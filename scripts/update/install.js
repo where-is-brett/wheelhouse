@@ -20,11 +20,21 @@ const FULL_SHA = /^[0-9a-f]{40}$/;
 const NAMED_TAG = /^v\d+\.\d+\.\d+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?$/;
 const LOCAL_SETTINGS = '.claude/settings.local.json';
 const INSTALL_NOTE = 'install.json';
+// Plugins the core cut dropped from the catalogue. The catalogue no longer lists them, so the install's own pass never
+// reaches an install of one at project scope; the update removes that one, and only that one (a user-scope install is
+// the director's own and is left).
+const RETIRED_PLUGINS = Object.freeze(['mattpocock-skills']);
+const RETIRED_NAMES = Object.freeze({ 'mattpocock-skills': "Matt Pocock's skills" });
+const RETIRED_SAID = Object.freeze({ 'mattpocock-skills': "Matt Pocock's skills plugin was removed from this project: its two skills Wheelhouse still needs are part of Wheelhouse now" });
 const short = (sha) => String(sha).slice(0, 12);
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+}
+
+function readText(file) {
+  try { return fs.readFileSync(file, 'utf8'); } catch { return null; }
 }
 
 function writeJson(file, value) {
@@ -91,6 +101,35 @@ async function cloneHead({ run, installLocation }) {
     if (error instanceof LookRefusal) return null;
     throw error;
   }
+}
+
+// The retired plugins installed at project scope for `projectDir`, by the plain name the card gives each. Read-only.
+export function retiredInstalls({ claudeHome = defaultClaudeHome(), projectDir, marketplace = MARKETPLACE } = {}) {
+  return installsOf({ claudeHome, projectDir, marketplace, names: [...RETIRED_PLUGINS] })
+    .filter((one) => one.scope === 'project').map((one) => RETIRED_NAMES[one.plugin] ?? one.plugin);
+}
+
+// Removes the project-scope installs of the retired plugins for `projectDir`: `claude plugin uninstall <plugin>@<marketplace>
+// --scope project` for each one still installed there, never at user scope. Claude Code rewrites the project's settings on
+// the way, so they are put back as they were. The earlier release's catalogue lists these plugins, so a put-back after this
+// installs them again. Resolves { ok, removed: [plugin], why? }; run again with nothing left it does nothing.
+export async function removeRetired({ run = defaultRun, resolved = resolveClaude(), projectDir, claudeHome = defaultClaudeHome(), marketplace = MARKETPLACE } = {}) {
+  const left = installsOf({ claudeHome, projectDir, marketplace, names: [...RETIRED_PLUGINS] }).filter((one) => one.scope === 'project');
+  const removed = [];
+  if (left.length === 0) return { ok: true, removed };
+  const settingsFile = path.join(projectDir, ...SETTINGS_FILE.split('/'));
+  const before = readText(settingsFile);
+  for (const { plugin } of left) {
+    await claudeIn({ run, resolved, projectDir }, ['plugin', 'uninstall', `${plugin}@${marketplace}`, '--scope', 'project', '--json']);
+    const stays = installsOf({ claudeHome, projectDir, marketplace, names: [plugin] }).some((one) => one.scope === 'project');
+    if (stays) {
+      if (before !== null) fs.writeFileSync(settingsFile, before);
+      return { ok: false, removed, why: `${plugin} could not be removed from this project` };
+    }
+    removed.push(plugin);
+  }
+  if (before !== null && readText(settingsFile) !== before) fs.writeFileSync(settingsFile, before);
+  return { ok: true, removed };
 }
 
 // Moves this computer's copy of the catalogue to `tag` without uninstalling anything: `claude plugin
@@ -214,9 +253,15 @@ export async function installRelease({
   const done = await reinstall({ projectDir: dir, release: { ref: tag, sha }, run, marketplace, claudeHome, resolved, scopes });
   if (!done.ok) return failed(`Wheelhouse ${tag} was not fully installed. ${done.line}`);
 
+  const gone = await removeRetired({ run, resolved, projectDir: dir, claudeHome, marketplace });
+  if (!gone.ok) return failed(`Wheelhouse ${tag} was not fully installed: ${gone.why}.`);
+  const note2 = readNote(journal);
+  if (gone.removed.length > 0) writeJson(noteFile(journal), { ...note2, removed: [...new Set([...(note2.removed ?? []), ...gone.removed])] });
+  const dropped = gone.removed.length === 0 ? '' : ` ${gone.removed.map((plugin) => `${RETIRED_SAID[plugin]}.`).join(' ')}`;
+
   const keeps = followers.length === 0 ? ''
     : ` The account's own install and catalogue stay at the earlier release for ${followers.map((f) => path.basename(f)).join(', ')}, which follow it.`;
-  return { ok: true, line: `${done.line}${keeps}` };
+  return { ok: true, line: `${done.line}${dropped}${keeps}` };
 }
 
 // Puts the computer back after a failed install: the backed-up files are restored, then the earlier

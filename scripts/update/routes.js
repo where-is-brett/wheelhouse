@@ -27,6 +27,7 @@ import { run as realRun } from '../lib/run.js';
 import { listEvents } from '../state/events.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { claudeHome as claudeHomeDir } from '../lineage/manifest.js';
+import { retiredInstalls } from './install.js';
 import { accountCatalogue } from './account-settings.js';
 import { runningVersion } from './board.js';
 import { releaseKind, updateMirror } from './change.js';
@@ -165,7 +166,7 @@ function milestones(steps, tag) {
 export function updateRoutes({
   now = () => new Date(), stopped = () => false, updateHeld = updateLockHeld, from = runningVersion, userHome = os.homedir(),
   run = realRun, spawn = nodeSpawn, list, fetch, check, kind, locked, requirements, claudeVersion = async () => null, signed = signedByDefault, clicked = clickedByDefault,
-  startRunner, account,
+  startRunner, account, retired,
 } = {}) {
   const listing = list ?? (() => listReleases({ run }));
   const fetching = fetch ?? ((tag) => fetchTag({ ref: tag, run, mirror: updateMirror() }));
@@ -203,9 +204,11 @@ export function updateRoutes({
       locked: lockedBy,
     });
     if (made.plan === undefined) return { ok: true, lines: made.lines };
-    const hash = hashOf(project, made.plan);
-    const card = updateCard({ ...made.plan, hash });
-    writeAtomic(planFile(project), { hash, project, folder, at: now().toISOString(), plan: made.plan, card });
+    const removes = (retired ?? ((where) => retiredInstalls({ claudeHome: claudeHomeDir(), ...where })))({ projectDir: folder });
+    const planned = removes.length > 0 ? { ...made.plan, removes } : made.plan;
+    const hash = hashOf(project, planned);
+    const card = updateCard({ ...planned, hash });
+    writeAtomic(planFile(project), { hash, project, folder, at: now().toISOString(), plan: planned, card });
     return { ok: true, hash, card, lines: made.lines };
   }
   async function apply(body) {

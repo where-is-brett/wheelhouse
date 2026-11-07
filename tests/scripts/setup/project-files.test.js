@@ -67,7 +67,7 @@ const GITLAB_TOKEN = 'glpat-directors-own-token-0001';
 const GITLAB_USER = { username: 'a-director', id: 77, name: 'A Director' };
 // The product's own .gitignore, as most hold it: .env files already kept out of git.
 const COVERED = '.env\n.env.*\n';
-const SHA = { superpowers: 'a'.repeat(40), 'mattpocock-skills': 'b'.repeat(40) };
+const SHA = { superpowers: 'a'.repeat(40) };
 // What the front desk's model alias stands for here: a stand-in name.
 const BEST_MODEL = 'model-top-1';
 // What the mid-sized model's alias stands for here.
@@ -110,7 +110,7 @@ const lsRemote = async (dir, branch) => (await realRun('git', ['ls-remote', dir,
 
 // A small copy of each pinned kit, its manifest, and where a stand-in install puts it.
 function kits(root) {
-  const upstreams = ['superpowers', 'mattpocock-skills'].map((name) => ({
+  const upstreams = ['superpowers'].map((name) => ({
     name, plugin: name, repo: `https://example.invalid/${name}.git`, ref: 'v1.0.0', sha: SHA[name], folders: ['skills/one'], files: ['LICENSE'],
   }));
   const roots = {};
@@ -280,7 +280,7 @@ test('the project settings keep the director\'s own keys and add Wheelhouse\'s',
     assert.ok(settings.permissions.deny.includes('Bash(git push:*)'));
     assert.equal(settings.sandbox.enabled, true);
     assert.equal(settings.enabledPlugins[`superpowers@${MARKETPLACE}`], true);
-    assert.equal(settings.enabledPlugins[`mattpocock-skills@${MARKETPLACE}`], true);
+    assert.equal(settings.enabledPlugins[`mattpocock-skills@${MARKETPLACE}`], undefined, 'the dropped plugin is not switched on');
     for (const off of SWITCHED_OFF_PLUGINS) assert.equal(settings.enabledPlugins[off], false);
     assert.equal(settings.extraKnownMarketplaces[MARKETPLACE].autoUpdate, false);
     assert.equal(settings.extraKnownMarketplaces[MARKETPLACE].source.ref, REF);
@@ -1187,20 +1187,19 @@ test('the pins are installed and the lineage check passes', async () => {
     assert.equal(before.ok, false);
     const planned = await w.plan();
     const pins = planned.changes.filter((c) => c.kind === 'process');
-    assert.deepEqual(pins.map((c) => c.target), [`superpowers@${MARKETPLACE}`, `mattpocock-skills@${MARKETPLACE}`]);
+    assert.deepEqual(pins.map((c) => c.target), [`superpowers@${MARKETPLACE}`]);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
     // Each by the documented command at project scope, in the project's folder (check 37).
     const installs = w.calls.filter((c) => c.tool === 'claude');
     assert.deepEqual(installs.map((c) => c.args), [
       ['plugin', 'install', `superpowers@${MARKETPLACE}`, '--scope', 'project'],
-      ['plugin', 'install', `mattpocock-skills@${MARKETPLACE}`, '--scope', 'project'],
     ]);
     assert.ok(installs.every((c) => c.cwd === w.folder));
     assert.equal(checkInstalled({ manifest: w.manifest, projectDir: w.folder, claudeHome: w.claudeHome }).ok, true);
     // Each install recorded before it was made, with what was installed before (nothing).
     const recorded = done.run.changes.filter((c) => c.kind === 'process');
-    assert.deepEqual(recorded.map((c) => [c.after.plugin, c.before]), [[`superpowers@${MARKETPLACE}`, null], [`mattpocock-skills@${MARKETPLACE}`, null]]);
+    assert.deepEqual(recorded.map((c) => [c.after.plugin, c.before]), [[`superpowers@${MARKETPLACE}`, null]]);
     // Installed, they are not listed again.
     assert.deepEqual((await w.plan()).changes.filter((c) => c.kind === 'process'), []);
   });
@@ -1271,12 +1270,12 @@ test('the card lists every part on GitLab with a long branch and release, and st
     { kind: 'json-key', target: '/p/.claude/settings.json', key: ['a'], after: 1 },
     { kind: 'file', target: '/p/CLAUDE.md', section: 'Compact instructions' },
     { kind: 'json-key', target: '/p/.claude/settings.local.json', key: ['b'], after: 2 },
-    { kind: 'process', target: `superpowers@${MARKETPLACE}` }, { kind: 'process', target: `mattpocock-skills@${MARKETPLACE}` },
+    { kind: 'process', target: `superpowers@${MARKETPLACE}` },
     { kind: 'host', action: 'commit' }, { kind: 'host', action: 'protect' },
   ];
   const text = (branch, ref) => composeCard({ ...projectFilesCard({ changes, host: 'gitlab', branch, release: { ref } }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
   const usual = text('main', 'v1.4.0');
-  for (const words of ['Compact instructions', 'settings.local.json', 'Superpowers and Matt Pocock\'s skills', 'Set up Wheelhouse', 'pipelines must succeed', 'GitLab sign-in', 'v1.4.0', 'never updates itself']) {
+  for (const words of ['Compact instructions', 'settings.local.json', 'Superpowers', 'Set up Wheelhouse', 'pipelines must succeed', 'GitLab sign-in', 'v1.4.0', 'never updates itself']) {
     assert.ok(usual.includes(words), words);
   }
   const long = text(`release/${'x'.repeat(200)}`, `v${'9'.repeat(150)}`);
@@ -1443,7 +1442,7 @@ test('a joining computer\'s step 7 lists only this computer\'s files and pins, w
     assert.ok(Array.isArray(planned.changes), JSON.stringify(planned));
     const local = path.join(w.folder, '.claude', 'settings.local.json');
     assert.deepEqual(planned.changes.map((c) => (c.kind === 'process' ? c.target : c.line ?? `${c.kind} ${path.relative(w.folder, c.target)}`)), [
-      `file ${path.join('.claude', 'settings.local.json')}`, EXCLUDE_LINE, WHEELHOUSE_LINE, `superpowers@${MARKETPLACE}`, `mattpocock-skills@${MARKETPLACE}`,
+      `file ${path.join('.claude', 'settings.local.json')}`, EXCLUDE_LINE, WHEELHOUSE_LINE, `superpowers@${MARKETPLACE}`,
     ]);
     assert.ok(!planned.changes.some((c) => c.kind === 'host'), 'no commit, no push, no protection');
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
@@ -1727,7 +1726,7 @@ test('the card with every part, a long branch and a long release, stays within t
     { kind: 'json-key', target: '/p/.claude/settings.local.json', key: ['b'], after: 2 },
     { kind: 'file', target: '/p/.git/info/exclude', line: EXCLUDE_LINE }, { kind: 'file', target: '/p/.git/info/exclude', line: WHEELHOUSE_LINE },
     { kind: 'file', target: `${folder}/.gitignore`, line: '.env' }, { kind: 'file', target: `${folder}/.gitignore`, line: '.env.*' },
-    { kind: 'process', target: `superpowers@${MARKETPLACE}` }, { kind: 'process', target: `mattpocock-skills@${MARKETPLACE}` },
+    { kind: 'process', target: `superpowers@${MARKETPLACE}` },
     { kind: 'host', action: 'commit', files: [...SETUP_FILES, '.gitignore'], yours: [{ file: 'CLAUDE.md' }, { file: '.gitignore' }, { file: '.claude/settings.json' }] },
     { kind: 'host', action: 'protect' },
   ];
@@ -1742,7 +1741,7 @@ test('the card with every part, a long branch and a long release, stays within t
     { kind: 'json-key', target: '/p/.claude/settings.local.json', key: ['b'], after: 2 },
     { kind: 'file', target: '/p/.git/info/exclude', line: EXCLUDE_LINE }, { kind: 'file', target: '/p/.git/info/exclude', line: WHEELHOUSE_LINE },
     { kind: 'file', target: '/p/.git/info/exclude', line: '.env' }, { kind: 'file', target: '/p/.git/info/exclude', line: '.env.*' },
-    { kind: 'process', target: `superpowers@${MARKETPLACE}` }, { kind: 'process', target: `mattpocock-skills@${MARKETPLACE}` },
+    { kind: 'process', target: `superpowers@${MARKETPLACE}` },
   ];
   const differ = ['.claude/settings.json', '.claude/wheelhouse.json', 'CLAUDE.md'];
   const joined = composeCard({ ...projectFilesCard({ changes: mine, host: 'gitlab', branch: null, release: { ref: `v${'9'.repeat(150)}` }, joining: true, differ: [...differ, `${'y'.repeat(300)}.md`] }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
@@ -1835,7 +1834,7 @@ test('the card says when .env.example stays shared, and the longest card still f
     { kind: 'file', target: '/p/.git/info/exclude', line: EXCLUDE_LINE }, { kind: 'file', target: '/p/.git/info/exclude', line: WHEELHOUSE_LINE },
     { kind: 'file', target: '/p/.gitignore', line: '.env' }, { kind: 'file', target: '/p/.gitignore', line: '.env.*' },
     { kind: 'file', target: '/p/.gitignore', line: '!.env.example', restate: true },
-    { kind: 'process', target: `superpowers@${MARKETPLACE}` }, { kind: 'process', target: `mattpocock-skills@${MARKETPLACE}` },
+    { kind: 'process', target: `superpowers@${MARKETPLACE}` },
     { kind: 'host', action: 'commit', files: [...SETUP_FILES, '.gitignore'], yours: [{ file: 'CLAUDE.md' }, { file: '.gitignore' }, { file: '.claude/settings.json' }] },
     { kind: 'host', action: 'protect' },
   ];
@@ -1962,7 +1961,7 @@ test('the joining card with a negation, in both sizes, stays within the composer
   const mine = [
     { kind: 'file', target: `${folder}/.claude/settings.local.json`, line: undefined, key: ['a'], after: 1 },
     { kind: 'file', target: `${folder}/.git/info/exclude`, line: EXCLUDE_LINE }, { kind: 'file', target: `${folder}/.git/info/exclude`, line: '.env' },
-    { kind: 'process', target: `superpowers@${MARKETPLACE}` }, { kind: 'process', target: `mattpocock-skills@${MARKETPLACE}` },
+    { kind: 'process', target: `superpowers@${MARKETPLACE}` },
   ];
   const text = (release, differ) => composeCard({ ...projectFilesCard({ changes: mine, host: 'gitlab', branch: null, release, joining: true, differ, negated: ['.env.*'] }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
   const plain = text({ ref: 'v1.4.0' }, []);

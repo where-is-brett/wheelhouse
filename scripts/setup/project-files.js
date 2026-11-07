@@ -15,7 +15,7 @@
 //      already ignores it; `.wheelhouse/` kept out of git by another line there (ruling R108)
 //      unless the list holds it already; and CLAUDE.md's "Compact instructions" section (design
 //      section 10), added once;
-//   2. the pins, Superpowers and Matt Pocock's skills, each installed by the documented command,
+//   2. the pin, Superpowers, installed by the documented command,
 //      `claude plugin install <plugin>@wheelhouse --scope project`, run in the project's folder
 //      (check 37: the project's settings alone don't install them, and the command needs no
 //      sign-in; ruling R46); Claude Code writes the project's settings again on the way, so any
@@ -236,7 +236,7 @@ async function githubLogin({ run }) {
 // Wheelhouse's own branches, which are never the product's default (ruling R34).
 const WHEELHOUSE_BRANCHES = [STATE_BRANCH, 'wheelhouse-lock', PROFILE_BRANCH];
 const NAME = { github: 'GitHub', gitlab: 'GitLab', local: 'this computer' };
-const PIN_NAMES = { superpowers: 'Superpowers', 'mattpocock-skills': 'Matt Pocock\'s skills' };
+const PIN_NAMES = { superpowers: 'Superpowers' };
 const INSTALL_WAIT_MS = 10 * 60 * 1000;
 const GIT_WAIT_MS = 5 * 60 * 1000;
 export const NO_CLAUDE = 'Setup could not run Claude Code\'s command line (claude) to install the pinned kits for this project. Install Claude Code\'s command line, then a fresh Go ahead carries on';

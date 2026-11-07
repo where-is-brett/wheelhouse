@@ -108,7 +108,7 @@ Visible means anything that adds to or changes what a person sees or uses: comma
 - `flag`: the switch's `name`, a short slug. With nothing else, the switch is a key in `config/feature-flags.json`. Where the project sets its switches its own way, say how in `"how"`, in a line.
 - `demo`: `midpoint` when the director chose a demo half way, otherwise `end`.
 
-**Alongside any route:** `mattpocock-skills:domain-modeling` when a new term or domain decision appears; `mattpocock-skills:prototype` for a visible change, after it is sized and before the director approves it.
+**Alongside any route:** `wheelhouse:domain-modeling` when a new term or domain decision appears; `wheelhouse:prototype` for a visible change, after it is sized and before the director approves it.
 
 ## Red flags: stop and route again
 

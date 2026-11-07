@@ -161,11 +161,11 @@ export function featureFileRules() {
   return ['Read(~/.claude/plugins/cache/**)', `Edit(/${FEATURE_TEMPORARY_FOLDER}/**)`];
 }
 
-// The copies of the pinned kits that must stay off in a project (check 24): Anthropic's
-// Superpowers, and the synced copies of Superpowers and Matt Pocock's skills. Two copies
-// of Superpowers share one manifest name, so they must never both be on.
+// The copies of the pinned kit that must stay off in a project (check 24): Anthropic's
+// Superpowers, and the synced copy of it. Two copies of Superpowers share one manifest
+// name, so they must never both be on.
 export const SWITCHED_OFF_PLUGINS = Object.freeze([
-  'superpowers@claude-plugins-official', 'superpowers@synced', 'mattpocock-skills@synced',
+  'superpowers@claude-plugins-official', 'superpowers@synced',
 ]);
 
 // The plugin settings (check 24): the copies pinned in Wheelhouse's marketplace on, every

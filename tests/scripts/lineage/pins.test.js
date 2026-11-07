@@ -21,7 +21,7 @@ test('the manifest\'s commits are the marketplace\'s pins', () => {
 });
 
 test('the marketplace pins each upstream at the manifest\'s commit, with a full sha', () => {
-  for (const name of ['superpowers', 'mattpocock-skills']) {
+  for (const name of ['superpowers']) {
     const { source } = entry(name);
     assert.equal(source.source, 'url');
     assert.match(source.url, /^https:\/\/github\.com\/[^/]+\/[^/]+\.git$/);
@@ -29,7 +29,7 @@ test('the marketplace pins each upstream at the manifest\'s commit, with a full 
     assert.ok(source.ref.length > 0);
   }
   assert.equal(entry('superpowers').source.url, 'https://github.com/obra/superpowers.git');
-  assert.equal(entry('mattpocock-skills').source.url, 'https://github.com/mattpocock/skills.git');
+  assert.equal(entry('mattpocock-skills'), undefined, 'the copies are in Wheelhouse, so no plugin of them is pinned');
 });
 
 test('the marketplace keeps Wheelhouse itself, from its own folder, and lists no plugin twice', () => {
@@ -37,5 +37,5 @@ test('the marketplace keeps Wheelhouse itself, from its own folder, and lists no
   assert.equal(entry('wheelhouse').source, './');
   const names = marketplace.plugins.map((p) => p.name);
   assert.equal(new Set(names).size, names.length);
-  assert.deepEqual([...names].sort(), ['mattpocock-skills', 'superpowers', 'wheelhouse']);
+  assert.deepEqual([...names].sort(), ['superpowers', 'wheelhouse']);
 });

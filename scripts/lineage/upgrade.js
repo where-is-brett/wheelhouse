@@ -113,7 +113,7 @@ export function planUpgrade({ manifest, register, candidates, changelog = [], co
 
 // --- Resolving and fetching the candidates ---
 
-// The `--to` words: ['superpowers=v7.1.0', 'mattpocock-skills=v1.4.0@<sha>'] as
+// The `--to` words, one per upstream (`superpowers=v7.1.0`, or `superpowers=v7.1.0@<sha>`), as
 // [{ name, tag, sha }]. A tag is plain, so it can't pass for an option or leave a branch name.
 export function parseTo(words) {
   if (!Array.isArray(words) || words.length === 0) throw new Error('give at least one --to <upstream>=<tag>');

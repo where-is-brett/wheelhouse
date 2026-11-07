@@ -4,20 +4,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { renderBrief, amendBrief, implementLines } from '../../../scripts/feature/brief.js';
+import * as briefModule from '../../../scripts/feature/brief.js';
+import { renderBrief, amendBrief } from '../../../scripts/feature/brief.js';
 import { parseBrief, briefHash } from '../../../scripts/feature/files.js';
 import { LANES } from '../../../scripts/lib/build-loop.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const pluginRoot = path.join(path.sep, 'plugins', 'wheelhouse');
-
-const FIVE_LINES = [
-  'Implement the work described by the user in the spec or tickets.',
-  'Use /tdd where possible, at pre-agreed seams.',
-  'Run typechecking regularly, single test files regularly, and the full test suite once at the end.',
-  'Once done, use /code-review to review the work.',
-  'Commit your work to the current branch.',
-].join('\n\n');
 
 const fields = (lane = 'feature') => ({
   v: 1,
@@ -67,14 +60,14 @@ test('each lane names the skills section 5.1 gives it, and no others', () => {
   const every = ['superpowers:verification-before-completion'];
   const review = ['superpowers:receiving-code-review', 'superpowers:requesting-code-review'];
   const allowed = {
-    quick: [...every, 'mattpocock-skills:code-review', 'mattpocock-skills:tdd'],
+    quick: [...every, 'superpowers:requesting-code-review', 'superpowers:test-driven-development'],
     small: [...every, ...review, 'superpowers:executing-plans', 'superpowers:test-driven-development', 'superpowers:using-git-worktrees', 'superpowers:writing-plans'],
     feature: [
       ...every, 'superpowers:receiving-code-review',
       'superpowers:dispatching-parallel-agents', 'superpowers:subagent-driven-development', 'superpowers:systematic-debugging',
       'superpowers:test-driven-development', 'superpowers:using-git-worktrees', 'superpowers:writing-plans',
     ],
-    bug: [...every, 'mattpocock-skills:code-review', 'mattpocock-skills:tdd', 'superpowers:systematic-debugging'],
+    bug: [...every, 'superpowers:requesting-code-review', 'superpowers:systematic-debugging', 'superpowers:test-driven-development'],
   };
   for (const lane of LANES) {
     // The lane's text, with the override (which names skills unprefixed) cut out.
@@ -90,19 +83,25 @@ test('each lane names the skills section 5.1 gives it, and no others', () => {
   assert.match(render('feature'), /600 lines/);
 });
 
-test('the quick brief carries the five lines byte for byte', () => {
-  const text = render('quick');
-  assert.ok(text.includes(FIVE_LINES), 'the five lines, each its own paragraph');
-  assert.equal(implementLines(), FIVE_LINES);
-  assert.ok(text.indexOf('mattpocock-skills:tdd') < text.indexOf('mattpocock-skills:code-review'), 'tdd is started before code-review');
-  assert.doesNotMatch(text, /implement:(begin|end)/, 'the markers are not in the brief');
-  assert.doesNotMatch(afterOverride(text), /superpowers:(writing-plans|executing-plans)/, 'no plan');
+test('the quick and bug briefs loop through test-driven development, then a code review run by Lookouts', () => {
+  for (const lane of ['quick', 'bug']) {
+    const text = afterOverride(render(lane));
+    assert.ok(text.indexOf('superpowers:test-driven-development') < text.indexOf('superpowers:requesting-code-review'), `${lane}: test-driven development is started before the review`);
+    assert.match(text, /Lookouts \(`wheelhouse:reviewer`\)/, lane);
+    assert.match(text, /never as general-purpose subagents/, lane);
+    assert.match(text, /`reviewerCritical`/, lane);
+    assert.match(text, /How to finish/, lane);
+    assert.doesNotMatch(text, /implement:(begin|end)|\/implement|\/tdd|\/code-review|Pocock|Matt/, `${lane}: nothing of the retired plugin's loop`);
+    assert.doesNotMatch(text, /superpowers:(writing-plans|executing-plans)/, `${lane}: no plan`);
+  }
+});
 
-  // The installed copy, line endings evened, is accepted; any other text is refused.
-  assert.ok(renderBrief({ fields: fields('quick'), pluginRoot, implementText: `${FIVE_LINES}\n` }).includes(FIVE_LINES));
-  assert.ok(renderBrief({ fields: fields('quick'), pluginRoot, implementText: `\n${FIVE_LINES.replace(/\n/g, '\r\n')}\r\n` }).includes(FIVE_LINES));
-  assert.throws(() => renderBrief({ fields: fields('quick'), pluginRoot, implementText: FIVE_LINES.replace('regularly,', 'often,') }), /\/implement/);
-  assert.throws(() => renderBrief({ fields: fields('quick'), pluginRoot, implementText: `${FIVE_LINES}\n\nPush it.` }), /\/implement/);
+test('the brief no longer reads or checks an installed /implement text', () => {
+  assert.equal(briefModule.implementLines, undefined);
+  // A text passed by an older caller is not looked at.
+  for (const lane of ['quick', 'bug']) {
+    assert.equal(renderBrief({ fields: fields(lane), pluginRoot, implementText: 'anything at all' }), render(lane));
+  }
 });
 
 test('a plan waits for the foreman: the session ends its turn and builds when woken with build', () => {
@@ -128,38 +127,14 @@ test('a plan waits for the foreman: the session ends its turn and builds when wo
   assert.doesNotMatch(afterOverride(render('quick')), /`build`|end your turn without building/);
 });
 
-test("Matt's code-review runs with Wheelhouse's reviewer in the quick and bug lanes", () => {
-  for (const lane of ['quick', 'bug']) {
-    const rest = afterOverride(render(lane));
-    const sentence = rest.split('\n').join(' ').split(/(?<=\.) /).find((s) => /code-review runs as it is written/.test(s));
-    assert.ok(sentence, `${lane}: says how code-review's reviewers are dispatched`);
-    assert.match(sentence, /`wheelhouse:reviewer`/);
-    assert.match(sentence, /`reviewer` role/);
-    assert.match(sentence, /`reviewerCritical`/);
-    assert.match(sentence, /never as general-purpose subagents/);
-  }
-});
-
-test('the installed /implement copy, laid out as Matt\'s file is, is accepted', () => {
-  // The body after the front matter: a leading blank line, and a blank line between the five paragraphs.
-  const installed = `\n${FIVE_LINES}\n`;
-  for (const text of [installed, installed.replace(/\n/g, '\r\n')]) {
-    for (const lane of ['quick', 'bug']) {
-      assert.ok(renderBrief({ fields: fields(lane), pluginRoot, implementText: text }).includes(FIVE_LINES), lane);
-    }
-  }
-  // A lane that does not carry the lines never reads them.
-  assert.ok(renderBrief({ fields: fields('small'), pluginRoot, implementText: 'anything' }).includes('Let people sign in'));
-});
-
-test("the bug brief starts systematic-debugging and never Matt's diagnosing-bugs", () => {
+test("the bug brief starts systematic-debugging and never another plugin's diagnosing-bugs", () => {
   for (const lane of LANES) assert.doesNotMatch(render(lane), /diagnosing-bugs/, lane);
   const text = render('bug');
   assert.match(text, /superpowers:systematic-debugging/);
   assert.match(text, /with `ask` that says what is missing/, 'cannot reproduce goes to ask');
   assert.match(text, /`blocked`/, 'works as designed reports blocked');
   assert.match(text, /`partial`/, 'a bigger cause reports partial');
-  assert.ok(text.includes(FIVE_LINES), 'a one-step cause carries on with the quick lane loop');
+  assert.match(text, /one step[\s\S]*superpowers:test-driven-development[\s\S]*superpowers:requesting-code-review/, 'a one-step cause carries on with test-driven development, then the review');
   assert.match(text, /regression test/);
 });
 

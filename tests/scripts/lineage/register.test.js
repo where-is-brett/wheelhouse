@@ -63,14 +63,14 @@ test('an anchor whose file has gone is named, and a path leaving the folder is n
 test('an upstream with no folder given is skipped', () => {
   const roots = anchorFolders();
   fs.rmSync(roots.superpowers, { recursive: true });
-  assert.deepEqual(checkAnchors({ register, roots: { 'mattpocock-skills': roots.superpowers } }), []);
+  assert.deepEqual(checkAnchors({ register, roots: { 'some-other-kit': roots.superpowers } }), []);
   assert.deepEqual(checkAnchors({ register, roots: {} }), []);
   assert.deepEqual(checkCarried({ register, roots: {} }), []);
 });
 
 test('a changed carried-text source is named', () => {
   const dir = tempFolder('wh-carried-');
-  const [carried] = register.carried;
+  const carried = { id: 'made-up', upstream: 'superpowers', file: 'skills/made-up/SKILL.md', hash: '', text: 'made-up' };
   write(dir, carried.file, 'made-up source\n');
   const held = { ...register, carried: [{ ...carried, hash: fingerprintFile(path.join(dir, ...carried.file.split('/'))).hash }] };
   const roots = { [carried.upstream]: dir };
@@ -101,14 +101,10 @@ test('every assumption names a check and says whether a person must re-test it',
   assert.equal(new Set(register.assumptions.map((a) => a.id)).size, 9);
 });
 
-test('the carried text is what the quick-lane brief carries, and names a file of a pinned upstream', () => {
+test('no text is carried from an upstream: the quick lane works its own loop', () => {
+  assert.deepEqual(register.carried, []);
   const quick = fs.readFileSync(path.join(repo, 'templates', 'brief', 'lanes', 'quick.md'), 'utf8');
-  const between = quick.split('<!-- implement:begin -->\n')[1].split('\n<!-- implement:end -->')[0];
-  const [carried] = register.carried;
-  assert.equal(register.carried.length, 1);
-  assert.equal(carried.text, between);
-  assert.equal(carried.text.split('\n').filter((line) => line !== '').length, 5);
-  assert.ok(UPSTREAMS.some((u) => u.name === carried.upstream));
+  assert.doesNotMatch(quick, /implement:begin/);
 });
 
 test('every override and carried text names a pinned upstream, and the anchored skills are ones Wheelhouse fingerprints', () => {
@@ -126,7 +122,7 @@ test('the command line checks folders given as name=folder, and refuses anything
   const ok = await run('node', [script, 'check', `superpowers=${roots.superpowers}`], { cwd: repo });
   assert.equal(ok.code, 0, ok.stdout + ok.stderr);
   assert.match(ok.stdout, /register ok/);
-  assert.match(ok.stdout, /not checked, no folder given: mattpocock-skills/);
+  assert.doesNotMatch(ok.stdout, /not checked, no folder given/);
   fs.writeFileSync(path.join(roots.superpowers, 'skills', 'brainstorming', 'SKILL.md'), 'nothing\n');
   const broken = await run('node', [script, 'check', `superpowers=${roots.superpowers}`], { cwd: repo });
   assert.equal(broken.code, 1);

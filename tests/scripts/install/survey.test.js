@@ -191,7 +191,7 @@ test('scheduled tasks, plugins and personal skills are read for the brief', asyn
   put('plugins/cache/m/notes-kit/1.0.0/.claude-plugin/plugin.json', { name: 'notes-kit', description: 'Takes meeting notes.' });
   put('plugins/synced/account_org/manifest.json', {
     plugins: [
-      { name: 'chart-kit', description: 'Draws charts.' }, { name: 'quiet-kit', description: 'Switched off.' }, { name: 'mattpocock-skills', description: 'A pinned kit.' },
+      { name: 'chart-kit', description: 'Draws charts.' }, { name: 'quiet-kit', description: 'Switched off.' }, { name: 'superpowers', description: 'A pinned kit.' },
     ],
   });
   put('skills/letter-writer/SKILL.md', '---\nname: letter-writer\ndescription: Writes letters in my voice.\n---\n\nWrite the letter.\n');

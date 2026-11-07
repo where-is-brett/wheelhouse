@@ -270,7 +270,7 @@ test('the check script runs on its own, names what is missing, and writes nothin
     const result = spawnSync(process.execPath, [CHECK, main], { env: { ...process.env, WHEELHOUSE_HOME: home, CLAUDE_CONFIG_DIR: claudeHome, PATH: '' }, encoding: 'utf8' });
     assert.equal(result.status, 1, result.stderr);
     assert.match(result.stdout, /^These installed files still differ/);
-    assert.match(result.stdout, /- superpowers: not installed\n- mattpocock-skills: not installed\n$/);
+    assert.match(result.stdout, /- superpowers: not installed\n$/);
     assert.equal(fs.existsSync(holdFile(P)), false, 'the check holds nothing: only a session start does');
   });
 });
