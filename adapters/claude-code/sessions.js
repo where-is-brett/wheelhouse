@@ -143,6 +143,37 @@ export function featureResumeCall({ sessionId, ...rest }) {
   return featureCall({ ...rest, lead: ['--resume', sessionId] });
 }
 
+// The tools a "why" session may use: it reads and searches, and nothing else.
+export const WHY_TOOLS = 'Read,Grep,Glob';
+// The connector configuration a why session is given: none.
+const WHY_NO_MCP = '{"mcpServers":{}}';
+const WHY_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+// A "why" session (design section 6.3): a read-only fork of the session `sessionId`, run in the same `worktree`, asked `question`.
+// It is always `--resume <id> --fork-session`, so the session it copies carries on undisturbed and is never resumed directly;
+// a follow-up passes the copy's own id. Five guards keep it read-only: the fork, `--permission-mode plan`, `--tools` and
+// `--allowedTools` of reading tools alone (with no connector), and the `why` role that the hooks enforce for every tool. Returns { command, file, args, cwd, env, input, verbatim }.
+export function whyCall({
+  sessionId, worktree, question, config = null, platform = process.platform, env = process.env, claude = null, model: chosen = null,
+}) {
+  if (typeof sessionId !== 'string' || !WHY_SESSION_ID.test(sessionId)) throw new Error('A why session copies a session named by a plain id');
+  if (typeof worktree !== 'string' || worktree === '') throw new Error('A why session needs the folder of the session it copies');
+  const model = givenModel(chosen, 'feature') ?? modelOf(config, 'feature') ?? modelOf(config, 'builder') ?? DEFAULT_MODEL;
+  const args = [
+    '--output-format', 'json',
+    '--permission-mode', 'plan',
+    ...(model ? ['--model', model] : []),
+    // Only these tools exist in the session at all, and no connector server is started: --tools takes the others away
+    // (a task, an agent, the web, a skill, the schedule), and an empty strict MCP configuration takes the connectors.
+    '--tools', WHY_TOOLS,
+    '--allowedTools', WHY_TOOLS,
+    '--strict-mcp-config', '--mcp-config', WHY_NO_MCP,
+    '--disable-slash-commands',
+  ];
+  const call = invocation(claude ?? resolveClaude({ platform, env }), ['--resume', sessionId, '--fork-session'], args, question);
+  return { ...call, command: call.file, cwd: worktree, env: { ...sessionEnv(env), [ROLE_VARIABLE]: 'why', ...FOREGROUND_ONLY } };
+}
+
 // The text of the last `result` event in a stream-json run, or null.
 export function finalAnswer(stdout) {
   let last = null;
@@ -163,4 +194,4 @@ export function finalAnswer(stdout) {
 // takes it (scripts/watcher/waker.js): Claude Code's sessions pass each subagent its model and effort.
 export const takesColumn = true;
 
-export default Object.freeze({ checkForeman, checkFeature, foremanCall, featureStartCall, featureResumeCall, finalAnswer, takesColumn });
+export default Object.freeze({ checkForeman, checkFeature, foremanCall, featureStartCall, featureResumeCall, whyCall, finalAnswer, takesColumn });

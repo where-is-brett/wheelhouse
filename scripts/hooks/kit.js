@@ -411,6 +411,8 @@ export async function hookMain(decide, { failClosed, event }, io = {}) {
     // An input the adapter cannot translate is handled as a hook that could not read its input.
     if (inputs.length === 0 || inputs.some((one) => one === null || typeof one !== 'object' || Array.isArray(one))) throw new Error('The adapter could not translate the hook input');
     const input = inputs[0];
+    // A why session's events but the tool guards' are none of the hooks' business: nothing is read, recorded or kept for it.
+    if (isWhy(process.env) && (input.hook_event_name ?? event) !== 'PreToolUse') return;
     const managed = dir ?? managedDir();
     const isManagedCopy = isInside(managed, self);
     if (typeof input.cwd === 'string') {
@@ -454,6 +456,14 @@ export async function hookMain(decide, { failClosed, event }, io = {}) {
     }
   }
 }
+
+// The tools a "why" session may use (adapters/claude-code/sessions.js whyCall): the copy that explains a decision reads and
+// searches, and nothing else.
+export const WHY_TOOLS = Object.freeze(['Read', 'Grep', 'Glob']);
+// Whether the session is a "why" copy, by the role variable in any spelling: the call that starts one sets it, and a
+// session started any other way has it taken out (sessionEnv). A why session works in the builder's own worktree, so no hook
+// but the guards may act for it: the builder's files and the project's record are not the copy's to touch.
+export const isWhy = (env = process.env) => Object.entries(env ?? {}).some(([name, value]) => name.toUpperCase() === 'WHEELHOUSE_ROLE' && value === 'why');
 
 // What a hook script's main block runs. Writes the answer, waits for the write
 // to be taken (a Windows pipe takes it asynchronously), then exits: a request
