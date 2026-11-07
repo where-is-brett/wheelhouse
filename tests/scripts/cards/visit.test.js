@@ -110,7 +110,7 @@ test('importanceOf ranks a card from its kind, its level and what it holds up', 
   assert.equal(importanceOf(waitingCard('f', 1, 'approval', { target: { pr: 7, sha: FULL } }), views([])), IMPORTANCE.LEVEL_3);
   assert.equal(importanceOf(waitingCard('l4', 1, 'approval', { level: 4 }), views([])), IMPORTANCE.LEVEL_4);
   assert.equal(importanceOf(waitingCard('p', 1, 'question'), views([])), IMPORTANCE.REST);
-  // The rank rises with importance; the courier reads "above level 3" from it.
+  // The rank rises with importance; a front end reads "above level 3" from it.
   const rank = Object.values(IMPORTANCE).sort((a, b) => a - b);
   assert.deepEqual(rank, [...new Set(rank)]);
   assert.ok(IMPORTANCE.STOP_OR_INCIDENT > IMPORTANCE.LEVEL_4 && IMPORTANCE.LEVEL_4 > IMPORTANCE.HOLDS_UP_ALL

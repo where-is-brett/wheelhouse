@@ -20,8 +20,7 @@
 // environment, and exits with its exit code. The second run is marked in the environment
 // (WHEELHOUSE_NODE_FLOOR_RERUN) and never searches again.
 //
-// A computer with no Node.js at all never reaches this file; the mod says so instead
-// (hooks/mod/ask.ts, NODE_MISSING).
+// A computer with no Node.js at all never reaches this file.
 //
 // Written as plain CommonJS with no newer syntax (var, function, no arrows or template strings),
 // so that an old Node.js can read it.
@@ -55,8 +54,7 @@ function message(version) {
     version + '. ' + REMEDY;
 }
 
-// The same for a computer with no Node.js at all, which the mod shows (hooks/mod/numbers.ts
-// NODE_MISSING holds these words).
+// The same for a computer with no Node.js at all.
 function missingMessage() {
   return 'Wheelhouse needs a free program called Node.js, version ' + FLOOR_MAJOR + ' or later, and this computer doesn\'t have it. ' + REMEDY;
 }

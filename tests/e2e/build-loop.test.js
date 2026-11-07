@@ -4,7 +4,7 @@
 // helper on a socket (a named pipe on Windows), a bare repository standing in for the host
 // behind a stand-in for gh and glab, and the project's main checkout cloned from it. The
 // foreman's commands (act.js, wake.js) make real git worktrees there. The watcher's core and
-// sources run as runWatcher runs them; the waker is the real one in Shape 2, which starts no
+// sources run as runWatcher runs them; the waker is the real one on its printing route, which starts no
 // process: what it would hand to a session is caught as its printed lines, and each wake is
 // copied into the session's own folder. One test runs Shape 1's start instead: the helper's child
 // starts a stand-in `claude` found on the helper's PATH. The hooks' `decide` functions are called
@@ -72,9 +72,9 @@ const CHECK = path.join(PLUGIN_ROOT, 'scripts', 'lineage', 'check.js');
 // A folder that is never created, so no managed copy of the hooks is found.
 const NO_MANAGED = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-no-managed-')), 'absent');
 process.on('exit', () => fs.rmSync(path.dirname(NO_MANAGED), { recursive: true, force: true }));
-// The project's configuration on its default branch: the watcher in Shape 2, so the waker
-// prints its wakes (and copies each into the session's folder) instead of starting `claude`.
-const CONFIG = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], watcherShape: 2 };
+// The project's configuration on its default branch. The test's own waker prints its wakes (and copies each into
+// the session's folder) instead of starting `claude`.
+const CONFIG = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], watcherShape: 1 };
 
 // --- The sandbox ---
 
@@ -139,7 +139,7 @@ function standInHost(remoteUrl) {
 // from it, a home with this computer's signing key enrolled, the project's record, a helper,
 // the state cloned and the lock taken. `lineage` makes a Wheelhouse root and an install record
 // for the checkout (tests/helpers/lineage.js), whose manifest the helper's gate reads.
-async function makeWorld({ lineage = false, shape = 2 } = {}) {
+async function makeWorld({ lineage = false, shape = 1 } = {}) {
   const remote = await makeBareRemote({ repo: 'o/p' });
   const seed = tempFolder('wh-seed-');
   await g(seed, 'init', '-q', '-b', 'main');
@@ -194,10 +194,14 @@ async function makeWorld({ lineage = false, shape = 2 } = {}) {
 }
 
 // Runs a test's body with the computer's home, and closes it afterwards.
+// A stand-in `claude` is first on the PATH the helper hands its children, so a start the foreman asks for runs it and no
+// real session begins.
 async function onComputer(options, fn) {
   const world = await makeWorld(options);
+  world.claude = standInClaude();
+  const pathKey = Object.keys(process.env).find((name) => name.toUpperCase() === 'PATH') ?? 'PATH';
   try {
-    await as(world.home, () => fn(world));
+    await withEnv({ [pathKey]: `${world.claude.dir}${path.delimiter}${process.env[pathKey] ?? ''}` }, () => as(world.home, () => fn(world)));
   } finally {
     await world.close();
   }
@@ -335,7 +339,13 @@ async function startWork(world, work, { provenance = true } = {}) {
   ]);
   assert.equal(started.code, 0, started.err);
   const s = { work, worktree: path.join(world.checkout, '.claude', 'worktrees', work), sessionId: `sess-${work}` };
-  assert.ok(started.out.split('\n').includes(`START feature ${work} ${s.worktree}`), 'the waker was asked to start the session');
+  assert.match(started.out, new RegExp(`^Started the ${work} session\\.$`, 'm'));
+  let runs = [];
+  for (let i = 0; i < 200 && !runs.some((r) => fs.realpathSync.native(r.cwd) === s.worktree); i += 1) {
+    runs = world.claude.read();
+    if (!runs.some((r) => fs.realpathSync.native(r.cwd) === s.worktree)) await new Promise((done) => { setTimeout(done, 50); });
+  }
+  assert.ok(runs.some((r) => fs.realpathSync.native(r.cwd) === s.worktree), 'the session was started');
   assert.equal(await g(s.worktree, 'rev-parse', '--abbrev-ref', 'HEAD'), `feature/${work}`);
   if (provenance) writeSessionProvenance(P, s.sessionId);
   await statusHook(world, s);

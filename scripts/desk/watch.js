@@ -15,7 +15,7 @@ const hashText = (text) => crypto.createHash('sha256').update(String(text)).dige
 
 // snapshotOf({ glance, waiting, work, stop, notices }) -> the state watch compares: `glance` the glance's
 // text, `waiting` the waiting cards, `work` each open item's state by id, `stop` STOP's time or null, and
-// `notices` [{ id, lines }], whose ids are the courier's (incident:<id>, health:<hash>, finished:<work>).
+// `notices` [{ id, lines }], whose ids read incident:<id>, health:<hash> or finished:<work>.
 export function snapshotOf({ glance = '', waiting = [], work = {}, stop = null, notices = [] } = {}) {
   const cards = {};
   for (const card of Array.isArray(waiting) ? waiting : []) {

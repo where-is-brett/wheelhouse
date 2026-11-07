@@ -3,7 +3,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { topCard, holdsUpCount, noCardBehind, deadEnds, waitsOnItself } from '../../../scripts/engine/stuck.js';
-import { needsYou, PRESENCE_LETS } from '../../../scripts/mod/courier.js';
 import { importanceOf, IMPORTANCE, cardsForVisit } from '../../../scripts/cards/visit.js';
 import { wayBack, asking, forever } from '../../helpers/way-back.js';
 
@@ -55,15 +54,13 @@ test('a hold names no card only when nothing behind it moves', () => {
   assert.deepEqual(noCardBehind({ hold, running: ['r'], cards: [card('q-a-1', 'a')] }).map((h) => h.work), ['x']);
 });
 
-test('the top card ranks as holding up all work, and passes Away', () => {
+test('the top card ranks as holding up all work', () => {
   const views = { questions: {}, cardsWaiting: { count: 0, ids: [], pulled: [], top: { id: 'q-a-1', holdsUp: 2 } } };
   const asCard = { id: 'c', at: 't', data: { kind: 'answer', level: 3, line: 'Answer question q-a-1', question: 'x', options: [] } };
   assert.equal(importanceOf(asCard, views), IMPORTANCE.HOLDS_UP_ALL);
   assert.equal(importanceOf({ data: { ...asCard.data, line: 'Answer question q-b-1' } }, views), IMPORTANCE.LEVEL_3);
   assert.equal(importanceOf({ data: { ...asCard.data, level: 4 } }, views), IMPORTANCE.LEVEL_4, 'it never lowers a card');
   assert.equal(cardsForVisit({ ...views, waiting: [{ ...asCard, asked: null }] }).ids[0], 'c');
-  const [item] = needsYou({ after: { cards: [{ id: 'c', n: 1, blocking: true }] } });
-  assert.equal(PRESENCE_LETS.away(item), true);
 });
 
 const clashing = (settings = {}) => {

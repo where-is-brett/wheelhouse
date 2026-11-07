@@ -300,7 +300,7 @@ test('the project settings keep the director\'s own keys and add Wheelhouse\'s',
       `Bash(${updateCommand(PLUGIN_ROOT, { platform: 'darwin', noSystemCa: true })}:*)`,
     ]);
     assert.deepEqual(local.sandbox.network.allowUnixSockets, [ADDRESS]);
-    assert.match(local.statusLine.command, /statusline\.js/);
+    assert.equal(local.statusLine, undefined, 'no status line is written');
 
     // The "Compact instructions" section, added once after the director's own lines.
     const claude = fs.readFileSync(path.join(w.folder, 'CLAUDE.md'), 'utf8');
@@ -1169,7 +1169,7 @@ test('step 7\'s line puts everything but the secrets\' names first, so "(and N m
   }
 });
 
-test('a director with a status line of their own keeps it: none is written for this computer', async () => {
+test('a director with a status line of their own keeps it: Wheelhouse writes none', async () => {
   await withHome(async () => {
     const w = await world({ ownStatusLine: { type: 'command', command: 'my-line.sh' } });
     const done = await w.apply((await w.plan()).changes);

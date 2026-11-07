@@ -27,12 +27,8 @@ export const SUGGEST_SAYS = 'Tell me what you\'d change; I\'ll come back with a 
 export const WHAT_WOULD_YOU_CHANGE = 'What would you change?';
 // The note shown once the director's words have been handed to the front desk.
 export const SENT_TO_FRONT_DESK = 'Sent to the First Mate. A new proposal will follow.';
-// The pane's small line on a card a question in the chat has open as well, and the toast after a press on it.
-export const OPEN_IN_CHAT = 'Also open in the chat.';
-export const OPEN_IN_CHAT_CLOSES = 'Counted. The copy in the chat closes by itself.';
-// The line the mod's one question-closing hook (hooks/mod/close.ts) refuses a chat question with once it is answered elsewhere.
+// The line a chat question is refused with once it is answered elsewhere.
 export const CLOSED_IN_PANEL = 'Answered elsewhere; this question is closed';
-export const OPEN_IN_CHAT_TOAST = 'Counted. The copy in the chat now changes nothing: pick anything or press Skip.';
 // The note for a suggestion made at a time: a new proposal is coming and nothing goes live meanwhile.
 export const suggestedAt = (hhmm) => `You suggested a change at ${hhmm}. A new proposal is on its way, and nothing goes live meanwhile.`;
 // The note for a suggestion typed in the chat, naming the card it is about.
@@ -70,12 +66,6 @@ export function verdict({ waiting, broken }) {
 // The line shown when the director returns, naming when they were last here.
 export const sinceLine = (hhmm) => `Since you were last here at ${hhmm}.`;
 
-// The note shown when Suggest a change… is sent with nothing written in it.
-export const WRITE_FIRST = 'Write what you\'d change first';
-// The note shown when Undo is pressed for a setting with no change to undo.
-export const NOTHING_TO_UNDO = 'There\'s nothing to undo now';
-// The note shown when Undo is pressed after its minute has passed.
-export const TOO_LATE_TO_UNDO = 'It\'s too late to undo that. Undo lasts one minute.';
 // What Undo is offered as, said after a setting's pick that can be undone.
 export const UNDO_IN_PANE = 'Undo in the pane for a minute.';
 // How long ago a card was asked: "asked just now", "asked 2 hours ago".

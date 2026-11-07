@@ -1,15 +1,16 @@
 // tests/scripts/foreman/start.test.js
 // The foreman's start (build-loop design, section 11). Shape 1 starts the
-// watcher, detached and hidden, when it isn't running, and nothing else.
-// Shape 2 starts the foreman's long session. No real watcher or claude runs:
-// starting is a stand-in that records the call.
+// watcher, detached and hidden, when it isn't running, and nothing else; a
+// project whose configuration still says Shape 2 starts the same. The
+// foreman's long session is built by foremanSession, for the agents adapter.
+// No real watcher or claude runs: starting is a stand-in that records the call.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { foremanSession, main, startWatcher, stopWatcher, stopForeman, watcherRunning, FOREMAN_PROMPT_LEAD, MONITOR_NOTE } from '../../../scripts/foreman/start.js';
+import { foremanSession, main, startWatcher, stopWatcher, stopForeman, watcherRunning, FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 import { foremanTools } from '../../../scripts/foreman/tools.js';
 import { FOREMAN_FALLBACK_COMPACT } from '../../../scripts/lib/build-loop.js';
 import { healthFile, lockFile } from '../../../scripts/watcher/main.js';
@@ -116,20 +117,30 @@ test('startWatcher starts the watcher with the folder of claude on its PATH when
   }
 }));
 
-test('Shape 2: the foreman\'s long session compacts at 100,000, runs as the foreman, and is told it is the foreman', () => withHome(async () => {
-  const checkout = await project();
-  const { client } = fakeClient({ cfg: config({ watcherShape: 2, sessionMode: 'acceptEdits' }) });
+test('a project whose configuration says Shape 2 starts the watcher and launches no foreman session', () => withHome(async () => {
+  await project();
+  const { client } = fakeClient({ cfg: config({ watcherShape: 2 }) });
   const watcher = fakeSpawn();
   const launched = [];
   const launch = async (file, args, opts) => { launched.push({ file, args, opts }); return 0; };
   const r = await start([P], {
     client, spawn: watcher.spawn, launch, pluginRoot: MAC_ROOT, platform: 'darwin', claude: { kind: 'direct', file: 'claude' },
-    env: { PATH: '/bin', CLAUDECODE: '1', wheelhouse_role: 'front-desk' },
+    env: { PATH: '/bin' },
   });
   assert.equal(r.code, 0, r.err);
-  assert.equal(watcher.calls.length, 0, 'Shape 2 starts no watcher process of its own');
-  assert.equal(launched.length, 1);
-  const [{ file, args, opts }] = launched;
+  assert.equal(watcher.calls.length, 1, 'the watcher is started, as for Shape 1');
+  assert.equal(launched.length, 0, 'no foreman session is launched');
+  assert.equal(r.out, `Started the watcher for ${P}.\n`);
+  assert.equal(r.err, '');
+}));
+
+test('the foreman\'s long session compacts at 100,000, runs as the foreman, and is told it is the foreman', () => withHome(async () => {
+  const checkout = await project();
+  const session = foremanSession({
+    project: P, config: config({ sessionMode: 'acceptEdits' }), pluginRoot: MAC_ROOT, platform: 'darwin', claude: { kind: 'direct', file: 'claude' },
+    env: { PATH: '/bin', CLAUDECODE: '1', wheelhouse_role: 'front-desk' },
+  });
+  const { file, args, options: opts } = session;
   assert.equal(file, 'claude');
 
   // Its own settings file, under the watcher's folder, compacting at 100,000.
@@ -157,45 +168,29 @@ test('the foreman\'s long session takes the foreman\'s model, effort and fallbac
   const pins = { mostCapable: 'model-top', midSized: 'model-mid' };
   const said = [];
   const at = (column) => foremanSession({
-    project: P, config: config({ watcherShape: 2, tiers: { pins } }), pluginRoot: MAC_ROOT, platform: 'darwin', env: {}, claude: { kind: 'direct', file: 'claude' },
+    project: P, config: config({ tiers: { pins } }), pluginRoot: MAC_ROOT, platform: 'darwin', env: {}, claude: { kind: 'direct', file: 'claude' },
     routing: () => column, say: (line) => said.push(line),
   }).args;
   const flags = (args) => args.slice(args.indexOf('--model'), args.indexOf('--allowedTools'));
   assert.deepEqual(flags(at({ roles: { foreman: { model: 'model-mid', effort: 'low', fallback: 'model-top' } }, lines: ['a line'] })), ['--model', 'model-mid', '--effort', 'low', '--fallback-model', 'model-top']);
   assert.deepEqual(said, ['a line']);
   // Read from the state when not given: nothing set is Balanced on the pins.
-  const read = foremanSession({ project: P, config: config({ watcherShape: 2, tiers: { pins } }), pluginRoot: MAC_ROOT, platform: 'darwin', env: {}, claude: { kind: 'direct', file: 'claude' } }).args;
+  const read = foremanSession({ project: P, config: config({ tiers: { pins } }), pluginRoot: MAC_ROOT, platform: 'darwin', env: {}, claude: { kind: 'direct', file: 'claude' } }).args;
   assert.deepEqual(flags(read), ['--model', 'model-mid', '--effort', 'medium', '--fallback-model', 'model-top']);
   // A column that can't be read leaves the flat table's model, as before.
   assert.deepEqual(flags(at(undefined)), ['--model', 'model-a']);
   const broken = foremanSession({
-    project: P, config: config({ watcherShape: 2 }), pluginRoot: MAC_ROOT, platform: 'darwin', env: {}, claude: { kind: 'direct', file: 'claude' }, routing: () => { throw new Error('no'); },
+    project: P, config: config(), pluginRoot: MAC_ROOT, platform: 'darwin', env: {}, claude: { kind: 'direct', file: 'claude' }, routing: () => { throw new Error('no'); },
   }).args;
   assert.deepEqual(flags(broken), ['--model', 'model-a']);
 }));
 
-test('the Shape 2 start says the mod hands on the wakes', () => withHome(async () => {
+test('the foreman\'s session through claude.cmd puts the prompt on the command line, quoted', () => withHome(async () => {
   await project();
-  const { client } = fakeClient({ cfg: config({ watcherShape: 2 }) });
-  const r = await start([P], {
-    client, launch: async () => 0, pluginRoot: MAC_ROOT, platform: 'darwin', claude: { kind: 'direct', file: 'claude' }, env: {},
-  });
-  assert.equal(r.code, 0, r.err);
-  assert.equal(MONITOR_NOTE, 'The mod in this session hands it the watcher\'s wakes.');
-  assert.equal(r.err, `${MONITOR_NOTE}\n`);
-  assert.doesNotMatch(r.err, /check 26|nothing wakes/i);
-}));
-
-test('Shape 2 through claude.cmd puts the prompt on the command line, quoted', () => withHome(async () => {
-  await project();
-  const { client } = fakeClient({ cfg: config({ watcherShape: 2 }) });
-  const launched = [];
-  const r = await start([P], {
-    client, launch: async (file, args, opts) => { launched.push({ file, args, opts }); return 0; }, pluginRoot: 'C:\\plugins\\wheelhouse', platform: 'win32',
+  const { file, args, options: opts } = foremanSession({
+    project: P, config: config(), pluginRoot: 'C:\\plugins\\wheelhouse', platform: 'win32',
     claude: { kind: 'cmd', file: 'C:\\npm\\claude.cmd' }, env: {},
   });
-  assert.equal(r.code, 0, r.err);
-  const [{ file, args, opts }] = launched;
   assert.equal(file, 'cmd.exe');
   assert.equal(opts.windowsVerbatimArguments, true);
   assert.match(args.at(-1), /^"C:\\npm\\claude\.cmd "Wheelhouse foreman: /);

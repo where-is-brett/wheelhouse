@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadBoardInputs } from '../../../scripts/board/inputs.js';
-import { NOTE_LEAD } from '../../../scripts/mod/press.js';
+import { NOTE_LEAD } from '../../../scripts/cards/answered.js';
 import { decide, HEADINGS, WAIT_MS, LEARN_WAIT_MS, briefingIn, cardsDue, cardsLine, FOREMAN_LINE, SINCE_LEAD, STOPPED_LEAD } from '../../../scripts/hooks/board-context.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 import { roleFile } from '../../../scripts/lib/role.js';
@@ -22,8 +22,6 @@ import { confirmLine } from '../../../scripts/state/card-lines.js';
 import { briefingLine } from '../../../scripts/lineage/release.js';
 import { BRIEFING_WORDS, CONTEXT_CHARS } from '../../../scripts/lib/core-numbers.js';
 import { briefingText } from '../../../scripts/briefing/text.js';
-import { LEADS } from '../../../scripts/lib/mod-numbers.js';
-import { courierWake } from '../../../scripts/mod/courier.js';
 import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { SETUP_STEPS } from '../../../scripts/lib/setup-run.js';
 import { NOT_SET_UP, SETUP_FIRST } from '../../../scripts/hooks/session-start.js';
@@ -128,14 +126,14 @@ test('the gap follows the briefingGapHours setting', async () => {
   });
 });
 
-test('a briefing /wheelhouse-digest gave restarts the gap: a prompt within two hours of it brings none', async () => {
+test('a briefing given outside a prompt restarts the gap: a prompt within two hours of it brings none', async () => {
   await withProject(async ({ repo }) => {
-    // The last prompt three hours ago, and /wheelhouse-digest an hour ago, which marks only the briefing given.
+    // The last prompt three hours ago, and a briefing given an hour ago, which marks only the briefing given.
     markSeen(P, { promptAt: new Date('2026-10-19T09:00:00.000Z'), briefedAt: new Date('2026-10-19T11:00:00.000Z') });
     assert.equal(await run(repo, 'Thanks', NOW), undefined);
     assert.equal(readSeen(P, { now: at(NOW) }).briefedAt, '2026-10-19T11:00:00.000Z', 'no briefing was given');
 
-    // /wheelhouse-digest over two hours ago: the next prompt brings the briefing.
+    // A briefing given over two hours ago: the next prompt brings the briefing.
     markSeen(P, { promptAt: new Date('2026-10-19T08:00:00.000Z'), briefedAt: new Date('2026-10-19T09:30:00.000Z') });
     assert.ok(contextOf(await run(repo, 'Back again', NOW)).startsWith(HEADINGS.briefing));
   });
@@ -690,62 +688,6 @@ test('the role comes from the session\'s first prompt and is kept: the wake line
   });
 });
 
-test('the board-context hook records nothing for /wheelhouse-go, /wheelhouse-digest or /wheelhouse', async () => {
-  await withProject(async ({ repo }) => {
-    // Cards no visit has asked would bring their line, and the gap a briefing, if the prompt counted.
-    put(viewFile('waiting'), unasked(2));
-    const seen = { promptAt: '2026-10-18T12:00:00.000Z', briefedAt: '2026-10-18T12:00:00.000Z' };
-    markSeen(P, seen);
-    for (const command of ['/wheelhouse-go', '/wheelhouse-digest', '/wheelhouse', '  /WHEELHOUSE-GO  ', '/wheelhouse now']) {
-      assert.equal(await run(repo, command, NOW), undefined, command);
-      assert.deepEqual(readSeen(P, { now: at(NOW) }), { ...seen, weeklyAt: null }, command);
-    }
-    // The plugin's own commands are different commands, and a line with more after it is a prompt.
-    assert.match(contextOf(await run(repo, '/wheelhouse:settings', NOW)), /^Cards to ask this visit: 2/);
-    assert.ok(contextOf(await run(repo, '/wheelhouse-go\nand then some', NOW)).includes(HEADINGS.briefing));
-  });
-});
-
-test('a courier wake neither restarts the gap nor brings the briefing', async () => {
-  await withProject(async ({ repo }) => {
-    put(viewFile('waiting'), unasked(2));
-    const seen = { promptAt: '2026-10-19T08:00:00.000Z', briefedAt: '2026-10-18T12:00:00.000Z' };
-    markSeen(P, seen);
-    assert.equal(await run(repo, `${LEADS.courier} 2 cards are waiting.`, NOW), undefined);
-    assert.deepEqual(readSeen(P, { now: at(NOW) }), { ...seen, weeklyAt: null });
-    // The next prompt of the director's is still the first after the gap.
-    assert.ok(contextOf(await run(repo, 'Morning', NOW)).includes(HEADINGS.briefing));
-    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: NOW, weeklyAt: null });
-  });
-});
-
-test('the courier\'s line brings its instructions as context, for its own session, and neither restarts the gap nor brings the briefing', async () => {
-  await withProject(async ({ repo }) => {
-    put(viewFile('waiting'), unasked(2));
-    const seen = { promptAt: '2026-10-19T08:00:00.000Z', briefedAt: '2026-10-18T12:00:00.000Z' };
-    markSeen(P, seen);
-    const ask = { project: P, session: 's1', presence: { value: 'here' }, quiet: null, idle: true };
-    await courierWake({ ...ask, items: [], now: at(NOW) });
-    const woke = await courierWake({ ...ask, items: [{ id: 'card:c-1', kind: 'card', n: 1 }, { id: 'card:c-2', kind: 'card', n: 2 }], now: at(NOW) });
-    assert.equal(woke.submit, 'Wheelhouse: 2 waiting on you: cards 1 and 2.');
-    const out = await run(repo, woke.submit, NOW);
-    assert.equal(contextOf(out), woke.context);
-    assert.ok(woke.context.startsWith(LEADS.courier));
-    assert.deepEqual(readSeen(P, { now: at(NOW) }), { ...seen, weeklyAt: null });
-    // The same words from another session are a prompt like any other.
-    assert.ok(contextOf(await decide(prompt(repo, woke.submit, 's2'), { now: at(NOW), env: {}, client })).includes(HEADINGS.briefing));
-  });
-});
-
-test('a pane press after two hours brings the briefing', async () => {
-  await withProject(async ({ repo }) => {
-    markSeen(P, { promptAt: new Date('2026-10-19T09:00:00.000Z') });
-    const out = await run(repo, `${LEADS.pane} the director pressed Approve on card 1 (c1).`, NOW);
-    assert.ok(contextOf(out).includes(HEADINGS.briefing), contextOf(out));
-    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: NOW, weeklyAt: null });
-  });
-});
-
 // --- Learning ---
 
 // Writes events to a clone of events on disk, as the helper would.
@@ -1056,9 +998,6 @@ test('while setup is unfinished, every prompt of the director\'s gets the setup-
     assert.equal(contextOf(await run(fresh, 'What step is next?', NOW)), SETUP_FIRST);
     // The first request is kept for a new session, as written, and the later prompts leave it as it is.
     assert.equal(keptRequest(fresh), ask);
-    // The mod's own commands and the courier's wake are left alone, as elsewhere.
-    assert.equal(await run(fresh, '/wheelhouse-go', NOW), undefined);
-    assert.equal(await run(fresh, `${LEADS.courier} wake`, NOW), undefined);
     // A folder Wheelhouse has nothing to do with gets nothing.
     const other = path.join(home, 'other');
     fs.mkdirSync(other);

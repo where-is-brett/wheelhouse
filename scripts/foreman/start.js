@@ -1,10 +1,11 @@
 // scripts/foreman/start.js
 // The foreman's start (build-loop design, section 11), run as
 //   node scripts/foreman/start.js <project>
-// The shape comes from the project's configuration on its default branch,
-// asked of the helper (ruling R50), never the working copy.
+// The configuration comes from the project's default branch, asked of the helper
+// (ruling R50), never the working copy. A configuration that still says
+// watcherShape 2 is read as Shape 1.
 //
-// Shape 1: starts the watcher (scripts/watcher/main.js <project>) detached and
+// Starts the watcher (scripts/watcher/main.js <project>) detached and
 // hidden, as the session start starts the helper, when it isn't running, and
 // nothing else: the watcher starts a fresh foreman at each wake. It counts as
 // running when the pid in its lock, or in its health.json, is a live process
@@ -14,19 +15,16 @@
 // stops. The session start shares startWatcher (ruling R62). Uninstall stops it (stopWatcher),
 // and the foreman's session it started (stopForeman), first of all (ruling R89).
 //
-// Shape 2: starts the foreman's long session in the project's main checkout:
-// `claude` with its explicit mode (sessionModeOf), and the model, thinking
+// foremanSession builds the foreman's long session in the project's main checkout, for the
+// agents adapter: `claude` with its explicit mode (sessionModeOf), and the model, thinking
 // effort and fallback of the `foreman` role in the Thoroughness column in force
 // when it starts (scripts/routing/in-force.js; Balanced when that can't be
 // read), which hold until the session ends; its own settings file in the watcher's folder with
 // `autoCompactWindow` at FOREMAN_FALLBACK_COMPACT so it compacts early, the
 // foreman's tools with --allowedTools, the environment less the host session's
 // variables with WHEELHOUSE_ROLE=foreman (ruling R26; the waker sets it for
-// Shape 1's foremen), and a first prompt beginning `Wheelhouse foreman:`. The
+// the foremen it starts), and a first prompt beginning `Wheelhouse foreman:`. The
 // session runs in this terminal until it ends.
-// The mod in that session runs the watcher's loop on its timer, through the
-// bridge's tick (scripts/mod/watch.js), and hands the session each wake line
-// as a prompt; the start says so.
 import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -158,7 +156,7 @@ export function startWatcher(project, { spawn = nodeSpawn, pluginRoot = PLUGIN_R
   return { started: true };
 }
 
-// The foreman's long session (Shape 2): what to run, where, and with what. Writes its settings file. The
+// The foreman's long session: what to run, where, and with what. Writes its settings file. The
 // command line and environment are the project's adapter's (`sessions` is that part of it, given only by tests).
 // `routing` reads the column in force (routingInForce by default); its lines are said through `say`.
 export function foremanSession({

@@ -21,8 +21,8 @@
 //                          role, source: 'run', agent, credits, premiumRequests, premiumCost, tokens? }, each figure null
 //                          when the run didn't give it (tokens is then counts by kind, never a sum,
 //                          so a reader of the sums above passes over it)
-//   mod/<date>.jsonl       the mod's readings of a session's running cost: { at, session, usd }, and each
-//                          message it kept out of the front desk: { at, event: 'received', via, origin, session }
+//   mod/<date>.jsonl       readings of a session's running cost: { at, session, usd }, and each
+//                          message kept out of the front desk: { at, event: 'received', via, origin, session }
 //   allowance.json         the latest rate-limit windows: { at, windows }
 //   sessions/<id>.json     what a session is for, written once
 //   days/<date>.json       a day's summary, from the two raw folders
@@ -252,7 +252,7 @@ function writeAllowance(windows, at, now = new Date()) {
   writeJson(file, { at, windows: kept });
 }
 
-// The mod's reading of a session's running cost (`usd`), and of the allowance (`windows`).
+// A reading of a session's running cost (`usd`), and of the allowance (`windows`).
 export function recordModReading({ session, usd, windows, at, now }) {
   checkSession(session);
   const time = timeOf(at);
@@ -262,7 +262,7 @@ export function recordModReading({ session, usd, windows, at, now }) {
   writeAllowance(windows, time, now);
 }
 
-// A message from another session that the mod kept out of the front desk: one line in the day's
+// A message from another session that was kept out of the front desk: one line in the day's
 // mod file, { at, event: 'received', via, origin, session }. It holds no cost, so the day's figures
 // pass over it. Never the message's text.
 export function recordReceived({ session, via, origin, at }) {
@@ -271,14 +271,14 @@ export function recordReceived({ session, via, origin, at }) {
   appendLines('mod', new Map([[dateOf(time), [{ at: time, event: 'received', via, origin, session }]]]));
 }
 
-// The allowance as the terminal's status line reports it: the same file.
+// The allowance as a reading reports it: the same file.
 export function recordAllowance({ windows, at, now }) {
   writeAllowance(windows, timeOf(at), now);
 }
 
-// What a session is for, written once; a second call changes nothing. The mod's bridge can't
-// tell a foreman from the front desk, so a file it wrote (`by: 'mod'`) is replaced once by the
-// session start's record, which knows; a file the session start wrote stays as it is.
+// What a session is for, written once; a second call changes nothing. A record written without
+// knowing the session's role (`by: 'mod'`) is replaced once by the session start's record, which
+// knows; a file the session start wrote stays as it is.
 export function recordSession({ session, project, role, work, at, by }) {
   checkSession(session);
   if (typeof project !== 'string' || !PROJECT.test(project)) throw new Error('A usage project name may use only letters, digits, dots, hyphens and underscores');

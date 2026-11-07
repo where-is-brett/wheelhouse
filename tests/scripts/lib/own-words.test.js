@@ -5,7 +5,7 @@ import { ownWords } from '../../../scripts/lib/own-words.js';
 
 const B = '<system-reminder>\nLinked sessions now: x\n</system-reminder>';
 
-// The same table runs against the mod's copy in tests/mod/messages.test.ts.
+// What a prompt says of itself once the system reminders at its start are read past.
 const CASES = [
   ['stop', 'stop'],
   ['  K7QD Approve ', '  K7QD Approve '],

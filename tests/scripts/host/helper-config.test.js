@@ -74,6 +74,7 @@ test('/config answers the default branch\'s configuration, also under STOP', asy
       const answer = await client.config({ project: 'o__p' });
       assert.equal(answer.ok, true);
       assert.deepEqual(answer.config, readConfig(JSON.stringify(given)));
+      assert.equal(answer.config.watcherShape, 1, 'a configuration that says Shape 2 is read as Shape 1');
       setStop({ by: 'prompt' });
       assert.deepEqual((await client.config({ project: 'o__p' })).config, answer.config, 'read-only, so STOP lets it through');
     });

@@ -108,7 +108,6 @@ function deps(h, extra = {}) {
       cacheRoot: '/cache',
       old: oldStandIn(),
       heldNow: () => true,
-      shape: async () => 1,
       move: async () => null,
       addon: async () => null,
       parked: async () => null,
@@ -123,16 +122,16 @@ function deps(h, extra = {}) {
 }
 
 // A project as step 7 left it on an earlier release, with the director's own entries beside Wheelhouse's.
-function localProject() {
+function localProject({ statusLine = { type: 'command', command: 'my-line' } } = {}) {
   const folder = temp('wh-finish-folder-');
   const claudeHome = path.join(folder, 'claude home');
   fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
   fs.mkdirSync(claudeHome);
   const file = path.join(folder, '.claude', 'settings.local.json');
-  const mine = { permissions: { allow: ['Bash(ls:*)', 'Bash(my-own-tool:*)'] }, env: { MINE: '1' }, statusLine: { type: 'command', command: 'my-line' } };
+  const mine = { permissions: { allow: ['Bash(ls:*)', 'Bash(my-own-tool:*)'] }, env: { MINE: '1' }, statusLine };
   fs.writeFileSync(file, `${JSON.stringify(mine, null, 2)}\n`);
   const run = startRun({ folder });
-  const step7 = localSettings({ address: '/h/old.sock', node: '/usr/bin/node', pluginRoot: '/cache/wheelhouse/0.2.6', platform: 'darwin', ownStatusLine: mine.statusLine });
+  const step7 = localSettings({ address: '/h/old.sock', node: '/usr/bin/node', pluginRoot: '/cache/wheelhouse/0.2.6', platform: 'darwin' });
   for (const { key, value } of keyEdits(mine, mergeSettings(mine, step7))) applyJsonKey({ file, key, value, step: 7, record: (c) => addChanges(run.id, [c]) });
   markStep(run.id, 7, 'doneAt');
   return { folder, claudeHome, file };
@@ -164,6 +163,28 @@ test('finish: the director\'s own local entries are kept', () => withHome(async 
     assert.deepEqual(record.wrote.map((w) => w.file), [p.file]);
   } finally { fs.rmSync(p.folder, { recursive: true, force: true }); }
 }));
+test('finish: the status line an earlier Wheelhouse set is taken out, and the director\'s other entries stay', () => withHome(async () => {
+  const ours = { type: 'command', command: '"/usr/bin/node" "/cache/wheelhouse/0.2.6/scripts/statusline.js"' };
+  const p = localProject({ statusLine: ours });
+  try {
+    const journal = setUp();
+    const h = helper({ version: '0.2.7' });
+    const { options } = deps(h, { folder: p.folder, claudeHome: p.claudeHome, newRoot: cacheRoot(p.claudeHome) });
+    options.refresh = {
+      ...realRefreshes({ project: 'proj', folder: p.folder, newRoot: options.newRoot, claudeHome: p.claudeHome, platform: 'darwin', address: '/h/new.sock' }),
+      locked: async () => null,
+      engine: async () => null,
+    };
+    const got = await finish({ ...options, journal });
+    assert.equal(got.ok, true, got.line);
+    const after = JSON.parse(fs.readFileSync(p.file, 'utf8'));
+    assert.equal(Object.hasOwn(after, 'statusLine'), false, 'our line is gone');
+    assert.ok(after.permissions.allow.includes('Bash(my-own-tool:*)'));
+    assert.deepEqual(after.env, { MINE: '1' });
+    assert.match(got.line, /status line Wheelhouse set in this project is gone/);
+  } finally { fs.rmSync(p.folder, { recursive: true, force: true }); }
+}));
+
 
 test('finish: Locked\'s step runs only with Locked present', () => withHome(async (home) => {
   const calls = [];
@@ -350,14 +371,6 @@ test('finish: the watcher is stopped only through stopWatcher, and started only 
   assert.equal(got.ok, true);
   assert.deepEqual(order, ['stop proj', `start proj ${options.newRoot}`]);
   assert.deepEqual(killed, [], 'finish itself ends no process');
-}));
-
-test('finish: the last line adds the Shape 2 foreman when it applies', () => withHome(async () => {
-  const journal = setUp();
-  const h = helper({ version: '0.2.7' });
-  const { options } = deps(h, { shape: async () => 2 });
-  const got = await finish({ ...options, journal });
-  assert.match(got.line, /Restart the foreman/);
 }));
 
 test('finish: refuses to run unless the job holds the lock and has its finish step running, and never takes the lock', () => withHome(async () => {

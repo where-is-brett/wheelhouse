@@ -1,11 +1,11 @@
 // tests/scripts/update/status-line.test.js
-// DRAFT (part 5, task 4). Fails until scripts/update/status-line.js exists.
+// The update's step that takes Wheelhouse's own status line out of a project's local settings.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { removeOwnStatusLine } from '../../../scripts/update/status-line.js';
+import { removeOwnStatusLine, statusLineStep } from '../../../scripts/update/status-line.js';
 
 const ours = { type: 'command', command: '"/n" "/p/scripts/statusline.js"' };
 const theirs = { type: 'command', command: 'theirs.sh' };
@@ -37,4 +37,11 @@ test('no file, no status line, or a damaged file: nothing happens and nothing th
   fs.writeFileSync(path.join(dir, '.claude', 'settings.local.json'), '{not json');
   assert.deepEqual(removeOwnStatusLine(dir), { removed: false });
   assert.equal(fs.readFileSync(path.join(dir, '.claude', 'settings.local.json'), 'utf8'), '{not json');
+});
+
+test('the step says a line only when it removed one', async () => {
+  const dir = folder({ statusLine: ours });
+  const first = await statusLineStep({ folder: dir });
+  assert.equal(first.lines.length, 1);
+  assert.deepEqual(await statusLineStep({ folder: dir }), { lines: [] });
 });

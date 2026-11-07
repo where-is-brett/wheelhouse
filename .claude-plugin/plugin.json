@@ -15,6 +15,5 @@
     "no-code",
     "code-review",
     "workflow"
-  ],
-  "types": "./types/index.d.ts"
+  ]
 }

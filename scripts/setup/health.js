@@ -851,8 +851,7 @@ function rulesFound(project, userHome) {
   }
 }
 
-// start.js's own start for Shape 1, the watcher (startWatcher), which wakes a foreman when there is
-// work. Shape 2's foreman is a session in a terminal, which the helper can't open: the line says so.
+// start.js's own start, the watcher (startWatcher), which wakes a foreman when there is work.
 async function startForeman(project, { client, spawn }) {
   const read = await projectConfig(project, client);
   if (read.config === null) return `The Bosun couldn't be started now (${read.why}); the next session start in this project starts it.`;

@@ -600,7 +600,7 @@ test('the tool search that loads a tool\'s schema is let through under STOP; the
     try {
       setStop({ by: 'prompt' });
       assert.ok(READ_TOOLS.includes('ToolSearch'));
-      // The courier's STOP wake: the session loads the notification tool, then sends it.
+      // A STOP wake: the session loads the notification tool, then sends it.
       for (const query of ['select:PushNotification', 'select:Edit,Write', 'notification']) {
         assert.equal(await guard(call(main, 'ToolSearch', { tool_input: { query, max_results: 5 } }), deps(base)), undefined, query);
       }

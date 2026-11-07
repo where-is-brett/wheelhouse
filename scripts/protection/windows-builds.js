@@ -170,7 +170,7 @@ export function UNATTENDED_CARD({ guardedReady, readsHeld } = {}) {
       ? `Let the Crew run build steps with no prompt in this project, or ${GUARDED_SETTING_WORDS}.`
       : 'Let the Crew on this Windows computer run build steps with no prompt, in this project.',
     why: 'While you are away, a Crew member stops at its first build command.',
-    // No reply code answers this card (scripts/mod/reply.js), so it says a click is needed.
+    // No reply code answers this card, so it says a click is needed.
     meanwhile: 'The Crew keeps asking; answer by a click only.',
     risk: UNATTENDED_RISK,
     options: [

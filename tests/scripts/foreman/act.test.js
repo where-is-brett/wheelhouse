@@ -30,7 +30,7 @@ import { writeReadyRecord } from '../../../scripts/survey/ready-record.js';
 import { eventPath, makeEvent } from '../../../scripts/state/events.js';
 import { HAND_DONE, HAND_GOAL } from '../../../scripts/lib/by-hand-done.js';
 import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
-import { makeWaker, sessionFile } from '../../../scripts/watcher/waker.js';
+import { sessionFile } from '../../../scripts/watcher/waker.js';
 import { run as runProgram } from '../../../scripts/lib/run.js';
 import { g, makeBareRemote } from '../../helpers/git-fixture.js';
 import { readProject, writeProject } from '../../../scripts/lib/projects.js';
@@ -240,18 +240,6 @@ test('start gives a known plan to the brief of work in one slice', () => withHom
   assert.equal(r.code, 0, r.err);
   const { fields } = parseBrief(fs.readFileSync(featurePaths(path.join(checkout, '.claude', 'worktrees', 'add-export')).brief, 'utf8'));
   assert.equal(fields.plan, 'docs/plans/x.md');
-}));
-
-test('under Shape 2 start passes on the waker\'s START line', () => withHome(async () => {
-  const checkout = await project({ git: true });
-  const fake = fakeClient({ views: startViews(), cfg: config({ watcherShape: 2 }) });
-  const r = await act(START, {
-    client: fake.client,
-    wakerFor: (cfg, print) => makeWaker({ shape: cfg.watcherShape, project: P, config: cfg, print, stopped: () => false }),
-  });
-  assert.equal(r.code, 0, r.err);
-  const wt = path.join(checkout, '.claude', 'worktrees', 'add-export');
-  assert.match(r.out, new RegExp(`^START feature add-export ${wt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
 }));
 
 test('start makes its branch and worktree afresh, refusing ones no recorded feature made', () => withHome(async () => {
@@ -1151,8 +1139,9 @@ test('start tells a Windows session how to run its build commands at the level t
     ['at Unattended', onWindows, (v, c) => unattendedOn(v, c), REFUSED],
     ['at Unattended in a Locked project', { platform: 'win32', isLocked: () => true }, (v, c) => unattendedOn(v, c), BEFORE],
     ['when Locked can\'t be read', { platform: 'win32', isLocked: () => { throw new Error('no'); } }, (v, c) => unattendedOn(v, c), BEFORE],
-    ['at watcher Shape 2', onWindows, (v) => v, SESSION, config({ watcherShape: 2 })],
-    ['at watcher Shape 2 at Unattended', onWindows, (v, c) => unattendedOn(v, c), SESSION, config({ watcherShape: 2 })],
+    // A project that still says Shape 2 is read as Shape 1: the same words, never the session's own.
+    ['at watcher Shape 2', onWindows, (v) => v, BEFORE, config({ watcherShape: 2 })],
+    ['at watcher Shape 2 at Unattended', onWindows, (v, c) => unattendedOn(v, c), REFUSED, config({ watcherShape: 2 })],
     ['at watcher Shape 2 off Windows', { platform: 'linux', isLocked: () => false }, (v) => v, null, config({ watcherShape: 2 })],
   ];
   for (const [name, deps, setUp, words, cfg] of cases) {

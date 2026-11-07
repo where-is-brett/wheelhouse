@@ -13,8 +13,7 @@
 // It also says what reads as the baseline card (baselineWording, looksLikeBaseline) and what holds
 // the figures waiting (holdsFigures), for the card check, the prompt record, the composer and the
 // state's own refusal, so none of them depends on one sentence of the card being copied exactly.
-// It lives apart from scripts/measures/ so the prompt record, which the mod's bridge imports,
-// reaches only what it needs (scripts/mod/validate.js, bridgeImports).
+// It lives apart from scripts/measures/ so the prompt record reaches only what it needs.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
