@@ -31,6 +31,9 @@ export const cases = [
   // ---- reads ----
   { name: 'defaultBranch', call: (a) => a.defaultBranch(), ...answers(same('project.json')), expect: 'main' },
   { name: 'branchHead', call: (a) => a.branchHead('feature/x'), ...answers(json(text({ name: 'feature/x', commit: { id: SHA } }))), expect: SHA },
+  { name: 'isPublic is true for a public project', call: (a) => a.isPublic(), ...answers(json(text({ visibility: 'public' }))), expect: true },
+  { name: 'isPublic is false for a private or internal project', call: async (a) => [await a.isPublic()], ...answers(json(text({ visibility: 'internal' }))), expect: [false] },
+  { name: 'isPublic with no visibility given is an error, never a guess', call: (a) => a.isPublic(), ...answers(json(text({ id: 3 }))), throws: /did not say whether/ },
 
   // ---- opening, changing and closing ----
   { name: 'openPr gives the number and the address', call: (a) => a.openPr({ head: 'wheelhouse/welcome-page', base: 'main', title: 'Add the welcome page', body: 'Words' }),

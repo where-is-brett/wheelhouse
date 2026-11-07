@@ -87,7 +87,11 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     config: post('/config'), //      { project | cwd } -> { ok, config }: the default branch's, read-only, answered under STOP
     dataCheck: post('/data/check'), // { cwd, branch, declared? } -> (declared: the report says the change has data work; without it the command runs only for data work; the run ends when this connection closes) { ok, dataWork, changes: [{ status, path }], ran, route?, before?, after?, why?, realRefused? }: whether a pushed feature branch's change is data work, and the project's read-only data command run at the merge base and the head (test data, or the real route only on the director's signed approval of that command); refused under STOP
     host: {
+      public: post('/host/public'), // { project } -> { ok, public: true | false | null }: whether the repository is public, kept for the decision messages (null when the host won't say)
       facts: post('/host/facts'), // { project } -> { ok, protection: 'on' | 'none' | 'unknown', ci: 'present' | 'none' | 'unknown', plan?, gaps? } (the last two on GitLab)
+    },
+    decisions: {
+      batch: post('/decisions/batch'), // { project, date? } -> { ok, step: 'none' | 'opened' | 'waiting' | 'merged', pr?, head?, files?, why? }: the next step of the change that adds the day's decision records with no piece (design section 6.6); refused under STOP
     },
     compactWindow: post('/compact-window'), // { project | cwd } -> { ok, step: 'off' | 'on' | 'opened' | 'approve' | 'waiting' | 'closed', pr?, head?, why? }: the next step of the compaction window the director chose
     engineSwitch: post('/engine-switch'), // { project | cwd } -> { ok, step: 'off' | 'on' | 'opened' | 'approve' | 'waiting' | 'closed', pr?, head?, why? }: the switch to the new engine's next step (part 3f)

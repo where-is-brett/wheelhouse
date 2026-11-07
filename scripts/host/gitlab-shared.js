@@ -163,3 +163,10 @@ export function approvalsLeft(answer) {
   if (!Number.isInteger(answer?.approvals_left) || answer.approvals_left < 0) throw new Error('GitLab did not say how many approvals the merge request still needs');
   return answer.approvals_left;
 }
+
+// Whether a project's answer says it is public: `visibility` is public, internal or private. One that says none of them is an error.
+export function publicOf(answer) {
+  const visibility = typeof answer?.visibility === 'string' ? answer.visibility.toLowerCase() : null;
+  if (visibility === null) throw new Error('GitLab did not say whether the project is public');
+  return visibility === 'public';
+}

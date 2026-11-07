@@ -43,6 +43,7 @@ import { appendCall, readLog } from '../decisions/log.js';
 import { touchedPages } from '../engine/preview.js';
 import { proofNote } from '../proof/note.js';
 import { compareSnapshots } from '../proof/data.js';
+import { DECISIONS_DIR, recordFile } from '../decisions/record-file.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
@@ -339,9 +340,80 @@ export async function answer({ client, worktree, questionId, noChange = false, a
   if (noChange && applied) throw new CliError('Say --applied or --no-change, not both');
   const said = await client.state.answer({ cwd: worktree, questionId, ...(noChange ? { noChange: true } : {}), ...(applied ? { applied: true } : {}) });
   if (said?.ok !== true) throw new CliError(said?.refused ?? 'The host helper gave no answer');
-  if (said.answer === null) return { answer: null };
-  if (typeof said.answer !== 'string' || said.answer === '') throw new CliError('The host helper gave an answer this could not read');
-  return { answer: said.answer };
+  const label = said.answer;
+  if (label !== null && (typeof label !== 'string' || label === '')) throw new CliError('The host helper gave an answer this could not read');
+  const kept = {};
+  const decision = said.decision;
+  if (!noChange && !applied && decision !== null && typeof decision === 'object' && !Array.isArray(decision)) {
+    if (decision.private === true) kept.private = true;
+    else {
+      const made = await keepRecord({ worktree, questionId, decision });
+      if (made !== null) kept.record = made;
+    }
+    if (label === null && typeof decision.words === 'string' && decision.words !== '' && decision.option === '') kept.own = decision.words;
+  }
+  return { answer: label, ...kept };
+}
+
+const AUTHOR = {
+  GIT_AUTHOR_NAME: 'Wheelhouse', GIT_AUTHOR_EMAIL: 'wheelhouse@invalid', GIT_COMMITTER_NAME: 'Wheelhouse', GIT_COMMITTER_EMAIL: 'wheelhouse@invalid',
+};
+
+// The text of a record without its path comment, which is the one line that changes with the name it is kept under.
+const withoutPathLine = (text) => text.split('\n').slice(1).join('\n');
+const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Keeps the decision as a file in the worktree and commits it with `git commit -- <path>`, so nothing else staged goes in. Where
+// the very same record is already there it is not written again (only committed, if it was left uncommitted). Resolves with
+// { path, committed: true }, or null when the question can't be read from this piece's questions.
+async function keepRecord({ worktree, questionId, decision }) {
+  if (typeof decision.at !== 'string' || Number.isNaN(Date.parse(decision.at)) || typeof decision.option !== 'string' || typeof decision.words !== 'string') {
+    throw new CliError('The host helper gave a decision this could not keep as a record');
+  }
+  if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
+  const asked = readQuestions(featurePaths(worktree).questions, { maxBytes: QUESTIONS_BYTES }).questions.find((q) => q.id === questionId);
+  if (asked === undefined || asked.kind !== 'question') return null;
+  const work = QUESTION_ID.exec(questionId)[1];
+  const dir = path.join(worktree, ...DECISIONS_DIR.split('/'));
+  for (const folder of [path.join(worktree, 'docs'), dir]) {
+    let link = false;
+    try { link = fs.lstatSync(folder).isSymbolicLink(); } catch { /* not there yet */ }
+    if (link) throw new CliError(`${path.relative(worktree, folder)} is a link, so no decision record was kept in it`);
+  }
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { /* none kept yet */ }
+  const taken = names.map((n) => `${DECISIONS_DIR}/${n}`);
+  const made = recordFile(
+    { question: asked.what, work, options: asked.options, recommend: asked.recommendation },
+    { at: decision.at, option: decision.option, words: decision.words },
+    { taken },
+  );
+  // The same record kept before, under this name or one with -2, -3: nothing is written twice.
+  const stem = made.path.replace(/(?:-[0-9]+)?\.md$/, '');
+  const named = new RegExp(`^${escaped(stem)}(?:-[0-9]+)?\\.md$`);
+  const same = taken.find((p) => named.test(p) && withoutPathLine(fs.readFileSync(path.join(worktree, ...p.split('/')), 'utf8')) === withoutPathLine(made.text));
+  const target = same ?? made.path;
+  if (same === undefined) {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(worktree, ...target.split('/')), made.text);
+  }
+  const fenced = safeGit({ cwd: worktree, reach: 'local', look: 'each', list: 'project', timeoutMs: 30 * 1000, caller: 'feature' });
+  const git = async (args) => {
+    try {
+      return await fenced(args, { env: { ...AUTHOR, GIT_TERMINAL_PROMPT: '0' }, input: '' });
+    } catch (e) {
+      throw new CliError(e.message);
+    }
+  };
+  const status = await git(['status', '--porcelain', '--', target]);
+  if (status.code !== 0) throw new CliError(`git could not read the decision record: ${firstLine(status.stderr)}`);
+  if (status.stdout.trim() !== '') {
+    const added = await git(['add', '--', target]);
+    if (added.code !== 0) throw new CliError(`git could not add the decision record: ${firstLine(added.stderr)}`);
+    const committed = await git(['commit', '-q', '--no-verify', '--no-gpg-sign', '-m', `Keep the decision ${questionId}`, '--', target]);
+    if (committed.code !== 0) throw new CliError(`git could not commit the decision record: ${firstLine(committed.stderr)}. It is written as ${target}; commit it with git commit -- ${target}`);
+  }
+  return { path: target, committed: true };
 }
 
 // --- wait-for ---
@@ -750,8 +822,11 @@ export async function main(argv, {
       if (rest.length !== 1 && !noChange && !applied) {
         throw new CliError('Give the id of the question: answer <questionId>, then --applied once the change the answer asks for is pushed, or --no-change when it asks for none');
       }
-      const { answer: label } = await answer({ client: helper(), worktree, questionId: rest[0], noChange, applied });
-      out(label === null ? 'There is no answer yet.\n' : `${label}\n`);
+      const got = await answer({ client: helper(), worktree, questionId: rest[0], noChange, applied });
+      if (got.answer === null && got.own === undefined) out('There is no answer yet.\n');
+      else out(got.answer === null ? `The director answered in their own words: ${got.own}\n` : `${got.answer}\n`);
+      if (got.record !== undefined) out(`Kept the decision as ${got.record.path}, committed on this branch.\n`);
+      if (got.private === true) out('The director kept this answer private: no file was written in the project.\n');
     } else if (command === 'plan') {
       out(`Recorded the plan: ${recordPlan({ worktree, argv: rest }).plan}\n`);
     } else if (command === 'report') {

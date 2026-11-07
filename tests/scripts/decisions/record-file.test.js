@@ -15,7 +15,7 @@ const decision = {
 };
 const at = new Date(2026, 10, 7, 14, 30);
 
-test('the record file has the fixed format with the path comment', () => {
+test('the record file has the set format with the path comment', () => {
   const file = recordFile(decision, { at, option: 'Weekly', words: '' });
   assert.equal(file.path, 'docs/decisions/2026-11-07-how-often-should-the-digest-go-out.md');
   assert.equal(file.text, [

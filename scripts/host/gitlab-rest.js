@@ -14,7 +14,7 @@ import { adapterFrom, refusalOf, scrub, settle } from './adapter.js';
 import { gitlabHistory } from './gitlab-history.js';
 import {
   mergedResults as mergedResultsOf, stateOf, prStateOf, requestOf, issueOf, fileOf, subjectsOf, previewOf,
-  approvalRefusal, approvalsLeft, MERGE_KEY_REFUSED,
+  approvalRefusal, approvalsLeft, MERGE_KEY_REFUSED, publicOf,
 } from './gitlab-shared.js';
 
 const API = '/api/v4/';
@@ -215,6 +215,9 @@ export function gitlabRestCommands({ send, repo }) {
 
     async verdictComment() {
       throw new Error('The merge queue\'s verdict comment is for GitHub only');
+    },
+    async isPublic() {
+      return publicOf(await get(project));
     },
     async login() {
       throw new Error('The merge queue\'s policy is for GitHub only');

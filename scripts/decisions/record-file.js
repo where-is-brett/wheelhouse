@@ -8,7 +8,7 @@
 //     answer:   { at, option, words }   `option` is the label chosen, or '' for the director's own words
 //     taken:    paths already in use (a list or a Set), so a second record with the same question and day gets -2, -3
 //
-// The text is fixed:
+// The text is always in this form:
 //   <!-- docs/decisions/<file>.md -->
 //   # <the question>
 //

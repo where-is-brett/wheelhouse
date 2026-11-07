@@ -249,6 +249,13 @@ export function adapterFrom(c) {
       number: wholeNumber(number), id: id === undefined || id === null ? undefined : wholeNumber(id), body: text(body, 'body'),
     }),
     // The login of the account the connection posts as.
+    // Whether the repository is public, for the decision records (design section 6.6): true only when the host says so. Where it
+    // can't be read it throws, and the caller treats the project as public.
+    isPublic: async () => {
+      const got = await c.isPublic();
+      if (typeof got !== 'boolean') throw new Error('The host did not say whether the repository is public');
+      return got;
+    },
     login: async () => c.login(),
     issue: {
       create: async ({ title, body, labels = [] } = {}) => c.issue.create({

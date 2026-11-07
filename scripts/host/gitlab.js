@@ -6,7 +6,7 @@
 import { gitlabHistory } from './gitlab-history.js';
 import {
   stateOf, mergedResults as mergedResultsOf, prStateOf, requestOf, issueOf, fileOf, subjectsOf, previewOf,
-  approvalRefusal, approvalsLeft, statusIn, MERGE_KEY_REFUSED,
+  approvalRefusal, approvalsLeft, statusIn, MERGE_KEY_REFUSED, publicOf,
 } from './gitlab-shared.js';
 
 const MR_ADDRESS = /(https?:\/\/\S+\/-\/merge_requests\/(\d+))/;
@@ -162,6 +162,11 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
     // Archon's merge queue reads its verdict from a GitHub comment; there is none to post on GitLab.
     async verdictComment() {
       throw new Error('The merge queue\'s verdict comment is for GitHub only');
+    },
+
+    // Whether the project is public: its `visibility` (public, internal or private), never a guess.
+    async isPublic() {
+      return publicOf(await ask(['api', project]));
     },
 
     // The merge queue's policy names a GitHub login; there is none to name on GitLab.

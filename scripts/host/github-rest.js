@@ -14,7 +14,7 @@ import { adapterFrom, refusalOf, scrub, settle } from './adapter.js';
 import { STATUS_CONTEXT } from '../checks/where.js';
 import {
   MERGEABLE, STATE, CI_QUERY, CONTEXTS_QUERY, MOST_DEPLOYMENTS, MOST_REVIEW_PAGES, NO_RULES_PLAN, APPROVE_HEAD_MOVED,
-  reviewOf, rollupOf, contextsOf, requiredChecksOf, approvalsLeftOf, approvalRefusal,
+  reviewOf, rollupOf, contextsOf, requiredChecksOf, approvalsLeftOf, approvalRefusal, publicOf,
 } from './github.js';
 
 export const GITHUB_API = 'https://api.github.com';
@@ -299,6 +299,10 @@ export function githubRestCommands({ send, repo }) {
     },
 
     reviews,
+
+    async isPublic() {
+      return publicOf(await get(project));
+    },
 
     async login() {
       const login = (await get('user'))?.login;

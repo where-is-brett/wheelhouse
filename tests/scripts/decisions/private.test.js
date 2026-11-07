@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { parseReply } from '../../../scripts/decisions/reply.js';
 import { decisionText, blocksIn } from '../../../scripts/decisions/message.js';
 import { makeEvent } from '../../../scripts/state/events.js';
+import { inHome } from '../../helpers/decisions-world.js';
 
 const options = [{ label: 'Daily' }, { label: 'Weekly' }, { label: 'Monthly' }];
 const decision = (n, code) => ({ n, code, options });
@@ -54,7 +55,8 @@ test('the private line shows only on a public project\'s decision', () => {
   assert.deepEqual(blocksIn(`Here you go.\n\n${offered}\n\nThanks.`), [offered]);
 });
 
-test('a decision-answer may carry private: true, and nothing else extra', () => {
+test('a decision-answer may carry private: true, and nothing else extra', async () => {
+  await inHome(() => {
   const now = () => new Date('2026-11-07T01:00:00.000Z');
   const data = { question: 'Which?', n: 1, label: 'B', option: 'Weekly', words: '', where: 'chat' };
   assert.ok(makeEvent({ kind: 'decision-answer', data: { ...data, private: true }, now }));
@@ -64,4 +66,5 @@ test('a decision-answer may carry private: true, and nothing else extra', () => 
   assert.throws(() => makeEvent({ kind: 'decision-answer', data: { ...data, public: true }, now }), /decision-answer/);
   // The director's own words never carry the mark: it follows a letter.
   assert.throws(() => makeEvent({ kind: 'decision-answer', data: { ...data, label: 'own', option: '', words: 'x', private: true }, now }), /decision-answer/);
+  });
 });

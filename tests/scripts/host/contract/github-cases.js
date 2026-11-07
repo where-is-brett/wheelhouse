@@ -48,6 +48,9 @@ export const cases = [
   // ---- reads ----
   { name: 'defaultBranch', call: (a) => a.defaultBranch(), ...both([{ stdout: ghFile('repo-view.json') }], [ok({ default_branch: 'main' })]), expect: 'main' },
   { name: 'branchHead', call: (a) => a.branchHead('feature/x'), ...same({ name: 'feature/x', commit: { sha: SHA } }), expect: SHA },
+  { name: 'isPublic is true for a public repository', call: (a) => a.isPublic(), ...same({ visibility: 'public', private: false }), expect: true },
+  { name: 'isPublic is false for a private or internal repository', call: async (a) => [await a.isPublic()], ...same({ visibility: 'internal', private: true }), expect: [false] },
+  { name: 'isPublic with no visibility given is an error, never a guess', call: (a) => a.isPublic(), ...same({ name: 'product' }), throws: /did not say whether/ },
   { name: 'login', call: (a) => a.login(), ...same({ login: 'a-director-bot' }), expect: 'a-director-bot' },
 
   // ---- opening, changing and closing ----

@@ -155,7 +155,7 @@ export async function recordAnswer({
 
   const decision = pending.find((d) => d.n === reply.n);
   const option = reply.label === 'own' ? undefined : decision.options[LETTERS.indexOf(reply.label)];
-  const data = { question: decision.text, n: decision.n, label: reply.label, option: option?.label ?? '', words: reply.words, where: 'chat' };
+  const data = { question: decision.text, n: decision.n, label: reply.label, option: option?.label ?? '', words: reply.words, where: 'chat', ...(reply.private === true ? { private: true } : {}) };
   const api = client ?? helperClient({ timeout: budget });
   const left = withinBudget(Date.now() + budget);
   // The reply is made first and the action it earns a moment later, so the reply is always what decides.
@@ -178,7 +178,7 @@ export async function recordAnswer({
       sent = false;
     }
   }
-  const how = howAnswered({ label: reply.label, words: reply.words });
+  const how = `${howAnswered({ label: reply.label, words: reply.words })}${reply.private === true ? ', marked private (kept in the private record alone, no file in the project)' : ''}`;
   const note = sent
     ? `The director answered decision ${decision.n} ${how}, and it is recorded. State it as a fact, in one plain line, and carry on from it.`
     : `The director answered decision ${decision.n} ${how}. The helper could not take it just now, so it is kept on this computer and will be sent. Say so in one plain line, and carry on from it.`;
