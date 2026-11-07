@@ -332,6 +332,7 @@ export function pluginRoots(dir, self, pluginRoot) {
 
 // Whether `file` lies inside `folder`: the test for a script being the managed copy.
 export function isInside(folder, file) {
+  if (typeof folder !== 'string') return false;
   const base = keyOf(realPath(folder));
   const target = keyOf(realPath(file));
   return target.startsWith(base.endsWith(path.sep) ? base : base + path.sep);

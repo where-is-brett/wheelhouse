@@ -359,7 +359,7 @@ test('Locked is installed only after the narrow connection, and never on Windows
     // Not chosen, or on Windows: nothing to do, settled without a Go ahead.
     assert.deepEqual(await step.plan(ctxOf('darwin', {})), { settled: { record: { locked: false } } });
     assert.deepEqual(await step.plan(ctxOf('darwin', { '3.locked': { label: LEVELS.standard, text: null } })), { settled: { record: { locked: false } } });
-    assert.deepEqual(await step.plan(ctxOf('win32', locked)), { settled: { record: { locked: false, why: 'Locked is offered on macOS only for now' } } });
+    assert.deepEqual(await step.plan(ctxOf('win32', locked)), { settled: { record: { locked: false } } });
 
     // Chosen on a Mac with the Quick connection: refused, nothing run.
     narrow(folder, 'quick');

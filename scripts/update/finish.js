@@ -144,8 +144,8 @@ export function realRefreshes({ project, folder, newRoot, claudeHome, platform, 
       return { ok: true, wrote };
     },
     async locked() {
-      if (platform === 'win32') return null;
       const { lockedProjects, managedDir } = await import('../protection/managed.js');
+      if (managedDir(platform) === null) return null;
       const { updateLocked, ownFile } = await import('../protection/locked.js');
       const dir = lockedDir ?? managedDir(platform);
       const list = lockedProjects({ dir });

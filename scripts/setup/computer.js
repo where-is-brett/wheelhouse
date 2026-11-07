@@ -55,7 +55,7 @@ import { localViews } from '../hooks/session-start.js';
 import { computerId, stateDir } from '../lib/paths.js';
 import { joinedRepo } from '../lib/setup-run.js';
 import { claudeCodeSettings } from '../protection/settings.js';
-import { installLocked, ownFile, MAC_ONLY, NEEDS_NARROW, HAS_MDM, NOT_OURS, MDM_PLIST } from '../protection/locked.js';
+import { installLocked, ownFile, NEEDS_NARROW, HAS_MDM, NOT_OURS, MDM_PLIST } from '../protection/locked.js';
 import { managedDir, lockedProjects } from '../protection/managed.js';
 import { MARKETPLACE, UPSTREAMS, readManifest } from '../lineage/manifest.js';
 import { receiverPort } from '../telemetry/main.js';
@@ -365,7 +365,7 @@ export function lockedStep({ run = realRun, dir, mdmPlist, nodePath, address } =
       const run = typeof ctx.runId === 'string' ? readJournal().runs.find((r) => r?.id === ctx.runId) ?? null : null;
       // A computer joining a project asks Locked here, when the project is launched (ruling R77).
       if (joinedRepo(run) !== null) {
-        if (platform === 'win32') return { settled: { record: { locked: false } } };
+        if (managedDir(platform) === null) return { settled: { record: { locked: false } } };
         const found = projectForFolder(ctx.folder);
         if (found === null) return { wait: PROJECT_WAIT_MS, why: `step 3 (${SETUP_TITLES[3]}) has not registered the project yet; Locked comes once it has` };
         if (!launchedIn(found.project)) return { settled: { record: { locked: false } } };
@@ -377,8 +377,8 @@ export function lockedStep({ run = realRun, dir, mdmPlist, nodePath, address } =
       }
       const answered = ctx.answers?.['3.locked'] ?? null;
       const chosen = answered?.label === LEVELS.locked;
-      // Step 3 never offers Locked on Windows, so there is nothing to make or to agree with.
-      if (platform === 'win32') return { settled: { record: chosen ? { locked: false, why: MAC_ONLY } : { locked: false } } };
+      // Step 3 offers Locked only where there is a managed folder (a Mac), so elsewhere there is nothing to make or to agree with.
+      if (managedDir(platform) === null) return { settled: { record: { locked: false } } };
       const found = projectForFolder(ctx.folder);
       if (found === null) return { wait: PROJECT_WAIT_MS, why: `step 3 (${SETUP_TITLES[3]}) has not registered the project yet; Locked comes once it has` };
       if (chosen) needsNarrow(found);

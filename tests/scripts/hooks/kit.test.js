@@ -7,7 +7,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { readInput, answer, findRepoRoot, projectOf, hookMain, readSmallText, SMALL_FILE_BYTES } from '../../../scripts/hooks/kit.js';
+import { readInput, answer, findRepoRoot, projectOf, hookMain, readSmallText, SMALL_FILE_BYTES, isInside, managedCopyInPlace, lockedByPath, pluginRoots } from '../../../scripts/hooks/kit.js';
 import { managedDir, lockedProjects } from '../../../scripts/protection/managed.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 
@@ -271,10 +271,17 @@ test('who answers: the plugin\'s copy or the managed copy, in a Locked project o
   });
 });
 
-test('managedDir names the computer-wide settings folder on each system', () => {
+test('managedDir names the computer-wide settings folder where Locked runs, and none elsewhere', () => {
   assert.equal(managedDir('darwin'), '/Library/Application Support/ClaudeCode');
-  assert.match(managedDir('win32'), /ClaudeCode$/);
+  assert.equal(managedDir('win32'), null, 'no computer-wide folder, so no Locked');
   assert.equal(managedDir('linux'), '/etc/claude-code');
+});
+
+test('with no managed folder (Windows) nothing is Locked, the copy is no managed copy, and nothing throws', () => {
+  assert.equal(isInside(null, '/some/script.js'), false);
+  assert.equal(managedCopyInPlace(null), false);
+  assert.equal(lockedByPath(process.cwd(), { dir: null }), false);
+  assert.deepEqual(pluginRoots(null, '/some/script.js', '/plugin'), ['/plugin']);
 });
 
 // Scripts named in hooks.json that are not written yet. Every script exists now.
