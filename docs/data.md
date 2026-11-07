@@ -4,6 +4,17 @@
 
 What Wheelhouse keeps, where, and for how long, and what uninstall removes and what it leaves.
 
+## From v0.3.0, the core cut
+
+From v0.3.0 Wheelhouse builds everything with its own engine. Archon, GitHub Copilot with Lean, the VS Code add-on, the pane and the mod, delegation, unattended goals and screenshot approvals are parked (`docs/parked.md`). Nothing new is kept for them, and what they kept before stays in the project's private record, unread. The sections below that describe them say what an earlier release kept.
+
+The update to v0.3.0 moves a project off Archon (`/wheelhouse:update`):
+
+- Archon on this computer (its program, its pinned Bun and its own records in `~/.wheelhouse-engine`) is moved, not deleted, to `~/.wheelhouse/archive/archon-<date>/`, once no project on the computer still uses it. It stays there until you delete it on a later card of your own. Uninstall leaves it too.
+- A run Archon still had going is cancelled with its branch and its work folder kept, and its work carries on with Wheelhouse's own engine. Which work carries on, and any question Archon left unanswered, is noted in `~/.wheelhouse/projects/<project>/engine/carried.json`.
+- Archon's files in the project (`.archon/` and the merge queue's policy) come out by one pull request, and only if you approve it on its card.
+- Wheelhouse's own status line and the project-scope install of Matt Pocock's plugin come out of the project's local settings. A status line you set yourself, and a copy of his plugin you installed for your whole account, stay.
+
 ## Conversations
 
 What you and the agents say in Claude sessions goes to Anthropic to be processed, as with any use of Claude. Wheelhouse sends your conversations nowhere else. What it does send, and where, is below: your product's code goes to GitHub or GitLab as it always did, Wheelhouse's records of what you say and click stay on your computer, and a link goes to ntfy or Telegram only if you switch them on.
@@ -32,7 +43,7 @@ For a project on a host, nothing of yours goes to GitHub or GitLab, even if the 
 
 When the helper finds your computer has been asleep for more than three minutes, it adds the start and end of that sleep to the same record, so a run isn't charged for time it wasn't running.
 
-A goal you sign stays in the same private record: its sheet, and later how it ended. Your Start signs the sheet's hash, so a sheet changed after you saw it starts nothing. When you end a goal or narrow it, that is noted there too. The report on a goal is worked out from that private record when it is asked for, kept nowhere else, and never put in a pull request. The record of how a goal ended holds what it spent, when the allowance was read, and how often the main line went red. A note records each slice added, each run that lost its process, and the merge queue's spend after the end.
+Until v0.3.0, a goal you signed stayed in the same private record; from v0.3.0 nothing new is added for goals, rules, blind cards or a second reading, and what is there stays, unread. A goal you sign stays in the same private record: its sheet, and later how it ended. Your Start signs the sheet's hash, so a sheet changed after you saw it starts nothing. When you end a goal or narrow it, that is noted there too. The report on a goal is worked out from that private record when it is asked for, kept nowhere else, and never put in a pull request. The record of how a goal ended holds what it spent, when the allowance was read, and how often the main line went red. A note records each slice added, each run that lost its process, and the merge queue's spend after the end.
 
 When a build run fails, the record of its ending says what kind of failure it was, in one word: connection, provider, host, limit or other. When a failed run resumes, the record gets a numbered start of its own and a numbered ending, so its running time and its spend add up once across the whole run. The record of its ending also names the step that failed, and a fresh run on the same work is given those steps and kinds in its order, so it doesn't repeat what failed. A Copilot run's record of its start also says the level it ran at: sandbox, or none when it started outside the sandbox. A Claude run's record carries no level.
 
@@ -62,6 +73,8 @@ If you set a project up with an earlier Wheelhouse (v0.1.x), its records were on
 
 ## The build engine
 
+*Parked from v0.3.0; what an earlier release kept. The update to v0.3.0 moves these folders to the archive (above).*
+
 On a Mac, from v0.2.0, for a product on GitHub, setup installs Wheelhouse's build engine, Archon. It keeps two folders on your computer:
 
 - `~/.wheelhouse/engine`, the engine itself: Archon, built from its pinned source with Wheelhouse's patch; the pinned Bun it needs; the broker, Wheelhouse's go-between for every GitHub call the engine makes; and a local copy of each project's history that the engine's git reads from, refreshed by Wheelhouse's helper, so the engine never holds a key. For a product that builds with Copilot, it also holds Copilot's pinned command-line tool and its clean home: Wheelhouse's guards, Wheelhouse's skills and your Copilot sign-in, and nothing else of your Copilot settings.
@@ -76,6 +89,8 @@ So that the engine's steps keep Wheelhouse's guards, setup also adds the Wheelho
 A product on GitLab, and a computer other than a Mac, gets none of this, and keeps Wheelhouse's own Crew for now.
 
 ## GitHub Copilot
+
+*Parked from v0.3.0; what an earlier release kept. The files below stay where they are until you delete them.*
 
 A product that builds with Copilot keeps the same private record as any other, plus these. Nothing in them is sent anywhere by Wheelhouse.
 

@@ -1,3 +1,3 @@
 {
-  "says": "Approved work now starts even when its first start failed, and old cards no longer get stuck. The chat that takes your requests can no longer change your product itself, every change goes through a build and your approval, and cards can no longer be rewritten by the agents."
+  "says": "Wheelhouse is cut back to its core and builds everything with its own engine. The build engine Archon, Copilot, the VS Code add-on, the pane, unattended goals and screenshot approvals are parked. The update moves a project off Archon with nothing lost: work under way carries on, and open pull requests and questions stay as they are."
 }

@@ -8,11 +8,12 @@ Guidance for Claude Code sessions in the Wheelhouse repository.
 
 ## What this is
 
-Wheelhouse is a Claude Code plugin: skills, agents, hooks, scripts and a mod. It lets a non-developer product owner (the director) run AI agents that build their product. The design is `docs/specs/2026-10-17-wheelhouse-design.md`.
+Wheelhouse is a Claude Code plugin: skills, agents, hooks and scripts. It lets a non-developer product owner (the director) run AI agents that build their product. The design is `docs/specs/2026-10-17-wheelhouse-design.md`.
 
 ## Where the work stands
 
 - **Built, and released by tag.** The design is approved; its rulings are in section 22 of the design. New work follows a build plan (`superpowers:writing-plans`) or comes through Wheelhouse's own intake.
+- **The core cut (7 November 2026, v0.3.0).** Wheelhouse is cut back to its core: `docs/specs/2026-11-07-core-cut-design.md`. Parked pieces (the mod and pane, Copilot and Lean, Archon, the VS Code add-on, delegation, unattended goals, screenshot approvals, Windows Locked) are listed in `docs/parked.md`, each with its `parked/<piece>` tag. Don't build on a parked piece or bring one back without the director's request.
 - **The repository is public.** Wheelhouse's records (its state, cards, briefs, the board and transcripts) never go into it, and nor does anything about the director's other projects.
 - **Testing.** Run the test files a change touches. The whole suite (`npm test`) takes about 40 minutes on the Mac and runs under two git setups, so leave it to CI unless a change touches many parts.
 - **Each project stays separate.** The first project Wheelhouse will be used on keeps its own rules in its own repository, not here.
