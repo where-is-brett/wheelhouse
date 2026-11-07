@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   makeWaker, writeWake, readWake, wakesDir, sessionModeOf, featureModeOf, sessionEnv, spawnDetached, pidAlive, processStartTime, makeStartTimes,
-  outboxFile, runningFile, sessionFile, grantsUsedFile, watcherDir, PROMPTS, MAX_RUN_MS, STARTING_MS, windowsBuildsOf, premiumRestFile,
+  outboxFile, runningFile, sessionFile, lostFile, grantsUsedFile, watcherDir, PROMPTS, MAX_RUN_MS, STARTING_MS, windowsBuildsOf, premiumRestFile,
 } from '../../../scripts/watcher/waker.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { briefHash, featurePaths } from '../../../scripts/feature/files.js';
@@ -651,6 +651,57 @@ test('a feature session whose start exits with an error is reported', () => with
   fake.end(fake.calls[0].pid, 2);
   await flush();
   assert.match(errors[0], /login-page session exited with code 2/);
+}));
+
+test('a feature session that exits with an error leaves a lost marker; one that ends cleanly leaves none', () => withHome(async () => {
+  checkout();
+  const fake = fakeRun({ exits: true });
+  const w = waker(fake, { onError: () => {} });
+  await w.startFeature({ work: 'login-page', worktree: worktree() });
+  await w.startFeature({ work: 'search-box', worktree: worktree() });
+  fake.end(fake.calls[0].pid, 1);
+  await flush();
+  fake.end(fake.calls[1].pid, 0);
+  await flush();
+  const marker = JSON.parse(fs.readFileSync(lostFile(P, 'login-page'), 'utf8'));
+  assert.equal(marker.why, 'exited');
+  assert.equal(marker.code, 1);
+  assert.equal(fs.existsSync(lostFile(P, 'search-box')), false);
+}));
+
+test('a lost feature session is resumed by its kept session id with the prompt it is given', () => withHome(async () => {
+  checkout();
+  const dir = worktree({ session: OTHER_SESSION });
+  keepSession('login-page', dir, SESSION);
+  const fake = fakeRun();
+  const w = waker(fake);
+  const out = await w.resumeFeature({ work: 'login-page', prompt: 'Carry on from what\'s there.' });
+  assert.equal(out.sessionId, SESSION);
+  assert.equal(fake.calls.length, 1);
+  const [call] = fake.calls;
+  assert.equal(call.cwd, dir);
+  const at = call.args.indexOf('--resume');
+  assert.equal(call.args[at + 1], SESSION, 'the id the watcher kept, not the one in the worktree');
+  assert.match(call.args[call.args.indexOf('-p') + 1], /Carry on from what's there\./);
+
+  // While that run lives, a second resume starts nothing.
+  assert.deepEqual(await w.resumeFeature({ work: 'login-page', prompt: 'Again.' }), { live: true });
+  assert.equal(fake.calls.length, 1);
+}));
+
+test('a resume is refused under STOP, and with no session id kept', () => withHome(async () => {
+  checkout();
+  const fake = fakeRun();
+  const w = waker(fake);
+  await assert.rejects(w.resumeFeature({ work: 'login-page', prompt: 'Go.' }), /no session id/);
+  keepSession('login-page', worktree(), SESSION);
+  setStop({ by: 'prompt' });
+  try {
+    await assert.rejects(w.resumeFeature({ work: 'login-page', prompt: 'Go.' }), /stop/i);
+  } finally {
+    liftStop();
+  }
+  assert.equal(fake.calls.length, 0);
 }));
 
 test('bypass mode is refused for every session, and auto mode for feature sessions', () => withHome(async () => {
