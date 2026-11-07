@@ -23,7 +23,7 @@ export const PLAIN_KINDS = [
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
   'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest', 'chat-steer',
-  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'brief', 'slept', 'agent-call',
+  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'brief', 'slept', 'agent-call', 'self-merged',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
@@ -62,7 +62,7 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 export const RED_MAIN_FIELDS = ['kind', 'suspect', 'work'];
 export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident';
 
-export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'by-hand', 'slept'];
+export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'by-hand', 'slept', 'self-merged'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
 const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'approve-release', 'update-helper-answer', 'update-click'];
@@ -384,6 +384,10 @@ const PLAIN_SHAPES = {
   run: { must: ['work', 'lane', 'engine', 'runId', 'state'], may: ['branch', 'pr', 'outcome', 'resume', 'failure', 'step', 'level'] },
   // A span the computer slept, as the helper measured it: it doesn't count as running.
   slept: { must: ['from', 'to'], may: [] },
+  // A change that merged by itself (design section 8 of the director's way of working), for the daily digest: the helper's own
+  // record, written after the merge. `reason` is `internal` (nothing users see, nothing at the director's level) or
+  // `decision-records` (the helper's own batch); `paths` is how many files it changed.
+  'self-merged': { must: ['pr', 'commit', 'reason'], may: ['work', 'title', 'paths'] },
   // An ask a run raised: `id` is stable, so the same ask seen again is not written twice. `kind` says what sort of
   // ask it is, `level` which of the decision levels it comes at.
   ask: { must: ['id', 'runId', 'work', 'kind', 'level', 'options'], may: ['topic', 'recommend', 'preview', 'setLine', 'resetAt'] },
@@ -514,6 +518,13 @@ function checkPlain(kind, data) {
       const s = data.slice;
       if (!(isPlain(s) && Object.keys(s).length === 2 && Number.isInteger(s.n) && Number.isInteger(s.m) && s.n >= 1 && s.n <= s.m)) bad('has a slice that is not n of m');
     }
+  } else if (kind === 'self-merged') {
+    if (!Number.isInteger(data.pr) || data.pr < 1) bad('needs the pull request number');
+    if (typeof data.commit !== 'string' || !FULL_COMMIT.test(data.commit)) bad('needs the full commit');
+    if (!['internal', 'decision-records'].includes(data.reason)) bad('needs reason to be internal or decision-records');
+    if (data.work !== undefined) slug('work');
+    if (data.title !== undefined && !(isText(data.title) && data.title.length <= 200)) bad('needs title to be text of at most 200 characters');
+    if (data.paths !== undefined && !(Number.isInteger(data.paths) && data.paths >= 0)) bad('needs paths to be a count');
   } else if (kind === 'slept') {
     for (const k of ['from', 'to']) if (typeof data[k] !== 'string' || Number.isNaN(Date.parse(data[k]))) bad(`needs ${k} to be a time`);
     if (Date.parse(data.from) >= Date.parse(data.to)) bad('needs to end after it starts');

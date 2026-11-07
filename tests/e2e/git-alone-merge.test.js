@@ -255,6 +255,20 @@ test('Undo takes a merge back out on the director\'s click, and one click does i
   assert.equal(await headIn(home, 'refs/heads/main'), undone.undone.undo);
 }, { check: checks(), askWindow: atWindow('Undo') }));
 
+test('undo on a local home still works through the one route every host uses', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
+  const { helper, client, home } = world;
+  const { n } = await readyChange(world, 'card-14', 'export const price = () => 14;\n');
+  await ticksUntil(helper, () => changeOf(n).state === 'merged', 'the merge');
+  const merge = changeOf(n).mergeCommit;
+  const asked = await client.undo({ project: P, merge });
+  assert.equal(asked.needs, 'window');
+  const card = cardOf((d) => String(d.question).includes(merge));
+  const undone = await confirm(client, card);
+  assert.equal(typeof undone.undone?.undo, 'string', JSON.stringify(undone));
+  assert.equal(await headIn(home, 'refs/heads/main'), undone.undone.undo);
+  assert.equal((await client.undo({ project: P, merge })).needs, 'window', 'the click is spent');
+}, { check: checks(), askWindow: atWindow('Undo') }));
+
 test('a write beside an Undo doesn\'t cost its click: the record takes one commit at a time', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
   const { helper, client } = world;
   const { n } = await readyChange(world, 'card-13', 'export const price = () => 13;\n');

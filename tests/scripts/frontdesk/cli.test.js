@@ -2047,9 +2047,9 @@ test('move raises the card by the folder, and names only GitHub or GitLab', asyn
   assert.equal(asked.length, 1);
 });
 
-test('undo asks the helper by the folder, and gives what it answers, its card included', async () => {
+test('undo asks the helper by the folder, on any host, and gives what it answers, its card included', async () => {
   const asked = [];
-  const helper = { client: { local: { undo: async (body) => { asked.push(body); return { ok: false, refused: 'needs the window', needs: 'window', card: { id: 'c-1' } }; } } } };
+  const helper = { client: { undo: async (body) => { asked.push(body); return { ok: false, refused: 'needs the window', needs: 'window', card: { id: 'c-1' } }; } } };
   const got = await run(helper, ['undo', FULL]);
   assert.equal(got.code, 0, got.err);
   assert.equal(got.json.card.id, 'c-1');

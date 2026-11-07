@@ -239,9 +239,9 @@ test('a review does not carry over when the feature\'s own changes moved', async
 // A file of three identical blocks. The feature adds a line after the first; moved after the
 // second, the line has the same context, so only its line numbers differ, which patch-id ignores.
 const BLOCK = 'one\ntwo\nthree\nfour\n';
-const BLOCKS = { 'blocks.txt': BLOCK.repeat(3) };
-const ADDED = { 'blocks.txt': `${BLOCK}added\n${BLOCK}${BLOCK}` };
-const MOVED = { 'blocks.txt': `${BLOCK}${BLOCK}added\n${BLOCK}` };
+const BLOCKS = { 'blocks.md': BLOCK.repeat(3) };
+const ADDED = { 'blocks.md': `${BLOCK}added\n${BLOCK}${BLOCK}` };
+const MOVED = { 'blocks.md': `${BLOCK}${BLOCK}added\n${BLOCK}` };
 const gitIn = (dir) => (args, options = {}) => run('git', args, { cwd: dir, ...options });
 
 test('a review does not carry over when the update merge changed code itself', async () => {
