@@ -87,3 +87,12 @@ test('a cursor kept while goals existed stays readable, and says nothing of goal
   assert.notEqual(decodeCursor(older), null);
   assert.deepEqual(changes(older, state({ glance: 'x', waiting: [], work: {} })).events.filter((e) => /goal/.test(e.type)), []);
 });
+
+test('snapshot: carries no steps', () => {
+  const live = { glance: 'Wheelhouse: 1 building', work: { 'export-csv': 'building' } };
+  const bare = snapshotOf(live);
+  const withSteps = snapshotOf({ ...live, crew: { 'export-csv': { steps: [{ text: 'Reading `a.ts`' }], crew: ['A Lookout is reviewing task 2'] } } });
+  assert.deepEqual(withSteps, bare);
+  assert.equal(JSON.stringify(withSteps).includes('Reading'), false);
+  assert.equal(encodeCursor(withSteps), encodeCursor(bare));
+});

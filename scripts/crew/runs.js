@@ -5,6 +5,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { plainWords, glossaryOf } from '../frontdesk/glossary.js';
+import { runningFile, sessionFile, pidAlive } from '../watcher/waker.js';
+import { readDecisions } from '../decisions/pending.js';
+import { levelFor } from './level.js';
 
 export function configDir(env = process.env) {
   return env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
@@ -456,7 +459,7 @@ function modifiedAt(file) {
 // before `now`. A background launch's immediate result never means finished.
 export function runSteps({ sessionId, env = process.env, glossary, waiting = null, foreman = false, now = Date.now } = {}) {
   const file = findTranscript({ sessionId, env });
-  if (!file) return { steps: [], crew: [] };
+  if (!file) return { steps: [], crew: [], crewDid: [] };
   const words = glossary ?? glossaryOf({});
   const events = readTail(file);
   const steps = [];
@@ -467,14 +470,14 @@ export function runSteps({ sessionId, env = process.env, glossary, waiting = nul
     const decision = foreman ? decisionWork(event) : null;
     if (decision) {
       const line = decision.work ? `The Bosun is deciding what to do about ${decision.work}` : 'The Bosun is deciding what to do';
-      steps.push({ at: step.at, text: mask(plain(line)) });
+      steps.push({ at: step.at, text: mask(plain(line)), kind: 'did' });
     } else {
-      steps.push({ at: step.at, text: foreman ? mask(plain(inThirdPerson('The Bosun', step))) : step.text });
+      steps.push({ at: step.at, text: foreman ? mask(plain(inThirdPerson('The Bosun', step))) : step.text, kind: step.kind });
     }
   }
   if (validWaiting(waiting)) {
     const text = `Waiting for your answer to decision ${waiting}`;
-    steps.push({ at: steps.length ? steps[steps.length - 1].at : null, text: foreman ? `The Bosun is ${lowerFirst(text)}` : text });
+    steps.push({ at: steps.length ? steps[steps.length - 1].at : null, text: foreman ? `The Bosun is ${lowerFirst(text)}` : text, kind: 'did' });
   }
   const clock = typeof now === 'function' ? now() : now;
   const subs = findSubagents(file).map((sub) => ({ ...sub, mtime: modifiedAt(sub.file), meta: readMeta(sub.file) }));
@@ -491,18 +494,25 @@ export function runSteps({ sessionId, env = process.env, glossary, waiting = nul
     .filter((sub) => !finished(sub))
     .sort((a, b) => b.mtime - a.mtime || (a.agentId < b.agentId ? -1 : 1));
   const crew = [];
+  // The same lines with a subagent's own words left out, for what a model reads.
+  const crewDid = [];
   for (const sub of working.slice(0, CREW_SHOWN)) {
     const meta = sub.meta;
     const fromMeta = meta && (meta.agentType !== undefined || meta.description !== undefined);
     const call = fromMeta ? { agentType: meta.agentType, description: meta.description }
       : (meta?.toolUseId !== undefined && calls.get(meta.toolUseId)) || byAgent.get(sub.agentId) || null;
     const latest = stepsOfKind(readTail(sub.file), words).pop();
+    const fallback = worded({ at: null, text: subagentLine(call ?? {}) }, words).text;
     if (latest) crew.push(mask(plain(inThirdPerson(roleOf(call?.agentType), latest))));
-    else crew.push(worded({ at: null, text: subagentLine(call ?? {}) }, words).text);
+    else crew.push(fallback);
+    crewDid.push(latest && latest.kind !== 'said' ? crew[crew.length - 1] : fallback);
   }
   const left = working.length - CREW_SHOWN;
-  if (left > 0) crew.push(`and ${left} more crew member${left === 1 ? '' : 's'}`);
-  return { steps, crew };
+  if (left > 0) {
+    crew.push(`and ${left} more crew member${left === 1 ? '' : 's'}`);
+    crewDid.push(crew[crew.length - 1]);
+  }
+  return { steps, crew, crewDid };
 }
 
 // A step with its kind, and for a sent subagent the phrase "sending out ..." through the glossary.
@@ -520,6 +530,66 @@ function stepsOfKind(events, words) {
   for (const event of events) {
     const raw = stepAndKind(event);
     if (raw) out.push(withKind(raw, words));
+  }
+  return out;
+}
+
+const readSmall = (file) => {
+  try {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.size > 64 * 1024) return null;
+    const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
+};
+
+// A running record that says a session is going: its state is `running` and, when it names a process, that process lives.
+const liveRecord = (record) => record !== null && record.state === 'running' && (!Number.isInteger(record.pid) || pidAlive(record.pid));
+
+// The latest steps of each piece with a live run, for the Logbook: `{ [work]: { steps, crew } }`. A piece whose level
+// is `off` is never opened (design 8.1 rule 6); nor is anything when a record can't be read. The Bosun comes under
+// the name `foreman`, on the project's own level, when its running record names a session. `read` stands for `runSteps`.
+export function crewNow(project, views, settings, { env = process.env, read = runSteps } = {}) {
+  const out = {};
+  // Not a project name (a path, say): nothing is opened, deliberately.
+  if (typeof project !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(project) || project.includes('..')) return out;
+  const glossary = glossaryOf(views?.glossary);
+  let pending = null;
+  const waitingOn = (work) => {
+    if (pending === null) {
+      try {
+        pending = readDecisions(project).pending;
+      } catch {
+        pending = [];
+      }
+    }
+    return pending.find((d) => d.workId === work)?.n ?? null;
+  };
+  const ids = Object.keys(views !== null && typeof views === 'object' && views.work !== null && typeof views.work === 'object' ? views.work : {});
+  for (const work of ids) {
+    // Whatever one piece's records give, the others still show: a failure shows less and never breaks the Logbook.
+    try {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(work) || work.includes('..')) continue;
+      if (levelFor(views, settings, work) === 'off') continue;
+      if (!liveRecord(readSmall(runningFile(project, `feature-${work}`)))) continue;
+      const sessionId = readSmall(sessionFile(project, work))?.sessionId;
+      if (typeof sessionId !== 'string') continue;
+      out[work] = read({ sessionId, env, glossary, waiting: waitingOn(work) });
+    } catch {
+      // This piece shows no step.
+    }
+  }
+  try {
+    if (levelFor(views, settings, 'foreman') !== 'off') {
+      const record = readSmall(runningFile(project, 'foreman'));
+      if (liveRecord(record) && typeof record.sessionId === 'string') {
+        out.foreman = read({ sessionId: record.sessionId, env, glossary, foreman: true });
+      }
+    }
+  } catch {
+    // The Bosun shows no step.
   }
   return out;
 }
