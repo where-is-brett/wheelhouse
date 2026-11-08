@@ -42,9 +42,20 @@ function readBody(req) {
   });
 }
 
+// Reads the multipart boundary from a content-type header, without a regular expression.
+function boundaryOf(contentType) {
+  for (const param of contentType.split(';')) {
+    const [key, ...rest] = param.split('=');
+    if (key.trim().toLowerCase() !== 'boundary') continue;
+    const value = rest.join('=').trim();
+    return value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value;
+  }
+  return '';
+}
+
 // Finds the uploaded file in a multipart body.
 function filePart(buffer, contentType, name) {
-  const boundary = /boundary=("?)([^";]+)\1/.exec(contentType ?? '')?.[2];
+  const boundary = boundaryOf(contentType ?? '');
   if (!boundary) return null;
   for (const part of buffer.toString('latin1').split(`--${boundary}`)) {
     const split = part.indexOf('\r\n\r\n');
