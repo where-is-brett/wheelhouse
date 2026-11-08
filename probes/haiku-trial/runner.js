@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appendJsonl } from '../lib/log.js';
 import { projectSlug } from '../../scripts/lib/paths.js';
+import { runFolder } from './results.js';
 import { PIECES, WAVES, P5_SPARE, F2_ANSWER } from './requests.js';
 import { SESSION_PREFIX, frontDeskCommand } from './tmux.js';
 import { STEPS as LOG, SETUP_DONE, OWN_BRANCH } from './signals.js';
@@ -800,31 +801,57 @@ export async function restore({ folder, io }) {
 
 // --- the command line ---
 
+// A run's label names its repository (`haiku-trial-<label>`), its project, its folder, its ntfy topic and its summary file, so it is
+// kept to a date with an optional short lowercase suffix (`2026-11-08-b`). The flag wins over HAIKU_TRIAL_DATE; neither leaves
+// the clock to name the run.
+const LABEL = /^\d{4}-\d{2}-\d{2}(-[a-z0-9]{1,20})?$/;
+export function runLabel({ arg, env = process.env } = {}) {
+  const fromFlag = arg !== undefined;
+  const given = fromFlag ? arg : env.HAIKU_TRIAL_DATE;
+  if (given === undefined || (!fromFlag && given === '')) return undefined;
+  if (typeof given !== 'string' || !LABEL.test(given)) {
+    throw new Error(`${fromFlag ? '--date' : 'HAIKU_TRIAL_DATE'} must be YYYY-MM-DD with an optional -suffix of lowercase letters and digits (for example 2026-11-08-b), not "${given}"`);
+  }
+  return given;
+}
+
+const USAGE = 'usage: node probes/haiku-trial/runner.js full | smoke | restore | plan [--from <step>] [--out <folder>] [--until <step>] [--date <label>]\n  --date <label> (or HAIKU_TRIAL_DATE) names the run: YYYY-MM-DD with an optional -suffix such as 2026-11-08-b';
+
 function parseArgs(argv) {
-  const out = { command: argv[0], from: undefined, folder: undefined, until: undefined };
+  const out = { command: argv[0], from: undefined, folder: undefined, until: undefined, date: undefined };
   for (let i = 1; i < argv.length; i += 1) {
     if (argv[i] === '--from') out.from = argv[(i += 1)];
     else if (argv[i] === '--out') out.folder = argv[(i += 1)];
     else if (argv[i] === '--until') out.until = argv[(i += 1)];
+    else if (argv[i] === '--date') out.date = argv[(i += 1)] ?? '';
   }
   return out;
 }
 
 export async function main(argv, { print = console.log, buildIo, env = process.env } = {}) {
   const args = parseArgs(argv);
+  let label;
+  try {
+    label = runLabel({ arg: args.date, env });
+  } catch (error) {
+    print(error.message);
+    print(USAGE);
+    return 2;
+  }
   if (args.command === 'plan') {
     for (const mode of ['full', 'smoke']) {
       print(`${mode}: ${planRun({ mode }).map((s) => `${s.id}${s.needsGo ? '*' : ''}${s.director ? '+' : ''}`).join(' ')}`);
     }
     print('* waits for the director\'s go, + needs the director');
+    if (label !== undefined) print(`run ${label}: repository ${env.HAIKU_TRIAL_GH_OWNER ?? '<owner>'}/haiku-trial-${label}, folder ${args.folder ?? runFolder(label)}`);
     return 0;
   }
   if (!['full', 'smoke', 'restore'].includes(args.command)) {
-    print('usage: node probes/haiku-trial/runner.js full | smoke | restore | plan [--from <step>] [--out <folder>]');
+    print(USAGE);
     return 2;
   }
   const io = await buildIo(env);
-  const folder = args.folder ?? io.results.runFolder(new Date(io.clock.now()).toISOString().slice(0, 10));
+  const folder = args.folder ?? io.results.runFolder(label ?? new Date(io.clock.now()).toISOString().slice(0, 10));
   // Everything Wheelhouse keeps follows WHEELHOUSE_HOME: set it to the trial's own folder before anything reads it, and refuse the real one.
   const home = trialHome({ folder, env });
   const given = { ...env, WHEELHOUSE_HOME: home };
@@ -836,7 +863,7 @@ export async function main(argv, { print = console.log, buildIo, env = process.e
     print(JSON.stringify(await restore({ folder, io })));
     return 0;
   }
-  const result = await run({ mode: args.command, io, from: args.from ?? 'auto', until: args.until, folder, env: given });
+  const result = await run({ mode: args.command, io, from: args.from ?? 'auto', until: args.until, folder, date: label, env: given });
   print(JSON.stringify(result));
   return result.stoppedAt ? 1 : 0;
 }

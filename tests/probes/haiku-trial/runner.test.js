@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { STEPS, planRun, run, restore, waitFor, main, withoutChrome } from '../../../probes/haiku-trial/runner.js';
+import { STEPS, planRun, run, restore, waitFor, main, withoutChrome, runLabel } from '../../../probes/haiku-trial/runner.js';
 import { P5_SPARE } from '../../../probes/haiku-trial/requests.js';
 
 const ENV = { WHEELHOUSE_HOME: process.env.WHEELHOUSE_HOME, HAIKU_TRIAL_GH_OWNER: 'trial-owner', HAIKU_TRIAL_CLAUDE: '/bin/claude', HAIKU_TRIAL_PREVIEW: 'none' };
@@ -373,4 +373,88 @@ test('F3b fires during the typed replies, not later', async (t) => {
   assert.equal(killed, 1);
   const typed = io.timeline.find((e) => e.kind === 'tmux.type');
   assert.ok(io.timeline.find((e) => e.kind === 'f3b').at - typed.at <= 15000, 'within the first look after the reply');
+});
+
+// --- the run label ---
+
+test('a run label is a date with an optional short suffix, from --date or HAIKU_TRIAL_DATE', () => {
+  for (const good of ['2026-11-08', '2026-11-08-b', '2026-11-08-b2', '2026-11-08-retry']) assert.equal(runLabel({ arg: good, env: {} }), good, good);
+  assert.equal(runLabel({ arg: undefined, env: { HAIKU_TRIAL_DATE: '2026-11-09-b' } }), '2026-11-09-b', 'the environment is the fallback');
+  assert.equal(runLabel({ arg: '2026-11-10', env: { HAIKU_TRIAL_DATE: '2026-11-09-b' } }), '2026-11-10', 'the flag beats the environment');
+  assert.equal(runLabel({ arg: undefined, env: {} }), undefined, 'no label leaves the clock to name the run');
+  assert.equal(runLabel({ arg: undefined, env: { HAIKU_TRIAL_DATE: '' } }), undefined);
+  for (const bad of ['b', '2026-11-8', '2026-11-08-', '2026-11-08-B', '2026-11-08_b', '2026-11-08-b/../x', '2026-11-08-b c', '../2026-11-08', '2026-11-08-aaaaaaaaaaaaaaaaaaaaaaaaa', '']) {
+    assert.throws(() => runLabel({ arg: bad, env: {} }), /YYYY-MM-DD/, JSON.stringify(bad));
+  }
+  assert.throws(() => runLabel({ arg: undefined, env: { HAIKU_TRIAL_DATE: 'tomorrow' } }), /HAIKU_TRIAL_DATE/);
+});
+
+const labelled = (t, over = {}) => {
+  const root = scratch(t);
+  const before = process.env.WHEELHOUSE_HOME;
+  t.after(() => { process.env.WHEELHOUSE_HOME = before; });
+  const asked = [];
+  const io = fakeIo(over);
+  io.results.runFolder = (d) => { asked.push(d); return path.join(root, `haiku-${d}`); };
+  return { root, io, asked };
+};
+
+test('--date names the repository, the project and the default run folder, so a fresh run does not meet an old one', async (t) => {
+  const { root, io, asked } = labelled(t);
+  const code = await main(['smoke', '--from', 'create-repo', '--until', 'create-repo', '--date', '2026-11-08-b'], { print: () => {}, buildIo: async () => io, env: ENV });
+  assert.equal(code, 0);
+  assert.deepEqual(asked, ['2026-11-08-b'], 'the folder is the label\'s, not the clock\'s');
+  const created = io.timeline.find((e) => e.kind === 'gh' && e.args[0][0] === 'repo');
+  assert.equal(created.args[0][2], 'trial-owner/haiku-trial-2026-11-08-b');
+  assert.ok(fs.existsSync(path.join(root, 'haiku-2026-11-08-b', 'run-log.jsonl')));
+});
+
+test('HAIKU_TRIAL_DATE does the same when there is no --date', async (t) => {
+  const { io, asked } = labelled(t);
+  await main(['smoke', '--from', 'create-repo', '--until', 'create-repo'], { print: () => {}, buildIo: async () => io, env: { ...ENV, HAIKU_TRIAL_DATE: '2026-11-09-b' } });
+  assert.deepEqual(asked, ['2026-11-09-b']);
+  assert.equal(io.timeline.find((e) => e.kind === 'gh' && e.args[0][0] === 'repo').args[0][2], 'trial-owner/haiku-trial-2026-11-09-b');
+});
+
+test('with no label the clock names the run, as before', async (t) => {
+  const { io, asked } = labelled(t);
+  await main(['smoke', '--from', 'create-repo', '--until', 'create-repo'], { print: () => {}, buildIo: async () => io, env: ENV });
+  assert.deepEqual(asked, ['2026-11-08']);
+  assert.equal(io.timeline.find((e) => e.kind === 'gh' && e.args[0][0] === 'repo').args[0][2], 'trial-owner/haiku-trial-2026-11-08');
+});
+
+test('restore --date finds that run\'s folder and stops what its log recorded', async (t) => {
+  const { root, io, asked } = labelled(t, { sessions: ['haiku-trial-desk'] });
+  const folder = path.join(root, 'haiku-2026-11-08-b');
+  fs.mkdirSync(folder, { recursive: true });
+  fs.writeFileSync(path.join(folder, 'run-log.jsonl'), `${JSON.stringify({ step: 'front-desk', note: 'x', detail: { tmux: 'haiku-trial-desk' } })}\n`);
+  const lines = [];
+  const code = await main(['restore', '--date', '2026-11-08-b'], { print: (l) => lines.push(l), buildIo: async () => io, env: ENV });
+  assert.equal(code, 0);
+  assert.deepEqual(asked, ['2026-11-08-b']);
+  assert.deepEqual(JSON.parse(lines[0]).stopped, ['haiku-trial-desk']);
+});
+
+test('a bad label is refused with the usage line before anything is built', async () => {
+  let built = 0;
+  for (const argv of [['full', '--date', 'tomorrow'], ['restore', '--date', '2026-11-08-B'], ['plan', '--date', 'x']]) {
+    const lines = [];
+    const code = await main(argv, { print: (l) => lines.push(l), buildIo: async () => { built += 1; }, env: {} });
+    assert.equal(code, 2, argv.join(' '));
+    assert.match(lines.join('\n'), /YYYY-MM-DD/);
+    assert.match(lines.join('\n'), /--date <label>/, 'the usage line shows the flag');
+  }
+  assert.equal(built, 0);
+});
+
+test('the usage line and plan name the label, the repository and the folder', async () => {
+  const lines = [];
+  assert.equal(await main(['nonsense'], { print: (l) => lines.push(l), buildIo: async () => assert.fail('built') }), 2);
+  assert.match(lines.join('\n'), /--date <label>/);
+  const plan = [];
+  assert.equal(await main(['plan', '--date', '2026-11-08-b'], { print: (l) => plan.push(l), buildIo: async () => assert.fail('built'), env: { HAIKU_TRIAL_GH_OWNER: 'trial-owner' } }), 0);
+  const text = plan.join('\n');
+  assert.match(text, /run 2026-11-08-b/);
+  assert.match(text, /trial-owner\/haiku-trial-2026-11-08-b/);
+  assert.match(text, /haiku-2026-11-08-b/);
 });

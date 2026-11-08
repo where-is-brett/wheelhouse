@@ -44,15 +44,26 @@ node probes/haiku-trial/runner.js full [--from <step>] [--out <folder>] [--until
 node probes/haiku-trial/runner.js smoke
 ```
 
+### Naming a run
+
+A run is named by a label, by default today's date from the clock: the test repository is `haiku-trial-<label>`, the project and the run folder (`~/.wheelhouse-trials/haiku-<label>`) follow it, and so do the ntfy topic and the summary file name. A second run on the same day would meet the first one's repository and resume its log, so give it a label of its own:
+
+```
+node probes/haiku-trial/runner.js smoke --date 2026-11-08-b
+HAIKU_TRIAL_DATE=2026-11-08-b node probes/haiku-trial/runner.js smoke
+```
+
+The label is `YYYY-MM-DD` with an optional `-suffix` of lowercase letters and digits (up to 20), so every name made from it stays valid; anything else is refused with the usage line before anything is built. `--date` beats `HAIKU_TRIAL_DATE`. Pass the same label to `restore` (`restore --date 2026-11-08-b`) to find that run's folder, and `plan --date 2026-11-08-b` prints the repository and folder the label gives. A label that already has a run folder resumes that run; a new label starts a fresh one, with a new staged plugin.
+
 Each step appends to `run-log.jsonl` in the run folder, and a step that finishes appends a `done` entry. A run with no `--from` goes on after the last finished step. The run's own state (pieces, fault results, replies) is kept in `state.json` beside the log.
 
 ## restore
 
-`node probes/haiku-trial/runner.js restore` stops what the run started, as its log records it: the `haiku-trial-*` tmux sessions, the product process, the tunnel process, and the trial's own helper, watchers and foremen under the trial home (the helper only while it is still the process its record names). It never touches `~/.wheelhouse` and deletes nothing: no repository, no Vercel project, no folder.
+`node probes/haiku-trial/runner.js restore [--date <label>]` stops what the run started, as its log records it: the `haiku-trial-*` tmux sessions, the product process, the tunnel process, and the trial's own helper, watchers and foremen under the trial home (the helper only while it is still the process its record names). It never touches `~/.wheelhouse` and deletes nothing: no repository, no Vercel project, no folder.
 
 ## Where results go
 
-Raw results stay outside every repository, in `~/.wheelhouse-trials/haiku-<date>/`: the run log, transcripts, event export, pane captures and usage. The public summary is written to `summary/<date>-haiku-trial-results.md` in that folder. Copy it to `docs/trials/` after the director has labelled each failure, as the design's section 12 says.
+Raw results stay outside every repository, in `~/.wheelhouse-trials/haiku-<label>/`: the run log, transcripts, event export, pane captures and usage. The public summary is written to `summary/<date>-haiku-trial-results.md` in that folder. Copy it to `docs/trials/` after the director has labelled each failure, as the design's section 12 says.
 
 ## What the runner cannot supply in this build
 
