@@ -305,3 +305,25 @@ Branch `feature/crew-steps` from `main` once parts 1 and 2 are merged. Spec sect
 - [ ] **Step 3: Implement** `crewNow` and the `workLines` parameter; the Logbook's caller passes `crewNow(...)`.
 - [ ] **Step 4: Run them and see them pass.**
 - [ ] **Step 5: Commit.** `git commit -am "Logbook: the latest step on a running piece"`
+
+### Task 3.2: The build tab's last five steps, and nothing pushed
+
+**Files:**
+- Modify: `scripts/desk/views.js` (`VIEWS.logbook`, around line 310)
+- Test: `tests/scripts/desk/views.test.js`, `tests/scripts/desk/watch.test.js`
+
+**Interfaces:**
+- Consumes: `crewNow` (3.1).
+- Produces: under each running piece in the build tab, its last five steps (oldest first) and then its `crew` lines; under a heading `The Bosun`, the Bosun's last five. The desk change feed and `snapshotOf` (`scripts/desk/watch.js:19`) never include steps (section 6.3: watching pushes nothing).
+
+- [ ] **Step 1: Write the failing tests**
+  - `build tab: shows five steps`: eight fixture steps → the last five, in order.
+  - `build tab: lists the crew under the piece`: one `crew` line → shown after the steps.
+  - `build tab: shows the Bosun's steps under its own heading`.
+  - `snapshot: carries no steps`: `snapshotOf` with a live fixture run is equal with and without the transcript present.
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/desk/views.test.js tests/scripts/desk/watch.test.js`
+- [ ] **Step 3: Implement** the build tab lines.
+- [ ] **Step 4: Run them and see them pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Logbook: the build tab's recent steps"`
+
+Part 3's pull request: title `Crew visibility: steps in the Logbook`.
