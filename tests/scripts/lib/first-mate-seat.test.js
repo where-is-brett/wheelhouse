@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   RECENT_MS, STALE_AFTER_MS, SEEN_EVERY_MS,
-  seatFile, readSeat, firstMatePid, seatInUse, takeSeat, holdsSeat, refreshSeat, handOverSeat, releaseSeat,
+  seatFile, readSeat, firstMatePid, seatInUse, takeSeat, holdsSeat, refreshSeat, handOverSeat, releaseSeat, movedAway,
 } from '../../../scripts/lib/first-mate-seat.js';
 
 const T0 = new Date('2026-11-08T10:00:00Z');
@@ -349,5 +349,28 @@ test('Claude Code is found under a path with spaces, and look-alikes are not', a
   for (const command of ['/usr/bin/claude-foo run', '/Applications/Claude.app/Contents/MacOS/Electron', 'node /opt/claude/scripts/hook.js']) {
     const lookAlike = [{ pid: 3, ppid: 1, command }, { pid: 4, ppid: 3, command: 'node hook.js' }];
     assert.equal((await firstMatePid({ ancestor: { pid: 4, table: lookAlike }, startTime: async () => 'x' })).pid, null, command);
+  }
+});
+
+test('movedAway is true once for the window the seat left', async () => {
+  const s = setup();
+  const before = process.env.WHEELHOUSE_HOME;
+  process.env.WHEELHOUSE_HOME = s.home;
+  try {
+    const { seat: first } = await take('p', 'a', s.options);
+    s.clock.t = at(5000);
+    await handOverSeat('p', { session: 'b', folder: '/work/b', from: { session: 'a', since: first.since } }, s.options);
+    assert.equal(readSeat('p', s.options).movedFrom, 'a');
+    s.clock.t = at(70 * 1000);
+    refreshSeat('p', 'b', s.options);
+    assert.equal(readSeat('p', s.options).movedFrom, 'a', 'a refresh keeps it');
+    assert.equal(movedAway('p', 'b', s.options), false);
+    assert.equal(movedAway('p', 'a', s.options), true);
+    assert.equal(movedAway('p', 'a', s.options), false);
+    assert.equal(movedAway('p', '../bad', s.options), false);
+    assert.equal(movedAway('nowhere', 'a', s.options), false);
+  } finally {
+    if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;
+    s.done();
   }
 });

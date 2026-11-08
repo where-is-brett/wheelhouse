@@ -15,6 +15,7 @@ import { words } from './shell-words.js';
 import { QUESTION_ID } from '../feature/files.js';
 import { stopState, NO_HELPER_STOP } from '../lib/stop.js';
 import { markBypass, clearBypass } from '../lib/bypass.js';
+import { releaseSeat } from '../lib/first-mate-seat.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import tools from '../../adapters/claude-code/tools.js';
@@ -193,6 +194,13 @@ export { pluginRoots };
 // its steps inherit) is never marked: the engine may start its steps in bypass mode, behind the guards, and a marker
 // would make the helper refuse every push and merge on the computer for as long as it stood. Such a call clears the
 // session's marker as a call in another mode does. STOP holds there as anywhere.
+// The session's end gives up the First Mate's seat when this session holds it. Never throws.
+function releaseAtEnd(project, session) {
+  try {
+    if (typeof project === 'string' && typeof session === 'string') releaseSeat(project, session);
+  } catch { /* nothing to give up */ }
+}
+
 export async function decide(input, {
   dir, projectOf: find = projectOf, pluginRoot = PLUGIN_ROOT, self = SELF, platform = process.platform,
   readTools = READ_TOOLS, haltTools = HALT_TOOLS, notifyTools = NOTIFY_TOOLS, bypass = true, writeVia = 'self', helperUp, env = process.env,
@@ -208,6 +216,7 @@ export async function decide(input, {
   const byPath = found ? false : registeredByPath(cwd);
   const inProject = Boolean(found) || byPath === true || (byPath === false && beingSetUp(cwd) !== null);
   const sessionEnd = input.hook_event_name === 'SessionEnd';
+  if (sessionEnd) releaseAtEnd(found?.project, input.session_id);
   if (inProject && bypass !== false && writeVia === 'self') {
     if (sessionEnd) {
       clearBypass(input.session_id);

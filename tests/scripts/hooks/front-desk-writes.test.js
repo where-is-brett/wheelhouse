@@ -6,7 +6,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { decide, FRONT_DESK_NO_WRITES } from '../../../scripts/hooks/front-desk-writes.js';
+import { decide, FRONT_DESK_NO_WRITES, ASIDE_NO_WRITES } from '../../../scripts/hooks/front-desk-writes.js';
+import { sessionRole } from '../../../scripts/lib/role.js';
+import { readSeat } from '../../../scripts/lib/first-mate-seat.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 const denied = (out) => out?.hookSpecificOutput?.permissionDecision === 'deny';
@@ -143,4 +145,68 @@ test('a heredoc fed to an interpreter is read, and one fed to anything else is n
   assert.equal(decide(bash(folder, 'bash <<EOF\nls\nEOF'), options(folder)), undefined);
   assert.equal(decide(bash(folder, 'cat <<EOF | node cli.js card\nwriteFileSync touch a\nEOF'), options(folder)), undefined);
   assert.equal(decide(bash(folder, 'cat > .wheelhouse/f.json <<EOF\nwriteFileSync\nEOF'), options(folder)), undefined);
+});
+
+// ---- The seat decides who is the front desk ----
+
+const seatOf = (session) => ({ session, pid: null, pidStart: null, folder: '/x', since: new Date().toISOString(), seenAt: new Date().toISOString() });
+function withSeat(holder, fn) {
+  const home = fs.realpathSync(tempFolder('wh-fdw-home-'));
+  const before = process.env.WHEELHOUSE_HOME;
+  process.env.WHEELHOUSE_HOME = home;
+  try {
+    fs.mkdirSync(path.join(home, 'projects', 'p'), { recursive: true });
+    fs.writeFileSync(path.join(home, 'projects', 'p', 'first-mate.json'), JSON.stringify(seatOf(holder)));
+    return fn();
+  } finally {
+    if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;
+  }
+}
+// The role comes from the real seat, with no role recorded for the session.
+const bySeat = (folder) => options(folder, { role: (given) => sessionRole({ ...given, seat: readSeat('p') }) });
+
+test('the holder may not write the product\'s files', () => {
+  const { folder } = project();
+  withSeat('s1', () => {
+    const out = decide(write(folder, path.join(folder, 'src', 'a.js')), bySeat(folder));
+    assert.ok(denied(out));
+    assert.equal(out.hookSpecificOutput.permissionDecisionReason, FRONT_DESK_NO_WRITES('src/a.js'));
+    assert.match(out.hookSpecificOutput.permissionDecisionReason, /worktree/);
+  });
+});
+
+test('a main-folder aside may not write the product\'s files', () => {
+  const { folder } = project();
+  withSeat('other', () => {
+    const out = decide(write(folder, path.join(folder, 'src', 'a.js')), bySeat(folder));
+    assert.ok(denied(out));
+    assert.equal(out.hookSpecificOutput.permissionDecisionReason, ASIDE_NO_WRITES('src/a.js'));
+    assert.match(out.hookSpecificOutput.permissionDecisionReason, /worktree/);
+  });
+});
+
+test('a worktree aside may write in its worktree', () => {
+  const { folder, worktree } = project();
+  withSeat('other', () => {
+    assert.equal(decide(write(worktree, path.join(worktree, 'a.js')), bySeat(folder)), undefined);
+    assert.equal(decide(write(worktree, path.join(folder, 'src', 'a.js')), bySeat(folder)), undefined, 'it is not the First Mate, and stands in a worktree');
+  });
+});
+
+test('an aside\'s own .wheelhouse notes stay allowed', () => {
+  const { folder } = project();
+  withSeat('other', () => {
+    assert.equal(decide(write(folder, path.join(folder, '.wheelhouse', 'work', 'x.md')), bySeat(folder)), undefined);
+  });
+});
+
+test('the holder\'s write refreshes the seat', () => {
+  const { folder } = project();
+  withSeat('s1', () => {
+    const file = path.join(process.env.WHEELHOUSE_HOME, 'projects', 'p', 'first-mate.json');
+    const old = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    fs.writeFileSync(file, JSON.stringify({ ...seatOf('s1'), seenAt: old }));
+    decide(write(folder, path.join(folder, 'src', 'a.js')), bySeat(folder));
+    assert.ok(Date.parse(JSON.parse(fs.readFileSync(file, 'utf8')).seenAt) > Date.parse(old));
+  });
 });

@@ -57,6 +57,8 @@ import { readDigest, clearDigest } from '../digest/due.js';
 import { takeFailures } from '../alerts/tick.js';
 import { markRaised as realMarkRaised } from '../usage/figures.js';
 import { sessionRole, recordRole, asideByChoice } from '../lib/role.js';
+import { refreshSeat, movedAway } from '../lib/first-mate-seat.js';
+import { SEAT_MOVED_LINE } from '../lib/front-desk.js';
 import { existingCard } from '../cards/visit.js';
 import { controlFilesDue, gateAsksDue, holdsDue, premiumFailuresDue } from '../cards/build-loop.js';
 import { questionProblem } from '../cards/compose.js';
@@ -377,8 +379,10 @@ export async function decide(input, deps = {}) {
     // A foreman known only from its first prompt was pointed at the front desk by the session start.
     if (role === 'foreman' && first && env?.WHEELHOUSE_ROLE !== 'foreman') return answer.context('UserPromptSubmit', FOREMAN_LINE);
     if (setup !== null && role === 'front-desk') return answer.context('UserPromptSubmit', SETUP_FIRST);
+    if (writes && role === 'aside' && attempt(() => movedAway(found.project, input.session_id), false)) return answer.context('UserPromptSubmit', SEAT_MOVED_LINE);
     if (role !== 'front-desk' || madeFeatureSlug(input.cwd) !== null) return undefined;
     const { project } = found;
+    if (writes) attempt(() => refreshSeat(project, input.session_id));
     const at = clockOf(now);
     const seen = readSeen(project, { now: at });
     const visits = attempt(() => readVisits(project, { now: at }), { visitAt: null, boardAsks: [] });

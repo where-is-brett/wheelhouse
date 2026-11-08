@@ -10,6 +10,7 @@ import { decide as guard, isFrontDeskRead, scriptArguments, READ_TOOLS, HALT_TOO
 import { decide as word, CONTEXT } from '../../../scripts/hooks/stop-word.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stopState, setStop, liftStop } from '../../../scripts/lib/stop.js';
+import { seatFile, readSeat } from '../../../scripts/lib/first-mate-seat.js';
 import { bypassDir } from '../../../scripts/lib/paths.js';
 
 const temp = (prefix) => fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
@@ -844,6 +845,28 @@ test('under STOP, the front desk\'s reads may carry the flag that turns the syst
       assert.ok(await ask(`node --no-use-system-ca --inspect "${PLUGIN}/scripts/frontdesk/cli.js" cards`));
       assert.ok(await ask(`node --use-system-ca "${PLUGIN}/scripts/frontdesk/cli.js" cards`));
       liftStop();
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
+test('SessionEnd releases the seat this session holds and leaves another\'s', async () => {
+  await withHome(async () => {
+    const { base, main } = makeProject();
+    try {
+      const now = new Date().toISOString();
+      const hold = (session) => {
+        fs.mkdirSync(path.dirname(seatFile('owner__name')), { recursive: true });
+        fs.writeFileSync(seatFile('owner__name'), JSON.stringify({ session, pid: null, pidStart: null, folder: main, since: now, seenAt: now }));
+      };
+      const end = (session) => guard({ cwd: main, session_id: session, hook_event_name: 'SessionEnd' }, { ...deps(base), event: 'SessionEnd' });
+      hold('b');
+      await end('a');
+      assert.equal(readSeat('owner__name')?.session, 'b');
+      hold('a');
+      await end('a');
+      assert.equal(readSeat('owner__name'), null);
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }
