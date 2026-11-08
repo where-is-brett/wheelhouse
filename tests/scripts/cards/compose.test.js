@@ -1002,3 +1002,10 @@ test('the commit scan skips the work id, so a uuid-shaped one is not read as a c
   const problem = whatProblem('approve-work', 'Work statement-import: x, deadbeef12', { work: 'statement-import', lane: 'small', hash: 'f'.repeat(64) });
   assert.match(problem, /^names commit deadbeef12, /);
 });
+
+test('the commit scan removes only whole-word occurrences of the work id, so a one-character slug chops no hex token', () => {
+  const target = { work: 'a', lane: 'small', hash: 'f'.repeat(64) };
+  const problem = whatProblem('approve-work', 'Work a: x, deadbeef1234', target);
+  assert.match(problem, /^names commit deadbeef1234, /);
+  assert.equal(whatProblem('approve-work', 'Work a: a small change.', target), null);
+});

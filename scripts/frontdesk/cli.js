@@ -40,7 +40,8 @@
 //                   work; shipping as it is is never offered while a signed review holds the merge) and prints the line to say
 //   record <kind>   records something the front desk decided: one of RECORD_KINDS, the data as JSON;
 //                   for a work event's document and an amendment, it works out the hash and prints it; a work also
-//                   prints `recordHash`, the hash of its record as written;
+//                   prints its slug (`work`), `eventId`, `recordHash`, the hash of its record as written, and, for work
+//                   the director is to approve, its approve-work card, composed and asked by the helper;
 //                   an amendment needs its read-back, and prints the route line and the read-back to say
 //   note            asks the host helper to write this session's note, up to 1,200 characters on standard input (four lines: the task, what
 //                   is done, what is next, the decisions open), to <wheelhouse home>/projects/<project>/sessions/<session id>.md,
@@ -1096,6 +1097,41 @@ async function withHash(client, cwd, kind, input) {
   return { ...input, hash: documentHash(cwd, file, input.hash) };
 }
 
+// Work the director approves before it is built: the small and feature lanes, and any work users would see.
+export function needsApproval(data) {
+  return data.lane === 'small' || data.lane === 'feature' || data.visible === true;
+}
+
+const APPROVE_WHY = {
+  small: 'It is a small change people will see, so it comes to you before it is built.',
+  feature: 'It is built from the design you shaped, so it starts only once you approve it.',
+  bug: 'People will see the fix, so it comes to you before it is built.',
+  quick: 'People will see this change, so it comes to you before it is built.',
+};
+
+// The composer's input for the approve-work card of a recorded work `data`, with the words in `override`
+// ({ what, why, because, meanwhile, options }) laid over the defaults. The target is always built here.
+export function approveWorkInput(data, override) {
+  const given = isPlain(override) ? override : {};
+  const { target: ignored, ...words } = given;
+  const title = String(data.title ?? '').trim().replace(/\.+$/, '').trim();
+  return {
+    kind: 'approve-work',
+    level: 3,
+    what: `Work ${data.id}: ${title}.`,
+    why: APPROVE_WHY[data.lane] ?? APPROVE_WHY.quick,
+    options: [
+      { label: 'Approve', says: 'Wheelhouse builds it and tests it, then shows you the result. It only goes into your product when you say yes to that.' },
+      { label: 'Not now' },
+    ],
+    recommend: 'Approve',
+    because: data.lane === 'feature' ? 'it is the design you shaped, and you\'ll see the result before it goes live' : 'you\'ll see it before it goes live',
+    meanwhile: 'Nothing is built until you approve.',
+    ...words,
+    target: { work: data.id, lane: data.lane, hash: data.doc?.hash, shownFirst: true },
+  };
+}
+
 // Records one event and resolves with { id, pushed }, with `hash` for a work event's document or an
 // amendment, `say` for an amendment (its route line and read-back), and for a ruling or a setting its confirm card, recorded too, as { question, id }. A setting the catalogue refuses is refused here, before
 // the helper is asked; the director's own settings go to their profile (writeSetting). A ruling keeps its words exactly as given: its card is composed
@@ -1141,9 +1177,23 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
       const { views } = await viewsOf(client, cwd);
       for (const d of input.dependsOn) await refuseEventId(views, d);
     }
-    const data = await withHash(client, cwd, kind, input);
+    // The card's words may be given beside the work; they are not part of the work event.
+    const { card: override, ...work } = input;
+    if (needsApproval(work) && work.doc === undefined) throw new CliError('an approval names the work\'s document: give `doc`, the path of the brief written first');
+    const data = await withHash(client, cwd, kind, work);
     const hash = data.doc?.hash;
-    return { ...answered(await write(client, cwd, kind, data)), ...(typeof hash === 'string' ? { hash } : {}), recordHash: dataHash(data) };
+    const written = await write(client, cwd, kind, data);
+    const out = { work: data.id, eventId: written.id, pushed: written.pushed === true, ...(typeof hash === 'string' ? { hash } : {}), recordHash: dataHash(data) };
+    if (!needsApproval(data)) return out;
+    const { views } = await viewsOf(client, cwd);
+    const approval = views.work?.[data.id]?.approval;
+    if (approval?.hash === hash && approval?.lane === data.lane) return { ...out, approved: true };
+    try {
+      return { ...out, card: await card({ client, cwd, input: approveWorkInput(data, override), now }) };
+    } catch (error) {
+      if (error instanceof CliError && error.message.startsWith('Already ')) return { ...out, approved: true };
+      throw error;
+    }
   }
   if (kind === 'amendment') {
     // The read-back is said, not stored: the event is the amendment as the foreman applies it.

@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { main, readInput, SEAT_WRITES, SEAT_REFUSAL, seatRefusal, RECORD_KINDS, MEANWHILE, CHECKS_UNSAID, RECENT_MS, RECENT_LEAD } from '../../../scripts/frontdesk/cli.js';
 import { cardsDue } from '../../../scripts/hooks/board-context.js';
 import { numberedWaiting } from '../../../scripts/board/model.js';
-import { composeCard } from '../../../scripts/cards/compose.js';
+import { composeCard, whatProblem } from '../../../scripts/cards/compose.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { briefText, wholeBrief, BRIEF_WORDS_MOST } from '../../../scripts/state/brief.js';
 import { makeEvent, dataHash, listEvents, confirmationFor, PROTECTED_KINDS } from '../../../scripts/state/events.js';
@@ -27,7 +27,7 @@ import { stateDir, computerId } from '../../../scripts/lib/paths.js';
 import { SINCE_LEAD } from '../../../scripts/cards/panel-words.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
-import { approvalLine, answerLine, chatCopy, ciPushLine, confirmLine, keepControlLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
+import { approveWorkLine, approvalLine, answerLine, chatCopy, ciPushLine, confirmLine, keepControlLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
 import { writeJsonFile, runningFile, sessionFile } from '../../../scripts/watcher/waker.js';
 import { setStop, stopState } from '../../../scripts/lib/stop.js';
 import { decide as cardCheck, cardProblems } from '../../../scripts/hooks/card-check.js';
@@ -871,21 +871,25 @@ test('record brief refuses what can\'t stand, before anything is written', async
 test('record work, amendment, incident and note write the build loop\'s kinds', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
+    const dir = projectWithDoc('export-csv');
+    const at = { cwd: dir };
+    const docHash = createHash('sha256').update('The brief.\n').digest('hex');
     const records = {
-      work: { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'feature', visible: true, dependsOn: [] },
-      amendment: { work: 'export-csv', change: 'Add a total row', hash: DOC },
+      work: { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'feature', visible: true, dependsOn: [], doc: { path: 'docs/export-csv.md', hash: docHash } },
+      amendment: { work: 'export-csv', change: 'Add a total row', hash: docHash },
       incident: { id: 'bad-total', what: 'Totals are wrong on the invoice page' },
       // The no-blame account once an incident is over (intake, route 1).
       note: { incident: 'bad-total', text: 'A rounding change reached the invoice page; the fix and a check are in.' },
     };
     for (const [kind, data] of Object.entries(records)) {
       const input = kind === 'amendment' ? { ...data, readBack: READ_BACK } : data;
-      const out = await run(helper, ['record', kind], JSON.stringify(input));
+      const out = await run(helper, ['record', kind], JSON.stringify(input), at);
       assert.equal(out.code, 0, out.err);
-      assert.deepEqual(helper.writes().at(-1), { cwd: CWD, kind, data });
-      assert.equal(out.json.id, helper.held.at(-1).id);
+      assert.deepEqual(helper.writes().filter((w) => w.kind === kind).at(-1), { cwd: dir, kind, data });
+      const written = kind === 'work' ? helper.held.find((e) => e.kind === 'work') : helper.held.at(-1);
+      assert.equal(out.json[kind === 'work' ? 'eventId' : 'id'], written.id);
     }
-    assert.deepEqual(helper.held.map((e) => e.kind), ['work', 'amendment', 'incident', 'note']);
+    assert.deepEqual(helper.held.map((e) => e.kind), ['work', 'card', 'asked', 'amendment', 'incident', 'note']);
     for (const kind of ['idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal']) assert.ok(RECORD_KINDS.includes(kind), kind);
   });
 });
@@ -893,19 +897,21 @@ test('record work, amendment, incident and note write the build loop\'s kinds', 
 test('record work refuses the quick lane for work users would see, unless it is ready-made work carried on (scenario 7)', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
+    const dir = projectWithDoc('order-button-blue');
     const work = { id: 'order-button-blue', title: 'Make the order button blue', lane: 'quick', visible: true, dependsOn: [] };
     const refused = await run(helper, ['record', 'work'], JSON.stringify(work));
     assert.equal(refused.code, 1);
     assert.match(refused.err, /Work users would see goes in the small lane at least, shown to the director first/);
     assert.equal(helper.held.length, 0, 'nothing refused was written');
     // Quick work users won't see, and the same work in the small lane, are written.
-    for (const data of [{ ...work, visible: false }, { ...work, lane: 'small' }]) {
-      const out = await run(helper, ['record', 'work'], JSON.stringify(data));
+    for (const data of [{ ...work, visible: false }, { ...work, lane: 'small', doc: 'docs/order-button-blue.md' }]) {
+      const out = await run(helper, ['record', 'work'], JSON.stringify(data), { cwd: dir });
       assert.equal(out.code, 0, out.err);
     }
     // Ready-made work (an archive of another setup's instructions) is always shown, whatever its lane.
     const from = { sha: 'a'.repeat(40), ref: 'refs/wheelhouse/from/archive-1' };
-    const archive = await run(helper, ['record', 'work'], JSON.stringify({ ...work, id: 'archive-1', from }));
+    fs.writeFileSync(path.join(dir, 'docs', 'archive-1.md'), 'Archive.\n');
+    const archive = await run(helper, ['record', 'work'], JSON.stringify({ ...work, id: 'archive-1', from, doc: 'docs/archive-1.md' }), { cwd: dir });
     assert.equal(archive.code, 0, archive.err);
   });
 });
@@ -913,10 +919,11 @@ test('record work refuses the quick lane for work users would see, unless it is 
 test('record work and card refuse an event id where a work id belongs, naming the slug when it is known', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
-    const work = { id: 'statement-import', title: 'Import a statement', lane: 'small', visible: true, dependsOn: [] };
-    const first = await run(helper, ['record', 'work'], JSON.stringify(work));
+    const dir = projectWithDoc('statement-import');
+    const work = { id: 'statement-import', title: 'Import a statement', lane: 'small', visible: true, dependsOn: [], doc: 'docs/statement-import.md' };
+    const first = await run(helper, ['record', 'work'], JSON.stringify(work), { cwd: dir });
     assert.equal(first.code, 0, first.err);
-    const eventId = helper.held.at(-1).id;
+    const eventId = first.json.eventId;
     const before = helper.held.length;
     const next = { id: 'statement-export', title: 'Export a statement', lane: 'small', visible: true };
     const known = await run(helper, ['record', 'work'], JSON.stringify({ ...next, dependsOn: [eventId] }));
@@ -932,15 +939,118 @@ test('record work and card refuse an event id where a work id belongs, naming th
   });
 });
 
+// A project folder holding a brief at docs/<name>.md, for the tests of `record work`'s own card.
+function projectWithDoc(name, text = 'The brief.\n') {
+  const dir = tempFolder('wh-frontdesk-work-');
+  fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'docs', `${name}.md`), text);
+  return dir;
+}
+const approvalEvents = (target) => [makeEvent({ kind: 'action', now: () => T(300), data: { action: 'approve-work', ...target, question: 'as shown', label: 'Approve' } })];
+const cardsOf = (helper) => helper.held.filter((e) => e.kind === 'card');
+
+test('record work composes, records and prints the approve-work card for a small or feature work', async () => {
+  await inHome(async () => {
+    for (const [lane, id] of [['small', 'statement-import'], ['feature', 'export-csv']]) {
+      const helper = fakeHelper();
+      const dir = projectWithDoc(id);
+      const work = { id, title: 'Import a statement.', lane, visible: true, dependsOn: [], doc: `docs/${id}.md` };
+      const out = await run(helper, ['record', 'work'], JSON.stringify(work), { cwd: dir });
+      assert.equal(out.code, 0, out.err);
+      assert.equal(out.json.work, id);
+      assert.equal(out.json.eventId, helper.held.find((e) => e.kind === 'work').id);
+      assert.ok(!('id' in out.json), 'no id key: the uuid is eventId');
+      assert.match(out.json.hash, /^[0-9a-f]{64}$/);
+      assert.equal(cardsOf(helper).length, 1, 'a card event was written');
+      const line = approveWorkLine(id, lane, out.json.hash, { shownFirst: true });
+      // The printed question is the chat's copy, without the set line; the card as recorded holds it.
+      assert.equal(cardsOf(helper)[0].data.line, line);
+      assert.ok(cardsOf(helper)[0].data.question.includes(line));
+      assert.match(out.json.card.question.question, new RegExp(`Work ${id}: Import a statement\\.`));
+      assert.equal(typeof out.json.card.id, 'string');
+      assert.equal(cardsOf(helper)[0].id, out.json.card.id);
+      assert.equal(whatProblem('approve-work', cardsOf(helper)[0].data.parts.what, { work: id, lane, hash: out.json.hash, shownFirst: true }), null);
+    }
+  });
+});
+
+test('record work asks no card for work users will not see, in the quick or bug lane', async () => {
+  await inHome(async () => {
+    for (const lane of ['quick', 'bug']) {
+      const helper = fakeHelper();
+      const out = await run(helper, ['record', 'work'], JSON.stringify({ id: `fix-${lane}`, title: 'Tidy a script', lane, visible: false, dependsOn: [] }));
+      assert.equal(out.code, 0, out.err);
+      assert.ok(!('card' in out.json), lane);
+      assert.equal(out.json.work, `fix-${lane}`);
+      assert.equal(cardsOf(helper).length, 0, lane);
+    }
+  });
+});
+
+test('record work refuses an approval with no document, writing nothing', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const out = await run(helper, ['record', 'work'], JSON.stringify({ id: 'statement-import', title: 'Import a statement', lane: 'small', visible: true, dependsOn: [] }));
+    assert.equal(out.code, 1);
+    assert.match(out.err, /an approval names the work's document/);
+    assert.equal(helper.held.length, 0);
+  });
+});
+
+test('record work again for a work already approved at that hash and lane asks nothing and says approved', async () => {
+  await inHome(async () => {
+    const dir = projectWithDoc('statement-import');
+    const work = { id: 'statement-import', title: 'Import a statement', lane: 'small', visible: true, dependsOn: [], doc: 'docs/statement-import.md' };
+    const first = fakeHelper();
+    const made = await run(first, ['record', 'work'], JSON.stringify(work), { cwd: dir });
+    assert.equal(made.code, 0, made.err);
+    const approval = { work: 'statement-import', lane: 'small', hash: made.json.hash, shownFirst: true };
+    const approved = fakeHelper({ events: [...first.held, ...approvalEvents(approval)] });
+    const before = approved.held.length;
+    const again = await run(approved, ['record', 'work'], JSON.stringify(work), { cwd: dir });
+    assert.equal(again.code, 0, again.err);
+    assert.equal(again.json.approved, true);
+    assert.ok(!('card' in again.json));
+    assert.equal(approved.held.length, before + 1, 'only the work event is written');
+  });
+});
+
+test('record work again while its card waits unasked-of brings back the same card', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('statement-import');
+    const work = { id: 'statement-import', title: 'Import a statement', lane: 'small', visible: true, dependsOn: [], doc: 'docs/statement-import.md' };
+    const first = await run(helper, ['record', 'work'], JSON.stringify(work), { cwd: dir });
+    const second = await run(helper, ['record', 'work'], JSON.stringify(work), { cwd: dir });
+    assert.equal(second.code, 0, second.err);
+    assert.equal(second.json.card.id, first.json.card.id);
+    assert.equal(cardsOf(helper).length, 1);
+  });
+});
+
+test('record work takes the card\'s words from a `card` override, which is not stored on the work', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('archive-x');
+    const work = { id: 'archive-x', title: 'Carry on archive x', lane: 'small', visible: true, dependsOn: [], doc: 'docs/archive-x.md', card: { what: 'Work archive-x: move the old instructions across.' } };
+    const out = await run(helper, ['record', 'work'], JSON.stringify(work), { cwd: dir });
+    assert.equal(out.code, 0, out.err);
+    assert.match(out.json.card.question.question, /Work archive-x: move the old instructions across\./);
+    assert.ok(!('card' in helper.held.find((e) => e.kind === 'work').data));
+  });
+});
+
 // The read-back an amendment needs (intake, route 3): what the change does, what it leaves, and when it is done.
 const READ_BACK = { doing: 'The export as one CSV file', notDoing: 'An Excel option', doneWhen: 'The button gives a CSV file that opens in Numbers' };
 
 test('record amendment takes the read-back, refuses without it, and prints the route line and the read-back to say (scenario 26)', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
-    const work = { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'feature', visible: true, dependsOn: [] };
-    await run(helper, ['record', 'work'], JSON.stringify(work));
-    const amendment = { work: 'export-csv', change: 'Make the export CSV, not Excel', hash: DOC };
+    const dir = projectWithDoc('export-csv');
+    const at = { cwd: dir };
+    const work = { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'feature', visible: true, dependsOn: [], doc: 'docs/export-csv.md' };
+    await run(helper, ['record', 'work'], JSON.stringify(work), at);
+    const amendment = { work: 'export-csv', change: 'Make the export CSV, not Excel', hash: createHash('sha256').update('The brief.\n').digest('hex') };
 
     // Without the read-back, or with a part missing, empty or on two lines, nothing is written.
     const bad = [
@@ -948,20 +1058,20 @@ test('record amendment takes the read-back, refuses without it, and prints the r
       { ...READ_BACK, doneWhen: 'Two\nlines' }, { ...READ_BACK, doing: 7 }, { ...READ_BACK, notDoing: ' . ' },
     ];
     for (const readBack of bad) {
-      const refused = await run(helper, ['record', 'amendment'], JSON.stringify({ ...amendment, ...(readBack === undefined ? {} : { readBack }) }));
+      const refused = await run(helper, ['record', 'amendment'], JSON.stringify({ ...amendment, ...(readBack === undefined ? {} : { readBack }) }), at);
       assert.equal(refused.code, 1, JSON.stringify(readBack));
       assert.match(refused.err, /Read the change back first: give readBack as \{ doing, notDoing, doneWhen \}, each one line/);
     }
     assert.equal(helper.held.filter((e) => e.kind === 'amendment').length, 0, 'nothing refused was written');
 
     // With it, the event is the amendment alone, and `say` is the route line and the read-back, in one.
-    const out = await run(helper, ['record', 'amendment'], JSON.stringify({ ...amendment, readBack: { ...READ_BACK, doing: 'The export as one CSV file.' } }));
+    const out = await run(helper, ['record', 'amendment'], JSON.stringify({ ...amendment, readBack: { ...READ_BACK, doing: 'The export as one CSV file.' } }), at);
     assert.equal(out.code, 0, out.err);
     assert.deepEqual(helper.held.at(-1).data, amendment, 'the read-back is said, not stored');
     assert.equal(out.json.say, "I've treated this as a change to work already running; say if it's something else. "
       + 'Doing: The export as one CSV file. Not doing: An Excel option. Done when: The button gives a CSV file that opens in Numbers.');
     // A part that ends in its own mark keeps it, with no full stop after it.
-    const asked = await run(helper, ['record', 'amendment'], JSON.stringify({ ...amendment, readBack: { ...READ_BACK, notDoing: 'Excel, for now!' } }));
+    const asked = await run(helper, ['record', 'amendment'], JSON.stringify({ ...amendment, readBack: { ...READ_BACK, notDoing: 'Excel, for now!' } }), at);
     assert.match(asked.json.say, /Not doing: Excel, for now! Done when:/);
   });
 });

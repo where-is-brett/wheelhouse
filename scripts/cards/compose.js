@@ -353,7 +353,10 @@ export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
   if (typeof commit !== 'string') return null;
   let scanned = kind === 'uninstall' ? what.split(String(target.project)).join(' ') : what;
   // The work's own id is no commit, however much it looks like one.
-  if (typeof target.work === 'string' && target.work !== '') scanned = scanned.split(target.work).join(' ');
+  // Only whole words go: a short slug must not chop a hex token that happens to hold it.
+  if (typeof target.work === 'string' && target.work !== '') {
+    scanned = scanned.replace(new RegExp(`(?<![A-Za-z0-9-])${target.work.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9-])`, 'gi'), ' ');
+  }
   for (const token of scanned.match(/\b[0-9a-f]{7,64}\b/g) ?? []) {
     const looksLikeOne = /[0-9]/.test(token) && (/[a-f]/.test(token) || token.length >= 12);
     const same = commit.startsWith(token) || (abbreviated && token.startsWith(commit));
