@@ -156,6 +156,7 @@ import { clearOtherAgentHolds, hasAgentHolds, recordLift } from '../lineage/chec
 import { agentInFolder, agentOfConfig } from '../agents/names.js';
 import { pathWithNode } from '../lib/claude.js';
 import { run as runProgram } from '../lib/run.js';
+import { PS_ENV, sameStart } from '../lib/start-time.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { stopState } from '../lib/stop.js';
 import claudeSessions, { ROLE_VARIABLE, featureModeOf, sessionEnv, sessionModeOf } from '../../adapters/claude-code/sessions.js';
@@ -681,7 +682,8 @@ export function endProcess(pid) {
 }
 
 // When each of these processes started, as the system says it, in one call:
-// `ps -o pid=,lstart= -p <pids>` on macOS and Linux, Win32_Process's
+// `ps -o pid=,lstart= -p <pids>` on macOS and Linux (in the C locale, so the
+// month comes before the day whatever the computer's own locale), Win32_Process's
 // CreationDate through one PowerShell call on Windows. A Map from pid to the
 // start time, or to null when it can't be had (the process has gone, or the
 // system won't say).
@@ -696,7 +698,7 @@ export async function processStartTimes(pids, { platform = process.platform, run
         '-NoProfile', '-NonInteractive', '-Command',
         `Get-CimInstance Win32_Process -Filter '${filter}' | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.CreationDate.ToUniversalTime().ToString('o') }`,
       ], { timeoutMs: 15000 })
-      : await run('ps', ['-o', 'pid=,lstart=', '-p', wanted.join(',')], { timeoutMs: 5000 });
+      : await run('ps', ['-o', 'pid=,lstart=', '-p', wanted.join(',')], { timeoutMs: 5000, env: PS_ENV });
     for (const line of String(answer.stdout ?? '').split(/\r?\n/)) {
       const m = /^\s*(\d+)\s+(\S.*?)\s*$/.exec(line);
       if (m && found.has(Number(m[1]))) found.set(Number(m[1]), m[2]);
@@ -1056,7 +1058,7 @@ export function makeWaker({
     if (!Number.isInteger(r.pid) || !alive(r.pid)) return { ended: r, why: 'gone' };
     if (typeof r.startTime === 'string') {
       const current = await timeOf(r.pid, runningPids());
-      if (current !== null && current !== r.startTime) return { ended: r, why: 'gone' };
+      if (current !== null && !sameStart(current, r.startTime)) return { ended: r, why: 'gone' };
     }
     // Still running: the time limit decides.
     if (t - at >= maxRunOf(target)) return { ended: r, why: 'overran' };
@@ -1866,7 +1868,7 @@ export function makeWaker({
         // A process is ended when it is live, or has overrun its time and is still the one recorded, and only when its
         // start time can be checked against the record's: a pid whose identity can't be verified is left alone.
         const running = state.live !== undefined || state.why === 'overran';
-        if (running && typeof record.startTime === 'string' && await timeOf(record.pid, [], { fresh: true }) === record.startTime) {
+        if (running && typeof record.startTime === 'string' && sameStart(await timeOf(record.pid, [], { fresh: true }), record.startTime)) {
           kill(record.pid);
         }
         if (claimRecord(target, same) === null) return { stopped: false, why: 'ended elsewhere' };

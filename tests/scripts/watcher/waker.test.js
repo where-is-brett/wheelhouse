@@ -1219,9 +1219,11 @@ test('start times are asked for every running pid in one call, and kept a minute
   assert.equal(asked.length, 3, 'a fresh ask, for a process just started');
 
   const ps = [];
-  const mac = makeStartTimes({ platform: 'darwin', run: async (f, a) => { ps.push([f, a]); return { code: 0, stdout: '   11 Mon Oct 19 08:00:00 2026\n' }; }, now: () => new Date(t) });
+  const env = [];
+  const mac = makeStartTimes({ platform: 'darwin', run: async (f, a, o) => { ps.push([f, a]); env.push(o?.env); return { code: 0, stdout: '   11 Mon Oct 19 08:00:00 2026\n' }; }, now: () => new Date(t) });
   assert.equal(await mac.get(11, [12]), 'Mon Oct 19 08:00:00 2026');
   assert.deepEqual(ps, [['ps', ['-o', 'pid=,lstart=', '-p', '11,12']]]);
+  assert.equal(env[0]?.LC_ALL, 'C', 'ps in the C locale, so a day-first Mac still gives month first');
 });
 
 // ---- The Thoroughness column at each session start (design section 14.6) ----
