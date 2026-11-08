@@ -388,3 +388,39 @@ Branch `feature/crew-page` from `main` once parts 1 and 2 are merged. Spec secti
 - [ ] **Step 5: Commit.** `git commit -am "Crew page: watch a piece, follow it, and tidy up"`
 
 Part 4's pull request: title `Crew visibility: the transcript page`.
+
+## Part 5: The helm: hold, gate, open, hand back
+
+Branch `feature/crew-helm` from `main` once part 2 is merged. Spec sections 8.2, 9.1, 9.2.
+
+### Task 5.1: The hold and its records
+
+**Files:**
+- Create: `scripts/crew/hold.js`
+- Modify: `scripts/state/events.js`, `scripts/state/views.js`, `scripts/frontdesk/cli.js` (`RECORD_KINDS`)
+- Test: `tests/scripts/crew/hold.test.js`, `tests/scripts/state/events.test.js`, `tests/scripts/state/views.test.js`
+
+**Interfaces:**
+- Consumes: `watcherDir(project)` (`scripts/watcher/waker.js:258`). `hold.js` imports it and nothing else from the waker; if that makes an import cycle once 5.2 lands, move `watcherDir` into a small `scripts/watcher/paths.js` that both import.
+- Produces:
+  - Kinds `helm` `{must: ['work', 'at'], may: ['fromStart']}`, `helm-ended` `{must: ['work', 'at'], may: ['why']}`, `helm-note` `{must: ['work', 'text'], may: []}` (`text` at most five lines). All three are requests, not decisions. `helm-note` joins `RECORD_KINDS`.
+  - `views.helm`: `{ [work]: {since, fromStart} }` for each helm not yet ended. `views.helmNotes`: `{ [work]: [{at, text}] }`.
+  - `holdFile(project, work)`: `<watcherDir>/helm/<work>.json`.
+  - `takeHold(project, {work, sessionId, fromStart = false, now}) -> hold`: writes the `helm` event and the hold file `{work, sessionId, at, fromStart, opened: false, pid: null, startTime: null}`. Refuses (throws) when a hold already exists: one writer (rule 8).
+  - `readHold(project, work) -> hold|null`; `holdBySession(project, sessionId) -> hold|null`; `markOpened(project, work, {pid, startTime})`.
+  - `releaseHold(project, work, {why, now})`: removes the file and writes `helm-ended`.
+  - `helmHeld(project, work) -> boolean`: true when the hold file exists, including when it cannot be parsed (a broken hold still holds).
+  - `cleanOrphans(project, views) -> string[]`: removes hold files with no open `views.helm` entry.
+
+- [ ] **Step 1: Write the failing tests**
+  - `hold: take writes the event and the file`: after `takeHold`, `helmHeld` is true and `views.helm.login.since` is set.
+  - `hold: one writer`: a second `takeHold` for the same piece throws.
+  - `hold: a broken file still holds`: the file holds `{` → `helmHeld` is true.
+  - `hold: release ends it`: after `releaseHold`, `helmHeld` is false and `views.helm.login` is absent.
+  - `hold: finds a hold by session id`.
+  - `hold: removes an orphan`: a file with no `helm` event → removed by `cleanOrphans`.
+  - `events: a helm note of six lines is refused`.
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/crew/hold.test.js tests/scripts/state/events.test.js tests/scripts/state/views.test.js`
+- [ ] **Step 3: Implement** `hold.js`, the kinds and the reducers.
+- [ ] **Step 4: Run them and see them pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Helm: the hold and its records"`
