@@ -633,3 +633,34 @@ Branch `feature/crew-helm-desk` from `main` once part 5 is merged. Spec sections
 - [ ] **Step 3: Implement**, then the documents.
 - [ ] **Step 4: Run them and see them pass.**
 - [ ] **Step 5: Commit.** `git commit -am "Helm: take, steer, hand back and now at the front desk"`
+
+## Part 7: Answers at the helm
+
+Branch `feature/crew-helm-answers`, base `main` once part 6 and #400's seat are merged. Spec 9.4 (answers) and its agreement with #400: `recordAnswer` gains one alternative to its role check; the starter-variable test gives way to the hold file for that case only; the entrypoint test stays.
+
+### Task 7.1: A numbered reply in the helm session answers that piece's decision
+
+**Files:**
+- Modify: `scripts/decisions/answer.js` (`recordAnswer`, `startedByScript`), `scripts/hooks/prompt-record.js` (the `recordAnswer` call at about line 925, passing the project's hold lookup), `docs/specs/2026-10-17-wheelhouse-design.md` (the typed-replies section 6.1 note pointing to the crew design's 9.4)
+- Test: `tests/scripts/hooks/prompt-record-reply.test.js`
+
+**Interfaces:**
+- Consumes: `holdBySession(project, sessionId) -> hold | null` (5.1); the pending decision's `work` (from `pendingDecisions`); `parseReply`; `SCRIPT_ENTRYPOINT`.
+- Produces:
+  - `helmSeat({project, sessionId, env}) -> work | null`: the hold's `work` when `holdBySession` names this session, the hold is opened, and `env.CLAUDE_CODE_ENTRYPOINT` is not a script's. The starter variables (`WHEELHOUSE_ROLE` and the rest) are not checked here: the helm session carries the piece's role by design.
+  - `recordAnswer`: when the front-desk path refuses (script start or role), it tries `helmSeat`. On a seat, only decisions whose `work` is the seat's piece count as pending or answered; the reply must name its number (`/^\s*(?:reply\s+)?#?[1-9]/` holds), so a bare letter records nothing and gets no note; the recorded `decision-answer` carries `where: 'helm'` in place of `'chat'`. Every other branch (ambiguous, beyond options, already answered, why, the typed-replies switch) works as at the front desk.
+  - Nothing else changes in `startedByScript` or `sessionRole`; the front desk's path is untouched (list this in the PR body with #400's two files).
+
+- [ ] **Step 1: Write the failing tests**
+  - `helm: a numbered reply records with where helm`: hold for `w1` opened by session `s1`, decision 2 on `w1`, prompt `decision 2: B`, entrypoint `cli`, `WHEELHOUSE_ROLE=feature` → `recorded: true`, the kept record's `data.where === 'helm'`.
+  - `helm: a bare letter records nothing`: prompt `B` → `recorded: false`, no note.
+  - `helm: another piece's decision records nothing`: decision 2 on `w2` → `recorded: false`.
+  - `helm: another session records nothing`: session `s2` → `recorded: false`.
+  - `helm: an unopened hold records nothing`.
+  - `helm: a script entrypoint records nothing`: entrypoint `sdk-cli` → `recorded: false`.
+  - `helm: a second answer meets already answered`: the second `decision 2: A` gets the `already answered` note.
+  - `front desk: a typed reply records with where chat` (the existing test, unchanged, still passes).
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/hooks/prompt-record-reply.test.js`
+- [ ] **Step 3: Implement**, then the design's section 6.1 note.
+- [ ] **Step 4: Run them and see them pass**, with `tests/scripts/hooks/prompt-record.test.js` and `tests/scripts/decisions/reply.test.js`.
+- [ ] **Step 5: Commit.** `git commit -am "Helm: a numbered reply at the helm answers the piece's own decision"`
