@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { configDir, findTranscript, findSubagents } from '../../../scripts/crew/runs.js';
+import { configDir, findTranscript, findSubagents, readTail } from '../../../scripts/crew/runs.js';
 
 function fakeConfig() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crew-runs-'));
@@ -90,4 +90,73 @@ test('rejects a session id with a path separator or ..', () => {
   assert.equal(findTranscript({ sessionId: 'a/x', env }), null);
   assert.equal(findTranscript({ sessionId: 'a\\x', env }), null);
   assert.equal(findTranscript({ sessionId: '', env }), null);
+});
+
+function ev(n) {
+  return JSON.stringify({ type: 'assistant', n });
+}
+
+test('readTail reads only the tail', () => {
+  const { dir } = fakeConfig();
+  const file = path.join(dir, 't.jsonl');
+  const lines = [];
+  let size = 0;
+  for (let n = 0; size < 1024 * 1024; n++) {
+    const line = ev(n);
+    lines.push(line);
+    size += line.length + 1;
+  }
+  fs.writeFileSync(file, lines.join('\n') + '\n');
+  const events = readTail(file, { max: 1024 });
+  assert.ok(events.length > 0);
+  // The oldest event that may appear starts within the last 1024 bytes.
+  let tailBytes = 0;
+  let firstAllowed = lines.length;
+  while (firstAllowed > 0 && tailBytes + lines[firstAllowed - 1].length + 1 <= 1024) {
+    firstAllowed--;
+    tailBytes += lines[firstAllowed].length + 1;
+  }
+  for (const e of events) assert.ok(e.n >= firstAllowed, `event ${e.n} is older than the tail`);
+  assert.equal(events[events.length - 1].n, lines.length - 1);
+  assert.ok(events.length < 100);
+});
+
+test('readTail skips a half-written last line', () => {
+  const { dir } = fakeConfig();
+  const file = path.join(dir, 't.jsonl');
+  fs.writeFileSync(file, `${ev(1)}\n${ev(2)}\n{"type":"assist`);
+  assert.deepEqual(readTail(file).map((e) => e.n), [1, 2]);
+});
+
+test('readTail skips a line that is not JSON', () => {
+  const { dir } = fakeConfig();
+  const file = path.join(dir, 't.jsonl');
+  fs.writeFileSync(file, `${ev(1)}\nnot json at all\n${ev(2)}\n`);
+  assert.deepEqual(readTail(file).map((e) => e.n), [1, 2]);
+});
+
+test('readTail gives [] for a missing file', () => {
+  const { dir } = fakeConfig();
+  assert.deepEqual(readTail(path.join(dir, 'nope.jsonl')), []);
+});
+
+test('readTail gives [] for a link', () => {
+  const { dir } = fakeConfig();
+  const real = path.join(dir, 'real.jsonl');
+  fs.writeFileSync(real, `${ev(1)}\n`);
+  const link = path.join(dir, 'link.jsonl');
+  fs.symlinkSync(real, link);
+  assert.deepEqual(readTail(link), []);
+});
+
+test('readTail does not change the file', () => {
+  const { dir } = fakeConfig();
+  const file = path.join(dir, 't.jsonl');
+  fs.writeFileSync(file, `${ev(1)}\n${ev(2)}\n`);
+  fs.utimesSync(file, new Date(1000 * 1000), new Date(1000 * 1000));
+  const before = fs.statSync(file);
+  readTail(file);
+  const after = fs.statSync(file);
+  assert.equal(after.mtimeMs, before.mtimeMs);
+  assert.equal(after.size, before.size);
 });

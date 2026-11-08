@@ -62,3 +62,48 @@ export function findSubagents(file) {
   found.sort((a, b) => a.mtime - b.mtime || (a.agentId < b.agentId ? -1 : 1));
   return found.map(({ agentId, file: f }) => ({ agentId, file: f }));
 }
+
+// The parsed events of the last `max` bytes of a transcript, oldest first. Opened read-only and
+// never followed through a link; anything that is not a plain file gives []. When the read starts
+// part-way into the file its first line is dropped, and any line that does not parse (such as a
+// half-written last line) is skipped.
+export function readTail(file, { max = 256 * 1024 } = {}) {
+  if (typeof file !== 'string' || !(max > 0)) return [];
+  const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0);
+  let fd;
+  try {
+    fd = fs.openSync(file, flags);
+  } catch {
+    return [];
+  }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) return [];
+    const start = Math.max(0, st.size - max);
+    const length = st.size - start;
+    if (length === 0) return [];
+    const buf = Buffer.alloc(length);
+    let got = 0;
+    while (got < length) {
+      const n = fs.readSync(fd, buf, got, length - got, start + got);
+      if (n === 0) break;
+      got += n;
+    }
+    const lines = buf.toString('utf8', 0, got).split('\n');
+    if (start > 0) lines.shift();
+    const events = [];
+    for (const line of lines) {
+      if (line.trim() === '') continue;
+      try {
+        events.push(JSON.parse(line));
+      } catch {
+        // not JSON, or still being written
+      }
+    }
+    return events;
+  } catch {
+    return [];
+  } finally {
+    fs.closeSync(fd);
+  }
+}
