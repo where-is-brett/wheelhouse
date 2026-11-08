@@ -174,7 +174,7 @@ test('the intake\'s bug route names where the report goes and records it with it
     assert.equal(JSON.parse(out).hash, work.data.doc.hash);
   } finally { fs.rmSync(project, { recursive: true, force: true }); }
   // The approve-work card's target names what the composer takes.
-  assert.match(route, /`target` `\{"work": "<id>", "lane": "bug", "hash": "<the hash record printed>", "shownFirst": true\}`/);
+  assert.match(route, /ask it as printed/);
 });
 
 test('the playbook gives JSON input from a file in the scratchpad, written with the Write tool, never a heredoc or a pipe (F81)', () => {
@@ -423,7 +423,7 @@ test('the playbook offers a GitLab or GitHub connector once, recommends Not now 
   assert.match(section, /`mcpServers` in `\.claude\/wheelhouse\.json`/);
   assert.match(section, /no agent edits it directly/);
   assert.match(section, /reviewed pull request with the director's approval/);
-  assert.match(section, /`approve-work` card/);
+  assert.match(section, /ask the `card` that `record work` printed/);
   assert.match(section, /write tools come with it/);
   assert.match(section, /I never depend on it/);
   assert.ok(CARD_KINDS.includes('question'));
