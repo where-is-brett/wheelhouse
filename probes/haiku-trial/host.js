@@ -199,8 +199,14 @@ export function buildRealIo(env = process.env) {
     // Option 2 of section 5.5: the app, and a Cloudflare quick tunnel to it, both left running until `restore`.
     async startTunnel({ dir }) {
       if (run('cloudflared', ['--version']).error) throw new Error('cloudflared is not installed, so the tunnel preview cannot start');
-      const app = spawn('npm', ['start'], { cwd: dirOf(dir), detached: true, stdio: 'ignore', env: { ...process.env, PORT: '4173', LEDGER_DB: ':memory:' } });
-      const tunnel = spawn('cloudflared', ['tunnel', '--url', 'http://127.0.0.1:4173'], { detached: true, stdio: 'ignore' });
+      if (!fs.existsSync(path.join(dirOf(dir), 'package.json'))) throw new Error(`the tunnel preview has no product to serve: ${dir} has no package.json yet`);
+      // A start that fails is reported as the step's error; unheard, it would end the runner.
+      const started = (child, what) => new Promise((resolve, reject) => {
+        child.once('spawn', () => resolve(child));
+        child.once('error', (error) => reject(new Error(`the tunnel preview's ${what} did not start: ${error.message}`)));
+      });
+      const app = await started(spawn('npm', ['start'], { cwd: dir, detached: true, stdio: 'ignore', env: { ...process.env, PORT: '4173', LEDGER_DB: ':memory:' } }), 'product');
+      const tunnel = await started(spawn('cloudflared', ['tunnel', '--url', 'http://127.0.0.1:4173'], { detached: true, stdio: 'ignore' }), 'tunnel');
       app.unref();
       tunnel.unref();
       return { productPid: app.pid, tunnelPid: tunnel.pid };

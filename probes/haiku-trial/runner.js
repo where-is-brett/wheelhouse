@@ -407,8 +407,9 @@ export const STEPS = [
     async run(ctx, io) {
       if (ctx.preview === 'vercel') await directorAsk(ctx, `Connect Vercel to ${ctx.repoSlug} with Deployment Protection off for previews, then answer done.`);
       else if (ctx.preview === 'tunnel') {
-        const got = await io.host.startTunnel({ dir: ctx.projectDir });
-        await note(ctx, 'tunnel', 'preview tunnel started', { detail: { productPid: got.productPid, tunnelPid: got.tunnelPid } });
+        // The tunnel serves the product from the project's folder, which the seed step makes, so it starts there.
+        ctx.state.tunnelWanted = true;
+        await note(ctx, 'create-preview', 'previews by tunnel: it starts once the project is seeded');
       } else await note(ctx, 'create-preview', 'no previews: the pictures rows are not covered');
     },
   },
@@ -442,6 +443,10 @@ export const STEPS = [
       await io.host.git(['remote', 'add', 'origin', ctx.remote], { cwd: ctx.projectDir });
       await io.host.git(['push', '-u', 'origin', 'main'], { cwd: ctx.projectDir });
       await note(ctx, 'seed', `seeded and pushed ${made.sha ?? ''}`);
+      if (ctx.state.tunnelWanted) {
+        const got = await io.host.startTunnel({ dir: ctx.projectDir });
+        await note(ctx, 'tunnel', 'preview tunnel started', { detail: { productPid: got.productPid, tunnelPid: got.tunnelPid } });
+      }
     },
   },
   {
