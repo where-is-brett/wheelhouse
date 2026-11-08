@@ -123,7 +123,7 @@ async function main() {
     const first = featureStartCall({ sessionId: resumeId, prompt: 'Reply with the single word ready.', ...common });
     const ran = spawnSync(first.file, first.args, { cwd: project.dir, env: first.env, input: first.input, encoding: 'utf8', timeout: 180000 });
     report.firstRun = { status: ran.status, entrypoints: [...new Set(records(logFile).map((r) => r.entrypoint))] };
-    if (ran.status !== 0) throw new Error(`the -p start failed (status ${ran.status}): ${String(ran.stderr).slice(0, 300)}`);
+    if (ran.status !== 0) throw new Error(`the -p start failed (status ${ran.status}): ${String(ran.stderr).slice(0, 300)} ${String(ran.stdout).slice(0, 300)} ${ran.error?.message ?? ""}`);
     // 2. Resuming form, 3. starting form.
     const forms = [
       ['resume', featureHelmCall({ sessionId: resumeId, start: false, ...common }), true],
