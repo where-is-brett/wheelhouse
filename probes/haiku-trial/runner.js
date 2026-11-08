@@ -191,6 +191,7 @@ async function tick(ctx) {
     state.pace = `${open.size},${features}`;
     await note(ctx, LOG.pace, `building ${open.size}, feature ${features}`);
   }
+  await linkLateWork(ctx, events);
   // P4's decisions are the live decision script's own (s9), so the stand-in leaves them to it.
   const skipWork = [state.pieces.P4?.change].filter((w) => typeof w === 'string');
   await io.host.answerCards({ project: ctx.projectName, tmux: io.tmux, events, session: ctx.session ?? DESK, skipWork });
@@ -240,22 +241,57 @@ async function deskFree(ctx) {
   if (!free) await note(ctx, LOG.health, 'a picker stayed open in the front desk for 10 minutes; typing anyway');
 }
 
+// The stand-in director's reply when a request is met with questions in the chat and no card: what a director who takes
+// every recommendation would say.
+export const FOLLOW_UP = 'Go with what you recommend on each question, and take it to a card.';
+
 async function typeRequest(ctx, id, text = pieceOf(id).text) {
   const { io, state } = ctx;
   await deskFree(ctx);
   const known = new Set((await io.host.events({ project: ctx.projectName })).filter((e) => e.kind === 'work').map((e) => e.data?.id));
   let answered = false;
+  let followed = false;
+  const before = io.tmux.capture(DESK);
+  state.pieces[id] = { ...(state.pieces[id] ?? {}), typedFrom: iso(ctx) };
   io.tmux.type(DESK, text);
+  const started = io.clock.now();
+  let last = '';
+  let still = 0;
   const found = [];
   await waitFor(async () => {
     const work = (await io.host.events({ project: ctx.projectName })).filter((e) => e.kind === 'work' && !known.has(e.data?.id));
     if (work.length > 0) { found.push(work[0]); return true; }
-    if (id === 'P8' && !answered && /nobody sees|anyone see|visible/i.test(io.tmux.capture(DESK))) { answered = true; io.tmux.type(DESK, F2_ANSWER); }
+    const pane = io.tmux.capture(DESK);
+    if (id === 'P8' && !answered && /nobody sees|anyone see|visible/i.test(pane)) { answered = true; io.tmux.type(DESK, F2_ANSWER); }
+    still = pane === last ? still + 1 : 0;
+    last = pane;
+    // The desk has finished its reply, made no work, opened no picker, and asked something: the stand-in answers once.
+    if (!followed && id !== 'P8' && still >= 2 && io.clock.now() - started >= 2 * MINUTE && openPicker(pane) === null && /\?/.test(newLines(before, pane))) {
+      followed = true;
+      io.tmux.type(DESK, FOLLOW_UP);
+      await note(ctx, id, `the desk asked questions and made no work; the stand-in answered: ${FOLLOW_UP}`);
+    }
     await tick(ctx);
     return false;
-  }, { io, timeoutMs: 5 * MINUTE, everyMs: 10000 });
-  state.pieces[id] = { ...(state.pieces[id] ?? {}), change: found[0]?.data?.id, typedAt: iso(ctx) };
+  }, { io, timeoutMs: 10 * MINUTE, everyMs: 10000 });
+  state.pieces[id] = { ...state.pieces[id], change: found[0]?.data?.id, typedAt: iso(ctx) };
   await note(ctx, id, found.length > 0 ? `typed; became work ${found[0].data?.id}` : 'typed; no work event seen yet', { work: found[0]?.data?.id });
+}
+
+// A piece whose work was not seen while it was typed is linked to the first work made after it was typed that no other
+// piece has, in the order the pieces were typed.
+async function linkLateWork(ctx, events) {
+  const { state } = ctx;
+  const waiting = Object.entries(state.pieces).filter(([, p]) => p.typedAt && !p.change && p.typedFrom).sort(([, a], [, b]) => (a.typedFrom < b.typedFrom ? -1 : 1));
+  if (waiting.length === 0) return;
+  const claimed = new Set(Object.values(state.pieces).map((p) => p.change).filter(Boolean));
+  for (const [id, piece] of waiting) {
+    const work = events.find((e) => e.kind === 'work' && typeof e.data?.id === 'string' && !claimed.has(e.data.id) && String(e.at ?? '') >= piece.typedFrom);
+    if (!work) continue;
+    piece.change = work.data.id;
+    claimed.add(work.data.id);
+    await note(ctx, id, `became work ${work.data.id} later`, { work: work.data.id });
+  }
 }
 
 async function typeWave(ctx, wave, { only } = {}) {
@@ -501,9 +537,12 @@ export const STEPS = [
   {
     id: 'f3-kill-p1', wave: 2, smoke: true,
     async run(ctx, io) {
-      const piece = ctx.state.pieces.P1?.change ?? 'p1';
+      // P1's work can be linked during the wait (linkLateWork), so its name is read at each look.
+      const pieceNow = () => ctx.state.pieces.P1?.change ?? 'p1';
+      let piece = pieceNow();
       const found = await waitFor(async () => {
         await tick(ctx);
+        piece = pieceNow();
         if (await localCommit(ctx, piece)) return true;
         const branch = ((await io.gh(['api', 'repos/{owner}/{repo}/branches?per_page=100'])) ?? []).map((b) => b.name).find((n) => n.toLowerCase().includes(String(piece).toLowerCase()));
         if (!branch) return false;
