@@ -1,7 +1,7 @@
 // tests/probes/haiku-trial/tmux.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cleanEnv, makeTmux, frontDeskCommand } from '../../../probes/haiku-trial/tmux.js';
+import { cleanEnv, makeTmux, frontDeskCommand, PASTE_SETTLE_MS } from '../../../probes/haiku-trial/tmux.js';
 import { startedByScript } from '../../../scripts/decisions/answer.js';
 
 test('cleanEnv removes every starter variable', () => {
@@ -25,12 +25,17 @@ test('cleanEnv drops what the Claude Code session the runner runs in sets for it
   assert.deepEqual(env, { CLAUDE_CONFIG_DIR: '/trial-config', HOME: '/h' });
 });
 
-test('type sends the text literally then Enter', () => {
+test('type pastes the text as one bracketed paste, waits for it to settle, then presses Enter', () => {
   const calls = [];
-  const tmux = makeTmux({ run: (cmd, args) => { calls.push([cmd, ...args]); return { status: 0, stdout: '' }; } });
-  tmux.type('haiku-trial-desk', '1 B');
+  const tmux = makeTmux({
+    run: (cmd, args) => { calls.push([cmd, ...args]); return { status: 0, stdout: '' }; },
+    pause: (ms) => calls.push(['pause', ms]),
+  });
+  tmux.type('haiku-trial-desk', '-1 B');
   assert.deepEqual(calls, [
-    ['tmux', 'send-keys', '-t', 'haiku-trial-desk', '-l', '1 B'],
+    ['tmux', 'set-buffer', '-b', 'haiku-trial-type', '--', '-1 B'],
+    ['tmux', 'paste-buffer', '-p', '-d', '-b', 'haiku-trial-type', '-t', 'haiku-trial-desk'],
+    ['pause', PASTE_SETTLE_MS],
     ['tmux', 'send-keys', '-t', 'haiku-trial-desk', 'Enter'],
   ]);
 });
