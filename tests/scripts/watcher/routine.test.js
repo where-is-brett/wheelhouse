@@ -10,7 +10,7 @@ import { HAND_DONE, HAND_GOAL } from '../../../scripts/lib/by-hand-done.js';
 import { FOREMAN_QUESTIONS } from '../../../scripts/lib/build-loop.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import { holdFile, helmHeld, markOpened, takeHold } from '../../../scripts/crew/hold.js';
+import { holdFile, helmHeld, markOpened, takeHold, releaseHold } from '../../../scripts/crew/hold.js';
 import { featurePaths, writeStatus } from '../../../scripts/feature/files.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { withHome } from '../../helpers/homes.js';
@@ -376,6 +376,22 @@ const helmDeps = (woken, over = {}) => ({
   alive: () => true, startTimeOf: async () => 'Sun Nov  8 02:00:00 2026',
   wakerFor: () => ({ wakeFeature: async (work) => { woken.push(work); } }), ...over,
 });
+
+test('routine: events for a held piece are deferred and run once it is handed back', () => withHome(async () => {
+  await openTestRecord({ project: P });
+  await takeHold(P, { work: 'w-tide-1', sessionId: 's-1' });
+  const { act, calls } = fakeAct();
+  const r = routineOf(state(), act);
+  for (const e of [ev('report', 'w-tide-1'), ev('merge-ready', 'w-tide-1', { pr: 7, detail: { head: 'a'.repeat(40) } }), ev('amended', 'w-tide-1', { detail: { hash: 'b'.repeat(40) } })]) {
+    await r.run({ events: [e] });
+  }
+  assert.deepEqual(calls, [], 'nothing is closed, merged or amended while held');
+  await r.run({ events: [] });
+  assert.deepEqual(calls, [], 'still held on a later run');
+  await releaseHold(P, 'w-tide-1');
+  await r.run({ events: [] });
+  assert.deepEqual(calls.map((c) => c.slice(0, 2)).sort(), [['amend', 'w-tide-1'], ['close', 'w-tide-1'], ['merge', 'w-tide-1']]);
+}));
 
 test('routine: a closed terminal hands back', () => withHome(async () => {
   await openedHold('w-tide-1', { pid: 4242, startTime: 'Sun Nov  8 02:00:00 2026' });

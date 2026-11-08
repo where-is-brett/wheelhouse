@@ -88,6 +88,7 @@ export async function openHelm(project, work, {
     try {
       await takeHold(project, { work, sessionId: kept.sessionId, now });
     } catch (error) {
+      if (error?.code === 'HELD') return refuse(`${work} is already at the helm in another terminal.`);
       return refuse(error instanceof Error ? error.message : `The helm of ${work} could not be taken.`);
     }
   }
@@ -184,6 +185,8 @@ export async function handBack(project, work, {
   }
 }
 
+// A helm opened on Windows gets no build grants (the allowed rules are made for the platform they are read on); Windows is out of
+// scope for now.
 async function main(argv) {
   const [command, work] = argv;
   const say = (line) => process.stderr.write(`${line}\n`);

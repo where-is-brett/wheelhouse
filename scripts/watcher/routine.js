@@ -88,6 +88,8 @@ const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const FOREMAN_ONLY = new Set(FOREMAN_TYPES);
 const keyOf = (move) => [move.act, ...move.args].join(' ');
 
+// The events about one piece that wait while the director has it at the helm.
+const PIECE_EVENTS = new Set(['report', 'amended', 'merge-ready', 'plan-ready', 'question', 'extra-plan', 'stuck-note', 'answer']);
 // The events that need no move and no foreman: they say what happened, and the script's own moves follow from the views.
 const NOTED = ['clash', 'stop', 'incident', 'lift-incident', 'incident-fix', 'approval', 'ci-push'];
 
@@ -113,7 +115,7 @@ const startArgs = (s) => [
 //   defer    events to run again once a hold lifts
 export function triage(state) {
   const {
-    events = [], halt = null, lanes = {}, start = [], build = [], pause = [], merge = [], held = [], ready = [], queue = true,
+    events = [], helmed = [], halt = null, lanes = {}, start = [], build = [], pause = [], merge = [], held = [], ready = [], queue = true,
   } = state ?? {};
   const moves = [];
   const handled = [];
@@ -135,6 +137,12 @@ export function triage(state) {
     const d = isPlain(e.detail) ? e.detail : {};
     const work = e.work;
     const lane = lanes[work] ?? null;
+    // A piece at the helm is not touched: its events are run again once the director hands it back.
+    if (PIECE_EVENTS.has(e.type) && helmed.includes(work)) {
+      handled.push(e.id);
+      defer.push(e);
+      continue;
+    }
     switch (e.type) {
       case 'work-ready': {
         const s = start.find((x) => x.work === work);
@@ -369,7 +377,7 @@ export function makeRoutine({
       }
       // A piece the director holds at its helm is waiting on purpose, whatever the facts say: its stillness is no trouble.
       const helmed = [...again, ...mine].map((e) => e.work).filter((w) => typeof w === 'string' && helmHeld(project, w));
-      const t = triage({ ...state, held: [...(Array.isArray(state.held) ? state.held : []), ...helmed], events: [...again, ...mine], queue: false });
+      const t = triage({ ...state, held: [...(Array.isArray(state.held) ? state.held : []), ...helmed], helmed, events: [...again, ...mine], queue: false });
       for (const id of t.handled) out.handled.add(id);
       for (const e of t.defer) deferred.set(e.id, e);
       for (const { event, reason } of t.wake) {

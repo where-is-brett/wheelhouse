@@ -103,7 +103,7 @@ export async function takeHold(project, { work, sessionId, fromStart = false, no
   try {
     putJson(file, hold, { exclusive: true });
   } catch (error) {
-    if (error.code === 'EEXIST') throw new Error(`The helm of ${work} is already held`);
+    if (error.code === 'EEXIST') throw Object.assign(new Error(`The helm of ${work} is already held`), { code: 'HELD' });
     throw error;
   }
   try {
@@ -115,17 +115,19 @@ export async function takeHold(project, { work, sessionId, fromStart = false, no
   return hold;
 }
 
-// Notes that the helm's terminal is open: its process id and the time that process started, so a terminal closed without
-// `/exit` can be told from one still open.
-export function markOpened(project, work, { pid, startTime }) {
+// Notes that the helm's terminal is open: the session's process id and the time that process started, so a terminal closed
+// without `/exit` can be told from one still open, and the id of the helm process itself (`holder`), which hands the piece
+// back once the session exits: the session-end hook leaves a hold with a live holder to it.
+export function markOpened(project, work, { pid, startTime, holder = process.pid }) {
   const hold = readHold(project, work);
   if (hold === null) return null;
-  const next = { ...hold, opened: true, pid, startTime };
+  const next = { ...hold, opened: true, pid, startTime, holder };
   putJson(holdFile(project, work), next);
   return next;
 }
 
-// Hands the piece back: the file goes, then the `helm-ended` record.
+// Hands the piece back: the file goes, then the `helm-ended` record. In that order, so a failed record write leaves the piece
+// free; the next hold or the orphan clear (`cleanOrphans`) puts the view right.
 export async function releaseHold(project, work, { why, now = () => new Date() } = {}) {
   const file = holdFile(project, work);
   const data = { work, at: now().toISOString(), ...(typeof why === 'string' && why !== '' ? { why } : {}) };

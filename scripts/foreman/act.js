@@ -1469,6 +1469,7 @@ async function close(ctx, work, rest) {
     ctx.say(`${work} is closed already.`);
     return;
   }
+  if (atTheHelm(ctx, work)) return;
   const worktree = worktreeOf(ctx.project, views, work);
   let missing;
   try {
@@ -1620,6 +1621,10 @@ async function restart(ctx, work, rest) {
   const f = liveFeature(views, work);
   refuseDirectorsPause(work, f);
   ctx.refuseHalted(views, `${work} can't be restarted`, laneOf(views, work));
+  if (helmHeld(ctx.project, work)) {
+    ctx.say(`${work} is with the director at the helm. The wake waits until they hand it back.`);
+    return;
+  }
   const worktree = worktreeOf(ctx.project, views, work);
   const kept = readPrRecord(worktree);
   const held = kept === null || kept.merged ? null : holdingReview(views, kept.pr);

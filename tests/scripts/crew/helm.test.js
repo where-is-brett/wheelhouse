@@ -110,11 +110,33 @@ test('helm: waits for a live run', async () => {
     fs.writeFileSync(running, JSON.stringify({ state: 'running', pid: process.pid, at: now().toISOString() }));
     const said = [];
     const spawned = [];
-    setTimeout(() => fs.rmSync(running, { force: true }), 60);
-    const out = await openHelm(p, 'login', { ...base, print: (l) => said.push(l), spawn: stubSpawn(spawned, { before: () => assert.equal(fs.existsSync(running), false) }) });
+    // The run ends while the helm waits, on the helm's own wait rather than a timer.
+    const sleep = async () => { fs.rmSync(running, { force: true }); };
+    const out = await openHelm(p, 'login', { ...base, sleep, print: (l) => said.push(l), spawn: stubSpawn(spawned, { before: () => assert.equal(fs.existsSync(running), false) }) });
     assert.equal(out.code, 0);
     assert.equal(spawned.length, 1);
     assert.deepEqual(said, ["Waiting for the crew's current step on login to finish…"]);
+  });
+});
+
+test('helm: a lost race on the hold says the piece is at the helm in another terminal', async () => {
+  await withHome(async (p) => {
+    await openPiece(p, 'login');
+    const spawned = [];
+    // Another terminal takes the hold after this one looked and before it takes it: the clock is read just before the take.
+    let raced = false;
+    const racingNow = () => {
+      if (!raced) {
+        raced = true;
+        fs.mkdirSync(path.dirname(holdFile(p, 'login')), { recursive: true });
+        fs.writeFileSync(holdFile(p, 'login'), '{}\n');
+      }
+      return now();
+    };
+    const out = await openHelm(p, 'login', { ...base, now: racingNow, spawn: stubSpawn(spawned) });
+    assert.equal(out.code, 1);
+    assert.equal(out.why, 'login is already at the helm in another terminal.');
+    assert.equal(spawned.length, 0);
   });
 });
 

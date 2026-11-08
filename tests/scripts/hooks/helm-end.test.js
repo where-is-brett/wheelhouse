@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { decide } from '../../../scripts/hooks/helm-end.js';
-import { takeHold, helmHeld } from '../../../scripts/crew/hold.js';
+import { takeHold, helmHeld, markOpened } from '../../../scripts/crew/hold.js';
 import { readWake } from '../../../scripts/watcher/waker.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -43,6 +43,20 @@ test('helm-end: hands back the held session', async () => {
     assert.equal(helmHeld(P, 'login'), false);
     assert.equal(woken.length, 1);
     assert.equal(woken[0].work, 'login');
+  });
+});
+
+test('helm-end: leaves a hold whose helm process is alive, and hands back one whose helm process is gone', async () => {
+  await withHome(async () => {
+    await takeHold(P, { work: 'login', sessionId: 's-1' });
+    markOpened(P, 'login', { pid: 4242, startTime: null, holder: 9999 });
+    const woken = [];
+    await decide(input('s-1'), deps(woken, { alive: (pid) => pid === 9999 }));
+    assert.equal(helmHeld(P, 'login'), true);
+    assert.equal(woken.length, 0);
+    await decide(input('s-1'), deps(woken, { alive: () => false }));
+    assert.equal(helmHeld(P, 'login'), false);
+    assert.equal(woken.length, 1);
   });
 });
 
