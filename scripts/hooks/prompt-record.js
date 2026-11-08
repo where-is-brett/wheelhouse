@@ -61,7 +61,7 @@ import {
 } from '../state/card-lines.js';
 import {
   chatCopy, setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
-  RELEASE_LABEL, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LABEL, UPDATE_LINE, TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE,
+  RELEASE_LABEL, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LABEL, UPDATE_LINE, TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, SEAT_TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE,
 } from '../state/card-lines.js';
 import {
   keepClick, shownHash, keepAnswer, askedFor, claimAnswer, claimedAt, noteClaimed, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords, sameWords,
@@ -73,7 +73,7 @@ import { switchLabelOf } from '../routing/nudge.js';
 import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
 import { offeredFrom, premiumValueOf, PREMIUM_CARD_MS } from '../routing/premium.js';
 import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures, cardText, sweepStale, cardHash } from '../lib/measures-clicks.js';
-import { localViews, lockFreeNow } from './session-start.js';
+import { localViews, lockFreeNow, FRONT_DESK_LINE } from './session-start.js';
 import { cardOutcomes } from '../state/views.js';
 import { clearOpen } from '../lib/session-files.js';
 import { cardProblems } from './card-check.js';
@@ -86,7 +86,7 @@ import { settingKey, UNATTENDED_CARD, USE_GUARDED } from '../protection/windows-
 import { startedAsScript } from '../lib/started-as-script.js';
 import { recordAnswer, startedByScript } from '../decisions/answer.js';
 import { sessionRole } from '../lib/role.js';
-import { readSeat, takeSeat, refreshSeat } from '../lib/first-mate-seat.js';
+import { readSeat, takeSeat, refreshSeat, handOverSeat } from '../lib/first-mate-seat.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const SHA12 = '([0-9a-f]{12})(?![0-9a-fA-F])';
@@ -334,6 +334,16 @@ function takeOverOf(question, label, shown) {
   return { made: { kind: 'action', data: { action: 'take-over', holder: m[1], counter: Number(m[2]), question: lines[0], label } }, takeOver: true };
 }
 
+// The click on the card that offers the First Mate's seat to this window: the made record, which the hook acts on by moving the
+// seat once the record is sent. A separate action from `take-over`, so the helper's lock take-over never reads it.
+function seatTakeOverOf(question, label, shown) {
+  if (label !== TAKEOVER_LABEL || shown?.question !== question) return null;
+  const lines = setLinesOf(question);
+  const m = lines.length === 1 ? SEAT_TAKEOVER_LINE.exec(lines[0]) : null;
+  if (!m) return null;
+  return { made: { kind: 'action', data: { action: 'seat-take-over', session: m[1], since: m[2], question: lines[0], label } }, seatTakeOver: true };
+}
+
 // The setting a premium card for `project` is offered from now, as the last sync's views hold it (a Yes whose
 // evaluation failed counts as off), or null when they can't be read.
 function premiumNow({ project }) {
@@ -373,6 +383,7 @@ export async function earned({ project, question, label, card, client, now, left
   if (setLinesOf(question).some((line) => USAGE_LINE.test(line))) return usageOf(project, question, label, card, now, ready);
   if (setLinesOf(question).some((line) => PREMIUM_LINE.test(line))) return premiumClickOf(project, question, label, card, now, premiumIn);
   if (setLinesOf(question).some((line) => TAKEOVER_LINE.test(line))) return takeOverOf(question, label, card);
+  if (setLinesOf(question).some((line) => SEAT_TAKEOVER_LINE.test(line))) return seatTakeOverOf(question, label, card);
   if (setLinesOf(question).some((line) => PAIR_LINE.test(line) || UNPAIR_LINE.test(line))) return pairOf(question, label);
   // The card for a Wheelhouse release that is not pins-only (update design, section 6.2): its one set line names the tag and
   // the commit in full, and the click earns an action naming both, which only the release's reviewed change counts.
@@ -902,7 +913,7 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
     // A setup card, setup's card of the rules found, a trust card, uninstall's card, a Keep card, a usage card and the
     // premium model's card have no reply code (rulings R36, R80, R90, P7-31; design section 14.6): only the click on
     // the card itself counts.
-    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || TAKEOVER_LINE.test(line) || UNINSTALL_LINE.test(line) || KEEP_CONTROL_LINE.test(line) || USAGE_LINE.test(line) || PREMIUM_LINE.test(line)) continue;
+    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || TAKEOVER_LINE.test(line) || SEAT_TAKEOVER_LINE.test(line) || UNINSTALL_LINE.test(line) || KEEP_CONTROL_LINE.test(line) || USAGE_LINE.test(line) || PREMIUM_LINE.test(line)) continue;
     const code = replyCode(line);
     const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
     if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;
@@ -927,6 +938,38 @@ async function takeFreeSeat({ project, input, env, now, client, left }) {
     if (readSeat(project)?.session === session) refreshSeat(project, session, { now });
     else await takeSeat(project, { session, folder: input.cwd }, { now });
   } catch { /* the seat is taken at a later hook */ }
+}
+
+// Whether `session` is a window that doesn't hold the First Mate's seat: another session holds it, or this window chose to be an
+// aside. A session with no id (a script or test) is never judged so.
+function isAside({ project, input, env }) {
+  const session = input.session_id;
+  if (typeof session !== 'string' || session === '') return false;
+  try {
+    return sessionRole({ sessionId: session, env, cwd: input.cwd, seat: readSeat(project) }) === 'aside';
+  } catch {
+    return false;
+  }
+}
+
+const isSeatTakeOverClick = (click) => click.label === TAKEOVER_LABEL && setLinesOf(click.question).some((line) => SEAT_TAKEOVER_LINE.test(line));
+
+const ASIDE_CLICK_LINE = 'Wheelhouse: the director\'s click in this window was not recorded, because the First Mate is in another window. The take-over card in this window can move the First Mate here.';
+
+// After a seat take-over click was recorded: moves the seat to this window while it still names the session and `since` the
+// card showed. The line it gives is this turn's context.
+async function moveSeat({ project, input, from }) {
+  try {
+    if (readSeat(project)?.session === input.session_id) return null;
+    const done = await handOverSeat(project, { session: input.session_id, folder: input.cwd, from });
+    if (done.moved) return `Wheelhouse: this window is now the First Mate. ${FRONT_DESK_LINE}`;
+    const holder = done.seat?.session;
+    return typeof holder === 'string' && holder !== ''
+      ? `Wheelhouse: the First Mate did not move, because the seat changed hands after that card was shown. Window session ${holder} holds it now, so this window is still an ordinary one. Tell the director in one plain line.`
+      : 'Wheelhouse: the First Mate did not move, because the seat changed after that card was shown, and no window holds it now. Tell the director in one plain line.';
+  } catch {
+    return null;
+  }
 }
 
 // The director's typed reply to a decision shown in the chat (scripts/decisions/answer.js), on UserPromptSubmit. The prompt is
@@ -1003,6 +1046,14 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   } catch {
     // The state can't be read: the answers are recorded as they were given.
   }
+  // A window that doesn't hold the First Mate's seat records no click, except the click that asks to move the seat here.
+  const aside = isAside({ project, input, env });
+  let refusedClicks = 0;
+  if (aside) {
+    const kept = out.filter(isSeatTakeOverClick);
+    refusedClicks = out.length - kept.length;
+    out.splice(0, out.length, ...kept);
+  }
   const api = client ?? helperClient({ timeout: budget });
   const end = Date.now() + budget;
   const left = withinBudget(end);
@@ -1012,6 +1063,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   // after its card's shown record and spends the code.
   const queued = [];
   const takeOvers = [];
+  const seatMoves = [];
   const clock = () => at;
   const shownAt = new Date(at.getTime() - 1);
   const dropped = new Map();
@@ -1022,7 +1074,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   const setupAsked = new Set(out.filter((c) => askedFor({ cwd: input.cwd, card: c.card }) !== null).map((c) => c.question));
   let cards = [];
   try {
-    cards = shownFor(project, input, at, stopState, carrying);
+    cards = aside ? [] : shownFor(project, input, at, stopState, carrying);
   } catch {
     // No reply codes this time; the clicks are still recorded.
   }
@@ -1040,6 +1092,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
       if (got) {
         queued.push(keepEarned(project, got, { now: clock, liftStop, proof }));
         if (got.takeOver) takeOvers.push(queued.at(-1));
+        if (got.seatTakeOver) seatMoves.push({ kept: queued.at(-1), from: { session: got.made.data.session, since: got.made.data.since } });
       }
     } catch {
       // One question failing does not stop the rest; a lift that did not happen leaves no record.
@@ -1049,6 +1102,13 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   for (const kept of queued) sent.set(kept, await sendKept(api, left, kept));
   // A Take over here the helper has the record of: it takes the lock, if the lock still stands as the card named it.
   if (takeOvers.some((kept) => sent.get(kept) === true)) await left(api.lock.takeOver({ project }));
+  // A Take over here on the First Mate's seat, once its record is sent: the seat moves here while it still stands as the card showed it.
+  const moved = [];
+  for (const { kept, from } of seatMoves) {
+    if (sent.get(kept) !== true || typeof input.session_id !== 'string' || input.session_id === '') continue;
+    const line = await moveSeat({ project, input, from });
+    if (line !== null) moved.push(line);
+  }
   // A pick of Suggest a change… on a build's question, which leaves that card as it was and only marks it for its score.
   for (const card of steered) await left(api.state.write({ project, kind: 'chat-steer', data: { card } }));
   // Then the plain answers. What cannot be sent in time is kept.
@@ -1062,7 +1122,8 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
       // Not kept twice: a failure here is a failure to write the file too.
     }
   }
-  return notices === null ? undefined : answer.context('PostToolUse', notices);
+  const told = [...(notices === null ? [] : [notices]), ...(refusedClicks > 0 ? [ASIDE_CLICK_LINE] : []), ...moved];
+  return told.length === 0 ? undefined : answer.context('PostToolUse', told.join('\n'));
 }
 
 if (startedAsScript(import.meta.url)) {

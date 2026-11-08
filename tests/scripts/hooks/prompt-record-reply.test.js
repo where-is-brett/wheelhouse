@@ -2,7 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
 import { stateDir } from '../../../scripts/lib/paths.js';
+import { readSeat, seatFile } from '../../../scripts/lib/first-mate-seat.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { recordAnswer, startedByScript } from '../../../scripts/decisions/answer.js';
 import { pendingDir } from '../../../scripts/hooks/pending.js';
@@ -152,7 +154,7 @@ test('a lone letter while two decisions wait records nothing and says which wait
     raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
     raise('Which harbour comes first on the map?', '2026-11-08T02:00:00.000Z');
     const c = fake();
-    const out = await recordAnswer({ project: P, sessionId: 's-desk', prompt: 'B', at: NOW, cwd: '/x', env: {}, client: c });
+    const out = await recordAnswer({ project: P, seat: { session: 's-desk' }, sessionId: 's-desk', prompt: 'B', at: NOW, cwd: '/x', env: {}, client: c });
     assert.equal(out.recorded, false);
     assert.deepEqual(c.calls.record, []);
     const note = out.note;
@@ -196,10 +198,10 @@ test('a letter beyond the options records nothing and a why records nothing', as
     raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
     const c = fake();
     assert.match(noteOf(await run(c, '1 E')), /offers A to C/);
-    const out = await recordAnswer({ project: P, sessionId: 's-desk', prompt: 'why 1', at: NOW, cwd: '/x', env: {}, client: c });
+    const out = await recordAnswer({ project: P, seat: { session: 's-desk' }, sessionId: 's-desk', prompt: 'why 1', at: NOW, cwd: '/x', env: {}, client: c });
     assert.deepEqual(out.why, { n: 1, words: '' });
     // A longer sentence that starts with why is the director talking: no why, no note.
-    assert.deepEqual(await recordAnswer({ project: P, sessionId: 's-desk', prompt: 'Why is the build slow?', at: NOW, cwd: '/x', env: {}, client: c }), { recorded: false });
+    assert.deepEqual(await recordAnswer({ project: P, seat: { session: 's-desk' }, sessionId: 's-desk', prompt: 'Why is the build slow?', at: NOW, cwd: '/x', env: {}, client: c }), { recorded: false });
     assert.deepEqual(c.calls.record, []);
   });
 });
@@ -268,5 +270,57 @@ test('the same reply records once typed replies are switched on', async () => {
     turnOn();
     await run(c, '1 A');
     assert.equal(c.calls.record[0].event.kind, 'decision-answer');
+  });
+});
+
+// A seat held by another live session: this process's own pid stands for the holder's window.
+const holdSeatFor = (session) => {
+  const file = seatFile(P);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ session, pid: process.pid, pidStart: null, folder: '/x', since: '2026-11-08T09:00:00.000Z', seenAt: '2026-11-08T09:59:00.000Z' }));
+};
+
+test('an aside session\'s typed answer records nothing and says why', async () => {
+  await inHome(async () => {
+    raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    holdSeatFor('b');
+    const c = fake();
+    const out = await run(c, 'B', { session: 'a' });
+    assert.deepEqual(c.calls.record, []);
+    assert.deepEqual(c.calls.write, []);
+    assert.match(noteOf(out), /First Mate is in another window/);
+    assert.match(noteOf(out), /nothing was recorded and the decision still waits/);
+    assert.equal(readSeat(P)?.session, 'b');
+  });
+});
+
+test('an aside session\'s words that answer nothing waiting get no note', async () => {
+  await inHome(async () => {
+    raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    holdSeatFor('b');
+    const c = fake();
+    assert.equal(noteOf(await run(c, 'Thanks, that looks fine', { session: 'a' })), undefined);
+    assert.deepEqual(c.calls.record, []);
+  });
+});
+
+test('the holder\'s typed answer records as today', async () => {
+  await inHome(async () => {
+    raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    holdSeatFor('a');
+    const c = fake();
+    await run(c, 'B', { session: 'a' });
+    assert.deepEqual(kinds(c), ['decision-answer', 'action']);
+  });
+});
+
+test('no session id records as today', async () => {
+  await inHome(async () => {
+    raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    holdSeatFor('b');
+    const c = fake();
+    const out = await recordAnswer({ project: P, prompt: 'B', at: NOW, cwd: '/x', env: {}, client: c });
+    assert.equal(out.recorded, true);
+    assert.deepEqual(kinds(c), ['decision-answer', 'action']);
   });
 });

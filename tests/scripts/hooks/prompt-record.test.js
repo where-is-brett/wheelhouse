@@ -8,7 +8,7 @@ import { decide, sendPending, SIGNED_LABELS, signsOn, storedText } from '../../.
 import { cardHash } from '../../../scripts/lib/measures-clicks.js';
 import { makeEvent, eventPath, dataHash, confirmationFor, eventHash, listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, chatCopy, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf, uninstallLine, trustLine, takeOverLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, chatCopy, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf, uninstallLine, trustLine, takeOverLine, seatTakeOverLine } from '../../../scripts/state/card-lines.js';
 import { profileDir, stateDir, stopFile, computerId } from '../../../scripts/lib/paths.js';
 import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
@@ -17,6 +17,7 @@ import { clicksDir, noteShown, noteAsked, noteUninstallShown, uninstallShownFor,
 import { CLICK_FRESH_MS } from '../../../scripts/lib/setup-numbers.js';
 import { markOpen, readOpen } from '../../../scripts/lib/session-files.js';
 import { readSeat, seatFile } from '../../../scripts/lib/first-mate-seat.js';
+import { FRONT_DESK_LINE } from '../../../scripts/hooks/session-start.js';
 import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
@@ -2011,5 +2012,86 @@ test('a prompt takes no seat while another computer holds the lock', async () =>
     c.lock.read = async () => ({ ok: true, result: { computer: '0a1b2c3d', counter: 4, takenAt: '2026-10-17T00:00:00.000Z', lastWriteAt: '2026-10-18T02:00:00.000Z' } });
     await decide(promptIn('a'), deps(c));
     assert.equal(readSeat(P)?.session, 'a');
+  });
+});
+
+const SEAT_SINCE = '2026-10-18T04:00:00.000Z';
+const writeSeat = (session, since = SEAT_SINCE) => {
+  const file = seatFile(P);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ ...heldSeat(session), since }));
+};
+const seatCard = (holder = 'b', since = SEAT_SINCE) => composeCard({
+  kind: 'take-over', level: 3, what: `The First Mate is in another window, session ${holder}.`, why: 'Only one window is the First Mate at a time.',
+  options: [{ label: 'Take over here', says: 'This window becomes the First Mate.' }, { label: 'Leave it there', says: 'This window stays an ordinary session.' }],
+  recommend: 'Leave it there', because: 'the other window is in use', meanwhile: 'This window changes nothing.', target: { session: holder, since },
+}).question;
+const inSession = (call, session) => ({ ...call, session_id: session });
+
+test('a card click in an aside window is refused', async () => {
+  await withHome(async () => {
+    writeSeat('b');
+    const c = fake();
+    const q = `${approvalLine(7, FULL)}? It changes the sign-in.`;
+    const out = await decide(inSession(input({ [q]: 'Approve' }), 'a'), deps(c));
+    assert.deepEqual([c.calls.record, c.calls.write], [[], []]);
+    assert.match(contextOf(out), /First Mate is in another window/);
+    assert.match(contextOf(out), /take-over card/);
+  });
+});
+
+test('the holder\'s card click records as today', async () => {
+  await withHome(async () => {
+    writeSeat('a');
+    const c = fake();
+    const q = `${approvalLine(7, FULL)}? It changes the sign-in.`;
+    const out = await decide(inSession(input({ [q]: 'Approve' }), 'a'), deps(c));
+    assert.equal(c.calls.record[0].event.kind, 'approval');
+    assert.equal(contextOf(out), '');
+  });
+});
+
+test('Take over here moves the seat', async () => {
+  await withHome(async () => {
+    writeSeat('b');
+    const c = fake();
+    const card = seatCard();
+    const out = await decide(inSession(takeOverAnswer(card, 'Take over here'), 'a'), deps(c));
+    const [rec] = c.calls.record;
+    assert.equal(rec.event.kind, 'action');
+    assert.deepEqual(rec.event.data, { action: 'seat-take-over', session: 'b', since: SEAT_SINCE, question: seatTakeOverLine('b', SEAT_SINCE), label: 'Take over here' });
+    assert.ok(rec.event.sig && verify(rec.event, readEnrolled()));
+    assert.equal(readSeat(P)?.session, 'a');
+    assert.ok(contextOf(out).includes(FRONT_DESK_LINE));
+    assert.deepEqual(c.takeOverCalls, []);
+  });
+});
+
+test('a stale Take over here is refused and names the holder', async () => {
+  await withHome(async () => {
+    writeSeat('b');
+    const card = seatCard();
+    writeSeat('c', '2026-10-18T04:30:00.000Z');
+    const c = fake();
+    const out = await decide(inSession(takeOverAnswer(card, 'Take over here'), 'a'), deps(c));
+    assert.equal(readSeat(P)?.session, 'c');
+    assert.match(contextOf(out), /did not move/);
+    assert.match(contextOf(out), /Window session c holds it now/);
+    assert.deepEqual(c.takeOverCalls, []);
+  });
+});
+
+test('no reply code for the window take-over card', async () => {
+  await withHome(async () => {
+    writeSeat('b');
+    const c = fake();
+    const card = seatCard();
+    assert.equal(card.question.includes('Reply code:'), false);
+    await decide(inSession(takeOverAnswer(card, 'Leave it there'), 'a'), deps(c));
+    assert.deepEqual(c.calls.record, []);
+    // Not even from the holder's window, where a shown record would otherwise be kept.
+    writeSeat('a');
+    await decide(inSession(takeOverAnswer(card, 'Leave it there'), 'a'), deps(c));
+    assert.deepEqual(c.calls.record, []);
   });
 });

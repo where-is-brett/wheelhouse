@@ -17,6 +17,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { sessionRole } from '../lib/role.js';
+import { readSeat } from '../lib/first-mate-seat.js';
 import { ownWords } from '../lib/own-words.js';
 import { helperClient } from '../host/helper-client.js';
 import { helperGrace } from '../lib/helper-grace.js';
@@ -101,15 +102,29 @@ function alreadyNote(n, answer, now) {
 
 // --- Recording ---
 
-// recordAnswer({ project, sessionId, prompt, at, cwd, env, client, budget }) -> { recorded, note?, why? }
-// `why` is { n, words } when the reply asks why of a decision, which records nothing.
+// What a window that isn't the First Mate's is told when the director's words read as an answer to a waiting decision (design
+// section 6.8, case 11): nothing was recorded, and the decision still waits.
+const asideNote = (n) => `The director typed what reads as an answer to decision ${n}, but the First Mate is in another window, so nothing was recorded and the decision still waits. Say so in one plain line: the answer goes in the First Mate's window, or the director can use Take over here to move the First Mate to this one.`;
+
+// recordAnswer({ project, sessionId, prompt, at, cwd, env, client, budget, seat }) -> { recorded, note?, why? }
+// `why` is { n, words } when the reply asks why of a decision, which records nothing. `seat` is the First Mate's seat (read from
+// the project when not given): with a session id, only the session the seat names records.
 export async function recordAnswer({
-  project, sessionId, prompt, at = new Date(), cwd, env = process.env, client, budget = BUDGET_MS + helperGrace(), decisions, on,
+  project, sessionId, prompt, at = new Date(), cwd, env = process.env, client, budget = BUDGET_MS + helperGrace(), decisions, on, seat = readSeat(project),
 }) {
   const now = at instanceof Date ? at : new Date(at);
   if (typeof prompt !== 'string' || typeof project !== 'string') return { recorded: false };
   if (startedByScript(env)) return { recorded: false };
-  if (sessionRole({ sessionId, env, prompt, cwd }) !== 'front-desk') return { recorded: false };
+  const role = sessionRole({ sessionId, env, prompt, cwd, seat });
+  const withId = typeof sessionId === 'string' && sessionId !== '';
+  if (role === 'aside' && withId) {
+    const words = ownWords(prompt);
+    if (words === null) return { recorded: false };
+    const read = parseReply(words, (decisions ?? readDecisions(project)).pending);
+    return read.kind === 'answer' ? { recorded: false, note: asideNote(read.n) } : { recorded: false };
+  }
+  if (role !== 'front-desk') return { recorded: false };
+  if (withId && seat?.session !== sessionId) return { recorded: false };
   const typed = ownWords(prompt);
   if (typed === null) return { recorded: false };
 
