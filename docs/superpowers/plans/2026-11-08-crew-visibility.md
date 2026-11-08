@@ -278,3 +278,30 @@ Branch `feature/crew-watch-level` from `main`. Spec sections 6.1, 6.2, 12.
 - [ ] **Step 5: Commit.** `git commit -am "Intake and front desk: the watch level and its phrases"`
 
 Part 2's pull request: title `Crew visibility: the watch level`.
+
+## Part 3: Steps in the Logbook
+
+Branch `feature/crew-steps` from `main` once parts 1 and 2 are merged. Spec sections 6.3, 7.2.
+
+### Task 3.1: The latest step on a piece's state line
+
+**Files:**
+- Modify: `scripts/crew/runs.js`
+- Modify: `scripts/desk/views.js` (`workLines` at 160, `workState` at 112)
+- Test: `tests/scripts/crew/runs.test.js`, `tests/scripts/desk/views.test.js`
+
+**Interfaces:**
+- Consumes: `runSteps` (1.4), `levelFor` (2.1), `sessionFile` and `runningFile` from `scripts/watcher/waker.js`, `decisionsFrom` from `scripts/decisions/pending.js`.
+- Produces:
+  - `crewNow(project, views, settings, {env}) -> { [work]: {steps, crew} }` in `runs.js`: one entry per piece that has a live run and a level other than `off`, plus `foreman` when the Bosun's running record names a `sessionId`. A piece at `off` is never opened (rule 6). `waiting` is the piece's oldest open decision number from `decisionsFrom`.
+  - `workLines(views, answers, words, prs = {}, crew = {})`: a running piece's state line ends ` · <its latest step>`; no entry, no change.
+
+- [ ] **Step 1: Write the failing tests**
+  - `crewNow: opens nothing at off`: a piece at `off` with a live run → no entry, and a spy on `readTail` saw no call for it.
+  - `crewNow: includes the Bosun`: a `foreman.json` running record with a `sessionId` and a fixture transcript → a `foreman` entry.
+  - `workLines: adds the latest step`: `crew.login.steps` ending ``Reading `a.ts` `` → the line for `login` ends `` · Reading `a.ts` ``.
+  - `workLines: no step, no change`: an empty `crew` → the same lines as before.
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/crew/runs.test.js tests/scripts/desk/views.test.js`
+- [ ] **Step 3: Implement** `crewNow` and the `workLines` parameter; the Logbook's caller passes `crewNow(...)`.
+- [ ] **Step 4: Run them and see them pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Logbook: the latest step on a running piece"`
