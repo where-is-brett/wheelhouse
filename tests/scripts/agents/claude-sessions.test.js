@@ -67,6 +67,18 @@ test('foremanCall passes a session id', () => {
   assert.deepEqual(args.slice(0, 4), ['--session-id', id, '-p', 'go']);
 });
 
+test('foremanCall passes a session id through cmd.exe', () => {
+  const claude = { kind: 'cmd', file: 'C:\\tools\\claude.cmd' };
+  const id = '11111111-2222-3333-4444-555555555555';
+  const call = sessions.foremanCall({ config: {}, prompt: 'go', env: {}, claude, sessionId: id });
+  assert.equal(call.file, 'cmd.exe');
+  const line = call.args[3];
+  const at = line.indexOf(`--session-id ${id}`);
+  assert.ok(at > 0, line);
+  assert.ok(line.indexOf(' -p', at) > at, line);
+  assert.equal(call.input, 'go');
+});
+
 test('foremanCall without one is unchanged', () => {
   const claude = { kind: 'direct', file: 'claude' };
   const { args } = sessions.foremanCall({ config: {}, prompt: 'go', env: {}, claude });

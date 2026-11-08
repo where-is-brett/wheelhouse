@@ -127,23 +127,36 @@ const KEY_PATTERNS = [
   /(api[_-]?key|token|secret|password)\s*[:=]\s*\S{8,}/i,
 ];
 
-// A text holding a key- or token-looking value becomes one fixed line.
+// A text holding a key- or token-looking value becomes one set line.
 export function mask(text) {
   const s = String(text ?? '');
   return KEY_PATTERNS.some((re) => re.test(s)) ? HIDDEN : s;
 }
 
-// Terminal escape codes and other control characters removed.
+// Terminal escape codes and other control characters removed, and every run of white space (line
+// breaks, tabs, U+2028 and U+2029 included) made one space, so the result is always one line.
 export function plain(text) {
   return String(text ?? '')
+    .replace(/\s+/g, ' ')
     .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g, '')
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
     .replace(/\u001b[@-Z\\-_]/g, '')
     // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '')
+    .trim();
 }
 
-const TEST_RUN = /\b(?:test|jest|vitest|pytest)\b|node\s+--test/;
+// A test tool run in command position: at the start, or after `&&`, `||`, `;` or `|`, with any
+// variable settings before it. `cd test` or `ls test/` is not a test run.
+const TEST_RUN = new RegExp(
+  '(?:^|&&|\\|\\||[;|])\\s*(?:\\w+=\\S*\\s+)*(?:'
+  + '(?:npm|pnpm|yarn)\\s+(?:run\\s+)?test\\b'
+  + '|npx\\s+(?:-{1,2}\\S+\\s+)*(?:jest|vitest|pytest|mocha)\\b'
+  + '|(?:jest|vitest|pytest|mocha)\\b'
+  + '|python3?\\s+-m\\s+pytest\\b'
+  + '|node\\s+(?:--\\S+\\s+)*--test\\b'
+  + ')',
+);
 const RECORD_DECISION = /frontdesk[\\/]cli\.js\s+record\s+decision\b/;
 
 function shown(file, cwd) {
@@ -185,7 +198,7 @@ function toolStep(block, cwd) {
     case 'Task':
       return subagentLine({ agentType: input.subagent_type, description: input.description });
     default:
-      return `Using ${name}`;
+      return /^mcp__[^_]/.test(name) ? 'Using a connected tool' : `Using ${name}`;
   }
 }
 
@@ -242,6 +255,11 @@ function worded(step, words) {
   return { at: step.at, text: mask(plain(said)) };
 }
 
+// A decision number to name: a positive whole number, and nothing else.
+function validWaiting(waiting) {
+  return Number.isInteger(waiting) && waiting > 0;
+}
+
 // The steps of a run, oldest first, each through the glossary. A waiting decision is named by its
 // number only.
 export function stepsOf(events, { glossary, waiting = null } = {}) {
@@ -252,7 +270,7 @@ export function stepsOf(events, { glossary, waiting = null } = {}) {
     if (!step) continue;
     out.push(worded(step, words));
   }
-  if (waiting !== null && waiting !== undefined) {
+  if (validWaiting(waiting)) {
     out.push({ at: out.length ? out[out.length - 1].at : null, text: `Waiting for your answer to decision ${waiting}` });
   }
   return out;
@@ -339,26 +357,51 @@ function agentCalls(events) {
   return calls;
 }
 
-// The call whose result names this agent id, or null.
-function callFor(agentId, events, calls) {
+// The call whose result names each agent id, built once: agent id -> call. A result names its
+// agent in `toolUseResult.agentId`, or else by the id standing as a whole word in its text.
+function callsByAgent(events, calls, agentIds) {
+  const byAgent = new Map();
   for (const event of events) {
     const content = event?.message?.content;
     for (const block of Array.isArray(content) ? content : []) {
       if (block?.type !== 'tool_result' || !calls.has(block.tool_use_id)) continue;
+      const call = calls.get(block.tool_use_id);
+      const named = event.toolUseResult?.agentId;
+      if (typeof named === 'string') {
+        if (!byAgent.has(named)) byAgent.set(named, call);
+        continue;
+      }
       let text = '';
       try {
         text = JSON.stringify(block.content) ?? '';
       } catch {
         text = '';
       }
-      const named = event.toolUseResult?.agentId;
-      if (typeof named === 'string' ? named === agentId : new RegExp(`(?<![A-Za-z0-9_-])${agentId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_-])`).test(text)) return calls.get(block.tool_use_id);
+      for (const id of agentIds) {
+        if (byAgent.has(id)) continue;
+        if (new RegExp(`(?<![A-Za-z0-9_-])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_-])`).test(text)) byAgent.set(id, call);
+      }
     }
   }
-  return null;
+  return byAgent;
 }
 
-export function runSteps({ sessionId, env = process.env, glossary, waiting = null, foreman = false } = {}) {
+const CREW_SHOWN = 5;
+const STILL_WORKING_MS = 10 * 60 * 1000;
+
+function modifiedAt(file) {
+  try {
+    return fs.lstatSync(file).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+// `crew` holds one line for each subagent still working, newest first, at most five, then
+// "and N more crew members". A subagent whose call has a result in the tail has finished and is
+// left out; one with no such result counts as working only if its file changed in the last ten
+// minutes before `now`.
+export function runSteps({ sessionId, env = process.env, glossary, waiting = null, foreman = false, now = Date.now } = {}) {
   const file = findTranscript({ sessionId, env });
   if (!file) return { steps: [], crew: [] };
   const words = glossary ?? glossaryOf({});
@@ -376,19 +419,24 @@ export function runSteps({ sessionId, env = process.env, glossary, waiting = nul
       steps.push({ at: step.at, text: foreman ? mask(plain(inThirdPerson('The Bosun', step))) : step.text });
     }
   }
-  if (waiting !== null && waiting !== undefined) {
+  if (validWaiting(waiting)) {
     const text = `Waiting for your answer to decision ${waiting}`;
     steps.push({ at: steps.length ? steps[steps.length - 1].at : null, text: foreman ? `The Bosun is ${lowerFirst(text)}` : text });
   }
-  const calls = agentCalls(events);
+  const subs = findSubagents(file).map((sub) => ({ ...sub, mtime: modifiedAt(sub.file) }));
+  const byAgent = callsByAgent(events, agentCalls(events), subs.map((sub) => sub.agentId));
+  const clock = typeof now === 'function' ? now() : now;
+  const working = subs
+    .filter((sub) => !byAgent.has(sub.agentId) && clock - sub.mtime <= STILL_WORKING_MS)
+    .sort((a, b) => b.mtime - a.mtime || (a.agentId < b.agentId ? -1 : 1));
   const crew = [];
-  for (const sub of findSubagents(file)) {
-    const call = callFor(sub.agentId, events, calls);
-    const who = roleOf(call?.agentType);
+  for (const sub of working.slice(0, CREW_SHOWN)) {
     const latest = stepsOfKind(readTail(sub.file), words).pop();
-    if (latest) crew.push(mask(plain(inThirdPerson(who, latest))));
-    else crew.push(worded({ at: null, text: call ? subagentLine(call) : subagentLine({}) }, words).text);
+    if (latest) crew.push(mask(plain(inThirdPerson(roleOf(undefined), latest))));
+    else crew.push(worded({ at: null, text: subagentLine({}) }, words).text);
   }
+  const left = working.length - CREW_SHOWN;
+  if (left > 0) crew.push(`and ${left} more crew member${left === 1 ? '' : 's'}`);
   return { steps, crew };
 }
 

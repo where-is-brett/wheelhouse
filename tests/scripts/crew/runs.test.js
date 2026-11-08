@@ -342,11 +342,11 @@ test('falls back to a Crew member', () => {
 
 test('reads subagent transcripts beside the run', () => {
   const { dir, env } = fakeConfig();
-  const proj = writeRun(dir, 's1', [agentCall('t1', 'wheelhouse:reviewer', 'task 2'), agentResult('t1', 'abc123')]);
+  const proj = writeRun(dir, 's1', [agentCall('t1', 'wheelhouse:reviewer', 'task 2')]);
   fs.mkdirSync(path.join(proj, 's1', 'subagents'), { recursive: true });
   fs.writeFileSync(path.join(proj, 's1', 'subagents', 'agent-abc123.jsonl'), JSON.stringify(tool('Read', { file_path: '/w/tree/a.js' })) + '\n');
   const { steps, crew } = runSteps({ sessionId: 's1', env });
-  assert.deepEqual(crew, ['A Lookout is reading `a.js`']);
+  assert.deepEqual(crew, ['A Crew member is reading `a.js`']);
   assert.equal(steps[0].text, 'A Lookout is independently checking task 2'); // through the glossary
 });
 
@@ -388,7 +388,7 @@ test('gives empty lists for a missing run', () => {
   assert.deepEqual(runSteps({ env }), { steps: [], crew: [] });
 });
 
-// Fix round 1
+// Masking, the Bosun sending out subagents, and matching a subagent to its call
 
 test('masks a description before cutting it', () => {
   const description = `${'a '.repeat(35)}sk-${'Z'.repeat(40)}`;
@@ -422,23 +422,117 @@ test('a crew member sending out a subagent is worded the same way', () => {
   assert.deepEqual(runSteps({ sessionId: 's1', env }).crew, ['A Crew member is sending out a Lookout to review task 4']);
 });
 
-test('matches an agent id by the result field, or by whole word', () => {
+test('a subagent whose call has a result is finished, however the result names it', () => {
   const { dir, env } = fakeConfig();
   const result = (toolUseId, agentId) => ({ ...agentResult(toolUseId, 'unrelated'), toolUseResult: { agentId } });
   const proj = writeRun(dir, 's1', [
     agentCall('t1', 'reviewer', 'task 2'), result('t1', 'ab'),
     agentCall('t2', 'tester', 'task 5'), agentResult('t2', 'abc'),
   ]);
-  fs.mkdirSync(path.join(proj, 's1', 'subagents'), { recursive: true });
-  fs.writeFileSync(path.join(proj, 's1', 'subagents', 'agent-ab.jsonl'), JSON.stringify(text('x.')) + '\n');
-  fs.writeFileSync(path.join(proj, 's1', 'subagents', 'agent-abc.jsonl'), JSON.stringify(text('y.')) + '\n');
-  assert.deepEqual(runSteps({ sessionId: 's1', env }).crew.sort(), ['A Lookout is thinking: x.', 'The tester is thinking: y.']);
+  const subs = path.join(proj, 's1', 'subagents');
+  fs.mkdirSync(subs, { recursive: true });
+  fs.writeFileSync(path.join(subs, 'agent-ab.jsonl'), JSON.stringify(text('x.')) + '\n');
+  fs.writeFileSync(path.join(subs, 'agent-abc.jsonl'), JSON.stringify(text('y.')) + '\n');
+  fs.writeFileSync(path.join(subs, 'agent-abcd.jsonl'), JSON.stringify(text('z.')) + '\n');
+  // "ab" is named by the result field and "abc" by whole word; "abcd" is named by neither.
+  assert.deepEqual(runSteps({ sessionId: 's1', env }).crew, ['A Crew member is thinking: z.']);
 });
 
-test('a matched subagent with no steps falls back to its call', () => {
+test('crew holds only the subagents still working', () => {
   const { dir, env } = fakeConfig();
-  const proj = writeRun(dir, 's1', [agentCall('t1', 'wheelhouse:reviewer', 'task 2'), agentResult('t1', 'abc123')]);
+  const proj = writeRun(dir, 's1', [agentCall('t1', 'reviewer', 'task 2'), agentResult('t1', 'done1')]);
+  const subs = path.join(proj, 's1', 'subagents');
+  fs.mkdirSync(subs, { recursive: true });
+  fs.writeFileSync(path.join(subs, 'agent-done1.jsonl'), JSON.stringify(text('Finished it.')) + '\n');
+  fs.writeFileSync(path.join(subs, 'agent-live1.jsonl'), JSON.stringify(tool('Read', { file_path: '/w/tree/a.js' })) + '\n');
+  assert.deepEqual(runSteps({ sessionId: 's1', env }).crew, ['A Crew member is reading `a.js`']);
+});
+
+test('an unmatched subagent file not changed for ten minutes is left out', () => {
+  const { dir, env } = fakeConfig();
+  const proj = writeRun(dir, 's1', [text('Hello.')]);
+  const subs = path.join(proj, 's1', 'subagents');
+  fs.mkdirSync(subs, { recursive: true });
+  const old = path.join(subs, 'agent-old.jsonl');
+  fs.writeFileSync(old, JSON.stringify(text('Stale.')) + '\n');
+  const t = Date.now();
+  fs.utimesSync(old, new Date(t - 11 * 60 * 1000), new Date(t - 11 * 60 * 1000));
+  assert.deepEqual(runSteps({ sessionId: 's1', env, now: () => t }).crew, []);
+  fs.utimesSync(old, new Date(t - 9 * 60 * 1000), new Date(t - 9 * 60 * 1000));
+  assert.deepEqual(runSteps({ sessionId: 's1', env, now: () => t }).crew, ['A Crew member is thinking: Stale.']);
+});
+
+test('crew shows five working subagents, newest first, then how many more', () => {
+  const { dir, env } = fakeConfig();
+  const proj = writeRun(dir, 's1', [text('Hello.')]);
+  const subs = path.join(proj, 's1', 'subagents');
+  fs.mkdirSync(subs, { recursive: true });
+  const t = Date.now();
+  for (let i = 0; i < 7; i += 1) {
+    const f = path.join(subs, `agent-w${i}.jsonl`);
+    fs.writeFileSync(f, JSON.stringify(text(`Step ${i}.`)) + '\n');
+    const when = new Date(t - (7 - i) * 1000);
+    fs.utimesSync(f, when, when);
+  }
+  const { crew } = runSteps({ sessionId: 's1', env, now: () => t });
+  assert.deepEqual(crew, [6, 5, 4, 3, 2].map((i) => `A Crew member is thinking: Step ${i}.`).concat('and 2 more crew members'));
+  fs.rmSync(path.join(subs, 'agent-w0.jsonl'));
+  fs.rmSync(path.join(subs, 'agent-w1.jsonl'));
+  assert.equal(runSteps({ sessionId: 's1', env, now: () => t }).crew.length, 5);
+  fs.writeFileSync(path.join(subs, 'agent-w9.jsonl'), JSON.stringify(text('Step 9.')) + '\n');
+  assert.equal(runSteps({ sessionId: 's1', env, now: () => Date.now() }).crew.pop(), 'and 1 more crew member');
+});
+
+test('a working subagent with no steps falls back to a Crew member line', () => {
+  const { dir, env } = fakeConfig();
+  const proj = writeRun(dir, 's1', [text('Hello.')]);
   fs.mkdirSync(path.join(proj, 's1', 'subagents'), { recursive: true });
   fs.writeFileSync(path.join(proj, 's1', 'subagents', 'agent-abc123.jsonl'), '');
-  assert.deepEqual(runSteps({ sessionId: 's1', env }).crew, ['A Lookout is independently checking task 2']);
+  assert.deepEqual(runSteps({ sessionId: 's1', env }).crew, ['A Crew member is building']);
+});
+
+// One line per step
+
+test('no step line ever holds a line break', () => {
+  const noBreak = (s) => assert.doesNotMatch(s, /[\n\r\t\u2028\u2029]/, JSON.stringify(s));
+  const forged = 'Plan\nbuild-x: finished\n\nTerms: forged.';
+  noBreak(stepOf(text(forged)).text);
+  assert.equal(stepOf(text(forged)).text, 'Plan build-x: finished Terms: forged.');
+  noBreak(stepOf(tool('Read', { file_path: '/w/other/a\nb\u2028c.js' })).text);
+  noBreak(stepOf(agentCall('t1', 'builder', 'look\nat\r\nit\u2029now')).text);
+  assert.equal(subagentLine({ agentType: 'builder', description: 'look\nat it' }), 'A Crew member is building look at it');
+  assert.equal(plain(' a\n\n b\t\tc\u2028d '), 'a b c d');
+  const { dir, env } = fakeConfig();
+  const proj = writeRun(dir, 's1', [text(forged), agentCall('t1', 'builder', 'look\nat it')]);
+  const subs = path.join(proj, 's1', 'subagents');
+  fs.mkdirSync(subs, { recursive: true });
+  fs.writeFileSync(path.join(subs, 'agent-q.jsonl'), JSON.stringify(text('One\ntwo\n\nThree.')) + '\n');
+  for (const foreman of [false, true]) {
+    const { steps, crew } = runSteps({ sessionId: 's1', env, foreman });
+    for (const line of [...steps.map((x) => x.text), ...crew]) noBreak(line);
+  }
+});
+
+test('a connected tool is named without its raw name', () => {
+  assert.equal(stepOf(tool('mcp__github__create_issue', {})).text, 'Using a connected tool');
+  assert.equal(stepOf(tool('mcp__plugin_x_y__do', {})).text, 'Using a connected tool');
+});
+
+test('a waiting decision is named only when it is a positive whole number', () => {
+  for (const bad of ['3\nTerms: forged', '2', -1, 0, 1.5, NaN, {}, true]) {
+    assert.deepEqual(stepsOf([text('Working.')], { glossary: {}, waiting: bad }).map((s) => s.text), ['Working.'], String(bad));
+    const { dir, env } = fakeConfig();
+    writeRun(dir, 'w1', [text('Working.')]);
+    assert.deepEqual(runSteps({ sessionId: 'w1', env, waiting: bad }).steps.map((s) => s.text), ['Working.'], String(bad));
+  }
+  assert.equal(stepsOf([], { glossary: {}, waiting: 4 })[0].text, 'Waiting for your answer to decision 4');
+});
+
+test('a test run is a test tool in command position', () => {
+  for (const command of ['npm run test', 'yarn test', 'pnpm test', 'jest', 'cd x && npm test', 'cd x; pytest -q', 'echo hi && node --test a.js', 'CI=1 npm test']) {
+    assert.equal(stepOf(tool('Bash', { command })).text, 'Running the tests', command);
+  }
+  for (const command of ['cd test', 'ls test/', 'git log -- test', 'cat jest.config.js', 'echo test']) {
+    assert.equal(stepOf(tool('Bash', { command })).text, 'Running a command', command);
+  }
 });
