@@ -282,8 +282,6 @@ function questionIdOf(id) {
   return m && isSlug(m[1]) ? { work: m[1], n: Number(m[2]) } : null;
 }
 
-// The levels a `watch` record may name: the `watchCrew` setting's own, from the leaf module.
-
 // What the build loop's plain records must carry. Each guards the shape; what the
 // records mean is read from them by the views and by the foreman.
 const PLAIN_SHAPES = {
@@ -483,6 +481,7 @@ function checkPlain(kind, data) {
   const optionalText = (k) => { if (data[k] !== undefined && !isText(data[k])) bad(`has a ${k} that is not text`); };
   const slug = (k) => { if (!isSlug(data[k])) bad(`needs ${k} to be a short slug (lower-case letters, digits and hyphens, at most 40)`); };
   const pr = () => { if (data.pr !== undefined && (!Number.isInteger(data.pr) || data.pr < 1)) bad('has a pull request number that is not one'); };
+  // The levels a `watch` record may name are the `watchCrew` setting's own, from the leaf module.
   if (kind === 'watch') {
     slug('work');
     if (!LEVELS.includes(data.level)) bad(`needs its level to be ${LEVELS.slice(0, -1).join(', ')} or ${LEVELS.at(-1)}`);
