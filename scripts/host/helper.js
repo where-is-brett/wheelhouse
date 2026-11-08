@@ -5533,6 +5533,7 @@ export async function startHelper({
       'not-merged': 'That merge is not in the main version',
       wide: 'That merge joins more than two lines of work, so it can\'t be undone here',
       'old-git': done.refused ?? 'Undo needs git 2.40 or later',
+      'already-undone': 'That merge has already been undone',
       'nothing-to-undo': 'Taking that merge out would change nothing: it is already out',
       push: done.refused ?? 'The undo\'s branch could not be pushed',
       host: done.refused ?? 'The host would not open the undo',
@@ -5547,7 +5548,19 @@ export async function startHelper({
   // The undos still open on GitHub or GitLab, each taken on from where it stopped (its checks pending, or the main version moved on):
   // a kept undo the director's click already approved goes through the same route again, which brings it up to date and merges it
   // once the gate allows. One with no click yet is left to the card that asks.
+  let undoRunning = false;
   async function undoRound() {
+    // Two rounds never overlap: a round still running is left to finish.
+    if (undoRunning) return;
+    undoRunning = true;
+    try {
+      await undoRoundOnce();
+    } finally {
+      undoRunning = false;
+    }
+  }
+
+  async function undoRoundOnce() {
     for (const { project, record } of registeredProjects()) {
       if (closing) return;
       if (record?.host === 'local') continue;

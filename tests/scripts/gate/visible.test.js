@@ -91,6 +91,32 @@ test('text between tags, inside multi-line strings and behind a hash or slashes 
   assert.equal(same.unsure, false);
 });
 
+// A changed line with letters and no closed literal is unsure unless it plainly looks like code: with --unified=0 the middle line of a
+// multi-line template or JSX arrives alone, as bare prose.
+test('a bare line of prose in code is unsure, and a plain line of code is internal', () => {
+  const prose = [
+    ['src/lib/a.js', 'Welcome', 'Goodbye'],
+    ['src/lib/a.js', 'Free shipping (today only)', 'Free shipping (this week only)'],
+    ['src/lib/a.js', 'Price: $5 per month', 'Price: $6 per month'],
+    ['src/lib/a.js', 'Save 20% today', 'Save 30% today'],
+    ['src/lib/a.js', 'Terms & conditions apply', 'Terms & conditions may apply'],
+    ['src/lib/a.js', 'and your receipt.', 'and your invoice.'],
+    ['src/lib/a.js', 'new arrivals every week', 'new arrivals every day'],
+    ['src/lib/a.js', 'or try again later.', 'or try again soon.'],
+    ['src/lib/a.py', 'Thank you for your order (ref 12).', 'Thank you for your order (ref 13).'],
+    ['src/lib/a.js', 'Hello {name}, welcome', 'Hello {name}, welcome back'],
+  ];
+  for (const [file, before, after] of prose) {
+    const got = visibleFromChange({ paths: [file], diff: diff(file, { remove: [before], add: [after] }) });
+    assert.ok(got.visible || got.unsure, `${before}: ${JSON.stringify(got)}`);
+  }
+  for (const line of ['const x = y + 1;', 'return foo(bar);', 'if (a) {', '}', 'def run(self):', 'export default App', 'import x from "./x.js";', 'else', '});', '{ a: 1 }']) {
+    const file = line.startsWith('def') ? 'src/lib/a.py' : 'src/lib/a.js';
+    const got = visibleFromChange({ paths: [file], diff: diff(file, { add: [line] }) });
+    assert.deepEqual([got.visible, got.unsure], [false, false], `${line}: ${JSON.stringify(got)}`);
+  }
+});
+
 test('hash lines are comments only where the language says so', () => {
   const py = visibleFromChange({ paths: ['src/a.py'], diff: diff('src/a.py', { add: ['# "A new note here"'] }) });
   assert.equal(py.visible, false);

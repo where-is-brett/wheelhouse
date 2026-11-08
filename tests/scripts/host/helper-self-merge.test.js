@@ -228,6 +228,23 @@ test('a missing intake mark counts as visible, a lowered mark does not count, an
   }
 });
 
+test('a change to development dependencies alone is internal through the helper, and any other change to package.json waits', async () => {
+  const pkg = (dev, name = 'harbour-demo') => `${JSON.stringify({ name, dependencies: { 'tide-chart': '^1.0.0' }, devDependencies: { eslint: dev } })}\n`;
+  for (const [what, name, ok] of [['development dependencies only', 'harbour-demo', true], ['the name too', 'harbour-demo-2', false]]) {
+    const pr = await remoteWithPr({ base: { 'package.json': pkg('^8.0.0') }, change: (w) => write(w, { 'package.json': pkg('^9.0.0', name) }) });
+    try {
+      const adapter = fakeAdapter(pr.head);
+      await merging(pr, adapter, [{
+        before: () => { marked(false); reviewed(pr.head); },
+        async after(answer) {
+          assert.equal(answer.ok, ok, `${what}: ${JSON.stringify(answer)}`);
+          assert.equal(selfMerged().length, ok ? 1 : 0, what);
+        },
+      }]);
+    } finally { pr.cleanup(); }
+  }
+});
+
 test('director-level facts make it wait', async () => {
   const pkg = (v) => `${JSON.stringify({ name: 'harbour-demo', dependencies: { 'tide-chart': v } })}\n`;
   const pr = await remoteWithPr({ base: { 'package.json': pkg('^1.0.0') }, change: (w) => write(w, { 'package.json': pkg('^2.0.0') }) });
@@ -254,7 +271,7 @@ test('a diff that can\'t be read is no diff: the change waits as unsure', async 
     const read = await changedPaths({ ...args, run });
     assert.deepEqual(read.paths, ['src/a.js']);
     assert.match(read.diff, /^diff --git a\/src\/a\.js b\/src\/a\.js/m);
-    const failing = (file, a, o) => (a.includes('diff') && a.includes('--unified=0') ? Promise.resolve({ code: 1, stdout: '', stderr: 'no' }) : run(file, a, o));
+    const failing = (file, a, o) => (a.includes('diff') && a.includes('--unified=0') ? Promise.resolve({ code: 1, stdout: '', stderr: 'no' }) : hostGuard(file, a, o));
     const unread = await changedPaths({ ...args, run: failing });
     assert.equal(unread.diff, null);
     assert.deepEqual(unread.paths, ['src/a.js']);

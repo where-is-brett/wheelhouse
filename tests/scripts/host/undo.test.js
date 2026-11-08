@@ -31,12 +31,13 @@ const AFTER = 'c'.repeat(40);
 
 // --- undoOnHost, against stand-ins for the two hosts ---
 // Both hosts give the same adapter contract (openPr, prState); the stand-in is built once for each and must be driven the same.
-function standIns({ history = [MERGE], revert = { ok: true, commit: REVERT, subject: 'Add tides' }, push = { ok: true }, through = { ok: true, merged: true }, kept = null, approvalOnRecord = false, update = { ok: true, current: true }, requests = [] } = {}) {
+function standIns({ history = [MERGE], revert = { ok: true, commit: REVERT, subject: 'Add tides' }, push = { ok: true }, through = { ok: true, merged: true }, kept = null, approvalOnRecord = false, update = { ok: true, current: true }, requests = [], pr = {}, ci = 'success' } = {}) {
   const calls = [];
   const adapter = (host) => ({
     host,
     openPr: async (x) => { calls.push(['openPr', x]); return { number: 12 }; },
-    prState: async (n) => { calls.push(['prState', n]); return { state: 'open', headSha: REVERT }; },
+    prState: async (n) => { calls.push(['prState', n]); return { state: 'open', headSha: REVERT, baseRef: 'main', ...pr }; },
+    ciState: async (sha) => { calls.push(['ciState', sha]); return { sha, state: ci }; },
     openRequests: async () => { calls.push(['openRequests']); return requests; },
   });
   const git = {
@@ -142,12 +143,53 @@ test('an undo whose pull request is behind the main version is brought up to dat
   assert.equal(got.ok, true);
   assert.deepEqual(s.calls.find((c) => c[0] === 'update')[1], { head: REVERT, base: 'd'.repeat(40) });
   assert.deepEqual(s.calls.find((c) => c[0] === 'push')[1], { branch, commit: NEW });
-  assert.deepEqual(s.calls.find((c) => c[0] === 'keep')[1], { merge: MERGE, pr: 12, head: NEW, branch });
+  // The new head is kept as pending before the push, so a stop between the two is found again.
+  assert.deepEqual(s.calls.filter((c) => c[0] === 'keep').map((c) => c[1]), [{ ...kept, next: NEW }, { merge: MERGE, pr: 12, head: NEW, branch }]);
+  assert.ok(names(s.calls).indexOf('keep') < names(s.calls).indexOf('push'));
   assert.deepEqual(s.calls.find((c) => c[0] === 'approve')[1], { pr: 12, head: NEW, approval: null });
   // Later work that clashes with the undo forces nothing: it is a conflict, and nothing is pushed.
   const c = standIns({ kept, approvalOnRecord: true, update: { ok: false, reason: 'conflict' } });
   assert.deepEqual(await undoOnHost({ adapter: c.adapter('github'), git: c.git, merge: MERGE, approval: null, defaultBranch: 'main', kept, ...c.hooks }), { ok: false, reason: 'conflict' });
   assert.equal(names(c.calls).includes('push'), false);
+});
+
+test('a stop between the update\'s push and its keep is found again: the host\'s head is the pending one', async () => {
+  const branch = undoBranch(MERGE, REVERT);
+  const NEW = '9'.repeat(40);
+  const kept = { merge: MERGE, pr: 12, head: REVERT, branch, next: NEW };
+  const s = standIns({ kept, approvalOnRecord: true, pr: { headSha: NEW } });
+  const got = await undoOnHost({ adapter: s.adapter('github'), git: s.git, merge: MERGE, approval: null, defaultBranch: 'main', kept, ...s.hooks });
+  assert.equal(got.ok, true);
+  assert.deepEqual(names(s.calls), ['prState', 'keep', 'base', 'update', 'approve', 'through', 'base']);
+  assert.deepEqual(s.calls.find((c) => c[0] === 'keep')[1], { merge: MERGE, pr: 12, head: NEW, branch });
+  assert.equal(s.calls.find((c) => c[0] === 'approve')[1].head, NEW);
+});
+
+test('a pull request adopted after a stop must target the default branch', async () => {
+  const branch = undoBranch(MERGE, REVERT);
+  const pending = { merge: MERGE, pr: 0, head: REVERT, branch };
+  const s = standIns({ kept: pending, requests: [{ number: 12, branch, head: REVERT, fork: false }], pr: { baseRef: 'release' } });
+  await undoOnHost({ adapter: s.adapter('github'), git: s.git, merge: MERGE, approval: CLICK, defaultBranch: 'main', kept: pending, ...s.hooks });
+  assert.equal(names(s.calls).includes('revert'), true, 'it is not the helper\'s: a new revert is made');
+});
+
+test('an undo is not brought up to date while its checks for the current head are pending', async () => {
+  const branch = undoBranch(MERGE, REVERT);
+  const kept = { merge: MERGE, pr: 12, head: REVERT, branch };
+  const s = standIns({ kept, approvalOnRecord: true, update: { ok: true, commit: '9'.repeat(40) }, ci: 'pending' });
+  const got = await undoOnHost({ adapter: s.adapter('github'), git: s.git, merge: MERGE, approval: null, defaultBranch: 'main', kept, ...s.hooks });
+  assert.equal(got.ok, true);
+  assert.equal(names(s.calls).includes('push'), false);
+  assert.equal(s.calls.find((c) => c[0] === 'approve')[1].head, REVERT);
+  assert.deepEqual(s.calls.find((c) => c[0] === 'ciState')[1], REVERT);
+});
+
+test('a merge whose undo already merged is already undone: no new revert, no new card', async () => {
+  const kept = { merge: MERGE, pr: 12, head: REVERT, branch: undoBranch(MERGE, REVERT) };
+  const s = standIns({ kept, pr: { state: 'merged' } });
+  const got = await undoOnHost({ adapter: s.adapter('github'), git: s.git, merge: MERGE, approval: null, defaultBranch: 'main', kept, ...s.hooks });
+  assert.deepEqual(got, { ok: false, reason: 'already-undone' });
+  assert.deepEqual(names(s.calls), ['prState']);
 });
 
 test('a git too old to make the revert is said plainly, not read as a conflict', async () => {
@@ -243,8 +285,13 @@ async function working(fn, { forge = 'github', choice = 'Undo', gitHook = () => 
       await openTestRecord({ env: LOCAL_PATHS, project: PROJECT, remoteUrl: p.remote.url });
       assert.equal((await takeLock({ env: LOCAL_PATHS, project: PROJECT, push: plainPush, now: () => new Date('2026-11-08T01:00:00.000Z') })).taken, true);
       const adapter = hostOver(p.remote, { forge });
+      // A test's own answer for a call, if it gives one; every other call goes through the guard.
+      const hooked = (file, args, options) => {
+        const said = gitHook(file, args, options);
+        return said !== undefined ? said : hostGuard(file, args, options);
+      };
       const helper = await startHelper({
-        run: (file, args, options) => Promise.resolve(gitHook(file, args, options)).then((answer) => answer ?? hostGuard(file, args, options)),
+        run: guardedRun(hooked, { log: hostLog }),
         address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), mirrorAddress: () => ADDRESS,
         askWindow: async () => ({ choice }),
       });
@@ -294,8 +341,10 @@ for (const forge of ['github', 'gitlab']) {
       assert.equal(approval.data.commit, adapter.merges[0].sha);
       assert.equal(approval.data.proof, 'window');
       assert.equal(events('self-merged').length, 0);
-      // The click is used up: another undo of the same merge asks again.
-      assert.equal((await client.undo({ project: PROJECT, merge })).needs, 'window');
+      // The click is used up, and the merge is already undone: another undo says so and asks nothing.
+      const twice = await client.undo({ project: PROJECT, merge });
+      assert.equal(twice.reason, 'already-undone', JSON.stringify(twice));
+      assert.equal(twice.card, undefined);
     }, { forge });
   });
 }
@@ -360,7 +409,7 @@ test('one click makes one revert, however many undo calls race on it', async () 
     release();
     const [first, again] = await Promise.all([clicked, second]);
     assert.equal(first.undone.ok, true, JSON.stringify(first));
-    assert.equal(again.ok === false && again.needs === 'window', true, JSON.stringify(again));
+    assert.equal(again.ok === false && again.reason === 'already-undone' && again.card === undefined, true, JSON.stringify(again));
     assert.equal(adapter.opened.length, 1, 'one pull request');
     assert.equal(adapter.merges.length, 1, 'one revert merged');
   });

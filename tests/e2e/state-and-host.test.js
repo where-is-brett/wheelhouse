@@ -54,7 +54,7 @@ function fakeAdapter(headOf = () => HEAD) {
   return {
     merges,
     defaultBranch: async () => 'main',
-    prState: async () => ({ headSha: headOf(), mergeable: 'mergeable', state: 'open', body: BODY }),
+    prState: async () => ({ headSha: headOf(), headRef: 'feature/x', mergeable: 'mergeable', state: 'open', body: BODY }),
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async (args) => { merges.push(args); return { merged: true }; },
     openPr: async () => ({ number: PR }),
@@ -155,6 +155,7 @@ test('two computers: each keeps its own record, the lock passes on, and the old 
       assert.deepEqual(await client.lock.take({ project: PROJECT }), { ok: true, result: { taken: true, counter: 1 } });
       const r = await write(a, client, 'ruling', { words: 'Prices show two decimal places', reason: 'the director asked', scope: 'project' }, 1000);
       await write(a, client, 'confirmation', confirmationFor(r).data, 2000);
+      await write(a, client, 'work', { id: 'x', title: 'X', lane: 'small', visible: false, dependsOn: [] }, 2500);
       await write(a, client, 'review', { pr: PR, commit: head, verdict: 'CLEAN' }, 3000);
       await write(a, client, 'approval', { pr: PR, commit: head }, 4000);
       return r;
@@ -205,6 +206,7 @@ test('two computers: each keeps its own record, the lock passes on, and the old 
       assert.equal(before.ok, false, JSON.stringify(before));
       assert.ok(!before.reasons.includes(LOCK_REASON), JSON.stringify(before));
       assert.deepEqual(b.adapter.merges, [], 'A\'s review did not let B merge');
+      await write(b, client, 'work', { id: 'x', title: 'X', lane: 'small', visible: false, dependsOn: [] }, 2 * HOUR + 2.5 * MINUTE);
       await write(b, client, 'review', { pr: PR, commit: head, verdict: 'CLEAN' }, 2 * HOUR + 3 * MINUTE);
       const merged = await client.merge({ project: PROJECT, number: PR, stop: false, bypass: false });
       assert.deepEqual(merged, { ok: true, merged: true, sha: head, guardrailPaths: [], criticalAreas: [] });

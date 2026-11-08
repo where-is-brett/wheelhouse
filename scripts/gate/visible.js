@@ -64,8 +64,9 @@ function sections(diff) {
 const SLASH_COMMENTS = /\.(?:js|mjs|cjs|ts|mts|cts|go|rs|java|kt|swift|php|cs|c|h|cpp|hpp)$/i;
 const HASH_COMMENTS = /\.(?:py|rb|sh|php)$/i;
 const DASH_COMMENTS = /\.lua$/i;
-// Words that start a line of code, so a line of plain words that starts with one is code and not text.
-const KEYWORD = /^(?:return|else|elif|end|begin|const|let|var|function|async|await|export|import|from|class|def|fn|pub|use|public|private|protected|static|package|func|try|catch|except|finally|throw|raise|yield|new|do|in|if|for|while|switch|case|default|break|continue|extends|implements|interface|type|enum|struct|impl|trait|mod|module|namespace|using|include|then|fi|done|esac|pass|not|and|or|is|with|as|lambda|global|del|assert)\b/;
+// A line of code with no text on it: a statement that starts with one of these words, or a bare keyword.
+const STATEMENT = /^(?:import|export|return|const|let|var|function|def|class)\b/;
+const BARE = /^(?:else|try|finally|break|continue|return|do|pass|end|fi|done)$/;
 
 // One line read as code: { lits, unsure }. `lits` are its string literals (and the text between tags), in order, leaving out the
 // specifiers of imports and requires, comments, and any without a letter. `unsure` is a line that has text on it but no closed
@@ -120,9 +121,12 @@ function readLine(line, file) {
       if (/[A-Za-z]{2}/.test(words)) lits.push(`tag:${words}`);
     }
   } else if (lits.length === 0 && !unsure) {
-    const plain = rest.replace(/\$?\{[^{}]*\}/g, ' ').trim();
+    // Text can be anywhere with no quote on its line, so a line with letters is unsure unless it plainly looks like code: it has code
+    // punctuation or structure, or is a statement. Text put into a line by `{...}` is not code.
+    const bare = rest.replace(/\$?\{[^{}]*\}/g, ' ').trim();
+    const code = /[=;{}]/.test(bare) || /[\w\])]\(/.test(bare) || STATEMENT.test(bare) || BARE.test(bare);
     if (/\$\{/.test(rest)) unsure = true;
-    else if (/\s/.test(plain) && /^[A-Za-z][A-Za-z0-9' ,.!?:-]*$/.test(plain) && !KEYWORD.test(plain)) unsure = true;
+    else if (/[A-Za-z]/.test(bare) && !code) unsure = true;
   }
   if (/"{3}|'{3}/.test(text) && hash) unsure = true;
   return { lits, unsure };

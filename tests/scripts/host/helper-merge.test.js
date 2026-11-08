@@ -119,7 +119,7 @@ async function merging(pr, adapter, steps) {
 }
 
 test('/merge needs the director\'s approval for a guardrail change even when the caller says false', async () => {
-  const pr = await remoteWithPr({ change: (w) => write(w, { '.claude/settings.json': '{}\n', 'src/a.js': 'a\n' }) });
+  const pr = await remoteWithPr({ change: (w) => write(w, { '.claude/settings.json': '{}\n', 'src/a.js': 'export const a = 1;\n' }) });
   try {
     const adapter = fakeAdapter(pr.head);
     const caller = { approvalRequired: false, touchesGuardrails: false };
@@ -148,7 +148,7 @@ test('/merge needs the director\'s approval for a guardrail change even when the
 });
 
 test('/merge with no guardrail change and no caller flag needs no approval', async () => {
-  const pr = await remoteWithPr({ change: (w) => write(w, { 'src/a.js': 'a\n' }) });
+  const pr = await remoteWithPr({ change: (w) => write(w, { 'src/a.js': 'export const a = 1;\n' }) });
   try {
     const noApproval = [`no approval of ${pr.head.slice(0, 7)}`];
     await merging(pr, fakeAdapter(pr.head), [
@@ -200,7 +200,7 @@ test('/merge reads the configuration from the default branch, not the pull reque
 });
 
 test('/merge refuses when the fetched head differs from the head the host reports', async () => {
-  const pr = await remoteWithPr({ change: (w) => write(w, { 'src/a.js': 'a\n' }) });
+  const pr = await remoteWithPr({ change: (w) => write(w, { 'src/a.js': 'export const a = 1;\n' }) });
   try {
     const other = 'f'.repeat(40);
     const adapter = fakeAdapter(other);
@@ -218,8 +218,8 @@ test('/merge refuses when the fetched head differs from the head the host report
 
 test('/merge treats unreadable changes or configuration as touching the guardrails', async () => {
   // A malformed configuration on the default branch; and no pull request ref on the host.
-  const bad = await remoteWithPr({ base: { '.claude/wheelhouse.json': '{ nope' }, change: (w) => write(w, { 'src/a.js': 'a\n' }) });
-  const missing = await remoteWithPr({ change: (w) => write(w, { 'src/a.js': 'a\n' }), ref: 'refs/heads/feature' });
+  const bad = await remoteWithPr({ base: { '.claude/wheelhouse.json': '{ nope' }, change: (w) => write(w, { 'src/a.js': 'export const a = 1;\n' }) });
+  const missing = await remoteWithPr({ change: (w) => write(w, { 'src/a.js': 'export const a = 1;\n' }), ref: 'refs/heads/feature' });
   try {
     for (const pr of [bad, missing]) {
       const adapter = fakeAdapter(pr.head);
@@ -249,7 +249,7 @@ test('/merge treats unreadable changes or configuration as touching the guardrai
 });
 
 test('/merge answers carry the empty findings when it fails before reading the files', async () => {
-  const pr = await remoteWithPr({ change: (w) => write(w, { 'src/a.js': 'a\n' }) });
+  const pr = await remoteWithPr({ change: (w) => write(w, { 'src/a.js': 'export const a = 1;\n' }) });
   try {
     await merging(pr, fakeAdapter(pr.head, { prState: async () => { throw new Error('the host is down'); } }), [{
       async after(answer) { assert.deepEqual(answer, { ok: false, refused: 'the host is down', guardrailPaths: [], criticalAreas: [] }); },
