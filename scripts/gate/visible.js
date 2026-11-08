@@ -71,8 +71,15 @@ const KEYWORD_START = new RegExp(`^(?:${KEYWORDS})(?![\\w$])`);
 // style block in a string, which users see.
 const DECLARATION = /^[A-Za-z-]+\s*:\s*[^;{},]+;?$/;
 // A value that is a code token and no word of text: digits, true/false/null/None, a dotted name, brackets, a blanked literal, a type.
-const CODE_VALUE = /^(?:\d+(?:\.\d+)?|true|false|null|None|undefined|string|number|boolean|any|unknown|void|never|[\w$]+(?:\.[\w$]+)+|\[.*\]|\(.*\)|"")$/;
+const CODE_VALUE = /^(?:\d+(?:\.\d+)?|true|false|null|None|undefined|string|number|boolean|any|unknown|void|never|[\w$]+(?:\.[\w$]+)+|"")$/;
 const ADJACENT_WORDS = /[A-Za-z0-9]\s+[A-Za-z0-9]/;
+// A code token for a member's value: the plain tokens above, or brackets whose contents are code (no two plain words side by side,
+// no capitalised word of text).
+function codeValue(value) {
+  if (CODE_VALUE.test(value)) return true;
+  const inside = /^\[(.*)\]$/.exec(value) ?? /^\((.*)\)$/.exec(value);
+  return inside !== null && !ADJACENT_WORDS.test(inside[1]) && !/\b[A-Z][a-z]+\b/.test(inside[1]);
+}
 
 // Whether a line, with its literals blanked, is unmistakably code with no text on it. Anything else with letters in it is the safe
 // side: unsure. A word or a comma, a keyword, a colon or `&&` that code also uses is not enough on its own.
@@ -80,10 +87,12 @@ function looksLikeCode(line) {
   const t = line.replace(/\$?\{[^{}]*\}/g, ' ').trim();
   if (!/[A-Za-z]/.test(t)) return true;
   if (DECLARATION.test(t) && (t.endsWith(';') || /^[A-Za-z]*-/.test(t) || /:\s*[^;]*[\d#%]/.test(t))) return false;
+  // A capitalised ordinary word first, then a space, a colon or an equals sign, is text: `Website: shop.com`, `Total = 5`. A name
+  // that goes straight on with `.`, `(`, `<` or `[` is code.
+  if (/^[A-Z][a-z]+(?:\s|:|=)/.test(t)) return false;
   let rest = t;
   for (let m = KEYWORD_START.exec(rest); m !== null; m = KEYWORD_START.exec(rest)) rest = rest.slice(m[0].length).trimStart();
   const started = rest !== t;
-  // The block openers and statements below are whole lines whose shape only code has.
   // Block openers with their colon, and statements whose shape only code has.
   if (/^(?:else|try|finally):$/.test(t) || /^except:$/.test(t)) return true;
   const header = /^(?:if|elif|while)\s+(.+):$/.exec(t);
@@ -96,11 +105,15 @@ function looksLikeCode(line) {
   if (/^package\s+[a-z][\w.]*$/.test(t) || /^attr_(?:reader|accessor|writer)\s+:\w+/.test(t) || /^@[\w.]+$/.test(t)) return true;
   // Sentences and amounts are text, even with code punctuation in them.
   if (/\$\d/.test(t) || /[A-Za-z0-9][.!?](?:\s|$)/.test(t) || /\b[A-Za-z]{2,}\s+[A-Za-z]{2,}\s+[A-Za-z]{2,}\b/.test(rest)) return false;
+  // Plain words and semicolons: code only as a short statement that starts with a statement word.
+  if (/;/.test(t) && /^[A-Za-z][A-Za-z0-9_ ]*(?:;[A-Za-z0-9_ ]*)*$/.test(t)) {
+    return /^(?:return|break|continue|throw|yield|await|import|package|use|using|delete)(?:\s+[A-Za-z_$][\w$]*)?;?$/.test(t);
+  }
   // A spread, or a line of arguments whose shape is code: `...rest,` `snake_case,` `a.b,` `x=1,` `foo(a),`.
-  if (/^\.\.\.[\w$.]+,?$/.test(t) || /^[\w$]*[_.][\w$.]*,$/.test(t) || /^[\w$.]+\s*=\s*[^\s,=]+,$/.test(t)) return true;
+  if (/^\.\.\.[\w$.]+,?$/.test(t) || /^(?=[^,]*[_.])[\w$.]*[A-Za-z_$][\w$]*,$/.test(t) || /^[\w$.]+\s*=\s*[^\s,=]+,$/.test(t)) return true;
   // A member whose value is a code token, not a word.
   const member = /^[A-Za-z_$][\w$]*\??\s*:\s*(.+?)\s*[,;]?$/.exec(t);
-  if (member !== null && CODE_VALUE.test(member[1]) && !t.endsWith(';')) return true;
+  if (member !== null && codeValue(member[1]) && !t.endsWith(';')) return true;
   // A call is a name with brackets that hold an argument: not a lone letter, not words with spaces between them; or a whole line
   // that is one call.
   const call = /[\w\])]\(([^()]*)\)/.exec(t);
@@ -167,7 +180,10 @@ function readLine(line, file) {
   } else if (lits.length === 0 && !unsure) {
     // Text can be anywhere with no quote on its line, so a line with letters is unsure unless it plainly looks like code: it has code
     // punctuation or structure, or is a statement. Text put into a line by `{...}` is not code.
-    if (/\$\{/.test(rest)) unsure = true;
+    // A line with no letters is code only when it is brackets, commas, semicolons and operators: a digit, `%`, a currency sign or `#` is
+    // a figure users may see.
+    if (!/[A-Za-z]/.test(rest) && /[\d%$£€#]/.test(rest.replace(/\$?\{[^{}]*\}/g, ' '))) unsure = true;
+    else if (/\$\{/.test(rest)) unsure = true;
     else if (/[A-Za-z]/.test(rest.replace(/\$?\{[^{}]*\}/g, ' ')) && !looksLikeCode(rest)) unsure = true;
   }
   if (/"{3}|'{3}/.test(text) && hash) unsure = true;

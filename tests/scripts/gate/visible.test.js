@@ -135,7 +135,7 @@ test('ordinary code lines with no brackets or semicolons are internal', () => {
   const by = {
     'src/lib/a.py': ['if x:', 'for a in b:', 'for item in items:', 'else:', 'try:', 'finally:', 'except ValueError:', 'from x import y', 'from flask import Flask', '@property', 'print(x)', 'while True:', 'def f():'],
     'src/lib/a.rb': ['attr_reader :name'],
-    'src/lib/a.js': ['  foo: bar.baz,', '  size: 14,', '  ...rest,', '  snake_case,', '  x=1,', '  foo(a),', 'case 1:', 'const total = price + tax;', 'await foo();', 'new Foo();', 'throw new Error(1);'],
+    'src/lib/a.js': ['return x;', 'break;', 'import foo;', 'x.y()', 'MAX = 5', 'const A = 1;', 'tags: [a, b],', '  ],', '});', '  foo: bar.baz,', '  size: 14,', '  ...rest,', '  snake_case,', '  x=1,', '  foo(a),', 'case 1:', 'const total = price + tax;', 'await foo();', 'new Foo();', 'throw new Error(1);'],
     'src/lib/a.ts': ['name: string', 'age?: number,', '@Component', 'export interface Tide {'],
     'src/lib/a.go': ['package main', 'func main() {'],
   };
@@ -158,9 +158,21 @@ test('prose that borrows the look of code is unsure', () => {
     'Name: Brett', 'Status: shipped', 'title: Welcome', 'label: Save', 'default: Premium', 'case: open',
     'Terms && conditions', '? Need help', ': see below', 'C++',
     'done', 'end', 'pass', 'default', 'return', 'new', 'raise', 'else',
+    // Brackets that hold words, not code.
+    'Note: (see below)', 'Hours: (closed Sunday)', 'Sizes: (S, M, L)', 'Tags: [new, sale]', 'Plan: [Pro plan]',
+    // A capitalised ordinary word first, then a space, a colon or an equals sign.
+    'Website: shop.com', 'Download: guide.pdf', 'Discount: None', 'Status: true', 'Answer: null', 'Size = large', 'Coupon = SAVE10',
+    'Total = 5', 'Free shipping;', 'Pick one;',
+    // Words and semicolons.
+    'including taxes;', 'and more;', 'apples; pears',
+    // Abbreviations and versions are not dotted names.
+    'e.g.,', 'etc.,', 'v1.2,',
+    // Amounts and counts with no letters.
+    '100%', '50%', '$5', '£5', '€5', '#1', '42',
   ];
   for (const file of ['src/lib/a.js', 'src/lib/a.py']) {
     for (const line of text) {
+      if (file.endsWith('.py') && line === '#1') continue; // a hash line is a comment in Python
       const got = visibleFromChange({ paths: [file], diff: diff(file, { add: [line] }) });
       assert.ok(got.visible || got.unsure, `${file} ${line}: ${JSON.stringify(got)}`);
     }
