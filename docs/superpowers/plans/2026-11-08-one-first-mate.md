@@ -417,3 +417,69 @@ Expected: PASS.
 git add scripts/frontdesk/cli.js tests/scripts/frontdesk/cli.test.js
 git commit -m "The front desk's command records only from the First Mate's window"
 ```
+
+### Task 7: The write guard, the board, the card check and the session's end follow the seat (Part D)
+
+Spec: 6.4 (the moved window's one line), 6.5 (the `front-desk-writes.js`, `board-context.js` and `card-check.js` rows), 6.1 (release at SessionEnd, `seenAt` from hooks), 6.8 cases 2 and 13.
+
+**Files:**
+- Modify: `scripts/hooks/front-desk-writes.js` (the role check at ~181; `FRONT_DESK_NO_WRITES` at ~29)
+- Modify: `scripts/hooks/board-context.js` (the role check at ~373–377)
+- Modify: `scripts/hooks/card-check.js` (`decideStop` at ~326)
+- Modify: `scripts/hooks/stop-guard.js` (the SessionEnd branch at ~210–218)
+- Modify: `scripts/lib/first-mate-seat.js` (`handOverSeat` keeps `movedFrom`; `movedAway`)
+- Test: `tests/scripts/hooks/front-desk-writes.test.js`, `tests/scripts/hooks/board-context.test.js`, `tests/scripts/hooks/card-check-shown.test.js`, `tests/scripts/hooks/stop.test.js`, `tests/scripts/lib/first-mate-seat.test.js`
+
+**Interfaces:**
+- Consumes: `refreshSeat`, `releaseSeat`, `readSeat`, `handOverSeat` (Task 2); `sessionRole`, `asideKind` (Task 3); `SEAT_MOVED_LINE` (Task 4); `roleFile(sessionId)` from `scripts/lib/role.js` (the session's own folder, `<home>/sessions/<id>/`).
+- Produces:
+  - `ASIDE_NO_WRITES(file)` in `front-desk-writes.js`, beside `FRONT_DESK_NO_WRITES`: this window isn't the First Mate and stands in the project's main folder, so it can't change the product's files here; to edit by hand, start a session in a worktree, whose changes reach main through the director's own pull request. Wording the builder's, within spec 6.5. `FRONT_DESK_NO_WRITES` gains the same pointer to a worktree session as its last sentence.
+  - `decide` in `front-desk-writes.js`: refuses for role `'front-desk'` (as today, with `FRONT_DESK_NO_WRITES`) and for role `'aside'` when `asideKind({cwd}) === 'main'` (with `ASIDE_NO_WRITES`); lets role `'aside'` in a worktree through. Every other role as today. Refreshes the seat (`refreshSeat`) when the role is `'front-desk'`.
+  - `handOverSeat` writes `movedFrom: from.session` into the new seat (a field spec 11 leaves to the builder). `refreshSeat` keeps it.
+  - `movedAway(project, session, options): boolean` in `first-mate-seat.js`: true exactly once per move, when the seat's `movedFrom` names this session; the "told" mark is a file `seat-moved.json` in the session's own folder (`path.dirname(roleFile(session))`) holding the seat's `since`. Never throws (false on any failure).
+  - `board-context.js`: when `movedAway` is true, the context is `SEAT_MOVED_LINE` (once). Board and cards lines stay behind `role === 'front-desk'`, which the seat now decides (Task 3), so an aside session gets none. The holder's prompt refreshes the seat.
+  - `card-check.js` `decideStop`: already checks `role(...) === 'front-desk'`, which the seat now decides; the holder's Stop refreshes the seat.
+  - `stop-guard.js`: on SessionEnd in a project, `releaseSeat(project, input.session_id)` in its own function (`releaseAtEnd`), before the SessionEnd return; never throws.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `tests/scripts/hooks/front-desk-writes.test.js` (a temp home and project; the seat set up with `takeSeat`):
+- `the holder may not write the product's files`: seat names the session, `Write` to `src/a.js` in the main folder → denied with `FRONT_DESK_NO_WRITES`, which now points to a worktree session.
+- `a main-folder aside may not write the product's files`: seat held by another session → denied with `ASIDE_NO_WRITES` (case 13).
+- `a worktree aside may write in its worktree`: a linked non-feature worktree, seat held by another → `undefined` (case 13).
+- `an aside's own .wheelhouse notes stay allowed`: a main-folder aside writing `.wheelhouse/work/x.md` → `undefined`.
+
+In `tests/scripts/hooks/board-context.test.js`:
+- `an aside session gets no board or cards lines`: seat held by another, a prompt with waiting cards → no board line, no cards line.
+- `the old window is told once that the First Mate moved`: `handOverSeat` from `'a'` to `'b'`; a prompt in `'a'` → context `SEAT_MOVED_LINE`; a second prompt in `'a'` → not `SEAT_MOVED_LINE`.
+- `the holder's prompt refreshes the seat`: `seenAt` 2 minutes old → newer after the prompt.
+
+In `tests/scripts/hooks/card-check-shown.test.js`:
+- `an aside session's Stop is not checked`: seat held by another, a paraphrased decision block → `undefined`.
+- `the holder's Stop is checked as before`: seat names the session → sent back as today.
+
+In `tests/scripts/hooks/stop.test.js`:
+- `SessionEnd releases the seat this session holds`: seat names `'a'`, SessionEnd for `'a'` → `readSeat === null`.
+- `SessionEnd leaves another session's seat`: seat names `'b'`, SessionEnd for `'a'` → unchanged.
+
+In `tests/scripts/lib/first-mate-seat.test.js`:
+- `movedAway is true once for the window the seat left`: after a hand-over from `'a'`, `movedAway(project, 'a')` → true, then false; `movedAway(project, 'b')` → false.
+
+- [ ] **Step 2: Run them and see them fail**
+
+Run: `node --test tests/scripts/hooks/front-desk-writes.test.js tests/scripts/hooks/board-context.test.js tests/scripts/hooks/card-check-shown.test.js tests/scripts/hooks/stop.test.js tests/scripts/lib/first-mate-seat.test.js`
+Expected: the new tests FAIL.
+
+- [ ] **Step 3: Implement the write guard's two cases, `movedFrom` and `movedAway`, the moved line and refresh in `board-context.js`, the refresh in `card-check.js` and `releaseAtEnd` in `stop-guard.js`**
+
+- [ ] **Step 4: Run them and see them pass**
+
+Run: the Step 2 command.
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/hooks/front-desk-writes.js scripts/hooks/board-context.js scripts/hooks/card-check.js scripts/hooks/stop-guard.js scripts/lib/first-mate-seat.js tests/scripts/hooks/front-desk-writes.test.js tests/scripts/hooks/board-context.test.js tests/scripts/hooks/card-check-shown.test.js tests/scripts/hooks/stop.test.js tests/scripts/lib/first-mate-seat.test.js
+git commit -m "The write guard, the board and the card check follow the seat; the seat is let go at the session's end"
+```
