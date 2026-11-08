@@ -120,3 +120,66 @@ Expected: PASS, with no change to the tests that already passed.
 git add scripts/hooks/session-start.js scripts/lib/role.js scripts/hooks/board-context.js tests/scripts/lib/role.test.js tests/scripts/hooks/session-start.test.js
 git commit -m "A feature session is one whose worktree Wheelhouse made"
 ```
+
+### Task 2: The seat (Part B)
+
+Spec: 6.1, 6.2, 6.8 cases 1 to 6, 10 and 12, and 11 (the builder's calls).
+
+**Files:**
+- Create: `scripts/lib/first-mate-seat.js`
+- Modify, maybe: `scripts/lib/start-lock.js` (only if its stale-takeover rename is lifted into a shared helper; then `tests/scripts/lib/start-lock.test.js` runs too)
+- Test: `tests/scripts/lib/first-mate-seat.test.js`
+
+**Interfaces:**
+- Consumes: `pidAlive(pid)`, `processStartTime(pid)` from `scripts/watcher/waker.js`; `listProcesses()` from `scripts/engine/stop.js` (`[{pid, ppid, pgid, command}]`, empty on Windows); `wheelhouseHome()` from `scripts/lib/paths.js`.
+- Produces, all in `scripts/lib/first-mate-seat.js`; every function takes a last `options = { home, alive, startTime, ancestor, now }` so tests inject the process table and the clock, as `scripts/foreman/start.js` does with `alive` and `now`:
+  - `RECENT_MS` (re-exported from `session-start.js`, 30 minutes), `STALE_AFTER_MS = 2 * 60 * 60 * 1000`, `SEEN_EVERY_MS = 60 * 1000`.
+  - `seatFile(project: string): string` → `<home>/projects/<project>/first-mate.json`.
+  - `readSeat(project): Seat | null`, where `Seat = {session, pid, pidStart, folder, since, seenAt}` (`pid` and `pidStart` may be null); null when missing, unreadable or not whole.
+  - `firstMatePid(options): Promise<{pid, pidStart} | {pid: null, pidStart: null}>`: the nearest Claude Code ancestor of this process and its start time; nulls where it can't be found (Windows today).
+  - `seatFree(seat, options): Promise<boolean>`: the three rules of spec 6.2.
+  - `seatInUse(seat, options): boolean`: `seenAt` within `RECENT_MS`.
+  - `takeSeat(project, {session, folder}, options): Promise<{held: true, seat} | {held: false, seat}>`: a `wx` write; a stale or unreadable file is replaced by rename-then-check, so two takers never both win; `held` is true when this session holds it afterwards (including when it already did).
+  - `holdsSeat(project, session, options): boolean`: the file names this session.
+  - `refreshSeat(project, session, options): void`: rewrites `seenAt` when the file names this session and `seenAt` is older than `SEEN_EVERY_MS`; never throws.
+  - `handOverSeat(project, {session, folder, from: {session, since}}, options): Promise<{moved: boolean, seat}>`: rewrites the seat for `session` only while it still names `from.session` with `from.since`; otherwise `moved: false` and the current seat (case 6).
+  - `releaseSeat(project, session, options): void`: removes the file only while it names this session; never throws.
+
+Hooks write the seat, never the helper (spec 6.1). No function here decides a session's role; Task 3 does.
+
+- [ ] **Step 1: Write the failing tests** in `tests/scripts/lib/first-mate-seat.test.js`, each with its own temporary `home`:
+- `takes a free seat`: `takeSeat` → `held === true`; `readSeat(...).session === 'a'`.
+- `two takers at once: one wins`: `Promise.all` of two `takeSeat` calls for `'a'` and `'b'`, 50 rounds → exactly one `held === true` each round, and the file names that one.
+- `a live holder keeps the seat`: `alive` true, `startTime` equal to `pidStart` → second `takeSeat` gives `held === false`, `seat.session === 'a'`.
+- `a dead holder frees the seat`: `alive` false → `held === true` for `'b'` (case 2).
+- `a reused pid frees the seat`: `alive` true, `startTime` different from `pidStart` → `held === true` for `'b'` (case 3).
+- `no pid frees after two hours`: pid null, `seenAt` 2 hours and 1 second ago → free; 1 hour 59 minutes ago → held (case 4).
+- `in use for thirty minutes`: `seatInUse` true at 29 minutes, false at 31 (case 4's flip).
+- `a corrupt or empty file is taken over`: write `'{'` then `''` → `held === true` each time (case 5).
+- `a stale hand-over is refused and names the holder`: seat moved to `'c'` → `handOverSeat(..., {from: {session: 'a', since}})` gives `moved === false`, `seat.session === 'c'` (case 6).
+- `a hand-over moves the seat`: `moved === true`, `readSeat(...).session === 'b'`.
+- `seenAt is written at most once a minute`: two `refreshSeat` calls 30 seconds apart → one write (compare `seenAt`); 61 seconds apart → two.
+- `release removes only this session's seat`: `releaseSeat(project, 'b')` while `'a'` holds → file kept; `releaseSeat(project, 'a')` → `readSeat === null`.
+- `works the same for a local project`: run `takes a free seat` and `a dead holder frees the seat` with a project whose record has `host: 'local'` (case 12).
+- `the nearest Claude Code ancestor`: an injected table `[{pid: 10, ppid: 1, command: 'claude'}, {pid: 20, ppid: 10, command: 'node hook.js'}]` with this process as 20 → `pid === 10`; an empty table → `pid === null`.
+
+- [ ] **Step 2: Run them and see them fail**
+
+Run: `node --test tests/scripts/lib/first-mate-seat.test.js`
+Expected: FAIL, module not found.
+
+- [ ] **Step 3: Implement `scripts/lib/first-mate-seat.js` to the Interfaces above**
+
+The rename-then-check: rename the stale file to a unique name, check the renamed copy is the stale one you judged, then `wx`-write; a taker that loses either step reads the seat again. Reuse `takeStartLock`'s rename steps if lifting them reads cleanly (builder's call, spec 11). Writes go through a temporary file and a rename except the first `wx`.
+
+- [ ] **Step 4: Run them and see them pass**
+
+Run: `node --test tests/scripts/lib/first-mate-seat.test.js` (and `tests/scripts/lib/start-lock.test.js` if it changed)
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/lib/first-mate-seat.js tests/scripts/lib/first-mate-seat.test.js
+git commit -m "The First Mate's seat: one per project, judged by its holder's process"
+```
