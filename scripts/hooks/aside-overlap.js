@@ -73,16 +73,21 @@ export async function asideFiles({ cwd, base, run } = {}) {
 const valueOf = (entry) => (isPlain(entry) && Object.hasOwn(entry, 'value') ? entry.value : entry);
 
 // mainBranchOf({ cwd, views, run }) -> the project's main branch: the base branch its settings record, else the target of
-// origin/HEAD (as `origin/<name>`), else null.
+// origin/HEAD (as `origin/<name>`), else a local `main` or `master`, else null.
 export async function mainBranchOf({ cwd, views, run } = {}) {
   const recorded = valueOf(isPlain(views?.settings) ? views.settings.baseBranch : undefined);
   if (isText(recorded)) return recorded;
   try {
     const target = (await git(run, cwd, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])).trim();
-    return target === '' ? null : target;
-  } catch {
-    return null;
+    if (target !== '') return target;
+  } catch { /* origin/HEAD is not set: look for a local main */ }
+  for (const name of ['main', 'master']) {
+    try {
+      await git(run, cwd, ['rev-parse', '--verify', '--quiet', `refs/heads/${name}`]);
+      return name;
+    } catch { /* not there */ }
   }
+  return null;
 }
 
 const listed = (names) => (names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names.join(''));
