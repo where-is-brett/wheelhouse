@@ -8,7 +8,7 @@ import { listEvents } from '../../../scripts/state/events.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
-import { holdFile, takeHold, readHold, holdBySession, markOpened, releaseHold, helmHeld, cleanOrphans } from '../../../scripts/crew/hold.js';
+import { holdFile, takeHold, readHold, holdBySession, markOpened, releaseHold, helmHeld, cleanOrphans, ORPHAN_GRACE_MS } from '../../../scripts/crew/hold.js';
 
 async function withHome(fn) {
   const before = process.env.WHEELHOUSE_HOME;
@@ -90,6 +90,8 @@ test('hold: removes an orphan', async () => {
   await withHome(async (p) => {
     await takeHold(p, { work: 'kept', sessionId: 's-1', now });
     fs.writeFileSync(holdFile(p, 'orphan'), JSON.stringify({ work: 'orphan' }));
+    const old = new Date(Date.now() - ORPHAN_GRACE_MS - 1000);
+    fs.utimesSync(holdFile(p, 'orphan'), old, old);
     assert.deepEqual(cleanOrphans(p, viewsOf(p)), ['orphan']);
     assert.equal(helmHeld(p, 'orphan'), false);
     assert.equal(helmHeld(p, 'kept'), true);
@@ -100,5 +102,16 @@ test('hold: a work name that is not a slug is refused', async () => {
   await withHome(async (p) => {
     for (const work of ['../x', 'a/b', '', 'Up', 'a.b']) assert.throws(() => holdFile(p, work), undefined, work);
     assert.equal(helmHeld(p, '../x'), false);
+  });
+});
+
+test('hold: a newly taken hold with no event yet is kept', async () => {
+  await withHome(async (p) => {
+    fs.mkdirSync(path.dirname(holdFile(p, 'fresh')), { recursive: true });
+    fs.writeFileSync(holdFile(p, 'fresh'), JSON.stringify({ work: 'fresh' }));
+    assert.deepEqual(cleanOrphans(p, viewsOf(p)), []);
+    assert.equal(helmHeld(p, 'fresh'), true);
+    const later = () => new Date(Date.now() + ORPHAN_GRACE_MS + 1000);
+    assert.deepEqual(cleanOrphans(p, viewsOf(p), { now: later }), ['fresh']);
   });
 });

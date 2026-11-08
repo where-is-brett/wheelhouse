@@ -117,8 +117,13 @@ export async function releaseHold(project, work, { why, now = () => new Date() }
   await writeEvent({ project, event, now });
 }
 
-// Removes the hold files that have no open `helm` in the views, and returns the work they named.
-export function cleanOrphans(project, views) {
+// A hold file this young is left alone: `takeHold` writes the file before its `helm` record, so views built a moment ago
+// may not show the record yet.
+export const ORPHAN_GRACE_MS = 60_000;
+
+// Removes the hold files that have no open `helm` in the views, and returns the work they named. A file younger than
+// ORPHAN_GRACE_MS is kept.
+export function cleanOrphans(project, views, { now = () => new Date() } = {}) {
   let names;
   try {
     names = fs.readdirSync(helmDir(project)).filter((n) => n.endsWith('.json'));
@@ -129,7 +134,15 @@ export function cleanOrphans(project, views) {
   for (const name of names.sort()) {
     const work = name.slice(0, -'.json'.length);
     if (!SLUG.test(work) || views?.helm?.[work] !== undefined) continue;
-    fs.rmSync(path.join(helmDir(project), name), { force: true });
+    const file = path.join(helmDir(project), name);
+    let age;
+    try {
+      age = now().getTime() - fs.lstatSync(file).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (age < ORPHAN_GRACE_MS) continue;
+    fs.rmSync(file, { force: true });
     removed.push(work);
   }
   return removed;
