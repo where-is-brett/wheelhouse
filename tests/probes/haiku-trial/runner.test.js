@@ -493,6 +493,16 @@ test('an unreadable main is logged and is not taken for a planted bug', async (t
   assert.equal(io.timeline.some((e) => e.kind === 'spare'), false);
 });
 
+test('F3 with no feature session to kill is noted as not exercised and the run goes on', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo({});
+  io.faults.f3KillFeature = async () => { throw new Error('No running feature session in /p names "p1"'); };
+  io.gh = async (args) => (String(args[1]).includes('branches') ? [{ name: 'wheelhouse/p1' }] : { ahead_by: 1 });
+  const got = await run({ mode: 'smoke', io, from: 'f3-kill-p1', until: 'f3-kill-p1', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['f3-kill-p1'], got.why);
+  assert.ok(readLog(folder).some((e) => /not exercised: No running feature session/.test(e.note)));
+});
+
 test('F3b fires during the typed replies, not later', async (t) => {
   const folder = scratch(t);
   fs.writeFileSync(path.join(folder, 'state.json'), JSON.stringify({ f3bArmed: true, pieces: { P4: { change: 'p4' } } }));

@@ -8,6 +8,7 @@ import readline from 'node:readline/promises';
 import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { makeTmux } from './tmux.js';
+import { standInAnswers } from './stand-in.js';
 import { faults } from './faults.js';
 import { checkAll, gatherContext } from './signals.js';
 import { scoreAll } from './score/total.js';
@@ -33,7 +34,7 @@ import { visibleFromChange } from '../../scripts/gate/visible.js';
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const IDENTITY = ['-c', 'user.name=Wheelhouse probe', '-c', 'user.email=probe@wheelhouse.invalid', '-c', 'commit.gpgsign=false'];
 // The cards a stand-in director answers with a pick. Decisions, undo approvals and lifts are never in this list.
-export const PICKED = ['approve-work', 'approval', 'confirm', 'ci-push', 'setup', 'confirm-all', 'baseline', 'trust'];
+export { PICKED } from './stand-in.js';
 
 // A `gh` call with the test repository's name filled in. Everything but `api` (which carries the repository in its path) and
 // `repo` (which names it) is scoped with --repo, so a command run from a Wheelhouse checkout never reads Wheelhouse's own records.
@@ -110,19 +111,17 @@ export function buildRealIo(env = process.env) {
     events: async ({ project }) => listEvents(stateDir(nameOf(project)), { report: () => {} }),
     hasCommand: async (name) => !run(name, ['--version']).error,
 
-    // A stand-in for the director's click on a plan, approval or confirm card: it types the card's first option.
-    async answerCards({ events, session = 'desk' }) {
-      const answered = new Set(events.filter((e) => e.kind === 'card-answer').map((e) => e.data?.card));
-      let count = 0;
-      for (const card of events.filter((e) => e.kind === 'card' && PICKED.includes(e.data?.kind))) {
-        if (answered.has(card.id) || typed.has(card.id)) continue;
-        const pick = card.data?.options?.[0]?.label;
-        if (typeof pick !== 'string') continue;
-        typed.add(card.id);
-        tmux.type(session, pick);
-        count += 1;
+    // The stand-in director's answer to each open card (approvals, confirms and the builds' decisions, except those of
+    // the work in `skipWork`): the recommended option, chosen in the picker the front desk shows or typed as a reply.
+    async answerCards({ events, session = 'desk', skipWork = [] }) {
+      const pane = tmux.capture(session);
+      const actions = standInAnswers({ events, pane, done: typed, skipWork: new Set(skipWork) });
+      for (const action of actions) {
+        typed.add(action.card);
+        if (action.keys) tmux.keys(session, ...action.keys);
+        else tmux.type(session, action.type);
       }
-      return count;
+      return actions.length;
     },
 
     async readNtfy({ topic }) {
