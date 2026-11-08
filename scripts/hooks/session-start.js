@@ -57,7 +57,7 @@ import { listEvents, makeEvent } from '../state/events.js';
 import { buildViews } from '../state/views.js';
 import { startBackground, startDetached } from '../lib/background.js';
 import { sessionRole, asideKind } from '../lib/role.js';
-import { RECENT_MS, readSeat, takeSeat, refreshSeat, seatInUse, firstMatePid } from '../lib/first-mate-seat.js';
+import { RECENT_MS, STALE_AFTER_MS, readSeat, takeSeat, refreshSeat, seatInUse, firstMatePid } from '../lib/first-mate-seat.js';
 import { startedByScript } from '../decisions/answer.js';
 import { asideLine } from '../lib/front-desk.js';
 import { projectConfig } from '../watcher/main.js';
@@ -480,6 +480,23 @@ async function takeOverNotes({ client, left, project, now }) {
     return [`${TAKEOVER_ASK}${JSON.stringify(question)}`];
   } catch {
     return [];
+  }
+}
+
+// Whether this computer holds the lock or could take it, judged by reading it and taking nothing (for a hook that doesn't
+// keep the lock): free when no helper can be asked, the project is in git alone, nothing holds it, this computer holds it, or
+// its holder has been idle STALE_AFTER_MS; not free while another computer's lock is live. keepLock's own rule, by a read.
+export async function lockFreeNow({ client, project, left = (p) => p, now = () => new Date() }) {
+  try {
+    if (readProject(project)?.host === 'local' || typeof client?.lock?.read !== 'function') return true;
+    const got = await left(client.lock.read({ project }));
+    if (got?.ok !== true) return true;
+    const lock = got.result;
+    if (!lock || lock.computer === computerId()) return true;
+    const idle = now().getTime() - Date.parse(lock.lastWriteAt);
+    return Number.isFinite(idle) && idle > STALE_AFTER_MS;
+  } catch {
+    return true;
   }
 }
 

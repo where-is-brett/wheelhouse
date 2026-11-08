@@ -73,7 +73,7 @@ import { switchLabelOf } from '../routing/nudge.js';
 import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
 import { offeredFrom, premiumValueOf, PREMIUM_CARD_MS } from '../routing/premium.js';
 import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures, cardText, sweepStale, cardHash } from '../lib/measures-clicks.js';
-import { localViews } from './session-start.js';
+import { localViews, lockFreeNow } from './session-start.js';
 import { cardOutcomes } from '../state/views.js';
 import { clearOpen } from '../lib/session-files.js';
 import { cardProblems } from './card-check.js';
@@ -918,11 +918,12 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
 // A front-desk session that doesn't hold the First Mate's seat takes it here when it is free (a session that began before
 // the seat existed, or whose holder has since ended). A seat another live session holds is never taken: takeSeat leaves it,
 // and moving it is the take-over card's click, not this. It informs, so a failure leaves the seat as it was.
-async function takeFreeSeat({ project, input, env, now }) {
+async function takeFreeSeat({ project, input, env, now, client, left }) {
   try {
     const session = input.session_id;
     if (typeof session !== 'string' || session === '' || startedByScript(env)) return;
     if (sessionRole({ sessionId: session, env, prompt: input.prompt, cwd: input.cwd, seat: null }) !== 'front-desk') return;
+    if (!(await lockFreeNow({ client, project, left, now }))) return; // another computer's lock: no seat (design 6.8, case 8)
     if (readSeat(project)?.session === session) refreshSeat(project, session, { now });
     else await takeSeat(project, { session, folder: input.cwd }, { now });
   } catch { /* the seat is taken at a later hook */ }
@@ -937,7 +938,7 @@ async function decideReply(input, { client, now, find, dir, budget, env }) {
     if (typeof input.prompt !== 'string') return undefined;
     const found = find(input.cwd, { dir });
     if (!found) return undefined;
-    await takeFreeSeat({ project: found.project, input, env, now });
+    await takeFreeSeat({ project: found.project, input, env, now, client: client ?? helperClient({ timeout: budget }), left: withinBudget(Date.now() + budget) });
     const done = await recordAnswer({ project: found.project, sessionId: input.session_id, prompt: input.prompt, at: now(), cwd: input.cwd, env, client, budget });
     return typeof done.note === 'string' && done.note !== '' ? answer.context('UserPromptSubmit', done.note) : undefined;
   } catch {

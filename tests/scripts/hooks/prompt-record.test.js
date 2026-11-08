@@ -2000,3 +2000,16 @@ test('a prompt never takes a held seat', async () => {
     assert.deepEqual(readSeat(P), heldSeat('b'));
   });
 });
+
+test('a prompt takes no seat while another computer holds the lock', async () => {
+  await withHome(async () => {
+    const c = fake();
+    c.lock = { read: async () => ({ ok: true, result: { computer: '0a1b2c3d', counter: 4, takenAt: '2026-10-18T00:00:00.000Z', lastWriteAt: '2026-10-18T04:50:00.000Z' } }) };
+    await decide(promptIn('a'), deps(c));
+    assert.equal(readSeat(P), null);
+    // The same lock idle for over two hours is takeable, so the seat is taken.
+    c.lock.read = async () => ({ ok: true, result: { computer: '0a1b2c3d', counter: 4, takenAt: '2026-10-17T00:00:00.000Z', lastWriteAt: '2026-10-18T02:00:00.000Z' } });
+    await decide(promptIn('a'), deps(c));
+    assert.equal(readSeat(P)?.session, 'a');
+  });
+});
