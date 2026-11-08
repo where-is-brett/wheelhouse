@@ -114,12 +114,19 @@ export function findTranscripts({ project, claudeHome = path.join(os.homedir(), 
   return [...found.values()];
 }
 
+const ADVISOR = 'advisor';
+
 export function auditModels(transcripts) {
   const offenders = [];
   for (const { file, role, session } of transcripts) {
     const counts = new Map();
     for (const entry of entriesOf(file)) {
-      const model = entry.type === 'assistant' ? entry.message?.model : undefined;
+      if (entry.type !== 'assistant') continue;
+      // A call to the advisor tool is answered by another model inside a Haiku turn, so it counts against the run.
+      for (const block of Array.isArray(entry.message?.content) ? entry.message.content : []) {
+        if (block?.type === 'server_tool_use' && block.name === ADVISOR) counts.set(ADVISOR, (counts.get(ADVISOR) ?? 0) + 1);
+      }
+      const model = entry.message?.model;
       if (typeof model !== 'string' || model === '<synthetic>' || HAIKU.test(model)) continue;
       counts.set(model, (counts.get(model) ?? 0) + 1);
     }

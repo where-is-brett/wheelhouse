@@ -253,12 +253,12 @@ test('setup answers its cards through the setup session, ends on the engine word
     capture: (name) => {
       if (name !== 'haiku-trial-setup' && name !== 'setup') return '';
       if (!trusted) return trustMenu(onYes);
-      phase += 1;
       if (phase < 3) return 'Last safety checks need one new session on this folder.';
       if (phase < 5) return 'working';
       return 'Every step is done.';
     },
-    host: { events: async () => cards, answerCards: async (x) => { answered.push(x.session); return 1; }, readConfig: async () => ({ routing: {} }) },
+    // One look at the project a tick, so the pane moves on once each tick.
+    host: { events: async () => { phase += 1; return cards; }, answerCards: async (x) => { answered.push(x.session); return 1; }, readConfig: async () => ({ routing: {} }) },
   });
   const got = await run({ mode: 'smoke', io, from: 'setup-s0', until: 'setup-s0', folder, date: '2026-11-08', env: ENV });
   assert.deepEqual(got.done, ['setup-s0'], got.why);
@@ -267,6 +267,56 @@ test('setup answers its cards through the setup session, ends on the engine word
   assert.equal(io.timeline.filter((e) => e.kind === 'tmux.start').length, 2, 'one restart');
   assert.deepEqual(io.timeline.filter((e) => e.kind === 'tmux.type').map((e) => e.args[1]), ['/wheelhouse:setup', 'carry on with setup']);
   assert.ok(readLog(folder).some((e) => e.step === 'health' && e.note === 'pass'));
+});
+
+// A picker as Claude Code draws it in the pane, its cursor on option `at` (0-based).
+const picker = (question, labels, at) => [
+  ` ☐ Setup`,
+  `│ ${question}`,
+  ...labels.map((l, i) => `${i === at ? '❯' : ' '} ${i + 1}. ${l}`),
+  'Enter to select · ↑/↓ to navigate · Esc to cancel',
+].join('\n');
+
+test("setup's pickers in the pane are answered with the recommended option, moving the cursor to it first", async (t) => {
+  const folder = scratch(t);
+  let at = 0;
+  const picks = [];
+  const labels = ['Show me', 'Go ahead (Recommended)', 'Not now', 'Type something.'];
+  const io = fakeIo({
+    keys: (name, key) => {
+      if (key === 'Down') at += 1;
+      if (key === 'Up') at -= 1;
+      if (key === 'Enter') picks.push(labels[at]);
+    },
+    capture: () => (picks.length === 0 ? picker('Setup step 2, Tools', labels, at) : 'Every step is done.'),
+    host: { readConfig: async () => ({ routing: {} }) },
+  });
+  const got = await run({ mode: 'smoke', io, from: 'setup-s0', until: 'setup-s0', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['setup-s0'], got.why);
+  assert.deepEqual(picks, ['Go ahead (Recommended)']);
+  assert.deepEqual(io.timeline.filter((e) => e.kind === 'tmux.keys').map((e) => e.args[1]), ['Down', 'Enter']);
+  assert.ok(readLog(folder).some((e) => e.step === 'setup' && e.note === 'answered the picker "Setup step 2, Tools": Go ahead (Recommended)'));
+});
+
+test('a picker with no recommended option is answered with its first option', async (t) => {
+  let picked = null;
+  const io = fakeIo({
+    keys: (name, key) => { if (key === 'Enter') picked = 'Test data only'; },
+    capture: () => (picked ? 'Every step is done.' : picker('Live data', ['Test data only', 'Live data'], 0)),
+    host: { readConfig: async () => ({ routing: {} }) },
+  });
+  const got = await run({ mode: 'smoke', io, from: 'setup-s0', until: 'setup-s0', folder: scratch(t), date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['setup-s0'], got.why);
+  assert.equal(picked, 'Test data only');
+  assert.deepEqual(io.timeline.filter((e) => e.kind === 'tmux.keys').map((e) => e.args[1]), ['Enter']);
+});
+
+test('a picker whose cursor never reaches the recommended option stops the run without pressing Enter', async (t) => {
+  const io = fakeIo({ capture: () => picker('Setup', ['Not now', 'Go ahead (Recommended)'], 0) });
+  const got = await run({ mode: 'smoke', io, from: 'setup-s0', until: 'setup-s0', folder: scratch(t), date: '2026-11-08', env: ENV });
+  assert.equal(got.stoppedAt, 'setup-s0');
+  assert.match(got.why, /never highlighted its recommended option/);
+  assert.equal(io.timeline.some((e) => e.kind === 'tmux.keys' && e.args.includes('Enter')), false);
 });
 
 test('the folder-trust prompt is answered Yes: the cursor is moved off "No, exit" before Enter', async (t) => {

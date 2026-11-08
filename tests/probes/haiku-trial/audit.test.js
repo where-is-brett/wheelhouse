@@ -59,6 +59,16 @@ test('audit counts repeated offences by model', () => {
   assert.deepEqual(offenders.map((o) => [o.model, o.count]).sort(), [['other-model', 1], ['other-model-b', 2]]);
 });
 
+test('a call to the advisor tool inside a haiku turn fails the audit', () => {
+  const dir = scratch();
+  const advised = { type: 'assistant', message: { model: 'haiku-test', content: [{ type: 'server_tool_use', id: 'a1', name: 'advisor', input: {} }] } };
+  const otherTool = { type: 'assistant', message: { model: 'haiku-test', content: [{ type: 'server_tool_use', id: 'w1', name: 'web_search', input: {} }] } };
+  const file = write(path.join(dir, 'a.jsonl'), [turn('haiku-test'), advised, otherTool, advised]);
+  const { clean, offenders } = auditModels(asTranscripts(file, 'setup', 's9'));
+  assert.equal(clean, false);
+  assert.deepEqual(offenders.map((o) => [o.role, o.session, o.model, o.count]), [['setup', 's9', 'advisor', 2]]);
+});
+
 test('audit skips a transcript file that cannot be read', () => {
   assert.deepEqual(auditModels(asTranscripts(path.join(scratch(), 'missing.jsonl'))), { clean: true, offenders: [] });
 });
