@@ -546,28 +546,35 @@ const liveRecord = (record) => record !== null && record.state === 'running' && 
 // the name `foreman`, on the project's own level, when its running record names a session. `read` stands for `runSteps`.
 export function crewNow(project, views, settings, { env = process.env, read = runSteps } = {}) {
   const out = {};
-  try {
-    const glossary = glossaryOf(views?.glossary);
-    let pending = null;
-    const waitingOn = (work) => {
-      if (pending === null) {
-        try {
-          pending = readDecisions(project).pending;
-        } catch {
-          pending = [];
-        }
+  // Not a project name (a path, say): nothing is opened, deliberately.
+  if (typeof project !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(project) || project.includes('..')) return out;
+  const glossary = glossaryOf(views?.glossary);
+  let pending = null;
+  const waitingOn = (work) => {
+    if (pending === null) {
+      try {
+        pending = readDecisions(project).pending;
+      } catch {
+        pending = [];
       }
-      return pending.find((d) => d.workId === work)?.n ?? null;
-    };
-    const ids = Object.keys(views !== null && typeof views === 'object' && views.work !== null && typeof views.work === 'object' ? views.work : {});
-    for (const work of ids) {
+    }
+    return pending.find((d) => d.workId === work)?.n ?? null;
+  };
+  const ids = Object.keys(views !== null && typeof views === 'object' && views.work !== null && typeof views.work === 'object' ? views.work : {});
+  for (const work of ids) {
+    // Whatever one piece's records give, the others still show: a failure shows less and never breaks the Logbook.
+    try {
       if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(work) || work.includes('..')) continue;
       if (levelFor(views, settings, work) === 'off') continue;
       if (!liveRecord(readSmall(runningFile(project, `feature-${work}`)))) continue;
       const sessionId = readSmall(sessionFile(project, work))?.sessionId;
       if (typeof sessionId !== 'string') continue;
       out[work] = read({ sessionId, env, glossary, waiting: waitingOn(work) });
+    } catch {
+      // This piece shows no step.
     }
+  }
+  try {
     if (levelFor(views, settings, 'foreman') !== 'off') {
       const record = readSmall(runningFile(project, 'foreman'));
       if (liveRecord(record) && typeof record.sessionId === 'string') {
@@ -575,7 +582,7 @@ export function crewNow(project, views, settings, { env = process.env, read = ru
       }
     }
   } catch {
-    // Whatever was read stands; a failure shows less and never breaks the Logbook.
+    // The Bosun shows no step.
   }
   return out;
 }

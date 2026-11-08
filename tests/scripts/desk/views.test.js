@@ -174,7 +174,6 @@ test('the briefing says the line once', () => withRuns(async ({ source }) => {
   assert.doesNotMatch(next.data.text, /New quick changes are built by the new engine\./);
 }));
 
-
 const crewViews = {
   work: { login: { work: { id: 'w', at: '2026-10-29T05:00:00.000Z', data: { id: 'login', title: 'The login page', lane: 'quick', visible: false } }, approved: true } },
   features: { login: { at: '2026-10-29T06:00:00.000Z', data: { step: 'building' } } },
@@ -191,6 +190,16 @@ test('workLines: no step, no change', () => {
   assert.match(before[0], /running/);
   assert.deepEqual(workLines(crewViews, [], {}, {}, {}), before);
   assert.deepEqual(workLines(crewViews, [], {}, {}, { login: { steps: [], crew: [] } }), before);
+});
+
+test("the desk's work view gives no step when its source has no project", async () => {
+  const source = {
+    views: async () => ({ ok: true, views: { ...crewViews, settings: { watchCrew: { key: 'watchCrew', value: 'steps' } } }, answers: [], names: [] }),
+    profile: async () => ({ settings: {} }),
+  };
+  const got = await readView('work', {}, source, { now });
+  assert.match(got.lines[0], /running/);
+  assert.ok(!got.lines[0].includes(' \u00b7 '), got.lines[0]);
 });
 
 test("the desk's work view shows the latest step for a running piece", async () => {

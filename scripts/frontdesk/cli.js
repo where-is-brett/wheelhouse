@@ -1202,7 +1202,8 @@ export async function view({ client, cwd, name, now, since: from }) {
   if (name === 'survey') return surveyLines(views.survey);
   if (name === 'work') {
     const own = await ownSettings(client, cwd);
-    const crew = crewNow(cwd, views, effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now }));
+    const found = projectOf(cwd);
+    const crew = found === null ? {} : crewNow(found.project, views, effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now }));
     return workLines(views, answers, await wordsOf(client, cwd, views, now, names), prsOfWork(views, cwd), crew);
   }
   // settings: the project's over the director's own, over the defaults

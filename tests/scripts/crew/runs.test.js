@@ -624,6 +624,16 @@ const liveFeature = (project, work, sessionId) => {
 };
 const viewsFor = (...ids) => ({ work: Object.fromEntries(ids.map((id) => [id, {}])), features: Object.fromEntries(ids.map((id) => [id, { data: { step: 'building' } }])) });
 
+test('crewNow: a path is no project name and gives nothing', () => {
+  const { dir, env } = fakeConfig();
+  const project = nowProject();
+  writeRun(dir, 's1', [tool('Read', { file_path: '/w/tree/a.js' })]);
+  liveFeature(project, 'login', 's1');
+  assert.deepEqual(crewNow('/Users/x/shop', viewsFor('login'), {}, { env }), {});
+  assert.deepEqual(crewNow(undefined, viewsFor('login'), {}, { env }), {});
+  assert.equal(crewNow(project, viewsFor('login'), { watchCrew: { value: 'steps' } }, { env }).login.steps[0].text, 'Reading `a.js`');
+});
+
 test('crewNow: opens nothing at off', () => {
   const { dir, env } = fakeConfig();
   const project = nowProject();
