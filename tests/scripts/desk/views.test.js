@@ -19,6 +19,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { writeJsonFile, runningFile, sessionFile } from '../../../scripts/watcher/waker.js';
+import { holdFile } from '../../../scripts/crew/hold.js';
 import { P, NOW, now, CARD, writeRecord, upClient, put, viewsDir } from './fixture.js';
 
 function withRecord(fn) {
@@ -356,3 +357,16 @@ test('desk: a hold file says whether a steer is opened', () => {
   const marked = withOpened(views, 'no__such-project');
   assert.deepEqual(marked.helm, views.helm, 'no hold file: nothing is marked');
 });
+
+test('desk: a real hold file marks the helm opened or not', () => withRuns(async () => {
+  const hold = (work, opened) => {
+    fs.mkdirSync(path.dirname(holdFile(P, work)), { recursive: true });
+    fs.writeFileSync(holdFile(P, work), `${JSON.stringify({ work, sessionId: 's', at: 'x', fromStart: true, opened, pid: null, startTime: null })}\n`);
+  };
+  hold('login', false);
+  hold('search', true);
+  const views = { helm: { login: { since: 'x', fromStart: true }, search: { since: 'x', fromStart: true } } };
+  const marked = withOpened(views, P);
+  assert.equal(marked.helm.login.opened, false);
+  assert.equal(marked.helm.search.opened, true);
+}));

@@ -113,7 +113,7 @@ export function nextWork({ work, features, reports, now, fiveHourTight, builderC
 
   const candidates = Object.values(work ?? {})
     .map((w) => w.work)
-    .filter((w) => !holdsSlot(w.key) && !stopped(w.key) && !closed(w) && !endedBy(reports, w.key, w))
+    .filter((w) => !holdsSlot(w.key) && !unopened(w.key) && !stopped(w.key) && !closed(w) && !endedBy(reports, w.key, w))
     .map((w) => ({ ...w, since: work[w.key].since ?? w.at }))
     .sort((a, b) => {
       const pa = a.data.place;

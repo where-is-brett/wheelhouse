@@ -1679,7 +1679,9 @@ function slotsWith(steer) {
   const work = {};
   const features = {};
   const ids = Array.from({ length: PACE.building - 1 }, (_, i) => `w-tide-${i + 1}`);
-  for (const id of [...ids, 'w-steer', 'w-next']) work[id] = { work: { key: id, at: T2(1), data: { lane: 'small' } }, approved: true, since: T2(1) };
+  // The steer is older than the new piece and sorts ahead of it by name too, so it would take the free slot if it were a candidate.
+  for (const id of [...ids, 'w-steer']) work[id] = { work: { key: id, at: T2(1), data: { lane: 'small' } }, approved: true, since: T2(1) };
+  work['w-znext'] = { work: { key: 'w-znext', at: T2(9), data: { lane: 'small' } }, approved: true, since: T2(9) };
   for (const id of [...ids, 'w-steer']) features[id] = { key: id, at: T2(2), data: { step: 'building', lane: 'small' } };
   steerHold('w-steer', steer);
   const views = { work, features };
@@ -1689,13 +1691,15 @@ function slotsWith(steer) {
 
 test('waker: an unopened steer holds no slot', () => withHome(async () => {
   checkout();
-  assert.deepEqual(slotsWith({}).start, ['w-next'], 'a further piece may still start beside the steer');
+  const got = slotsWith({});
+  assert.deepEqual(got.start, ['w-znext'], 'a further piece may still start beside the steer');
+  assert.ok(!got.start.includes('w-steer') && !got.hold.some((h) => h.work === 'w-steer'), 'the steer is neither started nor held');
 }));
 
 test('waker: an opened steer holds its slot', () => withHome(async () => {
   checkout();
   const got = slotsWith({ opened: true, pid: 4242 });
   assert.deepEqual(got.start, []);
-  assert.deepEqual(got.hold, [{ work: 'w-next', why: 'pace' }]);
+  assert.deepEqual(got.hold, [{ work: 'w-znext', why: 'pace' }]);
   assert.equal(helmHeld(P, 'w-steer'), true);
 }));
