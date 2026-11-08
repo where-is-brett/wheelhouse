@@ -579,7 +579,7 @@ Branch `feature/crew-helm-desk` from `main` once part 5 is merged. Spec sections
 
 **Files:**
 - Modify: `scripts/decisions/log.js`, `scripts/feature/cli.js` (its `appendCall` command), `scripts/crew/hold.js` (`releaseHold`), `scripts/hooks/board-context.js`, `scripts/frontdesk/cli.js` (the Logbook's helm lines)
-- Test: `tests/scripts/decisions/log.test.js`, `tests/scripts/feature/cli.test.js`, `tests/scripts/crew/hold.test.js`, `tests/scripts/hooks/board-context.test.js`
+- Test: `tests/scripts/decisions/log.test.js`, `tests/scripts/feature/cli-log.test.js`, `tests/scripts/crew/hold.test.js`, `tests/scripts/hooks/board-context.test.js`
 
 **Interfaces:**
 - Consumes: `views.helm`, `views.helmNotes`, `releaseHold` (5.1).
@@ -596,7 +596,40 @@ Branch `feature/crew-helm-desk` from `main` once part 5 is merged. Spec sections
   - `hold: release writes the helm line`.
   - `board-context: shows a helm note once`.
   - `board-context: says when no note came`.
-- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/decisions/log.test.js tests/scripts/feature/cli.test.js tests/scripts/crew/hold.test.js tests/scripts/hooks/board-context.test.js`
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/decisions/log.test.js tests/scripts/feature/cli-log.test.js tests/scripts/crew/hold.test.js tests/scripts/hooks/board-context.test.js`
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run them and see them pass.**
 - [ ] **Step 5: Commit.** `git commit -am "Helm: the decision log line, calls made at the helm and the helm note"`
+
+### Task 6.4: The helm at the front desk
+
+**Files:**
+- Modify: `scripts/crew/helm.js`, `scripts/frontdesk/cli.js` (`COMMANDS`), `scripts/desk/views.js`, `scripts/watcher/digest.js`, `scripts/desk/acts.js` (`all-stop` at 89), `skills/front-desk/SKILL.md`, `commands/logbook.md`, `docs/data.md`, `docs/specs/2026-10-17-wheelhouse-design.md` (safety section)
+- Test: `tests/scripts/crew/helm.test.js`, `tests/scripts/frontdesk/cli.test.js`, `tests/scripts/desk/views.test.js`, `tests/scripts/watcher/digest.test.js`, `tests/scripts/desk/acts.test.js`, `tests/skills/front-desk.test.js`
+
+**Interfaces:**
+- Consumes: `takeHold`, `readHold`, `views.helm` (5.1); `openHelm`, `handBack` (5.3); `stopRun` (6.2); `pidAlive`.
+- Produces:
+  - `cli.js helm take <work>` (the front desk's "take the helm of <work>", "let me steer <work>"): takes the hold and prints the readiness and the command. Exact copy, ready: `<work> is ready for you now. Run this to open it:` then, on its own line in a `bash` block, `node <plugin root>/scripts/crew/helm.js open <work>`. Not ready: `<work> will be ready when its current step ends, about <n> minutes from what it's doing. Run this once it is, or say "now" to stop the step:` and the same block. `<n>` comes from the running record's start and the piece's step (3.1); with nothing to go on, `when its current step ends`.
+  - `cli.js helm steer <work>` ("I'll steer it" at intake): `takeHold({fromStart: true})`.
+  - `cli.js helm back <work>` ("hand back <work>"): refuses with (exact copy) `<work>'s helm session is still open. Leave it with /exit first.` while the opened pid is alive with its start time; otherwise `handBack`.
+  - `cli.js helm now <work>`: `stopRun` (6.2).
+  - The plugin root in the printed command is found as the other front-desk commands find it; on Windows the block is the same `node` line, quoted for `cmd.exe`.
+  - Desk line for a held, opened piece (exact copy): `with the director since HH:MM`. The digest lists held pieces under what is waiting.
+  - All stop's answer, when any piece is held, adds (exact copy) `The helm session for <work> is the director's own, so it keeps running.`
+  - `skills/front-desk/SKILL.md` and `commands/logbook.md`: the phrases above, "Why" works while held, the Bosun and subagents can't be taken.
+  - `docs/data.md`: the hold file and the `helm`, `helm-ended` and `helm-note` records under "## Watching the crew". The design's safety section gains rules 7 to 10 from the spec's section 8.2.
+
+- [ ] **Step 1: Write the failing tests**
+  - `helm: take prints the command when ready`.
+  - `helm: take says when it will be ready while a run is live`.
+  - `helm: back refuses while the session is open`.
+  - `cli: helm take writes a helm event`.
+  - `desk: a held piece reads with the director since 14:02`.
+  - `digest: a held piece is listed as waiting`.
+  - `acts: all stop names the helm session it leaves running`.
+  - `front-desk skill: names take the helm, I'll steer it and hand back`.
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/crew/helm.test.js tests/scripts/frontdesk/cli.test.js tests/scripts/desk/views.test.js tests/scripts/watcher/digest.test.js tests/scripts/desk/acts.test.js tests/skills/front-desk.test.js`
+- [ ] **Step 3: Implement**, then the documents.
+- [ ] **Step 4: Run them and see them pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Helm: take, steer, hand back and now at the front desk"`
