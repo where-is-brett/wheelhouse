@@ -29,6 +29,14 @@ test('an alert holds only a count and the project\'s name', () => {
   assert.doesNotMatch(odd, LINK);
 });
 
+test('a dotted repository name comes out with dashes, and a name is capped', () => {
+  assert.equal(alertText({ count: 1, project: 'brett.github.io' }), '1 decision waits in brett-github-io');
+  assert.equal(alertText({ count: 2, project: 'harbour demo/api@x' }), '2 decisions wait in harbour-demoapix');
+  assert.ok(alertText({ count: 1, project: 'a'.repeat(100) }).endsWith(` in ${'a'.repeat(40)}`));
+  assert.equal(alertText({ count: 1, project: '...' }), '1 decision waits in -');
+  assert.doesNotMatch(alertText({ count: 3, project: 'www.example.com' }), /\./u);
+});
+
 test('ntfy gets the text as the body and no click, attach or actions header', async () => {
   const { calls, fetch } = recorder();
   const got = await sendAlert({ channel: 'ntfy', settings: SETTINGS, text: '1 decision waits in harbour-demo', fetch });

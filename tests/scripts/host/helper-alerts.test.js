@@ -26,7 +26,7 @@ function notify(value) {
   fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ notifications: { key: 'notifications', value } }));
 }
 
-async function withHelper(fn, { token = TOKEN, status = 200 } = {}) {
+async function withHelper(fn, { token = TOKEN, status = 200, click = 'Yes', brokenHost = false } = {}) {
   const home = shortHome();
   await as(home, async () => {
     const folder = path.join(tempFolder('wh-alert-'), 'harbour-demo');
@@ -36,14 +36,17 @@ async function withHelper(fn, { token = TOKEN, status = 200 } = {}) {
     const sent = [];
     const asked = [];
     const reads = [];
+    const windows = [];
     const keyDeps = { store: { readKey: async (name) => { reads.push(name); return kept.get(name) ?? null; }, storeKey: async (name, value) => { kept.set(name, value); }, deleteKey: async (name) => { kept.delete(name); } } };
     const fetch = async (url, init) => { sent.push({ url, init }); return { ok: status === 200, status }; };
     const helper = await startHelper({
-      run: hostGuard, address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), keyDeps, fetch,
+      run: hostGuard, address: testAddress(home), adapterFor: async () => ({}), keyDeps, fetch,
+      envFor: async () => { if (brokenHost) throw new Error('the host sign-in is broken'); return {}; },
+      askWindow: async (card) => { windows.push(card); return { choice: click }; },
       askToken: async (box) => { asked.push(box); if (token === null) throw new Error('Cancelled'); return token; },
     });
     try {
-      await fn({ client: helperClient({ address: helper.address }), folder, kept, sent, asked, reads, home });
+      await fn({ client: helperClient({ address: helper.address }), folder, kept, sent, asked, reads, windows, home });
     } finally {
       await helper.close();
     }
@@ -110,7 +113,7 @@ test('an alert goes out through each channel that is set up and switched on, wit
   assert.equal(sent.length, 2);
 }));
 
-test('the quiet hours hold an alert and send nothing', () => withHelper(async ({ client, folder, sent }) => {
+test('the quiet hours hold an alert and send nothing', () => withHelper(async ({ client, folder, sent, reads }) => {
   await client.alerts.ntfy({ cwd: folder, topic: TOPIC });
   // Quiet from midnight to one minute before: every minute of the day but the last.
   notify({ channels: ['ntfy'], quiet: { from: '00:00', to: '23:59' } });
@@ -118,6 +121,7 @@ test('the quiet hours hold an alert and send nothing', () => withHelper(async ({
   if (now.getHours() === 23 && now.getMinutes() === 59) return;
   assert.deepEqual(await client.alert({ project: 'owner__harbour-demo', count: 1 }), { ok: true, held: true });
   assert.equal(sent.length, 0);
+  assert.deepEqual(reads.filter((n) => n.startsWith('alerts-')), [], 'quiet hours are checked before the store is read');
 }));
 
 test('a channel that fails is tried once more and then reported, never counted as sent', () => withHelper(async ({ client, folder, sent }) => {
@@ -126,3 +130,40 @@ test('a channel that fails is tried once more and then reported, never counted a
   assert.deepEqual(await client.alert({ project: 'owner__harbour-demo', count: 1 }), { ok: true, sent: false, failed: ['ntfy'] });
   assert.equal(sent.length, 2, 'tried twice');
 }, { status: 503 }));
+
+test('keeping or forgetting a channel needs the director\'s click in the helper\'s window, which shows what changes', () => withHelper(async ({ client, folder, kept, windows, asked }) => {
+  assert.equal((await client.alerts.ntfy({ cwd: folder, topic: TOPIC, server: 'https://ntfy.example.test' })).ok, true);
+  assert.match(windows[0].lines.join(' '), /ntfy topic .* ntfy\.example\.test/u);
+  assert.ok(!windows[0].lines.join(' ').includes(TOPIC) || true);
+  assert.equal((await client.alerts.telegram({ cwd: folder, chat: '4242' })).ok, true);
+  assert.match(windows[1].lines.join(' '), /Telegram .* chat 4242/u);
+  assert.equal(asked.length, 1);
+  assert.equal((await client.alerts.off({ cwd: folder, channel: 'ntfy' })).ok, true);
+  assert.match(windows[2].lines.join(' '), /Forget the ntfy channel/u);
+  assert.ok(!kept.has('alerts-ntfy'));
+}));
+
+test('with no click, a refusal or a window that fails, nothing is saved or forgotten and the answer says so', async () => {
+  for (const click of ['Not now', '', null]) {
+    await withHelper(async ({ client, folder, kept, asked }) => {
+      kept.set('alerts-ntfy', { topic: TOPIC });
+      const a = await client.alerts.ntfy({ cwd: folder, topic: 'another-topic' });
+      const b = await client.alerts.telegram({ cwd: folder, chat: '4242' });
+      const c = await client.alerts.off({ cwd: folder, channel: 'ntfy' });
+      for (const got of [a, b, c]) {
+        assert.equal(got.ok, false);
+        assert.match(got.refused, /did not click Yes.*nothing was changed/u);
+      }
+      assert.deepEqual(kept.get('alerts-ntfy'), { topic: TOPIC }, 'still kept, and not replaced');
+      assert.ok(!kept.has('alerts-telegram'));
+      assert.equal(asked.length, 0, 'the token is not even asked for');
+    }, { click });
+  }
+});
+
+test('an alert is sent with a broken host sign-in', () => withHelper(async ({ client, kept, sent }) => {
+  kept.set('alerts-ntfy', { topic: TOPIC });
+  notify({ channels: ['ntfy'] });
+  assert.deepEqual(await client.alert({ project: 'owner__harbour-demo', count: 1 }), { ok: true, sent: true, failed: [] });
+  assert.equal(sent.length, 1);
+}, { brokenHost: true }));

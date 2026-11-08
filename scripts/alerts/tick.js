@@ -47,12 +47,14 @@ export function writeAlerts(project, kept) {
   }
 }
 
-// Hands the failures to the digest and forgets them: what the last alerts could not reach, oldest first.
-export function takeFailures(project) {
+// Forgets the oldest `count` failures (all, when none is named) and returns them: what the alerts could not reach, which a digest the
+// director was shown has said.
+export function takeFailures(project, count = Infinity) {
   const kept = readAlerts(project);
   if (kept.failures.length === 0) return [];
-  writeAlerts(project, { ...kept, failures: [] });
-  return kept.failures;
+  const taken = kept.failures.slice(0, count);
+  writeAlerts(project, { ...kept, failures: kept.failures.slice(taken.length) });
+  return taken;
 }
 
 // The waiting decisions no alert was sent for.

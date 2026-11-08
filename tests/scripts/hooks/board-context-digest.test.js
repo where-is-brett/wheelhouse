@@ -11,6 +11,7 @@ import { recordRole } from '../../../scripts/lib/role.js';
 import { markSeen, readDigestSeen } from '../../../scripts/briefing/seen.js';
 import { writeDigest, readDigest } from '../../../scripts/digest/due.js';
 import { wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { readAlerts, writeAlerts } from '../../../scripts/alerts/tick.js';
 import { listEvents } from '../../../scripts/state/events.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { inHome, P, raise } from '../../helpers/decisions-world.js';
@@ -61,6 +62,23 @@ test('a waiting digest comes with the decisions waiting, and answers none of the
     assert.match(text, /Decisions waiting for the director: 1\. How often should the digest go out\?\./);
     assert.ok(text.indexOf('Decisions waiting') < text.indexOf('Daily digest'), 'the decisions line comes first');
     assert.deepEqual(answersRecorded(), [], 'nothing was recorded as an answer');
+  });
+});
+
+test('a session a script started leaves the digest waiting, and the director\'s own message shows it, noting the log and the alerts said', async () => {
+  await inHome(async (home) => {
+    const repo = register(home);
+    writeDigest(P, { at: '2026-11-07T17:00:05.000Z', text: DIGEST, weekly: true, failures: 1 });
+    const kept = { ...readAlerts(P), ids: [], failures: [{ at: '2026-11-07T12:00:00.000Z', channels: ['ntfy'] }, { at: '2026-11-08T11:59:30.000Z', channels: ['telegram'] }] };
+    writeAlerts(P, kept);
+    assert.equal(await ask(repo, 'Hello', { env: { CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' } }), undefined);
+    assert.notEqual(readDigest(P), null);
+    assert.equal(readAlerts(P).failures.length, 2);
+    assert.ok(contextOf(await ask(repo, 'Hello')).includes(DIGEST));
+    const seen = readDigestSeen(P, { now: at(NOW) });
+    assert.equal(seen.digestShownAt, NOW);
+    assert.equal(seen.digestLogShownAt, NOW);
+    assert.deepEqual(readAlerts(P).failures.map((f) => f.channels), [['telegram']], 'only the failure the digest said is cleared');
   });
 });
 

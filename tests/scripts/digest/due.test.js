@@ -39,8 +39,8 @@ test('the weekly log is added on the first digest seven or more days after the l
 
 test('the digest shows once: it waits in its file, is read back whole, and is taken away when shown', () => withHome(() => {
   assert.equal(readDigest('harbour-demo'), null);
-  writeDigest('harbour-demo', { at: at(8, 17, 1).toISOString(), text: 'Daily digest, 8 November 2026\n\nMerged by itself\nNothing.', weekly: true });
-  assert.deepEqual(readDigest('harbour-demo'), { at: at(8, 17, 1).toISOString(), text: 'Daily digest, 8 November 2026\n\nMerged by itself\nNothing.', weekly: true });
+  writeDigest('harbour-demo', { at: at(8, 17, 1).toISOString(), text: 'Daily digest, 8 November 2026\n\nMerged by itself\nNothing.', weekly: true, failures: 2 });
+  assert.deepEqual(readDigest('harbour-demo'), { at: at(8, 17, 1).toISOString(), text: 'Daily digest, 8 November 2026\n\nMerged by itself\nNothing.', weekly: true, failures: 2 });
   // A newer digest replaces one not yet shown.
   writeDigest('harbour-demo', { at: at(9, 17, 1).toISOString(), text: 'Daily digest, 9 November 2026' });
   assert.equal(readDigest('harbour-demo').text, 'Daily digest, 9 November 2026');
@@ -56,7 +56,7 @@ test('the digest shows once: it waits in its file, is read back whole, and is ta
 
 test('the digest times are kept in seen.json beside the others, and a time in the future reads as none', () => withHome(() => {
   const now = at(8, 18);
-  assert.deepEqual(readDigestSeen('harbour-demo', { now }), { digestAt: null, digestLogAt: null, digestShownAt: null });
+  assert.deepEqual(readDigestSeen('harbour-demo', { now }), { digestAt: null, digestLogAt: null, digestShownAt: null, digestLogShownAt: null });
   markSeen('harbour-demo', { digestAt: at(8, 17, 1), digestLogAt: at(8, 17, 1).toISOString(), promptAt: at(8, 10).toISOString() });
   markSeen('harbour-demo', { digestShownAt: at(8, 17, 30) });
   const seen = readDigestSeen('harbour-demo', { now });

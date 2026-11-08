@@ -4,7 +4,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeDigestTicker } from '../../../scripts/watcher/digest.js';
-import { readDigest } from '../../../scripts/digest/due.js';
+import { readDigest, clearDigest } from '../../../scripts/digest/due.js';
+import { markSeen } from '../../../scripts/briefing/seen.js';
 import { readAlerts } from '../../../scripts/alerts/tick.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { inHome, keep, P, raise } from '../../helpers/decisions-world.js';
@@ -46,10 +47,12 @@ test('the digest is made once a day after digestAt, and waits for the director\'
   assert.match(kept.text, /^Daily digest, 8 November 2026/u);
   assert.match(kept.text, /Usage this week: 1\.2M tokens/u);
   // Not again the same evening, even though the digest has not been shown.
+  const shownLater = () => clearDigest(P);
   state.now = day(8, 19, 0);
   assert.deepEqual((await ticker.tick()).digest, { made: false });
   assert.equal(readDigest(P).at, kept.at);
-  // Tomorrow it is due again, and the log is a week away.
+  // The director reads it. Tomorrow it is due again, and the log is a week away.
+  shownLater();
   state.now = day(9, 17, 5);
   const second = (await ticker.tick()).digest;
   assert.equal(second.weekly, false);
@@ -61,6 +64,7 @@ test('the weekly decision log comes on the first digest seven days after the las
   await ticker.tick();
   for (let d = 2; d <= 7; d += 1) {
     state.now = day(d, 17, 1);
+    clearDigest(P); // shown each day
     assert.equal((await ticker.tick()).digest.weekly, false, `day ${d}`);
   }
   state.now = day(8, 17, 1);
@@ -81,7 +85,33 @@ test('the digest lists what merged by itself and what waits, and a failed alert 
   assert.match(text, /Pull request #12: Rename the tide table/u);
   assert.match(text, /1\. Should the harbour map show tide times\?/u);
   assert.match(text, /A phone alert couldn't be sent through ntfy/u);
-  assert.deepEqual(readAlerts(P).failures, [], 'a failure said in the digest is not said again');
+  assert.equal(readAlerts(P).failures.length, 1, 'kept until the director is shown the digest');
+}));
+
+test('an unshown digest replaced by the next keeps the weekly log and the failure note', () => inHome(async () => {
+  raise('Should the harbour map show tide times?', iso(day(8, 9)));
+  const { ticker, state } = setup({ clock: day(8, 17, 1), alert: { ok: true, sent: false, failed: ['ntfy'] } });
+  await ticker.tick();
+  assert.equal(readDigest(P).weekly, true);
+  // No message from the director between the two digests.
+  state.now = day(9, 17, 1);
+  const second = (await ticker.tick()).digest;
+  assert.equal(second.weekly, true, 'the log is carried on, though a week has not passed');
+  const kept = readDigest(P);
+  assert.equal(kept.weekly, true);
+  assert.match(kept.text, /decision log/u);
+  assert.match(kept.text, /A phone alert couldn't be sent through ntfy/u);
+  assert.equal(kept.failures, 1);
+  assert.equal(readAlerts(P).failures.length, 1, 'only showing the digest clears the failure');
+}));
+
+test('the log runs from the last one shown, so one made and never shown is not lost', () => inHome(async () => {
+  const { ticker, state } = setup({ clock: day(1, 17, 1) });
+  markSeen(P, { digestLogShownAt: day(1, 9) });
+  keep(makeEvent({ kind: 'agent-call', data: { work: 'w-tide-1', at: iso(day(3, 9)), decided: 'Use a table', options: ['A table', 'A chart'], why: 'Reads on a phone', kind: 'structure' }, now: () => day(3, 9) }));
+  state.now = day(9, 17, 1);
+  await ticker.tick();
+  assert.match(readDigest(P).text, /w-tide-1: Use a table/u, 'a call from before the last seven days is still in, since the last log was shown on day 1');
 }));
 
 test('a decision newly waiting brings one alert, and none is sent for a digest or for progress', () => inHome(async () => {

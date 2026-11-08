@@ -9,8 +9,8 @@
 // Nothing here answers a decision, and nothing turns a missing reply or a failed alert into one: a decision that waits keeps
 // waiting in the chat, and an alert that couldn't be sent is noted in the digest. Each step fails on its own and is tried again at
 // the next tick.
-import { alertTick, readAlerts, takeFailures } from '../alerts/tick.js';
-import { digestDue, logDue, writeDigest } from '../digest/due.js';
+import { alertTick, readAlerts } from '../alerts/tick.js';
+import { digestDue, logDue, readDigest, writeDigest } from '../digest/due.js';
 import { digestModel, digestText, hasNews } from '../digest/model.js';
 import { callsFrom } from '../decisions/calls.js';
 import { decisionsFrom } from '../decisions/pending.js';
@@ -49,26 +49,29 @@ export function makeDigestTicker({ project, client, now = () => new Date(), log 
     const at = reader.settings(t).digestAt?.value;
     const seen = readDigestSeen(project, { now: t });
     if (!digestDue({ seen, now: t, at })) return { made: false };
-    const weekly = logDue({ seen, now: t });
+    // A digest still waiting is replaced by this one, which carries on what it carried: the weekly log and the failed alerts.
+    const waiting = readDigest(project);
+    const weekly = logDue({ seen, now: t }) || waiting?.weekly === true;
     let usage = null;
     try {
       usage = reader.usage(project, t);
     } catch {
       // Usage that can't be read is left out of the digest, which says it isn't known.
     }
-    const logFrom = Date.parse(seen.digestLogAt ?? '');
-    const calls = weekly ? callsFrom(events, { since: new Date(Number.isFinite(logFrom) ? Math.max(logFrom, t.getTime() - 7 * DAY_MS) : t.getTime() - 7 * DAY_MS) }) : [];
+    // The log runs from the last one the director was shown, so a log made but never shown is made again.
+    const logFrom = Date.parse(seen.digestLogShownAt ?? '');
+    const calls = weekly ? callsFrom(events, { since: new Date(Number.isFinite(logFrom) ? logFrom : t.getTime() - 7 * DAY_MS) }) : [];
+    const failed = readAlerts(project).failures;
     const model = digestModel({
       events, enrolled, calls, usage, now: t, weekly, since: seen.digestShownAt ?? undefined,
       pending: decisionsFrom(events, enrolled).pending,
-      alertFailures: readAlerts(project).failures.flatMap((f) => f.channels),
+      alertFailures: failed.flatMap((f) => f.channels),
     });
     const made = hasNews(model);
-    if (made) writeDigest(project, { at: t.toISOString(), text: digestText(model, { now: t }), weekly });
+    if (made) writeDigest(project, { at: t.toISOString(), text: digestText(model, { now: t }), weekly, failures: failed.length });
     // Marked made whether or not it had news, so a quiet day is not looked at again every tick.
     markSeen(project, { digestAt: t, ...(weekly ? { digestLogAt: t } : {}) });
-    // The failures the digest has now said are not said again.
-    takeFailures(project);
+    // The failures it says stay in alerts.json until the director is shown the digest (the hook clears them then).
     return { made, weekly };
   }
 

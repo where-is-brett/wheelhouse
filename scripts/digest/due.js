@@ -55,12 +55,12 @@ export function digestFile(project) {
   return path.join(path.dirname(stateDir(project)), 'digest.json');
 }
 
-// The digest waiting to be shown, { at, text, weekly }, or null when none waits or the file can't be read.
+// The digest waiting to be shown, { at, text, weekly, failures } (`failures`: how many failed alerts it says), or null when none waits or the file can't be read.
 export function readDigest(project) {
   try {
     const kept = JSON.parse(fs.readFileSync(digestFile(project), 'utf8'));
     if (kept === null || typeof kept !== 'object' || typeof kept.text !== 'string' || kept.text === '' || typeof kept.at !== 'string') return null;
-    return { at: kept.at, text: kept.text, weekly: kept.weekly === true };
+    return { at: kept.at, text: kept.text, weekly: kept.weekly === true, failures: Number.isInteger(kept.failures) && kept.failures > 0 ? kept.failures : 0 };
   } catch {
     return null;
   }
@@ -68,12 +68,12 @@ export function readDigest(project) {
 
 // Keeps a digest to be shown at the director's next message, written whole. One that waits unshown is replaced by the newer, which
 // covers what it covered (its `since` is the last digest shown).
-export function writeDigest(project, { at, text, weekly = false }) {
+export function writeDigest(project, { at, text, weekly = false, failures = 0 }) {
   const file = digestFile(project);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.tmp`;
   try {
-    fs.writeFileSync(temp, `${JSON.stringify({ at, text, weekly }, null, 2)}\n`);
+    fs.writeFileSync(temp, `${JSON.stringify({ at, text, weekly, failures }, null, 2)}\n`);
     fs.renameSync(temp, file);
   } catch (error) {
     fs.rmSync(temp, { force: true });

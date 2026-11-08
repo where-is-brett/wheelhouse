@@ -9,7 +9,8 @@
 // visitAt it was asked in), which learning reads; and `safekeepingLevel` and `safekeepingAt`, the
 // safekeeping level a briefing last said and when, so a watch comes back once a month and no oftener; and the daily digest's:
 // `digestAt`, when the last digest was made, `digestLogAt`, the last that carried the weekly decision log, and `digestShownAt`,
-// the last the director was shown at their message (scripts/digest/due.js).
+// the last the director was shown at their message, and `digestLogShownAt`, the last shown that carried the weekly log
+// (scripts/digest/due.js).
 // Kept in projects/<project>/seen.json, beside the private record, and written whole (a temporary file
 // in the same folder, then a rename).
 //
@@ -20,7 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir } from '../lib/paths.js';
 
-const FIELDS = ['promptAt', 'briefedAt', 'weeklyAt', 'visitAt', 'surveyAgainAt', 'safekeepingAt', 'digestAt', 'digestLogAt', 'digestShownAt'];
+const FIELDS = ['promptAt', 'briefedAt', 'weeklyAt', 'visitAt', 'surveyAgainAt', 'safekeepingAt', 'digestAt', 'digestLogAt', 'digestShownAt', 'digestLogShownAt'];
 const LEVELS = ['safe', 'watch'];
 // How many board commands are kept.
 export const BOARD_ASKS = 10;
@@ -102,11 +103,11 @@ export function readSafekeepingSaid(project) {
   return { level: kept.safekeepingLevel, at: kept.safekeepingAt };
 }
 
-// readDigestSeen(project, { now }) -> { digestAt, digestLogAt, digestShownAt }, each a time or null.
+// readDigestSeen(project, { now }) -> { digestAt, digestLogAt, digestShownAt, digestLogShownAt }, each a time or null.
 export function readDigestSeen(project, { now } = {}) {
   const kept = readKept(project);
   const limit = nowMs(now);
-  return { digestAt: notAhead(kept.digestAt, limit), digestLogAt: notAhead(kept.digestLogAt, limit), digestShownAt: notAhead(kept.digestShownAt, limit) };
+  return { digestAt: notAhead(kept.digestAt, limit), digestLogAt: notAhead(kept.digestLogAt, limit), digestShownAt: notAhead(kept.digestShownAt, limit), digestLogShownAt: notAhead(kept.digestLogShownAt, limit) };
 }
 
 // readVisits(project, { now }) -> { visitAt, boardAsks }: when the latest visit began, or null,

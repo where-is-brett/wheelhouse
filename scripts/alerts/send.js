@@ -11,6 +11,8 @@ export const TELEGRAM_SERVER = 'https://api.telegram.org';
 export const CHANNELS = Object.freeze(['ntfy', 'telegram']);
 // How long one request may take.
 export const SEND_MS = 10 * 1000;
+// The most of a project's name an alert carries.
+const NAME_MAX = 40;
 
 const TOPIC = /^[A-Za-z0-9_-]{1,64}$/;
 const TOKEN = /^[0-9]{3,20}:[A-Za-z0-9_-]{20,80}$/;
@@ -18,9 +20,9 @@ const CHAT = /^-?[0-9]{1,20}$|^@[A-Za-z][A-Za-z0-9_]{3,31}$/;
 const TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-// What an alert says: a count and the project's name, and nothing else. The name loses any character that could make it a link.
+// What an alert says: a count and the project's name, and nothing else. The name keeps only letters, digits, dashes and underscores (a dot becomes a dash), so it can never read as a link, and is cut short.
 export function alertText({ count, project }) {
-  const name = String(project ?? '').replace(/\s+/g, '-').replace(/[:/\\@]+/g, '') || 'the-project';
+  const name = String(project ?? '').replace(/[.\s]+/g, '-').replace(/[^A-Za-z0-9_-]/g, '').slice(0, NAME_MAX) || 'the-project';
   return count === 1 ? `1 decision waits in ${name}` : `${count} decisions wait in ${name}`;
 }
 

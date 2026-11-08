@@ -54,6 +54,7 @@ import { briefingModel as realBriefingModel } from '../briefing/model.js';
 import { heldBackLine } from '../board/model.js';
 import { readSeen, readSurveyAt, markSeen, readVisits } from '../briefing/seen.js';
 import { readDigest, clearDigest } from '../digest/due.js';
+import { takeFailures } from '../alerts/tick.js';
 import { markRaised as realMarkRaised } from '../usage/figures.js';
 import { sessionRole, recordRole } from '../lib/role.js';
 import { existingCard } from '../cards/visit.js';
@@ -409,7 +410,8 @@ export async function decide(input, deps = {}) {
     const stuck = await within(() => stuckLine(desk, seen.promptAt, at), waitMs);
     // The daily digest the watcher made waits for the director's next message and is shown once, here (scripts/digest/due.js). A hook that
     // only reads leaves it for one that can take it away.
-    const digest = writes ? attempt(() => readDigest(project), null) : null;
+    // A session a script started is no director arriving, so it never uses the digest up.
+    const digest = writes && !startedByScript(env) ? attempt(() => readDigest(project), null) : null;
     const notes = [decisionLine, digest?.text ?? null, stuck, ...((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
     const reserve = (cards === null ? 0 : cards.length + 2) + notes.reduce((sum, line) => sum + line.length + 2, 0);
     // A survey not worked out in time is left to the briefing view, which takes the record's latest.
@@ -435,7 +437,9 @@ export async function decide(input, deps = {}) {
     // Shown now, so it is not shown again: the time is kept for the next digest's "since", and the file taken away.
     if (digest !== null && text !== '') {
       attempt(() => clearDigest(project));
-      attempt(() => markSeenHere(project, { digestShownAt: at }));
+      attempt(() => markSeenHere(project, { digestShownAt: at, ...(digest.weekly ? { digestLogShownAt: at } : {}) }));
+      // The failed alerts it said are said.
+      if (digest.failures > 0) attempt(() => takeFailures(project, digest.failures));
     }
     return text === '' ? undefined : answer.context('UserPromptSubmit', text);
   } catch {
