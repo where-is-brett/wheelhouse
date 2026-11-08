@@ -25,10 +25,16 @@ export function cleanEnv(from = process.env) {
   return env;
 }
 
+// How long Claude Code is given to take in a paste before Enter: an Enter that comes while it is still reading one is
+// swallowed, and the request sits unsent in the input box.
+export const PASTE_SETTLE_MS = 1500;
+const BUFFER = 'haiku-trial-type';
+const wait = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
 const named = (name) => (String(name).startsWith(SESSION_PREFIX) ? String(name) : `${SESSION_PREFIX}${name}`);
 
 // The tmux calls the trial makes. `run(command, args)` is spawnSync-shaped; tests inject it.
-export function makeTmux({ run = spawnSync } = {}) {
+export function makeTmux({ run = spawnSync, pause = wait } = {}) {
   const tmux = (...args) => run('tmux', args, { encoding: 'utf8' });
   const said = (got) => String(got?.stdout ?? '');
   return {
@@ -39,9 +45,11 @@ export function makeTmux({ run = spawnSync } = {}) {
       tmux('set-option', '-g', 'history-limit', String(HISTORY_LINES));
       return tmux('new-session', '-d', '-s', named(name), '-x', String(PANE_COLUMNS), '-y', String(PANE_ROWS), '-c', cwd, 'env', '-i', ...pairs, ...command);
     },
-    // The text goes in literally, then Enter.
+    // The text goes in as one bracketed paste, so Claude Code takes it whole; Enter follows once the paste has settled.
     type(name, text) {
-      tmux('send-keys', '-t', named(name), '-l', text);
+      tmux('set-buffer', '-b', BUFFER, '--', String(text));
+      tmux('paste-buffer', '-p', '-d', '-b', BUFFER, '-t', named(name));
+      pause(PASTE_SETTLE_MS);
       return tmux('send-keys', '-t', named(name), 'Enter');
     },
     keys(name, ...keys) {
