@@ -6,6 +6,12 @@ import { PACE, paceOf } from '../../../scripts/lib/build-loop.js';
 import { BRIEFING_GAP_HOURS, UNUSUAL } from '../../../scripts/lib/core-numbers.js';
 import { DEFAULT_SOURCES } from '../../../scripts/sources/list.js';
 
+test('catalogue: watchCrew defaults to steps, per project', () => {
+  assert.equal(SETTINGS.watchCrew.default, 'steps');
+  assert.equal(SETTINGS.watchCrew.home, 'project');
+  assert.deepEqual(SETTINGS.watchCrew.levels, ['off', 'steps', 'transcript']);
+});
+
 test('every setting in design section 14 is in the catalogue, with its default', () => {
   const expected = {
     autonomy: ['project', 'balanced'],
@@ -38,6 +44,7 @@ test('every setting in design section 14 is in the catalogue, with its default',
     bundleApprovals: ['project', false],
     engineRoom: ['project', false],
     typedReplies: ['project', true],
+    watchCrew: ['project', 'steps'],
   };
   assert.deepEqual(Object.keys(SETTINGS).sort(), Object.keys(expected).sort());
   for (const [key, [home, def]] of Object.entries(expected)) {

@@ -2376,3 +2376,15 @@ test('views waiting --since names panel answers only', async () => {
     assert.equal(bad.code, 1);
   });
 });
+
+test('cli: record watch writes the event', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    assert.ok(RECORD_KINDS.includes('watch'));
+    const out = await run(helper, ['record', 'watch'], JSON.stringify({ work: 'login', level: 'transcript' }));
+    assert.equal(out.code, 0, out.err);
+    assert.deepEqual(helper.writes().at(-1), { cwd: CWD, kind: 'watch', data: { work: 'login', level: 'transcript' } });
+    assert.deepEqual(helper.held.map((e) => e.kind), ['watch']);
+    assert.equal(out.json.id, helper.held.at(-1).id);
+  });
+});
