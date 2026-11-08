@@ -386,6 +386,59 @@ function callsByAgent(events, calls, agentIds) {
   return byAgent;
 }
 
+// A subagent's meta file beside its transcript, or null: read-only, never through a link, at most
+// 64 KiB, and anything that is not a JSON object counts as no meta. Only fields of the expected
+// type are kept.
+const META_MAX = 64 * 1024;
+
+function readMeta(subFile) {
+  const file = subFile.replace(/\.jsonl$/, '.meta.json');
+  if (file === subFile || !plainFile(file)) return null;
+  let fd;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+  } catch {
+    return null;
+  }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.size > META_MAX) return null;
+    const buf = Buffer.alloc(st.size);
+    let got = 0;
+    while (got < st.size) {
+      const n = fs.readSync(fd, buf, got, st.size - got, got);
+      if (n === 0) break;
+      got += n;
+    }
+    const meta = JSON.parse(buf.toString('utf8', 0, got));
+    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return null;
+    const str = (v) => (typeof v === 'string' ? v : undefined);
+    return {
+      agentType: str(meta.agentType),
+      description: str(meta.description),
+      toolUseId: str(meta.toolUseId),
+      requestShape: str(meta.requestShape),
+      finished: meta.finished === true,
+    };
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// The ids of the calls that have a result in the tail.
+function resultIds(events) {
+  const ids = new Set();
+  for (const event of events) {
+    const content = event?.message?.content;
+    for (const block of Array.isArray(content) ? content : []) {
+      if (block?.type === 'tool_result' && typeof block.tool_use_id === 'string') ids.add(block.tool_use_id);
+    }
+  }
+  return ids;
+}
+
 const CREW_SHOWN = 5;
 const STILL_WORKING_MS = 10 * 60 * 1000;
 
@@ -398,9 +451,9 @@ function modifiedAt(file) {
 }
 
 // `crew` holds one line for each subagent still working, newest first, at most five, then
-// "and N more crew members". A subagent whose call has a result in the tail has finished and is
-// left out; one with no such result counts as working only if its file changed in the last ten
-// minutes before `now`.
+// "and N more crew members". A subagent has finished when its meta says so; or, when it is not a
+// background one, its call has a result in the tail; or its file changed more than ten minutes
+// before `now`. A background launch's immediate result never means finished.
 export function runSteps({ sessionId, env = process.env, glossary, waiting = null, foreman = false, now = Date.now } = {}) {
   const file = findTranscript({ sessionId, env });
   if (!file) return { steps: [], crew: [] };
@@ -423,17 +476,29 @@ export function runSteps({ sessionId, env = process.env, glossary, waiting = nul
     const text = `Waiting for your answer to decision ${waiting}`;
     steps.push({ at: steps.length ? steps[steps.length - 1].at : null, text: foreman ? `The Bosun is ${lowerFirst(text)}` : text });
   }
-  const subs = findSubagents(file).map((sub) => ({ ...sub, mtime: modifiedAt(sub.file) }));
-  const byAgent = callsByAgent(events, agentCalls(events), subs.map((sub) => sub.agentId));
   const clock = typeof now === 'function' ? now() : now;
+  const subs = findSubagents(file).map((sub) => ({ ...sub, mtime: modifiedAt(sub.file), meta: readMeta(sub.file) }));
+  const calls = agentCalls(events);
+  const byAgent = callsByAgent(events, calls, subs.map((sub) => sub.agentId));
+  const answered = resultIds(events);
+  const finished = (sub) => {
+    const meta = sub.meta;
+    if (meta?.finished === true) return true;
+    if (meta && meta.requestShape !== 'background' && meta.toolUseId !== undefined && answered.has(meta.toolUseId)) return true;
+    return clock - sub.mtime > STILL_WORKING_MS;
+  };
   const working = subs
-    .filter((sub) => !byAgent.has(sub.agentId) && clock - sub.mtime <= STILL_WORKING_MS)
+    .filter((sub) => !finished(sub))
     .sort((a, b) => b.mtime - a.mtime || (a.agentId < b.agentId ? -1 : 1));
   const crew = [];
   for (const sub of working.slice(0, CREW_SHOWN)) {
+    const meta = sub.meta;
+    const fromMeta = meta && (meta.agentType !== undefined || meta.description !== undefined);
+    const call = fromMeta ? { agentType: meta.agentType, description: meta.description }
+      : (meta?.toolUseId !== undefined && calls.get(meta.toolUseId)) || byAgent.get(sub.agentId) || null;
     const latest = stepsOfKind(readTail(sub.file), words).pop();
-    if (latest) crew.push(mask(plain(inThirdPerson(roleOf(undefined), latest))));
-    else crew.push(worded({ at: null, text: subagentLine({}) }, words).text);
+    if (latest) crew.push(mask(plain(inThirdPerson(roleOf(call?.agentType), latest))));
+    else crew.push(worded({ at: null, text: subagentLine(call ?? {}) }, words).text);
   }
   const left = working.length - CREW_SHOWN;
   if (left > 0) crew.push(`and ${left} more crew member${left === 1 ? '' : 's'}`);

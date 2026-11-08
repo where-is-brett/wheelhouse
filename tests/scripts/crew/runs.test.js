@@ -342,11 +342,11 @@ test('falls back to a Crew member', () => {
 
 test('reads subagent transcripts beside the run', () => {
   const { dir, env } = fakeConfig();
-  const proj = writeRun(dir, 's1', [agentCall('t1', 'wheelhouse:reviewer', 'task 2')]);
+  const proj = writeRun(dir, 's1', [agentCall('t1', 'wheelhouse:reviewer', 'task 2'), agentResult('t1', 'abc123')]);
   fs.mkdirSync(path.join(proj, 's1', 'subagents'), { recursive: true });
   fs.writeFileSync(path.join(proj, 's1', 'subagents', 'agent-abc123.jsonl'), JSON.stringify(tool('Read', { file_path: '/w/tree/a.js' })) + '\n');
   const { steps, crew } = runSteps({ sessionId: 's1', env });
-  assert.deepEqual(crew, ['A Crew member is reading `a.js`']);
+  assert.deepEqual(crew, ['A Lookout is reading `a.js`']);
   assert.equal(steps[0].text, 'A Lookout is independently checking task 2'); // through the glossary
 });
 
@@ -422,7 +422,7 @@ test('a crew member sending out a subagent is worded the same way', () => {
   assert.deepEqual(runSteps({ sessionId: 's1', env }).crew, ['A Crew member is sending out a Lookout to review task 4']);
 });
 
-test('a subagent whose call has a result is finished, however the result names it', () => {
+test('a running subagent is named from its call, however the result names it', () => {
   const { dir, env } = fakeConfig();
   const result = (toolUseId, agentId) => ({ ...agentResult(toolUseId, 'unrelated'), toolUseResult: { agentId } });
   const proj = writeRun(dir, 's1', [
@@ -435,17 +435,81 @@ test('a subagent whose call has a result is finished, however the result names i
   fs.writeFileSync(path.join(subs, 'agent-abc.jsonl'), JSON.stringify(text('y.')) + '\n');
   fs.writeFileSync(path.join(subs, 'agent-abcd.jsonl'), JSON.stringify(text('z.')) + '\n');
   // "ab" is named by the result field and "abc" by whole word; "abcd" is named by neither.
-  assert.deepEqual(runSteps({ sessionId: 's1', env }).crew, ['A Crew member is thinking: z.']);
+  assert.deepEqual(runSteps({ sessionId: 's1', env }).crew.sort(), ['A Crew member is thinking: z.', 'A Lookout is thinking: x.', 'The tester is thinking: y.']);
 });
 
-test('crew holds only the subagents still working', () => {
-  const { dir, env } = fakeConfig();
-  const proj = writeRun(dir, 's1', [agentCall('t1', 'reviewer', 'task 2'), agentResult('t1', 'done1')]);
+const writeSub = (proj, id, events, meta) => {
   const subs = path.join(proj, 's1', 'subagents');
   fs.mkdirSync(subs, { recursive: true });
-  fs.writeFileSync(path.join(subs, 'agent-done1.jsonl'), JSON.stringify(text('Finished it.')) + '\n');
-  fs.writeFileSync(path.join(subs, 'agent-live1.jsonl'), JSON.stringify(tool('Read', { file_path: '/w/tree/a.js' })) + '\n');
-  assert.deepEqual(runSteps({ sessionId: 's1', env }).crew, ['A Crew member is reading `a.js`']);
+  fs.writeFileSync(path.join(subs, `agent-${id}.jsonl`), events.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  if (meta !== undefined) fs.writeFileSync(path.join(subs, `agent-${id}.meta.json`), typeof meta === 'string' ? meta : JSON.stringify(meta));
+  return subs;
+};
+const crewOf = (env) => runSteps({ sessionId: 's1', env }).crew;
+
+test('a running foreground subagent is named from its meta', () => {
+  const { dir, env } = fakeConfig();
+  const proj = writeRun(dir, 's1', [text('Hello.')]);
+  writeSub(proj, 'f1', [tool('Read', { file_path: '/w/tree/a.js' })], { agentType: 'wheelhouse:reviewer', requestShape: 'foreground', toolUseId: 'u1' });
+  assert.deepEqual(crewOf(env), ['A Lookout is reading `a.js`']);
+});
+
+test('a meta description names a subagent that has no steps', () => {
+  const { dir, env } = fakeConfig();
+  const proj = writeRun(dir, 's1', [text('Hello.')]);
+  writeSub(proj, 'f1', [], { agentType: 'tester', description: 'the\nlogin page' });
+  assert.deepEqual(crewOf(env), ['The tester is trying the login page']);
+});
+
+test('a foreground subagent whose call has a result is left out', () => {
+  const { dir, env } = fakeConfig();
+  const proj = writeRun(dir, 's1', [agentCall('u1', 'reviewer', 'task 2'), agentResult('u1', 'f1')]);
+  writeSub(proj, 'f1', [text('Done.')], { agentType: 'reviewer', requestShape: 'foreground', toolUseId: 'u1' });
+  assert.deepEqual(crewOf(env), []);
+});
+
+test('a background subagent stays in after its launch result', () => {
+  const { dir, env } = fakeConfig();
+  const proj = writeRun(dir, 's1', [agentCall('u1', 'reviewer', 'task 2'), agentResult('u1', 'b1')]);
+  writeSub(proj, 'b1', [tool('Read', { file_path: '/w/tree/a.js' })], { agentType: 'reviewer', requestShape: 'background', toolUseId: 'u1' });
+  assert.deepEqual(crewOf(env), ['A Lookout is reading `a.js`']);
+});
+
+test('a background subagent whose meta says finished is left out', () => {
+  const { dir, env } = fakeConfig();
+  const proj = writeRun(dir, 's1', [text('Hello.')]);
+  writeSub(proj, 'b1', [text('Done.')], { agentType: 'reviewer', requestShape: 'background', finished: true });
+  assert.deepEqual(crewOf(env), []);
+});
+
+test('with no meta a fresh subagent stays in, as a Crew member unless its call matches', () => {
+  const { dir, env } = fakeConfig();
+  const proj = writeRun(dir, 's1', [text('Hello.')]);
+  writeSub(proj, 'n1', [text('Working.')]);
+  assert.deepEqual(crewOf(env), ['A Crew member is thinking: Working.']);
+  const { dir: dir2, env: env2 } = fakeConfig();
+  const proj2 = writeRun(dir2, 's1', [agentCall('u1', 'tester', 'x'), agentResult('u1', 'n2')]);
+  writeSub(proj2, 'n2', [text('Working.')]);
+  assert.deepEqual(crewOf(env2), ['The tester is thinking: Working.']);
+});
+
+test('a meta found by its call id gives the role when it has no type', () => {
+  const { dir, env } = fakeConfig();
+  const proj = writeRun(dir, 's1', [agentCall('u1', 'reviewer', 'task 2')]);
+  writeSub(proj, 'm1', [text('Working.')], { toolUseId: 'u1' });
+  assert.deepEqual(crewOf(env), ['A Lookout is thinking: Working.']);
+});
+
+test('a linked, oversized or unparsable meta is ignored', () => {
+  const { dir, env } = fakeConfig();
+  const proj = writeRun(dir, 's1', [text('Hello.')]);
+  const subs = writeSub(proj, 'l1', [text('One.')]);
+  const real = path.join(dir, 'real.meta.json');
+  fs.writeFileSync(real, JSON.stringify({ agentType: 'reviewer', finished: true }));
+  fs.symlinkSync(real, path.join(subs, 'agent-l1.meta.json'));
+  writeSub(proj, 'u1', [text('Two.')], '{not json');
+  writeSub(proj, 'o1', [text('Three.')], JSON.stringify({ agentType: 'reviewer', finished: true, pad: 'x'.repeat(70 * 1024) }));
+  assert.deepEqual(crewOf(env).sort(), ['A Crew member is thinking: One.', 'A Crew member is thinking: Three.', 'A Crew member is thinking: Two.']);
 });
 
 test('an unmatched subagent file not changed for ten minutes is left out', () => {
@@ -483,7 +547,15 @@ test('crew shows five working subagents, newest first, then how many more', () =
   assert.equal(runSteps({ sessionId: 's1', env, now: () => Date.now() }).crew.pop(), 'and 1 more crew member');
 });
 
-test('a working subagent with no steps falls back to a Crew member line', () => {
+test('a working subagent with no steps falls back to its call', () => {
+  const { dir, env } = fakeConfig();
+  const proj = writeRun(dir, 's1', [agentCall('t1', 'wheelhouse:reviewer', 'task 2'), agentResult('t1', 'abc123')]);
+  fs.mkdirSync(path.join(proj, 's1', 'subagents'), { recursive: true });
+  fs.writeFileSync(path.join(proj, 's1', 'subagents', 'agent-abc123.jsonl'), '');
+  assert.deepEqual(runSteps({ sessionId: 's1', env }).crew, ['A Lookout is independently checking task 2']);
+});
+
+test('a working subagent with no steps and no call falls back to a Crew member line', () => {
   const { dir, env } = fakeConfig();
   const proj = writeRun(dir, 's1', [text('Hello.')]);
   fs.mkdirSync(path.join(proj, 's1', 'subagents'), { recursive: true });
