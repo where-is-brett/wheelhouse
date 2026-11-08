@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { STUCK_AFTER } from '../../scripts/feature/cli.js';
 import { featurePaths, readQuestions } from '../../scripts/feature/files.js';
 import { parsePs } from '../../scripts/engine/stop.js';
+import { WORKTREE_PATH } from '../../scripts/engine/parts.js';
+import { madeFeatureSlug } from '../../scripts/hooks/session-start.js';
 
 const PLUGIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CLI = (plugin) => path.join(plugin, 'scripts', 'feature', 'cli.js');
@@ -17,8 +19,9 @@ async function listWithEnv() {
   return got.status === 0 ? parsePs(got.stdout) : [];
 }
 
+// The NAME=value words `ps eww` prints after a command. A value runs up to the next NAME=, so a path with spaces survives.
 const variablesOf = (command) => Object.fromEntries(
-  [...String(command).matchAll(/(?:^|\s)([A-Z][A-Z0-9_]*)=(\S*)/g)].map((m) => [m[1], m[2]]),
+  [...String(command).matchAll(/(?:^|\s)([A-Z_][A-Z0-9_]*)=([\s\S]*?)(?=\s[A-Z_][A-Z0-9_]*=|$)/g)].map((m) => [m[1], m[2].trim()]),
 );
 const isClaudePrint = (command) => /(^|[\s/])claude\s/.test(command) && /\s-p(\s|$)/.test(command);
 
@@ -27,15 +30,30 @@ async function printSessions(listProcesses) {
   return (await listProcesses()).filter((p) => isClaudePrint(p.command)).map((p) => ({ pid: p.pid, vars: variablesOf(p.command) }));
 }
 
-async function findFeature(piece, listProcesses) {
-  const found = (await printSessions(listProcesses)).find((s) => s.vars.WHEELHOUSE_ROLE !== 'foreman' && s.vars.WHEELHOUSE_SESSION?.includes(piece));
-  if (found === undefined) throw new Error(`No running feature session names "${piece}"`);
+const inside = (folder, dir) => {
+  const relative = path.relative(folder, dir);
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+};
+// The piece is the whole slug or one hyphen-delimited segment run of it, so p1 never matches p10.
+const namesPiece = (slug, piece) => slug === piece || slug.startsWith(`${piece}-`) || slug.endsWith(`-${piece}`) || slug.includes(`-${piece}-`);
+
+// A feature session is a `claude -p` whose folder is a worktree Wheelhouse made inside the project's worktrees folder, and
+// whose feature slug names the piece.
+async function findFeature(project, piece, listProcesses) {
+  const base = path.join(project, WORKTREE_PATH);
+  const found = (await printSessions(listProcesses)).find((s) => {
+    const cwd = s.vars.PWD;
+    if (typeof cwd !== 'string' || !inside(base, cwd)) return false;
+    const slug = madeFeatureSlug(cwd);
+    return slug !== null && namesPiece(slug, piece);
+  });
+  if (found === undefined) throw new Error(`No running feature session in ${project} names "${piece}"`);
   return found;
 }
 
-// A feature session's WHEELHOUSE_* variables and its worktree, read from its process. `project` is accepted and not used: a session is found by its piece.
-export async function featureEnvOf({ piece, listProcesses = listWithEnv }) {
-  const { vars } = await findFeature(piece, listProcesses);
+// A feature session's WHEELHOUSE_* variables and its worktree, read from its process.
+export async function featureEnvOf({ project, piece, listProcesses = listWithEnv }) {
+  const { vars } = await findFeature(project, piece, listProcesses);
   const env = Object.fromEntries(Object.entries(vars).filter(([name]) => name.startsWith('WHEELHOUSE_')));
   return { env, cwd: vars.PWD };
 }
@@ -70,8 +88,8 @@ function f1cDirectorKind({ env, cwd, run = spawnSync, plugin = PLUGIN }) {
   return { code: got.status, text: said(got) };
 }
 
-async function f3KillFeature({ piece, listProcesses = listWithEnv, kill = process.kill }) {
-  const { pid } = await findFeature(piece, listProcesses);
+async function f3KillFeature({ project, piece, listProcesses = listWithEnv, kill = process.kill }) {
+  const { pid } = await findFeature(project, piece, listProcesses);
   kill(pid, 'SIGKILL');
   return { pid };
 }
@@ -112,11 +130,11 @@ const SECOND = shaped({
   recommend: 'Include', because: 'The director can then sort the file by category', meanwhile: 'I build the parts that do not depend on it',
 });
 
-// Raises P4's behaviour decision in P4's environment, unless the session has put a decision to the director already.
+// Raises P4's behaviour decision in P4's environment, unless its questions already hold this question.
 function decisionFallback({ env, cwd, run = spawnSync, plugin = PLUGIN }) {
   let raised = false;
   try {
-    raised = readQuestions(featurePaths(cwd).questions).questions.some((q) => q.kind === 'question');
+    raised = readQuestions(featurePaths(cwd).questions).questions.some((q) => q.what === FALLBACK_QUESTION);
   } catch { /* nothing readable counts as nothing raised */ }
   if (raised) return { raised: false, skipped: true };
   const got = feature(plugin, FALLBACK, { env, cwd, run });

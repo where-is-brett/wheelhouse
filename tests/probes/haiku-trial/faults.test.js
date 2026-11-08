@@ -8,6 +8,7 @@ import { faults, featureEnvOf } from '../../../probes/haiku-trial/faults.js';
 import { STUCK_AFTER } from '../../../scripts/feature/cli.js';
 import { featurePaths } from '../../../scripts/feature/files.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { makeFeatureFolder } from '../../helpers/made-feature.js';
 
 const write = (file, text) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -51,38 +52,61 @@ test('f1c is refused and points to ask', () => {
   assert.match(got.text, /ask --about behaviour --level 3/);
 });
 
-const LINE = (pid, session, extra = '') => ({ pid, ppid: 1, pgid: pid, command: `claude -p --model haiku WHEELHOUSE_ROLE=feature WHEELHOUSE_SESSION=${session} PWD=/work/${session} ${extra}` });
+// A project with feature worktrees made as Wheelhouse leaves them: .git on feature/<slug> and a brief whose work is the slug.
+const project = fs.realpathSync.native(tempFolder('wh-faults-project-'));
+function worktree(slug, folder = slug) {
+  const tree = path.join(project, '.wheelhouse', 'worktrees', folder);
+  write(path.join(tree, '.git', 'HEAD'), `ref: refs/heads/feature/${slug}\n`);
+  makeFeatureFolder(tree, slug);
+  return tree;
+}
+const LINE = (pid, cwd) => ({ pid, ppid: 1, pgid: pid, command: `claude -p --model haiku WHEELHOUSE_ENGINE_RUN=1 WHEELHOUSE_SESSION=s${pid} PWD=${cwd} HOME=/h` });
+const p1 = worktree('p1-import');
+const p10 = worktree('p10-other');
+const spaced = worktree('p2-categories', 'with space');
+const elsewhere = fs.realpathSync.native(tempFolder('wh-faults-elsewhere-'));
+write(path.join(elsewhere, '.git', 'HEAD'), 'ref: refs/heads/feature/p1-import\n');
+makeFeatureFolder(elsewhere, 'p1-import');
+const FOREMAN = { pid: 200, ppid: 1, pgid: 200, command: 'claude -p WHEELHOUSE_ROLE=foreman WHEELHOUSE_SESSION=foreman-ledger' };
+const table = async () => [LINE(101, p1), LINE(110, p10), LINE(102, spaced), LINE(103, elsewhere), { pid: 104, ppid: 1, pgid: 104, command: 'node server.js' }, FOREMAN];
 
 test('f3 kills only the named piece\'s session', async () => {
   const kills = [];
-  const listProcesses = async () => [LINE(101, 'p1-import'), LINE(102, 'p2-categories'), { pid: 103, ppid: 1, pgid: 103, command: 'node server.js' }];
-  const got = await faults.f3KillFeature({ project: 'ledger', piece: 'p1-import', listProcesses, kill: (pid, sig) => kills.push([pid, sig]) });
+  const got = await faults.f3KillFeature({ project, piece: 'p1', listProcesses: table, kill: (pid, sig) => kills.push([pid, sig]) });
   assert.deepEqual(got, { pid: 101 });
   assert.deepEqual(kills, [[101, 'SIGKILL']]);
 });
 
 test('f3b kills only the foreman', async () => {
   const kills = [];
-  const listProcesses = async () => [LINE(101, 'p1-import'), { pid: 200, ppid: 1, pgid: 200, command: 'claude -p WHEELHOUSE_ROLE=foreman WHEELHOUSE_SESSION=foreman-ledger' }];
-  const got = await faults.f3bKillForeman({ project: 'ledger', listProcesses, kill: (pid, sig) => kills.push([pid, sig]) });
+  const got = await faults.f3bKillForeman({ project, listProcesses: table, kill: (pid, sig) => kills.push([pid, sig]) });
   assert.deepEqual(got, { pid: 200 });
   assert.deepEqual(kills, [[200, 'SIGKILL']]);
 });
 
-test('f3 says so when the piece has no session', async () => {
-  await assert.rejects(faults.f3KillFeature({ project: 'x', piece: 'nope', listProcesses: async () => [LINE(1, 'other')], kill: () => {} }), /nope/);
+test('a piece that names no session is said, and p1 does not match a p10 slug', async () => {
+  const only10 = async () => [LINE(110, p10)];
+  await assert.rejects(faults.f3KillFeature({ project, piece: 'p1', listProcesses: only10, kill: () => assert.fail('killed') }), /p1/);
+  assert.equal((await featureEnvOf({ project, piece: 'p10', listProcesses: only10 })).cwd, p10);
 });
 
-test('featureEnvOf copies WHEELHOUSE variables and the worktree', async () => {
-  const listProcesses = async () => [
-    LINE(7, 'p3-categories-two'),
-    { pid: 8, ppid: 1, pgid: 8, command: 'claude -p WHEELHOUSE_ROLE=feature WHEELHOUSE_SESSION=p9 PWD=/work/p9 HOME=/h' },
-  ];
-  const got = await featureEnvOf({ project: 'ledger', piece: 'p3-categories-two', listProcesses });
-  assert.equal(got.env.WHEELHOUSE_SESSION, 'p3-categories-two');
-  assert.equal(got.env.WHEELHOUSE_ROLE, 'feature');
-  assert.equal(got.cwd, '/work/p3-categories-two');
-  assert.equal(got.env.HOME, undefined, 'only the WHEELHOUSE variables are copied');
+test('a process outside the project is not found', async () => {
+  await assert.rejects(featureEnvOf({ project, piece: 'p1', listProcesses: async () => [LINE(103, elsewhere)] }), /p1/);
+});
+
+test('a folder with a brief that does not match its branch is not a feature session', async () => {
+  const odd = worktree('p5-other', 'odd');
+  makeFeatureFolder(odd, 'something-else');
+  await assert.rejects(featureEnvOf({ project, piece: 'p5', listProcesses: async () => [LINE(5, odd)] }), /p5/);
+});
+
+test('featureEnvOf copies WHEELHOUSE variables and the worktree, including a path with a space', async () => {
+  const got = await featureEnvOf({ project, piece: 'p1', listProcesses: table });
+  assert.deepEqual(got.env, { WHEELHOUSE_ENGINE_RUN: '1', WHEELHOUSE_SESSION: 's101' });
+  assert.equal(got.cwd, p1);
+  const withSpace = await featureEnvOf({ project, piece: 'p2', listProcesses: table });
+  assert.equal(withSpace.cwd, spaced);
+  assert.ok(withSpace.cwd.includes(' '));
 });
 
 test('typed commands go through the front desk', () => {
@@ -110,6 +134,16 @@ test('decisionFallback asks the spec\'s question at level 3', () => {
   for (const flag of ['--recommend', '--because', '--meanwhile']) assert.ok(args.includes(flag), flag);
   assert.deepEqual(calls[0].opts.env, { A: 'b' });
   assert.equal(calls[0].opts.cwd, tree);
+});
+
+test('decisionFallback skips when the question is already in the trail, and an unrelated decision does not suppress it', () => {
+  const tree = feature();
+  const other = faults.secondDecision({ env: process.env, cwd: tree, run });
+  assert.equal(other.code, 0, other.stdout);
+  const never = () => assert.fail('asked again');
+  const raised = faults.decisionFallback({ env: process.env, cwd: tree, run });
+  assert.equal(raised.raised, true, raised.stdout);
+  assert.deepEqual(faults.decisionFallback({ env: process.env, cwd: tree, run: never }), { raised: false, skipped: true });
 });
 
 test('secondDecision raises a right-shaped decision with its own text', () => {
