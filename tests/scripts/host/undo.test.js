@@ -31,7 +31,7 @@ const AFTER = 'c'.repeat(40);
 
 // --- undoOnHost, against stand-ins for the two hosts ---
 // Both hosts give the same adapter contract (openPr, prState); the stand-in is built once for each and must be driven the same.
-function standIns({ history = [MERGE], revert = { ok: true, commit: REVERT, subject: 'Add tides' }, push = { ok: true }, through = { ok: true, merged: true }, kept = null, approvalOnRecord = false, update = { ok: true, current: true }, requests = [], pr = {}, ci = 'success' } = {}) {
+function standIns({ history = [MERGE], revert = { ok: true, commit: REVERT, subject: 'Add tides' }, push = { ok: true }, through = { ok: true, merged: true }, kept = null, approvalOnRecord = false, update = { ok: true, current: true }, requests = [], pr = {}, ci = 'success', out = true } = {}) {
   const calls = [];
   const adapter = (host) => ({
     host,
@@ -44,6 +44,7 @@ function standIns({ history = [MERGE], revert = { ok: true, commit: REVERT, subj
     base: async () => { calls.push(['base']); return { head: calls.some((c) => c[0] === 'through') ? AFTER : 'd'.repeat(40), history }; },
     revert: async (x) => { calls.push(['revert', x]); return revert; },
     update: async (x) => { calls.push(['update', x]); return update; },
+    isOut: async (x) => { calls.push(['isOut', x]); return out; },
     push: async (x) => { calls.push(['push', x]); return push; },
   };
   const hooks = {
@@ -189,7 +190,16 @@ test('a merge whose undo already merged is already undone: no new revert, no new
   const s = standIns({ kept, pr: { state: 'merged' } });
   const got = await undoOnHost({ adapter: s.adapter('github'), git: s.git, merge: MERGE, approval: null, defaultBranch: 'main', kept, ...s.hooks });
   assert.deepEqual(got, { ok: false, reason: 'already-undone' });
-  assert.deepEqual(names(s.calls), ['prState']);
+  assert.deepEqual(names(s.calls), ['prState', 'base', 'isOut']);
+  assert.deepEqual(s.calls.find((c) => c[0] === 'isOut')[1], { merge: MERGE, head: 'd'.repeat(40) });
+});
+
+test('a merge whose undo merged but was itself undone is not already undone: a call with no click asks', async () => {
+  const kept = { merge: MERGE, pr: 12, head: REVERT, branch: undoBranch(MERGE, REVERT) };
+  const s = standIns({ kept, pr: { state: 'merged' }, out: false });
+  const got = await undoOnHost({ adapter: s.adapter('github'), git: s.git, merge: MERGE, approval: null, defaultBranch: 'main', kept, ...s.hooks });
+  assert.deepEqual(got, { ok: false, reason: 'needs-approval' });
+  assert.equal(names(s.calls).includes('revert'), false);
 });
 
 test('a git too old to make the revert is said plainly, not read as a conflict', async () => {

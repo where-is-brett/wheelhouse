@@ -117,6 +117,36 @@ test('a bare line of prose in code is unsure, and a plain line of code is intern
   }
 });
 
+// The middle lines of a multi-line string or template can carry code punctuation and still be text users see.
+test('prose and style declarations with code punctuation are unsure', () => {
+  const text = [
+    '  color: red;', '  font-size: 14px;', '  margin: 0 auto', 'You have 3 item(s) in your cart', 'Call us(9am to 5pm)',
+    'Note: see below;', 'Total = $5', 'Thanks for shopping; come again soon', 'Your total = five dollars today',
+  ];
+  for (const file of ['src/lib/a.js', 'src/lib/a.ts']) {
+    for (const line of text) {
+      const got = visibleFromChange({ paths: [file], diff: diff(file, { add: [line] }) });
+      assert.ok(got.visible || got.unsure, `${file} ${line}: ${JSON.stringify(got)}`);
+    }
+  }
+});
+
+test('ordinary code lines with no brackets or semicolons are internal', () => {
+  const by = {
+    'src/lib/a.py': ['if x:', 'for a in b:', 'for item in items:', 'else:', 'try:', 'except ValueError:', 'raise', 'from x import y', 'from flask import Flask', '@property', 'print(x)'],
+    'src/lib/a.rb': ['puts x', 'attr_reader :name', 'end'],
+    'src/lib/a.js': ['  foo: bar,', '  bar,', '  ...rest,', 'case 1:', 'default:', 'throw err', 'await foo', 'new Foo', '  a && b', '  ? a', '  : b', 'x++', 'const total = price + tax;'],
+    'src/lib/a.ts': ['name: string', 'age?: number,', '@Component', 'export interface Tide {'],
+    'src/lib/a.go': ['package main', 'func main() {'],
+  };
+  for (const [file, lines] of Object.entries(by)) {
+    for (const line of lines) {
+      const got = visibleFromChange({ paths: [file], diff: diff(file, { add: [line] }) });
+      assert.deepEqual([got.visible, got.unsure], [false, false], `${file} ${line}: ${JSON.stringify(got)}`);
+    }
+  }
+});
+
 test('hash lines are comments only where the language says so', () => {
   const py = visibleFromChange({ paths: ['src/a.py'], diff: diff('src/a.py', { add: ['# "A new note here"'] }) });
   assert.equal(py.visible, false);

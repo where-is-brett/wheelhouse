@@ -5411,6 +5411,15 @@ export async function startHelper({
         if (made.code !== 0) throw new Error('making the revert\'s commit failed');
         return { ok: true, commit: made.stdout.trim(), subject };
       }),
+      // Whether the merge is already out of `head`: taking it out would change nothing. A clash or a failure is not an answer: false.
+      isOut: ({ merge, head }) => mirrored(async ({ mirror, keyed, must }) => {
+        const parents = (await must(['rev-list', '--parents', '-n', '1', merge], 'reading the merge\'s parents')).trim().split(/\s+/).slice(1);
+        if (parents.length === 0 || parents.length > 2) return false;
+        if ((await tooOld(keyed, mirror)) !== null) return false;
+        const merged = await keyed('git', [...NO_HOOKS, 'merge-tree', '--write-tree', '--no-messages', `--merge-base=${merge}`, head, parents[0]], { cwd: mirror, input: '' });
+        if (merged.code !== 0) return false;
+        return (await must(['rev-parse', '--verify', `${head}^{tree}`], 'reading the default branch')).trim() === merged.stdout.split('\n')[0].trim();
+      }),
       // The undo's head taken up to the default branch's tip as a merge of it: current if the tip is already in it, else a commit with the
       // head and the tip as parents whose tree is their three-way merge (so the push is a fast-forward of the helper's own branch).
       update: ({ head, base }) => mirrored(async ({ mirror, keyed, must }) => {

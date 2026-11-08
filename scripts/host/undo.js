@@ -10,6 +10,7 @@
 //   merge:    the merge commit to take out, in full
 //   approval: the director's signed click for this merge, or null
 //   git:      { base() -> { head, history }, revert({ merge, head }) -> { ok: true, commit } | { ok: false, reason },
+//               isOut({ merge, head }) -> true where taking the merge out of `head` would change nothing,
 //               update({ head, base }) -> { ok: true, current: true } | { ok: true, commit } | { ok: false, reason }, push({ branch, commit }) }
 //             over the helper's own mirror
 //   kept:     the undo already made for this merge and still open, { merge, pr, head, branch }, or null
@@ -75,7 +76,11 @@ export async function undoOnHost({ adapter, git, merge, approval = null, default
     } else {
       const state = await adapter.prState(kept.pr);
       // With no new click, a merge whose undo already merged is undone: there is nothing to ask.
-      if (state?.state === 'merged' && (approval === null || approval === undefined)) return { ok: false, reason: 'already-undone' };
+      // That holds only while the merge is still out of the main version: one whose undo was itself undone asks again.
+      if (state?.state === 'merged' && (approval === null || approval === undefined)) {
+        const tip = await git.base();
+        if ((await git.isOut({ merge, head: tip.head })) === true) return { ok: false, reason: 'already-undone' };
+      }
       const whole = { merge: kept.merge, pr: kept.pr, head: kept.head, branch: kept.branch };
       if (state?.state === 'open' && state.headSha === kept.head) {
         entry = whole;

@@ -64,9 +64,42 @@ function sections(diff) {
 const SLASH_COMMENTS = /\.(?:js|mjs|cjs|ts|mts|cts|go|rs|java|kt|swift|php|cs|c|h|cpp|hpp)$/i;
 const HASH_COMMENTS = /\.(?:py|rb|sh|php)$/i;
 const DASH_COMMENTS = /\.lua$/i;
-// A line of code with no text on it: a statement that starts with one of these words, or a bare keyword.
-const STATEMENT = /^(?:import|export|return|const|let|var|function|def|class)\b/;
-const BARE = /^(?:else|try|finally|break|continue|return|do|pass|end|fi|done)$/;
+// Words that start a line of code. A line that starts with one is code unless the rest reads as a sentence.
+const KEYWORDS = 'import|export|return|const|let|var|function|def|class|async|await|if|else|elif|for|while|switch|case|default|try|catch|except|finally|throw|raise|yield|new|do|end|pass|break|continue|with|assert|lambda|global|del|package|use|mod|fn|func|pub|public|private|protected|static|type|interface|enum|struct|impl|trait|namespace|using|require|include|extend|module|puts|print|attr_reader|attr_accessor|attr_writer|from|in|of|then|fi|done';
+const KEYWORD_START = new RegExp(`^(?:${KEYWORDS})(?![\\w$])`);
+const BARE = /^(?:else|try|finally|break|continue|return|do|pass|end|fi|done|raise|default|begin)\s*:?$/;
+// A style declaration: `color: red;`, `font-size: 14px`, `margin: 0 auto`. Alone on a line in a code file it is the middle of a
+// style block in a string, which users see.
+const DECLARATION = /^[A-Za-z-]+\s*:\s*[^;{},]+;?$/;
+
+// Whether a line, with its literals blanked, is plainly code with no text on it. A line that has letters and doesn't look like code
+// is the safe side: unsure.
+function looksLikeCode(line) {
+  const t = line.replace(/\$?\{[^{}]*\}/g, ' ').trim();
+  if (!/[A-Za-z]/.test(t)) return true;
+  if (DECLARATION.exec(t) !== null && (t.endsWith(';') || /^[A-Za-z]*-/.test(t) || /:\s*[^;]*[\d#%]/.test(t))) return false;
+  // A keyword starting the line, a header ending in `:` or Python's `from x import y` is a statement, whatever follows.
+  let rest = t;
+  for (let m = KEYWORD_START.exec(rest); m !== null; m = KEYWORD_START.exec(rest)) rest = rest.slice(m[0].length).trimStart();
+  const started = rest !== t;
+  if (BARE.test(t)) return true;
+  if (started && /:$/.test(t)) return true;
+  if (/^from\s+[\w.]+\s+import\b/.test(t) || /^import\s+[\w.]+(\s+as\s+\w+)?$/.test(t)) return true;
+  // Sentences and amounts are text, even with code punctuation in them.
+  const prose = /\$\d/.test(t) || /[A-Za-z0-9][.!?](?:\s|$)/.test(t) || /\b[A-Za-z]{2,}\s+[A-Za-z]{2,}\s+[A-Za-z]{2,}\b/.test(rest);
+  if (prose) return false;
+  if (started) return true;
+  if (/^@[\w.]+$/.test(t)) return true;
+  if (/^(?:\.\.\.)?[\w$.]+,$/.test(t) || /^\.\.\.[\w$.]+$/.test(t)) return true;
+  if (/^[A-Za-z_$][\w$]*\??\s*:\s*[\w$.'"\[\]<>|]+,?$/.test(t)) return true;
+  if (/^(?:&&|\|\||\?|:)(?:\s|$)/.test(t) || /&&|\|\|/.test(t) || /^[\w$.]+(?:\+\+|--)$/.test(t)) return true;
+  // A call is a name with brackets that hold an argument: not a lone letter, not words with spaces between them.
+  const call = /[\w\])]\(([^()]*)\)/.exec(t);
+  const callOk = (inside) => inside.trim() === '' || (!/^[A-Za-z]$/.test(inside.trim()) && !/[A-Za-z0-9]\s+[A-Za-z0-9]/.test(inside));
+  if (call !== null && callOk(call[1])) return true;
+  if (/^[\w$.@\[\]]+\([^]*\)[;,]?$/.test(t) && !/[A-Za-z0-9]\s+[A-Za-z0-9]/.test(t.slice(t.indexOf('(')))) return true;
+  return /[=;{}]/.test(t) || /[\w\])]\(\s*$/.test(t);
+}
 
 // One line read as code: { lits, unsure }. `lits` are its string literals (and the text between tags), in order, leaving out the
 // specifiers of imports and requires, comments, and any without a letter. `unsure` is a line that has text on it but no closed
@@ -123,10 +156,8 @@ function readLine(line, file) {
   } else if (lits.length === 0 && !unsure) {
     // Text can be anywhere with no quote on its line, so a line with letters is unsure unless it plainly looks like code: it has code
     // punctuation or structure, or is a statement. Text put into a line by `{...}` is not code.
-    const bare = rest.replace(/\$?\{[^{}]*\}/g, ' ').trim();
-    const code = /[=;{}]/.test(bare) || /[\w\])]\(/.test(bare) || STATEMENT.test(bare) || BARE.test(bare);
     if (/\$\{/.test(rest)) unsure = true;
-    else if (/[A-Za-z]/.test(bare) && !code) unsure = true;
+    else if (/[A-Za-z]/.test(rest.replace(/\$?\{[^{}]*\}/g, ' ')) && !looksLikeCode(rest)) unsure = true;
   }
   if (/"{3}|'{3}/.test(text) && hash) unsure = true;
   return { lits, unsure };
