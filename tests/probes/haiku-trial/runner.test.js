@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { STEPS, planRun, run, restore, waitFor, main, withoutChrome, runLabel, NEW_SESSION, FOLLOW_UP } from '../../../probes/haiku-trial/runner.js';
+import { STEPS, planRun, run, restore, waitFor, main, withoutChrome, runLabel, NEW_SESSION, FOLLOW_UP, CHECK_IN, waitingInRecord } from '../../../probes/haiku-trial/runner.js';
 import { P5_SPARE } from '../../../probes/haiku-trial/requests.js';
 
 const ENV = { WHEELHOUSE_HOME: process.env.WHEELHOUSE_HOME, HAIKU_TRIAL_GH_OWNER: 'trial-owner', HAIKU_TRIAL_CLAUDE: '/bin/claude', HAIKU_TRIAL_PREVIEW: 'none' };
@@ -625,6 +625,24 @@ test("F3 follows P1's work when it is linked late, during its wait", async (t) =
   assert.deepEqual(got.done, ['f3-kill-p1'], got.why);
   assert.deepEqual(kills, ['statement-import']);
   assert.ok(readLog(folder).some((e) => e.step === 'P1' && e.note === 'became work statement-import later'));
+});
+
+test('the stand-in checks in when the desk is idle and something waits in the record, at most every ten minutes', async (t) => {
+  const folder = scratch(t);
+  const typed = [];
+  const events = [{ id: 'q1', kind: 'question', data: { id: 'q-statement-import-1', work: 'statement-import' } }];
+  const io = fakeIo({ capture: () => 'idle desk', host: { events: async () => events } });
+  const wrapped = io.tmux.type;
+  io.tmux.type = (name, text) => { typed.push(text); return wrapped(name, text); };
+  io.faults.f3KillFeature = async () => ({ pid: 1 });
+  let looks = 0;
+  io.gh = async () => { looks += 1; return looks > 120 ? [{ name: 'p1' }] : []; };
+  await run({ mode: 'smoke', io, from: 'f3-kill-p1', until: 'f3-kill-p1', folder, date: '2026-11-08', env: ENV });
+  const at = readLog(folder).filter((e) => /checked in/.test(e.note)).map((e) => Date.parse(e.at));
+  assert.ok(at.length >= 2, `${at.length} check-ins`);
+  assert.equal(typed.filter((x) => x === CHECK_IN).length, at.length);
+  for (let i = 1; i < at.length; i += 1) assert.ok(at[i] - at[i - 1] >= 10 * 60 * 1000, 'at most one check-in each ten minutes');
+  assert.equal(waitingInRecord([...events, { id: 'a', kind: 'action', data: { action: 'answer', questionId: 'q-statement-import-1' } }]), 0);
 });
 
 test('F3 with no feature session to kill is noted as not exercised and the run goes on', async (t) => {
