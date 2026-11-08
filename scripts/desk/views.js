@@ -161,6 +161,25 @@ function stepEnd(entry) {
   return text === '' ? '' : ` · ${text}`;
 }
 
+// How many steps the build tab lists under a piece.
+const STEPS_SHOWN = 5;
+
+// The build tab's lines for the crew's steps: under each piece with a live run its last five steps (oldest
+// first, already in plain words) and then its crew lines, and under `The Bosun` the Bosun's last five.
+export function crewLines(views, crew = {}) {
+  const text = (x) => (isPlain(x) && typeof x.text === 'string' ? flat(x.text) : typeof x === 'string' ? flat(x) : '');
+  const some = (list) => (Array.isArray(list) ? list.map(text).filter((t) => t !== '') : []);
+  const lines = [];
+  for (const [id, entry] of Object.entries(isPlain(crew) ? crew : {})) {
+    if (!isPlain(entry)) continue;
+    const steps = some(entry.steps).slice(-STEPS_SHOWN);
+    const members = id === 'foreman' ? [] : some(entry.crew);
+    if (steps.length + members.length === 0) continue;
+    lines.push(id === 'foreman' ? 'The Bosun' : flat(views?.work?.[id]?.work?.data?.title) || id, ...[...steps, ...members].map((t) => `  ${t}`));
+  }
+  return lines;
+}
+
 // The open work, running work first, each oldest first (then by id): its id, title and lane, whether a feature
 // runs for it, its step or state, the slice in hand and the pull request the gate waits on or its
 // latest report names, either since the work was queued. `answers` are the card-answer events, for
@@ -238,6 +257,13 @@ async function recordOf(source, args) {
   const got = await source.views(args);
   if (got?.ok !== true || !isPlain(got.views)) return { refused: got?.refused ?? NO_RECORD };
   return got;
+}
+
+// The crew's latest steps for the project's running pieces, or none when the source has no project.
+function crewOfSource(source, views, own, now) {
+  return typeof source.project === 'string'
+    ? crewNow(source.project, views, effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now }))
+    : {};
 }
 
 // The director's own settings view, or none when it can't be read.
@@ -331,8 +357,12 @@ const VIEWS = {
     let text = renderBoard(inputs.model, { tab, ...(args.limit ? { limit: args.limit } : {}) });
     // The build tab shows each run's steps in plain words and its cost.
     if (tab === 'build') {
-      const runs = buildLines((await source.views({}))?.views ?? {}, { now: now() });
+      const views = (await source.views({}))?.views ?? {};
+      const runs = buildLines(views, { now: now() });
       if (runs.length > 0) text = `${text}\n\n${runs.join('\n')}`;
+      // The crew's recent steps are read only here, when the tab is drawn, and never reach the desk's change feed.
+      const steps = crewLines(views, crewOfSource(source, views, await ownSettings(source), now));
+      if (steps.length > 0) text = `${text}\n\n${steps.join('\n')}`;
     }
     return { ok: true, data: { text }, lines: lined(text) };
   },
@@ -373,9 +403,7 @@ const VIEWS = {
     const got = await recordOf(source, { answers: true });
     if (got.refused) return { ok: false, refused: got.refused };
     const own = await ownSettings(source);
-    const crew = typeof source.project === 'string'
-      ? crewNow(source.project, got.views, effectiveSettings({ project: isPlain(got.views.settings) ? got.views.settings : {}, profile: own, now }))
-      : {};
+    const crew = crewOfSource(source, got.views, own, now);
     const lines = workLines(got.views, got.answers ?? [], deskWords(got.views, own, now(), got.names ?? []), {}, crew);
     return { ok: true, data: got, lines: [...lines, ...runningLines(got.views, { now: now() })] };
   },
