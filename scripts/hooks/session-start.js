@@ -57,6 +57,7 @@ import { listEvents, makeEvent } from '../state/events.js';
 import { buildViews } from '../state/views.js';
 import { startBackground, startDetached } from '../lib/background.js';
 import { sessionRole } from '../lib/role.js';
+import { RECENT_MS } from '../lib/first-mate-seat.js';
 import { projectConfig } from '../watcher/main.js';
 import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
 import { readProject } from '../lib/projects.js';
@@ -434,8 +435,7 @@ async function keepLock(project, client, left, seen = {}) {
 
 // The words before the take-over card's AskUserQuestion input, as JSON on the same line.
 export const TAKEOVER_ASK = 'Another computer has the First Mate: show the director the Logbook as it stands, read-only, and ask them this card with AskUserQuestion, exactly as given, as a question of its own: ';
-// Within this long since the other computer last wrote, it counts as in use. (A lock idle two hours is taken at once.)
-const RECENT_MS = 30 * 60 * 1000;
+// RECENT_MS (imported): within this long since the other computer last wrote, it counts as in use. (A lock idle two hours is taken at once.)
 const agoWords = (ms) => {
   const minutes = Math.max(0, Math.floor(ms / 60000));
   if (minutes < 1) return 'just now';
@@ -718,7 +718,7 @@ export function sessionTitle(input, { dir, projectOf: find = projectOf, env = pr
   if (!found) return setup === null ? null : TITLES.setup;
   const role = sessionRole({ sessionId: input.session_id, env, cwd: input.cwd });
   if (role === 'foreman') return TITLES.bosun;
-  const feature = featureSlug(input.cwd);
+  const feature = madeFeatureSlug(input.cwd);
   if (feature !== null) return crewTitle(feature);
   return setup === null ? TITLES.firstMate : TITLES.setup;
 }
