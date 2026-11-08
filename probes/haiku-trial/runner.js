@@ -25,7 +25,9 @@ const WHY_WAIT_MS = 100 * 1000 + 20 * 1000;
 const WAVE_WAIT_MS = { 2: 90 * MINUTE, 3: 150 * MINUTE, 4: 90 * MINUTE };
 const SPARE_BRANCH = 'trial/spare-bug';
 const SETUP_WAIT_MS = 45 * MINUTE;
-const NEW_SESSION = /needs one new session|new session on this folder/i;
+// Setup's skill gives this line in prose, so the session words it its own way: "setup needs one new session on this
+// folder", "the last safety checks need one new session in this folder: close this session, start a new one here".
+export const NEW_SESSION = /needs? one new session|new session (?:on|in) this folder|start a new (?:one|session) (?:here|in this folder|on this folder)/i;
 const TRUST_PROMPT = /trust the files in this folder|do you trust|trust this folder/i;
 // The trust prompt's highlighted choice. Its first choice is "No, exit", so Enter alone ends the session.
 const TRUST_YES = /❯\s*(?:\d+\.\s*)?Yes, I trust this folder/;

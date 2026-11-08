@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { STEPS, planRun, run, restore, waitFor, main, withoutChrome, runLabel } from '../../../probes/haiku-trial/runner.js';
+import { STEPS, planRun, run, restore, waitFor, main, withoutChrome, runLabel, NEW_SESSION } from '../../../probes/haiku-trial/runner.js';
 import { P5_SPARE } from '../../../probes/haiku-trial/requests.js';
 
 const ENV = { WHEELHOUSE_HOME: process.env.WHEELHOUSE_HOME, HAIKU_TRIAL_GH_OWNER: 'trial-owner', HAIKU_TRIAL_CLAUDE: '/bin/claude', HAIKU_TRIAL_PREVIEW: 'none' };
@@ -317,6 +317,16 @@ test('a picker whose cursor never reaches the recommended option stops the run w
   assert.equal(got.stoppedAt, 'setup-s0');
   assert.match(got.why, /never highlighted its recommended option/);
   assert.equal(io.timeline.some((e) => e.kind === 'tmux.keys' && e.args.includes('Enter')), false);
+});
+
+test("setup's ask for a new session is heard however the session words it", () => {
+  for (const line of [
+    'Last safety checks need one new session on this folder.',
+    'Setup needs one new session on this folder, and it carries on by itself there.',
+    'The last safety checks need one new session in this folder: close this session, start a new one here, and setup carries on by itself.',
+    'Please start a new session in this folder and setup carries on.',
+  ]) assert.ok(NEW_SESSION.test(line), line);
+  assert.equal(NEW_SESSION.test('Setup is finished. Every step is done.'), false);
 });
 
 test('the folder-trust prompt is answered Yes: the cursor is moved off "No, exit" before Enter', async (t) => {
