@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ROWS, KINDS, FULL_ONLY, PROOF_HEADINGS, checkAll, gatherContext } from '../../../probes/haiku-trial/signals.js';
+import { ROWS, KINDS, EVENT_KINDS, STEPS, SETUP_DONE, OWN_BRANCH, FULL_ONLY, PROOF_HEADINGS, checkAll, gatherContext } from '../../../probes/haiku-trial/signals.js';
+import { PLAIN_KINDS, PROTECTED_KINDS } from '../../../scripts/state/events.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const row = (id) => ROWS.find((r) => r.id === id);
@@ -31,11 +32,11 @@ test('there are 45 rows, numbered 1 to 45, each with a check', () => {
 
 test('the smoke rows are exactly the listed ones', () => {
   const smoke = ROWS.filter((r) => r.smoke).map((r) => r.id);
-  assert.deepEqual(smoke, [1, 2, 3, 4, 5, 7, 8, 9, 10, 13, 16, 17, 18, 19, 21, 22, 25, 26, 27, 28, 29, 31, 33, 35, 43, 44, 45]);
+  assert.deepEqual(smoke, [1, 2, 3, 4, 5, 7, 8, 9, 13, 16, 17, 18, 21, 22, 25, 26, 27, 28, 29, 31, 33, 43, 44, 45]);
   assert.deepEqual(FULL_ONLY, [34, 41]);
 });
 
-test('every kind a row reads is written somewhere in scripts', () => {
+const scriptsText = () => {
   const files = [];
   const walk = (dir) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -45,8 +46,26 @@ test('every kind a row reads is written somewhere in scripts', () => {
     }
   };
   walk(path.join(root, 'scripts'));
-  const text = files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
-  for (const kind of Object.values(KINDS)) assert.ok(text.includes(`'${kind}'`), `no script writes '${kind}'`);
+  return files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+};
+
+test('every event kind a row reads is a kind the event log accepts, and there is no work-ready kind', () => {
+  const accepted = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
+  for (const kind of EVENT_KINDS) assert.ok(accepted.has(kind), `'${kind}' is not an event kind`);
+  assert.equal(accepted.has('work-ready'), false, 'work-ready is the watcher\'s own event, never in the log');
+  assert.equal(Object.values(KINDS).includes('work-ready'), false);
+});
+
+test('the action names and incident kinds the rows read are written in scripts', () => {
+  const text = scriptsText();
+  for (const name of [KINDS.approveWork, KINDS.liftStop, KINDS.liftIncident, KINDS.resumed, KINDS.lost]) assert.ok(text.includes(`'${name}'`), `no script writes '${name}'`);
+});
+
+test('the setup pattern matches what the engine says, and the engine still says it', () => {
+  assert.match('Every step is done.', SETUP_DONE);
+  assert.match('Setup is finished. Phone notifications come next, and are optional.', SETUP_DONE);
+  assert.doesNotMatch('setup is not finished', SETUP_DONE);
+  assert.ok(scriptsText().includes("'Every step is done.'"));
 });
 
 const workCtx = (merged) => ctxWith({
@@ -139,21 +158,78 @@ test('row 26 wants two images in What it looks like', () => {
   assert.equal(row(26).check(make(section('![desktop](a.png)'))).pass, false);
 });
 
-test('row 34 reports a lost row as a finding', () => {
+test('row 34 reads P7 starting after F3b, and reports a lost row as a finding', () => {
   const ctx = ctxWith({
-    runLog: [{ at: '2026-11-08T01:00:00Z', step: 'F3b', note: 'killed' }, { at: '2026-11-08T01:06:00Z', step: 'work-ready', note: 'recovered', detail: { recovered: true } }],
+    pieces: { P7: { change: 'export', prs: [] } },
+    events: [ev('run', { state: 'started', work: 'export', lane: 'small', runId: 'r1' }, '2026-11-08T01:06:00Z')],
+    runLog: [{ at: '2026-11-08T01:00:00Z', step: 'F3b', note: 'killed' }],
     incidents: [{ kind: 'lost', project: 'p', work: 'w', at: '2026-11-08T01:40:00Z', key: 'k' }],
   });
   const result = row(34).check(ctx);
   assert.equal(result.pass, true);
   assert.match(result.evidence, /lost/);
-  ctx.runLog[1].at = '2026-11-08T01:30:00Z';
+  ctx.events[0].at = '2026-11-08T01:30:00Z';
   assert.equal(row(34).check(ctx).pass, false);
+  ctx.events[0] = ev('run', { state: 'started', work: 'other', lane: 'small', runId: 'r2' }, '2026-11-08T01:02:00Z');
+  assert.equal(row(34).check(ctx).pass, false, 'another piece starting is not the recovery');
+});
+
+test('row 10 passes on tests plus recorded review and tester roles, and is unknown, not failed, without them', () => {
+  const pieces = {};
+  const prs = [];
+  PIECES_IDS.forEach((id, i) => {
+    pieces[id] = { change: `w-${id}`, prs: [i + 1] };
+    prs.push(pr(i + 1, { commits: [{ sha: 's', date: 'x', files: ['src/a.js', 'tests/a.test.js'] }] }));
+  });
+  const base = { pieces, prs };
+  assert.equal(row(10).check(ctxWith(base)).pass, null);
+  const costs = [ev('cost', { work: 'w-P1', runId: 'r', byRole: { reviewer: {}, 'tester-run': {} } }, '2026-11-08T01:00:00Z')];
+  assert.equal(row(10).check(ctxWith({ ...base, events: costs })).pass, true);
+  const bare = structuredClone(base);
+  bare.prs[0].commits[0].files = ['src/a.js'];
+  assert.equal(row(10).check(ctxWith({ ...bare, events: costs })).pass, false);
+});
+
+test('row 14 passes on exit 2 and a send-back, and reports P4\'s natural send-backs', () => {
+  assert.equal(row(14).check(ctxWith()).pass, null);
+  const ok = row(14).check(ctxWith({ faults: { F1: { code: 2, sentBack: true, naturalSendBacks: 1 } } }));
+  assert.equal(ok.pass, true);
+  assert.match(ok.evidence, /1 natural send-back/);
+  assert.equal(row(14).check(ctxWith({ faults: { F1: { code: 0, sentBack: false } } })).pass, false);
+});
+
+test('row 15 looks for the why text the stuck command was given', () => {
+  const faults = { F1b: { stuckAt: 3, why: 'the question keeps failing' } };
+  assert.equal(row(15).check(ctxWith({ faults, panes: { 'front-desk': ['says: the question keeps failing'] } })).pass, true);
+  assert.equal(row(15).check(ctxWith({ faults, panes: { 'front-desk': ['stuck somewhere unrelated'] } })).pass, false);
+  assert.equal(row(15).check(ctxWith({ faults: { F1b: { stuckAt: 3 } }, panes: { 'front-desk': ['stuck'] } })).pass, false);
+});
+
+test('row 35 is unknown and keeps its reliability evidence', () => {
+  const result = row(35).check(ctxWith({ incidents: [{ kind: 'resumed' }] }));
+  assert.equal(result.pass, null);
+  assert.match(result.evidence, /1 reliability row/);
+});
+
+test('row 25 leaves out the runner\'s own trial branch', () => {
+  const full = PROOF_HEADINGS.map((h) => `## ${h}\ntext`).join('\n');
+  const ctx = ctxWith({ prs: [pr(1, { mergedAt: 'x', body: full }), pr(2, { mergedAt: 'x', head: 'trial/spare-bug', body: 'plain' })] });
+  assert.equal(row(25).check(ctx).pass, true);
+  assert.ok(OWN_BRANCH.test('trial/spare-bug') && OWN_BRANCH.test('wheelhouse/undo-abc') && !OWN_BRANCH.test('feature/x'));
+});
+
+const withRoles = (roles) => roles.map((role) => ({ file: `${role}.jsonl`, role, session: role }));
+
+test('row 45 is unknown with nothing to audit and passes when every role has a transcript', () => {
+  const none = row(45).check(ctxWith());
+  assert.equal(none.pass, null);
+  assert.match(none.evidence, /front-desk, feature, foreman/);
+  assert.equal(row(45).check(ctxWith({ transcripts: withRoles(['front-desk', 'feature']) })).pass, null);
+  assert.equal(row(45).check(ctxWith({ transcripts: withRoles(['front-desk', 'feature', 'foreman']) })).pass, true);
 });
 
 test('row 45 fails on an offender and names its role', () => {
-  assert.equal(row(45).check(ctxWith()).pass, true);
-  const ctx = ctxWith({ audit: { models: { clean: false, offenders: [{ role: 'feature', session: 's', model: 'claude-sonnet-4-5', count: 2 }] }, peek: { clean: true, hits: [] } } });
+  const ctx = ctxWith({ audit: { models: { clean: false, offenders: [{ role: 'feature', session: 's', model: 'other-model', count: 2 }] }, peek: { clean: true, hits: [] } } });
   const result = row(45).check(ctx);
   assert.equal(result.pass, false);
   assert.match(result.evidence, /feature/);
@@ -189,6 +265,8 @@ test('row 1 wants every role and both pins on haiku with premium off', () => {
   assert.equal(result.pass, false);
   assert.match(result.evidence, /foreman/);
 });
+
+const PIECES_IDS = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8'];
 
 test('row 3 compares the intake lane with the piece', () => {
   const pieces = {};

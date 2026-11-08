@@ -75,3 +75,7 @@ test('lanes and rows match section 7', () => {
   assert.deepEqual(piece('P7').rows, [12, 26, 28]);
   assert.deepEqual(piece('P8').rows, [30]);
 });
+
+test('every request is one line, so the terminal sends it as one message', () => {
+  for (const { id, text } of PIECES) assert.equal(text.includes('\n'), false, id);
+});

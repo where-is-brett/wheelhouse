@@ -8,6 +8,10 @@ const STARTER_VARIABLES = ['WHEELHOUSE_ROLE', 'WHEELHOUSE_SESSION', 'WHEELHOUSE_
 const SCRIPT_ENTRYPOINT = /^sdk-/;
 
 export const SESSION_PREFIX = 'haiku-trial-';
+// A wide, tall window, so a long line is one line on screen, and a deep history, so a long reply is still there to read.
+export const PANE_COLUMNS = 220;
+export const PANE_ROWS = 60;
+export const HISTORY_LINES = 20000;
 
 // A copy of `from` without what marks a session as script-started.
 export function cleanEnv(from = process.env) {
@@ -27,7 +31,9 @@ export function makeTmux({ run = spawnSync } = {}) {
     // The session starts with exactly `env`, nothing inherited from the tmux server.
     start({ name, cwd, command, env }) {
       const pairs = Object.entries(env ?? {}).filter(([, v]) => typeof v === 'string').map(([k, v]) => `${k}=${v}`);
-      return tmux('new-session', '-d', '-s', named(name), '-c', cwd, 'env', '-i', ...pairs, ...command);
+      // The history size is read when a pane is made, so it is set first, for sessions made after this one too.
+      tmux('set-option', '-g', 'history-limit', String(HISTORY_LINES));
+      return tmux('new-session', '-d', '-s', named(name), '-x', String(PANE_COLUMNS), '-y', String(PANE_ROWS), '-c', cwd, 'env', '-i', ...pairs, ...command);
     },
     // The text goes in literally, then Enter.
     type(name, text) {
@@ -38,7 +44,8 @@ export function makeTmux({ run = spawnSync } = {}) {
       return tmux('send-keys', '-t', named(name), ...keys);
     },
     capture(name) {
-      return said(tmux('capture-pane', '-p', '-t', named(name)));
+      // -J joins the lines the window wrapped, -S - starts at the top of the history.
+      return said(tmux('capture-pane', '-p', '-J', '-S', '-', '-t', named(name)));
     },
     kill(name) {
       return tmux('kill-session', '-t', named(name));

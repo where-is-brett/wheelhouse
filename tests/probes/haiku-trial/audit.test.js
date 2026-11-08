@@ -16,26 +16,26 @@ const turn = (model, extra = {}) => ({ type: 'assistant', message: { model, cont
 const asTranscripts = (file, role = 'feature', session = 's1') => [{ file, role, session }];
 
 test('HAIKU matches Haiku model names only', () => {
-  assert.ok(HAIKU.test('claude-haiku-4-5'));
-  assert.ok(!HAIKU.test('claude-sonnet-4-5'));
+  assert.ok(HAIKU.test('haiku-test'));
+  assert.ok(!HAIKU.test('other-model'));
   assert.equal(PEEK_PATTERNS.length, 3);
 });
 
 test('a clean run passes', () => {
   const dir = scratch();
-  const file = write(path.join(dir, 'a.jsonl'), [turn('claude-haiku-4-5'), turn('claude-haiku-4-5-20251001')]);
+  const file = write(path.join(dir, 'a.jsonl'), [turn('haiku-test'), turn('haiku-test-b')]);
   assert.deepEqual(auditModels(asTranscripts(file)), { clean: true, offenders: [] });
 });
 
 test('a sonnet entry fails and names the session and role', () => {
   const dir = scratch();
-  const file = write(path.join(dir, 'feat-1.jsonl'), [turn('claude-haiku-4-5'), turn('claude-sonnet-4-5')]);
+  const file = write(path.join(dir, 'feat-1.jsonl'), [turn('haiku-test'), turn('other-model')]);
   const result = auditModels(asTranscripts(file, 'feature', 'feat-1'));
   assert.equal(result.clean, false);
   assert.equal(result.offenders.length, 1);
   assert.equal(result.offenders[0].role, 'feature');
   assert.equal(result.offenders[0].session, 'feat-1');
-  assert.equal(result.offenders[0].model, 'claude-sonnet-4-5');
+  assert.equal(result.offenders[0].model, 'other-model');
   assert.equal(result.offenders[0].count, 1);
 });
 
@@ -47,16 +47,16 @@ test('audit skips broken lines and synthetic entries', () => {
     turn('<synthetic>'),
     { type: 'user', message: { role: 'user', content: 'hi' } },
     { type: 'assistant', message: { content: [] } },
-    turn('claude-haiku-4-5'),
+    turn('haiku-test'),
   ]);
   assert.deepEqual(auditModels(asTranscripts(file)), { clean: true, offenders: [] });
 });
 
 test('audit counts repeated offences by model', () => {
   const dir = scratch();
-  const file = write(path.join(dir, 'a.jsonl'), [turn('claude-opus-4'), turn('claude-opus-4'), turn('claude-sonnet-4-5')]);
+  const file = write(path.join(dir, 'a.jsonl'), [turn('other-model-b'), turn('other-model-b'), turn('other-model')]);
   const { offenders } = auditModels(asTranscripts(file));
-  assert.deepEqual(offenders.map((o) => [o.model, o.count]).sort(), [['claude-opus-4', 2], ['claude-sonnet-4-5', 1]]);
+  assert.deepEqual(offenders.map((o) => [o.model, o.count]).sort(), [['other-model', 1], ['other-model-b', 2]]);
 });
 
 test('audit skips a transcript file that cannot be read', () => {
@@ -67,9 +67,9 @@ test('front desk transcripts are matched by cwd', () => {
   const home = scratch();
   const project = path.join(scratch(), 'trial-project');
   const other = path.join(scratch(), 'other-project');
-  const mine = write(path.join(home, 'projects', 'slug-a', 'sess-a.jsonl'), [{ type: 'summary' }, { type: 'user', cwd: project }, turn('claude-haiku-4-5')]);
-  write(path.join(home, 'projects', 'slug-b', 'sess-b.jsonl'), [{ type: 'user', cwd: other }, turn('claude-haiku-4-5')]);
-  const sub = write(path.join(home, 'projects', 'slug-a', 'sess-a', 'subagents', 'agent-1.jsonl'), [{ type: 'user', cwd: project }, turn('claude-haiku-4-5')]);
+  const mine = write(path.join(home, 'projects', 'slug-a', 'sess-a.jsonl'), [{ type: 'summary' }, { type: 'user', cwd: project }, turn('haiku-test')]);
+  write(path.join(home, 'projects', 'slug-b', 'sess-b.jsonl'), [{ type: 'user', cwd: other }, turn('haiku-test')]);
+  const sub = write(path.join(home, 'projects', 'slug-a', 'sess-a', 'subagents', 'agent-1.jsonl'), [{ type: 'user', cwd: project }, turn('haiku-test')]);
   const found = findTranscripts({ project, claudeHome: home });
   assert.deepEqual(found.map((t) => t.file).sort(), [mine, sub].sort());
   assert.ok(found.every((t) => t.role === 'front-desk'));
@@ -86,13 +86,30 @@ test('a cwd inside the project folder counts as the project', () => {
   assert.equal(findTranscripts({ project, claudeHome: home }).length, 1);
 });
 
+test('a worktree session is a feature, the project folder is the front desk, and a session found twice is counted once under the engine role', () => {
+  const home = scratch();
+  const engine = scratch();
+  const project = path.join(scratch(), 'p');
+  const desk = write(path.join(home, 'projects', 'slug', 'desk.jsonl'), [{ type: 'user', cwd: project }]);
+  const feat = write(path.join(home, 'projects', 'slug', 'feat.jsonl'), [{ type: 'user', cwd: path.join(project, '.wheelhouse', 'worktrees', 'p1-import') }]);
+  const fore = write(path.join(home, 'projects', 'slug', 'fore.jsonl'), [{ type: 'user', cwd: project }]);
+  write(path.join(engine, 'sessions', 'fore.jsonl'), [{ type: 'system', env: { WHEELHOUSE_ROLE: 'foreman' } }]);
+  const found = findTranscripts({ project, claudeHome: home, engineDir: engine });
+  assert.equal(found.length, 3, 'one entry per session');
+  const roleOf = (session) => found.find((t) => t.session === session)?.role;
+  assert.equal(roleOf('desk'), 'front-desk');
+  assert.equal(roleOf('feat'), 'feature');
+  assert.equal(roleOf('fore'), 'foreman');
+  assert.ok(desk && feat && fore);
+});
+
 test('engine transcripts take their role from the WHEELHOUSE_ROLE record or the folder name', () => {
   const home = scratch();
   const engine = scratch();
   const project = path.join(scratch(), 'p');
-  const byRecord = write(path.join(engine, 'sessions', 'one.jsonl'), [{ type: 'system', env: { WHEELHOUSE_ROLE: 'foreman' } }, turn('claude-haiku-4-5')]);
-  const byFolder = write(path.join(engine, 'feature', 'two.jsonl'), [turn('claude-haiku-4-5')]);
-  const why = write(path.join(engine, 'why', 'three.jsonl'), [turn('claude-haiku-4-5')]);
+  const byRecord = write(path.join(engine, 'sessions', 'one.jsonl'), [{ type: 'system', env: { WHEELHOUSE_ROLE: 'foreman' } }, turn('haiku-test')]);
+  const byFolder = write(path.join(engine, 'feature', 'two.jsonl'), [turn('haiku-test')]);
+  const why = write(path.join(engine, 'why', 'three.jsonl'), [turn('haiku-test')]);
   const found = findTranscripts({ project, claudeHome: home, engineDir: engine });
   const roleOf = (f) => found.find((t) => t.file === f)?.role;
   assert.equal(roleOf(byRecord), 'foreman');
@@ -108,7 +125,7 @@ test('findTranscripts copes with a missing claude home and engine folder', () =>
 test('peek flags a Bash command naming the held-back folder', () => {
   const dir = scratch();
   const file = write(path.join(dir, 'a.jsonl'), [
-    { type: 'assistant', message: { model: 'claude-haiku-4-5', content: [{ type: 'tool_use', name: 'Bash', input: { command: 'cat ../probes/haiku-trial/held-back/held-back.js' } }] } },
+    { type: 'assistant', message: { model: 'haiku-test', content: [{ type: 'tool_use', name: 'Bash', input: { command: 'cat ../probes/haiku-trial/held-back/held-back.js' } }] } },
   ]);
   const result = auditPeek(asTranscripts(file));
   assert.equal(result.clean, false);
@@ -129,7 +146,7 @@ test('peek flags a Read of the reference app', () => {
 test('peek ignores the word in plain assistant text', () => {
   const dir = scratch();
   const file = write(path.join(dir, 'a.jsonl'), [
-    { type: 'assistant', message: { model: 'claude-haiku-4-5', content: [{ type: 'text', text: 'I will not open the held-back folder or reference-app.' }] } },
+    { type: 'assistant', message: { model: 'haiku-test', content: [{ type: 'text', text: 'I will not open the held-back folder or reference-app.' }] } },
     'not json',
   ]);
   assert.deepEqual(auditPeek(asTranscripts(file)), { clean: true, hits: [] });

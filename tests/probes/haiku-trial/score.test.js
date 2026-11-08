@@ -11,7 +11,7 @@ import { a11y, makeBrowse, PLAYWRIGHT_CORE, AXE_CORE } from '../../../probes/hai
 import { health } from '../../../probes/haiku-trial/score/health.js';
 import { passBar, scoreAll } from '../../../probes/haiku-trial/score/total.js';
 import { makeStatement, HELD_BACK } from '../../../probes/haiku-trial/statement.js';
-import { defaultRun } from '../../../probes/haiku-trial/score/run.js';
+import { defaultRun, installDependencies } from '../../../probes/haiku-trial/score/run.js';
 import { REFERENCE, variant } from './variants.js';
 
 const tmp = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `haiku-score-${name}-`));
@@ -127,6 +127,39 @@ test('ownTests scores the parts from a fixture repository', async () => {
   assert.ok(result.notes.some((n) => /deleted/.test(n)));
   assert.ok(result.notes.some((n) => /skipped or todo/.test(n)));
   assert.equal(result.points, result.parts.written + result.parts.green + result.parts.kept + result.parts.bite);
+});
+
+test('installDependencies installs only what package.json lists, with ci when a lockfile exists', () => {
+  const calls = [];
+  const fake = (status) => (cmd, args) => { calls.push([cmd, ...args]); return { status, stdout: '', stderr: 'boom\nlast line' }; };
+  const none = tmp('deps-none');
+  write(none, { 'package.json': '{"name":"x"}' });
+  assert.deepEqual(installDependencies(none, fake(0)), { ok: true, skipped: true });
+  assert.equal(calls.length, 0);
+  const locked = tmp('deps-locked');
+  write(locked, { 'package.json': '{"dependencies":{"a":"1.0.0"}}', 'package-lock.json': '{}' });
+  assert.deepEqual(installDependencies(locked, fake(0)), { ok: true, command: 'npm ci' });
+  assert.deepEqual(calls[0], ['npm', 'ci', '--no-audit', '--no-fund']);
+  const unlocked = tmp('deps-unlocked');
+  write(unlocked, { 'package.json': '{"devDependencies":{"a":"1.0.0"}}' });
+  assert.equal(installDependencies(unlocked, fake(1)).ok, false);
+  assert.equal(calls[1][1], 'install');
+  assert.match(installDependencies(unlocked, fake(1)).why, /npm install failed/);
+});
+
+test('the test counts install each commit\'s dependencies before counting', async () => {
+  const { dir, baseSha } = fixtureRepo({ deleted: false, skipped: false });
+  const commands = [];
+  const run = (cmd, args, opts) => {
+    commands.push(`${cmd} ${args[0]}`);
+    return defaultRun(cmd, args, opts);
+  };
+  fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x","type":"module","dependencies":{"left-pad":"1.3.0"}}');
+  git(dir, 'add', '.');
+  git(dir, 'commit', '--quiet', '-m', 'adds a dependency');
+  const fake = (cmd, args, opts) => (cmd === 'npm' && args[0] !== 'test' ? (commands.push(`npm ${args[0]}`), { status: 0, stdout: '', stderr: '' }) : run(cmd, args, opts));
+  await ownTests({ dir, baseSha, gh: greenGh, run: fake });
+  assert.ok(commands.filter((c) => c === 'npm install').length >= 1, commands.join(', '));
 });
 
 test('ownTests keeps all four kept points when nothing is deleted, skipped or lost', async () => {

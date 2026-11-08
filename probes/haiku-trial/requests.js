@@ -6,12 +6,12 @@ export const P5_SPARE = 'A payment on 31 August shows under September';
 export const F2_ANSWER = 'No, nobody sees this';
 
 const keysAndLabels = CATEGORIES.map((c) => `${c.key} (${c.label})`).join(', ');
-const shops = MERCHANTS.map((m) => `${m.name} → ${m.category}`).join('\n');
+const shops = MERCHANTS.map((m) => `${m.name} → ${m.category}`).join('; ');
 
 const P1 =
   "Let me upload my bank statement and see it imported. Add a page at /import with a file upload field named `statement`. The statement is a CSV with the columns Date, Description, Amount; dates are DD/MM/YYYY, and an amount in brackets or with a minus sign is money coming back. Read amounts with `parseAmount` in src/lib/money.js and dates with `parseDate` in src/lib/dates.js. A duplicate has the same date, description and amount as a stored row: skip it. After an upload the page says 'Added n, skipped n' with the counts, so importing the same file twice adds nothing. A file that isn't a statement gets a plain error and adds nothing. The home page lists each month that has transactions, newest first, each linking to /month?m=YYYY-MM. Keep reading the port from PORT and the database path from LEDGER_DB, which can be `:memory:`.";
 
-const P2 = `Sort transactions into categories by shop name. Put the rules in src/lib/categories.js with these category keys and labels: ${keysAndLabels}. A description belongs to a shop when it contains the shop name, ignoring case. The shops are:\n${shops}\nA description that matches no shop is \`other\`.`;
+const P2 = `Sort transactions into categories by shop name. Put the rules in src/lib/categories.js with these category keys and labels: ${keysAndLabels}. A description belongs to a shop when it contains the shop name, ignoring case. The shops are: ${shops}. A description that matches no shop is \`other\`.`;
 
 const P3 =
   'A page per month with totals by category and change from last month. Build it in two slices: first the totals, then the change. The page is /month?m=YYYY-MM; work out a transaction\'s month with `monthOf` in src/lib/dates.js. Show a row per category with its total and the change from the month before, and a grand total of every category, with money back and income counted as negative. Each total cell carries `data-category` (the category key) and `data-total` (a plain decimal such as 1234.50 or -40.00); the grand total\'s cell has `data-category="all"`. Link to the previous and next months.';

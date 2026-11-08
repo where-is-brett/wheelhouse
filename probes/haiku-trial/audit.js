@@ -58,7 +58,13 @@ function jsonlFiles(dir) {
   return listDir(dir).filter((e) => e.isFile() && e.name.endsWith('.jsonl')).map((e) => path.join(dir, e.name));
 }
 
-function frontDeskFiles(claudeHome, project) {
+// The role a transcript's folder shows: the project's own folder is the front desk's, a worktree Wheelhouse made is a feature session's.
+const WORKTREES = path.join('.wheelhouse', 'worktrees');
+function roleByFolder(project, cwd) {
+  return isWithin(path.join(project, WORKTREES), cwd) && path.resolve(cwd) !== path.resolve(project, WORKTREES) ? 'feature' : 'front-desk';
+}
+
+function projectFiles(claudeHome, project) {
   const found = [];
   for (const slug of listDir(path.join(claudeHome, 'projects'))) {
     if (!slug.isDirectory()) continue;
@@ -69,7 +75,7 @@ function frontDeskFiles(claudeHome, project) {
     }
     for (const file of candidates) {
       const cwd = cwdOf(file);
-      if (cwd !== null && isWithin(project, cwd)) found.push({ file, role: 'front-desk', session: sessionOf(file) });
+      if (cwd !== null && isWithin(project, cwd)) found.push({ file, role: roleByFolder(project, cwd), session: sessionOf(file) });
     }
   }
   return found;
@@ -94,11 +100,18 @@ function engineRole(file, engineDir) {
 }
 
 export function findTranscripts({ project, claudeHome = path.join(os.homedir(), '.claude'), engineDir } = {}) {
-  const found = frontDeskFiles(claudeHome, project);
+  const found = new Map();
+  for (const entry of projectFiles(claudeHome, project)) found.set(entry.session, entry);
   if (typeof engineDir === 'string') {
-    for (const file of walk(engineDir)) found.push({ file, role: engineRole(file, engineDir), session: sessionOf(file) });
+    // The same session can be found twice. The engine's own record of its role beats the folder's guess, which would call a
+    // foreman started in the project's folder a front desk.
+    for (const file of walk(engineDir)) {
+      const role = engineRole(file, engineDir);
+      const session = sessionOf(file);
+      if (!found.has(session) || role !== 'unknown') found.set(session, { file: found.get(session)?.file ?? file, role, session });
+    }
   }
-  return found;
+  return [...found.values()];
 }
 
 export function auditModels(transcripts) {

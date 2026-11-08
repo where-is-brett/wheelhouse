@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { STEPS, planRun, run, restore, waitFor, main } from '../../../probes/haiku-trial/runner.js';
+import { STEPS, planRun, run, restore, waitFor, main, withoutChrome } from '../../../probes/haiku-trial/runner.js';
 import { P5_SPARE } from '../../../probes/haiku-trial/requests.js';
 
 const ENV = { HAIKU_TRIAL_GH_OWNER: 'trial-owner', HAIKU_TRIAL_CLAUDE: '/bin/claude', HAIKU_TRIAL_PREVIEW: 'none' };
@@ -24,7 +24,7 @@ function fakeIo(over = {}) {
   const io = {
     timeline,
     tmux: {
-      start: (x) => rec('tmux.start', x), type: (name, text) => rec('tmux.type', name, text), keys: () => {}, capture: () => '',
+      start: (x) => rec('tmux.start', x), type: (name, text) => rec('tmux.type', name, text), keys: (name, ...keys) => rec('tmux.keys', name, ...keys), capture: (name) => (over.capture ? over.capture(name) : ''),
       kill: (name) => rec('tmux.kill', name), list: () => over.sessions ?? [],
     },
     gh: async (args) => { rec('gh', args); return over.gh ? over.gh(args) : null; },
@@ -130,10 +130,10 @@ test('a planted bug already gone switches P5 to the spare bug', async (t) => {
   const folder = scratch(t);
   const io = fakeIo({ amount: -40, gh: threeMerged });
   const got = await run({ mode: 'full', io, from: 'w2-merge-wait', until: 'w3-type', folder, date: '2026-11-08', env: ENV });
-  assert.deepEqual(got.done, ['w2-merge-wait', 'w3-type']);
-  assert.ok(readLog(folder).some((e) => /planted bug fixed early/.test(e.note)));
+  assert.deepEqual(got.done, ['w2-merge-wait', 'w2-audit', 'w3-type']);
+  assert.ok(readLog(folder).some((e) => /planted bug already gone/.test(e.note)));
   assert.ok(io.timeline.some((e) => e.kind === 'spare'));
-  assert.ok(io.timeline.some((e) => e.kind === 'gh' && e.args[0][0] === 'pr' && e.args[0][1] === 'merge'), 'the spare branch merges by gh');
+  assert.ok(io.timeline.some((e) => e.kind === 'gh' && e.args[0][0] === 'pr' && e.args[0][1] === 'merge' && e.args[0].includes('--admin')), 'the spare branch merges by gh, past the pending check');
   const typed = io.timeline.filter((e) => e.kind === 'tmux.type').map((e) => e.args[1]);
   assert.ok(typed.some((x) => x.includes(P5_SPARE)));
   assert.equal(typed.some((x) => x.includes('A $40 refund')), false);
@@ -184,9 +184,144 @@ test('restore stops only what the run recorded', async (t) => {
   const before = fs.readdirSync(folder).sort();
   const got = await restore({ folder, io });
   assert.deepEqual(io.timeline.filter((e) => e.kind === 'tmux.kill').map((e) => e.args[0]), ['haiku-trial-desk']);
-  assert.deepEqual(io.timeline.filter((e) => e.kind === 'kill').map((e) => e.args[0]), [4242]);
+  assert.deepEqual(io.timeline.filter((e) => e.kind === 'kill').map((e) => e.args[0]), [-4242], 'the whole process group, not only the leader');
   assert.deepEqual(got.stopped, ['haiku-trial-desk', 'pid 4242']);
   assert.deepEqual(fs.readdirSync(folder).sort(), before, 'nothing is deleted');
+});
+
+test('the smoke plan waits for P4 to merge and the full plan has no smoke-only step', () => {
+  const smoke = ids('smoke');
+  assert.ok(smoke.indexOf('s9-4') < smoke.indexOf('w4-smoke-merge') && smoke.indexOf('w4-smoke-merge') < smoke.indexOf('score'));
+  assert.equal(ids('full').includes('w4-smoke-merge'), false);
+  for (const wave of [2, 3, 4]) assert.ok(ids('full').includes(`w${wave}-audit`), `w${wave}-audit`);
+  assert.ok(ids('full').indexOf('w2-merge-wait') < ids('full').indexOf('w2-audit'));
+});
+
+test('an audit step stops the run on a session that ran on another model, and passes otherwise', async (t) => {
+  const bad = fakeIo({ host: { findTranscripts: () => [{ file: '/none.jsonl', role: 'feature', session: 's' }] } });
+  const dir = scratch(t);
+  fs.writeFileSync(path.join(dir, 'x.jsonl'), `${JSON.stringify({ type: 'assistant', message: { model: 'other-model', content: [] } })}\n`);
+  bad.host.findTranscripts = () => [{ file: path.join(dir, 'x.jsonl'), role: 'feature', session: 's' }];
+  const got = await run({ mode: 'full', io: bad, from: 'w3-audit', until: 'w3-audit', folder: scratch(t), date: '2026-11-08', env: ENV });
+  assert.equal(got.stoppedAt, 'w3-audit');
+  assert.match(got.why, /feature \(other-model\)/);
+  const clean = await run({ mode: 'full', io: fakeIo(), from: 'w3-audit', until: 'w3-audit', folder: scratch(t), date: '2026-11-08', env: ENV });
+  assert.deepEqual(clean.done, ['w3-audit']);
+});
+
+test('work-ready is read from a quick or bug work not shown first and from a signed approve-work, never from a work-ready event', async (t) => {
+  const folder = scratch(t);
+  const events = [
+    { id: 'e1', at: '2026-11-08T09:01:00Z', kind: 'work', data: { id: 'quick-ci', lane: 'quick', visible: false } },
+    { id: 'e2', at: '2026-11-08T09:02:00Z', kind: 'work', data: { id: 'import', lane: 'feature', visible: true } },
+    { id: 'e3', at: '2026-11-08T09:03:00Z', kind: 'action', data: { action: 'approve-work', work: 'import' }, sig: { value: 'v' } },
+    { id: 'e4', at: '2026-11-08T09:04:00Z', kind: 'action', data: { action: 'approve-work', work: 'unsigned' } },
+    { id: 'e5', at: '2026-11-08T09:05:00Z', kind: 'work-ready', data: { work: 'not-a-record' } },
+  ];
+  const io = fakeIo({ gh: threeMerged, host: { events: async () => events } });
+  await run({ mode: 'full', io, from: 'w2-merge-wait', until: 'w2-merge-wait', folder, date: '2026-11-08', env: ENV });
+  const ready = readLog(folder).filter((e) => e.step === 'work-ready').map((e) => [e.work, e.at]);
+  assert.deepEqual(ready, [['quick-ci', '2026-11-08T09:01:00Z'], ['import', '2026-11-08T09:03:00Z']]);
+});
+
+test('setup answers its cards through the setup session, ends on the engine wording and restarts once when it asks for a new session', async (t) => {
+  const folder = scratch(t);
+  let phase = 0;
+  const cards = [{ id: 'c1', kind: 'card', data: { kind: 'setup', options: [{ label: 'Go ahead' }] } }];
+  const answered = [];
+  const io = fakeIo({
+    capture: (name) => {
+      if (name !== 'haiku-trial-setup' && name !== 'setup') return '';
+      phase += 1;
+      if (phase < 3) return 'Do you trust the files in this folder?';
+      if (phase < 5) return 'Last safety checks need one new session on this folder.';
+      if (phase < 7) return 'working';
+      return 'Every step is done.';
+    },
+    host: { events: async () => cards, answerCards: async (x) => { answered.push(x.session); return 1; }, readConfig: async () => ({ routing: {} }) },
+  });
+  const got = await run({ mode: 'smoke', io, from: 'setup-s0', until: 'setup-s0', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['setup-s0'], got.why);
+  assert.ok(answered.length > 0 && answered.every((x) => x === 'setup'), 'setup cards are answered in the setup session');
+  assert.ok(io.timeline.some((e) => e.kind === 'tmux.keys' && e.args.includes('Enter')), 'the folder-trust prompt is answered');
+  assert.equal(io.timeline.filter((e) => e.kind === 'tmux.start').length, 2, 'one restart');
+  assert.deepEqual(io.timeline.filter((e) => e.kind === 'tmux.type').map((e) => e.args[1]), ['/wheelhouse:setup', 'carry on with setup']);
+  assert.ok(readLog(folder).some((e) => e.step === 'health' && e.note === 'pass'));
+});
+
+test('setup that never finishes stops the run', async (t) => {
+  const io = fakeIo({ capture: () => 'still working' });
+  const got = await run({ mode: 'smoke', io, from: 'setup-s0', until: 'setup-s0', folder: scratch(t), date: '2026-11-08', env: ENV });
+  assert.equal(got.stoppedAt, 'setup-s0');
+  assert.match(got.why, /setup did not finish/);
+});
+
+test('the digest is due at the start of a minute', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo({ host: { setDigest: async () => ({ ok: true }) }, capture: () => 'Daily digest, 8 November' });
+  io.clock.sleep = async (ms) => { io.timeline.push({ kind: 'sleep', args: [ms], at: 0 }); };
+  await run({ mode: 'full', io, from: 'digest', until: 'digest', folder, date: '2026-11-08', env: ENV });
+  const state = JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8'));
+  assert.equal(new Date(state.digestAt).getUTCSeconds(), 0);
+  assert.equal(new Date(state.digestAt).getUTCMilliseconds(), 0);
+});
+
+test('the score step installs what the builders added, and says when it cannot', async (t) => {
+  const folder = scratch(t);
+  const ok = fakeIo({ host: { installDeps: async () => ({ ok: true, command: 'npm ci' }) } });
+  await run({ mode: 'full', io: ok, from: 'score', until: 'score', folder, date: '2026-11-08', env: ENV });
+  assert.ok(readLog(folder).some((e) => e.step === 'score' && /dependencies: installed/.test(e.note)));
+  const folder2 = scratch(t);
+  const bad = fakeIo({ host: { installDeps: async () => ({ ok: false, why: 'npm ci failed: no lockfile' }) } });
+  await run({ mode: 'full', io: bad, from: 'score', until: 'score', folder: folder2, date: '2026-11-08', env: ENV });
+  const state = JSON.parse(fs.readFileSync(path.join(folder2, 'state.json'), 'utf8'));
+  assert.match(state.score.why.join(' '), /not installed|no lockfile/);
+});
+
+test('decision 3 is raised in P4\'s saved environment and its number comes from the record', async (t) => {
+  const folder = scratch(t);
+  const worktree = scratch(t);
+  fs.writeFileSync(path.join(folder, 'state.json'), JSON.stringify({ p4env: { env: { A: 'b' }, cwd: worktree } }));
+  const raised = [];
+  const io = fakeIo({ host: { nextDecisionNumber: async () => 3 } });
+  io.faults.thirdDecision = (env) => { raised.push(env); return { code: 0, stdout: 'q-1' }; };
+  const got = await run({ mode: 'full', io, from: 'raise-decision-3', until: 'raise-decision-3', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['raise-decision-3']);
+  assert.equal(raised[0].cwd, worktree);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).decisionN, 3);
+  const lost = await run({ mode: 'full', io: fakeIo(), from: 'raise-decision-3', until: 'raise-decision-3', folder: scratch(t), date: '2026-11-08', env: ENV });
+  assert.equal(lost.stoppedAt, 'raise-decision-3');
+});
+
+test('the review card goes through the front desk as a decision and takes the letter from the typed answer', async (t) => {
+  const folder = scratch(t);
+  const worktree = scratch(t);
+  fs.writeFileSync(path.join(folder, 'state.json'), JSON.stringify({ decisionN: 3, p4env: { env: {}, cwd: worktree }, score: { total: 90, pass: true }, rows: [] }));
+  const cards = [];
+  const io = fakeIo({ host: { events: async () => [{ id: 'a1', at: new Date(T0 + 60000).toISOString(), kind: 'decision-answer', data: { n: 4, label: 'b' } }] } });
+  io.faults.reviewDecision = (x) => { cards.push(x.card); return { code: 0, stdout: '' }; };
+  const got = await run({ mode: 'full', io, from: 'review-card', until: 'review-card', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['review-card'], got.why);
+  assert.equal(cards[0].options.length, 3);
+  assert.equal(io.timeline.some((e) => e.kind === 'ask'), false, 'nothing is asked in the terminal');
+  assert.ok(readLog(folder).some((e) => /the director answered B/.test(e.note ?? '')));
+});
+
+test('the terminal fallback asks again until the answer is A, B or C', async (t) => {
+  const folder = scratch(t);
+  fs.writeFileSync(path.join(folder, 'state.json'), JSON.stringify({ decisionN: 3, score: { total: 90, pass: true }, rows: [] }));
+  const answers = ['maybe', '', 'c'];
+  const io = fakeIo();
+  io.ask = async (text) => { io.timeline.push({ kind: 'ask', args: [text], at: 0 }); return answers.shift(); };
+  const got = await run({ mode: 'full', io, from: 'review-card', until: 'review-card', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['review-card']);
+  assert.equal(io.timeline.filter((e) => e.kind === 'ask').length, 3);
+  assert.ok(readLog(folder).some((e) => /the director answered C/.test(e.note ?? '')));
+});
+
+test('the front desk reply drops terminal furniture', () => {
+  const text = ['Here is the answer to your question about the month.', '✻ Thinking… (12s · esc to interrupt)', '╭──────╮', '> ', '⏵⏵ bypass permissions on'].join('\n');
+  assert.equal(withoutChrome(text), 'Here is the answer to your question about the month.');
 });
 
 test('plan prints steps and calls nothing', async () => {
