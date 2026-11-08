@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { appendJsonl } from '../lib/log.js';
 import { projectSlug } from '../../scripts/lib/paths.js';
 import { runFolder } from './results.js';
-import { openPicker, readyToSubmit } from './stand-in.js';
+import { openPicker, readyToSubmit, HIGHLIGHTED } from './stand-in.js';
 import { PIECES, WAVES, P5_SPARE, F2_ANSWER } from './requests.js';
 import { SESSION_PREFIX, frontDeskCommand } from './tmux.js';
 import { STEPS as LOG, SETUP_DONE, OWN_BRANCH } from './signals.js';
@@ -29,12 +29,6 @@ const NEW_SESSION = /needs one new session|new session on this folder/i;
 const TRUST_PROMPT = /trust the files in this folder|do you trust|trust this folder/i;
 // The trust prompt's highlighted choice. Its first choice is "No, exit", so Enter alone ends the session.
 const TRUST_YES = /❯\s*(?:\d+\.\s*)?Yes, I trust this folder/;
-// A question Claude Code shows as a picker in the pane (setup asks its cards this way, before the project has a record to hold
-// them), its highlighted option, and an option marked as the one recommended.
-const PICKER = /Enter to select/;
-const HIGHLIGHTED = /^\s*❯\s*\d+\.\s/;
-const OPTION = /^\s*(?:❯\s*)?\d+\.\s/;
-const RECOMMENDED = /\(Recommended\)/;
 const pieceOf = (id) => PIECES.find((p) => p.id === id);
 
 export class Stop extends Error {}
@@ -198,6 +192,7 @@ async function tick(ctx) {
   // P4's decisions are the live decision script's own (s9), so the stand-in leaves them to it.
   const skipWork = [state.pieces.P4?.change].filter((w) => typeof w === 'string');
   await io.host.answerCards({ project: ctx.projectName, tmux: io.tmux, events, session: ctx.session ?? DESK, skipWork });
+  await staleDeskPicker(ctx);
   if (state.ntfyTopic) {
     for (const m of await io.host.readNtfy({ topic: state.ntfyTopic })) if (!state.ntfy.some((x) => x.at === m.at && x.text === m.text)) state.ntfy.push(m);
   }
@@ -329,34 +324,46 @@ async function desk(ctx, name, extraEnv = {}) {
   mustBeAlive(ctx);
 }
 
-// The stand-in director's answer to a picker in a session's pane: the recommended option, or the first when none is marked. The
-// cursor is moved to it and seen there before Enter. Returns whether a picker was answered.
+// The stand-in director's answer to the picker open in a session's pane: the recommended option, or the first when none
+// is marked. The cursor is moved to it and seen there before Enter. Returns whether a picker was answered.
 async function answerPicker(ctx, name) {
   const { io } = ctx;
-  const lines = () => io.tmux.capture(name).split('\n');
-  const first = lines();
-  if (!PICKER.test(first.join('\n'))) return false;
-  const options = first.filter((l) => OPTION.test(l));
-  const want = options.findIndex((l) => RECOMMENDED.test(l));
-  const target = want === -1 ? 0 : want;
-  // The question's text follows its short header (☐ Setup) on lines drawn with a bar.
-  const question = (first.find((l) => /^\s*│/.test(l)) ?? first.find((l) => /☐/.test(l)) ?? '').replace(/[☐│]/g, '').trim().slice(0, 160);
-  for (let moves = 0; moves < options.length; moves += 1) {
-    const now = lines().filter((l) => OPTION.test(l));
-    const index = now.findIndex((l) => HIGHLIGHTED.test(l));
+  const look = () => openPicker(io.tmux.capture(name));
+  const first = look();
+  if (first === null) return false;
+  const target = first.recommended === -1 ? 0 : first.recommended;
+  const question = (first.question.split('\n').find((l) => l.replace(/[│\s]/g, '') !== '') ?? '').replace(/[☐│]/g, '').trim().slice(0, 160);
+  for (let moves = 0; moves < first.options.length; moves += 1) {
+    const now = look();
+    const index = now?.options.findIndex((l) => HIGHLIGHTED.test(l)) ?? -1;
     if (index === target) break;
     io.tmux.keys(name, index < target ? 'Down' : 'Up');
     await io.clock.sleep(500);
   }
-  const chosen = lines().filter((l) => OPTION.test(l)).find((l) => HIGHLIGHTED.test(l));
-  if (chosen === undefined || (want !== -1 && !RECOMMENDED.test(chosen))) {
-    throw new Stop(`the ${name} session's picker "${question}" never highlighted ${want === -1 ? 'an option' : 'its recommended option'}`);
+  const chosen = look()?.options.findIndex((l) => HIGHLIGHTED.test(l));
+  if (chosen !== target) {
+    throw new Stop(`the ${name} session's picker "${question}" never highlighted ${first.recommended === -1 ? 'its first option' : 'its recommended option'}`);
   }
+  const label = first.options[target].replace(HIGHLIGHTED, '').replace(/^\s*\d+\.\s*/, '').trim();
   io.tmux.keys(name, 'Enter');
-  const label = chosen.replace(HIGHLIGHTED, '').trim();
   await note(ctx, name === DESK ? 'front-desk' : name, `answered the picker "${question}": ${label}`);
   await io.clock.sleep(3000);
   return true;
+}
+
+// A picker in the front desk that no card in the record stands for (setup's last card when setup carries on in the desk,
+// or a question of the desk's own) gets the stand-in's answer once it has stayed open for a while. Never during a step
+// that is the director's own.
+const STALE_PICKER_MS = 3 * MINUTE;
+async function staleDeskPicker(ctx) {
+  const { io } = ctx;
+  if (ctx.directorStep || (ctx.session ?? DESK) !== DESK) { ctx.deskPicker = undefined; return; }
+  const picker = openPicker(io.tmux.capture(DESK));
+  if (picker === null) { ctx.deskPicker = undefined; return; }
+  if (ctx.deskPicker?.question !== picker.question) { ctx.deskPicker = { question: picker.question, since: io.clock.now() }; return; }
+  if (io.clock.now() - ctx.deskPicker.since < STALE_PICKER_MS) return;
+  ctx.deskPicker = undefined;
+  await answerPicker(ctx, DESK);
 }
 
 async function pieceEnv(ctx, id) {
@@ -454,7 +461,8 @@ export const STEPS = [
         // Setup asks its cards as pickers in the pane: the project has no record to hold them yet.
         await answerPicker(ctx, SETUP);
         const pane = io.tmux.capture(SETUP);
-        if (SETUP_DONE.test(pane)) return true;
+        // The engine's last words also open the phone card, so setup is done only once no picker is open.
+        if (SETUP_DONE.test(pane) && openPicker(pane) === null) return true;
         if (!restarted && NEW_SESSION.test(pane)) {
           ctx.state.panes.setup.push(pane);
           endSession(ctx, SETUP);
@@ -865,6 +873,7 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
         }
       }
       io.log?.(`step ${step.id}`);
+      ctx.directorStep = step.director === true;
       await step.run(ctx, io);
     } catch (error) {
       await note(ctx, step.id, `stopped: ${error.message}`);
