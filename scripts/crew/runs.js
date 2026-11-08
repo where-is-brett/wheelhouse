@@ -4,10 +4,21 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { plainWords, glossaryOf } from '../frontdesk/glossary.js';
-import { runningFile, sessionFile, pidAlive } from '../watcher/waker.js';
+import { SLUG } from '../lib/build-loop.js';
+import { startedAsScript } from '../lib/started-as-script.js';
+import { stateDir } from '../lib/paths.js';
+import { listEvents } from '../state/events.js';
+import { readEnrolled } from '../state/signing.js';
+import { buildViews } from '../state/views.js';
+import { effectiveSettings } from '../settings/effective.js';
+import { isOpen } from '../desk/views.js';
+import { readCapped } from '../feature/status.js';
 import { readDecisions } from '../decisions/pending.js';
+import { runningFile, sessionFile, pidAlive } from '../watcher/waker.js';
 import { levelFor } from './level.js';
+import { LEVELS } from './levels.js';
 
 export function configDir(env = process.env) {
   return env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
@@ -497,10 +508,7 @@ export function runSteps({ sessionId, env = process.env, glossary, waiting = nul
   // The same lines with a subagent's own words left out, for what a model reads.
   const crewDid = [];
   for (const sub of working.slice(0, CREW_SHOWN)) {
-    const meta = sub.meta;
-    const fromMeta = meta && (meta.agentType !== undefined || meta.description !== undefined);
-    const call = fromMeta ? { agentType: meta.agentType, description: meta.description }
-      : (meta?.toolUseId !== undefined && calls.get(meta.toolUseId)) || byAgent.get(sub.agentId) || null;
+    const call = callOf(sub, calls, byAgent);
     const latest = stepsOfKind(readTail(sub.file), words).pop();
     const fallback = worded({ at: null, text: subagentLine(call ?? {}) }, words).text;
     if (latest) crew.push(mask(plain(inThirdPerson(roleOf(call?.agentType), latest))));
@@ -513,6 +521,16 @@ export function runSteps({ sessionId, env = process.env, glossary, waiting = nul
     crewDid.push(crew[crew.length - 1]);
   }
   return { steps, crew, crewDid };
+}
+
+// The call behind a subagent: its meta's own words, else the call its meta names, else the call whose
+// result names it, else null.
+function callOf(sub, calls, byAgent) {
+  const meta = sub.meta;
+  if (meta && (meta.agentType !== undefined || meta.description !== undefined)) {
+    return { agentType: meta.agentType, description: meta.description };
+  }
+  return (meta?.toolUseId !== undefined && calls.get(meta.toolUseId)) || byAgent.get(sub.agentId) || null;
 }
 
 // A step with its kind, and for a sent subagent the phrase "sending out ..." through the glossary.
@@ -556,17 +574,6 @@ export function crewNow(project, views, settings, { env = process.env, read = ru
   // Not a project name (a path, say): nothing is opened, deliberately.
   if (typeof project !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(project) || project.includes('..')) return out;
   const glossary = glossaryOf(views?.glossary);
-  let pending = null;
-  const waitingOn = (work) => {
-    if (pending === null) {
-      try {
-        pending = readDecisions(project).pending;
-      } catch {
-        pending = [];
-      }
-    }
-    return pending.find((d) => d.workId === work)?.n ?? null;
-  };
   const ids = Object.keys(views !== null && typeof views === 'object' && views.work !== null && typeof views.work === 'object' ? views.work : {});
   for (const work of ids) {
     // Whatever one piece's records give, the others still show: a failure shows less and never breaks the Logbook.
@@ -576,7 +583,7 @@ export function crewNow(project, views, settings, { env = process.env, read = ru
       if (!liveRecord(readSmall(runningFile(project, `feature-${work}`)))) continue;
       const sessionId = readSmall(sessionFile(project, work))?.sessionId;
       if (typeof sessionId !== 'string') continue;
-      out[work] = read({ sessionId, env, glossary, waiting: waitingOn(work) });
+      out[work] = read({ sessionId, env, glossary, waiting: waitingDecision(project, work) });
     } catch {
       // This piece shows no step.
     }
@@ -592,4 +599,342 @@ export function crewNow(project, views, settings, { env = process.env, read = ru
     // The Bosun shows no step.
   }
   return out;
+}
+
+// The transcript page: the run so far as Markdown, kept on this computer.
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const PAGE_MAX = 2 * 1024 * 1024;
+const RESULT_CHARS = 160;
+const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;' };
+
+// Transcript text made safe for a Markdown page: one line, keys hidden, then every character that
+// Markdown or HTML would act on written as plain text. Keys are hidden first, while they can still
+// be recognised.
+export function escapeMarkdown(text) {
+  return mask(plain(text)).replace(/[&<>\\`*_[\]#|]/g, (c) => ESCAPES[c] ?? `\\${c}`);
+}
+
+function writtenAt(now) {
+  const value = typeof now === 'function' ? now() : now;
+  const d = value instanceof Date ? value : new Date(value ?? Date.now());
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function blocksOf(event) {
+  const content = event?.message?.content;
+  if (typeof content === 'string') return [{ type: 'text', text: content }];
+  return Array.isArray(content) ? content : [];
+}
+
+// What each tool call returned, as one cut line: call id -> text. Only its first 160 characters
+// are kept, and only after the whole text has been checked for a key.
+function resultLines(events) {
+  const results = new Map();
+  for (const event of events) {
+    for (const block of blocksOf(event)) {
+      if (block?.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue;
+      const c = block.content;
+      const raw = typeof c === 'string' ? c
+        : Array.isArray(c) ? c.map((part) => (typeof part?.text === 'string' ? part.text : '')).join(' ') : '';
+      const whole = mask(plain(raw));
+      if (whole === '') continue;
+      results.set(block.tool_use_id, whole === HIDDEN ? whole : whole.slice(0, RESULT_CHARS).trim());
+    }
+  }
+  return results;
+}
+
+// One run's events as page lines, oldest first.
+function eventLines(events) {
+  const results = resultLines(events);
+  const lines = [];
+  for (const event of events) {
+    if (event?.type !== 'assistant') continue;
+    for (const block of blocksOf(event)) {
+      if (block?.type === 'text' && typeof block.text === 'string') {
+        const said = escapeMarkdown(block.text);
+        if (said !== '') lines.push('', said, '');
+      } else if (block?.type === 'tool_use') {
+        const step = stepsOf([{ ...event, message: { content: [block] } }])[0];
+        if (!step) continue;
+        lines.push(`- ${escapeMarkdown(step.text)}`);
+        // A decision's question is never shown, so nothing the call returned is either.
+        const result = step.text === 'Recording a decision' ? undefined : results.get(block.id);
+        if (result) lines.push(`  ${escapeMarkdown(result)}`);
+      }
+    }
+  }
+  return lines;
+}
+
+export function renderPage({ work, events = [], subagents = [], waiting = null, now = Date.now } = {}) {
+  const out = [
+    `# ${escapeMarkdown(work)}: what the crew did`,
+    '',
+    `Written ${writtenAt(now)}. Kept on this computer only.`,
+    '',
+  ];
+  const own = eventLines(Array.isArray(events) ? events : []);
+  out.push(...(own.some((l) => l !== '') ? own : ['No transcript yet.']));
+  for (const sub of Array.isArray(subagents) ? subagents : []) {
+    out.push('', `## ${escapeMarkdown(sub?.line)}`, '');
+    const lines = eventLines(Array.isArray(sub?.events) ? sub.events : []);
+    out.push(...(lines.some((l) => l !== '') ? lines : ['No transcript yet.']));
+  }
+  if (validWaiting(waiting)) out.push('', `Waiting for your answer to decision ${waiting}`);
+  return `${out.join('\n').replace(/\n{3,}/g, '\n\n')}\n`;
+}
+
+export function pagePath(project, work) {
+  return path.join(project, '.wheelhouse', 'watch', `${work}.md`);
+}
+
+function missing(file) {
+  try {
+    fs.lstatSync(file);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+// Writes the run's page and returns its path. `sessionId` is the piece's session; without one the
+// page says there is no transcript yet. Refuses (null) when `.wheelhouse`, `.wheelhouse/watch` or
+// the page is a link or not what it should be, or `work` is not a feature slug. Writes only the page.
+export function writePage(project, work, { sessionId, env = process.env, now = Date.now, waiting = null } = {}) {
+  if (typeof project !== 'string' || project === '' || typeof work !== 'string' || !SLUG.test(work)) return null;
+  const root = path.join(project, '.wheelhouse');
+  const dir = path.join(root, 'watch');
+  const file = pagePath(project, work);
+  try {
+    for (const folder of [root, dir]) {
+      if (missing(folder)) fs.mkdirSync(folder, { mode: 0o700 });
+      else if (!fs.lstatSync(folder).isDirectory()) return null;
+    }
+    if (!missing(file) && !plainFile(file)) return null;
+    const transcript = findTranscript({ sessionId, env });
+    const events = transcript ? readTail(transcript, { max: PAGE_MAX }) : [];
+    const callsFor = agentCalls(events);
+    const subs = transcript ? findSubagents(transcript) : [];
+    const byAgent = callsByAgent(events, callsFor, subs.map((s) => s.agentId));
+    const subagents = subs.map((sub) => {
+      const call = callOf({ ...sub, meta: readMeta(sub.file) }, callsFor, byAgent);
+      return { line: subagentLine(call ?? {}), events: readTail(sub.file, { max: PAGE_MAX }) };
+    });
+    const page = renderPage({ work, events, subagents, waiting, now });
+    // A temporary name no earlier run can have left behind; the page is for this computer's user only.
+    const temp = path.join(dir, `.${work}.md.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`);
+    try {
+      fs.writeFileSync(temp, page, { flag: 'wx', mode: 0o600 });
+      fs.renameSync(temp, file);
+    } catch (error) {
+      fs.rmSync(temp, { force: true });
+      throw error;
+    }
+    return file;
+  } catch {
+    return null;
+  }
+}
+
+// The piece's page for a command: its session found, and nothing opened for a piece at `off`.
+
+const SESSION_RECORD_MAX = 64 * 1024;
+const FOLLOW_MS = 2000;
+const FOLLOW_FIRST = 10;
+const TEMP_PAGE = /^\..+\.tmp$/;
+const TEMP_AGE_MS = 60 * 1000;
+
+// The session the watcher kept for a piece, read as the watcher's other readers read it; null when there is none.
+export function sessionIdOf(project, work) {
+  if (typeof project !== 'string' || typeof work !== 'string' || !SLUG.test(work)) return null;
+  try {
+    const kept = JSON.parse(readCapped(sessionFile(project, work), SESSION_RECORD_MAX) ?? 'null');
+    return kept !== null && typeof kept === 'object' && safeId(kept.sessionId) ? kept.sessionId : null;
+  } catch {
+    return null;
+  }
+}
+
+// Writes a piece's page, unless its watch level is `off` (design 8.1, rule 6): then nothing is opened and the answer is
+// null. `level` is the level just read (a string), or a function that reads it. This is the only way the page is written
+// for a piece, so every caller is held to the level. `project` is the project's name; `folder` is its main folder.
+export function writePiecePage({ project, folder, work, level, env = process.env, now = Date.now, waiting = null } = {}) {
+  const at = typeof level === 'function' ? level() : level;
+  if (!LEVELS.includes(at) || at === 'off') return null;
+  return writePage(folder, work, { sessionId: sessionIdOf(project, work), env, now, waiting });
+}
+
+// The number of the oldest decision waiting on the director for a piece, or null. An unreadable record gives null.
+export function waitingDecision(project, work) {
+  try {
+    return readDecisions(project).pending.find((d) => d.workId === work)?.n ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const NONE = (work) => `There is no open piece called ${work}.`;
+const NOT_STARTED = (work) => `${work} has not started yet, so there is nothing to watch.`;
+
+// "watch <work>", in the helper: checks the piece is open and has started, raises it to the transcript level when it is
+// below it (`raise` records that, and nothing is recorded before the checks), and writes its page. Resolves `{ file }`, or
+// `{ said }`, one line, when there is no page to write. `project` is the project's name, `folder` its main folder.
+export async function pageFor({
+  project, folder, work, raise, env = process.env, now = () => new Date(),
+} = {}) {
+  if (typeof work !== 'string' || !SLUG.test(work)) return { said: NONE(work) };
+  const read = () => {
+    const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled());
+    return { views, level: levelFor(views, effectiveSettings({ project: views.settings, now }), work) };
+  };
+  let { views, level } = read();
+  if (!isOpen(views, work)) return { said: NONE(work) };
+  const feature = views.features?.[work]?.data;
+  if (feature === null || typeof feature !== 'object' || feature.step === 'closed') return { said: NOT_STARTED(work) };
+  if (level !== 'transcript') {
+    await raise();
+    ({ level } = read());
+  }
+  if (level !== 'transcript') return { said: NOT_STARTED(work) };
+  const file = writePiecePage({ project, folder, work, level, env, now, waiting: waitingDecision(project, work) });
+  return file === null ? { said: `The page for ${work} couldn't be written.` } : { file };
+}
+
+// Whether the piece is open and the level it is watched at, from the project's records. A record that can't be read gives
+// a piece that is not open, at off.
+export function pieceState(project, work, { now = () => new Date() } = {}) {
+  try {
+    const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled());
+    return { open: isOpen(views, work), level: levelFor(views, effectiveSettings({ project: views.settings, now }), work) };
+  } catch {
+    return { open: false, level: 'off' };
+  }
+}
+
+// Removes the page of every piece that is not open, and says which it removed. Only a plain file in the watch folder named
+// for a piece is removed; a link, a folder or anything else is left alone. `views` is the records' views, or a function that
+// reads them, called only when there is a page to look at.
+export function prunePages(folder, views) {
+  const dir = path.join(folder, '.wheelhouse', 'watch');
+  const removed = [];
+  let names;
+  try {
+    if (!fs.lstatSync(dir).isDirectory()) return removed;
+    names = fs.readdirSync(dir);
+  } catch {
+    return removed;
+  }
+  const pages = names.filter((name) => /^[a-z0-9-]{1,40}\.md$/.test(name));
+  // A temporary file an interrupted write left behind: dot-prefixed, ending `.tmp`, a plain file, over a minute old.
+  for (const name of names) {
+    if (!TEMP_PAGE.test(name)) continue;
+    const file = path.join(dir, name);
+    try {
+      const stat = fs.lstatSync(file);
+      if (stat.isFile() && Date.now() - stat.mtimeMs > TEMP_AGE_MS) fs.rmSync(file);
+    } catch {
+      // left for the next look
+    }
+  }
+  if (pages.length === 0) return removed;
+  const seen = typeof views === 'function' ? views() : views;
+  for (const name of pages) {
+    const m = /^([a-z0-9-]{1,40})\.md$/.exec(name);
+    if (isOpen(seen, m[1])) continue;
+    const file = path.join(dir, name);
+    if (!plainFile(file)) continue;
+    try {
+      fs.rmSync(file);
+      removed.push(m[1]);
+    } catch {
+      // left for the next look
+    }
+  }
+  return removed;
+}
+
+// --follow: the page rewritten every two seconds, each new step printed. Stops when the piece closes, or goes to `off`
+// (the level is read again on every tick, and nothing of the transcript is opened once it is off). Resolves the exit code.
+export async function follow({
+  project, folder, work, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
+  env = process.env, now = () => new Date(), intervalMs = FOLLOW_MS, state = pieceState, waiting = waitingDecision,
+  sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
+} = {}) {
+  const say = (line) => out(`${line}\n`);
+  let seen = new Map();
+  let first = true;
+  let told = null;
+  for (;;) {
+    const { open, level } = state(project, work, { now });
+    if (!open) {
+      if (first) {
+        err(`There is no open piece called ${work}.\n`);
+        return 1;
+      }
+      say(`${work} has closed, so there is nothing more to follow.`);
+      return 0;
+    }
+    if (level === 'off') {
+      say(`Watching ${work} is off, so the page is no longer written and its run is no longer read.`);
+      return 0;
+    }
+    const sessionId = sessionIdOf(project, work);
+    const pending = waiting(project, work);
+    // The page belongs to the transcript level; below it the steps are followed alone.
+    const file = level === 'transcript' ? writePiecePage({ project, folder, work, level, env, now, waiting: pending }) : null;
+    if (first) {
+      say(level !== 'transcript'
+        ? `Following ${work}. Its watch level is below the full transcript, so no page is written. Stop with Ctrl-C.`
+        : file === null ? `The page for ${work} can't be written here. Following the steps only.` : `Following ${work}. The page is at \`${file}\`. Stop with Ctrl-C.`);
+    }
+    const transcript = findTranscript({ sessionId, env });
+    // What the crew said is left out: only what it did reaches the terminal.
+    const events = transcript ? readTail(transcript, { max: PAGE_MAX }).filter((event) => stepAndKind(event)?.kind !== 'said') : [];
+    const steps = stepsOf(events);
+    const counts = new Map();
+    let fresh = [];
+    for (const step of steps) {
+      const key = `${step.at}|${step.text}`;
+      const n = (counts.get(key) ?? 0) + 1;
+      counts.set(key, n);
+      if (n > (seen.get(key) ?? 0)) fresh.push(step);
+    }
+    if (first) fresh = fresh.slice(-FOLLOW_FIRST);
+    for (const step of fresh) say(step.text);
+    if (pending !== told) {
+      if (validWaiting(pending)) say(`Waiting for your answer to decision ${pending}`);
+      told = pending;
+    }
+    seen = counts;
+    first = false;
+    await sleep(intervalMs);
+  }
+}
+
+async function main(argv) {
+  const say = (line) => process.stderr.write(`${line}\n`);
+  const named = argv.length === 4 && argv[2] === '--folder';
+  if (argv[0] === '--follow' && process.env.CLAUDECODE) {
+    say("--follow is for the director's own terminal, not for a Claude Code session, so it won't run here.");
+    return 1;
+  }
+  if ((argv.length !== 2 && !named) || argv[0] !== '--follow' || !SLUG.test(argv[1])) {
+    say('Usage: runs.js --follow <work> [--folder <the project\'s folder>]');
+    return 1;
+  }
+  const { projectOf } = await import('../hooks/kit.js');
+  const found = projectOf(named ? argv[3] : process.cwd());
+  const folder = found === null ? null : found.record?.folder;
+  if (found === null || typeof folder !== 'string') {
+    say("This folder isn't a Wheelhouse project.");
+    return 1;
+  }
+  return follow({ project: found.project, folder, work: argv[1] });
+}
+
+if (startedAsScript(import.meta.url)) {
+  process.exitCode = await main(process.argv.slice(2));
 }

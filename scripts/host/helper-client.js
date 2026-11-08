@@ -51,6 +51,9 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       seat: post('/session/seat'), // { project | cwd, session } -> { ok, holds }: whether the session holds the project's First Mate seat; answered under STOP
       note: post('/session/note'), // { project | cwd, session, text } -> { ok, file }: the session's note, up to 1,200 characters, written beside its gauge reading; refused under STOP
     },
+    crew: {
+      page: post('/crew/page'), // { project | cwd, work } -> { ok, file } or { ok, said }: the piece's page of what its crew did, written in the project's folder after the piece is checked and raised to the transcript level if it was below it (a record, refused under STOP); `said` is the one line to say when there is no page to write
+    },
     cards: {
       chatClick: post('/cards/chat-click'), // { project | cwd, card, hash, label, proof, commit?, text? } -> { ok, id }: a click in the chat, as an unsigned card-answer naming its proof; never signed. `text`, the director's words, only with Suggest a change…
     },

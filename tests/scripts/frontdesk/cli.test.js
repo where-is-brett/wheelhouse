@@ -2132,7 +2132,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts\n$/);
+    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page\n$/);
     const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -2192,7 +2192,7 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts\n');
+  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page\n');
   assert.equal(done.stdout, '');
 });
 
@@ -2510,4 +2510,47 @@ test('seatRefusal leaves commands outside the list alone', async () => {
     for (const command of ['views', 'note', 'alerts', 'premium-check']) assert.equal(await seatRefusal({ command, env: { CLAUDE_CODE_SESSION_ID: 'a' }, cwd: folder, client }), null, command);
     assert.equal(await seatRefusal({ command: 'cards', env: { CLAUDE_CODE_SESSION_ID: 'a' }, cwd: folder, client }), SEAT_REFUSAL);
   });
+});
+
+// --- page ---
+
+// The helper's crew route, standing in: the command only asks it, in the project's folder, and says what it answers.
+function crewHelper(answer) {
+  const helper = fakeHelper();
+  const asked = [];
+  helper.client.crew = { page: async (body) => { asked.push(body); return answer(body); } };
+  return { helper, asked };
+}
+
+test('cli: page asks the helper for the folder and prints one line', async () => {
+  const { helper, asked } = crewHelper(() => ({ ok: true, file: '/projects/shop/.wheelhouse/watch/login.md' }));
+  const out = await run(helper, ['page', 'login']);
+  assert.equal(out.code, 0, out.err);
+  assert.deepEqual(asked, [{ cwd: CWD, work: 'login' }]);
+  assert.equal(out.out.trim().split('\n').length, 1);
+  assert.match(out.out, /^The page is at `\/projects\/shop\/\.wheelhouse\/watch\/login\.md`\. To follow it live: `node <plugin root>\/scripts\/crew\/runs\.js --follow login --folder "[^"]+"`\n$/);
+  assert.deepEqual(helper.calls, [], 'nothing else is asked of the helper, and nothing is read here');
+});
+
+test('cli: page says the helper\'s refusal line, and a name that is not a piece never reaches it', async () => {
+  const { helper, asked } = crewHelper(({ work }) => ({ ok: true, said: `There is no open piece called ${work}.` }));
+  const closed = await run(helper, ['page', 'old']);
+  assert.equal(closed.code, 0, closed.err);
+  assert.equal(closed.out, 'There is no open piece called old.\n');
+  const odd = await run(helper, ['page', '../x']);
+  assert.equal(odd.out, 'There is no open piece called ../x.\n');
+  assert.deepEqual(asked.map((b) => b.work), ['old']);
+  const idle = crewHelper(() => ({ ok: true, said: 'idle has not started yet, so there is nothing to watch.' }));
+  assert.equal((await run(idle.helper, ['page', 'idle'])).out, 'idle has not started yet, so there is nothing to watch.\n');
+});
+
+test('cli: page reports a helper that refuses', async () => {
+  const { helper } = crewHelper(() => ({ ok: false, refused: 'All stop is on, so the piece can\'t be raised to its full transcript' }));
+  const out = await run(helper, ['page', 'login']);
+  assert.equal(out.code, 1);
+  assert.equal(out.err, 'All stop is on, so the piece can\'t be raised to its full transcript\n');
+});
+
+test('cli: page is a seat write', async () => {
+  assert.ok(SEAT_WRITES.includes('page'));
 });

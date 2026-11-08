@@ -45,6 +45,9 @@
 //   note            asks the host helper to write this session's note, up to 1,200 characters on standard input (four lines: the task, what
 //                   is done, what is next, the decisions open), to <wheelhouse home>/projects/<project>/sessions/<session id>.md,
 //                   beside the context gauge's reading; the session is named by CLAUDE_CODE_SESSION_ID
+//   page <work>     "watch <work>": raises the piece to the transcript level when it is below it, writes the piece's run as a page
+//                   in .wheelhouse/watch/ (it stays on this computer), and prints one line: the page's path and the command that
+//                   follows it live. For a piece that is closed or unknown it prints a line saying so and writes nothing
 //   similar [words] the open work, ideas and rejections that share words with a request: its
 //                   words as the arguments, or its text on standard input
 //   views <name>    one view as short lines: rulebook, waiting, ideas, glossary, settings, levels, brief or
@@ -113,6 +116,7 @@ import { answeredWords } from '../cards/answered.js';
 import { crewNow } from '../crew/runs.js';
 import { markHere } from '../lib/session-files.js';
 import { sinceLine } from '../cards/panel-words.js';
+import { SLUG } from '../lib/build-loop.js';
 
 // How far back `views waiting` looks for answers, and its lead (scripts/desk/views.js).
 export { RECENT_MS, RECENT_LEAD };
@@ -138,7 +142,7 @@ export const RECORD_KINDS = Object.freeze([
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'brief']);
 // The commands that write a record, hand out a card or change the board: only the window that holds the First Mate's seat runs them.
 // Settings change through `record` and `suggest`, so they are covered. The rest only read, or keep a note by the session's own id.
-export const SEAT_WRITES = Object.freeze(['cards', 'pull-cards', 'again', 'card', 'record', 'confirm', 'suggest', 'pull-back', 'drop', 'ask-bosun', 'undo', 'move', 'carry-on', 'archive', 'restore', 'premium-card']);
+export const SEAT_WRITES = Object.freeze(['cards', 'pull-cards', 'again', 'card', 'record', 'confirm', 'suggest', 'pull-back', 'drop', 'ask-bosun', 'undo', 'move', 'carry-on', 'archive', 'restore', 'premium-card', 'page']);
 export const SEAT_REFUSAL = 'The First Mate is in another window, so this window can look things up but not record anything or hand out cards. The director can move the First Mate here with the take-over card in this window.';
 
 // The refusal for a seat write from a window that doesn't hold the seat; null when the command may run. A script or test
@@ -154,7 +158,7 @@ export async function seatRefusal({ command, env, cwd, client }) {
   return got?.ok === true && got.holds === false ? SEAT_REFUSAL : null;
 }
 
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts', 'page'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -1146,6 +1150,18 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
   return { ...answered(got), card: { question, id: made.id }, ...withProblems(await markAsked(client, cwd, [made.id], false)) };
 }
 
+// --- page ---
+export async function page({ client, cwd, work }) {
+  if (typeof work !== 'string' || !SLUG.test(work)) return `There is no open piece called ${work}.`;
+  // The helper places the project, checks the piece, raises it if need be and writes the page: this command can't read where
+  // the records and transcripts are kept.
+  const got = await client.crew.page({ cwd, work });
+  if (got?.ok !== true) throw new CliError(said(got, `The host helper did not write the page for ${work}`));
+  if (typeof got.said === 'string') return got.said;
+  if (typeof got.file !== 'string') throw new CliError(`The host helper gave no page for ${work}`);
+  return `The page is at \`${got.file}\`. To follow it live: \`node <plugin root>/scripts/crew/runs.js --follow ${work} --folder "${path.resolve(cwd)}"\``;
+}
+
 // --- similar ---
 
 export async function similar({ client, cwd, text }) {
@@ -1474,6 +1490,9 @@ export async function main(argv, {
       only(rest, 1, `Give the kind to record: record <kind>, one of ${RECORD_KINDS.join(', ')}`);
       if (!RECORD_KINDS.includes(rest[0])) throw new CliError(`record takes one of: ${RECORD_KINDS.join(', ')}`);
       json(await record({ client: helper, cwd: here, kind: rest[0], input: parsed(await stdin()), now, ...(makeId ? { makeId } : {}), ...(columnsReady ? { ready: columnsReady } : {}) }));
+    } else if (command === 'page') {
+      only(rest, 1, 'Give the piece to watch: page <work>');
+      lines([await page({ client: helper, cwd: here, work: rest[0] })]);
     } else if (command === 'similar') {
       // The request's words as the arguments, which STOP lets through, or its text on standard input.
       json(await similar({ client: helper, cwd: here, text: rest.length > 0 ? rest.join(' ') : await stdin() }));
