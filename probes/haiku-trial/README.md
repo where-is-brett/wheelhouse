@@ -50,10 +50,12 @@ Raw results stay outside every repository, in `~/.wheelhouse-trials/haiku-<date>
 
 The signal rows read optional context. The runner supplies `faults` (F1, F1b, F1c), `ntfy`, `mainCi`, `branches`, `digestAt`, `pieces[id].change`, `.prs` and `.gate`, `pieces.P5.redAtFirstCommit`, `panes.replies`, `panes['front-desk']` and `config`. Some of it cannot come from the code in this build, and the rows say so rather than pass:
 
-- **Log entries for `review`, `tester` and `routine`** (rows 10 and 35): nothing the runner can read records them, so they are never logged.
-- **`faults.F1.rightAfter`** (row 14): the faults module makes one wrong-shaped try and does not follow it with a right one in P3's session, so row 14 reports no right shape. The natural-decision rows 13 and 14 for P4 need the real trail of `questions.jsonl`.
-- **`pieces.P8.gate`** (row 30): no record of the gate's reading is available, so `readGate` returns nothing and the row fails.
+- **Rows 10 and 35:** row 10 reads signed `review` records and the roles in each run's `cost` record; with none it is not covered, not failed. A routine move leaves no record the runner reads, so row 35 is always not covered and only reports what `reliability.jsonl` holds.
+- **Row 14:** it passes on exit 2 and a send-back, as the design's F1 says. P4's own send-backs, read from its `questions.jsonl` while its session runs, go in the evidence.
+- **Row 30:** the gate's reading of P8 is taken from the pull request's files and diff through `visibleFromChange`.
+- **Work-ready:** the watcher's `work-ready` is never written to the event log, so rows 4 and 7 read the records it is made from (a quick or bug work not shown first, and a signed `approve-work`), and row 34 reads P7 starting after the foreman was killed.
 - **Card answers:** the stand-in director answers plan, approval and confirm cards by typing the card's first option into the front desk. This is unconfirmed against a live front desk. Check it in the first smoke run.
-- **Setup's finish and the digest and alert settings:** the runner reads the setup pane for "setup done" or "health check passed", asks for the digest in plain words and types `alerts ntfy <topic>`. Their wording has not met a live session.
+- **Setup:** the stand-in director answers setup's cards (Go ahead, per-step, confirm-all, baseline, trust) in the setup session, answers the folder-trust prompt, starts the session again once when setup says it needs a new session, and ends on the engine's own wording ("Every step is done." or the phone-notifications line). None of this has met a live session: read the setup pane captures after the first smoke.
+- **The digest and alert settings:** the runner asks for the digest in plain words and types `alerts ntfy <topic>`. Their wording has not met a live session.
 - **Engine transcripts:** the runner passes the project's queue folder under the engine directory to `findTranscripts`, or the engine directory itself if there is no such folder.
 - **P5 not covered:** if the spare bug cannot be applied, row 6 is reported as not covered with the reason, and other rows that need P5 will fail.

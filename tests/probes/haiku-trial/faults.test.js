@@ -170,3 +170,24 @@ test('secondDecision raises a right-shaped decision with its own text', () => {
   const got = faults.secondDecision({ env: process.env, cwd: tree, run });
   assert.equal(got.code, 0, got.stdout);
 });
+
+test('thirdDecision raises a right-shaped decision of its own', () => {
+  const tree = feature();
+  const got = faults.thirdDecision({ env: process.env, cwd: tree, run });
+  assert.equal(got.code, 0, got.stdout);
+});
+
+test('reviewDecision raises the card as a decision and naturalSendBacks counts a session\'s own send-backs', () => {
+  const tree = feature();
+  assert.equal(faults.naturalSendBacks({ cwd: tree }), 0);
+  faults.f1WrongShape({ env: process.env, cwd: tree, run });
+  assert.equal(faults.naturalSendBacks({ cwd: tree }), 1);
+  assert.equal(faults.naturalSendBacks({ cwd: path.join(tree, 'nowhere') }), null);
+  const card = {
+    what: 'Check the tracker', why: 'It is the director\'s call', recommend: 'Tag it',
+    options: [{ label: 'Tag it', says: 'Tag the release', cost: 'none', undo: 'yes' }, { label: 'Hold it', says: 'Hold the tag', cost: 'the tag waits', undo: 'yes' }],
+    because: 'the score passed', meanwhile: 'nothing builds',
+  };
+  const got = faults.reviewDecision({ env: process.env, cwd: tree, card, run });
+  assert.equal(got.code, 0, got.stdout);
+});

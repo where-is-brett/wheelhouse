@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { STUCK_AFTER } from '../../scripts/feature/cli.js';
 import { featurePaths, readQuestions } from '../../scripts/feature/files.js';
+import fs from 'node:fs';
 import { parsePs } from '../../scripts/engine/stop.js';
 import { WORKTREE_PATH } from '../../scripts/engine/parts.js';
 import { madeFeatureSlug } from '../../scripts/hooks/session-start.js';
@@ -168,6 +169,37 @@ function secondDecision({ env, cwd, run = spawnSync, plugin = PLUGIN }) {
   return { code: got.status, stdout: said(got) };
 }
 
+const THIRD = shaped({
+  what: 'Trial check: should the month page show a count of transactions?',
+  why: 'It decides what the director sees on each month',
+  options: [['Show it', 'Add the count beside the grand total', 'A few minutes', 'yes'], ['Leave it', 'Keep the page as it is', 'No extra work', 'yes']],
+  recommend: 'Leave it', because: 'The page already shows what the director asked for', meanwhile: 'Nothing waits on it',
+});
+
+// The decision the director answers by typing in the chat at the end of the trial (spec section 9 step 7), in P4's environment.
+function thirdDecision({ env, cwd, run = spawnSync, plugin = PLUGIN }) {
+  const got = feature(plugin, THIRD, { env, cwd, run });
+  return { code: got.status, stdout: said(got) };
+}
+
+// The review card as a decision: its title, why, options (each with its cost and undo), recommendation, because and meanwhile.
+function reviewDecision({ env, cwd, card, run = spawnSync, plugin = PLUGIN }) {
+  const got = feature(plugin, shaped({
+    what: card.what, why: card.why,
+    options: card.options.map((o) => [o.label, o.says, o.cost, o.undo]),
+    recommend: card.recommend, because: card.because, meanwhile: card.meanwhile,
+  }), { env, cwd, run });
+  return { code: got.status, stdout: said(got) };
+}
+
+// How many of a session's own tries were sent back, from its questions.jsonl; null when it cannot be read.
+function naturalSendBacks({ cwd }) {
+  try {
+    return fs.readFileSync(featurePaths(cwd).questions, 'utf8').split('\n').filter(Boolean).filter((l) => { try { return JSON.parse(l).sentBack === true; } catch { return false; } }).length;
+  } catch (error) { return error.code === 'ENOENT' && fs.existsSync(cwd) ? 0 : null; }
+}
+
 export const faults = {
   f1WrongShape, f1bStuck, f1cDirectorKind, f3KillFeature, f3bKillForeman, f6AllStop, undoTyped, liftTyped, decisionFallback, secondDecision,
+  thirdDecision, reviewDecision, naturalSendBacks,
 };

@@ -8,9 +8,11 @@ import { fileURLToPath } from 'node:url';
 import { appendJsonl } from '../lib/log.js';
 import { PIECES, WAVES, P5_SPARE, F2_ANSWER } from './requests.js';
 import { SESSION_PREFIX, frontDeskCommand } from './tmux.js';
-import { STEPS as LOG } from './signals.js';
+import { STEPS as LOG, SETUP_DONE, OWN_BRANCH } from './signals.js';
+import { auditModels } from './audit.js';
+import { STARTS_UNAPPROVED } from '../../scripts/foreman/queue.js';
 import { installCommand } from './stage-plugin.js';
-import { reviewCard, stepsPage, writeTryMe } from './review-card.js';
+import { reviewCard, stepsPage, writeTryMe, reviewAsDecision, answerLetter } from './review-card.js';
 
 const MINUTE = 60 * 1000;
 const DESK = 'desk';
@@ -18,6 +20,9 @@ const SETUP = 'setup';
 const WHY_WAIT_MS = 100 * 1000 + 20 * 1000;
 const WAVE_WAIT_MS = { 2: 90 * MINUTE, 3: 150 * MINUTE, 4: 90 * MINUTE };
 const SPARE_BRANCH = 'trial/spare-bug';
+const SETUP_WAIT_MS = 45 * MINUTE;
+const NEW_SESSION = /needs one new session|new session on this folder/i;
+const TRUST_PROMPT = /trust the files in this folder|do you trust|trust this folder/i;
 const pieceOf = (id) => PIECES.find((p) => p.id === id);
 
 export class Stop extends Error {}
@@ -33,6 +38,8 @@ const NOTHING = {
   mainParseAmount: async () => ({ ok: false, why: 'not wired' }),
   setDigest: async () => ({ ok: false, why: 'not wired' }),
   typedRepliesOn: async () => null,
+  nextDecisionNumber: async () => null,
+  installDeps: async () => ({ ok: true, skipped: true }),
   findTranscripts: () => [],
   cloneMain: async ({ dir }) => dir,
   commitAndPush: async () => ({}),
@@ -54,9 +61,13 @@ export async function waitFor(predicate, { io, timeoutMs, everyMs = 15000 }) {
 
 const iso = (ctx) => new Date(ctx.io.clock.now()).toISOString();
 const note = (ctx, step, text, extra = {}) => appendJsonl(ctx.logFile, { at: iso(ctx), step, note: text, ...extra });
+// The terminal's own furniture: spinners and their hints, boxes, the prompt line and the mode line.
+const CHROME = [/esc to interrupt/i, /\(\d+s\b.*(tokens|thinking)/i, /^\s*[✻✽✶✳✢·✦*]\s+\S.*…/, /^\s*[─━│╭╮╰╯┌┐└┘├┤]/, /\? for shortcuts/i,
+  /shift\+tab|bypass permissions|auto-accept|accept edits/i, /^\s*>\s*$/, /^\s*[⏵⏸]/];
+export const withoutChrome = (text) => String(text).split('\n').filter((l) => !CHROME.some((re) => re.test(l))).join('\n');
 const newLines = (before, after) => {
   const seen = new Set(String(before).split('\n'));
-  return String(after).split('\n').filter((l) => l.trim() !== '' && !seen.has(l)).join('\n');
+  return withoutChrome(String(after).split('\n').filter((l) => l.trim() !== '' && !seen.has(l)).join('\n'));
 };
 
 // Types into the front desk, waits for the pane to settle, and keeps what appeared as a reply.
@@ -68,12 +79,15 @@ async function say(ctx, text, { ready, maxMs = 90000 } = {}) {
   let last = before;
   let still = 0;
   const end = io.clock.now() + maxMs;
+  ctx.readyAt = undefined;
   while (io.clock.now() < end) {
     await io.clock.sleep(5000);
     const now = io.tmux.capture(DESK);
     still = now === last ? still + 1 : 0;
     last = now;
     await tick(ctx);
+    // The moment a reply first qualified, not the moment the pane settled.
+    if (ready !== undefined && ctx.readyAt === undefined && ready(newLines(before, last))) ctx.readyAt = io.clock.now();
     if (still >= 2 && (ready === undefined || ready(newLines(before, last)))) break;
   }
   const reply = newLines(before, last);
@@ -97,7 +111,6 @@ async function ghDo(ctx, args) {
 async function ghPulls(ctx) {
   return (await ctx.io.gh(['api', 'repos/{owner}/{repo}/pulls?state=all&per_page=100'])) ?? [];
 }
-const OWN_BRANCH = /^(trial\/|wheelhouse\/(undo|decisions))/;
 const mergedWork = (pulls) => pulls.filter((p) => p.merged_at && !OWN_BRANCH.test(p.head?.ref ?? ''));
 const mergedPulls = async (ctx) => mergedWork(await ghPulls(ctx));
 const pullOf = (pulls, text) => pulls.find((p) => text !== undefined && text !== '' && `${p.head?.ref ?? ''} ${p.title ?? ''}`.toLowerCase().includes(String(text).toLowerCase()));
@@ -109,7 +122,11 @@ async function tick(ctx) {
   for (const e of events) {
     if (e.id === undefined || state.seen.includes(e.id)) continue;
     state.seen.push(e.id);
-    if (e.kind === 'work-ready') await note(ctx, LOG.workReady, `work-ready ${e.data?.work ?? ''}`, { work: e.data?.work, detail: e.data?.detail ?? e.data, at: e.at ?? iso(ctx) });
+    // The watcher's work-ready is never written to the log, so it is read from the records it is made from: a quick or bug work
+    // that is not shown first, and a signed approve-work.
+    const ready = e.kind === 'work' && STARTS_UNAPPROVED.includes(e.data?.lane) && e.data?.visible === false ? e.data.id
+      : e.kind === 'action' && e.data?.action === 'approve-work' && (e.verified === true || e.sig) ? e.data.work : null;
+    if (typeof ready === 'string') await note(ctx, LOG.workReady, `work-ready ${ready}`, { work: ready, at: e.at ?? iso(ctx) });
     if (e.kind === 'run' && e.data?.state === 'started') await note(ctx, LOG.start, `started ${e.data.work ?? ''}`, { work: e.data.work, at: e.at ?? iso(ctx) });
   }
   const open = new Set();
@@ -122,7 +139,7 @@ async function tick(ctx) {
     state.pace = `${open.size},${features}`;
     await note(ctx, LOG.pace, `building ${open.size}, feature ${features}`);
   }
-  await io.host.answerCards({ project: ctx.project, tmux: io.tmux, events });
+  await io.host.answerCards({ project: ctx.project, tmux: io.tmux, events, session: ctx.session ?? DESK });
   if (state.ntfyTopic) {
     for (const m of await io.host.readNtfy({ topic: state.ntfyTopic })) if (!state.ntfy.some((x) => x.at === m.at && x.text === m.text)) state.ntfy.push(m);
   }
@@ -181,7 +198,7 @@ async function spareBugCheck(ctx) {
   }
   const amount = read?.amount;
   if (!(typeof amount === 'number' && amount < 0)) return;
-  await note(ctx, 'plant', 'planted bug fixed early', { amount });
+  await note(ctx, 'plant', 'planted bug already gone', { amount });
   const dir = path.join(folder, 'spare');
   await io.host.cloneMain({ url: ctx.remote, dir, branch: SPARE_BRANCH });
   const got = io.host.applySpareBug(dir);
@@ -193,7 +210,7 @@ async function spareBugCheck(ctx) {
   }
   await io.host.commitAndPush({ dir, branch: SPARE_BRANCH, message: 'Plant the spare bug for the trial' });
   await ghDo(ctx, ['pr', 'create', '--head', SPARE_BRANCH, '--base', 'main', '--title', 'Plant the spare bug for the trial', '--body', 'The trial plants this bug for piece P5.']);
-  await ghDo(ctx, ['pr', 'merge', SPARE_BRANCH, '--squash']);
+  await ghDo(ctx, ['pr', 'merge', SPARE_BRANCH, '--squash', '--admin']);
   state.p5 = 'spare';
   await note(ctx, 'plant', 'spare bug merged; P5 will use the spare request');
 }
@@ -209,6 +226,12 @@ async function desk(ctx, name, extraEnv = {}) {
   io.tmux.start({ name, cwd: ctx.project, command, env: { ...env, ...extraEnv } });
   await note(ctx, name === DESK ? 'front-desk' : name, `started tmux session ${SESSION_PREFIX}${name}`, { detail: { tmux: `${SESSION_PREFIX}${name}` } });
   await ctx.io.clock.sleep(15000);
+  // A fresh folder asks to be trusted before anything else; the first choice is Yes.
+  for (let i = 0; i < 3 && TRUST_PROMPT.test(io.tmux.capture(name)); i += 1) {
+    io.tmux.keys(name, 'Enter');
+    await note(ctx, name === DESK ? 'front-desk' : name, 'answered the folder-trust prompt');
+    await ctx.io.clock.sleep(5000);
+  }
 }
 
 async function pieceEnv(ctx, id) {
@@ -226,6 +249,16 @@ const directorAsk = async (ctx, text) => {
   await note(ctx, 'director', `${text} -> ${answer}`);
   return answer;
 };
+
+// After a wave's merges: one transcript on another model fails the whole run (spec section 4.3), so it is found now, not at the end.
+const auditStep = (wave, smoke = true) => ({
+  id: `w${wave}-audit`, wave, smoke,
+  async run(ctx, io) {
+    const models = auditModels(io.host.findTranscripts({ project: ctx.project }));
+    await note(ctx, `w${wave}-audit`, models.clean ? 'every assistant turn so far ran on Haiku' : `offenders: ${JSON.stringify(models.offenders.map((o) => `${o.role} ${o.model} x${o.count}`))}`);
+    if (!models.clean) throw new Stop(`a session ran on another model: ${models.offenders.map((o) => `${o.role} (${o.model})`).join(', ')}`);
+  },
+});
 
 const s9 = (n, run) => ({ id: `s9-${n}`, wave: 4, smoke: [1, 2, 4].includes(n), run });
 
@@ -272,10 +305,30 @@ export const STEPS = [
   {
     id: 'setup-s0', wave: 1, smoke: true,
     async run(ctx, io) {
-      await desk(ctx, SETUP, { WHEELHOUSE_SETUP_MODEL: 'haiku' });
-      io.tmux.type(SETUP, '/wheelhouse:setup');
-      const done = await waitFor(async () => /setup (is )?(done|complete)|health check passed/i.test(io.tmux.capture(SETUP)), { io, timeoutMs: 30 * MINUTE });
-      ctx.state.panes.setup = [io.tmux.capture(SETUP)];
+      let restarted = false;
+      const start = async () => {
+        await desk(ctx, SETUP, { WHEELHOUSE_SETUP_MODEL: 'haiku' });
+        io.tmux.type(SETUP, restarted ? 'carry on with setup' : '/wheelhouse:setup');
+      };
+      await start();
+      ctx.session = SETUP;
+      ctx.state.panes.setup = [];
+      // The stand-in director answers setup's cards as they come; when setup says it needs a new session, the session is started again once.
+      const done = await waitFor(async () => {
+        await tick(ctx);
+        const pane = io.tmux.capture(SETUP);
+        if (SETUP_DONE.test(pane)) return true;
+        if (!restarted && NEW_SESSION.test(pane)) {
+          ctx.state.panes.setup.push(pane);
+          io.tmux.kill(SETUP);
+          restarted = true;
+          await note(ctx, LOG.health, 'setup asked for a new session; started it again');
+          await start();
+        }
+        return false;
+      }, { io, timeoutMs: SETUP_WAIT_MS });
+      ctx.session = undefined;
+      ctx.state.panes.setup.push(io.tmux.capture(SETUP));
       await note(ctx, LOG.health, done ? 'pass' : 'fail: setup did not finish in time');
       ctx.state.config = await io.host.readConfig({ project: ctx.project });
       io.tmux.kill(SETUP);
@@ -313,6 +366,7 @@ export const STEPS = [
     id: 'w2-merge-wait', wave: 2, smoke: true,
     async run(ctx) { await waitMerged(ctx, 3, 2); await spareBugCheck(ctx); },
   },
+  auditStep(2),
   { id: 'w3-type', wave: 3, smoke: false, run: piecesTyped(3) },
   {
     id: 'f1', wave: 3, smoke: false,
@@ -388,6 +442,7 @@ export const STEPS = [
     },
   },
   { id: 'w3-merge-wait', wave: 3, smoke: false, async run(ctx) { await waitMerged(ctx, 3 + (ctx.state.p5 === 'not-covered' ? 3 : 4), 3); } },
+  auditStep(3, false),
   { id: 'w4-type', wave: 4, smoke: true, async run(ctx) { await typeWave(ctx, 4, ctx.smoke ? { only: ['P4'] } : {}); } },
   {
     id: 'f4-check', wave: 4, smoke: false,
@@ -411,6 +466,11 @@ export const STEPS = [
       await note(ctx, 'fallback', `P4 raised no decision; the runner raised one: ${JSON.stringify(got)}`);
       await io.clock.sleep(30000);
     }
+    try {
+      const env = await io.faults.featureEnvOf({ project: ctx.project, piece: ctx.state.pieces.P4?.change ?? 'p4' });
+      const natural = io.faults.naturalSendBacks?.(env);
+      if (Number.isInteger(natural)) ctx.state.faults.F1 = { ...(ctx.state.faults.F1 ?? {}), naturalSendBacks: natural };
+    } catch { /* no running P4 session to read */ }
     await note(ctx, 's9-1', `typed replies on: ${await io.host.typedRepliesOn({ project: ctx.project })}; decision 1 in chat: ${/decision 1/i.test(io.tmux.capture(DESK))}`);
     await tick(ctx);
   }),
@@ -418,10 +478,12 @@ export const STEPS = [
     for (const text of ['3 A', '1 E']) await note(ctx, 's9-2', `${text}: ${(await say(ctx, text)).slice(0, 300)}`);
     await note(ctx, LOG.why, 'typed "why 1"');
     const reply = await say(ctx, 'why 1', { maxMs: WHY_WAIT_MS, ready: (text) => text.split('\n').some((l) => !/^\W*(>\s*)?why 1\s*$/i.test(l.trim()) && l.trim().length > 40) });
-    await note(ctx, LOG.whySeen, reply || 'no reply');
+    await note(ctx, LOG.whySeen, reply || 'no reply', ctx.readyAt === undefined ? {} : { at: new Date(ctx.readyAt).toISOString() });
   }),
   s9(3, async (ctx, io) => {
-    const got = await io.faults.secondDecision(await pieceEnv(ctx, 'P4'));
+    const env = await pieceEnv(ctx, 'P4');
+    ctx.state.p4env = env;
+    const got = await io.faults.secondDecision(env);
     await note(ctx, 's9-3', `second decision raised, code ${got.code}`);
     await io.clock.sleep(20000);
     await note(ctx, 's9-3', `a bare A: ${(await say(ctx, 'A')).slice(0, 300)}`);
@@ -452,6 +514,7 @@ export const STEPS = [
     id: 'digest', wave: 4, smoke: false,
     async run(ctx, io) {
       const at = new Date(io.clock.now() + 10 * MINUTE);
+      at.setSeconds(0, 0); // the setting is a minute, and the digest is due when that minute starts
       ctx.state.digestAt = at.toISOString();
       const set = await io.host.setDigest({ project: ctx.project, at });
       await note(ctx, 'digest-set', `digest due ${ctx.state.digestAt}: ${JSON.stringify(set)}`);
@@ -459,7 +522,10 @@ export const STEPS = [
       if (arrived) await note(ctx, LOG.digest, 'the digest reached the chat');
     },
   },
+  // A smoke run starts only P4 in this wave, so only P4 has to merge before it is scored.
+  { id: 'w4-smoke-merge', wave: 4, smoke: true, smokeOnly: true, async run(ctx) { await waitMerged(ctx, 4, 4); } },
   { id: 'w4-merge-wait', wave: 4, smoke: false, async run(ctx) { await waitMerged(ctx, 3 + (ctx.state.p5 === 'not-covered' ? 3 : 4) + 2, 4); } },
+  auditStep(4),
   {
     id: 'w5-incident', wave: 5, smoke: false,
     async run(ctx, io) {
@@ -485,7 +551,11 @@ export const STEPS = [
     async run(ctx, io) {
       const dir = path.join(ctx.folder, 'score');
       await io.host.cloneMain({ url: ctx.remote, dir });
+      // The builders may have added dependencies; without them the product does not start and the score collapses.
+      const installed = await io.host.installDeps({ dir });
+      await note(ctx, 'score', installed.skipped ? 'no dependencies to install' : `dependencies: ${installed.ok ? 'installed' : `not installed (${installed.why ?? 'no reason given'})`}`);
       ctx.state.score = await io.score.scoreAll({ dir, baseSha: ctx.state.seedSha, gh: io.gh, browse: io.host.makeBrowse?.({ toolsDir: path.join(ctx.folder, 'tools') }), smoke: ctx.smoke });
+      if (installed.ok === false) ctx.state.score = { ...ctx.state.score, why: [...(ctx.state.score.why ?? []), `dependencies were not installed: ${installed.why ?? 'no reason given'}`] };
       await note(ctx, 'score', `score ${ctx.state.score.total}`);
     },
   },
@@ -509,15 +579,46 @@ export const STEPS = [
     },
   },
   {
+    id: 'raise-decision-3', wave: 6, smoke: false,
+    async run(ctx, io) {
+      const env = ctx.state.p4env;
+      if (!env || !fs.existsSync(env.cwd ?? '')) throw new Stop("no environment for P4 to raise decision 3 in: its worktree is gone, so run the typed-reply check by hand");
+      const n = await io.host.nextDecisionNumber({ project: ctx.project });
+      const got = await io.faults.thirdDecision(env);
+      if (got.code !== 0) throw new Stop(`decision 3 was not raised: ${String(got.stdout).trim().slice(0, 300)}`);
+      ctx.state.decisionN = Number.isInteger(n) ? n : null;
+      await note(ctx, 'decision-3', `raised as decision ${n ?? 'unknown'}`);
+    },
+  },
+  {
     id: 'review-card', wave: 6, smoke: false, director: true,
     async run(ctx, io) {
-      const decisionN = 3;
+      const decisionN = ctx.state.decisionN;
+      if (!Number.isInteger(decisionN)) throw new Stop('decision 3 has no number, so the review steps cannot point at it');
       const stepsFile = path.join(ctx.folder, 'steps.md');
       fs.writeFileSync(stepsFile, stepsPage({ decisionN }));
       const tryMe = writeTryMe(ctx.folder);
       const card = reviewCard({ project: ctx.repoName, date: ctx.date, decisionN, stepsUrl: stepsFile, score: ctx.state.score, rows: ctx.state.rows });
       fs.writeFileSync(path.join(ctx.folder, 'review-card.json'), `${JSON.stringify(card, null, 2)}\n`);
-      const answer = await directorAsk(ctx, `${card.title}\n\n${card.text}\n\nThe statement to import is ${tryMe}. Answer A, B or C.`);
+      // The card goes through the front desk as a decision, so it reads as it will on a phone; the terminal is the fallback.
+      let answer = null;
+      const env = ctx.state.p4env;
+      const raised = env && fs.existsSync(env.cwd ?? '') ? await io.faults.reviewDecision({ ...env, card: reviewAsDecision(card, { stepsUrl: stepsFile }) }) : { code: null, stdout: 'no environment' };
+      if (raised.code === 0) {
+        const askedAt = io.clock.now();
+        io.log?.(`The review card is in the chat as a decision. Try the tracker (statement: ${tryMe}), then answer there with its number and A, B or C.`);
+        await waitFor(async () => {
+          await tick(ctx);
+          const found = (await io.host.events({ project: ctx.project })).filter((e) => e.kind === 'decision-answer' && Date.parse(e.at) >= askedAt - 1000 && answerLetter(e.data?.label) !== null && e.data?.n === decisionN + 1).pop(); // the card follows decision 3 in the numbering
+          answer = found ? answerLetter(found.data.label) : null;
+          return answer !== null;
+        }, { io, timeoutMs: 120 * MINUTE, everyMs: 30000 });
+      } else {
+        await note(ctx, 'review-card', `the card could not be raised as a decision (${String(raised.stdout).trim().slice(0, 200)}); asking in the terminal`);
+      }
+      while (answer === null) {
+        answer = answerLetter(await directorAsk(ctx, `${card.title}\n\n${card.text}\n\nThe statement to import is ${tryMe}. Answer A, B or C.`));
+      }
       await note(ctx, 'review-card', `the director answered ${answer}`);
     },
   },
@@ -567,7 +668,7 @@ async function gatherAndCheck(ctx, io) {
 // --- planning and running ---
 
 export function planRun({ mode = 'full' } = {}) {
-  return mode === 'smoke' ? STEPS.filter((s) => s.smoke) : [...STEPS];
+  return mode === 'smoke' ? STEPS.filter((s) => s.smoke) : STEPS.filter((s) => s.smokeOnly !== true);
 }
 
 const lastDone = (file) => readLog(file).filter((e) => e.done === true).map((e) => e.step).filter((id) => STEPS.some((s) => s.id === id)).pop();

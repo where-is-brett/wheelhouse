@@ -1,7 +1,7 @@
 // tests/probes/haiku-trial/host.test.js
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ghArgs, readGateWith } from '../../../probes/haiku-trial/host.js';
+import { ghArgs, readGateWith, PICKED } from '../../../probes/haiku-trial/host.js';
 
 const SLUG = 'trial-owner/haiku-trial-2026-11-08';
 
@@ -47,4 +47,9 @@ test('a diff that could not be read leaves the gate unsure, not visible', async 
   const reading = await readGateWith({ gh, change: 'rename-key' });
   assert.equal(reading.unsure, true);
   assert.equal(reading.visible, false);
+});
+
+test('the stand-in answers setup cards as well as plan, approval and confirm cards, and never a decision or an undo', () => {
+  for (const kind of ['setup', 'confirm-all', 'baseline', 'trust', 'approve-work', 'approval', 'confirm']) assert.ok(PICKED.includes(kind), kind);
+  for (const kind of ['answer', 'undo', 'lift-stop', 'lift-incident']) assert.equal(PICKED.includes(kind), false, kind);
 });

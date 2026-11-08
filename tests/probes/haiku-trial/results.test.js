@@ -82,3 +82,8 @@ test('writeRaw copies transcripts and writes events, panes, signals and usage', 
   assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'signals.jsonl'), 'utf8').trim()).step, 's');
   assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'usage.json'), 'utf8')).total.input, 10);
 });
+
+test('the public summary scrubs paths under /opt and /Library too', () => {
+  const md = writeSummary({ file: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'haiku-scrub-')), 's.md'), date: '2026-11-08', rows: [{ id: 1, path: 'see /opt/tool/bin and /Library/Thing/x', pass: false }], score: null, audit: null, usage: {} });
+  assert.doesNotMatch(md, /\/opt\/|\/Library\//);
+});

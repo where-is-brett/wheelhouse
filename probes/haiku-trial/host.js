@@ -22,12 +22,14 @@ import { listEvents } from '../../scripts/state/events.js';
 import { stateDir, engineDir } from '../../scripts/lib/paths.js';
 import { queueFolderOf } from '../../scripts/engine/queue-place.js';
 import { typedRepliesOn } from '../../scripts/decisions/answer.js';
+import { decisionNumber } from '../../scripts/decisions/pending.js';
+import { installDependencies } from './score/run.js';
 import { visibleFromChange } from '../../scripts/gate/visible.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const IDENTITY = ['-c', 'user.name=Wheelhouse probe', '-c', 'user.email=probe@wheelhouse.invalid', '-c', 'commit.gpgsign=false'];
 // The cards a stand-in director answers with a pick. Decisions, undo approvals and lifts are never in this list.
-const PICKED = ['approve-work', 'approval', 'confirm', 'ci-push', 'setup', 'confirm-all', 'baseline', 'trust'];
+export const PICKED = ['approve-work', 'approval', 'confirm', 'ci-push', 'setup', 'confirm-all', 'baseline', 'trust'];
 
 // A `gh` call with the test repository's name filled in. Everything but `api` (which carries the repository in its path) and
 // `repo` (which names it) is scoped with --repo, so a command run from a Wheelhouse checkout never reads Wheelhouse's own records.
@@ -81,7 +83,7 @@ export function buildRealIo(env = process.env) {
     events: async ({ project }) => listEvents(stateDir(project), { report: () => {} }),
 
     // A stand-in for the director's click on a plan, approval or confirm card: it types the card's first option.
-    async answerCards({ events }) {
+    async answerCards({ events, session = 'desk' }) {
       const answered = new Set(events.filter((e) => e.kind === 'card-answer').map((e) => e.data?.card));
       let count = 0;
       for (const card of events.filter((e) => e.kind === 'card' && PICKED.includes(e.data?.kind))) {
@@ -89,7 +91,7 @@ export function buildRealIo(env = process.env) {
         const pick = card.data?.options?.[0]?.label;
         if (typeof pick !== 'string') continue;
         typed.add(card.id);
-        tmux.type('desk', pick);
+        tmux.type(session, pick);
         count += 1;
       }
       return count;
@@ -132,6 +134,8 @@ export function buildRealIo(env = process.env) {
       return { ok: true };
     },
     typedRepliesOn: async ({ project }) => typedRepliesOn(project),
+    nextDecisionNumber: async ({ project }) => decisionNumber(project),
+    installDeps: async ({ dir }) => installDependencies(dir),
     findTranscripts: ({ project }) => findTranscripts({ project, engineDir: fs.existsSync(queueFolderOf(project)) ? queueFolderOf(project) : engineDir() }),
     readUsage,
     async cloneMain({ url, dir, branch }) {
