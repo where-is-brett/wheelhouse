@@ -1,0 +1,59 @@
+<!-- probes/haiku-trial/README.md -->
+# The Haiku trial kit
+
+The kit runs Wheelhouse on Haiku alone, on a throwaway spending tracker, and scores what comes out. The design is `docs/specs/2026-11-08-haiku-trial-design.md`. The runner plays the director with a set script of words, injects the faults, reads the 45 path rows, scores the product and writes the results. It is a script, so it costs no tokens itself.
+
+Nothing in the kit runs by itself. Building it created no repository, no preview and no session.
+
+## Full against smoke
+
+- **Full** (`full`): setup, pieces P1 to P8, every fault, the wait past midnight and the director's review. About 5 hours of waves plus the wait for midnight.
+- **Smoke** (`smoke`): setup, then P1, P2 and P6 together, then P4 with steps 1, 2 and 4 of the live decision script. It scores only reconciliation and the project's own tests, with no pass bar. It leaves out undo, so it needs no director once the go is given. Use it after a change to prompts or checks, never for the tag.
+
+`node probes/haiku-trial/runner.js plan` prints both plans and spends nothing.
+
+## What waits for the director's go
+
+The runner stops and asks before each of these, and goes on only for the answer `go`:
+
+1. **The GitHub repository** (`create-repo`): a public repository named `haiku-trial-<date>` under `HAIKU_TRIAL_GH_OWNER`.
+2. **The preview** (`create-preview`, full only): `HAIKU_TRIAL_PREVIEW` is `vercel` (the director connects Vercel to the repository, with Deployment Protection off), `tunnel` (the runner starts the app and a Cloudflare quick tunnel) or `none` (the pictures rows are not covered).
+3. **The staged plugin install** (`install`): the staged copy of this checkout, without `probes/` and `tests/`, goes in through `claude plugin marketplace add` and `claude plugin install`. `HAIKU_TRIAL_CONFIG_DIR`, when set, keeps the install out of the director's own configuration.
+4. **Haiku usage:** the go on the install is also the go to spend tokens. Every session the trial starts runs on Haiku.
+
+Environment: `HAIKU_TRIAL_CLAUDE` is the full path to `claude`, `HAIKU_TRIAL_GH_OWNER` the account for the test repository, `HAIKU_TRIAL_PREVIEW` one of the three modes above.
+
+## The director's three steps
+
+1. The preview sign-in, only with `vercel`.
+2. One short helper-window sitting of about 5 minutes: the two undo approvals (F5a, F5b) and, if the runner cannot click it, the All stop lift (F6). The runner asks for each.
+3. The review at the end (`review-card`): a card that fits a phone, with the steps behind "Show the steps" and a generated `try-me.csv` of 41 rows to import. The card is written to the run folder.
+
+## Running and resuming
+
+```
+node probes/haiku-trial/runner.js full [--from <step>] [--out <folder>] [--until <step>]
+node probes/haiku-trial/runner.js smoke
+```
+
+Each step appends to `run-log.jsonl` in the run folder, and a step that finishes appends a `done` entry. A run with no `--from` goes on after the last finished step. The run's own state (pieces, fault results, replies) is kept in `state.json` beside the log.
+
+## restore
+
+`node probes/haiku-trial/runner.js restore` stops what the run started, as its log records it: the `haiku-trial-*` tmux sessions, the product process and the tunnel process. It stops nothing else and deletes nothing: no repository, no Vercel project, no folder.
+
+## Where results go
+
+Raw results stay outside every repository, in `~/.wheelhouse-trials/haiku-<date>/`: the run log, transcripts, event export, pane captures and usage. The public summary is written to `summary/<date>-haiku-trial-results.md` in that folder. Copy it to `docs/trials/` after the director has labelled each failure, as the design's section 12 says.
+
+## What the runner cannot supply in this build
+
+The signal rows read optional context. The runner supplies `faults` (F1, F1b, F1c), `ntfy`, `mainCi`, `branches`, `digestAt`, `pieces[id].change`, `.prs` and `.gate`, `pieces.P5.redAtFirstCommit`, `panes.replies`, `panes['front-desk']` and `config`. Some of it cannot come from the code in this build, and the rows say so rather than pass:
+
+- **Log entries for `review`, `tester` and `routine`** (rows 10 and 35): nothing the runner can read records them, so they are never logged.
+- **`faults.F1.rightAfter`** (row 14): the faults module makes one wrong-shaped try and does not follow it with a right one in P3's session, so row 14 reports no right shape. The natural-decision rows 13 and 14 for P4 need the real trail of `questions.jsonl`.
+- **`pieces.P8.gate`** (row 30): no record of the gate's reading is available, so `readGate` returns nothing and the row fails.
+- **Card answers:** the stand-in director answers plan, approval and confirm cards by typing the card's first option into the front desk. This is unconfirmed against a live front desk. Check it in the first smoke run.
+- **Setup's finish and the digest and alert settings:** the runner reads the setup pane for "setup done" or "health check passed", asks for the digest in plain words and types `alerts ntfy <topic>`. Their wording has not met a live session.
+- **Engine transcripts:** the runner passes the project's queue folder under the engine directory to `findTranscripts`, or the engine directory itself if there is no such folder.
+- **P5 not covered:** if the spare bug cannot be applied, row 6 is reported as not covered with the reason, and other rows that need P5 will fail.
