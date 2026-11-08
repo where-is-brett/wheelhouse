@@ -1055,6 +1055,54 @@ test('record work again after its card was answered with no approval on record a
   });
 });
 
+// A recorded work with a document and no card ever written, as `record work` left it before it asked its own card.
+const unaskedWork = (id = 'statement-import', extra = {}) => makeEvent({ kind: 'work', data: { id, title: 'Import a statement', lane: 'small', visible: true, dependsOn: [], doc: { path: `docs/${id}.md`, hash: DOC }, ...extra }, now: () => T(1) });
+
+test('cards re-offers the approve-work card for open work that waits for approval and never had a card', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper({ events: [unaskedWork()] });
+    const out = await run(helper, ['cards']);
+    assert.equal(out.code, 0, out.err);
+    assert.equal(out.json.problems, undefined);
+    const line = approveWorkLine('statement-import', 'small', DOC, { shownFirst: true });
+    assert.equal(cardsOf(helper).length, 1);
+    assert.equal(cardsOf(helper)[0].data.line, line);
+    assert.equal(out.json.questions.length, 1);
+    assert.ok(out.json.questions[0].question.includes('Work statement-import: Import a statement.'));
+    const next = await run(helper, ['cards']);
+    assert.equal(cardsOf(helper).length, 1, 'the card now exists, so none is made again');
+    assert.equal(next.json.problems, undefined);
+  });
+});
+
+test('cards writes no new approve-work card for work whose card exists in any state', async () => {
+  await inHome(async () => {
+    const first = fakeHelper({ events: [unaskedWork()] });
+    await run(first, ['cards']);
+    const made = cardsOf(first)[0];
+    const notNow = makeEvent({ kind: 'card-answer', data: { card: made.id, label: 'Not now', where: 'panel' }, now: () => T(5) });
+    for (const events of [[...first.held], [...first.held, notNow]]) {
+      const helper = fakeHelper({ events });
+      const out = await run(helper, ['cards']);
+      assert.equal(out.code, 0, out.err);
+      assert.equal(cardsOf(helper).length, 1, 'no second card is written');
+      assert.equal(out.json.problems, undefined);
+    }
+  });
+});
+
+test('cards re-offers nothing for work that is approved, started, finished or needs no approval', async () => {
+  await inHome(async () => {
+    const approval = makeEvent({ kind: 'action', now: () => T(300), data: { action: 'approve-work', work: 'approved-one', lane: 'small', hash: DOC, shownFirst: true, question: 'as shown', label: 'Approve' } });
+    const run1 = makeEvent({ kind: 'run', data: { work: 'started-one', lane: 'small', engine: 'fake', runId: 'r1', state: 'started', branch: 'wh/started-one' }, now: () => T(2) });
+    const report = makeEvent({ kind: 'report', data: { work: 'finished-one', outcome: 'closed', summary: 'Done.', rulings: [] }, now: () => T(3) });
+    const helper = fakeHelper({ events: [unaskedWork('approved-one'), approval, unaskedWork('started-one'), run1, unaskedWork('finished-one'), report, unaskedWork('quiet-one', { lane: 'quick', visible: false })] });
+    const out = await run(helper, ['cards']);
+    assert.equal(out.code, 0, out.err);
+    assert.equal(cardsOf(helper).filter((e) => /^Approve /.test(e.data.line ?? '')).length, 0);
+  });
+});
+
 test('record work takes the card\'s words from a `card` override, which is not stored on the work', async () => {
   await inHome(async () => {
     const helper = fakeHelper();

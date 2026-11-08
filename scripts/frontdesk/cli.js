@@ -106,7 +106,7 @@ import { checkSetting, definitionOf, SETTINGS, WINDOWS_BUILD_COMMANDS, OWN_GITHU
 import { CARD, WORK_REPORTS } from '../lib/front-desk.js';
 import { effectiveSettings, settingsText, settingWords } from '../settings/effective.js';
 import { similar as similarTo } from '../intake/similar.js';
-import { answerLine, chatCopy, ID, keepControlLine } from '../state/card-lines.js';
+import { answerLine, approveWorkLine, chatCopy, ID, keepControlLine } from '../state/card-lines.js';
 import { gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
@@ -500,7 +500,43 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
       problems.push(`The card for the premium model's failed trial wasn't made: ${error.message}`);
     }
   }
+  made += await approvalCards({ client, cwd, views, words, problems });
   return { made, again };
+}
+
+// The approve-work card for each open work that waits for approval and never had one: it needs approval, names its document,
+// has no approval on record, has not begun building (as `drop` checks), and no card event in any state (waiting, put off,
+// answered, outdated) carries its set line. Resolves with how many cards were recorded. One work's card that can't be made
+// or recorded goes into `problems` and leaves the others.
+async function approvalCards({ client, cwd, views, words, problems }) {
+  const candidates = [];
+  for (const [id, entry] of Object.entries(isPlain(views.work) ? views.work : {})) {
+    const data = entry?.work?.data;
+    if (!isPlain(data) || !isOpen(views, id) || !needsApproval(data) || typeof data.doc?.hash !== 'string') continue;
+    if (entry.approval !== undefined && entry.approval !== null) continue;
+    if ((isPlain(views.runs) && Array.isArray(views.runs[id]) && views.runs[id].length > 0) || isPlain(views.features?.[id]?.data)) continue;
+    candidates.push({ id, data: { ...data, id } });
+  }
+  if (candidates.length === 0) return 0;
+  let events;
+  try {
+    events = (await viewsOf(client, cwd, { cards: true })).cards;
+  } catch (error) {
+    problems.push(`The cards already asked couldn't be read, so work waiting for approval wasn't checked: ${error.message}`);
+    return 0;
+  }
+  const lines = new Set(events.map((e) => e?.data?.line));
+  let made = 0;
+  for (const { id, data } of candidates) {
+    if (lines.has(approveWorkLine(id, data.lane, data.doc.hash, { shownFirst: true }))) continue;
+    try {
+      await write(client, cwd, 'card', composePlain(approveWorkInput(data), words).card);
+      made += 1;
+    } catch (error) {
+      problems.push(`The approval card for ${id} wasn't made: ${error.message}`);
+    }
+  }
+  return made;
 }
 
 // An answer card for each open question from the build that no waiting card asks yet, or whose joiners changed: how many were
