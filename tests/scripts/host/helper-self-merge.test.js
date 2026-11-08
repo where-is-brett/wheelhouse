@@ -69,12 +69,14 @@ async function project(remote) {
   return home;
 }
 
-function record(kind, data) {
-  const event = makeEvent({ kind, data, now: at(1000) });
+function record(kind, data, ms = 1000) {
+  const event = makeEvent({ kind, data, now: at(ms) });
   const file = path.join(stateDir('o__p'), eventPath(event));
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
 }
+// Intake's mark for the work the `feature/x` branch belongs to: visible or not.
+const marked = (visible, ms) => record('work', { id: 'x', title: 'X', lane: 'small', visible, dependsOn: [] }, ms);
 const reviewed = (head) => record('review', { pr: 7, commit: head, verdict: 'CLEAN' });
 const approved = (head) => record('approval', { pr: 7, commit: head });
 const selfMerged = () => listEvents(stateDir('o__p'), { report: () => {} }).filter((e) => e.kind === 'self-merged');
@@ -113,7 +115,7 @@ test('internal-only work merges itself and records self-merged', async () => {
   try {
     const adapter = fakeAdapter(pr.head);
     await merging(pr, adapter, [{
-      before: () => reviewed(pr.head),
+      before: () => { marked(false); reviewed(pr.head); },
       async after(answer) {
         assert.equal(answer.ok, true, JSON.stringify(answer));
         assert.deepEqual(adapter.merges, [{ number: 7, sha: pr.head }]);
@@ -130,7 +132,7 @@ test('internal-only work still needs its signed clean review, and one the caller
   try {
     const adapter = fakeAdapter(pr.head);
     await merging(pr, adapter, [
-      { body: {}, async after(a) { assert.equal(a.ok, false); assert.match(a.reasons.join(';'), /no CLEAN review/); assert.deepEqual(selfMerged(), []); } },
+      { before: () => marked(false), body: {}, async after(a) { assert.equal(a.ok, false); assert.match(a.reasons.join(';'), /no CLEAN review/); assert.deepEqual(selfMerged(), []); } },
       { before: () => reviewed(pr.head), body: { approvalRequired: true }, async after(a) { assert.deepEqual(a.reasons, [NEEDS(pr.head)]); assert.deepEqual(selfMerged(), []); } },
     ]);
     assert.deepEqual(adapter.merges, []);
@@ -202,6 +204,28 @@ test('work intake marked visible waits even if the change looks internal', async
       },
     }]);
   } finally { pr.cleanup(); }
+});
+
+test('a missing intake mark counts as visible, a lowered mark does not count, and a branch no work owns waits', async () => {
+  const cases = [
+    ['no work record for a feature branch', 'feature/x', () => {}],
+    ['a mark lowered after it was raised', 'feature/x', () => { marked(true, 1000); marked(false, 2000); }],
+    ['a branch that is no work\'s', 'someone/tide-fix', () => {}],
+  ];
+  for (const [what, headRef, setup] of cases) {
+    const pr = await remoteWithPr({ change: (w) => write(w, { 'src/a.js': 'export const a = 1;\n' }) });
+    try {
+      const adapter = fakeAdapter(pr.head, { headRef });
+      await merging(pr, adapter, [{
+        before: () => { setup(); reviewed(pr.head); },
+        async after(answer) {
+          assert.equal(answer.ok, false, `${what}: ${JSON.stringify(answer)}`);
+          assert.deepEqual(answer.reasons, [NEEDS(pr.head)], what);
+          assert.deepEqual(selfMerged(), [], what);
+        },
+      }]);
+    } finally { pr.cleanup(); }
+  }
 });
 
 test('director-level facts make it wait', async () => {

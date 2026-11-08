@@ -104,6 +104,8 @@ async function project(remote) {
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
     await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
     assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: at(0) })).taken, true);
+    // Work with no record of its own is unmarked, which counts as visible: these changes are internal, so intake's mark says so.
+    record('work', { id: 'tweak', title: 'Tweak', lane: 'small', visible: false, dependsOn: [] });
   });
   return home;
 }
@@ -209,7 +211,7 @@ test('a review does not carry over when the feature\'s own changes moved', async
     const home = await project(pr.remote);
     await as(home, () => reviewed(pr.head));
     // A commit of the feature's own after the review, then the default branch moves on.
-    await commit(pr.work, { 'b.js': 'b changed\n' }, 'More of the feature');
+    await commit(pr.work, { 'b.js': 'b2\n' }, 'More of the feature');
     await mainMoves(pr.work, { 'a.js': 'a\n' });
     const adapter = fakeAdapter(pr.remote);
     await withHelper(home, adapter, async (client) => {
@@ -239,9 +241,9 @@ test('a review does not carry over when the feature\'s own changes moved', async
 // A file of three identical blocks. The feature adds a line after the first; moved after the
 // second, the line has the same context, so only its line numbers differ, which patch-id ignores.
 const BLOCK = 'one\ntwo\nthree\nfour\n';
-const BLOCKS = { 'blocks.md': BLOCK.repeat(3) };
-const ADDED = { 'blocks.md': `${BLOCK}added\n${BLOCK}${BLOCK}` };
-const MOVED = { 'blocks.md': `${BLOCK}${BLOCK}added\n${BLOCK}` };
+const BLOCKS = { 'docs/blocks.md': BLOCK.repeat(3) };
+const ADDED = { 'docs/blocks.md': `${BLOCK}added\n${BLOCK}${BLOCK}` };
+const MOVED = { 'docs/blocks.md': `${BLOCK}${BLOCK}added\n${BLOCK}` };
 const gitIn = (dir) => (args, options = {}) => run('git', args, { cwd: dir, ...options });
 
 test('a review does not carry over when the update merge changed code itself', async () => {

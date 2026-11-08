@@ -6,10 +6,11 @@
 //
 //   undoOnHost({ adapter, git, merge, approval, defaultBranch, kept, keep, approve, through })
 //     -> { ok: true, pr, merged, merge?, refused? }
-//      | { ok: false, reason: 'not-merged' | 'needs-approval' | 'conflict' | 'wide' | 'nothing-to-undo' | 'push' | 'host', refused? }
+//      | { ok: false, reason: 'not-merged' | 'needs-approval' | 'conflict' | 'wide' | 'nothing-to-undo' | 'push' | 'host' | 'old-git', refused? }
 //   merge:    the merge commit to take out, in full
 //   approval: the director's signed click for this merge, or null
-//   git:      { base() -> { head, history }, revert({ merge, head }) -> { ok: true, commit } | { ok: false, reason }, push({ branch, commit }) }
+//   git:      { base() -> { head, history }, revert({ merge, head }) -> { ok: true, commit } | { ok: false, reason },
+//               update({ head, base }) -> { ok: true, current: true } | { ok: true, commit } | { ok: false, reason }, push({ branch, commit }) }
 //             over the helper's own mirror
 //   kept:     the undo already made for this merge and still open, { merge, pr, head, branch }, or null
 //   keep:     remembers the undo it made, before anything else is done with it
@@ -49,13 +50,43 @@ export function undoConflictCard(merge) {
   };
 }
 
+// The pull request an earlier, interrupted undo opened, found by its branch and the exact commit the helper kept for it before pushing.
+async function adoptable(adapter, kept) {
+  if (typeof adapter.openRequests !== 'function') return null;
+  const open = await adapter.openRequests();
+  const found = (Array.isArray(open) ? open : []).find((r) => r?.branch === kept.branch && r.fork !== true && r.head === kept.head && Number.isInteger(r.number));
+  return found === undefined ? null : { merge: kept.merge, pr: found.number, head: kept.head, branch: kept.branch };
+}
+
 export async function undoOnHost({ adapter, git, merge, approval = null, defaultBranch, kept = null, keep, approve, through }) {
   if (typeof merge !== 'string' || !FULL_SHA.test(merge)) return { ok: false, reason: 'not-merged' };
   let entry = null;
-  // An undo already made and still open is carried on, never made twice.
+  // An undo already made and still open is carried on, never made twice. One that was kept before its push but not after its pull
+  // request opened (a crash between) is found on the host by its branch and commit and kept whole.
   if (kept !== null && kept.merge === merge && Number.isInteger(kept.pr)) {
-    const state = await adapter.prState(kept.pr);
-    if (state?.state === 'open' && state.headSha === kept.head) entry = kept;
+    if (kept.pr === 0) {
+      entry = await adoptable(adapter, kept);
+      if (entry !== null) await keep(entry);
+    } else {
+      const state = await adapter.prState(kept.pr);
+      if (state?.state === 'open' && state.headSha === kept.head) entry = kept;
+    }
+  }
+  if (entry !== null) {
+    // Behind the main version it can't merge, and nothing else would bring it up to date: the helper's own branch takes the main
+    // version's moves, as a merge of it, so later work that clashes is a conflict and nothing is forced.
+    const base = await git.base();
+    const updated = await git.update({ head: entry.head, base: base.head });
+    if (updated?.ok !== true) {
+      const reason = updated?.reason === 'conflict' ? 'conflict' : updated?.reason === 'old-git' ? 'old-git' : 'push';
+      return { ok: false, reason, ...(typeof updated?.refused === 'string' ? { refused: updated.refused } : {}) };
+    }
+    if (updated.current !== true) {
+      const pushed = await git.push({ branch: entry.branch, commit: updated.commit });
+      if (pushed?.ok !== true) return { ok: false, reason: 'push', refused: pushed?.refused };
+      entry = { ...entry, head: updated.commit };
+      await keep(entry);
+    }
   }
   if (entry === null) {
     const base = await git.base();
@@ -63,8 +94,13 @@ export async function undoOnHost({ adapter, git, merge, approval = null, default
     // Nothing is pushed or opened without the director's click.
     if (approval === null || approval === undefined) return { ok: false, reason: 'needs-approval' };
     const made = await git.revert({ merge, head: base.head });
-    if (made?.ok !== true) return { ok: false, reason: made?.reason === 'wide' ? 'wide' : made?.reason === 'nothing' ? 'nothing-to-undo' : 'conflict' };
+    if (made?.ok !== true) {
+      if (made?.reason === 'old-git') return { ok: false, reason: 'old-git', refused: made.refused };
+      return { ok: false, reason: made?.reason === 'wide' ? 'wide' : made?.reason === 'nothing' ? 'nothing-to-undo' : 'conflict' };
+    }
     const branch = undoBranch(merge, made.commit);
+    // Kept before the push (pr 0: not opened yet), so a crash after the push finds its own revert again and opens no second one.
+    await keep({ merge, pr: 0, head: made.commit, branch });
     const pushed = await git.push({ branch, commit: made.commit });
     if (pushed?.ok !== true) return { ok: false, reason: 'push', refused: pushed?.refused };
     let opened;
@@ -74,7 +110,7 @@ export async function undoOnHost({ adapter, git, merge, approval = null, default
       return { ok: false, reason: 'host', refused: error instanceof Error ? error.message : 'the host would not open the pull request' };
     }
     entry = { merge, pr: opened.number, head: made.commit, branch };
-    keep(entry);
+    await keep(entry);
   }
   if ((await approve({ pr: entry.pr, head: entry.head, approval })) !== true) return { ok: false, reason: 'needs-approval' };
   const answer = await through(entry.pr);

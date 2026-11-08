@@ -84,7 +84,8 @@ function record(kind, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
 }
-const reviewed = (head) => record('review', { pr: 7, commit: head, verdict: 'CLEAN' });
+// Work with no record of its own is unmarked, which counts as visible: these changes are internal, so intake's mark says so.
+const reviewed = (head) => { record('work', { id: 'x', title: 'X', lane: 'small', visible: false, dependsOn: [] }); record('review', { pr: 7, commit: head, verdict: 'CLEAN' }); };
 const approved = (head) => record('approval', { pr: 7, commit: head });
 
 function fakeAdapter(head, overrides = {}) {
@@ -92,7 +93,7 @@ function fakeAdapter(head, overrides = {}) {
   return {
     merges,
     defaultBranch: async () => 'main',
-    prState: async () => ({ headSha: head, mergeable: 'mergeable', state: 'open', body: BODY }),
+    prState: async () => ({ headSha: head, headRef: 'feature/x', mergeable: 'mergeable', state: 'open', body: BODY }),
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async (args) => { merges.push(args); return { merged: true }; },
     ...overrides,

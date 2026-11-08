@@ -416,8 +416,10 @@ function buildLoopViews(sorted, enrolled) {
     // The director's wish to see the work before it merges stands once any of their approvals said so,
     // in whatever lane and for whatever document (ruling R120), so a lapsed approval never drops it.
     const shownFirst = approvals.some((a) => a.data.work === id && a.data.shownFirst === true);
+    // Whether any record of the work ever marked it visible: the mark only goes up, so a later record can't lower it.
+    const everVisible = sorted.some((e) => e.kind === 'work' && e.data?.id === id && e.data.visible === true);
     work[id] = {
-      work: { key: id, ...mark(w) }, since, approved: approval !== null, ...(approval ? { approval } : {}), ...(shownFirst ? { shownFirst } : {}),
+      work: { key: id, ...mark(w) }, ...(everVisible ? { everVisible } : {}), since, approved: approval !== null, ...(approval ? { approval } : {}), ...(shownFirst ? { shownFirst } : {}),
     };
   }
 

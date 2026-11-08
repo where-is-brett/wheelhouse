@@ -2324,13 +2324,15 @@ export async function startHelper({
   }
 
   // The undo card of a project on GitHub or GitLab: the helper's own card word for word, naming a merge that is in the default
-  // branch's history, as the helper's own mirror reads it. Null where it isn't, so no click on another card is ever signed as one.
+  // branch's history, as the helper's own mirror reads it. Null where it isn't, so no click on another card is ever signed as one;
+  // undefined for a card that is not the undo card at all.
   async function hostedUndoEarned(project, data, ctx) {
     const question = data?.question;
     const lines = typeof question === 'string' ? [...question.matchAll(UNDO_LINE)] : [];
-    if (lines.length !== 1) return null;
+    // Undefined for a card that is not this one, so the other readings of an Undo click still get their turn.
+    if (lines.length !== 1) return undefined;
     const merge = lines[0][1];
-    if (!undoCards(merge).some((card) => sameCard(data, card))) return null;
+    if (!undoCards(merge).some((card) => sameCard(data, card))) return undefined;
     try {
       const defaultBranch = await defaultBranchOf(project, await ctx.adapter());
       const { history } = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, ({ must }) => defaultHistory(must, defaultBranch)));
@@ -3224,7 +3226,7 @@ export async function startHelper({
       const defaultBranch = await defaultBranchOf(project, adapter);
       changes = await readChanges({ project, number, headSha, defaultBranch }, ctx);
       classified = classifyChange({ paths: changes.paths, config: changes.config });
-      visibility = visibleFromChange({ paths: changes.paths, diff: changes.diff, config: changes.config });
+      visibility = visibleFromChange({ paths: changes.paths, diff: changes.diff, files: changes.files, config: changes.config });
       try {
         directorLevel = classifyDiff({
           paths: changes.paths, config: changes.config,
@@ -3365,12 +3367,16 @@ export async function startHelper({
     // Whether intake marked the work visible, as the signed record holds it (a work record that doesn't say `false` counts as
     // visible); and whether the change is one of the helper's own, verified ones, which are not judged by what they show.
     const intakeWork = FEATURE_BRANCH.exec(typeof pr.headRef === 'string' ? pr.headRef : '')?.[1];
-    const intakeMark = intakeWork !== undefined && Object.hasOwn(views.work ?? {}, intakeWork) ? views.work[intakeWork].work?.data?.visible : undefined;
+    const intakeEntry = intakeWork !== undefined && Object.hasOwn(views.work ?? {}, intakeWork) ? views.work[intakeWork] : undefined;
+    // The mark only goes up: a `true` anywhere in the work's records is final, and a mark that is missing is not a lowered one.
+    const intakeMark = intakeEntry?.everVisible === true ? true : intakeEntry?.work?.data?.visible;
     // Work in the feature lane that has flag files is behind a switch until a pull request changes one of them (as shownFirstNeeded
     // reads it): its other slices show users nothing yet, so intake's mark waits only for the switch-on.
     const behindSwitch = intakeWork !== undefined && views.work?.[intakeWork]?.work?.data?.lane === 'feature' && changes !== null
       && changes.config.flagFiles.length > 0 && !changes.paths.some((file) => changes.config.flagFiles.some((p) => matchGlob(p, file, { ignoreCase: true })));
-    const intakeVisible = intakeMark !== undefined && intakeMark !== false && !behindSwitch;
+    // Only a record that says `false` and has never said `true` lowers it, and only on a branch that belongs to the work: any other
+    // branch (not one of the helper's own verified changes, which `ownChange` and `batching` cover) counts as visible.
+    const intakeVisible = intakeWork === undefined || (intakeMark !== false && !behindSwitch);
     const ownChange = restore || switching || compacting || keeping || pinsOnly || updateCheck.matched || undoing;
     const internalByChange = visibility.visible === false && visibility.unsure === false && Array.isArray(directorLevel) && directorLevel.length === 0 && !intakeVisible;
     // Anything the change shows, can't be judged on, or sets at the director's level asks for the director's approval; the caller
@@ -5369,10 +5375,20 @@ export async function startHelper({
       return [];
     }
   }
-  const keepUndo = (project, entry) => writeWhole(undosFile(project), { undos: [...readUndos(project).filter((u) => u.pr !== entry.pr), entry] });
+  // A pending entry (pr 0: kept before its push) gives way to the entry for the same revert once its pull request is opened.
+  const keepUndo = (project, entry) => writeWhole(undosFile(project), { undos: [...readUndos(project).filter((u) => (entry.pr === 0 ? u.head !== entry.head : u.pr !== entry.pr && !(u.pr === 0 && u.head === entry.head))), entry] });
 
   // The helper's own mirror for an undo: the default branch's history, the revert (the merge's inverse as a three-way merge onto the
   // head, so no file in the mirror is touched), and the push of it.
+  // The words that say this computer's git is too old for merge-tree's --merge-base (2.40), or null. A version that can't be read throws.
+  async function tooOld(keyed, mirror) {
+    const said = await keyed('git', ['--version'], { cwd: mirror, input: '' });
+    const found = /git version (\d+)\.(\d+)(?:\.(\d+))?/.exec(said.stdout ?? '');
+    if (said.code !== 0 || found === null) throw new Error('reading the version of git failed');
+    const [major, minor] = [Number(found[1]), Number(found[2])];
+    return major > 2 || (major === 2 && minor >= 40) ? null : `Undo needs git 2.40 or later; this computer has ${found[0].slice('git version '.length)}`;
+  }
+
   function hostedUndoGit(project, ctx, defaultBranch) {
     const mirrored = (fn) => oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, fn));
     return {
@@ -5380,7 +5396,10 @@ export async function startHelper({
       revert: ({ merge, head }) => mirrored(async ({ mirror, keyed, must }) => {
         const parents = (await must(['rev-list', '--parents', '-n', '1', merge], 'reading the merge\'s parents')).trim().split(/\s+/).slice(1);
         if (parents.length === 0 || parents.length > 2) return { ok: false, reason: 'wide' };
+        const old = await tooOld(keyed, mirror);
+        if (old !== null) return { ok: false, reason: 'old-git', refused: old };
         const merged = await keyed('git', [...NO_HOOKS, 'merge-tree', '--write-tree', '--no-messages', `--merge-base=${merge}`, head, parents[0]], { cwd: mirror, input: '' });
+        // Exit 1 is merge-tree's word for a clash; any other failure is a failure, never read as one.
         if (merged.code === 1) return { ok: false, reason: 'conflict' };
         if (merged.code !== 0) throw new Error('making the revert failed');
         const tree = merged.stdout.split('\n')[0].trim();
@@ -5391,6 +5410,29 @@ export async function startHelper({
         const made = await keyed('git', [...NO_HOOKS, 'commit-tree', '--no-gpg-sign', tree, '-p', head, '-m', `Take back: ${subject}`], { cwd: mirror, input: '', env });
         if (made.code !== 0) throw new Error('making the revert\'s commit failed');
         return { ok: true, commit: made.stdout.trim(), subject };
+      }),
+      // The undo's head taken up to the default branch's tip as a merge of it: current if the tip is already in it, else a commit with the
+      // head and the tip as parents whose tree is their three-way merge (so the push is a fast-forward of the helper's own branch).
+      update: ({ head, base }) => mirrored(async ({ mirror, keyed, must }) => {
+        const known = readUndos(project).find((u) => u.head === head);
+        if (known === undefined) return { ok: false, reason: 'push', refused: 'the undo is not one the helper made' };
+        if ((await keyed('git', ['cat-file', '-e', `${head}^{commit}`], { cwd: mirror, input: '' })).code !== 0) {
+          await must(['fetch', '-q', '--no-tags', REMOTE, `+refs/heads/${known.branch}:refs/wheelhouse/undo-head`], 'fetching the undo\'s branch');
+          if ((await must(['rev-parse', '--verify', 'refs/wheelhouse/undo-head^{commit}'], 'reading the undo\'s branch')).trim() !== head) return { ok: false, reason: 'push', refused: `the branch ${known.branch} on the host is not the undo the helper made` };
+        }
+        const inside = await keyed('git', ['merge-base', '--is-ancestor', base, head], { cwd: mirror, input: '' });
+        if (inside.code === 0) return { ok: true, current: true };
+        if (inside.code !== 1) throw new Error('comparing the undo with the default branch failed');
+        const old = await tooOld(keyed, mirror);
+        if (old !== null) return { ok: false, reason: 'old-git', refused: old };
+        const merged = await keyed('git', [...NO_HOOKS, 'merge-tree', '--write-tree', '--no-messages', head, base], { cwd: mirror, input: '' });
+        if (merged.code === 1) return { ok: false, reason: 'conflict' };
+        if (merged.code !== 0) throw new Error('bringing the undo up to date failed');
+        const date = `${Math.floor(now().getTime() / 1000)} +0000`;
+        const env = { ...WHEELHOUSE_AUTHOR, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date };
+        const made = await keyed('git', [...NO_HOOKS, 'commit-tree', '--no-gpg-sign', merged.stdout.split('\n')[0].trim(), '-p', head, '-p', base, '-m', 'Bring the undo up to date with the main version'], { cwd: mirror, input: '', env });
+        if (made.code !== 0) throw new Error('making the update\'s commit failed');
+        return { ok: true, commit: made.stdout.trim() };
       }),
       push: async ({ branch, commit }) => {
         const mirror = await mirrored(async ({ mirror: dir, keyed }) => {
@@ -5408,16 +5450,42 @@ export async function startHelper({
     };
   }
 
+  // The approval the helper signed for an undo's pull request from the director's click, on any head: the click named the merge, not
+  // the head, so a revert brought up to date (the helper's own merge of the main version into its own branch) carries it on.
+  function undoApproval(project, merge, pr) {
+    const me = computerId();
+    const enrolled = readEnrolled();
+    return listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'approval' && e.data?.pr === pr && e.data?.proof === 'window'
+      && e.data?.question === undoLine(merge) && typeof e.data?.click === 'string' && e.computer === me && e.sig?.computer === me && verify(e, enrolled)).at(-1) ?? null;
+  }
+
+  // A click the director made for this merge that a revert already in flight used up, whose approval was not yet signed (a stop between
+  // the two): it still names the merge, and is carried on to the revert that click began.
+  function spentClick(project, merge) {
+    const me = computerId();
+    const enrolled = readEnrolled();
+    const events = listEvents(stateDir(project), { report: () => {} });
+    const ownSigned = (e) => e.computer === me && e.sig?.computer === me && verify(e, enrolled);
+    const used = new Set(events.filter((e) => e.kind === 'note' && e.data?.lean === 'undo' && typeof e.data?.click === 'string' && ownSigned(e)).map((e) => e.data.click));
+    const approved = new Set(events.filter((e) => e.kind === 'approval' && typeof e.data?.click === 'string' && ownSigned(e)).map((e) => e.data.click));
+    return events.filter((e) => e.kind === 'action' && e.data?.action === 'undo-merge' && e.data?.proof === 'window' && e.data?.merge === merge
+      && used.has(e.id) && !approved.has(e.id) && ownSigned(e)).at(-1) ?? null;
+  }
+
+  // The note that uses a click up, signed and naming it, written before the revert is pushed so one click makes one revert.
+  const useUndoClick = (project, click) => checkWrite(project, sign(makeEvent({ kind: 'note', data: { lean: 'undo', click, text: 'A merge was taken back out of the main version, on your click. Nothing was deleted.' }, now })));
+
   // Records the director's approval of an undo's pull request head, from the signed click in the window that names the merge: the
-  // helper signs it, so it exists only where the director clicked. An approval already on record for that head stands, so an undo whose
-  // merge was refused (its checks hadn't passed) is carried on without a second click. The click is used by the note that names it.
+  // helper signs it, so it exists only where the director clicked. An approval already on record for that head stands, and one on
+  // record for the same pull request on an earlier head (the revert brought up to date) is carried to the new head, so an undo whose
+  // merge was refused (its checks hadn't passed) is carried on without a second click.
   async function approveUndo(project, merge, { pr, head, approval }) {
     const enrolled = ownKeyOnly();
     const views = buildViews(listEvents(stateDir(project), { report: () => {} }), enrolled, { damaged: [], now });
     if (approvalCounts(views.approvals?.[String(pr)]?.[head], head, enrolled)) return true;
-    if (!approval) return false;
-    await checkWrite(project, sign(makeEvent({ kind: 'approval', data: { pr, commit: head, words: 'Undo', question: undoLine(merge), proof: 'window', click: approval.id }, now })));
-    await checkWrite(project, sign(makeEvent({ kind: 'note', data: { lean: 'undo', click: approval.id, text: 'A merge was taken back out of the main version, on your click. Nothing was deleted.' }, now })));
+    const click = approval?.id ?? undoApproval(project, merge, pr)?.data.click;
+    if (typeof click !== 'string') return false;
+    await checkWrite(project, sign(makeEvent({ kind: 'approval', data: { pr, commit: head, words: 'Undo', question: undoLine(merge), proof: 'window', click }, now })));
     return true;
   }
 
@@ -5427,17 +5495,24 @@ export async function startHelper({
   // is the card that asks. The caller's other fields are never read: it can't say the click was made. A revert that clashes with later
   // work pushes nothing and becomes a decision card.
   async function doUndo(body, ctx) {
-    const { project, merge } = body ?? {};
+    const { project, merge, moved } = body ?? {};
     if (readProject(project)?.host === 'local') return doLocalUndo(body);
-    if (body.moved === true) refuse('That undo is only for a project kept on this computer');
+    if (moved === true) refuse('That undo is only for a project kept on this computer');
     if (typeof merge !== 'string' || !FULL_SHA.test(merge)) refuse('The merge to undo must be written in full');
     if (stopped()) return STOP_REFUSAL;
+    // One undo of a project at a time, with the click and the kept revert read inside the lock: two calls on one click make one
+    // revert. Its own key, since the merge the undo ends in takes `merge:` itself.
+    return oneAtATime(`undo:${project}`, () => undoHosted({ project, merge }, ctx));
+  }
+
+  async function undoHosted({ project, merge }, ctx) {
     await lookAtState(ctx, project);
     await lookAtMirror(ctx, project);
     const adapter = await ctx.adapter();
     const defaultBranch = await defaultBranchOf(project, adapter);
     const kept = readUndos(project).filter((u) => u.merge === merge).at(-1) ?? null;
-    const approval = windowClick(project, 'undo-merge', (d) => d.merge === merge);
+    const fresh = windowClick(project, 'undo-merge', (d) => d.merge === merge);
+    const approval = fresh ?? (kept === null ? null : spentClick(project, merge));
     // The id of the card asking, raised once: the state's own record of it, since the writer gives none back.
     const cardOf = async (data) => {
       const raised = await raiseCard(project, data, (p, kind, d) => engineWrite(p, kind, d));
@@ -5445,7 +5520,11 @@ export async function startHelper({
     };
     const done = await undoOnHost({
       adapter, git: hostedUndoGit(project, ctx, defaultBranch), merge, approval, defaultBranch, kept,
-      keep: (entry) => keepUndo(project, entry),
+      // The click is used up as the revert is kept, before it is pushed.
+      keep: async (entry) => {
+        keepUndo(project, entry);
+        if (entry.pr === 0 && fresh !== null) await useUndoClick(project, fresh.id);
+      },
       approve: (given) => approveUndo(project, merge, given),
       through: (number) => oneAtATime(`merge:${project}`, () => doMerge({ project, number }, ctx)),
     });
@@ -5453,6 +5532,7 @@ export async function startHelper({
     const words = {
       'not-merged': 'That merge is not in the main version',
       wide: 'That merge joins more than two lines of work, so it can\'t be undone here',
+      'old-git': done.refused ?? 'Undo needs git 2.40 or later',
       'nothing-to-undo': 'Taking that merge out would change nothing: it is already out',
       push: done.refused ?? 'The undo\'s branch could not be pushed',
       host: done.refused ?? 'The host would not open the undo',
@@ -5462,6 +5542,26 @@ export async function startHelper({
       return { ok: false, reason: 'conflict', refused: 'The undo clashes with later work, so nothing was changed: it is now a decision for the director', card: await cardOf(undoConflictCard(merge)) };
     }
     return { ok: false, reason: done.reason, refused: words[done.reason] ?? 'The undo could not be made' };
+  }
+
+  // The undos still open on GitHub or GitLab, each taken on from where it stopped (its checks pending, or the main version moved on):
+  // a kept undo the director's click already approved goes through the same route again, which brings it up to date and merges it
+  // once the gate allows. One with no click yet is left to the card that asks.
+  async function undoRound() {
+    for (const { project, record } of registeredProjects()) {
+      if (closing) return;
+      if (record?.host === 'local') continue;
+      const open = new Map();
+      for (const u of readUndos(project)) if (u.pr > 0) open.set(u.merge, u);
+      for (const u of open.values()) {
+        try {
+          if (undoApproval(project, u.merge, u.pr) === null) continue;
+          const ctx = await contextFor(project);
+          const state = await (await ctx.adapter()).prState(u.pr);
+          if (state?.state === 'open') await doUndo({ project, merge: u.merge }, ctx);
+        } catch { /* looked at again next time */ }
+      }
+    }
   }
 
   // One sweep of the local queue. What was sent back, asked or said is kept for each head, so a change waiting says each once.
@@ -6438,9 +6538,9 @@ export async function startHelper({
       pluginRoot,
     });
   }
-  const safekeepingWatch = setInterval(() => { safekeepingRound().catch(() => {}); moveRound().catch(() => {}); watcherRound().catch(() => {}); }, dispatchMs);
+  const safekeepingWatch = setInterval(() => { safekeepingRound().catch(() => {}); moveRound().catch(() => {}); watcherRound().catch(() => {}); undoRound().catch(() => {}); }, dispatchMs);
   safekeepingWatch.unref?.();
 
   // `engine.start` is the helper's own way to start a run (the dispatcher's): no route starts one.
-  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() }, safekeeping: { tick: () => safekeepingRound() }, watcher: { tick: () => watcherRound() }, move: { tick: () => moveRound() } };
+  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() }, safekeeping: { tick: () => safekeepingRound() }, watcher: { tick: () => watcherRound() }, move: { tick: () => moveRound() }, undo: { tick: () => undoRound() } };
 }

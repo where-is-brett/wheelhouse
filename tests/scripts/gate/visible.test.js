@@ -23,7 +23,7 @@ test('a page or template change is visible', () => {
 });
 
 test('a test-only change is not visible', () => {
-  const paths = ['tests/scripts/tide.test.js', 'src/tide.spec.js', 'src/__tests__/a.js', 'docs/notes.md', 'README.md'];
+  const paths = ['tests/scripts/tide.test.js', 'src/tide.spec.js', 'src/__tests__/a.js', 'docs/notes.md'];
   const text = paths.map((p) => diff(p, { remove: ["const a = 'Tide chart failed';"], add: ["const a = 'Tide chart could not load';"] })).join('');
   assert.deepEqual(visibleFromChange({ paths, diff: text }), { visible: false, unsure: false, reasons: [] });
 });
@@ -69,4 +69,49 @@ test('a diff or paths that can\'t be read are unsure, never not visible', () => 
   // A code file the diff doesn't cover can't be judged, nor can a binary change to code.
   assert.equal(visibleFromChange({ paths: [file, 'src/other.js'], diff: text }).unsure, true);
   assert.equal(visibleFromChange({ paths: [file], diff: `diff --git a/${file} b/${file}\nBinary files a/${file} and b/${file} differ\n` }).unsure, true);
+});
+
+// Text that users see in forms a quoted-literal reading misses: each is visible or unsure, never quietly internal.
+test('text between tags, inside multi-line strings and behind a hash or slashes is not read as internal', () => {
+  const cases = [
+    ['src/App.js', ['<h1>Welcome</h1>'], ['<h1>Hello</h1>']],
+    ['src/mail.js', ['  Welcome back to the tide chart'], ['  Hello and welcome to the tide chart']],
+    ['src/mail.py', ['    Welcome back to the tide chart'], ['    Hello and welcome to the tide chart']],
+    ['src/err.rs', ['#[error("Tide chart failed")]'], ['#[error("Tide chart could not load")]']],
+    ['src/msg.c', ['#define MSG "Tide chart failed"'], ['#define MSG "Tide chart could not load"']],
+    ['src/url.js', ['const m = "Tide // failed";'], ['const m = "Tide // could not load";']],
+  ];
+  for (const [file, remove, add] of cases) {
+    const got = visibleFromChange({ paths: [file], diff: diff(file, { remove, add }) });
+    assert.ok(got.visible || got.unsure, `${file}: ${JSON.stringify(got)}`);
+  }
+  // A string with a slash run in it that does not change is still not a change.
+  const same = visibleFromChange({ paths: ['src/u.js'], diff: diff('src/u.js', { remove: ['a("x // y"); n = 1;'], add: ['a("x // y"); n = 2;'] }) });
+  assert.equal(same.visible, false);
+  assert.equal(same.unsure, false);
+});
+
+test('hash lines are comments only where the language says so', () => {
+  const py = visibleFromChange({ paths: ['src/a.py'], diff: diff('src/a.py', { add: ['# "A new note here"'] }) });
+  assert.equal(py.visible, false);
+  assert.equal(py.unsure, false);
+  const c = visibleFromChange({ paths: ['src/a.c'], diff: diff('src/a.c', { add: ['#define MSG "A new note here"'] }) });
+  assert.equal(c.visible, true);
+});
+
+test('package.json is unsure unless only development dependencies change; top-level notes are not internal by default', () => {
+  const pkg = (lines) => visibleFromChange({ paths: ['package.json'], diff: diff('package.json', { add: lines }) });
+  assert.equal(pkg(['  "name": "tide"']).unsure, true);
+  assert.equal(pkg(['  "scripts": { "start": "node x.js" }']).unsure, true);
+  const manifest = (devDeps, name = 'tide') => JSON.stringify({ name, dependencies: { a: '1' }, devDependencies: devDeps });
+  const files = { 'package.json': { base: manifest({ eslint: '^8.0.0' }), head: manifest({ eslint: '^9.0.0' }) } };
+  const dev = visibleFromChange({ paths: ['package.json'], diff: diff('package.json', { remove: ['    "eslint": "^8.0.0"'], add: ['    "eslint": "^9.0.0"'] }), files });
+  assert.equal(dev.unsure, false);
+  assert.equal(dev.visible, false);
+  const both = { 'package.json': { base: manifest({ eslint: '^8.0.0' }), head: manifest({ eslint: '^9.0.0' }, 'tide2') } };
+  assert.equal(visibleFromChange({ paths: ['package.json'], diff: diff('package.json', { add: ['x'] }), files: both }).unsure, true);
+  assert.equal(visibleFromChange({ paths: ['README.md'], diff: diff('README.md', { add: ['x'] }) }).unsure, true);
+  assert.equal(visibleFromChange({ paths: ['docs/a.md'], diff: diff('docs/a.md', { add: ['x'] }) }).unsure, false);
+  const config = readConfig(JSON.stringify({ ...CONFIG, visibility: { paths: ['README.md'] } }));
+  assert.equal(visibleFromChange({ paths: ['README.md'], diff: diff('README.md', { add: ['x'] }), config }).visible, true);
 });

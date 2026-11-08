@@ -16,7 +16,7 @@ import { stateDir, oldStateDir } from '../../../scripts/lib/paths.js';
 import { openRecord } from '../../../scripts/state/record.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
-import { makeEvent, eventPath, writeEvent } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath, writeEvent, listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { setStop } from '../../../scripts/lib/stop.js';
@@ -117,7 +117,14 @@ const merge = (client, number = 7, extra = {}) => client.merge({ project: 'o__p'
 // A reviewed pull request `number` from `headRef`, with `files` changed, ready to merge.
 async function readyPr(home, remote, number, headRef, files) {
   const headSha = await prOnHost(remote.url, { number, files });
-  await as(home, () => reviewed(number, headSha));
+  await as(home, () => {
+    reviewed(number, headSha);
+    // Work that has no record of its own is work intake has not marked, which counts as visible; these are internal.
+    const slug = /^feature\/([a-z0-9-]+)/.exec(headRef)?.[1];
+    if (slug !== undefined && !listEvents(stateDir('o__p'), { report: () => {} }).some((e) => e.kind === 'work' && e.data?.id === slug)) {
+      record('work', { id: slug, title: slug, lane: 'small', visible: false, dependsOn: [] });
+    }
+  });
   return { headSha, headRef };
 }
 
@@ -435,7 +442,10 @@ test('a branch that names no approved work, or work approved without shown-first
       click({ action: 'approve-work', work: 'waiting', lane: 'small', hash: H1, shownFirst: true, label: 'Approve' }, { unsigned: true });
     });
     await withHelper(home, adapter, async (client) => {
-      for (const number of [8, 9, 10]) assert.equal((await merge(client, number)).ok, true, `pull request ${number}`);
+      for (const number of [8, 10]) assert.equal((await merge(client, number)).ok, true, `pull request ${number}`);
+      // A branch that is no work's is not judged internal by intake's mark: it waits for the director's approval like any other change.
+      const waits = await merge(client, 9);
+      assert.deepEqual([waits.ok, waits.reasons], [false, [`no approval of ${short(other.headSha)}`]]);
     });
   } finally { remote.cleanup(); }
 });
@@ -555,7 +565,7 @@ test('/merge with a fix in its body is not taken as the fix of a red main line',
     const home = await project(remote);
     const a = await readyPr(home, remote, 9, 'wh/fix', { 'src/a.js': 'a\n' });
     const adapter = fakeAdapter({ 9: a });
-    await as(home, () => record('incident', { id: RED.id, what: 'red', kind: 'red-main', suspect: 7, work: RED.work }));
+    await as(home, () => { approved(9, a.headSha); record('incident', { id: RED.id, what: 'red', kind: 'red-main', suspect: 7, work: RED.work }); });
     await withHelper(home, adapter, async (client) => {
       for (const extra of [{}, { fix: { incident: RED.id, pr: 9, head: a.headSha } }, { fixCall: { runId: 'run-9', pr: 9, head: a.headSha, incident: RED.id } }]) {
         const answer = await merge(client, 9, extra);
