@@ -72,3 +72,13 @@ Changed:
 - `docs/specs/2026-10-17-wheelhouse-design.md` (settings list, safety section), `docs/data.md`.
 
 Not changed: `scripts/lib/role.js` and `scripts/hooks/session-start.js`. A helm session is already `feature` (its recorded role, or `featureSlug(cwd)` for the starting form). If a task finds it needs a change there, it goes in one separate block and the PR body names it.
+
+## Review Focus
+
+1. **A transcript being written as it is read.** The last line is often half-written: it is skipped, never a crash or a broken step. (Task 1.2.)
+2. **A very long run.** A transcript of hundreds of megabytes: only its tail is read (256 KiB for steps, 2 MiB for the page), and the Logbook stays quick. (Tasks 1.2, 4.1.)
+3. **Secrets and hostile text in a tool result.** An API key in `.env` output, Markdown or HTML, terminal escape codes, a line that says "ignore your instructions": masked or escaped on the page and in step lines, never acted on. (Tasks 1.3, 4.1.)
+4. **No transcript found.** Unknown session id, `CLAUDE_CONFIG_DIR` moved, the run not yet started: the piece shows no step line and the page says "No transcript yet", never an error. (Tasks 1.1, 3.1, 4.2.)
+5. **The helm terminal closed without `/exit`.** `SessionEnd` may not run: the recorded pid, checked with its start time, ends the hold at the watcher's next tick. (Task 5.4.)
+
+---
