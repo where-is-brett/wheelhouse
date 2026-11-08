@@ -10,7 +10,7 @@ import { appendJsonl } from '../lib/log.js';
 import { projectSlug } from '../../scripts/lib/paths.js';
 import { runFolder } from './results.js';
 import { openPicker, readyToSubmit, deskBusy, HIGHLIGHTED, PICKED } from './stand-in.js';
-import { PIECES, WAVES, P5_SPARE, F2_ANSWER } from './requests.js';
+import { PIECES, WAVES, P5_SPARE, F2_ANSWER, P6_FILE } from './requests.js';
 import { SESSION_PREFIX, frontDeskCommand } from './tmux.js';
 import { STEPS as LOG, SETUP_DONE, OWN_BRANCH } from './signals.js';
 import { auditModels } from './audit.js';
@@ -915,7 +915,7 @@ export const STEPS = [
 
 async function p6Sha(ctx) {
   const pulls = await ghPulls(ctx);
-  return (pullOf(pulls, ctx.state.pieces.P6?.change) ?? pullOf(pulls, 'node 24'))?.merge_commit_sha ?? 'unknown';
+  return (pullOf(pulls, ctx.state.pieces.P6?.change) ?? pullOf(pulls, 'money-edge'))?.merge_commit_sha ?? 'unknown';
 }
 
 const readLog = (file) => {
@@ -932,12 +932,14 @@ async function gatherAndCheck(ctx, io) {
   const transcripts = io.host.findTranscripts({ project: ctx.projectName, dir: ctx.projectDir });
   const pieces = state.pieces;
   if (pieces.P8) pieces.P8.gate = await io.host.readGate({ change: pieces.P8.change, project: ctx.projectName });
-  const mainCi = await io.host.readMain({ dir: ctx.projectDir, file: '.github/workflows/ci.yml' });
+  // A file that is absent and a read that failed both come back null, so package.json is read too: it is always on main.
+  const mainFiles = {};
+  for (const file of ['package.json', P6_FILE]) mainFiles[file] = await io.host.readMain({ dir: ctx.projectDir, file });
   const config = state.config ?? (await io.host.readConfig({ dir: ctx.projectDir }));
   const full = await io.signals.gatherContext({
     project: ctx.projectName, gh: io.gh, runLog: readLog(ctx.logFile).filter((e) => e.done !== true), panes: state.panes, transcripts, pieces,
     scores: state.score, previews: ctx.preview, config, ntfy: state.ntfy, ntfySetUp: state.ntfySetUp, faults: state.faults,
-    branches: state.branches, mainCi, digestAt: state.digestAt, projectName: ctx.repoName,
+    branches: state.branches, mainFiles, digestAt: state.digestAt, projectName: ctx.repoName,
   });
   for (const [id, piece] of Object.entries(pieces)) {
     piece.prs = piece.change ? (full.prs ?? []).filter((p) => `${p.head} ${p.title}`.toLowerCase().includes(String(piece.change).toLowerCase())).map((p) => p.number) : [];

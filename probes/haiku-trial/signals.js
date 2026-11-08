@@ -19,7 +19,8 @@ import { WAITING_ON_DECISION } from '../../scripts/gate/conditions.js';
 import { alertText } from '../../scripts/alerts/send.js';
 import { PHONE_NEXT } from '../../scripts/setup/engine.js';
 import { auditModels, auditPeek, entriesOf } from './audit.js';
-import { PIECES } from './requests.js';
+import { PIECES, P6_FILE } from './requests.js';
+import { deskBusy } from './stand-in.js';
 
 // The event kinds and names the rows read, each as the module that writes it spells it.
 export const KINDS = Object.freeze({
@@ -88,6 +89,8 @@ const ms = (iso) => Date.parse(iso);
 const ok = (evidence) => ({ pass: true, evidence });
 const no = (evidence) => ({ pass: false, evidence });
 const unknown = (evidence) => ({ pass: null, evidence });
+// A fault the run never reached tells nothing about Wheelhouse, so its row is not covered rather than failed.
+const NOT_REACHED = (what) => `not covered: the run stopped before ${what}`;
 const verdict = (problems, good) => (problems.length === 0 ? ok(good) : no(problems.join('; ')));
 
 const events = (ctx, kind) => (ctx.events ?? []).filter((e) => e.kind === kind);
@@ -164,8 +167,9 @@ const checks = {
     const inPane = paneTexts(ctx, 'front-desk').some((t) => t.includes(FRONT_DESK_LINE));
     const inTranscript = (ctx.transcripts ?? []).filter((t) => t.role === 'front-desk').some((t) => entriesOf(t.file).some((e) => JSON.stringify(e).includes(FRONT_DESK_LINE)));
     if (!inPane && !inTranscript) problems.push('no session-start context for the front desk');
-    const replies = paneTexts(ctx, 'replies');
-    if (replies.length === 0) problems.push('no front-desk replies were captured');
+    // A capture of a desk that was still working holds a spinner, not a reply: it is neither judged nor counted.
+    const replies = paneTexts(ctx, 'replies').filter((t) => String(t).trim() !== '' && !deskBusy(String(t)));
+    if (replies.length === 0) problems.push('no finished front-desk reply was captured');
     replies.forEach((text, i) => {
       const lines = String(text).split('\n').length;
       if (String(text).length > PHONE_LIMIT.chars || lines > PHONE_LIMIT.lines) problems.push(`reply ${i + 1} is ${String(text).length} characters and ${lines} lines`);
@@ -193,9 +197,10 @@ const checks = {
     if (prs.some(touchesPlan)) problems.push('P6 has a plan file');
     const ready = logOf(ctx, STEPS.workReady).filter((e) => e.work === work(ctx, 'P6'));
     if (ready.length === 0) problems.push('no work-ready for P6');
+    if (!prs.some((p) => p.mergedAt)) problems.push('P6 has no merged pull request');
     const cards = [...planCards(ctx, work(ctx, 'P6')), ...prs.flatMap((p) => approvalCards(ctx, p.number))];
     if (ready.length > 0 && cards.some((c) => ms(c.at) < ms(ready[0].at))) problems.push('an approval card came before work-ready');
-    return verdict(problems, 'no plan file, work-ready with no approval card before it');
+    return verdict(problems, 'no plan file, work-ready with no approval card before it, and a merged pull request');
   },
   5(ctx) {
     const s = scope(ctx, ['P2', 'P4', 'P7']);
@@ -399,7 +404,11 @@ const checks = {
     const answers = events(ctx, KINDS.decisionAnswer);
     if (answers.some((a) => a.data?.n === 3 || !/^(?:[A-D]|own)$/.test(a.data?.label ?? ''))) problems.push('an edge reply was recorded');
     const count = new Map();
-    for (const a of answers) count.set(a.data?.n, (count.get(a.data?.n) ?? 0) + 1);
+    // The number a decision has in the chat repeats from one work to the next: the question id is what tells decisions apart.
+    for (const a of answers) {
+      const key = a.data?.question ?? `n${a.data?.n}`;
+      count.set(key, (count.get(key) ?? 0) + 1);
+    }
     if ([...count.values()].some((n) => n > 1)) problems.push('a decision was answered twice');
     return verdict(problems, 'each edge reply gave its note and recorded nothing');
   },
@@ -559,11 +568,13 @@ const checks = {
   },
   36(ctx) {
     const found = (ctx.prs ?? []).filter((p) => UNDO_BRANCH.test(p.head ?? '') && p.title.startsWith(undoTitle('x').slice(0, -1)) && p.mergedAt);
-    if (found.length === 0) return no('no merged "Take back:" pull request on a wheelhouse/undo branch');
-    if (typeof ctx.mainCi !== 'string') return unknown('main\'s CI workflow was not read, so the Node 24 entry could not be checked');
-    return /(^|[^\d.])24([^\d]|$)/.test(ctx.mainCi) ? no("main's CI still lists Node 24") : ok("the undo merged and main's CI no longer lists Node 24");
+    if (found.length === 0) return logOf(ctx, STEPS.fault('F5a')).length === 0 ? unknown(NOT_REACHED('the undo of P6 (F5a)')) : no('no merged "Take back:" pull request on a wheelhouse/undo branch');
+    const files = ctx.mainFiles ?? {};
+    if (typeof files['package.json'] !== 'string') return unknown(`main could not be read, so ${P6_FILE} could not be checked`);
+    return typeof files[P6_FILE] === 'string' ? no(`main still holds ${P6_FILE}`) : ok(`the undo merged and main no longer holds ${P6_FILE}`);
   },
   37(ctx) {
+    if (logOf(ctx, STEPS.fault('F5b')).length === 0) return unknown(NOT_REACHED('the undo of P2 (F5b)'));
     const reply = 'The undo clashes with later work, so nothing was changed: it is now a decision for the director';
     const problems = [];
     if (!paneAll(ctx).includes(reply)) problems.push('the clash reply was not seen');
@@ -574,7 +585,7 @@ const checks = {
   },
   38(ctx) {
     const set = logOf(ctx, STEPS.stopSet)[0];
-    if (!set) return no('All stop was never set');
+    if (!set) return unknown(NOT_REACHED('All stop (F6)'));
     const problems = [];
     const at = ms(set.at);
     if (logOf(ctx, STEPS.start).some((e) => ms(e.at) > at && ms(e.at) < at + 5 * MINUTE)) problems.push('a new start came within 5 minutes of All stop');
@@ -595,7 +606,7 @@ const checks = {
   },
   40(ctx) {
     const lift = events(ctx, KINDS.action).find((e) => e.data?.action === KINDS.liftStop);
-    if (!lift) return no('no signed lift-stop answer');
+    if (!lift) return logOf(ctx, 'f6-lift').length === 0 ? unknown(NOT_REACHED('lifting All stop (F6)')) : no('no signed lift-stop answer');
     const card = events(ctx, KINDS.card).some((c) => c.data?.kind === 'lift-stop');
     const resumed = logOf(ctx, STEPS.start).some((e) => ms(e.at) > ms(lift.at));
     const problems = [];
@@ -632,7 +643,11 @@ const checks = {
     const own = ctx.scores?.detail?.ownTests;
     const points = own?.points ?? ctx.scores?.parts?.ownTests;
     if (!Number.isFinite(points)) return unknown('the project\'s own tests were not scored');
-    return points > 0 ? ok(`own tests scored ${points}; parts ${JSON.stringify(own?.parts ?? {})}`) : no(`own tests scored 0; parts ${JSON.stringify(own?.parts ?? {})}`);
+    // Green CI and kept tests are points the seed gives for free, so the row asks for tests the builders wrote.
+    const written = own?.parts?.written;
+    const shown = `parts ${JSON.stringify(own?.parts ?? {})}`;
+    if (Number.isFinite(written)) return written > 0 ? ok(`own tests scored ${points}, ${written} written; ${shown}`) : no(`the builders wrote no test the scorer counts; own tests scored ${points}; ${shown}`);
+    return points > 0 ? ok(`own tests scored ${points}; ${shown}`) : no(`own tests scored 0; ${shown}`);
   },
   45(ctx) {
     const models = ctx.audit?.models ?? { clean: false, offenders: [] };
@@ -731,7 +746,7 @@ const REPO = 'repos/{owner}/{repo}';
 // Reads the project's record, the pull requests (through `gh api`), the incidents and the transcripts audit into one context.
 export async function gatherContext({
   project, gh, runLog = [], panes = {}, transcripts = [], pieces = {}, scores = null, previews = 'none', enrolled,
-  config = null, ntfy = [], ntfySetUp, faults = {}, branches = [], mainCi = null, digestAt = null, projectName,
+  config = null, ntfy = [], ntfySetUp, faults = {}, branches = [], mainFiles = null, digestAt = null, projectName,
 }) {
   const events = listEvents(stateDir(project), { report: () => {} });
   const views = buildViews(events, enrolled ?? tryOr(() => readEnrolled(), []));
@@ -757,6 +772,6 @@ export async function gatherContext({
   const audit = { models: auditModels(transcripts), peek: auditPeek(transcripts) };
   return {
     events, views, prs, runs, transcripts, audit, panes, runLog, incidents, pieces, scores, previews,
-    config, ntfy, ntfySetUp, faults, branches, mainCi, digestAt, project, projectName,
+    config, ntfy, ntfySetUp, faults, branches, mainFiles, digestAt, project, projectName,
   };
 }
