@@ -435,9 +435,9 @@ async function keepLock(project, client, left, seen = {}) {
   return NO_LOCK;
 }
 
-// The words before the take-over card's AskUserQuestion input, as JSON on the same line.
 // The words before the window take-over card's AskUserQuestion input.
 export const SEAT_TAKEOVER_ASK = 'The First Mate is in another window: show the director this card with AskUserQuestion, exactly as given, as a question of its own, when they ask for Wheelhouse work: ';
+// The words before the take-over card's AskUserQuestion input, as JSON on the same line.
 export const TAKEOVER_ASK = 'Another computer has the First Mate: show the director the Logbook as it stands, read-only, and ask them this card with AskUserQuestion, exactly as given, as a question of its own: ';
 // RECENT_MS (imported from the seat's module, one number for both cards): within this long since the other computer or
 // window last wrote, it counts as in use. (A lock idle two hours is taken at once.)
@@ -776,7 +776,7 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
     if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
   }
   views ??= localViews(project);
-  const text = reload({ views, stop: stopOf(), notes, feature: featureSlug(input.cwd), stateRoot: stateDir(project), sheet: sheet() });
+  const text = reload({ views, stop: stopOf(), notes, feature: madeFeatureSlug(input.cwd), stateRoot: stateDir(project), sheet: sheet() });
   return text === '' ? undefined : answer.context('SessionStart', text);
 }
 
@@ -788,6 +788,7 @@ export const TITLES = Object.freeze({
   firstMate: 'Wheelhouse · First Mate',
   setup: 'Wheelhouse · Setup',
   bosun: 'Wheelhouse · Bosun',
+  aside: 'Wheelhouse · Aside',
 });
 export const crewTitle = (feature) => `Wheelhouse · Crew: ${oneLine(feature)}`;
 export function sessionTitle(input, { dir, projectOf: find = projectOf, env = process.env } = {}) {
@@ -795,8 +796,12 @@ export function sessionTitle(input, { dir, projectOf: find = projectOf, env = pr
   const found = find(input.cwd, { dir });
   const setup = beingSetUp(input.cwd);
   if (!found) return setup === null ? null : TITLES.setup;
-  const role = sessionRole({ sessionId: input.session_id, env, cwd: input.cwd });
+  // The seat is read from the project found, as it stands after the session start judged it.
+  let seat;
+  try { seat = readSeat(found.project); } catch { seat = null; }
+  const role = sessionRole({ sessionId: input.session_id, env, cwd: input.cwd, seat });
   if (role === 'foreman') return TITLES.bosun;
+  if (role === 'aside') return TITLES.aside;
   const feature = madeFeatureSlug(input.cwd);
   if (feature !== null) return crewTitle(feature);
   return setup === null ? TITLES.firstMate : TITLES.setup;
@@ -994,12 +999,12 @@ async function started(input, deps) {
   let where = '';
   if (input.source === 'compact') {
     try {
-      where = await whereDigest({ project, input, views, feature: featureSlug(input.cwd), stateRoot, env });
+      where = await whereDigest({ project, input, views, feature: madeFeatureSlug(input.cwd), stateRoot, env });
     } catch { /* the reload goes without it */ }
     resetEpisode(project, input.session_id);
   }
   const text = reload({
-    views, stop: stopOf(), lineage, notes, feature: featureSlug(input.cwd), stateRoot, windows, builds, frontDesk, aside: asideNote, where,
+    views, stop: stopOf(), lineage, notes, feature: madeFeatureSlug(input.cwd), stateRoot, windows, builds, frontDesk, aside: asideNote, where,
     sheet: toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: commandRoot({ dir, self }, pluginRoot), platform }),
   });
   return text === '' ? undefined : answer.context('SessionStart', text);
