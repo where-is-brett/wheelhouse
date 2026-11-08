@@ -48,7 +48,7 @@ import { answeredWords, subjectOf, NOTE_LEAD } from '../cards/answered.js';
 import { SINCE_LEAD, SINCE_TAIL } from '../cards/panel-words.js';
 import { chatCopy } from '../state/card-lines.js';
 import { readOpen, clearOpen } from '../lib/session-files.js';
-import { featureSlug, SETUP_FIRST } from './session-start.js';
+import { featureSlug, madeFeatureSlug, SETUP_FIRST } from './session-start.js';
 import { keepRequest } from '../lib/kept-request.js';
 import { briefingModel as realBriefingModel } from '../briefing/model.js';
 import { heldBackLine } from '../board/model.js';
@@ -375,7 +375,7 @@ export async function decide(input, deps = {}) {
     // A foreman known only from its first prompt was pointed at the front desk by the session start.
     if (role === 'foreman' && first && env?.WHEELHOUSE_ROLE !== 'foreman') return answer.context('UserPromptSubmit', FOREMAN_LINE);
     if (setup !== null && role === 'front-desk') return answer.context('UserPromptSubmit', SETUP_FIRST);
-    if (role !== 'front-desk' || featureSlug(input.cwd) !== null) return undefined;
+    if (role !== 'front-desk' || madeFeatureSlug(input.cwd) !== null) return undefined;
     const { project } = found;
     const at = clockOf(now);
     const seen = readSeen(project, { now: at });
