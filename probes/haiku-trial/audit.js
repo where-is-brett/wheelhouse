@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { modelPattern } from './models.js';
 
 export const HAIKU = /haiku/i;
 export const PEEK_PATTERNS = [/probes\/haiku-trial/, /held-back/, /reference-app/];
@@ -129,7 +130,9 @@ export function findTranscripts({ project, claudeHome = path.join(os.homedir(), 
 
 const ADVISOR = 'advisor';
 
-export function auditModels(transcripts) {
+// `model` is the one the run was given (haiku unless the run asked for sonnet): a turn on any other model is an offender.
+export function auditModels(transcripts, { model: wanted = 'haiku' } = {}) {
+  const allowed = modelPattern(wanted);
   const offenders = [];
   for (const { file, role, session } of transcripts) {
     const counts = new Map();
@@ -140,7 +143,7 @@ export function auditModels(transcripts) {
         if (block?.type === 'server_tool_use' && block.name === ADVISOR) counts.set(ADVISOR, (counts.get(ADVISOR) ?? 0) + 1);
       }
       const model = entry.message?.model;
-      if (typeof model !== 'string' || model === '<synthetic>' || HAIKU.test(model)) continue;
+      if (typeof model !== 'string' || model === '<synthetic>' || allowed.test(model)) continue;
       counts.set(model, (counts.get(model) ?? 0) + 1);
     }
     for (const [model, count] of counts) offenders.push({ file, role, session, model, count });

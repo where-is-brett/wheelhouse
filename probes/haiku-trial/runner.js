@@ -14,6 +14,7 @@ import { PIECES, WAVES, P5_SPARE, F2_ANSWER, P6_FILE } from './requests.js';
 import { SESSION_PREFIX, frontDeskCommand } from './tmux.js';
 import { STEPS as LOG, SETUP_DONE, OWN_BRANCH } from './signals.js';
 import { auditModels } from './audit.js';
+import { parseModel, DEFAULT_MODEL, MODELS } from './models.js';
 import { STARTS_UNAPPROVED } from '../../scripts/foreman/queue.js';
 import { installCommand, removeCommands } from './stage-plugin.js';
 import { reviewCard, stepsPage, writeTryMe, reviewAsDecision, answerLetter } from './review-card.js';
@@ -373,9 +374,12 @@ async function spareBugCheck(ctx) {
 const piecesTyped = (wave) => async (ctx) => typeWave(ctx, wave);
 const needsGo = true;
 
+// The model's name as a person reads it: Haiku, Sonnet.
+const modelName = (ctx) => { const m = ctx.model ?? DEFAULT_MODEL; return m[0].toUpperCase() + m.slice(1); };
+
 async function desk(ctx, name, extraEnv = {}) {
   const { io } = ctx;
-  const { command, env } = frontDeskCommand({ claude: ctx.claude });
+  const { command, env } = frontDeskCommand({ claude: ctx.claude, model: ctx.model });
   // The trial's own Wheelhouse home and Claude config folder go in explicitly: the session starts with `env -i`, and the helper it
   // wakes (and so every feature session) takes its environment from this one.
   const own = { WHEELHOUSE_HOME: ctx.env.WHEELHOUSE_HOME, ...(ctx.env.HAIKU_TRIAL_CONFIG_DIR ? { CLAUDE_CONFIG_DIR: ctx.env.HAIKU_TRIAL_CONFIG_DIR } : {}) };
@@ -438,7 +442,13 @@ export function waitingInRecord(events) {
   const answeredQuestions = new Set(events.filter((e) => e.kind === 'action' && e.data?.action === 'answer').map((e) => e.data?.questionId));
   const cards = events.filter((e) => e.kind === 'card' && PICKED.includes(e.data?.kind) && !answeredCards.has(e.id));
   const questions = events.filter((e) => e.kind === 'question' && typeof e.data?.id === 'string' && !answeredQuestions.has(e.data.id));
-  return cards.length + questions.length;
+  // A visible work waits for the director's approval from the moment of intake, before any card is raised for it: the desk
+  // may not have raised one at all, and the stand-in would never see a card to answer.
+  const approved = new Set(events.filter((e) => e.kind === 'action' && e.data?.action === 'approve-work').map((e) => e.data?.work));
+  const carded = events.filter((e) => e.kind === 'card' && e.data?.kind === 'approve-work').map((e) => JSON.stringify(e.data));
+  const unseen = events.filter((e) => e.kind === 'work' && e.data?.visible === true && typeof e.data.id === 'string'
+    && !approved.has(e.data.id) && !carded.some((c) => c.includes(e.data.id)));
+  return cards.length + questions.length + unseen.length;
 }
 async function checkIn(ctx, events) {
   const { io, state } = ctx;
@@ -491,8 +501,8 @@ const directorAsk = async (ctx, text) => {
 const auditStep = (wave, smoke = true) => ({
   id: `w${wave}-audit`, wave, smoke,
   async run(ctx, io) {
-    const models = auditModels(io.host.findTranscripts({ project: ctx.projectName, dir: ctx.projectDir }));
-    await note(ctx, `w${wave}-audit`, models.clean ? 'every assistant turn so far ran on Haiku' : `offenders: ${JSON.stringify(models.offenders.map((o) => `${o.role} ${o.model} x${o.count}`))}`);
+    const models = auditModels(io.host.findTranscripts({ project: ctx.projectName, dir: ctx.projectDir }), { model: ctx.model });
+    await note(ctx, `w${wave}-audit`, models.clean ? `every assistant turn so far ran on ${modelName(ctx)}` : `offenders: ${JSON.stringify(models.offenders.map((o) => `${o.role} ${o.model} x${o.count}`))}`);
     if (!models.clean) throw new Stop(`a session ran on another model: ${models.offenders.map((o) => `${o.role} (${o.model})`).join(', ')}`);
   },
 });
@@ -520,7 +530,7 @@ export const STEPS = [
   },
   {
     id: 'install', wave: 1, smoke: true, needsGo,
-    asks: () => 'Install the staged plugin into Claude Code and use Haiku for the trial? Answer go.',
+    asks: (ctx) => `Install the staged plugin into Claude Code and use ${modelName(ctx)} for the trial? Answer go.`,
     async run(ctx, io) {
       const configDir = ctx.env.HAIKU_TRIAL_CONFIG_DIR;
       // A copy an earlier run installed is taken out first: an install of the same version keeps it as it is.
@@ -543,7 +553,7 @@ export const STEPS = [
   {
     id: 'seed', wave: 1, smoke: true,
     async run(ctx, io) {
-      const made = await io.host.makeProject({ dir: ctx.projectDir });
+      const made = await io.host.makeProject({ dir: ctx.projectDir, model: ctx.model });
       ctx.state.seedSha = made.sha;
       await io.host.git(['remote', 'add', 'origin', ctx.remote], { cwd: ctx.projectDir });
       await io.host.git(['push', '-u', 'origin', 'main'], { cwd: ctx.projectDir });
@@ -559,7 +569,7 @@ export const STEPS = [
     async run(ctx, io) {
       let restarted = false;
       const start = async () => {
-        await desk(ctx, SETUP, { WHEELHOUSE_SETUP_MODEL: 'haiku' });
+        await desk(ctx, SETUP, { WHEELHOUSE_SETUP_MODEL: ctx.model });
         io.tmux.type(SETUP, restarted ? 'carry on with setup' : '/wheelhouse:setup');
       };
       await start();
@@ -863,7 +873,7 @@ export const STEPS = [
       const runLog = readLog(ctx.logFile);
       io.results.writeRaw({ folder: ctx.folder, transcripts, events: await io.host.events({ project: ctx.projectName }), panes: ctx.state.panes, runLog, usage });
       const file = path.join(ctx.folder, 'summary', `${ctx.date}-haiku-trial-results.md`);
-      io.results.writeSummary({ file, date: ctx.date, rows: ctx.state.rows ?? [], score: ctx.state.score, audit: ctx.state.audit, usage });
+      io.results.writeSummary({ file, date: ctx.date, rows: ctx.state.rows ?? [], score: ctx.state.score, audit: ctx.state.audit, usage, model: ctx.model });
       await note(ctx, 'results', `raw results and summary under ${ctx.folder}`);
     },
   },
@@ -939,7 +949,7 @@ async function gatherAndCheck(ctx, io) {
   const full = await io.signals.gatherContext({
     project: ctx.projectName, gh: io.gh, runLog: readLog(ctx.logFile).filter((e) => e.done !== true), panes: state.panes, transcripts, pieces,
     scores: state.score, previews: ctx.preview, config, ntfy: state.ntfy, ntfySetUp: state.ntfySetUp, faults: state.faults,
-    branches: state.branches, mainFiles, digestAt: state.digestAt, projectName: ctx.repoName,
+    branches: state.branches, mainFiles, model: ctx.model, digestAt: state.digestAt, projectName: ctx.repoName,
   });
   for (const [id, piece] of Object.entries(pieces)) {
     piece.prs = piece.change ? (full.prs ?? []).filter((p) => `${p.head} ${p.title}`.toLowerCase().includes(String(piece.change).toLowerCase())).map((p) => p.number) : [];
@@ -982,7 +992,7 @@ function contextFor({ mode, io, folder, date, env }) {
   };
 }
 
-export async function run({ mode = 'full', io: given, from, until, folder, date, env = process.env } = {}) {
+export async function run({ mode = 'full', io: given, from, until, folder, date, model, env = process.env } = {}) {
   const problem = homeProblem(env);
   if (problem) return { done: [], stoppedAt: 'wheelhouse-home', why: problem };
   const io = { ...given, host: { ...NOTHING, ...(given.host ?? {}) } };
@@ -990,6 +1000,14 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
   const where = folder ?? io.results.runFolder(day);
   fs.mkdirSync(where, { recursive: true });
   const ctx = contextFor({ mode, io, folder: where, date: day, env });
+  // The project and every session it starts are pinned to one model, so a resume keeps the model the run began on.
+  const asked = model === undefined ? undefined : parseModel(model);
+  const began = ctx.state.model;
+  if (began !== undefined && asked !== undefined && began !== asked) {
+    return { done: [], stoppedAt: 'model', why: `this run began on ${began}, so --model ${asked} would put the rest on another model. Start a new run with its own --date to use ${asked}.` };
+  }
+  ctx.model = began ?? asked ?? DEFAULT_MODEL;
+  ctx.state.model = ctx.model;
   io.host.useRepo(ctx.repoSlug);
   const plan = planRun({ mode });
   let start = 0;
@@ -1083,7 +1101,7 @@ export function runLabel({ arg, env = process.env } = {}) {
   return given;
 }
 
-const USAGE = 'usage: node probes/haiku-trial/runner.js full | smoke | restore | plan [--from <step>] [--out <folder>] [--until <step>] [--date <label>] [--force]\n  --force (restore) stops the helper, watchers and foremen even while a feature session is still running\n  --date <label> (or HAIKU_TRIAL_DATE) names the run: YYYY-MM-DD with an optional -suffix such as 2026-11-08-b';
+const USAGE = 'usage: node probes/haiku-trial/runner.js full | smoke | restore | plan [--from <step>] [--out <folder>] [--until <step>] [--date <label>] [--model <haiku|sonnet>] [--force]\n  --model <haiku|sonnet> runs the whole trial on that model (haiku by default); one sonnet run tells kit faults from model faults\n  --force (restore) stops the helper, watchers and foremen even while a feature session is still running\n  --date <label> (or HAIKU_TRIAL_DATE) names the run: YYYY-MM-DD with an optional -suffix such as 2026-11-08-b';
 
 function parseArgs(argv) {
   const out = { command: argv[0], from: undefined, folder: undefined, until: undefined, date: undefined };
@@ -1092,6 +1110,7 @@ function parseArgs(argv) {
     else if (argv[i] === '--out') out.folder = argv[(i += 1)];
     else if (argv[i] === '--until') out.until = argv[(i += 1)];
     else if (argv[i] === '--date') out.date = argv[(i += 1)] ?? '';
+    else if (argv[i] === '--model') out.model = argv[(i += 1)] ?? '';
     else if (argv[i] === '--force') out.force = true;
   }
   return out;
@@ -1101,6 +1120,7 @@ export async function main(argv, { print = console.log, buildIo, env = process.e
   const args = parseArgs(argv);
   let label;
   try {
+    if (args.model !== undefined) parseModel(args.model);
     label = runLabel({ arg: args.date, env });
   } catch (error) {
     print(error.message);
@@ -1132,7 +1152,7 @@ export async function main(argv, { print = console.log, buildIo, env = process.e
     print(JSON.stringify(await restore({ folder, io, force: args.force === true })));
     return 0;
   }
-  const result = await run({ mode: args.command, io, from: args.from ?? 'auto', until: args.until, folder, date: label, env: given });
+  const result = await run({ mode: args.command, io, from: args.from ?? 'auto', until: args.until, folder, date: label, model: args.model, env: given });
   print(JSON.stringify(result));
   return result.stoppedAt ? 1 : 0;
 }

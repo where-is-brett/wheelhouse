@@ -645,6 +645,16 @@ test('the stand-in checks in when the desk is idle and something waits in the re
   assert.equal(waitingInRecord([...events, { id: 'a', kind: 'action', data: { action: 'answer', questionId: 'q-statement-import-1' } }]), 0);
 });
 
+test('a visible work that waits for approval with no approve-work card yet counts as waiting, so the stand-in asks the desk', () => {
+  const work = (id, over = {}) => ({ id: `w-${id}`, kind: 'work', data: { id, title: id, lane: 'small', visible: true, dependsOn: [], ...over } });
+  assert.equal(waitingInRecord([work('shop-categories')]), 1);
+  // A card already stands for it (shown or answered), or the director's click was already recorded.
+  assert.equal(waitingInRecord([work('a'), { id: 'c1', kind: 'card', data: { kind: 'approve-work', question: 'Approve this work?\nWork a: it does a.' } }, { id: 'x', kind: 'card-answer', data: { card: 'c1' } }]), 0);
+  assert.equal(waitingInRecord([work('a'), { id: 'k', kind: 'action', data: { action: 'approve-work', work: 'a' } }]), 0);
+  // Work nobody sees, or that needs no approval, is not waiting.
+  assert.equal(waitingInRecord([work('b', { visible: false }), work('c', { lane: 'quick', visible: false })]), 0);
+});
+
 test('F3 with no feature session to kill is noted as not exercised and the run goes on', async (t) => {
   const folder = scratch(t);
   const io = fakeIo({});
@@ -881,6 +891,43 @@ test('the restore command line takes --force', async (t) => {
   const printed = [];
   await main(['restore', '--force', '--out', folder], { print: (l) => printed.push(l), buildIo: async () => io, env: { ...ENV, HAIKU_TRIAL_WHEELHOUSE_HOME: before } });
   assert.deepEqual(calls, [{ force: true }]);
+});
+
+test('--model sonnet reaches the seed, the setup session and the front desk, and is kept for a resume', async (t) => {
+  const folder = scratch(t);
+  const seeded = [];
+  const io = fakeIo({ host: { makeProject: async (x) => { seeded.push(x.model); return { sha: 'abc' }; } } });
+  io.ask = async () => 'go';
+  const got = await run({ mode: 'full', io, model: 'sonnet', from: 'seed', until: 'seed', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['seed'], got.why);
+  assert.deepEqual(seeded, ['sonnet']);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).model, 'sonnet');
+  // A resume with no --model keeps the model the run began on; a different one is refused, since the project is pinned to the first.
+  const again = fakeIo({ host: { makeProject: async (x) => { seeded.push(x.model); return { sha: 'abc' }; } } });
+  const clash = await run({ mode: 'full', io: again, model: 'haiku', from: 'seed', until: 'seed', folder, date: '2026-11-08', env: ENV });
+  assert.equal(clash.stoppedAt, 'model');
+  assert.match(clash.why, /began on sonnet/);
+});
+
+test('the setup session and the front desk start on the run\'s model', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo({ capture: () => '', host: { events: async () => [], readConfig: async () => ({ routing: {} }) } });
+  await run({ mode: 'smoke', io, model: 'sonnet', from: 'setup-s0', until: 'setup-s0', folder, date: '2026-11-08', env: ENV }).catch(() => {});
+  const started = io.timeline.filter((e) => e.kind === 'tmux.start').map((e) => e.args[0]);
+  assert.ok(started.length > 0);
+  for (const x of started) {
+    assert.deepEqual(x.command.slice(-2), ['--model', 'sonnet']);
+    assert.equal(x.env.WHEELHOUSE_SETUP_MODEL, 'sonnet');
+  }
+});
+
+test('--model is read from the command line and anything but haiku or sonnet is refused with the usage', async (t) => {
+  const folder = scratch(t);
+  const printed = [];
+  const code = await main(['smoke', '--model', 'opus', '--out', folder], { print: (l) => printed.push(l), buildIo: async () => fakeIo(), env: ENV });
+  assert.equal(code, 2);
+  assert.ok(printed.some((l) => /--model must be haiku or sonnet/.test(l)));
+  assert.ok(printed.some((l) => /--model <haiku\|sonnet>/.test(l)));
 });
 
 test('the ntfy click is its own director step early in wave 1, announced, and only in a full run', async (t) => {

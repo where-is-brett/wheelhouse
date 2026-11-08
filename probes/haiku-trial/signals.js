@@ -21,6 +21,7 @@ import { PHONE_NEXT } from '../../scripts/setup/engine.js';
 import { auditModels, auditPeek, entriesOf } from './audit.js';
 import { PIECES, P6_FILE } from './requests.js';
 import { deskBusy } from './stand-in.js';
+import { modelPattern } from './models.js';
 
 // The event kinds and names the rows read, each as the module that writes it spells it.
 export const KINDS = Object.freeze({
@@ -154,13 +155,15 @@ const checks = {
     if (!SETUP_DONE.test(said)) problems.push('no line saying setup is done');
     const roles = Object.entries(roleOf(ctx)).filter(([, v]) => typeof v === 'string');
     if (roles.length === 0) problems.push('the configuration names no role');
-    for (const [role, model] of roles) if (!/haiku/i.test(model)) problems.push(`role ${role} is not on haiku (${model})`);
+    const want = modelPattern(ctx.model);
+    const wantName = ctx.model ?? 'haiku';
+    for (const [role, model] of roles) if (!want.test(model)) problems.push(`role ${role} is not on ${wantName} (${model})`);
     const pins = ctx.config?.tiers?.pins ?? {};
-    for (const pin of ['mostCapable', 'midSized']) if (!/haiku/i.test(String(pins[pin] ?? ''))) problems.push(`pin ${pin} is not haiku`);
+    for (const pin of ['mostCapable', 'midSized']) if (!want.test(String(pins[pin] ?? ''))) problems.push(`pin ${pin} is not ${wantName}`);
     const premium = ctx.views?.settings?.premium?.value ?? 'off';
     if (premium !== 'off') problems.push(`premium is ${premium}, not off`);
     if (!logOf(ctx, STEPS.health).some((e) => /pass/i.test(e.note ?? '') && !/fail/i.test(e.note ?? ''))) problems.push('the health check did not pass');
-    return verdict(problems, 'setup done, every role and pin on haiku, premium off, health check passed');
+    return verdict(problems, `setup done, every role and pin on ${wantName}, premium off, health check passed`);
   },
   2(ctx) {
     const problems = [];
@@ -662,7 +665,7 @@ const checks = {
     const have = new Set((ctx.transcripts ?? []).map((t) => t.role));
     const absent = ['front-desk', 'feature', 'foreman'].filter((role) => !have.has(role));
     if (absent.length > 0) return unknown(`no transcript was found for ${absent.join(', ')}, so the audit has nothing to say about them`);
-    return ok('every model is haiku and no session read the held-back files');
+    return ok(`every model is ${ctx.model ?? 'haiku'} and no session read the held-back files`);
   },
 };
 
@@ -746,7 +749,7 @@ const REPO = 'repos/{owner}/{repo}';
 // Reads the project's record, the pull requests (through `gh api`), the incidents and the transcripts audit into one context.
 export async function gatherContext({
   project, gh, runLog = [], panes = {}, transcripts = [], pieces = {}, scores = null, previews = 'none', enrolled,
-  config = null, ntfy = [], ntfySetUp, faults = {}, branches = [], mainFiles = null, digestAt = null, projectName,
+  config = null, ntfy = [], ntfySetUp, faults = {}, branches = [], mainFiles = null, model = 'haiku', digestAt = null, projectName,
 }) {
   const events = listEvents(stateDir(project), { report: () => {} });
   const views = buildViews(events, enrolled ?? tryOr(() => readEnrolled(), []));
@@ -769,9 +772,9 @@ export async function gatherContext({
   const runs = ((await gh(['api', `${REPO}/actions/runs?per_page=100`]))?.workflow_runs ?? [])
     .map((r) => ({ id: r.id, headSha: r.head_sha, branch: r.head_branch, conclusion: r.conclusion, createdAt: r.created_at }));
   const incidents = tryOr(() => readIncidents(), []).filter((i) => i.project === project);
-  const audit = { models: auditModels(transcripts), peek: auditPeek(transcripts) };
+  const audit = { models: auditModels(transcripts, { model }), peek: auditPeek(transcripts) };
   return {
     events, views, prs, runs, transcripts, audit, panes, runLog, incidents, pieces, scores, previews,
-    config, ntfy, ntfySetUp, faults, branches, mainFiles, digestAt, project, projectName,
+    config, ntfy, ntfySetUp, faults, branches, mainFiles, digestAt, project, projectName, model,
   };
 }

@@ -351,6 +351,22 @@ test('row 1 wants every role and both pins on haiku with premium off', () => {
   assert.match(result.evidence, /foreman/);
 });
 
+test('row 1 checks the roles against the model the run was given', () => {
+  const ctx = (model) => ctxWith({
+    model,
+    config: { routing: { frontDesk: 'claude-sonnet-4-5', foreman: 'claude-sonnet-4-5' }, tiers: { pins: { mostCapable: 'claude-sonnet-4-5', midSized: 'claude-sonnet-4-5' } } },
+    panes: { setup: ['Every step is done.'] },
+    runLog: [{ at: '2026-11-08T00:10:00Z', step: 'health', note: 'all pass' }],
+  });
+  assert.equal(row(1).check(ctx('sonnet')).pass, true, row(1).check(ctx('sonnet')).evidence);
+  assert.equal(row(1).check(ctx('haiku')).pass, false);
+});
+
+test('row 45 reads "every model is <model>" for the run\'s model', () => {
+  const ctx = ctxWith({ model: 'sonnet', transcripts: ['front-desk', 'feature', 'foreman'].map((role) => ({ role, file: `/${role}` })) });
+  assert.match(row(45).check(ctx).evidence, /every model is sonnet/);
+});
+
 const PIECES_IDS = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8'];
 
 test('row 3 compares the intake lane with the piece', () => {

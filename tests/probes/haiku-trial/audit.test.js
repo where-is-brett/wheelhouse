@@ -27,6 +27,13 @@ test('a clean run passes', () => {
   assert.deepEqual(auditModels(asTranscripts(file)), { clean: true, offenders: [] });
 });
 
+test('a sonnet run is clean on sonnet and fails on haiku', () => {
+  const dir = scratch();
+  const file = write(path.join(dir, 's.jsonl'), [turn('claude-sonnet-4-5'), turn('claude-haiku-4-5')]);
+  assert.deepEqual(auditModels(asTranscripts(file), { model: 'sonnet' }).offenders.map((o) => o.model), ['claude-haiku-4-5']);
+  assert.deepEqual(auditModels(asTranscripts(file), { model: 'haiku' }).offenders.map((o) => o.model), ['claude-sonnet-4-5']);
+});
+
 test('a sonnet entry fails and names the session and role', () => {
   const dir = scratch();
   const file = write(path.join(dir, 'feat-1.jsonl'), [turn('haiku-test'), turn('other-model')]);

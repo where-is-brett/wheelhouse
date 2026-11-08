@@ -110,7 +110,7 @@ export function buildRealIo(env = process.env) {
     stage: ({ out }) => stagePlugin({ repo: REPO_ROOT, out }),
     exec: (argv, { cwd } = {}) => run(argv[0], argv.slice(1), { cwd }),
     installedProblem: async ({ configDir, pluginDir }) => installedProblem({ configDir, pluginDir }),
-    makeProject: async ({ dir }) => makeTestProject({ dir, allowAnywhere: true }),
+    makeProject: async ({ dir, model }) => makeTestProject({ dir, allowAnywhere: true, model }),
     git: async (args, options) => git(args, options),
     events: async ({ project }) => listEvents(stateDir(nameOf(project)), { report: () => {} }),
     hasCommand: async (name) => !run(name, ['--version']).error,
