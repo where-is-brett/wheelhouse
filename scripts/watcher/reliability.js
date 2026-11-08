@@ -27,6 +27,10 @@ const isText = (x) => typeof x === 'string' && x.trim() !== '';
 
 export const reliabilityFile = () => path.join(wheelhouseHome(), 'reliability.jsonl');
 export const noticeFile = () => path.join(wheelhouseHome(), 'reliability-notice.json');
+// Held (a folder, made in one step) while a watcher sends the notice, so two watchers never both send it.
+export const claimFolder = () => path.join(wheelhouseHome(), 'reliability-notice.claim');
+// A claim older than this was left by a watcher that stopped, and is taken over.
+const CLAIM_STALE_MS = 5 * 60 * 1000;
 
 function readText(file) {
   try {
@@ -58,8 +62,19 @@ export function recordIncident({ kind, project, work, at, key } = {}) {
   if (!KINDS.includes(kind) || !isText(project) || !SLUG.test(String(work ?? '')) || !Number.isFinite(Date.parse(at))) return false;
   const named = isText(key) ? key : `${kind}:${project}:${work}:${at}`;
   if (readIncidents().some((l) => (l.key ?? `${l.kind}:${l.project}:${l.work}:${l.at}`) === named)) return false;
+  const added = { kind, project, work, at, key: named };
+  const all = readIncidents();
+  // Incidents more than a window older than the newest don't count and are dropped as one is added, so the file stays small.
+  const newest = Math.max(Date.parse(at), ...all.map((l) => Date.parse(l.at)));
+  const keep = all.filter((l) => newest - Date.parse(l.at) < WINDOW_MS);
   fs.mkdirSync(wheelhouseHome(), { recursive: true });
-  fs.appendFileSync(reliabilityFile(), `${JSON.stringify({ kind, project, work, at, key: named })}\n`);
+  if (keep.length === all.length) {
+    fs.appendFileSync(reliabilityFile(), `${JSON.stringify(added)}\n`);
+    return true;
+  }
+  const temp = `${reliabilityFile()}.${process.pid}.tmp`;
+  fs.writeFileSync(temp, [...keep, added].map((l) => `${JSON.stringify(l)}\n`).join(''));
+  fs.renameSync(temp, reliabilityFile());
   return true;
 }
 
@@ -133,6 +148,26 @@ function readNotice() {
   }
 }
 
+// Takes the claim, or says another watcher holds it. A claim left by one that stopped is taken over after CLAIM_STALE_MS.
+function claim() {
+  fs.mkdirSync(wheelhouseHome(), { recursive: true });
+  for (let tries = 0; tries < 2; tries += 1) {
+    try {
+      fs.mkdirSync(claimFolder());
+      return true;
+    } catch (error) {
+      if (error?.code !== 'EEXIST') return false;
+      try {
+        if (Date.now() - fs.statSync(claimFolder()).mtimeMs < CLAIM_STALE_MS) return false;
+        fs.rmSync(claimFolder(), { recursive: true, force: true });
+      } catch {
+        return false;
+      }
+    }
+  }
+  return false;
+}
+
 // Raises the notice through the helper when the bar is crossed and none was raised in the last 30 days. It is marked as sent only
 // once the helper has taken it, so a refusal is tried again at the next loop. Resolves `{ raised }`.
 export async function checkReliability({ project, client, now = () => new Date(), log = () => {} }) {
@@ -142,18 +177,28 @@ export async function checkReliability({ project, client, now = () => new Date()
   const last = readNotice();
   if (last !== null && t.getTime() - last < WINDOW_MS && t.getTime() >= last) return { raised: false };
   const count = lines.filter((l) => t.getTime() - Date.parse(l.at) < WINDOW_MS && Date.parse(l.at) <= t.getTime()).length;
+  // Claim the sending first: the folder is made in one step, so only one watcher gets it.
+  if (!claim()) return { raised: false };
   try {
-    const made = await client.state.write({ project, kind: 'card', data: engineTroubleCard(count) });
-    if (made?.ok !== true) throw new Error(made?.refused ?? 'the card was refused');
-  } catch (error) {
-    log(`The engine-trouble notice couldn't be raised: ${error.message}`);
-    return { raised: false };
+    // Another watcher may have sent it between the look above and the claim.
+    const sent = readNotice();
+    if (sent !== null && t.getTime() - sent < WINDOW_MS && t.getTime() >= sent) return { raised: false };
+    try {
+      const made = await client.state.write({ project, kind: 'card', data: engineTroubleCard(count) });
+      if (made?.ok !== true) throw new Error(made?.refused ?? 'the card was refused');
+    } catch (error) {
+      log(`The engine-trouble notice couldn't be raised: ${error.message}`);
+      return { raised: false };
+    }
+    try {
+      const temp = `${noticeFile()}.${process.pid}.tmp`;
+      fs.writeFileSync(temp, `${JSON.stringify({ at: t.toISOString() })}\n`);
+      fs.renameSync(temp, noticeFile());
+    } catch (error) {
+      log(`The engine-trouble notice's time couldn't be kept: ${error.message}`);
+    }
+    return { raised: true };
+  } finally {
+    fs.rmSync(claimFolder(), { recursive: true, force: true });
   }
-  try {
-    fs.mkdirSync(wheelhouseHome(), { recursive: true });
-    fs.writeFileSync(noticeFile(), `${JSON.stringify({ at: t.toISOString() })}\n`);
-  } catch (error) {
-    log(`The engine-trouble notice's time couldn't be kept: ${error.message}`);
-  }
-  return { raised: true };
 }

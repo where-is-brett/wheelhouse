@@ -3,12 +3,13 @@
 // piece opens the gate, and the foreman model wakes only for judgement.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { JUDGEMENT, makeRoutine, routineMoves, triage } from '../../../scripts/watcher/routine.js';
+import { JUDGEMENT, makeRoutine, readFacts, routineMoves, triage } from '../../../scripts/watcher/routine.js';
 import { readIncidents } from '../../../scripts/watcher/reliability.js';
 import { route } from '../../../scripts/watcher/core.js';
 import { HAND_DONE, HAND_GOAL } from '../../../scripts/lib/by-hand-done.js';
 import { FOREMAN_QUESTIONS } from '../../../scripts/lib/build-loop.js';
 import { withHome } from '../../helpers/homes.js';
+import { emptyViews, fakeClient, featureView, project, worktree, workView, P as FOREMAN_P } from '../../helpers/foreman.js';
 
 const P = 'harbour__demo';
 const NOW = new Date('2026-11-08T05:00:00.000Z');
@@ -198,4 +199,78 @@ test('when the views can not be had nothing is handled and nothing is run', () =
   const out = await r.run({ events: [e] });
   assert.equal(calls.length, 0);
   assert.equal(out.handled.size, 0);
+}));
+
+test('under All stop a stuck piece is neither stalled nor a wake for the foreman', () => withHome(async () => {
+  const { act } = fakeAct();
+  const e = ev('stuck', 'w-tide-1', { detail: { still: 1300000, phase: 'building' } });
+  const halt = { why: 'All stop is on', fixes: [], stop: true };
+  const out = await routineOf(state({ halt }), act).run({ events: [e] });
+  assert.ok(out.handled.has(e.id));
+  assert.equal(out.reasons.size, 0);
+  assert.deepEqual(readIncidents(), []);
+}));
+
+test('during an incident a stuck piece in a held lane is handled, and bug work that goes on is still stuck', () => withHome(async () => {
+  const { act } = fakeAct();
+  const held = ev('stuck', 'w-tide-2', { detail: { still: 1300000, phase: 'building' } });
+  const bug = ev('stuck', 'w-tide-3', { detail: { still: 1300000, phase: 'building' } });
+  const halt = { why: 'incident outage is open', fixes: [], stop: false };
+  const lanes = { 'w-tide-2': 'small', 'w-tide-3': 'bug' };
+  const out = await routineOf(state({ halt, lanes }), act).run({ events: [held, bug] });
+  assert.ok(out.handled.has(held.id));
+  assert.equal(out.reasons.get(bug.id), 'stuck');
+  assert.deepEqual(readIncidents().map((l) => l.work), ['w-tide-3']);
+}));
+
+test('a piece freed to start whose words need its document read is put to the foreman once', () => withHome(async () => {
+  const { act, calls } = fakeAct();
+  const facts = { current: state({ start: [] }) };
+  const r = makeRoutine({ project: P, client: {}, now: () => NOW, act, facts: async () => facts.current, log: () => {} });
+  assert.deepEqual((await r.run({ events: [ev('merge-ready', 'w-tide-1', { pr: 7 })] })).extra, []);
+  facts.current = state({ start: [{ work: 'w-tide-2', lane: 'small', words: null }] });
+  const out = await r.run({ events: [ev('report', 'w-tide-1')] });
+  assert.equal(out.extra.length, 1);
+  assert.equal(out.extra[0].type, 'work-ready');
+  assert.equal(out.extra[0].work, 'w-tide-2');
+  assert.equal(out.extra[0].reason, 'unknown');
+  assert.equal(calls.some((c) => c[0] === 'start'), false);
+  assert.deepEqual((await r.run({ events: [ev('report', 'w-tide-9')] })).extra, [], 'not again while it waits');
+}));
+
+test('a plan the session said was ready, never recorded, is run again after a restart', () => withHome(async () => {
+  const { act, calls } = fakeAct();
+  const facts = state({ readyPlans: ['w-tide-2'] });
+  const first = routineOf(facts, act);
+  await first.run({ events: [] });
+  assert.deepEqual(calls.map((c) => c.slice(0, 2)), [['plan-ready', 'w-tide-2']]);
+  await first.run({ events: [] });
+  assert.equal(calls.filter((c) => c[0] === 'plan-ready').length, 1, 'only when the watcher starts');
+}));
+
+test('a plan found ready after a restart waits for a hold to lift, like one held in memory', () => withHome(async () => {
+  const { act, calls } = fakeAct();
+  const facts = { current: state({ readyPlans: ['w-tide-2'], halt: { why: 'All stop is on', fixes: [], stop: true } }) };
+  const r = makeRoutine({ project: P, client: {}, now: () => NOW, act, facts: async () => facts.current, log: () => {} });
+  await r.run({ events: [] });
+  assert.equal(calls.length, 0);
+  facts.current = state({ readyPlans: ['w-tide-2'] });
+  await r.run({ events: [] });
+  assert.deepEqual(calls.map((c) => c.slice(0, 2)), [['plan-ready', 'w-tide-2']]);
+}));
+
+test('the facts leave out plans that clash with running work or wait on their own pull request', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.e = workView('e');
+  views.features.e = featureView('e', { step: 'building', worktree: worktree(checkout, 'e'), branch: 'feature/e', files: ['package.json'] });
+  views.work.ok = workView('ok');
+  views.features.ok = featureView('ok', { step: 'planned', worktree: worktree(checkout, 'ok'), branch: 'feature/ok', plan: 'docs/plans/ok.md', files: ['src/ok.js'] });
+  views.work.clash = workView('clash');
+  views.features.clash = featureView('clash', { step: 'planned', worktree: worktree(checkout, 'clash'), branch: 'feature/clash', plan: 'docs/plans/c.md', files: ['package.json'] });
+  views.work.open = workView('open');
+  views.features.open = featureView('open', { step: 'planned', worktree: worktree(checkout, 'open', { pr: { pr: 3, merged: false } }), branch: 'feature/open', plan: 'docs/plans/o.md', files: ['src/open.js'] });
+  const { client } = fakeClient({ views });
+  const facts = await readFacts({ project: FOREMAN_P, client, now: () => new Date('2026-10-19T09:00:00.000Z'), stopped: () => false });
+  assert.deepEqual(facts.build.map((b) => b.work), ['ok']);
 }));

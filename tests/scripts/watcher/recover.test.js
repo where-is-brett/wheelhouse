@@ -41,15 +41,30 @@ test('recovery gives nothing when the views can not be had', () => withHome(asyn
   assert.deepEqual(await r.check(), []);
 }));
 
-test('work approved long enough ago that still has not started is recorded as lost, once', () => withHome(async () => {
+test('a piece that waited for a dependency, was freed and then raised is not lost', () => withHome(async () => {
   let t = Date.parse('2026-11-05T09:00:00Z');
-  const old = views({ work: { a: { ...w('a', {}, true), since: '2026-11-05T08:00:00Z' }, d: { ...w('d', {}, true), since: '2026-11-05T08:59:00Z' } } });
-  const client = { state: { views: async () => ({ ok: true, views: old }) } };
+  const current = { v: views({ work: { c: { ...w('c', { dependsOn: ['z'] }, true), since: '2026-11-01T08:00:00Z' } } }) };
+  const client = { state: { views: async () => ({ ok: true, views: current.v }) } };
   const recorded = [];
   const r = makeRecovery({ project: 'o__p', client, now: () => new Date(t), stopped: () => false, record: (i) => recorded.push(i) });
-  assert.equal((await r.check()).length, 2);
-  assert.deepEqual(recorded.map((i) => [i.kind, i.work]), [['lost', 'a']], 'd was approved a minute ago, so it is not lost yet');
-  t += 40 * 60 * 1000;
+  assert.deepEqual(await r.check(), [], 'held for its dependency');
+  t += 3 * 24 * 60 * 60 * 1000;
+  current.v = views({ work: { c: { ...w('c', {}, true), since: '2026-11-01T08:00:00Z' } }, reports: { z: { data: { outcome: 'merged' } } } });
+  assert.equal((await r.check()).length, 1, 'freed, so raised');
+  assert.deepEqual(recorded, [], 'it was queued for days, but nothing was lost');
+}));
+
+test('a piece raised and still unstarted half an hour later is lost, once for each raise', () => withHome(async () => {
+  let t = Date.parse('2026-11-05T09:00:00Z');
+  const client = { state: { views: async () => ({ ok: true, views: views() }) } };
+  const recorded = [];
+  const r = makeRecovery({ project: 'o__p', client, now: () => new Date(t), stopped: () => false, record: (i) => recorded.push(i) });
   await r.check();
-  assert.equal(new Set(recorded.map((i) => i.key)).size, 2, 'both are lost by now, each with its own key');
+  assert.deepEqual(recorded, [], 'the first raise is not a loss');
+  t += 31 * 60 * 1000;
+  await r.check();
+  t += 31 * 60 * 1000;
+  await r.check();
+  assert.deepEqual(recorded.map((i) => [i.kind, i.work]), [['lost', 'a'], ['lost', 'a']]);
+  assert.equal(new Set(recorded.map((i) => i.key)).size, 2, 'each loss has its own key');
 }));

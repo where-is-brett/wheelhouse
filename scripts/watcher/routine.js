@@ -24,12 +24,15 @@
 //   pause    [work] to pause for the five-hour window
 //   merge    [{ work, pr }] pull requests ready to merge now
 //   held     [work] features held on purpose (planned or paused), whose stillness is no trouble
+//   readyPlans [work] features at the start whose session says its plan is ready but whose plan was never recorded (found again
+//            when the watcher starts, so a plan held back by a hold is not lost to a restart)
 import { FOREMAN_TYPES } from './core.js';
 import { recordIncident } from './reliability.js';
 import {
-  FIVE_HOUR_TIGHT, NO_PLAN, PLANS_WHILE_HELD, builderCapOf, checkoutOf, currentFeatureOf, haltFor, haltOf, laneOf, loadConfig, loadViews, mergeWait,
-  pausedBy, queueToBuild, queueToStart, readyPrs, whyText,
+  FIVE_HOUR_TIGHT, ForemanError, NO_PLAN, PLANS_WHILE_HELD, builderCapOf, checkoutOf, clashFor, currentFeatureOf, haltFor, haltOf, laneOf, loadConfig,
+  loadViews, mergeWait, openPrWait, pausedBy, queueToBuild, queueToStart, readyPrs, waitText, whyText, worktreeOf,
 } from '../foreman/wake.js';
+import { featurePaths, readStatus } from '../feature/files.js';
 import { HAND_DONE, HAND_GOAL } from '../lib/by-hand-done.js';
 import { HASH, LANE_APPETITE, questionIdOf } from '../lib/build-loop.js';
 
@@ -128,8 +131,9 @@ export function triage(state) {
         break;
       case 'report': add({ act: 'close', args: [work] }, e.id); break;
       case 'stuck':
-        // A feature held on purpose (planned, or paused) is not trouble.
-        if (held.includes(work)) handled.push(e.id);
+        // A feature held on purpose (planned, or paused) is not trouble, and neither is one that All stop, or an incident holding its
+        // lane, keeps from moving: nothing is stalled by a hold, and the foreman has nothing to do about it.
+        if (held.includes(work) || (halt !== null && (halt.stop === true || heldBack(lane)))) handled.push(e.id);
         else ask(e, 'stuck');
         break;
       case 'review-overdue': ask(e, 'stuck'); break;
@@ -183,17 +187,34 @@ export async function readFacts({ project, client, now = () => new Date(), stopp
   const toBuild = queueToBuild(views, { now: t, builderCap });
   const build = [];
   const heldOn = [];
+  const readyPlans = [];
   for (const [id, f] of Object.entries(views.features)) {
     const step = f?.data?.step;
+    if (step === 'started' && !NO_PLAN.includes(lanes[id])) {
+      try {
+        if (readStatus(featurePaths(worktreeOf(project, views, id)).status)?.phase === 'ready-to-build') readyPlans.push(id);
+      } catch (error) {
+        if (!(error instanceof ForemanError)) throw error;
+      }
+    }
     if (step !== 'planned' && step !== 'paused') continue;
     heldOn.push(id);
     if (step === 'paused' && (pausedBy(f.data) === 'director' || FIVE_HOUR_TIGHT)) continue;
-    if (step === 'planned' && !toBuild.start.includes(id)) continue;
+    // The same waits as the foreman's queue lines: a clash with running work, no free slot, or the piece's own pull request still open.
+    let own = null;
+    try {
+      own = step === 'planned' ? openPrWait(worktreeOf(project, views, id)) : null;
+    } catch (error) {
+      if (!(error instanceof ForemanError)) throw error;
+    }
+    const slot = toBuild.start.includes(id) ? { ok: true } : { ok: false, why: toBuild.hold.find((h) => h.work === id)?.why ?? 'unknown' };
+    const clash = clashFor(views, config, id, Array.isArray(f.data.files) ? f.data.files : []);
+    if (own !== null || waitText(clash, slot) !== null) continue;
     build.push({ verb: step === 'paused' ? 'resume' : 'build', work: id });
   }
   const merge = readyPrs(project).map(({ pr, work }) => ({ work, pr }));
   return {
-    halt, lanes, start, build, pause: toBuild.pause, merge, held: heldOn, views,
+    halt, lanes, start, build, pause: toBuild.pause, merge, held: heldOn, readyPlans, views,
   };
 }
 
@@ -239,7 +260,10 @@ export function makeRoutine({
   const read = facts ?? (() => readFacts({ project, client, now, stopped }));
   const failed = new Map();
   const deferred = new Map();
+  // Startable pieces whose words need their document read, already put to the foreman; forgotten once the piece is no longer startable.
+  const asked = new Set();
   let lastQueue = null;
+  let first = true;
 
   const attempt = async (move, out, ranKeys) => {
     const key = keyOf(move);
@@ -273,6 +297,15 @@ export function makeRoutine({
 
       // A plan held back by a hold is run once the hold lifts.
       const again = [];
+      // Once, at the start: plans the session said were ready that no record shows, as a plan held back in memory would have been.
+      if (first) {
+        first = false;
+        for (const work of Array.isArray(state.readyPlans) ? state.readyPlans : []) {
+          if (!mine.some((e) => e.type === 'plan-ready' && e.work === work)) {
+            deferred.set(`routine:plan-ready:${work}`, { type: 'plan-ready', work, id: `routine:plan-ready:${work}`, detail: { phase: 'ready-to-build', routine: true } });
+          }
+        }
+      }
       for (const [id, e] of deferred) {
         if (haltFor(state.halt ?? null, state.lanes?.[e.work] ?? null) === null) {
           again.push(e);
@@ -319,6 +352,20 @@ export function makeRoutine({
             log(`The queue couldn't be read again: ${error.message}`);
           }
         }
+        // A piece a close, a merge or the end of a hold has just freed to start, whose goal and done lines a model must read from its
+        // document, is put to the foreman once, so it isn't left for the periodic look.
+        const startable = new Set();
+        for (const sx of Array.isArray(after.start) ? after.start : []) {
+          if (sx.words !== null || haltFor(after.halt ?? null, sx.lane ?? null) !== null) continue;
+          startable.add(sx.work);
+          if (asked.has(sx.work)) continue;
+          asked.add(sx.work);
+          if (mine.some((e) => e.type === 'work-ready' && e.work === sx.work)) continue; // its own event already puts it to the foreman
+          out.extra.push({
+            type: 'work-ready', work: sx.work, id: `routine:needs-document:${sx.work}:${at}`, detail: { lane: sx.lane, routine: true }, reason: 'unknown',
+          });
+        }
+        for (const w of asked) if (!startable.has(w)) asked.delete(w);
         for (const move of triage({ ...after, events: [], queue: true }).moves) {
           const key = keyOf(move);
           const was = failed.get(key);

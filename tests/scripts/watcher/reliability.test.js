@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  BAR, checkReliability, engineTroubleCard, overBar, readIncidents, recordIncident, reliabilityFile,
+  BAR, checkReliability, claimFolder, engineTroubleCard, overBar, readIncidents, recordIncident, reliabilityFile,
 } from '../../../scripts/watcher/reliability.js';
 import { wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { withHome } from '../../helpers/homes.js';
@@ -104,3 +104,34 @@ test('the notice is a decision in the shape of section 6.2 and names no project'
   assert.doesNotMatch(JSON.stringify(card), /harbour/);
   assert.match(card.question, /4/);
 });
+
+test('incidents more than 30 days older than the newest are dropped as one is added', () => withHome(async () => {
+  recordIncident(line(60, { work: 'w-tide-1' }));
+  recordIncident(line(45, { work: 'w-tide-2' }));
+  recordIncident(line(1, { work: 'w-tide-3' }));
+  assert.deepEqual(readIncidents().map((l) => l.work), ['w-tide-3']);
+  assert.equal(fs.readdirSync(wheelhouseHome()).filter((n) => n.endsWith('.tmp')).length, 0);
+  recordIncident(line(1, { work: 'w-tide-3' }));
+  assert.equal(readIncidents().length, 1, 'still recorded once');
+}));
+
+test('two watchers checking at once send the notice once', () => withHome(async () => {
+  const written = [];
+  const client = { state: { write: async (a) => { await new Promise((r) => setImmediate(r)); written.push(a); return { ok: true }; } } };
+  for (let i = 1; i <= 4; i += 1) recordIncident(line(i, { work: `w-tide-${i}` }));
+  const both = await Promise.all([
+    checkReliability({ project: 'harbour__demo', client, now: () => NOW }),
+    checkReliability({ project: 'harbour__other', client, now: () => NOW }),
+  ]);
+  assert.equal(both.filter((b) => b.raised).length, 1);
+  assert.equal(written.length, 1);
+  assert.equal(fs.existsSync(claimFolder()), false, 'the claim is let go');
+}));
+
+test('a claim another watcher holds keeps this one from sending', () => withHome(async () => {
+  for (let i = 1; i <= 4; i += 1) recordIncident(line(i, { work: `w-tide-${i}` }));
+  fs.mkdirSync(claimFolder());
+  const written = [];
+  assert.equal((await checkReliability({ project: 'harbour__demo', client: clientOf(written), now: () => NOW })).raised, false);
+  assert.equal(written.length, 0);
+}));

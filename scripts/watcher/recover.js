@@ -4,8 +4,9 @@
 // `work-ready` for that work again, when the watcher starts and then every RECOVER_MS, so the Bosun is woken to start
 // it. Work the queue holds is left alone: an unapproved one, one that waits on a dependency or on pace, one the new
 // engine builds, and everything while All stop is on or an incident is open (the same holds as the Bosun's queue).
-// Work approved at least RECOVER_MS ago that has still not started is a piece the engine lost: `record` takes it as one, once
-// (scripts/watcher/reliability.js).
+// A piece raised before that is still unstarted RAISE_AGAIN_MS later is a piece the engine lost: `record` takes it as one, once for
+// each time it is raised again (scripts/watcher/reliability.js). Work that only waited for a slot or a dependency, and was raised
+// when that freed it, is not lost.
 import path from 'node:path';
 import { watcherFolder, writeJsonFile } from './waker.js';
 import { readCapped } from '../feature/status.js';
@@ -57,16 +58,18 @@ export function makeRecovery({
         return [];
       }
       const events = [];
-      for (const id of recoverable(views, { now: now(), stopped, builderCap: config === null ? null : builderCapOf(views, config, now()) })) {
+      const open = recoverable(views, { now: now(), stopped, builderCap: config === null ? null : builderCapOf(views, config, now()) });
+      // A piece that is no longer waiting to start has its count forgotten, so queuing it again starts afresh.
+      for (const id of [...raisedAt.keys()]) if (!open.includes(id)) raisedAt.delete(id);
+      for (const id of open) {
         if (skip.includes(id)) continue; // this loop's own events already wake the Bosun for it
         if (raisedAt.has(id) && t - raisedAt.get(id) < again) continue;
-        raisedAt.set(id, t);
-        const since = Date.parse(views.work?.[id]?.since ?? views.work?.[id]?.work?.at);
-        if (Number.isFinite(since) && t - since >= every) {
+        if (raisedAt.has(id)) {
           try {
-            record({ kind: 'lost', work: id, at: now().toISOString(), key: `lost:${project}:${id}` });
+            record({ kind: 'lost', work: id, at: now().toISOString(), key: `lost:${project}:${id}:${raisedAt.get(id)}` });
           } catch { /* a record that can't be kept doesn't stop the raise */ }
         }
+        raisedAt.set(id, t);
         events.push({ type: 'work-ready', work: id, id: `recover:${id}:${now().toISOString()}`, detail: { lane: views.work?.[id]?.work?.data?.lane, recovered: true } });
       }
       keep();
