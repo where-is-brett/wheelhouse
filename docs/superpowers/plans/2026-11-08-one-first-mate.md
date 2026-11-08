@@ -38,7 +38,7 @@
 
 | File | Change | Responsibility |
 |---|---|---|
-| `scripts/hooks/session-start.js` | modify | `featureSlug` checks the worktree's feature folder and brief (Task 1); seat take and refresh at start, the aside line and its card, First-Mate-only notes (Task 4) |
+| `scripts/hooks/session-start.js` | modify | `madeFeatureSlug`: the branch's slug only when the worktree's feature folder and brief name it (Task 1); seat take and refresh at start, the aside line and its card, First-Mate-only notes (Task 4) |
 | `scripts/lib/first-mate-seat.js` | create | The seat file: read, take, refresh, hand over, release; liveness of its holder (Task 2) |
 | `scripts/lib/start-lock.js` | modify, maybe | Only if the stale-takeover rename is lifted into a shared helper (Task 2, builder's call) |
 | `scripts/lib/role.js` | modify | `aside` in `ROLES`; the seat step in `sessionRole`; `holdsSeat` (Task 3) |
@@ -51,10 +51,11 @@
 | `scripts/hooks/card-check.js` | modify | Its Stop check for the holder only; seat refresh (Task 7) |
 | `scripts/hooks/stop-guard.js` | modify | SessionEnd releases the seat this session holds (Task 7) |
 | `scripts/engine/dispatcher.js` | modify | Its `running` list lifted into `crewRunning` (Task 8) |
+| `scripts/state/events.js` | modify | The `aside-overlap` record kind (Task 8) |
 | `scripts/hooks/aside-overlap.js` | create | The overlap warning on Stop for a worktree aside session (Task 8) |
 | `hooks/hooks.json` | modify | `aside-overlap.js` on Stop (Task 8) |
-| `skills/aside/SKILL.md` or `commands/aside.md` | create | `/wheelhouse:aside`, whichever form the plugin's other commands take (Task 3) |
-| Tests | create / modify | `tests/scripts/lib/first-mate-seat.test.js`, `tests/scripts/lib/role.test.js`, `tests/scripts/hooks/session-start.test.js`, `tests/scripts/decisions/answer.test.js`, `tests/scripts/hooks/prompt-record.test.js`, `tests/scripts/frontdesk/cli.test.js`, `tests/scripts/hooks/front-desk-writes.test.js`, `tests/scripts/hooks/board-context.test.js`, `tests/scripts/hooks/card-check.test.js`, `tests/scripts/hooks/stop-guard.test.js`, `tests/scripts/engine/dispatcher.test.js`, `tests/scripts/hooks/aside-overlap.test.js`, `tests/e2e/front-desk.test.js` |
+| `commands/aside.md` | create | `/wheelhouse:aside`, in the form of `commands/stop.md` (Task 3) |
+| Tests | create / modify | `tests/scripts/lib/first-mate-seat.test.js`, `tests/scripts/lib/role.test.js`, `tests/scripts/hooks/session-start.test.js`, `tests/scripts/hooks/prompt-record-reply.test.js`, `tests/scripts/hooks/prompt-record.test.js`, `tests/scripts/frontdesk/cli.test.js`, `tests/scripts/hooks/front-desk-writes.test.js`, `tests/scripts/hooks/board-context.test.js`, `tests/scripts/hooks/card-check-shown.test.js`, `tests/scripts/hooks/stop.test.js` (covers `stop-guard.js`), `tests/scripts/state/events.test.js`, `tests/scripts/engine/dispatcher.test.js`, `tests/scripts/hooks/aside-overlap.test.js`, `tests/e2e/front-desk.test.js` |
 
 ## Parts (branches and pull requests)
 
@@ -70,3 +71,52 @@
 A and B run side by side. D and E run side by side once C is open.
 
 ---
+
+### Task 1: A feature session is one Wheelhouse made (Part A)
+
+Spec: 6.3 (the role order), 6.8 cases 20 and 21, 8 (`featureSlug` built first).
+
+**Files:**
+- Modify: `scripts/hooks/session-start.js` (beside `featureSlug`, about line 230)
+- Modify: `scripts/lib/role.js` (the `featureSlug(cwd) !== null` step)
+- Modify: `scripts/hooks/board-context.js` (about line 378) and `scripts/hooks/session-start.js` (about line 838), where they mean "a Wheelhouse feature"
+- Test: `tests/scripts/lib/role.test.js`, `tests/scripts/hooks/session-start.test.js`
+
+**Interfaces:**
+- Consumes: `featureSlug(cwd): string | null` (the branch parser, unchanged); `worktreeRoot(cwd)` from `scripts/hooks/kit.js`; `safeFeatureFolder(worktree): boolean` and `readBrief(worktree)` (throws when unreadable) from `scripts/feature/status.js`. Import from `feature/status.js`, never from `hooks/feature-status.js` (that imports `session-start.js` and would loop).
+- Produces: `madeFeatureSlug(cwd: string): string | null` exported from `scripts/hooks/session-start.js`: the branch's slug when `cwd` is in a worktree whose `.wheelhouse/feature` folder is safe and whose brief's `work` equals the slug; null otherwise, and null on any read failure. `sessionRole` returns `'feature'` only when it is not null.
+
+`featureSlug` keeps its raw meaning: `feature-status.js` compares it against the brief itself. Each other caller is the builder's call; list the ones changed under "Engineering calls".
+
+- [ ] **Step 1: Write the failing tests**
+
+In `tests/scripts/lib/role.test.js`:
+- `a feature/ branch with no feature folder is not a feature session`: a temporary repository on `feature/login` with no `.wheelhouse/feature` → `sessionRole({...}) !== 'feature'` (today's `'front-desk'`; Task 3 makes it `'aside'`).
+- `a feature/ branch whose brief names another piece is not a feature session`: brief `work: 'other'` → not `'feature'`.
+- `a feature worktree Wheelhouse made is a feature session`: folder and brief `work: 'login'` → `'feature'`.
+- `a helm worktree stays a feature session`: a worktree set up as the crew-visibility helm is (a made feature worktree with the helm's marker, whatever that spec gives) → `'feature'`. If the helm marker is not on `main` yet, write the case with a plain made feature worktree and leave a `// helm:` comment for the crew visibility build.
+
+In `tests/scripts/hooks/session-start.test.js`:
+- `madeFeatureSlug: null outside a repository, for an unsafe folder and for an unreadable brief`: three asserts of `=== null`.
+- `madeFeatureSlug: the slug for a made feature worktree`: `=== 'login'`.
+
+- [ ] **Step 2: Run them and see them fail**
+
+Run: `node --test tests/scripts/lib/role.test.js tests/scripts/hooks/session-start.test.js`
+Expected: the new tests FAIL (`madeFeatureSlug` is not exported; the bare branch is `'feature'`).
+
+- [ ] **Step 3: Implement `madeFeatureSlug(cwd)` in `session-start.js`; use it in `role.js` and the callers that mean "a feature session"**
+
+Same check as `featureWorktree` in `scripts/hooks/feature-status.js:48`, returning the slug.
+
+- [ ] **Step 4: Run them and see them pass**
+
+Run: `node --test tests/scripts/lib/role.test.js tests/scripts/hooks/session-start.test.js tests/scripts/hooks/board-context.test.js tests/scripts/hooks/why-role.test.js tests/scripts/lib/background.test.js`
+Expected: PASS, with no change to the tests that already passed.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/hooks/session-start.js scripts/lib/role.js scripts/hooks/board-context.js tests/scripts/lib/role.test.js tests/scripts/hooks/session-start.test.js
+git commit -m "A feature session is one whose worktree Wheelhouse made"
+```
