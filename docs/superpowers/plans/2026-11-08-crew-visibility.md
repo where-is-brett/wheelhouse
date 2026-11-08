@@ -256,3 +256,25 @@ Branch `feature/crew-watch-level` from `main`. Spec sections 6.1, 6.2, 12.
 - [ ] **Step 3: Implement** the kind, the shape, the reducer and the record kind.
 - [ ] **Step 4: Run them and see them pass.**
 - [ ] **Step 5: Commit.** `git commit -am "Records: the watch request"`
+
+### Task 2.3: The "Watch:" line, the phrases and the documents
+
+**Files:**
+- Modify: `skills/intake/SKILL.md` (steps 4 and 5)
+- Modify: `skills/front-desk/SKILL.md`
+- Modify: `docs/specs/2026-10-17-wheelhouse-design.md` (the settings list)
+- Test: `tests/scripts/skills/` (whichever test already checks the intake skill's text; add to it)
+
+**Interfaces:**
+- Consumes: `cli.js record watch` (2.2).
+- Exact copy: the intake's confirming message gains `Watch: steps. Say "background", "full transcript" or "I'll steer it" to change.`, with the piece's level in place of `steps`.
+- Phrases, recorded as a `watch` event: "background" or "don't show me this one" → `off`; "steps" or "keep me posted" → `steps`; "full transcript" or "show me everything" → `transcript`. "I'll steer it" or "let me drive this one" → `transcript`, and the steering itself comes in part 6 (until then the front desk says it is not ready yet).
+- The settings list gains `watchCrew` with its three levels and its default.
+
+- [ ] **Step 1: Write the failing test** `intake: the confirming message names the watch level`: the skill text contains `Watch: steps. Say "background", "full transcript" or "I'll steer it" to change.`
+- [ ] **Step 2: Run it and see it fail.**
+- [ ] **Step 3: Edit** the two skills and the design's settings list.
+- [ ] **Step 4: Run it and see it pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Intake and front desk: the watch level and its phrases"`
+
+Part 2's pull request: title `Crew visibility: the watch level`.
