@@ -98,6 +98,20 @@ export function gateInput(entry, name) {
       target: { pr, sha },
     };
   }
+  // A CI push asked before its pull request exists (the feature's first push of its branch) names the branch only.
+  if (!Number.isInteger(pr)) {
+    return {
+      kind: 'ci-push',
+      level: 3,
+      what: `The branch ${branch} for ${name} is ready to go up for its pull request, and it changes a file that runs the automatic checks.`,
+      why: 'A change to the automatic checks is pushed only with your own sign-in, so it comes to you.',
+      options: [{ label: 'Push it', says: 'The branch is pushed with your sign-in, and its pull request opens.' }],
+      recommend: 'Push it',
+      because: 'it is the change you approved, and the pull request waits for it',
+      meanwhile: 'The pull request waits; other work carries on.',
+      target: { branch, sha },
+    };
+  }
   return {
     kind: 'ci-push',
     level: 3,

@@ -120,6 +120,19 @@ test("the switch's approval card is the merge gate's own, naming the switch", ()
   assert.match(card.question, /Pull request #8 for the switch to the new build engine has everything else it needs to merge/);
 });
 
+test('a CI push asked before its pull request exists composes with no pull request named', () => {
+  const entry = { data: { work: 'ci-node-24', ask: 'ci-push', sha: 'a'.repeat(40), branch: 'feature/ci-node-24' } };
+  const input = gateInput(entry, 'the Node 24 move');
+  assert.equal(input.what, 'The branch feature/ci-node-24 for the Node 24 move is ready to go up for its pull request, and it changes a file that runs the automatic checks.');
+  assert.deepEqual(input.options, [{ label: 'Push it', says: 'The branch is pushed with your sign-in, and its pull request opens.' }]);
+  assert.equal(input.because, 'it is the change you approved, and the pull request waits for it');
+  assert.equal(input.meanwhile, 'The pull request waits; other work carries on.');
+  assert.deepEqual(input.target, { branch: 'feature/ci-node-24', sha: 'a'.repeat(40) });
+  const { card } = composeCard({ ...input, glossary: {} });
+  assert.equal(card.kind, 'ci-push');
+  assert.doesNotMatch(card.question, /pull request #/);
+});
+
 test("each visit asks the helper for the switch's next step, until the engine can build the project", { skip: 'Archon is no longer in force from core cut part 3B; this goes with the code it tests in a later part' }, async () => {
   await withHome(async () => {
     writeProject('o__p', { folder: tempFolder('wh-p '), remoteUrl: 'https://github.com/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
