@@ -483,3 +483,30 @@ Branch `feature/crew-helm` from `main` once part 2 is merged. Spec sections 8.2,
 - [ ] **Step 3: Implement** `featureHelmCall`, `helm.js` and `PROMPTS.helmBack`.
 - [ ] **Step 4: Run them and see them pass.**
 - [ ] **Step 5: Commit.** `git commit -am "Helm: open a piece's session for the director and hand it back"`
+
+### Task 5.4: Hand-back when the terminal closes
+
+**Files:**
+- Create: `scripts/hooks/helm-end.js`
+- Modify: `hooks/hooks.json` (a second `SessionEnd` entry), `scripts/watcher/routine.js` (the tick), `scripts/watcher/main.js`
+- Test: `tests/scripts/hooks/helm-end.test.js`, `tests/scripts/watcher/routine.test.js`, `tests/scripts/watcher/main.test.js`
+
+**Interfaces:**
+- Consumes: `holdBySession`, `cleanOrphans` (5.1); `handBack` (5.3); `pidAlive`, `processStartTime`.
+- Produces:
+  - `helm-end.js`: a `SessionEnd` hook. When the role is `feature` and `holdBySession(project, session_id)` names a hold, it calls `handBack(..., {why: 'ended'})`. Anything else, or any error, does nothing. It always exits 0 and never writes to stdout.
+  - `hooks.json`: `{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/node-floor.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/helm-end.js\"", "timeout": 10 }` beside `stop-guard.js`.
+  - `routine.js` tick: for each opened hold whose pid is gone, or alive with a different start time, `handBack(..., {why: 'closed'})`. A hold that is not yet opened is left alone (6.1 steers from the start).
+  - `main.js` start: `cleanOrphans`, and the pid check above once.
+
+- [ ] **Step 1: Write the failing tests**
+  - `helm-end: hands back the held session`: a hold naming `session_id` → no hold file, one wake.
+  - `helm-end: ignores another session`: a different `session_id` → hold kept.
+  - `helm-end: exits 0 on bad input`: stdin `{` → exit 0, empty stdout.
+  - `routine: a closed terminal hands back`: an opened hold with a dead pid → released (Review Focus 5).
+  - `routine: a reused pid hands back`: a live pid with another start time → released.
+  - `routine: an unopened hold stays`.
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/hooks/helm-end.test.js tests/scripts/watcher/routine.test.js tests/scripts/watcher/main.test.js`
+- [ ] **Step 3: Implement** the hook, its entry and the tick check.
+- [ ] **Step 4: Run them and see them pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Helm: hand back when the session ends or its terminal closes"`
