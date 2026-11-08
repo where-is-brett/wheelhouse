@@ -34,11 +34,19 @@ test('start gives the session only the environment it is handed, and list shows 
   const calls = [];
   const tmux = makeTmux({ run: (cmd, args) => { calls.push(args); return { status: 0, stdout: 'haiku-trial-desk\nmine\n' }; } });
   tmux.start({ name: 'desk', cwd: '/w', command: ['claude', '--model', 'haiku'], env: { PATH: '/bin' } });
-  assert.deepEqual(calls[0], ['new-session', '-d', '-s', 'haiku-trial-desk', '-c', '/w', 'env', '-i', 'PATH=/bin', 'claude', '--model', 'haiku']);
+  assert.deepEqual(calls[0], ['set-option', '-g', 'history-limit', '20000']);
+  assert.deepEqual(calls[1], ['new-session', '-d', '-s', 'haiku-trial-desk', '-x', '220', '-y', '60', '-c', '/w', 'env', '-i', 'PATH=/bin', 'claude', '--model', 'haiku']);
   assert.deepEqual(tmux.list(), ['haiku-trial-desk']);
 });
 
 test('front desk runs on haiku', () => {
   assert.deepEqual(frontDeskCommand().command, ['claude', '--model', 'haiku']);
   assert.equal(startedByScript(frontDeskCommand().env), false);
+});
+
+test('capture joins wrapped lines and reads the whole history', () => {
+  const calls = [];
+  const tmux = makeTmux({ run: (cmd, args) => { calls.push(args); return { status: 0, stdout: 'text' }; } });
+  assert.equal(tmux.capture('desk'), 'text');
+  assert.deepEqual(calls[0], ['capture-pane', '-p', '-J', '-S', '-', '-t', 'haiku-trial-desk']);
 });

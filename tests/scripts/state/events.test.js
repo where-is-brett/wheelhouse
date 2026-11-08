@@ -1048,3 +1048,21 @@ test('events: aside-overlap needs branch, pieces, files and at', () => {
     assert.throws(() => makeEvent({ kind: 'aside-overlap', data }), undefined, JSON.stringify(data));
   }
 });
+
+test('events: a helm note of six lines is refused', () => {
+  for (const kind of ['helm', 'helm-ended', 'helm-note']) assert.equal(PLAIN_KINDS.includes(kind), true);
+  const five = ['a', 'b', 'c', 'd', 'e'].join('\n');
+  makeEvent({ kind: 'helm-note', data: { work: 'login', text: five } });
+  assert.throws(() => makeEvent({ kind: 'helm-note', data: { work: 'login', text: `${five}\nf` } }));
+  assert.throws(() => makeEvent({ kind: 'helm-note', data: { work: 'login' } }));
+});
+
+test('events: a helm and a helm-ended take their fields', () => {
+  makeEvent({ kind: 'helm', data: { work: 'login', at: '2026-11-08T01:00:00.000Z', fromStart: true } });
+  makeEvent({ kind: 'helm', data: { work: 'login', at: '2026-11-08T01:00:00.000Z' } });
+  makeEvent({ kind: 'helm-ended', data: { work: 'login', at: '2026-11-08T01:00:00.000Z', why: 'handed back' } });
+  for (const [kind, data] of [
+    ['helm', { work: 'login' }], ['helm', { work: '../x', at: 'now' }], ['helm', { work: 'login', at: 'now', fromStart: 'yes' }],
+    ['helm-ended', { work: 'login' }], ['helm-ended', { work: 'login', at: 'now', extra: 1 }],
+  ]) assert.throws(() => makeEvent({ kind, data }), undefined, JSON.stringify(data));
+});

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { reviewCard, stepsPage, writeTryMe, recommendation, REVIEW_TITLE } from '../../../probes/haiku-trial/review-card.js';
+import { reviewCard, stepsPage, writeTryMe, recommendation, REVIEW_TITLE, answerLetter, reviewAsDecision } from '../../../probes/haiku-trial/review-card.js';
 import { PHONE_LIMIT, shapeProblems } from '../../../scripts/cards/compose.js';
 
 const given = {
@@ -56,4 +56,23 @@ test('try-me has 41 rows and no duplicates', (t) => {
   assert.equal(rows[0], 'Date,Description,Amount');
   assert.equal(rows.length - 1, 41);
   assert.equal(new Set(rows.slice(1)).size, 41);
+});
+
+test('only A, B or C is an answer', () => {
+  assert.equal(answerLetter('b'), 'B');
+  assert.equal(answerLetter(' C '), 'C');
+  for (const bad of ['', 'maybe', 'AB', 'D', undefined, null]) assert.equal(answerLetter(bad), null, String(bad));
+});
+
+test('the card as a decision has the shape the feature command checks', () => {
+  const card = reviewCard(given);
+  const decision = reviewAsDecision(card, { stepsUrl: 'https://example.invalid/steps' });
+  assert.deepEqual(shapeProblems({ ...decision }), []);
+  assert.equal(decision.recommend, card.options.find((o) => o.key === card.recommend).label);
+  assert.match(decision.why, /steps are at/);
+});
+
+test('a long floor line cannot push the card past the phone limit', () => {
+  const { text } = reviewCard({ ...given, floor: 'x'.repeat(5000) });
+  assert.ok(text.length <= PHONE_LIMIT.chars, `${text.length} characters`);
 });
