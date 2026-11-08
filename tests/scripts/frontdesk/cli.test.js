@@ -45,7 +45,6 @@ import { answeredWords, subjectOf } from '../../../scripts/cards/answered.js';
 import { takeSeat, holdsSeat } from '../../../scripts/lib/first-mate-seat.js';
 import { projectOf } from '../../../scripts/hooks/kit.js';
 import { takeHere } from '../../../scripts/lib/session-files.js';
-import { sessionFile } from '../../../scripts/watcher/waker.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
 const hostLog = [];
@@ -2481,52 +2480,41 @@ test('seatRefusal leaves commands outside the list alone', async () => {
 
 // --- page ---
 
-const workEvent = (id, n) => makeEvent({ kind: 'work', data: { id, title: `Title of ${id}`, lane: 'small', visible: false, dependsOn: [] }, now: () => T(n) });
-
-// An open piece `login`, with a session whose transcript has one step, in a registered project's folder.
-async function pageFixture(fn, extra = []) {
-  await inHome(async () => {
-    const folder = agentProject('claude-code');
-    const configDir = tempFolder('wh-claude-');
-    fs.mkdirSync(path.join(configDir, 'projects', 'a'), { recursive: true });
-    fs.writeFileSync(path.join(configDir, 'projects', 'a', 's1.jsonl'), `${JSON.stringify({ type: 'assistant', timestamp: '2026-11-08T01:00:00Z', message: { content: [{ type: 'text', text: 'Starting the login page. Then more.' }] } })}\n`);
-    const file = sessionFile('o__p', 'login');
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify({ sessionId: 's1', worktree: folder }));
-    const helper = fakeHelper({ events: [workEvent('login', 1), makeEvent({ kind: 'feature', data: { work: 'login', step: 'building' }, now: () => T(2) }), ...extra] });
-    await fn({ folder, helper, env: { CLAUDE_CONFIG_DIR: configDir } });
-  });
+// The helper's crew route, standing in: the command only asks it, in the project's folder, and says what it answers.
+function crewHelper(answer) {
+  const helper = fakeHelper();
+  const asked = [];
+  helper.client.crew = { page: async (body) => { asked.push(body); return answer(body); } };
+  return { helper, asked };
 }
 
-test('cli: page raises the level and prints one line', async () => {
-  await pageFixture(async ({ folder, helper, env }) => {
-    const out = await run(helper, ['page', 'login'], undefined, { cwd: folder, env });
-    assert.equal(out.code, 0, out.err);
-    assert.equal(out.out.trim().split('\n').length, 1);
-    assert.match(out.out, /--follow login/);
-    assert.equal(helper.views().watch.login, 'transcript');
-    assert.deepEqual(helper.writes().map((w) => [w.kind, w.data]), [['watch', { work: 'login', level: 'transcript' }]]);
-    const page = fs.readFileSync(path.join(folder, '.wheelhouse', 'watch', 'login.md'), 'utf8');
-    assert.match(page, /Starting the login page\./);
-    assert.ok(out.out.includes(path.join(folder, '.wheelhouse', 'watch', 'login.md')));
-    // Already at the transcript level: nothing more is recorded.
-    const again = await run(helper, ['page', 'login'], undefined, { cwd: folder, env });
-    assert.equal(again.code, 0, again.err);
-    assert.equal(helper.writes().length, 1);
-  });
+test('cli: page asks the helper for the folder and prints one line', async () => {
+  const { helper, asked } = crewHelper(() => ({ ok: true, file: '/projects/shop/.wheelhouse/watch/login.md' }));
+  const out = await run(helper, ['page', 'login']);
+  assert.equal(out.code, 0, out.err);
+  assert.deepEqual(asked, [{ cwd: CWD, work: 'login' }]);
+  assert.equal(out.out.trim().split('\n').length, 1);
+  assert.match(out.out, /^The page is at `\/projects\/shop\/\.wheelhouse\/watch\/login\.md`\. To follow it live: `node <plugin root>\/scripts\/crew\/runs\.js --follow login --folder "[^"]+"`\n$/);
+  assert.deepEqual(helper.calls, [], 'nothing else is asked of the helper, and nothing is read here');
 });
 
-test('cli: page refuses a closed piece', async () => {
-  const closed = makeEvent({ kind: 'feature', data: { work: 'login', step: 'closed' }, now: () => T(5) });
-  await pageFixture(async ({ folder, helper, env }) => {
-    for (const work of ['login', 'nothing', '../x']) {
-      const out = await run(helper, ['page', work], undefined, { cwd: folder, env });
-      assert.equal(out.code, 0, out.err);
-      assert.equal(out.out, `There is no open piece called ${work}.\n`);
-    }
-    assert.ok(!fs.existsSync(path.join(folder, '.wheelhouse')), 'no file');
-    assert.deepEqual(helper.writes(), [], 'nothing recorded');
-  }, [closed]);
+test('cli: page says the helper\'s refusal line, and a name that is not a piece never reaches it', async () => {
+  const { helper, asked } = crewHelper(({ work }) => ({ ok: true, said: `There is no open piece called ${work}.` }));
+  const closed = await run(helper, ['page', 'old']);
+  assert.equal(closed.code, 0, closed.err);
+  assert.equal(closed.out, 'There is no open piece called old.\n');
+  const odd = await run(helper, ['page', '../x']);
+  assert.equal(odd.out, 'There is no open piece called ../x.\n');
+  assert.deepEqual(asked.map((b) => b.work), ['old']);
+  const idle = crewHelper(() => ({ ok: true, said: 'idle has not started yet, so there is nothing to watch.' }));
+  assert.equal((await run(idle.helper, ['page', 'idle'])).out, 'idle has not started yet, so there is nothing to watch.\n');
+});
+
+test('cli: page reports a helper that refuses', async () => {
+  const { helper } = crewHelper(() => ({ ok: false, refused: 'All stop is on, so the piece can\'t be raised to its full transcript' }));
+  const out = await run(helper, ['page', 'login']);
+  assert.equal(out.code, 1);
+  assert.equal(out.err, 'All stop is on, so the piece can\'t be raised to its full transcript\n');
 });
 
 test('cli: page is a seat write', async () => {

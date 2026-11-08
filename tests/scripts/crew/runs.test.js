@@ -864,8 +864,60 @@ test('prunePages removes only the pages of pieces that are not open', async () =
     const dir = path.join(folder, '.wheelhouse', 'watch');
     fs.writeFileSync(path.join(dir, 'notes.txt'), 'keep');
     const views = () => buildViews(listEvents(stateDir(project), { report: () => {} }), []);
+    // A link and a folder with a page's name are left alone, and the link's target is not touched.
+    const target = path.join(tempFolder('wh-else-'), 'target.md');
+    fs.writeFileSync(target, 'keep');
+    fs.symlinkSync(target, path.join(dir, 'linked.md'));
+    fs.mkdirSync(path.join(dir, 'x.md'));
     assert.deepEqual(prunePages(folder, views), ['old-piece']);
-    assert.deepEqual(fs.readdirSync(dir).sort(), ['login.md', 'notes.txt']);
+    assert.deepEqual(fs.readdirSync(dir).sort(), ['linked.md', 'login.md', 'notes.txt', 'x.md']);
+    assert.equal(fs.readFileSync(target, 'utf8'), 'keep');
     assert.deepEqual(prunePages(path.join(folder, 'nowhere'), views), []);
+  });
+});
+
+test('--follow stops at a recorded watch off, and reads nothing after it', async () => {
+  await withPiece(async ({ project, folder, put, transcript, env }) => {
+    let out = '';
+    const code = await follow({
+      project, folder, work: 'login', env, out: (t) => { out += t; },
+      sleep: async () => {
+        // The director sets the piece to off, and the run says something more.
+        await put('watch', { work: 'login', level: 'off' });
+        fs.appendFileSync(transcript, `${JSON.stringify(tool('Edit', { file_path: '/w/tree/later.ts' }))}\n`);
+      },
+    });
+    assert.equal(code, 0);
+    assert.match(out, /Reading `first\.ts`/);
+    assert.doesNotMatch(out, /later\.ts/);
+    assert.match(out.trim().split('\n').at(-1), /Watching login is off/);
+    assert.doesNotMatch(fs.readFileSync(pagePath(folder, 'login'), 'utf8'), /later\.ts/);
+  });
+});
+
+test('--follow with --folder works from anywhere, and refuses a folder that is no project', async () => {
+  await withPiece(async ({ folder, put, env, home }) => {
+    const elsewhere = tempFolder('wh-elsewhere-');
+    const go = (folderArg) => new Promise((resolve) => {
+      const child = spawn(process.execPath, [RUNS, '--follow', 'login', '--folder', folderArg], {
+        cwd: elsewhere, env: { ...process.env, ...env, WHEELHOUSE_HOME: home }, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let out = '';
+      let err = '';
+      let closing = null;
+      child.stdout.on('data', (d) => {
+        out += d;
+        if (closing === null && out.includes('Following login')) closing = put('feature', { work: 'login', step: 'closed' });
+      });
+      child.stderr.on('data', (d) => { err += d; });
+      child.on('exit', async (code) => { await closing; resolve({ code, out, err }); });
+    });
+    const bad = await go(elsewhere);
+    assert.equal(bad.code, 1);
+    assert.match(bad.err, /isn't a Wheelhouse project/);
+    const good = await go(folder);
+    assert.equal(good.code, 0, good.err);
+    assert.match(good.out, /Following login\./);
+    assert.match(good.out, /login has closed/);
   });
 });

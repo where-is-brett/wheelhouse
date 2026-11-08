@@ -75,7 +75,7 @@ If you set a project up with an earlier Wheelhouse (v0.1.x), its records were on
 
 When you ask to watch a piece of work, Wheelhouse writes what its crew did so far as one readable page, `.wheelhouse/watch/<piece>.md`, inside the project's own folder. Setup keeps that folder out of git, so the page is never committed or pushed. The page holds what the piece's session said, each thing it did in one line with the first part of what came back, and each helper's run under its own heading, newest at the bottom. Anything that looks like a key or a password is hidden, and a decision waiting for you is named by its number only.
 
-The page stays on this computer. Writing it costs no model tokens, it goes into no record, digest, alert or message, and the chat gets one line: where the page is. It is written again each time you ask, or every two seconds while you follow it in a terminal, and it is removed when the piece closes. A piece set to "background" has no page written and its run is not read.
+The page stays on this computer. Writing it costs no model tokens, it goes into no record, digest, alert or message, and the chat gets one line: where the page is. It is written again each time you ask, or every two seconds while you follow it in a terminal, and it is removed when the piece closes. A page is written only when you ask for it, and asking raises the piece to the full transcript, even if it was set to "background". Until you ask, a piece set to "background" has no page and its run is not read.
 
 ## The build engine
 

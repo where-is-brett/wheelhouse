@@ -127,6 +127,7 @@ import { checkSetting, definitionOf } from '../settings/catalogue.js';
 import { READY_LEVELS, PREMIUM_LEVEL, barFailures, readiness, samePins } from '../routing/column-ready.js';
 import { PREMIUM_ASK, PREMIUM_DO, checkRefusal, foundPremium, offeredFrom, premiumInput, premiumRefusal, premiumPinOf } from '../routing/premium.js';
 import { levelOf } from '../routing/thoroughness.js';
+import { pageFor } from '../crew/runs.js';
 import { effectiveSettings, settingWords } from '../settings/effective.js';
 import { cardHash } from '../lib/measures-clicks.js';
 import { aliasModel, FRONT_DESK_ALIAS, STRONGEST_ALIAS } from '../setup/best-model.js';
@@ -921,7 +922,7 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 // ~/.wheelhouse cannot be read: like the runbook's, each may give `cwd`, a full path, and the
 // helper places the project from it.
 const PLACED_ROUTES = [
-  '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/session/note', '/session/seat', '/cards/chat-click', '/confirm',
+  '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/session/note', '/session/seat', '/crew/page', '/cards/chat-click', '/confirm',
   '/desk/read', '/desk/act', '/desk/watch',
   '/local/undo', '/undo', '/local/move',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
@@ -2259,6 +2260,24 @@ export async function startHelper({
   async function doSessionSeat({ project, session }) {
     if (typeof session !== 'string' || session === '') refuse('this session has no id to look the seat up by');
     return { ok: true, holds: holdsSeat(project, session) };
+  }
+
+  // The page of what a piece's crew did (crew visibility design, 7.3), for "watch <work>": the piece is checked, raised to the
+  // transcript level when it is below it (a record, refused under STOP) and its page written in the project's folder. Answers
+  // `{ ok, file }`, or `{ ok, said }` with the line to say when there is no page to write. The transcript is read here, on
+  // this computer, and none of it is answered.
+  async function doCrewPage({ project, work }, ctx) {
+    if (typeof work !== 'string' || work === '' || work.length > 100) refuse('give the piece by its short name');
+    const folder = recordOf(project)?.folder;
+    if (typeof folder !== 'string') refuse(FOLDER_NOT_PROJECT);
+    const got = await pageFor({
+      project, folder, work,
+      raise: async () => {
+        if (stopped()) refuse('All stop is on, so the piece can\'t be raised to its full transcript');
+        await doWrite({ project, kind: 'watch', data: { work, level: 'transcript' } }, ctx);
+      },
+    });
+    return { ok: true, ...got };
   }
 
   // A click in the chat (ruling P5-17): an unsigned card-answer naming its proof, never signed. A label that
@@ -4869,6 +4888,7 @@ export async function startHelper({
     '/session/mark': stateRoute(doSessionMark, { write: true }),
     '/session/note': stateRoute(doSessionNote, { clone: false, write: true }),
     '/session/seat': stateRoute(doSessionSeat, { clone: false }),
+    '/crew/page': stateRoute(doCrewPage, { clone: false }),
     '/cards/chat-click': stateRoute(doChatClick, { write: true }),
     // One window at a time on this computer: a second request waits for the first window to close.
     '/confirm': (body, ctx) => oneAtATime('window', () => doConfirm(body, ctx)),

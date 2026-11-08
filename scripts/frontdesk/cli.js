@@ -116,8 +116,6 @@ import { answeredWords } from '../cards/answered.js';
 import { markHere } from '../lib/session-files.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { SLUG } from '../lib/build-loop.js';
-import { levelFor } from '../crew/level.js';
-import { writePiecePage } from '../crew/runs.js';
 
 // How far back `views waiting` looks for answers, and its lead (scripts/desk/views.js).
 export { RECENT_MS, RECENT_LEAD };
@@ -1152,27 +1150,15 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
 }
 
 // --- page ---
-export async function page({ client, cwd, work, now, env = process.env }) {
-  const none = `There is no open piece called ${work}.`;
-  if (typeof work !== 'string' || !SLUG.test(work)) return none;
-  const { views } = await viewsOf(client, cwd);
-  if (!isOpen(views, work)) return none;
-  const found = projectOf(cwd);
-  if (found === null || typeof found.record?.folder !== 'string') throw new CliError('This folder is in no Wheelhouse project');
-  const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
-  const levelIn = (seen) => levelFor(seen, effectiveSettings({ project: seen.settings, now: () => at }), work);
-  // Asking for the page is asking to see the run: a piece below the transcript level is raised to it, and only then is a page
-  // written. The level is read again after the raise, so a piece the choice does not yet hold for (its work has not begun)
-  // gets no page.
-  let level = levelIn(views);
-  if (level !== 'transcript') {
-    await write(client, cwd, 'watch', { work, level: 'transcript' });
-    level = levelIn((await viewsOf(client, cwd)).views);
-  }
-  if (level !== 'transcript') return `${work} has not started yet, so there is nothing to watch.`;
-  const file = writePiecePage({ project: found.project, folder: found.record.folder, work, level, env, now: () => at });
-  if (file === null) throw new CliError(`The page for ${work} couldn't be written`);
-  return `The page is at \`${file}\`. To follow it live: \`node <plugin root>/scripts/crew/runs.js --follow ${work}\``;
+export async function page({ client, cwd, work }) {
+  if (typeof work !== 'string' || !SLUG.test(work)) return `There is no open piece called ${work}.`;
+  // The helper places the project, checks the piece, raises it if need be and writes the page: this command can't read where
+  // the records and transcripts are kept.
+  const got = await client.crew.page({ cwd, work });
+  if (got?.ok !== true) throw new CliError(said(got, `The host helper did not write the page for ${work}`));
+  if (typeof got.said === 'string') return got.said;
+  if (typeof got.file !== 'string') throw new CliError(`The host helper gave no page for ${work}`);
+  return `The page is at \`${got.file}\`. To follow it live: \`node <plugin root>/scripts/crew/runs.js --follow ${work} --folder "${path.resolve(cwd)}"\``;
 }
 
 // --- similar ---
@@ -1500,7 +1486,7 @@ export async function main(argv, {
       json(await record({ client: helper, cwd: here, kind: rest[0], input: parsed(await stdin()), now, ...(makeId ? { makeId } : {}), ...(columnsReady ? { ready: columnsReady } : {}) }));
     } else if (command === 'page') {
       only(rest, 1, 'Give the piece to watch: page <work>');
-      lines([await page({ client: helper, cwd: here, work: rest[0], now, env })]);
+      lines([await page({ client: helper, cwd: here, work: rest[0] })]);
     } else if (command === 'similar') {
       // The request's words as the arguments, which STOP lets through, or its text on standard input.
       json(await similar({ client: helper, cwd: here, text: rest.length > 0 ? rest.join(' ') : await stdin() }));

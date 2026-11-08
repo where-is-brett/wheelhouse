@@ -15,6 +15,7 @@ import { buildViews } from '../state/views.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { isOpen } from '../desk/views.js';
 import { readCapped } from '../feature/status.js';
+import { readDecisions } from '../decisions/pending.js';
 import { sessionFile } from '../watcher/waker.js';
 import { levelFor } from './level.js';
 import { LEVELS } from './levels.js';
@@ -707,6 +708,42 @@ export function writePiecePage({ project, folder, work, level, env = process.env
   return writePage(folder, work, { sessionId: sessionIdOf(project, work), env, now, waiting });
 }
 
+// The number of the oldest decision waiting on the director for a piece, or null. An unreadable record gives null.
+export function waitingDecision(project, work) {
+  try {
+    return readDecisions(project).pending.find((d) => d.workId === work)?.n ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const NONE = (work) => `There is no open piece called ${work}.`;
+const NOT_STARTED = (work) => `${work} has not started yet, so there is nothing to watch.`;
+
+// "watch <work>", in the helper: checks the piece is open and has started, raises it to the transcript level when it is
+// below it (`raise` records that, and nothing is recorded before the checks), and writes its page. Resolves `{ file }`, or
+// `{ said }`, one line, when there is no page to write. `project` is the project's name, `folder` its main folder.
+export async function pageFor({
+  project, folder, work, raise, env = process.env, now = () => new Date(),
+} = {}) {
+  if (typeof work !== 'string' || !SLUG.test(work)) return { said: NONE(work) };
+  const read = () => {
+    const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled());
+    return { views, level: levelFor(views, effectiveSettings({ project: views.settings, now }), work) };
+  };
+  let { views, level } = read();
+  if (!isOpen(views, work)) return { said: NONE(work) };
+  const feature = views.features?.[work]?.data;
+  if (feature === null || typeof feature !== 'object' || feature.step === 'closed') return { said: NOT_STARTED(work) };
+  if (level !== 'transcript') {
+    await raise();
+    ({ level } = read());
+  }
+  if (level !== 'transcript') return { said: NOT_STARTED(work) };
+  const file = writePiecePage({ project, folder, work, level, env, now, waiting: waitingDecision(project, work) });
+  return file === null ? { said: `The page for ${work} couldn't be written.` } : { file };
+}
+
 // Whether the piece is open and the level it is watched at, from the project's records. A record that can't be read gives
 // a piece that is not open, at off.
 export function pieceState(project, work, { now = () => new Date() } = {}) {
@@ -774,7 +811,7 @@ export async function follow({
       return 0;
     }
     const sessionId = sessionIdOf(project, work);
-    const file = writePiecePage({ project, folder, work, level, env, now });
+    const file = writePiecePage({ project, folder, work, level, env, now, waiting: waitingDecision(project, work) });
     if (first) say(file === null ? `The page for ${work} can't be written here. Following the steps only.` : `Following ${work}. The page is at \`${file}\`. Stop with Ctrl-C.`);
     const transcript = findTranscript({ sessionId, env });
     const steps = transcript ? stepsOf(readTail(transcript, { max: PAGE_MAX })) : [];
@@ -796,12 +833,13 @@ export async function follow({
 
 async function main(argv) {
   const say = (line) => process.stderr.write(`${line}\n`);
-  if (argv.length !== 2 || argv[0] !== '--follow' || !SLUG.test(argv[1])) {
-    say('Usage: runs.js --follow <work>');
+  const named = argv.length === 4 && argv[2] === '--folder';
+  if ((argv.length !== 2 && !named) || argv[0] !== '--follow' || !SLUG.test(argv[1])) {
+    say('Usage: runs.js --follow <work> [--folder <the project\'s folder>]');
     return 1;
   }
   const { projectOf } = await import('../hooks/kit.js');
-  const found = projectOf(process.cwd());
+  const found = projectOf(named ? argv[3] : process.cwd());
   const folder = found === null ? null : found.record?.folder;
   if (found === null || typeof folder !== 'string') {
     say("This folder isn't a Wheelhouse project.");
