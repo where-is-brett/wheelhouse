@@ -10,7 +10,7 @@ import { markSeen } from '../../../scripts/briefing/seen.js';
 import { wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { inHome as inHomeOff, keep, turnOn, P, raise, typedAnswer } from '../../helpers/decisions-world.js';
-// Typed replies are off until the director rules; these tests are of the behaviour with them on, and say so where they mean off.
+// Typed replies are on by default (the director's decision of 8 November 2026); these tests still switch them on, and say so where they mean off.
 const inHome = (fn) => inHomeOff(async (home) => { turnOn(); return fn(home); });
 
 

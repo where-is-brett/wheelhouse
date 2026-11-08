@@ -5,8 +5,8 @@ import { decide, checkShown, DECISION_IN_CHAT } from '../../../scripts/hooks/car
 import { pendingDecisions } from '../../../scripts/decisions/pending.js';
 import { decisionText } from '../../../scripts/decisions/message.js';
 import { asQuestion } from '../../../scripts/cards/visit.js';
-import { inHome as inHomeOff, turnOn, P, raise } from '../../helpers/decisions-world.js';
-// Typed replies are off until the director rules; these tests are of the behaviour with them on, and say so where they mean off.
+import { inHome as inHomeOff, turnOn, turnOff, P, raise } from '../../helpers/decisions-world.js';
+// Typed replies are on by default (the director's decision of 8 November 2026); these tests still switch them on, and say so where they mean off.
 const inHome = (fn) => inHomeOff(async (home) => { turnOn(); return fn(home); });
 
 
@@ -92,6 +92,15 @@ test('the last message is read from the transcript when the hook gives none', as
   });
 });
 
+test('typed replies never set: the default is on, so the question picker is refused for a decision', async () => {
+  await inHomeOff(async () => {
+    const card = raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    const question = asQuestion({ data: card.data });
+    const out = await decide({ cwd: '/x', session_id: 's-desk', hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [question] } }, { projectOf: () => ({ project: P }), env: {} });
+    assert.equal(out.hookSpecificOutput.permissionDecisionReason, DECISION_IN_CHAT);
+  });
+});
+
 test('the question picker is refused for a decision, with the way to show it', async () => {
   await inHome(async () => {
     const card = raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
@@ -102,8 +111,9 @@ test('the question picker is refused for a decision, with the way to show it', a
   });
 });
 
-test('typed replies off, the default: the question picker is allowed for a decision, as on main', async () => {
+test('typed replies switched off: the question picker is allowed for a decision, as on main', async () => {
   await inHomeOff(async () => {
+    turnOff();
     const card = raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
     const question = asQuestion({ data: card.data });
     const input = { cwd: '/x', session_id: 's-desk', hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [question] } };

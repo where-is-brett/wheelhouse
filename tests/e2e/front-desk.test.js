@@ -265,7 +265,7 @@ async function ask(world, questions, answers) {
 
 const labelsOf = (question) => question.options.map((o) => o.label);
 
-// Typed replies are off until the director rules: the setting, written and confirmed as the director's confirmation would.
+// Typed replies switched on, as the director's confirmed setting does (on is also the default): written and confirmed.
 async function typedRepliesOn(world) {
   const written = await world.client.state.write({ project: P, kind: 'setting', data: { key: 'typedReplies', value: true, words: 'Answer decisions by typing' } });
   assert.equal(written.ok, true, JSON.stringify(written));
