@@ -158,3 +158,27 @@ Branch `feature/crew-runs-reader` from `main`. Spec sections 4, 7.1, 7.2, 8.1.
 - [ ] **Step 3: Implement** `stepOf`, `stepsOf`, `mask`, `plain`.
 - [ ] **Step 4: Run them and see them pass.**
 - [ ] **Step 5: Commit.** `git commit -am "Crew runs: step lines in plain words"`
+
+### Task 1.4: Who is doing it: subagents and the Bosun
+
+**Files:**
+- Modify: `scripts/crew/runs.js`
+- Test: `tests/scripts/crew/runs.test.js`
+
+**Interfaces:**
+- Consumes: 1.1–1.3.
+- Produces:
+  - `roleOf(agentType) -> string`: `builder` → `A Crew member`, `reviewer` → `A Lookout`, `tester` → `The tester`, matched on the part after any `plugin:` prefix; anything else → `A Crew member`.
+  - `subagentLine({agentType, description}) -> string`: `A Crew member is building task 3`, `A Lookout is reviewing task 2`, `The tester is trying <description>`. The verb comes from the role (building, reviewing, trying); the object is the call's `description`, cut to 80 characters and through `plain`.
+  - `runSteps({sessionId, env, glossary, waiting, foreman = false}) -> {steps: [{at, text}], crew: [string]}`: finds and reads the run (1.1, 1.2), its subagents' latest lines in `crew`. Each subagent file is matched to the call whose result names its agent id; one with no match uses `A Crew member`. With `foreman: true` each line reads `The Bosun is <verb phrase>`, and a decision step reads `The Bosun is deciding what to do about <work>`. A missing transcript gives `{steps: [], crew: []}`.
+
+- [ ] **Step 1: Write the failing tests**
+  - `names a reviewer subagent a Lookout`: a call with `subagent_type: 'wheelhouse:reviewer'`, description `review task 2` → `A Lookout is reviewing task 2`.
+  - `falls back to a Crew member`: an unknown agent type → starts `A Crew member`.
+  - `reads subagent transcripts beside the run`: a fixture run plus one subagent file → `crew` has one line.
+  - `speaks of the Bosun in the third person`: `foreman: true` → every line starts `The Bosun is`.
+  - `gives empty lists for a missing run`.
+- [ ] **Step 2: Run them and see them fail.**
+- [ ] **Step 3: Implement** `roleOf`, `subagentLine`, `runSteps`.
+- [ ] **Step 4: Run them and see them pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Crew runs: subagent and Bosun lines"`
