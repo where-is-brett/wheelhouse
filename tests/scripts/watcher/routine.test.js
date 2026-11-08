@@ -10,8 +10,9 @@ import { HAND_DONE, HAND_GOAL } from '../../../scripts/lib/by-hand-done.js';
 import { FOREMAN_QUESTIONS } from '../../../scripts/lib/build-loop.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import { holdFile } from '../../../scripts/crew/hold.js';
+import { holdFile, helmHeld, markOpened, takeHold } from '../../../scripts/crew/hold.js';
 import { featurePaths, writeStatus } from '../../../scripts/feature/files.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { withHome } from '../../helpers/homes.js';
 import { emptyViews, fakeClient, featureView, project, worktree, workView, P as FOREMAN_P } from '../../helpers/foreman.js';
 
@@ -363,4 +364,50 @@ test('routine: a held piece is never stuck', () => withHome(async () => {
   fs.rmSync(file);
   const again = await routineOf(state(), act).run({ events: [stuck] });
   assert.equal(again.reasons.get(stuck.id), 'stuck');
+}));
+
+// A hold taken as the helm takes it, opened with the given process.
+async function openedHold(work, { pid, startTime, opened = true }) {
+  await openTestRecord({ project: P });
+  await takeHold(P, { work, sessionId: 's-1' });
+  if (opened) markOpened(P, work, { pid, startTime });
+}
+const helmDeps = (woken, over = {}) => ({
+  alive: () => true, startTimeOf: async () => 'Sun Nov  8 02:00:00 2026',
+  wakerFor: () => ({ wakeFeature: async (work) => { woken.push(work); } }), ...over,
+});
+
+test('routine: a closed terminal hands back', () => withHome(async () => {
+  await openedHold('w-tide-1', { pid: 4242, startTime: 'Sun Nov  8 02:00:00 2026' });
+  const woken = [];
+  await routineOf(state(), fakeAct().act, { helm: helmDeps(woken, { alive: () => false }) }).run({ events: [] });
+  assert.equal(helmHeld(P, 'w-tide-1'), false);
+  assert.deepEqual(woken, ['w-tide-1']);
+}));
+
+test('routine: a reused pid hands back', () => withHome(async () => {
+  await openedHold('w-tide-1', { pid: 4242, startTime: 'Sun Nov  8 02:00:00 2026' });
+  const woken = [];
+  await routineOf(state(), fakeAct().act, { helm: helmDeps(woken, { startTimeOf: async () => 'Sun Nov  8 09:30:00 2026' }) }).run({ events: [] });
+  assert.equal(helmHeld(P, 'w-tide-1'), false);
+  assert.deepEqual(woken, ['w-tide-1']);
+}));
+
+test('routine: a live pid with the same or an unreadable start time stays', () => withHome(async () => {
+  await openedHold('w-tide-1', { pid: 4242, startTime: 'Sun Nov  8 02:00:00 2026' });
+  await openedHold('w-tide-2', { pid: 4243, startTime: 'Sun Nov  8 02:00:00 2026' });
+  const woken = [];
+  const times = { 4242: 'Sun Nov  8 02:00:00 2026', 4243: null };
+  await routineOf(state(), fakeAct().act, { helm: helmDeps(woken, { startTimeOf: async (pid) => times[pid] }) }).run({ events: [] });
+  assert.equal(helmHeld(P, 'w-tide-1'), true);
+  assert.equal(helmHeld(P, 'w-tide-2'), true);
+  assert.deepEqual(woken, []);
+}));
+
+test('routine: an unopened hold stays', () => withHome(async () => {
+  await openedHold('w-tide-1', { opened: false });
+  const woken = [];
+  await routineOf(state(), fakeAct().act, { helm: helmDeps(woken, { alive: () => false }) }).run({ events: [] });
+  assert.equal(helmHeld(P, 'w-tide-1'), true);
+  assert.deepEqual(woken, []);
 }));

@@ -28,7 +28,9 @@
 //   readyPlans [work] features at the start whose session says its plan is ready but whose plan was never recorded (found again
 //            when the watcher starts, so a plan held back by a hold is not lost to a restart)
 import { FOREMAN_TYPES } from './core.js';
-import { helmHeld } from '../crew/hold.js';
+import { helmHeld, listHolds } from '../crew/hold.js';
+import { handBack } from '../crew/helm.js';
+import { pidAlive, processStartTime } from './waker.js';
 import { recordIncident } from './reliability.js';
 import {
   FIVE_HOUR_TIGHT, ForemanError, NO_PLAN, PLANS_WHILE_HELD, builderCapOf, checkoutOf, clashFor, currentFeatureOf, haltFor, haltOf, laneOf, loadConfig,
@@ -37,6 +39,39 @@ import {
 import { featurePaths, readStatus } from '../feature/files.js';
 import { HAND_DONE, HAND_GOAL } from '../lib/by-hand-done.js';
 import { HASH, LANE_APPETITE, questionIdOf } from '../lib/build-loop.js';
+
+// Hands back every opened hold whose terminal has gone: its process is gone, or a different process now has its id. A hold not
+// yet opened is left alone, as is one whose process is alive, whether or not its start time can be read. `config` is read
+// (by `configOf`) only when a hold is to be handed back, and the wake is delivered by the waker made from it. Resolves the
+// work handed back; says what it can't do, never throws.
+export async function handBackClosed(project, {
+  configOf = null, wakerFor = null, alive = pidAlive, startTimeOf = processStartTime, now = () => new Date(), log = () => {},
+} = {}) {
+  const closed = [];
+  try {
+    for (const { work, hold } of listHolds(project)) {
+      if (hold.opened !== true || !Number.isInteger(hold.pid)) continue;
+      if (!alive(hold.pid)) {
+        closed.push(work);
+        continue;
+      }
+      if (typeof hold.startTime !== 'string') continue;
+      const started = await startTimeOf(hold.pid);
+      if (typeof started === 'string' && started !== hold.startTime) closed.push(work);
+    }
+    if (closed.length === 0) return [];
+    let config = null;
+    if (wakerFor === null && configOf !== null) config = await configOf();
+    const handed = [];
+    for (const work of closed) {
+      if (await handBack(project, work, { why: 'closed', now, config, wakerFor, print: log })) handed.push(work);
+    }
+    return handed;
+  } catch (error) {
+    log(`The helm holds couldn't be looked after: ${error instanceof Error ? error.message : 'unknown error'}`);
+    return [];
+  }
+}
 
 // The only reasons the foreman model is woken.
 export const JUDGEMENT = Object.freeze(['ambiguous-report', 'stuck', 'unknown']);
@@ -266,7 +301,7 @@ function stood(move, n, lanes, merges) {
 // The routine for one project. `act(argv)` runs an act command (default: through the helper), `facts()` reads the state
 // (default: readFacts). `record` records an incident (default: the reliability file).
 export function makeRoutine({
-  project, client, now = () => new Date(), log = () => {}, act = null, facts = null, record = recordIncident, stopped,
+  project, client, now = () => new Date(), log = () => {}, act = null, facts = null, record = recordIncident, stopped, helm = {},
 }) {
   const run = act ?? helperAct({ project, client });
   const read = facts ?? ((options) => readFacts({ project, client, now, stopped, ...options }));
@@ -297,6 +332,10 @@ export function makeRoutine({
       const out = {
         handled: new Set(), reasons: new Map(), extra: [], moves: [],
       };
+      // A piece whose helm terminal has closed is handed back before anything else looks at its hold.
+      await handBackClosed(project, {
+        configOf: async () => (await loadConfig(project, client)), now, log, ...helm,
+      });
       const mine = (Array.isArray(events) ? events : []).filter((e) => isPlain(e) && FOREMAN_ONLY.has(e.type));
       let state;
       const wasFirst = first;

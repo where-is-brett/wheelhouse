@@ -17,7 +17,8 @@ import { LOOKBACK_MS } from '../../../scripts/watcher/sources.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
-import { holdFile } from '../../../scripts/crew/hold.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
+import { holdFile, markOpened, takeHold } from '../../../scripts/crew/hold.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
 const P = 'o__p';
@@ -486,4 +487,17 @@ test('main: removes orphan holds at start', () => withHome(async () => {
   const silent = { state: { views: async () => ({ ok: true, views: { work: {}, features: {} } }) } };
   await runWatcher({ project: P, client: silent, config: config(), observe: looker([]).observe, waker: fakeWaker(), loops: 1, sleep: async () => {}, log: quiet });
   assert.equal(fs.existsSync(holdFile(P, 'orphan')), true);
+}));
+
+test('main: hands back a closed terminal\'s hold at start', () => withHome(async () => {
+  await openTestRecord({ project: P });
+  await takeHold(P, { work: 'closed', sessionId: 's-1' });
+  markOpened(P, 'closed', { pid: 4242, startTime: 'Sun Nov  8 02:00:00 2026' });
+  const woken = [];
+  const helm = { alive: () => false, wakerFor: () => ({ wakeFeature: async (work) => { woken.push(work); } }) };
+  // The views name the hold's helm as open, so it is no orphan; only its closed terminal hands it back.
+  const client = { state: { views: async () => ({ ok: true, views: { work: {}, features: {}, helm: { closed: { since: '2026-11-08T01:00:00.000Z', fromStart: false } } } }) } };
+  await runWatcher({ project: P, client, config: config(), observe: looker([]).observe, waker: fakeWaker(), helm, loops: 1, sleep: async () => {}, log: quiet });
+  assert.equal(fs.existsSync(holdFile(P, 'closed')), false);
+  assert.deepEqual(woken, ['closed']);
 }));

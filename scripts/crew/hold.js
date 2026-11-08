@@ -61,6 +61,23 @@ export function readHold(project, work) {
   }
 }
 
+// Every hold that can be read, as `{ work, hold }`, in name order; files that cannot be read are skipped.
+export function listHolds(project) {
+  let names;
+  try {
+    names = fs.readdirSync(helmDir(project)).filter((n) => n.endsWith('.json')).sort();
+  } catch {
+    return [];
+  }
+  const found = [];
+  for (const name of names) {
+    const work = name.slice(0, -'.json'.length);
+    const hold = readHold(project, work);
+    if (hold !== null) found.push({ work, hold });
+  }
+  return found;
+}
+
 // The first hold whose session is `sessionId`; files that cannot be read are skipped.
 export function holdBySession(project, sessionId) {
   if (typeof sessionId !== 'string' || sessionId === '') return null;
