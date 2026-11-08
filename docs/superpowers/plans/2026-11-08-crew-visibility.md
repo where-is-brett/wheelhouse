@@ -327,3 +327,34 @@ Branch `feature/crew-steps` from `main` once parts 1 and 2 are merged. Spec sect
 - [ ] **Step 5: Commit.** `git commit -am "Logbook: the build tab's recent steps"`
 
 Part 3's pull request: title `Crew visibility: steps in the Logbook`.
+
+## Part 4: The transcript page and `--follow`
+
+Branch `feature/crew-page` from `main` once parts 1 and 2 are merged. Spec sections 7.3, 8.1.
+
+### Task 4.1: Rendering and writing the page
+
+**Files:**
+- Modify: `scripts/crew/runs.js`
+- Test: `tests/scripts/crew/runs.test.js`
+
+**Interfaces:**
+- Consumes: 1.1–1.4.
+- Produces:
+  - `escapeMarkdown(text) -> string`: `&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`, and a backslash before each of `` \ ` * _ [ ] # | ``; then `plain` and `mask` (1.3).
+  - `renderPage({work, events, subagents: [{line, events}], waiting, now}) -> string`: a Markdown page headed `# <work>: what the crew did` and `Written <day month year, HH:MM>. Kept on this computer only.`; then each event oldest first: what the session said, or `- <step line>` with the tool's result cut to one line of 160 characters beneath it; each subagent under `## <its line>`. Every transcript string goes through `escapeMarkdown`. With `waiting`, the page ends `Waiting for your answer to decision N`.
+  - `pagePath(project, work) -> string`: `<project>/.wheelhouse/watch/<work>.md`.
+  - `writePage(project, work, {env, now}) -> string|null`: reads the run with `max: 2 * 1024 * 1024`, writes the page atomically (temporary file, then rename) and returns its path. Refuses (returns `null`) when `.wheelhouse/watch` or the page is a link, or `work` is not a feature slug. It writes nothing else.
+
+- [ ] **Step 1: Write the failing tests**
+  - `page: escapes Markdown and HTML`: a result holding `<script>` and `[x](http://e)` → the page holds `&lt;script&gt;` and `\[x\]`.
+  - `page: masks a token`: a `ghp_` token → absent from the page.
+  - `page: subagents under their own headings`: one reviewer subagent → a `## A Lookout is reviewing …` heading.
+  - `page: newest at the bottom`: the last event's line is the page's last step line.
+  - `page: a waiting decision by number only`.
+  - `page: refuses a linked folder`: `.wheelhouse/watch` as a symlink → `null` and nothing written through it.
+  - `page: no transcript yet`: a piece with no transcript → the page says `No transcript yet.`
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/crew/runs.test.js`
+- [ ] **Step 3: Implement** `escapeMarkdown`, `renderPage`, `pagePath`, `writePage`.
+- [ ] **Step 4: Run them and see them pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Crew runs: the transcript page"`
