@@ -453,3 +453,33 @@ Branch `feature/crew-helm` from `main` once part 2 is merged. Spec sections 8.2,
 - [ ] **Step 3: Implement** the gate at each site, asking `helmHeld` and nothing else.
 - [ ] **Step 4: Run them and see them pass.**
 - [ ] **Step 5: Commit.** `git commit -am "Helm: every start, wake and move waits for a held piece"`
+
+### Task 5.3: Opening the helm
+
+**Files:**
+- Modify: `adapters/claude-code/sessions.js` (beside `featureResumeCall` at 142)
+- Create: `scripts/crew/helm.js`
+- Test: `tests/scripts/agents/claude-sessions.test.js`, `tests/scripts/crew/helm.test.js`
+
+**Interfaces:**
+- Consumes: `takeHold`, `readHold`, `markOpened`, `releaseHold` (5.1); `runningFile`, `sessionFile`, `processStartTime`, `pidAlive`, `writeWake` (`scripts/watcher/waker.js`); `featureCall`'s args.
+- Produces:
+  - `featureHelmCall({sessionId, prompt = null, start = false, ...rest}) -> {file, args, env}`: the feature session's own mode, model, effort and `--allowedTools`, with no `-p` and no piped input, so it opens interactive. `start: false` leads with `--resume <id>`; `start: true` leads with `--session-id <id>` and passes `prompt` as the last, positional argument. The env carries the feature role, as a feature run's does.
+  - `isDirector(env, stdin) -> boolean`: true only on a TTY with neither `WHEELHOUSE_ROLE` nor `CLAUDECODE` set (rule 7: an agent cannot take the helm).
+  - `openHelm(project, work, {spawn, now, waitMs = 2000}) -> Promise<{code}>`: refuses a piece that is not open or has no session file; takes the hold; while `running/feature-<work>.json` names a live process, prints (exact copy) `Waiting for the crew's current step on <work> to finish…` and waits; spawns `featureHelmCall` with inherited stdio in the piece's worktree; records the pid and its start time with `markOpened`; on exit calls `handBack`.
+  - `handBack(project, work, {why = 'closed', now})`: does nothing when no hold exists (the hook and the exit can both call it); otherwise releases the hold, removes nothing else, and writes one wake for the piece whose prompt is `PROMPTS.helmBack`.
+  - `PROMPTS.helmBack` (added to the waker's `PROMPTS`): asks the session to read what the director did, record a `helm-note` of at most five lines, record each call the director made with `where: 'helm'` (6.3), and carry on.
+  - CLI: `node scripts/crew/helm.js open <work>`. Exit 0 on hand-back, 1 with a one-line reason on refusal.
+
+- [ ] **Step 1: Write the failing tests**
+  - `adapter: the helm call resumes without -p`: `args` holds `--resume`, the id and the feature mode, and has no `-p`.
+  - `adapter: the helm call can start a session`: `start: true` → `--session-id`, and the prompt is the last argument.
+  - `helm: refuses when not the director`: `WHEELHOUSE_ROLE=feature` → refused, no hold file.
+  - `helm: refuses a closed piece`: no hold file.
+  - `helm: waits for a live run`: a running record naming a live pid → the spawn comes only after that record goes.
+  - `helm: hands back on exit`: a stub spawn that exits → no hold file, a `helm-ended` event, one wake with `PROMPTS.helmBack`.
+  - `helm: a second hand-back does nothing`: no second wake.
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/agents/claude-sessions.test.js tests/scripts/crew/helm.test.js`
+- [ ] **Step 3: Implement** `featureHelmCall`, `helm.js` and `PROMPTS.helmBack`.
+- [ ] **Step 4: Run them and see them pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Helm: open a piece's session for the director and hand it back"`
