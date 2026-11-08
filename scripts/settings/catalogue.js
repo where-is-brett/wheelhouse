@@ -84,6 +84,8 @@ export const SETTINGS = {
   // director's decision of 8 November 2026 (the record is under docs/decisions/), with the source gap written in the main
   // design's section 12.5; off, decisions go through the question picker as before.
   typedReplies: { label: 'Answer decisions by typing', group: 'advanced', levels: [false, true], default: true, home: 'project' },
+  // How much of the crew's work the director sees (crew visibility design, section 6): nothing, a line per step, or the transcript page.
+  watchCrew: { label: 'How much of the crew you see', group: 'advanced', levels: ['off', 'steps', 'transcript'], default: 'steps', home: 'project' },
 };
 
 // One per computer (`windowsBuildCommands:<computer>`): the level its build commands run at
