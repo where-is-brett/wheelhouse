@@ -208,14 +208,22 @@ function stepAndKind(event) {
     if (!block || typeof block !== 'object') continue;
     let line = null;
     let kind = 'did';
-    if (block.type === 'tool_use') line = toolStep(block, event.cwd);
+    let agent = null;
+    if (block.type === 'tool_use') {
+      line = toolStep(block, event.cwd);
+      if (block.name === 'Agent' || block.name === 'Task') {
+        kind = 'sent';
+        const input = block.input && typeof block.input === 'object' ? block.input : {};
+        agent = { agentType: input.subagent_type, description: input.description };
+      }
+    }
     else if (block.type === 'text' && typeof block.text === 'string') {
       line = sentence(block.text);
       kind = 'said';
     }
     if (line) {
       const at = typeof event.timestamp === 'string' || typeof event.timestamp === 'number' ? event.timestamp : null;
-      return { at, text: mask(plain(line)), kind };
+      return { at, text: mask(plain(line)), kind, agent };
     }
   }
   return null;
@@ -253,9 +261,9 @@ export function stepsOf(events, { glossary, waiting = null } = {}) {
 // Who is doing it: subagents and the Bosun.
 
 const ROLES = {
-  builder: { name: 'A Crew member', verb: 'building' },
-  reviewer: { name: 'A Lookout', verb: 'reviewing' },
-  tester: { name: 'The tester', verb: 'trying' },
+  builder: { name: 'A Crew member', verb: 'building', base: 'build' },
+  reviewer: { name: 'A Lookout', verb: 'reviewing', base: 'review' },
+  tester: { name: 'The tester', verb: 'trying', base: 'try' },
 };
 const CREW_MEMBER = ROLES.builder;
 
@@ -270,8 +278,24 @@ export function roleOf(agentType) {
 
 export function subagentLine({ agentType, description } = {}) {
   const role = roleFor(agentType);
-  const what = plain(description).trim().slice(0, 80).trim();
+  const what = describe(description);
+  if (what === HIDDEN) return HIDDEN;
   return mask(plain(`${role.name} is ${role.verb}${what ? ` ${what}` : ''}`));
+}
+
+// A call's description: through plain and mask as a whole first, so a cut can never split a key;
+// then cut to 80 characters. A description that looks like a key gives the hidden line.
+function describe(description) {
+  const whole = mask(plain(description).trim());
+  return whole === HIDDEN ? HIDDEN : whole.slice(0, 80).trim();
+}
+
+// "sending out a Lookout to review task 2", or null when the description is hidden.
+function sendPhrase({ agentType, description } = {}) {
+  const role = roleFor(agentType);
+  const what = describe(description);
+  if (what === HIDDEN) return null;
+  return `sending out ${lowerFirst(role.name)} to ${role.base}${what ? ` ${what}` : ''}`;
 }
 
 function lowerFirst(text) {
@@ -282,6 +306,7 @@ function lowerFirst(text) {
 // anything that is not a phrase for what was done.
 function inThirdPerson(who, step) {
   if (step.text === HIDDEN || step.kind === 'said') return `${who} is thinking: ${step.text}`;
+  if (step.kind === 'sent') return `${who} is ${step.phrase}`;
   return `${who} is ${lowerFirst(step.text)}`;
 }
 
@@ -326,7 +351,8 @@ function callFor(agentId, events, calls) {
       } catch {
         text = '';
       }
-      if (event.toolUseResult?.agentId === agentId || text.includes(agentId)) return calls.get(block.tool_use_id);
+      const named = event.toolUseResult?.agentId;
+      if (typeof named === 'string' ? named === agentId : new RegExp(`(?<![A-Za-z0-9_-])${agentId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_-])`).test(text)) return calls.get(block.tool_use_id);
     }
   }
   return null;
@@ -341,7 +367,7 @@ export function runSteps({ sessionId, env = process.env, glossary, waiting = nul
   for (const event of events) {
     const raw = stepAndKind(event);
     if (!raw) continue;
-    const step = { ...worded(raw, words), kind: raw.kind };
+    const step = withKind(raw, words);
     const decision = foreman ? decisionWork(event) : null;
     if (decision) {
       const line = decision.work ? `The Bosun is deciding what to do about ${decision.work}` : 'The Bosun is deciding what to do';
@@ -361,16 +387,26 @@ export function runSteps({ sessionId, env = process.env, glossary, waiting = nul
     const who = roleOf(call?.agentType);
     const latest = stepsOfKind(readTail(sub.file), words).pop();
     if (latest) crew.push(mask(plain(inThirdPerson(who, latest))));
-    else crew.push(call ? subagentLine(call) : subagentLine({}));
+    else crew.push(worded({ at: null, text: call ? subagentLine(call) : subagentLine({}) }, words).text);
   }
   return { steps, crew };
+}
+
+// A step with its kind, and for a sent subagent the phrase "sending out ..." through the glossary.
+function withKind(raw, words) {
+  const step = { ...worded(raw, words), kind: raw.kind };
+  if (raw.kind === 'sent') {
+    const phrase = sendPhrase(raw.agent);
+    if (phrase) step.phrase = worded({ at: raw.at, text: phrase }, words).text;
+  }
+  return step;
 }
 
 function stepsOfKind(events, words) {
   const out = [];
   for (const event of events) {
     const raw = stepAndKind(event);
-    if (raw) out.push({ ...worded(raw, words), kind: raw.kind });
+    if (raw) out.push(withKind(raw, words));
   }
   return out;
 }

@@ -387,3 +387,58 @@ test('gives empty lists for a missing run', () => {
   assert.deepEqual(runSteps({ sessionId: 'nope', env }), { steps: [], crew: [] });
   assert.deepEqual(runSteps({ env }), { steps: [], crew: [] });
 });
+
+// Fix round 1
+
+test('masks a description before cutting it', () => {
+  const description = `${'a '.repeat(35)}sk-${'Z'.repeat(40)}`;
+  const line = subagentLine({ agentType: 'builder', description });
+  assert.equal(line, '[hidden: looked like a key]');
+  assert.ok(!line.includes('sk-'));
+  const sent = stepOf(agentCall('t1', 'builder', description)).text;
+  assert.ok(!sent.includes('sk-'));
+});
+
+test('the Bosun sends out a subagent', () => {
+  const { dir, env } = fakeConfig();
+  writeRun(dir, 's1', [
+    agentCall('t1', 'wheelhouse:reviewer', 'review task 2'.replace('review ', '')),
+    agentCall('t2', 'tester', 'the login page'),
+    agentCall('t3', 'builder', `sk-${'Z'.repeat(40)}`),
+  ]);
+  const { steps } = runSteps({ sessionId: 's1', env, foreman: true });
+  assert.deepEqual(steps.map((s) => s.text), [
+    'The Bosun is sending out a Lookout to review task 2',
+    'The Bosun is sending out the tester to try the login page',
+    'The Bosun is thinking: [hidden: looked like a key]',
+  ]);
+});
+
+test('a crew member sending out a subagent is worded the same way', () => {
+  const { dir, env } = fakeConfig();
+  const proj = writeRun(dir, 's1', [text('Hi.')]);
+  fs.mkdirSync(path.join(proj, 's1', 'subagents'), { recursive: true });
+  fs.writeFileSync(path.join(proj, 's1', 'subagents', 'agent-q1.jsonl'), JSON.stringify(agentCall('t9', 'reviewer', 'task 4')) + '\n');
+  assert.deepEqual(runSteps({ sessionId: 's1', env }).crew, ['A Crew member is sending out a Lookout to review task 4']);
+});
+
+test('matches an agent id by the result field, or by whole word', () => {
+  const { dir, env } = fakeConfig();
+  const result = (toolUseId, agentId) => ({ ...agentResult(toolUseId, 'unrelated'), toolUseResult: { agentId } });
+  const proj = writeRun(dir, 's1', [
+    agentCall('t1', 'reviewer', 'task 2'), result('t1', 'ab'),
+    agentCall('t2', 'tester', 'task 5'), agentResult('t2', 'abc'),
+  ]);
+  fs.mkdirSync(path.join(proj, 's1', 'subagents'), { recursive: true });
+  fs.writeFileSync(path.join(proj, 's1', 'subagents', 'agent-ab.jsonl'), JSON.stringify(text('x.')) + '\n');
+  fs.writeFileSync(path.join(proj, 's1', 'subagents', 'agent-abc.jsonl'), JSON.stringify(text('y.')) + '\n');
+  assert.deepEqual(runSteps({ sessionId: 's1', env }).crew.sort(), ['A Lookout is thinking: x.', 'The tester is thinking: y.']);
+});
+
+test('a matched subagent with no steps falls back to its call', () => {
+  const { dir, env } = fakeConfig();
+  const proj = writeRun(dir, 's1', [agentCall('t1', 'wheelhouse:reviewer', 'task 2'), agentResult('t1', 'abc123')]);
+  fs.mkdirSync(path.join(proj, 's1', 'subagents'), { recursive: true });
+  fs.writeFileSync(path.join(proj, 's1', 'subagents', 'agent-abc123.jsonl'), '');
+  assert.deepEqual(runSteps({ sessionId: 's1', env }).crew, ['A Lookout is independently checking task 2']);
+});
