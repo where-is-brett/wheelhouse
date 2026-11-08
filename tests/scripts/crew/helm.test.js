@@ -10,7 +10,7 @@ import { openTestRecord } from '../../helpers/record-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { PROMPTS, firstPrompt, readWake, runningFile, sessionFile, wakesDir } from '../../../scripts/watcher/waker.js';
 import { takeHold, helmHeld, holdFile, claimHandBack } from '../../../scripts/crew/hold.js';
-import { openHelm, handBack, isDirector } from '../../../scripts/crew/helm.js';
+import { openHelm, handBack, isDirector, stopNow } from '../../../scripts/crew/helm.js';
 
 const claude = { kind: 'direct', file: 'claude' };
 const tty = { isTTY: true };
@@ -297,5 +297,33 @@ test('helm: with a transcript, a steered piece is resumed', async () => {
     const { args } = spawned[0];
     assert.equal(args[args.indexOf('--resume') + 1], 's-1');
     assert.equal(args.includes('--session-id'), false);
+  });
+});
+
+test('helm: now asks the waker to end the held piece\'s run', async () => {
+  await withHome(async (p) => {
+    await openPiece(p, 'login');
+    await takeHold(p, { work: 'login', sessionId: 's-1', now });
+    const asked = [];
+    const said = [];
+    const out = await stopNow(p, 'login', { env: {}, stdin: tty, print: (l) => said.push(l), wakerFor: () => ({ stopRun: async (w) => { asked.push(w); return { stopped: true }; } }) });
+    assert.equal(out.code, 0);
+    assert.deepEqual(asked, ['login']);
+    assert.equal(said.length, 1);
+  });
+});
+
+test('helm: now refuses an agent, a piece not held, and a piece with no run', async () => {
+  await withHome(async (p) => {
+    await openPiece(p, 'login');
+    const asked = [];
+    const wakerFor = () => ({ stopRun: async () => { asked.push(1); return { stopped: false }; } });
+    assert.equal((await stopNow(p, 'login', { env: { WHEELHOUSE_ROLE: 'feature' }, stdin: tty, wakerFor })).code, 1);
+    assert.equal((await stopNow(p, 'login', { env: {}, stdin: tty, wakerFor })).code, 1, 'not held');
+    await takeHold(p, { work: 'login', sessionId: 's-1', now });
+    const out = await stopNow(p, 'login', { env: {}, stdin: tty, wakerFor });
+    assert.equal(out.code, 1);
+    assert.match(out.why, /no run/);
+    assert.equal(asked.length, 1, 'only the held piece reached the waker');
   });
 });

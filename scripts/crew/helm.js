@@ -1,7 +1,7 @@
 // scripts/crew/helm.js
 // The director's helm of a feature piece (crew visibility design, 9.1): opening the piece's own session in this terminal,
 // holding it while they work, and handing it back with a wake when the terminal closes. The CLI is
-// `node scripts/crew/helm.js open <work>`.
+// `node scripts/crew/helm.js open <work>`, and `node scripts/crew/helm.js now <work>` ends the piece's current run.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as spawnChild } from 'node:child_process';
@@ -191,13 +191,33 @@ export async function handBack(project, work, {
   }
 }
 
+// "Now": ends the held piece's current run at once, so the director need not wait for its quiet point. The step in
+// flight is cut off; the session keeps everything before it. It acts only on a piece that is held. Resolves `{ code }`;
+// a refusal carries `why`, one line.
+export async function stopNow(project, work, {
+  env = process.env, stdin = process.stdin, config = {}, wakerFor = null, print = (line) => process.stderr.write(`${line}\n`),
+} = {}) {
+  if (!isDirector(env, stdin)) return refuse('The helm is for the director at their own terminal, not an agent.');
+  if (typeof work !== 'string' || !SLUG.test(work)) return refuse('Name the piece by its short name.');
+  if (!helmHeld(project, work)) return refuse(`${work} is not at the helm.`);
+  let got;
+  try {
+    got = await (wakerFor ?? ((cfg) => makeWaker({ shape: 1, project, config: cfg, print })))(config).stopRun(work);
+  } catch (error) {
+    return refuse(error instanceof Error ? error.message : `${work}'s run could not be ended.`);
+  }
+  if (got?.stopped !== true) return refuse(`${work} has no run to end.`);
+  print(`${work}'s current step is ended.`);
+  return { code: 0 };
+}
+
 // A helm opened on Windows gets no build grants (the allowed rules are made for the platform they are read on); Windows is out of
 // scope for now.
 async function main(argv) {
   const [command, work] = argv;
   const say = (line) => process.stderr.write(`${line}\n`);
-  if (command !== 'open' || work === undefined) {
-    say('Usage: helm.js open <work>');
+  if ((command !== 'open' && command !== 'now') || work === undefined) {
+    say('Usage: helm.js open <work> | helm.js now <work>');
     return 1;
   }
   const { projectOf } = await import('../hooks/kit.js');
@@ -213,6 +233,11 @@ async function main(argv) {
   if (read.config === null) {
     say(`The project's configuration can't be read: ${read.why}`);
     return 1;
+  }
+  if (command === 'now') {
+    const stopped = await stopNow(found.project, work, { config: read.config });
+    if (stopped.why) say(stopped.why);
+    return stopped.code;
   }
   const allowed = [...featureAllowRules(read.config, { platform: process.platform }), ...featureFileRules()];
   const result = await openHelm(found.project, work, { config: read.config, allowed });

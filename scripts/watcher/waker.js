@@ -664,6 +664,18 @@ export function pidAlive(pid) {
   }
 }
 
+// Ends a recorded session's process, and the ones it started with it where the system lets us (on macOS and Linux it
+// leads its own group). Says whether the signal was sent.
+export function endProcess(pid) {
+  for (const target of process.platform === 'win32' ? [pid] : [-pid, pid]) {
+    try {
+      process.kill(target, 'SIGTERM');
+      return true;
+    } catch { /* try the process alone */ }
+  }
+  return false;
+}
+
 // When each of these processes started, as the system says it, in one call:
 // `ps -o pid=,lstart= -p <pids>` on macOS and Linux, Win32_Process's
 // CreationDate through one PowerShell call on Windows. A Map from pid to the
@@ -751,6 +763,7 @@ export function makeWaker({
   print = (line) => process.stdout.write(`${line}\n`),
   now = () => new Date(),
   alive = pidAlive,
+  kill = endProcess,
   startTimeOf = null,
   bootedAt = bootTime,
   stopped = () => stopState().on,
@@ -1253,6 +1266,8 @@ export function makeWaker({
     if (started.exited && typeof started.exited.then === 'function') {
       started.exited.then((code) => serial(async () => {
         const mine = forget(target, started.pid);
+        // A run the director's "now" ended has had its wakes put back and its record removed: nothing more to settle.
+        if (!mine && stoppedByHelm.delete(started.pid)) return deliver();
         if (kept?.premium === true && mine && await premiumRefused(target, kept, code, entries)) {
           // Rests the premium model, and its wake goes again on the most capable model.
         } else {
@@ -1260,7 +1275,8 @@ export function makeWaker({
             // A record already ended elsewhere (endRecord) has been read there.
             if (mine) await finishRun(adapter, target, kept, code, entries);
           } else if (code === 0) settleEnded(target, entries);
-          else {
+          else if (mine || target === 'foreman' || !helmHeld(project, nameOf(target))) {
+            // A record already taken from a held piece was ended by the director's "now", which put its wakes back.
             settle(entries, 'failed', `its session exited with code ${code}`);
             if (entries.length === 0) onError(`The ${target.slice('feature-'.length)} session exited with code ${code}`);
           }
@@ -1272,6 +1288,8 @@ export function makeWaker({
     }
     return started.pid;
   }
+  // The pids of runs the helm's "now" ended in this process, so their exit settles nothing a second time.
+  const stoppedByHelm = new Set();
   // The records a refused prepare raised, each once for this waker.
   const raisedPrepare = new Set();
 
@@ -1824,6 +1842,30 @@ export function makeWaker({
           },
         });
         return { pid, sessionId };
+      });
+    },
+    // Ends the held piece's current run on the director's word ("now", crew visibility design 9.2). Not All stop: it
+    // touches nothing but this piece's run. The process its record names is ended only when it is live with the start
+    // time the record gives; the record goes; the wakes the run had taken are sent again (they wait while the piece is
+    // held); no lost marker is written, so the crash resume leaves it. Refused unless the piece is held.
+    async stopRun(work) {
+      if (typeof work !== 'string' || !SLUG.test(work)) throw new Error('A work id is lower-case letters, digits and hyphens');
+      return serial(async () => {
+        if (!helmHeld(project, work)) return { stopped: false, why: 'not held' };
+        const target = targetOf(work);
+        const state = await stateOf(target);
+        if (state === null) return { stopped: false, why: 'no run' };
+        const record = state.live ?? state.ended;
+        // A record still being made names no process yet: there is nothing to end.
+        if (state.live && !Number.isInteger(record.pid)) return { stopped: false, why: 'starting' };
+        const same = (r) => r.at === record.at && r.pid === record.pid && r.state === record.state;
+        if (state.live) {
+          stoppedByHelm.add(record.pid);
+          if (!kill(record.pid)) stoppedByHelm.delete(record.pid);
+        }
+        if (claimRecord(target, same) === null) return { stopped: false, why: 'ended elsewhere' };
+        settle(list(record.entries).filter((x) => typeof x === 'string'), 'again');
+        return { stopped: true };
       });
     },
     // Delivers what has been waiting: a session has ended, STOP has lifted, a wait has passed.

@@ -1703,3 +1703,77 @@ test('waker: an opened steer holds its slot', () => withHome(async () => {
   assert.deepEqual(got.hold, [{ work: 'w-znext', why: 'pace' }]);
   assert.equal(helmHeld(P, 'w-steer'), true);
 }));
+
+// "Now": the held piece's current run is ended on the director's word. A feature run live for `login-page`, taking one wake.
+async function liveRun({ startTime = 'A' } = {}) {
+  checkout();
+  const dir = worktree();
+  keepSession('login-page', dir, SESSION);
+  const fake = fakeRun({ exits: true });
+  let current = startTime;
+  const killed = [];
+  const w = waker(fake, {
+    locate: () => dir, onError: () => {}, startTimeOf: async () => current, kill: (pid) => { killed.push(pid); fake.end(pid, 1); return true; },
+  });
+  const file = writeWake(P, featureBundle('login-page'));
+  await w.wakeFeature('login-page', file);
+  assert.equal(fake.calls.length, 1, 'the wake started a run');
+  return { w, fake, killed, file, dir, setStartTime: (t) => { current = t; } };
+}
+
+test('waker: now ends the held piece\'s run', () => withHome(async () => {
+  const { w, fake, killed } = await liveRun();
+  hold('login-page');
+  const got = await w.stopRun('login-page');
+  await flush();
+  assert.deepEqual(got.stopped, true);
+  assert.deepEqual(killed, [fake.calls[0].pid]);
+  assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), false);
+  assert.equal(fs.existsSync(lostFile(P, 'login-page')), false, 'no lost marker, so no crash resume');
+  assert.equal(fake.calls.length, 1, 'nothing is started in its place');
+}));
+
+test('waker: now puts the run\'s wakes back', () => withHome(async () => {
+  const { w, file } = await liveRun();
+  assert.equal(w.waiting()[0].flight !== null, true, 'the run holds the wake in flight');
+  hold('login-page');
+  await w.stopRun('login-page');
+  await flush();
+  const [entry] = w.waiting();
+  assert.equal(entry.file, file);
+  assert.equal(entry.flight, null, 'the wake is waiting again');
+  assert.equal(entry.failures, 0, 'the run\'s end counts no failure');
+  assert.equal(entry.retryAt, null);
+  assert.equal(fs.existsSync(file), true, 'its record is still in the wakes folder');
+}));
+
+test('waker: now leaves a reused pid alone', () => withHome(async () => {
+  const { w, killed, setStartTime } = await liveRun();
+  setStartTime('B'); // the pid now belongs to another process
+  hold('login-page');
+  const got = await w.stopRun('login-page');
+  assert.deepEqual(killed, [], 'no process is ended');
+  assert.equal(got.stopped, true);
+  assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), false, 'the stale record is removed');
+  assert.equal(w.waiting()[0].flight, null);
+}));
+
+test('waker: now refuses a piece not held', () => withHome(async () => {
+  const { w, killed } = await liveRun();
+  const got = await w.stopRun('login-page');
+  assert.equal(got.stopped, false);
+  assert.deepEqual(killed, []);
+  assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), true, 'the run is untouched');
+}));
+
+test('waker: a run ended by another process\'s now costs its wakes no failure', () => withHome(async () => {
+  const { w, fake, killed, dir } = await liveRun();
+  const other = waker(fake, { locate: () => dir, onError: () => {}, kill: (pid) => { killed.push(pid); fake.end(pid, 1); return true; } });
+  hold('login-page');
+  assert.equal((await other.stopRun('login-page')).stopped, true);
+  await flush();
+  const [entry] = w.waiting();
+  assert.equal(entry.flight, null);
+  assert.equal(entry.failures, 0, 'the watcher that started the run settles nothing when it sees the exit');
+  assert.equal(entry.retryAt, null);
+}));
