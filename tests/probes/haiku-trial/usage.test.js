@@ -12,7 +12,7 @@ const write = (name, lines) => {
   fs.writeFileSync(file, lines.map((l) => (typeof l === 'string' ? l : JSON.stringify(l))).join('\n') + '\n');
   return file;
 };
-const turn = (usage) => ({ type: 'assistant', message: { model: 'claude-haiku-4-5', usage } });
+const turn = (usage) => ({ type: 'assistant', message: { model: 'haiku-test', usage } });
 
 test('usage sums by role', () => {
   const a = write('a.jsonl', [

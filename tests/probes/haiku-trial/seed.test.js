@@ -105,6 +105,27 @@ test('ci runs npm ci and npm test on Node 22', () => {
   }
 });
 
+test('the seed carries a lockfile that matches package.json, so npm ci works, and ignores what a run leaves behind', () => {
+  const { dir } = fresh();
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    const lock = JSON.parse(fs.readFileSync(path.join(dir, 'package-lock.json'), 'utf8'));
+    assert.equal(lock.lockfileVersion, 3);
+    assert.equal(lock.name, pkg.name);
+    assert.equal(lock.version, pkg.version);
+    assert.deepEqual(Object.keys(lock.packages), [''], 'the seed has no dependencies, so the lockfile has no packages');
+    assert.deepEqual(lock.packages[''].dependencies ?? {}, pkg.dependencies ?? {});
+    const ignore = fs.readFileSync(path.join(dir, '.gitignore'), 'utf8').split('\n');
+    assert.ok(ignore.includes('node_modules'));
+    assert.ok(ignore.includes('ledger.db*'));
+    const tracked = spawnSync('git', ['ls-files'], { cwd: dir, encoding: 'utf8' }).stdout.split('\n');
+    assert.ok(tracked.includes('package-lock.json'));
+    assert.ok(tracked.includes('.gitignore'));
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('refuses a folder outside the temp folder', () => {
   assert.throws(() => makeTestProject({ dir: path.join(process.cwd(), 'not-in-tmp') }), /outside the temporary folder/);
   assert.equal(fs.existsSync(path.join(process.cwd(), 'not-in-tmp')), false);

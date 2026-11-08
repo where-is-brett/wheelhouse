@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { findLostSessions, resumeLost, resumePrompt, RESUME_LIMIT, CARRY_ON } from '../../../scripts/watcher/resume.js';
 import { runningFile, sessionFile, lostFile, watcherDir } from '../../../scripts/watcher/waker.js';
 import { featurePaths } from '../../../scripts/feature/files.js';
+import { holdFile } from '../../../scripts/crew/hold.js';
 import { withHome, tempFolder } from '../../helpers/homes.js';
 
 const P = 'o__p';
@@ -221,4 +222,17 @@ test('each death is handed to the reliability record once: two resumed, then one
   assert.deepEqual(recorded.map((i) => i.kind), ['resumed', 'resumed', 'lost']);
   assert.ok(recorded.every((i) => i.work === WORK && typeof i.key === 'string'));
   assert.equal(new Set(recorded.map((i) => i.key)).size, recorded.length);
+}));
+
+test('resume: a held piece is not lost', () => withHome(async () => {
+  started(featureWorktree());
+  fs.mkdirSync(path.dirname(holdFile(P, WORK)), { recursive: true });
+  fs.writeFileSync(holdFile(P, WORK), '{}\n');
+  assert.deepEqual(await findLostSessions({ project: P, now, alive, bootAt }), []);
+  const f = fakes();
+  assert.deepEqual(await tick(f), []);
+  assert.equal(f.resumed.length, 0);
+  // Handed back, the same dead run is lost again.
+  fs.rmSync(holdFile(P, WORK));
+  assert.equal((await findLostSessions({ project: P, now, alive, bootAt })).length, 1);
 }));

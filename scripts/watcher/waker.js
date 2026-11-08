@@ -168,6 +168,7 @@ import { CONTROL_PATHS, listEvents } from '../state/events.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { buildViews } from '../state/views.js';
 import { balancedRouting, columnLines, promptWithColumn, roleOf, routingInForce } from '../routing/in-force.js';
+import { helmHeld } from '../crew/hold.js';
 import { refusalOf, restUntil } from '../routing/premium.js';
 import { hostApprovalReady } from '../host/approval-ready.js';
 import { guardedCommand, guardedReady, labelWorktree, readSelfTest } from '../windows/low.js';
@@ -197,6 +198,9 @@ export const PROMPTS = Object.freeze({
       + 'Read it whole first. Your plan, your tasks and your questions follow it: put right anything that doesn\'t, or ask.'
     : ''}`,
   start: 'Read .wheelhouse/feature/brief.md and follow it.',
+  // The director has handed the piece back from the helm.
+  helmBack: 'The director has handed this piece back from the helm. Read what they did there. Record a helm-note of at most five lines saying what changed. '
+    + 'Record each call the director made at the helm as a decision with where: \'helm\'. Then carry on with the work.',
 });
 
 // The role variable, the modes and the session environment are the adapter's (they come with how it starts a
@@ -1066,6 +1070,8 @@ export function makeWaker({
   // (resume.js) to find once its record has gone. `at` is when the run began, so one death is counted once.
   function markLost(target, { at, why, code = null }) {
     if (target === 'foreman' || typeof at !== 'string') return;
+    // A run that ends while the director holds the piece at its helm is not a crash: no marker, so nothing resumes it.
+    if (helmHeld(project, nameOf(target))) return;
     try {
       watcherFolder(project, 'lost');
       writeJsonFile(lostFile(project, nameOf(target)), { at, why, code });
@@ -1509,6 +1515,7 @@ export function makeWaker({
             settle([e.id], 'done'); // the feature has closed or gone
             continue;
           }
+          if (helmHeld(project, e.work)) continue; // the director has it at the helm: its wake stays queued
           if (await controlHeld(e.work, worktree, [e.id])) continue;
           copy = copyInto(e.file, featureWakesDir(worktree), shape2Column());
         }
@@ -1577,6 +1584,8 @@ export function makeWaker({
       }
       const waiting = entries.filter((e) => mine(e) && ready(e));
       if (waiting.length === 0) continue;
+      // The director has the piece at its helm: its wakes stay queued, and nothing starts or wakes its session.
+      if (work !== undefined && helmHeld(project, work)) continue;
 
       let cwd;
       let session = null;
@@ -1675,6 +1684,7 @@ export function makeWaker({
       mayStart('checkFeature');
       if (typeof work !== 'string' || !SLUG.test(work)) throw new Error('A work id is lower-case letters, digits and hyphens');
       if (!featureWorktreeOk(project, worktree)) throw new Error("This isn't a feature worktree of the project");
+      if (helmHeld(project, work)) throw new Error(`${work} is with the director at the helm. It waits until they hand it back.`);
       const brief = featurePaths(worktree).brief;
       if (briefFile !== undefined && path.resolve(briefFile) !== brief) throw new Error("The brief must be the worktree's own .wheelhouse/feature/brief.md");
       if (!lstatOf(brief)?.isFile()) throw new Error("The feature's brief isn't there");
@@ -1740,6 +1750,7 @@ export function makeWaker({
         const kept = readJson(sessionFile(project, work));
         const sessionId = typeof kept?.sessionId === 'string' && kept.sessionId !== '' ? kept.sessionId : null;
         if (sessionId === null) throw new Error(`The ${work} session has no session id kept`);
+        if (helmHeld(project, work)) throw new Error(`${work} is with the director at the helm. It waits until they hand it back.`);
         const worktree = kept.worktree;
         if (!featureWorktreeOk(project, worktree)) throw new Error("This isn't a feature worktree of the project");
         const target = targetOf(work);

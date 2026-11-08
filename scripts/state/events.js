@@ -19,12 +19,16 @@ import { WHERE } from '../cards/answered.js';
 import { isModelName } from '../gate/guardrails.js';
 import { AGENT_KINDS } from '../decisions/line.js';
 
+// The most lines a note left at the helm may run to.
+export const HELM_NOTE_LINES = 5;
+
 export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
   'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest', 'chat-steer',
   'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'brief', 'slept', 'agent-call', 'self-merged', 'watch', 'aside-overlap',
+  'helm', 'helm-ended', 'helm-note',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
@@ -300,6 +304,11 @@ const PLAIN_SHAPES = {
   // A worktree aside's branch overlaps live crew pieces (scripts/hooks/aside-overlap.js): its branch, the pieces and files it clashes
   // on, and when. The board shows it; no card, since the director was told in the window that made the overlap.
   'aside-overlap': { must: ['branch', 'pieces', 'files', 'at'], may: [] },
+  // The director's helm of a feature piece (crew visibility design, 9.1, 9.2): taken, handed back, and a note left for the
+  // piece's crew. Requests, not decisions: none reaches the decision log. `at` is when, as an ISO time.
+  helm: { must: ['work', 'at'], may: ['fromStart'] },
+  'helm-ended': { must: ['work', 'at'], may: ['why'] },
+  'helm-note': { must: ['work', 'text'], may: [] },
   // Words typed into a front end without a First Mate (a later UI), queued for the First Mate's next
   // turn and shown as waiting (spec 5.2); `via` names the front end.
   request: { must: ['words', 'via'], may: [] },
@@ -503,6 +512,19 @@ function checkPlain(kind, data) {
     text('branch');
     for (const k of ['pieces', 'files']) if (!Array.isArray(data[k]) || !data[k].every(isText)) bad(`needs ${k} to be a list of text`);
     if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs at to be a time');
+    return;
+  }
+  if (kind === 'helm' || kind === 'helm-ended') {
+    slug('work');
+    text('at');
+    if (kind === 'helm' && data.fromStart !== undefined && typeof data.fromStart !== 'boolean') bad('has a fromStart that is not true or false');
+    if (kind === 'helm-ended') optionalText('why');
+    return;
+  }
+  if (kind === 'helm-note') {
+    slug('work');
+    text('text');
+    if (data.text.split('\n').length > HELM_NOTE_LINES) bad(`needs its text to be at most ${HELM_NOTE_LINES} lines`);
     return;
   }
   if (kind === 'brief') {

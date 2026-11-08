@@ -38,7 +38,7 @@ function said(date) {
 }
 
 // Text that goes into the public summary: an absolute path on any system is replaced, and the text is held to one line.
-const ABSOLUTE = /(?:[A-Za-z]:\\[^\s"'`)]*|\/(?:Users|home|private|var|tmp|Volumes|root)\/[^\s"'`)]*|~\/[^\s"'`)]*)/g;
+const ABSOLUTE = /(?:[A-Za-z]:\\[^\s"'`)]*|\/(?:Users|home|private|var|tmp|Volumes|root|opt|Library|etc|srv|mnt|nix)\/[^\s"'`)]*|~\/[^\s"'`)]*)/g;
 const plain = (x) => String(x ?? '').replace(ABSOLUTE, '[a path]').replace(/\s+/g, ' ').replace(/\|/g, '/').trim();
 
 const RESULT = { true: 'pass', false: 'fail', null: 'not covered' };

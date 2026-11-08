@@ -40,10 +40,10 @@ export function reviewCard({ project, date, decisionN, stepsUrl, address, score,
   const options = [
     { key: 'A', label: OPTION_LABELS.A, says: 'Tag v0.3.0 as "works on Haiku".', cost: 'none', undo: 'the tag can be moved before release notes go out' },
     { key: 'B', label: OPTION_LABELS.B, says: 'Tag v0.3.0 without the Haiku claim.', cost: 'the claim waits for a later run', undo: 'a later run can add it' },
-    { key: 'C', label: OPTION_LABELS.C, says: 'Say what is wrong and it goes to intake as bugs.', cost: 'the tag waits', undo: 'answer again after the fixes' },
+    { key: 'C', label: OPTION_LABELS.C, says: 'Say what is wrong and it goes to intake as bugs.', cost: 'the tag waits', undo: 'answer again after the changes' },
   ];
   const text = [
-    `What this is. You try ${project ?? 'the tracker'} for about 15 minutes, the trial's last step (run of ${said(date)}). ${result} ${floor ?? 'No known floor.'}`,
+    `What this is. You try ${project ?? 'the tracker'} for about 15 minutes, the trial's last step (run of ${said(date)}). ${result} ${String(floor ?? 'No known floor.').slice(0, 200)}`,
     'Why it comes to you. Whether this is good enough to tag v0.3.0 as "works on Haiku" is your call.',
     `Try this${address ? ` at ${address}` : ''}: ${stepsUrl ? `Show the steps (${stepsUrl})` : 'Show the steps'}. Step 7 is your typed answer to decision ${decisionN} here in the chat.`,
     'Options',
@@ -72,6 +72,23 @@ export function stepsPage({ decisionN, tryMe = 'try-me.csv' } = {}) {
     '9. Open one merged pull request\'s description. *Good:* you can tell what changed and why without reading code.',
     '',
   ].join('\n');
+}
+
+export const ANSWER = /^\s*([ABC])\s*$/i;
+// The letter A, B or C in an answer, or null when it is anything else.
+export const answerLetter = (text) => ANSWER.exec(String(text ?? ''))?.[1].toUpperCase() ?? null;
+
+// The card in the shape the feature command's `ask` takes: the same fields shapeProblems reads.
+export function reviewAsDecision(card, { stepsUrl } = {}) {
+  const lead = card.options.find((o) => o.key === card.recommend);
+  return {
+    what: card.title,
+    why: `Whether this is good enough to tag v0.3.0 as "works on Haiku" is your call.${stepsUrl ? ` The steps are at ${stepsUrl}.` : ''}`,
+    options: card.options,
+    recommend: lead.label,
+    because: REASON[card.recommend],
+    meanwhile: 'Nothing builds; the tracker stays up for you.',
+  };
 }
 
 export function writeTryMe(dir) {

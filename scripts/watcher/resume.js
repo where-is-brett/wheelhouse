@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { SLUG } from '../lib/build-loop.js';
 import { safeGit } from '../lib/safe-git.js';
+import { helmHeld } from '../crew/hold.js';
 import { featurePaths } from '../feature/files.js';
 import { planIn, readBrief, readCapped, readPlan } from '../feature/status.js';
 import {
@@ -105,6 +106,8 @@ export async function findLostSessions({
   }
   const out = [];
   for (const [work, runAt] of found) {
+    // A piece the director holds at its helm is theirs to run: it is not lost, and nothing starts it again.
+    if (helmHeld(project, work)) continue;
     const s = readJson(sessionFile(project, work));
     if (!isPlain(s) || !isText(s.sessionId) || !isText(s.worktree) || !isDir(s.worktree)) continue;
     if (fs.existsSync(featurePaths(s.worktree).report)) {

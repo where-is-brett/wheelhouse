@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { MERCHANTS } from '../statement.js';
-import { defaultRun } from './run.js';
+import { defaultRun, installDependencies } from './run.js';
 
 const SKIPPED = new Set(['node_modules', '.git']);
 const TEST_PATH = /^tests?\/|\.(test|spec)\.[cm]?js$|-test\.[cm]?js$/;
@@ -87,6 +87,8 @@ function testCounts({ dir, baseSha, run }) {
     const merges = run('git', ['rev-list', '--first-parent', '--reverse', `${baseSha}..HEAD`], { cwd: clone }).stdout.split('\n').filter(Boolean);
     return [baseSha, ...merges].map((sha) => {
       run('git', ['checkout', '--quiet', sha], { cwd: clone });
+      // Each commit may need what it lists: a clone has no node_modules, and a test that cannot import counts as none.
+      installDependencies(clone, run);
       return countTests(clone, run) ?? 0;
     });
   } finally {
