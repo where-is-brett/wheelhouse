@@ -42,7 +42,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, managedMarker, readTailEntries, readSmallText, beingSetUp, removedFrom, isWhy } from './kit.js';
+import { answer, runAndExit, worktreeRoot, projectOf, pluginRoots, isInside, managedDir, managedMarker, readTailEntries, readSmallText, beingSetUp, removedFrom, isWhy } from './kit.js';
 import { keep, sendPending, withinBudget } from './pending.js';
 import { keepWatcherAlive } from '../watcher/keep-alive.js';
 import { recordClaudePath } from '../lib/claude.js';
@@ -61,6 +61,7 @@ import { projectConfig } from '../watcher/main.js';
 import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
 import { readProject } from '../lib/projects.js';
 import { ensureIgnored } from '../feature/files.js';
+import { safeFeatureFolder, readBrief } from '../feature/status.js';
 import { run as runProgram } from '../lib/run.js';
 import {
   LOW_NODE_SCRIPT, guardedReady, lowNodeReady, needsSelfTest, selfTest, SELF_TEST_MS,
@@ -230,6 +231,21 @@ export function branchOf(cwd) {
 export function featureSlug(cwd) {
   const match = /^feature\/([A-Za-z0-9._-]+)$/.exec(branchOf(cwd) ?? '');
   return match && !/^\.+$/.test(match[1]) ? match[1] : null;
+}
+
+// The branch's slug when `cwd` is in a worktree Wheelhouse made for that feature: its
+// `.wheelhouse/feature` folder is safe and its brief's `work` is the slug. Null otherwise, and
+// null when anything can't be read. A `feature/` branch alone is not a feature session.
+export function madeFeatureSlug(cwd) {
+  try {
+    const slug = featureSlug(cwd);
+    if (slug === null) return null;
+    const root = worktreeRoot(cwd);
+    if (root === null || !safeFeatureFolder(root)) return null;
+    return readBrief(root).work === slug ? slug : null;
+  } catch {
+    return null;
+  }
 }
 
 // The views as the helper last wrote them on disk, when it cannot give them.
@@ -835,7 +851,7 @@ async function started(input, deps) {
   if (setup === null) clearRequest(found.record?.folder ?? input.cwd);
   // The front desk's session: not a feature's, nor the foreman's own. Only it is told why the
   // foreman is held back, as it is the session that speaks to the director.
-  const deskSession = featureSlug(input.cwd) === null && sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk';
+  const deskSession = madeFeatureSlug(input.cwd) === null && sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk';
   if (trouble !== null && deskSession) notes.push(trouble === 'newer' ? FOREMAN_HELD_NEWER : FOREMAN_HELD_UNREADABLE);
 
   const stateRoot = stateDir(project);

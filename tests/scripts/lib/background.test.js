@@ -7,6 +7,7 @@ import path from 'node:path';
 import { startBackground as startWithBackground, weeklyDue } from '../../../scripts/lib/background.js';
 import { jobFolder } from '../../../scripts/lib/paths.js';
 import { recordRole } from '../../../scripts/lib/role.js';
+import { makeFeatureFolder } from '../../helpers/made-feature.js';
 
 const ROOT = '/plugin/root';
 // The weekly jobs are not due unless a test says so, whatever the home holds.
@@ -54,7 +55,7 @@ function feature(home, branch) {
 
 test('a session in a feature worktree is recorded as feature work, with its slug', async () => {
   await withHome(async (home) => {
-    const tree = feature(home, 'feature/gift-cards');
+    const tree = makeFeatureFolder(feature(home, 'feature/gift-cards'), 'gift-cards');
     const r = fakeReceiver({ up: true });
     await startBackground({ pluginRoot: ROOT, session: 's-feature', cwd: tree, project: 'owner__name', env: {}, spawn: r.spawn, now: () => NOW, health: r.health });
     const part = recorded(home, 's-feature');

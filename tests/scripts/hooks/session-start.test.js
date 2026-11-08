@@ -44,6 +44,7 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { journalFile } from '../../../scripts/lib/setup-run.js';
 import { beforeTimer, nodeStartMs } from '../../helpers/until.js';
 import { searchPathIn } from '../../helpers/env.js';
+import { makeFeatureFolder } from '../../helpers/made-feature.js';
 
 const P = 'owner__name';
 
@@ -314,6 +315,7 @@ test('a session in a feature worktree is pointed at its ledger', async () => {
     fs.mkdirSync(gitdir, { recursive: true });
     fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${gitdir}\n`);
     fs.writeFileSync(path.join(gitdir, 'HEAD'), 'ref: refs/heads/feature/gift-cards\n');
+    makeFeatureFolder(tree, 'gift-cards');
     const f = fake();
     const t = text(await run(f, {}, { cwd: tree }));
     assert.match(t, /Your feature's ledger: .*features[\\/]gift-cards[\\/]ledger\.md/);
@@ -1067,12 +1069,14 @@ test('in a registered folder whose setup journal can\'t be read, the session sta
     assert.equal(watcherStarts(foreman).length, 0);
     assert.deepEqual(heldLines(foremanOut), []);
     fs.writeFileSync(path.join(folder, '.git', 'HEAD'), 'ref: refs/heads/feature/login\n');
+    makeFeatureFolder(folder, 'login');
     const feature = shape1();
     const featureOut = await start(feature);
     assert.equal(watcherStarts(feature).length, 0);
     assert.deepEqual(heldLines(featureOut), []);
     assert.ok(!text(featureOut).split('\n').includes(FRONT_DESK_LINE));
     fs.rmSync(path.join(folder, '.git', 'HEAD'));
+    fs.rmSync(path.join(folder, '.wheelhouse'), { recursive: true, force: true });
     // Held back with the helper down too, and still said.
     const down = fake({ startsUp: false });
     down.client.config = async () => shapeConfig(1);
@@ -1134,6 +1138,7 @@ test('a feature worktree and the foreman are not pointed at the front desk\'s pl
     fs.mkdirSync(gitdir, { recursive: true });
     fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${gitdir}\n`);
     fs.writeFileSync(path.join(gitdir, 'HEAD'), 'ref: refs/heads/feature/gift-cards\n');
+    makeFeatureFolder(tree, 'gift-cards');
     assert.doesNotMatch(text(await run(fake(), { env: {} }, { cwd: tree })), /First Mate/);
     // Nor when a front-desk role was recorded for the session earlier: the worktree decides.
     recordRole('s-moved', 'front-desk');
@@ -1157,6 +1162,7 @@ test('the front desk\'s session start keeps the model it runs on; a feature\'s o
     fs.mkdirSync(gitdir, { recursive: true });
     fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${gitdir}\n`);
     fs.writeFileSync(path.join(gitdir, 'HEAD'), 'ref: refs/heads/feature/gift-cards\n');
+    makeFeatureFolder(tree, 'gift-cards');
     await run(fake(), { env: {} }, { cwd: tree, model: 'model-builder' });
     assert.equal(runningModel(P).model, 'model-small', 'nor does a feature session');
     // A session start with no model leaves what was kept.
@@ -1193,6 +1199,7 @@ test('in the main folder the session start keeps .wheelhouse/ out of git, once, 
     fs.mkdirSync(gitdir, { recursive: true });
     fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${gitdir}\n`);
     fs.writeFileSync(path.join(gitdir, 'HEAD'), 'ref: refs/heads/feature/gift-cards\n');
+    makeFeatureFolder(tree, 'gift-cards');
     await run(fake(), { projectOf: () => ({ project: P, record: { folder: other } }), env: {} }, { cwd: tree });
     assert.equal(await run(fake(), { projectOf: () => null, env: {} }, { cwd: other }), undefined);
     assert.equal(fs.readFileSync(otherExclude, 'utf8'), before);
@@ -2091,6 +2098,7 @@ test('a session is titled by its role when it starts afresh, and keeps its own t
     fs.mkdirSync(gitdir, { recursive: true });
     fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${gitdir}\n`);
     fs.writeFileSync(path.join(gitdir, 'HEAD'), 'ref: refs/heads/feature/gift-cards\n');
+    makeFeatureFolder(tree, 'gift-cards');
     assert.equal(await titleOf({}, { cwd: tree }), 'Wheelhouse · Crew: gift-cards');
     assert.equal(await titleOf({}, { source: 'resume' }), undefined);
     assert.equal(await titleOf({}, { source: 'compact' }), undefined);
@@ -2142,5 +2150,48 @@ test('a compaction with nothing to say about the session adds no digest, and a f
   await withHome(async () => {
     const out = text(await run(fake(), {}, { source: 'compact', cwd: 'relative', session_id: '../x' }));
     assert.doesNotMatch(out, /Where you were/);
+  });
+});
+
+// A worktree as git leaves one, on `branch`, under `home`.
+function gitWorktree(home, branch) {
+  const tree = path.join(home, 'tree');
+  const gitdir = path.join(home, 'main', '.git', 'worktrees', 'tree');
+  fs.mkdirSync(tree, { recursive: true });
+  fs.mkdirSync(gitdir, { recursive: true });
+  fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${gitdir}\n`);
+  fs.writeFileSync(path.join(gitdir, 'HEAD'), `ref: refs/heads/${branch}\n`);
+  return tree;
+}
+
+test('madeFeatureSlug: null outside a repository, for an unsafe folder and for an unreadable brief', async () => {
+  const { madeFeatureSlug } = await import('../../../scripts/hooks/session-start.js');
+  await withHome(async (home) => {
+    assert.equal(madeFeatureSlug(tempFolder('wh-elsewhere-')), null);
+    const tree = gitWorktree(home, 'feature/login');
+    // No feature folder at all.
+    assert.equal(madeFeatureSlug(tree), null);
+    // A feature folder that is a symbolic link to somewhere else is not safe.
+    const elsewhere = path.join(home, 'elsewhere');
+    makeFeatureFolder(elsewhere, 'login');
+    fs.mkdirSync(path.join(tree, '.wheelhouse'));
+    fs.symlinkSync(path.join(elsewhere, '.wheelhouse', 'feature'), path.join(tree, '.wheelhouse', 'feature'), 'dir');
+    assert.equal(madeFeatureSlug(tree), null);
+    fs.rmSync(path.join(tree, '.wheelhouse'), { recursive: true, force: true });
+    // A brief that can't be read.
+    makeFeatureFolder(tree, 'login');
+    fs.writeFileSync(path.join(tree, '.wheelhouse', 'feature', 'brief.md'), 'not a brief');
+    assert.equal(madeFeatureSlug(tree), null);
+  });
+});
+
+test('madeFeatureSlug: the slug for a made feature worktree', async () => {
+  const { madeFeatureSlug } = await import('../../../scripts/hooks/session-start.js');
+  await withHome(async (home) => {
+    const tree = gitWorktree(home, 'feature/login');
+    makeFeatureFolder(tree, 'login');
+    assert.equal(madeFeatureSlug(tree), 'login');
+    makeFeatureFolder(tree, 'other');
+    assert.equal(madeFeatureSlug(tree), null, 'a brief for another piece');
   });
 });
