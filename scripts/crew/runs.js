@@ -150,7 +150,7 @@ function shown(file, cwd) {
   if (typeof file !== 'string' || file === '') return null;
   if (typeof cwd === 'string' && cwd !== '' && path.isAbsolute(file)) {
     const rel = path.relative(cwd, file);
-    if (rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)) return rel.split(path.sep).join('/');
+    if (rel !== '' && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)) return rel.split(path.sep).join('/');
   }
   return file;
 }
@@ -187,8 +187,11 @@ function toolStep(block, cwd) {
   }
 }
 
+// The first sentence, cut to 120 characters. The whole text is checked for a key first, so a cut
+// can never split one below the length a pattern needs.
 function sentence(raw) {
   const s = plain(raw).trim();
+  if (mask(s) === HIDDEN) return HIDDEN;
   const m = /^[\s\S]*?[.!?](?=\s|$)/.exec(s);
   return (m ? m[0] : s).trim().slice(0, 120).trim();
 }

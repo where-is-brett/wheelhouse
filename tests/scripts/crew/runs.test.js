@@ -288,3 +288,17 @@ test('passes wording through the glossary', () => {
   assert.ok(!steps[0].text.includes('PR'));
   assert.ok(!steps[0].text.includes('Terms:'));
 });
+
+test('masks a key that would straddle the 120 character cut', () => {
+  const key = `sk-${'a1'.repeat(15)}`;
+  const long = `${'x'.repeat(100)}${key}`;
+  assert.equal(stepOf(text(long)).text, '[hidden: looked like a key]');
+  const tok = `${'y'.repeat(112)} token: abcdefghij`;
+  assert.equal(stepOf(text(tok)).text, '[hidden: looked like a key]');
+  assert.equal(stepsOf([text(long)], { glossary: {} })[0].text, '[hidden: looked like a key]');
+});
+
+test('shows an in-tree file whose name starts with two dots', () => {
+  assert.equal(stepOf(tool('Read', { file_path: '/w/tree/..foo' })).text, 'Reading `..foo`');
+  assert.equal(stepOf(tool('Read', { file_path: '/w/other/a.js' })).text, 'Reading `/w/other/a.js`');
+});
