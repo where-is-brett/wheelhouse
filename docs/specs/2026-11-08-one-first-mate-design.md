@@ -2,13 +2,15 @@
 
 # One First Mate per project: design (8 November 2026)
 
-**Status:** proposed, waiting on the director's three calls in section 5. Nothing is built. It builds on the core cut (`docs/specs/2026-11-07-core-cut-design.md`) and the way of working (`docs/specs/2026-11-07-director-way-of-working-design.md`), and changes neither.
+**Status:** decided. The director answered the three calls in section 5 on 8 November 2026 (1A, 2A, and 3A with an amendment), so no calls are open. Nothing is built. It builds on the core cut (`docs/specs/2026-11-07-core-cut-design.md`) and the way of working (`docs/specs/2026-11-07-director-way-of-working-design.md`), and changes neither. It agrees with the crew visibility design (`docs/specs/2026-11-08-crew-visibility-design.md`), whose helm sessions are feature sessions (section 6.7).
 
 ## 1. In plain words
 
 The director opened two Claude Code sessions in one project on one computer, and they clashed. Wheelhouse guards against two **computers** running the work (the lock and the Take over here card, main design section 9), but not against two **sessions on the same computer**. Today any ordinary session opened in the project folder becomes a First Mate, so two windows means two First Mates, each sure it is the director's only voice.
 
-This design makes the First Mate a seat that one session holds at a time. The session holding it is the First Mate. Any other session in the project is told, in its first lines, that the First Mate is in another window, and becomes an ordinary session that leaves Wheelhouse's work alone, with an offer to take the seat over. A session that crashed gives the seat up on its own. A research or design session opened in the project never takes the seat.
+This design makes the First Mate a seat that one session holds at a time. The session holding it is the First Mate. Any other session in the project is told, in its first lines, that the First Mate is in another window, and becomes an ordinary **aside** session that leaves Wheelhouse's work alone, with an offer to take the seat over. A session that crashed gives the seat up on its own. A session in a worktree never takes the seat, and `/wheelhouse:aside` keeps a main-folder session out of it.
+
+Edits belong in a worktree. An aside session in the project's **main folder** can read, talk and look things up, but can't edit the product's files, as a front desk can't today: its edits would be invisible to the crew's file-overlap waits, and uncommitted changes in the main folder can tangle with the First Mate's checkout. An aside session in a **worktree** edits freely on its own branch, and when that branch touches files a live crew piece is changing, Wheelhouse warns the director before the two collide (section 6.6).
 
 ## 2. How two First Mates clash today
 
@@ -30,7 +32,7 @@ The record itself doesn't tear: every write goes through the one host helper per
 | F8 | **Two windows, one Bosun.** There aren't two foremen: `startWatcher` refuses while `watcherRunning` finds the project's watcher (`scripts/foreman/start.js`), so one watcher, and therefore one foreman, runs per project. But both windows send it asks (`askBosun`, forwards) that can disagree. | `scripts/foreman/` | The Bosun gets contradicting steers. |
 | F9 | **Non-Wheelhouse sessions are hobbled.** A research or design session in the main folder is told to load the front-desk skill, and `front-desk-writes.js` refuses its edits to the product's files. | `scripts/hooks/front-desk-writes.js` | The director can't use the folder for anything else. |
 
-**A related finding, out of scope here.** `featureSlug` judges a Crew session by its branch alone (`feature/<slug>`). The Claude desktop app names its own worktree branches with a configurable prefix, `feature/` on this computer (for example `feature/agitated-mendeleev-bae7e1`), so an ordinary app session in a worktree is classed as Crew and given a Crew title. Section 8 proposes it as a follow-up.
+**A related finding.** `featureSlug` (`scripts/lib/role.js`) judges a Crew session by its branch alone (`feature/<slug>`). The Claude desktop app names its own worktree branches with a configurable prefix, `feature/` on this computer (for example `feature/agitated-mendeleev-bae7e1`), so an ordinary app session in a worktree is classed as Crew and given a Crew title. Such a session is `feature`, not `aside`, so the overlap warning (section 6.6) would never run for it. Section 8 makes the fix a step of this build, before the warning.
 
 ## 3. Goals, non-goals and anti-goals
 
@@ -38,25 +40,36 @@ The record itself doesn't tear: every write goes through the one host helper per
 - At most one First Mate per project at any moment, on one computer as across computers.
 - A second session knows in its first lines that it isn't the First Mate, and why, and can take the seat with one reply.
 - A First Mate that crashed or was closed doesn't block the next session for long, and never needs the director to delete a file.
-- Sessions that aren't Wheelhouse work can be opened in the project and work normally.
+- Sessions that aren't Wheelhouse work can be opened in the project: in the main folder to read, talk and look things up, in a worktree to edit as well.
+- A worktree session's edits never collide with a crew piece's unseen: the director is warned first.
 
 **Non-goals**
 - Several First Mates working together, for example one per topic (section 4).
 - Changing the cross-computer lock or its fencing counter.
-- Guarding feature sessions or the foreman, which already have one owner each.
+- Guarding feature sessions or the foreman, which already have one owner each. A helm session (crew visibility design, section 9) is a feature session.
+- Blocking a worktree session's edits or pull request. The overlap guard warns; the director decides.
 
 **Anti-goals** (failures even if it technically works)
 - The director's only working window loses the seat while they're still using it.
 - A session is silently read-only, and the director only finds out when their request goes nowhere.
+- A worktree session's pull request and a crew piece's both change one file, and the director first hears of it as a conflict at merge.
 - A crash leaves the project with no First Mate until something is cleaned up by hand.
 
 ## 4. One First Mate, or several?
 
-**Exactly one per project.** The First Mate exists to be the director's one voice: it holds the waiting list, numbers the decisions, keeps the rulings consistent and runs intake against everything already asked. Every failure in section 2 comes from splitting that voice. One per topic would need intake to route each request to a topic's First Mate, decisions to be numbered and shown per topic, and rulings to be scoped, which is a new design and the opposite of the way-of-working's aim of fewer things reaching the director. The director can still open as many *other* sessions as they like (section 6.5). This is the recommendation in call 1, section 5.
+**Exactly one per project** (the director's call 1, answered A). The First Mate exists to be the director's one voice: it holds the waiting list, numbers the decisions, keeps the rulings consistent and runs intake against everything already asked. Every failure in section 2 comes from splitting that voice. One per topic would need intake to route each request to a topic's First Mate, decisions to be numbered and shown per topic, and rulings to be scoped, which is a new design and the opposite of the way-of-working's aim of fewer things reaching the director. The director can still open as many *other* sessions as they like (section 6.5).
 
-## 5. The director's calls
+## 5. The director's calls (decided 8 November 2026)
 
-Each is in the decision shape of the way-of-working design, section 6.2.
+Each was put in the decision shape of the way-of-working design, section 6.2, and is kept here as asked, with the answer after it.
+
+| Call | Answer |
+|---|---|
+| 1. How many First Mates | **A**, exactly one per project, as recommended. |
+| 2. What a second session becomes | **A**, an ordinary `aside` session with a Take over here offer, as recommended. |
+| 3. How side sessions stay out of the seat | **A, amended.** Worktree sessions never take the seat, and `/wheelhouse:aside` opts out in the main folder, as recommended. On top of that: an aside session in the main folder keeps today's `front-desk-writes` refusal of product edits (it can read, talk and look things up); edits belong in a worktree session, which edits freely on its own branch; and a new guard warns the director when a worktree aside session's branch or pull request touches files a live crew piece is changing. The reason: an aside session's edits are invisible to the crew's file-overlap waits, and uncommitted edits in the main folder can tangle with the First Mate's checkout. |
+
+The amendment changes call 2's option A in one place: a main-folder aside session doesn't "edit like any Claude Code session". Sections 6.3, 6.5 and 6.6 carry it.
 
 ---
 
@@ -106,7 +119,7 @@ Reply A, B, C, "why", or your own words.
 
 ---
 
-Sections 6 and 7 are written for **1A, 2A and 3A**. Section 9 says what changes under the other answers.
+Sections 6 and 7 are written for the answers: **1A, 2A and 3A as amended**. Section 9 keeps what the other options would have changed, for the record.
 
 ## 6. The design
 
@@ -139,9 +152,9 @@ After a crash, case 2 frees the seat at the next session start. With no pid, cas
 
 ### 6.3 What each session is told at its start
 
-`sessionRole` gains a fifth role, **`aside`**: a session in the project that isn't the First Mate, the foreman, a feature or a why copy. The order of judging becomes: `why`, `foreman` (environment, recorded, wake line), `feature`, then the **seat**:
+`sessionRole` gains a fifth role, **`aside`**: a session in the project that isn't the First Mate, the foreman, a feature or a why copy. The order of judging becomes: `why`, `foreman` (environment, recorded, wake line), `feature` (a helm session included, section 6.7), then the **seat**:
 
-- A session in a linked worktree that isn't a Wheelhouse feature → `aside` (call 3A). Recorded once, like any role.
+- A session in a linked worktree that isn't a Wheelhouse feature → `aside` (call 3A). Recorded once, like any role. "Isn't a Wheelhouse feature" needs the `featureSlug` fix in section 8, which builds first.
 - A session whose first prompt is `/wheelhouse:aside` → `aside`, recorded.
 - Otherwise the session start tries the seat. Taken or already held by this session → `front-desk`. Held by another live session → `aside`.
 
@@ -151,7 +164,12 @@ The session start gives an aside session, in place of `FRONT_DESK_LINE`:
 
 > This session isn't the First Mate: it is in another window, last active 4 minutes ago. Work here as an ordinary session, and leave Wheelhouse's records to the First Mate. If the director asks for Wheelhouse work (a request to build, a decision, a card), say the First Mate is in another window, and offer this card…
 
-…followed by a take-over card for the seat (kind `take-over`, target `{ session, since }`), recommending **Leave it there** when the seat is in use and **Take over here** when it isn't. An aside session from a worktree or the command gets the first sentence only, with no card.
+…followed by a take-over card for the seat (kind `take-over`, target `{ session, since }`), recommending **Leave it there** when the seat is in use and **Take over here** when it isn't.
+
+What follows the first sentence depends on where the session is:
+
+- **In the main folder** (a held seat or `/wheelhouse:aside`), the line adds: "Here you can read, talk and look things up, but not edit the product's files. For edits, start a session in a worktree." The command-made aside gets no card; the seat-made one gets the card above.
+- **In a worktree**, the line adds: "Edit freely on this branch. If it touches files a crew piece is changing, you'll be told." No card: a worktree session can't take the seat.
 
 Only the First Mate gets the usage card, the take-over card for another computer, the running-model write (F7) and the setup notes for the front desk.
 
@@ -165,17 +183,50 @@ The seat is checked where a First Mate acts, so an aside session's attempt is re
 
 | Point | Today | With the seat |
 |---|---|---|
-| `recordAnswer` (`scripts/decisions/answer.js`) | front-desk, not script-started | also: the seat names this session. Closes F2 and F3. |
+| `recordAnswer` (`scripts/decisions/answer.js`) | front-desk, not script-started | also: the seat names this session. Closes F2 and F3. The crew visibility design adds one alternative for a helm session (section 6.7). |
 | Card clicks and reply codes (`prompt-record.js`) | any front-desk session | only the holder's. A click in an aside window is refused with the take-over line. |
 | `cli.js` writes: `cards`, `pull-cards`, `again`, `card`, `record`, `confirm`, `suggest`, `pull-back`, `drop`, `ask-bosun`, settings | any caller | the CLI reads `CLAUDE_CODE_SESSION_ID` (as `note` and `--here` already do) and refuses unless that session holds the seat. Closes F1, F4, F5, F8. With no session id (a script or test), today's behaviour. |
 | `cli.js` reads: `view`, `decision list`/`show`, `explain`, `similar`, `why` | any | unchanged, so an aside session can look things up. |
-| `front-desk-writes.js` | refuses product writes for every front-desk session | only for the holder. An aside session edits as any session does (F9); its changes reach main through the director's own pull request, which Wheelhouse already treats as by-hand work. |
+| `front-desk-writes.js` | refuses product writes for every front-desk session | refuses them for the holder **and for every aside session in the main folder** (call 3, amended), with a line that says to start a session in a worktree for edits. An aside session in a worktree isn't refused: it edits on its own branch, and its changes reach main through the director's own pull request, which Wheelhouse already treats as by-hand work. F9 is closed for reading, talking and looking things up in the main folder, and for edits in a worktree. |
+| A worktree aside session's turn ending (Stop) | nothing | the overlap check (section 6.6): a warning when its branch, or its uncommitted changes, touch files a live crew piece is changing. It never blocks. |
 | `board-context.js`, `card-check.js` Stop check | every front-desk session | holder only. |
 | `.wheelhouse/front-desk.json` | one per project | unchanged: with one First Mate it has one writer (F6). |
 
 Protections that apply to every session stay as they are for aside sessions: STOP, the lineage hold, protected tests and the merge gate.
 
-### 6.6 Failure cases the builder must cover
+### 6.6 The overlap warning
+
+**Why.** The crew waits for file overlaps among its own pieces: the dispatcher (`scripts/engine/dispatcher.js`) holds a piece whose files clash with a running one, using `clashCheck` (`scripts/foreman/queue.js`). A worktree aside session isn't a piece, so its branch is invisible to that wait. Left alone, the director first hears of the clash as a conflict at merge.
+
+**Where.** *Designer's call:* the aside session's **Stop** hook, as a new script `scripts/hooks/aside-overlap.js` beside `card-check.js` and `feature-status.js` in `hooks/hooks.json`. It's the cheapest sound point: Stop runs after every turn, so the warning comes in the turn that made the overlap, before any pull request exists, and it also covers the turn that opens one (the turn's `gh pr create` ends in a Stop like any other). A PreToolUse check on `gh pr create` alone was considered and rejected: it warns only at the end, after the work is done, and misses a pull request opened another way (the app's button, the web). A check at the helper's PR watch was rejected too: it sees only pushed branches, so it warns later still.
+
+**What it does**, only in a worktree session whose role is `aside` (never in the First Mate, a main-folder aside, the foreman, a feature or a helm session, or a why copy):
+
+1. **The aside's files:** the files its branch changes since it left main (`git diff --name-only` against the merge base with the project's main branch), plus its uncommitted and untracked files (`git status --porcelain`). Capped, as other hooks cap what they read.
+2. **The crew's files:** the same set the dispatcher passes to `clashCheck` as `running`: each live and waiting piece with its planned files, and each reservation whose work hasn't ended. Read through the desk, as `board-context.js` reads the board. *Designer's call:* lift the dispatcher's `running` list into one function both use, so the two can't drift.
+3. **The check:** `clashCheck({ files, running, hotFiles })` with the project's `hotFiles` setting, so two new migrations count as a clash here as they do for the crew.
+4. **The warning,** when there's a clash it hasn't already warned of: a `systemMessage`, which Claude Code shows the director in that window, naming each piece and file, for example:
+
+   > Heads up: this branch changes `src/login.ts`, which the crew piece login-retry is also changing. Merging both will conflict. You could wait for login-retry to merge and then bring this branch up to date, or ask the First Mate to hold it.
+
+   It also asks the session (Stop's `decision: block` with the same words as `reason`, once per new clash) to say so in its reply, so the warning sits in the conversation and not only in the app's banner. *Designer's call:* the block is used only for the first warning of each clash, so a turn is never held twice for the same overlap.
+5. **Once per clash:** the pairs (piece, file) it has warned of are kept in a small file under the session's own `.wheelhouse` in the worktree, so it warns again only for a new piece or a new file. A piece that ends drops out of `running` and so out of the warning.
+6. **The First Mate hears of it** through one record, `aside-overlap` (`{ branch, pieces, files, at }`), written through the helper like any record, so the board shows "a side branch overlaps login-retry" and the First Mate can raise it if the director asks how a piece is going. *Designer's call:* a record and not a card, because the director has already been told in the window that made the overlap; a card would tell them twice.
+
+**What it never does:** block an edit or a pull request, change the crew's plan, or hold a piece. The director decides.
+
+**When it can't tell:** with the helper down and the desk unreadable, or git failing, it says nothing and lets the turn end (it informs, as `board-context.js` does). The next Stop tries again.
+
+### 6.7 Agreement with the crew visibility design
+
+The crew visibility design (`docs/specs/2026-11-08-crew-visibility-design.md`, merged on main) lets the director talk to a running piece's own session, "taking the helm", and records what they decide there with `where: 'helm'`. The two designs agree:
+
+- **A helm session is `feature`,** judged before the seat (this design's order: `why`, `foreman`, `feature`, then the seat). It is never `aside` or `front-desk`, never takes or contests the seat, and never gets the aside line, the take-over card or the overlap warning. It is the crew piece itself, so its files are already in the crew's `running` list.
+- **`recordAnswer` keeps one alternative to the seat** for the helm: a reply records when the session is the one a helm hold file names, the decision is that hold's piece's own, the reply names the decision's number, and a person typed it (crew visibility, section 9.4). Every other non-holder reply is refused as section 6.5 says. F3 stays closed, because only the director's "take the helm" makes a hold file.
+- **The order of building** follows that design: the seat lands first; the helm's answer path is added after it as that one alternative.
+- **The `featureSlug` fix** (section 8) narrows `feature` to worktrees Wheelhouse made. A helm session runs in its piece's own worktree, which Wheelhouse made, so it stays `feature`.
+
+### 6.8 Failure cases the builder must cover
 
 1. Two sessions start within milliseconds: exactly one holds the seat. The other is aside and gets the offer.
 2. The holder's process is killed (no SessionEnd): the next session takes the seat at once (pid gone).
@@ -189,29 +240,44 @@ Protections that apply to every session stay as they are for aside sessions: STO
 10. Headless sessions with no `CLAUDE_CODE_SESSION_ID`, and script-started sessions (`startedByScript`), never take the seat.
 11. An aside session's typed "B" while decision B waits: nothing is recorded, and the note says the First Mate is in another window.
 12. Git-alone projects (`host: 'local'`, no lock branch): the seat works the same, since it doesn't depend on the lock branch.
+13. A main-folder aside session tries to edit a product file: refused, with the line to start a worktree session. The same edit in a worktree aside session goes through.
+14. A worktree aside session's turn changes a file a live crew piece plans to change: the director is warned once, a record is written, nothing is blocked. The next turn, with no new clash, says nothing.
+15. The overlap comes only from an uncommitted or untracked file: still warned.
+16. The overlap is through `hotFiles` (two new migrations, no shared file): warned, as the crew would hold.
+17. The crew piece ends (merged or closed): it drops out, and no warning follows.
+18. A new piece starts that clashes with files the aside branch already changed: warned at the aside session's next Stop. *Designer's call:* the warning follows the aside's turns; a piece started while the aside window is idle is caught when the director next uses that window, and the dispatcher never sees aside branches either way.
+19. The desk can't be read, or git fails: no warning, no error, the turn ends.
+20. A desktop worktree on a `feature/…` branch that Wheelhouse didn't make: `aside`, not `feature` (after the `featureSlug` fix), so it gets the warning.
+21. A helm session: `feature`, never `aside`; no aside line, no warning, and its numbered answers to its own piece's decisions record as the crew visibility design says.
 
 ## 7. Tests
 
 **Extend**
-- `tests/scripts/lib/role.test.js`: the `aside` role from a worktree, the command and a held seat; a seat-derived `aside` isn't recorded; the order with `why`, `foreman` and `feature`.
+- `tests/scripts/lib/role.test.js`: the `aside` role from a worktree, the command and a held seat; a seat-derived `aside` isn't recorded; the order with `why`, `foreman` and `feature`; a helm session stays `feature` (case 21); a `feature/…` branch Wheelhouse didn't make is `aside` (case 20).
 - `tests/scripts/lib/start-lock.test.js`: if the rename logic is lifted into a shared helper, its existing cases run against both users.
-- `tests/scripts/hooks/session-start.test.js`: the second session gets the aside line and the seat's take-over card, not `FRONT_DESK_LINE`, the usage card or the model write; the recommendation flips at 30 minutes; the computer card still comes first when another computer holds the lock; a worktree session gets no card.
-- `tests/scripts/hooks/prompt-record-reply.test.js`: a typed reply in an aside session records nothing and says why (cases 11, 2); the holder's reply records as today.
+- `tests/scripts/hooks/session-start.test.js`: the second session gets the aside line and the seat's take-over card, not `FRONT_DESK_LINE`, the usage card or the model write; the recommendation flips at 30 minutes; the computer card still comes first when another computer holds the lock; a main-folder aside's line says it can't edit and points to a worktree; a worktree session gets the worktree line and no card.
+- `tests/scripts/hooks/prompt-record-reply.test.js`: a typed reply in an aside session records nothing and says why (cases 11, 2); the holder's reply records as today; a numbered reply in a helm session still records with `where: 'helm'` once that path is built (case 21).
 - `tests/scripts/hooks/prompt-record.test.js`: a card click in an aside window is refused; Take over here moves the seat and is fenced (case 6).
 - `tests/scripts/frontdesk/cli.test.js`: every write command refuses for a non-holder session id and works for the holder; reads work for both; no session id keeps today's behaviour.
-- `tests/scripts/hooks/front-desk-writes.test.js`: product writes are allowed for an aside session and refused for the holder.
+- `tests/scripts/hooks/front-desk-writes.test.js`: product writes are refused for the holder and for a main-folder aside session (with the worktree line), and allowed for a worktree aside session (case 13).
+- `tests/scripts/engine/dispatcher.test.js`: the lifted `running` list gives the dispatcher the same holds as before.
 - `tests/scripts/hooks/board-context.test.js` and `card-check-shown.test.js`: holder only.
 - `tests/e2e/front-desk.test.js`: two sessions in one project, end to end. One records work, the other's `record work` is refused, Take over here moves the seat, and the first session's next write is refused.
 
 **New**
 - `tests/scripts/lib/first-mate-seat.test.js`: cases 1–6 and 12 against a temporary home, with the process table and clock passed in, as `start.js`'s `alive` and `now` are.
+- `tests/scripts/hooks/aside-overlap.test.js`: cases 14–19 against a temporary git repository with a branch and a desk stub: a shared committed file, an uncommitted one, an untracked one, a `hotFiles` match, no clash, an ended piece, a second Stop with nothing new (silent), a new piece (warned), the desk or git failing (silent); the `aside-overlap` record's shape; that it does nothing for the holder, a main-folder aside, a feature, a helm session and a why copy.
+- `tests/e2e/front-desk.test.js` gains a worktree aside session whose branch edits a file a recorded piece plans to change: the warning appears once and the board shows the overlap.
 
-## 8. Follow-ups, outside this design
+## 8. The `featureSlug` fix, and follow-ups
 
-- **Crew judged by branch alone.** `featureSlug` should also check that the branch is a feature Wheelhouse recorded (the work view), so a desktop worktree on a `feature/` branch isn't a Crew session. It's small and separate, and best done before this design's worktree rule (3A) relies on telling the two apart.
+**Built first, as part of this design.** `featureSlug` (`scripts/lib/role.js`) also checks that the worktree is one Wheelhouse made for a piece: its `.wheelhouse/feature` folder and brief are there and name the branch's piece, as `feature-status.js` already checks before it acts. A desktop worktree on a `feature/…` branch then reads as `aside`, which the worktree rule (call 3) and the overlap warning (section 6.6) both depend on. *Designer's call:* reuse `feature-status.js`'s check rather than ask the desk, so the role is known with the helper down.
+
+**Follow-ups, outside this design**
 - Showing the First Mate's window on the board and in the mod's pane ("First Mate: the session started 09:12").
+- Feeding aside branches into the dispatcher's clash wait, so the crew holds a new piece that would collide with a side branch. Not asked for: the director chose a warning, and an aside branch has no plan or end the dispatcher could wait on.
 
-## 9. Under the other answers
+## 9. Under the other answers (not chosen, kept for the record)
 
 - **1B (one per topic):** this design doesn't fit, and topic routing needs a design of its own first.
 - **1C (several, warned):** only the warning line from section 6.3, with no seat.
@@ -228,4 +294,4 @@ Protections that apply to every session stay as they are for aside sessions: STO
 
 ## 11. Left to the builder
 
-The seat's exact file name and fields, the one-minute write throttle, how the ancestor process is found on Windows (a missing pid falls back to case 3), the aside line's final wording within section 6.3's meaning, and whether `takeStartLock`'s rename logic is lifted into a shared helper or reused as it is.
+The seat's exact file name and fields, the one-minute write throttle, how the ancestor process is found on Windows (a missing pid falls back to case 3), the aside line's final wording within section 6.3's meaning, and whether `takeStartLock`'s rename logic is lifted into a shared helper or reused as it is. For the overlap warning: its wording within section 6.6's meaning, the cap on files read, the name and place of the warned-pairs file, and how the main branch's name is found (the project's recorded base branch, falling back to `origin/HEAD`).
