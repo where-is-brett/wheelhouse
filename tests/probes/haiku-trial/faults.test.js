@@ -117,7 +117,6 @@ test('featureEnvOf reads the worktree from the process, not PWD, and keeps PATH 
   assert.equal(got.env.WHEELHOUSE_SESSION, 's101');
   assert.equal(got.env.HOME, '/h', "the session's own HOME wins");
   assert.equal(typeof got.env.PATH, 'string');
-  assert.equal(got.env.PWD, '/stale/watcher/folder'.length > 0 ? got.env.PWD : undefined);
   assert.notEqual(got.cwd, '/stale/watcher/folder');
   assert.equal(got.cwd, p1);
   const withSpace = await featureEnvOf({ project, piece: 'p2', listProcesses: table, cwdOf });
