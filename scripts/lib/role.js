@@ -55,11 +55,14 @@ export function asideKind({ cwd } = {}) {
   return inLinkedWorktree(cwd) ? 'worktree' : 'main';
 }
 
+// Whether the prompt begins with the aside command as a word: `/wheelhouse:asides` is not it.
+const isAsideCommand = (prompt) => typeof prompt === 'string' && prompt.startsWith(ASIDE_COMMAND) && /^\s*$/.test(prompt.slice(ASIDE_COMMAND.length, ASIDE_COMMAND.length + 1));
+
 // Whether the session chose, or stands where it is, an aside: the aside command as the prompt, or a
 // linked worktree that isn't a made feature. A seat held by another session is not a choice, so it is
 // not recorded.
 export function asideByChoice({ prompt, cwd } = {}) {
-  if (typeof prompt === 'string' && prompt.startsWith(ASIDE_COMMAND)) return true;
+  if (typeof prompt === 'string' && isAsideCommand(prompt)) return true;
   return inLinkedWorktree(cwd);
 }
 
@@ -96,6 +99,19 @@ export function sessionRole({ sessionId, env = process.env, prompt, cwd, seat } 
   if (madeFeatureSlug(cwd) !== null) return 'feature';
   if (asideByChoice({ prompt, cwd })) return 'aside';
   return seatRole({ sessionId, cwd, seat });
+}
+
+// Turns a recorded front desk into an aside, once: the aside command, typed after the session start took the seat.
+// Nothing else is replaced. True when it wrote it.
+export function recordAside(sessionId) {
+  const file = roleFile(sessionId);
+  if (file === null || recorded(sessionId) !== 'front-desk') return false;
+  try {
+    fs.writeFileSync(file, `${JSON.stringify({ role: 'aside' })}\n`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Records the session's role unless one is recorded already: true when it wrote it.

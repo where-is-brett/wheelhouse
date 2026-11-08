@@ -49,11 +49,11 @@ export const KEEP_AS_IS = 'Keep as is';
 // The first sentences are shared; `ago` is how long since the First Mate's window was last active (null when
 // no window holds the seat). `card` is true where the take-over card follows.
 const ASIDE_FIRST = (ago) => (ago === null ? 'This session isn\'t the First Mate.' : `This session isn't the First Mate: it is in another window, last active ${ago}.`);
-const ASIDE_WORK = 'Work here as an ordinary session, and leave Wheelhouse\'s records to the First Mate. If the director asks for Wheelhouse work (a request to build, a decision, a card), say the First Mate is in another window';
+const ASIDE_WORK = (ago) => `Work here as an ordinary session, and leave Wheelhouse's records to the First Mate. If the director asks for Wheelhouse work (a request to build, a decision, a card), say ${ago === null ? 'no window is the First Mate right now, and that Wheelhouse work waits for a session in the project\'s main folder' : 'the First Mate is in another window'}`;
 export const ASIDE_LINE_MAIN = 'Here you can read, talk and look things up, but not edit the product\'s files. For edits, start a session in a worktree.';
 export const ASIDE_LINE_WORKTREE = 'Edit freely on this branch. If it touches files a crew piece is changing, you\'ll be told.';
 export const asideLine = ({ ago = null, kind = 'main', card = false } = {}) => (
-  `${ASIDE_FIRST(ago)} ${ASIDE_WORK}${card ? ', and offer this card.' : '.'} ${kind === 'worktree' ? ASIDE_LINE_WORKTREE : ASIDE_LINE_MAIN}`
+  `${ASIDE_FIRST(ago)} ${ASIDE_WORK(ago)}${card ? ', and offer this card.' : '.'} ${kind === 'worktree' ? ASIDE_LINE_WORKTREE : ASIDE_LINE_MAIN}`
 );
 // The one line the old window gets once the seat has moved to another.
 export const SEAT_MOVED_LINE = 'The First Mate moved to another window; this session is now an ordinary one';
