@@ -430,7 +430,7 @@ const checks = {
     if (merged.length === 0) return unknown('no pull request merged');
     const problems = [];
     for (const p of merged) {
-      const missing = PROOF_HEADINGS.filter((h) => !new RegExp(`${h}`, 'i').test(p.body ?? ''));
+      const missing = PROOF_HEADINGS.filter((h) => section(p.body, h) === null);
       if (missing.length > 0) problems.push(`#${p.number} lacks ${missing.join(', ')}`);
     }
     return verdict(problems, `${merged.length} merged pull requests carry every heading`);

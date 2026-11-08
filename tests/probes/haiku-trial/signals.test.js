@@ -118,6 +118,14 @@ test('row 25 lists the missing headings', () => {
   assert.equal(row(25).check(ctxWith({ prs: [pr(1, { mergedAt: '2026-11-08T01:00:00Z', body: full })] })).pass, true);
 });
 
+test('row 25 does not take a heading word found only in prose', () => {
+  const body = `${PROOF_HEADINGS.filter((h) => h !== 'Why' && h !== 'What changed').map((h) => `## ${h}\ntext`).join('\n')}\nI changed why the page loads, and what changed is small.`;
+  const result = row(25).check(ctxWith({ prs: [pr(1, { mergedAt: '2026-11-08T01:00:00Z', body })] }));
+  assert.equal(result.pass, false);
+  assert.match(result.evidence, /Why/);
+  assert.match(result.evidence, /What changed/);
+});
+
 test('row 26 is not covered without previews', () => {
   const result = row(26).check(ctxWith({ previews: 'none' }));
   assert.equal(result.pass, null);
