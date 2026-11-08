@@ -2,6 +2,7 @@
 // The trial's front desk: a Claude Code session in tmux whose environment carries no starter variable, so the hooks take
 // it for the director's own session and count typed replies.
 import { spawnSync } from 'node:child_process';
+import { withoutHostVariables } from '../../scripts/lib/claude.js';
 
 // The variables that make a session look as if a script started it.
 const STARTER_VARIABLES = ['WHEELHOUSE_ROLE', 'WHEELHOUSE_SESSION', 'WHEELHOUSE_AGENT', 'WHEELHOUSE_ENGINE_RUN', 'CLAUDECODE'];
@@ -13,9 +14,12 @@ export const PANE_COLUMNS = 220;
 export const PANE_ROWS = 60;
 export const HISTORY_LINES = 20000;
 
-// A copy of `from` without what marks a session as script-started.
+// A copy of `from` without what marks a session as script-started, and without every variable a Claude Code session sets
+// for what it starts (its session id, its child-session marker, its messaging socket, its settings' env): the runner is
+// often started from a Claude Code session, and a front desk that inherits those is taken for that session's child, which
+// saves no transcript. CLAUDE_CONFIG_DIR is kept.
 export function cleanEnv(from = process.env) {
-  const env = { ...from };
+  const env = withoutHostVariables(from);
   for (const name of STARTER_VARIABLES) delete env[name];
   if (typeof env.CLAUDE_CODE_ENTRYPOINT === 'string' && SCRIPT_ENTRYPOINT.test(env.CLAUDE_CODE_ENTRYPOINT)) delete env.CLAUDE_CODE_ENTRYPOINT;
   return env;
