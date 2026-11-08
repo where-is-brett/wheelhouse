@@ -30,7 +30,7 @@ const NOTHING = {
   readConfig: async () => null,
   readMain: async () => null,
   readGate: async () => null,
-  mainParseAmount: async () => null,
+  mainParseAmount: async () => ({ ok: false, why: 'not wired' }),
   setDigest: async () => ({ ok: false, why: 'not wired' }),
   typedRepliesOn: async () => null,
   findTranscripts: () => [],
@@ -73,12 +73,25 @@ async function say(ctx, text, { ready, maxMs = 90000 } = {}) {
     const now = io.tmux.capture(DESK);
     still = now === last ? still + 1 : 0;
     last = now;
+    await tick(ctx);
     if (still >= 2 && (ready === undefined || ready(newLines(before, last)))) break;
   }
   const reply = newLines(before, last);
   if (reply !== '') state.panes.replies.push(reply);
   state.panes['front-desk'].push(last);
   return reply;
+}
+
+// A call that creates or merges something. A failure stops the run; it is never logged as done.
+async function ghDo(ctx, args) {
+  let got;
+  try {
+    got = await ctx.io.gh(args);
+  } catch (error) {
+    throw new Stop(`gh ${args.slice(0, 2).join(' ')} failed: ${error.message}`);
+  }
+  if (got?.ok === false) throw new Stop(`gh ${args.slice(0, 2).join(' ')} failed: ${got.why ?? 'no reason given'}`);
+  return got;
 }
 
 async function ghPulls(ctx) {
@@ -161,7 +174,12 @@ async function typeWave(ctx, wave, { only } = {}) {
 
 async function spareBugCheck(ctx) {
   const { io, state, folder } = ctx;
-  const amount = await io.host.mainParseAmount({ project: ctx.project });
+  const read = await io.host.mainParseAmount({ project: ctx.project });
+  if (read?.ok === false) {
+    await note(ctx, 'plant', `could not read main's parseAmount: ${read.why ?? 'no reason given'}`);
+    return;
+  }
+  const amount = read?.amount;
   if (!(typeof amount === 'number' && amount < 0)) return;
   await note(ctx, 'plant', 'planted bug fixed early', { amount });
   const dir = path.join(folder, 'spare');
@@ -174,8 +192,8 @@ async function spareBugCheck(ctx) {
     return;
   }
   await io.host.commitAndPush({ dir, branch: SPARE_BRANCH, message: 'Plant the spare bug for the trial' });
-  await io.gh(['pr', 'create', '--head', SPARE_BRANCH, '--base', 'main', '--title', 'Plant the spare bug for the trial', '--body', 'The trial plants this bug for piece P5.']);
-  await io.gh(['pr', 'merge', SPARE_BRANCH, '--squash']);
+  await ghDo(ctx, ['pr', 'create', '--head', SPARE_BRANCH, '--base', 'main', '--title', 'Plant the spare bug for the trial', '--body', 'The trial plants this bug for piece P5.']);
+  await ghDo(ctx, ['pr', 'merge', SPARE_BRANCH, '--squash']);
   state.p5 = 'spare';
   await note(ctx, 'plant', 'spare bug merged; P5 will use the spare request');
 }
@@ -216,7 +234,7 @@ export const STEPS = [
   {
     id: 'create-repo', wave: 1, smoke: true, needsGo,
     asks: (ctx) => `Create the public GitHub repository ${ctx.repoSlug}? Answer go.`,
-    async run(ctx, io) { await io.gh(['repo', 'create', ctx.repoSlug, '--public', '--description', 'A throwaway project for the Haiku trial']); await note(ctx, 'create-repo', `created ${ctx.repoSlug}`); },
+    async run(ctx, io) { await ghDo(ctx, ['repo', 'create', ctx.repoSlug, '--public', '--description', 'A throwaway project for the Haiku trial']); await note(ctx, 'create-repo', `created ${ctx.repoSlug}`); },
   },
   {
     id: 'create-preview', wave: 1, smoke: false, needsGo, director: true,
@@ -467,7 +485,7 @@ export const STEPS = [
     async run(ctx, io) {
       const dir = path.join(ctx.folder, 'score');
       await io.host.cloneMain({ url: ctx.remote, dir });
-      ctx.state.score = await io.score.scoreAll({ dir, baseSha: ctx.state.seedSha, gh: io.gh, browse: io.host.browse, smoke: ctx.smoke });
+      ctx.state.score = await io.score.scoreAll({ dir, baseSha: ctx.state.seedSha, gh: io.gh, browse: io.host.makeBrowse?.({ toolsDir: path.join(ctx.folder, 'tools') }), smoke: ctx.smoke });
       await note(ctx, 'score', `score ${ctx.state.score.total}`);
     },
   },

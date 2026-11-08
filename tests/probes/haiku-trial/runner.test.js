@@ -49,7 +49,7 @@ function fakeIo(over = {}) {
       makeProject: async () => ({ sha: 'abc' }),
       git: async () => '',
       applySpareBug: (dir) => { rec('spare', dir); return over.spare ?? { applied: true }; },
-      mainParseAmount: async () => over.amount ?? 40,
+      mainParseAmount: async () => over.read ?? { ok: true, amount: over.amount ?? 40 },
       cloneMain: async ({ dir }) => dir,
       commitAndPush: async () => ({}),
       ...(over.host ?? {}),
@@ -197,4 +197,45 @@ test('plan prints steps and calls nothing', async () => {
   assert.equal(built, 0);
   assert.match(lines[0], /^full: stage create-repo\*/);
   assert.match(lines.join('\n'), /smoke: .*setup-s0/);
+});
+
+test('a gh failure on repo create stops the run and logs no success', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo({ gh: (args) => { if (args[0] === 'repo') throw new Error('name taken'); return null; } });
+  const got = await run({ mode: 'smoke', io, from: 'create-repo', until: 'create-repo', folder, date: '2026-11-08', env: ENV });
+  assert.equal(got.stoppedAt, 'create-repo');
+  assert.match(got.why, /name taken/);
+  assert.equal(readLog(folder).some((e) => /^created /.test(e.note ?? '')), false);
+});
+
+test('a failed pr merge stops the run and P5 is not switched to the spare bug', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo({ amount: -40, gh: (args) => (args[0] === 'pr' && args[1] === 'merge' ? { ok: false, why: 'checks failing' } : threeMerged(args)) });
+  const got = await run({ mode: 'full', io, from: 'w2-merge-wait', until: 'w3-type', folder, date: '2026-11-08', env: ENV });
+  assert.equal(got.stoppedAt, 'w2-merge-wait');
+  assert.match(got.why, /checks failing/);
+  assert.equal(io.timeline.some((e) => e.kind === 'tmux.type' && e.args[1].includes(P5_SPARE)), false);
+  assert.notEqual(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).p5, 'spare');
+});
+
+test('an unreadable main is logged and is not taken for a planted bug', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo({ read: { ok: false, why: 'git fetch failed' }, gh: threeMerged });
+  const got = await run({ mode: 'full', io, from: 'w2-merge-wait', until: 'w2-merge-wait', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['w2-merge-wait']);
+  assert.ok(readLog(folder).some((e) => /could not read main's parseAmount: git fetch failed/.test(e.note)));
+  assert.equal(io.timeline.some((e) => e.kind === 'spare'), false);
+});
+
+test('F3b fires during the typed replies, not later', async (t) => {
+  const folder = scratch(t);
+  fs.writeFileSync(path.join(folder, 'state.json'), JSON.stringify({ f3bArmed: true, pieces: { P4: { change: 'p4' } } }));
+  const io = fakeIo({ gh: () => [{ number: 9, merged_at: '2026-11-08T10:00:00Z', head: { ref: 'feature/p4' } }] });
+  let killed = 0;
+  io.faults.f3bKillForeman = async () => { killed += 1; io.timeline.push({ kind: 'f3b', args: [], at: io.clock.now() }); return { pid: 2 }; };
+  const got = await run({ mode: 'full', io, from: 's9-4', until: 's9-4', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['s9-4']);
+  assert.equal(killed, 1);
+  const typed = io.timeline.find((e) => e.kind === 'tmux.type');
+  assert.ok(io.timeline.find((e) => e.kind === 'f3b').at - typed.at <= 15000, 'within the first look after the reply');
 });

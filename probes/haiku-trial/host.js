@@ -15,6 +15,7 @@ import { runFolder, writeRaw, writeSummary } from './results.js';
 import { stagePlugin } from './stage-plugin.js';
 import { makeTestProject } from './seed.js';
 import { applySpareBug } from './spare-bug.js';
+import { makeBrowse } from './score/a11y.js';
 import { findTranscripts } from './audit.js';
 import { readUsage } from './usage.js';
 import { listEvents } from '../../scripts/state/events.js';
@@ -39,7 +40,10 @@ export function buildRealIo(env = process.env) {
     const filled = args.map((a) => String(a).replaceAll('{owner}/{repo}', slug).replaceAll('{owner}', slug.split('/')[0]).replaceAll('{repo}', slug.split('/')[1] ?? ''));
     const withRepo = filled[0] === 'pr' ? [...filled, '--repo', slug] : filled;
     const got = run('gh', withRepo);
-    if (got.status !== 0) return null;
+    if (got.status !== 0) {
+      if (filled[0] !== 'api') throw new Error(String(got.stderr || got.error?.message || `exit ${got.status}`).trim());
+      return null;
+    }
     try { return JSON.parse(got.stdout); } catch { return text(got); }
   };
 
@@ -89,17 +93,19 @@ export function buildRealIo(env = process.env) {
     },
     // The row 30 gate result has no record the runner can read in this build, so it is left unknown.
     readGate: async () => null,
+    // { ok: true, amount } or { ok: false, why }: a read that failed is never taken for a bug still planted.
     async mainParseAmount({ project }) {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'haiku-main-'));
       try {
-        run('git', ['fetch', '--quiet', 'origin', 'main'], { cwd: project });
+        const fetched = run('git', ['fetch', '--quiet', 'origin', 'main'], { cwd: project });
+        if (fetched.status !== 0) return { ok: false, why: `git fetch failed: ${String(fetched.stderr).trim()}` };
         const got = run('git', ['show', 'origin/main:src/lib/money.js'], { cwd: project });
-        if (got.status !== 0) return null;
+        if (got.status !== 0) return { ok: false, why: 'src/lib/money.js is not on origin/main' };
         const file = path.join(dir, 'money.mjs');
         fs.writeFileSync(file, got.stdout);
         const value = (await import(pathToFileURL(file).href)).parseAmount('(40.00)');
-        return typeof value === 'number' ? value : null;
-      } catch { return null; } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+        return typeof value === 'number' ? { ok: true, amount: value } : { ok: false, why: 'parseAmount did not return a number' };
+      } catch (error) { return { ok: false, why: error.message }; } finally { fs.rmSync(dir, { recursive: true, force: true }); }
     },
     // The director's own words to the front desk; the front desk runs the matching command.
     async setDigest({ at }) {
@@ -120,6 +126,7 @@ export function buildRealIo(env = process.env) {
       git(['push', '-u', 'origin', branch], { cwd: dir });
     },
     applySpareBug,
+    makeBrowse,
 
     // Option 2 of section 5.5: the app, and a Cloudflare quick tunnel to it, both left running until `restore`.
     async startTunnel({ project }) {
