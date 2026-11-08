@@ -93,6 +93,8 @@ test('rejects a session id with a path separator or ..', () => {
   assert.equal(findTranscript({ sessionId: 'a/x', env }), null);
   assert.equal(findTranscript({ sessionId: 'a\\x', env }), null);
   assert.equal(findTranscript({ sessionId: '', env }), null);
+  assert.equal(findTranscript({ sessionId: '..', env }), null);
+  assert.equal(findTranscript({ sessionId: '.', env }), null);
 });
 
 function ev(n) {
@@ -188,4 +190,11 @@ test('subagents: a linked session directory is refused', () => {
   fs.symlinkSync(elsewhere, path.join(proj, 'x'));
   const file = findTranscript({ sessionId: 'x', env });
   assert.deepEqual(findSubagents(file), []);
+});
+
+test('readTail skips parsed lines that are not plain objects', () => {
+  const { dir } = fakeConfig();
+  const file = path.join(dir, 't.jsonl');
+  fs.writeFileSync(file, `${ev(1)}\n1\nnull\n"s"\n[]\n${ev(2)}\n`);
+  assert.deepEqual(readTail(file).map((e) => e.n), [1, 2]);
 });
