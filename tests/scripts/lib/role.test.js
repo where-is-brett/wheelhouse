@@ -6,6 +6,7 @@ import path from 'node:path';
 import { sessionRole, recordRole, roleFile } from '../../../scripts/lib/role.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 import { withHome } from '../../helpers/homes.js';
+import { makeFeatureFolder } from '../../helpers/made-feature.js';
 
 // A feature worktree made by hand as git leaves one, on `branch`.
 function worktree(home, branch) {
@@ -58,6 +59,7 @@ test('a role recorded from the first prompt holds: a later prompt with the wake 
 test('a session in a feature worktree is a feature session; in the main folder it is the front desk', () => {
   withHome((home) => {
     const tree = worktree(home, 'feature/gift-cards');
+    makeFeatureFolder(tree, 'gift-cards');
     assert.equal(sessionRole({ sessionId: 's1', env: {}, cwd: tree }), 'feature');
     fs.writeFileSync(path.join(home, 'main', '.git', 'worktrees', 'tree', 'HEAD'), 'ref: refs/heads/main\n');
     assert.equal(sessionRole({ sessionId: 's2', env: {}, cwd: tree }), 'front-desk');
@@ -87,5 +89,34 @@ test('an unsafe session id or an unknown role is never written, and a damaged re
       fs.writeFileSync(path.join(home, 'sessions', 's2', 'role.json'), body);
       assert.equal(sessionRole({ sessionId: 's2', env: {}, prompt: `${FOREMAN_PROMPT_LEAD} x` }), 'foreman', body);
     }
+  });
+});
+
+test('a feature/ branch with no feature folder is not a feature session', () => {
+  withHome((home) => {
+    const tree = worktree(home, 'feature/login');
+    assert.notEqual(sessionRole({ sessionId: 's1', env: {}, cwd: tree }), 'feature');
+  });
+});
+
+test('a feature/ branch whose brief names another piece is not a feature session', () => {
+  withHome((home) => {
+    const tree = makeFeatureFolder(worktree(home, 'feature/login'), 'other');
+    assert.notEqual(sessionRole({ sessionId: 's1', env: {}, cwd: tree }), 'feature');
+  });
+});
+
+test('a feature worktree Wheelhouse made is a feature session', () => {
+  withHome((home) => {
+    const tree = makeFeatureFolder(worktree(home, 'feature/login'), 'login');
+    assert.equal(sessionRole({ sessionId: 's1', env: {}, cwd: tree }), 'feature');
+  });
+});
+
+test('a helm worktree stays a feature session', () => {
+  withHome((home) => {
+    // helm: the crew visibility build gives the helm's worktree its own marker; until it is on main this is a plain made feature worktree.
+    const tree = makeFeatureFolder(worktree(home, 'feature/helm'), 'helm');
+    assert.equal(sessionRole({ sessionId: 's1', env: {}, cwd: tree }), 'feature');
   });
 });

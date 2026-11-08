@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome } from './paths.js';
-import { featureSlug } from '../hooks/session-start.js';
+import { madeFeatureSlug } from '../hooks/session-start.js';
 import { FOREMAN_PROMPT_LEAD } from '../foreman/start.js';
 import { ROLE_VARIABLE } from '../watcher/waker.js';
 
@@ -45,7 +45,7 @@ export function sessionRole({ sessionId, env = process.env, prompt, cwd } = {}) 
   const kept = recorded(sessionId);
   if (kept !== null) return kept;
   if (typeof prompt === 'string' && prompt.startsWith(FOREMAN_PROMPT_LEAD)) return 'foreman';
-  if (featureSlug(cwd) !== null) return 'feature';
+  if (madeFeatureSlug(cwd) !== null) return 'feature';
   return 'front-desk';
 }
 

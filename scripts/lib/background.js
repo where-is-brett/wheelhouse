@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
-import { featureSlug } from '../hooks/session-start.js';
+import { madeFeatureSlug } from '../hooks/session-start.js';
 import { receiverPort } from '../telemetry/main.js';
 import { recordSession } from '../usage/store.js';
 import { weeklyDue } from '../jobs/weekly.js';
@@ -55,7 +55,7 @@ function recordPart({ session, project, cwd, env, now }) {
     // A why session is not a part of the project's work, whatever folder it runs in.
     if (role === 'why') return;
     // A session in a feature worktree is feature work, whatever role was recorded, unless it is the foreman.
-    const feature = role === 'foreman' ? null : featureSlug(cwd);
+    const feature = role === 'foreman' ? null : madeFeatureSlug(cwd);
     recordSession({ session, project, role: feature ? 'feature' : role, ...(feature ? { work: feature } : {}), at: now() });
   } catch { /* a session that can't be recorded is still a session */ }
 }

@@ -30,6 +30,7 @@ import { deskCore } from '../../../scripts/desk/core.js';
 import { fileSource } from '../../../scripts/desk/file-source.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
 import { markOpen, readOpen } from '../../../scripts/lib/session-files.js';
+import { makeFeatureFolder } from '../../helpers/made-feature.js';
 
 const P = 'owner__name';
 const HOOK = fileURLToPath(new URL('../../../scripts/hooks/board-context.js', import.meta.url));
@@ -63,6 +64,7 @@ function featureWorktree(home, repo) {
   put(path.join(gitdir, 'commondir'), '../..\n');
   const tree = path.join(home, 'search');
   put(path.join(tree, '.git'), `gitdir: ${gitdir}\n`);
+  makeFeatureFolder(tree, 'search');
   return tree;
 }
 
