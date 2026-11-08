@@ -62,3 +62,16 @@ test('startOf reads a start time month first, as the helper records it, and day 
   assert.equal(startOf('not a time'), null);
   assert.equal(startOf(undefined), null);
 });
+
+import { buildRealIo } from '../../../probes/haiku-trial/host.js';
+
+test('the Wheelhouse teardown keeps the helper, watchers and foremen while a feature session is running, unless forced', async () => {
+  const io = buildRealIo({});
+  const live = () => [{ project: 'a__b', work: 'p1-import', pid: 5 }, { project: 'a__b', work: 'p2-export', pid: 6 }];
+  const got = await io.host.stopWheelhouse({ force: false, live });
+  assert.deepEqual(got.stopped, []);
+  assert.equal(got.kept.length, 1);
+  assert.match(got.kept[0], /p1-import/);
+  assert.match(got.kept[0], /p2-export/);
+  assert.match(got.kept[0], /restore --force/);
+});

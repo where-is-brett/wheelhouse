@@ -32,7 +32,7 @@ test('there are 45 rows, numbered 1 to 45, each with a check', () => {
 
 test('the smoke rows are exactly the listed ones', () => {
   const smoke = ROWS.filter((r) => r.smoke).map((r) => r.id);
-  assert.deepEqual(smoke, [1, 2, 3, 4, 5, 7, 8, 9, 13, 16, 17, 18, 21, 22, 25, 26, 27, 28, 29, 31, 33, 43, 44, 45]);
+  assert.deepEqual(smoke, [1, 2, 3, 4, 5, 7, 8, 9, 13, 16, 17, 18, 21, 22, 25, 26, 27, 28, 29, 31, 33, 44, 45]);
   assert.deepEqual(FULL_ONLY, [34, 41]);
 });
 
@@ -248,8 +248,14 @@ test('smoke checkAll leaves out full-only rows', () => {
 
 test('row 43 reads the ntfy message', () => {
   assert.equal(row(43).check(ctxWith({ ntfy: [{ at: '2026-11-08T01:00:00Z', text: '1 decision waits in budget-app' }] })).pass, true);
-  assert.equal(row(43).check(ctxWith({ ntfy: [{ at: '2026-11-08T01:00:00Z', text: '2 decisions wait in budget-app' }] })).pass, false);
-  assert.equal(row(43).check(ctxWith()).pass, false);
+  assert.equal(row(43).check(ctxWith({ ntfySetUp: true, ntfy: [{ at: '2026-11-08T01:00:00Z', text: '2 decisions wait in budget-app' }] })).pass, false);
+  // The click that sets ntfy up is the director's: a run that never got it covers nothing here, and one that did, and still heard nothing, fails.
+  assert.equal(row(43).check(ctxWith()).pass, null);
+  assert.match(row(43).check(ctxWith()).evidence, /not covered/);
+  assert.equal(row(43).check(ctxWith({ ntfySetUp: false })).pass, null);
+  assert.equal(row(43).check(ctxWith({ ntfySetUp: true })).pass, false);
+  assert.equal(row(43).check(ctxWith({ ntfySetUp: true, ntfy: [{ at: '2026-11-08T01:00:00Z', text: '1 decision waits in budget-app' }] })).pass, true);
+  assert.equal(ROWS.find((r) => r.id === 43).smoke, false, 'a smoke run has no ntfy step');
 });
 
 test('row 1 wants every role and both pins on haiku with premium off', () => {

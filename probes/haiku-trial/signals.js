@@ -79,7 +79,7 @@ export const PROOF_HEADINGS = Object.freeze([
 ]);
 export const FULL_ONLY = Object.freeze([34, 41]);
 
-const SMOKE = new Set([1, 2, 3, 4, 5, 7, 8, 9, 13, 16, 17, 18, 21, 22, 25, 26, 27, 28, 29, 31, 33, 43, 44, 45]);
+const SMOKE = new Set([1, 2, 3, 4, 5, 7, 8, 9, 13, 16, 17, 18, 21, 22, 25, 26, 27, 28, 29, 31, 33, 44, 45]);
 const MINUTE = 60 * 1000;
 
 // --- reading helpers ---
@@ -623,7 +623,10 @@ const checks = {
   43(ctx) {
     const messages = (ctx.ntfy ?? []).map((m) => m.text ?? '');
     const expected = ctx.projectName === undefined ? /^1 decision waits in [A-Za-z0-9_-]+$/ : new RegExp(`^${alertText({ count: 1, project: ctx.projectName })}$`);
-    return messages.some((t) => expected.test(t.trim())) ? ok('ntfy received "1 decision waits in <project>"') : no(`no ntfy message reading "1 decision waits in <project>" among ${messages.length}`);
+    if (messages.some((t) => expected.test(t.trim()))) return ok('ntfy received "1 decision waits in <project>"');
+    // The click that sets ntfy up is the director's: a run that did not get it covers nothing here.
+    if (ctx.ntfySetUp !== true) return unknown('not covered: ntfy was not set up in this run (the director\'s click in the helper window)');
+    return no(`no ntfy message reading "1 decision waits in <project>" among ${messages.length}`);
   },
   44(ctx) {
     const own = ctx.scores?.detail?.ownTests;
@@ -728,7 +731,7 @@ const REPO = 'repos/{owner}/{repo}';
 // Reads the project's record, the pull requests (through `gh api`), the incidents and the transcripts audit into one context.
 export async function gatherContext({
   project, gh, runLog = [], panes = {}, transcripts = [], pieces = {}, scores = null, previews = 'none', enrolled,
-  config = null, ntfy = [], faults = {}, branches = [], mainCi = null, digestAt = null, projectName,
+  config = null, ntfy = [], ntfySetUp, faults = {}, branches = [], mainCi = null, digestAt = null, projectName,
 }) {
   const events = listEvents(stateDir(project), { report: () => {} });
   const views = buildViews(events, enrolled ?? tryOr(() => readEnrolled(), []));
@@ -754,6 +757,6 @@ export async function gatherContext({
   const audit = { models: auditModels(transcripts), peek: auditPeek(transcripts) };
   return {
     events, views, prs, runs, transcripts, audit, panes, runLog, incidents, pieces, scores, previews,
-    config, ntfy, faults, branches, mainCi, digestAt, project, projectName,
+    config, ntfy, ntfySetUp, faults, branches, mainCi, digestAt, project, projectName,
   };
 }

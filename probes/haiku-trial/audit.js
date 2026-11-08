@@ -59,9 +59,20 @@ function jsonlFiles(dir) {
 }
 
 // The role a transcript's folder shows: the project's own folder is the front desk's, a worktree Wheelhouse made is a feature session's.
-const WORKTREES = path.join('.wheelhouse', 'worktrees');
+// Wheelhouse's own engine keeps them under .wheelhouse/worktrees; the front desk's feature command makes them under
+// .claude/worktrees, a folder to each work.
+const WORKTREES = [path.join('.wheelhouse', 'worktrees'), path.join('.claude', 'worktrees')];
 function roleByFolder(project, cwd) {
-  return isWithin(path.join(project, WORKTREES), cwd) && path.resolve(cwd) !== path.resolve(project, WORKTREES) ? 'feature' : 'front-desk';
+  const inWorktree = WORKTREES.some((rel) => isWithin(path.join(project, rel), cwd) && path.resolve(cwd) !== path.resolve(project, rel));
+  return inWorktree ? 'feature' : 'front-desk';
+}
+
+// A role the session records of itself: its WHEELHOUSE_ROLE, as it shows in the first lines of its transcript. A foreman is
+// started in the project's own folder, so its folder alone would call it a front desk.
+const OWN_ROLE = /WHEELHOUSE_ROLE["'\s:=]+(foreman|feature|why)\b/;
+function ownRole(file) {
+  const head = readText(file).split('\n', 40).join('\n');
+  return OWN_ROLE.exec(head)?.[1] ?? null;
 }
 
 function projectFiles(claudeHome, project) {
@@ -75,7 +86,9 @@ function projectFiles(claudeHome, project) {
     }
     for (const file of candidates) {
       const cwd = cwdOf(file);
-      if (cwd !== null && isWithin(project, cwd)) found.push({ file, role: roleByFolder(project, cwd), session: sessionOf(file) });
+      if (cwd === null || !isWithin(project, cwd)) continue;
+      const byFolder = roleByFolder(project, cwd);
+      found.push({ file, role: byFolder === 'front-desk' ? (ownRole(file) ?? byFolder) : byFolder, session: sessionOf(file) });
     }
   }
   return found;

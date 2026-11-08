@@ -161,3 +161,25 @@ test('peek ignores the word in plain assistant text', () => {
   ]);
   assert.deepEqual(auditPeek(asTranscripts(file)), { clean: true, hits: [] });
 });
+
+test('a session in the front desk\'s worktree folder (.claude/worktrees/<work>) is a feature session, and one in the folder itself is not', () => {
+  const home = scratch();
+  const project = path.join(scratch(), 'trial-project');
+  const feature = write(path.join(home, 'projects', 'slug', 'f.jsonl'), [{ type: 'user', cwd: path.join(project, '.claude', 'worktrees', 'import-csv') }, turn('haiku-test')]);
+  const deeper = write(path.join(home, 'projects', 'slug', 'g.jsonl'), [{ type: 'user', cwd: path.join(project, '.claude', 'worktrees', 'export-year', 'src') }, turn('haiku-test')]);
+  const folder = write(path.join(home, 'projects', 'slug', 'h.jsonl'), [{ type: 'user', cwd: path.join(project, '.claude', 'worktrees') }, turn('haiku-test')]);
+  const roles = Object.fromEntries(findTranscripts({ project, claudeHome: home }).map((t) => [t.file, t.role]));
+  assert.equal(roles[feature], 'feature');
+  assert.equal(roles[deeper], 'feature');
+  assert.equal(roles[folder], 'front-desk');
+});
+
+test('a session in the project folder that records its own role (the foreman) is labelled by it', () => {
+  const home = scratch();
+  const project = path.join(scratch(), 'trial-project');
+  const foreman = write(path.join(home, 'projects', 'slug', 'fm.jsonl'), [{ type: 'user', cwd: project, message: { content: 'env WHEELHOUSE_ROLE=foreman WHEELHOUSE_SESSION=foreman-x' } }, turn('haiku-test')]);
+  const desk = write(path.join(home, 'projects', 'slug', 'fd.jsonl'), [{ type: 'user', cwd: project, message: { content: 'This is the First Mate.' } }, turn('haiku-test')]);
+  const roles = Object.fromEntries(findTranscripts({ project, claudeHome: home }).map((t) => [t.file, t.role]));
+  assert.equal(roles[foreman], 'foreman');
+  assert.equal(roles[desk], 'front-desk');
+});
