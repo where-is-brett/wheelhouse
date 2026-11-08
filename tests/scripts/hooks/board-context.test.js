@@ -1319,3 +1319,13 @@ test('board-context: shows a helm note once', async () => {
     assert.ok(!(later ?? '').includes('While you had the helm'));
   });
 });
+
+test('board-context: with more helm notes than it names, it names the newest', async () => {
+  await withProject(async ({ repo }) => {
+    markSeen(P, { promptAt: new Date('2026-10-19T11:59:00.000Z') });
+    for (let n = 1; n <= 7; n += 1) keepNote('login', `Note number ${n}.`, `2026-10-19T11:59:${String(10 + n).padStart(2, '0')}.000Z`);
+    const text = contextOf(await run(repo, 'What is going on?', NOW));
+    assert.ok(text.includes('Note number 7.') && text.includes('Note number 3.'), text);
+    assert.ok(!text.includes('Note number 2.') && !text.includes('Note number 1.'), text);
+  });
+});

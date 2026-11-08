@@ -206,7 +206,7 @@ export async function stuckLine(desk, since, at) {
   return notes.map((e) => `${e.work} is stuck: its session says "${e.words.replace(/\s+/g, ' ').trim()}" (sent ${e.at}).`).join(' ');
 }
 
-// The most helm notes one line names.
+// The most helm notes one line names: the newest, since the oldest were recorded first.
 const HELM_NOTES = 5;
 
 // The notes a piece's crew left of what the director did at its helm, told once: those recorded since the First Mate's last turn
@@ -219,7 +219,7 @@ export async function helmNoteLine(desk, since, at) {
     .filter((e) => isRecord(e) && typeof e.work === 'string' && typeof e.text === 'string' && Date.parse(e.recorded) > from)
     .map((e) => ({ work: e.work, text: e.text.replace(/[\p{Cc}\p{Cf}\u2028\u2029]+/gu, ' ').replace(/\s+/g, ' ').trim() }))
     .filter((e) => e.text !== '')
-    .slice(0, HELM_NOTES);
+    .slice(-HELM_NOTES);
   if (notes.length === 0) return null;
   return notes.map((e) => `While you had the helm of ${e.work}: ${e.text}`).join('\n');
 }
