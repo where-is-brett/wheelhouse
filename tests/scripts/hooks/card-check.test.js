@@ -14,8 +14,10 @@ import { baselineCard } from '../../../scripts/measures/baseline.js';
 import { BASELINE_PHRASES } from '../../../scripts/lib/measures-clicks.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT } from '../../../scripts/lib/calm-words.js';
 import { makeEvent } from '../../../scripts/state/events.js';
-import { approvalLine, replyCode, replyCodeLine, setLineOf, LIFT_STOP, LIFT_STOP_EARLIER } from '../../../scripts/state/card-lines.js';
+import { approvalLine, replyCode, replyCodeLine, setLineOf, chatCopy, LIFT_STOP, LIFT_STOP_EARLIER } from '../../../scripts/state/card-lines.js';
 import { withHome } from '../../helpers/homes.js';
+import { asQuestion } from '../../../scripts/cards/visit.js';
+import { answer } from '../../../adapters/claude-code/answers.js';
 
 const HOOK = fileURLToPath(new URL('../../../scripts/hooks/card-check.js', import.meta.url));
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
@@ -606,46 +608,53 @@ const FOUR = [
 const four = composeCard({ ...INPUTS.question, what: 'The report needs a footer.', recommend: 'Approve', options: FOUR });
 const FOUR_WAITING = outcome('c-4', four);
 const exactly = (q) => ({ ...q, options: q.options.map((o) => ({ ...o })) });
+const PRINTED = asQuestion({ data: four.card });
+const swapped = (out) => out.hookSpecificOutput.updatedInput.questions;
+const isSwap = (out, questions) => {
+  assert.equal(out.hookSpecificOutput.hookEventName, 'PreToolUse');
+  assert.equal(out.hookSpecificOutput.permissionDecision, undefined);
+  assert.deepEqual(swapped(out), questions);
+};
+const waitingRun = (questions, over = {}) => run(withSession(questions), { outcomes: () => [FOUR_WAITING], holdForPane: false, ...over });
 
 test('a waiting card asked exactly as printed passes', () => withHome(async () => {
   assert.equal(await run(withSession([exactly(four.question)]), { outcomes: () => [FOUR_WAITING], holdForPane: false }), undefined);
 }));
 
-test('a waiting card with an option left out is refused, naming what differs', () => withHome(async () => {
+test('a waiting card with an option left out is swapped for the stored card', () => withHome(async () => {
   const trimmed = { ...four.question, options: four.question.options.slice(0, 3) };
-  const out = reason(await run(withSession([trimmed]), { outcomes: () => [FOUR_WAITING], holdForPane: false }));
-  assert.match(out, /Question 1/);
-  assert.match(out, /Suggest a change…/);
-  assert.match(out, /exactly as `cli.js cards` printed it/);
+  isSwap(await waitingRun([trimmed]), [PRINTED]);
 }));
 
-test('a waiting card with its options reordered is refused', () => withHome(async () => {
+test('a waiting card with its options reordered is swapped for the stored card', () => withHome(async () => {
   const [a, b, ...rest] = four.question.options;
-  const swapped = { ...four.question, options: [b, a, ...rest] };
-  assert.match(reason(await run(withSession([swapped]), { outcomes: () => [FOUR_WAITING], holdForPane: false })), /order/);
+  const swapped3 = { ...four.question, options: [b, a, ...rest] };
+  isSwap(await waitingRun([swapped3]), [PRINTED]);
 }));
 
-test('a waiting card with a changed label or header is refused', () => withHome(async () => {
+test('a waiting card with a changed label or header is swapped for the stored card', () => withHome(async () => {
   const relabelled = { ...four.question, options: four.question.options.map((o, i) => (i === 1 ? { ...o, label: 'Later' } : o)) };
-  assert.match(reason(await run(withSession([relabelled]), { outcomes: () => [FOUR_WAITING], holdForPane: false })), /Later/);
+  isSwap(await waitingRun([relabelled]), [PRINTED]);
   const reheaded = { ...four.question, header: 'Other' };
-  assert.match(reason(await run(withSession([reheaded]), { outcomes: () => [FOUR_WAITING], holdForPane: false })), /header/);
+  isSwap(await waitingRun([reheaded]), [PRINTED]);
 }));
 
 test('a question matching no card is not held to a card\'s options', () => withHome(async () => {
   assert.equal(await run(withSession([colour.question]), { outcomes: () => [FOUR_WAITING], holdForPane: false }), undefined);
 }));
 
-test('a waiting card with its question reworded but its labels kept is refused', () => withHome(async () => {
-  const reworded = { ...four.question, question: 'Shall we add a footer to the report?' };
-  const out = reason(await run(withSession([reworded]), { outcomes: () => [FOUR_WAITING], holdForPane: false }));
-  assert.match(out, /reworded/);
-  assert.match(out, /not worded as printed/);
+const reworded = { ...four.question, question: 'Shall we add a footer to the report?' };
+// Another first line over the same rest of the card, so the question is still in the form cards take.
+const REST = four.question.question.split('\n').slice(1).join('\n');
+const rewordedWell = { ...four.question, question: `Shall we add a footer to the report?\n${REST}` };
+
+test('a waiting card with its question reworded but its labels kept is swapped for the stored card', () => withHome(async () => {
+  isSwap(await waitingRun([reworded]), [PRINTED]);
 }));
 
-test('a reworded question with the card\'s header and one label is refused; a decided card is not matched', () => withHome(async () => {
+test('a reworded question with the card\'s header and one label is swapped; a decided card is not matched', () => withHome(async () => {
   const headed = { ...colour.question, header: four.question.header, options: [four.question.options[0], { label: 'Else', description: 'x' }] };
-  assert.match(reason(await run(withSession([headed]), { outcomes: () => [FOUR_WAITING], holdForPane: false })), /reworded/);
+  isSwap(await waitingRun([headed]), [PRINTED]);
   const decidedFour = outcome('c-4', four, { at: whenLocal, label: 'Approve', where: 'chat' });
   const out = reason(await run(withSession([{ ...four.question, question: 'Other words' }]), { outcomes: () => [decidedFour], now: later, holdForPane: false }).then((o) => o ?? { hookSpecificOutput: { permissionDecision: 'deny', permissionDecisionReason: 'none' } }));
   assert.ok(!/reworded/.test(out));
@@ -654,4 +663,113 @@ test('a reworded question with the card\'s header and one label is refused; a de
 test('a plain question sharing neither header nor two labels still passes with a card waiting', () => withHome(async () => {
   const plain = { ...PLAIN, options: [...PLAIN.options.slice(0, 1), { label: 'Elsewhere', description: 'x' }] };
   assert.equal(await run(withSession([plain]), { outcomes: () => [FOUR_WAITING], holdForPane: false }), undefined);
+}));
+
+test('answer.update wraps a tool input and sets no decision', () => withHome(async () => {
+  assert.deepEqual(answer.update({ questions: [] }), { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { questions: [] } } });
+}));
+
+test('the stored card is what cards prints', () => withHome(async () => {
+  assert.deepEqual(PRINTED, four.question);
+}));
+
+test('a "(Recommended)" label with a trimmed description is swapped', () => withHome(async () => {
+  const options = four.question.options.map((o, i) => (i === 0 ? { label: 'Approve (Recommended)', description: 'It goes.' } : o));
+  isSwap(await waitingRun([{ ...four.question, options }]), [PRINTED]);
+}));
+
+test('only a description that differs is swapped; identical descriptions are not', () => withHome(async () => {
+  const options = four.question.options.map((o, i) => (i === 1 ? { ...o, description: 'x' } : { ...o }));
+  isSwap(await waitingRun([{ ...four.question, options }]), [PRINTED]);
+  assert.equal(await waitingRun([exactly(four.question)]), undefined);
+}));
+
+test('a card with a set line is found by that line when every other word is changed', () => withHome(async () => {
+  const setup = composeCard(INPUTS.setup);
+  const asked3 = { ...setup.question, question: `Go ahead?\n${setLineOf(setup.question.question)}` };
+  isSwap(await run(withSession([asked3]), { outcomes: () => [outcome('c-3', setup)], holdForPane: false }), [asQuestion({ data: setup.card })]);
+}));
+
+test('a card is found by its first question line when the rest is cut', () => withHome(async () => {
+  const cut = {
+    ...four.question,
+    question: four.question.question.split('\n').slice(0, 2).join('\n'),
+    options: [{ label: 'Yes', description: 'x' }, { label: 'No', description: 'y' }],
+  };
+  isSwap(await waitingRun([cut]), [PRINTED]);
+  // A first line two waiting cards share picks neither; the question is in the form cards take, so it is let be.
+  const lines = four.question.question.split('\n');
+  const withSecond = (words) => ({ ...four.card, question: [lines[0], `${lines[1]} ${words}`, ...lines.slice(2)].join('\n') });
+  const twoCards = [outcome('c-7', { card: withSecond('One.') }), outcome('c-8', { card: withSecond('Two.') })];
+  const alike = { ...cut, question: withSecond('Three.').question, options: [{ label: 'Yes', description: 'Recommended: x' }, { label: 'No', description: 'y' }] };
+  assert.equal(await waitingRun([alike], { outcomes: () => twoCards }), undefined);
+}));
+
+test('mixed call', () => withHome(async () => {
+  const input = withSession([reworded, colour.question, PLAIN]);
+  input.tool_input.metadata = { source: 'x' };
+  const out = await run(input, { outcomes: () => [FOUR_WAITING], holdForPane: false });
+  assert.equal(swapped(out).length, 3);
+  assert.deepEqual(swapped(out)[0], PRINTED);
+  assert.deepEqual(swapped(out)[1], colour.question);
+  assert.deepEqual(swapped(out)[2], PLAIN);
+  assert.deepEqual(out.hookSpecificOutput.updatedInput.metadata, { source: 'x' });
+}));
+
+test('twice', () => withHome(async () => {
+  isSwap(await waitingRun([exactly(four.question), reworded]), [PRINTED]);
+  isSwap(await waitingRun([reworded, reworded]), [PRINTED]);
+}));
+
+test('a swapped card\'s form faults are moot', () => withHome(async () => {
+  isSwap(await waitingRun([{ ...four.question, question: 'Short' }]), [PRINTED]);
+  assert.match(reason(await waitingRun([reworded, { ...separator.question, question: 'Short' }])), /not in the form/);
+}));
+
+test('decided beside reworded', () => withHome(async () => {
+  const decidedSep = outcome('c-1', separator, { at: whenLocal, label: 'Comma', where: 'chat' });
+  const out = await run(withSession([separator.question, reworded]), { outcomes: () => [decidedSep, FOUR_WAITING], now: later, holdForPane: false });
+  assert.ok(reason(out).startsWith(DECIDED_LEAD));
+  assert.equal(out.hookSpecificOutput.updatedInput, undefined);
+  const decidedFour = outcome('c-4', four, { at: whenLocal, label: 'Approve', where: 'chat' });
+  const other = { ...four.question, question: `Other words\n${REST}`, header: 'Other', options: [{ label: 'x', description: 'Recommended: y' }, { label: 'z', description: 'w' }] };
+  assert.equal(await run(withSession([other]), { outcomes: () => [decidedFour, SEPARATOR], now: later, holdForPane: false }), undefined);
+}));
+
+test('chat copy', () => withHome(async () => {
+  const approval = composeCard(INPUTS.approval);
+  const outcomes = () => [outcome('c-6', approval)];
+  const copy = { ...approval.question, question: chatCopy(approval.question.question) };
+  assert.equal(await run(withSession([copy]), { outcomes, holdForPane: false }), undefined);
+  const cut = { ...copy, options: copy.options.map((o) => ({ ...o, description: 'Go.' })) };
+  const out = await run(withSession([cut]), { outcomes, holdForPane: false });
+  isSwap(out, [asQuestion({ data: approval.card })]);
+  assert.equal(swapped(out)[0].question, approval.question.question);
+}));
+
+test('pane', () => withHome(async () => {
+  live();
+  assert.ok(reason(await run(withSession([reworded]), { outcomes: () => [FOUR_WAITING] })).startsWith(PANE_LEAD));
+  markPane(SID, { at: T0 - 46000, drawn: T0 - 46000, surface: 'desktop' });
+  isSwap(await waitingRun([reworded]), [PRINTED]);
+  assert.deepEqual(readOpen(SID).cards, ['c-4']);
+}));
+
+test('state that cannot be read lets a reworded card through', () => withHome(async () => {
+  const broken = () => { throw new Error('unreadable'); };
+  assert.equal(await waitingRun([rewordedWell], { outcomes: broken }), undefined);
+}));
+
+test('the hook writes the swap as one JSON line', () => withHome(async () => {
+  const out = [];
+  await hookMain(decide, { failClosed: false, event: 'PreToolUse' }, {
+    stdin: Readable.from([JSON.stringify(withSession([reworded]))]),
+    write: (text) => out.push(text),
+    deps: { ...quick, role: () => 'feature', outcomes: () => [FOUR_WAITING], holdForPane: false },
+    projectOf: () => null,
+  });
+  assert.equal(out.length, 1);
+  const parsed = JSON.parse(out[0]);
+  assert.deepEqual(parsed.hookSpecificOutput.updatedInput.questions, [PRINTED]);
+  assert.equal(parsed.hookSpecificOutput.permissionDecision, undefined);
 }));

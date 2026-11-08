@@ -19,9 +19,11 @@
 // director has already decided is refused with what counted and where, and, for the front desk with a live pane beside
 // it, a card the pane gives buttons to is held back unless the director asked for it in the chat. A call that goes
 // through notes the cards it is open on. Both inform and fail open. A question that is a card the state holds (matched by its
-// question's words) must also be that card as `cli.js cards` printed it: the same question, header and option labels in the
-// same order, else it is refused saying what differs. An answer to a hand-trimmed copy can't be matched to the card, so
-// the director's click would record nothing. A question matching no card is left as it was.
+// question's words, by its set line, or by its first line) must also be that card as `cli.js cards` printed it: the same question,
+// header, option labels in the same order and descriptions. A small model rewords the card it is told to ask word for word, and an
+// answer to a reworded copy can't be matched to the card, so the director's click would record nothing. The hook therefore hands over
+// the stored card in its place (the tool's input is returned changed, with no refusal), and a card asked exactly as printed goes
+// through untouched. A question matching no card is left as it was.
 // In any folder, a card that reads as the baseline card (any of its fixed words however written, or
 // its header with the private note's figures) is refused unless it is the very card the helper
 // composed and recorded as shown, word for word: a reworded copy would carry the figures without
@@ -30,6 +32,7 @@
 // the figures waiting for the click is refused too, saying to leave them out; elsewhere no record of
 // an answer is written, so that is let be. A card merely headed Baseline is not refused.
 import tools from '../../adapters/claude-code/tools.js';
+import { asQuestion } from '../cards/visit.js';
 import { runAndExit, answer, projectOf, beingSetUp, readTailEntries } from './kit.js';
 import { looksLikeBaseline, holdsFigures, cardHash, readShown, cardText, sweepStale } from '../lib/measures-clicks.js';
 import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
@@ -220,9 +223,34 @@ function rewordedOf(q, open) {
   }) ?? null;
 }
 
-const PRINTED_END = 'A card is asked exactly as `cli.js cards` printed it: pass the `questions` JSON it gave, word for word, with every option in its order.';
+// The first line of a question that holds words, trimmed.
+const firstLineOf = (text) => text.split(/\r\n|[\n\r]/).map((l) => l.trim()).find((l) => l !== '') ?? '';
 
-const plural = (n, one, many) => (n === 1 ? one : many);
+// True when a question is the card as printed: its question (or chat copy), header, labels in order, and every description.
+function sameAsPrinted(q, card) {
+  if (printedProblems(q, card).length > 0) return false;
+  const printed = asQuestion(card).options;
+  return Array.isArray(q.options) && q.options.length === printed.length
+    && q.options.every((o, i) => typeof o?.description === 'string' && o.description === printed[i].description);
+}
+
+// The waiting card a question stands for, as { card } (an element of `open`), or null. `f` is the exact-question match, if any.
+// Otherwise the card with the question's own set line, then the one whose question starts with the same first line, then the
+// one `rewordedOf` finds. "The one" is exactly one: two or more at a step is no card there, and the next rule is tried.
+function swapFor(q, f, open) {
+  if (f && !f.stale) return { card: f.card };
+  const line = setLineOf(q.question);
+  if (line !== null) {
+    const same = open.filter((o) => setLineOf(o.card.data.question) === line);
+    if (same.length === 1) return same[0];
+  }
+  const first = firstLineOf(q.question);
+  if (first !== '') {
+    const same = open.filter((o) => firstLineOf(o.card.data.question) === first);
+    if (same.length === 1) return same[0];
+  }
+  return rewordedOf(q, open);
+}
 
 // The deny for cards the director has decided already, or for cards the live pane answers, or undefined; and the
 // ids a call that goes through is open on. Hooks inform and fail open: any failure here lets the questions through.
@@ -253,28 +281,38 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
     return { deny: `All stop is already lifted, so that question is not asked. Say so in one plain line, and ask nothing about it again.${others ? ' Ask only the others.' : ''}` };
   }
   const open = allOutcomes(project, outcomes).filter((o) => o.decided === null && typeof o.card?.data?.question === 'string');
-  const wrong = questions.flatMap((q, i) => {
-    const f = found[i];
-    if (typeof q?.question !== 'string') return [];
-    if (!f) {
-      const card = rewordedOf(q, open);
-      return card === null ? [] : [`Question ${i + 1} is a waiting card reworded: ${printedProblems(q, card.card).join('; ')}.`];
-    }
-    const problems = printedProblems(q, f.card);
-    return problems.length === 0 ? [] : [`Question ${i + 1} is a card, but ${problems.join('; ')}.`];
+  // Each question's card: the one it names exactly, else the waiting card it is a reworded copy of; null for neither.
+  const matched = questions.map((q, i) => {
+    if (typeof q?.question !== 'string') return null;
+    const swap = swapFor(q, found[i], open);
+    return swap === null ? null : { card: swap.card };
   });
-  if (wrong.length > 0) return { deny: `The director has not seen this card. ${wrong.join(' ')} ${PRINTED_END}` };
-  const waiting = found.filter(Boolean);
+  const waiting = matched.filter(Boolean);
   const session = input.session_id;
   const pane = (f) => cardButtons(f.card.data).buttons.some((b) => b.does === 'record' || b.does === 'turn');
   // Each question the live pane answers with its own buttons: a card with buttons, and Lift All stop (the pane's Lift STOP).
-  const heldAt = questions.map((_, i) => lifts[i] || (found[i] ? pane(found[i]) : false));
+  const heldAt = questions.map((_, i) => lifts[i] || (matched[i] ? pane(matched[i]) : false));
   const held = [...waiting.filter(pane).map((f) => f.card.id), ...(lifts.includes(true) ? [LIFT_ID] : [])];
   if (held.length > 0 && holdForPane && role({ sessionId: session, cwd: input.cwd }) === 'front-desk'
     && live(session, at.getTime()) && !take(session, held, at.getTime())) {
     return { deny: paneLine(held.length, { others: heldAt.includes(false) }) };
   }
-  return { open: waiting.map((f) => f.card.id) };
+  // The questions as the director is shown them: a card that is not as printed is the stored card, once.
+  const taken = new Set();
+  const swapped = new Set();
+  const next = [];
+  questions.forEach((q, i) => {
+    const m = matched[i];
+    if (!m) { next.push(q); return; }
+    if (taken.has(m.card.id)) return;
+    taken.add(m.card.id);
+    if (sameAsPrinted(q, m.card)) { next.push(q); return; }
+    const stored = asQuestion(m.card);
+    swapped.add(stored);
+    next.push(stored);
+  });
+  const changed = next.length !== questions.length || next.some((q, i) => q !== questions[i]);
+  return { open: waiting.map((f) => f.card.id), questions: changed ? next : null, swapped };
 }
 
 // Only the repeat refusal, for an agent whose question tool the form check and the pane hold don't apply to: a
@@ -354,15 +392,20 @@ export async function decide(input, {
   if (baseline.length > 0) return answer.deny(`The director has not seen this card. ${baseline.join(' ')}`);
   if (!inProject) return undefined;
   let open_ = null;
+  let checked_ = null;
   try {
     const checked = oneCardCheck(input, find(input.cwd, { dir }).project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop });
     if (checked.deny !== undefined) return answer.deny(checked.deny);
     open_ = checked.open;
+    checked_ = checked;
   } catch {
     // The state can't be read: the questions are asked as they were.
   }
-  const faults = questions.flatMap((q, i) => {
-    if (typeof q?.question !== 'string') return [];
+  // The questions the director will be shown; a stored card is in the form its composer gave it.
+  const shown = checked_?.questions ?? questions;
+  const stored = checked_?.swapped ?? new Set();
+  const faults = shown.flatMap((q, i) => {
+    if (typeof q?.question !== 'string' || stored.has(q)) return [];
     const name = typeof q.header === 'string' && q.header !== '' ? `Question ${i + 1} ("${q.header}")` : `Question ${i + 1}`;
     return cardProblems(q).map((problem) => `${name} ${problem}.`);
   });
@@ -373,7 +416,7 @@ export async function decide(input, {
     } catch {
       // Nothing is noted.
     }
-    return undefined;
+    return checked_?.questions ? answer.update({ ...input.tool_input, questions: checked_.questions }) : undefined;
   }
   return answer.deny(`The director has not seen this card, which is not in the form their cards take. ${faults.join(' ')} ${REFUSAL_END}`);
 }
