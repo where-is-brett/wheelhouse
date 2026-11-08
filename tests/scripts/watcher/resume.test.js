@@ -206,3 +206,19 @@ test('a resume the waker can not start is not counted, and is tried at the next 
   assert.deepEqual(await resumeLost({ project: P, lost: await lost(), now, resume, client: f.client }), [{ work: WORK, outcome: 'resumed' }]);
   assert.equal(JSON.parse(fs.readFileSync(path.join(watcherDir(P), 'resumes.json'), 'utf8'))[WORK].count, 1);
 }));
+
+test('each death is handed to the reliability record once: two resumed, then one lost with the card', () => withHome(async () => {
+  const worktree = featureWorktree();
+  const f = fakes();
+  const recorded = [];
+  const record = (i) => recorded.push(i);
+  for (let death = 1; death <= RESUME_LIMIT; death += 1) {
+    started(worktree, { runAt: at(death * 10) });
+    const lost = await findLostSessions({ project: P, now, alive, bootAt });
+    await resumeLost({ project: P, lost, now, resume: f.resume, client: f.client, record });
+    await resumeLost({ project: P, lost, now, resume: f.resume, client: f.client, record });
+  }
+  assert.deepEqual(recorded.map((i) => i.kind), ['resumed', 'resumed', 'lost']);
+  assert.ok(recorded.every((i) => i.work === WORK && typeof i.key === 'string'));
+  assert.equal(new Set(recorded.map((i) => i.key)).size, recorded.length);
+}));

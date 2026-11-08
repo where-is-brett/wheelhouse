@@ -14,7 +14,9 @@
 //   3. observes (sources.js), with `awake` the time since the last loop,
 //      capped at twice the shortest interval, so a computer that slept counts
 //      as at most one loop and no feature is called stuck for it;
-//   4. diffs and routes (core.js) and gives what it found to the bundler;
+//   4. diffs and routes (core.js) and gives what it found to the bundler, after the routine (routine.js) has made the
+//      moves a script can make (start the next piece, merge, close, wake a session after an answer): an event it dealt
+//      with goes to the digest, and the foreman is woken only for judgement, each event naming its reason;
 //   (also, on the first loop after local midnight, it asks the helper to batch the previous day's decision records that belong
 //   to no piece, scripts/watcher/decision-batch.js);
 //   5. writes each bundle that is due as a wake and hands it to the waker
@@ -45,6 +47,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { makeBundler, readCursor, route, step, writeCursor } from './core.js';
+import { makeRoutine } from './routine.js';
+import { checkReliability, recordIncident } from './reliability.js';
 import { readHandled } from './handled.js';
 import { INTERVALS, LOOKBACK_MS, observe } from './sources.js';
 import { makeRecovery } from './recover.js';
@@ -145,6 +149,7 @@ export async function runWatcher({
   handled = () => new Set(),
   recovery = null,
   resume = null,
+  routine = null,
   log = (message) => process.stderr.write(`${message}\n`),
 }) {
   const every = { ...INTERVALS, ...intervals };
@@ -177,6 +182,7 @@ export async function runWatcher({
     let shape = settings?.watcherShape ?? null;
     let wake = null;
     let recover = recovery;
+    let routineMoves = routine === true ? null : routine;
     const batcher = makeDecisionBatcher({ project, client, now, log });
 
     let cursor = readCursor(project);
@@ -258,15 +264,30 @@ export async function runWatcher({
 
         const seen = await look({ project, client, now, intervals: every, prev: cursor.prev, awake });
         const { events, cursor: next } = step(cursor, seen, { handled: handled(seen) });
-        bundler.add(route(events));
+        // The routine moves a script can make are made now; what is left to the foreman is judgement, with its reason.
+        const give = async (list, queue) => {
+          if (routine === null) return list;
+          let done = { handled: new Set(), reasons: new Map(), extra: [] };
+          try {
+            routineMoves ??= makeRoutine({ project, client, now, log });
+            done = await routineMoves.run({ events: list, queue });
+          } catch (error) {
+            log(`The routine moves couldn't be made: ${error.message}`);
+          }
+          return [
+            ...list.map((e) => (done.handled.has(e.id) ? { ...e, handled: true } : done.reasons.has(e.id) ? { ...e, reason: done.reasons.get(e.id) } : e)),
+            ...done.extra,
+          ];
+        };
+        bundler.add(route(await give(events, true)));
         // Approved work that nothing started (its wake lost) is raised again, at the start and then now and again.
         try {
-          recover ??= makeRecovery({ project, client, now });
+          recover ??= makeRecovery({ project, client, now, record: (incident) => recordIncident({ ...incident, project }) });
           const again = await recover.check({
             config: settings,
             skip: [...events, ...(bundler.held()?.foreman?.events ?? [])].filter((e) => e.type === 'work-ready').map((e) => e.work),
           });
-          if (again.length > 0) bundler.add(route(again));
+          if (again.length > 0) bundler.add(route(await give(again, false)));
         } catch (error) {
           log(`Approved work that has not started couldn't be looked for: ${error.message}`);
         }
@@ -288,6 +309,7 @@ export async function runWatcher({
           else if (typeof wake.resumeFeature === 'function') {
             await resumeLost({
               project, lost: await findLostSessions({ project, now }), now, resume: wake.resumeFeature, client, log,
+              record: (incident) => recordIncident({ ...incident, project }),
             });
           }
         } catch (error) {
@@ -298,6 +320,12 @@ export async function runWatcher({
           await raiseStuckCards({ project, client });
         } catch (error) {
           log(`A stuck work's card couldn't be raised: ${error.message}`);
+        }
+        // More than three lost, stalled or resumed pieces in a month, across projects, raises one notice.
+        try {
+          await checkReliability({ project, client, now, log });
+        } catch (error) {
+          log(`The engine's reliability couldn't be checked: ${error.message}`);
         }
         // The first tick after local midnight batches the previous day's decision records that belong to no piece.
         try {
@@ -329,6 +357,7 @@ export function cliOptions(project) {
   return {
     project,
     handled: () => readHandled(project),
+    routine: true,
     wakerOptions: { foremanTools: foremanTools() },
   };
 }
