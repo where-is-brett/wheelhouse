@@ -16,7 +16,7 @@ import { SUGGEST, WHY } from '../lib/calm-words.js';
 import { premiumState } from '../routing/premium.js';
 import { LEVELS } from '../crew/levels.js';
 
-// The places a plain card answer can say it was given (the state keeps clear of the card words, so it has its own copy).
+// The places an answer can carry (the state keeps clear of the card words, so it has its own copy).
 const WHERE_PLACES = ['panel', 'chat', 'reply', 'helm'];
 const byOrder = (a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const isPlainKey = (k) => typeof k === 'string' && k !== '';

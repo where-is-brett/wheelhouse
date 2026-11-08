@@ -6,6 +6,8 @@
 //   - the prompt text came through UserPromptSubmit, which carries what was typed and nothing an agent wrote;
 //   - the session's role is front-desk (a feature, foreman or other session's prompts are never replies);
 //   - the session was not started by a script: a headless `claude -p` session's prompt is a script's words.
+// The one other place a reply counts is a piece's helm: a session that holds an opened helm records a reply that starts with its
+// number, for that piece's own decisions alone, with the place 'helm'.
 // A reply that could mean more than one decision, that names no waiting decision, or that answers one already answered
 // is never recorded. It gives a note for the First Mate, which the prompt hook returns as that same turn's context: what
 // waits, or when and how the decision was answered. Silence, a timeout or a missing reply is never an answer: nothing here reads a clock
@@ -89,7 +91,7 @@ function keptAnswers(project) {
       const { route, body } = JSON.parse(fs.readFileSync(path.join(folder, name), 'utf8'));
       const event = body?.event;
       if (route === 'record' && event?.kind === 'decision-answer' && typeof event.data?.question === 'string') {
-        out.push({ text: event.data.question, at: event.at, label: event.data.label, words: event.data.words ?? '' });
+        out.push({ text: event.data.question, at: event.at, label: event.data.label, words: event.data.words ?? '', where: event.data.where });
       }
     } catch {
       // A file that cannot be read is sendPending's to set aside.
@@ -166,13 +168,14 @@ export async function recordAnswer({
   if (!(on ?? typedRepliesOn(project))) {
     const read = parseReply(typed, held.pending);
     if (read.kind !== 'answer') return { recorded: false };
+    if (helm !== null) return { recorded: false, note: `The director typed what reads as an answer to decision ${read.n}. Typed replies are switched off, so nothing was recorded and the decision still waits. Say so in one plain line; the answer goes to the First Mate.` };
     return { recorded: false, note: `The director typed what reads as an answer to decision ${read.n}. Typed replies are switched off, so nothing was recorded and the decision still waits. Ask it through the question picker (\`cards\` hands it out) and say so in one plain line.` };
   }
   // An answer kept to send counts as given: its decision no longer waits, and a second reply to it meets "already answered".
   const kept = keptAnswers(project);
   const keptFor = (d) => kept.find((k) => k.text === d.text);
   const pending = held.pending.filter((d) => keptFor(d) === undefined);
-  const answered = [...held.answered, ...held.pending.filter((d) => keptFor(d) !== undefined).map((d) => ({ n: d.n, id: d.id, text: d.text, code: d.code, options: d.options, ...pick(keptFor(d), where) }))];
+  const answered = [...held.answered, ...held.pending.filter((d) => keptFor(d) !== undefined).map((d) => ({ n: d.n, id: d.id, text: d.text, code: d.code, options: d.options, ...pick(keptFor(d), keptFor(d).where) }))];
   let reply = parseReply(typed, pending);
   // A numbered reply to a decision answered already, with nothing else waiting for it, is told so.
   if (reply.kind === 'none' && /^\s*(?:reply\s+)?#?[1-9]/i.test(typed)) {

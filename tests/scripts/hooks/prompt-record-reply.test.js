@@ -438,3 +438,17 @@ test('helm: a second answer meets already answered', async () => {
     assert.match(noteOf(out), /already answered/);
   });
 });
+
+test('helm: with typed replies off, the note is worded for the piece and names no picker', async () => {
+  await inHomeOff(async () => {
+    turnOff();
+    raiseTwo();
+    await holdHelm('w-tide-1', 's1');
+    const c = fake();
+    const out = await helmRun(c, '2 B');
+    assert.deepEqual(c.calls.record, []);
+    assert.match(noteOf(out), /Typed replies are switched off, so nothing was recorded and the decision still waits/);
+    assert.match(noteOf(out), /the answer goes to the First Mate/);
+    assert.doesNotMatch(noteOf(out), /question picker|cards/);
+  });
+});

@@ -8,7 +8,7 @@ export const NOTE_LEAD = 'Wheelhouse pane: the director ';
 
 export const WHERE = Object.freeze(['panel', 'chat', 'reply']);
 
-const PLACE_WORDS = { panel: 'in the panel', chat: 'in the chat', reply: 'by reply code' };
+const PLACE_WORDS = { panel: 'in the panel', chat: 'in the chat', reply: 'by reply code', helm: 'at the helm' };
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const two = (n) => String(n).padStart(2, '0');
 
