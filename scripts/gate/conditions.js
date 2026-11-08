@@ -133,6 +133,36 @@ export function decisionsOnly(paths) {
   return paths.every((p) => typeof p === 'string' && DECISION_RECORD.test(p.replace(/\\/g, '/')) && !p.split(/[\\/]/).includes('..'));
 }
 
+// Whether work merges by itself (design section 8 of the director's way of working), from facts the helper reads itself: never from
+// the caller's say. Gives { allow, reasons, case }; `case` is 'batch' or 'internal' when it allows, and `reasons` say each fact that
+// stops it otherwise.
+//
+// Case 'batch': the helper's own decision-records change (step 4). `batch` is exactly true only where the helper verified its branch,
+// the head it kept and the default branch as base; every changed path is a decision record (decisionsOnly); it touches no guardrail
+// (`guardrails` exactly false) and is no release. It has no review of its own, since every byte is the helper's.
+//
+// Case 'internal': all of these hold, each exactly as written, so a fact that is missing or malformed fails its own condition:
+// `checksGreen` and `reviewClean` true; `visible` and `unsure` false (scripts/gate/visible.js); `directorLevel` an empty list
+// (classifyDiff's director-level kinds); `decisionsOpen` false; `intakeVisible` false; `guardrails` false and no `release`.
+// It lowers the approval condition and nothing else: review, checks, STOP, the guardrails and releases stand in the gate.
+export function selfMergeDecision(input) {
+  const i = input && typeof input === 'object' ? input : {};
+  const isRel = isRelease(i.release);
+  if (i.batch === true && i.guardrails === false && !isRel && decisionsOnly(i.changedPaths)) return { allow: true, reasons: [], case: 'batch' };
+  const reasons = [];
+  if (i.checksGreen !== true) reasons.push('the checks have not passed');
+  if (i.reviewClean !== true) reasons.push('there is no signed clean review of the head');
+  if (i.visible !== false) reasons.push('the change shows something users see, or whether it does could not be told');
+  if (i.unsure !== false) reasons.push('the change has files or text that could not be judged as internal');
+  if (!Array.isArray(i.directorLevel)) reasons.push('whether the change is at the director\'s level could not be told');
+  else if (i.directorLevel.length > 0) reasons.push(`the change is at the director's level: ${i.directorLevel.map((d) => d?.kind).filter((k) => typeof k === 'string').join(', ') || 'a kind that could not be named'}`);
+  if (i.decisionsOpen !== false) reasons.push('a decision on the work is open, or could not be checked');
+  if (i.intakeVisible !== false) reasons.push('intake marked the work as something users see, or did not say');
+  if (i.guardrails !== false) reasons.push('the change touches the guardrails, or whether it does could not be told');
+  if (isRel) reasons.push('a release is approved by the director\'s card for it');
+  return reasons.length === 0 ? { allow: true, reasons: [], case: 'internal' } : { allow: false, reasons, case: null };
+}
+
 // Pure. Takes what the caller gathered and says whether the merge may go ahead,
 // with one plain reason for each condition that fails. Missing or malformed
 // input fails the condition it belongs to: `stop` must be exactly false,
@@ -177,7 +207,7 @@ export function gateDecision(input) {
   // verified it (its branch, the head it kept, the default branch as base), and its `changedPaths` are all decision records. The
   // paths alone never lower the bar: decision files on a feature branch go through the gate with the rest of the piece. A
   // guardrail, a release's card and every other condition stand.
-  const recordsOnly = i.batch === true && !guardrails && !isRelease(i.release) && decisionsOnly(i.changedPaths);
+  const recordsOnly = selfMergeDecision({ batch: i.batch, changedPaths: i.changedPaths, guardrails, release: i.release }).case === 'batch';
   const needApproval = (i.approvalRequired === true && !recordsOnly) || guardrails;
 
   const kinds = reviewKindsOf(i);

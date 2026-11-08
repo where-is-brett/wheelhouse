@@ -65,7 +65,7 @@ function fakeAdapter(head = sha('head')) {
   return {
     merges,
     defaultBranch: async () => 'main',
-    prState: async () => ({ headSha: head, mergeable: 'mergeable', state: 'open', body: BODY }),
+    prState: async () => ({ headSha: head, headRef: 'feature/x', mergeable: 'mergeable', state: 'open', body: BODY }),
     ciState: async (s) => ({ sha: s, state: 'success' }),
     merge: async (args) => { merges.push(args); return { merged: true }; },
     openPr: async () => ({ number: PR }),
@@ -184,7 +184,7 @@ test('the session start takes the lock, so a reviewed pull request merges with n
   try {
     const remote = await makeBareRemote({ repo: 'o/p' });
     undos.push(() => remote.cleanup());
-    const head = await seedPr(remote.url, { 'src/a.js': 'a\n' });
+    const head = await seedPr(remote.url, { 'src/a.js': 'export const a = 1;\n' });
     const a = await makeComputer(remote.url, { adapter: fakeAdapter(head) });
     undos.push(() => a.close());
     const b = await makeComputer(remote.url, { adapter: fakeAdapter(head) });
@@ -194,6 +194,8 @@ test('the session start takes the lock, so a reviewed pull request merges with n
       a.time(0);
       // Before any session start, nothing holds the lock: the gate and a code push refuse.
       assert.deepEqual(await client.push({ project: PROJECT, dir: a.folder, refspec: 'feature' }), { ok: false, refused: LOCK_REASON });
+      // Intake's mark for this work: it shows users nothing, so it is internal.
+      await client.state.write({ project: PROJECT, kind: 'work', data: { id: 'x', title: 'X', lane: 'small', visible: false, dependsOn: [] } });
       const reviewed = await client.state.record({ project: PROJECT, event: makeEvent({ kind: 'review', data: { pr: PR, commit: head, verdict: 'CLEAN' }, now: () => new Date(T0.getTime() + 1000) }) });
       assert.equal(reviewed.ok, true);
       const before = await client.merge({ project: PROJECT, number: PR, stop: false, bypass: false });
@@ -240,7 +242,7 @@ test('STOP mid-build: writes, pushes, merges and new agents are refused; reading
   try {
     const remote = await makeBareRemote({ repo: 'o/p' });
     undos.push(() => remote.cleanup());
-    const head = await seedPr(remote.url, { 'src/a.js': 'a\n' });
+    const head = await seedPr(remote.url, { 'src/a.js': 'export const a = 1;\n' });
     const a = await makeComputer(remote.url, { adapter: fakeAdapter(head) });
     undos.push(() => a.close());
     await enrolAll([a]);
@@ -248,6 +250,8 @@ test('STOP mid-build: writes, pushes, merges and new agents are refused; reading
       a.time(0);
       assert.equal((await client.lock.take({ project: PROJECT })).result.taken, true);
       // The pull request is ready to merge: reviewed, CI green, nothing else in the way.
+      // Intake's mark for this work: it shows users nothing, so it is internal.
+      await client.state.write({ project: PROJECT, kind: 'work', data: { id: 'x', title: 'X', lane: 'small', visible: false, dependsOn: [] } });
       const reviewed = await client.state.record({ project: PROJECT, event: makeEvent({ kind: 'review', data: { pr: PR, commit: head, verdict: 'CLEAN' }, now: () => new Date(T0.getTime() + 1000) }) });
       assert.equal(reviewed.ok, true);
 
@@ -319,7 +323,7 @@ test('an approval or ruling committed to main by hand changes nothing', async ()
   try {
     const remote = await makeBareRemote({ repo: 'o/p' });
     undos.push(() => remote.cleanup());
-    const head = await seedPr(remote.url, { 'src/a.js': 'a\n' });
+    const head = await seedPr(remote.url, { 'src/a.js': 'export const a = 1;\n' });
     const a = await makeComputer(remote.url, { adapter: fakeAdapter(head) });
     undos.push(() => a.close());
     const other = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-other-'));
@@ -328,6 +332,8 @@ test('an approval or ruling committed to main by hand changes nothing', async ()
     await a.act(async (client) => {
       a.time(0);
       assert.equal((await client.lock.take({ project: PROJECT })).result.taken, true);
+      // Intake's mark for this work: it shows users nothing, so it is internal.
+      await client.state.write({ project: PROJECT, kind: 'work', data: { id: 'x', title: 'X', lane: 'small', visible: false, dependsOn: [] } });
       const review = await client.state.record({
         project: PROJECT, event: makeEvent({ kind: 'review', data: { pr: PR, commit: head, verdict: 'CLEAN' }, now: () => new Date(T0.getTime() + 1000) }),
       });
@@ -395,7 +401,7 @@ test('a pull request changing a workflow needs a review and the director\'s appr
   try {
     const remote = await makeBareRemote({ repo: 'o/p' });
     undos.push(() => remote.cleanup());
-    const head = await seedPr(remote.url, { '.github/workflows/x.yml': 'name: x\n', 'src/a.js': 'a\n' });
+    const head = await seedPr(remote.url, { '.github/workflows/x.yml': 'name: x\n', 'src/a.js': 'export const a = 1;\n' });
     const a = await makeComputer(remote.url, { adapter: fakeAdapter(head) });
     undos.push(() => a.close());
       const record = (client, kind, ms) => client.state.record({ project: PROJECT, event: makeEvent({ kind, data: kind === 'review' ? { pr: PR, commit: head, verdict: 'CLEAN' } : { pr: PR, commit: head }, now: () => new Date(T0.getTime() + ms) }) });
@@ -472,7 +478,7 @@ test('a session in bypass mode stops every merge on the computer until it leaves
   try {
     const remote = await makeBareRemote({ repo: 'o/p' });
     undos.push(() => remote.cleanup());
-    const head = await seedPr(remote.url, { 'src/a.js': 'a\n' });
+    const head = await seedPr(remote.url, { 'src/a.js': 'export const a = 1;\n' });
     const a = await makeComputer(remote.url, { adapter: fakeAdapter(head) });
     undos.push(() => a.close());
       const merge = (client) => client.merge({ project: PROJECT, number: PR, stop: false, bypass: false });
@@ -480,6 +486,8 @@ test('a session in bypass mode stops every merge on the computer until it leaves
     await a.act(async (client) => {
       a.time(0);
       assert.equal((await client.lock.take({ project: PROJECT })).result.taken, true);
+      // Intake's mark for this work: it shows users nothing, so it is internal.
+      await client.state.write({ project: PROJECT, kind: 'work', data: { id: 'x', title: 'X', lane: 'small', visible: false, dependsOn: [] } });
       const review = await client.state.record({ project: PROJECT, event: makeEvent({ kind: 'review', data: { pr: PR, commit: head, verdict: 'CLEAN' }, now: () => new Date(T0.getTime() + 1000) }) });
       assert.equal(review.ok, true);
 

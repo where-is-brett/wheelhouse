@@ -1419,7 +1419,7 @@ export async function main(argv, {
       lines(await preview({ client: helper, cwd: here, n: Number(rest[0]) }));
     } else if (command === 'undo') {
       if (rest.length !== 1 || !/^[0-9a-f]{40,64}$/.test(rest[0])) throw new CliError('Give the merge in full: undo <merge>');
-      json(await helper.local.undo({ cwd: here, merge: rest[0] }));
+      json(await helper.undo({ cwd: here, merge: rest[0] }));
     } else if (command === 'move') {
       if (rest.length !== 1 || !['github', 'gitlab'].includes(rest[0])) throw new CliError('Say where: move github, or move gitlab');
       json(await helper.local.move({ cwd: here, host: rest[0] }));

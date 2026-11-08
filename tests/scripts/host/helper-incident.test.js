@@ -16,7 +16,7 @@ import { stateDir, oldStateDir } from '../../../scripts/lib/paths.js';
 import { openRecord } from '../../../scripts/state/record.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
-import { makeEvent, eventPath, writeEvent } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath, writeEvent, listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { setStop } from '../../../scripts/lib/stop.js';
@@ -87,7 +87,8 @@ const fixFor = (incident, pr, options) => click({ action: 'incident-fix', incide
 const lift = (incident) => click({ action: 'lift-incident', incident, label: 'End it' });
 // The work, and the director's signed approval of it, as the front desk records them.
 function approveWork({ id = 'export-csv', lane, shownFirst }) {
-  record('work', { id, title: 'Export', lane, visible: true, dependsOn: [], doc: { path: 'd.md', hash: H1 } });
+  // Work shown first is work users see; the rest is internal, which intake marks `visible: false` (the gate reads that mark too).
+  record('work', { id, title: 'Export', lane, visible: shownFirst === true, dependsOn: [], doc: { path: 'd.md', hash: H1 } });
   click({ action: 'approve-work', work: id, lane, hash: H1, shownFirst, label: 'Approve' });
 }
 
@@ -116,7 +117,14 @@ const merge = (client, number = 7, extra = {}) => client.merge({ project: 'o__p'
 // A reviewed pull request `number` from `headRef`, with `files` changed, ready to merge.
 async function readyPr(home, remote, number, headRef, files) {
   const headSha = await prOnHost(remote.url, { number, files });
-  await as(home, () => reviewed(number, headSha));
+  await as(home, () => {
+    reviewed(number, headSha);
+    // Work that has no record of its own is work intake has not marked, which counts as visible; these are internal.
+    const slug = /^feature\/([a-z0-9-]+)/.exec(headRef)?.[1];
+    if (slug !== undefined && !listEvents(stateDir('o__p'), { report: () => {} }).some((e) => e.kind === 'work' && e.data?.id === slug)) {
+      record('work', { id: slug, title: slug, lane: 'small', visible: false, dependsOn: [] });
+    }
+  });
   return { headSha, headRef };
 }
 
@@ -125,8 +133,8 @@ test('an incident is declared while two PRs are ready: neither merges; the fix d
   const remote = await hostWith();
   try {
     const home = await project(remote);
-    const a = await readyPr(home, remote, 7, 'feature/totals', { 'a.txt': 'a\n' });
-    const b = await readyPr(home, remote, 8, 'feature/report', { 'b.txt': 'b\n' });
+    const a = await readyPr(home, remote, 7, 'feature/totals', { 'src/a.js': 'export const a = 1;\n' });
+    const b = await readyPr(home, remote, 8, 'feature/report', { 'src/b.js': 'export const b = 1;\n' });
     const adapter = fakeAdapter({ 7: a, 8: b });
     await as(home, () => declare('bad-total'));
     await withHelper(home, adapter, async (client) => {
@@ -154,7 +162,7 @@ test('an incident in the old v0.1.x clone freezes a merge before any import is a
   const remote = await hostWith();
   try {
     const home = await project(remote);
-    const a = await readyPr(home, remote, 7, 'feature/totals', { 'a.txt': 'a\n' });
+    const a = await readyPr(home, remote, 7, 'feature/totals', { 'src/a.js': 'export const a = 1;\n' });
     const adapter = fakeAdapter({ 7: a });
     await as(home, async () => {
       const from = oldStateDir('o__p');
@@ -173,7 +181,7 @@ test('an unsigned fix record does not let a PR through', async () => {
   const remote = await hostWith();
   try {
     const home = await project(remote);
-    const a = await readyPr(home, remote, 7, 'feature/totals', { 'a.txt': 'a\n' });
+    const a = await readyPr(home, remote, 7, 'feature/totals', { 'src/a.js': 'export const a = 1;\n' });
     const adapter = fakeAdapter({ 7: a });
     await as(home, () => { declare('bad-total'); fixFor('bad-total', 7, { unsigned: true }); });
     await withHelper(home, adapter, async (client) => {
@@ -187,7 +195,7 @@ test('the director\'s click on End it lifts the freeze', async () => {
   const remote = await hostWith();
   try {
     const home = await project(remote);
-    const a = await readyPr(home, remote, 7, 'feature/totals', { 'a.txt': 'a\n' });
+    const a = await readyPr(home, remote, 7, 'feature/totals', { 'src/a.js': 'export const a = 1;\n' });
     const adapter = fakeAdapter({ 7: a });
     await as(home, () => declare('bad-total'));
     await withHelper(home, adapter, async (client) => {
@@ -208,8 +216,8 @@ test('with several incidents open, a fix of any of them lets its PR through; any
   const remote = await hostWith();
   try {
     const home = await project(remote);
-    const a = await readyPr(home, remote, 7, 'feature/totals', { 'a.txt': 'a\n' });
-    const b = await readyPr(home, remote, 8, 'feature/report', { 'b.txt': 'b\n' });
+    const a = await readyPr(home, remote, 7, 'feature/totals', { 'src/a.js': 'export const a = 1;\n' });
+    const b = await readyPr(home, remote, 8, 'feature/report', { 'src/b.js': 'export const b = 1;\n' });
     const adapter = fakeAdapter({ 7: a, 8: b });
     await as(home, () => { declare('bad-total'); declare('slow-page'); fixFor('slow-page', 8); });
     await withHelper(home, adapter, async (client) => {
@@ -267,7 +275,7 @@ test('a damaged event file refuses an ordinary merge; a restore is not refused f
   try {
     const home = await project(remote);
     const restore = await restorePr(remote, home);
-    const a = await readyPr(home, remote, 8, 'feature/totals', { 'a.txt': 'a\n' });
+    const a = await readyPr(home, remote, 8, 'feature/totals', { 'src/a.js': 'export const a = 1;\n' });
     const adapter = fakeAdapter({ 7: restore, 8: a });
     await as(home, () => {
       const folder = path.join(stateDir('o__p'), 'events');
@@ -288,7 +296,7 @@ test('a reply-code clash is not damage: it doesn\'t refuse an ordinary merge, wh
   const remote = await hostWith();
   try {
     const home = await project(remote);
-    const a = await readyPr(home, remote, 7, 'feature/totals', { 'a.txt': 'a\n' });
+    const a = await readyPr(home, remote, 7, 'feature/totals', { 'src/a.js': 'export const a = 1;\n' });
     const adapter = fakeAdapter({ 7: a });
     // Two live cards with one code and different questions.
     await as(home, () => {
@@ -300,7 +308,7 @@ test('a reply-code clash is not damage: it doesn\'t refuse an ordinary merge, wh
       assert.deepEqual(adapter.merges, [{ number: 7, sha: a.headSha }]);
     }, { now: at(60 * 1000) });
     // The clash and a damaged event file together: the damage refuses.
-    const b = await readyPr(home, remote, 8, 'feature/more', { 'b.txt': 'b\n' });
+    const b = await readyPr(home, remote, 8, 'feature/more', { 'src/b.js': 'export const b = 1;\n' });
     const both = fakeAdapter({ 8: b });
     await as(home, () => {
       const folder = path.join(stateDir('o__p'), 'events');
@@ -322,7 +330,7 @@ test('an incident recorded on another computer counts for nothing here', async (
   const otherHome = shortHome();
   try {
     const home = await project(remote);
-    const a = await readyPr(home, remote, 7, 'feature/totals', { 'a.txt': 'a\n' });
+    const a = await readyPr(home, remote, 7, 'feature/totals', { 'src/a.js': 'export const a = 1;\n' });
     const adapter = fakeAdapter({ 7: a });
     await as(otherHome, async () => {
       writeProject('o__p', {
@@ -347,7 +355,7 @@ test('a fix click signed by another enrolled computer does not let a PR through;
   const otherHome = shortHome();
   try {
     const home = await project(remote);
-    const a = await readyPr(home, remote, 7, 'feature/totals', { 'a.txt': 'a\n' });
+    const a = await readyPr(home, remote, 7, 'feature/totals', { 'src/a.js': 'export const a = 1;\n' });
     const adapter = fakeAdapter({ 7: a });
     const other = await as(otherHome, () => {
       const key = makeSigningKey();
@@ -405,7 +413,7 @@ test('a shown-first small change needs the director\'s approval', async () => {
   const remote = await hostWith();
   try {
     const home = await project(remote);
-    const a = await readyPr(home, remote, 7, 'feature/tweak', { 'src/a.js': 'a\n' });
+    const a = await readyPr(home, remote, 7, 'feature/tweak', { 'src/a.js': 'export const a = 1;\n' });
     const adapter = fakeAdapter({ 7: a });
     await as(home, () => approveWork({ id: 'tweak', lane: 'small', shownFirst: true }));
     await withHelper(home, adapter, async (client) => {
@@ -423,18 +431,21 @@ test('a branch that names no approved work, or work approved without shown-first
   const remote = await hostWith();
   try {
     const home = await project(remote);
-    const quiet = await readyPr(home, remote, 8, 'feature/quiet', { 'b.txt': 'b\n' });
-    const other = await readyPr(home, remote, 9, 'fix/thing', { 'c.txt': 'c\n' });
-    const unapproved = await readyPr(home, remote, 10, 'feature/waiting', { 'd.txt': 'd\n' });
+    const quiet = await readyPr(home, remote, 8, 'feature/quiet', { 'src/b.js': 'export const b = 1;\n' });
+    const other = await readyPr(home, remote, 9, 'fix/thing', { 'src/c.js': 'export const c = 1;\n' });
+    const unapproved = await readyPr(home, remote, 10, 'feature/waiting', { 'src/d.js': 'export const d = 1;\n' });
     const adapter = fakeAdapter({ 8: quiet, 9: other, 10: unapproved });
     await as(home, () => {
       approveWork({ id: 'quiet', lane: 'small', shownFirst: false });
-      record('work', { id: 'waiting', title: 'Waiting', lane: 'small', visible: true, dependsOn: [], doc: { path: 'd.md', hash: H1 } });
+      record('work', { id: 'waiting', title: 'Waiting', lane: 'small', visible: false, dependsOn: [], doc: { path: 'd.md', hash: H1 } });
       // An unsigned approval counts for nothing.
       click({ action: 'approve-work', work: 'waiting', lane: 'small', hash: H1, shownFirst: true, label: 'Approve' }, { unsigned: true });
     });
     await withHelper(home, adapter, async (client) => {
-      for (const number of [8, 9, 10]) assert.equal((await merge(client, number)).ok, true, `pull request ${number}`);
+      for (const number of [8, 10]) assert.equal((await merge(client, number)).ok, true, `pull request ${number}`);
+      // A branch that is no work's is not judged internal by intake's mark: it waits for the director's approval like any other change.
+      const waits = await merge(client, 9);
+      assert.deepEqual([waits.ok, waits.reasons], [false, [`no approval of ${short(other.headSha)}`]]);
     });
   } finally { remote.cleanup(); }
 });
@@ -443,8 +454,8 @@ test('shown-first is kept once any signed approval of the work said it, whatever
   const remote = await hostWith();
   try {
     const home = await project(remote);
-    const seen = await readyPr(home, remote, 7, 'feature/seen', { 'a.txt': 'a\n' });
-    const tweak = await readyPr(home, remote, 8, 'feature/tweak', { 'b.txt': 'b\n' });
+    const seen = await readyPr(home, remote, 7, 'feature/seen', { 'src/a.js': 'export const a = 1;\n' });
+    const tweak = await readyPr(home, remote, 8, 'feature/tweak', { 'src/b.js': 'export const b = 1;\n' });
     const adapter = fakeAdapter({ 7: seen, 8: tweak });
     await as(home, () => {
       // Shown first in another lane than the work's: the approval does not count for the work, but the wish does.
@@ -452,7 +463,7 @@ test('shown-first is kept once any signed approval of the work said it, whatever
       click({ action: 'approve-work', work: 'seen', lane: 'feature', hash: H1, shownFirst: true, label: 'Approve' });
       // Approved small and shown first, then moved to the feature lane with its approval there pending.
       approveWork({ id: 'tweak', lane: 'small', shownFirst: true });
-      record('work', { id: 'tweak', title: 'Tweak', lane: 'feature', visible: true, dependsOn: [], doc: { path: 'd.md', hash: H1 } });
+      record('work', { id: 'tweak', title: 'Tweak', lane: 'feature', visible: false, dependsOn: [], doc: { path: 'd.md', hash: H1 } });
     });
     await withHelper(home, adapter, async (client) => {
       for (const [number, pr] of [[7, seen], [8, tweak]]) {
@@ -467,8 +478,8 @@ test('a flag-off slice merges without it; the switch-on PR needs it', async () =
   const remote = await hostWith(flagConfig(['src/flags.js']));
   try {
     const home = await project(remote);
-    const slice = await readyPr(home, remote, 7, 'feature/export-csv/slice-1', { 'src/a.js': 'a\n' });
-    const whole = await readyPr(home, remote, 8, 'feature/export-csv', { 'src/b.js': 'b\n' });
+    const slice = await readyPr(home, remote, 7, 'feature/export-csv/slice-1', { 'src/a.js': 'export const a = 1;\n' });
+    const whole = await readyPr(home, remote, 8, 'feature/export-csv', { 'src/b.js': 'export const b = 1;\n' });
     const switchOn = await readyPr(home, remote, 9, 'feature/export-csv/switch-on', { 'src/flags.js': 'export const csv = true;\n' });
     const adapter = fakeAdapter({ 7: slice, 8: whole, 9: switchOn });
     await as(home, () => approveWork({ lane: 'feature', shownFirst: true }));
@@ -488,8 +499,8 @@ test('shown-first work in a project with no flag files needs approval on every P
   const remote = await hostWith();
   try {
     const home = await project(remote);
-    const first = await readyPr(home, remote, 7, 'feature/export-csv/slice-1', { 'src/a.js': 'a\n' });
-    const second = await readyPr(home, remote, 8, 'feature/export-csv/slice-2', { 'src/b.js': 'b\n' });
+    const first = await readyPr(home, remote, 7, 'feature/export-csv/slice-1', { 'src/a.js': 'export const a = 1;\n' });
+    const second = await readyPr(home, remote, 8, 'feature/export-csv/slice-2', { 'src/b.js': 'export const b = 1;\n' });
     const adapter = fakeAdapter({ 7: first, 8: second });
     await as(home, () => approveWork({ lane: 'feature', shownFirst: true }));
     await withHelper(home, adapter, async (client) => {
@@ -505,10 +516,10 @@ test('shown-first work in a project with no flag files needs approval on every P
 });
 
 test('feature work that is not shown first merges without approval, flag files or none', async () => {
-  const remote = await hostWith(flagConfig(['src/flags.js']));
+  const remote = await hostWith(flagConfig(['src/switch-csv.js']));
   try {
     const home = await project(remote);
-    const switchOn = await readyPr(home, remote, 7, 'feature/export-csv', { 'src/flags.js': 'export const csv = true;\n' });
+    const switchOn = await readyPr(home, remote, 7, 'feature/export-csv', { 'src/switch-csv.js': 'export const csv = true;\n' });
     const adapter = fakeAdapter({ 7: switchOn });
     await as(home, () => approveWork({ lane: 'feature', shownFirst: false }));
     await withHelper(home, adapter, async (client) => {
@@ -552,9 +563,9 @@ test('/merge with a fix in its body is not taken as the fix of a red main line',
   const remote = await hostWith();
   try {
     const home = await project(remote);
-    const a = await readyPr(home, remote, 9, 'wh/fix', { 'a.txt': 'a\n' });
+    const a = await readyPr(home, remote, 9, 'wh/fix', { 'src/a.js': 'export const a = 1;\n' });
     const adapter = fakeAdapter({ 9: a });
-    await as(home, () => record('incident', { id: RED.id, what: 'red', kind: 'red-main', suspect: 7, work: RED.work }));
+    await as(home, () => { approved(9, a.headSha); record('incident', { id: RED.id, what: 'red', kind: 'red-main', suspect: 7, work: RED.work }); });
     await withHelper(home, adapter, async (client) => {
       for (const extra of [{}, { fix: { incident: RED.id, pr: 9, head: a.headSha } }, { fixCall: { runId: 'run-9', pr: 9, head: a.headSha, incident: RED.id } }]) {
         const answer = await merge(client, 9, extra);

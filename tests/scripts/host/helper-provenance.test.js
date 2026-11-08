@@ -148,6 +148,7 @@ test('what built a pull request is recorded in the state, never in its body, and
 // with `provenance` recorded for its branch (none when it is undefined).
 async function mergeWith(p, body, pluginRoot, provenance) {
   const head = await prOnHost(p.remote.url);
+  record('work', { id: 'login-page', title: 'Login page', lane: 'small', visible: false, dependsOn: [] });
   record('review', { pr: 7, commit: head, verdict: 'CLEAN' });
   if (provenance !== undefined) record('provenance', { branch: 'feature/login-page', provenance });
   const adapter = fakeAdapter({ prState: async () => ({ headSha: head, headRef: 'feature/login-page', mergeable: 'mergeable', state: 'open', body }) });

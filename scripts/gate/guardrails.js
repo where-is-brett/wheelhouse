@@ -11,7 +11,7 @@
 //              tiers?: { pins: { mostCapable?, midSized?, premium? } },
 //              sessionMode?: string, buildCommands?: [string], watcherShape?: 1 | 2,
 //              hotFiles?: [glob], flagFiles?: [glob], pages?: [path], gitlabHosts?: [string],
-//              glabFrom?: string, signsApps?: boolean,
+//              glabFrom?: string, signsApps?: boolean, visibility?: { paths?: [glob] },
 //              agentRouting?: { <agent>: { <role>: model | null } } }
 // Other keys are kept and ignored.
 //
@@ -173,6 +173,9 @@ const DATA_CHECK_KEYS = ['command', 'route', 'paths'];
 const dataCheckOk = (d) => isObject(d) && Object.keys(d).every((k) => DATA_CHECK_KEYS.includes(k))
   && testCommandOk(d.command) && (d.route === undefined || ['test', 'real'].includes(d.route))
   && (d.paths === undefined || globs(d.paths));
+// `paths` adds glob patterns for files whose change users see in this project, beyond the places every project has
+// (scripts/gate/visible.js).
+const visibilityOk = (v) => isObject(v) && Object.keys(v).every((k) => k === 'paths') && (v.paths === undefined || globs(v.paths));
 const SAFEKEEPING_KEYS = ['days', 'hereDays'];
 const safekeepingOk = (s) => isObject(s) && Object.keys(s).every((k) => SAFEKEEPING_KEYS.includes(k))
   && (s.days === undefined || positiveWhole(s.days)) && (s.hereDays === undefined || positiveWhole(s.hereDays));
@@ -196,6 +199,7 @@ function shapeOk(c) {
   if (c.checks !== undefined && !checksOk(c.checks)) return false;
   if (c.safekeeping !== undefined && !safekeepingOk(c.safekeeping)) return false;
   if (c.dataCheck !== undefined && !dataCheckOk(c.dataCheck)) return false;
+  if (c.visibility !== undefined && !visibilityOk(c.visibility)) return false;
   return buildLoopOk(c);
 }
 

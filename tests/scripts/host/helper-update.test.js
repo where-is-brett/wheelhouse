@@ -104,6 +104,8 @@ async function project(remote) {
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
     await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
     assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: at(0) })).taken, true);
+    // Work with no record of its own is unmarked, which counts as visible: these changes are internal, so intake's mark says so.
+    record('work', { id: 'tweak', title: 'Tweak', lane: 'small', visible: false, dependsOn: [] });
   });
   return home;
 }
@@ -164,7 +166,7 @@ test('update-branch merges the default branch in and pushes the merge commit', a
 });
 
 test('update-branch on a conflicting branch refuses, naming the files', async () => {
-  const pr = await remoteWithPr({ base: { 'app.js': 'one\n', 'b.js': 'b\n' }, change: { 'app.js': 'feature\n', 'b.js': 'B\n' } });
+  const pr = await remoteWithPr({ base: { 'app.js': 'export const one = 1;\n', 'b.js': 'export const b = 1;\n' }, change: { 'app.js': 'export const one = 2;\n', 'b.js': 'export const b = 2;\n' } });
   try {
     await mainMoves(pr.work, { 'app.js': 'other\n' });
     const home = await project(pr.remote);
@@ -177,12 +179,12 @@ test('update-branch on a conflicting branch refuses, naming the files', async ()
 
 test('A merges while B is ready: B is brought up to date and its review carries over', async () => {
   // Scenario 29: B's head has a signed CLEAN review; A's merge moves the default branch.
-  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'b\n' } });
+  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'export const b = 1;\n' } });
   try {
     const home = await project(pr.remote);
     const adapter = fakeAdapter(pr.remote);
     await as(home, () => reviewed(pr.head));
-    await mainMoves(pr.work, { 'a.js': 'a\n' }, 'Merge A');
+    await mainMoves(pr.work, { 'a.js': 'export const a = 1;\n' }, 'Merge A');
     await withHelper(home, adapter, async (client) => {
       const behind = await merge(client);
       assert.deepEqual([behind.ok, behind.reasons], [false, [BEHIND]]);
@@ -204,13 +206,13 @@ test('A merges while B is ready: B is brought up to date and its review carries 
 });
 
 test('a review does not carry over when the feature\'s own changes moved', async () => {
-  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'b\n' } });
+  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'export const b = 1;\n' } });
   try {
     const home = await project(pr.remote);
     await as(home, () => reviewed(pr.head));
     // A commit of the feature's own after the review, then the default branch moves on.
-    await commit(pr.work, { 'b.js': 'b changed\n' }, 'More of the feature');
-    await mainMoves(pr.work, { 'a.js': 'a\n' });
+    await commit(pr.work, { 'b.js': 'export const b = 2;\n' }, 'More of the feature');
+    await mainMoves(pr.work, { 'a.js': 'export const a = 1;\n' });
     const adapter = fakeAdapter(pr.remote);
     await withHelper(home, adapter, async (client) => {
       const updated = await update(client);
@@ -223,7 +225,7 @@ test('a review does not carry over when the feature\'s own changes moved', async
     });
 
     // An empty commit leaves the patch-id alone, but it is not a clean update merge either.
-    const second = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'b\n' } });
+    const second = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'export const b = 1;\n' } });
     try {
       const other = await project(second.remote);
       await as(other, () => reviewed(second.head));
@@ -239,9 +241,9 @@ test('a review does not carry over when the feature\'s own changes moved', async
 // A file of three identical blocks. The feature adds a line after the first; moved after the
 // second, the line has the same context, so only its line numbers differ, which patch-id ignores.
 const BLOCK = 'one\ntwo\nthree\nfour\n';
-const BLOCKS = { 'blocks.txt': BLOCK.repeat(3) };
-const ADDED = { 'blocks.txt': `${BLOCK}added\n${BLOCK}${BLOCK}` };
-const MOVED = { 'blocks.txt': `${BLOCK}${BLOCK}added\n${BLOCK}` };
+const BLOCKS = { 'docs/blocks.md': BLOCK.repeat(3) };
+const ADDED = { 'docs/blocks.md': `${BLOCK}added\n${BLOCK}${BLOCK}` };
+const MOVED = { 'docs/blocks.md': `${BLOCK}${BLOCK}added\n${BLOCK}` };
 const gitIn = (dir) => (args, options = {}) => run('git', args, { cwd: dir, ...options });
 
 test('a review does not carry over when the update merge changed code itself', async () => {
@@ -313,11 +315,11 @@ test('a review does not carry over when the update merge changed code itself', a
 
 test('a review does not carry over when the feature\'s only change since is whitespace', async () => {
   // Ruling R111: patch-ids are taken verbatim, since indentation can be code.
-  const pr = await remoteWithPr({ base: { 'app.py': 'x = 1\n' }, change: { 'run.py': 'if ready:\n    start()\n' } });
+  const pr = await remoteWithPr({ base: { 'app.py': 'x = 1\n' }, change: { 'run.py': 'if ready == 1:\n    start()\n' } });
   try {
     const home = await project(pr.remote);
     await as(home, () => reviewed(pr.head));
-    const head = await commit(pr.work, { 'run.py': 'if ready:\nstart()\n' }, 'Indentation only');
+    const head = await commit(pr.work, { 'run.py': 'if ready == 1:\nstart()\n' }, 'Indentation only');
     const git = gitIn(pr.work);
     assert.notEqual(await patchIdOf({ git, base: 'main', head }), await patchIdOf({ git, base: 'main', head: pr.head }));
 
@@ -331,7 +333,7 @@ test('a review does not carry over when the feature\'s only change since is whit
 });
 
 test('with no CLEAN review to weigh, /pr/carried reads nothing from the host', async () => {
-  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'b\n' } });
+  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'export const b = 1;\n' } });
   try {
     const home = await project(pr.remote);
     const fetches = [];
@@ -353,7 +355,7 @@ test('with no CLEAN review to weigh, /pr/carried reads nothing from the host', a
 });
 
 test('with a CLEAN review to weigh, /pr/carried reads the mirror', async () => {
-  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'b\n' } });
+  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'export const b = 1;\n' } });
   try {
     const home = await project(pr.remote);
     const fetches = [];
@@ -372,7 +374,7 @@ test('with a CLEAN review to weigh, /pr/carried reads the mirror', async () => {
 
 test('a mirror that can\'t say whether the branch is up to date says so, not that it is behind', async () => {
   // M5: the look refuses a filter named in the mirror's configuration.
-  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'b\n' } });
+  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'export const b = 1;\n' } });
   try {
     const home = await project(pr.remote);
     await as(home, () => reviewed(pr.head));
@@ -392,9 +394,9 @@ test('a mirror that can\'t say whether the branch is up to date says so, not tha
 
 test('update-branch brings up to date only a feature branch of this repository, against the default branch', async () => {
   // M2. The default branch has moved, so each would otherwise be merged and pushed.
-  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'b\n' } });
+  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'export const b = 1;\n' } });
   try {
-    await mainMoves(pr.work, { 'a.js': 'a\n' });
+    await mainMoves(pr.work, { 'a.js': 'export const a = 1;\n' });
     const home = await project(pr.remote);
     const refusedWith = async (adapter, refused) => withHelper(home, adapter, async (client) => {
       assert.deepEqual(await update(client), { ok: false, refused });
@@ -420,9 +422,9 @@ test('update-branch brings up to date only a feature branch of this repository, 
 });
 
 test('a branch that changes a CI file is brought up to date with the director\'s click on that exact merge (R118)', async () => {
-  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { '.github/workflows/ci.yml': 'on: push\n', 'b.js': 'b\n' } });
+  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { '.github/workflows/ci.yml': 'on: push\n', 'b.js': 'export const b = 1;\n' } });
   try {
-    const main = await mainMoves(pr.work, { 'a.js': 'a\n' });
+    const main = await mainMoves(pr.work, { 'a.js': 'export const a = 1;\n' });
     const home = await project(pr.remote);
     // The helper's clock follows the records, so the click is a fresh one.
     const clock = () => new Date(T0.getTime() + 1000 * tick + 5000);
@@ -477,10 +479,10 @@ function previewing(adapter, previews = {}) {
 // Pull request 7 with a CLEAN review and the director's approval of its first head, brought up
 // to date after the default branch moved on. `base` is the default branch's first commit.
 async function approvedAndUpdated(base, { approve = true } = {}) {
-  const pr = await remoteWithPr({ base: { 'app.js': 'one\n', ...base }, change: { 'b.js': 'b\n' } });
+  const pr = await remoteWithPr({ base: { 'app.js': 'one\n', ...base }, change: { 'b.js': 'export const b = 1;\n' } });
   const home = await project(pr.remote);
   await as(home, () => { reviewed(pr.head); if (approve) approved(pr.head); });
-  await mainMoves(pr.work, { 'a.js': 'a\n' });
+  await mainMoves(pr.work, { 'a.js': 'export const a = 1;\n' });
   return { pr, home };
 }
 
@@ -503,7 +505,7 @@ test('an approval never carries over an update, even where every page looks the 
 });
 
 test('/pr/preview gives the head\'s preview, or null', async () => {
-  const pr = await remoteWithPr({ change: { 'b.js': 'b\n' } });
+  const pr = await remoteWithPr({ change: { 'b.js': 'export const b = 1;\n' } });
   try {
     const home = await project(pr.remote);
     const previews = {};
@@ -529,12 +531,12 @@ test('/pr/preview gives the head\'s preview, or null', async () => {
 });
 
 test('a branch behind the default branch cannot merge', async () => {
-  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'b\n' } });
+  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'export const b = 1;\n' } });
   try {
     const home = await project(pr.remote);
     await as(home, () => reviewed(pr.head));
     const adapter = fakeAdapter(pr.remote);
-    await mainMoves(pr.work, { 'a.js': 'a\n' });
+    await mainMoves(pr.work, { 'a.js': 'export const a = 1;\n' });
     await withHelper(home, adapter, async (client) => {
       const answer = await merge(client);
       assert.equal(answer.ok, false);

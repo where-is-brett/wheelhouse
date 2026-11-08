@@ -8,7 +8,7 @@ import path from 'node:path';
 import { g } from './git-fixture.js';
 import { tempFolder } from './homes.js';
 
-export async function prOnHost(remoteUrl, { number = 7, branch = 'main', files = { 'feature.txt': 'the feature\n' } } = {}) {
+export async function prOnHost(remoteUrl, { number = 7, branch = 'main', files = { 'src/feature.js': 'export const feature = 1;\n' } } = {}) {
   const work = tempFolder('wh-pr-');
   await g(work, 'init', '-q', '-b', branch);
   if ((await g(work, 'ls-remote', '--heads', remoteUrl, `refs/heads/${branch}`)) !== '') {
