@@ -122,10 +122,39 @@ Branch `feature/crew-runs-reader` from `main`. Spec sections 4, 7.1, 7.2, 8.1.
 - [ ] **Step 1: Write the failing tests**
   - `reads only the tail`: a 1 MiB file, `max: 1024` → every event comes from the last 1024 bytes.
   - `skips a half-written last line`: the file ends `{"type":"assist` → that line is absent, the rest parse.
-  - `skips a line that is not JSON`: `[]`-free result, no throw.
+  - `skips a line that is not JSON`: the other lines still parse, no throw.
   - `gives [] for a missing file`.
   - `does not change the file`: the mtime and size before and after are equal.
 - [ ] **Step 2: Run them and see them fail.** Same command as 1.1 → FAIL.
 - [ ] **Step 3: Implement `readTail`** with `fs.openSync`, `fs.fstatSync` and one `fs.readSync` from `size - max`.
 - [ ] **Step 4: Run them and see them pass.**
 - [ ] **Step 5: Commit.** `git commit -am "Crew runs: read a transcript's tail, read-only"`
+
+### Task 1.3: Step lines
+
+**Files:**
+- Modify: `scripts/crew/runs.js`
+- Test: `tests/scripts/crew/runs.test.js`
+
+**Interfaces:**
+- Consumes: `readTail` (1.2); `plainWords(text, glossary)` and `glossaryOf(view)` from `scripts/frontdesk/glossary.js`.
+- Produces:
+  - `stepOf(event) -> {at, text}|null`: one transcript event in plain words; `null` for anything it does not know.
+  - `stepsOf(events, {glossary, waiting = null}) -> [{at, text}]`, oldest first, every `text` through `plainWords` and `mask`. When `waiting` is a decision number, the last line is `Waiting for your answer to decision ${waiting}` (section 8.1 rule 4).
+  - `mask(text) -> string`: a line holding a key- or token-looking value becomes `[hidden: looked like a key]`. Patterns: `sk-[A-Za-z0-9_-]{20,}`, `gh[pousr]_[A-Za-z0-9]{20,}`, `glpat-[A-Za-z0-9_-]{20,}`, `AKIA[0-9A-Z]{16}`, `xox[abprs]-[A-Za-z0-9-]{10,}`, `-----BEGIN [A-Z ]*PRIVATE KEY-----`, and `(api[_-]?key|token|secret|password)\s*[:=]\s*\S{8,}` (any case).
+  - `plain(text) -> string`: terminal escape codes and other control characters removed (rule 3).
+- Verbs (exact copy): `Read` → ``Reading `<path relative to the worktree>` ``; `Edit`, `Write` → ``Changing `<path>` ``; `Grep`, `Glob` → `Searching the code`; `Bash` whose command runs tests (`test`, `jest`, `vitest`, `pytest`, `node --test`) → `Running the tests`; other `Bash` → `Running a command`; `Agent`/`Task` → see 1.4; `WebFetch`, `WebSearch` → `Looking something up`; any other tool → `Using <tool name>`. Assistant text → its first sentence, cut to 120 characters. A `Bash` command that runs `frontdesk/cli.js record decision` → `Recording a decision` (the question is never shown).
+
+- [ ] **Step 1: Write the failing tests**
+  - `turns a Read into a reading step`: → ``Reading `src/login.ts` ``.
+  - `names a test run`: `npm test` → `Running the tests`.
+  - `keeps the first sentence of assistant text`: `"Done. Next I will…"` → `Done.`
+  - `skips an event it does not know`: `{type:'summary'}` → no line.
+  - `masks a key`: a result holding `sk-` plus 30 characters → the line has `[hidden: looked like a key]` and no `sk-`.
+  - `strips escape codes`: `"\u001b[31mred"` → `red`.
+  - `shows a waiting decision by number only`: `waiting: 2` → last line `Waiting for your answer to decision 2`, and the question text appears nowhere.
+  - `passes wording through the glossary`: a glossary mapping `PR` → `change` → the line says `change`.
+- [ ] **Step 2: Run them and see them fail.**
+- [ ] **Step 3: Implement** `stepOf`, `stepsOf`, `mask`, `plain`.
+- [ ] **Step 4: Run them and see them pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Crew runs: step lines in plain words"`
