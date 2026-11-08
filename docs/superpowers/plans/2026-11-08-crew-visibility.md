@@ -52,7 +52,7 @@ New:
 - `scripts/crew/hold.js`: the hold file and the one gate, `helmHeld`. No other module reads `helm/*.json`.
 - `scripts/crew/helm.js`: take, open, hand back, stop now; the CLI the director runs (`open`).
 - `scripts/hooks/helm-end.js`: the `SessionEnd` hand-back.
-- `probes/crew-helm/probe.js`: the section 14 probe, run on purpose, never by `npm test`.
+- `probes/96-helm/run.js`: the section 14 probe, run on purpose, never by `npm test`.
 - Tests beside them: `tests/scripts/crew/{level,runs,hold,helm}.test.js`, `tests/scripts/hooks/helm-end.test.js`.
 
 Changed:
@@ -510,3 +510,17 @@ Branch `feature/crew-helm` from `main` once part 2 is merged. Spec sections 8.2,
 - [ ] **Step 3: Implement** the hook, its entry and the tick check.
 - [ ] **Step 4: Run them and see them pass.**
 - [ ] **Step 5: Commit.** `git commit -am "Helm: hand back when the session ends or its terminal closes"`
+
+### Task 5.5: The helm probe
+
+**Files:**
+- Create: `probes/96-helm/run.js`, `probes/96-helm/run.md`
+
+**Interfaces:**
+- Consumes: `featureHelmCall` (5.3); `probes/lib/hook-logger.js` and `probes/lib/scratch.js`.
+- Produces: a probe run by hand, never by `npm test`. In a scratch repository with the plugin's hooks and a hook logger, it uses tmux to start a session `-p` with a known id, mode and one granted tool, then opens it with `featureHelmCall` (resuming form) and with the starting form, sends one prompt that uses the granted tool, and `/exit`. It writes `probes/96-helm/reports/<date>.json` with four answers: the grant held in both forms, the mode held in both forms, the hooks saw `CLAUDE_CODE_ENTRYPOINT === 'cli'`, and `SessionEnd` ran on `/exit`. It uses the cheapest model the adapter allows.
+
+- [ ] **Step 1: Write** `run.js` and `run.md` (what it checks and how to run it).
+- [ ] **Step 2: Check it parses.** `node --check probes/96-helm/run.js`
+- [ ] **Step 3: Commit.** `git commit -am "Helm: a probe for the interactive forms"`
+- [ ] **Step 4: Ask the parent session before running it** (it spends model calls). If a run says a grant or the mode is lost, stop before part 6 and report.
