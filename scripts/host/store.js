@@ -15,7 +15,7 @@ import { spawn } from 'node:child_process';
 import { readSecret, storeSecret, deleteSecret } from '../secrets/secret-box.js';
 
 export const SERVICE = 'wheelhouse';
-const NAME = /^(?:github-app|gitlab-project-\d+)$/;
+const NAME = /^(?:github-app|gitlab-project-\d+|alerts-ntfy|alerts-telegram)$/;
 const TRUE = /^(?:true|yes|on|1)$/i;
 
 export function defaultRun({ file, args, input, env }) {
@@ -104,7 +104,7 @@ export async function storeDirectorKey({ host, base, repoPath, username, key, ru
 
 function checkName(name) {
   if (typeof name !== 'string' || !NAME.test(name)) {
-    throw new Error('The key name must be github-app or gitlab-project-<number>');
+    throw new Error('The key name must be github-app, gitlab-project-<number>, alerts-ntfy or alerts-telegram');
   }
   return { service: SERVICE, account: name };
 }

@@ -135,7 +135,7 @@ export const RECORD_KINDS = Object.freeze([
   'work', 'amendment', 'incident', 'note', 'brief',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'brief']);
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -1274,6 +1274,41 @@ async function ready(ask, body, what) {
   return typeof made.branch === 'string' && /^feature\/by-hand-[0-9a-f]+$/.test(made.branch) ? { ...made, goal: HAND_GOAL, done: [...HAND_DONE] } : made;
 }
 
+// --- Phone alerts ---
+
+const ALERTS_USAGE = 'Give alerts ntfy <topic>, alerts telegram <chat>, alerts status, or alerts off <ntfy|telegram>';
+
+// `alerts ntfy <topic>` keeps an ntfy topic with the helper; `alerts telegram <chat>` has the helper ask the director for the bot token in
+// the system's own hidden-entry dialog, which is never a command argument; `alerts status` says which channels are set up and which are on;
+// `alerts off <channel>` forgets one. What comes back never holds a topic or a token. An alert says only that decisions wait and in which
+// project, and goes only through a channel the director has also switched on in Notifications.
+export async function alerts({ client, cwd, args }) {
+  const [what, value, ...extra] = args;
+  const refuse = (got, fallback) => { throw new CliError(said(got, fallback)); };
+  if (what === 'ntfy' && typeof value === 'string' && extra.length === 0) {
+    const got = await client.alerts.ntfy({ cwd, topic: value });
+    if (got?.ok !== true) refuse(got, 'The host helper did not keep the topic');
+    return ['The ntfy topic is kept by the helper. Switch ntfy on under Notifications for alerts to go through it.'];
+  }
+  if (what === 'telegram' && typeof value === 'string' && extra.length === 0) {
+    const got = await client.alerts.telegram({ cwd, chat: value });
+    if (got?.ok !== true) refuse(got, 'The host helper did not keep the Telegram details');
+    return ['The Telegram bot token and chat are kept by the helper. Switch Telegram on under Notifications for alerts to go through it.'];
+  }
+  if (what === 'status' && value === undefined) {
+    const got = await client.alerts.status({ cwd });
+    if (got?.ok !== true) refuse(got, 'The host helper did not say which channels are set up');
+    const names = (list) => (Array.isArray(list) && list.length > 0 ? list.join(', ') : 'none');
+    return [`Phone alerts set up: ${names(got.setUp)}. Switched on in Notifications: ${names(got.on)}.`];
+  }
+  if (what === 'off' && ['ntfy', 'telegram'].includes(value) && extra.length === 0) {
+    const got = await client.alerts.off({ cwd, channel: value });
+    if (got?.ok !== true) refuse(got, 'The host helper did not forget the channel');
+    return [`The ${value} channel is forgotten.`];
+  }
+  throw new CliError(ALERTS_USAGE);
+}
+
 // --- The session note ---
 
 // Asks the host helper to keep the session's note for the project `cwd` is in (the sandbox cannot write under the
@@ -1381,6 +1416,8 @@ export async function main(argv, {
       if (rest[0] === 'list' && rest.length === 1) lines(await decisionList({ client: helper, cwd: here, now }));
       else if (rest[0] === 'show' && rest.length === 2 && /^[1-9][0-9]{0,2}$/.test(rest[1])) out(`${await decisionShow({ client: helper, cwd: here, n: Number(rest[1]) })}\n`);
       else throw new CliError(usage);
+    } else if (command === 'alerts') {
+      lines(await alerts({ client: helper, cwd: here, args: rest }));
     } else if (command === 'card') {
       only(rest, 0, 'card takes no arguments: give the card as JSON on standard input');
       json(await card({ client: helper, cwd: here, input: parsed(await stdin()), now }));

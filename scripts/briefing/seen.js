@@ -7,7 +7,10 @@
 // director's Leave it for now on setup's carry-on card (ruling A9), and `boardAsks`, the last
 // BOARD_ASKS board commands as { at, tab, visit } (`tab` the command's word or null, `visit` the
 // visitAt it was asked in), which learning reads; and `safekeepingLevel` and `safekeepingAt`, the
-// safekeeping level a briefing last said and when, so a watch comes back once a month and no oftener.
+// safekeeping level a briefing last said and when, so a watch comes back once a month and no oftener; and the daily digest's:
+// `digestAt`, when the last digest was made, `digestLogAt`, the last that carried the weekly decision log, and `digestShownAt`,
+// the last the director was shown at their message, and `digestLogShownAt`, the last shown that carried the weekly log
+// (scripts/digest/due.js).
 // Kept in projects/<project>/seen.json, beside the private record, and written whole (a temporary file
 // in the same folder, then a rename).
 //
@@ -18,7 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir } from '../lib/paths.js';
 
-const FIELDS = ['promptAt', 'briefedAt', 'weeklyAt', 'visitAt', 'surveyAgainAt', 'safekeepingAt'];
+const FIELDS = ['promptAt', 'briefedAt', 'weeklyAt', 'visitAt', 'surveyAgainAt', 'safekeepingAt', 'digestAt', 'digestLogAt', 'digestShownAt', 'digestLogShownAt'];
 const LEVELS = ['safe', 'watch'];
 // How many board commands are kept.
 export const BOARD_ASKS = 10;
@@ -100,6 +103,13 @@ export function readSafekeepingSaid(project) {
   return { level: kept.safekeepingLevel, at: kept.safekeepingAt };
 }
 
+// readDigestSeen(project, { now }) -> { digestAt, digestLogAt, digestShownAt, digestLogShownAt }, each a time or null.
+export function readDigestSeen(project, { now } = {}) {
+  const kept = readKept(project);
+  const limit = nowMs(now);
+  return { digestAt: notAhead(kept.digestAt, limit), digestLogAt: notAhead(kept.digestLogAt, limit), digestShownAt: notAhead(kept.digestShownAt, limit), digestLogShownAt: notAhead(kept.digestLogShownAt, limit) };
+}
+
 // readVisits(project, { now }) -> { visitAt, boardAsks }: when the latest visit began, or null,
 // and the board commands kept, oldest first, leaving out any asked after now.
 export function readVisits(project, { now } = {}) {
@@ -108,7 +118,7 @@ export function readVisits(project, { now } = {}) {
   return { visitAt: notAhead(kept.visitAt, limit), boardAsks: kept.boardAsks.filter((a) => notAhead(a.at, limit) !== null) };
 }
 
-// markSeen(project, { promptAt, briefedAt, weeklyAt, visitAt, surveyAgainAt, surveyAt, boardAsk }): writes the times given,
+// markSeen(project, { promptAt, briefedAt, weeklyAt, visitAt, surveyAgainAt, surveyAt, digestAt, digestLogAt, digestShownAt, boardAsk }): writes the times given,
 // keeping the others as they were, and adds `boardAsk` ({ at, tab, visit }) to the board commands,
 // keeping the last BOARD_ASKS. A value that isn't a time (or, for surveyAt, an id), or a board command that isn't one, is not written.
 export function markSeen(project, times = {}) {

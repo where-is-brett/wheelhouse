@@ -36,6 +36,9 @@
 // wasn't written gets it then too (rulings F37, F45). Learning adds no text, and a failure or a
 // late helper leaves the rest for next visit.
 //
+// The daily digest the watcher made (scripts/watcher/digest.js) is added once, at the first message after it was made, ahead of the
+// cards line, and then taken away; it answers nothing.
+//
 // A command is matched as typed, in any case, with white space around it ignored:
 // /wheelhouse:logbook or /wheelhouse:board (optionally "build" or "director"), /wheelhouse:briefing,
 // /wheelhouse:settings and /wheelhouse:sources. The short forms (/board) are left to whoever owns them.
@@ -50,6 +53,8 @@ import { keepRequest } from '../lib/kept-request.js';
 import { briefingModel as realBriefingModel } from '../briefing/model.js';
 import { heldBackLine } from '../board/model.js';
 import { readSeen, readSurveyAt, markSeen, readVisits } from '../briefing/seen.js';
+import { readDigest, clearDigest } from '../digest/due.js';
+import { takeFailures } from '../alerts/tick.js';
 import { markRaised as realMarkRaised } from '../usage/figures.js';
 import { sessionRole, recordRole } from '../lib/role.js';
 import { existingCard } from '../cards/visit.js';
@@ -403,7 +408,11 @@ export async function decide(input, deps = {}) {
     const typed = !writes || startedByScript(env) ? null : attempt(() => ownWords(input.prompt), null);
     const decisionLine = await within(() => decisionLineOf(desk, typed), waitMs);
     const stuck = await within(() => stuckLine(desk, seen.promptAt, at), waitMs);
-    const notes = [decisionLine, stuck, ...((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
+    // The daily digest the watcher made waits for the director's next message and is shown once, here (scripts/digest/due.js). A hook that
+    // only reads leaves it for one that can take it away.
+    // A session a script started is no director arriving, so it never uses the digest up.
+    const digest = writes && !startedByScript(env) ? attempt(() => readDigest(project), null) : null;
+    const notes = [decisionLine, digest?.text ?? null, stuck, ...((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
     const reserve = (cards === null ? 0 : cards.length + 2) + notes.reduce((sum, line) => sum + line.length + 2, 0);
     // A survey not worked out in time is left to the briefing view, which takes the record's latest.
     const survey = want === 'briefing' ? (await within(() => surveyOf({ project, client, desk }), learnWaitMs)) ?? undefined : null;
@@ -425,6 +434,13 @@ export async function decide(input, deps = {}) {
       if (built.raise.length > 0 && Number.isFinite(at.getTime())) attempt(() => markRaised(built.raise, { now: at }));
     }
     const text = [...notes, cards, built?.text].filter((part) => typeof part === 'string').join('\n\n');
+    // Shown now, so it is not shown again: the time is kept for the next digest's "since", and the file taken away.
+    if (digest !== null && text !== '') {
+      attempt(() => clearDigest(project));
+      attempt(() => markSeenHere(project, { digestShownAt: at, ...(digest.weekly ? { digestLogShownAt: at } : {}) }));
+      // The failed alerts it said are said.
+      if (digest.failures > 0) attempt(() => takeFailures(project, digest.failures));
+    }
     return text === '' ? undefined : answer.context('UserPromptSubmit', text);
   } catch {
     return undefined;

@@ -42,7 +42,9 @@ import { setDecisionStatus } from './decision-status.js';
 import { classifyChange, classifyDiff, dataModelPaths, readConfig, isModelName, CI_FILES, PLUGIN_MANIFEST } from '../gate/guardrails.js';
 import { scrub } from './adapter.js';
 import { hide, cleanDeep } from '../lib/clean.js';
-import { findKey } from './keys.js';
+import { findKey, saveKey, removeKey } from './keys.js';
+import { askSecret } from '../secrets/secret-box.js';
+import { deliverAlert, inQuiet, goodTopic, goodToken, goodChat, CHANNELS as ALERT_CHANNELS } from '../alerts/send.js';
 import { borrowKey } from './store.js';
 import { checkBaseUrl, gitlabApi } from './gitlab-key.js';
 import { DEFAULT_GITLAB, parseRemote } from './gitlab-base.js';
@@ -128,7 +130,7 @@ import { levelOf } from '../routing/thoroughness.js';
 import { effectiveSettings, settingWords } from '../settings/effective.js';
 import { cardHash } from '../lib/measures-clicks.js';
 import { aliasModel, FRONT_DESK_ALIAS, STRONGEST_ALIAS } from '../setup/best-model.js';
-import { writeProfileViews } from '../profile/store.js';
+import { writeProfileViews, readProfileViews } from '../profile/store.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
 import { branchOf } from '../hooks/session-start.js';
@@ -923,6 +925,7 @@ const PLACED_ROUTES = [
   '/local/undo', '/undo', '/local/move',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
   '/engine-switch', '/compact-window',
+  '/alerts/ntfy', '/alerts/telegram', '/alerts/status', '/alerts/off',
 ];
 
 // The marks a session sends (ruling P5-19), each with its fields and what each must be.
@@ -1017,6 +1020,9 @@ export async function startHelper({
   // How the helper's own calls to GitLab are made (gitlabApi's run, curl, proxy and caFile; left out, the real ones), the
   // computer's store for keys (keys.js's seam) and the lender of the director's own key. All for tests.
   via = {}, keyDeps, borrow = borrowKey,
+  // How the helper asks the director for the Telegram bot token, in the system's own hidden-entry dialog, so it never passes through an
+  // agent or a command argument: ({ title, prompt }) -> the text. For tests.
+  askToken = (box) => askSecret(box),
   // Whether an update job holds the update lock (scripts/update/journal.js): an update's retire is accepted only then. And
   // how long the helper makes way for an update before it serves normally again. Both are for tests.
   updateHeld = updateLockHeld, updateBoundMs = 3 * 60 * 1000,
@@ -3937,6 +3943,109 @@ export async function startHelper({
     return { ok: true, public: isPublic };
   }
 
+  // --- phone alerts (design section 9 of the director's way of working) ---
+  // Only the helper holds the ntfy topic and the Telegram token, and only the helper sends. They are kept in the computer's store
+  // beside the host keys (keys.js), and no answer here ever holds one. An alert says a count and the project's name, nothing else.
+  const ALERT_KEYS = { ntfy: 'alerts-ntfy', telegram: 'alerts-telegram' };
+  const ALERT_SERVER = (v) => {
+    if (typeof v !== 'string' || v.length > 100) return false;
+    try {
+      const u = new URL(v);
+      return u.protocol === 'https:' && u.username === '' && u.password === '' && u.search === '' && u.hash === '';
+    } catch {
+      return false;
+    }
+  };
+
+  // What is kept for each of `channels` (all, when none are named). A channel nobody switched on is never looked for, so a project
+  // that sends no alerts never reaches the computer's store.
+  async function alertSettings(channels = ALERT_CHANNELS) {
+    const out = {};
+    for (const [channel, name] of Object.entries(ALERT_KEYS).filter(([c]) => channels.includes(c))) {
+      try {
+        const kept = await findKey(name, keyDeps);
+        if (kept !== null && typeof kept === 'object' && !Array.isArray(kept)) out[channel] = kept;
+      } catch {
+        // A channel whose key can't be read is one that isn't set up.
+      }
+    }
+    return out;
+  }
+
+  const notificationsNow = () => {
+    try {
+      return effectiveSettings({ profile: readProfileViews()?.settings ?? {}, now }).notifications?.value;
+    } catch {
+      return undefined;
+    }
+  };
+
+  // Sends one alert for the decisions that wait, through each channel the director switched on in Notifications and has set up.
+  // { ok, none } when there is no such channel, { ok, held } inside the quiet hours, else { ok, sent, failed: [channel] }. A
+  // channel that fails is tried once more; nothing is ever taken as an answer. It answers under STOP: it only says a decision waits.
+  async function doAlert({ project, count }) {
+    if (!Number.isInteger(count) || count < 1 || count > 999) return { ok: false, refused: 'an alert needs the number of decisions that wait' };
+    const repo = typeof readProject(project)?.repo === 'string' ? readProject(project).repo.split('/').at(-1) : '';
+    const notifications = notificationsNow();
+    const on = Array.isArray(notifications?.channels) ? notifications.channels.filter((c) => ALERT_CHANNELS.includes(c)) : [];
+    // Nothing is switched on, or it is quiet: the store is not read at all.
+    if (on.length === 0) return { ok: true, none: true };
+    if (inQuiet(notifications?.quiet, now())) return { ok: true, held: true };
+    const done = await deliverAlert({ count, project: repo || project, notifications, settings: await alertSettings(on), now: now(), fetch });
+    return { ok: true, ...done };
+  }
+
+  // The director's click in the helper's own window, which no agent can press, before any channel is kept or forgotten. Nothing is
+  // saved without it: a refusal, no answer or a window that can't open all leave things as they were.
+  const NOT_CLICKED = 'the director did not click Yes in the helper\'s window, so nothing was changed';
+  async function clickedFor(lines) {
+    try {
+      const { choice } = await askWindow({ title: 'Wheelhouse: phone alerts', lines, options: ['Yes'] });
+      return choice === 'Yes';
+    } catch {
+      return false;
+    }
+  }
+
+  async function doAlertsNtfy({ topic, server }) {
+    if (!goodTopic(topic)) return { ok: false, refused: 'an ntfy topic is 1 to 64 letters, digits, dashes or underscores' };
+    if (server !== undefined && !ALERT_SERVER(server)) return { ok: false, refused: 'the ntfy server must be a plain https address' };
+    const where = server === undefined ? 'ntfy.sh' : new URL(server).host;
+    if (!await clickedFor([`Keep an ntfy topic for phone alerts on the server ${where}?`, 'Alerts will say only that decisions wait and in which project.'])) return { ok: false, refused: NOT_CLICKED };
+    await saveKey(ALERT_KEYS.ntfy, { topic, ...(server === undefined ? {} : { server: server.replace(/\/+$/, '') }) }, keyDeps);
+    return { ok: true, channel: 'ntfy' };
+  }
+
+  // The token is asked for here, by the system's hidden-entry dialog on the director's screen: it is never an argument, an
+  // environment variable or anything an agent could type or read.
+  async function doAlertsTelegram({ chat }) {
+    if (!goodChat(chat)) return { ok: false, refused: 'a Telegram chat is its number, or @ and the channel\'s name' };
+    if (!await clickedFor([`Keep Telegram for phone alerts, sending to the chat ${chat}?`, 'You will be asked for the bot token next. Alerts will say only that decisions wait and in which project.'])) return { ok: false, refused: NOT_CLICKED };
+    let token;
+    try {
+      token = await askToken({ title: 'Wheelhouse', prompt: 'Paste the Telegram bot token for phone alerts. It stays on this computer.' });
+    } catch {
+      return { ok: false, refused: 'no token was given' };
+    }
+    if (!goodToken(token)) return { ok: false, refused: 'that is not a Telegram bot token' };
+    await saveKey(ALERT_KEYS.telegram, { token, chat }, keyDeps);
+    return { ok: true, channel: 'telegram' };
+  }
+
+  // Which channels are set up and which are switched on, and never what they hold.
+  async function doAlertsStatus() {
+    const kept = await alertSettings();
+    const on = notificationsNow()?.channels;
+    return { ok: true, setUp: ALERT_CHANNELS.filter((c) => c in kept), on: Array.isArray(on) ? on.filter((c) => ALERT_CHANNELS.includes(c)) : [] };
+  }
+
+  async function doAlertsOff({ channel }) {
+    if (!ALERT_CHANNELS.includes(channel)) return { ok: false, refused: 'the channel is ntfy or telegram' };
+    if (!await clickedFor([`Forget the ${channel} channel for phone alerts? No more alerts will go through it.`])) return { ok: false, refused: NOT_CLICKED };
+    await removeKey(ALERT_KEYS[channel], keyDeps);
+    return { ok: true, channel };
+  }
+
   // --- the runbook (design section 12.7) ---
   // These routes answer under STOP. Each step but the first needs the director's
   // click on its card: a signed `action` for that step, from this computer.
@@ -4732,6 +4841,12 @@ export async function startHelper({
     '/compact-window': (body, ctx) => oneAtATime(`compact:${body.project}`, () => doCompactWindow(body, ctx)),
     '/decisions/batch': (body, ctx) => oneAtATime(`decisions:${body.project}`, () => doDecisionBatch(body, ctx)),
     '/host/public': (body, ctx) => doHostPublic(body, ctx),
+    // Answered before the project's context is made (see the handler), so it needs no host sign-in.
+    '/alert': (body) => doAlert(body),
+    '/alerts/ntfy': (body) => oneAtATime('alerts-window', () => doAlertsNtfy(body)),
+    '/alerts/telegram': (body) => oneAtATime('alerts-window', () => doAlertsTelegram(body)),
+    '/alerts/status': () => doAlertsStatus(),
+    '/alerts/off': (body) => oneAtATime('alerts-window', () => doAlertsOff(body)),
     '/engine-switch': (body, ctx) => oneAtATime(`switch:${body.project}`, () => doEngineSwitch(body, ctx)),
     '/review/run': async (body, ctx) => {
       try {
@@ -6458,6 +6573,15 @@ export async function startHelper({
       try {
         onArrive(url.pathname);
         return send(res, 200, cleanDeep(await route(body), []));
+      } catch (error) {
+        return send(res, 200, { ok: false, refused: clean(error instanceof Error ? error.message : '', []) || 'the request failed' });
+      }
+    }
+    if (url.pathname === '/alert') {
+      // An alert needs no connection to the host, so a broken sign-in can't stop it: it is answered without the project's context.
+      try {
+        onArrive(url.pathname);
+        return send(res, 200, await doAlert({ project: checkProject(body.project), count: body.count }));
       } catch (error) {
         return send(res, 200, { ok: false, refused: clean(error instanceof Error ? error.message : '', []) || 'the request failed' });
       }
