@@ -6,8 +6,9 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   configDir, findTranscript, findSubagents, readTail, stepOf, stepsOf, mask, plain,
-  roleOf, subagentLine, runSteps,
+  roleOf, subagentLine, runSteps, crewNow,
 } from '../../../scripts/crew/runs.js';
+import { writeJsonFile, runningFile, sessionFile } from '../../../scripts/watcher/waker.js';
 import { glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 
 function fakeConfig() {
@@ -607,4 +608,53 @@ test('a test run is a test tool in command position', () => {
   for (const command of ['cd test', 'ls test/', 'git log -- test', 'cat jest.config.js', 'echo test']) {
     assert.equal(stepOf(tool('Bash', { command })).text, 'Running a command', command);
   }
+});
+
+// crewNow: the latest steps for the Logbook
+
+let projectCount = 0;
+const nowProject = () => `crew-now-${process.pid}-${projectCount++}`;
+const keepRecord = (file, value) => {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  writeJsonFile(file, value);
+};
+const liveFeature = (project, work, sessionId) => {
+  keepRecord(runningFile(project, `feature-${work}`), { state: 'running', pid: process.pid, at: '2026-11-08T01:00:00.000Z' });
+  keepRecord(sessionFile(project, work), { sessionId, worktree: '/w/tree', at: '2026-11-08T01:00:00.000Z' });
+};
+const viewsFor = (...ids) => ({ work: Object.fromEntries(ids.map((id) => [id, {}])), features: Object.fromEntries(ids.map((id) => [id, { data: { step: 'building' } }])) });
+
+test('crewNow: opens nothing at off', () => {
+  const { dir, env } = fakeConfig();
+  const project = nowProject();
+  writeRun(dir, 's1', [tool('Read', { file_path: '/w/tree/a.js' })]);
+  liveFeature(project, 'login', 's1');
+  const seen = [];
+  const read = (args) => { seen.push(args.sessionId); return runSteps(args); };
+  assert.deepEqual(crewNow(project, viewsFor('login'), { watchCrew: { value: 'off' } }, { env, read }), {});
+  assert.deepEqual(seen, []);
+  // its own choice of steps opens it, while the project stays off
+  const own = { ...viewsFor('login'), watch: { login: 'steps' } };
+  const got = crewNow(project, own, { watchCrew: { value: 'off' } }, { env, read });
+  assert.deepEqual(seen, ['s1']);
+  assert.equal(got.login.steps[0].text, 'Reading `a.js`');
+});
+
+test('crewNow: a piece with no live run has no entry', () => {
+  const { dir, env } = fakeConfig();
+  const project = nowProject();
+  writeRun(dir, 's1', [text('Hi.')]);
+  keepRecord(sessionFile(project, 'login'), { sessionId: 's1' });
+  assert.deepEqual(crewNow(project, viewsFor('login'), { watchCrew: { value: 'steps' } }, { env }), {});
+});
+
+test('crewNow: includes the Bosun', () => {
+  const { dir, env } = fakeConfig();
+  const project = nowProject();
+  writeRun(dir, 'f1', [tool('Read', { file_path: '/w/tree/a.js' })]);
+  keepRecord(runningFile(project, 'foreman'), { state: 'running', pid: process.pid, at: '2026-11-08T01:00:00.000Z', sessionId: 'f1' });
+  const got = crewNow(project, viewsFor(), { watchCrew: { value: 'steps' } }, { env });
+  assert.deepEqual(Object.keys(got), ['foreman']);
+  assert.equal(got.foreman.steps[0].text, 'The Bosun is reading `a.js`');
+  assert.deepEqual(crewNow(project, viewsFor(), { watchCrew: { value: 'off' } }, { env }), {});
 });

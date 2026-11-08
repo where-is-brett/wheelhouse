@@ -110,6 +110,7 @@ import { startedAsScript } from '../lib/started-as-script.js';
 import { FINISHED_WORDS, prsOfWork, workFinished } from '../desk/work-prs.js';
 import { isOpen, surveyLines, whyNext, workLines, RECENT_MS, RECENT_LEAD, recentLines } from '../desk/views.js';
 import { answeredWords } from '../cards/answered.js';
+import { crewNow } from '../crew/runs.js';
 import { markHere } from '../lib/session-files.js';
 import { sinceLine } from '../cards/panel-words.js';
 
@@ -1199,7 +1200,11 @@ export async function view({ client, cwd, name, now, since: from }) {
   if (name === 'glossary') return Object.entries(glossaryOf(views.glossary)).map(([term, entry]) => `${term}: ${entry.plain}`);
   if (name === 'levels') return listed(levelLines(views, events), 'No decision topics yet.');
   if (name === 'survey') return surveyLines(views.survey);
-  if (name === 'work') return workLines(views, answers, await wordsOf(client, cwd, views, now, names), prsOfWork(views, cwd));
+  if (name === 'work') {
+    const own = await ownSettings(client, cwd);
+    const crew = crewNow(cwd, views, effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now }));
+    return workLines(views, answers, await wordsOf(client, cwd, views, now, names), prsOfWork(views, cwd), crew);
+  }
   // settings: the project's over the director's own, over the defaults
   const own = await ownSettings(client, cwd);
   return settingsText(effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now })).split('\n');

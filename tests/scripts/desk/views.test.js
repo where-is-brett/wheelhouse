@@ -171,3 +171,21 @@ test('the briefing says the line once', () => withRuns(async ({ source }) => {
   assert.doesNotMatch(next.data.text, /New quick changes are built by the new engine\./);
 }));
 
+
+const crewViews = {
+  work: { login: { work: { id: 'w', at: '2026-10-29T05:00:00.000Z', data: { id: 'login', title: 'The login page', lane: 'quick', visible: false } }, approved: true } },
+  features: { login: { at: '2026-10-29T06:00:00.000Z', data: { step: 'building' } } },
+};
+
+test('workLines: adds the latest step', () => {
+  const crew = { login: { steps: [{ at: null, text: 'Thinking' }, { at: null, text: 'Reading `a.ts`' }], crew: [] } };
+  const [line] = workLines(crewViews, [], {}, {}, crew);
+  assert.ok(line.endsWith(' · Reading `a.ts`'), line);
+});
+
+test('workLines: no step, no change', () => {
+  const before = workLines(crewViews, [], {});
+  assert.match(before[0], /running/);
+  assert.deepEqual(workLines(crewViews, [], {}, {}, {}), before);
+  assert.deepEqual(workLines(crewViews, [], {}, {}, { login: { steps: [], crew: [] } }), before);
+});

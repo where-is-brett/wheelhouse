@@ -152,12 +152,20 @@ export function prLine(views, open, known) {
   return [...lead, `its review holds the merge: ${found}`];
 }
 
+// ` · <latest step>` for a piece's crew record, or nothing. The step is already in plain words.
+function stepEnd(entry) {
+  const steps = isPlain(entry) && Array.isArray(entry.steps) ? entry.steps : [];
+  const last = steps.at(-1);
+  const text = isPlain(last) && typeof last.text === 'string' ? flat(last.text) : '';
+  return text === '' ? '' : ` · ${text}`;
+}
+
 // The open work, running work first, each oldest first (then by id): its id, title and lane, whether a feature
 // runs for it, its step or state, the slice in hand and the pull request the gate waits on or its
 // latest report names, either since the work was queued. `answers` are the card-answer events, for
 // the director's Not now. In the glossary's plain words, but for the titles, kept as written: the
 // front desk reads this to tell the director how things stand.
-export function workLines(views, answers, words, prs = {}) {
+export function workLines(views, answers, words, prs = {}, crew = {}) {
   const features = isPlain(views.features) ? views.features : {};
   const questions = isPlain(views.questions) ? views.questions : {};
   const reports = Object.values(isPlain(views.reports) ? views.reports : {}).filter((r) => isPlain(r?.data));
@@ -197,7 +205,9 @@ export function workLines(views, answers, words, prs = {}) {
   // Labels, ids and work titles stay as written, as the board keeps titles (design section 21).
   lines.push(...stranded);
   const protect = [...LABELS, ...open.map(({ id }) => `${id}:`), ...stranded.map((l) => `${l.split(':')[0]}:`), ...open.map(({ entry }) => flat(entry.work.data.title)).filter((t) => t !== '')];
-  return plainWords(lines.join('\n'), words.glossary, { ...words, protect }).text.split('\n');
+  // The steps are already in plain words, so they are added after the lines have been through the glossary.
+  const worded = plainWords(lines.join('\n'), words.glossary, { ...words, protect }).text.split('\n');
+  return worded.map((line, i) => (i < open.length && open[i].running ? line + stepEnd(crew[open[i].id]) : line));
 }
 
 // The one sentence the front desk says before card n on a Why?, word for word: the everyday example

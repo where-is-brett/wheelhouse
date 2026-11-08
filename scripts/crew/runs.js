@@ -5,6 +5,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { plainWords, glossaryOf } from '../frontdesk/glossary.js';
+import { runningFile, sessionFile, pidAlive } from '../watcher/waker.js';
+import { readDecisions } from '../decisions/pending.js';
+import { levelFor } from './level.js';
 
 export function configDir(env = process.env) {
   return env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
@@ -520,6 +523,59 @@ function stepsOfKind(events, words) {
   for (const event of events) {
     const raw = stepAndKind(event);
     if (raw) out.push(withKind(raw, words));
+  }
+  return out;
+}
+
+const readSmall = (file) => {
+  try {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.size > 64 * 1024) return null;
+    const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
+};
+
+// A running record that says a session is going: its state is `running` and, when it names a process, that process lives.
+const liveRecord = (record) => record !== null && record.state === 'running' && (!Number.isInteger(record.pid) || pidAlive(record.pid));
+
+// The latest steps of each piece with a live run, for the Logbook: `{ [work]: { steps, crew } }`. A piece whose level
+// is `off` is never opened (design 8.1 rule 6); nor is anything when a record can't be read. The Bosun comes under
+// the name `foreman`, on the project's own level, when its running record names a session. `read` stands for `runSteps`.
+export function crewNow(project, views, settings, { env = process.env, read = runSteps } = {}) {
+  const out = {};
+  try {
+    const glossary = glossaryOf(views?.glossary);
+    let pending = null;
+    const waitingOn = (work) => {
+      if (pending === null) {
+        try {
+          pending = readDecisions(project).pending;
+        } catch {
+          pending = [];
+        }
+      }
+      return pending.find((d) => d.workId === work)?.n ?? null;
+    };
+    const ids = Object.keys(views !== null && typeof views === 'object' && views.work !== null && typeof views.work === 'object' ? views.work : {});
+    for (const work of ids) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(work) || work.includes('..')) continue;
+      if (levelFor(views, settings, work) === 'off') continue;
+      if (!liveRecord(readSmall(runningFile(project, `feature-${work}`)))) continue;
+      const sessionId = readSmall(sessionFile(project, work))?.sessionId;
+      if (typeof sessionId !== 'string') continue;
+      out[work] = read({ sessionId, env, glossary, waiting: waitingOn(work) });
+    }
+    if (levelFor(views, settings, 'foreman') !== 'off') {
+      const record = readSmall(runningFile(project, 'foreman'));
+      if (liveRecord(record) && typeof record.sessionId === 'string') {
+        out.foreman = read({ sessionId: record.sessionId, env, glossary, foreman: true });
+      }
+    }
+  } catch {
+    // Whatever was read stands; a failure shows less and never breaks the Logbook.
   }
   return out;
 }
