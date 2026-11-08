@@ -310,7 +310,7 @@ test('the chat Logbook stays within its room with the crew steps added', () => w
 
 test('the build tab drawn for a paired client keeps what the crew said', () => withSaidRun(async ({ source }) => {
   const got = await readView('logbook', { tab: 'build' }, source, { now });
-  assert.ok(got.lines.some((l) => l.includes(SAID.replace(/\.$/, '.'))), got.lines.join('\n'));
+  assert.ok(got.lines.some((l) => l.includes(SAID)), got.lines.join('\n'));
 }));
 
 test("the desk's work line shows the latest did step and never the said sentence", async () => {
