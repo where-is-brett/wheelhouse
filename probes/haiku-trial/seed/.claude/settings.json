@@ -2,5 +2,8 @@
   "model": "haiku",
   "env": {
     "CLAUDE_CODE_SUBAGENT_MODEL": "haiku"
+  },
+  "enabledPlugins": {
+    "wheelhouse@wheelhouse": true
   }
 }

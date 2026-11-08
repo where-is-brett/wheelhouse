@@ -1,7 +1,7 @@
 // tests/probes/haiku-trial/host.test.js
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ghArgs, readGateWith, PICKED } from '../../../probes/haiku-trial/host.js';
+import { ghArgs, readGateWith, PICKED, startOf } from '../../../probes/haiku-trial/host.js';
 
 const SLUG = 'trial-owner/haiku-trial-2026-11-08';
 
@@ -52,4 +52,13 @@ test('a diff that could not be read leaves the gate unsure, not visible', async 
 test('the stand-in answers setup cards as well as plan, approval and confirm cards, and never a decision or an undo', () => {
   for (const kind of ['setup', 'confirm-all', 'baseline', 'trust', 'approve-work', 'approval', 'confirm']) assert.ok(PICKED.includes(kind), kind);
   for (const kind of ['answer', 'undo', 'lift-stop', 'lift-incident']) assert.equal(PICKED.includes(kind), false, kind);
+});
+
+test('startOf reads a start time month first, as the helper records it, and day first, as ps prints it under en_AU', () => {
+  const monthFirst = startOf('Mon Nov  9 00:36:26 2026');
+  assert.equal(typeof monthFirst, 'number');
+  assert.equal(startOf('Mon  9 Nov 00:36:26 2026'), monthFirst);
+  assert.equal(startOf('Mon 19 Nov 00:36:26 2026'), startOf('Mon Nov 19 00:36:26 2026'));
+  assert.equal(startOf('not a time'), null);
+  assert.equal(startOf(undefined), null);
 });

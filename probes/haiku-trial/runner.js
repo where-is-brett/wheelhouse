@@ -14,7 +14,7 @@ import { SESSION_PREFIX, frontDeskCommand } from './tmux.js';
 import { STEPS as LOG, SETUP_DONE, OWN_BRANCH } from './signals.js';
 import { auditModels } from './audit.js';
 import { STARTS_UNAPPROVED } from '../../scripts/foreman/queue.js';
-import { installCommand, removeCommand } from './stage-plugin.js';
+import { installCommand, removeCommands } from './stage-plugin.js';
 import { reviewCard, stepsPage, writeTryMe, reviewAsDecision, answerLetter } from './review-card.js';
 
 const MINUTE = 60 * 1000;
@@ -324,7 +324,7 @@ const auditStep = (wave, smoke = true) => ({
 const s9 = (n, run) => ({ id: `s9-${n}`, wave: 4, smoke: [1, 2, 4].includes(n), run });
 
 export const STEPS = [
-  { id: 'stage', wave: 1, smoke: true, async run(ctx, io) { ctx.state.stage = await io.host.stage({ out: ctx.folder }); await note(ctx, 'stage', 'plugin staged without probes or tests'); } },
+  { id: 'stage', wave: 1, smoke: true, async run(ctx, io) { ctx.state.stage = await io.host.stage({ out: ctx.folder }); await note(ctx, 'stage', 'plugin staged without this kit or the tests'); } },
   {
     id: 'create-repo', wave: 1, smoke: true, needsGo,
     asks: (ctx) => `Create the public GitHub repository ${ctx.repoSlug}? Answer go.`,
@@ -347,19 +347,20 @@ export const STEPS = [
     async run(ctx, io) {
       const configDir = ctx.env.HAIKU_TRIAL_CONFIG_DIR;
       // A copy an earlier run installed is taken out first: an install of the same version keeps it as it is.
-      const remove = removeCommand({ configDir, claude: ctx.claude });
-      const gone = await io.host.exec(remove, { cwd: ctx.folder });
-      await note(ctx, 'install', `${remove.join(' ')} -> ${gone.status} (fails when nothing was installed)`);
+      for (const remove of removeCommands({ configDir, claude: ctx.claude })) {
+        const gone = await io.host.exec(remove, { cwd: ctx.folder });
+        await note(ctx, 'install', `${remove.join(' ')} -> ${gone.status} (fails when nothing was installed)`);
+      }
       const lines = installCommand({ marketplaceDir: ctx.state.stage?.marketplaceDir, configDir, claude: ctx.claude });
       for (const line of lines) {
         const got = await io.host.exec(line, { cwd: ctx.folder });
         await note(ctx, 'install', `${line.join(' ')} -> ${got.status}`);
         if (got.status !== 0) throw new Stop(`install failed: ${line.join(' ')}`);
       }
-      const sha = ctx.state.stage?.sha;
-      const problem = await io.host.installedProblem({ configDir, sha });
+      const { pluginDir, sha } = ctx.state.stage ?? {};
+      const problem = await io.host.installedProblem({ configDir, pluginDir });
       if (problem) throw new Stop(`the installed plugin is not the staged copy: ${problem}`);
-      await note(ctx, 'install', `the installed copy is the staged commit ${sha}`);
+      await note(ctx, 'install', `the installed copy matches the staged commit ${sha}, file for file`);
     },
   },
   {

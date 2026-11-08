@@ -309,25 +309,25 @@ test('a session that ends by itself stops the run at once instead of waiting it 
 
 test('install takes out an earlier copy first, then checks the installed copy is the staged commit', async (t) => {
   const folder = scratch(t);
-  fs.writeFileSync(path.join(folder, 'state.json'), JSON.stringify({ stage: { marketplaceDir: '/m', sha: 'feed01' } }));
+  fs.writeFileSync(path.join(folder, 'state.json'), JSON.stringify({ stage: { pluginDir: '/p', marketplaceDir: '/p', sha: 'feed01' } }));
   const env = { ...ENV, HAIKU_TRIAL_CONFIG_DIR: '/trial-config' };
   const io = fakeIo({ exec: (argv) => ({ status: argv.includes('uninstall') ? 1 : 0 }) });
   const got = await run({ mode: 'smoke', io, from: 'install', until: 'install', folder, date: '2026-11-08', env });
   assert.deepEqual(got.done, ['install'], got.why);
   const lines = io.timeline.filter((e) => e.kind === 'exec').map((e) => e.args[0].slice(3, 6).join(' '));
-  assert.deepEqual(lines, ['plugin uninstall wheelhouse@wheelhouse-probe-wheelhouse-trial', 'plugin marketplace add', 'plugin install wheelhouse@wheelhouse-probe-wheelhouse-trial']);
+  assert.deepEqual(lines, ['plugin uninstall wheelhouse@wheelhouse', 'plugin uninstall wheelhouse@wheelhouse-probe-wheelhouse-trial', 'plugin marketplace add', 'plugin install wheelhouse@wheelhouse']);
   assert.ok(io.timeline.every((e) => e.kind !== 'exec' || e.args[0][1] === 'CLAUDE_CONFIG_DIR=/trial-config'));
-  assert.deepEqual(io.timeline.find((e) => e.kind === 'installed').args[0], { configDir: '/trial-config', sha: 'feed01' });
-  assert.ok(readLog(folder).some((e) => e.step === 'install' && /staged commit feed01/.test(e.note)));
+  assert.deepEqual(io.timeline.find((e) => e.kind === 'installed').args[0], { configDir: '/trial-config', pluginDir: '/p' });
+  assert.ok(readLog(folder).some((e) => e.step === 'install' && /staged commit feed01, file for file/.test(e.note)));
 });
 
 test('install stops the run when the installed copy is not the staged one', async (t) => {
   const folder = scratch(t);
   fs.writeFileSync(path.join(folder, 'state.json'), JSON.stringify({ stage: { marketplaceDir: '/m', sha: 'feed01' } }));
-  const io = fakeIo({ installed: 'the installed copy is commit 588bcd8, not the staged feed01' });
+  const io = fakeIo({ installed: '3 of 900 staged files differ in the installed copy, such as scripts/lib/paths.js' });
   const got = await run({ mode: 'smoke', io, from: 'install', until: 'install', folder, date: '2026-11-08', env: ENV });
   assert.equal(got.stoppedAt, 'install');
-  assert.match(got.why, /not the staged copy: the installed copy is commit 588bcd8/);
+  assert.match(got.why, /not the staged copy: 3 of 900 staged files differ/);
 });
 
 test('setup that never finishes stops the run', async (t) => {

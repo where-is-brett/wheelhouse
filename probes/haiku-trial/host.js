@@ -54,6 +54,16 @@ export async function readGateWith({ gh, change }) {
   return visibleFromChange({ paths: files.map((f) => f.filename), diff: typeof diff === 'string' ? diff : undefined });
 }
 
+// A process start time as whole seconds, from `ps`'s lstart in either order: month first ("Mon Nov  9 00:36:26 2026"), as the
+// helper records it, or day first ("Mon  9 Nov 00:36:26 2026"), as `ps` prints it under a day-first locale such as en_AU.
+// Wheelhouse's own startSeconds reads only the first, so restore read no helper as the trial's on such a computer.
+export function startOf(text) {
+  const seconds = startSeconds(text);
+  if (seconds !== null || typeof text !== 'string') return seconds;
+  const dayFirst = /^(\w{3}) +(\d{1,2}) (\w{3}) (.+)$/.exec(text.trim());
+  return dayFirst ? startSeconds(`${dayFirst[1]} ${dayFirst[3]} ${dayFirst[2].padStart(2, ' ')} ${dayFirst[4]}`) : null;
+}
+
 // Wheelhouse keeps a project's records under its NAME (owner__repo); the runner's processes work in its FOLDER. These two
 // guards make a mix-up throw at the host, where the fakes in the runner's tests cannot hide it.
 const NAME_SHAPE = /^[A-Za-z0-9._-]+$/;
@@ -94,7 +104,7 @@ export function buildRealIo(env = process.env) {
     useRepo(value) { slug = value; },
     stage: ({ out }) => stagePlugin({ repo: REPO_ROOT, out }),
     exec: (argv, { cwd } = {}) => run(argv[0], argv.slice(1), { cwd }),
-    installedProblem: async ({ configDir, sha }) => installedProblem({ configDir, sha }),
+    installedProblem: async ({ configDir, pluginDir }) => installedProblem({ configDir, pluginDir }),
     makeProject: async ({ dir }) => makeTestProject({ dir, allowAnywhere: true }),
     git: async (args, options) => git(args, options),
     events: async ({ project }) => listEvents(stateDir(nameOf(project)), { report: () => {} }),
@@ -204,8 +214,8 @@ export function buildRealIo(env = process.env) {
       }
       const record = readHelperRecord();
       if (record && record.pid !== process.pid) {
-        const wanted = startSeconds(record.startTime);
-        const now = wanted === null ? null : startSeconds(await processStartTime(record.pid));
+        const wanted = startOf(record.startTime);
+        const now = wanted === null ? null : startOf(await processStartTime(record.pid));
         if (wanted !== null && now === wanted) {
           try { process.kill(record.pid, 'SIGTERM'); stopped.push(`helper pid ${record.pid}`); } catch { /* already gone */ }
         }

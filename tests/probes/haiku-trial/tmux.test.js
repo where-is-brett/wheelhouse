@@ -16,8 +16,13 @@ test('cleanEnv removes every starter variable', () => {
   assert.equal(from.WHEELHOUSE_ROLE, 'feature', 'the original is left alone');
 });
 
-test('cleanEnv keeps a non-script entrypoint', () => {
-  assert.equal(cleanEnv({ CLAUDE_CODE_ENTRYPOINT: 'cli' }).CLAUDE_CODE_ENTRYPOINT, 'cli');
+test('cleanEnv drops what the Claude Code session the runner runs in sets for its children, and keeps the config folder', () => {
+  const env = cleanEnv({
+    CLAUDE_CODE_SESSION_ID: 'host', CLAUDE_CODE_CHILD_SESSION: '1', CLAUDE_CODE_MESSAGING_SOCKET: '/s', CLAUDE_PID: '9',
+    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '40', CLAUDE_EFFORT: 'medium', CLAUDE_CODE_ENTRYPOINT: 'cli',
+    CLAUDE_CONFIG_DIR: '/trial-config', HOME: '/h',
+  });
+  assert.deepEqual(env, { CLAUDE_CONFIG_DIR: '/trial-config', HOME: '/h' });
 });
 
 test('type sends the text literally then Enter', () => {
