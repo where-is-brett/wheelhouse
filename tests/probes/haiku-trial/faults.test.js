@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { faults, featureEnvOf } from '../../../probes/haiku-trial/faults.js';
+import { faults, featureEnvOf, sessionEnv, STUCK_WHY } from '../../../probes/haiku-trial/faults.js';
 import { STUCK_AFTER } from '../../../scripts/feature/cli.js';
 import { featurePaths } from '../../../scripts/feature/files.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -42,6 +42,11 @@ test('f1b is stuck by the STUCK_AFTER-th try', () => {
   assert.ok(got.stuckAt <= STUCK_AFTER);
   assert.equal(got.tries.at(-1).stuck, true);
   assert.ok(got.tries.length <= STUCK_AFTER);
+  assert.equal(got.why, STUCK_WHY);
+  assert.equal(got.stuckCode, 0, 'the stuck message was sent');
+  const lines = fs.readFileSync(featurePaths(tree).questions, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.equal(lines.at(-1).stuck, true);
+  assert.equal(lines.at(-1).why, STUCK_WHY);
 });
 
 test('f1c is refused and points to ask', () => {
@@ -60,7 +65,13 @@ function worktree(slug, folder = slug) {
   makeFeatureFolder(tree, slug);
   return tree;
 }
-const LINE = (pid, cwd) => ({ pid, ppid: 1, pgid: pid, command: `claude -p --model haiku WHEELHOUSE_ENGINE_RUN=1 WHEELHOUSE_SESSION=s${pid} PWD=${cwd} HOME=/h` });
+// PWD is what the watcher had, not the session's folder; the folder comes from `cwds`, the stand-in for `lsof -d cwd`.
+const cwds = new Map();
+const cwdOf = async (pid) => cwds.get(pid) ?? null;
+const LINE = (pid, cwd) => {
+  cwds.set(pid, cwd);
+  return { pid, ppid: 1, pgid: pid, command: `claude -p --model haiku WHEELHOUSE_ENGINE_RUN=1 WHEELHOUSE_SESSION=s${pid} PWD=/stale/watcher/folder HOME=/h` };
+};
 const p1 = worktree('p1-import');
 const p10 = worktree('p10-other');
 const spaced = worktree('p2-categories', 'with space');
@@ -72,41 +83,50 @@ const table = async () => [LINE(101, p1), LINE(110, p10), LINE(102, spaced), LIN
 
 test('f3 kills only the named piece\'s session', async () => {
   const kills = [];
-  const got = await faults.f3KillFeature({ project, piece: 'p1', listProcesses: table, kill: (pid, sig) => kills.push([pid, sig]) });
+  const got = await faults.f3KillFeature({ project, piece: 'p1', listProcesses: table, cwdOf, kill: (pid, sig) => kills.push([pid, sig]) });
   assert.deepEqual(got, { pid: 101 });
   assert.deepEqual(kills, [[101, 'SIGKILL']]);
 });
 
 test('f3b kills only the foreman', async () => {
   const kills = [];
-  const got = await faults.f3bKillForeman({ project, listProcesses: table, kill: (pid, sig) => kills.push([pid, sig]) });
+  const got = await faults.f3bKillForeman({ project, listProcesses: table, cwdOf, kill: (pid, sig) => kills.push([pid, sig]) });
   assert.deepEqual(got, { pid: 200 });
   assert.deepEqual(kills, [[200, 'SIGKILL']]);
 });
 
 test('a piece that names no session is said, and p1 does not match a p10 slug', async () => {
   const only10 = async () => [LINE(110, p10)];
-  await assert.rejects(faults.f3KillFeature({ project, piece: 'p1', listProcesses: only10, kill: () => assert.fail('killed') }), /p1/);
-  assert.equal((await featureEnvOf({ project, piece: 'p10', listProcesses: only10 })).cwd, p10);
+  await assert.rejects(faults.f3KillFeature({ project, piece: 'p1', listProcesses: only10, cwdOf, kill: () => assert.fail('killed') }), /p1/);
+  assert.equal((await featureEnvOf({ project, piece: 'p10', listProcesses: only10, cwdOf })).cwd, p10);
 });
 
 test('a process outside the project is not found', async () => {
-  await assert.rejects(featureEnvOf({ project, piece: 'p1', listProcesses: async () => [LINE(103, elsewhere)] }), /p1/);
+  await assert.rejects(featureEnvOf({ project, piece: 'p1', listProcesses: async () => [LINE(103, elsewhere)], cwdOf }), /p1/);
 });
 
 test('a folder with a brief that does not match its branch is not a feature session', async () => {
   const odd = worktree('p5-other', 'odd');
   makeFeatureFolder(odd, 'something-else');
-  await assert.rejects(featureEnvOf({ project, piece: 'p5', listProcesses: async () => [LINE(5, odd)] }), /p5/);
+  await assert.rejects(featureEnvOf({ project, piece: 'p5', listProcesses: async () => [LINE(5, odd)], cwdOf }), /p5/);
 });
 
-test('featureEnvOf copies WHEELHOUSE variables and the worktree, including a path with a space', async () => {
-  const got = await featureEnvOf({ project, piece: 'p1', listProcesses: table });
-  assert.deepEqual(got.env, { WHEELHOUSE_ENGINE_RUN: '1', WHEELHOUSE_SESSION: 's101' });
+test('featureEnvOf reads the worktree from the process, not PWD, and keeps PATH and HOME beside the WHEELHOUSE variables', async () => {
+  const got = await featureEnvOf({ project, piece: 'p1', listProcesses: table, cwdOf });
+  assert.equal(got.env.WHEELHOUSE_ENGINE_RUN, '1');
+  assert.equal(got.env.WHEELHOUSE_SESSION, 's101');
+  assert.equal(got.env.HOME, '/h', "the session's own HOME wins");
+  assert.equal(typeof got.env.PATH, 'string');
+  assert.equal(got.env.PWD, '/stale/watcher/folder'.length > 0 ? got.env.PWD : undefined);
+  assert.notEqual(got.cwd, '/stale/watcher/folder');
   assert.equal(got.cwd, p1);
-  const withSpace = await featureEnvOf({ project, piece: 'p2', listProcesses: table });
+  const withSpace = await featureEnvOf({ project, piece: 'p2', listProcesses: table, cwdOf });
   assert.equal(withSpace.cwd, spaced);
   assert.ok(withSpace.cwd.includes(' '));
+});
+
+test('sessionEnv fills PATH and HOME from the base when the session lacks them', () => {
+  assert.deepEqual(sessionEnv({ WHEELHOUSE_SESSION: 's' }, { PATH: '/bin', HOME: '/home/x', SECRET: 'no' }), { PATH: '/bin', HOME: '/home/x', WHEELHOUSE_SESSION: 's' });
 });
 
 test('typed commands go through the front desk', () => {

@@ -19,6 +19,14 @@ async function listWithEnv() {
   return got.status === 0 ? parsePs(got.stdout) : [];
 }
 
+// A process's real working folder. A session Wheelhouse starts gets its folder from the spawn call, which leaves PWD as the
+// watcher had it, so the folder is read from the process itself (`lsof -d cwd` works on macOS and Linux).
+export async function lsofCwd(pid) {
+  const got = spawnSync('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], { encoding: 'utf8' });
+  if (got.status !== 0) return null;
+  return String(got.stdout).split('\n').find((l) => l.startsWith('n'))?.slice(1) ?? null;
+}
+
 // The NAME=value words `ps eww` prints after a command. A value runs up to the next NAME=, so a path with spaces survives.
 const variablesOf = (command) => Object.fromEntries(
   [...String(command).matchAll(/(?:^|\s)([A-Z_][A-Z0-9_]*)=([\s\S]*?)(?=\s[A-Z_][A-Z0-9_]*=|$)/g)].map((m) => [m[1], m[2].trim()]),
@@ -37,25 +45,32 @@ const inside = (folder, dir) => {
 // The piece is the whole slug or one hyphen-delimited segment run of it, so p1 never matches p10.
 const namesPiece = (slug, piece) => slug === piece || slug.startsWith(`${piece}-`) || slug.endsWith(`-${piece}`) || slug.includes(`-${piece}-`);
 
-// A feature session is a `claude -p` whose folder is a worktree Wheelhouse made inside the project's worktrees folder, and
-// whose feature slug names the piece.
-async function findFeature(project, piece, listProcesses) {
+// A feature session is a `claude -p` whose working folder (read from the process, not from PWD) is a worktree Wheelhouse made
+// inside the project's worktrees folder, and whose feature slug names the piece.
+async function findFeature(project, piece, { listProcesses, cwdOf }) {
   const base = path.join(project, WORKTREE_PATH);
-  const found = (await printSessions(listProcesses)).find((s) => {
-    const cwd = s.vars.PWD;
-    if (typeof cwd !== 'string' || !inside(base, cwd)) return false;
+  for (const session of await printSessions(listProcesses)) {
+    const cwd = await cwdOf(session.pid);
+    if (typeof cwd !== 'string' || !inside(base, cwd)) continue;
     const slug = madeFeatureSlug(cwd);
-    return slug !== null && namesPiece(slug, piece);
-  });
-  if (found === undefined) throw new Error(`No running feature session in ${project} names "${piece}"`);
-  return found;
+    if (slug !== null && namesPiece(slug, piece)) return { ...session, cwd };
+  }
+  throw new Error(`No running feature session in ${project} names "${piece}"`);
 }
 
-// A feature session's WHEELHOUSE_* variables and its worktree, read from its process.
-export async function featureEnvOf({ project, piece, listProcesses = listWithEnv }) {
-  const { vars } = await findFeature(project, piece, listProcesses);
-  const env = Object.fromEntries(Object.entries(vars).filter(([name]) => name.startsWith('WHEELHOUSE_')));
-  return { env, cwd: vars.PWD };
+// The variables a stand-in command needs: PATH and HOME (git needs both) and the rest of what the session has, whose
+// WHEELHOUSE_* names are what make the feature command act as that session.
+export function sessionEnv(vars, base = process.env) {
+  const own = Object.fromEntries(Object.entries(vars).filter(([name, value]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && typeof value === 'string' && value !== ''));
+  const kept = {};
+  for (const name of ['PATH', 'HOME', 'USER', 'LANG', 'TMPDIR']) if (typeof base[name] === 'string') kept[name] = base[name];
+  return { ...kept, ...own };
+}
+
+// A feature session's environment and its worktree, read from its process.
+export async function featureEnvOf({ project, piece, listProcesses = listWithEnv, cwdOf = lsofCwd }) {
+  const { vars, cwd } = await findFeature(project, piece, { listProcesses, cwdOf });
+  return { env: sessionEnv(vars), cwd };
 }
 
 const feature = (plugin, args, { env, cwd, run }) => run(process.execPath, [CLI(plugin), ...args], { env, cwd, encoding: 'utf8' });
@@ -71,14 +86,20 @@ function f1WrongShape({ env, cwd, run = spawnSync, plugin = PLUGIN }) {
   return { code: got.status, sentBack: got.status === 2, stdout: said(got) };
 }
 
-// The same wrong shape again until the session is told to stop and say it is stuck, never more than STUCK_AFTER tries.
+export const STUCK_WHY = 'Trial check: the question keeps coming back in the wrong shape';
+
+// The same wrong shape again until the session is told to stop and say it is stuck (never more than STUCK_AFTER tries), then
+// the plain message the command asks for, which also starts the count of failed tries again.
 function f1bStuck({ env, cwd, run = spawnSync, plugin = PLUGIN }) {
   const tries = [];
   for (let i = 0; i < STUCK_AFTER; i += 1) {
     const got = feature(plugin, WRONG_SHAPE, { env, cwd, run });
     const stuck = /stuck --why/.test(said(got));
     tries.push({ code: got.status, stuck });
-    if (stuck) return { tries, stuckAt: tries.length };
+    if (stuck) {
+      const told = feature(plugin, ['stuck', '--why', STUCK_WHY], { env, cwd, run });
+      return { tries, stuckAt: tries.length, why: STUCK_WHY, stuckCode: told.status };
+    }
   }
   return { tries, stuckAt: null };
 }
@@ -88,8 +109,8 @@ function f1cDirectorKind({ env, cwd, run = spawnSync, plugin = PLUGIN }) {
   return { code: got.status, text: said(got) };
 }
 
-async function f3KillFeature({ project, piece, listProcesses = listWithEnv, kill = process.kill }) {
-  const { pid } = await findFeature(project, piece, listProcesses);
+async function f3KillFeature({ project, piece, listProcesses = listWithEnv, cwdOf = lsofCwd, kill = process.kill }) {
+  const { pid } = await findFeature(project, piece, { listProcesses, cwdOf });
   kill(pid, 'SIGKILL');
   return { pid };
 }
