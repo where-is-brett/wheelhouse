@@ -181,8 +181,10 @@ function toolStep(block, cwd) {
       return 'Looking something up';
     case '':
       return null;
+    case 'Agent':
+    case 'Task':
+      return subagentLine({ agentType: input.subagent_type, description: input.description });
     default:
-      // Agent and Task get their own wording in a later task.
       return `Using ${name}`;
   }
 }
@@ -196,22 +198,40 @@ function sentence(raw) {
   return (m ? m[0] : s).trim().slice(0, 120).trim();
 }
 
-// One transcript event in plain words, or null for anything not known.
-export function stepOf(event) {
+// One transcript event in plain words, with whether it did something ('did') or said something
+// ('said'), or null for anything not known.
+function stepAndKind(event) {
   if (!event || typeof event !== 'object' || event.type !== 'assistant') return null;
   const content = event.message?.content;
   const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : [];
   for (const block of blocks) {
     if (!block || typeof block !== 'object') continue;
     let line = null;
+    let kind = 'did';
     if (block.type === 'tool_use') line = toolStep(block, event.cwd);
-    else if (block.type === 'text' && typeof block.text === 'string') line = sentence(block.text);
+    else if (block.type === 'text' && typeof block.text === 'string') {
+      line = sentence(block.text);
+      kind = 'said';
+    }
     if (line) {
       const at = typeof event.timestamp === 'string' || typeof event.timestamp === 'number' ? event.timestamp : null;
-      return { at, text: mask(plain(line)) };
+      return { at, text: mask(plain(line)), kind };
     }
   }
   return null;
+}
+
+// One transcript event in plain words, or null for anything not known.
+export function stepOf(event) {
+  const step = stepAndKind(event);
+  return step ? { at: step.at, text: step.text } : null;
+}
+
+// A step through the glossary, as one line.
+function worded(step, words) {
+  // A step is one line: the glossary's trailing "Terms:" note is left off.
+  const said = step.text === HIDDEN ? step.text : plainWords(step.text, words).text.split('\n\nTerms:')[0];
+  return { at: step.at, text: mask(plain(said)) };
 }
 
 // The steps of a run, oldest first, each through the glossary. A waiting decision is named by its
@@ -222,12 +242,135 @@ export function stepsOf(events, { glossary, waiting = null } = {}) {
   for (const event of Array.isArray(events) ? events : []) {
     const step = stepOf(event);
     if (!step) continue;
-    // A step is one line: the glossary's trailing "Terms:" note is left off.
-    const said = step.text === HIDDEN ? step.text : plainWords(step.text, words).text.split('\n\nTerms:')[0];
-    out.push({ at: step.at, text: mask(plain(said)) });
+    out.push(worded(step, words));
   }
   if (waiting !== null && waiting !== undefined) {
     out.push({ at: out.length ? out[out.length - 1].at : null, text: `Waiting for your answer to decision ${waiting}` });
+  }
+  return out;
+}
+
+// Who is doing it: subagents and the Bosun.
+
+const ROLES = {
+  builder: { name: 'A Crew member', verb: 'building' },
+  reviewer: { name: 'A Lookout', verb: 'reviewing' },
+  tester: { name: 'The tester', verb: 'trying' },
+};
+const CREW_MEMBER = ROLES.builder;
+
+function roleFor(agentType) {
+  const kind = typeof agentType === 'string' ? agentType.split(':').pop() : '';
+  return Object.hasOwn(ROLES, kind) ? ROLES[kind] : CREW_MEMBER;
+}
+
+export function roleOf(agentType) {
+  return roleFor(agentType).name;
+}
+
+export function subagentLine({ agentType, description } = {}) {
+  const role = roleFor(agentType);
+  const what = plain(description).trim().slice(0, 80).trim();
+  return mask(plain(`${role.name} is ${role.verb}${what ? ` ${what}` : ''}`));
+}
+
+function lowerFirst(text) {
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+// A step line in a third person: "<who> is reading `x`", or "<who> is thinking: <line>" for
+// anything that is not a phrase for what was done.
+function inThirdPerson(who, step) {
+  if (step.text === HIDDEN || step.kind === 'said') return `${who} is thinking: ${step.text}`;
+  return `${who} is ${lowerFirst(step.text)}`;
+}
+
+// The piece named by a `record decision` command: a `--work <name>` argument, or the `work` field
+// of the JSON the command carries. The question is never read.
+function decisionWork(event) {
+  const content = event?.message?.content;
+  for (const block of Array.isArray(content) ? content : []) {
+    if (block?.type !== 'tool_use' || block.name !== 'Bash') continue;
+    const command = typeof block.input?.command === 'string' ? block.input.command : '';
+    if (!RECORD_DECISION.test(command)) continue;
+    const m = /--work[=\s]+["']?([A-Za-z0-9][A-Za-z0-9._:/-]{0,59})/.exec(command)
+      || /["']work["']\s*:\s*["']([A-Za-z0-9][A-Za-z0-9._:/-]{0,59})["']/.exec(command);
+    return { work: m ? m[1] : null };
+  }
+  return null;
+}
+
+function agentCalls(events) {
+  const calls = new Map();
+  for (const event of events) {
+    const content = event?.message?.content;
+    for (const block of Array.isArray(content) ? content : []) {
+      if (block?.type === 'tool_use' && (block.name === 'Agent' || block.name === 'Task') && typeof block.id === 'string') {
+        const input = block.input && typeof block.input === 'object' ? block.input : {};
+        calls.set(block.id, { agentType: input.subagent_type, description: input.description });
+      }
+    }
+  }
+  return calls;
+}
+
+// The call whose result names this agent id, or null.
+function callFor(agentId, events, calls) {
+  for (const event of events) {
+    const content = event?.message?.content;
+    for (const block of Array.isArray(content) ? content : []) {
+      if (block?.type !== 'tool_result' || !calls.has(block.tool_use_id)) continue;
+      let text = '';
+      try {
+        text = JSON.stringify(block.content) ?? '';
+      } catch {
+        text = '';
+      }
+      if (event.toolUseResult?.agentId === agentId || text.includes(agentId)) return calls.get(block.tool_use_id);
+    }
+  }
+  return null;
+}
+
+export function runSteps({ sessionId, env = process.env, glossary, waiting = null, foreman = false } = {}) {
+  const file = findTranscript({ sessionId, env });
+  if (!file) return { steps: [], crew: [] };
+  const words = glossary ?? glossaryOf({});
+  const events = readTail(file);
+  const steps = [];
+  for (const event of events) {
+    const raw = stepAndKind(event);
+    if (!raw) continue;
+    const step = { ...worded(raw, words), kind: raw.kind };
+    const decision = foreman ? decisionWork(event) : null;
+    if (decision) {
+      const line = decision.work ? `The Bosun is deciding what to do about ${decision.work}` : 'The Bosun is deciding what to do';
+      steps.push({ at: step.at, text: mask(plain(line)) });
+    } else {
+      steps.push({ at: step.at, text: foreman ? mask(plain(inThirdPerson('The Bosun', step))) : step.text });
+    }
+  }
+  if (waiting !== null && waiting !== undefined) {
+    const text = `Waiting for your answer to decision ${waiting}`;
+    steps.push({ at: steps.length ? steps[steps.length - 1].at : null, text: foreman ? `The Bosun is ${lowerFirst(text)}` : text });
+  }
+  const calls = agentCalls(events);
+  const crew = [];
+  for (const sub of findSubagents(file)) {
+    const call = callFor(sub.agentId, events, calls);
+    const who = roleOf(call?.agentType);
+    const latest = stepsOfKind(readTail(sub.file), words).pop();
+    if (latest) crew.push(mask(plain(inThirdPerson(who, latest))));
+    else crew.push(call ? subagentLine(call) : subagentLine({}));
+  }
+  return { steps, crew };
+}
+
+function stepsOfKind(events, words) {
+  const out = [];
+  for (const event of events) {
+    const raw = stepAndKind(event);
+    if (raw) out.push({ ...worded(raw, words), kind: raw.kind });
   }
   return out;
 }

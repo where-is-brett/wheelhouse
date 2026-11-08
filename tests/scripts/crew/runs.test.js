@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   configDir, findTranscript, findSubagents, readTail, stepOf, stepsOf, mask, plain,
+  roleOf, subagentLine, runSteps,
 } from '../../../scripts/crew/runs.js';
 import { glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 
@@ -301,4 +302,88 @@ test('masks a key that would straddle the 120 character cut', () => {
 test('shows an in-tree file whose name starts with two dots', () => {
   assert.equal(stepOf(tool('Read', { file_path: '/w/tree/..foo' })).text, 'Reading `..foo`');
   assert.equal(stepOf(tool('Read', { file_path: '/w/other/a.js' })).text, 'Reading `/w/other/a.js`');
+});
+
+// Subagents and the Bosun
+
+const writeRun = (dir, id, events) => {
+  const proj = path.join(dir, 'projects', 'a');
+  fs.mkdirSync(proj, { recursive: true });
+  fs.writeFileSync(path.join(proj, `${id}.jsonl`), events.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  return proj;
+};
+const agentCall = (id, subagent_type, description) => asst({ type: 'tool_use', id, name: 'Agent', input: { subagent_type, description } });
+const agentResult = (toolUseId, agentId) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content: `done\nagentId: ${agentId}` }] } });
+
+test('names roles', () => {
+  assert.equal(roleOf('builder'), 'A Crew member');
+  assert.equal(roleOf('wheelhouse:reviewer'), 'A Lookout');
+  assert.equal(roleOf('tester'), 'The tester');
+  assert.equal(roleOf('whatever'), 'A Crew member');
+  assert.equal(roleOf(undefined), 'A Crew member');
+});
+
+test('names a reviewer subagent a Lookout', () => {
+  assert.equal(subagentLine({ agentType: 'wheelhouse:reviewer', description: 'task 2' }), 'A Lookout is reviewing task 2');
+  assert.equal(stepOf(agentCall('t1', 'wheelhouse:reviewer', 'task 2')).text, 'A Lookout is reviewing task 2');
+  assert.equal(subagentLine({ agentType: 'builder', description: 'task 3' }), 'A Crew member is building task 3');
+  assert.equal(subagentLine({ agentType: 'tester', description: 'the login' }), 'The tester is trying the login');
+});
+
+test('cuts a description to 80 characters and strips escape codes', () => {
+  const line = subagentLine({ agentType: 'builder', description: 'x'.repeat(200) });
+  assert.equal(line, `A Crew member is building ${'x'.repeat(80)}`);
+  assert.equal(subagentLine({ agentType: 'builder', description: '\u001b[31mred' }), 'A Crew member is building red');
+});
+
+test('falls back to a Crew member', () => {
+  assert.ok(stepOf(agentCall('t1', 'mystery', 'task 9')).text.startsWith('A Crew member'));
+});
+
+test('reads subagent transcripts beside the run', () => {
+  const { dir, env } = fakeConfig();
+  const proj = writeRun(dir, 's1', [agentCall('t1', 'wheelhouse:reviewer', 'task 2'), agentResult('t1', 'abc123')]);
+  fs.mkdirSync(path.join(proj, 's1', 'subagents'), { recursive: true });
+  fs.writeFileSync(path.join(proj, 's1', 'subagents', 'agent-abc123.jsonl'), JSON.stringify(tool('Read', { file_path: '/w/tree/a.js' })) + '\n');
+  const { steps, crew } = runSteps({ sessionId: 's1', env });
+  assert.deepEqual(crew, ['A Lookout is reading `a.js`']);
+  assert.equal(steps[0].text, 'A Lookout is independently checking task 2'); // through the glossary
+});
+
+test('an unmatched subagent is a Crew member', () => {
+  const { dir, env } = fakeConfig();
+  const proj = writeRun(dir, 's1', [text('Hello.')]);
+  fs.mkdirSync(path.join(proj, 's1', 'subagents'), { recursive: true });
+  fs.writeFileSync(path.join(proj, 's1', 'subagents', 'agent-zzz.jsonl'), JSON.stringify(text('Looking around. More.')) + '\n');
+  assert.deepEqual(runSteps({ sessionId: 's1', env }).crew, ['A Crew member is thinking: Looking around.']);
+});
+
+test('speaks of the Bosun in the third person', () => {
+  const { dir, env } = fakeConfig();
+  writeRun(dir, 's1', [
+    tool('Read', { file_path: '/w/tree/a.js' }),
+    tool('Bash', { command: 'npm test' }),
+    text('All good. Moving on.'),
+    tool('Bash', { command: 'node scripts/frontdesk/cli.js record decision <<< \'{"work":"login-page","question":"Secret?"}\'' }),
+    tool('Bash', { command: 'node scripts/frontdesk/cli.js record decision --question "Secret?"' }),
+    text('my key is sk-abcdefghijklmnopqrstuvwxyz'),
+  ]);
+  const { steps } = runSteps({ sessionId: 's1', env, foreman: true, waiting: 2 });
+  assert.ok(steps.every((s) => s.text.startsWith('The Bosun is')), JSON.stringify(steps));
+  assert.deepEqual(steps.map((s) => s.text), [
+    'The Bosun is reading `a.js`',
+    'The Bosun is running the tests',
+    'The Bosun is thinking: All good.',
+    'The Bosun is deciding what to do about login-page',
+    'The Bosun is deciding what to do',
+    'The Bosun is thinking: [hidden: looked like a key]',
+    'The Bosun is waiting for your answer to decision 2',
+  ]);
+  assert.ok(!JSON.stringify(steps).includes('Secret'));
+});
+
+test('gives empty lists for a missing run', () => {
+  const { env } = fakeConfig();
+  assert.deepEqual(runSteps({ sessionId: 'nope', env }), { steps: [], crew: [] });
+  assert.deepEqual(runSteps({ env }), { steps: [], crew: [] });
 });
