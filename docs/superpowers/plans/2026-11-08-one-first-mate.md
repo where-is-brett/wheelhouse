@@ -483,3 +483,101 @@ Expected: PASS.
 git add scripts/hooks/front-desk-writes.js scripts/hooks/board-context.js scripts/hooks/card-check.js scripts/hooks/stop-guard.js scripts/lib/first-mate-seat.js tests/scripts/hooks/front-desk-writes.test.js tests/scripts/hooks/board-context.test.js tests/scripts/hooks/card-check-shown.test.js tests/scripts/hooks/stop.test.js tests/scripts/lib/first-mate-seat.test.js
 git commit -m "The write guard, the board and the card check follow the seat; the seat is let go at the session's end"
 ```
+
+### Task 8: The overlap warning for worktree asides (Part E)
+
+Spec: 6.6 (copy the example warning verbatim as the wording's model), 6.8 cases 14–19, 7 (`aside-overlap.test.js`, `dispatcher.test.js`).
+
+**Files:**
+- Modify: `scripts/engine/dispatcher.js` (lift the `running` list at ~70–88 into `crewRunning`; `dispatch` calls it)
+- Modify: `scripts/state/events.js` (`PLAIN_KINDS` and `PLAIN_SHAPES` gain `aside-overlap`)
+- Modify: `scripts/board/model.js` (the overlap line)
+- Create: `scripts/hooks/aside-overlap.js`
+- Modify: `hooks/hooks.json` (a third command in the Stop entry, after `feature-status.js`, same `node-floor.cjs` form, timeout 10)
+- Test: `tests/scripts/engine/dispatcher.test.js`, `tests/scripts/state/events.test.js`, `tests/scripts/board/model.test.js`, `tests/scripts/hooks/aside-overlap.test.js` (new)
+
+**Interfaces:**
+- Consumes: `sessionRole`, `asideKind` (Task 3); `clashCheck({files, running, hotFiles})` from `scripts/foreman/queue.js`; `deskClient`, `unreached` from `scripts/desk/client.js`; `projectOf`, `runAndExit` from `scripts/hooks/kit.js`.
+- Produces:
+  - `crewRunning({work, runs, reports, features, waiting, reserved, returning, admitted, stoppedFeatures, settings}): Array<{work: string, files: string[]}>` exported from `dispatcher.js`, with the same defaults as `dispatch`. `dispatch` uses it, so its holds don't change. It also returns the `live` list `dispatch` needs further down, or `dispatch` keeps computing `live` itself; the builder's call, as long as there is one copy of each rule.
+  - The `aside-overlap` plain kind: `{ must: ['branch', 'pieces', 'files', 'at'], may: [] }`. `pieces` and `files` are arrays of strings.
+  - `asideFiles({cwd, base, run}): string[] | null`: `git merge-base HEAD <base>`, `git diff --name-only <mergeBase>`, and `git status --porcelain` (the path after the status columns; for a rename, the new path), deduplicated and capped at `FILES_CAP = 500`. `run` is an injectable `execFileSync`-like function. Null when any git call fails.
+  - `mainBranchOf({cwd, views, run}): string | null`: the project's recorded base branch from the settings view, then `origin/HEAD` resolved with `git symbolic-ref`, then null.
+  - `overlapWords(clashes): string`: one sentence per piece, the spec 6.6 example's shape: "Heads up: this branch changes `<files>`, which the crew piece <piece> is also changing. Merging both will conflict. You could wait for <piece> to merge and then bring this branch up to date, or ask the First Mate to hold it." Two or more files are joined with commas and "and".
+  - `warnedFile(cwd): string` → `<worktree>/.wheelhouse/aside-overlap.json` holding `[{work, file}]`.
+  - `decide(input, {env, cwd, desk, run, now, role, kind}): Promise<{systemMessage, decision: 'block', reason} | undefined>`. Undefined unless `role(...) === 'aside'` and `kind({cwd}) === 'worktree'`; undefined when the input's `stop_hook_active` is true; undefined when the desk is unreached or git fails. On a new (piece, file) pair: writes the record through the desk (`kind: 'aside-overlap'`, `branch` from `git rev-parse --abbrev-ref HEAD`, the new pairs' pieces and files, `at`), adds the pairs to the warned file, and returns the `systemMessage` and the block, both with `overlapWords` of the new pairs only. The warned file keeps only pairs whose piece is still in `running`, so a piece that ends and comes back warns again.
+  - `crewRunning`'s inputs in the hook: `work`, `runs`, `reports`, `features` and `settings` from the desk's views read; `waiting` from the waiting view's cards; `reserved`, `returning` and `admitted` empty, since those live in the dispatcher's own process. A recorded piece's planned files (`e.files`) still count. Engineering call: listed in the PR.
+  - The board line in `boardModel`: for each `aside-overlap` record of the last 7 days whose pieces haven't ended, "A side branch (<branch>) overlaps <pieces>". Placement next to the held-back lines; the builder matches how `heldBackLine` lines are carried.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `tests/scripts/engine/dispatcher.test.js`:
+- `crewRunning gives the dispatcher the same holds`: a live piece with files and a waiting piece clashing with it → `dispatch` holds the waiting piece as before; `crewRunning` of the same inputs → both pieces with their files.
+
+In `tests/scripts/state/events.test.js`:
+- `aside-overlap needs branch, pieces, files and at`: a full record → accepted; one missing `pieces` → refused.
+
+In `tests/scripts/board/model.test.js`:
+- `the board shows a side branch that overlaps a piece`: an `aside-overlap` record naming a live piece → the line naming the branch and the piece; the piece ended → no line.
+
+In `tests/scripts/hooks/aside-overlap.test.js` (a temp git repo with `main` and a linked worktree on `side`; a desk stub returning views and recording writes; `role` and `kind` passed in):
+- `a committed shared file warns once and writes the record` (case 14): `side` commits `src/login.ts`; a piece plans `src/login.ts` → `systemMessage` and `reason` both contain "src/login.ts" and the piece's id, `decision === 'block'`; one `aside-overlap` write with `pieces: [id]`, `files: ['src/login.ts']`.
+- `the next turn with nothing new says nothing` (case 14): a second `decide` → `undefined`, no write.
+- `an uncommitted file warns` (case 15).
+- `an untracked file warns` (case 15).
+- `a hotFiles match warns` (case 16): `hotFiles: ['migrations/*']`, the aside adds `migrations/002.sql`, the piece plans `migrations/003.sql` → warned.
+- `no clash says nothing`.
+- `an ended piece drops out` (case 17): the piece's report says merged → `undefined`.
+- `a new piece warns at the next Stop` (case 18): after a warning, a second piece planning the same file → warned for that piece only.
+- `a desk that can't be read says nothing` (case 19): desk returns unreached → `undefined`, no throw.
+- `git failing says nothing` (case 19): `run` throws → `undefined`.
+- `stop_hook_active says nothing`: the block is never asked for twice in one turn.
+- `it does nothing outside a worktree aside`: role `'front-desk'`, role `'aside'` with kind `'main'`, role `'feature'` (also a helm session), role `'why'` → each `undefined`.
+- `the base branch falls back to origin/HEAD`: no recorded base branch → `mainBranchOf` gives `origin/HEAD`'s target.
+
+- [ ] **Step 2: Run them and see them fail**
+
+Run: `node --test tests/scripts/engine/dispatcher.test.js tests/scripts/state/events.test.js tests/scripts/board/model.test.js tests/scripts/hooks/aside-overlap.test.js`
+Expected: the new tests FAIL (`aside-overlap.test.js` with "Cannot find module").
+
+- [ ] **Step 3: Implement `crewRunning`, the record kind, the board line, `scripts/hooks/aside-overlap.js` (its `main` reads stdin with `runAndExit`, as `card-check.js` does) and the hooks.json entry**
+
+- [ ] **Step 4: Run them and see them pass**
+
+Run: the Step 2 command, plus `node --test tests/hooks-json.test.js` if that file exists (it checks every hooks.json script is present).
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/engine/dispatcher.js scripts/state/events.js scripts/board/model.js scripts/hooks/aside-overlap.js hooks/hooks.json tests/scripts/engine/dispatcher.test.js tests/scripts/state/events.test.js tests/scripts/board/model.test.js tests/scripts/hooks/aside-overlap.test.js
+git commit -m "A worktree aside is warned once when its branch overlaps a crew piece"
+```
+
+### Task 9: Two windows, end to end (Part F)
+
+Spec: 7 (the two `tests/e2e/front-desk.test.js` entries).
+
+**Files:**
+- Test: `tests/e2e/front-desk.test.js`
+
+**Interfaces:**
+- Consumes: everything above, through the real hooks and `cli.js`, as the file's existing cases drive them.
+
+- [ ] **Step 1: Write the tests**
+
+In `tests/e2e/front-desk.test.js`, with the file's existing temp home, project and helper:
+- `two windows: only the seat holder records`: session `a` starts (SessionStart) and takes the seat; `a` runs `cli.js record work` → exit 0; session `b` starts → its context has the aside line and the take-over card; `b` runs `cli.js record work` → non-zero, `SEAT_REFUSAL` on stderr; `b` clicks "Take over here" (`seatTakeOverLine`) → the seat names `b`; `b`'s `record work` → exit 0; `a`'s next `record work` → refused, and `a`'s next prompt gets `SEAT_MOVED_LINE`.
+- `a worktree aside overlapping a recorded piece is warned once`: a recorded piece planning `src/a.js`; a linked worktree whose branch commits `src/a.js`; Stop in that session → a `systemMessage` naming the piece and `src/a.js`; a second Stop → nothing; the board view shows the overlap line.
+
+- [ ] **Step 2: Run them**
+
+Run: `node --test tests/e2e/front-desk.test.js`
+Expected: PASS. A failure here is a bug in Tasks 1–8: fix it in the part it belongs to, on this branch, and say so in the PR.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add tests/e2e/front-desk.test.js
+git commit -m "Two windows in one project, end to end"
+```
