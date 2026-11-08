@@ -10,7 +10,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { main, readInput, RECORD_KINDS, MEANWHILE, CHECKS_UNSAID, RECENT_MS, RECENT_LEAD } from '../../../scripts/frontdesk/cli.js';
+import { main, readInput, SEAT_WRITES, SEAT_REFUSAL, seatRefusal, RECORD_KINDS, MEANWHILE, CHECKS_UNSAID, RECENT_MS, RECENT_LEAD } from '../../../scripts/frontdesk/cli.js';
 import { cardsDue } from '../../../scripts/hooks/board-context.js';
 import { numberedWaiting } from '../../../scripts/board/model.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
@@ -42,6 +42,7 @@ import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { SUGGEST, WHY, suggestedAt } from '../../../scripts/lib/calm-words.js';
 import { answeredWords, subjectOf } from '../../../scripts/cards/answered.js';
+import { takeSeat } from '../../../scripts/lib/first-mate-seat.js';
 import { takeHere } from '../../../scripts/lib/session-files.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
@@ -2386,5 +2387,75 @@ test('cli: record watch writes the event', async () => {
     assert.deepEqual(helper.writes().at(-1), { cwd: CWD, kind: 'watch', data: { work: 'login', level: 'transcript' } });
     assert.deepEqual(helper.held.map((e) => e.kind), ['watch']);
     assert.equal(out.json.id, helper.held.at(-1).id);
+  });
+});
+
+// --- writes only from the First Mate's seat ---
+
+// A project in a temporary folder, with the seat held by session 'b'.
+async function seatHeldByB(fn) {
+  await inHome(async () => {
+    const folder = agentProject('claude-code');
+    const table = [{ pid: 10, ppid: 1, command: 'claude' }, { pid: 20, ppid: 10, command: 'node hook.js' }];
+    const taken = await takeSeat('o__p', { session: 'b', folder }, { alive: () => true, startTime: async () => 'T1', ancestor: { pid: 20, table }, now: () => NOW });
+    assert.equal(taken.held, true);
+    await fn(folder);
+  });
+}
+
+test('every seat write is refused for a session that doesn\'t hold the seat', async () => {
+  await seatHeldByB(async (folder) => {
+    for (const command of SEAT_WRITES) {
+      const helper = fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] });
+      const got = await run(helper, [command], '{}', { cwd: folder, env: { CLAUDE_CODE_SESSION_ID: 'a' } });
+      assert.equal(got.code, 1, command);
+      assert.equal(got.err, `${SEAT_REFUSAL}\n`, command);
+      assert.deepEqual(helper.calls, [], `${command} never reached the helper`);
+    }
+  });
+});
+
+test('the holder\'s writes go through', async () => {
+  await seatHeldByB(async (folder) => {
+    const env = { CLAUDE_CODE_SESSION_ID: 'b' };
+    const helper = fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] });
+    const listed = await run(helper, ['cards'], undefined, { cwd: folder, env });
+    assert.equal(listed.code, 0, listed.err);
+    const recorded = await run(helper, ['record', 'ruling'], JSON.stringify({}), { cwd: folder, env });
+    assert.ok(!recorded.err.includes(SEAT_REFUSAL), recorded.err);
+    assert.ok(helper.calls.length > 1, 'the record reached the client');
+  });
+});
+
+test('reads work for any session', async () => {
+  await seatHeldByB(async (folder) => {
+    const env = { CLAUDE_CODE_SESSION_ID: 'a' };
+    for (const argv of [['views', 'waiting'], ['decision', 'list'], ['explain', 'work'], ['similar', 'a name'], ['why', '1']]) {
+      const got = await run(fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] }), argv, '', { cwd: folder, env });
+      assert.ok(!got.err.includes(SEAT_REFUSAL), argv.join(' '));
+    }
+  });
+});
+
+test('no session id keeps today\'s behaviour', async () => {
+  await seatHeldByB(async (folder) => {
+    const helper = fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] });
+    const got = await run(helper, ['cards'], undefined, { cwd: folder, env: {} });
+    assert.equal(got.code, 0, got.err);
+    const none = await run(helper, ['record', 'ruling'], '{}', { cwd: folder, env: { CLAUDE_CODE_SESSION_ID: '' } });
+    assert.ok(!none.err.includes(SEAT_REFUSAL));
+  });
+});
+
+test('outside a project nothing is refused', async () => {
+  await inHome(async () => {
+    for (const command of SEAT_WRITES) assert.equal(seatRefusal({ command, env: { CLAUDE_CODE_SESSION_ID: 'a' }, cwd: CWD }), null, command);
+  });
+});
+
+test('seatRefusal leaves commands outside the list alone', async () => {
+  await seatHeldByB(async (folder) => {
+    for (const command of ['views', 'note', 'alerts', 'premium-check']) assert.equal(seatRefusal({ command, env: { CLAUDE_CODE_SESSION_ID: 'a' }, cwd: folder }), null, command);
+    assert.equal(seatRefusal({ command: 'cards', env: { CLAUDE_CODE_SESSION_ID: 'a' }, cwd: folder }), SEAT_REFUSAL);
   });
 });
