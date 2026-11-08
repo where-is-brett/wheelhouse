@@ -1,0 +1,134 @@
+// probes/haiku-trial/faults.js
+// The trial's faults: a wrong-shaped decision, a director's kind in the log, killed sessions, All stop, undo and lift, and
+// the decisions the runner raises itself. Each takes its process list, runner and kill as arguments, so tests start nothing.
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { STUCK_AFTER } from '../../scripts/feature/cli.js';
+import { featurePaths, readQuestions } from '../../scripts/feature/files.js';
+import { parsePs } from '../../scripts/engine/stop.js';
+
+const PLUGIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const CLI = (plugin) => path.join(plugin, 'scripts', 'feature', 'cli.js');
+
+// `ps eww` shows each process's environment after its command; the engine's own listing leaves it out.
+async function listWithEnv() {
+  const got = spawnSync('ps', ['eww', '-A', '-o', 'pid=,ppid=,pgid=,command='], { encoding: 'utf8' });
+  return got.status === 0 ? parsePs(got.stdout) : [];
+}
+
+const variablesOf = (command) => Object.fromEntries(
+  [...String(command).matchAll(/(?:^|\s)([A-Z][A-Z0-9_]*)=(\S*)/g)].map((m) => [m[1], m[2]]),
+);
+const isClaudePrint = (command) => /(^|[\s/])claude\s/.test(command) && /\s-p(\s|$)/.test(command);
+
+// The `claude -p` processes, each as { pid, vars }.
+async function printSessions(listProcesses) {
+  return (await listProcesses()).filter((p) => isClaudePrint(p.command)).map((p) => ({ pid: p.pid, vars: variablesOf(p.command) }));
+}
+
+async function findFeature(piece, listProcesses) {
+  const found = (await printSessions(listProcesses)).find((s) => s.vars.WHEELHOUSE_ROLE !== 'foreman' && s.vars.WHEELHOUSE_SESSION?.includes(piece));
+  if (found === undefined) throw new Error(`No running feature session names "${piece}"`);
+  return found;
+}
+
+// A feature session's WHEELHOUSE_* variables and its worktree, read from its process. `project` is accepted and not used: a session is found by its piece.
+export async function featureEnvOf({ piece, listProcesses = listWithEnv }) {
+  const { vars } = await findFeature(piece, listProcesses);
+  const env = Object.fromEntries(Object.entries(vars).filter(([name]) => name.startsWith('WHEELHOUSE_')));
+  return { env, cwd: vars.PWD };
+}
+
+const feature = (plugin, args, { env, cwd, run }) => run(process.execPath, [CLI(plugin), ...args], { env, cwd, encoding: 'utf8' });
+const said = (got) => `${got.stdout ?? ''}${got.stderr ?? ''}`;
+
+const WRONG_SHAPE = [
+  'ask', '--what', 'Trial check: is this question the right shape?', '--why', 'The trial is checking that a wrong shape is sent back',
+  '--option', 'A=Yes', '--recommend', 'A', '--level', '2',
+];
+
+function f1WrongShape({ env, cwd, run = spawnSync, plugin = PLUGIN }) {
+  const got = feature(plugin, WRONG_SHAPE, { env, cwd, run });
+  return { code: got.status, sentBack: got.status === 2, stdout: said(got) };
+}
+
+// The same wrong shape again until the session is told to stop and say it is stuck, never more than STUCK_AFTER tries.
+function f1bStuck({ env, cwd, run = spawnSync, plugin = PLUGIN }) {
+  const tries = [];
+  for (let i = 0; i < STUCK_AFTER; i += 1) {
+    const got = feature(plugin, WRONG_SHAPE, { env, cwd, run });
+    const stuck = /stuck --why/.test(said(got));
+    tries.push({ code: got.status, stuck });
+    if (stuck) return { tries, stuckAt: tries.length };
+  }
+  return { tries, stuckAt: null };
+}
+
+function f1cDirectorKind({ env, cwd, run = spawnSync, plugin = PLUGIN }) {
+  const got = feature(plugin, ['log', '--kind', 'behaviour', '--decided', 'Trial check', '--option', 'A', '--option', 'B', '--why', 'The trial is checking the refusal'], { env, cwd, run });
+  return { code: got.status, text: said(got) };
+}
+
+async function f3KillFeature({ piece, listProcesses = listWithEnv, kill = process.kill }) {
+  const { pid } = await findFeature(piece, listProcesses);
+  kill(pid, 'SIGKILL');
+  return { pid };
+}
+
+async function f3bKillForeman({ listProcesses = listWithEnv, kill = process.kill }) {
+  const found = (await printSessions(listProcesses)).find((s) => s.vars.WHEELHOUSE_ROLE === 'foreman');
+  if (found === undefined) throw new Error('No running foreman session');
+  kill(found.pid, 'SIGKILL');
+  return { pid: found.pid };
+}
+
+const DESK = 'haiku-trial-desk';
+const f6AllStop = (tmux, name = DESK) => tmux.type(name, 'all stop');
+const undoTyped = (tmux, sha, name = DESK) => tmux.type(name, `undo ${sha}`);
+const liftTyped = (tmux, name = DESK) => tmux.type(name, 'lift all stop');
+
+// The flags of a right-shaped decision with two options, each with its cost and whether it can be undone.
+const shaped = ({ what, why, options, recommend, because, meanwhile }) => [
+  'ask', '--what', what, '--why', why, '--about', 'behaviour', '--level', '3',
+  ...options.flatMap(([label, says]) => ['--option', `${label}=${says}`]),
+  ...options.flatMap(([label, , cost, undo]) => ['--cost', `${label}=${cost}`, '--undo', `${label}=${undo}`]),
+  '--recommend', recommend, '--because', because, '--meanwhile', meanwhile,
+];
+
+export const FALLBACK_QUESTION = 'Should moving one transaction also make a rule for that shop?';
+
+const FALLBACK = shaped({
+  what: FALLBACK_QUESTION,
+  why: 'It changes what the director sees on the next import',
+  options: [['Rule', 'Make a rule for that shop', 'An hour of building', 'yes'], ['One only', 'Move just that transaction', 'No extra work', 'yes']],
+  recommend: 'One only', because: 'It is the smallest change and the director can ask for rules later', meanwhile: 'I build the parts that do not depend on it',
+});
+
+const SECOND = shaped({
+  what: 'Trial check: should the export include the category column?',
+  why: 'It decides what the director finds in the downloaded file',
+  options: [['Include', 'Add the category column', 'A few minutes', 'yes'], ['Leave out', 'Keep the three original columns', 'No extra work', 'yes']],
+  recommend: 'Include', because: 'The director can then sort the file by category', meanwhile: 'I build the parts that do not depend on it',
+});
+
+// Raises P4's behaviour decision in P4's environment, unless the session has put a decision to the director already.
+function decisionFallback({ env, cwd, run = spawnSync, plugin = PLUGIN }) {
+  let raised = false;
+  try {
+    raised = readQuestions(featurePaths(cwd).questions).questions.some((q) => q.kind === 'question');
+  } catch { /* nothing readable counts as nothing raised */ }
+  if (raised) return { raised: false, skipped: true };
+  const got = feature(plugin, FALLBACK, { env, cwd, run });
+  return { raised: got.status === 0, code: got.status, stdout: said(got) };
+}
+
+// A second, right-shaped decision, so that a bare `A` is ambiguous between it and the first.
+function secondDecision({ env, cwd, run = spawnSync, plugin = PLUGIN }) {
+  const got = feature(plugin, SECOND, { env, cwd, run });
+  return { code: got.status, stdout: said(got) };
+}
+
+export const faults = {
+  f1WrongShape, f1bStuck, f1cDirectorKind, f3KillFeature, f3bKillForeman, f6AllStop, undoTyped, liftTyped, decisionFallback, secondDecision,
+};
