@@ -1005,3 +1005,17 @@ test('a self-merged record names the change that merged by itself, and only the 
     { pr: 7, commit, reason: 'internal', work: 'Not A Slug' }, { pr: 7, commit, reason: 'internal', paths: -1 }, { pr: 7, commit, reason: 'internal', extra: 1 },
   ]) assert.throws(() => makeEvent({ kind: 'self-merged', data }), undefined, JSON.stringify(data));
 });
+
+test('events: a watch event needs work and level', () => {
+  assert.equal(PLAIN_KINDS.includes('watch'), true);
+  assert.equal(PROTECTED_KINDS.includes('watch'), false);
+  makeEvent({ kind: 'watch', data: { work: 'login', level: 'transcript' } });
+  for (const data of [{ work: 'login' }, { level: 'steps' }, {}, { work: 'Not A Slug', level: 'steps' }, { work: 'login', level: 'steps', extra: 1 }]) {
+    assert.throws(() => makeEvent({ kind: 'watch', data }), undefined, JSON.stringify(data));
+  }
+});
+
+test('events: a watch event refuses an unknown level', () => {
+  for (const level of ['off', 'steps', 'transcript']) makeEvent({ kind: 'watch', data: { work: 'login', level } });
+  for (const level of ['loud', '', null, 1]) assert.throws(() => makeEvent({ kind: 'watch', data: { work: 'login', level } }), undefined, String(level));
+});

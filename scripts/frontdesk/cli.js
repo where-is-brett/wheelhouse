@@ -132,7 +132,7 @@ export class CliError extends Error {}
 // (work, amendment, incident, and the no-blame note when an incident ends).
 export const RECORD_KINDS = Object.freeze([
   'ruling', 'idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal', 'setting',
-  'work', 'amendment', 'incident', 'note', 'brief',
+  'work', 'amendment', 'incident', 'note', 'brief', 'watch',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'brief']);
 const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts'];
