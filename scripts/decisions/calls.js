@@ -24,7 +24,7 @@ export function callsFrom(events, { since } = {}) {
     if (d === null || typeof d !== 'object' || typeof e.id !== 'string') continue;
     const at = typeof d.at === 'string' && !Number.isNaN(Date.parse(d.at)) ? d.at : e.at;
     if (Date.parse(at) < from) continue;
-    found.push({ id: e.id, work: d.work, at, decided: d.decided, options: d.options, why: d.why, kind: d.kind, key: d.key, logged: e.at });
+    found.push({ id: e.id, work: d.work, at, decided: d.decided, options: d.options, why: d.why, kind: d.kind, ...(d.where === undefined ? {} : { where: d.where }), key: d.key, logged: e.at });
   }
   // Earliest event first, so a repeat of a key is the later one.
   found.sort((a, b) => (a.logged < b.logged ? -1 : a.logged > b.logged ? 1 : a.id < b.id ? -1 : 1));

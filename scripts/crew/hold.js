@@ -4,9 +4,10 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { watcherDir } from '../watcher/waker.js';
+import { watcherDir, locateFeature } from '../watcher/waker.js';
 import { makeEvent, writeEvent } from '../state/events.js';
 import { SLUG } from '../lib/build-loop.js';
+import { appendHelm } from '../decisions/log.js';
 
 const helmDir = (project) => path.join(watcherDir(project), 'helm');
 
@@ -142,13 +143,21 @@ export function unopenedSteers(project) {
   return listHolds(project).filter(({ hold }) => hold.fromStart === true && hold.opened !== true).map(({ work }) => work);
 }
 
-// Hands the piece back: the file goes, then the `helm-ended` record. In that order, so a failed record write leaves the piece
-// free; the next hold or the orphan clear (`cleanOrphans`) puts the view right.
-export async function releaseHold(project, work, { why, now = () => new Date() } = {}) {
+// Hands the piece back: the file goes, then the helm line in the piece's decision log ("The director steered this piece from
+// 14:02 to 14:31"), then the `helm-ended` record. In that order, so a failed record write leaves the piece free; the next hold
+// or the orphan clear (`cleanOrphans`) puts the view right. The log line is best effort: a piece with no worktree to write it
+// in, or a log that can't be added to, leaves it out and never stops the hand-back. `worktree` names the piece's folder, which
+// is otherwise the waker's answer for it.
+export async function releaseHold(project, work, { why, now = () => new Date(), worktree } = {}) {
   const file = holdFile(project, work);
+  const from = readHold(project, work)?.at;
   const data = { work, at: now().toISOString(), ...(typeof why === 'string' && why !== '' ? { why } : {}) };
   const event = makeEvent({ kind: 'helm-ended', data, now });
   fs.rmSync(file, { force: true });
+  try {
+    const folder = worktree ?? locateFeature(project)(work);
+    if (typeof folder === 'string' && folder !== '' && typeof from === 'string') appendHelm({ worktree: folder, from, to: data.at, now });
+  } catch { /* the log line is not worth keeping the piece held */ }
   await writeEvent({ project, event, now });
 }
 

@@ -106,6 +106,9 @@ export function surveyLines(survey) {
 // What the new engine's run came to, for open work: only a finished run has built anything.
 const RUN_ENDED_WORDS = { completed: 'built by the new engine', failed: 'stopped by a problem on the new engine', cancelled: 'cancelled on the new engine' };
 
+// What the Logbook says of a piece handed back from the helm whose crew wrote no note of it.
+export const HELM_NO_NOTE = (work) => `${work} was handed back; no note from the helm.`;
+
 // What an unopened steer reads on the board and in the Logbook.
 export const STEER_WORDS = 'ready for you to steer';
 
@@ -266,7 +269,11 @@ export function workLines(views, answers, words, prs = {}, crew = {}) {
   // The steps are already in plain words, so they are added after the lines have been through the glossary.
   const worded = plainWords(lines.join('\n'), words.glossary, { ...words, protect }).text.split('\n');
   const seen = didOnly(crew);
-  return worded.map((line, i) => (i < open.length && open[i].running ? line + stepEnd(seen[open[i].id]) : line));
+  // A piece handed back from the helm whose crew wrote no note of it says so, as fixed words.
+  const backs = isPlain(views.helmBacks) ? views.helmBacks : {};
+  const unnoted = open.filter(({ id }) => isPlain(backs[id]) && backs[id].noted === false && !(isPlain(views.helm) && views.helm[id] !== undefined))
+    .map(({ id }) => HELM_NO_NOTE(id)).sort();
+  return [...worded.map((line, i) => (i < open.length && open[i].running ? line + stepEnd(seen[open[i].id]) : line)), ...unnoted];
 }
 
 // The one sentence the front desk says before card n on a Why?, word for word: the everyday example
@@ -347,6 +354,14 @@ function stuckNotes(events) {
   return events
     .filter((e) => e.kind === 'note' && e.data?.about === 'stuck' && typeof e.data.work === 'string' && typeof e.data.words === 'string')
     .map((e) => ({ work: e.data.work, at: typeof e.data.at === 'string' ? e.data.at : e.at, words: e.data.words, recorded: e.at }))
+    .sort((a, b) => Date.parse(a.recorded) - Date.parse(b.recorded));
+}
+
+// The notes a piece's crew left of what the director did at its helm, oldest first: { work, text, recorded } each.
+function helmNoteEvents(events) {
+  return events
+    .filter((e) => e.kind === 'helm-note' && typeof e.data?.work === 'string' && typeof e.data.text === 'string')
+    .map((e) => ({ work: e.data.work, text: e.data.text, recorded: e.at }))
     .sort((a, b) => Date.parse(a.recorded) - Date.parse(b.recorded));
 }
 
@@ -443,7 +458,9 @@ const VIEWS = {
     const calls = args.calls === true && typeof source.events === 'function' ? { calls: callsFrom(source.events()) } : {};
     // With `stuck: true`, the notes recording that a feature session sent its plain "stuck" message (`act stuck-note`), oldest first.
     const stuck = args.stuck === true && typeof source.events === 'function' ? { stuck: stuckNotes(source.events()) } : {};
-    return { ok: true, data: { ...got, numbered, ...given, ...decisions, ...calls, ...stuck }, lines };
+    // With `helmNotes: true`, the notes a piece's crew wrote of what the director did at its helm, oldest first.
+    const helmNotes = args.helmNotes === true && typeof source.events === 'function' ? { helmNotes: helmNoteEvents(source.events()) } : {};
+    return { ok: true, data: { ...got, numbered, ...given, ...decisions, ...calls, ...stuck, ...helmNotes }, lines };
   },
 
   async card(args, source) {

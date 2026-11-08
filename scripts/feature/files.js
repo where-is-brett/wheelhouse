@@ -346,19 +346,47 @@ export function questionTrail(file, opts) {
 // --- The decision log ---
 
 // One line of decisions.jsonl: a call the session made on its own side of the decision line (design section 5), with the
-// time it was logged, what it decided, the options it saw (two or more), why, and its kind, one of the agents'.
-const CALL_KEYS = ['v', 'at', 'decided', 'options', 'why', 'kind'];
+// time it was logged, what it decided, the options it saw (two or more), why, and its kind, one of the agents'. A call the
+// director made at a piece's helm (asked and answered at once) also says `where: 'helm'`, and its kind may be a director's.
+const CALL_KEYS = ['v', 'at', 'decided', 'options', 'why', 'kind', 'where'];
+const CALL_MUST = ['v', 'at', 'decided', 'options', 'why', 'kind'];
 
 export function validCall(c) {
   return isPlain(c)
     && hasOnly(c, CALL_KEYS)
-    && CALL_KEYS.every((k) => k in c)
+    && CALL_MUST.every((k) => k in c)
     && c.v === 1
     && isTime(c.at)
     && isText(c.decided)
     && Array.isArray(c.options) && c.options.length >= 2 && c.options.every(isText)
     && isText(c.why)
-    && AGENT_KINDS.includes(c.kind);
+    && (c.where === undefined || c.where === 'helm')
+    && (c.where === 'helm' ? isText(c.kind) : AGENT_KINDS.includes(c.kind));
+}
+
+// "14:02": the local time of `value` (a time or a Date), zero-padded, 24-hour.
+const clock = (value) => {
+  const d = new Date(value);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+// A helm line of decisions.jsonl, `{ v: 1, at, helm: { from, to } }`: the director steered the piece from one time to another.
+export function validHelmLine(c) {
+  return isPlain(c) && hasOnly(c, ['v', 'at', 'helm']) && c.v === 1 && isTime(c.at)
+    && isPlain(c.helm) && hasOnly(c.helm, ['from', 'to']) && isTime(c.helm.from) && isTime(c.helm.to);
+}
+
+// The helm line read as a call, so the log, the proof note and the record carry it as they carry any call.
+function helmCall(c) {
+  return {
+    v: 1,
+    at: c.at,
+    decided: `The director steered this piece from ${clock(c.helm.from)} to ${clock(c.helm.to)}`,
+    options: ['The director steers the piece', 'The crew carries on alone'],
+    why: 'The director took the helm of this piece.',
+    kind: 'helm',
+    where: 'helm',
+  };
 }
 
 // The calls in `file`, one JSON object per line, and how many lines it holds and how many of them were not a call. A
@@ -388,6 +416,7 @@ export function readCalls(file, { maxBytes = 8 * 1024 * 1024 } = {}) {
     try {
       const c = JSON.parse(line);
       if (validCall(c)) calls.push(c);
+      else if (validHelmLine(c)) calls.push(helmCall(c));
       else skipped += 1;
     } catch {
       skipped += 1;

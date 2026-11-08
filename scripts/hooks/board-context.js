@@ -206,6 +206,24 @@ export async function stuckLine(desk, since, at) {
   return notes.map((e) => `${e.work} is stuck: its session says "${e.words.replace(/\s+/g, ' ').trim()}" (sent ${e.at}).`).join(' ');
 }
 
+// The most helm notes one line names.
+const HELM_NOTES = 5;
+
+// The notes a piece's crew left of what the director did at its helm, told once: those recorded since the First Mate's last turn
+// began, or in the last day when there was none. Each is a record's text and so data, kept to one line with its control
+// characters taken out. Null when there are none.
+export async function helmNoteLine(desk, since, at) {
+  const from = Number.isFinite(Date.parse(since)) ? Date.parse(since) : at.getTime() - 24 * HOUR_MS;
+  const got = await desk.read('waiting', { helmNotes: true });
+  const notes = (Array.isArray(got?.data?.helmNotes) ? got.data.helmNotes : [])
+    .filter((e) => isRecord(e) && typeof e.work === 'string' && typeof e.text === 'string' && Date.parse(e.recorded) > from)
+    .map((e) => ({ work: e.work, text: e.text.replace(/[\p{Cc}\p{Cf}\u2028\u2029]+/gu, ' ').replace(/\s+/g, ' ').trim() }))
+    .filter((e) => e.text !== '')
+    .slice(0, HELM_NOTES);
+  if (notes.length === 0) return null;
+  return notes.map((e) => `While you had the helm of ${e.work}: ${e.text}`).join('\n');
+}
+
 // What the director answered since the First Mate's last turn, and how the cards of a question that was stopped stand now.
 // Neither names a card's id: a card goes by its subject.
 export { SINCE_LEAD };
@@ -421,11 +439,12 @@ export async function decide(input, deps = {}) {
     const typed = !writes || startedByScript(env) ? null : attempt(() => ownWords(input.prompt), null);
     const decisionLine = await within(() => decisionLineOf(desk, typed), waitMs);
     const stuck = await within(() => stuckLine(desk, seen.promptAt, at), waitMs);
+    const helmNote = await within(() => helmNoteLine(desk, seen.promptAt, at), waitMs);
     // The daily digest the watcher made waits for the director's next message and is shown once, here (scripts/digest/due.js). A hook that
     // only reads leaves it for one that can take it away.
     // A session a script started is no director arriving, so it never uses the digest up.
     const digest = writes && !startedByScript(env) ? attempt(() => readDigest(project), null) : null;
-    const notes = [decisionLine, digest?.text ?? null, stuck, ...((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
+    const notes = [decisionLine, digest?.text ?? null, stuck, helmNote, ...((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
     const reserve = (cards === null ? 0 : cards.length + 2) + notes.reduce((sum, line) => sum + line.length + 2, 0);
     // A survey not worked out in time is left to the briefing view, which takes the record's latest.
     const survey = want === 'briefing' ? (await within(() => surveyOf({ project, client, desk }), learnWaitMs)) ?? undefined : null;

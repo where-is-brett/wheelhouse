@@ -8,6 +8,8 @@ import { listEvents } from '../../../scripts/state/events.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { makeFeatureFolder } from '../../helpers/made-feature.js';
+import { readLog } from '../../../scripts/decisions/log.js';
 import { holdFile, takeHold, readHold, holdBySession, markOpened, releaseHold, helmHeld, cleanOrphans, ORPHAN_GRACE_MS } from '../../../scripts/crew/hold.js';
 
 async function withHome(fn) {
@@ -59,6 +61,28 @@ test('hold: release ends it', async () => {
   await withHome(async (p) => {
     await takeHold(p, { work: 'login', sessionId: 's-1', now });
     await releaseHold(p, 'login', { why: 'handed back', now });
+    assert.equal(helmHeld(p, 'login'), false);
+    assert.equal(viewsOf(p).helm.login, undefined);
+  });
+});
+
+test('hold: release writes the helm line', async () => {
+  await withHome(async (p) => {
+    const worktree = makeFeatureFolder(fs.realpathSync.native(tempFolder('wh-hold-tree-')), 'login');
+    const taken = await takeHold(p, { work: 'login', sessionId: 's-1', now });
+    await releaseHold(p, 'login', { why: 'handed back', now, worktree });
+    const [call] = readLog(worktree);
+    const hhmm = (iso) => `${String(new Date(iso).getHours()).padStart(2, '0')}:${String(new Date(iso).getMinutes()).padStart(2, '0')}`;
+    const ended = listEvents(stateDir(p), { report: () => {} }).find((e) => e.kind === 'helm-ended');
+    assert.equal(call.decided, `The director steered this piece from ${hhmm(taken.at)} to ${hhmm(ended.data.at)}`);
+    assert.equal(helmHeld(p, 'login'), false);
+  });
+});
+
+test('hold: a piece with no folder is still handed back', async () => {
+  await withHome(async (p) => {
+    await takeHold(p, { work: 'login', sessionId: 's-1', now });
+    await releaseHold(p, 'login', { now, worktree: path.join(tempFolder('wh-hold-none-'), 'missing') });
     assert.equal(helmHeld(p, 'login'), false);
     assert.equal(viewsOf(p).helm.login, undefined);
   });

@@ -370,3 +370,13 @@ test('desk: a real hold file marks the helm opened or not', () => withRuns(async
   assert.equal(marked.helm.login.opened, false);
   assert.equal(marked.helm.search.opened, true);
 }));
+
+test('board-context: says when no note came', () => {
+  const base = { ...crewViews, features: { login: { at: '2026-10-29T06:00:00.000Z', data: { step: 'started' } } } };
+  const lines = (helmBacks, helm = {}) => workLines({ ...base, helm, helmBacks }, [], {});
+  const said = 'login was handed back; no note from the helm.';
+  assert.ok(lines({ login: { at: '2026-11-08T03:31:00.000Z', noted: false } }).includes(said));
+  assert.ok(!lines({ login: { at: '2026-11-08T03:31:00.000Z', noted: true } }).includes(said), 'a note came');
+  assert.ok(!lines({}).includes(said), 'no hand-back');
+  assert.ok(!lines({ login: { at: 'x', noted: false } }, { login: { since: 'x', fromStart: false } }).includes(said), 'held again');
+});
