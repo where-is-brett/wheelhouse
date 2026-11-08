@@ -17,6 +17,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { sessionRole } from '../lib/role.js';
+import { holdBySession } from '../crew/hold.js';
 import { readSeat } from '../lib/first-mate-seat.js';
 import { ownWords } from '../lib/own-words.js';
 import { helperClient } from '../host/helper-client.js';
@@ -44,6 +45,20 @@ export function startedByScript(env = process.env) {
   const entry = env?.CLAUDE_CODE_ENTRYPOINT;
   if (typeof entry === 'string' && SCRIPT_ENTRYPOINT.test(entry)) return true;
   return STARTER_VARIABLES.some((name) => typeof env?.[name] === 'string' && env[name] !== '');
+}
+
+// The piece whose helm this session sits at (crew visibility design, 9.4), or null: the hold names this session, the hold is
+// opened, and the entrypoint is not a script's. The starter variables are not checked, as the helm session carries its piece's role.
+export function helmSeat({ project, sessionId, env = process.env, holdOf = holdBySession }) {
+  const entry = env?.CLAUDE_CODE_ENTRYPOINT;
+  if (typeof entry === 'string' && SCRIPT_ENTRYPOINT.test(entry)) return null;
+  let hold;
+  try {
+    hold = holdOf(project, sessionId);
+  } catch {
+    return null;
+  }
+  return hold?.opened === true && typeof hold.work === 'string' ? hold.work : null;
 }
 
 // Whether typed replies are on for the project, from the settings the local record builds (as the session start's fallback
@@ -83,7 +98,7 @@ function keptAnswers(project) {
   return out;
 }
 
-const pick = ({ at, label, words }) => ({ at, label, words, where: 'chat' });
+const pick = ({ at, label, words }, where = 'chat') => ({ at, label, words, where });
 
 // --- What each outcome says ---
 
@@ -110,25 +125,41 @@ const asideNote = (n) => `The director typed what reads as an answer to decision
 // `why` is { n, words } when the reply asks why of a decision, which records nothing. `seat` is the First Mate's seat (read from
 // the project when not given): with a session id, only the session the seat names records.
 export async function recordAnswer({
-  project, sessionId, prompt, at = new Date(), cwd, env = process.env, client, budget = BUDGET_MS + helperGrace(), decisions, on, seat = readSeat(project),
+  project, sessionId, prompt, at = new Date(), cwd, env = process.env, client, budget = BUDGET_MS + helperGrace(), decisions, on, seat = readSeat(project), holdOf,
 }) {
   const now = at instanceof Date ? at : new Date(at);
   if (typeof prompt !== 'string' || typeof project !== 'string') return { recorded: false };
-  if (startedByScript(env)) return { recorded: false };
-  const role = sessionRole({ sessionId, env, prompt, cwd, seat });
   const withId = typeof sessionId === 'string' && sessionId !== '';
-  if (role === 'aside' && withId) {
-    const words = ownWords(prompt);
-    if (words === null) return { recorded: false };
-    const read = parseReply(words, (decisions ?? readDecisions(project)).pending);
-    return read.kind === 'answer' ? { recorded: false, note: asideNote(read.n) } : { recorded: false };
+  // The front desk's path first; where it refuses, a numbered reply at a piece's helm answers that piece's own decisions.
+  let helm = null;
+  const toHelm = () => {
+    helm = withId ? helmSeat({ project, sessionId, env, holdOf }) : null;
+    return helm !== null;
+  };
+  let role = null;
+  if (startedByScript(env)) {
+    if (!toHelm()) return { recorded: false };
+  } else {
+    role = sessionRole({ sessionId, env, prompt, cwd, seat });
+    if (role === 'aside' && withId) {
+      const words = ownWords(prompt);
+      if (words === null) return { recorded: false };
+      const read = parseReply(words, (decisions ?? readDecisions(project)).pending);
+      return read.kind === 'answer' ? { recorded: false, note: asideNote(read.n) } : { recorded: false };
+    }
+    if ((role !== 'front-desk' || (withId && seat?.session !== sessionId)) && !toHelm()) return { recorded: false };
   }
-  if (role !== 'front-desk') return { recorded: false };
-  if (withId && seat?.session !== sessionId) return { recorded: false };
   const typed = ownWords(prompt);
   if (typed === null) return { recorded: false };
+  // At a helm only a reply that names its number counts: a bare letter could be meant for the piece's own work.
+  if (helm !== null && !/^\s*(?:reply\s+)?#?[1-9]/i.test(typed)) return { recorded: false };
+  const where = helm === null ? 'chat' : 'helm';
 
-  const held = decisions ?? readDecisions(project);
+  const read0 = decisions ?? readDecisions(project);
+  // At a helm, only the held piece's decisions count, waiting or answered.
+  const workIds = new Map([...(read0.record ?? []), ...read0.pending].map((d) => [d.id, d.workId]));
+  const mine = (d) => helm === null || workIds.get(d.id) === helm;
+  const held = helm === null ? read0 : { ...read0, pending: read0.pending.filter(mine), answered: read0.answered.filter(mine) };
   // Off (the default until the director rules on the typed-reply source gap): nothing typed is recorded. Words that read as an
   // answer to a waiting decision are told, so the First Mate asks it the other way.
   if (!(on ?? typedRepliesOn(project))) {
@@ -140,7 +171,7 @@ export async function recordAnswer({
   const kept = keptAnswers(project);
   const keptFor = (d) => kept.find((k) => k.text === d.text);
   const pending = held.pending.filter((d) => keptFor(d) === undefined);
-  const answered = [...held.answered, ...held.pending.filter((d) => keptFor(d) !== undefined).map((d) => ({ n: d.n, id: d.id, text: d.text, code: d.code, options: d.options, ...pick(keptFor(d)) }))];
+  const answered = [...held.answered, ...held.pending.filter((d) => keptFor(d) !== undefined).map((d) => ({ n: d.n, id: d.id, text: d.text, code: d.code, options: d.options, ...pick(keptFor(d), where) }))];
   let reply = parseReply(typed, pending);
   // A numbered reply to a decision answered already, with nothing else waiting for it, is told so.
   if (reply.kind === 'none' && /^\s*(?:reply\s+)?#?[1-9]/i.test(typed)) {
@@ -170,7 +201,7 @@ export async function recordAnswer({
 
   const decision = pending.find((d) => d.n === reply.n);
   const option = reply.label === 'own' ? undefined : decision.options[LETTERS.indexOf(reply.label)];
-  const data = { question: decision.text, n: decision.n, label: reply.label, option: option?.label ?? '', words: reply.words, where: 'chat', ...(reply.private === true ? { private: true } : {}) };
+  const data = { question: decision.text, n: decision.n, label: reply.label, option: option?.label ?? '', words: reply.words, where, ...(reply.private === true ? { private: true } : {}) };
   const api = client ?? helperClient({ timeout: budget });
   const left = withinBudget(Date.now() + budget);
   // The reply is made first and the action it earns a moment later, so the reply is always what decides.

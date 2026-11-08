@@ -11,6 +11,7 @@ import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { recordRole } from '../../../scripts/lib/role.js';
 import { readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
+import { holdFile } from '../../../scripts/crew/hold.js';
 import { inHome as inHomeOff, turnOn, turnOff, P, raise, raiseBuildQuestion, typedAnswer } from '../../helpers/decisions-world.js';
 // Typed replies are on by default (the director's decision of 8 November 2026); these tests still switch them on, and say so where they mean off.
 const inHome = (fn) => inHomeOff(async (home) => { turnOn(); return fn(home); });
@@ -322,5 +323,99 @@ test('no session id records as today', async () => {
     const out = await recordAnswer({ project: P, prompt: 'B', at: NOW, cwd: '/x', env: {}, client: c });
     assert.equal(out.recorded, true);
     assert.deepEqual(kinds(c), ['decision-answer', 'action']);
+  });
+});
+
+// --- Replies typed at a piece's helm (crew visibility design, 9.4) ---
+
+// A hold on `work`, taken by `sessionId` and (unless `opened` is false) opened, written as the helm leaves it.
+async function holdHelm(work, sessionId, { opened = true } = {}) {
+  const file = holdFile(P, work);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ work, sessionId, at: NOW.toISOString(), fromStart: false, opened, pid: opened ? process.pid : null, startTime: opened ? 'now' : null }));
+}
+const HELM_ENV = { CLAUDE_CODE_ENTRYPOINT: 'cli', WHEELHOUSE_ROLE: 'feature' };
+const helmRun = (c, prompt, { session = 's1', env = HELM_ENV } = {}) => run(c, prompt, { session, env });
+// Two decisions: 1 on another piece, 2 on w-tide-1 (the piece held).
+function raiseTwo(second = 'w-tide-1') {
+  raiseBuildQuestion('q-w-other-1', '2026-11-08T01:00:00.000Z', { work: 'w-other' });
+  return raiseBuildQuestion(`q-${second}-2`, '2026-11-08T02:00:00.000Z', { work: second });
+}
+
+test('helm: a numbered reply records with where helm', async () => {
+  await inHome(async () => {
+    raiseTwo();
+    await holdHelm('w-tide-1', 's1');
+    const c = fake();
+    const out = await helmRun(c, '2 B');
+    assert.equal(c.calls.record[0].event.kind, 'decision-answer');
+    assert.equal(c.calls.record[0].event.data.where, 'helm');
+    assert.equal(c.calls.record[0].event.data.n, 2);
+    assert.match(noteOf(out), /answered decision 2 with B/);
+  });
+});
+
+test('helm: a bare letter records nothing', async () => {
+  await inHome(async () => {
+    raiseTwo();
+    await holdHelm('w-tide-1', 's1');
+    const c = fake();
+    const out = await helmRun(c, 'B');
+    assert.deepEqual(c.calls.record, []);
+    assert.equal(noteOf(out), undefined);
+  });
+});
+
+test('helm: another piece\'s decision records nothing', async () => {
+  await inHome(async () => {
+    raiseTwo();
+    await holdHelm('w-tide-1', 's1');
+    const c = fake();
+    await helmRun(c, '1 B');
+    assert.deepEqual(c.calls.record, []);
+  });
+});
+
+test('helm: another session records nothing', async () => {
+  await inHome(async () => {
+    raiseTwo();
+    await holdHelm('w-tide-1', 's1');
+    const c = fake();
+    await helmRun(c, '2 B', { session: 's2' });
+    assert.deepEqual(c.calls.record, []);
+  });
+});
+
+test('helm: an unopened hold records nothing', async () => {
+  await inHome(async () => {
+    raiseTwo();
+    await holdHelm('w-tide-1', 's1', { opened: false });
+    const c = fake();
+    await helmRun(c, '2 B');
+    assert.deepEqual(c.calls.record, []);
+  });
+});
+
+test('helm: a script entrypoint records nothing', async () => {
+  await inHome(async () => {
+    raiseTwo();
+    await holdHelm('w-tide-1', 's1');
+    const c = fake();
+    await helmRun(c, '2 B', { env: { ...HELM_ENV, CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' } });
+    assert.deepEqual(c.calls.record, []);
+  });
+});
+
+test('helm: a second answer meets already answered', async () => {
+  await inHome(async () => {
+    const card = raiseTwo();
+    await holdHelm('w-tide-1', 's1');
+    const c = fake();
+    await helmRun(c, '2 A');
+    typedAnswer(card, { n: 2, label: 'A' }, '2026-11-08T09:59:00.000Z');
+    const second = fake();
+    const out = await helmRun(second, '2 B');
+    assert.deepEqual(second.calls.record, []);
+    assert.match(noteOf(out), /already answered/);
   });
 });
