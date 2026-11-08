@@ -18,6 +18,7 @@ import { callsFrom } from '../decisions/calls.js';
 import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { crewNow } from '../crew/runs.js';
+import { listHolds } from '../crew/hold.js';
 import { contextText } from './context.js';
 import { readStatus } from '../safekeeping/readings.js';
 import { answeredLines, buildLines, runningLines, shippedLines } from '../engine/words.js';
@@ -105,13 +106,33 @@ export function surveyLines(survey) {
 // What the new engine's run came to, for open work: only a finished run has built anything.
 const RUN_ENDED_WORDS = { completed: 'built by the new engine', failed: 'stopped by a problem on the new engine', cancelled: 'cancelled on the new engine' };
 
+// What an unopened steer reads on the board and in the Logbook.
+export const STEER_WORDS = 'ready for you to steer';
+
+// The views with each helm marked as opened or not, as the project's hold files say (the records don't carry it): a piece
+// steered from the start reads as waiting until its helm is opened. Views and project are left as given when there are no holds.
+export function withOpened(views, project) {
+  if (typeof project !== 'string' || !isPlain(views?.helm)) return views;
+  let holds;
+  try {
+    holds = listHolds(project);
+  } catch {
+    return views;
+  }
+  const helm = { ...views.helm };
+  for (const { work, hold } of holds) if (isPlain(helm[work])) helm[work] = { ...helm[work], opened: hold.opened === true };
+  return { ...views, helm };
+}
+
 // Open work's step or state in words, and whether a feature runs for it: one that is writing its
 // plan or building. A quick or bug feature has no plan, so it builds from its start. A planned one
 // waits for the go-ahead, and one the director's Not now to its build commands holds (`held`, as the
 // board reads it) waits on them. Work whose feature closed before a `work` event queued it again
 // hasn't started this time.
-function workState(entry, feature, held, run) {
+function workState(entry, feature, held, run, helm) {
   const { lane, visible } = entry.work?.data ?? {};
+  // A piece the director chose to steer from the start waits for them until they open it.
+  if (helm?.fromStart === true && helm.opened === false) return { running: false, state: STEER_WORDS };
   // The new engine's run for it, since it was queued: its records sit beside the old engine's features.
   if (isPlain(run?.data) && since(run, entry.work) && !isPlain(feature?.data)) {
     if (run.data.state !== 'ended') return { running: true, state: 'building on the new engine' };
@@ -215,7 +236,7 @@ export function workLines(views, answers, words, prs = {}, crew = {}) {
   };
   const asks = Object.values(isPlain(views.gateAsks) ? views.gateAsks : {}).filter((a) => isPlain(a?.data));
   const open = Object.entries(isPlain(views.work) ? views.work : {}).filter(([id, entry]) => isPlain(entry?.work?.data) && isOpen(views, id))
-    .map(([id, entry]) => ({ id, entry, ...workState(entry, features[id], held(id), latestRun(views, id)) }))
+    .map(([id, entry]) => ({ id, entry, ...workState(entry, features[id], held(id), latestRun(views, id), isPlain(views.helm) ? views.helm[id] : undefined) }))
     .sort((a, b) => Number(b.running) - Number(a.running) || String(a.entry.since ?? a.entry.work.at).localeCompare(String(b.entry.since ?? b.entry.work.at))
       || a.id.localeCompare(b.id));
   // Work that has ended but whose pull request was never recorded as merged: its changes may be stranded on its branch,
@@ -438,7 +459,7 @@ const VIEWS = {
     if (got.refused) return { ok: false, refused: got.refused };
     const own = await ownSettings(source);
     const crew = crewOfSource(source, got.views, own, now);
-    const lines = workLines(got.views, got.answers ?? [], deskWords(got.views, own, now(), got.names ?? []), {}, crew);
+    const lines = workLines(withOpened(got.views, source.project), got.answers ?? [], deskWords(got.views, own, now(), got.names ?? []), {}, crew);
     return { ok: true, data: got, lines: [...lines, ...runningLines(got.views, { now: now() })] };
   },
 

@@ -8,13 +8,14 @@ import { spawn as spawnChild } from 'node:child_process';
 import sessionsAdapter from '../../adapters/claude-code/sessions.js';
 import { helmHeld, readHold, takeHold, markOpened, releaseHold, claimHandBack } from './hold.js';
 import {
-  runningFile, sessionFile, processStartTime, pidAlive, writeWake, PROMPTS, STARTING_MS, locateFeature, makeWaker,
+  runningFile, sessionFile, processStartTime, pidAlive, writeWake, PROMPTS, STARTING_MS, locateFeature, makeWaker, firstPrompt,
 } from '../watcher/waker.js';
 import { stateDir } from '../lib/paths.js';
 import { listEvents } from '../state/events.js';
 import { readEnrolled } from '../state/signing.js';
 import { buildViews } from '../state/views.js';
 import { SLUG } from '../lib/build-loop.js';
+import { findTranscript } from './runs.js';
 
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -73,9 +74,14 @@ export async function openHelm(project, work, {
   if (typeof kept.worktree === 'string' && kept.worktree !== '' && path.resolve(kept.worktree) !== path.resolve(worktree)) {
     return refuse(`${work}'s session is kept for a different folder than its worktree.`);
   }
+  // A piece steered from the start has no transcript until its first open, which starts the session; any later open resumes it.
+  const starting = readHold(project, work)?.fromStart === true && findTranscript({ sessionId: kept.sessionId, env }) === null;
   let call;
   try {
-    call = sessionsAdapter.featureHelmCall({ config, sessionId: kept.sessionId, allowed, env, claude, platform });
+    call = sessionsAdapter.featureHelmCall({
+      config, sessionId: kept.sessionId, allowed, env, claude, platform,
+      ...(starting ? { start: true, prompt: firstPrompt(project, work, { config, now }) } : {}),
+    });
   } catch (error) {
     return refuse(error instanceof Error ? error.message : 'The session could not be opened.');
   }

@@ -126,6 +126,22 @@ export function markOpened(project, work, { pid, startTime, holder = process.pid
   return next;
 }
 
+// Names the session a hold from the start will open, once the watcher has made it. It does nothing when there is no hold
+// that can be read. Resolves the hold, or null.
+export function setHoldSession(project, work, sessionId) {
+  const hold = readHold(project, work);
+  if (hold === null) return null;
+  const next = { ...hold, sessionId };
+  putJson(holdFile(project, work), next);
+  return next;
+}
+
+// The pieces whose director chose to steer them from the start and has not yet opened them: they wait on the board and
+// take no building slot (design 9.1).
+export function unopenedSteers(project) {
+  return listHolds(project).filter(({ hold }) => hold.fromStart === true && hold.opened !== true).map(({ work }) => work);
+}
+
 // Hands the piece back: the file goes, then the `helm-ended` record. In that order, so a failed record write leaves the piece
 // free; the next hold or the orphan clear (`cleanOrphans`) puts the view right.
 export async function releaseHold(project, work, { why, now = () => new Date() } = {}) {

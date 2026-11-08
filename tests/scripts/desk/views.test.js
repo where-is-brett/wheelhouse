@@ -1,7 +1,7 @@
 // tests/scripts/desk/views.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readView, deskWords } from '../../../scripts/desk/views.js';
+import { readView, deskWords, withOpened } from '../../../scripts/desk/views.js';
 import { fileSource } from '../../../scripts/desk/file-source.js';
 import { loadBoardInputs } from '../../../scripts/board/inputs.js';
 import { glanceLine, renderBoard } from '../../../scripts/board/render.js';
@@ -338,4 +338,21 @@ test("the desk's work line shows the latest did step and never the said sentence
   } finally {
     if (was === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = was;
   }
+});
+
+test('desk: an unopened steer reads ready for you to steer', () => {
+  const at = { since: '2026-10-29T06:00:00.000Z', fromStart: true };
+  const lineWith = (helm) => workLines({ ...crewViews, features: { login: { at: '2026-10-29T06:00:00.000Z', data: { step: 'started' } } }, helm }, [], {})[0];
+  assert.match(lineWith({ login: { ...at, opened: false } }), /not running, ready for you to steer/);
+  assert.match(lineWith({ login: { ...at, opened: true } }), /running/);
+  assert.doesNotMatch(lineWith({ login: { ...at, opened: true } }), /ready for you to steer/);
+  assert.doesNotMatch(lineWith({ login: { since: at.since, fromStart: false, opened: false } }), /ready for you to steer/);
+  assert.doesNotMatch(lineWith({}), /ready for you to steer/);
+});
+
+test('desk: a hold file says whether a steer is opened', () => {
+  const views = { helm: { login: { since: 'x', fromStart: true }, other: { since: 'x', fromStart: false } } };
+  assert.equal(withOpened(views, undefined), views);
+  const marked = withOpened(views, 'no__such-project');
+  assert.deepEqual(marked.helm, views.helm, 'no hold file: nothing is marked');
 });

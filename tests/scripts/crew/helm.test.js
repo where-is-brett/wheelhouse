@@ -8,7 +8,7 @@ import { stateDir } from '../../../scripts/lib/paths.js';
 import { listEvents, makeEvent, writeEvent } from '../../../scripts/state/events.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
-import { PROMPTS, readWake, runningFile, sessionFile, wakesDir } from '../../../scripts/watcher/waker.js';
+import { PROMPTS, firstPrompt, readWake, runningFile, sessionFile, wakesDir } from '../../../scripts/watcher/waker.js';
 import { takeHold, helmHeld, holdFile, claimHandBack } from '../../../scripts/crew/hold.js';
 import { openHelm, handBack, isDirector } from '../../../scripts/crew/helm.js';
 
@@ -264,5 +264,38 @@ test('helm: a second process handing back the same hold writes no wake and no re
     assert.equal(woken.length, 1);
     assert.equal(listEvents(stateDir(p), { report: () => {} }).filter((e) => e.kind === 'helm-ended').length, 1);
     assert.equal(typeof claimHandBack(p, 'login'), 'function');
+  });
+});
+
+test('helm: the first open starts the session', async () => {
+  await withHome(async (p) => {
+    await openPiece(p, 'login');
+    await takeHold(p, { work: 'login', sessionId: 's-1', fromStart: true, now });
+    const spawned = [];
+    const out = await openHelm(p, 'login', { ...base, spawn: stubSpawn(spawned) });
+    assert.equal(out.code, 0);
+    assert.equal(spawned.length, 1);
+    const { args } = spawned[0];
+    assert.equal(args[args.indexOf('--session-id') + 1], 's-1');
+    assert.equal(args.includes('--resume'), false);
+    assert.equal(args.at(-1), firstPrompt(p, 'login'));
+    assert.equal(args.at(-2), '--');
+    assert.match(args.at(-1), /^Read \.wheelhouse\/feature\/brief\.md and follow it\./);
+  });
+});
+
+test('helm: with a transcript, a steered piece is resumed', async () => {
+  await withHome(async (p) => {
+    await openPiece(p, 'login');
+    const config = path.join(tempFolder('wh-claude-'), 'claude');
+    fs.mkdirSync(path.join(config, 'projects', 'x'), { recursive: true });
+    fs.writeFileSync(path.join(config, 'projects', 'x', 's-1.jsonl'), '{}\n');
+    await takeHold(p, { work: 'login', sessionId: 's-1', fromStart: true, now });
+    const spawned = [];
+    const out = await openHelm(p, 'login', { ...base, env: { CLAUDE_CONFIG_DIR: config }, spawn: stubSpawn(spawned) });
+    assert.equal(out.code, 0);
+    const { args } = spawned[0];
+    assert.equal(args[args.indexOf('--resume') + 1], 's-1');
+    assert.equal(args.includes('--session-id'), false);
   });
 });

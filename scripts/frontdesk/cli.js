@@ -111,7 +111,7 @@ import { briefHash } from '../feature/files.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { FINISHED_WORDS, prsOfWork, workFinished } from '../desk/work-prs.js';
-import { isOpen, surveyLines, whyNext, workLines, RECENT_MS, RECENT_LEAD, recentLines } from '../desk/views.js';
+import { isOpen, surveyLines, whyNext, workLines, withOpened, RECENT_MS, RECENT_LEAD, recentLines } from '../desk/views.js';
 import { answeredWords } from '../cards/answered.js';
 import { crewNow } from '../crew/runs.js';
 import { markHere } from '../lib/session-files.js';
@@ -1220,7 +1220,7 @@ export async function view({ client, cwd, name, now, since: from }) {
     const own = await ownSettings(client, cwd);
     const found = projectOf(cwd);
     const crew = found === null ? {} : crewNow(found.project, views, effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now }));
-    return workLines(views, answers, await wordsOf(client, cwd, views, now, names), prsOfWork(views, cwd), crew);
+    return workLines(found === null ? views : withOpened(views, found.project), answers, await wordsOf(client, cwd, views, now, names), prsOfWork(views, cwd), crew);
   }
   // settings: the project's over the director's own, over the defaults
   const own = await ownSettings(client, cwd);

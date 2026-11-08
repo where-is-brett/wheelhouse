@@ -24,7 +24,10 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { guardedCommand, selfTestFile } from '../../../scripts/windows/low.js';
 import { readBaseline, writeBaseline } from '../../../scripts/watcher/control-files.js';
-import { holdFile } from '../../../scripts/crew/hold.js';
+import { holdFile, readHold, helmHeld } from '../../../scripts/crew/hold.js';
+import { nextWork } from '../../../scripts/foreman/queue.js';
+import { markUnopenedSteers } from '../../../scripts/foreman/wake.js';
+import { PACE } from '../../../scripts/lib/build-loop.js';
 
 // The running node's folder is on the PATH of every session the waker starts, so these tests' PATH has it.
 const BIN = `${path.dirname(process.execPath)}:/bin`;
@@ -1637,4 +1640,62 @@ test('waker: a held run that ends leaves no lost marker', () => withHome(async (
   await flush();
   assert.equal(fs.existsSync(lostFile(P, 'login-page')), false);
   assert.equal(fs.existsSync(lostFile(P, 'search-box')), true, 'a piece that is not held still leaves its marker');
+}));
+
+// A hold the director's choice to steer a piece from the start leaves: named for no session yet.
+const steerHold = (work, over = {}) => {
+  fs.mkdirSync(path.dirname(holdFile(P, work)), { recursive: true });
+  fs.writeFileSync(holdFile(P, work), `${JSON.stringify({ work, sessionId: null, at: new Date(T0).toISOString(), fromStart: true, opened: false, pid: null, startTime: null, ...over })}\n`);
+};
+
+test('waker: a piece steered from the start is made but not launched', () => withHome(async () => {
+  checkout();
+  const dir = worktree();
+  writeBaseline(P, 'login-page', dir);
+  steerHold('login-page');
+  const fake = fakeRun();
+  const said = [];
+  const w = waker(fake, { platform: 'darwin', print: (line) => said.push(line) });
+  const started = await w.startFeature({ work: 'login-page', worktree: dir });
+  assert.equal(fake.calls.length, 0, 'no session is launched');
+  assert.match(started.sessionId, UUID);
+  assert.equal(JSON.parse(fs.readFileSync(sessionFile(P, 'login-page'), 'utf8')).sessionId, started.sessionId);
+  assert.equal(readHold(P, 'login-page').sessionId, started.sessionId, 'the hold names the session the helm will start');
+  assert.equal(readHold(P, 'login-page').fromStart, true);
+  assert.deepEqual(said, [`START feature login-page ${dir} held`]);
+  assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), false, 'nothing is recorded as running');
+  // Held for another reason, or already named: still refused.
+  await assert.rejects(w.startFeature({ work: 'login-page', worktree: dir }), /at the helm/);
+  hold('other-piece');
+  await assert.rejects(w.startFeature({ work: 'other-piece', worktree: worktree() }), /at the helm/);
+  steerHold('opened-piece', { opened: true });
+  await assert.rejects(w.startFeature({ work: 'opened-piece', worktree: worktree() }), /at the helm/);
+  assert.equal(fake.calls.length, 0);
+}));
+
+// Three pieces building and one more waiting, for the queue's slots; `steer` says what the director's steer holds.
+function slotsWith(steer) {
+  const T2 = (n) => `2026-11-08T02:00:${String(n).padStart(2, '0')}.000Z`;
+  const work = {};
+  const features = {};
+  const ids = Array.from({ length: PACE.building - 1 }, (_, i) => `w-tide-${i + 1}`);
+  for (const id of [...ids, 'w-steer', 'w-next']) work[id] = { work: { key: id, at: T2(1), data: { lane: 'small' } }, approved: true, since: T2(1) };
+  for (const id of [...ids, 'w-steer']) features[id] = { key: id, at: T2(2), data: { step: 'building', lane: 'small' } };
+  steerHold('w-steer', steer);
+  const views = { work, features };
+  markUnopenedSteers(views, P);
+  return nextWork({ work, features: views.features, reports: {}, now: '2026-11-08T05:00:00.000Z', fiveHourTight: false });
+}
+
+test('waker: an unopened steer holds no slot', () => withHome(async () => {
+  checkout();
+  assert.deepEqual(slotsWith({}).start, ['w-next'], 'a further piece may still start beside the steer');
+}));
+
+test('waker: an opened steer holds its slot', () => withHome(async () => {
+  checkout();
+  const got = slotsWith({ opened: true, pid: 4242 });
+  assert.deepEqual(got.start, []);
+  assert.deepEqual(got.hold, [{ work: 'w-next', why: 'pace' }]);
+  assert.equal(helmHeld(P, 'w-steer'), true);
 }));
