@@ -562,6 +562,22 @@ test('a picker in the front desk that no card stands for is answered once it has
   assert.equal(readLog(folder).some((e) => /typing anyway/.test(e.note)), false);
 });
 
+test('a tunnel preview starts once the project is seeded, not before its folder exists', async (t) => {
+  const folder = scratch(t);
+  const order = [];
+  const io = fakeIo({
+    host: {
+      makeProject: async () => { order.push('seed'); return { sha: 'abc' }; },
+      startTunnel: async ({ dir }) => { order.push(`tunnel ${path.basename(dir)}`); return { productPid: 11, tunnelPid: 12 }; },
+    },
+  });
+  io.ask = async () => 'go';
+  const got = await run({ mode: 'full', io, from: 'create-preview', until: 'seed', folder, date: '2026-11-08', env: { ...ENV, HAIKU_TRIAL_PREVIEW: 'tunnel' } });
+  assert.deepEqual(got.done, ['create-preview', 'install', 'seed'], got.why);
+  assert.deepEqual(order, ['seed', 'tunnel project']);
+  assert.ok(readLog(folder).some((e) => e.step === 'tunnel' && e.detail?.productPid === 11));
+});
+
 test('F3 with no feature session to kill is noted as not exercised and the run goes on', async (t) => {
   const folder = scratch(t);
   const io = fakeIo({});
