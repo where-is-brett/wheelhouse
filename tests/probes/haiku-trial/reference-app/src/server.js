@@ -5,6 +5,7 @@ import { readStatement, field } from './lib/csv.js';
 import { monthOf } from './lib/dates.js';
 import { formatCents } from './lib/money.js';
 import { CATEGORIES, categorise } from './lib/categories.js';
+import { monthTotals } from './lib/totals.js';
 
 const db = new DatabaseSync(process.env.LEDGER_DB ?? 'ledger.db');
 db.exec(`CREATE TABLE IF NOT EXISTS tx (
@@ -105,9 +106,7 @@ function home(res) {
 }
 
 function totals(month) {
-  const sums = Object.fromEntries(CATEGORIES.map(([k]) => [k, 0]));
-  for (const r of db.prepare('SELECT category, SUM(cents) AS s FROM tx WHERE month = ? GROUP BY category').all(month)) sums[r.category] = r.s;
-  return sums;
+  return monthTotals(db.prepare('SELECT category, cents FROM tx WHERE month = ?').all(month));
 }
 
 function monthPage(res, m) {
@@ -122,7 +121,8 @@ function monthPage(res, m) {
   const change = (d) => (hasEarlier ? `${d > 0 ? '+' : ''}${formatCents(d)}` : 'n/a');
   const grand = Object.values(sums).reduce((a, b) => a + b, 0);
   const grandBefore = Object.values(prevSums).reduce((a, b) => a + b, 0);
-  const rows = CATEGORIES.map(([k, l]) => `<tr><th scope="row">${l}</th><td data-category="${k}" data-total="${formatCents(sums[k])}">${formatCents(sums[k])}</td><td>${change(sums[k] - prevSums[k])}</td></tr>`);
+  const shown = (k) => sums[k]; // variant: rounding
+  const rows = CATEGORIES.map(([k, l]) => `<tr><th scope="row">${l}</th><td data-category="${k}" data-total="${formatCents(shown(k))}">${formatCents(shown(k))}</td><td>${change(sums[k] - prevSums[k])}</td></tr>`);
   rows.push(`<tr><th scope="row">All</th><td data-category="all" data-total="${formatCents(grand)}">${formatCents(grand)}</td><td>${change(grand - grandBefore)}</td></tr>`);
   const list = db.prepare('SELECT * FROM tx WHERE month = ? ORDER BY date, id').all(m).map((t) =>
     `<tr><td>${shownDate(t.date)}</td><td><a href="/edit?id=${t.id}">${esc(t.description)}</a></td><td>${formatCents(t.cents)}</td><td>${label(t.category)}</td></tr>`);

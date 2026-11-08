@@ -39,6 +39,7 @@ export const VARIANTS = {
   'export-hangs': '  const hang = true;',
   labels: '  const importField = \'<input type="file" id="statement" name="statement" accept=".csv" required>\';',
   titles: "  const heading = 'Spending tracker';",
+  rounding: "  const shown = (k) => sums[k] + (k === 'shopping' && m === '2026-06' ? 1 : 0);",
   'export-name': "  const filename = 'export.csv';",
 };
 
