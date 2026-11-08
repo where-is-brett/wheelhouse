@@ -246,3 +246,72 @@ Expected: PASS.
 git add scripts/lib/role.js scripts/hooks/board-context.js commands/aside.md tests/scripts/lib/role.test.js tests/scripts/hooks/board-context.test.js
 git commit -m "An aside session: any ordinary session that doesn't hold the seat"
 ```
+
+### Task 4: Session start takes the seat; the aside lines and card (Part C)
+
+Spec: 6.1 (taking, `seenAt`), 6.3 (the aside lines, the card, what only the First Mate gets), 6.8 cases 1, 7, 8, 9, 10.
+
+**Files:**
+- Modify: `scripts/hooks/session-start.js` (`started`, after `keepLock` at ~807 and before `deskSession` at ~838; `readOnlyStart` at ~678 only reads; the take-over block at ~863; the model write at ~879)
+- Modify: `scripts/state/card-lines.js` (the window take-over set line)
+- Modify: `scripts/cards/compose.js` (`lineFor('take-over', …)` at ~268 and the title at ~149 take either target)
+- Modify: `scripts/lib/front-desk.js` (the aside lines)
+- Modify: `scripts/hooks/prompt-record.js` (a free seat is taken on the first prompt as well, for a session that started before the seat existed)
+- Test: `tests/scripts/hooks/session-start.test.js`, `tests/scripts/cards/compose.test.js`
+
+**Interfaces:**
+- Consumes: `takeSeat`, `refreshSeat`, `readSeat`, `seatInUse`, `firstMatePid` (Task 2); `sessionRole`, `asideKind`, `ASIDE_COMMAND` (Task 3); `startedByScript(env)` from `scripts/decisions/answer.js:42`; `agoWords` in session-start.js.
+- Produces:
+  - `export const RECENT_MS` from session-start.js (Task 2's re-export reads it).
+  - `seatTakeOverLine(session, since)` → `Take over the First Mate from window session ${session}, since ${since}`, and `SEAT_TAKEOVER_LINE` (session `[A-Za-z0-9_-]{1,128}`, since an ISO time), in card-lines.js; `SEAT_TAKEOVER_LINE` joins `SET_LINES`.
+  - `composeCard({kind: 'take-over', target: {session, since}})` gives the seat line and the title `Move the First Mate to this window?`; a `{holder, counter}` target stays as it is.
+  - `ASIDE_LINE_MAIN`, `ASIDE_LINE_WORKTREE`, `asideLine({ago, kind})` and `SEAT_MOVED_LINE` in `scripts/lib/front-desk.js`. The words are spec 6.3's and 6.4's, copied verbatim: the shared first sentence with "last active N minutes ago" from `agoWords`, then the main-folder or the worktree addition. `SEAT_MOVED_LINE = 'The First Mate moved to another window; this session is now an ordinary one'`.
+  - `export async function keepSeat({project, input, env, lockFree, now, seat})` → `{role: 'front-desk' | 'aside', seat}` in session-start.js: its own function, apart from anything the crew visibility build adds.
+
+`keepSeat`: no session id or `startedByScript(env)` → reads only (case 10). When the computer holds or can take the lock (`lockFree`: `keepLock` gave null, or the helper is down, case 9) it calls `takeSeat` with `firstMatePid()`'s pid and start time; when this session already holds it, `refreshSeat`. While another computer holds the lock it takes nothing (case 8): that session keeps today's computer take-over card and no seat. A compaction keeps the id and so the seat (case 7).
+
+In `started`: `deskSession` is the role after `keepSeat`, not before. An aside session gets `asideLine` in place of `FRONT_DESK_LINE`; a seat-made aside in the main folder also gets the window take-over card (target `{session, since}` from the seat, recommend `LEAVE_LABEL` when `seatInUse`, else `TAKEOVER_LABEL`), composed as `takeOverNotes` composes the computer's. A command-made aside and a worktree aside get no card. The usage card, the computer take-over card, `keepRunningModel` and the setup note stay behind `deskSession` (only the First Mate gets them).
+
+The prompt hook takes a free seat the same way on a prompt in a session whose role is `front-desk` and that doesn't hold it yet; it never takes one another session holds.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `tests/scripts/cards/compose.test.js`:
+- `a window take-over card names the session and since`: target `{session: 'abc', since: '2026-11-08T01:00:00.000Z'}` → the question holds `Take over the First Mate from window session abc, since 2026-11-08T01:00:00.000Z` and matches a `SET_LINES` entry.
+- `a computer take-over card is as before`: target `{holder: '0a1b2c3d', counter: 2}` → `Take over the lock from computer 0a1b2c3d, counter 2`.
+
+In `tests/scripts/hooks/session-start.test.js` (a temp home, a fake client whose `lock.read` gives no other holder):
+- `the first session takes the seat`: `decide` with `session_id: 'a'` → `readSeat(project).session === 'a'`; the context holds `FRONT_DESK_LINE`.
+- `a second session is aside`: seat held by live `'a'`; `decide` with `'b'` → the seat still names `'a'`; the context holds the aside line's first sentence and the window take-over card, and no `FRONT_DESK_LINE`.
+- `the card recommends Leave it there while the seat is in use`: `seenAt` 5 minutes ago → `recommend` is `Leave it there`; `seenAt` 45 minutes ago → `Take over here`.
+- `a worktree aside gets the worktree line and no card`: `decide` in a linked non-feature worktree → the worktree addition, no take-over card.
+- `a command-made aside gets no card`: role recorded `aside` by the command → the main-folder line, no card.
+- `no session id never takes the seat` and `a script-started session never takes the seat` (case 10): no seat file after `decide`.
+- `a compaction keeps the seat`: holder `'a'`, `decide` with `source: 'compact'`, `session_id: 'a'` → front desk, seat unchanged but `seenAt` refreshed (case 7).
+- `another computer's lock comes first`: `lock.read` names another computer → the computer take-over card, no seat file (case 8).
+- `with the helper down the seat is still taken` (case 9).
+- `only the First Mate writes the running model`: an aside session leaves no running-model file; the holder writes it.
+- `RECENT_MS is exported`: equals `30 * 60 * 1000`.
+
+In `tests/scripts/hooks/prompt-record.test.js`:
+- `a front desk prompt takes a free seat`: no seat file, prompt in session `'a'` → seat names `'a'`.
+- `a prompt never takes a held seat`: seat held by live `'b'` → unchanged.
+
+- [ ] **Step 2: Run them and see them fail**
+
+Run: `node --test tests/scripts/hooks/session-start.test.js tests/scripts/cards/compose.test.js tests/scripts/hooks/prompt-record.test.js`
+Expected: the new tests FAIL.
+
+- [ ] **Step 3: Implement `seatTakeOverLine`, the compose branch, the aside lines, `keepSeat`, the wiring in `started` and the prompt hook's take**
+
+- [ ] **Step 4: Run them and see them pass**
+
+Run: `node --test tests/scripts/hooks/session-start.test.js tests/scripts/cards/compose.test.js tests/scripts/hooks/prompt-record.test.js tests/scripts/lib/first-mate-seat.test.js tests/scripts/lib/role.test.js`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/hooks/session-start.js scripts/state/card-lines.js scripts/cards/compose.js scripts/lib/front-desk.js scripts/hooks/prompt-record.js tests/scripts/hooks/session-start.test.js tests/scripts/cards/compose.test.js tests/scripts/hooks/prompt-record.test.js
+git commit -m "Session start takes the First Mate's seat; a second window is an aside"
+```
