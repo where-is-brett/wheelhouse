@@ -4,7 +4,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { configDir, findTranscript, findSubagents, readTail } from '../../../scripts/crew/runs.js';
+import {
+  configDir, findTranscript, findSubagents, readTail, stepOf, stepsOf, mask, plain,
+} from '../../../scripts/crew/runs.js';
+import { glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 
 function fakeConfig() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crew-runs-'));
@@ -197,4 +200,91 @@ test('readTail skips parsed lines that are not plain objects', () => {
   const file = path.join(dir, 't.jsonl');
   fs.writeFileSync(file, `${ev(1)}\n1\nnull\n"s"\n[]\n${ev(2)}\n`);
   assert.deepEqual(readTail(file).map((e) => e.n), [1, 2]);
+});
+
+// Step lines
+
+const GLOSSARY = glossaryOf({ PR: { data: { term: 'PR', plain: 'change', phrase: 'change' } } });
+const asst = (...content) => ({ type: 'assistant', timestamp: '2026-11-08T01:00:00Z', cwd: '/w/tree', message: { content } });
+const tool = (name, input) => asst({ type: 'tool_use', name, input });
+const text = (t) => asst({ type: 'text', text: t });
+
+test('turns a Read into a reading step', () => {
+  const step = stepOf(tool('Read', { file_path: '/w/tree/src/login.ts' }));
+  assert.equal(step.text, 'Reading `src/login.ts`');
+  assert.equal(step.at, '2026-11-08T01:00:00Z');
+});
+
+test('names the other tools', () => {
+  assert.equal(stepOf(tool('Edit', { file_path: '/w/tree/a.js' })).text, 'Changing `a.js`');
+  assert.equal(stepOf(tool('Write', { file_path: '/w/tree/b.js' })).text, 'Changing `b.js`');
+  assert.equal(stepOf(tool('Grep', { pattern: 'x' })).text, 'Searching the code');
+  assert.equal(stepOf(tool('Glob', { pattern: 'x' })).text, 'Searching the code');
+  assert.equal(stepOf(tool('WebFetch', {})).text, 'Looking something up');
+  assert.equal(stepOf(tool('WebSearch', {})).text, 'Looking something up');
+  assert.equal(stepOf(tool('Bash', { command: 'ls' })).text, 'Running a command');
+  assert.equal(stepOf(tool('NotebookEdit', {})).text, 'Using NotebookEdit');
+});
+
+test('names a test run', () => {
+  for (const command of ['npm test', 'npx jest', 'vitest run', 'pytest -q', 'node --test tests/a.test.js']) {
+    assert.equal(stepOf(tool('Bash', { command })).text, 'Running the tests', command);
+  }
+  assert.equal(stepOf(tool('Bash', { command: 'git add tests/a.js' })).text, 'Running a command');
+});
+
+test('records a decision without its question', () => {
+  const step = stepOf(tool('Bash', { command: 'node scripts/frontdesk/cli.js record decision --question "Which login?"' }));
+  assert.equal(step.text, 'Recording a decision');
+});
+
+test('keeps the first sentence of assistant text', () => {
+  assert.equal(stepOf(text('Done. Next I will tidy up.')).text, 'Done.');
+  const long = 'a'.repeat(300);
+  assert.equal(stepOf(text(long)).text.length, 120);
+});
+
+test('skips an event it does not know', () => {
+  assert.equal(stepOf({ type: 'summary' }), null);
+  assert.equal(stepOf(null), null);
+  assert.equal(stepOf({ type: 'user', message: { content: [{ type: 'tool_result', content: 'ok' }] } }), null);
+  assert.equal(stepOf(text('   ')), null);
+  assert.deepEqual(stepsOf([{ type: 'summary' }], { glossary: {} }), []);
+});
+
+test('masks a key', () => {
+  const key = `sk-${'a1'.repeat(15)}`;
+  const step = stepOf(text(`The key is ${key} ok`));
+  assert.equal(step.text, '[hidden: looked like a key]');
+  assert.equal(mask(`x ${key}`), '[hidden: looked like a key]');
+  for (const bad of [`ghp_${'A'.repeat(25)}`, `glpat-${'b'.repeat(22)}`, 'AKIAABCDEFGHIJKLMNOP',
+    `xoxb-${'1'.repeat(12)}`, '-----BEGIN RSA PRIVATE KEY-----', 'API_KEY=abcdefgh12', 'Password: hunter2hunter2']) {
+    assert.equal(mask(bad), '[hidden: looked like a key]', bad);
+  }
+  assert.equal(mask('nothing secret here'), 'nothing secret here');
+  const steps = stepsOf([text(key)], { glossary: {} });
+  assert.ok(!steps[0].text.includes('sk-'));
+  const read = stepsOf([tool('Read', { file_path: `/w/tree/${key}` })], { glossary: {} });
+  assert.ok(!read[0].text.includes('sk-'));
+});
+
+test('strips escape codes', () => {
+  assert.equal(plain('\u001b[31mred\u001b[0m'), 'red');
+  assert.equal(plain('a\u0007b\u0000c\u001b]0;title\u0007d'), 'abcd');
+  assert.equal(stepOf(text('\u001b[31mred')).text, 'red');
+});
+
+test('shows a waiting decision by number only', () => {
+  const events = [text('Working.'), tool('Bash', { command: 'node scripts/frontdesk/cli.js record decision --question "Secret question?"' })];
+  const steps = stepsOf(events, { glossary: {}, waiting: 2 });
+  assert.equal(steps[steps.length - 1].text, 'Waiting for your answer to decision 2');
+  assert.ok(!JSON.stringify(steps).includes('Secret question'));
+  assert.equal(stepsOf(events, { glossary: {} }).length, 2);
+});
+
+test('passes wording through the glossary', () => {
+  const steps = stepsOf([text('Opening the PR now.')], { glossary: GLOSSARY });
+  assert.ok(steps[0].text.includes('change'), steps[0].text);
+  assert.ok(!steps[0].text.includes('PR'));
+  assert.ok(!steps[0].text.includes('Terms:'));
 });
