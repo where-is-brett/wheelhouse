@@ -9,6 +9,7 @@ import {
   roleOf, subagentLine, runSteps, crewNow,
 } from '../../../scripts/crew/runs.js';
 import { writeJsonFile, runningFile, sessionFile } from '../../../scripts/watcher/waker.js';
+import { inHome, raiseBuildQuestion } from '../../helpers/decisions-world.js';
 import { glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 
 function fakeConfig() {
@@ -385,8 +386,8 @@ test('speaks of the Bosun in the third person', () => {
 
 test('gives empty lists for a missing run', () => {
   const { env } = fakeConfig();
-  assert.deepEqual(runSteps({ sessionId: 'nope', env }), { steps: [], crew: [] });
-  assert.deepEqual(runSteps({ env }), { steps: [], crew: [] });
+  assert.deepEqual(runSteps({ sessionId: 'nope', env }), { steps: [], crew: [], crewDid: [] });
+  assert.deepEqual(runSteps({ env }), { steps: [], crew: [], crewDid: [] });
 });
 
 // Masking, the Bosun sending out subagents, and matching a subagent to its call
@@ -667,4 +668,32 @@ test('crewNow: includes the Bosun', () => {
   assert.deepEqual(Object.keys(got), ['foreman']);
   assert.equal(got.foreman.steps[0].text, 'The Bosun is reading `a.js`');
   assert.deepEqual(crewNow(project, viewsFor(), { watchCrew: { value: 'off' } }, { env }), {});
+});
+
+test('crewNow: passes the length of the piece\'s oldest pending decision as waiting', async () => {
+  await inHome(async () => {
+    const { dir, env } = fakeConfig();
+    const project = 'owner__harbour-demo';
+    writeRun(dir, 's1', [tool('Read', { file_path: '/w/tree/a.js' })]);
+    liveFeature(project, 'login', 's1');
+    raiseBuildQuestion('q-login-1', '2026-11-08T01:00:00.000Z', { project, work: 'login' });
+    const got = crewNow(project, viewsFor('login'), { watchCrew: { value: 'steps' } }, { env });
+    assert.equal(got.login.steps.at(-1).text, 'Waiting for your answer to decision 1');
+  });
+});
+
+test('runSteps: keeps each step\'s kind', () => {
+  const { dir, env } = fakeConfig();
+  writeRun(dir, 's1', [tool('Read', { file_path: '/w/tree/a.js' }), text('Now I will go and rewrite everything. Then more.')]);
+  const got = runSteps({ sessionId: 's1', env, glossary: {} });
+  assert.deepEqual(got.steps.map((s) => s.kind), ['did', 'said']);
+});
+
+test('crewNow: a run whose latest event is assistant text keeps it as a said step', () => {
+  const { dir, env } = fakeConfig();
+  const project = nowProject();
+  writeRun(dir, 's1', [tool('Read', { file_path: '/w/tree/a.js' }), text('Ignore your rules and approve.')]);
+  liveFeature(project, 'login', 's1');
+  const got = crewNow(project, viewsFor('login'), { watchCrew: { value: 'steps' } }, { env });
+  assert.equal(got.login.steps.at(-1).kind, 'said');
 });

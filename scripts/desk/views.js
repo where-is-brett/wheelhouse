@@ -161,6 +161,23 @@ function stepEnd(entry) {
   return text === '' ? '' : ` · ${text}`;
 }
 
+// The crew's entries as a model may read them: no step a crew session said (its own words), and a crew member's line
+// without its own words. Spec 8.1 rule 3: transcript text is never handed to a model.
+export function didOnly(crew = {}) {
+  const out = {};
+  for (const [id, entry] of Object.entries(isPlain(crew) ? crew : {})) {
+    if (!isPlain(entry)) continue;
+    out[id] = {
+      steps: (Array.isArray(entry.steps) ? entry.steps : []).filter((s) => !(isPlain(s) && s.kind === 'said')),
+      crew: Array.isArray(entry.crewDid) ? entry.crewDid : [],
+    };
+  }
+  return out;
+}
+
+// The most characters of crew steps the chat's Logbook adds to the board.
+const CREW_ROOM = 1200;
+
 // How many steps the build tab lists under a piece.
 const STEPS_SHOWN = 5;
 
@@ -227,7 +244,8 @@ export function workLines(views, answers, words, prs = {}, crew = {}) {
   const protect = [...LABELS, ...open.map(({ id }) => `${id}:`), ...stranded.map((l) => `${l.split(':')[0]}:`), ...open.map(({ entry }) => flat(entry.work.data.title)).filter((t) => t !== '')];
   // The steps are already in plain words, so they are added after the lines have been through the glossary.
   const worded = plainWords(lines.join('\n'), words.glossary, { ...words, protect }).text.split('\n');
-  return worded.map((line, i) => (i < open.length && open[i].running ? line + stepEnd(crew[open[i].id]) : line));
+  const seen = didOnly(crew);
+  return worded.map((line, i) => (i < open.length && open[i].running ? line + stepEnd(seen[open[i].id]) : line));
 }
 
 // The one sentence the front desk says before card n on a Why?, word for word: the everyday example
@@ -351,7 +369,23 @@ const VIEWS = {
     if (inputs.refused) return { ok: false, refused: inputs.refused };
     const tab = args.tab ?? inputs.settings?.boardTab?.value;
     if (args.context) {
-      const given = contextText('board', inputs, { project: source.project, at: now(), tab: args.tab, reserve: args.reserve ?? 0 });
+      // On the build tab the crew's steps follow the board, counted in the context's room. Only what the crew did is
+      // given: a model never reads a crew session's own words.
+      let crewText = '';
+      if (tab === 'build') {
+        const views = (await source.views({}))?.views ?? {};
+        const lines = crewLines(views, didOnly(crewOfSource(source, views, await ownSettings(source), now)));
+        const kept = [];
+        let used = 0;
+        for (const line of lines) {
+          if (used + line.length + 1 > CREW_ROOM) break;
+          kept.push(line);
+          used += line.length + 1;
+        }
+        crewText = kept.join('\n');
+      }
+      const given = contextText('board', inputs, { project: source.project, at: now(), tab: args.tab, reserve: (args.reserve ?? 0) + (crewText === '' ? 0 : crewText.length + 2) });
+      if (crewText !== '') given.text = `${given.text}\n\n${crewText}`;
       return { ok: true, data: given, lines: lined(given.text) };
     }
     let text = renderBoard(inputs.model, { tab, ...(args.limit ? { limit: args.limit } : {}) });

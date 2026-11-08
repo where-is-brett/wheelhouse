@@ -459,7 +459,7 @@ function modifiedAt(file) {
 // before `now`. A background launch's immediate result never means finished.
 export function runSteps({ sessionId, env = process.env, glossary, waiting = null, foreman = false, now = Date.now } = {}) {
   const file = findTranscript({ sessionId, env });
-  if (!file) return { steps: [], crew: [] };
+  if (!file) return { steps: [], crew: [], crewDid: [] };
   const words = glossary ?? glossaryOf({});
   const events = readTail(file);
   const steps = [];
@@ -470,14 +470,14 @@ export function runSteps({ sessionId, env = process.env, glossary, waiting = nul
     const decision = foreman ? decisionWork(event) : null;
     if (decision) {
       const line = decision.work ? `The Bosun is deciding what to do about ${decision.work}` : 'The Bosun is deciding what to do';
-      steps.push({ at: step.at, text: mask(plain(line)) });
+      steps.push({ at: step.at, text: mask(plain(line)), kind: 'did' });
     } else {
-      steps.push({ at: step.at, text: foreman ? mask(plain(inThirdPerson('The Bosun', step))) : step.text });
+      steps.push({ at: step.at, text: foreman ? mask(plain(inThirdPerson('The Bosun', step))) : step.text, kind: step.kind });
     }
   }
   if (validWaiting(waiting)) {
     const text = `Waiting for your answer to decision ${waiting}`;
-    steps.push({ at: steps.length ? steps[steps.length - 1].at : null, text: foreman ? `The Bosun is ${lowerFirst(text)}` : text });
+    steps.push({ at: steps.length ? steps[steps.length - 1].at : null, text: foreman ? `The Bosun is ${lowerFirst(text)}` : text, kind: 'did' });
   }
   const clock = typeof now === 'function' ? now() : now;
   const subs = findSubagents(file).map((sub) => ({ ...sub, mtime: modifiedAt(sub.file), meta: readMeta(sub.file) }));
@@ -494,18 +494,25 @@ export function runSteps({ sessionId, env = process.env, glossary, waiting = nul
     .filter((sub) => !finished(sub))
     .sort((a, b) => b.mtime - a.mtime || (a.agentId < b.agentId ? -1 : 1));
   const crew = [];
+  // The same lines with a subagent's own words left out, for what a model reads.
+  const crewDid = [];
   for (const sub of working.slice(0, CREW_SHOWN)) {
     const meta = sub.meta;
     const fromMeta = meta && (meta.agentType !== undefined || meta.description !== undefined);
     const call = fromMeta ? { agentType: meta.agentType, description: meta.description }
       : (meta?.toolUseId !== undefined && calls.get(meta.toolUseId)) || byAgent.get(sub.agentId) || null;
     const latest = stepsOfKind(readTail(sub.file), words).pop();
+    const fallback = worded({ at: null, text: subagentLine(call ?? {}) }, words).text;
     if (latest) crew.push(mask(plain(inThirdPerson(roleOf(call?.agentType), latest))));
-    else crew.push(worded({ at: null, text: subagentLine(call ?? {}) }, words).text);
+    else crew.push(fallback);
+    crewDid.push(latest && latest.kind !== 'said' ? crew[crew.length - 1] : fallback);
   }
   const left = working.length - CREW_SHOWN;
-  if (left > 0) crew.push(`and ${left} more crew member${left === 1 ? '' : 's'}`);
-  return { steps, crew };
+  if (left > 0) {
+    crew.push(`and ${left} more crew member${left === 1 ? '' : 's'}`);
+    crewDid.push(crew[crew.length - 1]);
+  }
+  return { steps, crew, crewDid };
 }
 
 // A step with its kind, and for a sent subagent the phrase "sending out ..." through the glossary.
