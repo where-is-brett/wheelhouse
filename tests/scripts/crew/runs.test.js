@@ -635,7 +635,7 @@ test('page: escapes Markdown and HTML', () => {
   });
   assert.match(page, /&lt;script&gt;/);
   assert.match(page, /\\\[x\\\]/);
-  assert.doesNotMatch(page, /<script>/);
+  assert.doesNotMatch(page, /<script/i);
 });
 
 test('page: header and cut result line', () => {
@@ -646,7 +646,7 @@ test('page: header and cut result line', () => {
   });
   assert.ok(page.startsWith('# login: what the crew did\n\nWritten 8 November 2026, 14:05. Kept on this computer only.\n'));
   const lines = page.split('\n');
-  const at = lines.indexOf('- Reading `a.ts`'.replace(/`/g, '\\`'));
+  const at = lines.indexOf('- Reading \\`a.ts\\`');
   assert.ok(at > 0);
   assert.ok(lines[at + 1].startsWith('  line one line two '));
   assert.ok(lines[at + 1].length <= 2 + 160);
