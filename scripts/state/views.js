@@ -784,6 +784,17 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     if (e.kind === 'watch' && isPlainKey(e.data?.work) && LEVELS.includes(e.data.level)) watch[e.data.work] = e.data.level;
     else if (e.kind === 'feature' && isPlainKey(e.data?.work) && e.data.step === 'closed') delete watch[e.data.work];
   }
+  // The helms the director holds, by work: `{ since, fromStart }` from a `helm` record until its `helm-ended`. And the
+  // notes left for a piece's crew while it was held (design 9.2), oldest first.
+  const helm = {};
+  const helmNotes = {};
+  for (const e of sorted) {
+    if (!isPlainObject(e.data) || !isPlainKey(e.data.work)) continue;
+    const work = e.data.work;
+    if (e.kind === 'helm') helm[work] = { since: typeof e.data.at === 'string' ? e.data.at : e.at, fromStart: e.data.fromStart === true };
+    else if (e.kind === 'helm-ended') delete helm[work];
+    else if (e.kind === 'helm-note' && typeof e.data.text === 'string') (helmNotes[work] ??= []).push({ at: e.at, text: e.data.text });
+  }
   const merges = sorted.filter((e) => e.kind === 'merge');
   const lastMerge = merges.length > 0 ? { at: merges.at(-1).at, data: merges.at(-1).data } : null;
 
@@ -813,6 +824,8 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     controlFiles: controlFiles.standing,
     survey,
     watch,
+    helm,
+    helmNotes,
     columnsReady,
     usageCards,
     premium,
