@@ -103,12 +103,12 @@ export function gateInput(entry, name) {
     return {
       kind: 'ci-push',
       level: 3,
-      what: `The branch ${branch} for ${name} is ready to go up for its pull request, and it changes a file that runs the automatic checks.`,
+      what: `The branch ${branch} for ${name} is ready to be pushed, and it changes a file that runs the automatic checks.`,
       why: 'A change to the automatic checks is pushed only with your own sign-in, so it comes to you.',
-      options: [{ label: 'Push it', says: 'The branch is pushed with your sign-in, and its pull request opens.' }],
+      options: [{ label: 'Push it', says: 'The branch is pushed with your sign-in.' }],
       recommend: 'Push it',
-      because: 'it is the change you approved, and the pull request waits for it',
-      meanwhile: 'The pull request waits; other work carries on.',
+      because: 'it is the change you approved, and it waits for this push',
+      meanwhile: 'The branch waits; other work carries on.',
       target: { branch, sha },
     };
   }

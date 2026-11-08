@@ -683,9 +683,10 @@ test('the director\'s approval of an open pull request\'s head, or CI push of it
   ]);
   assert.deepEqual(routed.foreman[0].detail, { pr: 7, head: 'ddd444' });
   assert.deepEqual(routed.foreman[1].detail, { pr: 7, branch: 'feature/login-page', sha: 'e'.repeat(40) });
-  // A click naming a branch with no open pull request wakes that feature, never the foreman.
-  assert.deepEqual(Object.keys(routed.features), ['search-box']);
+  // A click naming a branch wakes that feature to push again, and the foreman too only where a pull request is open.
+  assert.deepEqual(Object.keys(routed.features).sort(), ['login-page', 'search-box']);
   assert.deepEqual(routed.features['search-box'].map((e) => e.type), ['ci-push-ready']);
+  assert.deepEqual(routed.features['login-page'].map((e) => e.type), ['ci-push-ready']);
   // Once per event id: a restart from the cursor sends neither again.
   const first = step({ seen: [], prev }, observation({ events }));
   assert.equal(first.events.filter((e) => e.type === 'approval' || e.type === 'ci-push').length, 2);
@@ -906,5 +907,5 @@ test('a CI push click for a branch with no pull request wakes its feature sessio
   const open = { 7: prState({ head: 'ddd444', branch: 'feature/ci-node-24', ci: 'success', review: 'clean', mergeable: 'yes' }) };
   const withPr = route(diff(observation({ prs: open }), observation({ events }), { handled: new Set() }));
   assert.deepEqual(withPr.foreman.map((e) => e.type), ['ci-push']);
-  assert.deepEqual(withPr.features, {});
+  assert.deepEqual(withPr.features['ci-node-24'].map((e) => [e.type, e.id, e.detail]), [['ci-push-ready', 'ev-ready:ready', { branch: 'feature/ci-node-24', sha }]]);
 });
