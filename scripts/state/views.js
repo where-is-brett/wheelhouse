@@ -17,7 +17,7 @@ import { premiumState } from '../routing/premium.js';
 import { LEVELS } from '../crew/levels.js';
 
 // The places a plain card answer can say it was given (the state keeps clear of the card words, so it has its own copy).
-const WHERE_PLACES = ['panel', 'chat', 'reply'];
+const WHERE_PLACES = ['panel', 'chat', 'reply', 'helm'];
 const byOrder = (a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const isPlainKey = (k) => typeof k === 'string' && k !== '';
 // The computer whose key signed a verified record, when that is the computer the record names;
@@ -324,7 +324,8 @@ function outcomesOf(sorted, { confirmations, answeredBy }) {
     // Where it was given: the deciding plain answer's, or for a signed record the nearest plain answer after it (the
     // click writes the plain answer beside its record). Null for an answer recorded before `where` existed.
     const placed = first === undefined || first === answered ? answered : mine.filter((a) => byOrder(first, a) <= 0 && WHERE_PLACES.includes(a.data?.where)).sort(byOrder)[0];
-    const where = first?.kind === 'decision-answer' ? 'chat' : WHERE_PLACES.includes(placed?.data?.where) ? placed.data.where : null;
+    // A typed reply carries its own place (the chat or a piece's helm); one recorded before the helm existed reads as the chat.
+    const where = first?.kind === 'decision-answer' ? (WHERE_PLACES.includes(first.data?.where) ? first.data.where : 'chat') : WHERE_PLACES.includes(placed?.data?.where) ? placed.data.where : null;
     const decided = first === undefined ? null : { at: first.at, label, where };
     const explained = mine.filter((a) => a.data?.label === 'Explain more' || a.data?.label === WHY).map((a) => a.at);
     return { card, answers: mine, decided, explained, steered: mine.filter((a) => a.data?.label === SUGGEST && byOrder(card, a) < 0).at(-1)?.at ?? null };

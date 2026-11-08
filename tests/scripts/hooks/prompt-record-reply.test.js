@@ -368,11 +368,18 @@ test('helm: a bare letter records nothing', async () => {
 
 test('helm: another piece\'s decision records nothing', async () => {
   await inHome(async () => {
-    raiseTwo();
+    const otherAsk = 'Which colour should the other piece be?';
+    raiseBuildQuestion('q-w-other-1', '2026-11-08T01:00:00.000Z', { work: 'w-other', ask: otherAsk });
+    raiseBuildQuestion('q-w-tide-1-2', '2026-11-08T02:00:00.000Z', { work: 'w-tide-1' });
     await holdHelm('w-tide-1', 's1');
     const c = fake();
-    await helmRun(c, '1 B');
+    const out = await helmRun(c, '1 B');
     assert.deepEqual(c.calls.record, []);
+    // The note speaks only of this piece's own decision: the other piece's question is never named or counted as waiting.
+    const note = noteOf(out) ?? '';
+    assert.ok(!/other piece|colour/.test(note), note);
+    assert.ok(!note.includes(otherAsk), note);
+    assert.match(note, /Decisions waiting: 2\. Should the harbour map show tide times\?/);
   });
 });
 
@@ -403,6 +410,18 @@ test('helm: a script entrypoint records nothing', async () => {
     const c = fake();
     await helmRun(c, '2 B', { env: { ...HELM_ENV, CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' } });
     assert.deepEqual(c.calls.record, []);
+  });
+});
+
+test('helm: a held session that reads as an aside still answers at its helm', async () => {
+  await inHome(async () => {
+    raiseTwo();
+    await holdHelm('w-tide-1', 's1');
+    holdSeatFor('b');
+    const c = fake();
+    const out = await helmRun(c, '2 B');
+    assert.equal(c.calls.record[0].event.data.where, 'helm');
+    assert.match(noteOf(out), /answered decision 2 with B/);
   });
 });
 

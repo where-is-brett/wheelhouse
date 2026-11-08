@@ -141,7 +141,8 @@ export async function recordAnswer({
     if (!toHelm()) return { recorded: false };
   } else {
     role = sessionRole({ sessionId, env, prompt, cwd, seat });
-    if (role === 'aside' && withId) {
+    // A session that holds a piece's helm answers there, whatever else its role reads as.
+    if (role === 'aside' && withId && !toHelm()) {
       const words = ownWords(prompt);
       if (words === null) return { recorded: false };
       const read = parseReply(words, (decisions ?? readDecisions(project)).pending);
