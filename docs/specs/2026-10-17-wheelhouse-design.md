@@ -876,6 +876,15 @@ The director can watch a piece's crew in the Logbook and on a page of its run (c
 5. **Kept on this computer.** Transcripts hold file contents and command output. The views show them only on this computer: nothing goes to the board's records, the repository, the digest, an alert or a remote. Lines that look like keys or tokens are masked.
 6. **Off means off.** For a piece at `off`, nothing is read.
 
+The director can also take the helm of a piece, steering its own session from their terminal (crew visibility design, section 8.2). Four more rules hold that:
+
+7. **Only the director takes the helm,** by their own words at the front desk, at a piece's start or later. An agent may suggest it in a decision's "Meanwhile" or "why" answer; it never takes it.
+8. **One writer.** The watcher starts nothing for a piece while the director holds it, and the director's session opens only once the piece's own run has ended. Claude Code also refuses a second process on one session, which is the backstop.
+9. **The guards still hold.** The director's session is the same feature session, in the same worktree, so Wheelhouse's hooks run as in any feature session: the protected files, the build-command guards and the gate are unchanged. A permission Claude Code asks the director for there is theirs to give, as in any session of theirs.
+10. **The First Mate is never blind.** The piece's decision log gets a line for the helm ("The director steered this piece from 14:02 to 14:31"). What the director says or decides at the helm reaches the First Mate through a helm note on hand-back and decision records marked `where: 'helm'`.
+
+All stop leaves a helm session running, as it is the director's own, and says so in its answer.
+
 ## 13. Notifications
 
 **On by default (free):**

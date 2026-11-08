@@ -117,6 +117,7 @@ import { crewNow } from '../crew/runs.js';
 import { markHere } from '../lib/session-files.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { SLUG } from '../lib/build-loop.js';
+import { takeAtDesk, backAtDesk, stopNow } from '../crew/helm.js';
 
 // How far back `views waiting` looks for answers, and its lead (scripts/desk/views.js).
 export { RECENT_MS, RECENT_LEAD };
@@ -142,7 +143,7 @@ export const RECORD_KINDS = Object.freeze([
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'brief']);
 // The commands that write a record, hand out a card or change the board: only the window that holds the First Mate's seat runs them.
 // Settings change through `record` and `suggest`, so they are covered. The rest only read, or keep a note by the session's own id.
-export const SEAT_WRITES = Object.freeze(['cards', 'pull-cards', 'again', 'card', 'record', 'confirm', 'suggest', 'pull-back', 'drop', 'ask-bosun', 'undo', 'move', 'carry-on', 'archive', 'restore', 'premium-card', 'page']);
+export const SEAT_WRITES = Object.freeze(['cards', 'pull-cards', 'again', 'card', 'record', 'confirm', 'suggest', 'pull-back', 'drop', 'ask-bosun', 'undo', 'move', 'carry-on', 'archive', 'restore', 'premium-card', 'page', 'helm']);
 export const SEAT_REFUSAL = 'The First Mate is in another window, so this window can look things up but not record anything or hand out cards. The director can move the First Mate here with the take-over card in this window.';
 
 // The refusal for a seat write from a window that doesn't hold the seat; null when the command may run. A script or test
@@ -158,7 +159,7 @@ export async function seatRefusal({ command, env, cwd, client }) {
   return got?.ok === true && got.holds === false ? SEAT_REFUSAL : null;
 }
 
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts', 'page'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts', 'page', 'helm'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -1162,6 +1163,41 @@ export async function page({ client, cwd, work }) {
   return `The page is at \`${got.file}\`. To follow it live: \`node <plugin root>/scripts/crew/runs.js --follow ${work} --folder "${path.resolve(cwd)}"\``;
 }
 
+// --- helm ---
+// The director's words at the front desk about a piece's helm: `take` (a piece under way), `steer` (from its first step), `back`
+// and `now`. It acts in this process on the project's own files, which the front desk's folder place gives it; `deps` stands in
+// for the project, its configuration and the process checks.
+const HELM_USAGE = 'Give take, steer, back or now and the piece: helm take <work>';
+export async function helm({ client, cwd, action, work, deps = {} }) {
+  if (!['take', 'steer', 'back', 'now'].includes(action) || typeof work !== 'string' || work === '') throw new CliError(HELM_USAGE);
+  if (!SLUG.test(work)) throw new CliError(`There is no open piece called ${work}.`);
+  const found = deps.project === undefined ? projectOf(cwd) : { project: deps.project };
+  if (found === null) throw new CliError('This folder isn\'t a Wheelhouse project.');
+  let config = deps.config;
+  if (config === undefined) {
+    const { projectConfig } = await import('../watcher/main.js');
+    const read = await projectConfig(found.project, client);
+    if (read.config === null) throw new CliError(`The project's configuration can't be read: ${read.why}`);
+    config = read.config;
+  }
+  const { project } = found;
+  const rest = { ...deps };
+  delete rest.project;
+  delete rest.config;
+  let got;
+  if (action === 'now') {
+    const said = [];
+    got = await stopNow(project, work, { config, atFrontDesk: true, print: (line) => said.push(line), ...(rest.wakerFor ? { wakerFor: rest.wakerFor } : {}) });
+    if (got.code === 0) got = { ...got, lines: said };
+  } else if (action === 'back') {
+    got = await backAtDesk(project, work, { config, print: () => {}, ...rest });
+  } else {
+    got = await takeAtDesk(project, work, { fromStart: action === 'steer', config, ...rest });
+  }
+  if (got.code !== 0) throw new CliError(got.why);
+  return got.lines;
+}
+
 // --- similar ---
 
 export async function similar({ client, cwd, text }) {
@@ -1412,7 +1448,7 @@ export function inChatWords(value, whole = null) {
 }
 
 export async function main(argv, {
-  cwd = process.cwd(), env = process.env, client, input, now = () => new Date(), makeId, columnsReady, ask,
+  cwd = process.cwd(), env = process.env, client, input, now = () => new Date(), makeId, columnsReady, ask, helmDeps,
   out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
 } = {}) {
   try {
@@ -1493,6 +1529,9 @@ export async function main(argv, {
     } else if (command === 'page') {
       only(rest, 1, 'Give the piece to watch: page <work>');
       lines([await page({ client: helper, cwd: here, work: rest[0] })]);
+    } else if (command === 'helm') {
+      only(rest, 2, HELM_USAGE);
+      lines(await helm({ client: helper, cwd: here, action: rest[0], work: rest[1], deps: { now, ...helmDeps } }));
     } else if (command === 'similar') {
       // The request's words as the arguments, which STOP lets through, or its text on standard input.
       json(await similar({ client: helper, cwd: here, text: rest.length > 0 ? rest.join(' ') : await stdin() }));

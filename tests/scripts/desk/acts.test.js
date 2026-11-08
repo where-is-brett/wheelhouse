@@ -143,3 +143,12 @@ test('not-now writes the plain card-answer, and a chat click goes the helper\'s 
   await runAct('answer', { card: 'merge-12', option: 'Not now', hash: 'b'.repeat(64) }, { ok: true, records: [], chatClick: true }, { source, recorder, now });
   assert.deepEqual(recorder.calls[1], ['chatClick', { card: 'merge-12', label: 'Not now', hash: 'b'.repeat(64), proof: 'chat-click' }]);
 }));
+
+test('acts: all stop names the helm session it leaves running', () => withKey(async () => {
+  const held = { ...memory(), async views() { return { ok: true, views: { waiting: [], helm: { login: { since: 'x', fromStart: false }, search: { since: 'y', fromStart: false } } }, names: [] }; } };
+  const got = await runAct('all-stop', {}, { ok: true, records: [] }, { source: held, recorder: spy(), now });
+  assert.equal(got.ok, true);
+  assert.equal(got.says, "The helm session for login is the director's own, so it keeps running. The helm session for search is the director's own, so it keeps running.");
+  const none = await runAct('all-stop', {}, { ok: true, records: [] }, { source: memory(), recorder: spy(), now });
+  assert.equal('says' in none, false, 'nothing held, nothing added');
+}));

@@ -112,6 +112,12 @@ export const HELM_NO_NOTE = (work) => `${work} was handed back; no note from the
 // What an unopened steer reads on the board and in the Logbook.
 export const STEER_WORDS = 'ready for you to steer';
 
+// The local time of day as HH:MM, for a record's time.
+const clockOf = (iso) => {
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime()) ? null : `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+};
+
 // The views with each helm marked as opened or not, as the project's hold files say (the records don't carry it): a piece
 // steered from the start reads as waiting until its helm is opened. Views and project are left as given when there are no holds.
 export function withOpened(views, project) {
@@ -136,6 +142,8 @@ function workState(entry, feature, held, run, helm) {
   const { lane, visible } = entry.work?.data ?? {};
   // A piece the director chose to steer from the start waits for them until they open it.
   if (helm?.fromStart === true && helm.opened === false) return { running: false, state: STEER_WORDS };
+  // A piece whose helm is open reads as with the director, since when they took it.
+  if (helm?.opened === true) return { running: false, state: `with the director since ${clockOf(helm.since) ?? 'now'}` };
   // The new engine's run for it, since it was queued: its records sit beside the old engine's features.
   if (isPlain(run?.data) && since(run, entry.work) && !isPlain(feature?.data)) {
     if (run.data.state !== 'ended') return { running: true, state: 'building on the new engine' };

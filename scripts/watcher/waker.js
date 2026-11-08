@@ -655,6 +655,10 @@ export function spawnDetached(file, args, { cwd, env, input = '', windowsVerbati
 }
 
 // Whether a process with this id is running. EPERM means it exists.
+// Said when a piece is to be steered from its start on an agent whose sessions name themselves: the helm names its own
+// session when it starts, so such a piece can't be steered from the start.
+export const STEER_NAMES_ITSELF = "This agent's sessions name themselves, so a piece can't be steered from its start";
+
 export function pidAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -1749,7 +1753,7 @@ export function makeWaker({
             ...feature.inputs, ...roleOf(column, 'feature'),
           });
           // The helm names its own session when it starts, so an adapter whose sessions name themselves can't be steered from the start.
-          if (call.idFromRun === true) throw new Error("This agent's sessions name themselves, so a piece can't be steered from its start");
+          if (call.idFromRun === true) throw new Error(STEER_NAMES_ITSELF);
           if (stopped()) throw new Error('All stop is on: no session is started');
           feature.recordUsed(call);
           await noteLevel(call.level, work);

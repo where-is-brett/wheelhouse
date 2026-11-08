@@ -482,3 +482,12 @@ test('the playbook gives the approve-work card plain words and says why a visibl
   assert.match(playbook, /Wheelhouse builds it and tests it, then shows you the result/);
   assert.match(playbook, /this one starts the building, and the later "Put pull request #n live\?" card/);
 });
+
+test('front-desk skill: names take the helm, I\'ll steer it and hand back', () => {
+  for (const phrase of ['Take the helm of login', 'let me steer login', '"I\'ll steer it"', '"Hand back login"', '`helm take <work id>`', '`helm steer <work id>`', '`helm back <work id>`', '`helm now <work id>`']) {
+    assert.ok(playbook.includes(phrase), phrase);
+  }
+  assert.match(playbook, /Bosun and the helpers a session starts can't be taken/);
+  assert.match(playbook, /"why" about its decisions works as ever/);
+  assert.match(read('commands/logbook.md'), /helm take <piece>/);
+});

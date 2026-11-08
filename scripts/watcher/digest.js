@@ -21,6 +21,7 @@ import { usageFigures } from '../usage/figures.js';
 import { listEvents } from '../state/events.js';
 import { readEnrolled } from '../state/signing.js';
 import { stateDir } from '../lib/paths.js';
+import { buildViews } from '../state/views.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const quiet = { report: () => {} };
@@ -62,8 +63,14 @@ export function makeDigestTicker({ project, client, now = () => new Date(), log 
     const logFrom = Date.parse(seen.digestLogShownAt ?? '');
     const calls = weekly ? callsFrom(events, { since: new Date(Number.isFinite(logFrom) ? logFrom : t.getTime() - 7 * DAY_MS) }) : [];
     const failed = readAlerts(project).failures;
+    let held = [];
+    try {
+      held = Object.entries(buildViews(events, enrolled).helm ?? {}).map(([work, h]) => ({ work, since: h.since }));
+    } catch {
+      // Pieces held that can't be read are left out of the digest.
+    }
     const model = digestModel({
-      events, enrolled, calls, usage, now: t, weekly, since: seen.digestShownAt ?? undefined,
+      events, enrolled, calls, usage, held, now: t, weekly, since: seen.digestShownAt ?? undefined,
       pending: decisionsFrom(events, enrolled).pending,
       alertFailures: failed.flatMap((f) => f.channels),
     });

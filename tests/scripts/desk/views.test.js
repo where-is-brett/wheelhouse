@@ -380,3 +380,11 @@ test('board-context: says when no note came', () => {
   assert.ok(!lines({}).includes(said), 'no hand-back');
   assert.ok(!lines({ login: { at: 'x', noted: false } }, { login: { since: 'x', fromStart: false } }).includes(said), 'held again');
 });
+
+test('desk: a held piece reads with the director since 14:02', () => {
+  const since = new Date(2026, 10, 8, 14, 2).toISOString();
+  const lineWith = (helm) => workLines({ ...crewViews, features: { login: { at: '2026-10-29T06:00:00.000Z', data: { step: 'building' } } }, helm }, [], {})[0];
+  assert.match(lineWith({ login: { since, fromStart: false, opened: true } }), /not running, with the director since 14:02/);
+  assert.doesNotMatch(lineWith({ login: { since, fromStart: false, opened: false } }), /with the director since/);
+  assert.doesNotMatch(lineWith({}), /with the director since/);
+});

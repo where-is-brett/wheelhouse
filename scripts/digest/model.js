@@ -84,7 +84,7 @@ function usageOf(usage) {
 // last log (projectCalls). `since` is when the director was last shown a digest (a day ago when none, never longer ago than a week), `weekly`
 // says this digest carries the decision log (`calls`, and only then), and `alertFailures` lists the channels a phone alert could not
 // reach, which the digest says so the director knows to look in the chat.
-export function digestModel({ events, calls, pending, usage, now, weekly = false, since, enrolled, alertFailures } = {}) {
+export function digestModel({ events, calls, pending, usage, now, weekly = false, since, enrolled, alertFailures, held } = {}) {
   const nowMs = clockMs(now);
   const sinceParsed = typeof since === 'string' ? Date.parse(since) : NaN;
   const sinceMs = Number.isFinite(sinceParsed) ? Math.max(sinceParsed, nowMs - 7 * DAY_MS) : nowMs - DAY_MS;
@@ -97,6 +97,11 @@ export function digestModel({ events, calls, pending, usage, now, weekly = false
     usage: part(() => usageOf(usage), null),
     alerts: part(() => [...new Set(list(alertFailures).filter((c) => typeof c === 'string'))], []),
   };
+  // The pieces the director holds at the helm, oldest first; the key is there only when some are held.
+  const heldPieces = part(() => list(held).filter((h) => isRecord(h) && typeof h.work === 'string' && h.work !== '')
+    .map((h) => ({ work: words(h.work), since: typeof h.since === 'string' ? h.since : null }))
+    .sort((a, b) => String(a.since).localeCompare(String(b.since)) || a.work.localeCompare(b.work)), []);
+  if (heldPieces.length > 0) model.held = heldPieces;
   if (weekly === true) {
     model.calls = part(() => list(calls).filter(isRecord).map((c) => ({
       work: typeof c.work === 'string' ? words(c.work) : null,
@@ -155,6 +160,15 @@ export function digestText(model, { now } = {}) {
     const meanwhile = d.meanwhile ? ` Meanwhile: ${d.meanwhile}` : '';
     return `${d.n}. ${d.question}${d.work ? ` (${d.work})` : ''}${meanwhile}`;
   })));
+  const heldNow = list(m.held);
+  if (heldNow.length > 0) {
+    out.push('', 'Held by you at the helm');
+    out.push(...listed(heldNow, (h) => {
+      const at = h.since === null ? null : new Date(h.since);
+      const clock = at === null || Number.isNaN(at.getTime()) ? null : `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+      return `- ${h.work}, with you${clock === null ? '' : ` since ${clock}`}`;
+    }));
+  }
   out.push('', usageLine(m.usage ?? null));
   if (Array.isArray(m.calls)) {
     out.push('', 'The week\'s decision log: what the agents decided on their own');
@@ -170,4 +184,4 @@ export function digestText(model, { now } = {}) {
 
 // Whether the digest has anything to say: any section with an entry, a failed alert, or a usage figure.
 export const hasNews = (model) => isRecord(model) && (model.selfMerged.length > 0 || model.waitingApproval.length > 0 || model.waitingDecisions.length > 0
-  || model.alerts.length > 0 || (Array.isArray(model.calls) && model.calls.length > 0) || model.usage !== null);
+  || (Array.isArray(model.held) && model.held.length > 0) || model.alerts.length > 0 || (Array.isArray(model.calls) && model.calls.length > 0) || model.usage !== null);
