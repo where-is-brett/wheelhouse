@@ -9,7 +9,7 @@ import { listEvents, makeEvent, writeEvent } from '../../../scripts/state/events
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { PROMPTS, readWake, runningFile, sessionFile, wakesDir } from '../../../scripts/watcher/waker.js';
-import { takeHold, helmHeld, holdFile } from '../../../scripts/crew/hold.js';
+import { takeHold, helmHeld, holdFile, claimHandBack } from '../../../scripts/crew/hold.js';
 import { openHelm, handBack, isDirector } from '../../../scripts/crew/helm.js';
 
 const claude = { kind: 'direct', file: 'claude' };
@@ -219,5 +219,28 @@ test('helm: refuses a worktree the waker does not name', async () => {
     assert.equal((await openHelm(p, 'login', { ...base, locate: () => tempFolder('wh-other-'), spawn: stubSpawn(spawned) })).code, 1);
     assert.equal(spawned.length, 0);
     assert.equal(fs.existsSync(holdFile(p, 'login')), false);
+  });
+});
+
+test('helm: a second process handing back the same hold writes no wake and no record', async () => {
+  await withHome(async (p) => {
+    await openPiece(p, 'login');
+    await takeHold(p, { work: 'login', sessionId: 's-1', now });
+    const woken = [];
+    const wakerFor = () => ({ wakeFeature: async (work) => { woken.push(work); } });
+    // Another process is part-way through handing the piece back: it holds the claim.
+    const release = claimHandBack(p, 'login');
+    assert.equal(typeof release, 'function');
+    assert.equal(await handBack(p, 'login', { now, wakerFor, config: {} }), false);
+    assert.equal(helmHeld(p, 'login'), true);
+    assert.equal(wakesOf(p).length, 0);
+    assert.equal(listEvents(stateDir(p), { report: () => {} }).filter((e) => e.kind === 'helm-ended').length, 0);
+    release();
+    // Once it lets go, a hand-back goes through exactly once, and leaves no claim behind.
+    assert.equal(await handBack(p, 'login', { now, wakerFor, config: {} }), true);
+    assert.equal(await handBack(p, 'login', { now, wakerFor, config: {} }), false);
+    assert.equal(woken.length, 1);
+    assert.equal(listEvents(stateDir(p), { report: () => {} }).filter((e) => e.kind === 'helm-ended').length, 1);
+    assert.equal(typeof claimHandBack(p, 'login'), 'function');
   });
 });

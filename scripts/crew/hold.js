@@ -134,6 +134,32 @@ export async function releaseHold(project, work, { why, now = () => new Date() }
   await writeEvent({ project, event, now });
 }
 
+// A claim older than this is left by a process that died while handing back, and is taken over.
+export const CLAIM_STALE_MS = 60_000;
+
+// The right to hand `work` back, taken across processes: a `.<work>.handing` file made with `wx`, so of two callers (the
+// session-end hook and the watcher's tick, say) one gets a release function and the other gets null. Release it when done.
+export function claimHandBack(project, work, { now = () => new Date() } = {}) {
+  const claim = path.join(helmDir(project), `.${path.basename(holdFile(project, work), '.json')}.handing`);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      fs.writeFileSync(claim, `${process.pid}\n`, { flag: 'wx' });
+      return () => fs.rmSync(claim, { force: true });
+    } catch (error) {
+      if (error.code !== 'EEXIST') return null;
+      let age;
+      try {
+        age = now().getTime() - fs.lstatSync(claim).mtimeMs;
+      } catch {
+        continue;
+      }
+      if (age < CLAIM_STALE_MS) return null;
+      fs.rmSync(claim, { force: true });
+    }
+  }
+  return null;
+}
+
 // A hold file this young is left alone: `takeHold` writes the file before its `helm` record, so views built a moment ago
 // may not show the record yet.
 export const ORPHAN_GRACE_MS = 60_000;

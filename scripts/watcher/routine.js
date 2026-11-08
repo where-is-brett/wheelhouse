@@ -30,7 +30,7 @@
 import { FOREMAN_TYPES } from './core.js';
 import { helmHeld, listHolds } from '../crew/hold.js';
 import { handBack } from '../crew/helm.js';
-import { pidAlive, processStartTime } from './waker.js';
+import { makeStartTimes, pidAlive } from './waker.js';
 import { recordIncident } from './reliability.js';
 import {
   FIVE_HOUR_TIGHT, ForemanError, NO_PLAN, PLANS_WHILE_HELD, builderCapOf, checkoutOf, clashFor, currentFeatureOf, haltFor, haltOf, laneOf, loadConfig,
@@ -40,12 +40,15 @@ import { featurePaths, readStatus } from '../feature/files.js';
 import { HAND_DONE, HAND_GOAL } from '../lib/by-hand-done.js';
 import { HASH, LANE_APPETITE, questionIdOf } from '../lib/build-loop.js';
 
+// Start times kept for a minute, so each tick doesn't ask the system for every held run.
+const startTimes = makeStartTimes();
+
 // Hands back every opened hold whose terminal has gone: its process is gone, or a different process now has its id. A hold not
 // yet opened is left alone, as is one whose process is alive, whether or not its start time can be read. `config` is read
 // (by `configOf`) only when a hold is to be handed back, and the wake is delivered by the waker made from it. Resolves the
 // work handed back; says what it can't do, never throws.
 export async function handBackClosed(project, {
-  configOf = null, wakerFor = null, alive = pidAlive, startTimeOf = processStartTime, now = () => new Date(), log = () => {},
+  configOf = null, wakerFor = null, alive = pidAlive, startTimeOf = (pid) => startTimes.get(pid), now = () => new Date(), log = () => {},
 } = {}) {
   const closed = [];
   try {

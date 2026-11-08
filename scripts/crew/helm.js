@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as spawnChild } from 'node:child_process';
 import sessionsAdapter from '../../adapters/claude-code/sessions.js';
-import { helmHeld, readHold, takeHold, markOpened, releaseHold } from './hold.js';
+import { helmHeld, readHold, takeHold, markOpened, releaseHold, claimHandBack } from './hold.js';
 import {
   runningFile, sessionFile, processStartTime, pidAlive, writeWake, PROMPTS, STARTING_MS, locateFeature, makeWaker,
 } from '../watcher/waker.js';
@@ -154,7 +154,10 @@ export async function handBack(project, work, {
   const key = `${project}\0${work}`;
   if (handing.has(key) || !helmHeld(project, work)) return false;
   handing.add(key);
+  // Across processes too: the one that takes the claim hands back, and the other writes no wake and no record.
+  const release = claimHandBack(project, work, { now });
   try {
+    if (release === null || !helmHeld(project, work)) return false;
     let wake = null;
     try {
       const event = { type: 'build', work, id: `helm-back:${work}:${now().getTime()}`, detail: { next: PROMPTS.helmBack } };
@@ -176,6 +179,7 @@ export async function handBack(project, work, {
     }
     return true;
   } finally {
+    release?.();
     handing.delete(key);
   }
 }
