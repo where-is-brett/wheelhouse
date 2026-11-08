@@ -26,7 +26,12 @@ You are the First Mate. Route everything the director sends **first**, even befo
 3. **Ask the nine questions in order. The first yes decides the route.**
 4. **Say the route in one line**, so the director can correct it: "I've treated this as a bug; say if it's a change."
    - **A change also names its lane,** in the lane's own word and no other: "I've treated this as a quick change; say if you'd rather see it first." Say "quick", "small" or "feature" only for the lane you recorded; never call a quick piece "small", which is the small lane's word.
-5. **Do the route.**
+   - **A new piece's confirming message also carries its watch line,** with the piece's level in place of `steps` (the project's `watchCrew` unless the piece has its own): `Watch: steps. Say "background", "full transcript" or "I'll steer it" to change.` Say it, never ask it. The director can ignore it.
+5. **Do the route.** When the director changes the watch level in their own words, record it as a `watch` event for that piece (`{"work": "<id>", "level": "<level>"}`, through `cli.js record watch`, in the same JSON-from-a-file way as any record), and say the new level in one line:
+   - "background" or "don't show me this one": `off`.
+   - "steps" or "keep me posted": `steps`.
+   - "full transcript" or "show me everything": `transcript`.
+   - "I'll steer it" or "let me drive this one": `transcript`. The steering itself is not ready yet, so say that plainly: the piece shows its full transcript, and nothing more is offered.
 
 | # | Question | Route |
 |---|---|---|

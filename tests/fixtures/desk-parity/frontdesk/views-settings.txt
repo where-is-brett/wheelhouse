@@ -30,4 +30,5 @@ Tokens a run may use: quick 1,000,000, small 4,000,000, a feature piece 10,000,0
 Bundle approvals: off (the default)
 Engine room: off (the default)
 Answer decisions by typing: true (the default)
+Watch the crew: steps (the default)
 --- err
