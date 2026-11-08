@@ -424,3 +424,32 @@ Branch `feature/crew-helm` from `main` once part 2 is merged. Spec sections 8.2,
 - [ ] **Step 3: Implement** `hold.js`, the kinds and the reducers.
 - [ ] **Step 4: Run them and see them pass.**
 - [ ] **Step 5: Commit.** `git commit -am "Helm: the hold and its records"`
+
+### Task 5.2: The one gate
+
+**Files:**
+- Modify: `scripts/watcher/waker.js` (beside each `controlHeld` call at 1510, 1602, 1683, 1747; `deliverByStart` around 1562; `markLost` at 1066; the exit handling in `launch`)
+- Modify: `scripts/watcher/resume.js` (`findLostSessions` at 80), `scripts/watcher/routine.js` (`readFacts` at 172, `triage` at 75, the `stalled` record around 329), `scripts/foreman/act.js` (`start` 583, `goAhead` 320, `pause` 789, `merge` 1382)
+- Modify: `scripts/watcher/main.js` (at start, `cleanOrphans`)
+- Test: `tests/scripts/watcher/waker.test.js`, `tests/scripts/watcher/resume.test.js`, `tests/scripts/watcher/routine.test.js`, `tests/scripts/foreman/act.test.js`, `tests/scripts/watcher/main.test.js`
+
+**Interfaces:**
+- Consumes: `helmHeld`, `cleanOrphans` (5.1).
+- Produces:
+  - Waker: a held piece's wakes stay queued (not delivered, not dropped); nothing starts or resumes it; a run that ends while held writes no lost marker. A live run is left to finish.
+  - `resume.js`: a held piece is not a lost session.
+  - `routine.js`: a held piece joins `held`, so the stuck check skips it; no `stalled` record and no reliability incident for it.
+  - `act.js`: `start`, `build`, `resume`, `pause` and `merge` on a held piece refuse with (exact copy) `<work> is with the director at the helm. It waits until they hand it back.`
+  - The pace limit (3) is unchanged: a held piece keeps its slot.
+
+- [ ] **Step 1: Write the failing tests**
+  - `waker: a held piece's wake waits`: a wake for a held piece → no spawn; after `releaseHold` and a tick → one spawn with that wake.
+  - `waker: a held run that ends leaves no lost marker`.
+  - `resume: a held piece is not lost`.
+  - `routine: a held piece is never stuck`: an old run of a held piece → no `stalled` record.
+  - `act: merge refuses a held piece`: the exact message, and no merge call.
+  - `main: removes orphan holds at start`.
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/watcher/waker.test.js tests/scripts/watcher/resume.test.js tests/scripts/watcher/routine.test.js tests/scripts/foreman/act.test.js tests/scripts/watcher/main.test.js`
+- [ ] **Step 3: Implement** the gate at each site, asking `helmHeld` and nothing else.
+- [ ] **Step 4: Run them and see them pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Helm: every start, wake and move waits for a held piece"`
