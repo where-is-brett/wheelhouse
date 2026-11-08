@@ -7,6 +7,8 @@
 //     file call into the Wheelhouse home fails the test;
 //   - `press(card, label)`: the director's click on a card, through the card check and the prompt record, the hooks a
 //     click goes through in a terminal, which sign it with this computer's key;
+//   - `type(words)`: the director's typed reply in the front desk's chat, through the prompt record hook, which signs
+//     an answer to a waiting decision the same way;
 //   - `watch()`: one observation of the watcher, its waker printing its wakes and starting nothing;
 //   - `tick()`: the helper's dispatcher and card router, one tick.
 // An agent's decisions (the front desk recording work, the foreman acting) are the same commands their sessions run,
@@ -99,6 +101,13 @@ export async function openDirectorWorld({ recordings = {}, says, lanes = ['quick
         tool_input: { questions: [question], answers: { [question.question]: label } },
         tool_response: { questions: [question], answers: { [question.question]: label } },
       }, { client, now, dir: NO_MANAGED });
+    },
+    // The director's typed reply in the front desk's chat, as the prompt record hook sees the prompt they send.
+    async type(words) {
+      await promptRecord(
+        { session_id: session.id, cwd: world.folder, hook_event_name: 'UserPromptSubmit', prompt: words },
+        { client, now, dir: NO_MANAGED, env: {} },
+      );
     },
     // One observation of the watcher, as the process runs it: what it saw, then a minute's wait for the bundle, then what
     // was gathered goes out. Resolves with the wake lines the waker printed (this waker prints; it starts nothing).
