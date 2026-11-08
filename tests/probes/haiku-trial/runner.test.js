@@ -493,6 +493,25 @@ test('an unreadable main is logged and is not taken for a planted bug', async (t
   assert.equal(io.timeline.some((e) => e.kind === 'spare'), false);
 });
 
+test('a request waits for an open picker in the front desk to be answered before it is typed', async (t) => {
+  const folder = scratch(t);
+  let open = true;
+  const order = [];
+  const card = { id: 'c1', kind: 'card', data: { kind: 'approve-work', question: 'Approve this work as written?\nWork a: b', options: ['Approve'] } };
+  const io = fakeIo({
+    capture: () => (open ? ['│ Approve this work as written?', '│ Work a: b', '❯ 1. Approve', 'Enter to select · ↑/↓ to navigate'].join('\n') : 'idle'),
+    host: {
+      events: async () => [card],
+      answerCards: async () => { if (open) { order.push('answered'); open = false; } return 1; },
+    },
+  });
+  const wrapped = io.tmux.type;
+  io.tmux.type = (name, text) => { order.push(`typed ${text.slice(0, 10)}`); return wrapped(name, text); };
+  await run({ mode: 'smoke', io, from: 'w2-type', until: 'w2-type', folder, date: '2026-11-08', env: ENV });
+  assert.equal(order[0], 'answered', order.join(', '));
+  assert.ok(order[1].startsWith('typed '), order.join(', '));
+});
+
 test('F3 with no feature session to kill is noted as not exercised and the run goes on', async (t) => {
   const folder = scratch(t);
   const io = fakeIo({});

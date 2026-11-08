@@ -1,7 +1,7 @@
 // tests/probes/haiku-trial/stand-in.test.js
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { standInAnswers, recommendedIndex, decisionWork, PICKED } from '../../../probes/haiku-trial/stand-in.js';
+import { standInAnswers, recommendedIndex, decisionWork, PICKED, openPicker, readyToSubmit } from '../../../probes/haiku-trial/stand-in.js';
 
 const approval = (id, work) => ({
   id, kind: 'card',
@@ -86,4 +86,34 @@ test('the recommended option and the work of a decision are read from the card',
   assert.equal(recommendedIndex({ options: ['a', 'b'] }), 0);
   assert.equal(decisionWork({ line: 'Answer question q-bank-statement-import-12' }), 'bank-statement-import');
   assert.ok(PICKED.includes('approve-work') && !PICKED.includes('answer'));
+});
+
+test("only the picker open at the foot of the pane counts, not earlier ones in the pane's history", () => {
+  const first = approval('c1', 'bank-statement-import');
+  const second = approval('c2', 'transaction-categories');
+  const older = picker(first.data.question, first.data.options, 0);
+  const chat = ['Done. The plan:', '  1. Approve the import', '  2. Then the categories'].join('\n');
+  // The first card was answered; its picker is still in the history, and the second one is open now with its cursor moved.
+  const pane = [older, chat, picker(second.data.question, second.data.options, 2)].join('\n');
+  const answered = { id: 'a', kind: 'card-answer', data: { card: 'c1' } };
+  assert.deepEqual(standInAnswers({ events: [first, second, answered], pane }), [{ card: 'c2', label: 'Approve', keys: ['Up', 'Up', 'Enter'] }]);
+  assert.equal(openPicker(chat), null);
+});
+
+test('a picker of several questions with every one answered is submitted', () => {
+  const pane = [
+    '   → Approve',
+    'Ready to submit your answers?',
+    '❯ 1. Submit answers',
+    '  2. Cancel',
+  ].join('\n');
+  assert.equal(readyToSubmit(pane), true);
+  assert.deepEqual(standInAnswers({ events: [approval('c1', 'a')], pane }), [{ card: null, label: 'Submit answers', keys: ['Enter'] }]);
+  assert.equal(readyToSubmit('Ready to submit your answers?\n  1. Submit answers\n❯ 2. Cancel'), false);
+});
+
+test('a decision already answered in the chat is not answered again', () => {
+  const one = decision('d1', 'bank-statement-import', 1, 'Repeated lines in one statement');
+  const done = { id: 'x', kind: 'action', data: { action: 'answer', questionId: 'q-bank-statement-import-1' } };
+  assert.deepEqual(standInAnswers({ events: [one, done], pane: 'Decision needed (1): Repeated lines in one statement' }), []);
 });
