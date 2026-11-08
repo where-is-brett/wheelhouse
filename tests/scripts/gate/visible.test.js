@@ -110,7 +110,7 @@ test('a bare line of prose in code is unsure, and a plain line of code is intern
     const got = visibleFromChange({ paths: [file], diff: diff(file, { remove: [before], add: [after] }) });
     assert.ok(got.visible || got.unsure, `${before}: ${JSON.stringify(got)}`);
   }
-  for (const line of ['const x = y + 1;', 'return foo(bar);', 'if (a) {', '}', 'def run(self):', 'export default App', 'import x from "./x.js";', 'else', '});', '{ a: 1 }']) {
+  for (const line of ['const x = y + 1;', 'return foo(bar);', 'if (a) {', '}', 'def run(self):', 'export default App', 'import x from "./x.js";', 'else:', '});', '{ a: 1 }']) {
     const file = line.startsWith('def') ? 'src/lib/a.py' : 'src/lib/a.js';
     const got = visibleFromChange({ paths: [file], diff: diff(file, { add: [line] }) });
     assert.deepEqual([got.visible, got.unsure], [false, false], `${line}: ${JSON.stringify(got)}`);
@@ -133,9 +133,9 @@ test('prose and style declarations with code punctuation are unsure', () => {
 
 test('ordinary code lines with no brackets or semicolons are internal', () => {
   const by = {
-    'src/lib/a.py': ['if x:', 'for a in b:', 'for item in items:', 'else:', 'try:', 'except ValueError:', 'raise', 'from x import y', 'from flask import Flask', '@property', 'print(x)'],
-    'src/lib/a.rb': ['puts x', 'attr_reader :name', 'end'],
-    'src/lib/a.js': ['  foo: bar,', '  bar,', '  ...rest,', 'case 1:', 'default:', 'throw err', 'await foo', 'new Foo', '  a && b', '  ? a', '  : b', 'x++', 'const total = price + tax;'],
+    'src/lib/a.py': ['if x:', 'for a in b:', 'for item in items:', 'else:', 'try:', 'finally:', 'except ValueError:', 'from x import y', 'from flask import Flask', '@property', 'print(x)', 'while True:', 'def f():'],
+    'src/lib/a.rb': ['attr_reader :name'],
+    'src/lib/a.js': ['  foo: bar.baz,', '  size: 14,', '  ...rest,', '  snake_case,', '  x=1,', '  foo(a),', 'case 1:', 'const total = price + tax;', 'await foo();', 'new Foo();', 'throw new Error(1);'],
     'src/lib/a.ts': ['name: string', 'age?: number,', '@Component', 'export interface Tide {'],
     'src/lib/a.go': ['package main', 'func main() {'],
   };
@@ -143,6 +143,26 @@ test('ordinary code lines with no brackets or semicolons are internal', () => {
     for (const line of lines) {
       const got = visibleFromChange({ paths: [file], diff: diff(file, { add: [line] }) });
       assert.deepEqual([got.visible, got.unsure], [false, false], `${file} ${line}: ${JSON.stringify(got)}`);
+    }
+  }
+});
+
+// The twin: lines of text that could be the middle of a template literal or a triple-quoted string, with a word, a comma, a keyword or
+// a colon that code also uses. None of them is plainly code, so none reads internal.
+test('prose that borrows the look of code is unsure', () => {
+  const text = [
+    'Thanks,', 'Regards,', 'Hi,', 'Yes,', 'No,', 'Cancel,', 'Monday,', 'Pro,', 'red,',
+    'in the cart', 'for this harbour', 'from your account', 'import your data', 'new message', 'use code SAVE10', 'print receipt',
+    'do not disturb', 'case closed', 'return policy', 'while you wait',
+    'for example:', 'for more details:',
+    'Name: Brett', 'Status: shipped', 'title: Welcome', 'label: Save', 'default: Premium', 'case: open',
+    'Terms && conditions', '? Need help', ': see below', 'C++',
+    'done', 'end', 'pass', 'default', 'return', 'new', 'raise', 'else',
+  ];
+  for (const file of ['src/lib/a.js', 'src/lib/a.py']) {
+    for (const line of text) {
+      const got = visibleFromChange({ paths: [file], diff: diff(file, { add: [line] }) });
+      assert.ok(got.visible || got.unsure, `${file} ${line}: ${JSON.stringify(got)}`);
     }
   }
 });

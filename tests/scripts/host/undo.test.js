@@ -475,3 +475,41 @@ test('a git older than 2.40 is said plainly, and a failing merge-tree is not rea
     assert.deepEqual(adapter.opened, []);
   }, { gitHook: hook });
 });
+
+// The helper's own check that a merge is out of the main version, run against a real remote. It is seen through what a call with no
+// click answers for a merge whose kept undo already merged: "already undone" only while the merge is out.
+test('a merge is called already undone only while its change is out of the main version', async () => {
+  const { engineDirOf } = await import('../../../scripts/engine/routes.js');
+  await working(async ({ client, adapter, remote, work, merge }) => {
+    const out = async () => (await client.undo({ project: PROJECT, merge })).reason === 'already-undone';
+    const later = async (name) => {
+      await g(work, 'fetch', '-q', remote.url, 'main');
+      await g(work, 'reset', '-q', '--hard', 'FETCH_HEAD');
+      fs.writeFileSync(path.join(work, name), 'later\n');
+      await g(work, 'add', '-A');
+      await g(work, 'commit', '-q', '-m', `Add ${name}`);
+      await g(work, 'push', '-q', remote.url, 'main');
+    };
+    // A kept undo that merged, though nothing was taken out: the merge is in.
+    const branch = `wheelhouse/undo-${merge.slice(0, 12)}-${'b'.repeat(12)}`;
+    fs.mkdirSync(engineDirOf(stateDir(PROJECT)), { recursive: true });
+    fs.writeFileSync(path.join(engineDirOf(stateDir(PROJECT)), 'undos.json'), `${JSON.stringify({ undos: [{ merge, pr: 99, head: 'b'.repeat(40), branch }] })}\n`);
+    adapter.prs.set(99, { headSha: 'b'.repeat(40), headRef: branch, baseRef: 'main', state: 'merged', mergeable: 'mergeable', body: '' });
+    assert.equal(await out(), false, 'just merged');
+    await later('c.txt');
+    assert.equal(await out(), false, 'merged with later work on top');
+    // The real undo: the merge is out.
+    const asked = await client.undo({ project: PROJECT, merge });
+    const undone = await confirm(client, asked.card);
+    assert.equal(undone.undone.ok, true, JSON.stringify(undone));
+    assert.equal(await out(), true, 'after the revert');
+    await later('d.txt');
+    assert.equal(await out(), true, 'after the revert and more work');
+    // The revert itself undone: the merge is in again.
+    const revert = adapter.merges[0].sha;
+    const again = await client.undo({ project: PROJECT, merge: revert });
+    const restored = await confirm(client, again.card);
+    assert.equal(restored.undone.ok, true, JSON.stringify(restored));
+    assert.equal(await out(), false, 'after the revert was itself reverted');
+  });
+});

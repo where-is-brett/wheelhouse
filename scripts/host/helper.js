@@ -5411,7 +5411,7 @@ export async function startHelper({
         if (made.code !== 0) throw new Error('making the revert\'s commit failed');
         return { ok: true, commit: made.stdout.trim(), subject };
       }),
-      // Whether the merge is already out of `head`: taking it out would change nothing. A clash or a failure is not an answer: false.
+      // Whether the merge is already out of `head`: taking it out would change nothing. A clash, any other merge-tree failure, an old git or a merge of more than two parents gives false; the plain git reads (and an unreadable version) throw instead, which still never reads as already undone.
       isOut: ({ merge, head }) => mirrored(async ({ mirror, keyed, must }) => {
         const parents = (await must(['rev-list', '--parents', '-n', '1', merge], 'reading the merge\'s parents')).trim().split(/\s+/).slice(1);
         if (parents.length === 0 || parents.length > 2) return false;

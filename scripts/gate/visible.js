@@ -64,41 +64,52 @@ function sections(diff) {
 const SLASH_COMMENTS = /\.(?:js|mjs|cjs|ts|mts|cts|go|rs|java|kt|swift|php|cs|c|h|cpp|hpp)$/i;
 const HASH_COMMENTS = /\.(?:py|rb|sh|php)$/i;
 const DASH_COMMENTS = /\.lua$/i;
-// Words that start a line of code. A line that starts with one is code unless the rest reads as a sentence.
-const KEYWORDS = 'import|export|return|const|let|var|function|def|class|async|await|if|else|elif|for|while|switch|case|default|try|catch|except|finally|throw|raise|yield|new|do|end|pass|break|continue|with|assert|lambda|global|del|package|use|mod|fn|func|pub|public|private|protected|static|type|interface|enum|struct|impl|trait|namespace|using|require|include|extend|module|puts|print|attr_reader|attr_accessor|attr_writer|from|in|of|then|fi|done';
+// Words that start a line of code. A line that starts with one is code only if what follows has code shape: plain words after it are text.
+const KEYWORDS = 'import|export|return|const|let|var|function|def|class|async|await|if|else|elif|for|while|switch|case|default|try|catch|except|finally|throw|raise|yield|new|do|end|pass|break|continue|with|assert|lambda|global|del|package|use|fn|func|pub|public|private|protected|static|type|interface|enum|struct|impl|trait|namespace|using|require|include|extend|module|puts|print|from|in|of|then';
 const KEYWORD_START = new RegExp(`^(?:${KEYWORDS})(?![\\w$])`);
-const BARE = /^(?:else|try|finally|break|continue|return|do|pass|end|fi|done|raise|default|begin)\s*:?$/;
 // A style declaration: `color: red;`, `font-size: 14px`, `margin: 0 auto`. Alone on a line in a code file it is the middle of a
 // style block in a string, which users see.
 const DECLARATION = /^[A-Za-z-]+\s*:\s*[^;{},]+;?$/;
+// A value that is a code token and no word of text: digits, true/false/null/None, a dotted name, brackets, a blanked literal, a type.
+const CODE_VALUE = /^(?:\d+(?:\.\d+)?|true|false|null|None|undefined|string|number|boolean|any|unknown|void|never|[\w$]+(?:\.[\w$]+)+|\[.*\]|\(.*\)|"")$/;
+const ADJACENT_WORDS = /[A-Za-z0-9]\s+[A-Za-z0-9]/;
 
-// Whether a line, with its literals blanked, is plainly code with no text on it. A line that has letters and doesn't look like code
-// is the safe side: unsure.
+// Whether a line, with its literals blanked, is unmistakably code with no text on it. Anything else with letters in it is the safe
+// side: unsure. A word or a comma, a keyword, a colon or `&&` that code also uses is not enough on its own.
 function looksLikeCode(line) {
   const t = line.replace(/\$?\{[^{}]*\}/g, ' ').trim();
   if (!/[A-Za-z]/.test(t)) return true;
-  if (DECLARATION.exec(t) !== null && (t.endsWith(';') || /^[A-Za-z]*-/.test(t) || /:\s*[^;]*[\d#%]/.test(t))) return false;
-  // A keyword starting the line, a header ending in `:` or Python's `from x import y` is a statement, whatever follows.
+  if (DECLARATION.test(t) && (t.endsWith(';') || /^[A-Za-z]*-/.test(t) || /:\s*[^;]*[\d#%]/.test(t))) return false;
   let rest = t;
   for (let m = KEYWORD_START.exec(rest); m !== null; m = KEYWORD_START.exec(rest)) rest = rest.slice(m[0].length).trimStart();
   const started = rest !== t;
-  if (BARE.test(t)) return true;
-  if (started && /:$/.test(t)) return true;
-  if (/^from\s+[\w.]+\s+import\b/.test(t) || /^import\s+[\w.]+(\s+as\s+\w+)?$/.test(t)) return true;
+  // The block openers and statements below are whole lines whose shape only code has.
+  // Block openers with their colon, and statements whose shape only code has.
+  if (/^(?:else|try|finally):$/.test(t) || /^except:$/.test(t)) return true;
+  const header = /^(?:if|elif|while)\s+(.+):$/.exec(t);
+  if (header !== null && (/[=<>!()\[\]._\d]/.test(header[1]) || /^(?:not\s+)?[A-Za-z]$/.test(header[1]) || /^(?:True|False|None)$/.test(header[1]))) return true;
+  if (/^for\s+(?:\w+|\(?\w+(?:,\s*\w+)*\)?)\s+in\s+[\w.()\[\]'"*,-]+:$/.test(t)) return true;
+  if (/^except\s+(?:[A-Z]\w*(?:\.\w+)*(?:\s+as\s+\w+)?|\(.*\)(?:\s+as\s+\w+)?):$/.test(t) || /^class\s+[A-Z]\w*(?:\(.*\))?:$/.test(t)) return true;
+  if (/^case\s+(?:\d+|""):$/.test(t)) return true;
+  if (/^from\s+[\w.]+\s+import\s+[\w*]+(?:\s*,\s*[\w*]+)*$/.test(t) || /^import\s+[\w.]+(?:\s+as\s+\w+)?$/.test(t)) return true;
+  if (/^import\s+[\w{}*,\s$]+\s+from\s*""$/.test(t) || /^import\s*""$/.test(t) || /^export\s+default\s+[\w$.]+;?$/.test(t)) return true;
+  if (/^package\s+[a-z][\w.]*$/.test(t) || /^attr_(?:reader|accessor|writer)\s+:\w+/.test(t) || /^@[\w.]+$/.test(t)) return true;
   // Sentences and amounts are text, even with code punctuation in them.
-  const prose = /\$\d/.test(t) || /[A-Za-z0-9][.!?](?:\s|$)/.test(t) || /\b[A-Za-z]{2,}\s+[A-Za-z]{2,}\s+[A-Za-z]{2,}\b/.test(rest);
-  if (prose) return false;
-  if (started) return true;
-  if (/^@[\w.]+$/.test(t)) return true;
-  if (/^(?:\.\.\.)?[\w$.]+,$/.test(t) || /^\.\.\.[\w$.]+$/.test(t)) return true;
-  if (/^[A-Za-z_$][\w$]*\??\s*:\s*[\w$.'"\[\]<>|]+,?$/.test(t)) return true;
-  if (/^(?:&&|\|\||\?|:)(?:\s|$)/.test(t) || /&&|\|\|/.test(t) || /^[\w$.]+(?:\+\+|--)$/.test(t)) return true;
-  // A call is a name with brackets that hold an argument: not a lone letter, not words with spaces between them.
+  if (/\$\d/.test(t) || /[A-Za-z0-9][.!?](?:\s|$)/.test(t) || /\b[A-Za-z]{2,}\s+[A-Za-z]{2,}\s+[A-Za-z]{2,}\b/.test(rest)) return false;
+  // A spread, or a line of arguments whose shape is code: `...rest,` `snake_case,` `a.b,` `x=1,` `foo(a),`.
+  if (/^\.\.\.[\w$.]+,?$/.test(t) || /^[\w$]*[_.][\w$.]*,$/.test(t) || /^[\w$.]+\s*=\s*[^\s,=]+,$/.test(t)) return true;
+  // A member whose value is a code token, not a word.
+  const member = /^[A-Za-z_$][\w$]*\??\s*:\s*(.+?)\s*[,;]?$/.exec(t);
+  if (member !== null && CODE_VALUE.test(member[1]) && !t.endsWith(';')) return true;
+  // A call is a name with brackets that hold an argument: not a lone letter, not words with spaces between them; or a whole line
+  // that is one call.
   const call = /[\w\])]\(([^()]*)\)/.exec(t);
-  const callOk = (inside) => inside.trim() === '' || (!/^[A-Za-z]$/.test(inside.trim()) && !/[A-Za-z0-9]\s+[A-Za-z0-9]/.test(inside));
-  if (call !== null && callOk(call[1])) return true;
-  if (/^[\w$.@\[\]]+\([^]*\)[;,]?$/.test(t) && !/[A-Za-z0-9]\s+[A-Za-z0-9]/.test(t.slice(t.indexOf('(')))) return true;
-  return /[=;{}]/.test(t) || /[\w\])]\(\s*$/.test(t);
+  const callOk = (inside) => inside.trim() === '' || (!/^[A-Za-z]$/.test(inside.trim()) && !ADJACENT_WORDS.test(inside));
+  if (call !== null && callOk(call[1]) && (started ? true : /^[\w$.@\[\]]+\(/.test(t) || !/[A-Za-z]\s+[\w$.]+\(/.test(t))) return true;
+  if (/^[\w$.@\[\]]+\(.*\)[;,]?$/.test(t) && !ADJACENT_WORDS.test(t.slice(t.indexOf('(')))) return true;
+  // Punctuation only code uses, on a line that is not text. Plain words after a keyword are not code shape.
+  if (/[=;{}]/.test(t)) return true;
+  return false;
 }
 
 // One line read as code: { lits, unsure }. `lits` are its string literals (and the text between tags), in order, leaving out the
