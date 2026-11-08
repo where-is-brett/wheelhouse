@@ -574,3 +574,29 @@ Branch `feature/crew-helm-desk` from `main` once part 5 is merged. Spec sections
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run them and see them pass.**
 - [ ] **Step 5: Commit.** `git commit -am "Helm: end a held piece's current run on the director's word"`
+
+### Task 6.3: The helm in the decision log and the First Mate's news
+
+**Files:**
+- Modify: `scripts/decisions/log.js`, `scripts/feature/cli.js` (its `appendCall` command), `scripts/crew/hold.js` (`releaseHold`), `scripts/hooks/board-context.js`, `scripts/frontdesk/cli.js` (the Logbook's helm lines)
+- Test: `tests/scripts/decisions/log.test.js`, `tests/scripts/feature/cli.test.js`, `tests/scripts/crew/hold.test.js`, `tests/scripts/hooks/board-context.test.js`
+
+**Interfaces:**
+- Consumes: `views.helm`, `views.helmNotes`, `releaseHold` (5.1).
+- Produces:
+  - `appendHelm({worktree, from, to, now}) -> line`: adds `{v: 1, at, helm: {from, to}}` to the piece's `decisions.jsonl`; `readLog` returns it as a call with `decided` (exact copy) `The director steered this piece from HH:MM to HH:MM` (local time). `releaseHold` calls it.
+  - `appendCall({..., where})`: `where` is absent or `'helm'`; anything else fails with `--where is helm or left out`. With `where: 'helm'` the kind may be a director's kind (the call was the director's, asked and answered at once), and the line carries `where: 'helm'`. The feature CLI takes `--where helm`.
+  - `board-context.js`: once per note, the First Mate's news gets (exact copy) `While you had the helm of <work>: <note>` for each `helm-note` written since the last turn, the note's text escaped as other record text is.
+  - The Logbook: after a `helm-ended` with no `helm-note` for that piece since its `helm` event, (exact copy) `<work> was handed back; no note from the helm.`
+
+- [ ] **Step 1: Write the failing tests**
+  - `log: the helm line reads as a call`: `readLog` holds `The director steered this piece from 14:02 to 14:31`.
+  - `log: where helm allows a director's kind`.
+  - `log: where must be helm`: `where: 'desk'` fails.
+  - `hold: release writes the helm line`.
+  - `board-context: shows a helm note once`.
+  - `board-context: says when no note came`.
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/decisions/log.test.js tests/scripts/feature/cli.test.js tests/scripts/crew/hold.test.js tests/scripts/hooks/board-context.test.js`
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run them and see them pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Helm: the decision log line, calls made at the helm and the helm note"`
