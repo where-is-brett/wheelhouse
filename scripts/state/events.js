@@ -14,6 +14,7 @@ import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH, mayRepla
 import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 import { SEND_BACK } from '../lib/calm-words.js';
+import { LEVELS } from '../crew/levels.js';
 import { WHERE } from '../cards/answered.js';
 import { isModelName } from '../gate/guardrails.js';
 import { AGENT_KINDS } from '../decisions/line.js';
@@ -281,9 +282,7 @@ function questionIdOf(id) {
   return m && isSlug(m[1]) ? { work: m[1], n: Number(m[2]) } : null;
 }
 
-// The levels a `watch` record may name: the `watchCrew` setting's own (scripts/crew/level.js imports this module's views,
-// so the list is kept here rather than imported).
-const WATCH_LEVELS = ['off', 'steps', 'transcript'];
+// The levels a `watch` record may name: the `watchCrew` setting's own, from the leaf module.
 
 // What the build loop's plain records must carry. Each guards the shape; what the
 // records mean is read from them by the views and by the foreman.
@@ -486,7 +485,7 @@ function checkPlain(kind, data) {
   const pr = () => { if (data.pr !== undefined && (!Number.isInteger(data.pr) || data.pr < 1)) bad('has a pull request number that is not one'); };
   if (kind === 'watch') {
     slug('work');
-    if (!WATCH_LEVELS.includes(data.level)) bad('needs its level to be off, steps or transcript');
+    if (!LEVELS.includes(data.level)) bad(`needs its level to be ${LEVELS.slice(0, -1).join(', ')} or ${LEVELS.at(-1)}`);
     return;
   }
   if (kind === 'brief') {

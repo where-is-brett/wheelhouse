@@ -5,6 +5,7 @@
 import { BRIEFING_GAP_HOURS, UNUSUAL } from '../lib/core-numbers.js';
 import { DEFAULT_SOURCES } from '../sources/list.js';
 import { LEVELS as BUILD_LEVELS } from '../protection/windows-builds.js';
+import { LEVELS } from '../crew/levels.js';
 
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
@@ -85,7 +86,7 @@ export const SETTINGS = {
   // design's section 12.5; off, decisions go through the question picker as before.
   typedReplies: { label: 'Answer decisions by typing', group: 'advanced', levels: [false, true], default: true, home: 'project' },
   // How much of the crew's work the director sees (crew visibility design, section 6): nothing, a line per step, or the transcript page.
-  watchCrew: { label: 'How much of the crew you see', group: 'advanced', levels: ['off', 'steps', 'transcript'], default: 'steps', home: 'project' },
+  watchCrew: { label: 'How much of the crew you see', group: 'advanced', levels: LEVELS, default: 'steps', home: 'project' },
 };
 
 // One per computer (`windowsBuildCommands:<computer>`): the level its build commands run at

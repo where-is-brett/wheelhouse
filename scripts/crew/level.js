@@ -8,7 +8,9 @@ import { readEnrolled } from '../state/signing.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { stateDir } from '../lib/paths.js';
 
-export const LEVELS = ['off', 'steps', 'transcript'];
+import { LEVELS } from './levels.js';
+
+export { LEVELS };
 
 const BOSUN = 'foreman';
 
@@ -30,7 +32,8 @@ export function levelFor(views, settings, work) {
   return isOpen && LEVELS.includes(own) ? own : project;
 }
 
-// The level for `work` in a project, from its records and settings. Off when anything cannot be read.
+// The level for `work` in a project, from its records and settings. An unreadable records folder gives the project's default; only an unexpected failure
+// gives off.
 export function levelOf(project, work, { now = () => new Date() } = {}) {
   try {
     const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled());

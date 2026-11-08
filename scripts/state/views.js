@@ -14,6 +14,7 @@ import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { SUGGEST, WHY } from '../lib/calm-words.js';
 import { premiumState } from '../routing/premium.js';
+import { LEVELS } from '../crew/levels.js';
 
 // The places a plain card answer can say it was given (the state keeps clear of the card words, so it has its own copy).
 const WHERE_PLACES = ['panel', 'chat', 'reply'];
@@ -779,7 +780,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   // project's setting says otherwise, is scripts/crew/level.js.
   const watch = {};
   for (const e of sorted) {
-    if (e.kind === 'watch' && isPlainKey(e.data?.work) && ['off', 'steps', 'transcript'].includes(e.data.level)) watch[e.data.work] = e.data.level;
+    if (e.kind === 'watch' && isPlainKey(e.data?.work) && LEVELS.includes(e.data.level)) watch[e.data.work] = e.data.level;
   }
   const merges = sorted.filter((e) => e.kind === 'merge');
   const lastMerge = merges.length > 0 ? { at: merges.at(-1).at, data: merges.at(-1).data } : null;
