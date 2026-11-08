@@ -22,8 +22,8 @@ function monthOfIn(dir, tz, input) {
   if (tz) env.TZ = tz;
   else delete env.TZ;
   const url = pathToFileURL(path.join(dir, 'src/lib/dates.js')).href;
-  const script = `import(${JSON.stringify(url)}).then((m) => console.log(m.monthOf(${JSON.stringify(input)})))`;
-  const run = spawnSync(process.execPath, ['-e', script], { env, encoding: 'utf8' });
+  const script = 'import(process.argv[1]).then((m) => console.log(m.monthOf(process.argv[2])))';
+  const run = spawnSync(process.execPath, ['-e', script, url, input], { env, encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
   return run.stdout.trim();
 }

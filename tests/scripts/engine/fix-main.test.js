@@ -130,7 +130,7 @@ test('changes to CI, .archon policy, agent control files and coverage settings w
   for (const file of ['.github/workflows/ci.yml', '.archon/sdlc/policy/maintainers.json', 'CLAUDE.md', '.claude/settings.json', 'vitest.config.ts', '.nycrc']) {
     const got = weakensChecks({ paths: ['src/a.js', file], config: CONFIG, tests: cleanTests });
     assert.equal(got.length, 1, file);
-    assert.match(got[0], new RegExp(file.replace(/[.]/g, '\\.')));
+    assert.ok(got[0].includes(file), got[0]);
   }
   // The project's own CI files and critical-area checks count too.
   assert.equal(weakensChecks({ paths: ['ops/pipeline.yml'], config: { ...CONFIG, ciFiles: ['ops/**'] }, tests: cleanTests }).length, 1);
