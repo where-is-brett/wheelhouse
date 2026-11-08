@@ -575,9 +575,14 @@ export async function push({ client, worktree }) {
   if (branch === null) throw new CliError("This worktree isn't on a branch, so there is nothing to push");
   const pushed = await client.push({ cwd: worktree, dir: worktree, refspec: branch });
   if (pushed?.ok === true) return { branch };
+  if (isPlainObject(pushed?.ciPush)) throw new CliError(CARD_SENT);
   if (pushed?.rejected === 'non-fast-forward') throw new CliError(`The branch was not pushed: ${MOVED_ON}`);
   throw new CliError(`The branch was not pushed: ${pushed?.refused ?? 'the host helper gave no answer'}`);
 }
+
+// What a push the host held for the director's click on a CI file says.
+const CARD_SENT = 'The branch was not pushed: it changes a CI file, so its card has gone to the director. Ask nothing and end your turn: a ci-push-ready wake comes once they click it, then run this command again.';
+const isPlainObject = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
 // What a push the host turned down because its branch moved on says.
 const MOVED_ON = 'the host\'s branch has moved on (the gate may have brought it up to date): run `cli.js pull`, then push again';

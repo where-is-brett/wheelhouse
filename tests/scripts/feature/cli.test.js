@@ -471,6 +471,9 @@ test('push sends the worktree\'s branch through the helper by its folder, and sa
 
   const refusing = { push: async () => ({ ok: false, refused: 'the push would change a CI file, so it needs the director\'s click' }) };
   await assert.rejects(push({ client: refusing, worktree: tree }), (e) => e instanceof CliError && /^The branch was not pushed: the push would change a CI file/.test(e.message));
+  const carded = { push: async () => ({ ok: false, refused: 'the push would change a CI file', ciPush: { branch: 'feature/login-page', sha: 'e'.repeat(40) } }) };
+  await assert.rejects(push({ client: carded, worktree: tree }), (e) => e instanceof CliError
+    && e.message === 'The branch was not pushed: it changes a CI file, so its card has gone to the director. Ask nothing and end your turn: a ci-push-ready wake comes once they click it, then run this command again.');
   await assert.rejects(push({ client: { push: async () => undefined }, worktree: tree }), /no answer/);
 
   // A detached head has no branch to push.

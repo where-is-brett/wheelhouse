@@ -98,7 +98,7 @@ export const FOREMAN_TYPES = Object.freeze([
   'over-appetite', 'clash', 'stop', 'incident', 'brief-tampered', 'plan-ready', 'report', 'lift-incident', 'incident-fix',
   'approval', 'ci-push', 'stuck-note',
 ]);
-export const FEATURE_TYPES = Object.freeze(['ci-red', 'findings', 'conflict', 'review-needed', 'brief-changed', 'answer', 'build']);
+export const FEATURE_TYPES = Object.freeze(['ci-red', 'findings', 'conflict', 'review-needed', 'brief-changed', 'answer', 'build', 'ci-push-ready']);
 export const DIGEST_TYPES = Object.freeze(['task-done', 'review-passed', 'ci-running', 'pushed', 'progress', 'skipped-lines']);
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -248,6 +248,8 @@ function openPr(prs, holds) {
 // as actions. `prs` is the open pull requests as last known, for the clicks the merge gate waits on
 // (ruling R117): a signed approval of an open pull request's current head, and a CI push for an open
 // pull request's branch, each wake the foreman, which merges the ready pull request from the cursor.
+const FEATURE_BRANCH = /^feature\/([a-z0-9][a-z0-9-]*)(?:\/[^/]+)?$/;
+
 function stateEvents(next, prs, out) {
   for (const e of list(next.events)) {
     if (!isPlain(e) || typeof e.id !== 'string' || !isPlain(e.data)) continue;
@@ -290,6 +292,10 @@ function stateEvents(next, prs, out) {
         if (found !== null) {
           const [pr, p] = found;
           out.push({ type: 'ci-push', work: p.work, pr, id, detail: { pr, branch: data.branch, sha: data.sha } });
+        } else if (typeof data.branch === 'string') {
+          // No pull request yet: a feature session's first push was held for the click, so its session is woken to push again.
+          const work = FEATURE_BRANCH.exec(data.branch)?.[1];
+          if (work !== undefined) out.push({ type: 'ci-push-ready', work, id, detail: { branch: data.branch, sha: data.sha } });
         }
       }
     }
