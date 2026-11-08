@@ -14,6 +14,7 @@ import { openHelm, handBack, isDirector } from '../../../scripts/crew/helm.js';
 
 const claude = { kind: 'direct', file: 'claude' };
 const tty = { isTTY: true };
+const treeOf = new Map();
 let tick = 0;
 const now = () => new Date(Date.UTC(2026, 10, 8, 2, 0, tick++));
 
@@ -33,7 +34,9 @@ async function openPiece(project, work, step = 'building') {
   await writeEvent({ project, event: makeEvent({ kind: 'feature', data: { work, step }, now }), now });
   const file = sessionFile(project, work);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ sessionId: 's-1', worktree: tempFolder('wh-tree-') }));
+  const tree = tempFolder('wh-tree-');
+  treeOf.set(work, tree);
+  fs.writeFileSync(file, JSON.stringify({ sessionId: 's-1', worktree: tree }));
 }
 
 // A stand-in for the spawn: records its call and exits on the next turn.
@@ -48,7 +51,8 @@ function stubSpawn(calls, { pid = 4242, before = () => {} } = {}) {
   };
 }
 
-const base = { env: {}, stdin: tty, claude, now, waitMs: 5, startTimeOf: async () => 'Sun Nov  8 02:00:00 2026', print: () => {} };
+const locate = (w) => treeOf.get(w);
+const base = { locate, env: {}, stdin: tty, claude, now, waitMs: 5, startTimeOf: async () => 'Sun Nov  8 02:00:00 2026', print: () => {} };
 const wakesOf = (project) => {
   try {
     return fs.readdirSync(wakesDir(project)).filter((n) => n.endsWith('.json')).map((n) => readWake(path.join(wakesDir(project), n)));
@@ -151,5 +155,69 @@ test('helm: a hold the front desk took is used, and its piece handed back', asyn
     assert.equal(out.code, 0);
     assert.equal(helmHeld(p, 'login'), false);
     assert.equal(wakesOf(p).length, 1);
+  });
+});
+
+test('helm: a hand-back reaches wakeFeature with the helmBack wake', async () => {
+  await withHome(async (p) => {
+    await openPiece(p, 'login');
+    const woken = [];
+    const wakerFor = () => ({ wakeFeature: async (work, file) => { woken.push({ work, wake: readWake(file), held: helmHeld(p, work) }); } });
+    const out = await openHelm(p, 'login', { ...base, wakerFor, config: {}, spawn: stubSpawn([]) });
+    assert.equal(out.code, 0);
+    assert.equal(woken.length, 1);
+    assert.equal(woken[0].work, 'login');
+    assert.equal(woken[0].held, false);
+    assert.equal(woken[0].wake.events[0].detail.next, PROMPTS.helmBack);
+  });
+});
+
+test('helm: a wake that can\'t be delivered is removed and does not change the exit', async () => {
+  await withHome(async (p) => {
+    await openPiece(p, 'login');
+    const wakerFor = () => ({ wakeFeature: async () => { throw new Error('stopped'); } });
+    const out = await openHelm(p, 'login', { ...base, wakerFor, config: {}, spawn: stubSpawn([]) });
+    assert.equal(out.code, 0);
+    assert.equal(helmHeld(p, 'login'), false);
+    assert.equal(wakesOf(p).length, 0);
+  });
+});
+
+test('helm: Ctrl-C while waiting releases the hold and sends no wake', async () => {
+  await withHome(async (p) => {
+    await openPiece(p, 'login');
+    const running = runningFile(p, 'feature-login');
+    fs.mkdirSync(path.dirname(running), { recursive: true });
+    fs.writeFileSync(running, JSON.stringify({ state: 'running', pid: process.pid, at: now().toISOString() }));
+    const proc = new EventEmitter();
+    const spawned = [];
+    const out = await openHelm(p, 'login', { ...base, proc, print: () => proc.emit('SIGINT'), spawn: stubSpawn(spawned) });
+    assert.equal(out.code, 1);
+    assert.equal(spawned.length, 0);
+    assert.equal(helmHeld(p, 'login'), false);
+    assert.equal(wakesOf(p).length, 0);
+    assert.equal(proc.listenerCount('SIGINT'), 0);
+    assert.ok(listEvents(stateDir(p), { report: () => {} }).some((e) => e.kind === 'helm-ended'));
+  });
+});
+
+test('helm: Ctrl-C while the session runs is left to the session', async () => {
+  await withHome(async (p) => {
+    await openPiece(p, 'login');
+    const proc = new EventEmitter();
+    const out = await openHelm(p, 'login', { ...base, proc, spawn: stubSpawn([], { before: () => proc.emit('SIGINT') }) });
+    assert.equal(out.code, 0);
+    assert.equal(wakesOf(p).length, 1);
+  });
+});
+
+test('helm: refuses a worktree the waker does not name', async () => {
+  await withHome(async (p) => {
+    await openPiece(p, 'login');
+    const spawned = [];
+    assert.equal((await openHelm(p, 'login', { ...base, locate: () => null, spawn: stubSpawn(spawned) })).code, 1);
+    assert.equal((await openHelm(p, 'login', { ...base, locate: () => tempFolder('wh-other-'), spawn: stubSpawn(spawned) })).code, 1);
+    assert.equal(spawned.length, 0);
+    assert.equal(fs.existsSync(holdFile(p, 'login')), false);
   });
 });
