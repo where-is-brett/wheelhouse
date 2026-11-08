@@ -35,6 +35,7 @@ import { reload, toolSheetLines } from '../hooks/session-start.js';
 import { HEADINGS, briefingIn, cardsDue, cardsLine, decisionsLine } from '../hooks/board-context.js';
 import { decisionsFrom } from '../decisions/pending.js';
 import { boardModel } from '../board/model.js';
+import { confirmationFor } from '../state/events.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { BRIEFING_GAP_HOURS, CONTEXT_CHARS } from '../lib/core-numbers.js';
 import { locateSuperpowers } from './harness.js';
@@ -254,12 +255,14 @@ export const FRONT_DESK_MODEL = 'WHEELHOUSE_EVAL_FRONT_DESK_MODEL';
 //               board context hook's text comes on each prompt (promptContext)
 //   usage       the usage figures the briefing reads, or null
 //   env         the environment the front desk's model is read from (FRONT_DESK_MODEL)
+//   typedReplies  undefined to leave the setting as the seed has it; true or false for the setting
+//               the director confirmed, as the run starts (the stand-in signs its confirmation)
 // Resolves with the context runScenario takes: { env, pluginDirs, appendSystemPrompt, helper,
 // seededIds, evidence, hooksGave, head, close, model, modelVariable }, with `reload`, the session
 // start's text over the seed, with Wheelhouse. `hooksGave()` lists what the plugin's hooks added,
 // in order. `model` is null when the environment names none, and runScenario then runs nothing.
 export async function setUpFrontDesk(dir, variant, {
-  files = {}, commits = [], seed = [], approved = {}, worktree = null, pullRequests = {}, signed = [], lastPrompt, usage = null, env = process.env,
+  files = {}, commits = [], seed = [], approved = {}, worktree = null, pullRequests = {}, signed = [], lastPrompt, usage = null, env = process.env, typedReplies,
 } = {}) {
   assertUnderTmp(dir);
   // By its real path: the command runs nothing when started through a link in its path (the
@@ -300,6 +303,11 @@ export async function setUpFrontDesk(dir, variant, {
     }
     if (typeof seed === 'function') seed = seed({ head });
     if (typeof signed === 'function') signed = signed({ head });
+    if (typedReplies !== undefined) {
+      const setting = seedEvent('setting', { key: 'typedReplies', value: typedReplies, words: 'Answer decisions by typing' }, new Date().toISOString());
+      seed = [...seed, setting];
+      signed = [...signed, confirmationFor(setting)];
+    }
     const pluginDirs = [];
     let appendSystemPrompt = PLAIN_PROMPT;
     let reloadText = null;
@@ -309,7 +317,6 @@ export async function setUpFrontDesk(dir, variant, {
     if (plugin) {
       write(plugin, '.claude-plugin/plugin.json', `${JSON.stringify({ name: 'wheelhouse', version: '0.0.0', description: 'Wheelhouse\'s front desk, for one evaluation run.' }, null, 2)}\n`);
       for (const file of PLUGIN_FILES) write(plugin, file, fs.readFileSync(path.join(REPO_ROOT, file), 'utf8'));
-      reloadText = reload({ views: standInViews(seed, approved), stop: null, notes: [], frontDesk: true, sheet: toolSheetLines('claude-code', { pluginRoot: plugin }) });
       write(plugin, 'hooks/hooks.json', `${JSON.stringify(hooksFor(lastPrompt !== undefined), null, 2)}\n`);
       pluginDirs.push(plugin);
       appendSystemPrompt = undefined;
@@ -327,6 +334,12 @@ export async function setUpFrontDesk(dir, variant, {
       state: { events: seed, approved, pullRequests: prs, signed },
       onHook: ({ body, views, events }) => hookText({ body, views, events, seen, usage, home, plugin }),
     });
+    // The session start's text over the state the run starts with. A confirmed setting counts only by
+    // the stand-in's signature, so with one the text is read from the stand-in's views.
+    if (plugin) {
+      const views = typedReplies === undefined ? standInViews(seed, approved) : helper.views();
+      reloadText = reload({ views, stop: null, notes: [], frontDesk: true, sheet: toolSheetLines('claude-code', { pluginRoot: plugin }) });
+    }
     const seededIds = new Set([...seed.map((e) => e.id), ...helper.events().map((e) => e.id)]);
     const evidence = () => ({ helper: helper.records(), written: helper.events().filter((e) => !seededIds.has(e.id)) });
     // What the hooks added, in order: { event, source, text }, and { …, text: null, failed } for a

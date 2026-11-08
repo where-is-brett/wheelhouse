@@ -65,6 +65,12 @@ export function typedAnswer(card, { n, label, words = '', private: isPrivate = f
   return keep(makeEvent({ kind: 'decision-answer', data: { question: card.data.question, n, label, option, words, where: 'chat', ...(isPrivate ? { private: true } : {}) }, now: () => new Date(at) }), project);
 }
 
+// Switches typed replies off, as the director's confirmed setting does, half an hour before `turnOn` would switch them back.
+export function turnOff(project = P) {
+  const setting = keep(makeEvent({ kind: 'setting', data: { key: 'typedReplies', value: false, words: 'Answer decisions by typing' }, now: () => new Date('2026-11-01T00:30:00.000Z') }), project);
+  keep(makeEvent({ ...confirmationFor(setting), now: () => new Date('2026-11-01T00:30:01.000Z') }), project);
+}
+
 // Switches typed replies on, as the director's confirmed setting does: a `setting` event and its signed confirmation.
 export function turnOn(project = P) {
   const setting = keep(makeEvent({ kind: 'setting', data: { key: 'typedReplies', value: true, words: 'Answer decisions by typing' }, now: () => new Date('2026-11-01T01:00:00.000Z') }), project);

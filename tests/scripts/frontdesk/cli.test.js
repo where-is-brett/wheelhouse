@@ -168,12 +168,14 @@ const QUESTION = {
   options: [{ label: 'Comma', says: 'Commas between values; opens in any spreadsheet.' }, { label: 'Tab', says: 'Tabs between values.' }],
   recommendation: 'Tab', level: 2,
 };
-// Typed replies are off by default; the tests of a decision asked in chat hold the setting confirmed on.
-// Made inside a test, once its home has a signing key.
-const typedOn = () => {
-  const setting = makeEvent({ kind: 'setting', data: { key: 'typedReplies', value: true, words: 'Answer decisions by typing' }, now: () => T(0) });
+// Typed replies are on by default; the tests of a decision asked in chat still hold the setting confirmed on, and the
+// tests of the question picker hold it confirmed off. Made inside a test, once its home has a signing key.
+const typedSet = (value) => {
+  const setting = makeEvent({ kind: 'setting', data: { key: 'typedReplies', value, words: 'Answer decisions by typing' }, now: () => T(0) });
   return [setting, makeEvent({ ...confirmationFor(setting), now: () => new Date(T(0).getTime() + 1) })];
 };
+const typedOn = () => typedSet(true);
+const typedOff = () => typedSet(false);
 const questionEvent = (data = QUESTION, n = 5) => makeEvent({ kind: 'question', data, now: () => T(n) });
 
 test('cards gives at most four questions and says how many are left', async () => {
@@ -2223,9 +2225,9 @@ test('the project\'s own name, as the helper gives it, is never put in plain wor
   });
 });
 
-test('typed replies off, the default: cards hands an open question out as an answer card, once, as it always did', async () => {
+test('typed replies switched off: cards hands an open question out as an answer card, once, as it always did', async () => {
   await inHome(async () => {
-    const helper = fakeHelper({ events: [questionEvent()] });
+    const helper = fakeHelper({ events: [...typedOff(), questionEvent()] });
     const first = await run(helper, ['cards']);
     assert.equal(first.code, 0, first.err);
     assert.equal(first.json.questions.length, 1);

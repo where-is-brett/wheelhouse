@@ -653,7 +653,7 @@ test('the count is at most one call\'s worth, and counts a question from the bui
       'q-wide-4': { question: { data: { ...question('q-wide-4'), options: ['A', 'B', 'C', 'D', 'E'].map((label) => ({ label, says: label })), recommendation: 'A' } } },
       'q-unread-5': { question: { data: { id: 'q-unread-5' } } },
     });
-    // Typed replies are off by default: the question with no card yet is a card to ask, as it always was.
+    // No settings view on disk can't be read, so typed replies count as off: the question with no card yet is a card to ask.
     assert.equal(contextOf(await run(repo, 'Hi', NOW)), cardsLine(1));
     // A board command gives the line, then the board.
     const board = contextOf(await run(repo, '/wheelhouse:board', NOW));

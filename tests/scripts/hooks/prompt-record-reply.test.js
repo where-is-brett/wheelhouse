@@ -9,8 +9,8 @@ import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { recordRole } from '../../../scripts/lib/role.js';
 import { readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
-import { inHome as inHomeOff, turnOn, P, raise, raiseBuildQuestion, typedAnswer } from '../../helpers/decisions-world.js';
-// Typed replies are off until the director rules; these tests are of the behaviour with them on, and say so where they mean off.
+import { inHome as inHomeOff, turnOn, turnOff, P, raise, raiseBuildQuestion, typedAnswer } from '../../helpers/decisions-world.js';
+// Typed replies are on by default (the director's decision of 8 November 2026); these tests still switch them on, and say so where they mean off.
 const inHome = (fn) => inHomeOff(async (home) => { turnOn(); return fn(home); });
 
 
@@ -233,8 +233,18 @@ test('a fault before anything is kept lets the prompt through with nothing said'
   });
 });
 
-test('typed replies off, the default: "1 A" records nothing and the note says the decision still waits', async () => {
+test('typed replies never set: the default is on, so "1 A" records', async () => {
   await inHomeOff(async () => {
+    raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    const c = fake();
+    await run(c, '1 A');
+    assert.equal(c.calls.record[0].event.kind, 'decision-answer');
+  });
+});
+
+test('typed replies switched off: "1 A" records nothing and the note says the decision still waits', async () => {
+  await inHomeOff(async () => {
+    turnOff();
     raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
     const c = fake();
     const out = await run(c, '1 A');
@@ -250,6 +260,7 @@ test('typed replies off, the default: "1 A" records nothing and the note says th
 
 test('the same reply records once typed replies are switched on', async () => {
   await inHomeOff(async () => {
+    turnOff();
     raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
     const c = fake();
     await run(c, '1 A');
