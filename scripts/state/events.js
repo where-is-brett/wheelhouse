@@ -23,7 +23,7 @@ export const PLAIN_KINDS = [
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
   'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest', 'chat-steer',
-  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'brief', 'slept', 'agent-call', 'self-merged',
+  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'brief', 'slept', 'agent-call', 'self-merged', 'watch',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
@@ -281,9 +281,16 @@ function questionIdOf(id) {
   return m && isSlug(m[1]) ? { work: m[1], n: Number(m[2]) } : null;
 }
 
+// The levels a `watch` record may name: the `watchCrew` setting's own (scripts/crew/level.js imports this module's views,
+// so the list is kept here rather than imported).
+const WATCH_LEVELS = ['off', 'steps', 'transcript'];
+
 // What the build loop's plain records must carry. Each guards the shape; what the
 // records mean is read from them by the views and by the foreman.
 const PLAIN_SHAPES = {
+  // The director's request to see more or less of one piece's crew (crew visibility design, section 6.2): `level` is one of
+  // the watchCrew levels. A request, not a decision: it never reaches the decision log.
+  watch: { must: ['work', 'level'], may: [] },
   // Words typed into a front end without a First Mate (a later UI), queued for the First Mate's next
   // turn and shown as waiting (spec 5.2); `via` names the front end.
   request: { must: ['words', 'via'], may: [] },
@@ -477,6 +484,11 @@ function checkPlain(kind, data) {
   const optionalText = (k) => { if (data[k] !== undefined && !isText(data[k])) bad(`has a ${k} that is not text`); };
   const slug = (k) => { if (!isSlug(data[k])) bad(`needs ${k} to be a short slug (lower-case letters, digits and hyphens, at most 40)`); };
   const pr = () => { if (data.pr !== undefined && (!Number.isInteger(data.pr) || data.pr < 1)) bad('has a pull request number that is not one'); };
+  if (kind === 'watch') {
+    slug('work');
+    if (!WATCH_LEVELS.includes(data.level)) bad('needs its level to be off, steps or transcript');
+    return;
+  }
   if (kind === 'brief') {
     const problem = briefProblem(data);
     if (problem !== null) bad(problem);

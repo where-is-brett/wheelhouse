@@ -17,7 +17,7 @@ import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'brief', 'sendBacks', 'slept'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'brief', 'sendBacks', 'slept', 'watch'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -1698,4 +1698,20 @@ test('a replacement that the rules refuse hides nothing, even when it is in the 
   const events = [makeEvent({ kind: 'question', data: ask('q-by-hand-3'), now: () => new Date('2026-10-18T01:00:00Z') }), forged];
   const { questions } = buildViews(events, { now: () => new Date('2026-10-18T04:00:00Z') });
   assert.deepEqual(Object.keys(questions).sort(), ['q-by-hand-1000001', 'q-by-hand-3']);
+});
+
+test('views: the latest watch per piece wins', () => {
+  const events = [
+    ev('watch', 1, { work: 'login', level: 'transcript' }),
+    ev('watch', 2, { work: 'other', level: 'off' }),
+    ev('watch', 3, { work: 'login', level: 'steps' }),
+  ];
+  assert.deepEqual(build(events).watch, { login: 'steps', other: 'off' });
+  assert.deepEqual(build([]).watch, {});
+});
+
+test('views: a watch record that is not a level counts for nothing', () => {
+  const events = [ev('watch', 1, { work: 'login', level: 'steps' })];
+  events.push({ ...ev('watch', 2, { work: 'login', level: 'steps' }), data: { work: 'login', level: 'loud' } });
+  assert.deepEqual(build(events).watch, { login: 'steps' });
 });
