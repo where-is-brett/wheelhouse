@@ -38,7 +38,12 @@ function ioWith(real, { capture = () => '', over = {} } = {}) {
   const answered = [];
   const io = {
     started, raw, answered,
-    tmux: { start: (x) => started.push(x), type: () => {}, keys: () => {}, capture, kill: () => {}, list: () => [] },
+    // tmux lists the sessions started and not killed, by their full names, as the real one does.
+    tmux: {
+      start: (x) => started.push(x), type: () => {}, keys: () => {}, capture,
+      kill: (name) => { const at = started.findIndex((x) => x.name === name); if (at >= 0) started.splice(at, 1); },
+      list: () => started.map((x) => `haiku-trial-${x.name}`),
+    },
     gh: async () => null,
     clock: { now: () => now, sleep: async (ms) => { now += ms; } },
     signals: { checkAll: () => [], gatherContext },
@@ -146,13 +151,14 @@ test('main sets WHEELHOUSE_HOME to the trial home for restore and refuses the re
 
 test('every desk session starts with the trial home and config folder', async (t) => {
   const folder = scratch(t);
-  const started = [];
+  const starts = [];
   const io = ioWith(buildRealIo().host, { capture: (n) => (n === 'setup' ? 'Every step is done.' : '') });
-  io.tmux.start = (x) => started.push(x);
+  const start = io.tmux.start;
+  io.tmux.start = (x) => { starts.push(x); start(x); };
   const env = { HAIKU_TRIAL_GH_OWNER: 'trial-owner', HAIKU_TRIAL_CLAUDE: '/bin/claude', HAIKU_TRIAL_CONFIG_DIR: '/cfg', WHEELHOUSE_HOME: wheelhouseHome() };
   await run({ mode: 'smoke', io, from: 'setup-s0', until: 'front-desk', folder, date: DATE, env });
-  assert.equal(started.length, 2);
-  for (const s of started) assert.deepEqual([s.env.WHEELHOUSE_HOME, s.env.CLAUDE_CONFIG_DIR], [wheelhouseHome(), '/cfg']);
+  assert.equal(starts.length, 2);
+  for (const s of starts) assert.deepEqual([s.env.WHEELHOUSE_HOME, s.env.CLAUDE_CONFIG_DIR], [wheelhouseHome(), '/cfg']);
 });
 
 test('a tunnel preview stops before anything is created when cloudflared is missing', async (t) => {

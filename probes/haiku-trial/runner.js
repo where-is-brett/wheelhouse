@@ -14,7 +14,7 @@ import { SESSION_PREFIX, frontDeskCommand } from './tmux.js';
 import { STEPS as LOG, SETUP_DONE, OWN_BRANCH } from './signals.js';
 import { auditModels } from './audit.js';
 import { STARTS_UNAPPROVED } from '../../scripts/foreman/queue.js';
-import { installCommand } from './stage-plugin.js';
+import { installCommand, removeCommand } from './stage-plugin.js';
 import { reviewCard, stepsPage, writeTryMe, reviewAsDecision, answerLetter } from './review-card.js';
 
 const MINUTE = 60 * 1000;
@@ -26,6 +26,8 @@ const SPARE_BRANCH = 'trial/spare-bug';
 const SETUP_WAIT_MS = 45 * MINUTE;
 const NEW_SESSION = /needs one new session|new session on this folder/i;
 const TRUST_PROMPT = /trust the files in this folder|do you trust|trust this folder/i;
+// The trust prompt's highlighted choice. Its first choice is "No, exit", so Enter alone ends the session.
+const TRUST_YES = /❯\s*(?:\d+\.\s*)?Yes, I trust this folder/;
 const pieceOf = (id) => PIECES.find((p) => p.id === id);
 
 export class Stop extends Error {}
@@ -74,6 +76,7 @@ const NOTHING = {
   startTunnel: async () => ({}),
   hasCommand: async () => true,
   stopWheelhouse: async () => [],
+  installedProblem: async () => 'not wired',
   useRepo: () => {},
 };
 
@@ -144,9 +147,25 @@ const mergedWork = (pulls) => pulls.filter((p) => p.merged_at && !OWN_BRANCH.tes
 const mergedPulls = async (ctx) => mergedWork(await ghPulls(ctx));
 const pullOf = (pulls, text) => pulls.find((p) => text !== undefined && text !== '' && `${p.head?.ref ?? ''} ${p.title ?? ''}`.toLowerCase().includes(String(text).toLowerCase()));
 
+// The tmux sessions this run started and has not ended itself. One that is gone ended by itself (a crash, or a prompt answered
+// the wrong way), and nothing the run waits for can come from it, so the run stops.
+const tmuxName = (name) => `${SESSION_PREFIX}${name}`;
+function endSession(ctx, name) {
+  ctx.live?.delete(name);
+  ctx.io.tmux.kill(name);
+}
+function mustBeAlive(ctx) {
+  if (!ctx.live?.size) return;
+  const up = new Set(ctx.io.tmux.list());
+  for (const name of ctx.live) {
+    if (!up.has(tmuxName(name))) throw new Stop(`the ${name} session ended by itself (tmux ${tmuxName(name)} is gone)`);
+  }
+}
+
 // One look at the project: events become log entries, open cards get the director's stand-in answer, and F3b fires when armed.
 async function tick(ctx) {
   const { io, state } = ctx;
+  mustBeAlive(ctx);
   const events = await io.host.events({ project: ctx.projectName });
   for (const e of events) {
     if (e.id === undefined || state.seen.includes(e.id)) continue;
@@ -256,14 +275,24 @@ async function desk(ctx, name, extraEnv = {}) {
   // wakes (and so every feature session) takes its environment from this one.
   const own = { WHEELHOUSE_HOME: ctx.env.WHEELHOUSE_HOME, ...(ctx.env.HAIKU_TRIAL_CONFIG_DIR ? { CLAUDE_CONFIG_DIR: ctx.env.HAIKU_TRIAL_CONFIG_DIR } : {}) };
   io.tmux.start({ name, cwd: ctx.projectDir, command, env: { ...env, ...own, ...extraEnv } });
+  (ctx.live ??= new Set()).add(name);
   await note(ctx, name === DESK ? 'front-desk' : name, `started tmux session ${SESSION_PREFIX}${name}`, { detail: { tmux: `${SESSION_PREFIX}${name}` } });
   await ctx.io.clock.sleep(15000);
-  // A fresh folder asks to be trusted before anything else; the first choice is Yes.
+  // A fresh folder asks to be trusted before anything else. Its first choice is "No, exit", so Yes is chosen by moving down to it
+  // and seeing it highlighted before Enter.
   for (let i = 0; i < 3 && TRUST_PROMPT.test(io.tmux.capture(name)); i += 1) {
+    let onYes = TRUST_YES.test(io.tmux.capture(name));
+    for (let down = 0; down < 3 && !onYes; down += 1) {
+      io.tmux.keys(name, 'Down');
+      await ctx.io.clock.sleep(1000);
+      onYes = TRUST_YES.test(io.tmux.capture(name));
+    }
+    if (!onYes) throw new Stop(`the ${name} session's folder-trust prompt never highlighted "Yes, I trust this folder"`);
     io.tmux.keys(name, 'Enter');
-    await note(ctx, name === DESK ? 'front-desk' : name, 'answered the folder-trust prompt');
+    await note(ctx, name === DESK ? 'front-desk' : name, 'answered the folder-trust prompt: Yes, I trust this folder');
     await ctx.io.clock.sleep(5000);
   }
+  mustBeAlive(ctx);
 }
 
 async function pieceEnv(ctx, id) {
@@ -316,12 +345,21 @@ export const STEPS = [
     id: 'install', wave: 1, smoke: true, needsGo,
     asks: () => 'Install the staged plugin into Claude Code and use Haiku for the trial? Answer go.',
     async run(ctx, io) {
-      const lines = installCommand({ marketplaceDir: ctx.state.stage?.marketplaceDir, configDir: ctx.env.HAIKU_TRIAL_CONFIG_DIR, claude: ctx.claude });
+      const configDir = ctx.env.HAIKU_TRIAL_CONFIG_DIR;
+      // A copy an earlier run installed is taken out first: an install of the same version keeps it as it is.
+      const remove = removeCommand({ configDir, claude: ctx.claude });
+      const gone = await io.host.exec(remove, { cwd: ctx.folder });
+      await note(ctx, 'install', `${remove.join(' ')} -> ${gone.status} (fails when nothing was installed)`);
+      const lines = installCommand({ marketplaceDir: ctx.state.stage?.marketplaceDir, configDir, claude: ctx.claude });
       for (const line of lines) {
         const got = await io.host.exec(line, { cwd: ctx.folder });
         await note(ctx, 'install', `${line.join(' ')} -> ${got.status}`);
         if (got.status !== 0) throw new Stop(`install failed: ${line.join(' ')}`);
       }
+      const sha = ctx.state.stage?.sha;
+      const problem = await io.host.installedProblem({ configDir, sha });
+      if (problem) throw new Stop(`the installed plugin is not the staged copy: ${problem}`);
+      await note(ctx, 'install', `the installed copy is the staged commit ${sha}`);
     },
   },
   {
@@ -352,7 +390,7 @@ export const STEPS = [
         if (SETUP_DONE.test(pane)) return true;
         if (!restarted && NEW_SESSION.test(pane)) {
           ctx.state.panes.setup.push(pane);
-          io.tmux.kill(SETUP);
+          endSession(ctx, SETUP);
           restarted = true;
           await note(ctx, LOG.health, 'setup asked for a new session; started it again');
           await start();
@@ -363,7 +401,7 @@ export const STEPS = [
       ctx.state.panes.setup.push(io.tmux.capture(SETUP));
       await note(ctx, LOG.health, done ? 'pass' : 'fail: setup did not finish in time');
       ctx.state.config = await io.host.readConfig({ dir: ctx.projectDir });
-      io.tmux.kill(SETUP);
+      endSession(ctx, SETUP);
       if (!done) throw new Stop('setup did not finish');
     },
   },

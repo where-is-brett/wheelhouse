@@ -21,11 +21,19 @@ function fakeIo(over = {}) {
   let now = T0;
   const timeline = [];
   const rec = (kind, ...args) => timeline.push({ kind, args, at: now });
+  // The sessions started and not killed are the ones tmux lists, by their full names; `over.sessions` overrides the list.
+  const full = (name) => (String(name).startsWith('haiku-trial-') ? String(name) : `haiku-trial-${name}`);
+  const live = new Set();
   const io = {
     timeline,
+    live,
     tmux: {
-      start: (x) => rec('tmux.start', x), type: (name, text) => rec('tmux.type', name, text), keys: (name, ...keys) => rec('tmux.keys', name, ...keys), capture: (name) => (over.capture ? over.capture(name) : ''),
-      kill: (name) => rec('tmux.kill', name), list: () => over.sessions ?? [],
+      start: (x) => { live.add(full(x.name)); rec('tmux.start', x); },
+      type: (name, text) => rec('tmux.type', name, text),
+      keys: (name, ...keys) => { rec('tmux.keys', name, ...keys); over.keys?.(name, ...keys); },
+      capture: (name) => (over.capture ? over.capture(name) : ''),
+      kill: (name) => { live.delete(full(name)); rec('tmux.kill', name); },
+      list: () => over.sessions ?? [...live],
     },
     gh: async (args) => { rec('gh', args); return over.gh ? over.gh(args) : null; },
     clock: { now: () => now, sleep: async (ms) => { now += ms; } },
@@ -45,7 +53,8 @@ function fakeIo(over = {}) {
     kill: (pid, signal) => rec('kill', pid, signal),
     host: {
       stage: async () => ({ pluginDir: '/p', marketplaceDir: '/m' }),
-      exec: async () => ({ status: 0 }),
+      exec: async (argv) => { rec('exec', argv); return over.exec ? over.exec(argv) : { status: 0 }; },
+      installedProblem: async (x) => { rec('installed', x); return over.installed ?? null; },
       makeProject: async () => ({ sha: 'abc' }),
       git: async () => '',
       applySpareBug: (dir) => { rec('spare', dir); return over.spare ?? { applied: true }; },
@@ -57,6 +66,14 @@ function fakeIo(over = {}) {
   };
   return io;
 }
+
+// Claude Code's folder-trust prompt, its cursor on No (the first choice) or on Yes.
+const trustMenu = (onYes) => [
+  'Quick safety check: Is this a project you created or one you trust?',
+  onYes ? '   No, exit' : ' ❯ No, exit',
+  onYes ? ' ❯ Yes, I trust this folder' : '   Yes, I trust this folder',
+  'Enter to confirm · Esc to cancel',
+].join('\n');
 
 const withLog = (folder, steps) => fs.writeFileSync(path.join(folder, 'run-log.jsonl'), steps.map((step) => JSON.stringify({ at: '2026-11-08T09:00:00.000Z', step, note: 'done', done: true })).join('\n') + '\n');
 const readLog = (folder) => fs.readFileSync(path.join(folder, 'run-log.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -227,15 +244,18 @@ test('work-ready is read from a quick or bug work not shown first and from a sig
 test('setup answers its cards through the setup session, ends on the engine wording and restarts once when it asks for a new session', async (t) => {
   const folder = scratch(t);
   let phase = 0;
+  let trusted = false;
+  let onYes = false;
   const cards = [{ id: 'c1', kind: 'card', data: { kind: 'setup', options: [{ label: 'Go ahead' }] } }];
   const answered = [];
   const io = fakeIo({
+    keys: (name, key) => { if (key === 'Down') onYes = true; if (key === 'Enter' && onYes) trusted = true; },
     capture: (name) => {
       if (name !== 'haiku-trial-setup' && name !== 'setup') return '';
+      if (!trusted) return trustMenu(onYes);
       phase += 1;
-      if (phase < 3) return 'Do you trust the files in this folder?';
-      if (phase < 5) return 'Last safety checks need one new session on this folder.';
-      if (phase < 7) return 'working';
+      if (phase < 3) return 'Last safety checks need one new session on this folder.';
+      if (phase < 5) return 'working';
       return 'Every step is done.';
     },
     host: { events: async () => cards, answerCards: async (x) => { answered.push(x.session); return 1; }, readConfig: async () => ({ routing: {} }) },
@@ -247,6 +267,67 @@ test('setup answers its cards through the setup session, ends on the engine word
   assert.equal(io.timeline.filter((e) => e.kind === 'tmux.start').length, 2, 'one restart');
   assert.deepEqual(io.timeline.filter((e) => e.kind === 'tmux.type').map((e) => e.args[1]), ['/wheelhouse:setup', 'carry on with setup']);
   assert.ok(readLog(folder).some((e) => e.step === 'health' && e.note === 'pass'));
+});
+
+test('the folder-trust prompt is answered Yes: the cursor is moved off "No, exit" before Enter', async (t) => {
+  let onYes = false;
+  let trusted = false;
+  const io = fakeIo({
+    keys: (name, key) => { if (key === 'Down') onYes = true; if (key === 'Enter' && onYes) trusted = true; },
+    capture: () => (trusted ? 'Every step is done.' : trustMenu(onYes)),
+    host: { readConfig: async () => ({ routing: {} }) },
+  });
+  const got = await run({ mode: 'smoke', io, from: 'setup-s0', until: 'setup-s0', folder: scratch(t), date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['setup-s0'], got.why);
+  const keys = io.timeline.filter((e) => e.kind === 'tmux.keys').map((e) => e.args[1]);
+  assert.deepEqual(keys, ['Down', 'Enter'], 'Down to Yes, then Enter; never Enter on No');
+});
+
+test('a trust prompt that never highlights Yes stops the run without pressing Enter', async (t) => {
+  const io = fakeIo({ capture: () => trustMenu(false) });
+  const got = await run({ mode: 'smoke', io, from: 'setup-s0', until: 'setup-s0', folder: scratch(t), date: '2026-11-08', env: ENV });
+  assert.equal(got.stoppedAt, 'setup-s0');
+  assert.match(got.why, /never highlighted "Yes, I trust this folder"/);
+  assert.equal(io.timeline.some((e) => e.kind === 'tmux.keys' && e.args.includes('Enter')), false);
+});
+
+test('a session that ends by itself stops the run at once instead of waiting it out', async (t) => {
+  let looks = 0;
+  const io = fakeIo({
+    capture: () => {
+      looks += 1;
+      // The session is there for its start, then gone, as when Claude Code exits.
+      if (looks > 2) io.live.clear();
+      return 'working';
+    },
+  });
+  const got = await run({ mode: 'smoke', io, from: 'setup-s0', until: 'setup-s0', folder: scratch(t), date: '2026-11-08', env: ENV });
+  assert.equal(got.stoppedAt, 'setup-s0');
+  assert.match(got.why, /the setup session ended by itself \(tmux haiku-trial-setup is gone\)/);
+  assert.ok(io.clock.now() - T0 < 5 * 60 * 1000, 'stopped within minutes, not after the 45-minute wait');
+});
+
+test('install takes out an earlier copy first, then checks the installed copy is the staged commit', async (t) => {
+  const folder = scratch(t);
+  fs.writeFileSync(path.join(folder, 'state.json'), JSON.stringify({ stage: { marketplaceDir: '/m', sha: 'feed01' } }));
+  const env = { ...ENV, HAIKU_TRIAL_CONFIG_DIR: '/trial-config' };
+  const io = fakeIo({ exec: (argv) => ({ status: argv.includes('uninstall') ? 1 : 0 }) });
+  const got = await run({ mode: 'smoke', io, from: 'install', until: 'install', folder, date: '2026-11-08', env });
+  assert.deepEqual(got.done, ['install'], got.why);
+  const lines = io.timeline.filter((e) => e.kind === 'exec').map((e) => e.args[0].slice(3, 6).join(' '));
+  assert.deepEqual(lines, ['plugin uninstall wheelhouse@wheelhouse-probe-wheelhouse-trial', 'plugin marketplace add', 'plugin install wheelhouse@wheelhouse-probe-wheelhouse-trial']);
+  assert.ok(io.timeline.every((e) => e.kind !== 'exec' || e.args[0][1] === 'CLAUDE_CONFIG_DIR=/trial-config'));
+  assert.deepEqual(io.timeline.find((e) => e.kind === 'installed').args[0], { configDir: '/trial-config', sha: 'feed01' });
+  assert.ok(readLog(folder).some((e) => e.step === 'install' && /staged commit feed01/.test(e.note)));
+});
+
+test('install stops the run when the installed copy is not the staged one', async (t) => {
+  const folder = scratch(t);
+  fs.writeFileSync(path.join(folder, 'state.json'), JSON.stringify({ stage: { marketplaceDir: '/m', sha: 'feed01' } }));
+  const io = fakeIo({ installed: 'the installed copy is commit 588bcd8, not the staged feed01' });
+  const got = await run({ mode: 'smoke', io, from: 'install', until: 'install', folder, date: '2026-11-08', env: ENV });
+  assert.equal(got.stoppedAt, 'install');
+  assert.match(got.why, /not the staged copy: the installed copy is commit 588bcd8/);
 });
 
 test('setup that never finishes stops the run', async (t) => {

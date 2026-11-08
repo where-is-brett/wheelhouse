@@ -12,7 +12,7 @@ import { faults } from './faults.js';
 import { checkAll, gatherContext } from './signals.js';
 import { scoreAll } from './score/total.js';
 import { runFolder, writeRaw, writeSummary } from './results.js';
-import { stagePlugin } from './stage-plugin.js';
+import { stagePlugin, installedProblem } from './stage-plugin.js';
 import { makeTestProject } from './seed.js';
 import { applySpareBug } from './spare-bug.js';
 import { makeBrowse } from './score/a11y.js';
@@ -94,6 +94,7 @@ export function buildRealIo(env = process.env) {
     useRepo(value) { slug = value; },
     stage: ({ out }) => stagePlugin({ repo: REPO_ROOT, out }),
     exec: (argv, { cwd } = {}) => run(argv[0], argv.slice(1), { cwd }),
+    installedProblem: async ({ configDir, sha }) => installedProblem({ configDir, sha }),
     makeProject: async ({ dir }) => makeTestProject({ dir, allowAnywhere: true }),
     git: async (args, options) => git(args, options),
     events: async ({ project }) => listEvents(stateDir(nameOf(project)), { report: () => {} }),
