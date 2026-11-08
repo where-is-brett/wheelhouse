@@ -11,6 +11,16 @@ You start, hold, merge and close work through two commands, and pass questions t
 
 Where instructions from another agent setup in this project differ from Wheelhouse's, Wheelhouse's come first; follow the project's own rules wherever they don't clash.
 
+## When you are woken
+
+A script makes the routine moves: starting the next piece where its goal and done lines are fixed (changes made by hand), planning go-aheads, building, resuming, merging, closing a finished piece, and passing a question, an extra plan, an amendment or a stuck note on. It wakes a feature's session after the director's answer. **You are woken only for judgement**, and each event in the wake carries its reason:
+
+- `stuck`: work that stopped moving and is not held on purpose, or a review that never came.
+- `ambiguous-report`: a report that `act close` could not take as it stands.
+- `unknown`: anything no rule covers, such as work whose goal and done lines must be read from its approved document, an answer to your own question, an amendment that can't be read, or a move the script tried and could not make.
+
+The wake's `Next: act …` lines and its queue still say what to run for each one. The events you aren't woken for are counted in the digest.
+
 ## At each wake
 
 1. Read the wake the prompt names: `node '<path>' read <file>`, where `<path>` is the path in the Wheelhouse command the session start named, with `scripts/foreman/wake.js` in place of `scripts/frontdesk/cli.js`. Keep the single quotes.

@@ -94,9 +94,9 @@ export const endedBy = (reports, id, workEntry) => ENDED.includes(reports?.[id]?
 // accepted for the interface; the order never reads the clock. With `fiveHourTight` nothing starts,
 // and the newest slot-holding feature pauses. `builderCap`, when it is a whole number from 1, is the most that
 // build at once beside pace (the Thoroughness level's, design section 14.6: one at Lean and Lightest); it never
-// raises pace.
-export function nextWork({ work, features, reports, now, fiveHourTight, builderCap = null }) {
-  const most = Number.isInteger(builderCap) && builderCap >= 1 ? Math.min(PACE.building, builderCap) : PACE.building;
+// raises pace. `pace` is the director's one, two or three at once, as `paceOf(settings)` gives it; without it, PACE.
+export function nextWork({ work, features, reports, now, fiveHourTight, builderCap = null, pace = PACE }) {
+  const most = Number.isInteger(builderCap) && builderCap >= 1 ? Math.min(pace.building, builderCap) : pace.building;
   const laneOf = (id) => work?.[id]?.work?.data?.lane;
   const stepOf = (id) => features?.[id]?.data?.step;
   // A piece that asked still builds on its recommendation, so it keeps its slot. Only one that has reached a step it can't undo
@@ -135,7 +135,7 @@ export function nextWork({ work, features, reports, now, fiveHourTight, builderC
       hold.push({ work: id, why: 'unapproved' });
     } else if ((w.data.dependsOn ?? []).some((dep) => reports?.[dep]?.data?.outcome !== 'merged')) {
       hold.push({ work: id, why: 'dependency' });
-    } else if (fiveHourTight || building >= most || (lane === FEATURE_LANE && featureLane >= PACE.featureLane)) {
+    } else if (fiveHourTight || building >= most || (lane === FEATURE_LANE && featureLane >= pace.featureLane)) {
       hold.push({ work: id, why: 'pace' });
     } else {
       start.push(id);

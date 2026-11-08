@@ -439,3 +439,29 @@ test('the watcher reads the configuration again each loop; one that cannot be re
   });
   assert.deepEqual(given, ['model-b'], 'taken once; the unreadable answers change nothing');
 }));
+
+test('the routine takes what it can make by script, and the foreman is woken only for what is left, with its reason', () => withHome(async () => {
+  const a = { id: 'ev-a', kind: 'incident', data: { id: 'outage-a', what: 'Down' } };
+  const b = { id: 'ev-b', kind: 'incident', data: { id: 'outage-b', what: 'Down again' } };
+  const seen = [];
+  const routine = {
+    run: async ({ events, queue }) => {
+      seen.push({ events: events.map((e) => e.id), queue });
+      return {
+        handled: new Set(events.filter((e) => e.id === 'ev-a').map((e) => e.id)),
+        reasons: new Map(events.filter((e) => e.id === 'ev-b').map((e) => [e.id, 'unknown'])),
+        extra: [],
+      };
+    },
+  };
+  const c = clock();
+  const waker = fakeWaker();
+  await runWatcher({
+    project: P, config: config(), observe: looker([a, b]).observe, waker, routine, loops: 6, now: c.now, sleep: c.sleep, log: quiet,
+  });
+  assert.equal(seen[0].queue, true, 'the queue is looked at with the loop\'s events');
+  assert.equal(waker.wakes.length, 1);
+  const wake = readWake(waker.wakes[0][1]);
+  assert.deepEqual(wake.events.map((e) => [e.id, e.reason]), [['ev-b', 'unknown']]);
+  assert.deepEqual(wake.digest.map((e) => [e.id, e.handled]), [['ev-a', true]], 'the handled event goes to the digest');
+}));

@@ -4,6 +4,8 @@
 // `work-ready` for that work again, when the watcher starts and then every RECOVER_MS, so the Bosun is woken to start
 // it. Work the queue holds is left alone: an unapproved one, one that waits on a dependency or on pace, one the new
 // engine builds, and everything while All stop is on or an incident is open (the same holds as the Bosun's queue).
+// Work approved at least RECOVER_MS ago that has still not started is a piece the engine lost: `record` takes it as one, once
+// (scripts/watcher/reliability.js).
 import path from 'node:path';
 import { watcherFolder, writeJsonFile } from './waker.js';
 import { readCapped } from '../feature/status.js';
@@ -24,7 +26,9 @@ export function recoverable(views, { now = new Date(), stopped, builderCap = nul
 
 // `check()` gives the `work-ready` events to raise now, or none when it is not yet time (debounced) or the views
 // can't be had (it is asked again at the next time).
-export function makeRecovery({ project, client, now = () => new Date(), stopped, every = RECOVER_MS, again = RAISE_AGAIN_MS }) {
+export function makeRecovery({
+  project, client, now = () => new Date(), stopped, every = RECOVER_MS, again = RAISE_AGAIN_MS, record = () => {},
+}) {
   // Kept in the watcher's folder, so a watcher that runs one loop at a time (Shape 2) or restarts keeps its time.
   let file = null;
   let kept = {};
@@ -57,6 +61,12 @@ export function makeRecovery({ project, client, now = () => new Date(), stopped,
         if (skip.includes(id)) continue; // this loop's own events already wake the Bosun for it
         if (raisedAt.has(id) && t - raisedAt.get(id) < again) continue;
         raisedAt.set(id, t);
+        const since = Date.parse(views.work?.[id]?.since ?? views.work?.[id]?.work?.at);
+        if (Number.isFinite(since) && t - since >= every) {
+          try {
+            record({ kind: 'lost', work: id, at: now().toISOString(), key: `lost:${project}:${id}` });
+          } catch { /* a record that can't be kept doesn't stop the raise */ }
+        }
         events.push({ type: 'work-ready', work: id, id: `recover:${id}:${now().toISOString()}`, detail: { lane: views.work?.[id]?.work?.data?.lane, recovered: true } });
       }
       keep();

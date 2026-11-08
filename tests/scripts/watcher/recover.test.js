@@ -40,3 +40,16 @@ test('recovery gives nothing when the views can not be had', () => withHome(asyn
   const r = makeRecovery({ project: 'o__p', client: { state: { views: async () => { throw new Error('no helper'); } } } });
   assert.deepEqual(await r.check(), []);
 }));
+
+test('work approved long enough ago that still has not started is recorded as lost, once', () => withHome(async () => {
+  let t = Date.parse('2026-11-05T09:00:00Z');
+  const old = views({ work: { a: { ...w('a', {}, true), since: '2026-11-05T08:00:00Z' }, d: { ...w('d', {}, true), since: '2026-11-05T08:59:00Z' } } });
+  const client = { state: { views: async () => ({ ok: true, views: old }) } };
+  const recorded = [];
+  const r = makeRecovery({ project: 'o__p', client, now: () => new Date(t), stopped: () => false, record: (i) => recorded.push(i) });
+  assert.equal((await r.check()).length, 2);
+  assert.deepEqual(recorded.map((i) => [i.kind, i.work]), [['lost', 'a']], 'd was approved a minute ago, so it is not lost yet');
+  t += 40 * 60 * 1000;
+  await r.check();
+  assert.equal(new Set(recorded.map((i) => i.key)).size, 2, 'both are lost by now, each with its own key');
+}));

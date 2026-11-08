@@ -233,9 +233,11 @@ const sameQuestion = (question) => (e) => e?.data?.question === question;
 // again), 'card' (it stopped RESUME_LIMIT times: its card is up, and it is not started), 'aside' (the director set it
 // aside) or 'held' (the waker could not start it now: STOP, its work paused, or another engine's shape; it is not
 // counted and is tried at the next tick). A run already counted and started again gives nothing. `resume({ work,
-// prompt })` is the waker's resumeFeature.
+// prompt })` is the waker's resumeFeature. `record({ kind, work, at, key })` takes each death as the engine's reliability
+// record: `resumed` when the piece was started again, `lost` when it stopped RESUME_LIMIT times and its card went up
+// (scripts/watcher/reliability.js).
 export async function resumeLost({
-  project, lost, now = () => new Date(), resume, client, log = () => {},
+  project, lost, now = () => new Date(), resume, client, log = () => {}, record = () => {},
 }) {
   const all = readResumes(project);
   const out = [];
@@ -247,6 +249,13 @@ export async function resumeLost({
       cardsSeen = { cards: Array.isArray(v.cards) ? [...v.cards] : [], answers: Array.isArray(v.answers) ? [...v.answers] : [] };
     }
     return cardsSeen;
+  };
+  const note = (kind, work, runAt) => {
+    try {
+      record({ kind, work, at: now().toISOString(), key: `${kind}:${project}:${work}:${runAt}` });
+    } catch (error) {
+      log(`The ${kind} piece ${work} couldn't be recorded: ${error.message}`);
+    }
   };
   const save = (work, e) => {
     all[work] = { ...e, seen: e.seen.slice(-SEEN), at: now().toISOString() };
@@ -306,6 +315,7 @@ export async function resumeLost({
         e.used = [...new Set([...e.used, ...seen.answers.filter(sameQuestion(card.question)).map((a) => a.id).filter(isText)])];
         e.carded = true;
         save(work, e);
+        note('lost', work, runAt);
         out.push({ work, outcome: 'card' });
       } catch (error) {
         log(`The card for ${work}, which stopped ${RESUME_LIMIT} times, can't be raised: ${error.message}`);
@@ -328,6 +338,7 @@ export async function resumeLost({
     }
     save(work, e);
     dropMarker(project, work);
+    note('resumed', work, runAt);
     out.push({ work, outcome: 'resumed' });
   }
   return out;
