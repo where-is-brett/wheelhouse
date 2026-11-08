@@ -53,7 +53,8 @@
 | `scripts/engine/dispatcher.js` | modify | Its `running` list lifted into `crewRunning` (Task 8) |
 | `scripts/state/events.js` | modify | The `aside-overlap` record kind (Task 8) |
 | `scripts/hooks/aside-overlap.js` | create | The overlap warning on Stop for a worktree aside session (Task 8) |
-| `hooks/hooks.json` | modify | `aside-overlap.js` on Stop (Task 8) |
+| `adapters/claude-code/hooks.js`, `hooks/hooks.json` | modify | `aside-overlap.js` on Stop (Task 8) |
+| `scripts/board/model.js` | modify | The side-branch overlap line (Task 8) |
 | `commands/aside.md` | create | `/wheelhouse:aside`, in the form of `commands/stop.md` (Task 3) |
 | Tests | create / modify | `tests/scripts/lib/first-mate-seat.test.js`, `tests/scripts/lib/role.test.js`, `tests/scripts/hooks/session-start.test.js`, `tests/scripts/hooks/prompt-record-reply.test.js`, `tests/scripts/hooks/prompt-record.test.js`, `tests/scripts/frontdesk/cli.test.js`, `tests/scripts/hooks/front-desk-writes.test.js`, `tests/scripts/hooks/board-context.test.js`, `tests/scripts/hooks/card-check-shown.test.js`, `tests/scripts/hooks/stop.test.js` (covers `stop-guard.js`), `tests/scripts/state/events.test.js`, `tests/scripts/engine/dispatcher.test.js`, `tests/scripts/hooks/aside-overlap.test.js`, `tests/e2e/front-desk.test.js` |
 
@@ -493,7 +494,7 @@ Spec: 6.6 (copy the example warning verbatim as the wording's model), 6.8 cases 
 - Modify: `scripts/state/events.js` (`PLAIN_KINDS` and `PLAIN_SHAPES` gain `aside-overlap`)
 - Modify: `scripts/board/model.js` (the overlap line)
 - Create: `scripts/hooks/aside-overlap.js`
-- Modify: `hooks/hooks.json` (a third command in the Stop entry, after `feature-status.js`, same `node-floor.cjs` form, timeout 10)
+- Modify: `adapters/claude-code/hooks.js` and `hooks/hooks.json` (a third command in the Stop entry, after `feature-status.js`, same `node-floor.cjs` form, timeout 10; `hooks.json` must equal the adapter's registration)
 - Test: `tests/scripts/engine/dispatcher.test.js`, `tests/scripts/state/events.test.js`, `tests/scripts/board/model.test.js`, `tests/scripts/hooks/aside-overlap.test.js` (new)
 
 **Interfaces:**
@@ -544,13 +545,13 @@ Expected: the new tests FAIL (`aside-overlap.test.js` with "Cannot find module")
 
 - [ ] **Step 4: Run them and see them pass**
 
-Run: the Step 2 command, plus `node --test tests/hooks-json.test.js` if that file exists (it checks every hooks.json script is present).
+Run: the Step 2 command, plus `node --test tests/scripts/agents/claude-registration.test.js` (it reads hooks.json).
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add scripts/engine/dispatcher.js scripts/state/events.js scripts/board/model.js scripts/hooks/aside-overlap.js hooks/hooks.json tests/scripts/engine/dispatcher.test.js tests/scripts/state/events.test.js tests/scripts/board/model.test.js tests/scripts/hooks/aside-overlap.test.js
+git add scripts/engine/dispatcher.js scripts/state/events.js scripts/board/model.js scripts/hooks/aside-overlap.js adapters/claude-code/hooks.js hooks/hooks.json tests/scripts/engine/dispatcher.test.js tests/scripts/state/events.test.js tests/scripts/board/model.test.js tests/scripts/hooks/aside-overlap.test.js
 git commit -m "A worktree aside is warned once when its branch overlaps a crew piece"
 ```
 
