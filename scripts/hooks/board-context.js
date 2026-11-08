@@ -112,7 +112,9 @@ export function commandOf(prompt) {
   const word = (match[2] ?? '').trim().toLowerCase();
   const name = match[1].toLowerCase();
   // /wheelhouse:logbook is the Logbook's own name; /wheelhouse:board, its earlier one, still works. Both are 'board' here.
-  return { name: name === 'logbook' ? 'board' : name, tab: TABS.includes(word) ? word : undefined };
+  // `/wheelhouse:logbook watch <piece>` is the page command's: the Logbook is not added for it.
+  const watch = name === 'logbook' && /^watch(\s|$)/.test(word);
+  return { name: name === 'logbook' ? 'board' : name, tab: TABS.includes(word) ? word : undefined, ...(watch ? { watch: true } : {}) };
 }
 
 // The clock as a Date; one that can't be read gives an invalid Date.
@@ -395,13 +397,13 @@ export async function decide(input, deps = {}) {
     // The gap runs from the director's last prompt or the last briefing given, whichever is later,
     // so a briefing /wheelhouse-digest gave counts as given: a prompt soon after it brings none.
     const due = gapPassed(project, [seen.promptAt, seen.briefedAt].filter((t) => typeof t === 'string').sort().at(-1) ?? null, at);
-    const want = command?.name ?? (due && writes ? 'briefing' : null);
+    const want = command?.watch ? null : command?.name ?? (due && writes ? 'briefing' : null);
     // A visit begins with the first prompt of any kind after a gap since the last one seen: the last
     // message, the last board command or the visit's own start.
     const lastSeen = [seen.promptAt, visits.visitAt, visits.boardAsks.at(-1)?.at].filter((t) => typeof t === 'string').sort().at(-1) ?? null;
     const visit = gapPassed(project, lastSeen, at) ? at : visits.visitAt;
     if (visit === at) attempt(() => markSeenHere(project, { visitAt: at }));
-    if (command?.name === 'board') attempt(() => markSeenHere(project, { boardAsk: { at, tab: command.tab ?? null, visit } }));
+    if (command?.name === 'board' && !command.watch) attempt(() => markSeenHere(project, { boardAsk: { at, tab: command.tab ?? null, visit } }));
     if (!command && due && writes && !attempt(() => stopState().on, true)) {
       const asker = client ?? helperClient({ timeout: LEARN_WAIT_MS + helperGrace() });
       await within(() => visitLearning({ project, cwd: input.cwd, client: asker, at, boardAsks: visits.boardAsks }), learnWaitMs);

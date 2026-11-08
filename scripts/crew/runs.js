@@ -624,6 +624,7 @@ function writtenAt(now) {
 
 function blocksOf(event) {
   const content = event?.message?.content;
+  if (typeof content === 'string') return [{ type: 'text', text: content }];
   return Array.isArray(content) ? content : [];
 }
 
@@ -743,6 +744,8 @@ export function writePage(project, work, { sessionId, env = process.env, now = D
 const SESSION_RECORD_MAX = 64 * 1024;
 const FOLLOW_MS = 2000;
 const FOLLOW_FIRST = 10;
+const TEMP_PAGE = /^\..+\.tmp$/;
+const TEMP_AGE_MS = 60 * 1000;
 
 // The session the watcher kept for a piece, read as the watcher's other readers read it; null when there is none.
 export function sessionIdOf(project, work) {
@@ -825,6 +828,17 @@ export function prunePages(folder, views) {
     return removed;
   }
   const pages = names.filter((name) => /^[a-z0-9-]{1,40}\.md$/.test(name));
+  // A temporary file an interrupted write left behind: dot-prefixed, ending `.tmp`, a plain file, over a minute old.
+  for (const name of names) {
+    if (!TEMP_PAGE.test(name)) continue;
+    const file = path.join(dir, name);
+    try {
+      const stat = fs.lstatSync(file);
+      if (stat.isFile() && Date.now() - stat.mtimeMs > TEMP_AGE_MS) fs.rmSync(file);
+    } catch {
+      // left for the next look
+    }
+  }
   if (pages.length === 0) return removed;
   const seen = typeof views === 'function' ? views() : views;
   for (const name of pages) {
@@ -846,12 +860,13 @@ export function prunePages(folder, views) {
 // (the level is read again on every tick, and nothing of the transcript is opened once it is off). Resolves the exit code.
 export async function follow({
   project, folder, work, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
-  env = process.env, now = () => new Date(), intervalMs = FOLLOW_MS, state = pieceState,
+  env = process.env, now = () => new Date(), intervalMs = FOLLOW_MS, state = pieceState, waiting = waitingDecision,
   sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
 } = {}) {
   const say = (line) => out(`${line}\n`);
   let seen = new Map();
   let first = true;
+  let told = null;
   for (;;) {
     const { open, level } = state(project, work, { now });
     if (!open) {
@@ -867,10 +882,18 @@ export async function follow({
       return 0;
     }
     const sessionId = sessionIdOf(project, work);
-    const file = writePiecePage({ project, folder, work, level, env, now, waiting: waitingDecision(project, work) });
-    if (first) say(file === null ? `The page for ${work} can't be written here. Following the steps only.` : `Following ${work}. The page is at \`${file}\`. Stop with Ctrl-C.`);
+    const pending = waiting(project, work);
+    // The page belongs to the transcript level; below it the steps are followed alone.
+    const file = level === 'transcript' ? writePiecePage({ project, folder, work, level, env, now, waiting: pending }) : null;
+    if (first) {
+      say(level !== 'transcript'
+        ? `Following ${work}. Its watch level is below the full transcript, so no page is written. Stop with Ctrl-C.`
+        : file === null ? `The page for ${work} can't be written here. Following the steps only.` : `Following ${work}. The page is at \`${file}\`. Stop with Ctrl-C.`);
+    }
     const transcript = findTranscript({ sessionId, env });
-    const steps = transcript ? stepsOf(readTail(transcript, { max: PAGE_MAX })) : [];
+    // What the crew said is left out: only what it did reaches the terminal.
+    const events = transcript ? readTail(transcript, { max: PAGE_MAX }).filter((event) => stepAndKind(event)?.kind !== 'said') : [];
+    const steps = stepsOf(events);
     const counts = new Map();
     let fresh = [];
     for (const step of steps) {
@@ -881,6 +904,10 @@ export async function follow({
     }
     if (first) fresh = fresh.slice(-FOLLOW_FIRST);
     for (const step of fresh) say(step.text);
+    if (pending !== told) {
+      if (validWaiting(pending)) say(`Waiting for your answer to decision ${pending}`);
+      told = pending;
+    }
     seen = counts;
     first = false;
     await sleep(intervalMs);
@@ -890,6 +917,10 @@ export async function follow({
 async function main(argv) {
   const say = (line) => process.stderr.write(`${line}\n`);
   const named = argv.length === 4 && argv[2] === '--folder';
+  if (argv[0] === '--follow' && process.env.CLAUDECODE) {
+    say("--follow is for the director's own terminal, not for a Claude Code session, so it won't run here.");
+    return 1;
+  }
   if ((argv.length !== 2 && !named) || argv[0] !== '--follow' || !SLUG.test(argv[1])) {
     say('Usage: runs.js --follow <work> [--folder <the project\'s folder>]');
     return 1;

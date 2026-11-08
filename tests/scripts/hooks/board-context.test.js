@@ -196,6 +196,17 @@ test('each command adds its text, and the Logbook command, by its own name or th
   });
 });
 
+test('the Logbook command with "watch" adds no Logbook', async () => {
+  await withProject(async ({ repo }) => {
+    markSeen(P, { promptAt: new Date('2026-10-19T11:59:00.000Z') });
+    for (const typed of ['/wheelhouse:logbook watch login', '/Wheelhouse:Logbook  WATCH login']) {
+      const got = await run(repo, typed, NOW);
+      assert.ok(got === undefined || !contextOf(got).includes(HEADINGS.board), typed);
+    }
+    assert.ok(contextOf(await run(repo, '/wheelhouse:logbook build', NOW)).startsWith(HEADINGS.board));
+  });
+});
+
 test('with no changed source the sources command says so', async () => {
   await withProject(async ({ repo }) => {
     fs.rmSync(sourcesDir(), { recursive: true, force: true });
