@@ -732,8 +732,15 @@ test('decided beside reworded', () => withHome(async () => {
   assert.ok(reason(out).startsWith(DECIDED_LEAD));
   assert.equal(out.hookSpecificOutput.updatedInput, undefined);
   const decidedFour = outcome('c-4', four, { at: whenLocal, label: 'Approve', where: 'chat' });
-  const other = { ...four.question, question: `Other words\n${REST}`, header: 'Other', options: [{ label: 'x', description: 'Recommended: y' }, { label: 'z', description: 'w' }] };
+  // The other waiting card shares one label with the asked question (and not its header), the nearest a card comes to matching without being it.
+  const other = { ...four.question, question: `Other words\n${REST}`, header: 'Other', options: [{ label: 'Comma', description: 'Recommended: y' }, { label: 'z', description: 'w' }] };
   assert.equal(await run(withSession([other]), { outcomes: () => [decidedFour, SEPARATOR], now: later, holdForPane: false }), undefined);
+}));
+
+test('a fault is numbered as the call numbers the question, after a duplicate is dropped', () => withHome(async () => {
+  const out = await waitingRun([exactly(four.question), reworded, { ...separator.question, question: 'Short' }]);
+  assert.match(reason(out), /Question 3 /);
+  assert.ok(!/Question 2 /.test(reason(out)));
 }));
 
 test('chat copy', () => withHome(async () => {

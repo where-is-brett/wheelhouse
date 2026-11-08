@@ -271,15 +271,6 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
   const found = cardsOf(questions, project, outcomes);
   const decided = decidedDeny(found, at);
   if (decided !== undefined) return { deny: decided };
-  // The picker is for a decision only while typed replies are off, so on it a decision is answered by typing instead.
-  if (typedRepliesOn(project) && found.some((f) => f && !f.stale && isDecisionCard(f.card.data))) return { deny: DECISION_IN_CHAT };
-  // The Lift All stop question is composed on each visit and never recorded as a card, so the state can't say it is
-  // decided: STOP being off is what says so.
-  const lifts = questions.map(isLiftQuestion);
-  if (lifts.includes(true) && !stop().on) {
-    const others = lifts.includes(false);
-    return { deny: `All stop is already lifted, so that question is not asked. Say so in one plain line, and ask nothing about it again.${others ? ' Ask only the others.' : ''}` };
-  }
   const open = allOutcomes(project, outcomes).filter((o) => o.decided === null && typeof o.card?.data?.question === 'string');
   // Each question's card: the one it names exactly, else the waiting card it is a reworded copy of; null for neither.
   const matched = questions.map((q, i) => {
@@ -287,6 +278,15 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
     const swap = swapFor(q, found[i], open);
     return swap === null ? null : { card: swap.card };
   });
+  // The picker is for a decision only while typed replies are off, so on it a decision is answered by typing instead.
+  if (typedRepliesOn(project) && matched.some((m) => m && isDecisionCard(m.card.data))) return { deny: DECISION_IN_CHAT };
+  // The Lift All stop question is composed on each visit and never recorded as a card, so the state can't say it is
+  // decided: STOP being off is what says so.
+  const lifts = questions.map(isLiftQuestion);
+  if (lifts.includes(true) && !stop().on) {
+    const others = lifts.includes(false);
+    return { deny: `All stop is already lifted, so that question is not asked. Say so in one plain line, and ask nothing about it again.${others ? ' Ask only the others.' : ''}` };
+  }
   const waiting = matched.filter(Boolean);
   const session = input.session_id;
   const pane = (f) => cardButtons(f.card.data).buttons.some((b) => b.does === 'record' || b.does === 'turn');
@@ -301,18 +301,20 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
   const taken = new Set();
   const swapped = new Set();
   const next = [];
+  const origins = [];
   questions.forEach((q, i) => {
     const m = matched[i];
-    if (!m) { next.push(q); return; }
+    if (!m) { next.push(q); origins.push(i); return; }
     if (taken.has(m.card.id)) return;
     taken.add(m.card.id);
+    origins.push(i);
     if (sameAsPrinted(q, m.card)) { next.push(q); return; }
     const stored = asQuestion(m.card);
     swapped.add(stored);
     next.push(stored);
   });
   const changed = next.length !== questions.length || next.some((q, i) => q !== questions[i]);
-  return { open: waiting.map((f) => f.card.id), questions: changed ? next : null, swapped };
+  return { open: waiting.map((f) => f.card.id), questions: changed ? next : null, swapped, origins };
 }
 
 // Only the repeat refusal, for an agent whose question tool the form check and the pane hold don't apply to: a
@@ -404,9 +406,12 @@ export async function decide(input, {
   // The questions the director will be shown; a stored card is in the form its composer gave it.
   const shown = checked_?.questions ?? questions;
   const stored = checked_?.swapped ?? new Set();
+  // Faults are numbered as the call the model wrote numbers its questions, even after a duplicate is dropped.
+  const origins = checked_?.origins ?? null;
   const faults = shown.flatMap((q, i) => {
     if (typeof q?.question !== 'string' || stored.has(q)) return [];
-    const name = typeof q.header === 'string' && q.header !== '' ? `Question ${i + 1} ("${q.header}")` : `Question ${i + 1}`;
+    const n = (origins?.[i] ?? i) + 1;
+    const name = typeof q.header === 'string' && q.header !== '' ? `Question ${n} ("${q.header}")` : `Question ${n}`;
     return cardProblems(q).map((problem) => `${name} ${problem}.`);
   });
   if (faults.length === 0) {
