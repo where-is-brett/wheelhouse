@@ -1,7 +1,7 @@
 // tests/scripts/engine/dispatcher.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dispatch, MERGE_QUEUE_EVERY_MS } from '../../../scripts/engine/dispatcher.js';
+import { dispatch, crewRunning, MERGE_QUEUE_EVERY_MS } from '../../../scripts/engine/dispatcher.js';
 import { orderFor } from '../../../scripts/engine/dispatch-run.js';
 
 const NOW = new Date('2026-10-29T12:00:00.000Z');
@@ -468,4 +468,17 @@ test('a limit holds no merge queue, and All stop and an incident stay what they 
 test('with no limit the same work starts', () => {
   const work = Object.fromEntries([piece('a')]);
   assert.deepEqual(dispatch(base({ work, limited: false })).start, [{ work: 'a', lane: 'quick' }]);
+});
+
+test('crewRunning gives the dispatcher the same holds', () => {
+  const work = Object.fromEntries([piece('live', { place: 0, files: ['src/login.ts'] }), piece('waits', { place: 1, files: ['src/login.ts'] })]);
+  const runs = { live: [runOf('live', 'started')] };
+  const got = dispatch(base({ work, runs }));
+  assert.deepEqual(got.hold, [{ work: 'waits', why: 'clash', by: ['live'] }]);
+  const crew = crewRunning({ work, runs, settings: base().settings });
+  assert.deepEqual(crew, [{ work: 'live', files: ['src/login.ts'] }]);
+  // A piece waiting on the director keeps its files, as dispatch holds them.
+  const parked = { work: { ...work, live: { ...work.live, files: ['src/login.ts'] } }, runs: { live: [runOf('live', 'paused')] }, waiting: ['live'], settings: base().settings };
+  assert.deepEqual(crewRunning(parked), [{ work: 'live', files: ['src/login.ts'] }]);
+  assert.deepEqual(dispatch(base({ ...parked })).hold, [{ work: 'waits', why: 'clash', by: ['live'] }]);
 });

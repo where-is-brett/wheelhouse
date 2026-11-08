@@ -35,20 +35,11 @@ function runsOf(runs, id, entry) {
 // The work the merge queue's own runs stand for, which no work record names: their asks are routed under it.
 export const MERGE_WORK = 'merge-queue';
 
-// dispatch({ work, runs, reports, features, settings, stop, incident, capsReached, limited?, mergeQueue, sentBack?, waiting?, reserved?, returning?, admitted?, stoppedFeatures?, waived?, now })
-//   -> { start: [{ work, lane }], hold: [{ work, why, by? }], admit: [{ work, via }], startMergeQueue, requeue: [{ work, lane, branch, reason? }], clashCards: [{ work }], redCards: [{ work }], live: [work] }
-// `work`, `runs` and `reports` are the record's views; `mergeQueue` is { running, lastStart, waiting, newReady };
-// `sentBack` is [{ work, times, reason? }], the pull requests sent back: for a clash by the merge gate, and with reason
-// `red` by the check runner; `waiting` the pieces that wait on the director; `reserved` { [work]: paths } the files held
-// for a piece until its work ends. A hold's `by` names what holds it, where that can be named: the clash's pieces, the
-// dependencies not merged, or what fills the parked limit. `returning` is [{ work, lane, via, at, asked? }], with a card out when `asked` and `filesFree` when it has begun nothing, the pieces asking for
-// a place back, and `admitted` the same shape, named and not yet seen running; neither counts as running by itself. A
-// `requeue` is named only when it has a place, and otherwise is asked about again on the next tick. `stoppedFeatures` are
-// the features whose run the director or All stop ended, which stay stopped until a Carry on and hold no place meanwhile. `waived` are the pieces the director
-// let start without what they depend on. `limited` says a run is parked at a usage limit.
-export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeatures = {}, settings = {}, stop = false, incident = false, capsReached = false, limited = false, mergeQueue = {}, requests = null, sentBack = [], waiting = [], reserved = {}, returning = [], admitted = [], stoppedFeatures = [], waived = [], now = new Date() } = {}) {
+// What the dispatcher counts as the crew's: the engine's work in its lanes, what holds a slot (`live`), what waits on
+// the director with files kept (`waits`), and `running`, each piece with the files a new piece mustn't clash with. One
+// copy of the rule, for `dispatch` and for the aside's overlap check (scripts/hooks/aside-overlap.js).
+function crewState({ work = {}, runs = {}, reports = {}, features: oldFeatures = {}, settings = {}, waiting = [], reserved = {}, returning = [], admitted = [], stoppedFeatures = [] } = {}) {
   const lanes = Array.isArray(settings.engineLanes) ? settings.engineLanes : ['quick'];
-  const pace = paceOf(settings);
   // A piece the old engine started before the switch finishes there (scripts/engine/lanes.js).
   const entries = Object.entries(isPlain(work) ? work : {})
     .filter(([id, e]) => isPlain(e?.work?.data) && lanes.includes(e.work.data.lane) && !startedOnOldEngine(oldFeatures, id, e));
@@ -71,8 +62,6 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
     if (e.work.data.lane === FEATURE && own.length > 0) return !endedBy(reports, id, e.work) && !stoppedFeatures.includes(id);
     return own.some((r) => r.data.state !== 'ended');
   });
-  let building = live.length;
-  let features = live.filter(([, e]) => e.work.data.lane === FEATURE).length;
   // What a new piece mustn't clash with: what is live, what waits, each reservation whose work hasn't ended, and each
   // stopped feature, which a Carry on takes up on the files it has.
   const waits = entries.filter((entry) => {
@@ -86,7 +75,31 @@ export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeat
     const e = isPlain(work) ? work[id] : undefined;
     if (!running.some((r) => r.work === id) && !endedBy(reports, id, e?.work)) running.push({ work: id, files: filesOf(id, e) });
   }
+  return { entries, parked, back, through, onTheWay, live, waits, running };
+}
 
+// crewRunning({ work, runs, reports, features, waiting, reserved, returning, admitted, stoppedFeatures, settings })
+//   -> [{ work, files }]: the pieces a new piece's files are checked against, as `dispatch` holds them.
+export function crewRunning(inputs = {}) {
+  return crewState(inputs).running;
+}
+
+// dispatch({ work, runs, reports, features, settings, stop, incident, capsReached, limited?, mergeQueue, sentBack?, waiting?, reserved?, returning?, admitted?, stoppedFeatures?, waived?, now })
+//   -> { start: [{ work, lane }], hold: [{ work, why, by? }], admit: [{ work, via }], startMergeQueue, requeue: [{ work, lane, branch, reason? }], clashCards: [{ work }], redCards: [{ work }], live: [work] }
+// `work`, `runs` and `reports` are the record's views; `mergeQueue` is { running, lastStart, waiting, newReady };
+// `sentBack` is [{ work, times, reason? }], the pull requests sent back: for a clash by the merge gate, and with reason
+// `red` by the check runner; `waiting` the pieces that wait on the director; `reserved` { [work]: paths } the files held
+// for a piece until its work ends. A hold's `by` names what holds it, where that can be named: the clash's pieces, the
+// dependencies not merged, or what fills the parked limit. `returning` is [{ work, lane, via, at, asked? }], with a card out when `asked` and `filesFree` when it has begun nothing, the pieces asking for
+// a place back, and `admitted` the same shape, named and not yet seen running; neither counts as running by itself. A
+// `requeue` is named only when it has a place, and otherwise is asked about again on the next tick. `stoppedFeatures` are
+// the features whose run the director or All stop ended, which stay stopped until a Carry on and hold no place meanwhile. `waived` are the pieces the director
+// let start without what they depend on. `limited` says a run is parked at a usage limit.
+export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeatures = {}, settings = {}, stop = false, incident = false, capsReached = false, limited = false, mergeQueue = {}, requests = null, sentBack = [], waiting = [], reserved = {}, returning = [], admitted = [], stoppedFeatures = [], waived = [], now = new Date() } = {}) {
+  const pace = paceOf(settings);
+  const { entries, parked, back, through, onTheWay, live, waits, running } = crewState({ work, runs, reports, features: oldFeatures, settings, waiting, reserved, returning, admitted, stoppedFeatures });
+  let building = live.length;
+  let features = live.filter(([, e]) => e.work.data.lane === FEATURE).length;
   const sent = Array.isArray(sentBack) ? sentBack.filter((s) => s.times > 0) : [];
   const requeue = [];
   const clashCards = [];

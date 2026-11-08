@@ -24,7 +24,7 @@ export const PLAIN_KINDS = [
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
   'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest', 'chat-steer',
-  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'brief', 'slept', 'agent-call', 'self-merged', 'watch',
+  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'brief', 'slept', 'agent-call', 'self-merged', 'watch', 'aside-overlap',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
@@ -288,6 +288,9 @@ const PLAIN_SHAPES = {
   // The director's request to see more or less of one piece's crew (crew visibility design, section 6.2): `level` is one of
   // the watchCrew levels. A request, not a decision: it never reaches the decision log.
   watch: { must: ['work', 'level'], may: [] },
+  // A worktree aside's branch overlaps live crew pieces (scripts/hooks/aside-overlap.js): its branch, the pieces and files it clashes
+  // on, and when. The board shows it; no card, since the director was told in the window that made the overlap.
+  'aside-overlap': { must: ['branch', 'pieces', 'files', 'at'], may: [] },
   // Words typed into a front end without a First Mate (a later UI), queued for the First Mate's next
   // turn and shown as waiting (spec 5.2); `via` names the front end.
   request: { must: ['words', 'via'], may: [] },
@@ -485,6 +488,12 @@ function checkPlain(kind, data) {
   if (kind === 'watch') {
     slug('work');
     if (!LEVELS.includes(data.level)) bad(`needs its level to be ${LEVELS.slice(0, -1).join(', ')} or ${LEVELS.at(-1)}`);
+    return;
+  }
+  if (kind === 'aside-overlap') {
+    text('branch');
+    for (const k of ['pieces', 'files']) if (!Array.isArray(data[k]) || !data[k].every(isText)) bad(`needs ${k} to be a list of text`);
+    if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs at to be a time');
     return;
   }
   if (kind === 'brief') {

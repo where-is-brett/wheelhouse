@@ -588,3 +588,18 @@ test('while tests aren\'t counting, the First Mate offers to add or repair them'
   assert.deepEqual(watch([state('not-counting', '2026-10-30T00:00:00Z')]), ['Tests aren\'t counting yet: ask the First Mate to add tests or repair them']);
   assert.deepEqual(watch([state('not-counting', '2026-10-30T00:00:00Z'), state('counting', '2026-10-31T00:00:00Z')]), []);
 });
+
+test('the board shows a side branch that overlaps a piece', () => {
+  const overlap = ev('aside-overlap', at(18), { branch: 'side', pieces: ['login-retry'], files: ['src/login.ts'], at: at(18) });
+  const views = (ended) => ({
+    ...emptyViews(),
+    ...buildLoop({ work: [ev('work', at(10), { id: 'login-retry', title: 'Login retry', lane: 'quick', visible: false, dependsOn: [] })] }),
+    reports: ended ? { 'login-retry': { id: 'r1', at: at(19), data: { work: 'login-retry', outcome: 'merged' } } } : {},
+  });
+  const texts = (m) => m.director.health.map((l) => l.text);
+  assert.ok(texts(model({ views: views(false), events: [overlap] })).includes('A side branch (side) overlaps login-retry'));
+  assert.ok(!texts(model({ views: views(true), events: [overlap] })).some((t) => /side branch/.test(t)));
+  // Older than a week: no line.
+  const old = ev('aside-overlap', at(5), { branch: 'side', pieces: ['login-retry'], files: ['a'], at: at(5) });
+  assert.ok(!texts(model({ views: views(false), events: [old] })).some((t) => /side branch/.test(t)));
+});
