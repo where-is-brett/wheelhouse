@@ -252,3 +252,102 @@ test('a cycle in the process table ends the search', async () => {
   const loop = [{ pid: 1, ppid: 2, command: 'a' }, { pid: 2, ppid: 1, command: 'b' }];
   assert.equal((await firstMatePid({ ancestor: { pid: 1, table: loop }, startTime: async () => 'x' })).pid, null);
 });
+
+// A seat for `session` as another hook would have written it.
+const seatOf = (session, extra = {}) => ({
+  session, pid: 10, pidStart: 'T1', folder: `/work/${session}`,
+  since: T0.toISOString(), seenAt: T0.toISOString(), ...extra,
+});
+const strays = (home) => fs.readdirSync(path.join(home, 'projects', 'p')).filter((n) => n !== 'first-mate.json');
+
+test('a change judged against one seat never lands on another, and never removes it', async () => {
+  const s = setup();
+  try {
+    const { seat: first } = await take('p', 'a', s.options);
+    // While the hand-over builds its seat, a take-over by 'x' lands: the seat 'a' named has gone.
+    const swap = async (pid) => {
+      fs.writeFileSync(file(s.home), JSON.stringify(seatOf('x', { since: at(1000).toISOString() })));
+      return 'T1';
+    };
+    const got = await handOverSeat('p', { session: 'b', folder: '/work/b', from: { session: 'a', since: first.since } }, { ...s.options, startTime: swap });
+    assert.equal(got.moved, false);
+    assert.equal(got.seat.session, 'x');
+    assert.equal(readSeat('p', s.options).session, 'x');
+    assert.deepEqual(strays(s.home), []);
+  } finally { s.done(); }
+});
+
+test('a taker over a stale seat that changed hands meanwhile does not win', async () => {
+  const s = setup();
+  try {
+    await take('p', 'old', s.options);
+    // 'y' judges the old seat dead; while it does, 'x' takes the seat and is alive.
+    const alive = (pid) => {
+      if (readSeat('p', s.options)?.session === 'old') {
+        fs.writeFileSync(file(s.home), JSON.stringify(seatOf('x', { pid: 77 })));
+      }
+      return pid === 77;
+    };
+    const got = await take('p', 'y', { ...s.options, alive });
+    assert.equal(got.held, false);
+    assert.equal(got.seat.session, 'x');
+    assert.equal(readSeat('p', s.options).session, 'x');
+    assert.deepEqual(strays(s.home), []);
+  } finally { s.done(); }
+});
+
+test('while another change holds the lock, a change gives way and writes nothing', async () => {
+  const s = setup({ lockWaitMs: 60 });
+  try {
+    await take('p', 'a', s.options);
+    const lock = `${file(s.home)}.lock`;
+    fs.writeFileSync(lock, '1\n');
+    s.clock.t = at(5 * 60 * 1000);
+    const before = fs.readFileSync(file(s.home), 'utf8');
+    refreshSeat('p', 'a', s.options);
+    releaseSeat('p', 'a', s.options);
+    assert.equal(fs.readFileSync(file(s.home), 'utf8'), before);
+    const got = await take('p', 'b', { ...s.options, alive: () => false });
+    assert.equal(got.held, false);
+    assert.equal(readSeat('p', s.options).session, 'a');
+  } finally { s.done(); }
+});
+
+test('a lock left by a dead taker is cleared', async () => {
+  const s = setup({ lockStaleMs: 1000 });
+  try {
+    await take('p', 'a', s.options);
+    const lock = `${file(s.home)}.lock`;
+    fs.writeFileSync(lock, '1\n');
+    const old = new Date(Date.now() - 60 * 1000);
+    fs.utimesSync(lock, old, old);
+    releaseSeat('p', 'a', s.options);
+    assert.equal(readSeat('p', s.options), null);
+    assert.equal(fs.existsSync(lock), false);
+  } finally { s.done(); }
+});
+
+test('a refresh by the old holder after a hand-over does not undo it', async () => {
+  const s = setup();
+  try {
+    const { seat: first } = await take('p', 'a', s.options);
+    s.clock.t = at(5000);
+    await handOverSeat('p', { session: 'b', folder: '/work/b', from: { session: 'a', since: first.since } }, s.options);
+    s.clock.t = at(5 * 60 * 1000);
+    refreshSeat('p', 'a', s.options);
+    assert.equal(readSeat('p', s.options).session, 'b');
+    assert.equal(readSeat('p', s.options).seenAt, at(5000).toISOString());
+  } finally { s.done(); }
+});
+
+test('Claude Code is found under a path with spaces, and look-alikes are not', async () => {
+  const spaced = [
+    { pid: 3, ppid: 1, command: '/Users/x/Library/Application Support/Claude/claude-code/2.1/claude --resume' },
+    { pid: 4, ppid: 3, command: 'node hook.js' },
+  ];
+  assert.equal((await firstMatePid({ ancestor: { pid: 4, table: spaced }, startTime: async () => 'x' })).pid, 3);
+  for (const command of ['/usr/bin/claude-foo run', '/Applications/Claude.app/Contents/MacOS/Electron', 'node /opt/claude/scripts/hook.js']) {
+    const lookAlike = [{ pid: 3, ppid: 1, command }, { pid: 4, ppid: 3, command: 'node hook.js' }];
+    assert.equal((await firstMatePid({ ancestor: { pid: 4, table: lookAlike }, startTime: async () => 'x' })).pid, null, command);
+  }
+});

@@ -54,11 +54,9 @@ export function readSeat(project, options = {}) {
   return look(seatFile(project, options)).seat;
 }
 
-// Whether a command line is Claude Code's own: the program `claude`, or Node running its package.
-const isClaudeCode = (command) => {
-  const first = String(command).trim().split(/\s+/)[0] ?? '';
-  return /^claude(\.exe)?$/i.test(path.basename(first.replace(/\\/g, '/'))) || /@anthropic-ai[\\/]claude-code/.test(command);
-};
+// Whether a command line is Claude Code's own: the program `claude` (by itself or at the end of a path,
+// which may hold spaces), or Node running its package. `claude-foo` and `claude.app` are not it.
+const isClaudeCode = (command) => /(^|[\\/\s])claude(\.exe)?(\s|$)/i.test(command) || /@anthropic-ai[\\/]claude-code/.test(command);
 
 // The nearest Claude Code process above this one, and when it started; nulls where there is none
 // to find (Windows lists no processes today).
@@ -108,27 +106,40 @@ function writeWhole(file, seat) {
   } finally { fs.rmSync(temporary, { force: true }); }
 }
 
-// Replaces the file that held `judged` (its text, or null for none) with `seat`, only if it still holds
-// that: the file is renamed to a name of its own, so only one taker finds it, and the renamed copy is
-// checked to be the one judged. A copy that isn't (someone made a fresh seat in between) is put back,
-// unless yet another stands. Then the new seat is written with `wx`. True when this call wrote it.
-function replace(file, judged, seat) {
-  if (judged !== null) {
-    const aside = `${unique(file)}.stale`;
-    try { fs.renameSync(file, aside); } catch { return false; }
-    let taken = null;
-    try { taken = fs.readFileSync(aside, 'utf8'); } catch { /* unreadable: treated as not the one judged */ }
-    if (taken !== judged) {
-      try { fs.linkSync(aside, file); } catch { /* another seat stands */ }
-      fs.rmSync(aside, { force: true });
-      return false;
+// Every change to a seat that exists is made while holding `<seat>.lock`, an exclusive file kept for
+// milliseconds, and re-reads the seat inside it. So a change judged against one seat never lands on
+// another, and the seat file is never absent mid-change. (Only the first `wx` write of a fresh seat
+// happens outside it; that needs the file to be absent, which no change under the lock leaves it.)
+// A lock older than `lockStaleMs` is a dead taker's and is removed. Where the lock can't be had within
+// `lockWaitMs`, `fn` is not run and the result is undefined.
+const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function underLock(file, options, fn) {
+  const lock = `${file}.lock`;
+  const until = Date.now() + (options.lockWaitMs ?? 2000);
+  for (;;) {
+    try {
+      fs.writeFileSync(lock, `${process.pid}\n`, { flag: 'wx' });
+      break;
+    } catch (error) {
+      if (error.code !== 'EEXIST') return undefined;
     }
-    fs.rmSync(aside, { force: true });
+    try {
+      if (Date.now() - fs.statSync(lock).mtimeMs > (options.lockStaleMs ?? 10000)) fs.rmSync(lock, { force: true });
+    } catch { /* gone already */ }
+    if (Date.now() > until) return undefined;
+    sleepSync(2);
   }
-  try {
-    fs.writeFileSync(file, text(seat), { flag: 'wx' });
+  try { return fn(); } finally { fs.rmSync(lock, { force: true }); }
+}
+
+// Replaces the seat file with `seat` only while it still holds `judged` (the text that was judged).
+// True when this call wrote it.
+function replace(file, judged, seat, options) {
+  return underLock(file, options, () => {
+    if (look(file).raw !== judged) return false;
+    writeWhole(file, seat);
     return true;
-  } catch { return false; }
+  }) === true;
 }
 
 const newSeat = async ({ session, folder }, options, since) => {
@@ -156,11 +167,11 @@ export async function takeSeat(project, { session, folder }, options = {}) {
     if (seat?.session === session) {
       // Already this session's (a resume, or a restart in the same window): follow its process.
       const same = { ...seat, pid: mine.pid, pidStart: mine.pidStart, seenAt: mine.seenAt };
-      try { writeWhole(file, same); } catch { /* the old seat still names this session */ }
-      return { held: true, seat: same };
+      if (replace(file, raw, same, options)) return { held: true, seat: same };
+      continue; // the seat changed hands meanwhile: judge it again
     }
     if (!(await seatFree(seat, options))) return { held: false, seat };
-    if (replace(file, raw, mine)) return { held: true, seat: mine };
+    if (replace(file, raw, mine, options)) return { held: true, seat: mine };
   }
   return { held: false, seat: seen ?? readSeat(project, options) };
 }
@@ -173,11 +184,13 @@ export function holdsSeat(project, session, options = {}) {
 export function refreshSeat(project, session, options = {}) {
   try {
     const file = seatFile(project, options);
-    const { seat } = look(file);
-    if (seat?.session !== session) return;
-    const now = clock(options);
-    if (now.getTime() - Date.parse(seat.seenAt) < SEEN_EVERY_MS) return;
-    writeWhole(file, { ...seat, seenAt: now.toISOString() });
+    underLock(file, options, () => {
+      const { seat } = look(file);
+      if (seat?.session !== session) return;
+      const now = clock(options);
+      if (now.getTime() - Date.parse(seat.seenAt) < SEEN_EVERY_MS) return;
+      writeWhole(file, { ...seat, seenAt: now.toISOString() });
+    });
   } catch { /* the seat is kept fresh on a later hook */ }
 }
 
@@ -190,7 +203,7 @@ export async function handOverSeat(project, { session, folder, from }, options =
     return { moved: false, seat: readSeat(project, options) };
   }
   const mine = await newSeat({ session, folder }, options);
-  if (replace(file, raw, mine)) return { moved: true, seat: mine };
+  if (replace(file, raw, mine, options)) return { moved: true, seat: mine };
   return { moved: false, seat: readSeat(project, options) };
 }
 
@@ -198,13 +211,8 @@ export async function handOverSeat(project, { session, folder, from }, options =
 export function releaseSeat(project, session, options = {}) {
   try {
     const file = seatFile(project, options);
-    const { raw, seat } = look(file);
-    if (raw === null || seat?.session !== session) return;
-    const aside = `${unique(file)}.released`;
-    fs.renameSync(file, aside);
-    if (fs.readFileSync(aside, 'utf8') !== raw) {
-      try { fs.linkSync(aside, file); } catch { /* another seat stands */ }
-    }
-    fs.rmSync(aside, { force: true });
+    underLock(file, options, () => {
+      if (look(file).seat?.session === session) fs.rmSync(file, { force: true });
+    });
   } catch { /* nothing to give up */ }
 }
