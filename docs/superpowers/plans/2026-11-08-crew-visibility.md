@@ -466,7 +466,7 @@ Branch `feature/crew-helm` from `main` once part 2 is merged. Spec sections 8.2,
 - Produces:
   - `featureHelmCall({sessionId, prompt = null, start = false, ...rest}) -> {file, args, env}`: the feature session's own mode, model, effort and `--allowedTools`, with no `-p` and no piped input, so it opens interactive. `start: false` leads with `--resume <id>`; `start: true` leads with `--session-id <id>` and passes `prompt` as the last, positional argument. The env carries the feature role, as a feature run's does.
   - `isDirector(env, stdin) -> boolean`: true only on a TTY with neither `WHEELHOUSE_ROLE` nor `CLAUDECODE` set (rule 7: an agent cannot take the helm).
-  - `openHelm(project, work, {spawn, now, waitMs = 2000}) -> Promise<{code}>`: refuses a piece that is not open or has no session file; takes the hold; while `running/feature-<work>.json` names a live process, prints (exact copy) `Waiting for the crew's current step on <work> to finish…` and waits; spawns `featureHelmCall` with inherited stdio in the piece's worktree; records the pid and its start time with `markOpened`; on exit calls `handBack`.
+  - `openHelm(project, work, {spawn, now, waitMs = 2000}) -> Promise<{code}>`: refuses a piece that is not open or has no session file; takes the hold unless the front desk already has (6.4's `helm take`), and refuses a hold naming another session; while `running/feature-<work>.json` names a live process, prints (exact copy) `Waiting for the crew's current step on <work> to finish…` and waits; spawns `featureHelmCall` with inherited stdio in the piece's worktree; records the pid and its start time with `markOpened`; on exit calls `handBack`.
   - `handBack(project, work, {why = 'closed', now})`: does nothing when no hold exists (the hook and the exit can both call it); otherwise releases the hold, removes nothing else, and writes one wake for the piece whose prompt is `PROMPTS.helmBack`.
   - `PROMPTS.helmBack` (added to the waker's `PROMPTS`): asks the session to read what the director did, record a `helm-note` of at most five lines, record each call the director made with `where: 'helm'` (6.3), and carry on.
   - CLI: `node scripts/crew/helm.js open <work>`. Exit 0 on hand-back, 1 with a one-line reason on refusal.
@@ -524,3 +524,33 @@ Branch `feature/crew-helm` from `main` once part 2 is merged. Spec sections 8.2,
 - [ ] **Step 2: Check it parses.** `node --check probes/96-helm/run.js`
 - [ ] **Step 3: Commit.** `git commit -am "Helm: a probe for the interactive forms"`
 - [ ] **Step 4: Ask the parent session before running it** (it spends model calls). If a run says a grant or the mode is lost, stop before part 6 and report.
+
+## Part 6: The helm: steering from the start, "now", the note, the desk
+
+Branch `feature/crew-helm-desk` from `main` once part 5 is merged. Spec sections 9.1, 9.2, 9.4 (the note and calls).
+
+### Task 6.1: Steering from the start
+
+**Files:**
+- Modify: `scripts/watcher/waker.js` (`startFeature` at 1672; `PROMPTS`), `scripts/crew/helm.js`, `scripts/state/views.js`, `scripts/desk/views.js`
+- Test: `tests/scripts/watcher/waker.test.js`, `tests/scripts/crew/helm.test.js`, `tests/scripts/desk/views.test.js`
+
+**Interfaces:**
+- Consumes: `takeHold({fromStart: true})`, `helmHeld`, `readHold` (5.1); `featureHelmCall({start: true})`, `openHelm` (5.3).
+- Produces:
+  - `startFeature` on a held piece whose hold has `fromStart: true`: does everything a start does (checks, worktree label, grants, session file with a new session id) except launch; the hold file gets that `sessionId`; prints `START feature <work> <worktree> held`. Any other held piece: refused as in 5.2.
+  - `firstPrompt(project, work) -> string` (exported from the waker): the prompt a launch would pipe, for `openHelm` to pass.
+  - `openHelm` on a hold with `fromStart: true` and no transcript (`findTranscript`, 1.1) uses the starting form with `firstPrompt`; with a transcript, the resuming form.
+  - The building slot: a `fromStart` hold that is not yet opened does not count toward the pace limit; once opened it does. The implementer finds the pace count (search `pace` in `scripts/watcher/`) and adds this one condition.
+  - Board line (exact copy): `ready for you to steer`.
+
+- [ ] **Step 1: Write the failing tests**
+  - `waker: a piece steered from the start is made but not launched`: a session file with an id, the hold names it, no spawn.
+  - `waker: an unopened steer holds no slot`: three running pieces and one unopened steer → a fourth piece may still start.
+  - `waker: an opened steer holds its slot`.
+  - `helm: the first open starts the session`: no transcript → `--session-id` and `firstPrompt` in the args.
+  - `desk: an unopened steer reads ready for you to steer`.
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/watcher/waker.test.js tests/scripts/crew/helm.test.js tests/scripts/desk/views.test.js`
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run them and see them pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Helm: steer a piece from its first step"`
