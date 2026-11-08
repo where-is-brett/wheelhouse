@@ -111,6 +111,9 @@ export default {
         }, ago(45)),
       ],
       lastPrompt: ago(20),
+      // The card path this scenario measures: typed replies, on by default since the director's decision of 8 November 2026,
+      // are switched off, as the director's confirmed setting does.
+      typedReplies: false,
     });
   },
 

@@ -140,7 +140,9 @@ export default {
 
   setup: (dir, variant) => {
     const { ago } = clock();
-    return setUpFrontDesk(dir, variant, { files: SHOP_FILES, commits: COMMITS, seed: seed(ago), lastPrompt: ago(180), usage: USAGE });
+    // The question waits as a card, as this scenario was written: typed replies (on by default since the director's
+    // decision of 8 November 2026) are switched off, as the director's confirmed setting does.
+    return setUpFrontDesk(dir, variant, { files: SHOP_FILES, commits: COMMITS, seed: seed(ago), lastPrompt: ago(180), usage: USAGE, typedReplies: false });
   },
 
   prompt: MESSAGE,
