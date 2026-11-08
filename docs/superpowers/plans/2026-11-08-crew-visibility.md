@@ -188,7 +188,7 @@ Branch `feature/crew-runs-reader` from `main`. Spec sections 4, 7.1, 7.2, 8.1.
 **Files:**
 - Modify: `adapters/claude-code/sessions.js` (`foremanCall`, around line 80)
 - Modify: `scripts/watcher/waker.js` (`startForeman`, around line 1265; `launch`, around 1160–1230)
-- Test: `tests/adapters/claude-code/sessions.test.js`, `tests/scripts/watcher/waker.test.js`
+- Test: `tests/scripts/agents/claude-sessions.test.js`, `tests/scripts/watcher/waker.test.js`
 
 **Interfaces:**
 - Produces: `foremanCall({..., sessionId = null})`: with a `sessionId`, `args` gains `--session-id <sessionId>` before `-p`. `launch` writes `sessionId` into the running record (`watcher/running/foreman.json`) when the target is `foreman`; `runSteps` in parts 3 and 4 reads it from there.
@@ -198,9 +198,40 @@ Branch `feature/crew-runs-reader` from `main`. Spec sections 4, 7.1, 7.2, 8.1.
   - `foremanCall passes a session id`: `args` contains `'--session-id', id` before `'-p'`.
   - `foremanCall without one is unchanged`: `args` has no `--session-id`.
   - `the foreman's running record names its session`: after a start through the waker's fake spawn, `running/foreman.json` has a `sessionId` matching `/^[0-9a-f-]{36}$/`.
-- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/adapters/claude-code/sessions.test.js tests/scripts/watcher/waker.test.js`
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/agents/claude-sessions.test.js tests/scripts/watcher/waker.test.js`
 - [ ] **Step 3: Implement** the two changes.
 - [ ] **Step 4: Run them and see them pass.**
 - [ ] **Step 5: Commit.** `git commit -am "Watcher: give the Bosun's run a known session id"`
 
 Part 1's pull request: title `Crew visibility: the run reader and the Bosun's session id`; body names the spec sections and says nothing reads a transcript yet.
+
+## Part 2: `watchCrew`, the `watch` event and the "Watch:" line
+
+Branch `feature/crew-watch-level` from `main`. Spec sections 6.1, 6.2, 12.
+
+### Task 2.1: The `watchCrew` setting and the level for a piece
+
+**Files:**
+- Modify: `scripts/settings/catalogue.js` (`SETTINGS`, beside `typedReplies` at line 86)
+- Create: `scripts/crew/level.js`
+- Test: `tests/scripts/settings/catalogue.test.js`, `tests/scripts/crew/level.test.js`
+
+**Interfaces:**
+- Produces:
+  - The entry `watchCrew: { label: 'How much of the crew you see', group: 'advanced', levels: ['off', 'steps', 'transcript'], default: 'steps', home: 'project' }`.
+  - `LEVELS = ['off', 'steps', 'transcript']`.
+  - `watchCrewIn(settings) -> 'off'|'steps'|'transcript'`: `settings.watchCrew.value` when it is one of `LEVELS`, else `'off'` (an unreadable value counts as off).
+  - `levelFor(views, settings, work) -> level`: the latest `watch` event for `work` (`views.watch[work]`, Task 2.2) while the piece is open, else `watchCrewIn(settings)`. `work === 'foreman'` always takes the project value.
+  - `levelOf(project, work, {now}) -> level`: reads the records and `effectiveSettings` as `typedRepliesOn` does (`scripts/decisions/answer.js:50`), and returns `'off'` when anything throws.
+
+- [ ] **Step 1: Write the failing tests**
+  - `catalogue: watchCrew defaults to steps, per project`: `SETTINGS.watchCrew.default === 'steps'` and `.home === 'project'`.
+  - `level: an unreadable value counts as off`: `watchCrewIn({watchCrew:{value:'loud'}}) === 'off'`.
+  - `level: a piece's own choice beats the project`: project `steps`, `watch {work:'login', level:'off'}` → `'off'`.
+  - `level: the choice ends when the piece closes`: the same, with `login` closed → `'steps'`.
+  - `level: the Bosun follows the project only`: a `watch` event for `foreman` is ignored.
+  - `level: a records error gives off`: `levelOf` on a project with an unreadable state folder → `'off'`.
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/settings/catalogue.test.js tests/scripts/crew/level.test.js`
+- [ ] **Step 3: Implement** the entry and `scripts/crew/level.js`.
+- [ ] **Step 4: Run them and see them pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Crew level: the watchCrew setting and a piece's own level"`
