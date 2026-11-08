@@ -281,5 +281,5 @@ test("build tab: shows the Bosun's steps under its own heading", () => withCrewR
   const got = await readView('logbook', { tab: 'build' }, source, { now });
   const at = got.lines.indexOf('The Bosun');
   assert.ok(at > 0, got.lines.join('\n'));
-  assert.deepEqual(got.lines.slice(at + 1, at + 6).filter((l) => l.startsWith('  ')), ['c', 'd', 'e', 'f', 'g'].map((f) => `  Reading \`${f}.ts\``));
+  assert.deepEqual(got.lines.slice(at + 1, at + 6).filter((l) => l.startsWith('  ')), ['c', 'd', 'e', 'f', 'g'].map((f) => `  The Bosun is reading \`${f}.ts\``));
 }, { foreman: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] }));
