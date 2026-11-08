@@ -127,7 +127,8 @@ test('promptContext gives the cards line and, after the gap, the briefing the bo
   const home = tempFolder('prompt-context-');
   const { ago } = clock();
   const seed = seed9(ago);
-  const views = standInViews(seed);
+  // Scenario 9's run has typed replies switched off (its setup confirms that setting), so the question waits as a card.
+  const views = { ...standInViews(seed), settings: { typedReplies: { key: 'typedReplies', value: false } } };
   const seen = { promptAt: ago(180), briefedAt: null };
   const at = new Date();
   const text = promptContext({ views, events: seed, seen, at, usage: USAGE, home });

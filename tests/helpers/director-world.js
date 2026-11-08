@@ -60,7 +60,7 @@ export const recordingsNamed = (...names) => {
 
 // openDirectorWorld({ recordings, says, lanes }) -> the world, with a terminal session ('desk-session') for the front desk.
 // `lanes` are the lanes the project has put on the engine, as its confirmed setting; the quick lane alone by default.
-export async function openDirectorWorld({ recordings = {}, says, lanes = ['quick', 'small'], adapt, files } = {}) {
+export async function openDirectorWorld({ recordings = {}, says, lanes = ['quick', 'small'], adapt, files, typedReplies = false } = {}) {
   const clock = { base: Date.parse('2026-11-05T09:00:00.000Z'), from: Date.now() };
   const now = () => new Date(clock.base + (Date.now() - clock.from));
   const world = await openWorld({ place: 'git-alone', recordings, now, ...(says ? { says } : {}), ...(adapt ? { adapt } : {}), ...(files ? { files } : {}) });
@@ -198,6 +198,13 @@ export async function openDirectorWorld({ recordings = {}, says, lanes = ['quick
       return `.wheelhouse/work/${id}.md`;
     },
   });
+  if (typedReplies === false) {
+    // The director's paths walk the card path: typed replies (on by default since the director's decision of 8 November
+    // 2026) are switched off, as the director's confirmed setting does. The typed-reply path has tests of its own.
+    const { confirmationFor } = await import('../../scripts/state/events.js');
+    const setting = world.put('setting', { key: 'typedReplies', value: false, words: 'Answer decisions by typing' });
+    world.put('confirmation', confirmationFor(setting).data);
+  }
   if (lanes.length > 0 && !(lanes.length === 1 && lanes[0] === 'quick')) {
     // The project's own setting, as confirmed when the lanes were put on the engine (not a click this scenario guards).
     const { confirmationFor } = await import('../../scripts/state/events.js');
