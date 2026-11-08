@@ -116,7 +116,7 @@ import { answeredWords } from '../cards/answered.js';
 import { crewNow } from '../crew/runs.js';
 import { markHere } from '../lib/session-files.js';
 import { sinceLine } from '../cards/panel-words.js';
-import { SLUG } from '../lib/build-loop.js';
+import { SLUG, UUID } from '../lib/build-loop.js';
 
 // How far back `views waiting` looks for answers, and its lead (scripts/desk/views.js).
 export { RECENT_MS, RECENT_LEAD };
@@ -617,6 +617,21 @@ function topicOf(given) {
   return topic;
 }
 
+// The slug of the work whose latest work event has the id `eventId`, or null.
+async function slugForEvent(views, eventId) {
+  for (const entry of Object.values(isPlain(views.work) ? views.work : {})) {
+    if (entry?.work?.id === eventId && typeof entry.work.data?.id === 'string') return entry.work.data.id;
+  }
+  return null;
+}
+
+// Refuses an event id given where a work id belongs, naming the slug when it is known.
+async function refuseEventId(views, given) {
+  if (typeof given !== 'string' || !UUID.test(given)) return;
+  const slug = await slugForEvent(views, given);
+  throw new CliError(slug === null ? 'the work id is the slug you recorded it under, not an event id' : `the work id is the slug you recorded it under: ${slug}`);
+}
+
 // Composes one card and records it, unless a waiting card already carries its set line: then that
 // card comes back as it was recorded, so the director is asked the card the state holds, with
 // `alreadyAsked` when a visit has handed it out already. The card handed out is recorded as asked.
@@ -637,6 +652,7 @@ export async function card({ client, cwd, input, now }) {
   const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
   const { views, names, outcomes } = await viewsOf(client, cwd, { since: new Date(at.getTime() - RECENT_MS) });
   let target = input.target;
+  if (input.kind === 'approve-work' && isPlain(target)) await refuseEventId(views, target.work);
   if (input.kind === 'approval' && isPlain(target) && target.sha === undefined && Number.isSafeInteger(target.pr) && target.pr >= 1) {
     const state = await client.prState({ cwd, number: target.pr });
     if (state?.ok !== true) throw new CliError(said(state, `The host helper couldn't read pull request #${target.pr}`));
@@ -1120,6 +1136,10 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     // scenario 7). Ready-made work carried on (`from`) is shown whatever its lane.
     if (input.lane === 'quick' && input.visible === true && input.from === undefined) {
       throw new CliError('Work users would see goes in the small lane at least, shown to the director first: record it in the small lane, with an approve-work card (shownFirst). The quick lane is for work users won\'t see (visible false)');
+    }
+    if (Array.isArray(input.dependsOn)) {
+      const { views } = await viewsOf(client, cwd);
+      for (const d of input.dependsOn) await refuseEventId(views, d);
     }
     const data = await withHash(client, cwd, kind, input);
     const hash = data.doc?.hash;

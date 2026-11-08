@@ -348,6 +348,10 @@ test('each new plain kind is accepted with its shape and refused without it', as
       { ...w, lane: 'huge' }, { ...w, visible: 'yes' }, { ...w, dependsOn: 'login' }, { ...w, dependsOn: ['Not A Slug'] },
       { ...w, doc: { path: 'x' } }, { ...w, doc: { path: 'x', hash: 'zz' } }, { ...w, place: 'first' }, { ...w, parent: 'No' }, { ...w, title: '' },
     ]) assert.throws(() => makeEvent({ kind: 'work', data: bad }), /work event/);
+    // An event id is not a work id, nor something work depends on.
+    const EVENT_ID = '65b530ed-b8e7-4a1c-9d2e-0123456789ab';
+    assert.throws(() => makeEvent({ kind: 'work', data: { ...w, id: EVENT_ID } }), /not an event id/);
+    assert.throws(() => makeEvent({ kind: 'work', data: { ...w, dependsOn: [EVENT_ID] } }), /by the slug it was recorded under/);
     const f = SHAPES.feature;
     for (const bad of [
       { ...f, step: 'done' }, { ...f, files: 'a' }, { ...f, slice: { n: 3, m: 2 } }, { ...f, slice: { n: 1 } }, { ...f, brief: 4 },

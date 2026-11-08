@@ -910,6 +910,28 @@ test('record work refuses the quick lane for work users would see, unless it is 
   });
 });
 
+test('record work and card refuse an event id where a work id belongs, naming the slug when it is known', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const work = { id: 'statement-import', title: 'Import a statement', lane: 'small', visible: true, dependsOn: [] };
+    const first = await run(helper, ['record', 'work'], JSON.stringify(work));
+    assert.equal(first.code, 0, first.err);
+    const eventId = helper.held.at(-1).id;
+    const before = helper.held.length;
+    const next = { id: 'statement-export', title: 'Export a statement', lane: 'small', visible: true };
+    const known = await run(helper, ['record', 'work'], JSON.stringify({ ...next, dependsOn: [eventId] }));
+    assert.equal(known.code, 1);
+    assert.match(known.err, /the work id is the slug you recorded it under: statement-import/);
+    const unknown = await run(helper, ['record', 'work'], JSON.stringify({ ...next, dependsOn: ['65b530ed-b8e7-4a1c-9d2e-0123456789ab'] }));
+    assert.equal(unknown.code, 1);
+    assert.match(unknown.err, /the work id is the slug you recorded it under, not an event id/);
+    const card = await run(helper, ['card'], JSON.stringify({ ...APPROVAL, kind: 'approve-work', what: 'Work statement-import: x.', target: { work: eventId, lane: 'small', hash: DOC } }));
+    assert.equal(card.code, 1);
+    assert.match(card.err, /the work id is the slug you recorded it under: statement-import/);
+    assert.equal(helper.held.length, before, 'nothing refused was written');
+  });
+});
+
 // The read-back an amendment needs (intake, route 3): what the change does, what it leaves, and when it is done.
 const READ_BACK = { doing: 'The export as one CSV file', notDoing: 'An Excel option', doneWhen: 'The button gives a CSV file that opens in Numbers' };
 

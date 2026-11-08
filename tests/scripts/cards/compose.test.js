@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { composeCard, answerInput, questionProblem, textOf, DECIDING, HEADERS, MEANWHILE, CHECKS_UNSAID, NO_REPLY_CODE } from '../../../scripts/cards/compose.js';
+import { composeCard, whatProblem, answerInput, questionProblem, textOf, DECIDING, HEADERS, MEANWHILE, CHECKS_UNSAID, NO_REPLY_CODE } from '../../../scripts/cards/compose.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
@@ -994,4 +994,11 @@ test('a computer take-over card is as before', () => {
   const { question } = composeCard(input('take-over'));
   assert.ok(question.question.includes('Take over the lock from computer 0a1b2c3d, counter 4'));
   assert.ok(!question.question.includes('Take over the First Mate'));
+});
+
+test('the commit scan skips the work id, so a uuid-shaped one is not read as a commit', () => {
+  const work = '65b530ed-b8e7-4a1c-9d2e-0123456789ab';
+  assert.equal(whatProblem('approve-work', `Work ${work}: x`, { work, lane: 'small', hash: 'f'.repeat(64) }), null);
+  const problem = whatProblem('approve-work', 'Work statement-import: x, deadbeef12', { work: 'statement-import', lane: 'small', hash: 'f'.repeat(64) });
+  assert.match(problem, /^names commit deadbeef12, /);
 });

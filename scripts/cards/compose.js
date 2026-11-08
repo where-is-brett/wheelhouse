@@ -351,7 +351,9 @@ export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
   if (need !== null && !need[0]) return `must name ${need[1]}, as its set line does`;
   const commit = target.sha ?? target.hash;
   if (typeof commit !== 'string') return null;
-  const scanned = kind === 'uninstall' ? what.split(String(target.project)).join(' ') : what;
+  let scanned = kind === 'uninstall' ? what.split(String(target.project)).join(' ') : what;
+  // The work's own id is no commit, however much it looks like one.
+  if (typeof target.work === 'string' && target.work !== '') scanned = scanned.split(target.work).join(' ');
   for (const token of scanned.match(/\b[0-9a-f]{7,64}\b/g) ?? []) {
     const looksLikeOne = /[0-9]/.test(token) && (/[a-f]/.test(token) || token.length >= 12);
     const same = commit.startsWith(token) || (abbreviated && token.startsWith(commit));

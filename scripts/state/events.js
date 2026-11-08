@@ -10,7 +10,7 @@ import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { RELEASE_LABEL, RELEASE_TAG, releaseLine, UPDATE_LABEL, updateLine, keepControlLine, approvalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, seatTakeOverLine, SEAT_SESSION, isSeatSince, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
-import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH, mayReplace } from '../lib/build-loop.js';
+import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, UUID, HASH, mayReplace } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 import { SEND_BACK } from '../lib/calm-words.js';
@@ -535,10 +535,12 @@ function checkPlain(kind, data) {
   }
   if (kind === 'work') {
     slug('id');
+    if (UUID.test(data.id)) bad('needs its id to be the work\'s slug, not an event id');
     text('title');
     if (!LANES.includes(data.lane)) bad('needs its lane to be quick, small, feature or bug');
     if (typeof data.visible !== 'boolean') bad('needs visible to be true or false');
     if (!Array.isArray(data.dependsOn) || !data.dependsOn.every(isSlug)) bad('needs dependsOn to be a list of work ids');
+    if (data.dependsOn.some((d) => UUID.test(d))) bad('needs dependsOn to name each work by the slug it was recorded under, not an event id');
     // The work's decision level, which the build engine's permit reads (level 4 waits for the director's approval).
     if (data.level !== undefined && ![1, 2, 3, 4].includes(data.level)) bad('has a level that is not 1, 2, 3 or 4');
     if (data.doc !== undefined && !(isPlain(data.doc) && Object.keys(data.doc).length === 2 && isText(data.doc.path) && typeof data.doc.hash === 'string' && HASH.test(data.doc.hash))) {

@@ -39,6 +39,8 @@ export const FEATURE_STEPS = Object.freeze(['started', 'planned', 'building', 'p
 export const REPORT_OUTCOMES = Object.freeze(['merged', 'closed', 'blocked']);
 // A work or incident id: lower-case letters, digits and hyphens, at most 40 characters.
 export const SLUG = /^[a-z0-9-]{1,40}$/;
+// An event's id, which is never a work id: the work id is the slug it was recorded under.
+export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // A hash a card can show as its first twelve characters: lower-case hex, 12 to 64 long.
 export const HASH = /^[0-9a-f]{12,64}$/;
 // The first number of the foreman's own question ids, `q-<work>-<n>`. A
