@@ -16,6 +16,12 @@ const NOW = new Date('2026-11-08T05:00:00.000Z');
 const ago = (days) => new Date(NOW.getTime() - days * DAY).toISOString();
 const line = (days, over = {}) => ({ kind: 'resumed', project: 'harbour__demo', work: 'w-tide-1', at: ago(days), ...over });
 
+// A claim as a watcher at work holds it: a folder with its owner inside.
+function held(folder) {
+  fs.mkdirSync(folder, { recursive: true });
+  fs.writeFileSync(path.join(folder, 'owner'), 'other\n');
+}
+
 function clientOf(written = []) {
   return { state: { write: async (a) => { written.push(a); return { ok: true }; } } };
 }
@@ -130,7 +136,7 @@ test('two watchers checking at once send the notice once', () => withHome(async 
 
 test('a claim another watcher holds keeps this one from sending', () => withHome(async () => {
   for (let i = 1; i <= 4; i += 1) recordIncident(line(i, { work: `w-tide-${i}` }));
-  fs.mkdirSync(claimFolder());
+  held(claimFolder());
   const written = [];
   assert.equal((await checkReliability({ project: 'harbour__demo', client: clientOf(written), now: () => NOW })).raised, false);
   assert.equal(written.length, 0);
@@ -145,7 +151,7 @@ test('a future-dated entry doesn\'t wipe real ones: pruning goes by the incoming
 
 test('a claim another watcher holds does not stop an incident being recorded, only the pruning', () => withHome(async () => {
   recordIncident(line(60, { work: 'w-tide-1' }));
-  fs.mkdirSync(recordClaimFolder(), { recursive: true });
+  held(recordClaimFolder());
   recordIncident(line(1, { work: 'w-tide-2' }));
   assert.deepEqual(readIncidents().map((l) => l.work), ['w-tide-1', 'w-tide-2'], 'recorded, and not pruned without the claim');
 }));
@@ -162,7 +168,7 @@ test('a claim is let go only by its owner', () => withHome(async () => {
 
 test('a stale claim is taken over by one watcher only, and nothing is left beside it', () => withHome(async () => {
   const folder = claimFolder();
-  fs.mkdirSync(folder, { recursive: true });
+  held(folder);
   const old = new Date(Date.now() - 60 * 60 * 1000);
   fs.utimesSync(folder, old, old);
   const first = takeClaim(folder);
@@ -195,7 +201,7 @@ test('the notice\'s time is on record before the card is sent, so a stop after t
 
 test('when the record claim is held a moment, the watcher waits for it and the line is written under it', () => withHome(async () => {
   recordIncident(line(60, { work: 'w-tide-1' }));
-  fs.mkdirSync(recordClaimFolder(), { recursive: true });
+  held(recordClaimFolder());
   let waits = 0;
   const sleep = () => {
     waits += 1;
@@ -215,7 +221,7 @@ test('the same occurrence added by another watcher between the look and the clai
 
 test('a fresh claim moved aside by mistake is put back, and never removed', () => withHome(async () => {
   const folder = claimFolder();
-  fs.mkdirSync(folder, { recursive: true });
+  held(folder);
   const old = new Date(Date.now() - 60 * 60 * 1000);
   fs.utimesSync(folder, old, old);
   // After the stale claim was seen, another watcher took it over and made a live one.
@@ -231,7 +237,7 @@ test('a fresh claim moved aside by mistake is put back, and never removed', () =
 
 test('a live claim that can\'t be put back is left where it is, not deleted', () => withHome(async () => {
   const folder = claimFolder();
-  fs.mkdirSync(folder, { recursive: true });
+  held(folder);
   const old = new Date(Date.now() - 60 * 60 * 1000);
   fs.utimesSync(folder, old, old);
   const seen = () => {
@@ -266,4 +272,61 @@ test('stale folders left beside a claim are swept once they are old', () => with
   const release = takeClaim(folder);
   release();
   assert.deepEqual(fs.readdirSync(wheelhouseHome()).filter((n) => n.includes('stale')), ['reliability-notice.claim.stale-new']);
+}));
+
+test('an owner that can\'t be written never touches the claim folder, even one another watcher has just made', () => withHome(async () => {
+  const folder = claimFolder();
+  const owner = () => {
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, 'owner'), 'live\n');
+    throw new Error('disk full');
+  };
+  assert.equal(takeClaim(folder, { owner }), null);
+  assert.equal(fs.readFileSync(path.join(folder, 'owner'), 'utf8').trim(), 'live');
+  assert.deepEqual(fs.readdirSync(wheelhouseHome()).filter((n) => n.includes('.new-')), [], 'only its own temporary folder was removed');
+}));
+
+test('a claim is never a folder without an owner: a put-back onto a live claim fails and leaves its owner intact', () => withHome(async () => {
+  const folder = claimFolder();
+  held(folder);
+  const old = new Date(Date.now() - 60 * 60 * 1000);
+  fs.utimesSync(folder, old, old);
+  const live = (who) => () => {
+    fs.rmSync(folder, { recursive: true, force: true });
+    fs.mkdirSync(`${folder}.new-${who}`);
+    fs.writeFileSync(path.join(`${folder}.new-${who}`, 'owner'), `${who}\n`);
+    fs.renameSync(`${folder}.new-${who}`, folder);
+  };
+  // One watcher's fresh claim is moved aside by a watcher with a stale view, and another then takes the place.
+  assert.equal(takeClaim(folder, { seen: live('first'), aside: live('second') }), null);
+  assert.equal(fs.readFileSync(path.join(folder, 'owner'), 'utf8').trim(), 'second');
+}));
+
+test('a claim that is taken has its owner inside from the start', () => withHome(async () => {
+  const folder = claimFolder();
+  const seenEmpty = [];
+  const release = takeClaim(folder);
+  seenEmpty.push(fs.readdirSync(folder).length);
+  release();
+  assert.deepEqual(seenEmpty, [1]);
+}));
+
+test('old temporary claim folders are swept, and fresh ones are left', () => withHome(async () => {
+  const folder = claimFolder();
+  fs.mkdirSync(`${folder}.new-old`, { recursive: true });
+  fs.mkdirSync(`${folder}.new-fresh`, { recursive: true });
+  const old = new Date(Date.now() - 60 * 60 * 1000);
+  fs.utimesSync(`${folder}.new-old`, old, old);
+  takeClaim(folder)();
+  assert.deepEqual(fs.readdirSync(wheelhouseHome()).filter((n) => n.includes('.new-')), ['reliability-notice.claim.new-fresh']);
+}));
+
+test('a claim that is old enough to be a crashed watcher\'s is not waited for', () => withHome(async () => {
+  held(recordClaimFolder());
+  const old = new Date(Date.now() - 60 * 1000);
+  fs.utimesSync(recordClaimFolder(), old, old);
+  let waits = 0;
+  assert.equal(recordIncident(line(1, { work: 'w-tide-1' }), { sleep: () => { waits += 1; } }), true);
+  assert.equal(waits, 0);
+  assert.deepEqual(readIncidents().map((l) => l.work), ['w-tide-1'], 'appended without the claim');
 }));
