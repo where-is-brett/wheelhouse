@@ -2,7 +2,7 @@
 
 # Crew visibility: design (8 November 2026)
 
-**Status:** draft for the director. It replaces PR #370's design (`docs/specs/2026-11-07-watch-the-crew-design.md`, on `design/watch-crew`), as the core cut's section 4.4 asked, and keeps that design's setting name, levels, script and safety rules. It builds on the core cut (`docs/specs/2026-11-07-core-cut-design.md`) and the director's way of working (`docs/specs/2026-11-07-director-way-of-working-design.md`), and changes neither. On 8 November the director settled the first two calls of the first draft (section 13.1). One call is open: whether the director talks to worker sessions directly (section 13.2). It touches #400's one-First-Mate design (`docs/specs/2026-11-08-one-first-mate-design.md`, on `design/one-first-mate`), and section 13.2 says how the two agree.
+**Status:** draft for the director. It replaces PR #370's design (`docs/specs/2026-11-07-watch-the-crew-design.md`, on `design/watch-crew`), as the core cut's section 4.4 asked, and keeps that design's setting name, levels, script and safety rules. It builds on the core cut (`docs/specs/2026-11-07-core-cut-design.md`) and the director's way of working (`docs/specs/2026-11-07-director-way-of-working-design.md`), and changes neither. On 8 November 2026 the director settled every call (section 13.1); none is open. Talking to worker sessions directly touches #400's one-First-Mate design (`docs/specs/2026-11-08-one-first-mate-design.md`, on `design/one-first-mate`), and section 9.4 says how the two agree.
 
 ## 1. In plain words
 
@@ -163,7 +163,7 @@ PR #370's six rules, kept in substance. After way-of-working section 6.1, "card"
 7. **Only the director takes the helm,** by their own words at the front desk, at a piece's start or later. An agent may suggest it in a decision's "Meanwhile" or "why" answer; it never takes it.
 8. **One writer.** The watcher starts nothing for a piece while the director holds it, and the director's session opens only once the piece's own run has ended (section 9.2). Claude Code also refuses a second process on one session, which is the backstop.
 9. **The guards still hold.** The director's session is the same feature session, in the same worktree, so Wheelhouse's hooks run as in any feature session: the protected files, the build-command guards and the gate are unchanged. A permission Claude Code asks the director for there is theirs to give, as in any session of theirs.
-10. **The First Mate is never blind.** The piece's decision log gets a line for the helm ("The director steered this piece from 14:02 to 14:31"). What the director says or decides at the helm reaches the First Mate as section 13.2's answer sets out; under its recommendation, a helm note on hand-back and decision records marked `where: 'helm'`.
+10. **The First Mate is never blind.** The piece's decision log gets a line for the helm ("The director steered this piece from 14:02 to 14:31"). What the director says or decides at the helm reaches the First Mate through a helm note on hand-back and decision records marked `where: 'helm'` (section 9.4).
 
 ## 9. Taking the helm
 
@@ -186,7 +186,7 @@ PR #370's six rules, kept in substance. After way-of-working section 6.1, "card"
 - **One gate, every path.** A new check, `helmHeld(project, work)`, in one module, is asked by every path that starts, wakes or moves a session or branch for a piece: the waker's start and wake sites (beside `controlHeld`, which checks the files that steer agents and is a different hold), the crash resume (`resume.js`), the routine moves (`routine.js`) and the Bosun's `act` commands (start, build, resume, pause and merge). A held piece is not started, woken, resumed, paused or merged: the director is changing its branch. Wakes queue as they do while a session runs. Records, signed reviews and the Logbook carry on as usual. *Designer's call.*
 - **Waiting for the quiet point:** when a run is live, the hold waits for it to end. Runs end at each report, so this is usually minutes; it can be up to the run's 8-hour limit. The director may say "now". That is a new per-run stop, not All stop: it ends that piece's recorded process (checked by its start time, as `stateOf` checks it), clears its running record, sends its wakes again, and writes no lost marker, so the crash resume doesn't start it. The step in flight is cut off and the session keeps everything before it. *Designer's call.*
 - **While held:** the piece shows "with the director since 14:02". It **keeps its building slot**, so taking the helm never raises the pace above three, as a waiting piece keeps its slot (way of working, section 6.4). The stuck check skips it, and the reliability bar records nothing for it: it is held on purpose (`scripts/watcher/reliability.js`, "stalled" counts only pieces not held on purpose). The digest lists it under what is waiting, so a long hold is seen.
-- **Handing back:** a second `SessionEnd` command, beside the stop guard (`scripts/hooks/stop-guard.js`) in `hooks/hooks.json`, records `helm-ended` when the ending session's id has the `feature` role (`scripts/lib/role.js`) and a hold file names that id; "hand back" at the front desk does the same once the session's process has gone. The hold file is removed and the waker wakes the piece with its hand-back line (section 13.2 sets what it asks). The queued wakes go with it.
+- **Handing back:** a second `SessionEnd` command, beside the stop guard (`scripts/hooks/stop-guard.js`) in `hooks/hooks.json`, records `helm-ended` when the ending session's id has the `feature` role (`scripts/lib/role.js`) and a hold file names that id; "hand back" at the front desk does the same once the session's process has gone. The hold file is removed and the waker wakes the piece with its hand-back line (section 9.4 sets what it asks). The queued wakes go with it.
 - **Recovery:** a watcher that restarts reads the hold file and leaves the piece alone. A reboot while held leaves the hold in place and the session on disk; the director can open it again, or hand it back. A hold with no `helm` event behind it (a file left by a crash mid-take) is removed at the watcher's start.
 - **All stop** stops Wheelhouse's own starts, as today. A helm session is the director's own, so All stop leaves it running and says so in its answer.
 - **"Why"** still works while held: it copies the session, which the director's session doesn't block.
@@ -199,6 +199,23 @@ PR #370's six rules, kept in substance. After way-of-working section 6.1, "card"
 | **Terminal** | Steps in the chat's Logbook; the page; `runs.js --follow` | Yes: the helm command opens the session in the terminal |
 | **Claude desktop app** | The same, in the chat; the page opens in the app's file pane | Yes, through the app's terminal panel (the one-click Run). Claude Code's documentation says the app's sidebar lists only sessions the app runs itself, so a crew session never appears there as a session row |
 | **Phone (the Claude app)** | Nothing new: alerts say only that something waits (way of working, section 9). Transcripts stay on the computer (rule 5) | Nothing built. A helm session is an ordinary running interactive session, so Claude Code's Remote Control (`/remote-control` inside it) can already continue it from the phone or claude.ai/code while the computer stays on (Pro, Max, Team and Enterprise plans; not with an API key). That is enough for a start |
+
+### 9.4 Talking to the piece directly
+
+The director decided on 8 November 2026 that talking to worker sessions directly stays allowed, and is recorded so the First Mate isn't blind (section 13.1). In their words: "it is a freedom i think shouldnt be taken away but it kind of bypasses the first mate." At the helm the director steers the build, makes calls and answers that piece's own decisions.
+
+- **The helm note.** The hand-back wake asks the piece, first, to write a short note of what the director said at the helm: what they asked it to change, and any call they made, in at most five lines in its own words. It is a `helm-note` record, written through the helper as the piece's other records are. The First Mate reads it at its next turn with the board's other news ("While you had the helm of login-retry: …") and treats it as data, as any record. If the piece never writes it, the Logbook says "no note from the helm" and the decision-log line still stands. *Designer's call.*
+- **Calls made at the helm.** When the director makes a director-level call there ("keep the old login page for now"), the piece records it as a decision, asked and answered at once, with `where: 'helm'` and the director's words. It appears in the decision record like any other, so the First Mate and the director's later reading see it.
+- **Answers at the helm.** A reply in the helm session answers a decision only when all of these hold: it is that piece's own waiting decision; the reply names its number ("decision 2: B"), so a bare letter never counts; the session is the one the hold file names; and a person typed it (Claude Code's entrypoint is not a script's). The `UserPromptSubmit` hook (`scripts/hooks/prompt-record.js`) records it, as it records a typed reply at the front desk, with `where: 'helm'`, so the words are the director's own and never the piece's summary of them. *Designer's call.*
+
+**Agreement with #400.** Checked against `docs/specs/2026-11-08-one-first-mate-design.md` on `design/one-first-mate`:
+
+- **The roles don't change.** A helm session keeps the `feature` role: it is judged `feature` before the seat is (#400's order: `why`, `foreman`, `feature`, then the seat), so it is never `aside` or `front-desk`, and never takes or contests the seat. #400 leaves feature sessions out of its scope because they "already have one owner each"; the hold file is how the helm keeps that true.
+- **One exception to one guard.** #400's `recordAnswer` records only when the session is front-desk, not started by a script, and named by the seat. This design adds one alternative, not a loosening: the session is the one a hold file names, and the decision belongs to that hold's piece. The script check splits in two: the entrypoint test still applies (a person must be typing), while the starter-variable test is replaced by the hold file, because the helm command sets the piece's `WHEELHOUSE_ROLE` so its hooks run as a feature session's.
+- **F3 stays closed.** #400's most serious clash is a stray reply in a session that isn't Wheelhouse's being recorded as a decision. A helm answer needs a hold file naming that exact session id, which only the director's "take the helm" creates, and a numbered reply to that piece's own decision. A desktop worktree on a `feature/` branch, which #400 notes is mistaken for a Crew session, has no hold file, so it can't answer anything. #400's follow-up on `featureSlug` makes that stronger and isn't needed for this.
+- **One decision, one answer.** Decision numbers are stable, and a second answer to one already given meets "already answered", whether it came from the chat or the helm, so the First Mate and the helm can't both decide it.
+- **The 6.1 gap is no wider.** Typed replies are guarded because a script could type into the First Mate's session. While a piece is held, no script sends it a prompt (every start and wake asks `helmHeld`), so the helm session's only prompts are the director's.
+- **Order of building.** The helm answer path builds after #400's seat, as an exception to its guard; until #400 lands, the helm steers the build and writes its note, and decisions are answered at the First Mate.
 
 ## 10. Costs
 
@@ -217,11 +234,11 @@ PR #370's six rules, kept in substance. After way-of-working section 6.1, "card"
 
 - **Pull, not push.** The levels change only what the Logbook and the page show. The digest and alerts are unchanged (its section 9).
 - **No new question.** The choice at start is a stated line in a message the intake already sends; the director answers it only to change it.
-- **The decision line stands.** Decisions keep their shape (its section 6.2). Where they may be answered is section 13.2's call; under its recommendation the First Mate stays the one place they are tracked, even when one is answered at the helm.
+- **The decision line stands.** Decisions keep their shape (its section 6.2). A piece's own decision may also be answered at the helm (section 9.4), and the First Mate stays the one place they are tracked.
 - **"Why" and the helm differ.** "Why" asks a read-only copy and never changes the work (its section 6.3). The helm is the one route by which the director's words reach a running piece directly, and it is logged (rule 10).
 - **Waiting doesn't stop the work** (its section 6.4). Taking the helm does stop that one piece, by the director's own choice, and the others go on.
 - **The phone limit.** Nothing here sends content to the phone. Remote Control is the director's own reach into a session they opened; Wheelhouse doesn't start it.
-- **Typed replies** (its section 6.1): their safeguards were built for the front desk. Section 13.2's option A adds one narrow case, the piece's own decisions answered by number in the helm session, and says why the gap is no wider.
+- **Typed replies** (its section 6.1): their safeguards were built for the front desk. Section 9.4 adds one narrow case, the piece's own decisions answered by number in the helm session, and says why the gap is no wider.
 
 ## 12. What changes
 
@@ -230,12 +247,12 @@ PR #370's six rules, kept in substance. After way-of-working section 6.1, "card"
 - `scripts/crew/helm.js` (new): takes, opens and hands back; the hold file; the starting form for "I'll steer it".
 - `adapters/claude-code/sessions.js`: `featureHelmCall`, the interactive call, in a resuming form and a starting form.
 - `scripts/watcher/waker.js`: the foreman's `--session-id`; `helmHeld` at each start and wake site; the start without a launch for a piece steered from the start; the per-run stop for "now"; the hand-back wake. `scripts/watcher/resume.js`, `routine.js` (its moves and stuck check), `reliability.js` and the Bosun's `act` commands ask `helmHeld` too.
-- The state layer: the `watch`, `helm` and `helm-ended` record kinds, and, under section 13.2 A, `helm-note`.
+- The state layer: the `watch`, `helm` and `helm-ended` and `helm-note` record kinds.
 - `scripts/desk/views.js`: steps in `workLines` and the build tab; "with the director"; "ready for you to steer".
 - The intake: the "Watch:" line in its confirming message.
 - The front desk skill: the watch, helm and hand-back phrases; `/wheelhouse:logbook watch <work>`.
 - Hooks: the `SessionEnd` hand-back; the decision-log line at the helm.
-- Under section 13.2 A only: `scripts/decisions/answer.js` and `scripts/hooks/prompt-record.js` gain the helm case, and decision records gain `where: 'helm'` beside `where: 'chat'`.
+- `scripts/decisions/answer.js` and `scripts/hooks/prompt-record.js` gain the helm case, and decision records gain `where: 'helm'` beside `where: 'chat'`.
 - The main design's safety section gains section 8's ten rules. `engineRoom` goes with Archon in core cut part 4, as the core cut says.
 - `docs/data.md`: the watch pages, the hold file and the helm note.
 
@@ -245,53 +262,11 @@ PR #370's six rules, kept in substance. After way-of-working section 6.1, "card"
 
 - **How the level is chosen:** by the director for each piece as they start it, with a project setting as the default; no defaults by kind of work. The default, the designer's call as asked, is `steps` (section 6.1).
 - **Steering:** from this computer only. Remote Control already gives remote access to a running interactive session, which covers the phone for a start; nothing is built for it (section 9.3).
+- **Talking to worker sessions directly:** allowed, and recorded so the First Mate isn't blind (option A of three; B allowed steering only, with decisions answered at the First Mate; C allowed no direct talk). The director, in their own words: "it is a freedom i think shouldnt be taken away but it kind of bypasses the first mate." Section 9.4 sets out how it works and how it agrees with #400.
 
-### 13.2 Talking to worker sessions directly
+### 13.2 Open calls
 
-The director, in their own words: "whether i should talk to worker sessions directly - it is a freedom i think shouldnt be taken away but it kind of bypasses the first mate."
-
-```
-Decision needed: should you talk to worker sessions directly?   (holds up: the helm's build)
-Why now: the helm lets you talk to a piece's own session; what you say there goes round the First Mate unless it's recorded.
-
-A. Yes, and it's recorded so the First Mate isn't blind (recommended). At the helm you steer the build,
-   make calls and answer that piece's own decisions. On hand-back the piece writes a short note of what
-   you said, which the First Mate reads; a call you make there becomes a decision record, and an answer
-   by number to its own waiting decision is recorded as yours, both marked "at the helm".
-   Cost: medium, the note is small; the answer path needs one narrow exception in #400's guard.
-   Undo: a setting turns helm answers off and leaves you at B; answers already recorded stay.
-B. Yes, to steer the build only. Decisions are still answered at the First Mate; if you answer one at the
-   helm, the piece points you there. The hand-back note is still written.
-   Cost: small. Undo: move to A later without rework.
-C. No. You steer only through the First Mate: it records what you want changed and wakes the piece with
-   your words. No helm at all.
-   Cost: the smallest; saves about a third of this build. Undo: add the helm later.
-Recommended because: you said the freedom shouldn't be taken away, so C is out; and B makes you
-repeat yourself at the First Mate for a decision you have just settled with the piece that asked it.
-A keeps the freedom and gives the First Mate the same record it would have had: every call and
-answer is in the decision record, and the note says what changed. Taking the helm is a deliberate
-act on one named session, not a stray reply in some other window, so it isn't the clash #400 guards.
-
-Meanwhile: the steps, the page and the helm itself are built first; only the answer path waits on this.
-Reply A, B, C, "why", or your own words.
-```
-
-**How option A works.**
-
-- **The helm note.** The hand-back wake asks the piece, first, to write a short note of what the director said at the helm: what they asked it to change, and any call they made, in at most five lines in its own words. It is a `helm-note` record, written through the helper as the piece's other records are. The First Mate reads it at its next turn with the board's other news ("While you had the helm of login-retry: …") and treats it as data, as any record. If the piece never writes it, the Logbook says "no note from the helm" and the decision-log line still stands. *Designer's call.*
-- **Calls made at the helm.** When the director makes a director-level call there ("keep the old login page for now"), the piece records it as a decision, asked and answered at once, with `where: 'helm'` and the director's words. It appears in the decision record like any other, so the First Mate and the director's later reading see it.
-- **Answers at the helm.** A reply in the helm session answers a decision only when all of these hold: it is that piece's own waiting decision; the reply names its number ("decision 2: B"), so a bare letter never counts; the session is the one the hold file names; and a person typed it (Claude Code's entrypoint is not a script's). The `UserPromptSubmit` hook (`scripts/hooks/prompt-record.js`) records it, as it records a typed reply at the front desk, with `where: 'helm'`, so the words are the director's own and never the piece's summary of them. *Designer's call.*
-
-**Agreement with #400.** Checked against `docs/specs/2026-11-08-one-first-mate-design.md` on `design/one-first-mate`:
-
-- **The roles don't change.** A helm session keeps the `feature` role: it is judged `feature` before the seat is (#400's order: `why`, `foreman`, `feature`, then the seat), so it is never `aside` or `front-desk`, and never takes or contests the seat. #400 leaves feature sessions out of its scope because they "already have one owner each"; the hold file is how the helm keeps that true.
-- **One exception to one guard.** #400's `recordAnswer` records only when the session is front-desk, not started by a script, and named by the seat. Option A adds one alternative, not a loosening: the session is the one a hold file names, and the decision belongs to that hold's piece. The script check splits in two: the entrypoint test still applies (a person must be typing), while the starter-variable test is replaced by the hold file, because the helm command sets the piece's `WHEELHOUSE_ROLE` so its hooks run as a feature session's.
-- **F3 stays closed.** #400's most serious clash is a stray reply in a session that isn't Wheelhouse's being recorded as a decision. A helm answer needs a hold file naming that exact session id, which only the director's "take the helm" creates, and a numbered reply to that piece's own decision. A desktop worktree on a `feature/` branch, which #400 notes is mistaken for a Crew session, has no hold file, so it can't answer anything. #400's follow-up on `featureSlug` makes that stronger and isn't needed for this.
-- **One decision, one answer.** Decision numbers are stable, and a second answer to one already given meets "already answered", whether it came from the chat or the helm, so the First Mate and the helm can't both decide it.
-- **The 6.1 gap is no wider.** Typed replies are guarded because a script could type into the First Mate's session. While a piece is held, no script sends it a prompt (every start and wake asks `helmHeld`), so the helm session's only prompts are the director's.
-- **Order of building.** The helm answer path builds after #400's seat, as an exception to its guard; until #400 lands, the helm is built at B's behaviour and A's answer path follows.
-
-Under B, the answer path and the `recordAnswer` exception aren't built; the helm note and decision records for calls made at the helm still are. Under C, sections 8.2 and 9 aren't built; the First Mate records a `steer` request with the director's words and wakes the piece with them.
+None.
 
 ## 14. Left to the builder
 
@@ -312,7 +287,7 @@ Nothing here waits for core cut part 4: the own engine is the only engine since 
 2. **`watchCrew`** in the catalogue, the `watch` event and the intake's "Watch:" line.
 3. **Steps** in the Logbook.
 4. **The transcript page** and `--follow`.
-5. **The helm**, taken later and from the start: the hold, the open command, the hand-back, the watcher's skips, the helm note, and section 8.2's rules as tests (unless section 13.2 is C).
-6. **Answers at the helm** (section 13.2 A only), after #400's seat has landed.
+5. **The helm**, taken later and from the start: the hold, the open command, the hand-back, the watcher's skips, the helm note, and section 8.2's rules as tests.
+6. **Answers at the helm** (section 9.4), after #400's seat has landed.
 
 Parts 3 and 4 touch separate files and can run side by side.
