@@ -101,3 +101,21 @@ test('after downtime or a long sleep the raise clock starts again, so the wait i
   }
   assert.deepEqual(recorded.map((i) => i.kind), ['lost'], 'but a piece still unstarted half an hour into a run that stayed up is lost');
 }));
+
+test('a piece that leaves the queue and comes back can be lost again', () => withHome(async () => {
+  let t = Date.parse('2026-11-05T09:00:00Z');
+  const current = { v: views() };
+  const client = { state: { views: async () => ({ ok: true, views: current.v }) } };
+  const recorded = [];
+  const r = makeRecovery({ project: 'o__p', client, now: () => new Date(t), stopped: () => false, record: (i) => recorded.push(i) });
+  const steps = async (n) => { for (let i = 0; i < n; i += 1) { t += 11 * MIN; await r.check(); } };
+  await r.check();
+  await steps(3);
+  assert.equal(recorded.length, 1, 'lost the first time');
+  current.v = views({ work: { a: w('a', { dependsOn: ['z'] }, true) } });
+  await steps(1);
+  current.v = views();
+  await steps(4);
+  assert.equal(recorded.length, 2, 'and again, once it has been back in the queue half an hour');
+  assert.equal(new Set(recorded.map((i) => i.key)).size, 2);
+}));

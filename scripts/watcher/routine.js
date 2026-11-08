@@ -135,7 +135,9 @@ export function triage(state) {
         // A piece waiting on purpose is not trouble: one planned or paused, one with a ready pull request whose merge a hold freezes,
         // and, under All stop, every piece, since nothing runs. An incident freezes only starts and merges: a piece that is still
         // building and stalls is stuck, and is asked about.
-        if (held.includes(work) || (halt !== null && (halt.stop === true || ready.some((r) => r.work === work && mergeWait(halt, r.pr) !== null)))) handled.push(e.id);
+        // A plan held back by an incident leaves its session at ready-to-build, still at its start: held on purpose, like planned.
+        if (held.includes(work) || (halt !== null && (halt.stop === true || ready.some((r) => r.work === work && mergeWait(halt, r.pr) !== null)
+          || (d.phase === 'ready-to-build' && heldBack(lane))))) handled.push(e.id);
         else ask(e, 'stuck');
         break;
       case 'review-overdue': ask(e, 'stuck'); break;
@@ -358,7 +360,7 @@ export function makeRoutine({
         let after = state;
         if (made > 0) {
           try {
-            after = await read();
+            after = await read({ readyPlans: false });
           } catch (error) {
             log(`The queue couldn't be read again: ${error.message}`);
           }

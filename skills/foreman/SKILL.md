@@ -41,7 +41,7 @@ A line with `Next: act start W` names a document. Read that, and nothing else. T
 - Add `--slices N` when the document splits the work into N slices.
 - **An extra plan:** its goal is its title. Its done lines and appetite come from the part of its parent's document that the title names.
 - **The appetite:** quick, bug and small work takes the one its `Next:` line gives, unless its document sets its own. A feature's comes from its document.
-- **Changes made by hand:** the wake's `Next: act start` line for them already carries a fixed goal and done lines (the hand-made changes pass review, the checks pass, they join the main version). Run it as printed: that work is complete as it stands, so never `act ask` about what done looks like.
+- **Changes made by hand:** the wake's `Next: act start` line for them already carries a set goal and done lines (the hand-made changes pass review, the checks pass, they join the main version). Run it as printed: that work is complete as it stands, so never `act ask` about what done looks like.
 - **Missing done lines, a feature's appetite,** or anything unclear: `act ask` instead.
 - **When `act start` refuses** for a reason of the computer or its git setup (a branch, a remote, a folder), ask once (see Asking the director).
 - **Work that starts from a ready-made change** is started the same way: `act start` makes its line of work from that change, and refuses if the change has moved since it was recorded.

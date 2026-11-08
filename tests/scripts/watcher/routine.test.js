@@ -318,3 +318,31 @@ test('the facts leave out plans that clash with running work or wait on their ow
   const facts = await readFacts({ project: FOREMAN_P, client, now: () => new Date('2026-10-19T09:00:00.000Z'), stopped: () => false, readyPlans: true });
   assert.deepEqual(facts.build.map((b) => b.work), ['ok']);
 }));
+
+test('during an incident a piece whose plan is held back, so its session sits at ready-to-build, is not stalled', () => withHome(async () => {
+  const { act } = fakeAct();
+  const waiting = ev('stuck', 'w-tide-2', { detail: { still: 1300000, phase: 'ready-to-build' } });
+  const halt = { why: 'incident outage is open', fixes: [], stop: false };
+  const out = await routineOf(state({ halt, lanes: { 'w-tide-2': 'small' } }), act).run({ events: [waiting] });
+  assert.ok(out.handled.has(waiting.id));
+  assert.equal(out.reasons.size, 0);
+  assert.deepEqual(readIncidents(), []);
+  // Bug work goes on during an incident, so its plan is not held back: sitting at ready-to-build is a stall.
+  const bug = ev('stuck', 'w-tide-3', { detail: { still: 1300000, phase: 'ready-to-build' } });
+  const stalled = await routineOf(state({ halt, lanes: { 'w-tide-3': 'bug' } }), act).run({ events: [bug] });
+  assert.equal(stalled.reasons.get(bug.id), 'stuck');
+  // And without a hold at all, ready-to-build for long is a stall too.
+  const free = ev('stuck', 'w-tide-4', { detail: { still: 1300000, phase: 'ready-to-build' } });
+  assert.equal((await routineOf(state({ lanes: { 'w-tide-4': 'small' } }), act).run({ events: [free] })).reasons.get(free.id), 'stuck');
+}));
+
+test('the routine asks for ready plans only on its first run', () => withHome(async () => {
+  const { act } = fakeAct();
+  const asked = [];
+  const r = makeRoutine({ project: P, client: {}, now: () => NOW, act, facts: async (options) => { asked.push(options?.readyPlans); return state(); }, log: () => {} });
+  await r.run({ events: [] });
+  await r.run({ events: [ev('report', 'w-tide-1')] });
+  await r.run({ events: [ev('report', 'w-tide-1')] });
+  assert.equal(asked[0], true);
+  assert.deepEqual([...new Set(asked.slice(1))], [false]);
+}));

@@ -58,49 +58,84 @@ export function readIncidents() {
   return out;
 }
 
+// Folders left beside a claim by a takeover (`<claim>.stale-<token>`) are swept once they are this old.
+const sweep = (folder) => {
+  try {
+    const base = `${path.basename(folder)}.stale-`;
+    for (const name of fs.readdirSync(path.dirname(folder))) {
+      const full = path.join(path.dirname(folder), name);
+      if (name.startsWith(base) && Date.now() - fs.statSync(full).mtimeMs >= CLAIM_STALE_MS) fs.rmSync(full, { recursive: true, force: true });
+    }
+  } catch { /* swept another time */ }
+};
+
 // A claim is a folder made in one step, with its owner's token inside. Returns a function that lets it go (only if it is still
 // this owner's), or null when another watcher holds it. A claim older than CLAIM_STALE_MS was left by a watcher that stopped: it is
-// taken over by renaming it aside first, which only one watcher can do.
-export function takeClaim(folder) {
+// taken over by renaming it aside first, which only one watcher can do. What was moved aside is never deleted unless it is stale
+// still: a live claim that can't be put back is left where it is. `hooks` (`seen`, `aside`, `owner`) are for tests and run after the
+// stale claim was seen, after it was moved aside, and in place of writing the owner.
+export function takeClaim(folder, hooks = {}) {
   const token = crypto.randomUUID();
   fs.mkdirSync(path.dirname(folder), { recursive: true });
+  sweep(folder);
   for (let tries = 0; tries < 2; tries += 1) {
     try {
       fs.mkdirSync(folder);
-      fs.writeFileSync(path.join(folder, 'owner'), `${token}\n`);
-      return () => {
-        try {
-          if (fs.readFileSync(path.join(folder, 'owner'), 'utf8').trim() === token) fs.rmSync(folder, { recursive: true, force: true });
-        } catch { /* gone already, or no longer ours */ }
-      };
     } catch (error) {
       if (error?.code !== 'EEXIST') return null;
       const aside = `${folder}.stale-${token}`;
       try {
         if (Date.now() - fs.statSync(folder).mtimeMs < CLAIM_STALE_MS) return null;
+        hooks.seen?.();
         fs.renameSync(folder, aside);
       } catch {
         return null; // another watcher took it over first
       }
-      // What was moved may be a fresh claim made after the stale one was seen: put it back, and leave it be.
+      hooks.aside?.();
+      // What was moved may be a fresh claim made after the stale one was seen: put it back, and never delete it.
+      let stale = false;
       try {
-        if (Date.now() - fs.statSync(aside).mtimeMs < CLAIM_STALE_MS) {
+        stale = Date.now() - fs.statSync(aside).mtimeMs >= CLAIM_STALE_MS;
+      } catch { /* not there: nothing to delete */ }
+      if (!stale) {
+        try {
           fs.renameSync(aside, folder);
-          return null;
-        }
-      } catch { /* looked at below */ }
+        } catch { /* left where it is; swept once it is old */ }
+        return null;
+      }
       fs.rmSync(aside, { recursive: true, force: true });
+      continue;
     }
+    try {
+      if (hooks.owner) hooks.owner();
+      else fs.writeFileSync(path.join(folder, 'owner'), `${token}\n`);
+    } catch {
+      fs.rmSync(folder, { recursive: true, force: true }); // the folder just made, so it never blocks the others
+      return null;
+    }
+    return () => {
+      try {
+        if (fs.readFileSync(path.join(folder, 'owner'), 'utf8').trim() === token) fs.rmSync(folder, { recursive: true, force: true });
+      } catch { /* gone already, or no longer ours */ }
+    };
   }
   return null;
 }
+
+// Waits a few milliseconds, blocking: the record is written by code that isn't async.
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+// How long a watcher waits for the record's claim before it appends without it.
+const CLAIM_TRIES = 50;
+const CLAIM_WAIT_MS = 20;
 
 // Appends one incident, unless the same occurrence is there already. `key` is optional; without it the kind, project, work and
 // time name the occurrence. Anything that isn't one of the three kinds, or names no piece, is not recorded. Returns whether a
 // line was added. Incidents more than a window older than the incoming one don't count and are dropped as it is added, under a
 // claim, so the file stays small and no other watcher's line is lost to the rewrite. Without the claim, or where the rewrite is
-// refused (a file held open on Windows), the line is appended and the pruning left for another time.
-export function recordIncident({ kind, project, work, at, key } = {}) {
+// refused (a file held open on Windows), the line is appended and the pruning left for another time. The claim is waited for
+// up to a second first; a line appended after that without it can still be lost to a rewrite already under way, which costs one
+// count towards the bar and nothing else.
+export function recordIncident({ kind, project, work, at, key } = {}, { sleep = pause, beforeClaim = () => {} } = {}) {
   if (!KINDS.includes(kind) || !isText(project) || !SLUG.test(String(work ?? '')) || !Number.isFinite(Date.parse(at))) return false;
   const named = isText(key) ? key : `${kind}:${project}:${work}:${at}`;
   const seen = (all) => all.some((l) => (l.key ?? `${l.kind}:${l.project}:${l.work}:${l.at}`) === named);
@@ -108,7 +143,13 @@ export function recordIncident({ kind, project, work, at, key } = {}) {
   const added = { kind, project, work, at, key: named };
   fs.mkdirSync(wheelhouseHome(), { recursive: true });
   const append = () => fs.appendFileSync(reliabilityFile(), `${JSON.stringify(added)}\n`);
-  const release = takeClaim(recordClaimFolder());
+  beforeClaim();
+  // Another watcher may be pruning: wait for it a little, so the line it would drop is written after its rename and not before.
+  let release = takeClaim(recordClaimFolder());
+  for (let tries = 1; release === null && tries < CLAIM_TRIES; tries += 1) {
+    sleep(CLAIM_WAIT_MS);
+    release = takeClaim(recordClaimFolder());
+  }
   if (release === null) {
     append();
     return true;
