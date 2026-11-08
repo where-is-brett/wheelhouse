@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { appendJsonl } from '../lib/log.js';
 import { projectSlug } from '../../scripts/lib/paths.js';
 import { runFolder } from './results.js';
-import { openPicker, readyToSubmit, HIGHLIGHTED } from './stand-in.js';
+import { openPicker, readyToSubmit, HIGHLIGHTED, PICKED } from './stand-in.js';
 import { PIECES, WAVES, P5_SPARE, F2_ANSWER } from './requests.js';
 import { SESSION_PREFIX, frontDeskCommand } from './tmux.js';
 import { STEPS as LOG, SETUP_DONE, OWN_BRANCH } from './signals.js';
@@ -196,6 +196,7 @@ async function tick(ctx) {
   const skipWork = [state.pieces.P4?.change].filter((w) => typeof w === 'string');
   await io.host.answerCards({ project: ctx.projectName, tmux: io.tmux, events, session: ctx.session ?? DESK, skipWork });
   await staleDeskPicker(ctx);
+  await checkIn(ctx, events);
   if (state.ntfyTopic) {
     for (const m of await io.host.readNtfy({ topic: state.ntfyTopic })) if (!state.ntfy.some((x) => x.at === m.at && x.text === m.text)) state.ntfy.push(m);
   }
@@ -387,6 +388,35 @@ async function answerPicker(ctx, name) {
   await note(ctx, name === DESK ? 'front-desk' : name, `answered the picker "${question}": ${label}`);
   await io.clock.sleep(3000);
   return true;
+}
+
+// The stand-in director checks in, as a director does now and then: the desk shows waiting cards and decisions when the
+// director writes to it, so with the desk idle a while and something waiting in the record, it asks, at most every ten
+// minutes. Never during a step that is the director's own.
+export const CHECK_IN = 'Anything waiting for me?';
+const CHECK_IN_IDLE_MS = 3 * MINUTE;
+const CHECK_IN_EVERY_MS = 10 * MINUTE;
+export function waitingInRecord(events) {
+  const answeredCards = new Set(events.filter((e) => e.kind === 'card-answer').map((e) => e.data?.card));
+  const answeredQuestions = new Set(events.filter((e) => e.kind === 'action' && e.data?.action === 'answer').map((e) => e.data?.questionId));
+  const cards = events.filter((e) => e.kind === 'card' && PICKED.includes(e.data?.kind) && !answeredCards.has(e.id));
+  const questions = events.filter((e) => e.kind === 'question' && typeof e.data?.id === 'string' && !answeredQuestions.has(e.data.id));
+  return cards.length + questions.length;
+}
+async function checkIn(ctx, events) {
+  const { io, state } = ctx;
+  if (ctx.directorStep || (ctx.session ?? DESK) !== DESK) { ctx.deskIdle = undefined; return; }
+  const pane = io.tmux.capture(DESK);
+  if (pane === '' || openPicker(pane) !== null) { ctx.deskIdle = undefined; return; }
+  if (ctx.deskIdle?.pane !== pane) { ctx.deskIdle = { pane, since: io.clock.now() }; return; }
+  if (io.clock.now() - ctx.deskIdle.since < CHECK_IN_IDLE_MS) return;
+  if (state.checkedInAt !== undefined && io.clock.now() - state.checkedInAt < CHECK_IN_EVERY_MS) return;
+  const waiting = waitingInRecord(events);
+  if (waiting === 0) return;
+  state.checkedInAt = io.clock.now();
+  ctx.deskIdle = undefined;
+  io.tmux.type(DESK, CHECK_IN);
+  await note(ctx, 'front-desk', `the desk was idle with ${waiting} waiting in the record; the stand-in checked in: ${CHECK_IN}`);
 }
 
 // A picker in the front desk that no card in the record stands for (setup's last card when setup carries on in the desk,
