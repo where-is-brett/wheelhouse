@@ -72,10 +72,12 @@ async function sitting({ label, call, dir, logFile, sendPrompt }) {
     const started = tmux('new-session', '-d', '-s', name, '-x', '200', '-y', '50', '-c', dir, `sh ${quote(launcher)}`);
     if (started.status !== 0) fail(`tmux would not start: ${started.stderr}`);
     created.add(name);
-    // Ready: the input box is there. A trust question for the scratch folder is answered with its default (Enter).
+    // Ready: the input box is there. A trust question for the scratch folder is answered yes: its default is "No, exit",
+    // so the cursor is moved to "Yes, I trust this folder" first and Enter is sent only once it is there.
     const ready = await untilAlive(name, () => {
       const text = screen(name);
-      if (/trust (this|the files in this) folder|Yes, I trust/i.test(text)) tmux('send-keys', '-t', name, 'Enter');
+      if (/❯\s*No, exit/.test(text)) tmux('send-keys', '-t', name, 'Down');
+      else if (/❯\s*Yes, I trust/.test(text)) tmux('send-keys', '-t', name, 'Enter');
       return /\? for shortcuts|bypass permissions|accept edits on|esc to interrupt/i.test(text) ? text : null;
     }, 90000);
     if (ready === 'dead') fail('the session ended before it showed its input box');
