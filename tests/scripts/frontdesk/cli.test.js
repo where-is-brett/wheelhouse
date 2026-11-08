@@ -1028,6 +1028,33 @@ test('record work again while its card waits unasked-of brings back the same car
   });
 });
 
+test('record work for a title with a hex-looking word still writes a card, with the plain line for what', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('hex-export');
+    const work = { id: 'hex-export', title: 'Fix deadbeef1234 export', lane: 'small', visible: true, dependsOn: [], doc: 'docs/hex-export.md' };
+    const out = await run(helper, ['record', 'work'], JSON.stringify(work), { cwd: dir });
+    assert.equal(out.code, 0, out.err);
+    assert.equal(cardsOf(helper).length, 1);
+    assert.equal(cardsOf(helper)[0].data.parts.what, 'Work hex-export, as its document describes.');
+  });
+});
+
+test('record work again after its card was answered with no approval on record asks nothing and does not say approved', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('statement-import');
+    const work = { id: 'statement-import', title: 'Import a statement', lane: 'small', visible: true, dependsOn: [], doc: 'docs/statement-import.md' };
+    const first = await run(helper, ['record', 'work'], JSON.stringify(work), { cwd: dir });
+    const decided = fakeHelper({ events: [...helper.held, answerAt(helper.held.find((e) => e.kind === 'card'), 'Approve', 10 * MINUTE)] });
+    const again = await run(decided, ['record', 'work'], JSON.stringify(work), { cwd: dir });
+    assert.equal(again.code, 0, again.err);
+    assert.ok(!('approved' in again.json));
+    assert.ok(!('card' in again.json));
+    assert.match(again.json.asked, /^Already .*; nothing to ask\.$/);
+  });
+});
+
 test('record work takes the card\'s words from a `card` override, which is not stored on the work', async () => {
   await inHome(async () => {
     const helper = fakeHelper();

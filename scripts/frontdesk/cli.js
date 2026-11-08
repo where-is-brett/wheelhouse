@@ -87,7 +87,7 @@ import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
 import { WINDOW_MS } from '../confirm/window.js';
 import { dataHash } from '../state/events.js';
-import { composeCard, answerInput } from '../cards/compose.js';
+import { composeCard, answerInput, whatProblem } from '../cards/compose.js';
 import { decisionText } from '../decisions/message.js';
 import { isDecisionCard } from '../decisions/pending.js';
 import { askWhy } from '../decisions/why.js';
@@ -1111,14 +1111,18 @@ const APPROVE_WHY = {
 
 // The composer's input for the approve-work card of a recorded work `data`, with the words in `override`
 // ({ what, why, because, meanwhile, options }) laid over the defaults. The target is always built here.
+// A title the composer would refuse in `what` (a hex-looking word reads as a commit) gives way to a plain line
+// naming the work; a `what` given in the override is the caller's own and is left as it is.
 export function approveWorkInput(data, override) {
   const given = isPlain(override) ? override : {};
   const { target: ignored, ...words } = given;
   const title = String(data.title ?? '').trim().replace(/\.+$/, '').trim();
+  const target = { work: data.id, lane: data.lane, hash: data.doc?.hash, shownFirst: true };
+  const titled = `Work ${data.id}: ${title}.`;
   return {
     kind: 'approve-work',
     level: 3,
-    what: `Work ${data.id}: ${title}.`,
+    what: whatProblem('approve-work', titled, target) === null ? titled : `Work ${data.id}, as its document describes.`,
     why: APPROVE_WHY[data.lane] ?? APPROVE_WHY.quick,
     options: [
       { label: 'Approve', says: 'Wheelhouse builds it and tests it, then shows you the result. It only goes into your product when you say yes to that.' },
@@ -1128,11 +1132,12 @@ export function approveWorkInput(data, override) {
     because: data.lane === 'feature' ? 'it is the design you shaped, and you\'ll see the result before it goes live' : 'you\'ll see it before it goes live',
     meanwhile: 'Nothing is built until you approve.',
     ...words,
-    target: { work: data.id, lane: data.lane, hash: data.doc?.hash, shownFirst: true },
+    target,
   };
 }
 
-// Records one event and resolves with { id, pushed }, with `hash` for a work event's document or an
+// Records one event and resolves with { id, pushed }, except a work, which resolves with { work, eventId, pushed, recordHash }
+// and its card, or `approved`, or `asked` (see the work branch), with `hash` for a work event's document or an
 // amendment, `say` for an amendment (its route line and read-back), and for a ruling or a setting its confirm card, recorded too, as { question, id }. A setting the catalogue refuses is refused here, before
 // the helper is asked; the director's own settings go to their profile (writeSetting). A ruling keeps its words exactly as given: its card is composed
 // first, under the id the ruling is then written with, so a ruling whose words no card can carry
@@ -1186,12 +1191,16 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     const out = { work: data.id, eventId: written.id, pushed: written.pushed === true, ...(typeof hash === 'string' ? { hash } : {}), recordHash: dataHash(data) };
     if (!needsApproval(data)) return out;
     const { views } = await viewsOf(client, cwd);
-    const approval = views.work?.[data.id]?.approval;
-    if (approval?.hash === hash && approval?.lane === data.lane) return { ...out, approved: true };
+    const approvedNow = () => {
+      const approval = views.work?.[data.id]?.approval;
+      return approval?.hash === hash && approval?.lane === data.lane;
+    };
+    if (approvedNow()) return { ...out, approved: true };
     try {
       return { ...out, card: await card({ client, cwd, input: approveWorkInput(data, override), now }) };
     } catch (error) {
-      if (error instanceof CliError && error.message.startsWith('Already ')) return { ...out, approved: true };
+      // Decided before: approved only when the views hold the approval; a "Not now" says so in `asked`, and nothing is approved.
+      if (error instanceof CliError && error.message.startsWith('Already ')) return { ...out, ...(approvedNow() ? { approved: true } : { asked: error.message }) };
       throw error;
     }
   }
