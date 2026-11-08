@@ -7,7 +7,7 @@ import path from 'node:path';
 import { STEPS, planRun, run, restore, waitFor, main, withoutChrome } from '../../../probes/haiku-trial/runner.js';
 import { P5_SPARE } from '../../../probes/haiku-trial/requests.js';
 
-const ENV = { HAIKU_TRIAL_GH_OWNER: 'trial-owner', HAIKU_TRIAL_CLAUDE: '/bin/claude', HAIKU_TRIAL_PREVIEW: 'none' };
+const ENV = { WHEELHOUSE_HOME: process.env.WHEELHOUSE_HOME, HAIKU_TRIAL_GH_OWNER: 'trial-owner', HAIKU_TRIAL_CLAUDE: '/bin/claude', HAIKU_TRIAL_PREVIEW: 'none' };
 const T0 = Date.parse('2026-11-08T09:00:00Z');
 
 function scratch(t) {
@@ -92,7 +92,7 @@ test('steps that create things wait for go', async (t) => {
 
 test('a missing GitHub owner stops before anything is asked', async (t) => {
   const io = fakeIo();
-  const got = await run({ mode: 'smoke', io, folder: scratch(t), date: '2026-11-08', env: {} });
+  const got = await run({ mode: 'smoke', io, folder: scratch(t), date: "2026-11-08", env: { WHEELHOUSE_HOME: ENV.WHEELHOUSE_HOME } });
   assert.equal(got.stoppedAt, 'create-repo');
   assert.match(got.why, /HAIKU_TRIAL_GH_OWNER/);
   assert.equal(io.timeline.some((e) => e.kind === 'ask'), false);

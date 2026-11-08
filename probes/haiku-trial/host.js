@@ -19,7 +19,11 @@ import { makeBrowse } from './score/a11y.js';
 import { findTranscripts } from './audit.js';
 import { readUsage } from './usage.js';
 import { listEvents } from '../../scripts/state/events.js';
-import { stateDir, engineDir } from '../../scripts/lib/paths.js';
+import { stateDir, engineDir, projectsDir } from '../../scripts/lib/paths.js';
+import { readHelperRecord } from '../../scripts/host/helper-record.js';
+import { startSeconds } from '../../scripts/update/old-helper.js';
+import { processStartTime } from '../../scripts/watcher/waker.js';
+import { stopWatcher, stopForeman } from '../../scripts/foreman/start.js';
 import { queueFolderOf } from '../../scripts/engine/queue-place.js';
 import { typedRepliesOn } from '../../scripts/decisions/answer.js';
 import { decisionNumber } from '../../scripts/decisions/pending.js';
@@ -48,6 +52,18 @@ export async function readGateWith({ gh, change }) {
   const files = (await gh(['api', `repos/{owner}/{repo}/pulls/${pull.number}/files?per_page=100`])) ?? [];
   const diff = await gh(['api', `repos/{owner}/{repo}/pulls/${pull.number}`, '-H', 'Accept: application/vnd.github.v3.diff']);
   return visibleFromChange({ paths: files.map((f) => f.filename), diff: typeof diff === 'string' ? diff : undefined });
+}
+
+// Wheelhouse keeps a project's records under its NAME (owner__repo); the runner's processes work in its FOLDER. These two
+// guards make a mix-up throw at the host, where the fakes in the runner's tests cannot hide it.
+const NAME_SHAPE = /^[A-Za-z0-9._-]+$/;
+export function nameOf(project) {
+  if (typeof project !== 'string' || !NAME_SHAPE.test(project) || /^\.+$/.test(project)) throw new Error(`Expected the project's name (owner__repo), not "${project}"`);
+  return project;
+}
+export function dirOf(dir) {
+  if (typeof dir !== 'string' || !path.isAbsolute(dir)) throw new Error(`Expected the project's folder as a full path, not "${dir}"`);
+  return dir;
 }
 
 const run = (command, args, options = {}) => spawnSync(command, args, { encoding: 'utf8', ...options });
@@ -80,7 +96,8 @@ export function buildRealIo(env = process.env) {
     exec: (argv, { cwd } = {}) => run(argv[0], argv.slice(1), { cwd }),
     makeProject: async ({ dir }) => makeTestProject({ dir, allowAnywhere: true }),
     git: async (args, options) => git(args, options),
-    events: async ({ project }) => listEvents(stateDir(project), { report: () => {} }),
+    events: async ({ project }) => listEvents(stateDir(nameOf(project)), { report: () => {} }),
+    hasCommand: async (name) => !run(name, ['--version']).error,
 
     // A stand-in for the director's click on a plan, approval or confirm card: it types the card's first option.
     async answerCards({ events, session = 'desk' }) {
@@ -104,18 +121,20 @@ export function buildRealIo(env = process.env) {
           .map((m) => ({ at: new Date(m.time * 1000).toISOString(), text: m.message }));
       } catch { return []; }
     },
-    async readConfig({ project }) {
-      try { return JSON.parse(fs.readFileSync(path.join(project, '.claude', 'wheelhouse.json'), 'utf8')); } catch { return null; }
+    async readConfig({ dir }) {
+      dirOf(dir);
+      try { return JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'wheelhouse.json'), 'utf8')); } catch { return null; }
     },
-    async readMain({ project, file }) {
-      run('git', ['fetch', '--quiet', 'origin', 'main'], { cwd: project });
-      const got = run('git', ['show', `origin/main:${file}`], { cwd: project });
+    async readMain({ dir, file }) {
+      run('git', ['fetch', '--quiet', 'origin', 'main'], { cwd: dirOf(dir) });
+      const got = run('git', ['show', `origin/main:${file}`], { cwd: dir });
       return got.status === 0 ? got.stdout : null;
     },
     // Row 30: the gate's own reading of P8's change, from its pull request's files and diff.
     readGate: async ({ change }) => readGateWith({ gh, change }),
     // { ok: true, amount } or { ok: false, why }: a read that failed is never taken for a bug still planted.
-    async mainParseAmount({ project }) {
+    async mainParseAmount({ dir: project }) {
+      dirOf(project);
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'haiku-main-'));
       try {
         const fetched = run('git', ['fetch', '--quiet', 'origin', 'main'], { cwd: project });
@@ -133,10 +152,19 @@ export function buildRealIo(env = process.env) {
       tmux.type('desk', `Send me the daily digest at ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')} today.`);
       return { ok: true };
     },
-    typedRepliesOn: async ({ project }) => typedRepliesOn(project),
-    nextDecisionNumber: async ({ project }) => decisionNumber(project),
+    typedRepliesOn: async ({ project }) => typedRepliesOn(nameOf(project)),
+    nextDecisionNumber: async ({ project }) => decisionNumber(nameOf(project)),
     installDeps: async ({ dir }) => installDependencies(dir),
-    findTranscripts: ({ project }) => findTranscripts({ project, engineDir: fs.existsSync(queueFolderOf(project)) ? queueFolderOf(project) : engineDir() }),
+    // Transcripts are under the trial's own Claude config folder when there is one (not ~/.claude); the engine's queue folder is
+    // keyed by the project's name, the transcripts' working folders by the project's folder.
+    findTranscripts: ({ project, dir }) => {
+      nameOf(project);
+      return findTranscripts({
+        project: dirOf(dir),
+        claudeHome: env.HAIKU_TRIAL_CONFIG_DIR || undefined,
+        engineDir: fs.existsSync(queueFolderOf(project)) ? queueFolderOf(project) : engineDir(),
+      });
+    },
     readUsage,
     async cloneMain({ url, dir, branch }) {
       git(['clone', '--quiet', url, dir], { cwd: os.tmpdir() });
@@ -152,12 +180,36 @@ export function buildRealIo(env = process.env) {
     makeBrowse,
 
     // Option 2 of section 5.5: the app, and a Cloudflare quick tunnel to it, both left running until `restore`.
-    async startTunnel({ project }) {
-      const app = spawn('npm', ['start'], { cwd: project, detached: true, stdio: 'ignore', env: { ...process.env, PORT: '4173', LEDGER_DB: ':memory:' } });
+    async startTunnel({ dir }) {
+      if (run('cloudflared', ['--version']).error) throw new Error('cloudflared is not installed, so the tunnel preview cannot start');
+      const app = spawn('npm', ['start'], { cwd: dirOf(dir), detached: true, stdio: 'ignore', env: { ...process.env, PORT: '4173', LEDGER_DB: ':memory:' } });
       const tunnel = spawn('cloudflared', ['tunnel', '--url', 'http://127.0.0.1:4173'], { detached: true, stdio: 'ignore' });
       app.unref();
       tunnel.unref();
       return { productPid: app.pid, tunnelPid: tunnel.pid };
+    },
+
+    // `restore`: stops the trial's own helper, watchers and foremen, which live under the trial's Wheelhouse home (the caller
+    // has set WHEELHOUSE_HOME to it). The helper is stopped only while it is still the process its record names.
+    async stopWheelhouse() {
+      const stopped = [];
+      let names = [];
+      try { names = fs.readdirSync(projectsDir()); } catch { /* no projects yet */ }
+      for (const name of names.filter((n) => NAME_SHAPE.test(n))) {
+        for (const [what, stop] of [['watcher', stopWatcher], ['foreman', stopForeman]]) {
+          const got = await stop(name).catch(() => ({ stopped: false }));
+          if (got.stopped === true) stopped.push(`${what} ${name}`);
+        }
+      }
+      const record = readHelperRecord();
+      if (record && record.pid !== process.pid) {
+        const wanted = startSeconds(record.startTime);
+        const now = wanted === null ? null : startSeconds(await processStartTime(record.pid));
+        if (wanted !== null && now === wanted) {
+          try { process.kill(record.pid, 'SIGTERM'); stopped.push(`helper pid ${record.pid}`); } catch { /* already gone */ }
+        }
+      }
+      return stopped;
     },
   };
 
