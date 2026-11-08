@@ -528,7 +528,8 @@ async function approvalCards({ client, cwd, views, words, problems }) {
   const lines = new Set(events.map((e) => e?.data?.line));
   let made = 0;
   for (const { id, data } of candidates) {
-    if (lines.has(approveWorkLine(id, data.lane, data.doc.hash, { shownFirst: true }))) continue;
+    // The line has two wordings: with the show-first tail, and plain (as `card` words non-visible work, and older cards carry).
+    if (lines.has(approveWorkLine(id, data.lane, data.doc.hash, { shownFirst: true })) || lines.has(approveWorkLine(id, data.lane, data.doc.hash))) continue;
     try {
       await write(client, cwd, 'card', composePlain(approveWorkInput(data), words).card);
       made += 1;

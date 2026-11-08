@@ -1091,15 +1091,35 @@ test('cards writes no new approve-work card for work whose card exists in any st
   });
 });
 
+test('cards writes no new approve-work card when the waiting, put-off or Not-now card is in the plain wording', async () => {
+  await inHome(async () => {
+    const plain = approveWorkLine('statement-import', 'small', DOC);
+    const first = fakeHelper({ events: [unaskedWork('statement-import', { visible: false })] });
+    await run(first, ['cards']);
+    const made = cardsOf(first)[0];
+    const old = makeEvent({ kind: 'card', data: { ...made.data, line: plain }, now: () => T(2) });
+    const notNow = makeEvent({ kind: 'card-answer', data: { card: old.id, label: 'Not now', where: 'panel' }, now: () => T(5) });
+    const work = first.held.find((e) => e.kind === 'work');
+    for (const events of [[work, old], [work, old, notNow]]) {
+      const helper = fakeHelper({ events });
+      const out = await run(helper, ['cards']);
+      assert.equal(out.code, 0, out.err);
+      assert.equal(cardsOf(helper).length, 1, 'no second card is written');
+      assert.equal(out.json.problems, undefined);
+    }
+  });
+});
+
 test('cards re-offers nothing for work that is approved, started, finished or needs no approval', async () => {
   await inHome(async () => {
     const approval = makeEvent({ kind: 'action', now: () => T(300), data: { action: 'approve-work', work: 'approved-one', lane: 'small', hash: DOC, shownFirst: true, question: 'as shown', label: 'Approve' } });
     const run1 = makeEvent({ kind: 'run', data: { work: 'started-one', lane: 'small', engine: 'fake', runId: 'r1', state: 'started', branch: 'wh/started-one' }, now: () => T(2) });
     const report = makeEvent({ kind: 'report', data: { work: 'finished-one', outcome: 'closed', summary: 'Done.', rulings: [] }, now: () => T(3) });
-    const helper = fakeHelper({ events: [unaskedWork('approved-one'), approval, unaskedWork('started-one'), run1, unaskedWork('finished-one'), report, unaskedWork('quiet-one', { lane: 'quick', visible: false })] });
+    const helper = fakeHelper({ events: [unaskedWork('approved-one'), approval, unaskedWork('started-one'), run1, unaskedWork('finished-one'), report, unaskedWork('quiet-one', { lane: 'quick', visible: false }), unaskedWork('open-one')] });
     const out = await run(helper, ['cards']);
     assert.equal(out.code, 0, out.err);
-    assert.equal(cardsOf(helper).filter((e) => /^Approve /.test(e.data.line ?? '')).length, 0);
+    // The one open, unasked work is the control: it is offered, so the others are left alone by the check, not by a silent call.
+    assert.deepEqual(cardsOf(helper).filter((e) => /^Approve /.test(e.data.line ?? '')).map((e) => e.data.line), [approveWorkLine('open-one', 'small', DOC, { shownFirst: true })]);
   });
 });
 
