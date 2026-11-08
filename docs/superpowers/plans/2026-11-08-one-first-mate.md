@@ -363,7 +363,7 @@ Tests that call `recordAnswer` directly with a session id pass `seat` (or set on
 
 - [ ] **Step 4: Run them and see them pass**
 
-Run: `node --test tests/scripts/hooks/prompt-record-reply.test.js tests/scripts/hooks/prompt-record.test.js tests/scripts/state/events.test.js tests/scripts/decisions/answer.test.js`
+Run: `node --test tests/scripts/hooks/prompt-record-reply.test.js tests/scripts/hooks/prompt-record.test.js tests/scripts/state/events.test.js tests/scripts/frontdesk/cli.test.js`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -371,4 +371,49 @@ Expected: PASS.
 ```bash
 git add scripts/decisions/answer.js scripts/hooks/prompt-record.js scripts/state/events.js tests/scripts/hooks/prompt-record-reply.test.js tests/scripts/hooks/prompt-record.test.js tests/scripts/state/events.test.js
 git commit -m "Only the First Mate's window records answers and clicks; Take over here moves the seat"
+```
+
+### Task 6: The front desk's command writes only from the seat (Part D)
+
+Spec: 6.5 (the two `cli.js` rows), 7 (`cli.test.js`), Review Focus 3.
+
+**Files:**
+- Modify: `scripts/frontdesk/cli.js` (`main` at ~1376, straight after the `COMMANDS` check)
+- Test: `tests/scripts/frontdesk/cli.test.js`
+
+**Interfaces:**
+- Consumes: `holdsSeat(project, session)` (Task 2); `projectOf(cwd)` from `scripts/hooks/kit.js` (as `readyIn` uses it).
+- Produces, in `cli.js`:
+  - `SEAT_WRITES`: a frozen list of the commands the seat guards. From spec 6.5: `cards`, `pull-cards`, `again`, `card`, `record`, `confirm`, `suggest`, `pull-back`, `drop`, `ask-bosun`. There is no `settings` command: settings change through `record` and `suggest`, so they are covered. Of the rest of `COMMANDS`, a command that writes a record, hands out a card or changes the board is a write (`undo`, `move`, `carry-on`, `archive`, `restore`, `premium-card` on a first reading); one that only reads is not (`views`, `decision`, `explain`, `similar`, `why`, `preview`, `premium-check`, `alerts`). Check `note`, `premium-check` and `alerts` against their handlers and list where each fell under "Engineering calls".
+  - `SEAT_REFUSAL`: the refusal's words: the First Mate is in another window, so this window can look things up but not record or hand out cards; the director can move the First Mate here with that window's take-over card. Wording the builder's, within spec 6.5.
+  - `seatRefusal({command, env, cwd}): string | null`: its own function. Null when `command` isn't in `SEAT_WRITES`, when `env.CLAUDE_CODE_SESSION_ID` is missing or empty (a script or test: today's behaviour), when the cwd is in no project, or when `holdsSeat` is true. Otherwise `SEAT_REFUSAL`. `main` throws `new CliError(seatRefusal(...))` when it isn't null, before the helper client is made.
+
+A session id with no seat file at all is refused: by the time the agent runs the command, session start or the prompt hook (Task 4) has taken a free seat for the First Mate.
+
+- [ ] **Step 1: Write the failing tests** in `tests/scripts/frontdesk/cli.test.js`, each with a temporary home and project, the seat set up with `takeSeat`:
+- `every seat write is refused for a session that doesn't hold the seat`: for each of `SEAT_WRITES`, `main([command], {env: {CLAUDE_CODE_SESSION_ID: 'a'}, ...})` with the seat held by `'b'` → exit code 1, `err` holds `SEAT_REFUSAL`, and the fake client was never called.
+- `the holder's writes go through`: `record` with a whole record on standard input and `cards`, session `'b'` holding → exit 0 and the record reached the client.
+- `reads work for any session`: `views waiting`, `decision list`, `explain`, `similar`, `why` with session `'a'` while `'b'` holds → not refused (no `SEAT_REFUSAL` in `err`).
+- `no session id keeps today's behaviour`: `record` with no `CLAUDE_CODE_SESSION_ID` and the seat held by `'b'` → exit 0.
+- `outside a project nothing is refused`: a cwd in no project → `seatRefusal(...) === null`.
+
+Existing tests that pass a session id to a write command (the `--here` cases) set up the seat for that id.
+
+- [ ] **Step 2: Run them and see them fail**
+
+Run: `node --test tests/scripts/frontdesk/cli.test.js`
+Expected: the new tests FAIL (`SEAT_WRITES` is not exported).
+
+- [ ] **Step 3: Implement `SEAT_WRITES`, `SEAT_REFUSAL` and `seatRefusal`, and the one check in `main`**
+
+- [ ] **Step 4: Run them and see them pass**
+
+Run: `node --test tests/scripts/frontdesk/cli.test.js`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/frontdesk/cli.js tests/scripts/frontdesk/cli.test.js
+git commit -m "The front desk's command records only from the First Mate's window"
 ```
