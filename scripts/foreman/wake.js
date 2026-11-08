@@ -79,7 +79,7 @@ import {
 import { forward } from './forward.js';
 import { helperClient } from '../host/helper-client.js';
 import { HAND_DONE, HAND_GOAL } from '../lib/by-hand-done.js';
-import { HASH, LANE_APPETITE, PACE, SLUG, questionIdOf } from '../lib/build-loop.js';
+import { HASH, LANE_APPETITE, SLUG, paceOf, questionIdOf } from '../lib/build-loop.js';
 import { stateDir, wheelhouseHome } from '../lib/paths.js';
 import { projectForFolder, readProject } from '../lib/projects.js';
 import { stopState } from '../lib/stop.js';
@@ -437,7 +437,7 @@ function unstartedWithPlan(views, id) {
 // Work the new engine builds is never the old engine's to start (scripts/engine/lanes.js).
 function queueWithout(views, leaveOut, now, builderCap) {
   const work = Object.fromEntries(Object.entries(views.work).filter(([id]) => !leaveOut(id) && !onNewEngine(views, id, { now })));
-  return nextWork({ work, features: views.features, reports: views.reports, now, fiveHourTight: FIVE_HOUR_TIGHT, builderCap });
+  return nextWork({ work, features: views.features, reports: views.reports, now, fiveHourTight: FIVE_HOUR_TIGHT, builderCap, pace: paceOf(views.settings) });
 }
 
 // The most that build at once beside pace at the Thoroughness level in force for `config` and the views' settings
@@ -660,6 +660,7 @@ function queueLines(ctx) {
 
   // Work not started: what may open a session now.
   const builderCap = builderCapOf(views, config, now);
+  const pace = paceOf(views.settings);
   const toStart = queueToStart(views, { now, builderCap });
   for (const id of toStart.start) {
     if (!recorded(id)) lines.push(`- start ${id} (${laneOf(views, id)}): approved. ${startLine(id)}`);
@@ -717,7 +718,7 @@ function queueLines(ctx) {
   const building = steps.filter(([id, f]) => f.data.step === 'building' || (f.data.step === 'started' && NO_PLAN.includes(laneOf(views, id)))).map(([id]) => id);
   const paused = (why) => steps.filter(([, f]) => f.data.step === 'paused' && pausedBy(f.data) === why).map(([id]) => id);
   if (planning.length > 0) lines.push(`Planning: ${planning.join(', ')}.`);
-  lines.push(`Building (${building.length} of ${builderCap === null ? PACE.building : Math.min(PACE.building, builderCap)}): ${building.length > 0 ? building.join(', ') : 'none'}.`);
+  lines.push(`Building (${building.length} of ${builderCap === null ? pace.building : Math.min(pace.building, builderCap)}): ${building.length > 0 ? building.join(', ') : 'none'}.`);
   if (builderCap !== null) lines.push(`Thoroughness: ${builderCap === 1 ? 'one builds' : `${builderCap} build`} at a time at this level.`);
   if (paused('five-hour').length > 0) lines.push(`Paused for the five-hour window: ${paused('five-hour').join(', ')}.`);
   if (paused('director').length > 0) lines.push(`Paused by the director: ${paused('director').join(', ')}. Only their amendment beginning "Resume" lifts it.`);

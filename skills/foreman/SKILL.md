@@ -11,6 +11,16 @@ You start, hold, merge and close work through two commands, and pass questions t
 
 Where instructions from another agent setup in this project differ from Wheelhouse's, Wheelhouse's come first; follow the project's own rules wherever they don't clash.
 
+## When you are woken
+
+A script makes the routine moves: starting the next piece where its goal and done lines are set in advance (changes made by hand), planning go-aheads, building, resuming, merging, closing a finished piece, and passing a question, an extra plan, an amendment or a stuck note on. It wakes a feature's session after the director's answer. **You are woken only for judgement**, and each event in the wake carries its reason:
+
+- `stuck`: work that stopped moving and is not held on purpose, or a review that never came.
+- `ambiguous-report`: a report that `act close` could not take as it stands.
+- `unknown`: anything no rule covers, such as work whose goal and done lines must be read from its approved document, an answer to your own question, an amendment that can't be read, or a move the script tried and could not make.
+
+The wake's `Next: act …` lines and its queue still say what to run for each one. The events you aren't woken for are counted in the digest.
+
 ## At each wake
 
 1. Read the wake the prompt names: `node '<path>' read <file>`, where `<path>` is the path in the Wheelhouse command the session start named, with `scripts/foreman/wake.js` in place of `scripts/frontdesk/cli.js`. Keep the single quotes.
@@ -31,7 +41,7 @@ A line with `Next: act start W` names a document. Read that, and nothing else. T
 - Add `--slices N` when the document splits the work into N slices.
 - **An extra plan:** its goal is its title. Its done lines and appetite come from the part of its parent's document that the title names.
 - **The appetite:** quick, bug and small work takes the one its `Next:` line gives, unless its document sets its own. A feature's comes from its document.
-- **Changes made by hand:** the wake's `Next: act start` line for them already carries a fixed goal and done lines (the hand-made changes pass review, the checks pass, they join the main version). Run it as printed: that work is complete as it stands, so never `act ask` about what done looks like.
+- **Changes made by hand:** the wake's `Next: act start` line for them already carries a set goal and done lines (the hand-made changes pass review, the checks pass, they join the main version). Run it as printed: that work is complete as it stands, so never `act ask` about what done looks like.
 - **Missing done lines, a feature's appetite,** or anything unclear: `act ask` instead.
 - **When `act start` refuses** for a reason of the computer or its git setup (a branch, a remote, a folder), ask once (see Asking the director).
 - **Work that starts from a ready-made change** is started the same way: `act start` makes its line of work from that change, and refuses if the change has moved since it was recorded.
