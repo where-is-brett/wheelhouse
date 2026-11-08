@@ -39,9 +39,28 @@ import {
 import { featurePaths, readStatus } from '../feature/files.js';
 import { HAND_DONE, HAND_GOAL } from '../lib/by-hand-done.js';
 import { HASH, LANE_APPETITE, questionIdOf } from '../lib/build-loop.js';
+import { prunePages } from '../crew/runs.js';
+import { readProject } from '../lib/projects.js';
+import { stateDir } from '../lib/paths.js';
+import { listEvents } from '../state/events.js';
+import { readEnrolled } from '../state/signing.js';
+import { buildViews } from '../state/views.js';
 
 // Start times kept for a minute, so each tick doesn't ask the system for every held run.
 const startTimes = makeStartTimes();
+
+// Removes the transcript page of each piece that has closed (.wheelhouse/watch/<work>.md). The records are read only when
+// there is a page to look at, and a page is left where the records can't be read. Says what it can't do, never throws.
+export function tidyPages(project, { log = () => {} } = {}) {
+  try {
+    const folder = readProject(project)?.folder;
+    if (typeof folder !== 'string') return [];
+    return prunePages(folder, () => buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled()));
+  } catch (error) {
+    log(`The pages of closed pieces couldn't be tidied: ${error instanceof Error ? error.message : 'unknown error'}`);
+    return [];
+  }
+}
 
 // Hands back every opened hold whose terminal has gone: its process is gone, or a different process now has its id. A hold not
 // yet opened is left alone, as is one whose process is alive, whether or not its start time can be read. `config` is read
@@ -343,6 +362,8 @@ export function makeRoutine({
       const out = {
         handled: new Set(), reasons: new Map(), extra: [], moves: [],
       };
+      // The pages of closed pieces are removed.
+      tidyPages(project, { log });
       // A piece whose helm terminal has closed is handed back before anything else looks at its hold.
       await handBackClosed(project, {
         configOf: async () => (await loadConfig(project, client)), now, log, ...helm,

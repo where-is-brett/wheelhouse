@@ -13,6 +13,10 @@ import path from 'node:path';
 import { holdFile, helmHeld, markOpened, takeHold, releaseHold } from '../../../scripts/crew/hold.js';
 import { featurePaths, writeStatus } from '../../../scripts/feature/files.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
+import { writeProject } from '../../../scripts/lib/projects.js';
+import { makeEvent, writeEvent } from '../../../scripts/state/events.js';
+import { pagePath } from '../../../scripts/crew/runs.js';
+import { tempFolder } from '../../helpers/homes.js';
 import { withHome } from '../../helpers/homes.js';
 import { emptyViews, fakeClient, featureView, project, worktree, workView, P as FOREMAN_P } from '../../helpers/foreman.js';
 
@@ -426,4 +430,23 @@ test('routine: an unopened hold stays', () => withHome(async () => {
   await routineOf(state(), fakeAct().act, { helm: helmDeps(woken, { alive: () => false }) }).run({ events: [] });
   assert.equal(helmHeld(P, 'w-tide-1'), true);
   assert.deepEqual(woken, []);
+}));
+
+test('routine: removes a closed piece\'s page, and leaves an open piece\'s', () => withHome(async () => {
+  const folder = path.join(tempFolder('wh-proj-'), 'demo');
+  fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
+  writeProject(P, { folder, remoteUrl: 'https://example.test/harbour/demo.git', host: 'github', repo: 'harbour/demo', connection: { host: 'github', mode: 'quick', project: 'harbour/demo' } });
+  await openTestRecord({ project: P });
+  let n = 0;
+  const now = () => new Date(Date.UTC(2026, 10, 8, 3, 0, n++));
+  const put = (kind, data) => writeEvent({ project: P, event: makeEvent({ kind, data, now }), now });
+  for (const id of ['w-open', 'w-shut']) await put('work', { id, title: id, lane: 'small', visible: false, dependsOn: [] });
+  await put('feature', { work: 'w-open', step: 'building' });
+  await put('feature', { work: 'w-shut', step: 'closed' });
+  const dir = path.dirname(pagePath(folder, 'w-open'));
+  fs.mkdirSync(dir, { recursive: true });
+  for (const id of ['w-open', 'w-shut']) fs.writeFileSync(pagePath(folder, id), 'a page');
+  await routineOf(state(), fakeAct().act).run({ events: [] });
+  assert.ok(fs.existsSync(pagePath(folder, 'w-open')), 'the open piece\'s page stays');
+  assert.ok(!fs.existsSync(pagePath(folder, 'w-shut')), 'the closed piece\'s page is gone');
 }));

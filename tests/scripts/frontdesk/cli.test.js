@@ -45,6 +45,7 @@ import { answeredWords, subjectOf } from '../../../scripts/cards/answered.js';
 import { takeSeat, holdsSeat } from '../../../scripts/lib/first-mate-seat.js';
 import { projectOf } from '../../../scripts/hooks/kit.js';
 import { takeHere } from '../../../scripts/lib/session-files.js';
+import { sessionFile } from '../../../scripts/watcher/waker.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
 const hostLog = [];
@@ -2098,7 +2099,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts\n$/);
+    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page\n$/);
     const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -2158,7 +2159,7 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts\n');
+  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page\n');
   assert.equal(done.stdout, '');
 });
 
@@ -2476,4 +2477,58 @@ test('seatRefusal leaves commands outside the list alone', async () => {
     for (const command of ['views', 'note', 'alerts', 'premium-check']) assert.equal(await seatRefusal({ command, env: { CLAUDE_CODE_SESSION_ID: 'a' }, cwd: folder, client }), null, command);
     assert.equal(await seatRefusal({ command: 'cards', env: { CLAUDE_CODE_SESSION_ID: 'a' }, cwd: folder, client }), SEAT_REFUSAL);
   });
+});
+
+// --- page ---
+
+const workEvent = (id, n) => makeEvent({ kind: 'work', data: { id, title: `Title of ${id}`, lane: 'small', visible: false, dependsOn: [] }, now: () => T(n) });
+
+// An open piece `login`, with a session whose transcript has one step, in a registered project's folder.
+async function pageFixture(fn, extra = []) {
+  await inHome(async () => {
+    const folder = agentProject('claude-code');
+    const configDir = tempFolder('wh-claude-');
+    fs.mkdirSync(path.join(configDir, 'projects', 'a'), { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'projects', 'a', 's1.jsonl'), `${JSON.stringify({ type: 'assistant', timestamp: '2026-11-08T01:00:00Z', message: { content: [{ type: 'text', text: 'Starting the login page. Then more.' }] } })}\n`);
+    const file = sessionFile('o__p', 'login');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ sessionId: 's1', worktree: folder }));
+    const helper = fakeHelper({ events: [workEvent('login', 1), makeEvent({ kind: 'feature', data: { work: 'login', step: 'building' }, now: () => T(2) }), ...extra] });
+    await fn({ folder, helper, env: { CLAUDE_CONFIG_DIR: configDir } });
+  });
+}
+
+test('cli: page raises the level and prints one line', async () => {
+  await pageFixture(async ({ folder, helper, env }) => {
+    const out = await run(helper, ['page', 'login'], undefined, { cwd: folder, env });
+    assert.equal(out.code, 0, out.err);
+    assert.equal(out.out.trim().split('\n').length, 1);
+    assert.match(out.out, /--follow login/);
+    assert.equal(helper.views().watch.login, 'transcript');
+    assert.deepEqual(helper.writes().map((w) => [w.kind, w.data]), [['watch', { work: 'login', level: 'transcript' }]]);
+    const page = fs.readFileSync(path.join(folder, '.wheelhouse', 'watch', 'login.md'), 'utf8');
+    assert.match(page, /Starting the login page\./);
+    assert.ok(out.out.includes(path.join(folder, '.wheelhouse', 'watch', 'login.md')));
+    // Already at the transcript level: nothing more is recorded.
+    const again = await run(helper, ['page', 'login'], undefined, { cwd: folder, env });
+    assert.equal(again.code, 0, again.err);
+    assert.equal(helper.writes().length, 1);
+  });
+});
+
+test('cli: page refuses a closed piece', async () => {
+  const closed = makeEvent({ kind: 'feature', data: { work: 'login', step: 'closed' }, now: () => T(5) });
+  await pageFixture(async ({ folder, helper, env }) => {
+    for (const work of ['login', 'nothing', '../x']) {
+      const out = await run(helper, ['page', work], undefined, { cwd: folder, env });
+      assert.equal(out.code, 0, out.err);
+      assert.equal(out.out, `There is no open piece called ${work}.\n`);
+    }
+    assert.ok(!fs.existsSync(path.join(folder, '.wheelhouse')), 'no file');
+    assert.deepEqual(helper.writes(), [], 'nothing recorded');
+  }, [closed]);
+});
+
+test('cli: page is a seat write', async () => {
+  assert.ok(SEAT_WRITES.includes('page'));
 });

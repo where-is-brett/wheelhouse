@@ -4,8 +4,20 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { plainWords, glossaryOf } from '../frontdesk/glossary.js';
 import { SLUG } from '../lib/build-loop.js';
+import { startedAsScript } from '../lib/started-as-script.js';
+import { stateDir } from '../lib/paths.js';
+import { listEvents } from '../state/events.js';
+import { readEnrolled } from '../state/signing.js';
+import { buildViews } from '../state/views.js';
+import { effectiveSettings } from '../settings/effective.js';
+import { isOpen } from '../desk/views.js';
+import { readCapped } from '../feature/status.js';
+import { sessionFile } from '../watcher/waker.js';
+import { levelFor } from './level.js';
+import { LEVELS } from './levels.js';
 
 export function configDir(env = process.env) {
   return env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
@@ -640,7 +652,7 @@ export function writePage(project, work, { sessionId, env = process.env, now = D
   const file = pagePath(project, work);
   try {
     for (const folder of [root, dir]) {
-      if (missing(folder)) fs.mkdirSync(folder);
+      if (missing(folder)) fs.mkdirSync(folder, { mode: 0o700 });
       else if (!fs.lstatSync(folder).isDirectory()) return null;
     }
     if (!missing(file) && !plainFile(file)) return null;
@@ -654,9 +666,10 @@ export function writePage(project, work, { sessionId, env = process.env, now = D
       return { line: subagentLine(call ?? {}), events: readTail(sub.file, { max: PAGE_MAX }) };
     });
     const page = renderPage({ work, events, subagents, waiting, now });
-    const temp = path.join(dir, `.${work}.md.${process.pid}.tmp`);
-    fs.writeFileSync(temp, page, { flag: 'wx' });
+    // A temporary name no earlier run can have left behind; the page is for this computer's user only.
+    const temp = path.join(dir, `.${work}.md.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`);
     try {
+      fs.writeFileSync(temp, page, { flag: 'wx', mode: 0o600 });
       fs.renameSync(temp, file);
     } catch (error) {
       fs.rmSync(temp, { force: true });
@@ -666,4 +679,137 @@ export function writePage(project, work, { sessionId, env = process.env, now = D
   } catch {
     return null;
   }
+}
+
+// The piece's page for a command: its session found, and nothing opened for a piece at `off`.
+
+const SESSION_RECORD_MAX = 64 * 1024;
+const FOLLOW_MS = 2000;
+const FOLLOW_FIRST = 10;
+
+// The session the watcher kept for a piece, read as the watcher's other readers read it; null when there is none.
+export function sessionIdOf(project, work) {
+  if (typeof project !== 'string' || typeof work !== 'string' || !SLUG.test(work)) return null;
+  try {
+    const kept = JSON.parse(readCapped(sessionFile(project, work), SESSION_RECORD_MAX) ?? 'null');
+    return kept !== null && typeof kept === 'object' && safeId(kept.sessionId) ? kept.sessionId : null;
+  } catch {
+    return null;
+  }
+}
+
+// Writes a piece's page, unless its watch level is `off` (design 8.1, rule 6): then nothing is opened and the answer is
+// null. `level` is the level just read (a string), or a function that reads it. This is the only way the page is written
+// for a piece, so every caller is held to the level. `project` is the project's name; `folder` is its main folder.
+export function writePiecePage({ project, folder, work, level, env = process.env, now = Date.now, waiting = null } = {}) {
+  const at = typeof level === 'function' ? level() : level;
+  if (!LEVELS.includes(at) || at === 'off') return null;
+  return writePage(folder, work, { sessionId: sessionIdOf(project, work), env, now, waiting });
+}
+
+// Whether the piece is open and the level it is watched at, from the project's records. A record that can't be read gives
+// a piece that is not open, at off.
+export function pieceState(project, work, { now = () => new Date() } = {}) {
+  try {
+    const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled());
+    return { open: isOpen(views, work), level: levelFor(views, effectiveSettings({ project: views.settings, now }), work) };
+  } catch {
+    return { open: false, level: 'off' };
+  }
+}
+
+// Removes the page of every piece that is not open, and says which it removed. Only a plain file in the watch folder named
+// for a piece is removed; a link, a folder or anything else is left alone. `views` is the records' views, or a function that
+// reads them, called only when there is a page to look at.
+export function prunePages(folder, views) {
+  const dir = path.join(folder, '.wheelhouse', 'watch');
+  const removed = [];
+  let names;
+  try {
+    if (!fs.lstatSync(dir).isDirectory()) return removed;
+    names = fs.readdirSync(dir);
+  } catch {
+    return removed;
+  }
+  const pages = names.filter((name) => /^[a-z0-9-]{1,40}\.md$/.test(name));
+  if (pages.length === 0) return removed;
+  const seen = typeof views === 'function' ? views() : views;
+  for (const name of pages) {
+    const m = /^([a-z0-9-]{1,40})\.md$/.exec(name);
+    if (isOpen(seen, m[1])) continue;
+    const file = path.join(dir, name);
+    if (!plainFile(file)) continue;
+    try {
+      fs.rmSync(file);
+      removed.push(m[1]);
+    } catch {
+      // left for the next look
+    }
+  }
+  return removed;
+}
+
+// --follow: the page rewritten every two seconds, each new step printed. Stops when the piece closes, or goes to `off`
+// (the level is read again on every tick, and nothing of the transcript is opened once it is off). Resolves the exit code.
+export async function follow({
+  project, folder, work, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
+  env = process.env, now = () => new Date(), intervalMs = FOLLOW_MS, state = pieceState,
+  sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
+} = {}) {
+  const say = (line) => out(`${line}\n`);
+  let seen = new Map();
+  let first = true;
+  for (;;) {
+    const { open, level } = state(project, work, { now });
+    if (!open) {
+      if (first) {
+        err(`There is no open piece called ${work}.\n`);
+        return 1;
+      }
+      say(`${work} has closed, so there is nothing more to follow.`);
+      return 0;
+    }
+    if (level === 'off') {
+      say(`Watching ${work} is off, so the page is no longer written and its run is no longer read.`);
+      return 0;
+    }
+    const sessionId = sessionIdOf(project, work);
+    const file = writePiecePage({ project, folder, work, level, env, now });
+    if (first) say(file === null ? `The page for ${work} can't be written here. Following the steps only.` : `Following ${work}. The page is at \`${file}\`. Stop with Ctrl-C.`);
+    const transcript = findTranscript({ sessionId, env });
+    const steps = transcript ? stepsOf(readTail(transcript, { max: PAGE_MAX })) : [];
+    const counts = new Map();
+    let fresh = [];
+    for (const step of steps) {
+      const key = `${step.at}|${step.text}`;
+      const n = (counts.get(key) ?? 0) + 1;
+      counts.set(key, n);
+      if (n > (seen.get(key) ?? 0)) fresh.push(step);
+    }
+    if (first) fresh = fresh.slice(-FOLLOW_FIRST);
+    for (const step of fresh) say(step.text);
+    seen = counts;
+    first = false;
+    await sleep(intervalMs);
+  }
+}
+
+async function main(argv) {
+  const say = (line) => process.stderr.write(`${line}\n`);
+  if (argv.length !== 2 || argv[0] !== '--follow' || !SLUG.test(argv[1])) {
+    say('Usage: runs.js --follow <work>');
+    return 1;
+  }
+  const { projectOf } = await import('../hooks/kit.js');
+  const found = projectOf(process.cwd());
+  const folder = found === null ? null : found.record?.folder;
+  if (found === null || typeof folder !== 'string') {
+    say("This folder isn't a Wheelhouse project.");
+    return 1;
+  }
+  return follow({ project: found.project, folder, work: argv[1] });
+}
+
+if (startedAsScript(import.meta.url)) {
+  process.exitCode = await main(process.argv.slice(2));
 }

@@ -7,8 +7,18 @@ import path from 'node:path';
 import {
   configDir, findTranscript, findSubagents, readTail, stepOf, stepsOf, mask, plain,
   roleOf, subagentLine, runSteps, escapeMarkdown, renderPage, pagePath, writePage,
+  follow, prunePages, sessionIdOf, writePiecePage,
 } from '../../../scripts/crew/runs.js';
+import { buildViews } from '../../../scripts/state/views.js';
 import { glossaryOf } from '../../../scripts/frontdesk/glossary.js';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { listEvents, makeEvent, writeEvent } from '../../../scripts/state/events.js';
+import { stateDir } from '../../../scripts/lib/paths.js';
+import { writeProject } from '../../../scripts/lib/projects.js';
+import { sessionFile } from '../../../scripts/watcher/waker.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
+import { as, tempFolder } from '../../helpers/homes.js';
 
 function fakeConfig() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crew-runs-'));
@@ -731,4 +741,131 @@ test('page: refuses a linked page and a name that is not a slug', () => {
   assert.equal(fs.readFileSync(elsewhere, 'utf8'), 'keep');
   assert.equal(writePage(project, '../evil', { sessionId: 's', env, now: NOW }), null);
   assert.equal(writePage(project, 'Login', { sessionId: 's', env, now: NOW }), null);
+});
+
+// --follow, the session lookup and the removal of pages
+
+const RUNS = fileURLToPath(new URL('../../../scripts/crew/runs.js', import.meta.url));
+let beat = 0;
+const tick = () => new Date(Date.UTC(2026, 10, 8, 2, 0, beat++));
+
+// A registered project with an open piece `login` at the transcript level, whose session `s1` has a transcript with one step.
+async function withPiece(fn, { level = 'transcript' } = {}) {
+  const home = path.join(tempFolder('wh-follow-'), 'home');
+  return as(home, async () => {
+    const folder = path.join(tempFolder('wh-proj-'), 'shop');
+    fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
+    writeProject('o__p', { folder, remoteUrl: 'https://example.test/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+    await openTestRecord({ project: 'o__p' });
+    const put = (kind, data) => writeEvent({ project: 'o__p', event: makeEvent({ kind, data, now: tick }), now: tick });
+    await put('work', { id: 'login', title: 'Login', lane: 'small', visible: false, dependsOn: [] });
+    await put('feature', { work: 'login', step: 'building' });
+    if (level !== null) await put('watch', { work: 'login', level });
+    const file = sessionFile('o__p', 'login');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ sessionId: 's1', worktree: folder }));
+    const { dir, env } = fakeConfig();
+    fs.mkdirSync(path.join(dir, 'projects', 'a'), { recursive: true });
+    const transcript = path.join(dir, 'projects', 'a', 's1.jsonl');
+    fs.writeFileSync(transcript, `${JSON.stringify(tool('Read', { file_path: '/w/tree/first.ts' }))}\n`);
+    return fn({ home, folder, put, transcript, env, project: 'o__p' });
+  });
+}
+
+test('sessionIdOf reads the watcher\'s kept session and nothing odd', async () => {
+  await withPiece(async ({ project }) => {
+    assert.equal(sessionIdOf(project, 'login'), 's1');
+    assert.equal(sessionIdOf(project, 'nothing'), null);
+    assert.equal(sessionIdOf(project, '../x'), null);
+    fs.writeFileSync(sessionFile(project, 'login'), JSON.stringify({ sessionId: '../x' }));
+    assert.equal(sessionIdOf(project, 'login'), null);
+  });
+});
+
+test('writePiecePage opens nothing for a piece at off', async () => {
+  await withPiece(async ({ project, folder, env }) => {
+    assert.equal(writePiecePage({ project, folder, work: 'login', level: 'off', env }), null);
+    assert.equal(writePiecePage({ project, folder, work: 'login', level: () => 'off', env }), null);
+    assert.equal(writePiecePage({ project, folder, work: 'login', level: 'nonsense', env }), null);
+    assert.ok(!fs.existsSync(path.join(folder, '.wheelhouse')), 'no page and no folder');
+    const file = writePiecePage({ project, folder, work: 'login', level: 'steps', env });
+    assert.match(fs.readFileSync(file, 'utf8'), /Reading \\`first\.ts\\`/);
+  });
+});
+
+test('--follow prints new steps, and exits when the piece is marked closed', async () => {
+  await withPiece(async ({ folder, put, transcript, env, home }) => {
+    const child = spawn(process.execPath, [RUNS, '--follow', 'login'], {
+      cwd: folder, env: { ...process.env, ...env, WHEELHOUSE_HOME: home }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { err += d; });
+    const exited = new Promise((resolve) => { child.on('exit', (code) => resolve(code)); });
+    const until = async (done, what) => {
+      const end = Date.now() + 20000;
+      while (!done()) {
+        if (Date.now() > end) { child.kill(); assert.fail(`${what} never came: ${out} ${err}`); }
+        await new Promise((r) => { setTimeout(r, 100); });
+      }
+    };
+    await until(() => out.includes('Reading `first.ts`'), 'the first step');
+    assert.match(out, /Following login\. The page is at `/);
+    fs.appendFileSync(transcript, `${JSON.stringify(tool('Edit', { file_path: '/w/tree/second.ts' }))}\n`);
+    await until(() => out.includes('Changing `second.ts`'), 'the new step');
+    assert.equal(out.split('Reading `first.ts`').length, 2, 'the first step is not printed twice');
+    assert.match(fs.readFileSync(pagePath(folder, 'login'), 'utf8'), /Changing \\`second\.ts\\`/);
+    await put('feature', { work: 'login', step: 'closed' });
+    assert.equal(await exited, 0, err);
+    assert.match(out, /login has closed/);
+  });
+});
+
+test('--follow refuses a piece that is not open', async () => {
+  await withPiece(async ({ project, folder, env }) => {
+    let said = '';
+    const code = await follow({ project, folder, work: 'nothing', env, out: () => {}, err: (t) => { said += t; }, sleep: async () => {} });
+    assert.equal(code, 1);
+    assert.equal(said, 'There is no open piece called nothing.\n');
+    assert.ok(!fs.existsSync(path.join(folder, '.wheelhouse')));
+  });
+});
+
+test('--follow stops at off, and reads no transcript after it', async () => {
+  await withPiece(async ({ project, folder, transcript, env }) => {
+    let level = 'transcript';
+    let out = '';
+    const reads = [];
+    const code = await follow({
+      project, folder, work: 'login', env,
+      out: (t) => { out += t; },
+      state: () => ({ open: true, level }),
+      sleep: async () => {
+        // The director turns it off, and the run says something more: none of it may be opened.
+        level = 'off';
+        fs.appendFileSync(transcript, `${JSON.stringify(tool('Edit', { file_path: '/w/tree/later.ts' }))}\n`);
+        reads.push(fs.readFileSync(pagePath(folder, 'login'), 'utf8'));
+      },
+    });
+    assert.equal(code, 0);
+    assert.match(out, /Reading `first\.ts`/);
+    assert.doesNotMatch(out, /later\.ts/);
+    assert.match(out.trim().split('\n').at(-1), /Watching login is off/);
+    assert.equal(fs.readFileSync(pagePath(folder, 'login'), 'utf8'), reads[0], 'the page is not written again');
+    assert.doesNotMatch(reads[0], /later\.ts/);
+  });
+});
+
+test('prunePages removes only the pages of pieces that are not open', async () => {
+  await withPiece(async ({ project, folder, env }) => {
+    writePage(folder, 'login', { sessionId: 's1', env });
+    writePage(folder, 'old-piece', { sessionId: 's1', env });
+    const dir = path.join(folder, '.wheelhouse', 'watch');
+    fs.writeFileSync(path.join(dir, 'notes.txt'), 'keep');
+    const views = () => buildViews(listEvents(stateDir(project), { report: () => {} }), []);
+    assert.deepEqual(prunePages(folder, views), ['old-piece']);
+    assert.deepEqual(fs.readdirSync(dir).sort(), ['login.md', 'notes.txt']);
+    assert.deepEqual(prunePages(path.join(folder, 'nowhere'), views), []);
+  });
 });

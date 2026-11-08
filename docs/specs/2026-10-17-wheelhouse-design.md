@@ -865,6 +865,17 @@ The safety build leaves these out, and they are not promised for any date:
 - **GitLab.** A Developer key merging, and merged-results pipelines, are untried live (section 11).
 - **A source check on typed replies.** A typed reply to a decision can't yet be proved to come from the director (section 12.5). When Claude Code marks where a prompt came from, an agent adds a check of that mark to the typed-reply path (`scripts/hooks/prompt-record.js` and `scripts/decisions/answer.js`), so only the director's own typing counts, and the record's gap is closed.
 
+### 12.10 Watching the crew
+
+The director can watch a piece's crew in the Logbook and on a page of its run (crew visibility design, `docs/specs/2026-11-08-crew-visibility-design.md`). Watching is read-only, and six rules hold it so:
+
+1. **No path back.** The view has no input, and nothing in it sends anything to a crew session. It never starts, resumes or messages a session; it only opens files for reading. Stopping a build stays where it is today.
+2. **Read-only by construction.** The script opens a transcript with a read-only flag, refuses a link or anything not a plain file, and writes only its own page. A crew session can't tell it is being watched.
+3. **Data, not instructions.** Transcript text is shown as escaped text and never handed to a model, so nothing a crew session wrote, or a web page it read, can act through the view.
+4. **Decisions stay decisions.** A piece waiting on the director shows "Waiting for your answer to decision 2" in its steps and on its page, never the question as something to answer there.
+5. **Kept on this computer.** Transcripts hold file contents and command output. The views show them only on this computer: nothing goes to the board's records, the repository, the digest, an alert or a remote. Lines that look like keys or tokens are masked.
+6. **Off means off.** For a piece at `off`, nothing is read.
+
 ## 13. Notifications
 
 **On by default (free):**
