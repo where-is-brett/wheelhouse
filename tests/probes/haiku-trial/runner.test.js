@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { STEPS, planRun, run, restore, waitFor, main, withoutChrome, runLabel, NEW_SESSION } from '../../../probes/haiku-trial/runner.js';
+import { STEPS, planRun, run, restore, waitFor, main, withoutChrome, runLabel, NEW_SESSION, FOLLOW_UP } from '../../../probes/haiku-trial/runner.js';
 import { P5_SPARE } from '../../../probes/haiku-trial/requests.js';
 
 const ENV = { WHEELHOUSE_HOME: process.env.WHEELHOUSE_HOME, HAIKU_TRIAL_GH_OWNER: 'trial-owner', HAIKU_TRIAL_CLAUDE: '/bin/claude', HAIKU_TRIAL_PREVIEW: 'none' };
@@ -586,6 +586,45 @@ test('a tunnel preview starts once the project is seeded, not before its folder 
   assert.deepEqual(got.done, ['create-preview', 'install', 'seed'], got.why);
   assert.deepEqual(order, ['seed', 'tunnel project']);
   assert.ok(readLog(folder).some((e) => e.step === 'tunnel' && e.detail?.productPid === 11));
+});
+
+test('a request met with questions and no card gets the stand-in answer once, and its work is linked when it comes', async (t) => {
+  const folder = scratch(t);
+  const typed = [];
+  let work = [];
+  const io = fakeIo({
+    capture: () => (typed.length === 0 ? '' : typed.length === 1 ? 'Design written.\n1. Should the month page be built now?' : 'Approved.'),
+    host: { events: async () => work },
+  });
+  const wrapped = io.tmux.type;
+  io.tmux.type = (name, text) => {
+    typed.push(text);
+    // The work appears once the stand-in has answered.
+    if (text === FOLLOW_UP) work = [{ id: 'e1', kind: 'work', at: '2099-01-01T00:00:00.000Z', data: { id: 'statement-import' } }];
+    return wrapped(name, text);
+  };
+  await run({ mode: 'smoke', io, from: 'w2-type', until: 'w2-type', folder, date: '2026-11-08', env: ENV });
+  assert.equal(typed.filter((x) => x === FOLLOW_UP).length, 1, typed.join(' | '));
+  assert.ok(readLog(folder).some((e) => e.step === 'P1' && /the stand-in answered/.test(e.note)));
+  assert.ok(readLog(folder).some((e) => e.step === 'P1' && e.work === 'statement-import'));
+});
+
+test("F3 follows P1's work when it is linked late, during its wait", async (t) => {
+  const folder = scratch(t);
+  fs.writeFileSync(path.join(folder, 'state.json'), JSON.stringify({ pieces: { P1: { typedFrom: '2026-11-08T09:00:00.000Z', typedAt: '2026-11-08T09:05:00.000Z' } } }));
+  const kills = [];
+  const io = fakeIo({
+    gh: () => [],
+    host: {
+      events: async () => [{ id: 'w1', kind: 'work', at: '2026-11-08T09:10:00.000Z', data: { id: 'statement-import' } }],
+      git: async (args) => (args[0] === 'for-each-ref' ? 'main\nfeature/statement-import\n' : args[0] === 'rev-list' && args[2] === 'main..feature/statement-import' ? '2\n' : ''),
+    },
+  });
+  io.faults.f3KillFeature = async (x) => { kills.push(x.piece); return { pid: 1 }; };
+  const got = await run({ mode: 'smoke', io, from: 'f3-kill-p1', until: 'f3-kill-p1', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['f3-kill-p1'], got.why);
+  assert.deepEqual(kills, ['statement-import']);
+  assert.ok(readLog(folder).some((e) => e.step === 'P1' && e.note === 'became work statement-import later'));
 });
 
 test('F3 with no feature session to kill is noted as not exercised and the run goes on', async (t) => {
