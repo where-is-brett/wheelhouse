@@ -512,6 +512,19 @@ test('a request waits for an open picker in the front desk to be answered before
   assert.ok(order[1].startsWith('typed '), order.join(', '));
 });
 
+test("F3 sees P1's first commit on its local branch, before anything is pushed", async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo({
+    gh: () => [],
+    host: {
+      git: async (args) => (args[0] === 'for-each-ref' ? 'main\nfeature/p1\n' : args[0] === 'rev-list' && args[2] === 'main..feature/p1' ? '6\n' : ''),
+    },
+  });
+  const got = await run({ mode: 'smoke', io, from: 'f3-kill-p1', until: 'f3-kill-p1', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['f3-kill-p1'], got.why);
+  assert.ok(io.timeline.some((e) => e.kind === 'f3'), 'the feature session is killed');
+});
+
 test('F3 with no feature session to kill is noted as not exercised and the run goes on', async (t) => {
   const folder = scratch(t);
   const io = fakeIo({});
