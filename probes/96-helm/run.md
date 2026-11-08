@@ -5,7 +5,7 @@ The helm opens a feature session for the director in their terminal (`featureHel
 
 ## What it checks
 
-In a scratch project with a hook (`hook.js`) that logs every event, one granted tool (`Bash(node:*)`), mode `acceptEdits` and the cheapest model (`haiku`), it:
+In a scratch project with the plugin's own hooks (`hooks/hooks.json`, with `${CLAUDE_PLUGIN_ROOT}` set to this repository) and a hook (`hook.js`) that logs every event, one granted tool (`Bash(node:*)`), mode `acceptEdits` and the cheapest model (`haiku`), it:
 
 1. starts a session with `-p` under a known id (`featureStartCall`);
 2. opens it in tmux with `featureHelmCall` resuming (`start: false`), sends one prompt that uses the granted tool, and `/exit`;
@@ -13,12 +13,16 @@ In a scratch project with a hook (`hook.js`) that logs every event, one granted 
 
 Four answers, each true only when both forms agree:
 
-- `grantHeld`: the granted tool ran with no permission question on screen.
+- `grantHeld`: the granted tool ran with no permission question on screen, and a negative control (a second prompt that runs an ungranted Bash command, `python3`) did bring up a permission question, so the grant is what let the first one run and not a broader allow rule in the director's own settings. The control's question is answered with Escape.
 - `modeHeld`: every hook input carried `acceptEdits`.
 - `entrypointCli`: the hooks saw `CLAUDE_CODE_ENTRYPOINT === 'cli'`.
-- `sessionEndOnExit`: `SessionEnd` ran after `/exit`.
+- `sessionEndOnExit`: `/exit` ended the process and `SessionEnd` ran with reason `prompt_input_exit`.
 
-It also records, without judging them, the `reason` on the `SessionEnd` input, and whether the hooks saw `WHEELHOUSE_ROLE` in the helm terminal.
+It also records, without judging it, whether the hooks saw `WHEELHOUSE_ROLE` in the helm terminal.
+
+The probe logs with its own `hook.js` and not `probes/lib/hook-logger.js`: it needs the session's environment (`CLAUDE_CODE_ENTRYPOINT`, `WHEELHOUSE_ROLE`) and `permission_mode`, which the shared logger does not record. It runs first for each event, ahead of the plugin's hooks. The helm is started through `env -i`, so it sees exactly the environment `featureHelmCall` gives it, as the real helm does.
+
+A failure keeps what was learned: the report holds the forms already finished, the pane of the form that failed, and the error. A session that ends early (limit, sign-in, a bad flag) fails at once with its pane captured.
 
 ## How to run it
 

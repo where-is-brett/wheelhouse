@@ -45,39 +45,73 @@ function records(file) {
   return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
 }
 
+const created = new Set();
+const DIALOG = /Do you want to (proceed|allow|make)|Allow this|Yes, and don't ask again/i;
+const CONTROL_PROMPT = 'Run exactly this one Bash command and then say done: python3 -c "print(\'probe96-control\')"';
+
+// Like `until`, but a tmux session that has died ends the wait at once with 'dead' (a start that exits: limit, sign-in, a bad flag).
+const lastPanes = new Map();
+const untilAlive = (name, check, ms) => until(() => {
+  if (!alive(name)) return 'dead';
+  lastPanes.set(name, screen(name));
+  return check();
+}, ms);
+
 // One interactive form in tmux: `call` is a featureHelmCall result. Returns what the pane showed and what the hooks logged.
+// On a failure the error carries the pane as it stood (error.pane).
 async function sitting({ label, call, dir, logFile, sendPrompt }) {
   const name = `wh96-${label}-${crypto.randomBytes(3).toString('hex')}`;
   const launcher = path.join(dir, `${label}-launch.sh`);
-  const exports = Object.entries(call.env).filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)).map(([k, v]) => `export ${k}=${quote(v)}`);
-  fs.writeFileSync(launcher, `#!/bin/sh\n${exports.join('\n')}\nexec ${[call.file, ...call.args].map(quote).join(' ')}\n`, { mode: 0o700 });
+  // `env -i` gives the helm exactly call.env, as the real helm has it, and not the tmux server's environment.
+  const vars = Object.entries(call.env).filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)).map(([k, v]) => `${k}=${quote(v)}`);
+  fs.writeFileSync(launcher, `#!/bin/sh\nexec env -i ${[...vars, call.file, ...call.args.map(String)].map((w, i) => (i < vars.length ? w : quote(w))).join(' ')}\n`, { mode: 0o700 });
   const since = new Date().toISOString();
-  const seen = { dialog: false, ended: false, exitedBy: null };
+  const seen = { dialog: false, controlDialog: false, ended: false, exitedBy: null };
+  const fail = (text) => { throw new Error(text); };
   try {
     const started = tmux('new-session', '-d', '-s', name, '-x', '200', '-y', '50', '-c', dir, `sh ${quote(launcher)}`);
-    if (started.status !== 0) throw new Error(`tmux would not start: ${started.stderr}`);
+    if (started.status !== 0) fail(`tmux would not start: ${started.stderr}`);
+    created.add(name);
     // Ready: the input box is there. A trust question for the scratch folder is answered with its default (Enter).
-    const ready = await until(() => {
+    const ready = await untilAlive(name, () => {
       const text = screen(name);
       if (/trust (this|the files in this) folder|Yes, I trust/i.test(text)) tmux('send-keys', '-t', name, 'Enter');
       return /\? for shortcuts|bypass permissions|accept edits on|esc to interrupt/i.test(text) ? text : null;
     }, 90000);
-    if (!ready) throw new Error('the session never showed its input box');
+    if (ready === 'dead') fail('the session ended before it showed its input box');
+    if (!ready) fail('the session never showed its input box');
+    await sleep(1500);
     if (sendPrompt) {
       tmux('send-keys', '-t', name, '-l', TOOL_PROMPT);
       await sleep(300);
       tmux('send-keys', '-t', name, 'Enter');
     }
     // The granted tool ran when its PostToolUse is logged; a permission question on screen means the grant did not hold.
-    const ran = await until(() => {
-      const text = screen(name);
-      if (/Do you want to (proceed|allow|make)|Allow this|Yes, and don't ask again/i.test(text)) seen.dialog = true;
+    const ran = await untilAlive(name, () => {
+      if (DIALOG.test(screen(name))) seen.dialog = true;
       return records(logFile).some((r) => r.at >= since && r.event === 'PostToolUse' && r.tool === 'Bash') || seen.dialog ? true : null;
     }, 120000);
+    if (ran === 'dead') fail('the session ended while the granted tool was to run');
     seen.toolRan = Boolean(ran) && !seen.dialog;
-    // Let the turn finish before leaving: the input box returns.
-    await sleep(3000);
-    await until(() => !/esc to interrupt/i.test(screen(name)), 60000);
+    // Let the turn finish: the input box returns.
+    const idle = async () => {
+      await sleep(3000);
+      return untilAlive(name, () => !/esc to interrupt/i.test(screen(name)), 60000);
+    };
+    if (await idle() === 'dead') fail('the session ended during the first turn');
+    // Negative control: a tool the grant does not cover must ask. Without it a broader allow rule in the director's own
+    // settings could let the grant check pass on its own.
+    tmux('send-keys', '-t', name, '-l', CONTROL_PROMPT);
+    await sleep(300);
+    tmux('send-keys', '-t', name, 'Enter');
+    const asked = await untilAlive(name, () => (DIALOG.test(screen(name)) ? true : null), 90000);
+    if (asked === 'dead') fail('the session ended during the control prompt');
+    seen.controlDialog = Boolean(asked);
+    // Escape answers a permission question with no, and leaves an idle input box alone; so /exit never goes into a dialog.
+    tmux('send-keys', '-t', name, 'Escape');
+    await sleep(1000);
+    tmux('send-keys', '-t', name, 'Escape');
+    await sleep(1000);
     tmux('send-keys', '-t', name, '-l', '/exit');
     await sleep(500);
     tmux('send-keys', '-t', name, 'Enter');
@@ -87,9 +121,12 @@ async function sitting({ label, call, dir, logFile, sendPrompt }) {
       gone = await until(() => !alive(name), 20000);
     }
     seen.ended = Boolean(gone);
-    seen.exitedBy = '/exit';
+    seen.exitedBy = gone ? '/exit' : null;
     if (gone) await until(() => records(logFile).some((r) => r.at >= since && r.event === 'SessionEnd'), 15000);
     seen.pane = screen(name).split('\n').slice(-12).join('\n');
+  } catch (error) {
+    error.pane = (alive(name) ? screen(name) : lastPanes.get(name) ?? '').split('\n').slice(-40).join('\n');
+    throw error;
   } finally {
     if (alive(name)) tmux('kill-session', '-t', name);
     fs.rmSync(launcher, { force: true });
@@ -106,15 +143,23 @@ const summarise = (rows) => ({
   sessionEnd: rows.filter((r) => r.event === 'SessionEnd').map((r) => r.reason),
 });
 
-async function main() {
+// The plugin's own hooks (hooks/hooks.json), with ${CLAUDE_PLUGIN_ROOT} as this repository, so the grant and the mode are
+// tested against the plugin's PreToolUse and role hooks. The probe's logger (hook.js, not probes/lib/hook-logger.js) is
+// first for each event: it records the session's environment (CLAUDE_CODE_ENTRYPOINT, WHEELHOUSE_ROLE) and the permission
+// mode, which the shared logger does not.
+function scratchHooks(logFile) {
+  const root = path.join(probeDir, '..', '..');
+  const plugin = JSON.parse(fs.readFileSync(path.join(root, 'hooks', 'hooks.json'), 'utf8').split('${CLAUDE_PLUGIN_ROOT}').join(root.split(path.sep).join('/'))).hooks;
+  const logger = { hooks: [{ type: 'command', command: `node ${quote(path.join(probeDir, 'hook.js'))} ${quote(logFile)}`, timeout: 10 }] };
+  const merged = { ...plugin };
+  for (const event of ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'SessionEnd']) merged[event] = [logger, ...(plugin[event] ?? [])];
+  return merged;
+}
+
+async function main(report) {
   if (spawnSync('tmux', ['-V']).status !== 0) throw new Error('This probe needs tmux');
   const logFile = path.join(os.tmpdir(), `wheelhouse-probe-96-${crypto.randomBytes(4).toString('hex')}.jsonl`);
-  const hook = (event) => ({ [event]: [{ hooks: [{ type: 'command', command: `node ${quote(path.join(probeDir, 'hook.js'))} ${quote(logFile)}`, timeout: 10 }] }] });
-  const project = await makeScratchProject({
-    name: '96-helm',
-    settings: { hooks: Object.assign({}, ...['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'SessionEnd'].map(hook)) },
-  });
-  const report = { date: new Date().toISOString().slice(0, 10), model: MODEL, mode: MODE, grant: GRANT, forms: {} };
+  const project = await makeScratchProject({ name: '96-helm', settings: { hooks: scratchHooks(logFile) } });
   try {
     const resumeId = crypto.randomUUID();
     const startId = crypto.randomUUID();
@@ -123,7 +168,7 @@ async function main() {
     const first = featureStartCall({ sessionId: resumeId, prompt: 'Reply with the single word ready.', ...common });
     const ran = spawnSync(first.file, first.args, { cwd: project.dir, env: first.env, input: first.input, encoding: 'utf8', timeout: 180000 });
     report.firstRun = { status: ran.status, entrypoints: [...new Set(records(logFile).map((r) => r.entrypoint))] };
-    if (ran.status !== 0) throw new Error(`the -p start failed (status ${ran.status}): ${String(ran.stderr).slice(0, 300)} ${String(ran.stdout).slice(0, 300)} ${ran.error?.message ?? ""}`);
+    if (ran.status !== 0) throw new Error(`the -p start failed (status ${ran.status}): ${String(ran.stderr).slice(0, 300)} ${String(ran.stdout).slice(0, 300)} ${ran.error?.message ?? ''}`);
     // 2. Resuming form, 3. starting form.
     const forms = [
       ['resume', featureHelmCall({ sessionId: resumeId, start: false, ...common }), true],
@@ -131,37 +176,42 @@ async function main() {
     ];
     for (const [label, call, sendPrompt] of forms) {
       say(`Opening the ${label} form...`);
-      const result = await sitting({ label, call: { ...call, env: call.env }, dir: project.dir, logFile, sendPrompt });
-      const rows = records(logFile).filter((r) => r.at >= result.since && r.at <= result.until);
-      report.forms[label] = { args: call.args.map((a) => (a === TOOL_PROMPT ? '<prompt>' : a)), ...result, hooks: summarise(rows) };
+      const args = call.args.map((a) => (a === TOOL_PROMPT ? '<prompt>' : a));
+      try {
+        const result = await sitting({ label, call, dir: project.dir, logFile, sendPrompt });
+        const rows = records(logFile).filter((r) => r.at >= result.since && r.at <= result.until);
+        report.forms[label] = { args, ...result, hooks: summarise(rows) };
+      } catch (error) {
+        report.forms[label] = { args, failed: String(error?.message ?? error), pane: error.pane ?? null, hooks: summarise(records(logFile)) };
+        throw error;
+      }
     }
     const both = Object.values(report.forms);
-    const hooksOf = (f) => f.hooks;
     report.answers = {
-      grantHeld: both.every((f) => f.toolRan === true && hooksOf(f).tools.includes('Bash')),
-      modeHeld: both.every((f) => hooksOf(f).modes.length > 0 && hooksOf(f).modes.every((m) => m === MODE)),
-      entrypointCli: both.every((f) => hooksOf(f).entrypoints.length > 0 && hooksOf(f).entrypoints.every((e) => e === 'cli')),
-      sessionEndOnExit: both.every((f) => f.ended === true && hooksOf(f).sessionEnd.length > 0),
+      // The grant held: the granted tool ran with no question, and the ungranted control did ask (so the grant is what let it run).
+      grantHeld: both.every((f) => f.toolRan === true && f.controlDialog === true && f.hooks.tools.includes('Bash')),
+      modeHeld: both.every((f) => f.hooks.modes.length > 0 && f.hooks.modes.every((m) => m === MODE)),
+      entrypointCli: both.every((f) => f.hooks.entrypoints.length > 0 && f.hooks.entrypoints.every((e) => e === 'cli')),
+      sessionEndOnExit: both.every((f) => f.ended === true && f.exitedBy === '/exit' && f.hooks.sessionEnd.includes('prompt_input_exit')),
     };
     // Recorded observations, not gates.
     report.observations = {
-      sessionEndReasons: both.map((f) => hooksOf(f).sessionEnd),
-      sessionEndWhileProcessAlive: 'recorded, not gated: each form\'s hooks.sessionEnd holds the reason the SessionEnd hook input carried after /exit, and ended says whether the process had gone by then',
-      roleEnvSeen: both.map((f) => hooksOf(f).roles),
+      negativeControl: 'an ungranted Bash command (python3) was sent after the granted one; controlDialog says whether it asked',
+      sessionEndReasons: both.map((f) => f.hooks.sessionEnd),
+      roleEnvSeen: both.map((f) => f.hooks.roles),
     };
   } finally {
     await project.cleanup();
     fs.rmSync(logFile, { force: true });
-    for (const name of tmux('list-sessions', '-F', '#{session_name}').stdout?.split('\n') ?? []) if (name.startsWith('wh96-')) tmux('kill-session', '-t', name);
+    for (const name of created) if (alive(name)) tmux('kill-session', '-t', name);
   }
-  return report;
 }
 
-let report;
+const report = { date: new Date().toISOString().slice(0, 10), model: MODEL, mode: MODE, grant: GRANT, forms: {}, answers: {} };
 try {
-  report = await main();
+  await main(report);
 } catch (error) {
-  report = { date: new Date().toISOString().slice(0, 10), error: String(error?.message ?? error), answers: {} };
+  report.error = String(error?.message ?? error);
 }
 fs.mkdirSync(path.join(probeDir, 'reports'), { recursive: true });
 const out = path.join(probeDir, 'reports', `${report.date}.json`);
