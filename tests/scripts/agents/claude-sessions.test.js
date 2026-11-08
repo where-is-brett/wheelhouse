@@ -350,3 +350,21 @@ test('the waker asks the project\'s adapter for the mode checks', () => withHome
   const refusing = { ...stood, checkForeman: () => { throw new Error('The adapter will not start a foreman'); } };
   assert.throws(() => waker({ sessions: refusing }), /will not start a foreman/);
 }));
+
+test('adapter: the helm call resumes without -p', () => {
+  const claude = { kind: 'direct', file: 'claude' };
+  const call = sessions.featureHelmCall({ config: { routing: { feature: 'model-f' } }, sessionId: 's-1', claude, allowed: ['Read'], effort: 'high', env: { WHEELHOUSE_ROLE: 'foreman' } });
+  assert.deepEqual(call.args, ['--resume', 's-1', '--permission-mode', 'acceptEdits', '--model', 'model-f', '--effort', 'high', '--allowedTools', 'Read']);
+  assert.ok(!call.args.includes('-p'));
+  assert.equal(call.input, '');
+  assert.equal(call.env.WHEELHOUSE_ROLE, undefined);
+});
+
+test('adapter: the helm call can start a session', () => {
+  const claude = { kind: 'direct', file: 'claude' };
+  const call = sessions.featureHelmCall({ config: {}, sessionId: 's-2', claude, start: true, prompt: 'Read the brief.', allowed: ['Read'] });
+  assert.deepEqual(call.args.slice(0, 2), ['--session-id', 's-2']);
+  assert.equal(call.args.at(-1), 'Read the brief.');
+  assert.ok(!call.args.includes('-p'));
+  assert.throws(() => sessions.featureHelmCall({ config: { sessionMode: 'auto' }, sessionId: 's', claude }), /never started in auto mode/);
+});

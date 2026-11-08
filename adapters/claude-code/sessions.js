@@ -117,7 +117,7 @@ export function checkFeature(config) {
 // to pass to --allowedTools, when there are any. `model`, `effort` and `fallback` are the feature role's from the
 // column in force, when given (effortArgs).
 function featureCall({
-  lead, config, prompt, allowed = [], platform = process.platform, env = process.env, claude = null, model: chosen = null, effort = null, fallback = null,
+  lead, config, prompt, tail = [], allowed = [], platform = process.platform, env = process.env, claude = null, model: chosen = null, effort = null, fallback = null,
 }) {
   // A worktree reads the main checkout's local settings too, so, as the foreman, it names its model: the column's,
   // or the flat table's `feature` role, else its `builder` role (as before), else the command line's default.
@@ -128,6 +128,7 @@ function featureCall({
     ...(model ? ['--model', model] : []),
     ...effortArgs({ effort, fallback }),
     ...(allowed.length > 0 ? ['--allowedTools', ...allowed] : []),
+    ...tail,
   ];
   const call = invocation(claude ?? resolveClaude({ platform, env }), [], args, prompt);
   return { ...call, env: { ...sessionEnv(env), ...FOREGROUND_ONLY } };
@@ -141,6 +142,16 @@ export function featureStartCall({ sessionId, ...rest }) {
 // The feature session with id `sessionId`, resumed. The mode and model are given again: `--resume` needs them.
 export function featureResumeCall({ sessionId, ...rest }) {
   return featureCall({ ...rest, lead: ['--resume', sessionId] });
+}
+
+// The feature session with id `sessionId`, opened for the director to work in (the helm): its own mode, model, effort and
+// allow rules, with no `-p` and nothing piped in, so it opens interactive. `start: false` resumes the session;
+// `start: true` starts it under that id, with `prompt` as the last, positional argument (after `--`, since
+// --allowedTools takes every word after it). The environment is a feature run's.
+export function featureHelmCall({ sessionId, prompt = null, start = false, ...rest }) {
+  const lead = [start ? '--session-id' : '--resume', sessionId];
+  const tail = start && typeof prompt === 'string' && prompt !== '' ? ['--', prompt] : [];
+  return featureCall({ ...rest, lead, tail, prompt: undefined });
 }
 
 // The tools a "why" session may use: it reads and searches, and nothing else.
@@ -194,4 +205,4 @@ export function finalAnswer(stdout) {
 // takes it (scripts/watcher/waker.js): Claude Code's sessions pass each subagent its model and effort.
 export const takesColumn = true;
 
-export default Object.freeze({ checkForeman, checkFeature, foremanCall, featureStartCall, featureResumeCall, whyCall, finalAnswer, takesColumn });
+export default Object.freeze({ checkForeman, checkFeature, foremanCall, featureStartCall, featureResumeCall, featureHelmCall, whyCall, finalAnswer, takesColumn });

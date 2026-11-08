@@ -198,6 +198,9 @@ export const PROMPTS = Object.freeze({
       + 'Read it whole first. Your plan, your tasks and your questions follow it: put right anything that doesn\'t, or ask.'
     : ''}`,
   start: 'Read .wheelhouse/feature/brief.md and follow it.',
+  // The director has handed the piece back from the helm.
+  helmBack: 'The director has handed this piece back from the helm. Read what they did there. Record a helm-note of at most five lines saying what changed. '
+    + 'Record each call the director made at the helm as a decision with where: \'helm\'. Then carry on with the work.',
 });
 
 // The role variable, the modes and the session environment are the adapter's (they come with how it starts a
