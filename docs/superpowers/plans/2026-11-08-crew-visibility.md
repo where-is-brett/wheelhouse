@@ -8,7 +8,7 @@
 
 **Architecture:** A read-only script (`scripts/crew/runs.js`) finds a run's transcript on disk by session id, turns its tail into plain step lines, and writes a Markdown page on request; the Logbook asks it only for pieces at `steps` or above. The helm is a hold file in the watcher's folder (`helm/<work>.json`) that one gate, `helmHeld(project, work)`, makes every start, wake, resume, routine move and Bosun `act` respect; `scripts/crew/helm.js` takes, opens (through the adapter's interactive `featureHelmCall`) and hands back, and a `SessionEnd` hook ends the hold. Nothing changes how the watcher runs sessions.
 
-**Tech Stack:** Node.js (CommonJS, as the rest of `scripts/`), `node:test`, `node:fs`. No new dependencies.
+**Tech Stack:** Node.js ES modules (as the rest of `scripts/`), `node:test`, `node:fs`. No new dependencies.
 
 **Spec:** `docs/specs/2026-11-08-crew-visibility-design.md` (section numbers below are the spec's). Each task names the sections its implementer reads.
 
@@ -42,3 +42,33 @@ One branch and pull request per part, base `main`, stacked only where a part nee
 | 7. Answers at the helm | `feature/crew-helm-answers` | 6, #400's seat | 9.4 (answers) |
 
 Parts 1, 2 run side by side; 3 and 4 side by side once 1 and 2 are on main; part 7 waits for #400.
+
+## File structure
+
+New:
+
+- `scripts/crew/level.js`: the level for a piece. `watchCrewIn(settings)`, `levelFor(views, settings, work)`.
+- `scripts/crew/runs.js`: finding, reading and summarising a run and its subagents; masking; the page; `--follow`. Read-only except its page.
+- `scripts/crew/hold.js`: the hold file and the one gate, `helmHeld`. No other module reads `helm/*.json`.
+- `scripts/crew/helm.js`: take, open, hand back, stop now; the CLI the director runs (`open`).
+- `scripts/hooks/helm-end.js`: the `SessionEnd` hand-back.
+- `probes/crew-helm/probe.js`: the section 14 probe, run on purpose, never by `npm test`.
+- Tests beside them: `tests/scripts/crew/{level,runs,hold,helm}.test.js`, `tests/scripts/hooks/helm-end.test.js`.
+
+Changed:
+
+- `scripts/settings/catalogue.js`: the `watchCrew` entry.
+- `scripts/state/events.js`: `watch`, `helm`, `helm-ended`, `helm-note` in `PLAIN_KINDS` and `PLAIN_SHAPES`; `decision` may carry `where` and `words`.
+- `scripts/state/views.js`: reducers for the four kinds (`views.watch`, `views.helm`, `views.helmNotes`).
+- `scripts/frontdesk/cli.js`: `watch`, `helm` in `RECORD_KINDS`; commands `page <work>`, `helm take|hand-back|now <work>`.
+- `adapters/claude-code/sessions.js`: `featureHelmCall`.
+- `scripts/watcher/waker.js`: the foreman's `--session-id`; `helmHeld` beside each `controlHeld` call and in `deliverByStart`; `markLost` skips a held piece; the start without a launch.
+- `scripts/watcher/resume.js`, `scripts/watcher/routine.js`, `scripts/foreman/act.js`: ask `helmHeld`.
+- `scripts/desk/views.js`: steps in `workLines` and the build tab; the helm lines.
+- `scripts/hooks/board-context.js`: the helm note in the First Mate's news.
+- `hooks/hooks.json`: the second `SessionEnd` command.
+- `skills/intake/SKILL.md`: the "Watch:" line.
+- `skills/front-desk/SKILL.md`, `commands/logbook.md`: the watch, helm and hand-back phrases; `watch <work>`.
+- `docs/specs/2026-10-17-wheelhouse-design.md` (settings list, safety section), `docs/data.md`.
+
+Not changed: `scripts/lib/role.js` and `scripts/hooks/session-start.js`. A helm session is already `feature` (its recorded role, or `featureSlug(cwd)` for the starting form). If a task finds it needs a change there, it goes in one separate block and the PR body names it.
