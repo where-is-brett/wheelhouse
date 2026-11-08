@@ -25,10 +25,26 @@ export function cleanEnv(from = process.env) {
   return env;
 }
 
-// How long Claude Code is given to take in a paste before Enter: an Enter that comes while it is still reading one is
+// Text goes in as a person types it: short bursts with a pause between. All at once, Claude Code takes it as a paste, and
+// the front desk rightly reads pasted text as material, not the director's own request. A burst never ends with a
+// semicolon, which tmux would read as the end of its command and drop.
+export const TYPE_BURST = 16;
+export const TYPE_GAP_MS = 30;
+// How long Claude Code is given to take in the text before Enter: an Enter that comes while it is still reading is
 // swallowed, and the request sits unsent in the input box.
-export const PASTE_SETTLE_MS = 1500;
-const BUFFER = 'haiku-trial-type';
+export const SETTLE_MS = 1500;
+export function bursts(text, size = TYPE_BURST) {
+  const flat = String(text).replace(/\s*\n\s*/g, ' ');
+  const out = [];
+  let i = 0;
+  while (i < flat.length) {
+    let end = Math.min(i + size, flat.length);
+    while (end < flat.length && flat[end - 1] === ';') end += 1;
+    out.push(flat.slice(i, end));
+    i = end;
+  }
+  return out;
+}
 const wait = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 const named = (name) => (String(name).startsWith(SESSION_PREFIX) ? String(name) : `${SESSION_PREFIX}${name}`);
@@ -45,11 +61,13 @@ export function makeTmux({ run = spawnSync, pause = wait } = {}) {
       tmux('set-option', '-g', 'history-limit', String(HISTORY_LINES));
       return tmux('new-session', '-d', '-s', named(name), '-x', String(PANE_COLUMNS), '-y', String(PANE_ROWS), '-c', cwd, 'env', '-i', ...pairs, ...command);
     },
-    // The text goes in as one bracketed paste, so Claude Code takes it whole; Enter follows once the paste has settled.
+    // The text is typed in bursts, as a person would; Enter follows once it has settled.
     type(name, text) {
-      tmux('set-buffer', '-b', BUFFER, '--', String(text));
-      tmux('paste-buffer', '-p', '-d', '-b', BUFFER, '-t', named(name));
-      pause(PASTE_SETTLE_MS);
+      for (const burst of bursts(text)) {
+        tmux('send-keys', '-t', named(name), '-l', '--', burst);
+        pause(TYPE_GAP_MS);
+      }
+      pause(SETTLE_MS);
       return tmux('send-keys', '-t', named(name), 'Enter');
     },
     keys(name, ...keys) {

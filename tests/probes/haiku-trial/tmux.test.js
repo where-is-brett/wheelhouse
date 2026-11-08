@@ -1,7 +1,7 @@
 // tests/probes/haiku-trial/tmux.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cleanEnv, makeTmux, frontDeskCommand, PASTE_SETTLE_MS } from '../../../probes/haiku-trial/tmux.js';
+import { cleanEnv, makeTmux, frontDeskCommand, bursts, TYPE_GAP_MS, SETTLE_MS } from '../../../probes/haiku-trial/tmux.js';
 import { startedByScript } from '../../../scripts/decisions/answer.js';
 
 test('cleanEnv removes every starter variable', () => {
@@ -25,19 +25,28 @@ test('cleanEnv drops what the Claude Code session the runner runs in sets for it
   assert.deepEqual(env, { CLAUDE_CONFIG_DIR: '/trial-config', HOME: '/h' });
 });
 
-test('type pastes the text as one bracketed paste, waits for it to settle, then presses Enter', () => {
+test('type types the text in short bursts, as a person would, then Enter once it has settled', () => {
   const calls = [];
   const tmux = makeTmux({
     run: (cmd, args) => { calls.push([cmd, ...args]); return { status: 0, stdout: '' }; },
     pause: (ms) => calls.push(['pause', ms]),
   });
-  tmux.type('haiku-trial-desk', '-1 B');
+  tmux.type('haiku-trial-desk', '-1 B and a second part');
   assert.deepEqual(calls, [
-    ['tmux', 'set-buffer', '-b', 'haiku-trial-type', '--', '-1 B'],
-    ['tmux', 'paste-buffer', '-p', '-d', '-b', 'haiku-trial-type', '-t', 'haiku-trial-desk'],
-    ['pause', PASTE_SETTLE_MS],
+    ['tmux', 'send-keys', '-t', 'haiku-trial-desk', '-l', '--', '-1 B and a secon'],
+    ['pause', TYPE_GAP_MS],
+    ['tmux', 'send-keys', '-t', 'haiku-trial-desk', '-l', '--', 'd part'],
+    ['pause', TYPE_GAP_MS],
+    ['pause', SETTLE_MS],
     ['tmux', 'send-keys', '-t', 'haiku-trial-desk', 'Enter'],
   ]);
+});
+
+test('no burst ends with a semicolon, which tmux would drop, and every character is kept', () => {
+  const text = 'Greenbarrow Fresh → groceries; Pennywhistle Market → groceries;; Lowtide;\nnext line';
+  const got = bursts(text, 8);
+  assert.equal(got.join(''), text.replace('\n', ' '));
+  for (const b of got.slice(0, -1)) assert.ok(!b.endsWith(';'), b);
 });
 
 test('start gives the session only the environment it is handed, and list shows only the trial\'s sessions', () => {
