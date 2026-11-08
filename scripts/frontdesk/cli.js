@@ -840,6 +840,7 @@ export async function pullBack({ client, cwd, call, change = false, now, makeId 
   if (found.length === 0) throw new CliError(`No call starting with ${call} is among the recent calls (the latest ${MOST_CALLS} are kept in view)`);
   if (found.length > 1) throw new CliError(`More than one recent call starts with ${call}: give more of its id`);
   const [chosen] = found;
+  if (chosen.where === 'helm') throw new CliError('That call was your own, made at the helm: there is nothing to pull back');
   const mark = callMark(chosen.id);
   // A ruling for the call stands once; a request to change what was built is filed once. With a ruling already, `change` files
   // only the request.

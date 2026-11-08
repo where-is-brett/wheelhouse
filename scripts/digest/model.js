@@ -8,6 +8,7 @@
 // to a length that reads on a phone screen.
 import { oneLine, tokenWords, dollarWords, creditWords } from '../board/model.js';
 import { cardOutcomes } from '../state/views.js';
+import { isHelmCall } from '../decisions/calls.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // The most entries a section lists; the rest are counted.
@@ -103,7 +104,7 @@ export function digestModel({ events, calls, pending, usage, now, weekly = false
     .sort((a, b) => String(a.since).localeCompare(String(b.since)) || a.work.localeCompare(b.work)), []);
   if (heldPieces.length > 0) model.held = heldPieces;
   if (weekly === true) {
-    model.calls = part(() => list(calls).filter(isRecord).map((c) => ({
+    model.calls = part(() => list(calls).filter((c) => isRecord(c) && !isHelmCall(c)).map((c) => ({
       work: typeof c.work === 'string' ? words(c.work) : null,
       at: typeof c.at === 'string' ? c.at : null,
       decided: words(c.decided),

@@ -14,7 +14,7 @@ import { dataHash } from '../state/events.js';
 import { cardOutcomes, latestFor } from '../state/views.js';
 import { decisionsFrom } from '../decisions/pending.js';
 import { canPrivate as canPrivateIn } from '../decisions/visibility.js';
-import { callsFrom } from '../decisions/calls.js';
+import { callsFrom, isHelmCall } from '../decisions/calls.js';
 import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { crewNow } from '../crew/runs.js';
@@ -463,7 +463,7 @@ const VIEWS = {
     // The decisions waiting and answered, numbered as the chat shows them (scripts/decisions/pending.js).
     const decisions = typeof source.events === 'function' ? { decisions: decisionsFrom(source.events(), source.enrolled?.() ?? [], { canPrivate: typeof source.project === 'string' && canPrivateIn(source.project) }) } : {};
     // With `calls: true`, the calls the agents logged on their own side of the decision line, for the director to pull one back.
-    const calls = args.calls === true && typeof source.events === 'function' ? { calls: callsFrom(source.events()) } : {};
+    const calls = args.calls === true && typeof source.events === 'function' ? { calls: callsFrom(source.events()).filter((c) => !isHelmCall(c)) } : {};
     // With `stuck: true`, the notes recording that a feature session sent its plain "stuck" message (`act stuck-note`), oldest first.
     const stuck = args.stuck === true && typeof source.events === 'function' ? { stuck: stuckNotes(source.events()) } : {};
     // With `helmNotes: true`, the notes a piece's crew wrote of what the director did at its helm, oldest first.

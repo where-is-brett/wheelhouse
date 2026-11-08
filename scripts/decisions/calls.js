@@ -7,6 +7,10 @@ import { stateDir } from '../lib/paths.js';
 // The most calls the record gives back at once, the latest.
 export const MOST_CALLS = 200;
 
+// Whether `call` (as callsFrom gives it) is the director's own, made at a piece's helm, and so not one the agents made on their own.
+// Every reader that shows the calls as the agents' own leaves these out.
+export const isHelmCall = (call) => call !== null && typeof call === 'object' && call.where === 'helm';
+
 // What a ruling or a request that names a call says: `[call <first 8 of its id>]`.
 export const callMark = (id) => `[call ${String(id).slice(0, 8)}]`;
 

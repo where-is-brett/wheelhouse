@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { projectCalls, callsFrom, readLog, appendCall, appendHelm } from '../../../scripts/decisions/log.js';
+import { isHelmCall } from '../../../scripts/decisions/calls.js';
 import { featurePaths } from '../../../scripts/feature/files.js';
 import { makeFeatureFolder } from '../../helpers/made-feature.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -95,4 +96,14 @@ test('log: a helm call reaches the record as an agent-call event', () => {
   assert.ok(make({ where: 'helm' }));
   assert.throws(() => make({}), /agent-call event/);
   assert.throws(() => make({ where: 'desk', kind: 'structure' }), /where/);
+});
+
+test('isHelmCall tells the director\'s own helm calls from the agents\' calls', async () => {
+  await inHome(() => {
+    const [agent, helm] = callsFrom([callEvent({}, '2026-11-07T02:00:01.000Z'), callEvent({ where: 'helm', kind: 'steer' }, '2026-11-07T03:00:01.000Z')]);
+    assert.equal(isHelmCall(agent), false);
+    assert.equal(isHelmCall(helm), true);
+    assert.equal(isHelmCall(null), false);
+    assert.equal(isHelmCall({}), false);
+  });
 });
