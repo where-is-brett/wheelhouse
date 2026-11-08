@@ -16,6 +16,9 @@ import { localViews } from '../../../scripts/hooks/session-start.js';
 import { readProfileViews } from '../../../scripts/profile/store.js';
 import { as, shortHome } from '../../helpers/homes.js';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
+import { writeJsonFile, runningFile, sessionFile } from '../../../scripts/watcher/waker.js';
 import { P, NOW, now, CARD, writeRecord, upClient, put, viewsDir } from './fixture.js';
 
 function withRecord(fn) {
@@ -188,4 +191,29 @@ test('workLines: no step, no change', () => {
   assert.match(before[0], /running/);
   assert.deepEqual(workLines(crewViews, [], {}, {}, {}), before);
   assert.deepEqual(workLines(crewViews, [], {}, {}, { login: { steps: [], crew: [] } }), before);
+});
+
+test("the desk's work view shows the latest step for a running piece", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'desk-crew-'));
+  const project = `desk-crew-${process.pid}`;
+  const keep = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); writeJsonFile(file, value); };
+  keep(runningFile(project, 'feature-login'), { state: 'running', pid: process.pid, at: '2026-11-08T01:00:00.000Z' });
+  keep(sessionFile(project, 'login'), { sessionId: 's1' });
+  const proj = path.join(dir, 'projects', 'a');
+  fs.mkdirSync(proj, { recursive: true });
+  const event = { type: 'assistant', timestamp: '2026-11-08T01:00:00Z', cwd: '/w/tree', message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: '/w/tree/a.ts' } }] } };
+  fs.writeFileSync(path.join(proj, 's1.jsonl'), `${JSON.stringify(event)}\n`);
+  const was = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = dir;
+  try {
+    const source = {
+      project,
+      views: async () => ({ ok: true, views: { ...crewViews, settings: { watchCrew: { key: 'watchCrew', value: 'steps' } } }, answers: [], names: [] }),
+      profile: async () => ({ settings: {} }),
+    };
+    const got = await readView('work', {}, source, { now });
+    assert.ok(got.lines[0].endsWith(' · Reading `a.ts`'), got.lines[0]);
+  } finally {
+    if (was === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = was;
+  }
 });

@@ -17,6 +17,7 @@ import { canPrivate as canPrivateIn } from '../decisions/visibility.js';
 import { callsFrom } from '../decisions/calls.js';
 import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
 import { sinceLine } from '../cards/panel-words.js';
+import { crewNow } from '../crew/runs.js';
 import { contextText } from './context.js';
 import { readStatus } from '../safekeeping/readings.js';
 import { answeredLines, buildLines, runningLines, shippedLines } from '../engine/words.js';
@@ -371,7 +372,11 @@ const VIEWS = {
   async work(args, source, { now }) {
     const got = await recordOf(source, { answers: true });
     if (got.refused) return { ok: false, refused: got.refused };
-    const lines = workLines(got.views, got.answers ?? [], deskWords(got.views, await ownSettings(source), now(), got.names ?? []));
+    const own = await ownSettings(source);
+    const crew = typeof source.project === 'string'
+      ? crewNow(source.project, got.views, effectiveSettings({ project: isPlain(got.views.settings) ? got.views.settings : {}, profile: own, now }))
+      : {};
+    const lines = workLines(got.views, got.answers ?? [], deskWords(got.views, own, now(), got.names ?? []), {}, crew);
     return { ok: true, data: got, lines: [...lines, ...runningLines(got.views, { now: now() })] };
   },
 
