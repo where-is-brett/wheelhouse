@@ -12,7 +12,7 @@ import path from 'node:path';
 import { git } from '../helpers/director-world.js';
 import { world, approvalOf, record, waitingCards, approveCards, merged, assertNoPanelWords } from '../helpers/director-steps.js';
 import { waitLongerOnTheHelper } from '../helpers/until.js';
-import { approving, running } from '../eval/build-loop/engine-recordings.js';
+import { approving, asking, running } from '../eval/build-loop/engine-recordings.js';
 import { CHECK_AND_ADD } from '../../scripts/state/card-lines.js';
 
 waitLongerOnTheHelper();
@@ -129,6 +129,38 @@ test('a start that is refused raises one card across many wakes, with choices th
     assert.equal(w.records('question').filter((q) => q.data.work === 'tidy').length, 1, 'still one card');
   });
 });
+
+// Guards: with typed replies on (the default since the director's decision of 8 November 2026), a question a run asks
+// must reach the director as a decision in chat, never on the question picker; the reply they type must be recorded,
+// signed, as the answer; and the answer must reach the run, which carries on and ends, with nothing done by hand between.
+test('with typed replies on, a run\'s question is a decision in chat, a typed reply answers it, and the work carries on', { timeout: 120000 }, () => world({ recordings: { tidy: asking('tidy') }, typedReplies: true }, async (w) => {
+  await w.watch();
+  await record(w, 'tidy', { lane: 'quick', visible: false });
+  await w.tickUntil(() => w.eventsOf('run').length > 0, 'the work to start');
+  // The run asks; the decision waits, and the picker is handed nothing.
+  let listed;
+  await w.tickUntil(async () => { listed = await w.desk(['decision', 'list']); return /How much of the page should change\?/.test(listed.out); }, 'the decision to wait');
+  assert.equal(listed.code, 0, listed.err);
+  assert.deepEqual((await w.desk(['cards'])).json.questions, [], 'a decision is never put on the question picker');
+  const shown = await w.desk(['decision', 'show', '1']);
+  assert.equal(shown.code, 0, shown.err);
+  assert.match(shown.out, /^Decision needed \(1\): /);
+  assert.match(shown.out, /Keep it small/);
+  assert.match(shown.out, /Do the whole page/);
+  const letter = /^([A-Z])\. Keep it small/m.exec(shown.out)?.[1];
+  assert.ok(letter, shown.out);
+  const ended = () => w.eventsOf('run').some((e) => e.data.work === 'tidy' && e.data.state === 'ended');
+  await w.tick();
+  assert.equal(ended(), false, 'the run waits for the answer');
+  // The director types the reply; it is recorded as the answer, signed by this computer.
+  await w.type(`1 ${letter}`);
+  const answers = w.eventsOf('decision-answer');
+  assert.equal(answers.length, 1, 'one typed reply, one answer');
+  assert.equal(typeof answers[0].sig?.value, 'string', 'the answer is signed');
+  // The answer reaches the run, which carries on and ends; the decision waits no longer.
+  await w.tickUntil(ended, 'the run to carry on and end');
+  assert.doesNotMatch((await w.desk(['decision', 'list'])).out, /How much of the page should change\?/);
+}));
 
 // Guards: a dropped work's Approve card stayed in the waiting view, to be asked for work that would never be built.
 test('dropping work with an open Approve card takes the card out of the waiting view', { timeout: 120000 }, () => world({ recordings: { flag: running('flag') } }, async (w) => {
