@@ -235,3 +235,24 @@ Branch `feature/crew-watch-level` from `main`. Spec sections 6.1, 6.2, 12.
 - [ ] **Step 3: Implement** the entry and `scripts/crew/level.js`.
 - [ ] **Step 4: Run them and see them pass.**
 - [ ] **Step 5: Commit.** `git commit -am "Crew level: the watchCrew setting and a piece's own level"`
+
+### Task 2.2: The `watch` record
+
+**Files:**
+- Modify: `scripts/state/events.js` (`PLAIN_KINDS` at 21, `PLAIN_SHAPES` at 286)
+- Modify: `scripts/state/views.js` (`buildViews` at 588)
+- Modify: `scripts/frontdesk/cli.js` (`RECORD_KINDS` at 133)
+- Test: `tests/scripts/state/events.test.js`, `tests/scripts/state/views.test.js`, `tests/scripts/frontdesk/cli.test.js`
+
+**Interfaces:**
+- Produces: kind `watch` with shape `{ must: ['work', 'level'], may: [] }`, `level` one of `LEVELS` (2.1), `work` a feature slug. `views.watch` is `{ [work]: level }`, the latest event per work winning. `cli.js record watch < {"work":"login","level":"transcript"}` writes it. It is a request, not a decision: it never reaches the decision log (`scripts/decisions/line.js`).
+
+- [ ] **Step 1: Write the failing tests**
+  - `events: a watch event needs work and level`: a `watch` with no `level` is refused.
+  - `events: a watch event refuses an unknown level`: `level: 'loud'` is refused.
+  - `views: the latest watch per piece wins`: two events for `login` → `views.watch.login` is the second level.
+  - `cli: record watch writes the event`: after the command, `listEvents` holds one `watch`.
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/state/events.test.js tests/scripts/state/views.test.js tests/scripts/frontdesk/cli.test.js`
+- [ ] **Step 3: Implement** the kind, the shape, the reducer and the record kind.
+- [ ] **Step 4: Run them and see them pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Records: the watch request"`
