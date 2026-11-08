@@ -3,6 +3,7 @@ import { test, after, mock } from 'node:test';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -14,9 +15,8 @@ import { openTestRecord } from '../../helpers/record-fixture.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir, computerId } from '../../../scripts/lib/paths.js';
-import { eventPath } from '../../../scripts/state/events.js';
+import { eventPath, listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, sign } from '../../../scripts/state/signing.js';
-import { ciPushLine } from '../../../scripts/state/card-lines.js';
 import { CERTIFICATE_NOT_TRUSTED, caFile, gitCaConfig, writeCaFile } from '../../../scripts/host/company-ca.js';
 import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 import { makeBareRemote, push as plainPush, LOCAL_PATHS } from '../../helpers/git-fixture.js';
@@ -213,7 +213,7 @@ const adapterFor = () => ({
 });
 
 // A project whose folder holds a clone on `feature`: `base` files on main, `change` files on feature.
-async function scenario({ base = { 'README.md': 'x\n' }, change, files = {}, project = {} }) {
+async function scenario({ base = { 'README.md': 'x\n' }, change, files = {}, project = {}, branch = 'feature' }) {
   const remote = await makeBareRemote({ repo: 'o/p' });
   const home = fs.realpathSync.native(shortHome());
   const work = path.join(home, 'work');
@@ -234,7 +234,7 @@ async function scenario({ base = { 'README.md': 'x\n' }, change, files = {}, pro
     await g(work, 'commit', '-q', '-m', 'Base');
     await g(work, 'remote', 'add', 'origin', remote.url);
     await g(work, 'push', '-q', 'origin', 'main');
-    await g(work, 'checkout', '-q', '-b', 'feature');
+    await g(work, 'checkout', '-q', '-b', branch);
     for (const [name, text] of Object.entries(change ?? files)) write(work, name, text);
     await g(work, 'add', '-A');
     await g(work, 'commit', '-q', '-m', 'Change');
@@ -271,7 +271,7 @@ test('a branch that changes .github/workflows is refused, naming the rule', asyn
   const s = await scenario({ change: { '.github/workflows/ci.yml': 'on: push\n', 'src/a.js': 'a\n' } });
   try {
     await viaHelper(s, async (client) => {
-      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: 'feature' }), { ok: false, refused: PUSH_REFUSALS.ciFile });
+      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: 'feature' }), { ok: false, refused: PUSH_REFUSALS.ciFile, ciPush: { branch: 'feature', sha: s.sha } });
     });
     assert.doesNotMatch(await heads(s), /feature/);
   } finally { s.cleanup(); }
@@ -408,21 +408,82 @@ test('a click for another commit, another branch, or older than ten minutes does
   } finally { s.cleanup(); }
 });
 
-test('/ci-push/line gives the card line and records the pending push', async () => {
-  const s = await scenario({ change: { 'a.txt': 'a\n' } });
+const FEATURE = 'feature/ci-node-24';
+const ciAsks = () => listEvents(stateDir('o__p'), { report: () => {} }).filter((e) => e.kind === 'gate-asks');
+const pendingOf = (s) => JSON.parse(fs.readFileSync(path.join(s.home, 'projects', 'o__p', 'ci-pending.json'), 'utf8'));
+const CI_CHANGE = { '.github/workflows/ci.yml': 'on: push\n' };
+const commitMore = async (s, files, message) => {
+  for (const [name, text] of Object.entries(files)) write(s.work, name, text);
+  await g(s.work, 'add', '-A');
+  await g(s.work, 'commit', '-q', '-m', message);
+  return (await g(s.work, 'rev-parse', 'HEAD')).trim();
+};
+
+test('a first push of a feature branch that edits a CI file is refused and raises its card, once', async () => {
+  const s = await scenario({ branch: FEATURE, change: CI_CHANGE });
   try {
     await viaHelper(s, async (client) => {
-      const answer = await client.ciPushLine({ project: 'o__p', branch: 'feature', sha: s.sha });
-      assert.deepEqual(answer, { ok: true, line: ciPushLine('feature', s.sha) });
-      assert.equal(answer.line, `Push the CI change on feature at commit ${s.sha.slice(0, 12)} with your own sign-in`);
-      await client.ciPushLine({ project: 'o__p', branch: 'other', sha: 'b'.repeat(40) });
-      await client.ciPushLine({ project: 'o__p', branch: 'feature', sha: 'c'.repeat(40) });
-      assert.equal((await client.ciPushLine({ project: 'o__p', branch: 'feature', sha: 'short' })).ok, false);
-      assert.equal((await client.ciPushLine({ project: 'o__p', branch: '--force', sha: s.sha })).ok, false);
+      const want = { ok: false, refused: PUSH_REFUSALS.ciFile, ciPush: { branch: FEATURE, sha: s.sha } };
+      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: FEATURE }), want);
+      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: FEATURE }), want);
     });
-    const pending = JSON.parse(fs.readFileSync(path.join(s.home, 'projects', 'o__p', 'ci-pending.json'), 'utf8'));
-    assert.deepEqual(Object.keys(pending).sort(), ['feature', 'other']);
-    assert.deepEqual(pending.feature, { branch: 'feature', sha: 'c'.repeat(40), at: NOW.toISOString() });
+    await as(s.home, async () => {
+      const asks = ciAsks();
+      assert.equal(asks.length, 1);
+      assert.deepEqual(asks[0].data, { work: 'ci-node-24', ask: 'ci-push', branch: FEATURE, sha: s.sha });
+      assert.deepEqual(pendingOf(s)[FEATURE], { branch: FEATURE, sha: s.sha, at: NOW.toISOString() });
+    });
+    assert.doesNotMatch(await heads(s), /ci-node-24/);
+  } finally { s.cleanup(); }
+});
+
+test('a click for the branch and commit lets the push go', async () => {
+  const s = await scenario({ branch: FEATURE, change: CI_CHANGE });
+  try {
+    await as(s.home, async () => { click({ sha: s.sha, branch: FEATURE }); });
+    await viaHelper(s, async (client) => {
+      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: FEATURE }), { ok: true });
+    });
+    assert.match(await heads(s), /ci-node-24/);
+  } finally { s.cleanup(); }
+});
+
+test('a click stands over later commits that add only decision records, and not over any other change', async () => {
+  const s = await scenario({ branch: FEATURE, change: CI_CHANGE });
+  try {
+    await as(s.home, async () => { click({ sha: s.sha, branch: FEATURE }); });
+    const docs = await commitMore(s, { 'docs/decisions/0001-x.md': 'x\n' }, 'Record');
+    await viaHelper(s, async (client) => {
+      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: FEATURE }), { ok: true });
+    });
+    const code = await commitMore(s, { 'src/x.js': 'x\n' }, 'Code');
+    await viaHelper(s, async (client) => {
+      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: FEATURE }), { ok: false, refused: PUSH_REFUSALS.ciFile, ciPush: { branch: FEATURE, sha: code } });
+    });
+    await as(s.home, async () => {
+      assert.deepEqual(ciAsks().map((e) => e.data.sha), [code]);
+      assert.notEqual(code, docs);
+    });
+  } finally { s.cleanup(); }
+});
+
+test('/ci-push/line is gone: the helper answers it as an unknown route', async () => {
+  const s = await scenario({ change: { 'a.txt': 'a\n' } });
+  try {
+    await viaHelper(s, async (client, helper) => {
+      assert.equal(client.ciPushLine, undefined);
+      const answer = await new Promise((resolve, reject) => {
+        const body = JSON.stringify({ project: 'o__p', branch: 'feature', sha: s.sha });
+        const req = http.request({ socketPath: helper.address, method: 'POST', path: '/ci-push/line', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } }, (res) => {
+          const chunks = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
+        });
+        req.on('error', reject);
+        req.end(body);
+      });
+      assert.deepEqual(answer, { status: 404, body: { ok: false, refused: 'unknown request' } });
+    });
   } finally { s.cleanup(); }
 });
 
