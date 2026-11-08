@@ -525,6 +525,43 @@ test("F3 sees P1's first commit on its local branch, before anything is pushed",
   assert.ok(io.timeline.some((e) => e.kind === 'f3'), 'the feature session is killed');
 });
 
+test("setup is not done while a picker is open, even one whose question carries setup's last words", async (t) => {
+  const folder = scratch(t);
+  let answered = false;
+  const phone = ['│ Every step is done. Setup step 9, your phone.', '❯ 1. Skip for now', '  2. Ready', 'Enter to select · ↑/↓ to navigate'].join('\n');
+  const io = fakeIo({
+    keys: (name, key) => { if (key === 'Enter') answered = true; },
+    capture: () => (answered ? 'Every step is done.' : phone),
+    host: { readConfig: async () => ({ routing: {} }) },
+  });
+  const got = await run({ mode: 'smoke', io, from: 'setup-s0', until: 'setup-s0', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['setup-s0'], got.why);
+  assert.equal(answered, true, 'the phone card is answered before setup counts as done');
+  assert.ok(readLog(folder).some((e) => e.note === 'answered the picker "Every step is done. Setup step 9, your phone.": Skip for now'));
+});
+
+test('a picker in the front desk that no card stands for is answered once it has stayed open, before a request is typed', async (t) => {
+  const folder = scratch(t);
+  let open = true;
+  const order = [];
+  const picker = ['│ A question of the desk\'s own', '  1. Later', '❯ 2. Now', '     Recommended: do it now', '  3. Never', 'Enter to select · ↑/↓ to navigate'].join('\n');
+  let at = 1;
+  const io = fakeIo({
+    keys: (name, key) => {
+      if (key === 'Up') at -= 1;
+      if (key === 'Down') at += 1;
+      if (key === 'Enter') { order.push(`picked ${at + 1}`); open = false; }
+    },
+    capture: () => (open ? picker.replace('❯ 2.', at === 1 ? '❯ 2.' : '  2.') : 'idle'),
+  });
+  const wrapped = io.tmux.type;
+  io.tmux.type = (name, text) => { order.push('typed'); return wrapped(name, text); };
+  await run({ mode: 'smoke', io, from: 'w2-type', until: 'w2-type', folder, date: '2026-11-08', env: ENV });
+  assert.equal(order[0], 'picked 2', order.join(', '));
+  assert.equal(order[1], 'typed', order.join(', '));
+  assert.equal(readLog(folder).some((e) => /typing anyway/.test(e.note)), false);
+});
+
 test('F3 with no feature session to kill is noted as not exercised and the run goes on', async (t) => {
   const folder = scratch(t);
   const io = fakeIo({});

@@ -10,9 +10,10 @@ export const DECISION = 'answer';
 
 const PICKER = /Enter to select/;
 const OPTION = /^\s*(?:❯\s*)?(\d+)\.\s+(.*)$/;
-const HIGHLIGHTED = /^\s*❯\s*\d+\.\s/;
+export const HIGHLIGHTED = /^\s*❯\s*\d+\.\s/;
 const QUESTION_LINE = /^Answer question q-(.+)-(\d+)$/;
 const BAR = /^\s*│/;
+const RECOMMENDED_LABEL = /\(Recommended\)/;
 const SUBMIT_PAGE = /Ready to submit your answers\?/;
 const SUBMIT = /^\s*❯\s*1\.\s*Submit answers/m;
 // The pane's window is 60 rows; a picker open now is within them.
@@ -49,9 +50,18 @@ export function openPicker(pane) {
   if (barEnd < 0) return null;
   let barStart = barEnd;
   while (barStart > 0 && BAR.test(lines[barStart - 1])) barStart -= 1;
+  // The recommended option says so in its label ("Go ahead (Recommended)") or in the description under it.
+  const body = lines.slice(barEnd + 1, foot);
+  let recommended = -1;
+  let index = -1;
+  for (const line of body) {
+    if (OPTION.test(line)) index += 1;
+    if (recommended === -1 && index >= 0 && (RECOMMENDED_LABEL.test(line) || (!OPTION.test(line) && /^\s*Recommended\b/.test(line)))) recommended = index;
+  }
   return {
     question: lines.slice(barStart, barEnd + 1).join('\n'),
-    options: lines.slice(barEnd + 1, foot).filter((l) => OPTION.test(l)),
+    options: body.filter((l) => OPTION.test(l)),
+    recommended,
   };
 }
 
