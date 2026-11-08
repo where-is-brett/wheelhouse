@@ -469,3 +469,19 @@ test('helm: back refuses when the pid is alive and its start time can\'t be read
     assert.equal(helmHeld(p, 'login'), true);
   });
 });
+
+test('helm: back hands a steer from the start, never opened, back to the foreman to start', async () => {
+  await withHome(async (p) => {
+    await openPiece(p, 'login');
+    await openPiece(p, 'search');
+    // The steer start wrote the session file and named its id in the hold; nothing was ever launched.
+    await takeHold(p, { work: 'login', sessionId: 's-1', fromStart: true, now });
+    await takeHold(p, { work: 'search', sessionId: 's-1', now });
+    const gone = { alive: () => false, startTimeOf: async () => null, now, wakerFor: () => ({ wakeFeature: async () => {} }), config: {}, env: {} };
+    assert.equal((await backAtDesk(p, 'login', gone)).code, 0);
+    assert.equal(fs.existsSync(sessionFile(p, 'login')), false, 'no session is kept for a session that was never started');
+    // A plain take, never opened, keeps the session it already had.
+    assert.equal((await backAtDesk(p, 'search', gone)).code, 0);
+    assert.equal(fs.existsSync(sessionFile(p, 'search')), true);
+  });
+});

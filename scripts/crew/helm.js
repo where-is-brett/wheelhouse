@@ -283,7 +283,7 @@ export const HELM_STILL_OPEN = (work) => `${work}'s helm session is still open. 
 // Hands `work` back on the director's word. It refuses while the opened session's process is still the one the hold names. A
 // helm never opened goes with no wake: nothing was done in it. Resolves `{ code: 0, lines }`, or `{ code: 1, why }`.
 export async function backAtDesk(project, work, {
-  now = () => new Date(), config = null, wakerFor = null, alive = pidAlive, startTimeOf = processStartTime, print = () => {},
+  now = () => new Date(), config = null, wakerFor = null, alive = pidAlive, startTimeOf = processStartTime, print = () => {}, env = process.env,
 } = {}) {
   if (typeof work !== 'string' || !SLUG.test(work)) return refuse('Name the piece by its short name.');
   if (!helmHeld(project, work)) return refuse(`${work} is not at the helm.`);
@@ -296,6 +296,12 @@ export async function backAtDesk(project, work, {
   if (hold?.opened === true) {
     if (!await handBack(project, work, { why: 'closed', now, config, wakerFor, print })) return refuse(`${work} is already being handed back.`);
   } else {
+    // A piece steered from the start was made but never launched: the session file its steer start wrote names a session that
+    // does not exist, so it goes, and the foreman's next pass starts the piece as usual.
+    if (hold?.fromStart === true && typeof hold.sessionId === 'string' && findTranscript({ sessionId: hold.sessionId, env }) === null) {
+      const file = sessionFile(project, work);
+      if (readJson(file)?.sessionId === hold.sessionId) fs.rmSync(file, { force: true });
+    }
     await releaseHold(project, work, { why: 'closed', now });
   }
   return { code: 0, lines: [`${work} is back with the crew.`] };
