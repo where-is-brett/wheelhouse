@@ -193,7 +193,9 @@ async function tick(ctx) {
     state.pace = `${open.size},${features}`;
     await note(ctx, LOG.pace, `building ${open.size}, feature ${features}`);
   }
-  await io.host.answerCards({ project: ctx.projectName, tmux: io.tmux, events, session: ctx.session ?? DESK });
+  // P4's decisions are the live decision script's own (s9), so the stand-in leaves them to it.
+  const skipWork = [state.pieces.P4?.change].filter((w) => typeof w === 'string');
+  await io.host.answerCards({ project: ctx.projectName, tmux: io.tmux, events, session: ctx.session ?? DESK, skipWork });
   if (state.ntfyTopic) {
     for (const m of await io.host.readNtfy({ topic: state.ntfyTopic })) if (!state.ntfy.some((x) => x.at === m.at && x.text === m.text)) state.ntfy.push(m);
   }
@@ -467,8 +469,10 @@ export const STEPS = [
         return (cmp?.ahead_by ?? 0) > 0;
       }, { io, timeoutMs: 45 * MINUTE });
       if (!found) throw new Stop("P1's branch never got a first commit");
-      const killed = await io.faults.f3KillFeature({ project: ctx.projectDir, piece });
-      await note(ctx, LOG.fault('F3'), `killed P1's feature session ${JSON.stringify(killed)}`);
+      // P1 may not run as a feature session (intake can size it smaller); the fault is then noted as not exercised and
+      // the run goes on.
+      const killed = await io.faults.f3KillFeature({ project: ctx.projectDir, piece }).catch((error) => ({ error: error.message }));
+      await note(ctx, LOG.fault('F3'), killed?.error ? `not exercised: ${killed.error}` : `killed P1's feature session ${JSON.stringify(killed)}`);
     },
   },
   {
