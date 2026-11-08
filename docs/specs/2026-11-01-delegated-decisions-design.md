@@ -2,6 +2,8 @@
 
 # Delegated decisions: design
 
+> **Parked or reversed on 7 November 2026,** see `docs/specs/2026-11-07-core-cut-design.md`. Parked, with concept learning. Every decision at levels 3 and 4 is the director's card (core cut, section 4.2). What is parked, and how it comes back, is in `docs/parked.md`.
+
 **Status:** approved by the director, 1 November 2026. Nothing in it is built. Section 17 records their answers to the six decisions.
 
 **What it adds.** The director hands Wheelhouse intent and limits instead of a plan. The First Mate settles the small decisions a signed rule covers, under guardrails that rest on what a script can see, so that well-defined work can run for long stretches, such as 8 hours, without the director. Where this design differs from `docs/specs/2026-10-17-wheelhouse-design.md` (the main design), `docs/specs/2026-10-29-wheelhouse-on-archon-design.md` (the Archon design) or the unattended goals draft (`docs/specs/2026-10-31-unattended-goals-design.md`, not yet on main; the goals draft below), this one wins once approved. Section 14 states every such difference. The goals draft isn't approved, so stages 1 and above depend on it; record-only mode doesn't.

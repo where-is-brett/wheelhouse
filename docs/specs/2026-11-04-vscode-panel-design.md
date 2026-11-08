@@ -2,6 +2,8 @@
 
 # The Wheelhouse panel in VS Code: design (4 November 2026)
 
+> **Parked or reversed on 7 November 2026,** see `docs/specs/2026-11-07-core-cut-design.md`. Parked, with the VS Code add-on (core cut, section 4.2). What is parked, and how it comes back, is in `docs/parked.md`.
+
 **Status:** approved. The director took every recommendation on 4 November 2026 (section 11). Nothing here is built yet; it is built after the one-card build lands (D5).
 
 ## 1. Why this, and why now
