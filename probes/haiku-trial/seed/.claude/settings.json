@@ -1,7 +1,8 @@
 {
   "model": "haiku",
   "env": {
-    "CLAUDE_CODE_SUBAGENT_MODEL": "haiku"
+    "CLAUDE_CODE_SUBAGENT_MODEL": "haiku",
+    "CLAUDE_CODE_DISABLE_ADVISOR_TOOL": "1"
   },
   "enabledPlugins": {
     "wheelhouse@wheelhouse": true

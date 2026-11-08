@@ -28,6 +28,12 @@ const NEW_SESSION = /needs one new session|new session on this folder/i;
 const TRUST_PROMPT = /trust the files in this folder|do you trust|trust this folder/i;
 // The trust prompt's highlighted choice. Its first choice is "No, exit", so Enter alone ends the session.
 const TRUST_YES = /❯\s*(?:\d+\.\s*)?Yes, I trust this folder/;
+// A question Claude Code shows as a picker in the pane (setup asks its cards this way, before the project has a record to hold
+// them), its highlighted option, and an option marked as the one recommended.
+const PICKER = /Enter to select/;
+const HIGHLIGHTED = /^\s*❯\s*\d+\.\s/;
+const OPTION = /^\s*(?:❯\s*)?\d+\.\s/;
+const RECOMMENDED = /\(Recommended\)/;
 const pieceOf = (id) => PIECES.find((p) => p.id === id);
 
 export class Stop extends Error {}
@@ -295,6 +301,36 @@ async function desk(ctx, name, extraEnv = {}) {
   mustBeAlive(ctx);
 }
 
+// The stand-in director's answer to a picker in a session's pane: the recommended option, or the first when none is marked. The
+// cursor is moved to it and seen there before Enter. Returns whether a picker was answered.
+async function answerPicker(ctx, name) {
+  const { io } = ctx;
+  const lines = () => io.tmux.capture(name).split('\n');
+  const first = lines();
+  if (!PICKER.test(first.join('\n'))) return false;
+  const options = first.filter((l) => OPTION.test(l));
+  const want = options.findIndex((l) => RECOMMENDED.test(l));
+  const target = want === -1 ? 0 : want;
+  // The question's text follows its short header (☐ Setup) on lines drawn with a bar.
+  const question = (first.find((l) => /^\s*│/.test(l)) ?? first.find((l) => /☐/.test(l)) ?? '').replace(/[☐│]/g, '').trim().slice(0, 160);
+  for (let moves = 0; moves < options.length; moves += 1) {
+    const now = lines().filter((l) => OPTION.test(l));
+    const index = now.findIndex((l) => HIGHLIGHTED.test(l));
+    if (index === target) break;
+    io.tmux.keys(name, index < target ? 'Down' : 'Up');
+    await io.clock.sleep(500);
+  }
+  const chosen = lines().filter((l) => OPTION.test(l)).find((l) => HIGHLIGHTED.test(l));
+  if (chosen === undefined || (want !== -1 && !RECOMMENDED.test(chosen))) {
+    throw new Stop(`the ${name} session's picker "${question}" never highlighted ${want === -1 ? 'an option' : 'its recommended option'}`);
+  }
+  io.tmux.keys(name, 'Enter');
+  const label = chosen.replace(HIGHLIGHTED, '').trim();
+  await note(ctx, name === DESK ? 'front-desk' : name, `answered the picker "${question}": ${label}`);
+  await io.clock.sleep(3000);
+  return true;
+}
+
 async function pieceEnv(ctx, id) {
   const piece = ctx.state.pieces[id]?.change ?? id.toLowerCase();
   let got;
@@ -384,9 +420,11 @@ export const STEPS = [
       await start();
       ctx.session = SETUP;
       ctx.state.panes.setup = [];
-      // The stand-in director answers setup's cards as they come; when setup says it needs a new session, the session is started again once.
+      // The stand-in director answers setup's cards as they come, in the record and in the pane; when setup says it needs a new session, the session is started again once.
       const done = await waitFor(async () => {
         await tick(ctx);
+        // Setup asks its cards as pickers in the pane: the project has no record to hold them yet.
+        await answerPicker(ctx, SETUP);
         const pane = io.tmux.capture(SETUP);
         if (SETUP_DONE.test(pane)) return true;
         if (!restarted && NEW_SESSION.test(pane)) {
