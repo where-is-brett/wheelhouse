@@ -182,3 +182,25 @@ Branch `feature/crew-runs-reader` from `main`. Spec sections 4, 7.1, 7.2, 8.1.
 - [ ] **Step 3: Implement** `roleOf`, `subagentLine`, `runSteps`.
 - [ ] **Step 4: Run them and see them pass.**
 - [ ] **Step 5: Commit.** `git commit -am "Crew runs: subagent and Bosun lines"`
+
+### Task 1.5: The Bosun's session id
+
+**Files:**
+- Modify: `adapters/claude-code/sessions.js` (`foremanCall`, around line 80)
+- Modify: `scripts/watcher/waker.js` (`startForeman`, around line 1265; `launch`, around 1160–1230)
+- Test: `tests/adapters/claude-code/sessions.test.js`, `tests/scripts/watcher/waker.test.js`
+
+**Interfaces:**
+- Produces: `foremanCall({..., sessionId = null})`: with a `sessionId`, `args` gains `--session-id <sessionId>` before `-p`. `launch` writes `sessionId` into the running record (`watcher/running/foreman.json`) when the target is `foreman`; `runSteps` in parts 3 and 4 reads it from there.
+- `startForeman` makes the id with `crypto.randomUUID()` for each start.
+
+- [ ] **Step 1: Write the failing tests**
+  - `foremanCall passes a session id`: `args` contains `'--session-id', id` before `'-p'`.
+  - `foremanCall without one is unchanged`: `args` has no `--session-id`.
+  - `the foreman's running record names its session`: after a start through the waker's fake spawn, `running/foreman.json` has a `sessionId` matching `/^[0-9a-f-]{36}$/`.
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/adapters/claude-code/sessions.test.js tests/scripts/watcher/waker.test.js`
+- [ ] **Step 3: Implement** the two changes.
+- [ ] **Step 4: Run them and see them pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Watcher: give the Bosun's run a known session id"`
+
+Part 1's pull request: title `Crew visibility: the run reader and the Bosun's session id`; body names the spec sections and says nothing reads a transcript yet.
