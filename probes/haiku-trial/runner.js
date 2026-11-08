@@ -219,6 +219,19 @@ async function waitMerged(ctx, count, wave) {
   if (!ok) throw new Stop(`fewer than ${count} pull requests merged in time for wave ${wave}`);
 }
 
+// Whether a branch in the project's own folder that names the piece has a commit of its own. A build commits in its
+// worktree and pushes only when it opens its pull request, so GitHub sees the first commit late or not at all.
+async function localCommit(ctx, piece) {
+  try {
+    const refs = String(await ctx.io.host.git(['for-each-ref', '--format=%(refname:short)', 'refs/heads'], { cwd: ctx.projectDir }));
+    const branch = refs.split('\n').map((l) => l.trim()).find((n) => n !== '' && n.toLowerCase().includes(String(piece).toLowerCase()));
+    if (!branch) return false;
+    return Number(String(await ctx.io.host.git(['rev-list', '--count', `main..${branch}`], { cwd: ctx.projectDir })).trim()) > 0;
+  } catch {
+    return false;
+  }
+}
+
 // Types a piece's request, answers intake's visibility question for P8, and notes which work event it became.
 // Text typed while a picker is open goes into the picker, not the chat, so the stand-in answers the picker first. After
 // the wait it is typed anyway, and the wait is noted.
@@ -476,6 +489,7 @@ export const STEPS = [
       const piece = ctx.state.pieces.P1?.change ?? 'p1';
       const found = await waitFor(async () => {
         await tick(ctx);
+        if (await localCommit(ctx, piece)) return true;
         const branch = ((await io.gh(['api', 'repos/{owner}/{repo}/branches?per_page=100'])) ?? []).map((b) => b.name).find((n) => n.toLowerCase().includes(String(piece).toLowerCase()));
         if (!branch) return false;
         const cmp = await io.gh(['api', `repos/{owner}/{repo}/compare/main...${branch}`]);
