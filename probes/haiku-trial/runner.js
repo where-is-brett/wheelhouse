@@ -3,9 +3,11 @@
 // resume, and `restore`. Everything it touches arrives through `io`, so tests drive it with a fake and nothing real starts.
 // Nothing here runs a trial until the director's go: the steps that create things ask first.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appendJsonl } from '../lib/log.js';
+import { projectSlug } from '../../scripts/lib/paths.js';
 import { PIECES, WAVES, P5_SPARE, F2_ANSWER } from './requests.js';
 import { SESSION_PREFIX, frontDeskCommand } from './tmux.js';
 import { STEPS as LOG, SETUP_DONE, OWN_BRANCH } from './signals.js';
@@ -27,6 +29,30 @@ const pieceOf = (id) => PIECES.find((p) => p.id === id);
 
 export class Stop extends Error {}
 
+// --- the trial's own Wheelhouse home ---
+
+const holds = (outer, inner) => {
+  const rel = path.relative(outer, inner);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+};
+export const realWheelhouseHome = () => path.resolve(os.homedir(), '.wheelhouse');
+
+// Where the trial keeps Wheelhouse's records, helper and engine state: its own folder, never the director's.
+export function trialHome({ folder, env }) {
+  return path.resolve(env.HAIKU_TRIAL_WHEELHOUSE_HOME || path.join(folder, 'wheelhouse-home'));
+}
+
+// Why the trial must not run in this environment, or null. The records, events and helper socket all follow WHEELHOUSE_HOME, and
+// the in-process readers read the process's own, so the two must be the same folder and neither the real one.
+export function homeProblem(env, processEnv = process.env) {
+  if (!env.WHEELHOUSE_HOME) return 'WHEELHOUSE_HOME is not set, so the trial would use the real Wheelhouse home';
+  const home = path.resolve(env.WHEELHOUSE_HOME);
+  const real = realWheelhouseHome();
+  if (holds(real, home) || holds(home, real)) return `WHEELHOUSE_HOME (${home}) is, or holds, the real Wheelhouse home (${real})`;
+  if (!processEnv.WHEELHOUSE_HOME || path.resolve(processEnv.WHEELHOUSE_HOME) !== home) return 'WHEELHOUSE_HOME differs between the runner and its process, so some reads would reach another home';
+  return null;
+}
+
 // What `io.host` does when a run hands it nothing: nothing happens and nothing is found.
 const NOTHING = {
   events: async () => [],
@@ -45,6 +71,8 @@ const NOTHING = {
   commitAndPush: async () => ({}),
   applySpareBug: () => ({ applied: false, why: 'not wired' }),
   startTunnel: async () => ({}),
+  hasCommand: async () => true,
+  stopWheelhouse: async () => [],
   useRepo: () => {},
 };
 
@@ -118,7 +146,7 @@ const pullOf = (pulls, text) => pulls.find((p) => text !== undefined && text !==
 // One look at the project: events become log entries, open cards get the director's stand-in answer, and F3b fires when armed.
 async function tick(ctx) {
   const { io, state } = ctx;
-  const events = await io.host.events({ project: ctx.project });
+  const events = await io.host.events({ project: ctx.projectName });
   for (const e of events) {
     if (e.id === undefined || state.seen.includes(e.id)) continue;
     state.seen.push(e.id);
@@ -139,7 +167,7 @@ async function tick(ctx) {
     state.pace = `${open.size},${features}`;
     await note(ctx, LOG.pace, `building ${open.size}, feature ${features}`);
   }
-  await io.host.answerCards({ project: ctx.project, tmux: io.tmux, events, session: ctx.session ?? DESK });
+  await io.host.answerCards({ project: ctx.projectName, tmux: io.tmux, events, session: ctx.session ?? DESK });
   if (state.ntfyTopic) {
     for (const m of await io.host.readNtfy({ topic: state.ntfyTopic })) if (!state.ntfy.some((x) => x.at === m.at && x.text === m.text)) state.ntfy.push(m);
   }
@@ -164,12 +192,12 @@ async function waitMerged(ctx, count, wave) {
 // Types a piece's request, answers intake's visibility question for P8, and notes which work event it became.
 async function typeRequest(ctx, id, text = pieceOf(id).text) {
   const { io, state } = ctx;
-  const known = new Set((await io.host.events({ project: ctx.project })).filter((e) => e.kind === 'work').map((e) => e.data?.id));
+  const known = new Set((await io.host.events({ project: ctx.projectName })).filter((e) => e.kind === 'work').map((e) => e.data?.id));
   let answered = false;
   io.tmux.type(DESK, text);
   const found = [];
   await waitFor(async () => {
-    const work = (await io.host.events({ project: ctx.project })).filter((e) => e.kind === 'work' && !known.has(e.data?.id));
+    const work = (await io.host.events({ project: ctx.projectName })).filter((e) => e.kind === 'work' && !known.has(e.data?.id));
     if (work.length > 0) { found.push(work[0]); return true; }
     if (id === 'P8' && !answered && /nobody sees|anyone see|visible/i.test(io.tmux.capture(DESK))) { answered = true; io.tmux.type(DESK, F2_ANSWER); }
     await tick(ctx);
@@ -191,7 +219,7 @@ async function typeWave(ctx, wave, { only } = {}) {
 
 async function spareBugCheck(ctx) {
   const { io, state, folder } = ctx;
-  const read = await io.host.mainParseAmount({ project: ctx.project });
+  const read = await io.host.mainParseAmount({ dir: ctx.projectDir });
   if (read?.ok === false) {
     await note(ctx, 'plant', `could not read main's parseAmount: ${read.why ?? 'no reason given'}`);
     return;
@@ -223,7 +251,10 @@ const needsGo = true;
 async function desk(ctx, name, extraEnv = {}) {
   const { io } = ctx;
   const { command, env } = frontDeskCommand({ claude: ctx.claude });
-  io.tmux.start({ name, cwd: ctx.project, command, env: { ...env, ...extraEnv } });
+  // The trial's own Wheelhouse home and Claude config folder go in explicitly: the session starts with `env -i`, and the helper it
+  // wakes (and so every feature session) takes its environment from this one.
+  const own = { WHEELHOUSE_HOME: ctx.env.WHEELHOUSE_HOME, ...(ctx.env.HAIKU_TRIAL_CONFIG_DIR ? { CLAUDE_CONFIG_DIR: ctx.env.HAIKU_TRIAL_CONFIG_DIR } : {}) };
+  io.tmux.start({ name, cwd: ctx.projectDir, command, env: { ...env, ...own, ...extraEnv } });
   await note(ctx, name === DESK ? 'front-desk' : name, `started tmux session ${SESSION_PREFIX}${name}`, { detail: { tmux: `${SESSION_PREFIX}${name}` } });
   await ctx.io.clock.sleep(15000);
   // A fresh folder asks to be trusted before anything else; the first choice is Yes.
@@ -238,7 +269,7 @@ async function pieceEnv(ctx, id) {
   const piece = ctx.state.pieces[id]?.change ?? id.toLowerCase();
   let got;
   const found = await waitFor(async () => {
-    try { got = await ctx.io.faults.featureEnvOf({ project: ctx.project, piece }); return true; } catch { await tick(ctx); return false; }
+    try { got = await ctx.io.faults.featureEnvOf({ project: ctx.projectDir, piece }); return true; } catch { await tick(ctx); return false; }
   }, { io: ctx.io, timeoutMs: 40 * MINUTE });
   if (!found) throw new Stop(`no running feature session names ${id}`);
   return got;
@@ -254,7 +285,7 @@ const directorAsk = async (ctx, text) => {
 const auditStep = (wave, smoke = true) => ({
   id: `w${wave}-audit`, wave, smoke,
   async run(ctx, io) {
-    const models = auditModels(io.host.findTranscripts({ project: ctx.project }));
+    const models = auditModels(io.host.findTranscripts({ project: ctx.projectName, dir: ctx.projectDir }));
     await note(ctx, `w${wave}-audit`, models.clean ? 'every assistant turn so far ran on Haiku' : `offenders: ${JSON.stringify(models.offenders.map((o) => `${o.role} ${o.model} x${o.count}`))}`);
     if (!models.clean) throw new Stop(`a session ran on another model: ${models.offenders.map((o) => `${o.role} (${o.model})`).join(', ')}`);
   },
@@ -275,7 +306,7 @@ export const STEPS = [
     async run(ctx, io) {
       if (ctx.preview === 'vercel') await directorAsk(ctx, `Connect Vercel to ${ctx.repoSlug} with Deployment Protection off for previews, then answer done.`);
       else if (ctx.preview === 'tunnel') {
-        const got = await io.host.startTunnel({ project: ctx.project });
+        const got = await io.host.startTunnel({ dir: ctx.projectDir });
         await note(ctx, 'tunnel', 'preview tunnel started', { detail: { productPid: got.productPid, tunnelPid: got.tunnelPid } });
       } else await note(ctx, 'create-preview', 'no previews: the pictures rows are not covered');
     },
@@ -295,10 +326,10 @@ export const STEPS = [
   {
     id: 'seed', wave: 1, smoke: true,
     async run(ctx, io) {
-      const made = await io.host.makeProject({ dir: ctx.project });
+      const made = await io.host.makeProject({ dir: ctx.projectDir });
       ctx.state.seedSha = made.sha;
-      await io.host.git(['remote', 'add', 'origin', ctx.remote], { cwd: ctx.project });
-      await io.host.git(['push', '-u', 'origin', 'main'], { cwd: ctx.project });
+      await io.host.git(['remote', 'add', 'origin', ctx.remote], { cwd: ctx.projectDir });
+      await io.host.git(['push', '-u', 'origin', 'main'], { cwd: ctx.projectDir });
       await note(ctx, 'seed', `seeded and pushed ${made.sha ?? ''}`);
     },
   },
@@ -330,7 +361,7 @@ export const STEPS = [
       ctx.session = undefined;
       ctx.state.panes.setup.push(io.tmux.capture(SETUP));
       await note(ctx, LOG.health, done ? 'pass' : 'fail: setup did not finish in time');
-      ctx.state.config = await io.host.readConfig({ project: ctx.project });
+      ctx.state.config = await io.host.readConfig({ dir: ctx.projectDir });
       io.tmux.kill(SETUP);
       if (!done) throw new Stop('setup did not finish');
     },
@@ -339,7 +370,7 @@ export const STEPS = [
     id: 'front-desk', wave: 1, smoke: true,
     async run(ctx, io) {
       await desk(ctx, DESK);
-      const on = await io.host.typedRepliesOn({ project: ctx.project });
+      const on = await io.host.typedRepliesOn({ project: ctx.projectName });
       await note(ctx, 'front-desk', `typed replies on: ${on}`);
       ctx.state.ntfyTopic = `haiku-trial-${ctx.date}-${Math.floor(io.clock.now() / 1000) % 100000}`;
       await say(ctx, `alerts ntfy ${ctx.state.ntfyTopic}`);
@@ -358,7 +389,7 @@ export const STEPS = [
         return (cmp?.ahead_by ?? 0) > 0;
       }, { io, timeoutMs: 45 * MINUTE });
       if (!found) throw new Stop("P1's branch never got a first commit");
-      const killed = await io.faults.f3KillFeature({ project: ctx.project, piece });
+      const killed = await io.faults.f3KillFeature({ project: ctx.projectDir, piece });
       await note(ctx, LOG.fault('F3'), `killed P1's feature session ${JSON.stringify(killed)}`);
     },
   },
@@ -426,7 +457,7 @@ export const STEPS = [
       await io.faults.liftTyped(io.tmux);
       const lifted = await waitFor(async () => {
         await tick(ctx);
-        return (await io.host.events({ project: ctx.project })).some((e) => e.kind === 'action' && e.data?.action === 'lift-stop');
+        return (await io.host.events({ project: ctx.projectName })).some((e) => e.kind === 'action' && e.data?.action === 'lift-stop');
       }, { io, timeoutMs: 2 * MINUTE });
       if (!lifted) await directorAsk(ctx, 'Lift All stop in the helper window, then answer done.');
       await note(ctx, 'f6-lift', 'All stop lifted');
@@ -459,7 +490,7 @@ export const STEPS = [
   },
   s9(1, async (ctx, io) => {
     const change = ctx.state.pieces.P4?.change;
-    const raised = await waitFor(async () => { await tick(ctx); return (await io.host.events({ project: ctx.project })).some((e) => e.kind === 'question' && (change === undefined || e.data?.work === change)); }, { io, timeoutMs: 40 * MINUTE });
+    const raised = await waitFor(async () => { await tick(ctx); return (await io.host.events({ project: ctx.projectName })).some((e) => e.kind === 'question' && (change === undefined || e.data?.work === change)); }, { io, timeoutMs: 40 * MINUTE });
     if (!raised) {
       const env = await pieceEnv(ctx, 'P4');
       const got = await io.faults.decisionFallback(env);
@@ -467,11 +498,11 @@ export const STEPS = [
       await io.clock.sleep(30000);
     }
     try {
-      const env = await io.faults.featureEnvOf({ project: ctx.project, piece: ctx.state.pieces.P4?.change ?? 'p4' });
+      const env = await io.faults.featureEnvOf({ project: ctx.projectDir, piece: ctx.state.pieces.P4?.change ?? 'p4' });
       const natural = io.faults.naturalSendBacks?.(env);
       if (Number.isInteger(natural)) ctx.state.faults.F1 = { ...(ctx.state.faults.F1 ?? {}), naturalSendBacks: natural };
     } catch { /* no running P4 session to read */ }
-    await note(ctx, 's9-1', `typed replies on: ${await io.host.typedRepliesOn({ project: ctx.project })}; decision 1 in chat: ${/decision 1/i.test(io.tmux.capture(DESK))}`);
+    await note(ctx, 's9-1', `typed replies on: ${await io.host.typedRepliesOn({ project: ctx.projectName })}; decision 1 in chat: ${/decision 1/i.test(io.tmux.capture(DESK))}`);
     await tick(ctx);
   }),
   s9(2, async (ctx, io) => {
@@ -504,7 +535,7 @@ export const STEPS = [
   {
     id: 'pull-back', wave: 4, smoke: false,
     async run(ctx, io) {
-      const call = (await io.host.events({ project: ctx.project })).find((e) => e.kind === 'agent-call');
+      const call = (await io.host.events({ project: ctx.projectName })).find((e) => e.kind === 'agent-call');
       if (!call) { await note(ctx, 'pull-back', 'no logged agent call to pull back'); return; }
       await note(ctx, 'pull-back', (await say(ctx, `pull-back ${call.id}`)).slice(0, 300));
       await tick(ctx);
@@ -516,7 +547,7 @@ export const STEPS = [
       const at = new Date(io.clock.now() + 10 * MINUTE);
       at.setSeconds(0, 0); // the setting is a minute, and the digest is due when that minute starts
       ctx.state.digestAt = at.toISOString();
-      const set = await io.host.setDigest({ project: ctx.project, at });
+      const set = await io.host.setDigest({ project: ctx.projectName, at });
       await note(ctx, 'digest-set', `digest due ${ctx.state.digestAt}: ${JSON.stringify(set)}`);
       const arrived = await waitFor(async () => { await tick(ctx); return /Daily digest,/.test(io.tmux.capture(DESK)); }, { io, timeoutMs: 20 * MINUTE });
       if (arrived) await note(ctx, LOG.digest, 'the digest reached the chat');
@@ -533,7 +564,7 @@ export const STEPS = [
       const refused = await say(ctx, 'merge the next approved change');
       await note(ctx, LOG.fault('W5'), `incident recorded; merge reply: ${refused.slice(0, 300)}`);
       await tick(ctx);
-      await waitFor(async () => { await tick(ctx); return (await io.host.events({ project: ctx.project })).some((e) => e.kind === 'incident-closed'); }, { io, timeoutMs: 10 * MINUTE });
+      await waitFor(async () => { await tick(ctx); return (await io.host.events({ project: ctx.projectName })).some((e) => e.kind === 'incident-closed'); }, { io, timeoutMs: 10 * MINUTE });
     },
   },
   {
@@ -569,10 +600,10 @@ export const STEPS = [
   {
     id: 'results', wave: 6, smoke: true,
     async run(ctx, io) {
-      const transcripts = io.host.findTranscripts({ project: ctx.project });
+      const transcripts = io.host.findTranscripts({ project: ctx.projectName, dir: ctx.projectDir });
       const usage = io.host.readUsage ? io.host.readUsage(transcripts) : {};
       const runLog = readLog(ctx.logFile);
-      io.results.writeRaw({ folder: ctx.folder, transcripts, events: await io.host.events({ project: ctx.project }), panes: ctx.state.panes, runLog, usage });
+      io.results.writeRaw({ folder: ctx.folder, transcripts, events: await io.host.events({ project: ctx.projectName }), panes: ctx.state.panes, runLog, usage });
       const file = path.join(ctx.folder, 'summary', `${ctx.date}-haiku-trial-results.md`);
       io.results.writeSummary({ file, date: ctx.date, rows: ctx.state.rows ?? [], score: ctx.state.score, audit: ctx.state.audit, usage });
       await note(ctx, 'results', `raw results and summary under ${ctx.folder}`);
@@ -583,7 +614,7 @@ export const STEPS = [
     async run(ctx, io) {
       const env = ctx.state.p4env;
       if (!env || !fs.existsSync(env.cwd ?? '')) throw new Stop("no environment for P4 to raise decision 3 in: its worktree is gone, so run the typed-reply check by hand");
-      const n = await io.host.nextDecisionNumber({ project: ctx.project });
+      const n = await io.host.nextDecisionNumber({ project: ctx.projectName });
       const got = await io.faults.thirdDecision(env);
       if (got.code !== 0) throw new Stop(`decision 3 was not raised: ${String(got.stdout).trim().slice(0, 300)}`);
       ctx.state.decisionN = Number.isInteger(n) ? n : null;
@@ -609,7 +640,7 @@ export const STEPS = [
         io.log?.(`The review card is in the chat as a decision. Try the tracker (statement: ${tryMe}), then answer there with its number and A, B or C.`);
         await waitFor(async () => {
           await tick(ctx);
-          const found = (await io.host.events({ project: ctx.project })).filter((e) => e.kind === 'decision-answer' && Date.parse(e.at) >= askedAt - 1000 && answerLetter(e.data?.label) !== null && e.data?.n === decisionN + 1).pop(); // the card follows decision 3 in the numbering
+          const found = (await io.host.events({ project: ctx.projectName })).filter((e) => e.kind === 'decision-answer' && Date.parse(e.at) >= askedAt - 1000 && answerLetter(e.data?.label) !== null && e.data?.n === decisionN + 1).pop(); // the card follows decision 3 in the numbering
           answer = found ? answerLetter(found.data.label) : null;
           return answer !== null;
         }, { io, timeoutMs: 120 * MINUTE, everyMs: 30000 });
@@ -640,13 +671,13 @@ const readLog = (file) => {
 // Builds the context the rows read, adds what only the runner can know, and runs them.
 async function gatherAndCheck(ctx, io) {
   const { state } = ctx;
-  const transcripts = io.host.findTranscripts({ project: ctx.project });
+  const transcripts = io.host.findTranscripts({ project: ctx.projectName, dir: ctx.projectDir });
   const pieces = state.pieces;
-  if (pieces.P8) pieces.P8.gate = await io.host.readGate({ change: pieces.P8.change, project: ctx.project });
-  const mainCi = await io.host.readMain({ project: ctx.project, file: '.github/workflows/ci.yml' });
-  const config = state.config ?? (await io.host.readConfig({ project: ctx.project }));
+  if (pieces.P8) pieces.P8.gate = await io.host.readGate({ change: pieces.P8.change, project: ctx.projectName });
+  const mainCi = await io.host.readMain({ dir: ctx.projectDir, file: '.github/workflows/ci.yml' });
+  const config = state.config ?? (await io.host.readConfig({ dir: ctx.projectDir }));
   const full = await io.signals.gatherContext({
-    project: ctx.project, gh: io.gh, runLog: readLog(ctx.logFile).filter((e) => e.done !== true), panes: state.panes, transcripts, pieces,
+    project: ctx.projectName, gh: io.gh, runLog: readLog(ctx.logFile).filter((e) => e.done !== true), panes: state.panes, transcripts, pieces,
     scores: state.score, previews: ctx.preview, config, ntfy: state.ntfy, faults: state.faults,
     branches: state.branches, mainCi, digestAt: state.digestAt, projectName: ctx.repoName,
   });
@@ -676,6 +707,7 @@ const lastDone = (file) => readLog(file).filter((e) => e.done === true).map((e) 
 function contextFor({ mode, io, folder, date, env }) {
   const owner = env.HAIKU_TRIAL_GH_OWNER;
   const repoName = `haiku-trial-${date}`;
+  const projectName = projectSlug(owner ?? 'unset', repoName);
   const stateFile = path.join(folder, 'state.json');
   let saved = {};
   try { saved = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { /* a fresh run */ }
@@ -685,12 +717,14 @@ function contextFor({ mode, io, folder, date, env }) {
   return {
     mode, io, env, folder, date, state, stateFile, smoke: mode === 'smoke', repoName, owner,
     repoSlug: `${owner}/${repoName}`, remote: `https://github.com/${owner}/${repoName}.git`,
-    project: path.join(folder, 'project'), logFile: path.join(folder, 'run-log.jsonl'),
+    projectDir: path.join(folder, 'project'), projectName, logFile: path.join(folder, 'run-log.jsonl'),
     claude: env.HAIKU_TRIAL_CLAUDE ?? 'claude', preview: env.HAIKU_TRIAL_PREVIEW ?? 'none',
   };
 }
 
 export async function run({ mode = 'full', io: given, from, until, folder, date, env = process.env } = {}) {
+  const problem = homeProblem(env);
+  if (problem) return { done: [], stoppedAt: 'wheelhouse-home', why: problem };
   const io = { ...given, host: { ...NOTHING, ...(given.host ?? {}) } };
   const day = date ?? new Date(io.clock.now()).toISOString().slice(0, 10);
   const where = folder ?? io.results.runFolder(day);
@@ -705,6 +739,10 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
   } else if (from) {
     start = plan.findIndex((s) => s.id === from);
     if (start < 0) throw new Error(`No step called ${from} in the ${mode} plan`);
+  }
+  // Before anything is created: a tunnel preview needs cloudflared.
+  if (ctx.preview === 'tunnel' && plan.slice(start).some((s) => s.id === 'create-preview') && !(await io.host.hasCommand('cloudflared'))) {
+    return { done: [], stoppedAt: 'create-preview', why: 'HAIKU_TRIAL_PREVIEW is tunnel but cloudflared is not installed. Install it (brew install cloudflared) or use vercel or none. Nothing was created.' };
   }
   const done = [];
   for (const step of plan.slice(start)) {
@@ -756,6 +794,7 @@ export async function restore({ folder, io }) {
       } catch { /* already gone */ }
     }
   }
+  for (const what of (await io.host.stopWheelhouse?.()) ?? []) stopped.push(what);
   return { stopped };
 }
 
@@ -786,11 +825,18 @@ export async function main(argv, { print = console.log, buildIo, env = process.e
   }
   const io = await buildIo(env);
   const folder = args.folder ?? io.results.runFolder(new Date(io.clock.now()).toISOString().slice(0, 10));
+  // Everything Wheelhouse keeps follows WHEELHOUSE_HOME: set it to the trial's own folder before anything reads it, and refuse the real one.
+  const home = trialHome({ folder, env });
+  const given = { ...env, WHEELHOUSE_HOME: home };
+  process.env.WHEELHOUSE_HOME = home;
+  const problem = homeProblem(given);
+  if (problem) { print(JSON.stringify({ stoppedAt: 'wheelhouse-home', why: problem })); return 1; }
+  fs.mkdirSync(home, { recursive: true });
   if (args.command === 'restore') {
     print(JSON.stringify(await restore({ folder, io })));
     return 0;
   }
-  const result = await run({ mode: args.command, io, from: args.from ?? 'auto', until: args.until, folder, env });
+  const result = await run({ mode: args.command, io, from: args.from ?? 'auto', until: args.until, folder, env: given });
   print(JSON.stringify(result));
   return result.stoppedAt ? 1 : 0;
 }

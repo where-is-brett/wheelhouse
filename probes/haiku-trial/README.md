@@ -21,7 +21,15 @@ The runner stops and asks before each of these, and goes on only for the answer 
 3. **The staged plugin install** (`install`): the staged copy of this checkout, without `probes/` and `tests/`, goes in through `claude plugin marketplace add` and `claude plugin install`. `HAIKU_TRIAL_CONFIG_DIR`, when set, keeps the install out of the director's own configuration.
 4. **Haiku usage:** the go on the install is also the go to spend tokens. Every session the trial starts runs on Haiku.
 
-Environment: `HAIKU_TRIAL_CLAUDE` is the full path to `claude`, `HAIKU_TRIAL_GH_OWNER` the account for the test repository, `HAIKU_TRIAL_PREVIEW` one of the three modes above.
+Environment: `HAIKU_TRIAL_CLAUDE` is the full path to `claude`, `HAIKU_TRIAL_GH_OWNER` the account for the test repository, `HAIKU_TRIAL_PREVIEW` one of the three modes above, `HAIKU_TRIAL_CONFIG_DIR` the trial's own Claude config folder. The front desk and setup sessions start with it as `CLAUDE_CONFIG_DIR`, and the audit reads transcripts from its `projects` folder instead of `~/.claude`.
+
+With `tunnel`, the runner checks for `cloudflared` before it creates anything and stops with a message if it is missing.
+
+## The trial's own Wheelhouse home
+
+Wheelhouse keeps its records, events, helper socket and engine state under `WHEELHOUSE_HOME`. The runner sets it itself, to `<run folder>/wheelhouse-home` or to `HAIKU_TRIAL_WHEELHOUSE_HOME` when that is set, and passes it to the front desk and every process it starts, so the trial's helper and its feature sessions never meet your running helper or your projects. It refuses to run if the folder is, is inside, or holds `~/.wheelhouse`. You do not need to export `WHEELHOUSE_HOME` yourself.
+
+The runner works with two names for the project: the **folder** (`<run folder>/project`, for git, tmux and transcripts) and the **name** Wheelhouse keeps its records under (`<owner>__haiku-trial-<date>`, from `projectSlug`). The real host refuses one where it wants the other.
 
 ## The director's three steps
 
@@ -40,7 +48,7 @@ Each step appends to `run-log.jsonl` in the run folder, and a step that finishes
 
 ## restore
 
-`node probes/haiku-trial/runner.js restore` stops what the run started, as its log records it: the `haiku-trial-*` tmux sessions, the product process and the tunnel process. It stops nothing else and deletes nothing: no repository, no Vercel project, no folder.
+`node probes/haiku-trial/runner.js restore` stops what the run started, as its log records it: the `haiku-trial-*` tmux sessions, the product process, the tunnel process, and the trial's own helper, watchers and foremen under the trial home (the helper only while it is still the process its record names). It never touches `~/.wheelhouse` and deletes nothing: no repository, no Vercel project, no folder.
 
 ## Where results go
 
