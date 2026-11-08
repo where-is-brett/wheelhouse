@@ -956,6 +956,8 @@ const isSeatTakeOverClick = (click) => click.label === TAKEOVER_LABEL && setLine
 
 const ASIDE_CLICK_LINE = 'Wheelhouse: the director\'s click in this window was not recorded, because the First Mate is in another window. The take-over card in this window can move the First Mate here.';
 
+const SEAT_NOT_MOVED_LINE = 'Wheelhouse: the First Mate did not move, because the seat could not be written. Tell the director in one plain line that the take-over did not happen and they can try the card again.';
+
 // After a seat take-over click was recorded: moves the seat to this window while it still names the session and `since` the
 // card showed. The line it gives is this turn's context.
 async function moveSeat({ project, input, from }) {
@@ -968,7 +970,7 @@ async function moveSeat({ project, input, from }) {
       ? `Wheelhouse: the First Mate did not move, because the seat changed hands after that card was shown. Window session ${holder} holds it now, so this window is still an ordinary one. Tell the director in one plain line.`
       : 'Wheelhouse: the First Mate did not move, because the seat changed after that card was shown, and no window holds it now. Tell the director in one plain line.';
   } catch {
-    return null;
+    return SEAT_NOT_MOVED_LINE;
   }
 }
 
@@ -1105,7 +1107,11 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   // A Take over here on the First Mate's seat, once its record is sent: the seat moves here while it still stands as the card showed it.
   const moved = [];
   for (const { kept, from } of seatMoves) {
-    if (sent.get(kept) !== true || typeof input.session_id !== 'string' || input.session_id === '') continue;
+    if (typeof input.session_id !== 'string' || input.session_id === '') continue;
+    if (sent.get(kept) !== true) {
+      moved.push(SEAT_NOT_MOVED_LINE);
+      continue;
+    }
     const line = await moveSeat({ project, input, from });
     if (line !== null) moved.push(line);
   }
