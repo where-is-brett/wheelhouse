@@ -60,6 +60,20 @@ test('each call builds the recorded argv on darwin and win32', () => {
   }
 });
 
+test('foremanCall passes a session id', () => {
+  const claude = { kind: 'direct', file: 'claude' };
+  const id = '11111111-2222-3333-4444-555555555555';
+  const { args } = sessions.foremanCall({ config: {}, prompt: 'go', env: {}, claude, sessionId: id });
+  assert.deepEqual(args.slice(0, 4), ['--session-id', id, '-p', 'go']);
+});
+
+test('foremanCall without one is unchanged', () => {
+  const claude = { kind: 'direct', file: 'claude' };
+  const { args } = sessions.foremanCall({ config: {}, prompt: 'go', env: {}, claude });
+  assert.equal(args.includes('--session-id'), false);
+  assert.equal(args[0], '-p');
+});
+
 test('the registry\'s adapter and the sessions the waker loads are one object', () => {
   assert.equal(sessionsFor('claude-code'), sessions);
   assert.throws(() => sessionsFor('model-x'), /no adapter for the agent "model-x"/);
@@ -226,7 +240,7 @@ test('without a stand-in the waker starts Claude Code, the default agent', () =>
   const defaulted = waker();
   await defaulted.w.wakeForeman(foremanWake());
   assert.equal(defaulted.calls[0].file, 'claude');
-  assert.equal(defaulted.calls[0].args[0], '-p');
+  assert.equal(defaulted.calls[0].args[2], '-p');
 }));
 
 test('a project that names Claude Code for this computer starts it too', () => withHome(async () => {

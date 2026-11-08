@@ -75,11 +75,12 @@ export function sessionEnv(env) {
 //   - the foreman's long session (`long: true`), with the prompt first and no -p, its own `settings` file,
 //     and --allowedTools always given (by default the foreman's own tools for `pluginRoot`).
 // `model`, `effort` and `fallback` are the foreman's from the column in force, when given (effortArgs).
+// With a `sessionId` (a fresh wake's), `--session-id <id>` goes before -p, so the run's transcript is found by that id.
 // Its environment is sessionEnv's, with the role and FOREGROUND_ONLY, as a feature session's is.
 // Returns { file, args, env, input, verbatim }.
 export function foremanCall({
   config, pluginRoot = PLUGIN_ROOT, prompt, platform = process.platform, env = process.env, claude = null, tools = null, settings = null, long = false,
-  model: chosen = null, effort = null, fallback = null,
+  model: chosen = null, effort = null, fallback = null, sessionId = null,
 }) {
   // The foreman works in the project's main folder, whose local settings start the front desk on its
   // own model (design section 8), so it always names one: the column's, its role's, or the command line's default.
@@ -94,7 +95,7 @@ export function foremanCall({
   ];
   // In the long session the prompt goes first: --allowedTools takes every word after it.
   const resolved = claude ?? resolveClaude(long ? { platform, env } : { env });
-  const call = long ? invocation(resolved, [prompt], args) : invocation(resolved, [], args, prompt);
+  const call = long ? invocation(resolved, [prompt], args) : invocation(resolved, sessionId === null ? [] : ['--session-id', sessionId], args, prompt);
   return { ...call, env: { ...sessionEnv(env), [ROLE_VARIABLE]: 'foreman', ...FOREGROUND_ONLY } };
 }
 

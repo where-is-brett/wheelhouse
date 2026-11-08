@@ -1170,7 +1170,7 @@ export function makeWaker({
   // session record, so no other process finds it with no run recorded); then run, and recorded as running.
   // Resolves with the pid. When the call names an `output` file, the child's output is appended there and read once
   // it exits (finishRun); otherwise its exit code settles `entries`, as it always has.
-  async function launch({ target, cwd, check, build, file, entries = [], beforeRun = () => {}, afterRecord = () => {} }) {
+  async function launch({ target, cwd, check, build, file, entries = [], sessionId = null, beforeRun = () => {}, afterRecord = () => {} }) {
     const adapter = sessionsOf();
     check(adapter);
     if (typeof adapter.prepare === 'function') {
@@ -1222,7 +1222,7 @@ export function makeWaker({
       throw error;
     }
     const startTime = await timeOf(started.pid, [], { fresh: true });
-    writeJsonFile(file0, { state: 'running', pid: started.pid, startTime, at, file, entries, ...(kept ? { run: kept } : {}) });
+    writeJsonFile(file0, { state: 'running', pid: started.pid, startTime, at, file, entries, ...(target === 'foreman' && sessionId !== null ? { sessionId } : {}), ...(kept ? { run: kept } : {}) });
     if (started.exited && typeof started.exited.then === 'function') {
       started.exited.then((code) => serial(async () => {
         const mine = forget(target, started.pid);
@@ -1264,12 +1264,14 @@ export function makeWaker({
   // The foreman's start for `prompt`'s wake: its check asked right before its call is built.
   const startForeman = (cwd, prompt, gathered) => {
     const column = columnNow();
+    const sessionId = crypto.randomUUID();
     return launch({
       target: 'foreman',
       cwd,
+      sessionId,
       check: (adapter) => adapter.checkForeman(config),
       build: (adapter) => adapter.foremanCall({
-        config, project, prompt, tools: foremanTools, env: baseEnv, claude, platform, ...roleOf(column, 'foreman'),
+        config, project, prompt, tools: foremanTools, env: baseEnv, claude, platform, sessionId, ...roleOf(column, 'foreman'),
       }),
       file: gathered.entry.file,
       entries: [gathered.entry.id],

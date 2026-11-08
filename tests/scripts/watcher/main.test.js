@@ -309,7 +309,7 @@ test('under STOP the loop observes and records, but starts and wakes nothing unt
   liftStop();
   await runWatcher({ project: P, config: config(), observe: looker([]).observe, wakerOptions, loops: 1, now: c.now, sleep: c.sleep, log: quiet });
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].args.slice(0, 2), ['-p', PROMPTS.foreman(copyOf(waiting[0].file), foremanCommands(PLUGIN_ROOT).wake)]);
+  assert.deepEqual(calls[0].args.slice(2, 4), ['-p', PROMPTS.foreman(copyOf(waiting[0].file), foremanCommands(PLUGIN_ROOT).wake)]);
   assert.equal(calls[0].env.WHEELHOUSE_ROLE, 'foreman');
 }));
 
@@ -407,7 +407,7 @@ test('the command line gives the watcher the handled ids and the foreman its too
     project: P, config: config(), observe: looker().observe, wakerOptions: { ...wakerOptions, ...options.wakerOptions }, loops: 5, now: c.now, sleep: c.sleep, log: quiet,
   });
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].args.slice(2), ['--permission-mode', 'acceptEdits', '--model', 'model-a', '--effort', 'medium', '--allowedTools', ...foremanTools()]);
+  assert.deepEqual(calls[0].args.slice(4), ['--permission-mode', 'acceptEdits', '--model', 'model-a', '--effort', 'medium', '--allowedTools', ...foremanTools()]);
 }));
 
 test('approved work whose wake was lost is raised again to the Bosun by the recovery', () => withHome(async () => {
