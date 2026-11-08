@@ -108,3 +108,24 @@ Branch `feature/crew-runs-reader` from `main`. Spec sections 4, 7.1, 7.2, 8.1.
 - [ ] **Step 3: Implement** the three functions in `scripts/crew/runs.js` with `fs.readdirSync` and `fs.lstatSync`; no recursion beyond `projects/*/`.
 - [ ] **Step 4: Run them and see them pass.** Same command → PASS.
 - [ ] **Step 5: Commit.** `git add scripts/crew/runs.js tests/scripts/crew/runs.test.js && git commit -m "Crew runs: find a run's transcript and its subagents"`
+
+### Task 1.2: Reading the tail, read-only
+
+**Files:**
+- Modify: `scripts/crew/runs.js`
+- Test: `tests/scripts/crew/runs.test.js`
+
+**Interfaces:**
+- Consumes: Task 1.1's paths.
+- Produces: `readTail(file, {max = 256 * 1024}) -> object[]`: the parsed events of the last `max` bytes, oldest first. The first line is dropped when the read starts mid-file; a line that does not parse is skipped. Opened with `fs.constants.O_RDONLY` (plus `O_NOFOLLOW` where defined); a file that is not plain gives `[]`.
+
+- [ ] **Step 1: Write the failing tests**
+  - `reads only the tail`: a 1 MiB file, `max: 1024` → every event comes from the last 1024 bytes.
+  - `skips a half-written last line`: the file ends `{"type":"assist` → that line is absent, the rest parse.
+  - `skips a line that is not JSON`: `[]`-free result, no throw.
+  - `gives [] for a missing file`.
+  - `does not change the file`: the mtime and size before and after are equal.
+- [ ] **Step 2: Run them and see them fail.** Same command as 1.1 → FAIL.
+- [ ] **Step 3: Implement `readTail`** with `fs.openSync`, `fs.fstatSync` and one `fs.readSync` from `size - max`.
+- [ ] **Step 4: Run them and see them pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Crew runs: read a transcript's tail, read-only"`
