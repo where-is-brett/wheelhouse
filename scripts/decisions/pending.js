@@ -24,6 +24,8 @@ import { canPrivate as canPrivateIn } from './visibility.js';
 export const DECISION_KINDS = Object.freeze(['answer']);
 
 const BUILD_LABELS = Object.values(BUILD_QUESTION_LABELS).filter((l) => !PUT_OFF.includes(l));
+// Where a typed reply can be given: the chat, or a piece's helm.
+const WHERE_PLACES_TYPED = ['chat', 'helm'];
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const flat = (x) => (typeof x === 'string' ? x.replace(/\s+/g, ' ').trim() : '');
 const byOrder = (a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
@@ -149,7 +151,7 @@ export function decisionsFrom(events, enrolled, { canPrivate = false } = {}) {
         at: step.at,
         label: answer?.data.label ?? step.decided?.label ?? null,
         words: answer?.data.words ?? '',
-        where: step.decided?.where ?? 'chat',
+        where: WHERE_PLACES_TYPED.includes(answer?.data.where) ? answer.data.where : step.decided?.where ?? 'chat',
       };
     }
   }

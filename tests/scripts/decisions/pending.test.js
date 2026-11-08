@@ -107,6 +107,18 @@ test('a decision-answer names the option chosen, and is strict about it', async 
   });
 });
 
+test('a typed reply given at a helm shows where helm in the decision record; an old one reads as the chat', async () => {
+  await inHome(() => {
+    const card = raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    typedAnswer(card, { n: 1, label: 'B', where: 'helm' }, '2026-11-08T02:00:00.000Z');
+    const read = readDecisions(P);
+    assert.equal(read.record.find((r) => r.id === card.id).answer.where, 'helm');
+    const second = raise('Which day should it go out?', '2026-11-08T03:00:00.000Z');
+    typedAnswer(second, { n: 2, label: 'A' }, '2026-11-08T04:00:00.000Z');
+    assert.equal(readDecisions(P).record.find((r) => r.id === second.id).answer.where, 'chat');
+  });
+});
+
 test('the card shows the option\'s words, whichever of the reply and the action it earns counts first', async () => {
   await inHome(() => {
     const card = raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');

@@ -975,7 +975,7 @@ async function moveSeat({ project, input, from }) {
 }
 
 // The director's typed reply to a decision shown in the chat (scripts/decisions/answer.js), on UserPromptSubmit. The prompt is
-// the director's own words only in a front-desk session that no script started, which recordAnswer checks. It records, and gives what
+// the director's own words only in a front-desk session that no script started (or a numbered reply at an opened helm), which recordAnswer checks. It records, and gives what
 // it made of the reply back as this turn's own context (a hook of the same event runs beside this one, so nothing is left for a
 // later prompt); a failure here lets the prompt through.
 async function decideReply(input, { client, now, find, dir, budget, env }) {

@@ -272,6 +272,17 @@ test('a failed commit leaves no empty month folder', async () => {
   } finally { remote.cleanup(); }
 });
 
+test('a decision-answer accepts where chat or helm, and refuses any other place', async () => {
+  await withHome(() => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const data = { question: 'How often?', n: 1, label: 'B', option: 'Weekly', words: '', where: 'helm' };
+    assert.ok(makeEvent({ kind: 'decision-answer', data, now: at(1) }).sig);
+    assert.ok(makeEvent({ kind: 'decision-answer', data: { ...data, where: 'chat' }, now: at(2) }).sig);
+    assert.throws(() => makeEvent({ kind: 'decision-answer', data: { ...data, where: 'desk' }, now: at(3) }), /where to be chat or helm/);
+  });
+});
+
 test('blocker, risk and decision events are accepted as plain kinds', async () => {
   await withHome(() => {
     const kinds = [

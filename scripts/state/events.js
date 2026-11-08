@@ -924,7 +924,7 @@ function checkChecksFound(data) {
 // The director's typed reply to a decision: the decision's question as the state holds it, its number, the letter they
 // chose (A to D) or `own` when they answered in their own words, the label of the option that letter stands for (empty for
 // their own words), those words (empty when the letter stood alone) and
-// the place, always the chat. `private: true` follows a letter the director marked "private".
+// the place, the chat or a piece's helm. `private: true` follows a letter the director marked "private".
 function checkDecisionAnswer(data) {
   const bad = (why) => { throw new Error(`A decision-answer event ${why}`); };
   const keys = isPlain(data) ? Object.keys(data).sort().join() : '';
@@ -939,7 +939,7 @@ function checkDecisionAnswer(data) {
   if ((data.label === 'own') !== (data.option === '')) bad('needs an option for a letter and none for the director\'s own words');
   if (typeof data.words !== 'string' || data.words.length > 2000) bad('needs words, empty when there are none, of at most 2000 characters');
   if (data.label === 'own' && data.words.trim() === '') bad('needs the director\'s words when it is their own');
-  if (data.where !== 'chat') bad('needs where to be chat');
+  if (data.where !== 'chat' && data.where !== 'helm') bad('needs where to be chat or helm');
 }
 
 // The director's approval of a read-only route to the project's real data: the one command that may run on it.

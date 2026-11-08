@@ -409,6 +409,17 @@ test('cardOutcomes: decided carries where the deciding answer was given', async 
   });
 });
 
+test('cardOutcomes: a typed reply carries its own place, and not another', async () => {
+  await withHome(() => {
+    const question = 'How often should the digest go out?';
+    const card = ev('card', 1, cardData(question));
+    const typed = (extra) => ev('decision-answer', 5, { question, n: 1, label: 'B', option: 'Weekly', words: '', ...extra });
+    const whereOf = (answer) => cardOutcomes([card, answer], readEnrolled()).find((o) => o.card.id === card.id).decided.where;
+    assert.equal(whereOf(typed({ where: 'helm' })), 'helm');
+    assert.equal(whereOf(typed({ where: 'chat' })), 'chat');
+  });
+});
+
 const shownData = (code, question, options = ['Yes', 'No']) => ({ code, question, options });
 
 test('blockers and risks hold the latest per key; decisions list newest first, at most 50', async () => {

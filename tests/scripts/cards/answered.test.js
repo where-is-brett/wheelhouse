@@ -48,3 +48,15 @@ test('the moved helpers behave as before', () => {
   assert.equal(countedOf({ card: card({ kind: 'confirm' }), decided: { label: null } }), 'Confirm');
   assert.equal(countedOf({ card: card(), decided: { label: null } }), 'an answer');
 });
+
+test('answeredWords: an answer at a helm says where', () => {
+  const decided = { at: at(2026, 10, 4, 10, 20), label: 'B', where: 'helm' };
+  assert.equal(answeredWords({ card: card(), decided }, NOW), 'answered B at the helm at 10:20');
+});
+
+test('sinceLine: a helm answer reaches the line with its place', async () => {
+  const { sinceLine } = await import('../../../scripts/cards/panel-words.js');
+  const decided = { at: at(2026, 10, 4, 10, 20), label: 'B', where: 'helm' };
+  const line = sinceLine([{ card: card({ question: 'Which tide table?' }), decided }], new Date(2026, 10, 4, 10, 0).getTime(), NOW);
+  assert.match(line, /Which tide table\?: answered B at the helm at 10:20/);
+});
