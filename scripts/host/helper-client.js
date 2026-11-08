@@ -48,6 +48,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     stop: post('/stop/set'), //      { by?, wait? } -> { ok, engine? }: turns STOP on, then the engine's runs are cancelled; nothing here lifts it. `by: 'prompt'` records that the director's word set it, `by: 'runbook'` the runbook; `wait: true` waits for the engine and gives what it cancelled
     session: {
       mark: post('/session/mark'), // { project | cwd, mark, data } -> { ok, id }: a session's mark, as a plain note: 'unknown-tool' ({ name }), 'compaction' ({ trigger }) or 'deadline' ({ event })
+      seat: post('/session/seat'), // { project | cwd, session } -> { ok, holds }: whether the session holds the project's First Mate seat; answered under STOP
       note: post('/session/note'), // { project | cwd, session, text } -> { ok, file }: the session's note, up to 1,200 characters, written beside its gauge reading; refused under STOP
     },
     cards: {

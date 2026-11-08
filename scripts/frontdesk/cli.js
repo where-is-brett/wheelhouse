@@ -122,7 +122,6 @@ export { surveyLines, workLines };
 import { SUGGEST, WHY, suggestedAt } from '../lib/calm-words.js';
 import { keep, taken } from '../hooks/pending.js';
 import { projectOf } from '../hooks/kit.js';
-import { holdsSeat } from '../lib/first-mate-seat.js';
 import { noteProblem } from '../lib/session-note.js';
 import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
 
@@ -142,14 +141,16 @@ export const SEAT_WRITES = Object.freeze(['cards', 'pull-cards', 'again', 'card'
 export const SEAT_REFUSAL = 'The First Mate is in another window, so this window can look things up but not record anything or hand out cards. The director can move the First Mate here with the take-over card in this window.';
 
 // The refusal for a seat write from a window that doesn't hold the seat; null when the command may run. A script or test
-// (no session id) and a folder in no project are never refused.
-export function seatRefusal({ command, env, cwd }) {
+// (no session id) and a folder in no project are never refused. The seat is read through the host helper, since this
+// command runs in the project's sandbox, which cannot read the Wheelhouse home; refused only on its plain answer that
+// another window holds the seat.
+export async function seatRefusal({ command, env, cwd, client }) {
   if (!SEAT_WRITES.includes(command)) return null;
   const session = env?.CLAUDE_CODE_SESSION_ID;
   if (typeof session !== 'string' || session === '') return null;
-  const found = projectOf(cwd);
-  if (found === null || holdsSeat(found.project, session)) return null;
-  return SEAT_REFUSAL;
+  let got;
+  try { got = await client.session.seat({ cwd, session }); } catch { return null; }
+  return got?.ok === true && got.holds === false ? SEAT_REFUSAL : null;
 }
 
 const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts'];
@@ -1395,9 +1396,9 @@ export async function main(argv, {
   try {
     const [command, ...rest] = argv;
     if (!COMMANDS.includes(command)) throw new CliError(`Commands: ${COMMANDS.join(', ')}`);
-    const refused = seatRefusal({ command, env, cwd });
-    if (refused !== null) throw new CliError(refused);
     const helper = client ?? helperClient(command === 'confirm' ? { timeout: CONFIRM_WAIT_MS } : {});
+    const refused = await seatRefusal({ command, env, cwd, client: helper });
+    if (refused !== null) throw new CliError(refused);
     const here = path.resolve(cwd);
     const stdin = async () => (input === undefined ? readInput() : input);
     const json = (value) => out(`${JSON.stringify(inChatWords(value), null, 2)}\n`);

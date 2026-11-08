@@ -175,6 +175,7 @@ import { briefHash } from '../feature/files.js';
 import { HAND_DONE, HAND_GOAL } from '../lib/by-hand-done.js';
 import { writeInside } from '../lib/write-inside.js';
 import { tieNamesWork } from '../lib/by-hand-tie.js';
+import { holdsSeat } from '../lib/first-mate-seat.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 // The adapter's refusal of a merge by a key GitLab does not let merge (adapter.js), and what the
@@ -920,7 +921,7 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 // ~/.wheelhouse cannot be read: like the runbook's, each may give `cwd`, a full path, and the
 // helper places the project from it.
 const PLACED_ROUTES = [
-  '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/session/note', '/cards/chat-click', '/confirm',
+  '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/session/note', '/session/seat', '/cards/chat-click', '/confirm',
   '/desk/read', '/desk/act', '/desk/watch',
   '/local/undo', '/undo', '/local/move',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
@@ -2251,6 +2252,13 @@ export async function startHelper({
     const problem = noteProblem(text);
     if (problem !== null) refuse(problem);
     return { ok: true, file: writeNoteFile(project, session, text) };
+  }
+
+  // Whether a session holds the project's First Mate seat, for the front desk, whose sandbox cannot read the
+  // Wheelhouse home. A read: answered under STOP.
+  async function doSessionSeat({ project, session }) {
+    if (typeof session !== 'string' || session === '') refuse('this session has no id to look the seat up by');
+    return { ok: true, holds: holdsSeat(project, session) };
   }
 
   // A click in the chat (ruling P5-17): an unsigned card-answer naming its proof, never signed. A label that
@@ -4860,6 +4868,7 @@ export async function startHelper({
     '/state/write': stateRoute(doWrite, { write: true }),
     '/session/mark': stateRoute(doSessionMark, { write: true }),
     '/session/note': stateRoute(doSessionNote, { clone: false, write: true }),
+    '/session/seat': stateRoute(doSessionSeat, { clone: false }),
     '/cards/chat-click': stateRoute(doChatClick, { write: true }),
     // One window at a time on this computer: a second request waits for the first window to close.
     '/confirm': (body, ctx) => oneAtATime('window', () => doConfirm(body, ctx)),

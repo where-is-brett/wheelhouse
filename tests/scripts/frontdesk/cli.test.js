@@ -42,7 +42,8 @@ import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { SUGGEST, WHY, suggestedAt } from '../../../scripts/lib/calm-words.js';
 import { answeredWords, subjectOf } from '../../../scripts/cards/answered.js';
-import { takeSeat } from '../../../scripts/lib/first-mate-seat.js';
+import { takeSeat, holdsSeat } from '../../../scripts/lib/first-mate-seat.js';
+import { projectOf } from '../../../scripts/hooks/kit.js';
 import { takeHere } from '../../../scripts/lib/session-files.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
@@ -105,6 +106,13 @@ function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, 
     profile: async () => ({ settings: profile }),
   };
   const client = {
+    // The seat as the helper reads it: placed by the folder, the seat file in the test's home. Not a call the tests count.
+    session: {
+      seat: async (body) => {
+        const found = projectOf(body.cwd);
+        return found === null ? { ok: false, error: 'This folder is in no Wheelhouse project' } : { ok: true, holds: holdsSeat(found.project, body.session) };
+      },
+    },
     desk: {
       read: async (body) => {
         calls.push(['desk.read', { cwd: body.cwd, view: body.view, args: body.args }]);
@@ -2118,7 +2126,7 @@ test('through the real helper, the command places the project from its folder an
         const say = async (argv, input) => {
           let out = '';
           let err = '';
-          const code = await main(argv, { cwd: path.join(folder, 'src'), client, input, out: (t) => { out += t; }, err: (t) => { err += t; } });
+          const code = await main(argv, { cwd: path.join(folder, 'src'), env: {}, client, input, out: (t) => { out += t; }, err: (t) => { err += t; } });
           assert.equal(code, 0, err);
           return out;
         };
@@ -2449,13 +2457,23 @@ test('no session id keeps today\'s behaviour', async () => {
 
 test('outside a project nothing is refused', async () => {
   await inHome(async () => {
-    for (const command of SEAT_WRITES) assert.equal(seatRefusal({ command, env: { CLAUDE_CODE_SESSION_ID: 'a' }, cwd: CWD }), null, command);
+    const { client } = fakeHelper();
+    for (const command of SEAT_WRITES) assert.equal(await seatRefusal({ command, env: { CLAUDE_CODE_SESSION_ID: 'a' }, cwd: CWD, client }), null, command);
   });
+});
+
+test('a helper that can\'t answer about the seat refuses nothing', async () => {
+  const env = { CLAUDE_CODE_SESSION_ID: 'a' };
+  const failing = { session: { seat: async () => { throw new Error('no helper'); } } };
+  assert.equal(await seatRefusal({ command: 'cards', env, cwd: CWD, client: failing }), null);
+  const unsure = { session: { seat: async () => ({ ok: true }) } };
+  assert.equal(await seatRefusal({ command: 'cards', env, cwd: CWD, client: unsure }), null);
 });
 
 test('seatRefusal leaves commands outside the list alone', async () => {
   await seatHeldByB(async (folder) => {
-    for (const command of ['views', 'note', 'alerts', 'premium-check']) assert.equal(seatRefusal({ command, env: { CLAUDE_CODE_SESSION_ID: 'a' }, cwd: folder }), null, command);
-    assert.equal(seatRefusal({ command: 'cards', env: { CLAUDE_CODE_SESSION_ID: 'a' }, cwd: folder }), SEAT_REFUSAL);
+    const { client } = fakeHelper();
+    for (const command of ['views', 'note', 'alerts', 'premium-check']) assert.equal(await seatRefusal({ command, env: { CLAUDE_CODE_SESSION_ID: 'a' }, cwd: folder, client }), null, command);
+    assert.equal(await seatRefusal({ command: 'cards', env: { CLAUDE_CODE_SESSION_ID: 'a' }, cwd: folder, client }), SEAT_REFUSAL);
   });
 });

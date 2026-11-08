@@ -38,6 +38,7 @@ import { main as protectedCheck } from '../../scripts/engine/protected-check.js'
 import { main as controlCheck } from '../../scripts/engine/control-check.js';
 import { withTicket } from '../../scripts/engine/ticket.js';
 import { until as waitUntil } from './until.js';
+import { takeSeat } from '../../scripts/lib/first-mate-seat.js';
 
 export { PROJECT };
 const WHO = ['-c', 'user.name=Builder', '-c', 'user.email=builder@example.invalid'];
@@ -70,6 +71,11 @@ export async function openDirectorWorld({ recordings = {}, says, lanes = ['quick
   const walls = [...new Set([path.resolve(world.home), fs.realpathSync.native(world.home)])];
   const lines = [];
   const session = { id: 'desk-session', said: [] };
+  // The desk session holds the First Mate's seat, as session start gives it in real use.
+  await takeSeat(PROJECT, { session: session.id, folder: world.folder }, {
+    home: world.home, alive: () => true, startTime: async () => 'T1',
+    ancestor: { pid: 20, table: [{ pid: 10, ppid: 1, command: 'claude' }, { pid: 20, ppid: 10, command: 'node' }] },
+  });
   Object.assign(world, {
     client, lines, session, now, recordings,
     // Every line given to the director so far (the commands' output, the card text, the wakes), and the document hashes recorded.
