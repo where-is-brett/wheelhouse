@@ -15,6 +15,7 @@ import { BUILD_QUESTION_LABELS, isBuildQuestion, settingKey } from '../protectio
 import { SEE_BEFORE_MERGE, SEE_IN_BRIEFING } from '../lib/calm-words.js';
 import { REST_LINE, restOf } from '../routing/premium.js';
 import { NOT_COUNTING_LINE, checksRanLine } from '../checks/not-counting.js';
+import { endedBy } from '../foreman/queue.js';
 
 const LANES = ['quick', 'small', 'feature', 'bug'];
 const WHEN = ['now', 'next', 'later'];
@@ -363,6 +364,29 @@ function agentHealth(agent) {
   return safetyLine(options).slice(0, AGENT_LINES_SHOWN).map((line, i) => ({ level: 'watch', text: cap(i === 0 ? `${label}: ${line}` : line) }));
 }
 
+// How long a worktree aside's overlap record keeps its board line (spec 6.6): a week, or until its pieces end.
+const OVERLAP_DAYS = 7;
+
+// The board's line for each side branch (a worktree aside, scripts/hooks/aside-overlap.js) that overlaps crew pieces still
+// going: "A side branch (<branch>) overlaps <pieces>". It sits with the health lines, which is where the board carries what
+// the director should look at. A branch's records within the week add their pieces together; a piece that has ended drops out.
+function overlapLines(events, views, nowMs) {
+  const byBranch = new Map();
+  for (const e of events.filter((x) => x.kind === 'aside-overlap' && isRecord(x.data)).sort(oldestFirst)) {
+    const at = Date.parse(timeOf(e.at));
+    if (!(at <= nowMs && nowMs - at <= OVERLAP_DAYS * DAY_MS) || typeof e.data.branch !== 'string') continue;
+    const pieces = byBranch.get(e.data.branch) ?? [];
+    for (const piece of Array.isArray(e.data.pieces) ? e.data.pieces : []) {
+      if (typeof piece === 'string' && !pieces.includes(piece) && !endedBy(views?.reports, piece, views?.work?.[piece]?.work)) pieces.push(piece);
+    }
+    byBranch.set(e.data.branch, pieces);
+  }
+  return [...byBranch].filter(([, pieces]) => pieces.length > 0).map(([branch, pieces]) => ({
+    level: 'watch',
+    text: cap(`A side branch (${oneLine(branch)}) overlaps ${pieces.length > 1 ? `${pieces.slice(0, -1).map(oneLine).join(', ')} and ${oneLine(pieces.at(-1))}` : oneLine(pieces[0])}`),
+  }));
+}
+
 // How long a session's mark of a tool Wheelhouse doesn't know keeps the board's line (ruling P5-19).
 const UPDATE_WAITING_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -508,7 +532,7 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
       ...(oneLine(m.data.forUsers) ? {} : { behind: true }),
     })), []),
     ideas,
-    health: [...(lines ?? []).map((l) => ({ level: l.level, text: l.text, ...(l.safekeeping === true ? { safekeeping: true, detail: l.detail } : {}) })), ...part(missing, 'checks line', () => checkLines(all), []), ...part(missing, 'agent line', () => (agent === undefined ? [] : agentHealth(agent)), []), ...part(missing, 'update line', () => updateLines(all, agent, nowMs), []), ...part(missing, 'premium line', () => premiumRestLines(all, nowMs), []), ...part(missing, 'health', () => extraHealth(loop?.incidents, report, hostUnreachable), [])],
+    health: [...(lines ?? []).map((l) => ({ level: l.level, text: l.text, ...(l.safekeeping === true ? { safekeeping: true, detail: l.detail } : {}) })), ...part(missing, 'checks line', () => checkLines(all), []), ...part(missing, 'side branch line', () => overlapLines(all, state, nowMs), []), ...part(missing, 'agent line', () => (agent === undefined ? [] : agentHealth(agent)), []), ...part(missing, 'update line', () => updateLines(all, agent, nowMs), []), ...part(missing, 'premium line', () => premiumRestLines(all, nowMs), []), ...part(missing, 'health', () => extraHealth(loop?.incidents, report, hostUnreachable), [])],
     budget: {
       week: week ? {
         from: timeOf(week.from), to: timeOf(week.to), tokens: numberOrNull(week.tokens), usd: numberOrNull(week.usd),

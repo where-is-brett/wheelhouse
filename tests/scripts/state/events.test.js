@@ -1038,6 +1038,17 @@ test('events: a watch event refuses an unknown level', () => {
   for (const level of ['loud', '', null, 1]) assert.throws(() => makeEvent({ kind: 'watch', data: { work: 'login', level } }), undefined, String(level));
 });
 
+test('events: aside-overlap needs branch, pieces, files and at', () => {
+  assert.equal(PLAIN_KINDS.includes('aside-overlap'), true);
+  assert.equal(PROTECTED_KINDS.includes('aside-overlap'), false);
+  const full = { branch: 'side', pieces: ['login-retry'], files: ['src/login.ts'], at: '2026-11-08T10:00:00.000Z' };
+  makeEvent({ kind: 'aside-overlap', data: full });
+  const { pieces: _p, ...noPieces } = full;
+  for (const data of [noPieces, { ...full, files: 'src/login.ts' }, { ...full, pieces: [1] }, { ...full, at: 'not a time' }, { ...full, extra: 1 }]) {
+    assert.throws(() => makeEvent({ kind: 'aside-overlap', data }), undefined, JSON.stringify(data));
+  }
+});
+
 test('events: a helm note of six lines is refused', () => {
   for (const kind of ['helm', 'helm-ended', 'helm-note']) assert.equal(PLAIN_KINDS.includes(kind), true);
   const five = ['a', 'b', 'c', 'd', 'e'].join('\n');
