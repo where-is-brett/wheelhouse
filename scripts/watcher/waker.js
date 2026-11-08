@@ -1266,8 +1266,11 @@ export function makeWaker({
     if (started.exited && typeof started.exited.then === 'function') {
       started.exited.then((code) => serial(async () => {
         const mine = forget(target, started.pid);
-        // A run the director's "now" ended has had its wakes put back and its record removed: nothing more to settle.
-        if (!mine && stoppedByHelm.delete(started.pid)) return deliver();
+        // A run the director's "now" ended (here or in the helm's own process) has had its record taken from the held
+        // piece and its wakes put back, whatever code it exits with: nothing more to settle.
+        if (!mine && target !== 'foreman' && helmHeld(project, nameOf(target))) {
+          return deliver();
+        }
         if (kept?.premium === true && mine && await premiumRefused(target, kept, code, entries)) {
           // Rests the premium model, and its wake goes again on the most capable model.
         } else {
@@ -1275,8 +1278,7 @@ export function makeWaker({
             // A record already ended elsewhere (endRecord) has been read there.
             if (mine) await finishRun(adapter, target, kept, code, entries);
           } else if (code === 0) settleEnded(target, entries);
-          else if (mine || target === 'foreman' || !helmHeld(project, nameOf(target))) {
-            // A record already taken from a held piece was ended by the director's "now", which put its wakes back.
+          else {
             settle(entries, 'failed', `its session exited with code ${code}`);
             if (entries.length === 0) onError(`The ${target.slice('feature-'.length)} session exited with code ${code}`);
           }
@@ -1288,8 +1290,6 @@ export function makeWaker({
     }
     return started.pid;
   }
-  // The pids of runs the helm's "now" ended in this process, so their exit settles nothing a second time.
-  const stoppedByHelm = new Set();
   // The records a refused prepare raised, each once for this waker.
   const raisedPrepare = new Set();
 
@@ -1859,9 +1859,11 @@ export function makeWaker({
         // A record still being made names no process yet: there is nothing to end.
         if (state.live && !Number.isInteger(record.pid)) return { stopped: false, why: 'starting' };
         const same = (r) => r.at === record.at && r.pid === record.pid && r.state === record.state;
-        if (state.live) {
-          stoppedByHelm.add(record.pid);
-          if (!kill(record.pid)) stoppedByHelm.delete(record.pid);
+        // A process is ended when it is live, or has overrun its time and is still the one recorded, and only when its
+        // start time can be checked against the record's: a pid whose identity can't be verified is left alone.
+        const running = state.live !== undefined || state.why === 'overran';
+        if (running && typeof record.startTime === 'string' && await timeOf(record.pid, [], { fresh: true }) === record.startTime) {
+          kill(record.pid);
         }
         if (claimRecord(target, same) === null) return { stopped: false, why: 'ended elsewhere' };
         settle(list(record.entries).filter((x) => typeof x === 'string'), 'again');

@@ -1777,3 +1777,35 @@ test('waker: a run ended by another process\'s now costs its wakes no failure', 
   assert.equal(entry.failures, 0, 'the watcher that started the run settles nothing when it sees the exit');
   assert.equal(entry.retryAt, null);
 }));
+
+test('waker: a run another process\'s now ended, exiting with code 0, keeps its wakes', () => withHome(async () => {
+  const { w, fake, dir } = await liveRun();
+  const other = waker(fake, { locate: () => dir, onError: () => {}, startTimeOf: async () => 'A', kill: (pid) => { fake.end(pid, 0); return true; } });
+  hold('login-page');
+  assert.equal((await other.stopRun('login-page')).stopped, true);
+  await flush();
+  const [entry] = w.waiting();
+  assert.ok(entry, 'the wake is not settled done and dropped');
+  assert.equal(entry.flight, null);
+}));
+
+test('waker: now ends a run that has overrun its time and is still the recorded process', () => withHome(async () => {
+  const { w, killed, fake } = await liveRun();
+  w.clock.move(MAX_RUN_MS.feature + MIN);
+  hold('login-page');
+  const got = await w.stopRun('login-page');
+  assert.equal(got.stopped, true);
+  assert.deepEqual(killed, [fake.calls[0].pid]);
+  assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), false);
+  assert.equal(w.waiting()[0].flight, null);
+}));
+
+test('waker: now ends no process whose start time can\'t be verified', () => withHome(async () => {
+  const { w, killed } = await liveRun({ startTime: null });
+  hold('login-page');
+  const got = await w.stopRun('login-page');
+  assert.equal(got.stopped, true);
+  assert.deepEqual(killed, [], 'a record with no start time names a process that can\'t be told from another');
+  assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), false, 'the record is removed');
+  assert.equal(w.waiting()[0].flight, null, 'the wake is back');
+}));
