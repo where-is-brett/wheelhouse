@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   configDir, findTranscript, findSubagents, readTail, stepOf, stepsOf, mask, plain,
-  roleOf, subagentLine, runSteps,
+  roleOf, subagentLine, runSteps, escapeMarkdown, renderPage, pagePath, writePage,
 } from '../../../scripts/crew/runs.js';
 import { glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 
@@ -607,4 +607,128 @@ test('a test run is a test tool in command position', () => {
   for (const command of ['cd test', 'ls test/', 'git log -- test', 'cat jest.config.js', 'echo test']) {
     assert.equal(stepOf(tool('Bash', { command })).text, 'Running a command', command);
   }
+});
+
+// The transcript page
+
+const result = (id, content) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content }] } });
+const call = (id, name, input) => asst({ type: 'tool_use', id, name, input });
+const NOW = new Date(2026, 10, 8, 14, 5);
+
+test('page: escapes Markdown and HTML', () => {
+  assert.equal(escapeMarkdown('a & <b> `c` *d* _e_ [f] #g |h \\i'), 'a &amp; &lt;b&gt; \\`c\\` \\*d\\* \\_e\\_ \\[f\\] \\#g \\|h \\\\i');
+  const page = renderPage({
+    work: 'login',
+    events: [call('t1', 'Read', { file_path: '/w/tree/a.ts' }), result('t1', '<script>alert(1)</script> [x](http://e)')],
+    now: NOW,
+  });
+  assert.match(page, /&lt;script&gt;/);
+  assert.match(page, /\\\[x\\\]/);
+  assert.doesNotMatch(page, /<script>/);
+});
+
+test('page: header and cut result line', () => {
+  const page = renderPage({
+    work: 'login',
+    events: [call('t1', 'Read', { file_path: '/w/tree/a.ts' }), result('t1', `line one\nline two ${'x'.repeat(300)}`)],
+    now: NOW,
+  });
+  assert.ok(page.startsWith('# login: what the crew did\n\nWritten 8 November 2026, 14:05. Kept on this computer only.\n'));
+  const lines = page.split('\n');
+  const at = lines.indexOf('- Reading `a.ts`'.replace(/`/g, '\\`'));
+  assert.ok(at > 0);
+  assert.ok(lines[at + 1].startsWith('  line one line two '));
+  assert.ok(lines[at + 1].length <= 2 + 160);
+});
+
+test('page: masks a token', () => {
+  const token = `ghp_${'a1B2'.repeat(6)}`;
+  const page = renderPage({
+    work: 'login',
+    events: [text(`I found ${token} here.`), call('t1', 'Bash', { command: 'env' }), result('t1', `TOKEN=${token}`)],
+    now: NOW,
+  });
+  assert.ok(!page.includes(token));
+  assert.ok(!page.includes('a1B2a1B2'));
+  assert.match(page, /hidden: looked like a key/);
+});
+
+test('page: subagents under their own headings', () => {
+  const line = subagentLine({ agentType: 'reviewer', description: 'task 2' });
+  const page = renderPage({
+    work: 'login',
+    events: [text('Starting.')],
+    subagents: [{ line, events: [call('s1', 'Grep', { pattern: 'x' })] }],
+    now: NOW,
+  });
+  assert.match(page, /^## A Lookout is reviewing task 2$/m);
+  assert.ok(page.indexOf('## A Lookout') < page.indexOf('Searching the code'));
+});
+
+test('page: newest at the bottom', () => {
+  const page = renderPage({
+    work: 'login',
+    events: [call('a', 'Read', { file_path: '/w/tree/first.ts' }), call('b', 'Edit', { file_path: '/w/tree/last.ts' })],
+    now: NOW,
+  });
+  const steps = page.split('\n').filter((l) => l.startsWith('- '));
+  assert.equal(steps.length, 2);
+  assert.match(steps[1], /last\.ts/);
+  assert.ok(page.trimEnd().endsWith(steps[1]));
+});
+
+test('page: a waiting decision by number only', () => {
+  const events = [call('d', 'Bash', { command: 'node scripts/frontdesk/cli.js record decision --question "Secret question?"' }), result('d', 'Secret question? recorded')];
+  const page = renderPage({ work: 'login', events, waiting: 2, now: NOW });
+  assert.ok(page.trimEnd().endsWith('Waiting for your answer to decision 2'));
+  assert.ok(!page.includes('Secret'));
+  assert.ok(!renderPage({ work: 'login', events, waiting: 'x', now: NOW }).includes('Waiting for'));
+});
+
+test('page: no transcript yet', () => {
+  assert.match(renderPage({ work: 'login', events: [], now: NOW }), /^No transcript yet\.$/m);
+  const { env } = fakeConfig();
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'crew-proj-'));
+  const file = writePage(project, 'login', { sessionId: 'missing', env, now: NOW });
+  assert.equal(file, pagePath(project, 'login'));
+  assert.match(fs.readFileSync(file, 'utf8'), /No transcript yet\./);
+});
+
+test('page: writes the run, its subagents, and nothing else', () => {
+  const { dir, env } = fakeConfig();
+  const proj = path.join(dir, 'projects', 'a');
+  fs.mkdirSync(path.join(proj, 's1', 'subagents'), { recursive: true });
+  fs.writeFileSync(path.join(proj, 's1.jsonl'), `${JSON.stringify(text('Hello there. More.'))}\n`);
+  fs.writeFileSync(path.join(proj, 's1', 'subagents', 'agent-x1.jsonl'), `${JSON.stringify(call('s', 'Grep', {}))}\n`);
+  fs.writeFileSync(path.join(proj, 's1', 'subagents', 'agent-x1.meta.json'), JSON.stringify({ agentType: 'reviewer', description: 'task 2' }));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'crew-proj-'));
+  const file = writePage(project, 'login', { sessionId: 's1', env, now: NOW });
+  const page = fs.readFileSync(file, 'utf8');
+  assert.match(page, /Hello there\./);
+  assert.match(page, /## A Lookout is reviewing task 2/);
+  assert.deepEqual(fs.readdirSync(path.join(project, '.wheelhouse', 'watch')), ['login.md']);
+  assert.deepEqual(fs.readdirSync(project), ['.wheelhouse']);
+});
+
+test('page: refuses a linked folder', () => {
+  const { env } = fakeConfig();
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'crew-proj-'));
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'crew-else-'));
+  fs.mkdirSync(path.join(project, '.wheelhouse'));
+  fs.symlinkSync(elsewhere, path.join(project, '.wheelhouse', 'watch'));
+  assert.equal(writePage(project, 'login', { sessionId: 's', env, now: NOW }), null);
+  assert.deepEqual(fs.readdirSync(elsewhere), []);
+});
+
+test('page: refuses a linked page and a name that is not a slug', () => {
+  const { env } = fakeConfig();
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'crew-proj-'));
+  const elsewhere = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'crew-else-')), 'x.md');
+  fs.writeFileSync(elsewhere, 'keep');
+  fs.mkdirSync(path.join(project, '.wheelhouse', 'watch'), { recursive: true });
+  fs.symlinkSync(elsewhere, path.join(project, '.wheelhouse', 'watch', 'login.md'));
+  assert.equal(writePage(project, 'login', { sessionId: 's', env, now: NOW }), null);
+  assert.equal(fs.readFileSync(elsewhere, 'utf8'), 'keep');
+  assert.equal(writePage(project, '../evil', { sessionId: 's', env, now: NOW }), null);
+  assert.equal(writePage(project, 'Login', { sessionId: 's', env, now: NOW }), null);
 });

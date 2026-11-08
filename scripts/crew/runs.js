@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { plainWords, glossaryOf } from '../frontdesk/glossary.js';
+import { SLUG } from '../lib/build-loop.js';
 
 export function configDir(env = process.env) {
   return env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
@@ -492,10 +493,7 @@ export function runSteps({ sessionId, env = process.env, glossary, waiting = nul
     .sort((a, b) => b.mtime - a.mtime || (a.agentId < b.agentId ? -1 : 1));
   const crew = [];
   for (const sub of working.slice(0, CREW_SHOWN)) {
-    const meta = sub.meta;
-    const fromMeta = meta && (meta.agentType !== undefined || meta.description !== undefined);
-    const call = fromMeta ? { agentType: meta.agentType, description: meta.description }
-      : (meta?.toolUseId !== undefined && calls.get(meta.toolUseId)) || byAgent.get(sub.agentId) || null;
+    const call = callOf(sub, calls, byAgent);
     const latest = stepsOfKind(readTail(sub.file), words).pop();
     if (latest) crew.push(mask(plain(inThirdPerson(roleOf(call?.agentType), latest))));
     else crew.push(worded({ at: null, text: subagentLine(call ?? {}) }, words).text);
@@ -503,6 +501,16 @@ export function runSteps({ sessionId, env = process.env, glossary, waiting = nul
   const left = working.length - CREW_SHOWN;
   if (left > 0) crew.push(`and ${left} more crew member${left === 1 ? '' : 's'}`);
   return { steps, crew };
+}
+
+// The call behind a subagent: its meta's own words, else the call its meta names, else the call whose
+// result names it, else null.
+function callOf(sub, calls, byAgent) {
+  const meta = sub.meta;
+  if (meta && (meta.agentType !== undefined || meta.description !== undefined)) {
+    return { agentType: meta.agentType, description: meta.description };
+  }
+  return (meta?.toolUseId !== undefined && calls.get(meta.toolUseId)) || byAgent.get(sub.agentId) || null;
 }
 
 // A step with its kind, and for a sent subagent the phrase "sending out ..." through the glossary.
@@ -522,4 +530,140 @@ function stepsOfKind(events, words) {
     if (raw) out.push(withKind(raw, words));
   }
   return out;
+}
+
+// The transcript page: the run so far as Markdown, kept on this computer.
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const PAGE_MAX = 2 * 1024 * 1024;
+const RESULT_CHARS = 160;
+const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;' };
+
+// Transcript text made safe for a Markdown page: one line, keys hidden, then every character that
+// Markdown or HTML would act on written as plain text. Keys are hidden first, while they can still
+// be recognised.
+export function escapeMarkdown(text) {
+  return mask(plain(text)).replace(/[&<>\\`*_[\]#|]/g, (c) => ESCAPES[c] ?? `\\${c}`);
+}
+
+function writtenAt(now) {
+  const value = typeof now === 'function' ? now() : now;
+  const d = value instanceof Date ? value : new Date(value ?? Date.now());
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function blocksOf(event) {
+  const content = event?.message?.content;
+  return Array.isArray(content) ? content : [];
+}
+
+// What each tool call returned, as one cut line: call id -> text. Only its first 160 characters
+// are kept, and only after the whole text has been checked for a key.
+function resultLines(events) {
+  const results = new Map();
+  for (const event of events) {
+    for (const block of blocksOf(event)) {
+      if (block?.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue;
+      const c = block.content;
+      const raw = typeof c === 'string' ? c
+        : Array.isArray(c) ? c.map((part) => (typeof part?.text === 'string' ? part.text : '')).join(' ') : '';
+      const whole = mask(plain(raw));
+      if (whole === '') continue;
+      results.set(block.tool_use_id, whole === HIDDEN ? whole : whole.slice(0, RESULT_CHARS).trim());
+    }
+  }
+  return results;
+}
+
+// One run's events as page lines, oldest first.
+function eventLines(events) {
+  const results = resultLines(events);
+  const lines = [];
+  for (const event of events) {
+    if (event?.type !== 'assistant') continue;
+    for (const block of blocksOf(event)) {
+      if (block?.type === 'text' && typeof block.text === 'string') {
+        const said = escapeMarkdown(block.text);
+        if (said !== '') lines.push('', said, '');
+      } else if (block?.type === 'tool_use') {
+        const step = stepsOf([{ ...event, message: { content: [block] } }])[0];
+        if (!step) continue;
+        lines.push(`- ${escapeMarkdown(step.text)}`);
+        // A decision's question is never shown, so nothing the call returned is either.
+        const result = step.text === 'Recording a decision' ? undefined : results.get(block.id);
+        if (result) lines.push(`  ${escapeMarkdown(result)}`);
+      }
+    }
+  }
+  return lines;
+}
+
+export function renderPage({ work, events = [], subagents = [], waiting = null, now = Date.now } = {}) {
+  const out = [
+    `# ${escapeMarkdown(work)}: what the crew did`,
+    '',
+    `Written ${writtenAt(now)}. Kept on this computer only.`,
+    '',
+  ];
+  const own = eventLines(Array.isArray(events) ? events : []);
+  out.push(...(own.some((l) => l !== '') ? own : ['No transcript yet.']));
+  for (const sub of Array.isArray(subagents) ? subagents : []) {
+    out.push('', `## ${escapeMarkdown(sub?.line)}`, '');
+    const lines = eventLines(Array.isArray(sub?.events) ? sub.events : []);
+    out.push(...(lines.some((l) => l !== '') ? lines : ['No transcript yet.']));
+  }
+  if (validWaiting(waiting)) out.push('', `Waiting for your answer to decision ${waiting}`);
+  return `${out.join('\n').replace(/\n{3,}/g, '\n\n')}\n`;
+}
+
+export function pagePath(project, work) {
+  return path.join(project, '.wheelhouse', 'watch', `${work}.md`);
+}
+
+function missing(file) {
+  try {
+    fs.lstatSync(file);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+// Writes the run's page and returns its path. `sessionId` is the piece's session; without one the
+// page says there is no transcript yet. Refuses (null) when `.wheelhouse`, `.wheelhouse/watch` or
+// the page is a link or not what it should be, or `work` is not a feature slug. Writes only the page.
+export function writePage(project, work, { sessionId, env = process.env, now = Date.now, waiting = null } = {}) {
+  if (typeof project !== 'string' || project === '' || typeof work !== 'string' || !SLUG.test(work)) return null;
+  const root = path.join(project, '.wheelhouse');
+  const dir = path.join(root, 'watch');
+  const file = pagePath(project, work);
+  try {
+    for (const folder of [root, dir]) {
+      if (missing(folder)) fs.mkdirSync(folder);
+      else if (!fs.lstatSync(folder).isDirectory()) return null;
+    }
+    if (!missing(file) && !plainFile(file)) return null;
+    const transcript = findTranscript({ sessionId, env });
+    const events = transcript ? readTail(transcript, { max: PAGE_MAX }) : [];
+    const callsFor = agentCalls(events);
+    const subs = transcript ? findSubagents(transcript) : [];
+    const byAgent = callsByAgent(events, callsFor, subs.map((s) => s.agentId));
+    const subagents = subs.map((sub) => {
+      const call = callOf({ ...sub, meta: readMeta(sub.file) }, callsFor, byAgent);
+      return { line: subagentLine(call ?? {}), events: readTail(sub.file, { max: PAGE_MAX }) };
+    });
+    const page = renderPage({ work, events, subagents, waiting, now });
+    const temp = path.join(dir, `.${work}.md.${process.pid}.tmp`);
+    fs.writeFileSync(temp, page, { flag: 'wx' });
+    try {
+      fs.renameSync(temp, file);
+    } catch (error) {
+      fs.rmSync(temp, { force: true });
+      throw error;
+    }
+    return file;
+  } catch {
+    return null;
+  }
 }
