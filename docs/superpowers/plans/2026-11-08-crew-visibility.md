@@ -554,3 +554,23 @@ Branch `feature/crew-helm-desk` from `main` once part 5 is merged. Spec sections
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run them and see them pass.**
 - [ ] **Step 5: Commit.** `git commit -am "Helm: steer a piece from its first step"`
+
+### Task 6.2: "Now": a per-run stop
+
+**Files:**
+- Modify: `scripts/watcher/waker.js` (beside `stateOf` at 1007 and `endRecord` at 1081), `scripts/crew/helm.js`
+- Test: `tests/scripts/watcher/waker.test.js`
+
+**Interfaces:**
+- Consumes: `helmHeld` (5.1); `stateOf`, `endRecord`, `runningFile`, `lostFile`.
+- Produces: `waker.stopRun(work) -> {stopped: boolean}`, refused unless `helmHeld(project, work)`. It ends the process `running/feature-<work>.json` names only when `stateOf` finds it live with a matching start time; removes the running record; puts the wakes that run had taken back in the piece's wakes folder; writes no lost marker. Not All stop: nothing else changes. CLI: `node scripts/crew/helm.js now <work>`.
+
+- [ ] **Step 1: Write the failing tests**
+  - `waker: now ends the held piece's run`: a live stub process → killed, no running record, no lost marker.
+  - `waker: now puts the run's wakes back`: the wake the run took is in the wakes folder again.
+  - `waker: now leaves a reused pid alone`: another start time → no kill, record removed.
+  - `waker: now refuses a piece not held`.
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/watcher/waker.test.js`
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run them and see them pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Helm: end a held piece's current run on the director's word"`
