@@ -93,6 +93,14 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     decisions: {
       batch: post('/decisions/batch'), // { project, date? } -> { ok, step: 'none' | 'opened' | 'waiting' | 'merged', pr?, head?, files?, why? }: the next step of the change that adds the day's decision records with no piece (design section 6.6); refused under STOP
     },
+    // Phone alerts (scripts/alerts/send.js). Only the helper holds a channel's topic or token and only the helper sends; no answer holds one.
+    alert: post('/alert'), //        { project, count } -> { ok, none: true } (no channel is switched on and set up) | { ok, held: true } (quiet hours) | { ok, sent, failed: [channel] }: one alert, "<n> decisions wait in <project>", a channel that fails tried once more
+    alerts: {
+      ntfy: post('/alerts/ntfy'), //         { project | cwd, topic, server? } -> { ok, channel }: keeps the topic; the answer never holds it
+      telegram: post('/alerts/telegram'), // { project | cwd, chat } -> { ok, channel }: the helper asks the director for the bot token in the system's hidden-entry dialog and keeps it
+      status: post('/alerts/status'), //     { project | cwd } -> { ok, setUp: [channel], on: [channel] }: which channels are set up and which are switched on, never what they hold
+      off: post('/alerts/off'), //           { project | cwd, channel } -> { ok, channel }: forgets a channel's key
+    },
     compactWindow: post('/compact-window'), // { project | cwd } -> { ok, step: 'off' | 'on' | 'opened' | 'approve' | 'waiting' | 'closed', pr?, head?, why? }: the next step of the compaction window the director chose
     engineSwitch: post('/engine-switch'), // { project | cwd } -> { ok, step: 'off' | 'on' | 'opened' | 'approve' | 'waiting' | 'closed', pr?, head?, why? }: the switch to the new engine's next step (part 3f)
     local: {

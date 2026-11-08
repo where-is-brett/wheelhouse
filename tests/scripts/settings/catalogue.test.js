@@ -24,6 +24,7 @@ test('every setting in design section 14 is in the catalogue, with its default',
     notifications: ['profile', { channels: ['claude'] }],
     boardTab: ['profile', 'director'],
     hours: ['profile', null],
+    digestAt: ['profile', '17:00'],
     roundCap: ['project', 3],
     compactPrepare: ['project', 200000],
     compactWindow: ['project', 300000],
@@ -86,6 +87,14 @@ test('notifications, hours and sources are checked by their shape', () => {
   assert.doesNotThrow(() => checkSetting('sources', []));
   assert.throws(() => checkSetting('sources', ['http://docs.example.com/a']), /sources can't be/);
   assert.throws(() => checkSetting('sources', 'https://docs.example.com/a'), /sources can't be/);
+});
+
+test('digestAt is a time of day, 17:00 unless changed', () => {
+  assert.equal(SETTINGS.digestAt.default, '17:00');
+  assert.doesNotThrow(() => checkSetting('digestAt', '08:30'));
+  assert.throws(() => checkSetting('digestAt', '8:30'), /digestAt can't be/);
+  assert.throws(() => checkSetting('digestAt', '24:00'), /digestAt can't be/);
+  assert.throws(() => checkSetting('digestAt', 1700), /digestAt can't be/);
 });
 
 test('budget accepts only report while budget allocation is in the backlog', () => {

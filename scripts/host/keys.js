@@ -20,11 +20,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { keysDir } from '../lib/paths.js';
 
-const NAME = /^(?:github-app|gitlab-project-\d+)$/;
+const NAME = /^(?:github-app|gitlab-project-\d+|alerts-ntfy|alerts-telegram)$/;
 
 function fileFor(name) {
   if (typeof name !== 'string' || !NAME.test(name)) {
-    throw new Error('The key name must be github-app or gitlab-project-<number>');
+    throw new Error('The key name must be github-app, gitlab-project-<number>, alerts-ntfy or alerts-telegram');
   }
   return path.join(keysDir(), `${name}.json`);
 }

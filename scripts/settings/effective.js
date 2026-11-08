@@ -77,6 +77,7 @@ export function sayValue(key, value) {
   }
   if (key === 'own-github-app') return value === null ? 'none' : `${value.slug}, on ${value.owner}`;
   if (key === 'hours') return value === null ? 'no set hours' : `${value.days.map((d) => DAYS[d]).join(', ')}, ${value.from} to ${value.to}`;
+  if (key === 'digestAt') return `${value} each day`;
   if (key === 'briefingGapHours') return `${value} ${value === 1 ? 'hour' : 'hours'}`;
   if (key === 'sources') return value.length ? `${value.length} ${value.length === 1 ? 'address' : 'addresses'}` : 'none yet';
   if (key === 'efficiency') return EFFICIENCY_WORDS[value] ?? String(value);

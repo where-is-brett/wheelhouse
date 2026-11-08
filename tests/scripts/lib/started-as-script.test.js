@@ -64,7 +64,7 @@ test('the front desk\'s command started through a linked plugin folder answers',
   fs.symlinkSync(ROOT, plugin, 'dir');
   const done = spawnSync(process.execPath, [path.join(plugin, 'scripts', 'frontdesk', 'cli.js'), 'nonsense'], { encoding: 'utf8', timeout: 20000 });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back\n');
+  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts\n');
 });
 
 // Each asks scripts/lib/started-as-script.js, which takes the arguments whole.

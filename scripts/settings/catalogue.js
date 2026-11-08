@@ -56,6 +56,8 @@ export const SETTINGS = {
   usageMark: { label: 'Usage nudge', group: 'everyday', levels: ['off', 50, 65, 75, 90], default: 75, home: 'profile' },
   boardTab: { label: 'Logbook opens on', group: 'everyday', levels: ['director', 'build'], default: 'director', home: 'profile' },
   hours: { label: 'Working hours', group: 'everyday', check: checkHours, default: null, home: 'profile' },
+  // The local time of day the daily digest is made (scripts/digest/due.js); it waits for the director's next message.
+  digestAt: { label: 'Daily digest time', group: 'everyday', check: (v) => typeof v === 'string' && TIME.test(v), default: '17:00', home: 'profile' },
   // Advanced, kept in the project.
   roundCap: { label: 'Review round cap', group: 'advanced', check: wholeBetween(1, 5), default: 3, home: 'project' },
   // The point where the context gauge says to prepare. The compaction point itself (compactWindow, below) is in

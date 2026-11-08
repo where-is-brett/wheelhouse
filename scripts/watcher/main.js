@@ -17,7 +17,8 @@
 //   4. diffs and routes (core.js) and gives what it found to the bundler, after the routine (routine.js) has made the
 //      moves a script can make (start the next piece, merge, close, wake a session after an answer): an event it dealt
 //      with goes to the digest, and the foreman is woken only for judgement, each event naming its reason;
-//   (also, on the first loop after local midnight, it asks the helper to batch the previous day's decision records that belong
+//   (also, each loop, a phone alert for a decision newly waiting and, once a day after `digestAt`, the daily digest kept for the director's next
+//   message, scripts/watcher/digest.js; and, on the first loop after local midnight, it asks the helper to batch the previous day's decision records that belong
 //   to no piece, scripts/watcher/decision-batch.js);
 //   5. writes each bundle that is due as a wake and hands it to the waker
 //      (waker.js), then lets the waker deliver what was waiting. A bundle
@@ -55,6 +56,7 @@ import { makeRecovery } from './recover.js';
 import { findLostSessions, resumeLost } from './resume.js';
 import { raiseStuckCards } from './stuck-cards.js';
 import { makeDecisionBatcher } from './decision-batch.js';
+import { makeDigestTicker } from './digest.js';
 import { makeWaker, watcherDir, watcherFolder, writeJsonFile, writeWake } from './waker.js';
 import { foremanTools } from '../foreman/tools.js';
 import { readConfig } from '../gate/guardrails.js';
@@ -150,6 +152,7 @@ export async function runWatcher({
   recovery = null,
   resume = null,
   routine = null,
+  digest = null,
   log = (message) => process.stderr.write(`${message}\n`),
 }) {
   const every = { ...INTERVALS, ...intervals };
@@ -184,6 +187,7 @@ export async function runWatcher({
     let recover = recovery;
     let routineMoves = routine === true ? null : routine;
     const batcher = makeDecisionBatcher({ project, client, now, log });
+    const digester = digest ?? makeDigestTicker({ project, client, now, log });
 
     let cursor = readCursor(project);
     let bundler = makeBundler({ now, held: cursor.held });
@@ -332,6 +336,12 @@ export async function runWatcher({
           await batcher.tick();
         } catch (error) {
           log(`The day's decision records couldn't be looked after: ${error.message}`);
+        }
+        // A phone alert for a decision newly waiting, and once a day after digestAt the digest, kept for the director's next message.
+        try {
+          await digester.tick();
+        } catch (error) {
+          log(`The director's day couldn't be looked after: ${error.message}`);
         }
         const written = { ...next, held: bundler.held() };
         writeCursor(project, written);
