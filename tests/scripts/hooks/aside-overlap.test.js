@@ -204,16 +204,16 @@ test('it does nothing outside a worktree aside', async () => {
   assert.equal(desk.writes.length, 0);
 });
 
-test('the base branch falls back to origin/HEAD', () => {
+test('the base branch falls back to origin/HEAD', async () => {
   const { main } = makeAside();
-  assert.equal(mainBranchOf({ cwd: main, views: { settings: {} } }), null);
+  assert.equal(await mainBranchOf({ cwd: main, views: { settings: {} } }), null);
   git(main, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
   git(main, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
-  assert.equal(mainBranchOf({ cwd: main, views: { settings: {} } }), 'origin/main');
-  assert.equal(mainBranchOf({ cwd: main, views: { settings: { baseBranch: { value: 'trunk' } } } }), 'trunk');
+  assert.equal(await mainBranchOf({ cwd: main, views: { settings: {} } }), 'origin/main');
+  assert.equal(await mainBranchOf({ cwd: main, views: { settings: { baseBranch: { value: 'trunk' } } } }), 'trunk');
 });
 
-test('the aside\'s files are the branch\'s changes, uncommitted and untracked files, once each', () => {
+test('the aside\'s files are the branch\'s changes, uncommitted and untracked files, once each', async () => {
   const { side } = makeAside({ tracked: ['src/b.ts'] });
   put(side, 'src/a.ts');
   git(side, 'add', '.');
@@ -223,14 +223,14 @@ test('the aside\'s files are the branch\'s changes, uncommitted and untracked fi
   put(side, 'notes/c.md');
   git(side, 'mv', 'README.md', 'READ.md');
   put(side, '.wheelhouse/aside-overlap.json', '[]');
-  assert.deepEqual(asideFiles({ cwd: side, base: 'main' }).sort(), ['READ.md', 'README.md', 'notes/c.md', 'src/a.ts', 'src/b.ts']);
-  assert.equal(asideFiles({ cwd: side, base: 'no-such-branch' }), null);
+  assert.deepEqual((await asideFiles({ cwd: side, base: 'main' })).sort(), ['READ.md', 'README.md', 'notes/c.md', 'src/a.ts', 'src/b.ts']);
+  assert.equal(await asideFiles({ cwd: side, base: 'no-such-branch' }), null);
 });
 
-test('the files read are capped', () => {
+test('the files read are capped', async () => {
   const { side } = makeAside();
   for (let i = 0; i < FILES_CAP + 20; i += 1) put(side, `many/f${i}.txt`);
-  assert.equal(asideFiles({ cwd: side, base: 'main' }).length, FILES_CAP);
+  assert.equal((await asideFiles({ cwd: side, base: 'main' })).length, FILES_CAP);
 });
 
 test('the warning names each piece, and joins two or more files with commas and "and"', () => {

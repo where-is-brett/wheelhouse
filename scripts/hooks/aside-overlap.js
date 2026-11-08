@@ -11,7 +11,6 @@
 // It informs and never holds an edit or a pull request: with the desk unread or git failing it says nothing.
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { runAndExit, worktreeRoot } from './kit.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { sessionRole, asideKind } from '../lib/role.js';
@@ -21,6 +20,7 @@ import { effectiveSettings } from '../settings/effective.js';
 import { deskClient, unreached } from '../desk/client.js';
 import { helperClient } from '../host/helper-client.js';
 import { withinBudget } from './pending.js';
+import { safeGit } from '../lib/safe-git.js';
 import { readCapped, writeWhole } from '../feature/status.js';
 
 // How many of the aside's files are read; more than this are left out.
@@ -35,21 +35,27 @@ const OWN_FOLDER = '.wheelhouse';
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x !== '';
 
-const git = (run, cwd, args) => run('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GIT_TIMEOUT_MS });
+// git in `cwd` by the repository's git route (scripts/lib/safe-git.js): the fence alone, as these calls only read. Its output,
+// or a throw when git fails. `run` is the route's runner or a stand-in.
+async function git(run, cwd, args) {
+  const got = await safeGit({ ...(run ? { run } : {}), cwd, list: 'project', look: 'never', timeoutMs: GIT_TIMEOUT_MS })(args);
+  if (got?.code !== 0 || typeof got.stdout !== 'string') throw new Error(`git ${args[0]} failed`);
+  return got.stdout;
+}
 const lines = (text) => String(text).split('\n').map((l) => l.trim()).filter((l) => l !== '');
 const nulSplit = (text) => String(text).split('\0').filter((p) => p !== '');
 const ownFile = (file) => file === OWN_FOLDER || file.startsWith(`${OWN_FOLDER}/`);
 
 // asideFiles({ cwd, base, run }) -> the files the branch changed since its merge base with `base`, and its uncommitted and
-// untracked files, each once and at most FILES_CAP; null when any git call fails. `run` is execFileSync or a stand-in.
-export function asideFiles({ cwd, base, run = execFileSync } = {}) {
+// untracked files, each once and at most FILES_CAP; null when any git call fails.
+export async function asideFiles({ cwd, base, run } = {}) {
   try {
-    const mergeBase = git(run, cwd, ['merge-base', 'HEAD', base]).trim();
+    const mergeBase = (await git(run, cwd, ['merge-base', 'HEAD', base])).trim();
     if (mergeBase === '') return null;
-    const files = new Set(nulSplit(git(run, cwd, ['diff', '--name-only', '--no-renames', '-z', mergeBase])));
+    const files = new Set(nulSplit(await git(run, cwd, ['diff', '--name-only', '--no-renames', '-z', mergeBase])));
     // The diff names a renamed file by both paths (--no-renames): the old one is changed too. `-z` gives `XY path` entries,
     // a rename or copy followed by its old path, which the diff has already named.
-    const entries = nulSplit(git(run, cwd, ['status', '--porcelain', '-z', '--untracked-files=all']));
+    const entries = nulSplit(await git(run, cwd, ['status', '--porcelain', '-z', '--untracked-files=all']));
     for (let i = 0; i < entries.length; i += 1) {
       const entry = entries[i];
       if (entry.length < 4) continue;
@@ -67,11 +73,11 @@ const valueOf = (entry) => (isPlain(entry) && Object.hasOwn(entry, 'value') ? en
 
 // mainBranchOf({ cwd, views, run }) -> the project's main branch: the base branch its settings record, else the target of
 // origin/HEAD (as `origin/<name>`), else null.
-export function mainBranchOf({ cwd, views, run = execFileSync } = {}) {
+export async function mainBranchOf({ cwd, views, run } = {}) {
   const recorded = valueOf(isPlain(views?.settings) ? views.settings.baseBranch : undefined);
   if (isText(recorded)) return recorded;
   try {
-    const target = git(run, cwd, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).trim();
+    const target = (await git(run, cwd, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])).trim();
     return target === '' ? null : target;
   } catch {
     return null;
@@ -147,7 +153,7 @@ function deskOf(cwd) {
 // decide(input, { env, cwd, desk, run, now, role, kind }) -> { systemMessage, decision: 'block', reason } for a clash not yet
 // warned of, else undefined.
 export async function decide(input, {
-  env = process.env, cwd = input?.cwd, desk, run = execFileSync, now = () => new Date(), role = sessionRole, kind = asideKind,
+  env = process.env, cwd = input?.cwd, desk, run, now = () => new Date(), role = sessionRole, kind = asideKind,
 } = {}) {
   try {
     if (input?.stop_hook_active === true || typeof cwd !== 'string') return undefined;
@@ -157,11 +163,11 @@ export async function decide(input, {
     if (unreached(got) || got?.ok !== true || !isPlain(got.data?.views)) return undefined;
     const { views } = got.data;
     const clock = typeof now === 'function' ? now() : now;
-    const base = mainBranchOf({ cwd, views, run });
+    const base = await mainBranchOf({ cwd, views, run });
     if (base === null) return undefined;
-    const files = asideFiles({ cwd, base, run });
+    const files = await asideFiles({ cwd, base, run });
     if (files === null) return undefined;
-    const branch = git(run, cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).trim();
+    const branch = (await git(run, cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
     if (branch === '') return undefined;
 
     const settings = flatSettings(views, clock);
