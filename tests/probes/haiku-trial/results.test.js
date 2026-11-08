@@ -47,14 +47,14 @@ test('writeSummary shows a failure with no label as still to sort', () => {
 test('writeSummary leaves out transcript text and paths outside the repository', () => {
   const dir = scratch();
   const dirty = rows.map((r) => ({ ...r, evidence: `${r.evidence} see /Users/someone/x and the line "I will now read the held-back folder"` }));
-  const offending = { models: { clean: false, offenders: [{ file: '/Users/someone/.claude/projects/x/s.jsonl', role: 'feature', session: 's1', model: 'claude-sonnet-4-5', count: 3 }] }, peek: { clean: false, hits: [{ file: '/Users/someone/y.jsonl', role: 'builder', tool: 'Bash', text: 'cat probes/haiku-trial/held-back/x' }] } };
+  const offending = { models: { clean: false, offenders: [{ file: '/Users/someone/.claude/projects/x/s.jsonl', role: 'feature', session: 's1', model: 'other-model', count: 3 }] }, peek: { clean: false, hits: [{ file: '/Users/someone/y.jsonl', role: 'builder', tool: 'Bash', text: 'cat probes/haiku-trial/held-back/x' }] } };
   const md = writeSummary({ file: path.join(dir, 's.md'), date: '2026-11-08', rows: dirty, score, audit: offending, usage, labels: {}, verdict: 'B, see /Users/someone/notes' });
   assert.ok(!md.includes('/Users/'));
   assert.ok(!md.includes('someone'));
   assert.ok(!md.includes('I will now read'));
   assert.ok(!md.includes('cat probes'));
   assert.match(md, /feature/);
-  assert.match(md, /claude-sonnet-4-5/);
+  assert.match(md, /other-model/);
 });
 
 test('writeRaw copies transcripts and writes events, panes, signals and usage', () => {

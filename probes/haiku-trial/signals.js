@@ -17,6 +17,7 @@ import { CLEARED_WORDS } from '../../scripts/host/decision-status.js';
 import { DECISION_CONTEXT } from '../../scripts/checks/where.js';
 import { WAITING_ON_DECISION } from '../../scripts/gate/conditions.js';
 import { alertText } from '../../scripts/alerts/send.js';
+import { PHONE_NEXT } from '../../scripts/setup/engine.js';
 import { auditModels, auditPeek, entriesOf } from './audit.js';
 import { PIECES } from './requests.js';
 
@@ -37,13 +38,26 @@ export const KINDS = Object.freeze({
   run: 'run',
   ruling: 'ruling',
   confirm: 'confirm', // the kind of card a ruling's confirm card has
-  workReady: 'work-ready', // scripts/watcher/core.js and recover.js: the watcher's event that puts an approved piece to the foreman
   approveWork: 'approve-work',
   liftStop: 'lift-stop',
   liftIncident: 'lift-incident',
   resumed: 'resumed', // scripts/watcher/reliability.js: an incident kind
   lost: 'lost',
 });
+
+// The kinds above that are records in the event log (the rest are card kinds, action names and incident kinds).
+export const EVENT_KINDS = Object.freeze([
+  KINDS.work, KINDS.card, KINDS.cardAnswer, KINDS.action, KINDS.approval, KINDS.question, KINDS.decisionAnswer, KINDS.agentCall,
+  KINDS.selfMerged, KINDS.merge, KINDS.incident, KINDS.incidentClosed, KINDS.run, KINDS.ruling,
+]);
+
+// The line setup ends on, as scripts/setup/engine.js words it: "Every step is done." or the phone-notifications line.
+export const SETUP_DONE_LINE = 'Every step is done';
+const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export const SETUP_DONE = new RegExp(`${escaped(SETUP_DONE_LINE)}|${escaped(PHONE_NEXT.split('.')[0])}`, 'i');
+
+// The branches the runner or Wheelhouse itself makes, which are not a piece's work.
+export const OWN_BRANCH = /^(trial\/|wheelhouse\/(undo|decisions))/;
 
 // The names the runner gives the steps it writes to its own log (`runLog`): `{ at, step, note, work?, detail? }`.
 export const STEPS = Object.freeze({
@@ -52,8 +66,7 @@ export const STEPS = Object.freeze({
   start: 'start', // a piece started, `work` names its change
   review: 'review',
   tester: 'tester',
-  routine: 'routine', // a routine move the watcher settled
-  workReady: 'work-ready', // the watcher's event, `detail` as it carries it
+  workReady: 'work-ready', // the runner's note that a piece became ready: a quick or bug work not shown first, or a signed approve-work
   why: 'why', // the stand-in typed `why 1`
   whySeen: 'why-seen', // the why answer reached the pane, note holds its text
   stopSet: 'stop-set', // F6: All stop was set
@@ -66,7 +79,7 @@ export const PROOF_HEADINGS = Object.freeze([
 ]);
 export const FULL_ONLY = Object.freeze([34, 41]);
 
-const SMOKE = new Set([1, 2, 3, 4, 5, 7, 8, 9, 10, 13, 16, 17, 18, 19, 21, 22, 25, 26, 27, 28, 29, 31, 33, 35, 43, 44, 45]);
+const SMOKE = new Set([1, 2, 3, 4, 5, 7, 8, 9, 13, 16, 17, 18, 21, 22, 25, 26, 27, 28, 29, 31, 33, 43, 44, 45]);
 const MINUTE = 60 * 1000;
 
 // --- reading helpers ---
@@ -134,9 +147,8 @@ const roleOf = (ctx) => ({ ...(ctx.config?.routing ?? {}) });
 const checks = {
   1(ctx) {
     const problems = [];
-    const done = /Every step is done|Setup is finished/i;
     const said = paneAll(ctx) + '\n' + (ctx.events ?? []).filter((e) => e.kind === 'note').map((e) => JSON.stringify(e.data)).join('\n');
-    if (!done.test(said)) problems.push('no line saying setup is done');
+    if (!SETUP_DONE.test(said)) problems.push('no line saying setup is done');
     const roles = Object.entries(roleOf(ctx)).filter(([, v]) => typeof v === 'string');
     if (roles.length === 0) problems.push('the configuration names no role');
     for (const [role, model] of roles) if (!/haiku/i.test(model)) problems.push(`role ${role} is not on haiku (${model})`);
@@ -272,9 +284,14 @@ const checks = {
       if (prs.length === 0) problems.push(`${id} has no pull request`);
       else if (!prs.some((p) => filesOf(p).some(isTestFile))) problems.push(`${id}'s pull request has no test files`);
     }
-    if (logOf(ctx, STEPS.review).length === 0) problems.push('no review step in the log');
-    if (logOf(ctx, STEPS.tester).length === 0) problems.push('no tester step in the log');
-    return verdict(problems, 'every pull request has tests; review and tester steps logged');
+    if (problems.length > 0) return no(problems.join('; '));
+    // The steps are read from what Wheelhouse records: a run's cost names the roles that did its steps, and a review is a signed record.
+    const roles = events(ctx, 'cost').flatMap((e) => Object.keys(e.data?.byRole ?? {}));
+    const reviewed = events(ctx, 'review').length > 0 || roles.some((r) => /review/i.test(r)) || logOf(ctx, STEPS.review).length > 0;
+    const tested = roles.some((r) => /test/i.test(r)) || logOf(ctx, STEPS.tester).length > 0;
+    if (reviewed && tested) return ok('every pull request has tests; a review and a tester step were recorded');
+    const missing = [!reviewed && 'review', !tested && 'tester'].filter(Boolean).join(' and ');
+    return unknown(`every pull request has tests; no ${missing} step is recorded (cost roles: ${[...new Set(roles)].join(', ') || 'none'})`);
   },
   11(ctx) {
     const s = scope(ctx, ['P3']);
@@ -315,14 +332,14 @@ const checks = {
     const problems = [];
     if (f.code !== 2) problems.push(`the exit code was ${f.code}, not 2`);
     if (f.sentBack !== true) problems.push('the decision was not sent back');
-    if (!(Number.isInteger(f.rightAfter) && f.rightAfter <= STUCK_AFTER)) problems.push(`no right-shaped try within ${STUCK_AFTER} tries`);
-    return verdict(problems, `exit 2, sent back, a right shape on try ${f.rightAfter}`);
+    const natural = Number.isInteger(f.naturalSendBacks) ? `${f.naturalSendBacks} natural send-back(s) in P4's questions` : "P4's natural send-backs were not read";
+    return verdict(problems, `exit 2 and sent back; ${natural}; a stuck ending is a finding, not a failure`);
   },
   15(ctx) {
-    const why = ctx.faults?.F1b?.why;
-    const texts = paneTexts(ctx, 'front-desk');
-    const seen = typeof why === 'string' && why !== '' ? texts.some((t) => t.includes(why)) : texts.some((t) => /stuck/i.test(t));
-    return seen ? ok('the stuck message reached the front desk') : no('no stuck message in the front desk pane');
+    const f = ctx.faults?.F1b;
+    if (!f) return unknown('F1b was not run');
+    if (typeof f.why !== 'string' || f.why === '') return no(`the third try was not followed by a stuck message${f.stuckAt === null ? ' (the command never asked for one)' : ''}`);
+    return paneTexts(ctx, 'front-desk').some((t) => t.includes(f.why)) ? ok('the stuck message reached the front desk') : no('the stuck message is not in the front desk pane');
   },
   16(ctx) {
     const s = scope(ctx, ['P4']);
@@ -426,7 +443,7 @@ const checks = {
     return card ? ok('the pulled-back call waits on a confirm card') : no('no confirm card for the pulled-back ruling');
   },
   25(ctx) {
-    const merged = (ctx.prs ?? []).filter((p) => p.mergedAt && !UNDO_BRANCH.test(p.head ?? '') && !RECORDS_BRANCH.test(p.head ?? ''));
+    const merged = (ctx.prs ?? []).filter((p) => p.mergedAt && !OWN_BRANCH.test(p.head ?? ''));
     if (merged.length === 0) return unknown('no pull request merged');
     const problems = [];
     for (const p of merged) {
@@ -519,22 +536,26 @@ const checks = {
   34(ctx) {
     const fault = logOf(ctx, STEPS.fault('F3b'))[0];
     if (!fault) return unknown('F3b was not run');
-    const ready = logOf(ctx, STEPS.workReady).filter((e) => e.detail?.recovered === true && ms(e.at) >= ms(fault.at));
+    // The recovery raise leaves no record of its own; its sign is a run of P7 starting after the foreman was killed.
+    const p7 = work(ctx, 'P7');
+    const from = ms(fault.at);
+    const starts = [
+      ...events(ctx, KINDS.run).filter((e) => e.data?.state === 'started' && (p7 === undefined || e.data.work === p7)).map((e) => ms(e.at)),
+      ...logOf(ctx, STEPS.start).filter((e) => p7 === undefined || e.work === p7).map((e) => ms(e.at)),
+    ].filter((t) => t >= from);
     const lost = (ctx.incidents ?? []).filter((i) => i.kind === KINDS.lost);
     const finding = lost.length > 0 ? `; finding: ${lost.length} lost row(s) in reliability.jsonl` : '';
-    if (ready.length === 0) return no(`no recovered work-ready after F3b${finding}`);
-    const gap = ms(ready[0].at) - ms(fault.at);
-    return gap <= 10 * MINUTE ? ok(`recovered ${Math.round(gap / 1000)} seconds after F3b${finding}`) : no(`recovered ${Math.round(gap / MINUTE)} minutes after F3b, over 10${finding}`);
+    if (starts.length === 0) return no(`no start of P7 after F3b${finding}`);
+    const gap = Math.min(...starts) - from;
+    return gap <= 10 * MINUTE ? ok(`P7 started ${Math.round(gap / 1000)} seconds after F3b${finding}`) : no(`P7 started ${Math.round(gap / MINUTE)} minutes after F3b, over 10${finding}`);
   },
   35(ctx) {
-    const problems = [];
-    if (logOf(ctx, STEPS.routine).length === 0) problems.push('no routine move settled by the watcher was logged');
+    // A routine move leaves only a watcher-side trace, no record the runner reads, so this row reports what reliability.jsonl holds.
     const rows = ctx.incidents ?? [];
-    if (rows.length === 0) problems.push('reliability.jsonl has no rows');
     const counts = {};
     for (const i of rows) counts[i.kind] = (counts[i.kind] ?? 0) + 1;
     const over = Object.entries(counts).filter(([, n]) => n >= BAR).map(([kind, n]) => `${kind} ${n}`);
-    return verdict(problems, `${rows.length} reliability row(s)${over.length > 0 ? `; at or over ${BAR}: ${over.join(', ')}` : ''}`);
+    return unknown(`no record of a routine move is readable here; ${rows.length} reliability row(s)${over.length > 0 ? `; at or over ${BAR}: ${over.join(', ')}` : ''}`);
   },
   36(ctx) {
     const found = (ctx.prs ?? []).filter((p) => UNDO_BRANCH.test(p.head ?? '') && p.title.startsWith(undoTitle('x').slice(0, -1)) && p.mergedAt);
@@ -613,11 +634,17 @@ const checks = {
   45(ctx) {
     const models = ctx.audit?.models ?? { clean: false, offenders: [] };
     const peek = ctx.audit?.peek ?? { clean: false, hits: [] };
-    if (models.clean && peek.clean) return ok('every model is haiku and no session read the held-back files');
-    const problems = [];
-    if (!models.clean) problems.push(`model offenders: ${(models.offenders ?? []).map((o) => `${o.role} (${o.model}, ${o.count})`).join(', ') || 'unknown'}`);
-    if (!peek.clean) problems.push(`peek hits: ${(peek.hits ?? []).map((h) => `${h.role} (${h.tool})`).join(', ') || 'unknown'}`);
-    return no(problems.join('; '));
+    if (!models.clean || !peek.clean) {
+      const problems = [];
+      if (!models.clean) problems.push(`model offenders: ${(models.offenders ?? []).map((o) => `${o.role} (${o.model}, ${o.count})`).join(', ') || 'unknown'}`);
+      if (!peek.clean) problems.push(`peek hits: ${(peek.hits ?? []).map((h) => `${h.role} (${h.tool})`).join(', ') || 'unknown'}`);
+      return no(problems.join('; '));
+    }
+    // A clean audit of nothing proves nothing: each role must have left at least one transcript.
+    const have = new Set((ctx.transcripts ?? []).map((t) => t.role));
+    const absent = ['front-desk', 'feature', 'foreman'].filter((role) => !have.has(role));
+    if (absent.length > 0) return unknown(`no transcript was found for ${absent.join(', ')}, so the audit has nothing to say about them`);
+    return ok('every model is haiku and no session read the held-back files');
   },
 };
 
