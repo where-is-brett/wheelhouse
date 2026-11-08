@@ -263,7 +263,7 @@ Branch `feature/crew-watch-level` from `main`. Spec sections 6.1, 6.2, 12.
 - Modify: `skills/intake/SKILL.md` (steps 4 and 5)
 - Modify: `skills/front-desk/SKILL.md`
 - Modify: `docs/specs/2026-10-17-wheelhouse-design.md` (the settings list)
-- Test: `tests/scripts/skills/` (whichever test already checks the intake skill's text; add to it)
+- Test: `tests/skills/intake.test.js` (new), `tests/skills/front-desk.test.js`
 
 **Interfaces:**
 - Consumes: `cli.js record watch` (2.2).
