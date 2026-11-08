@@ -82,3 +82,29 @@ Not changed: `scripts/lib/role.js` and `scripts/hooks/session-start.js`. A helm 
 5. **The helm terminal closed without `/exit`.** `SessionEnd` may not run: the recorded pid, checked with its start time, ends the hold at the watcher's next tick. (Task 5.4.)
 
 ---
+
+## Part 1: Reader and the Bosun's session id
+
+Branch `feature/crew-runs-reader` from `main`. Spec sections 4, 7.1, 7.2, 8.1.
+
+### Task 1.1: Finding a run and its subagents
+
+**Files:**
+- Create: `scripts/crew/runs.js`
+- Test: `tests/scripts/crew/runs.test.js`
+
+**Interfaces:**
+- Produces: `configDir(env) -> string` (`env.CLAUDE_CONFIG_DIR` or `~/.claude`); `findTranscript({sessionId, env}) -> string|null` (first `<sessionId>.jsonl` under `<config>/projects/*/`); `findSubagents(file) -> [{agentId, file}]` (`<dir of file>/<sessionId>/subagents/agent-*.jsonl`, oldest first by mtime).
+- Every file found is checked with `lstat`: a link or anything not a plain file is left out.
+
+- [ ] **Step 1: Write the failing tests**
+  - `finds a transcript under any project folder`: a fake config with `projects/a/x.jsonl` → `findTranscript({sessionId:'x', env})` ends with `projects/a/x.jsonl`.
+  - `honours CLAUDE_CONFIG_DIR`: with `env.CLAUDE_CONFIG_DIR` set, `~/.claude` is not searched.
+  - `returns null for an unknown session`: `null`, no throw.
+  - `refuses a link`: `x.jsonl` as a symlink → `null`.
+  - `lists subagents oldest first`: two `agent-*.jsonl` files → both, in mtime order, `agentId` from the file name.
+  - `rejects a session id with a path separator or ..`: `'../x'` → `null`.
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/crew/runs.test.js` → FAIL, module not found.
+- [ ] **Step 3: Implement** the three functions in `scripts/crew/runs.js` with `fs.readdirSync` and `fs.lstatSync`; no recursion beyond `projects/*/`.
+- [ ] **Step 4: Run them and see them pass.** Same command → PASS.
+- [ ] **Step 5: Commit.** `git add scripts/crew/runs.js tests/scripts/crew/runs.test.js && git commit -m "Crew runs: find a run's transcript and its subagents"`
