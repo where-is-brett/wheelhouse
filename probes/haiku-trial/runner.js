@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { appendJsonl } from '../lib/log.js';
 import { projectSlug } from '../../scripts/lib/paths.js';
 import { runFolder } from './results.js';
+import { openPicker, readyToSubmit } from './stand-in.js';
 import { PIECES, WAVES, P5_SPARE, F2_ANSWER } from './requests.js';
 import { SESSION_PREFIX, frontDeskCommand } from './tmux.js';
 import { STEPS as LOG, SETUP_DONE, OWN_BRANCH } from './signals.js';
@@ -112,6 +113,7 @@ const newLines = (before, after) => {
 // With `ready`, it keeps waiting (up to `maxMs`) until `ready(reply)` is true, as for an answer that comes from a fork.
 async function say(ctx, text, { ready, maxMs = 90000 } = {}) {
   const { io, state } = ctx;
+  await deskFree(ctx);
   const before = io.tmux.capture(DESK);
   io.tmux.type(DESK, text);
   let last = before;
@@ -218,8 +220,19 @@ async function waitMerged(ctx, count, wave) {
 }
 
 // Types a piece's request, answers intake's visibility question for P8, and notes which work event it became.
+// Text typed while a picker is open goes into the picker, not the chat, so the stand-in answers the picker first. After
+// the wait it is typed anyway, and the wait is noted.
+async function deskFree(ctx) {
+  const { io } = ctx;
+  const open = () => { const pane = io.tmux.capture(DESK); return openPicker(pane) !== null || readyToSubmit(pane); };
+  if (!open()) return;
+  const free = await waitFor(async () => { await tick(ctx); return !open(); }, { io, timeoutMs: 10 * MINUTE, everyMs: 10000 });
+  if (!free) await note(ctx, LOG.health, 'a picker stayed open in the front desk for 10 minutes; typing anyway');
+}
+
 async function typeRequest(ctx, id, text = pieceOf(id).text) {
   const { io, state } = ctx;
+  await deskFree(ctx);
   const known = new Set((await io.host.events({ project: ctx.projectName })).filter((e) => e.kind === 'work').map((e) => e.data?.id));
   let answered = false;
   io.tmux.type(DESK, text);

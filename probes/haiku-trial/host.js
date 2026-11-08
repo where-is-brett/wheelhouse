@@ -77,12 +77,15 @@ export function dirOf(dir) {
   return dir;
 }
 
+// How long a card the stand-in acted on is left before it is tried again.
+const RETRY_MS = 90 * 1000;
+
 const run = (command, args, options = {}) => spawnSync(command, args, { encoding: 'utf8', ...options });
 const text = (got) => String(got.stdout ?? '').trim();
 
 export function buildRealIo(env = process.env) {
   let slug = '';
-  const typed = new Set();
+  const acted = new Map();
   const tmux = makeTmux();
 
   const gh = async (args) => {
@@ -115,9 +118,13 @@ export function buildRealIo(env = process.env) {
     // the work in `skipWork`): the recommended option, chosen in the picker the front desk shows or typed as a reply.
     async answerCards({ events, session = 'desk', skipWork = [] }) {
       const pane = tmux.capture(session);
-      const actions = standInAnswers({ events, pane, done: typed, skipWork: new Set(skipWork) });
+      // A card acted on is left alone for a while, then tried again if it is still open: a press can land before the
+      // picker is ready.
+      const now = Date.now();
+      const recent = new Set([...acted].filter(([, at]) => now - at < RETRY_MS).map(([card]) => card));
+      const actions = standInAnswers({ events, pane, done: recent, skipWork: new Set(skipWork) });
       for (const action of actions) {
-        typed.add(action.card);
+        if (action.card) acted.set(action.card, now);
         if (action.keys) tmux.keys(session, ...action.keys);
         else tmux.type(session, action.type);
       }
