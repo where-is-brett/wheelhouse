@@ -176,10 +176,10 @@ test('a foreman bundle starts one fresh foreman with the configured model and mo
   const [call] = fake.calls;
   const copy = path.join(main, '.wheelhouse', 'foreman', 'wakes', path.basename(record));
   assert.equal(call.file, 'claude');
-  assert.deepEqual(call.args, ['-p', foremanPrompt(copy), '--permission-mode', 'plan', '--model', 'model-a', '--effort', 'medium']);
+  assert.deepEqual(call.args, ['--session-id', call.args[1], '-p', foremanPrompt(copy), '--permission-mode', 'plan', '--model', 'model-a', '--effort', 'medium']);
   // The prompt gives the first command whole, so the first step needs no skill and no ${CLAUDE_PLUGIN_ROOT}.
-  assert.ok(call.args[1].startsWith(`Wheelhouse foreman: follow wheelhouse:foreman to handle ${copy}. First run: node '`), call.args[1]);
-  assert.ok(call.args[1].includes(`${foremanCommands(PLUGIN_ROOT).wake} read `), call.args[1]);
+  assert.ok(call.args[3].startsWith(`Wheelhouse foreman: follow wheelhouse:foreman to handle ${copy}. First run: node '`), call.args[3]);
+  assert.ok(call.args[3].includes(`${foremanCommands(PLUGIN_ROOT).wake} read `), call.args[3]);
   assert.equal(fs.readFileSync(copy, 'utf8'), fs.readFileSync(record, 'utf8'), 'the copy is the record');
   assert.match(fs.readFileSync(path.join(main, '.git', 'info', 'exclude'), 'utf8'), /^\.wheelhouse\/$/m, 'git-ignored through info/exclude');
   assert.equal(call.cwd, main);
@@ -190,14 +190,23 @@ test('a foreman bundle starts one fresh foreman with the configured model and mo
   // desk's model in the main folder's local settings never reaches the foreman.
   const other = fakeRun();
   await waker(other, { config: config({ routing: {} }) }).wakeForeman(writeWake(P, bundle('e2')));
-  assert.deepEqual(other.calls[0].args.slice(2), ['--permission-mode', 'acceptEdits', '--model', 'default', '--effort', 'medium']);
+  assert.deepEqual(other.calls[0].args.slice(4), ['--permission-mode', 'acceptEdits', '--model', 'default', '--effort', 'medium']);
+}));
+
+test('the foreman\'s running record names its session', () => withHome(async () => {
+  checkout();
+  const fake = fakeRun();
+  await waker(fake).wakeForeman(writeWake(P, bundle('e1')));
+  const recorded = JSON.parse(fs.readFileSync(runningFile(P, 'foreman'), 'utf8'));
+  assert.match(recorded.sessionId, /^[0-9a-f-]{36}$/);
+  assert.equal(fake.calls[0].args[fake.calls[0].args.indexOf('--session-id') + 1], recorded.sessionId, 'the id the session was started with');
 }));
 
 test('the foreman\'s tools, when given, are passed with --allowedTools', () => withHome(async () => {
   checkout();
   const fake = fakeRun();
   await waker(fake, { foremanTools: ['Bash(node:*)', 'Read'] }).wakeForeman(writeWake(P, bundle('e1')));
-  assert.deepEqual(fake.calls[0].args.slice(2), ['--permission-mode', 'acceptEdits', '--model', 'model-a', '--effort', 'medium', '--allowedTools', 'Bash(node:*)', 'Read']);
+  assert.deepEqual(fake.calls[0].args.slice(4), ['--permission-mode', 'acceptEdits', '--model', 'model-a', '--effort', 'medium', '--allowedTools', 'Bash(node:*)', 'Read']);
   assert.throws(() => waker(fake, { foremanTools: [''] }), /tool/);
   assert.throws(() => waker(fake, { foremanTools: 'Read' }), /tool/);
 }));
@@ -224,7 +233,7 @@ test('a second bundle while a foreman runs waits for it', () => withHome(async (
   await again.pump();
   // The restarted watcher never learnt the first one's exit code, so its wake goes again, with the second, as one.
   assert.equal(fake.calls.length, 2);
-  const merged = recordOf(fileIn(fake.calls[1].args[1], PROMPTS.foreman('')));
+  const merged = recordOf(fileIn(fake.calls[1].args[3], PROMPTS.foreman('')));
   assert.deepEqual(readWake(merged).merged, [first, second]);
   assert.deepEqual(readWake(merged).events.map((e) => e.id), ['e1', 'e2']);
 }));
@@ -246,7 +255,7 @@ test('several waiting wakes go as one, each event once, read only from the recor
   fake.end(fake.calls[0].pid, 0);
   await flush();
   assert.equal(fake.calls.length, 2, 'the exit started the next foreman, with no pump called');
-  const merged = recordOf(fileIn(fake.calls[1].args[1], PROMPTS.foreman('')));
+  const merged = recordOf(fileIn(fake.calls[1].args[3], PROMPTS.foreman('')));
   const wake = readWake(merged);
   assert.deepEqual(wake.events.map((e) => e.id), ['e3', 'e4']);
   assert.deepEqual(wake.digest.map((e) => e.id), ['p1', 'p2']);
@@ -399,7 +408,7 @@ test('a starting record, left by a stop mid-start, holds for 2 minutes, then its
   w.clock.move(1);
   await w.pump();
   assert.equal(fake.calls.length, 1, 'not held for the foreman\'s whole hour');
-  const merged = recordOf(fileIn(fake.calls[0].args[1], PROMPTS.foreman('')));
+  const merged = recordOf(fileIn(fake.calls[0].args[3], PROMPTS.foreman('')));
   assert.deepEqual(readWake(merged).events.map((e) => e.id), ['e0', 'e1'], 'the left wake goes again, with the new one');
   assert.equal(w.waiting()[0].failures, 0, 'no failure counted');
 }));
@@ -727,7 +736,7 @@ test('bypass mode is refused for every session, and auto mode for feature sessio
   assert.throws(() => featureModeOf(auto), /auto/);
   const a = waker(fake, { config: auto });
   await a.wakeForeman(writeWake(P, bundle('e3')));
-  assert.deepEqual(fake.calls[0].args.slice(2, 4), ['--permission-mode', 'auto']);
+  assert.deepEqual(fake.calls[0].args.slice(4, 6), ['--permission-mode', 'auto']);
   await assert.rejects(a.startFeature({ work: 'login-page', worktree: worktree() }), /auto/);
   await assert.rejects(a.wakeFeature('login-page', writeWake(P, featureBundle('login-page'))), /auto/);
   assert.equal(fake.calls.length, 1);
@@ -1001,7 +1010,7 @@ test('the foreman, and only the foreman, is told it is the foreman; no session g
   const record = writeWake(P, bundle('e1'));
   await waker(fake, { baseEnv: host }).wakeForeman(record);
   assert.deepEqual(fake.calls[0].env, { PATH: BIN, CLAUDE_CONFIG_DIR: '/c', ANTHROPIC_API_KEY_HELPER: 'kept', WHEELHOUSE_ROLE: 'foreman', ...FOREGROUND_ONLY });
-  assert.ok(fake.calls[0].args[1].startsWith('Wheelhouse foreman: '));
+  assert.ok(fake.calls[0].args[3].startsWith('Wheelhouse foreman: '));
 
   const dir = worktree();
   keepSession('login-page', dir);
@@ -1015,7 +1024,7 @@ test('the foreman, and only the foreman, is told it is the foreman; no session g
   // Shape 2 names the same copy the Shape 1 prompt names.
   const lines = [];
   await waker(fakeRun(), { shape: 2, print: (line) => lines.push(line) }).wakeForeman(record);
-  assert.equal(lines[0].slice('WAKE foreman '.length), fileIn(fake.calls[0].args[1], PROMPTS.foreman('')));
+  assert.equal(lines[0].slice('WAKE foreman '.length), fileIn(fake.calls[0].args[3], PROMPTS.foreman('')));
 }));
 
 test('under STOP nothing is started or woken; what waits goes once STOP lifts', () => withHome(async () => {
@@ -1094,7 +1103,7 @@ test('a waker whose plugin folder can\'t be a command still wakes the foreman, w
   const fake = fakeRun();
   const record = writeWake(P, bundle('e1'));
   await waker(fake, { pluginRoot: "/opt/it's" }).wakeForeman(record);
-  assert.equal(fake.calls[0].args[1], PROMPTS.foreman(path.join(foremanCopies(), path.basename(record))));
+  assert.equal(fake.calls[0].args[3], PROMPTS.foreman(path.join(foremanCopies(), path.basename(record))));
 }));
 
 test('through claude.cmd on Windows, the prompt goes in on stdin', () => withHome(async () => {
