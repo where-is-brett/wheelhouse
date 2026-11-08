@@ -19,10 +19,11 @@
 //   halt     null, or `{ why, fixes, stop }` while All stop or an incident holds (wake.js haltOf)
 //   lanes    { work: lane }
 //   start    work that may open a session now: [{ work, lane, words }]; `words` is `{ goal, done, sessions, tokens }` where they
-//            are fixed (work made by hand), and null where a model must read the approved document for them
+//            are set (work made by hand), and null where a model must read the approved document for them
 //   build    [{ verb: 'build' | 'resume', work }] plans that clear the clash check and a slot
 //   pause    [work] to pause for the five-hour window
 //   merge    [{ work, pr }] pull requests ready to merge now
+//   ready    [{ work, pr }] every pull request that is ready to merge, whether or not a hold lets it merge now
 //   held     [work] features held on purpose (planned or paused), whose stillness is no trouble
 //   readyPlans [work] features at the start whose session says its plan is ready but whose plan was never recorded (found again
 //            when the watcher starts, so a plan held back by a hold is not lost to a restart)
@@ -51,7 +52,7 @@ const keyOf = (move) => [move.act, ...move.args].join(' ');
 // The events that need no move and no foreman: they say what happened, and the script's own moves follow from the views.
 const NOTED = ['clash', 'stop', 'incident', 'lift-incident', 'incident-fix', 'approval', 'ci-push'];
 
-// The words and appetite `act start` takes for work whose goal and done lines are fixed (changes made by hand), or null.
+// The words and appetite `act start` takes for work whose goal and done lines are set (changes made by hand), or null.
 export function startWordsOf(views, work) {
   const entry = views.work?.[work];
   const data = entry?.work?.data;
@@ -73,7 +74,7 @@ const startArgs = (s) => [
 //   defer    events to run again once a hold lifts
 export function triage(state) {
   const {
-    events = [], halt = null, lanes = {}, start = [], build = [], pause = [], merge = [], held = [], queue = true,
+    events = [], halt = null, lanes = {}, start = [], build = [], pause = [], merge = [], held = [], ready = [], queue = true,
   } = state ?? {};
   const moves = [];
   const handled = [];
@@ -131,9 +132,10 @@ export function triage(state) {
         break;
       case 'report': add({ act: 'close', args: [work] }, e.id); break;
       case 'stuck':
-        // A feature held on purpose (planned, or paused) is not trouble, and neither is one that All stop, or an incident holding its
-        // lane, keeps from moving: nothing is stalled by a hold, and the foreman has nothing to do about it.
-        if (held.includes(work) || (halt !== null && (halt.stop === true || heldBack(lane)))) handled.push(e.id);
+        // A piece waiting on purpose is not trouble: one planned or paused, one with a ready pull request whose merge a hold freezes,
+        // and, under All stop, every piece, since nothing runs. An incident freezes only starts and merges: a piece that is still
+        // building and stalls is stuck, and is asked about.
+        if (held.includes(work) || (halt !== null && (halt.stop === true || ready.some((r) => r.work === work && mergeWait(halt, r.pr) !== null)))) handled.push(e.id);
         else ask(e, 'stuck');
         break;
       case 'review-overdue': ask(e, 'stuck'); break;
@@ -165,7 +167,9 @@ export function routineMoves(state) {
 }
 
 // Reads the facts `triage` needs from the views and configuration, through the helper. Throws when they can't be had.
-export async function readFacts({ project, client, now = () => new Date(), stopped }) {
+export async function readFacts({
+  project, client, now = () => new Date(), stopped, readyPlans: wantPlans = false,
+}) {
   const { views } = await loadViews(project, client);
   const config = await loadConfig(project, client);
   const t = now();
@@ -190,7 +194,7 @@ export async function readFacts({ project, client, now = () => new Date(), stopp
   const readyPlans = [];
   for (const [id, f] of Object.entries(views.features)) {
     const step = f?.data?.step;
-    if (step === 'started' && !NO_PLAN.includes(lanes[id])) {
+    if (wantPlans && step === 'started' && !NO_PLAN.includes(lanes[id])) {
       try {
         if (readStatus(featurePaths(worktreeOf(project, views, id)).status)?.phase === 'ready-to-build') readyPlans.push(id);
       } catch (error) {
@@ -212,9 +216,9 @@ export async function readFacts({ project, client, now = () => new Date(), stopp
     if (own !== null || waitText(clash, slot) !== null) continue;
     build.push({ verb: step === 'paused' ? 'resume' : 'build', work: id });
   }
-  const merge = readyPrs(project).map(({ pr, work }) => ({ work, pr }));
+  const ready = readyPrs(project).map(({ pr, work }) => ({ work, pr }));
   return {
-    halt, lanes, start, build, pause: toBuild.pause, merge, held: heldOn, readyPlans, views,
+    halt, lanes, start, build, pause: toBuild.pause, merge: ready, ready, held: heldOn, readyPlans, views,
   };
 }
 
@@ -257,7 +261,7 @@ export function makeRoutine({
   project, client, now = () => new Date(), log = () => {}, act = null, facts = null, record = recordIncident, stopped,
 }) {
   const run = act ?? helperAct({ project, client });
-  const read = facts ?? (() => readFacts({ project, client, now, stopped }));
+  const read = facts ?? ((options) => readFacts({ project, client, now, stopped, ...options }));
   const failed = new Map();
   const deferred = new Map();
   // Startable pieces whose words need their document read, already put to the foreman; forgotten once the piece is no longer startable.
@@ -287,8 +291,9 @@ export function makeRoutine({
       };
       const mine = (Array.isArray(events) ? events : []).filter((e) => isPlain(e) && FOREMAN_ONLY.has(e.type));
       let state;
+      const wasFirst = first;
       try {
-        state = await read();
+        state = await read({ readyPlans: wasFirst });
       } catch (error) {
         log(`The routine moves couldn't be made, the foreman is left the events: ${error.message}`);
         return out;
@@ -335,7 +340,13 @@ export function makeRoutine({
           made += 1;
           for (const id of move.for) out.handled.add(id);
         } else {
-          for (const id of move.for) out.reasons.set(id, move.act === 'close' && asksDirector(reply) ? 'ambiguous-report' : 'unknown');
+          for (const id of move.for) {
+            const reason = move.act === 'close' && asksDirector(reply) ? 'ambiguous-report' : 'unknown';
+            out.reasons.set(id, reason);
+            // A plan the script held back or found again itself isn't among the loop's events, so the foreman is given it here.
+            const own = again.find((e) => e.id === id);
+            if (own !== undefined) out.extra.push({ ...own, reason });
+          }
         }
       }
 

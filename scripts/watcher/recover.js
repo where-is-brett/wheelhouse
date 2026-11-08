@@ -39,16 +39,21 @@ export function makeRecovery({
   } catch { /* none yet, or the folder is not a real folder: nothing is kept */ }
   let last = Number.isFinite(kept.last) ? kept.last : null;
   const raisedAt = new Map(Object.entries(isPlain(kept.raised) ? kept.raised : {}).filter(([, v]) => Number.isFinite(v)));
+  // The pieces already recorded as lost, each once until it starts (or stops waiting to).
+  const noted = new Set(Array.isArray(kept.noted) ? kept.noted.filter((x) => typeof x === 'string') : []);
+  // A raise counts towards a loss only if it was made while this watcher ran: after downtime or a long sleep the clock starts again.
+  let epoch = now().getTime();
   const keep = () => {
     if (file === null) return;
     try {
-      writeJsonFile(file, { last, raised: Object.fromEntries(raisedAt) });
+      writeJsonFile(file, { last, raised: Object.fromEntries(raisedAt), noted: [...noted] });
     } catch { /* looked for again at the next time */ }
   };
   return {
     async check({ skip = [], config = null } = {}) {
       const t = now().getTime();
       if (last !== null && t - last < every) return [];
+      if (last !== null && t - last > 3 * every) epoch = t;
       last = t;
       keep();
       let views;
@@ -61,10 +66,12 @@ export function makeRecovery({
       const open = recoverable(views, { now: now(), stopped, builderCap: config === null ? null : builderCapOf(views, config, now()) });
       // A piece that is no longer waiting to start has its count forgotten, so queuing it again starts afresh.
       for (const id of [...raisedAt.keys()]) if (!open.includes(id)) raisedAt.delete(id);
+      for (const id of [...noted]) if (!open.includes(id)) noted.delete(id);
       for (const id of open) {
         if (skip.includes(id)) continue; // this loop's own events already wake the Bosun for it
         if (raisedAt.has(id) && t - raisedAt.get(id) < again) continue;
-        if (raisedAt.has(id)) {
+        if (raisedAt.has(id) && raisedAt.get(id) >= epoch && !noted.has(id)) {
+          noted.add(id);
           try {
             record({ kind: 'lost', work: id, at: now().toISOString(), key: `lost:${project}:${id}:${raisedAt.get(id)}` });
           } catch { /* a record that can't be kept doesn't stop the raise */ }

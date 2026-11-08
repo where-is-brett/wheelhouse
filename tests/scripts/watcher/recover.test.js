@@ -54,17 +54,50 @@ test('a piece that waited for a dependency, was freed and then raised is not los
   assert.deepEqual(recorded, [], 'it was queued for days, but nothing was lost');
 }));
 
-test('a piece raised and still unstarted half an hour later is lost, once for each raise', () => withHome(async () => {
+const MIN = 60 * 1000;
+
+test('a piece that stays unstarted is recorded as lost once, however many times it is raised again', () => withHome(async () => {
   let t = Date.parse('2026-11-05T09:00:00Z');
   const client = { state: { views: async () => ({ ok: true, views: views() }) } };
   const recorded = [];
   const r = makeRecovery({ project: 'o__p', client, now: () => new Date(t), stopped: () => false, record: (i) => recorded.push(i) });
   await r.check();
   assert.deepEqual(recorded, [], 'the first raise is not a loss');
-  t += 31 * 60 * 1000;
+  for (let i = 0; i < 14; i += 1) {
+    t += 11 * MIN;
+    await r.check();
+  }
+  assert.deepEqual(recorded.map((i) => [i.kind, i.work]), [['lost', 'a']]);
+}));
+
+test('a piece that stops waiting to start has its raise forgotten, so queuing it again is not a loss', () => withHome(async () => {
+  let t = Date.parse('2026-11-05T09:00:00Z');
+  const current = { v: views() };
+  const client = { state: { views: async () => ({ ok: true, views: current.v }) } };
+  const recorded = [];
+  const r = makeRecovery({ project: 'o__p', client, now: () => new Date(t), stopped: () => false, record: (i) => recorded.push(i) });
+  assert.equal((await r.check()).length, 1);
+  t += 25 * MIN;
+  current.v = views({ work: { a: w('a', { dependsOn: ['z'] }, true) } });
+  assert.deepEqual(await r.check(), [], 'held for a dependency');
+  t += 25 * MIN;
+  current.v = views();
+  assert.equal((await r.check()).length, 1, 'raised afresh');
+  assert.deepEqual(recorded, [], 'fifty minutes after the first raise, but only just raised again');
+}));
+
+test('after downtime or a long sleep the raise clock starts again, so the wait is not counted as a loss', () => withHome(async () => {
+  let t = Date.parse('2026-11-05T09:00:00Z');
+  const client = { state: { views: async () => ({ ok: true, views: views() }) } };
+  const recorded = [];
+  const r = makeRecovery({ project: 'o__p', client, now: () => new Date(t), stopped: () => false, record: (i) => recorded.push(i) });
   await r.check();
-  t += 31 * 60 * 1000;
-  await r.check();
-  assert.deepEqual(recorded.map((i) => [i.kind, i.work]), [['lost', 'a'], ['lost', 'a']]);
-  assert.equal(new Set(recorded.map((i) => i.key)).size, 2, 'each loss has its own key');
+  t += 3 * 60 * MIN;
+  assert.equal((await r.check()).length, 1, 'raised again after the gap');
+  assert.deepEqual(recorded, [], 'the gap was the watcher\'s, not the engine\'s');
+  for (let i = 0; i < 3; i += 1) {
+    t += 11 * MIN;
+    await r.check();
+  }
+  assert.deepEqual(recorded.map((i) => i.kind), ['lost'], 'but a piece still unstarted half an hour into a run that stayed up is lost');
 }));

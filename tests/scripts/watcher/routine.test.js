@@ -8,6 +8,8 @@ import { readIncidents } from '../../../scripts/watcher/reliability.js';
 import { route } from '../../../scripts/watcher/core.js';
 import { HAND_DONE, HAND_GOAL } from '../../../scripts/lib/by-hand-done.js';
 import { FOREMAN_QUESTIONS } from '../../../scripts/lib/build-loop.js';
+import path from 'node:path';
+import { featurePaths, writeStatus } from '../../../scripts/feature/files.js';
 import { withHome } from '../../helpers/homes.js';
 import { emptyViews, fakeClient, featureView, project, worktree, workView, P as FOREMAN_P } from '../../helpers/foreman.js';
 
@@ -211,16 +213,58 @@ test('under All stop a stuck piece is neither stalled nor a wake for the foreman
   assert.deepEqual(readIncidents(), []);
 }));
 
-test('during an incident a stuck piece in a held lane is handled, and bug work that goes on is still stuck', () => withHome(async () => {
+test('during an incident a piece that is still building and stalls is stuck: only its starts and merges are frozen', () => withHome(async () => {
   const { act } = fakeAct();
-  const held = ev('stuck', 'w-tide-2', { detail: { still: 1300000, phase: 'building' } });
+  const small = ev('stuck', 'w-tide-2', { detail: { still: 1300000, phase: 'building' } });
   const bug = ev('stuck', 'w-tide-3', { detail: { still: 1300000, phase: 'building' } });
   const halt = { why: 'incident outage is open', fixes: [], stop: false };
   const lanes = { 'w-tide-2': 'small', 'w-tide-3': 'bug' };
-  const out = await routineOf(state({ halt, lanes }), act).run({ events: [held, bug] });
-  assert.ok(out.handled.has(held.id));
+  const out = await routineOf(state({ halt, lanes }), act).run({ events: [small, bug] });
+  assert.equal(out.reasons.get(small.id), 'stuck');
   assert.equal(out.reasons.get(bug.id), 'stuck');
-  assert.deepEqual(readIncidents().map((l) => l.work), ['w-tide-3']);
+  assert.deepEqual(readIncidents().map((l) => l.work).sort(), ['w-tide-2', 'w-tide-3']);
+}));
+
+test('during an incident a stuck piece held at planned or paused, or with its merge frozen, stays quiet', () => withHome(async () => {
+  const { act } = fakeAct();
+  const planned = ev('stuck', 'w-tide-2', { detail: { still: 1300000, phase: 'ready-to-build' } });
+  const frozen = ev('stuck', 'w-tide-3', { detail: { still: 1300000, phase: 'pr-open' } });
+  const halt = { why: 'incident outage is open', fixes: [], stop: false };
+  const lanes = { 'w-tide-2': 'small', 'w-tide-3': 'small' };
+  const out = await routineOf(state({ halt, lanes, held: ['w-tide-2'], ready: [{ work: 'w-tide-3', pr: 5 }] }), act).run({ events: [planned, frozen] });
+  assert.ok(out.handled.has(planned.id) && out.handled.has(frozen.id));
+  assert.equal(out.reasons.size, 0);
+  assert.deepEqual(readIncidents(), []);
+  // The incident's own fix is not frozen, so a stall in its merge is a stall.
+  const fix = await routineOf(state({ halt: { ...halt, fixes: [5] }, lanes, ready: [{ work: 'w-tide-3', pr: 5 }] }), act).run({ events: [frozen] });
+  assert.equal(fix.reasons.get(frozen.id), 'stuck');
+}));
+
+test('a plan found ready after a restart that fails is put to the foreman with a reason', () => withHome(async () => {
+  const { act } = fakeAct(() => ({ code: 1, stdout: '', stderr: 'its brief changed\n' }));
+  const out = await routineOf(state({ readyPlans: ['w-tide-2'] }), act).run({ events: [] });
+  assert.equal(out.extra.length, 1);
+  assert.equal(out.extra[0].type, 'plan-ready');
+  assert.equal(out.extra[0].work, 'w-tide-2');
+  assert.equal(out.extra[0].reason, 'unknown');
+}));
+
+test('the facts name ready plans only when asked, and find them from the status the session wrote', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.p = workView('p');
+  views.features.p = featureView('p', { step: 'started', worktree: worktree(checkout, 'p'), branch: 'feature/p' });
+  views.work.q = workView('q');
+  views.features.q = featureView('q', { step: 'started', worktree: worktree(checkout, 'q'), branch: 'feature/q' });
+  const status = (work, phase) => ({
+    v: 1, work, lane: 'small', phase, task: null, fixRound: null, waitingOn: null, head: null, pr: null, slice: null, tokens: null, updatedAt: '2026-11-05T21:57:00.000Z',
+  });
+  writeStatus(featurePaths(path.join(checkout, '.claude', 'worktrees', 'p')).status, status('p', 'ready-to-build'));
+  writeStatus(featurePaths(path.join(checkout, '.claude', 'worktrees', 'q')).status, status('q', 'building'));
+  const { client } = fakeClient({ views });
+  const common = { project: FOREMAN_P, client, now: () => new Date('2026-10-19T09:00:00.000Z'), stopped: () => false };
+  assert.deepEqual((await readFacts({ ...common, readyPlans: true })).readyPlans, ['p']);
+  assert.deepEqual((await readFacts({ ...common, readyPlans: false })).readyPlans, [], 'not read when not wanted');
 }));
 
 test('a piece freed to start whose words need its document read is put to the foreman once', () => withHome(async () => {
@@ -271,6 +315,6 @@ test('the facts leave out plans that clash with running work or wait on their ow
   views.work.open = workView('open');
   views.features.open = featureView('open', { step: 'planned', worktree: worktree(checkout, 'open', { pr: { pr: 3, merged: false } }), branch: 'feature/open', plan: 'docs/plans/o.md', files: ['src/open.js'] });
   const { client } = fakeClient({ views });
-  const facts = await readFacts({ project: FOREMAN_P, client, now: () => new Date('2026-10-19T09:00:00.000Z'), stopped: () => false });
+  const facts = await readFacts({ project: FOREMAN_P, client, now: () => new Date('2026-10-19T09:00:00.000Z'), stopped: () => false, readyPlans: true });
   assert.deepEqual(facts.build.map((b) => b.work), ['ok']);
 }));

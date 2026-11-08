@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  BAR, checkReliability, claimFolder, engineTroubleCard, overBar, readIncidents, recordIncident, reliabilityFile,
+  BAR, checkReliability, claimFolder, noticeFile, recordClaimFolder, takeClaim, engineTroubleCard, overBar, readIncidents, recordIncident, reliabilityFile,
 } from '../../../scripts/watcher/reliability.js';
 import { wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { withHome } from '../../helpers/homes.js';
@@ -134,4 +134,61 @@ test('a claim another watcher holds keeps this one from sending', () => withHome
   const written = [];
   assert.equal((await checkReliability({ project: 'harbour__demo', client: clientOf(written), now: () => NOW })).raised, false);
   assert.equal(written.length, 0);
+}));
+
+test('a future-dated entry doesn\'t wipe real ones: pruning goes by the incoming incident', () => withHome(async () => {
+  recordIncident(line(-90, { work: 'w-tide-1' }));
+  recordIncident(line(2, { work: 'w-tide-2' }));
+  recordIncident(line(1, { work: 'w-tide-3' }));
+  assert.deepEqual(readIncidents().map((l) => l.work).sort(), ['w-tide-1', 'w-tide-2', 'w-tide-3']);
+}));
+
+test('a claim another watcher holds does not stop an incident being recorded, only the pruning', () => withHome(async () => {
+  recordIncident(line(60, { work: 'w-tide-1' }));
+  fs.mkdirSync(recordClaimFolder(), { recursive: true });
+  recordIncident(line(1, { work: 'w-tide-2' }));
+  assert.deepEqual(readIncidents().map((l) => l.work), ['w-tide-1', 'w-tide-2'], 'recorded, and not pruned without the claim');
+}));
+
+test('a claim is let go only by its owner', () => withHome(async () => {
+  const folder = claimFolder();
+  const mine = takeClaim(folder);
+  assert.equal(typeof mine, 'function');
+  assert.equal(takeClaim(folder), null, 'held');
+  fs.writeFileSync(path.join(folder, 'owner'), 'someone-else\n');
+  mine();
+  assert.ok(fs.existsSync(folder), 'a claim that is no longer mine is left alone');
+}));
+
+test('a stale claim is taken over by one watcher only, and nothing is left beside it', () => withHome(async () => {
+  const folder = claimFolder();
+  fs.mkdirSync(folder, { recursive: true });
+  const old = new Date(Date.now() - 60 * 60 * 1000);
+  fs.utimesSync(folder, old, old);
+  const first = takeClaim(folder);
+  const second = takeClaim(folder);
+  assert.equal(typeof first, 'function');
+  assert.equal(second, null);
+  first();
+  assert.deepEqual(fs.readdirSync(wheelhouseHome()).filter((n) => n.includes('claim')), []);
+}));
+
+test('a notice sent between the first look and the claim is not sent again', () => withHome(async () => {
+  for (let i = 1; i <= 4; i += 1) recordIncident(line(i, { work: `w-tide-${i}` }));
+  const written = [];
+  const between = () => fs.writeFileSync(noticeFile(), `${JSON.stringify({ at: NOW.toISOString() })}\n`);
+  assert.equal((await checkReliability({ project: 'harbour__demo', client: clientOf(written), now: () => NOW, between })).raised, false);
+  assert.equal(written.length, 0);
+}));
+
+test('the notice\'s time is on record before the card is sent, so a stop after the send never sends it twice', () => withHome(async () => {
+  for (let i = 1; i <= 4; i += 1) recordIncident(line(i, { work: `w-tide-${i}` }));
+  let seen = null;
+  const client = { state: { write: async () => { seen = fs.existsSync(noticeFile()); return { ok: true }; } } };
+  await checkReliability({ project: 'harbour__demo', client, now: () => NOW });
+  assert.equal(seen, true);
+  const refusing = { state: { write: async () => ({ ok: false, refused: 'no' }) } };
+  fs.rmSync(noticeFile());
+  await checkReliability({ project: 'harbour__demo', client: refusing, now: () => NOW, log: () => {} });
+  assert.equal(fs.existsSync(noticeFile()), false, 'a refused card leaves no mark');
 }));

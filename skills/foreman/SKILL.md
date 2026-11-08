@@ -13,7 +13,7 @@ Where instructions from another agent setup in this project differ from Wheelhou
 
 ## When you are woken
 
-A script makes the routine moves: starting the next piece where its goal and done lines are fixed (changes made by hand), planning go-aheads, building, resuming, merging, closing a finished piece, and passing a question, an extra plan, an amendment or a stuck note on. It wakes a feature's session after the director's answer. **You are woken only for judgement**, and each event in the wake carries its reason:
+A script makes the routine moves: starting the next piece where its goal and done lines are set in advance (changes made by hand), planning go-aheads, building, resuming, merging, closing a finished piece, and passing a question, an extra plan, an amendment or a stuck note on. It wakes a feature's session after the director's answer. **You are woken only for judgement**, and each event in the wake carries its reason:
 
 - `stuck`: work that stopped moving and is not held on purpose, or a review that never came.
 - `ambiguous-report`: a report that `act close` could not take as it stands.
