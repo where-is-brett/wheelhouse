@@ -1,5 +1,9 @@
 // tests/scripts/hooks/card-check-shown.test.js
 import { test } from 'node:test';
+import fs from 'node:fs';
+import path from 'node:path';
+import { sessionRole } from '../../../scripts/lib/role.js';
+import { seatFile, readSeat } from '../../../scripts/lib/first-mate-seat.js';
 import assert from 'node:assert/strict';
 import { decide, checkShown, DECISION_IN_CHAT } from '../../../scripts/hooks/card-check.js';
 import { pendingDecisions } from '../../../scripts/decisions/pending.js';
@@ -122,5 +126,31 @@ test('typed replies switched off: the question picker is allowed for a decision,
     turnOn();
     const on = await decide(input, { projectOf: () => ({ project: P }), env: {} });
     assert.equal(on.hookSpecificOutput.permissionDecisionReason, DECISION_IN_CHAT);
+  });
+});
+
+test('an aside session\'s Stop is not checked, and the holder\'s is', async () => {
+  await inHome(async () => {
+    const paraphrase = 'Decision needed (1): how often?   (holds up: nothing else)\nReply 1 A';
+    const seat = (session) => ({ session, pid: null, pidStart: null, folder: '/x', since: '2026-11-08T01:00:00.000Z', seenAt: new Date().toISOString() });
+    const take = (session) => {
+      fs.mkdirSync(path.dirname(seatFile(P)), { recursive: true });
+      fs.writeFileSync(seatFile(P), JSON.stringify(seat(session)));
+    };
+    const real = { projectOf: () => ({ project: P }), env: {}, role: (given) => sessionRole({ ...given, seat: readSeat(P) }) };
+    take('other');
+    assert.equal(await decide(stop(paraphrase), real), undefined);
+    take('s-desk');
+    assert.equal((await decide(stop(paraphrase), real)).decision, 'block');
+  });
+});
+
+test('the holder\'s Stop refreshes the seat', async () => {
+  await inHome(async () => {
+    const old = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    fs.mkdirSync(path.dirname(seatFile(P)), { recursive: true });
+    fs.writeFileSync(seatFile(P), JSON.stringify({ session: 's-desk', pid: null, pidStart: null, folder: '/x', since: old, seenAt: old }));
+    await decide(stop('All done.'), { projectOf: () => ({ project: P }), env: {} });
+    assert.ok(Date.parse(readSeat(P).seenAt) > Date.parse(old));
   });
 });

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { CODE_ALPHABET, takeOverLine, TAKEOVER_LABEL, approvalLine } from '../../../scripts/state/card-lines.js';
+import { CODE_ALPHABET, takeOverLine, TAKEOVER_LABEL, approvalLine, seatTakeOverLine } from '../../../scripts/state/card-lines.js';
 import { PUT_OFF } from '../../../scripts/lib/front-desk.js';
 import { makeEvent, eventPath, writeEvent, listEvents, checkRecord, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS } from '../../../scripts/state/events.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
@@ -57,6 +57,24 @@ test('a take-over action needs the computer that held the lock, its counter, its
       [{ counter: 5 }, /set line/],
       [{ label: 'Leave it there' }, /label/],
       [{ proof: 'x'.repeat(3), sha: 'abc' }, /field/],
+    ]) assert.throws(() => makeEvent({ kind: 'action', data: { ...good, ...bad }, now: at(1) }), pattern, JSON.stringify(bad));
+  });
+});
+
+test('a seat-take-over action needs its set line', async () => {
+  await withHome(() => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const since = '2026-11-08T09:00:00.000Z';
+    const good = { action: 'seat-take-over', session: 'abc-123', since, question: seatTakeOverLine('abc-123', since), label: TAKEOVER_LABEL };
+    assert.equal(verify(makeEvent({ kind: 'action', data: good, now: at(1) }), readEnrolled()), true);
+    for (const [bad, pattern] of [
+      [{ question: seatTakeOverLine('other', since) }, /set line/],
+      [{ question: takeOverLine('0a1b2c3d', 4) }, /set line/],
+      [{ session: 'has space' }, /session/],
+      [{ since: 'yesterday' }, /time/],
+      [{ label: 'Leave it there' }, /label/],
+      [{ holder: '0a1b2c3d' }, /field/],
     ]) assert.throws(() => makeEvent({ kind: 'action', data: { ...good, ...bad }, now: at(1) }), pattern, JSON.stringify(bad));
   });
 });

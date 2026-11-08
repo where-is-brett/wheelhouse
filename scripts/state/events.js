@@ -8,7 +8,7 @@ import { scanContent } from './secret-scan.js';
 import { briefProblem, briefWords } from './brief.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
-import { RELEASE_LABEL, RELEASE_TAG, releaseLine, UPDATE_LABEL, updateLine, keepControlLine, approvalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
+import { RELEASE_LABEL, RELEASE_TAG, releaseLine, UPDATE_LABEL, updateLine, keepControlLine, approvalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, seatTakeOverLine, SEAT_SESSION, isSeatSince, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH, mayReplace } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
@@ -66,7 +66,7 @@ export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident
 export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'by-hand', 'slept', 'self-merged'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'approve-release', 'update-helper-answer', 'update-click'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'seat-take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'approve-release', 'update-helper-answer', 'update-click'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -100,6 +100,10 @@ const ACTION_OWN = {
   // The director's Take over here (design section 9): the computer that held the lock and the counter it held it
   // at, as the card showed them. The helper takes the lock only while it still stands so.
   'take-over': ['holder', 'counter'],
+  // The director's Take over here on the card that offers the First Mate's seat (one-First-Mate design, section 6.4): the
+  // window session that held the seat and since when, as the card showed them. The prompt hook moves the seat only while it
+  // still stands so. A separate action, so the helper's lock take-over never reads it.
+  'seat-take-over': ['session', 'since'],
   // A later app paired with the desk, or unpaired (spec 5.3): its id and its key's twelve-character fingerprint.
   'pair-client': ['client', 'fingerprint'],
   'unpair-client': ['client', 'fingerprint'],
@@ -232,6 +236,11 @@ function checkAction(data) {
     if (!Number.isInteger(data.counter) || data.counter < 1) bad('needs the counter the lock was held at');
     if (data.label !== TAKEOVER_LABEL) bad(`needs the ${TAKEOVER_LABEL} label`);
     if (data.question !== takeOverLine(data.holder, data.counter)) bad('carries only the take-over card\'s set line as its question');
+  } else if (data.action === 'seat-take-over') {
+    if (typeof data.session !== 'string' || !SEAT_SESSION.test(data.session)) bad('needs the session that holds the First Mate\'s seat');
+    if (!isSeatSince(data.since)) bad('needs the time the seat was taken, as the card showed it');
+    if (data.label !== TAKEOVER_LABEL) bad(`needs the ${TAKEOVER_LABEL} label`);
+    if (data.question !== seatTakeOverLine(data.session, data.since)) bad('carries only the seat take-over card\'s set line as its question');
   } else if (data.action === 'uninstall') {
     if (!isLineName(data.project)) bad('needs the project it removes Wheelhouse from');
     if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the list its card showed');

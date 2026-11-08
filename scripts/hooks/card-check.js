@@ -48,6 +48,7 @@ import { subjectOf, answeredWords } from '../cards/answered.js';
 import { PANE_LEAD, paneLine } from '../cards/panel-words.js';
 import { paneLive, takeHere, markOpen, HOLD_FOR_PANE } from '../lib/session-files.js';
 import { sessionRole } from '../lib/role.js';
+import { refreshSeat } from '../lib/first-mate-seat.js';
 import { cardButtons } from '../cards/buttons.js';
 import { standing } from './prompt-record.js';
 import { isDecisionCard, readDecisions } from '../decisions/pending.js';
@@ -328,9 +329,10 @@ export async function decideStop(input, { projectOf: find = projectOf, dir, role
   try {
     if (input.stop_hook_active === true || startedByScript(env)) return undefined;
     const message = lastMessageOf(input);
-    if (blocksIn(message).length === 0) return undefined;
     const found = find(input.cwd, { dir });
-    if (!found || role({ sessionId: input.session_id, env, cwd: input.cwd }) !== 'front-desk') return undefined;
+    const holder = found && role({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk';
+    if (holder) refreshSeat(found.project, input.session_id);
+    if (blocksIn(message).length === 0 || !holder) return undefined;
     const checked = checkShown(message, (decisions ?? readDecisions(found.project)).pending);
     return checked.ok ? undefined : answer.block(checked.reason);
   } catch {

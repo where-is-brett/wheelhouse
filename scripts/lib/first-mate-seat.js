@@ -15,6 +15,7 @@ import path from 'node:path';
 import { wheelhouseHome } from './paths.js';
 import { pidAlive, processStartTime } from '../watcher/waker.js';
 import { listProcesses } from '../engine/stop.js';
+import { roleFile } from './role.js';
 
 // Within this long since the holder last wrote, a held seat counts as in use. The same number as
 // RECENT_MS in scripts/hooks/session-start.js (the computer card). It is written here rather than
@@ -202,7 +203,8 @@ export async function handOverSeat(project, { session, folder, from }, options =
   if (raw === null || seat?.session !== from.session || seat?.since !== from.since) {
     return { moved: false, seat: readSeat(project, options) };
   }
-  const mine = await newSeat({ session, folder }, options);
+  // `movedFrom` names the window the seat left, so that window can be told once (movedAway).
+  const mine = { ...(await newSeat({ session, folder }, options)), movedFrom: from.session };
   if (replace(file, raw, mine, options)) return { moved: true, seat: mine };
   return { moved: false, seat: readSeat(project, options) };
 }
@@ -215,4 +217,26 @@ export function releaseSeat(project, session, options = {}) {
       if (look(file).seat?.session === session) fs.rmSync(file, { force: true });
     });
   } catch { /* nothing to give up */ }
+}
+
+// True exactly once per move: when the seat's `movedFrom` names this session and the session hasn't yet
+// been told of this move. The mark is `seat-moved.json` in the session's own folder, holding the seat's
+// `since`. Never throws; false on any failure.
+export function movedAway(project, session, options = {}) {
+  try {
+    const record = roleFile(session);
+    if (record === null) return false;
+    const seat = readSeat(project, options);
+    if (seat?.movedFrom !== session) return false;
+    const folder = path.join(homeOf(options), 'sessions', session);
+    const mark = path.join(folder, 'seat-moved.json');
+    try {
+      if (JSON.parse(fs.readFileSync(mark, 'utf8'))?.since === seat.since) return false;
+    } catch { /* not told yet */ }
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(mark, `${JSON.stringify({ since: seat.since })}\n`);
+    return true;
+  } catch {
+    return false;
+  }
 }
