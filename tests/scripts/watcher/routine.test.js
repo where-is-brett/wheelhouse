@@ -8,7 +8,9 @@ import { readIncidents } from '../../../scripts/watcher/reliability.js';
 import { route } from '../../../scripts/watcher/core.js';
 import { HAND_DONE, HAND_GOAL } from '../../../scripts/lib/by-hand-done.js';
 import { FOREMAN_QUESTIONS } from '../../../scripts/lib/build-loop.js';
+import fs from 'node:fs';
 import path from 'node:path';
+import { holdFile } from '../../../scripts/crew/hold.js';
 import { featurePaths, writeStatus } from '../../../scripts/feature/files.js';
 import { withHome } from '../../helpers/homes.js';
 import { emptyViews, fakeClient, featureView, project, worktree, workView, P as FOREMAN_P } from '../../helpers/foreman.js';
@@ -345,4 +347,20 @@ test('the routine asks for ready plans only on its first run', () => withHome(as
   await r.run({ events: [ev('report', 'w-tide-1')] });
   assert.equal(asked[0], true);
   assert.deepEqual([...new Set(asked.slice(1))], [false]);
+}));
+
+test('routine: a held piece is never stuck', () => withHome(async () => {
+  const { act } = fakeAct();
+  const stuck = ev('stuck', 'w-tide-1', { detail: { still: 1300000, phase: 'building' } });
+  const file = holdFile(P, 'w-tide-1');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, '{}\n');
+  const out = await routineOf(state(), act).run({ events: [stuck] });
+  assert.ok(out.handled.has(stuck.id), 'no wake for the foreman');
+  assert.equal(out.reasons.size, 0);
+  assert.deepEqual(readIncidents(), [], 'no stalled record and no incident');
+  // Handed back, the same stall is trouble again.
+  fs.rmSync(file);
+  const again = await routineOf(state(), act).run({ events: [stuck] });
+  assert.equal(again.reasons.get(stuck.id), 'stuck');
 }));

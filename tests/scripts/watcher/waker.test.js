@@ -24,6 +24,7 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { guardedCommand, selfTestFile } from '../../../scripts/windows/low.js';
 import { readBaseline, writeBaseline } from '../../../scripts/watcher/control-files.js';
+import { holdFile } from '../../../scripts/crew/hold.js';
 
 // The running node's folder is on the PATH of every session the waker starts, so these tests' PATH has it.
 const BIN = `${path.dirname(process.execPath)}:/bin`;
@@ -1584,4 +1585,47 @@ test('a configuration set between two wakes changes the model of the second, and
   w.setConfig('not a configuration');
   await w.wakeForeman(writeWake(P, bundle('e2')));
   assert.equal(modelOfCall(fake.calls.at(-1)), 'model-b');
+}));
+
+const hold = (work) => {
+  fs.mkdirSync(path.dirname(holdFile(P, work)), { recursive: true });
+  fs.writeFileSync(holdFile(P, work), '{}\n');
+};
+
+test('waker: a held piece\'s wake waits', () => withHome(async () => {
+  checkout();
+  const dir = worktree();
+  keepSession('login-page', dir, SESSION);
+  const fake = fakeRun();
+  const w = waker(fake, { locate: () => dir });
+  hold('login-page');
+  const file = writeWake(P, featureBundle('login-page'));
+  await w.wakeFeature('login-page', file);
+  await w.pump();
+  assert.equal(fake.calls.length, 0, 'nothing is started or woken while it is held');
+  assert.equal(w.waiting().filter((e) => e.work === 'login-page').length, 1, 'the wake stays queued, not delivered and not dropped');
+  await assert.rejects(w.startFeature({ work: 'login-page', worktree: dir }), /at the helm/);
+  await assert.rejects(w.resumeFeature({ work: 'login-page', prompt: 'Go.' }), /at the helm/);
+  assert.equal(fake.calls.length, 0);
+
+  fs.rmSync(holdFile(P, 'login-page'));
+  await w.pump();
+  assert.equal(fake.calls.length, 1);
+  assert.equal(fake.calls[0].args[fake.calls[0].args.indexOf('--resume') + 1], SESSION);
+  assert.match(fake.calls[0].args[fake.calls[0].args.indexOf('-p') + 1], /\S/);
+}));
+
+test('waker: a held run that ends leaves no lost marker', () => withHome(async () => {
+  checkout();
+  const fake = fakeRun({ exits: true });
+  const w = waker(fake, { onError: () => {} });
+  await w.startFeature({ work: 'login-page', worktree: worktree() });
+  await w.startFeature({ work: 'search-box', worktree: worktree() });
+  hold('login-page'); // taken while the run is live: the run is left alone, and when it ends no one resumes it
+  assert.equal(fake.live.size, 2);
+  fake.end(fake.calls[0].pid, 1);
+  fake.end(fake.calls[1].pid, 1);
+  await flush();
+  assert.equal(fs.existsSync(lostFile(P, 'login-page')), false);
+  assert.equal(fs.existsSync(lostFile(P, 'search-box')), true, 'a piece that is not held still leaves its marker');
 }));

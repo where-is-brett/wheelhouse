@@ -28,6 +28,7 @@
 //   readyPlans [work] features at the start whose session says its plan is ready but whose plan was never recorded (found again
 //            when the watcher starts, so a plan held back by a hold is not lost to a restart)
 import { FOREMAN_TYPES } from './core.js';
+import { helmHeld } from '../crew/hold.js';
 import { recordIncident } from './reliability.js';
 import {
   FIVE_HOUR_TIGHT, ForemanError, NO_PLAN, PLANS_WHILE_HELD, builderCapOf, checkoutOf, clashFor, currentFeatureOf, haltFor, haltOf, laneOf, loadConfig,
@@ -219,8 +220,13 @@ export async function readFacts({
     build.push({ verb: step === 'paused' ? 'resume' : 'build', work: id });
   }
   const ready = readyPrs(project).map(({ pr, work }) => ({ work, pr }));
+  // A piece the director holds at its helm waits on purpose: no move is made for it, and its stillness is no trouble. Its slot
+  // stays counted (the pace limit is unchanged).
+  const helmed = (id) => helmHeld(project, id);
+  for (const id of Object.keys(views.work)) if (helmed(id) && !heldOn.includes(id)) heldOn.push(id);
   return {
-    halt, lanes, start, build, pause: toBuild.pause, merge: ready, ready, held: heldOn, readyPlans, views,
+    halt, lanes, start: start.filter((s) => !helmed(s.work)), build: build.filter((b) => !helmed(b.work)), pause: toBuild.pause.filter((w) => !helmed(w)),
+    merge: ready.filter((m) => !helmed(m.work)), ready, held: heldOn, readyPlans: readyPlans.filter((w) => !helmed(w)), views,
   };
 }
 
@@ -319,7 +325,9 @@ export function makeRoutine({
           deferred.delete(id);
         }
       }
-      const t = triage({ ...state, events: [...again, ...mine], queue: false });
+      // A piece the director holds at its helm is waiting on purpose, whatever the facts say: its stillness is no trouble.
+      const helmed = [...again, ...mine].map((e) => e.work).filter((w) => typeof w === 'string' && helmHeld(project, w));
+      const t = triage({ ...state, held: [...(Array.isArray(state.held) ? state.held : []), ...helmed], events: [...again, ...mine], queue: false });
       for (const id of t.handled) out.handled.add(id);
       for (const e of t.defer) deferred.set(e.id, e);
       for (const { event, reason } of t.wake) {

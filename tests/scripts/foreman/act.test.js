@@ -35,6 +35,7 @@ import { run as runProgram } from '../../../scripts/lib/run.js';
 import { g, makeBareRemote } from '../../helpers/git-fixture.js';
 import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 import { NULL_FILE } from '../../../scripts/lib/safe-git.js';
+import { holdFile } from '../../../scripts/crew/hold.js';
 import { withHome } from '../../helpers/homes.js';
 import {
   P, T0, HASH, config, emptyViews, fakeClient, featureView, planText, project, recordInState, reportText, workView, worktree,
@@ -2257,4 +2258,34 @@ test('restart refuses work that is not there', () => withHome(async () => {
   const { fake, woken, wakerFor } = await restartScene();
   refusedInOneLine(await act(['restart', 'ghost'], { client: fake.client, wakerFor }));
   assert.equal(woken.length, 0);
+}));
+
+test('act: merge refuses a held piece', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.mine = workView('mine');
+  const wt = worktree(checkout, 'mine', { pr: { pr: 12, plan: 'docs/plans/a.md' } });
+  views.features.mine = featureView('mine', { step: 'building', worktree: wt });
+  fs.mkdirSync(path.dirname(holdFile(P, 'mine')), { recursive: true });
+  fs.writeFileSync(holdFile(P, 'mine'), '{}\n');
+  const fake = fakeClient({ views });
+  const copy = 'mine is with the director at the helm. It waits until they hand it back.\n';
+  for (const verb of ['merge', 'pause', 'resume', 'build']) {
+    const r = await act([verb, 'mine'], { client: fake.client });
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.out, copy, verb);
+  }
+  assert.deepEqual(fake.calls.map(([name]) => name), [], 'no merge call, no record written');
+}));
+
+test('act: start refuses a held piece', () => withHome(async () => {
+  await project();
+  const views = emptyViews();
+  views.work.mine = workView('mine');
+  fs.mkdirSync(path.dirname(holdFile(P, 'mine')), { recursive: true });
+  fs.writeFileSync(holdFile(P, 'mine'), '{}\n');
+  const fake = fakeClient({ views });
+  const r = await act(['start', 'mine', '--goal', 'g', '--done', 'd', '--appetite-sessions', '1', '--appetite-tokens', '1000'], { client: fake.client });
+  assert.equal(r.out, 'mine is with the director at the helm. It waits until they hand it back.\n');
+  assert.deepEqual(fake.calls.map(([name]) => name), []);
 }));

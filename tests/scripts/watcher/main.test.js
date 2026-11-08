@@ -17,6 +17,7 @@ import { LOOKBACK_MS } from '../../../scripts/watcher/sources.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
+import { holdFile } from '../../../scripts/crew/hold.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
 const P = 'o__p';
@@ -464,4 +465,25 @@ test('the routine takes what it can make by script, and the foreman is woken onl
   const wake = readWake(waker.wakes[0][1]);
   assert.deepEqual(wake.events.map((e) => [e.id, e.reason]), [['ev-b', 'unknown']]);
   assert.deepEqual(wake.digest.map((e) => [e.id, e.handled]), [['ev-a', true]], 'the handled event goes to the digest');
+}));
+
+test('main: removes orphan holds at start', () => withHome(async () => {
+  const mk = (work) => {
+    fs.mkdirSync(path.dirname(holdFile(P, work)), { recursive: true });
+    fs.writeFileSync(holdFile(P, work), '{}\n');
+    const old = new Date(Date.now() - 10 * 60 * SEC);
+    fs.utimesSync(holdFile(P, work), old, old);
+  };
+  mk('orphan');
+  mk('kept');
+  const client = { state: { views: async () => ({ ok: true, views: { work: {}, features: {}, helm: { kept: { since: '2026-11-08T01:00:00.000Z', fromStart: false } } } }) } };
+  await runWatcher({ project: P, client, config: config(), observe: looker([]).observe, waker: fakeWaker(), loops: 1, sleep: async () => {}, log: quiet });
+  assert.equal(fs.existsSync(holdFile(P, 'orphan')), false);
+  assert.equal(fs.existsSync(holdFile(P, 'kept')), true);
+
+  // Views that say nothing about the helm clear nothing.
+  mk('orphan');
+  const silent = { state: { views: async () => ({ ok: true, views: { work: {}, features: {} } }) } };
+  await runWatcher({ project: P, client: silent, config: config(), observe: looker([]).observe, waker: fakeWaker(), loops: 1, sleep: async () => {}, log: quiet });
+  assert.equal(fs.existsSync(holdFile(P, 'orphan')), true);
 }));

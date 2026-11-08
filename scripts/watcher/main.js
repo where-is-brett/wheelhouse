@@ -59,6 +59,7 @@ import { makeDecisionBatcher } from './decision-batch.js';
 import { makeDigestTicker } from './digest.js';
 import { makeWaker, watcherDir, watcherFolder, writeJsonFile, writeWake } from './waker.js';
 import { foremanTools } from '../foreman/tools.js';
+import { cleanOrphans } from '../crew/hold.js';
 import { readConfig } from '../gate/guardrails.js';
 import { helperClient } from '../host/helper-client.js';
 import { takeStartLock } from '../lib/start-lock.js';
@@ -194,6 +195,15 @@ export async function runWatcher({
     let pruned = null;
     let gapSent = null;
     let last = null;
+    // Holds the director left behind (no open helm in the records) are cleared once, as the watcher starts.
+    try {
+      // The views as the helper gives them, not as the foreman reads them: a reading with no `helm` in it would clear every hold.
+      const answer = await client.state.views({ project });
+      const helm = answer?.ok === true ? answer.views?.helm : undefined;
+      if (helm !== null && typeof helm === 'object' && !Array.isArray(helm)) cleanOrphans(project, answer.views, { now });
+    } catch (error) {
+      log(`Old helm holds couldn't be looked for: ${error.message}`);
+    }
     for (let n = 0; n < loops && !signal?.aborted; n += 1) {
       if (n > 0) await sleep(every.features, signal);
       if (signal?.aborted) break;
