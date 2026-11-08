@@ -358,3 +358,33 @@ Branch `feature/crew-page` from `main` once parts 1 and 2 are merged. Spec secti
 - [ ] **Step 3: Implement** `escapeMarkdown`, `renderPage`, `pagePath`, `writePage`.
 - [ ] **Step 4: Run them and see them pass.**
 - [ ] **Step 5: Commit.** `git commit -am "Crew runs: the transcript page"`
+
+### Task 4.2: "watch <work>", `--follow`, removal and the documents
+
+**Files:**
+- Modify: `scripts/crew/runs.js` (a command-line entry when run directly)
+- Modify: `scripts/frontdesk/cli.js` (command `page <work>`)
+- Modify: `scripts/watcher/routine.js` (`makeRoutine`'s tick removes pages of closed pieces)
+- Modify: `commands/logbook.md`, `skills/front-desk/SKILL.md`, `docs/data.md`, `docs/specs/2026-10-17-wheelhouse-design.md` (safety section)
+- Test: `tests/scripts/crew/runs.test.js`, `tests/scripts/frontdesk/cli.test.js`, `tests/scripts/watcher/routine.test.js`
+
+**Interfaces:**
+- Consumes: `writePage` (4.1), `cli.js record watch` (2.2), `isOpen(views, id)` from `scripts/desk/views.js:59`.
+- Produces:
+  - `cli.js page <work>`: records `watch {work, level: 'transcript'}` when the piece is below `transcript`, writes the page, and prints one line (exact copy): ``The page is at `<path>`. To follow it live: `node <plugin root>/scripts/crew/runs.js --follow <work>` `` For a closed or unknown piece it prints `There is no open piece called <work>.` and writes nothing.
+  - `node scripts/crew/runs.js --follow <work>`: rewrites the page every 2 seconds and prints each new step line to the terminal; stops when the piece closes or on Ctrl-C.
+  - `prunePages(project, views) -> string[]`: removes `watch/<work>.md` for every piece that is not open; returns what it removed. Called from the routine's tick.
+  - "watch <work>" (front desk) and `/wheelhouse:logbook watch <work>` run `cli.js page <work>` and pass on its one line.
+  - `docs/data.md` gains a `## Watching the crew` section: what the page holds, where it lives (`.wheelhouse/watch/`, ignored by git), that it stays on this computer and is removed when the piece closes. The design's safety section gains rules 1–6 of section 8.1.
+
+- [ ] **Step 1: Write the failing tests**
+  - `cli: page raises the level and prints one line`: after `page login`, `views.watch.login === 'transcript'` and stdout is one line containing `--follow login`.
+  - `cli: page refuses a closed piece`: the refusal line, no file.
+  - `routine: removes a closed piece's page`: a page for a closed piece is gone after one tick; an open piece's page stays.
+  - `runs: --follow prints new steps`: run as a child with a fixture transcript appended once → its output gains that step, and it exits when the piece is marked closed.
+- [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/crew/runs.test.js tests/scripts/frontdesk/cli.test.js tests/scripts/watcher/routine.test.js`
+- [ ] **Step 3: Implement** the command, `--follow`, `prunePages` and the documents.
+- [ ] **Step 4: Run them and see them pass.**
+- [ ] **Step 5: Commit.** `git commit -am "Crew page: watch a piece, follow it, and tidy up"`
+
+Part 4's pull request: title `Crew visibility: the transcript page`.
