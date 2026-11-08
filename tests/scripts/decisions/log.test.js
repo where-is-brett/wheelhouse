@@ -100,7 +100,7 @@ test('log: a helm call reaches the record as an agent-call event', () => {
 
 test('isHelmCall tells the director\'s own helm calls from the agents\' calls', async () => {
   await inHome(() => {
-    const [agent, helm] = callsFrom([callEvent({}, '2026-11-07T02:00:01.000Z'), callEvent({ where: 'helm', kind: 'steer' }, '2026-11-07T03:00:01.000Z')]);
+    const [agent, helm] = callsFrom([callEvent({}, '2026-11-07T02:00:01.000Z'), callEvent({ where: 'helm', kind: 'steer', at: '2026-11-07T03:00:00.000Z' }, '2026-11-07T03:00:01.000Z')]);
     assert.equal(isHelmCall(agent), false);
     assert.equal(isHelmCall(helm), true);
     assert.equal(isHelmCall(null), false);
