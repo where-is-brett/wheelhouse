@@ -4,10 +4,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir } from '../../../scripts/lib/paths.js';
+import { makeEvent } from '../../../scripts/state/events.js';
+import { buildViews } from '../../../scripts/state/views.js';
 import { LEVELS, watchCrewIn, levelFor, levelOf } from '../../../scripts/crew/level.js';
 
 const steps = { watchCrew: { value: 'steps' } };
-const open = (...ids) => Object.fromEntries(ids.map((id) => [id, { step: 'building' }]));
+const open = (...ids) => Object.fromEntries(ids.map((id) => [id, { data: { step: 'building' } }]));
+let tick = 0;
+const ev = (kind, data) => makeEvent({ kind, data, now: () => new Date(Date.UTC(2026, 10, 8, 0, 0, tick++)) });
+const viewsOf = (...events) => buildViews(events, []);
 
 test('level: the levels are off, steps and transcript', () => {
   assert.deepEqual(LEVELS, ['off', 'steps', 'transcript']);
@@ -27,8 +32,28 @@ test("level: a piece's own choice beats the project", () => {
 });
 
 test('level: the choice ends when the piece closes', () => {
-  const views = { features: { login: { step: 'closed' } }, watch: { login: 'off' } };
+  const views = viewsOf(
+    ev('feature', { work: 'login', step: 'building' }),
+    ev('watch', { work: 'login', level: 'off' }),
+    ev('feature', { work: 'login', step: 'closed' }),
+  );
   assert.equal(levelFor(views, steps, 'login'), 'steps');
+});
+
+test('level: work closed and queued again drops the old choice, and a new choice counts', () => {
+  const closed = [
+    ev('feature', { work: 'login', step: 'building' }),
+    ev('watch', { work: 'login', level: 'off' }),
+    ev('feature', { work: 'login', step: 'closed' }),
+    ev('feature', { work: 'login', step: 'started' }),
+  ];
+  assert.equal(levelFor(viewsOf(...closed), steps, 'login'), 'steps');
+  assert.equal(levelFor(viewsOf(...closed, ev('watch', { work: 'login', level: 'transcript' })), steps, 'login'), 'transcript');
+});
+
+test('level: a real open piece keeps its choice', () => {
+  const views = viewsOf(ev('feature', { work: 'login', step: 'building' }), ev('watch', { work: 'login', level: 'off' }));
+  assert.equal(levelFor(views, steps, 'login'), 'off');
 });
 
 test('level: a missing watch view is no override', () => {
@@ -54,11 +79,10 @@ test('level: a project with no records takes the default', () => {
   assert.equal(levelOf('level-test-project', 'login', { now: () => new Date() }), 'steps');
 });
 
-// The records layer reads a record path that is not a folder as no records (listEvents never throws on it), so the
-// level is the project default, not off; `off` is for a records error that does throw.
-test('level: a state path that is a file, not a folder, reads as no records', () => {
+// A state path that exists but is not a folder can't be read, and a value that can't be read counts as off.
+test('level: a state path that is a file, not a folder, gives off', () => {
   const project = 'level-file-project';
   fs.mkdirSync(path.dirname(stateDir(project)), { recursive: true });
   fs.writeFileSync(stateDir(project), 'not a folder');
-  assert.equal(levelOf(project, 'login', { now: () => new Date() }), 'steps');
+  assert.equal(levelOf(project, 'login', { now: () => new Date() }), 'off');
 });

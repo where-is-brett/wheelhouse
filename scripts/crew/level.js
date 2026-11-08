@@ -2,6 +2,7 @@
 // How much of the crew's work the director sees for a piece (crew visibility design, section 6): `off`, `steps` or
 // `transcript`. The project setting `watchCrew` gives it; a `watch` record for a piece, while the piece is open, gives
 // that piece its own. The Bosun (`foreman`) follows the project setting only.
+import fs from 'node:fs';
 import { buildViews } from '../state/views.js';
 import { listEvents } from '../state/events.js';
 import { readEnrolled } from '../state/signing.js';
@@ -26,15 +27,20 @@ export function levelFor(views, settings, work) {
   const project = watchCrewIn(settings);
   if (work === BOSUN) return project;
   const feature = isRecord(views?.features) ? views.features[work] : undefined;
-  const isOpen = isRecord(feature) && feature.step !== 'closed';
+  const isOpen = isRecord(feature) && isRecord(feature.data) && feature.data.step !== 'closed';
   const own = isRecord(views?.watch) ? views.watch[work] : undefined;
   return isOpen && LEVELS.includes(own) ? own : project;
 }
 
-// The level for `work` in a project, from its records and settings. An unreadable records folder gives the project's
-// default; only an unexpected failure gives off.
+// The level for `work` in a project, from its records and settings. A state folder that exists but cannot be read as a
+// folder, or any other failure, gives off: a value that can't be read counts as off (design 6.1, 8.1 rule 6).
 export function levelOf(project, work, { now = () => new Date() } = {}) {
   try {
+    try {
+      fs.readdirSync(stateDir(project));
+    } catch (e) {
+      if (e?.code !== 'ENOENT') return 'off';
+    }
     const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled());
     return levelFor(views, effectiveSettings({ project: views.settings, now }), work);
   } catch {

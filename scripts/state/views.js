@@ -776,11 +776,13 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const premiumFailures = sorted.filter((e) => e.kind === 'premium-failed' && isPlainObject(e.data) && verify(e, enrolled))
     .map((e) => ({ id: e.id, at: e.at, data: e.data, card: sorted.find((c) => c.kind === 'card' && c.data?.event === e.id)?.id ?? null }));
 
-  // The level the director asked for a piece, by work: its latest `watch` record. Whether it still counts, and what the
-  // project's setting says otherwise, is scripts/crew/level.js.
+  // The level the director asked for a piece, by work: its latest `watch` record. A choice holds until the piece closes
+  // (design 6.2), so a close ends it: a piece queued again starts with no choice. What the project's setting says
+  // otherwise is scripts/crew/level.js.
   const watch = {};
   for (const e of sorted) {
     if (e.kind === 'watch' && isPlainKey(e.data?.work) && LEVELS.includes(e.data.level)) watch[e.data.work] = e.data.level;
+    else if (e.kind === 'feature' && isPlainKey(e.data?.work) && e.data.step === 'closed') delete watch[e.data.work];
   }
   const merges = sorted.filter((e) => e.kind === 'merge');
   const lastMerge = merges.length > 0 ? { at: merges.at(-1).at, data: merges.at(-1).data } : null;
