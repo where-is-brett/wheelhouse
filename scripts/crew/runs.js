@@ -40,9 +40,12 @@ export function findTranscript({ sessionId, env = process.env } = {}) {
 
 export function findSubagents(file) {
   if (typeof file !== 'string' || !file.endsWith('.jsonl')) return [];
-  const dir = path.join(path.dirname(file), path.basename(file, '.jsonl'), 'subagents');
+  const sessionDir = path.join(path.dirname(file), path.basename(file, '.jsonl'));
+  const dir = path.join(sessionDir, 'subagents');
   let names;
   try {
+    // Both folders must be plain directories: a link is not followed.
+    if (!fs.lstatSync(sessionDir).isDirectory() || !fs.lstatSync(dir).isDirectory()) return [];
     names = fs.readdirSync(dir);
   } catch {
     return [];
@@ -95,7 +98,8 @@ export function readTail(file, { max = 256 * 1024 } = {}) {
     for (const line of lines) {
       if (line.trim() === '') continue;
       try {
-        events.push(JSON.parse(line));
+        const event = JSON.parse(line);
+        if (event && typeof event === 'object' && !Array.isArray(event)) events.push(event);
       } catch {
         // not JSON, or still being written
       }

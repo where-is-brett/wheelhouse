@@ -85,7 +85,10 @@ test('subagents: none when the folder is missing, links left out', () => {
 test('rejects a session id with a path separator or ..', () => {
   const { dir, env } = fakeConfig();
   fs.mkdirSync(path.join(dir, 'projects', 'a'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'x.jsonl'), '{}\n');
+  // Where traversal from projects/a/ would land: projects/x.jsonl, and projects/a/x.jsonl for a/x.
+  fs.writeFileSync(path.join(dir, 'projects', 'x.jsonl'), '{}\n');
+  fs.mkdirSync(path.join(dir, 'projects', 'a', 'a'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'projects', 'a', 'a', 'x.jsonl'), '{}\n');
   assert.equal(findTranscript({ sessionId: '../x', env }), null);
   assert.equal(findTranscript({ sessionId: 'a/x', env }), null);
   assert.equal(findTranscript({ sessionId: 'a\\x', env }), null);
@@ -159,4 +162,30 @@ test('readTail does not change the file', () => {
   const after = fs.statSync(file);
   assert.equal(after.mtimeMs, before.mtimeMs);
   assert.equal(after.size, before.size);
+});
+
+test('subagents: a linked subagents directory is refused', () => {
+  const { dir, env } = fakeConfig();
+  const proj = path.join(dir, 'projects', 'a');
+  fs.mkdirSync(path.join(proj, 'x'), { recursive: true });
+  fs.writeFileSync(path.join(proj, 'x.jsonl'), '{}\n');
+  const elsewhere = path.join(dir, 'elsewhere');
+  fs.mkdirSync(elsewhere);
+  fs.writeFileSync(path.join(elsewhere, 'agent-q.jsonl'), '{}\n');
+  fs.symlinkSync(elsewhere, path.join(proj, 'x', 'subagents'));
+  const file = findTranscript({ sessionId: 'x', env });
+  assert.deepEqual(findSubagents(file), []);
+});
+
+test('subagents: a linked session directory is refused', () => {
+  const { dir, env } = fakeConfig();
+  const proj = path.join(dir, 'projects', 'a');
+  fs.mkdirSync(proj, { recursive: true });
+  fs.writeFileSync(path.join(proj, 'x.jsonl'), '{}\n');
+  const elsewhere = path.join(dir, 'elsewhere');
+  fs.mkdirSync(path.join(elsewhere, 'subagents'), { recursive: true });
+  fs.writeFileSync(path.join(elsewhere, 'subagents', 'agent-q.jsonl'), '{}\n');
+  fs.symlinkSync(elsewhere, path.join(proj, 'x'));
+  const file = findTranscript({ sessionId: 'x', env });
+  assert.deepEqual(findSubagents(file), []);
 });
