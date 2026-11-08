@@ -315,3 +315,60 @@ Expected: PASS.
 git add scripts/hooks/session-start.js scripts/state/card-lines.js scripts/cards/compose.js scripts/lib/front-desk.js scripts/hooks/prompt-record.js tests/scripts/hooks/session-start.test.js tests/scripts/cards/compose.test.js tests/scripts/hooks/prompt-record.test.js
 git commit -m "Session start takes the First Mate's seat; a second window is an aside"
 ```
+
+### Task 5: Answers and clicks only from the seat; Take over here moves it (Part D)
+
+Spec: 6.4, 6.5 (the `recordAnswer` and clicks rows), 6.7 (the helm's one alternative), 6.8 cases 6 and 11.
+
+**Files:**
+- Modify: `scripts/decisions/answer.js` (`recordAnswer` at ~106, the guard at ~111–112)
+- Modify: `scripts/hooks/prompt-record.js` (`earned` at ~363; `takeOverOf` at ~327; `shownFor` at ~895; `decideReply` at ~920; the click loop in `decide` at ~1018–1034)
+- Modify: `scripts/state/events.js` (`ACTIONS` at ~68, the action fields at ~101, the checks at ~229)
+- Test: `tests/scripts/hooks/prompt-record-reply.test.js`, `tests/scripts/hooks/prompt-record.test.js`, `tests/scripts/state/events.test.js`
+
+**Interfaces:**
+- Consumes: `holdsSeat`, `readSeat`, `handOverSeat` (Task 2); `sessionRole` (Task 3); `seatTakeOverLine`, `SEAT_TAKEOVER_LINE`, `SEAT_MOVED_LINE` (Task 4); `TAKEOVER_LABEL` from `scripts/state/card-lines.js`.
+- Produces:
+  - `recordAnswer({..., seat})`: `seat` defaults to `readSeat(project)`. With a session id, it records only when the seat names this session (or through the helm alternative, if the crew visibility build has added it: keep it as that one alternative). Otherwise `{recorded: false}`, and when the words read as an answer to a waiting decision, a `note` that the First Mate is in another window, so nothing was recorded and the decision still waits (case 11; wording the builder's, in the form of the typed-replies-off note). No session id: today's behaviour.
+  - An `action` record `seat-take-over` with fields `['session', 'since']`, its `label` `TAKEOVER_LABEL` and its `question` exactly `seatTakeOverLine(session, since)`, checked in events.js beside `take-over`. A separate action, so the helper's `takeOverClick` (`scripts/host/helper.js:1340`), which moves the git lock, never reads it.
+  - `seatTakeOverOf(question, label, shown)` in prompt-record.js beside `takeOverOf`: the made record and `seatTakeOver: true`.
+
+In `decide`: a click or a reply code from a session that doesn't hold the seat records nothing and adds a context line that the First Mate is in another window and the window's take-over card can move it here; the one exception is the window take-over click itself. That click is recorded, then `handOverSeat(project, {session, folder: input.cwd, from: {session, since}})` runs after the record is sent (in place of `api.lock.takeOver` for this kind). `moved` → a context line that this window is now the First Mate, with `FRONT_DESK_LINE`; refused → a line naming the current holder (case 6). `shownFor` gives no reply code for `SEAT_TAKEOVER_LINE`, as for `TAKEOVER_LINE`.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `tests/scripts/hooks/prompt-record-reply.test.js`:
+- `an aside session's typed answer records nothing and says why`: seat held by `'b'`, typed replies on, session `'a'` types `B` while decision 1 waits → no answer record; the context names the First Mate's other window (case 11).
+- `the holder's typed answer records as today`: seat held by `'a'` → recorded.
+- `no session id records as today`: `session_id` absent → recorded.
+
+In `tests/scripts/hooks/prompt-record.test.js`:
+- `a card click in an aside window is refused`: seat held by `'b'`, a shown card clicked in session `'a'` → no record; the context holds the refusal line.
+- `the holder's card click records as today`.
+- `Take over here moves the seat`: seat `{session: 'b', since: S}`, the window card shown in `'a'`, clicked → a `seat-take-over` record; `readSeat(...).session === 'a'`; the context holds `FRONT_DESK_LINE`; `api.lock.takeOver` not called.
+- `a stale Take over here is refused and names the holder`: seat moved to `'c'` after the card showed `'b'` → seat still `'c'`; the context names `c` (case 6).
+- `no reply code for the window take-over card`: the shown card's line carries no reply code.
+
+In `tests/scripts/state/events.test.js`:
+- `a seat-take-over action needs its set line`: a record whose question isn't `seatTakeOverLine(session, since)` → refused; a whole one → accepted.
+
+- [ ] **Step 2: Run them and see them fail**
+
+Run: `node --test tests/scripts/hooks/prompt-record-reply.test.js tests/scripts/hooks/prompt-record.test.js tests/scripts/state/events.test.js`
+Expected: the new tests FAIL.
+
+- [ ] **Step 3: Implement the `recordAnswer` guard, the `seat-take-over` action, `seatTakeOverOf`, the holder check on clicks and codes, and the hand-over after the click is sent**
+
+Tests that call `recordAnswer` directly with a session id pass `seat` (or set one up), since a missing seat no longer records.
+
+- [ ] **Step 4: Run them and see them pass**
+
+Run: `node --test tests/scripts/hooks/prompt-record-reply.test.js tests/scripts/hooks/prompt-record.test.js tests/scripts/state/events.test.js tests/scripts/decisions/answer.test.js`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/decisions/answer.js scripts/hooks/prompt-record.js scripts/state/events.js tests/scripts/hooks/prompt-record-reply.test.js tests/scripts/hooks/prompt-record.test.js tests/scripts/state/events.test.js
+git commit -m "Only the First Mate's window records answers and clicks; Take over here moves the seat"
+```
