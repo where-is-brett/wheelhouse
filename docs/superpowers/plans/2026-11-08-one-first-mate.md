@@ -183,3 +183,66 @@ Expected: PASS.
 git add scripts/lib/first-mate-seat.js tests/scripts/lib/first-mate-seat.test.js
 git commit -m "The First Mate's seat: one per project, judged by its holder's process"
 ```
+
+### Task 3: The aside role (Part C)
+
+Spec: 6.3 (the order and the three kinds of aside), 6.8 cases 7, 10, 20 and 21.
+
+**Files:**
+- Modify: `scripts/lib/role.js`
+- Modify: `scripts/hooks/board-context.js` (where it records the first prompt's role: record `'aside'` for `/wheelhouse:aside` and for a linked worktree that isn't a made feature)
+- Create: `commands/aside.md`
+- Test: `tests/scripts/lib/role.test.js`, `tests/scripts/hooks/board-context.test.js`
+
+**Interfaces:**
+- Consumes: `madeFeatureSlug(cwd)` (Task 1); `readSeat(project)` (Task 2); `projectOf(cwd)` and `worktreeRoot(cwd)` from `scripts/hooks/kit.js`.
+- Produces:
+  - `ROLES` gains `'aside'`.
+  - `ASIDE_COMMAND = '/wheelhouse:aside'` exported from `role.js`.
+  - `sessionRole({sessionId, env, prompt, cwd, seat})` stays synchronous. Order: env `why`; env `foreman`; a recorded role other than `'front-desk'`; the foreman wake line; `madeFeatureSlug(cwd) !== null` → `'feature'`; a prompt starting with `ASIDE_COMMAND` → `'aside'`; a linked worktree (`.git` a file) → `'aside'`; then the seat: `seat` (default `readSeat` of the cwd's project) null, unreadable or naming this session → `'front-desk'`; naming another session → `'aside'`. No session id, or no project: `'front-desk'` as today (case 10).
+  - `asideKind({cwd}): 'worktree' | 'main'`: which aside line a session gets (Task 4 uses it).
+
+The seat step only reads. Who may take a free seat is Task 4's (session start and the prompt hook); a recorded `'front-desk'` no longer outranks the seat, since a take-over (Task 5) moves the seat without rewriting the old window's record. A helm session is `'feature'` (case 21), and a why copy stays `'why'` (case 7).
+
+`commands/aside.md`: front matter `description:` (one line: makes this window an ordinary session, never the First Mate), then `<!-- commands/aside.md -->`, then one or two lines telling the session to say it is now an ordinary session and to carry on with what the director asks.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `tests/scripts/lib/role.test.js`:
+- `aside is a role`: `ROLES.includes('aside')`.
+- `the seat holder is the front desk`: `seat: {session: 'a'}`, `sessionId: 'a'` → `'front-desk'`.
+- `another session's seat makes this one aside`: `seat: {session: 'b'}`, `sessionId: 'a'` → `'aside'`.
+- `no seat is the front desk`: `seat: null` → `'front-desk'`.
+- `a recorded front desk follows the seat`: role file `front-desk`, `seat: {session: 'b'}` → `'aside'`.
+- `the aside command makes an aside`: `prompt: '/wheelhouse:aside'`, `seat: null` → `'aside'`.
+- `a linked worktree that isn't a feature is aside`: `git worktree add` on `feature/desk` with no feature folder → `'aside'` (case 20).
+- `a made feature worktree is a feature whatever the seat`: → `'feature'` with `seat: {session: 'b'}`.
+- `why and foreman come before the seat`: env `why` → `'why'`; env `foreman` → `'foreman'`, each with `seat: {session: 'b'}`.
+- `no session id is the front desk`: `sessionId: undefined`, `seat: {session: 'b'}` → `'front-desk'`.
+- `asideKind`: the main checkout → `'main'`; a linked worktree → `'worktree'`.
+
+In `tests/scripts/hooks/board-context.test.js`:
+- `the aside command is recorded as aside`: first prompt `/wheelhouse:aside` → the role file holds `aside`.
+- `a linked worktree's aside is recorded`: first prompt in a linked non-feature worktree → `aside` recorded.
+- `a seat-made aside is not recorded`: seat held by another session → no role file written.
+
+- [ ] **Step 2: Run them and see them fail**
+
+Run: `node --test tests/scripts/lib/role.test.js tests/scripts/hooks/board-context.test.js`
+Expected: the new tests FAIL.
+
+- [ ] **Step 3: Implement the order above in `sessionRole`, `asideKind`, the recording in `board-context.js`, and `commands/aside.md`**
+
+Keep the seat step in its own function in `role.js` (`seatRole(...)`), apart from anything the crew visibility build adds.
+
+- [ ] **Step 4: Run them and see them pass**
+
+Run: `node --test tests/scripts/lib/role.test.js tests/scripts/hooks/board-context.test.js tests/scripts/hooks/why-role.test.js`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/lib/role.js scripts/hooks/board-context.js commands/aside.md tests/scripts/lib/role.test.js tests/scripts/hooks/board-context.test.js
+git commit -m "An aside session: any ordinary session that doesn't hold the seat"
+```
