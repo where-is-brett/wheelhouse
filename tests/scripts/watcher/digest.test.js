@@ -155,6 +155,7 @@ test('digest: a held piece is listed as waiting', () => inHome(async () => {
   const { ticker } = setup({ clock: day(8, 17, 1) });
   assert.equal((await ticker.tick()).digest.made, true);
   const text = readDigest(P).text;
-  assert.match(text, /Held by you at the helm\n- login-retry, with you since 14:02/u);
-  assert.doesNotMatch(text, /search, with you/u, 'a piece handed back is not listed');
+  assert.match(text, /Waiting on your decisions\n- login-retry, held by you at the helm since 14:02\n/u);
+  assert.doesNotMatch(text, /search, held by you/u, 'a piece handed back is not listed');
+  assert.doesNotMatch(text, /Held by you at the helm\n/u, 'no section of its own');
 }));

@@ -117,7 +117,6 @@ import { crewNow } from '../crew/runs.js';
 import { markHere } from '../lib/session-files.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { SLUG } from '../lib/build-loop.js';
-import { takeAtDesk, backAtDesk, stopNow } from '../crew/helm.js';
 
 // How far back `views waiting` looks for answers, and its lead (scripts/desk/views.js).
 export { RECENT_MS, RECENT_LEAD };
@@ -1165,36 +1164,15 @@ export async function page({ client, cwd, work }) {
 
 // --- helm ---
 // The director's words at the front desk about a piece's helm: `take` (a piece under way), `steer` (from its first step), `back`
-// and `now`. It acts in this process on the project's own files, which the front desk's folder place gives it; `deps` stands in
-// for the project, its configuration and the process checks.
+// and `now`. The helper does the hold, its records and the stop, as it writes the page: this command can't write where they
+// are kept, and says what the helper answers.
 const HELM_USAGE = 'Give take, steer, back or now and the piece: helm take <work>';
-export async function helm({ client, cwd, action, work, deps = {} }) {
+export async function helm({ client, cwd, action, work, session }) {
   if (!['take', 'steer', 'back', 'now'].includes(action) || typeof work !== 'string' || work === '') throw new CliError(HELM_USAGE);
   if (!SLUG.test(work)) throw new CliError(`There is no open piece called ${work}.`);
-  const found = deps.project === undefined ? projectOf(cwd) : { project: deps.project };
-  if (found === null) throw new CliError('This folder isn\'t a Wheelhouse project.');
-  let config = deps.config;
-  if (config === undefined) {
-    const { projectConfig } = await import('../watcher/main.js');
-    const read = await projectConfig(found.project, client);
-    if (read.config === null) throw new CliError(`The project's configuration can't be read: ${read.why}`);
-    config = read.config;
-  }
-  const { project } = found;
-  const rest = { ...deps };
-  delete rest.project;
-  delete rest.config;
-  let got;
-  if (action === 'now') {
-    const said = [];
-    got = await stopNow(project, work, { config, atFrontDesk: true, print: (line) => said.push(line), ...(rest.wakerFor ? { wakerFor: rest.wakerFor } : {}) });
-    if (got.code === 0) got = { ...got, lines: said };
-  } else if (action === 'back') {
-    got = await backAtDesk(project, work, { config, print: () => {}, ...rest });
-  } else {
-    got = await takeAtDesk(project, work, { fromStart: action === 'steer', config, ...rest });
-  }
-  if (got.code !== 0) throw new CliError(got.why);
+  const got = await client.crew.helm({ cwd, work, action, ...(typeof session === 'string' && session !== '' ? { session } : {}) });
+  if (got?.ok !== true) throw new CliError(said(got, `The host helper did not do that for ${work}`));
+  if (!Array.isArray(got.lines) || got.lines.length === 0) throw new CliError(`The host helper gave no answer for ${work}`);
   return got.lines;
 }
 
@@ -1448,7 +1426,7 @@ export function inChatWords(value, whole = null) {
 }
 
 export async function main(argv, {
-  cwd = process.cwd(), env = process.env, client, input, now = () => new Date(), makeId, columnsReady, ask, helmDeps,
+  cwd = process.cwd(), env = process.env, client, input, now = () => new Date(), makeId, columnsReady, ask,
   out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
 } = {}) {
   try {
@@ -1531,7 +1509,7 @@ export async function main(argv, {
       lines([await page({ client: helper, cwd: here, work: rest[0] })]);
     } else if (command === 'helm') {
       only(rest, 2, HELM_USAGE);
-      lines(await helm({ client: helper, cwd: here, action: rest[0], work: rest[1], deps: { now, ...helmDeps } }));
+      lines(await helm({ client: helper, cwd: here, action: rest[0], work: rest[1], session: env.CLAUDE_CODE_SESSION_ID }));
     } else if (command === 'similar') {
       // The request's words as the arguments, which STOP lets through, or its text on standard input.
       json(await similar({ client: helper, cwd: here, text: rest.length > 0 ? rest.join(' ') : await stdin() }));

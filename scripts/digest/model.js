@@ -156,19 +156,20 @@ export function digestText(model, { now } = {}) {
   out.push(...(approval.length === 0 ? ['Nothing.'] : listed(approval, (x) => `- Pull request #${x.pr}${x.title ? `: ${x.title}` : ''}`)));
   out.push('', 'Waiting on your decisions');
   const decisions = list(m.waitingDecisions);
-  out.push(...(decisions.length === 0 ? ['Nothing.'] : listed(decisions, (d) => {
-    const meanwhile = d.meanwhile ? ` Meanwhile: ${d.meanwhile}` : '';
-    return `${d.n}. ${d.question}${d.work ? ` (${d.work})` : ''}${meanwhile}`;
-  })));
   const heldNow = list(m.held);
-  if (heldNow.length > 0) {
-    out.push('', 'Held by you at the helm');
-    out.push(...listed(heldNow, (h) => {
-      const at = h.since === null ? null : new Date(h.since);
-      const clock = at === null || Number.isNaN(at.getTime()) ? null : `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
-      return `- ${h.work}, with you${clock === null ? '' : ` since ${clock}`}`;
-    }));
-  }
+  const heldLine = (h) => {
+    const at = h.since === null ? null : new Date(h.since);
+    const clock = at === null || Number.isNaN(at.getTime()) ? null : `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+    return `- ${h.work}, held by you at the helm${clock === null ? '' : ` since ${clock}`}`;
+  };
+  const waiting = [
+    ...listed(decisions, (d) => {
+      const meanwhile = d.meanwhile ? ` Meanwhile: ${d.meanwhile}` : '';
+      return `${d.n}. ${d.question}${d.work ? ` (${d.work})` : ''}${meanwhile}`;
+    }),
+    ...listed(heldNow, heldLine),
+  ];
+  out.push(...(waiting.length === 0 ? ['Nothing.'] : waiting));
   out.push('', usageLine(m.usage ?? null));
   if (Array.isArray(m.calls)) {
     out.push('', 'The week\'s decision log: what the agents decided on their own');

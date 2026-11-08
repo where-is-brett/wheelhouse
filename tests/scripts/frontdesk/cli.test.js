@@ -152,11 +152,11 @@ function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, 
 async function run(helper, argv, input, opts) {
   return runWith(helper, argv, input, opts);
 }
-async function runWith(helper, argv, input, { cwd = CWD, ready, env, ask, helmDeps } = {}) {
+async function runWith(helper, argv, input, { cwd = CWD, ready, env, ask } = {}) {
   let out = '';
   let err = '';
   const code = await main(argv, {
-    cwd, client: helper.client, input, env: env ?? {}, ...(ready ? { columnsReady: ready } : {}), ...(ask ? { ask } : {}), ...(helmDeps ? { helmDeps } : {}), now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; },
+    cwd, client: helper.client, input, env: env ?? {}, ...(ready ? { columnsReady: ready } : {}), ...(ask ? { ask } : {}), now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; },
   });
   let json;
   try { json = JSON.parse(out); } catch { json = undefined; }
@@ -2555,72 +2555,47 @@ test('cli: page is a seat write', async () => {
   assert.ok(SEAT_WRITES.includes('page'));
 });
 
-// A piece open in a test record, with its session kept, and the helm's seams standing in for the project and its processes.
-async function helmWorld(fn) {
-  const before = process.env.WHEELHOUSE_HOME;
-  process.env.WHEELHOUSE_HOME = path.join(tempFolder('wh-cli-helm-'), 'home');
-  try {
-    const project = 'o__p';
-    await openTestRecord({ project });
-    const { computer, publicKey } = makeSigningKey();
-    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    const at = () => NOW;
-    await (await import('../../../scripts/state/events.js')).writeEvent({ project, event: makeEvent({ kind: 'feature', data: { work: 'login', step: 'building' }, now: at }), now: at });
-    fs.mkdirSync(path.dirname(sessionFile(project, 'login')), { recursive: true });
-    writeJsonFile(sessionFile(project, 'login'), { sessionId: 's-1', worktree: tempFolder('wh-tree-') });
-    const deps = { project, config: {}, alive: () => false, startTimeOf: async () => null };
-    return await fn({ project, deps });
-  } finally {
-    if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;
-  }
+// The helper's answer to `helm`: kept calls, and the lines or refusal the test gives.
+function helmHelper(answer) {
+  const helper = fakeHelper();
+  const asked = [];
+  helper.client.crew = { helm: async (body) => { asked.push(body); return answer(body); } };
+  return { helper, asked };
 }
 
 test('cli: helm is a seat write and a command', () => {
   assert.ok(SEAT_WRITES.includes('helm'));
 });
 
-test('cli: helm take writes a helm event and prints the command', async () => {
-  await helmWorld(async ({ project, deps }) => {
-    const out = await run(fakeHelper(), ['helm', 'take', 'login'], undefined, { helmDeps: deps });
-    assert.equal(out.code, 0, out.err);
-    assert.equal(out.out, 'login is ready for you now. Run this to open it:\n```bash\nnode <plugin root>/scripts/crew/helm.js open login\n```\n');
-    const events = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'helm');
-    assert.equal(events.length, 1);
-    assert.equal(events[0].data.work, 'login');
-    assert.equal(events[0].data.fromStart, false);
-    const again = await run(fakeHelper(), ['helm', 'take', 'login'], undefined, { helmDeps: deps });
-    assert.equal(again.code, 1);
-    assert.match(again.err, /already at the helm/);
-  });
+test('cli: helm asks the helper and prints its lines, and the folder and the session go with it', async () => {
+  const lines = ['login is ready for you now. Run this to open it:', '```bash', 'node <plugin root>/scripts/crew/helm.js open login', '```'];
+  const { helper, asked } = helmHelper(() => ({ ok: true, lines }));
+  const out = await run(helper, ['helm', 'take', 'login']);
+  assert.equal(out.code, 0, out.err);
+  assert.equal(out.out, `${lines.join('\n')}\n`);
+  assert.deepEqual(asked, [{ cwd: CWD, work: 'login', action: 'take' }]);
+  assert.deepEqual(helper.calls, [], 'nothing is written or read here');
+  const seated = await run(helper, ['helm', 'steer', 'search'], undefined, { env: {} });
+  assert.equal(seated.code, 0);
+  assert.equal(asked[1].action, 'steer');
 });
 
-test('cli: helm steer holds a piece from its start, and helm back lets it go', async () => {
-  await helmWorld(async ({ project, deps }) => {
-    const sessions = { featureStartCall: () => ({ file: 'claude', args: [] }) };
-    const steered = await run(fakeHelper(), ['helm', 'steer', 'search'], undefined, { helmDeps: { ...deps, sessions } });
-    assert.equal(steered.code, 0, steered.err);
-    const events = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'helm');
-    assert.equal(events[0].data.fromStart, true);
-    const named = await run(fakeHelper(), ['helm', 'steer', 'other'], undefined, { helmDeps: { ...deps, sessions: { featureStartCall: () => ({ idFromRun: true }) } } });
-    assert.equal(named.code, 1);
-    assert.match(named.err, /name themselves/);
-    const back = await run(fakeHelper(), ['helm', 'back', 'search'], undefined, { helmDeps: deps });
-    assert.equal(back.code, 0, back.err);
-    assert.equal(back.out, 'search is back with the crew.\n');
-    assert.equal((await run(fakeHelper(), ['helm', 'back', 'search'], undefined, { helmDeps: deps })).code, 1);
-  });
+test('cli: helm says the helper\'s refusal, and takes only a known action and a piece name', async () => {
+  const { helper, asked } = helmHelper(() => ({ ok: false, refused: 'login is already at the helm.' }));
+  const out = await run(helper, ['helm', 'take', 'login']);
+  assert.equal(out.code, 1);
+  assert.equal(out.err, 'login is already at the helm.\n');
+  assert.equal((await run(helper, ['helm', 'drive', 'login'])).code, 1);
+  assert.match((await run(helper, ['helm', 'take', '../x'])).err, /no open piece/);
+  assert.equal((await run(helper, ['helm', 'take'])).code, 1);
+  assert.equal(asked.length, 1, 'only the valid request reached the helper');
 });
 
-test('cli: helm now asks the waker to end the held piece\'s run, and helm takes only a known action and a piece name', async () => {
-  await helmWorld(async ({ deps }) => {
-    assert.equal((await run(fakeHelper(), ['helm', 'take', 'login'], undefined, { helmDeps: deps })).code, 0);
-    const asked = [];
-    const wakerFor = () => ({ stopRun: async (w) => { asked.push(w); return { stopped: true }; } });
-    const out = await run(fakeHelper(), ['helm', 'now', 'login'], undefined, { helmDeps: { ...deps, wakerFor } });
-    assert.equal(out.code, 0, out.err);
-    assert.deepEqual(asked, ['login']);
-    assert.equal(out.out, 'login\'s current step is ended.\n');
-    assert.equal((await run(fakeHelper(), ['helm', 'drive', 'login'], undefined, { helmDeps: deps })).code, 1);
-    assert.match((await run(fakeHelper(), ['helm', 'take', '../x'], undefined, { helmDeps: deps })).err, /no open piece/);
-  });
+test('cli: helm from a window without the First Mate\'s seat is refused before the helper', async () => {
+  const { helper, asked } = helmHelper(() => ({ ok: true, lines: ['x'] }));
+  helper.client.session.seat = async () => ({ ok: true, holds: false });
+  const out = await run(helper, ['helm', 'take', 'login'], undefined, { env: { CLAUDE_CODE_SESSION_ID: 'other' } });
+  assert.equal(out.code, 1);
+  assert.equal(out.err, `${SEAT_REFUSAL}\n`);
+  assert.deepEqual(asked, []);
 });

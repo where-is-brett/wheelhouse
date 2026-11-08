@@ -145,10 +145,10 @@ test('not-now writes the plain card-answer, and a chat click goes the helper\'s 
 }));
 
 test('acts: all stop names the helm session it leaves running', () => withKey(async () => {
-  const held = { ...memory(), async views() { return { ok: true, views: { waiting: [], helm: { login: { since: 'x', fromStart: false }, search: { since: 'y', fromStart: false } } }, names: [] }; } };
+  const held = { ...memory(), async views() { return { ok: true, views: { waiting: [], helm: { login: { since: 'x', fromStart: false, opened: true }, search: { since: 'y', fromStart: false, opened: false }, build: { since: 'z', fromStart: true, opened: true } } }, names: [] }; } };
   const got = await runAct('all-stop', {}, { ok: true, records: [] }, { source: held, recorder: spy(), now });
   assert.equal(got.ok, true);
-  assert.equal(got.says, "The helm session for login is the director's own, so it keeps running. The helm session for search is the director's own, so it keeps running.");
+  assert.equal(got.says, "The helm session for build is the director's own, so it keeps running. The helm session for login is the director's own, so it keeps running.", 'search was taken but never opened, so it has no session');
   const none = await runAct('all-stop', {}, { ok: true, records: [] }, { source: memory(), recorder: spy(), now });
   assert.equal('says' in none, false, 'nothing held, nothing added');
 }));

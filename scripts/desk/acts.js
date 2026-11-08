@@ -10,6 +10,7 @@ import { cardTextOf, hashOf } from './card-text.js';
 import { NOT_NOW, SUGGEST } from '../lib/calm-words.js';
 import { composeCard } from '../cards/compose.js';
 import { PAIR_LABEL } from '../state/card-lines.js';
+import { withOpened } from './views.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
@@ -86,14 +87,16 @@ const ACTS = {
     const refused = await recordAll(recorder, checked.records ?? []);
     return refused === null ? { ok: true, changed: ['setting'] } : no(`The setting wasn't changed: ${refused}`);
   },
-  // A helm session is the director's own, so All stop leaves it running and says so, once for each piece held.
+  // A helm session is the director's own, so All stop leaves it running and says so, once for each piece whose helm is open.
   async 'all-stop'(args, checked, { source, recorder }) {
     const got = await recorder.setStop({ by: typeof args.by === 'string' ? args.by : 'helper' });
     if (got?.ok === false) return no(got.refused ?? 'All stop wasn\'t set');
     let held = [];
     try {
       const seen = await source?.views?.({});
-      held = Object.keys(isPlain(seen?.views?.helm) ? seen.views.helm : {}).sort();
+      // Only an opened helm is a session that runs; a piece taken or steered and not yet opened has none.
+      const marked = withOpened(seen?.views, source.project)?.helm;
+      held = Object.entries(isPlain(marked) ? marked : {}).filter(([, h]) => isPlain(h) && h.opened === true).map(([work]) => work).sort();
     } catch {
       // The pieces held can't be named; All stop is set all the same.
     }

@@ -289,8 +289,9 @@ export async function backAtDesk(project, work, {
   if (!helmHeld(project, work)) return refuse(`${work} is not at the helm.`);
   const hold = readHold(project, work);
   if (hold?.opened === true && Number.isInteger(hold.pid) && alive(hold.pid)) {
+    // A start time that can't be read, where the hold has one, leaves the session counted as open.
     const started = typeof hold.startTime === 'string' ? await startTimeOf(hold.pid) : null;
-    if (typeof hold.startTime !== 'string' || started === hold.startTime) return refuse(HELM_STILL_OPEN(work));
+    if (typeof hold.startTime !== 'string' || typeof started !== 'string' || started === hold.startTime) return refuse(HELM_STILL_OPEN(work));
   }
   if (hold?.opened === true) {
     if (!await handBack(project, work, { why: 'closed', now, config, wakerFor, print })) return refuse(`${work} is already being handed back.`);

@@ -654,11 +654,11 @@ export function spawnDetached(file, args, { cwd, env, input = '', windowsVerbati
   });
 }
 
-// Whether a process with this id is running. EPERM means it exists.
 // Said when a piece is to be steered from its start on an agent whose sessions name themselves: the helm names its own
 // session when it starts, so such a piece can't be steered from the start.
 export const STEER_NAMES_ITSELF = "This agent's sessions name themselves, so a piece can't be steered from its start";
 
+// Whether a process with this id is running. EPERM means it exists.
 export function pidAlive(pid) {
   try {
     process.kill(pid, 0);

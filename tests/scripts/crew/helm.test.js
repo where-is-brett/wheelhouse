@@ -458,3 +458,14 @@ test('helm: now at the front desk needs no terminal', async () => {
     assert.equal(out.code, 0);
   });
 });
+
+test('helm: back refuses when the pid is alive and its start time can\'t be read', async () => {
+  await withHome(async (p) => {
+    await openPiece(p, 'login');
+    await takeHold(p, { work: 'login', sessionId: 's-1', now });
+    markOpened(p, 'login', { pid: 4242, startTime: 'Sun Nov  8 02:00:00 2026' });
+    const out = await backAtDesk(p, 'login', { alive: () => true, startTimeOf: async () => null, now, config: {} });
+    assert.equal(out.code, 1);
+    assert.equal(helmHeld(p, 'login'), true);
+  });
+});
