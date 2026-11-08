@@ -132,7 +132,7 @@ export class CliError extends Error {}
 // (work, amendment, incident, and the no-blame note when an incident ends).
 export const RECORD_KINDS = Object.freeze([
   'ruling', 'idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal', 'setting',
-  'work', 'amendment', 'incident', 'note', 'brief', 'watch',
+  'work', 'amendment', 'incident', 'note', 'brief', 'watch', 'helm-note',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'brief']);
 // The commands that write a record, hand out a card or change the board: only the window that holds the First Mate's seat runs them.

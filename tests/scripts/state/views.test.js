@@ -17,7 +17,7 @@ import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'brief', 'sendBacks', 'slept', 'watch'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'brief', 'sendBacks', 'slept', 'watch', 'helm', 'helmNotes'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -1714,4 +1714,18 @@ test('views: a watch record that is not a level counts for nothing', () => {
   const events = [ev('watch', 1, { work: 'login', level: 'steps' })];
   events.push({ ...ev('watch', 2, { work: 'login', level: 'steps' }), data: { work: 'login', level: 'loud' } });
   assert.deepEqual(build(events).watch, { login: 'steps' });
+});
+
+test('views: a helm lasts until it is ended, and notes gather by piece', () => {
+  const events = [
+    ev('helm', 1, { work: 'login', at: T(1), fromStart: true }),
+    ev('helm', 2, { work: 'other', at: T(2) }),
+    ev('helm-note', 3, { work: 'login', text: 'use the old form' }),
+    ev('helm-ended', 4, { work: 'other', at: T(4) }),
+  ];
+  const v = build(events);
+  assert.deepEqual(v.helm, { login: { since: T(1), fromStart: true } });
+  assert.deepEqual(v.helmNotes, { login: [{ at: T(3), text: 'use the old form' }] });
+  assert.deepEqual(build([]).helm, {});
+  assert.deepEqual(build([]).helmNotes, {});
 });

@@ -48,7 +48,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { makeBundler, readCursor, route, step, writeCursor } from './core.js';
-import { makeRoutine } from './routine.js';
+import { handBackClosed, makeRoutine } from './routine.js';
 import { checkReliability, recordIncident } from './reliability.js';
 import { readHandled } from './handled.js';
 import { INTERVALS, LOOKBACK_MS, observe } from './sources.js';
@@ -59,6 +59,7 @@ import { makeDecisionBatcher } from './decision-batch.js';
 import { makeDigestTicker } from './digest.js';
 import { makeWaker, watcherDir, watcherFolder, writeJsonFile, writeWake } from './waker.js';
 import { foremanTools } from '../foreman/tools.js';
+import { cleanOrphans } from '../crew/hold.js';
 import { readConfig } from '../gate/guardrails.js';
 import { helperClient } from '../host/helper-client.js';
 import { takeStartLock } from '../lib/start-lock.js';
@@ -152,6 +153,7 @@ export async function runWatcher({
   recovery = null,
   resume = null,
   routine = null,
+  helm = {},
   digest = null,
   log = (message) => process.stderr.write(`${message}\n`),
 }) {
@@ -194,6 +196,24 @@ export async function runWatcher({
     let pruned = null;
     let gapSent = null;
     let last = null;
+    // Holds the director left behind (no open helm in the records) are cleared once, as the watcher starts.
+    try {
+      // The views as the helper gives them, not as the foreman reads them: a reading with no `helm` in it would clear every hold.
+      const answer = await client.state.views({ project });
+      const helm = answer?.ok === true ? answer.views?.helm : undefined;
+      if (helm !== null && typeof helm === 'object' && !Array.isArray(helm)) cleanOrphans(project, answer.views, { now });
+    } catch (error) {
+      log(`Old helm holds couldn't be looked for: ${error.message}`);
+    }
+    // Pieces whose helm terminal closed while the watcher was off are handed back, once, as it starts.
+    await handBackClosed(project, {
+      configOf: async () => {
+        const read = await projectConfig(project, client);
+        if (read.config === null) throw new Error(read.why);
+        return read.config;
+      },
+      now, log, ...helm,
+    });
     for (let n = 0; n < loops && !signal?.aborted; n += 1) {
       if (n > 0) await sleep(every.features, signal);
       if (signal?.aborted) break;

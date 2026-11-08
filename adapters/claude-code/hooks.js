@@ -171,6 +171,15 @@ const REGISTRATION = {
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/node-floor.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/helm-end.js\"",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }

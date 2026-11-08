@@ -167,6 +167,7 @@ import { recordHandled } from '../watcher/handled.js';
 import { recordedBriefs } from '../watcher/sources.js';
 import { writeBaseline } from '../watcher/control-files.js';
 import { makeWaker, sessionFile, watcherDir, writeJsonFile, writeWake } from '../watcher/waker.js';
+import { helmHeld } from '../crew/hold.js';
 import { guardedCardInput, guardedCommand, readSelfTest } from '../windows/low.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -298,6 +299,14 @@ function context({ project, client, now, run, wakerFor, pluginRoot, makeId, out,
   return ctx;
 }
 
+// Says so and answers true when the director has the piece in hand at its helm: nothing starts, resumes, pauses or merges it
+// until they hand it back. It returns, as every wait here does, and does not throw.
+function atTheHelm(ctx, work) {
+  if (!helmHeld(ctx.project, work)) return false;
+  ctx.say(`${work} is with the director at the helm. It waits until they hand it back.`);
+  return true;
+}
+
 // The feature as recorded, refusing one that is not there or has closed.
 function liveFeature(views, work) {
   const f = featureOf(views, work);
@@ -318,6 +327,7 @@ const GO = (work) => `${work} may build: recorded building, so its session is wo
 // Records `building` when the feature's recorded plan clears the clash check
 // and has a slot; otherwise says why it waits. `f` is the feature as it stands.
 async function goAhead(ctx, work, f, { lead = '' } = {}) {
+  if (atTheHelm(ctx, work)) return false;
   const views = await ctx.views();
   const halt = ctx.halt(views, laneOf(views, work));
   if (halt !== null) {
@@ -586,6 +596,7 @@ async function start(ctx, work, rest) {
   const entry = views.work[work];
   if (!isPlain(entry?.work?.data)) refuse(`There is no work named ${work} in state`);
   const lane = entry.work.data.lane;
+  if (atTheHelm(ctx, work)) return;
   ctx.refuseHalted(views, `${work} can't start`, lane);
   const config = await ctx.config();
 
@@ -745,6 +756,7 @@ async function build(ctx, work, rest) {
   flagsOf(rest, [], 'build');
   const views = await ctx.views();
   const f = liveFeature(views, work);
+  if (atTheHelm(ctx, work)) return;
   const lane = laneOf(views, work);
   if (f.step === 'building') {
     ctx.say(`${work} is building already.`);
@@ -790,6 +802,7 @@ async function pause(ctx, work, rest, { lead = '', why = 'five-hour' } = {}) {
   flagsOf(rest, [], 'pause');
   const views = await ctx.views();
   const f = liveFeature(views, work);
+  if (atTheHelm(ctx, work)) return;
   if (f.step === 'paused' && (pausedBy(f) === 'director' || why === 'five-hour')) {
     ctx.say(`${lead}${work} is paused already.`);
     return;
@@ -804,6 +817,7 @@ async function resume(ctx, work, rest, { lead = '', lifted = false } = {}) {
   flagsOf(rest, [], 'resume');
   const views = await ctx.views();
   const f = liveFeature(views, work);
+  if (atTheHelm(ctx, work)) return;
   if (f.step === 'building') {
     ctx.say(`${lead}${work} is building already.`);
     return;
@@ -1383,6 +1397,7 @@ async function merge(ctx, work, rest) {
   flagsOf(rest, [], 'merge');
   const views = await ctx.views();
   liveFeature(views, work);
+  if (atTheHelm(ctx, work)) return;
   const worktree = worktreeOf(ctx.project, views, work);
   const kept = readPrRecord(worktree);
   if (kept === null) refuse(`${work} has no pull request kept in its pr.json`);
@@ -1454,6 +1469,7 @@ async function close(ctx, work, rest) {
     ctx.say(`${work} is closed already.`);
     return;
   }
+  if (atTheHelm(ctx, work)) return;
   const worktree = worktreeOf(ctx.project, views, work);
   let missing;
   try {
@@ -1605,6 +1621,10 @@ async function restart(ctx, work, rest) {
   const f = liveFeature(views, work);
   refuseDirectorsPause(work, f);
   ctx.refuseHalted(views, `${work} can't be restarted`, laneOf(views, work));
+  if (helmHeld(ctx.project, work)) {
+    ctx.say(`${work} is with the director at the helm. The wake waits until they hand it back.`);
+    return;
+  }
   const worktree = worktreeOf(ctx.project, views, work);
   const kept = readPrRecord(worktree);
   const held = kept === null || kept.merged ? null : holdingReview(views, kept.pr);
