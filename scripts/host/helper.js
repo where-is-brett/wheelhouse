@@ -128,6 +128,7 @@ import { READY_LEVELS, PREMIUM_LEVEL, barFailures, readiness, samePins } from '.
 import { PREMIUM_ASK, PREMIUM_DO, checkRefusal, foundPremium, offeredFrom, premiumInput, premiumRefusal, premiumPinOf } from '../routing/premium.js';
 import { levelOf } from '../routing/thoroughness.js';
 import { pageFor } from '../crew/runs.js';
+import { takeAtDesk, backAtDesk, stopNow } from '../crew/helm.js';
 import { effectiveSettings, settingWords } from '../settings/effective.js';
 import { cardHash } from '../lib/measures-clicks.js';
 import { aliasModel, FRONT_DESK_ALIAS, STRONGEST_ALIAS } from '../setup/best-model.js';
@@ -922,7 +923,7 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 // ~/.wheelhouse cannot be read: like the runbook's, each may give `cwd`, a full path, and the
 // helper places the project from it.
 const PLACED_ROUTES = [
-  '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/session/note', '/session/seat', '/crew/page', '/cards/chat-click', '/confirm',
+  '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/session/note', '/session/seat', '/crew/page', '/crew/helm', '/cards/chat-click', '/confirm',
   '/desk/read', '/desk/act', '/desk/watch',
   '/local/undo', '/undo', '/local/move',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
@@ -2278,6 +2279,33 @@ export async function startHelper({
       },
     });
     return { ok: true, ...got };
+  }
+
+  // The director's words at the front desk about a piece's helm (crew visibility design, 9.1): "take the helm of <work>",
+  // "I'll steer it" (`steer`), "hand back <work>" and "now". The hold, its records and the stop are done here, on this
+  // computer, since the front desk's sandbox can't write the Wheelhouse home. Only this route acts for the front desk without
+  // a terminal (`atFrontDesk`), so a `session` that is given must hold the First Mate's seat, as the front desk's own command
+  // checks. Answers `{ ok, lines }`, or the refusal in one line.
+  async function doCrewHelm({ project, work, action, session }) {
+    if (!['take', 'steer', 'back', 'now'].includes(action)) refuse('say take, steer, back or now');
+    if (typeof work !== 'string' || work === '' || work.length > 100) refuse('give the piece by its short name');
+    if (session !== undefined && (typeof session !== 'string' || session === '' || !holdsSeat(project, session))) refuse('only the window that holds the First Mate\'s seat can take or hand back the helm');
+    const folder = recordOf(project)?.folder;
+    if (typeof folder !== 'string') refuse(FOLDER_NOT_PROJECT);
+    let config;
+    try {
+      const file = path.join(folder, ...CONFIG_FILE.split('/'));
+      config = readConfig(fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null);
+    } catch {
+      refuse('the project\'s configuration can\'t be read');
+    }
+    const said = [];
+    const print = (line) => said.push(line);
+    const got = action === 'now' ? await stopNow(project, work, { config, atFrontDesk: true, print })
+      : action === 'back' ? await backAtDesk(project, work, { config, print })
+        : await takeAtDesk(project, work, { fromStart: action === 'steer', config });
+    if (got.code !== 0) refuse(got.why);
+    return { ok: true, lines: got.lines ?? said };
   }
 
   // A click in the chat (ruling P5-17): an unsigned card-answer naming its proof, never signed. A label that
@@ -4889,6 +4917,7 @@ export async function startHelper({
     '/session/note': stateRoute(doSessionNote, { clone: false, write: true }),
     '/session/seat': stateRoute(doSessionSeat, { clone: false }),
     '/crew/page': stateRoute(doCrewPage, { clone: false }),
+    '/crew/helm': stateRoute(doCrewHelm, { clone: false, write: true }),
     '/cards/chat-click': stateRoute(doChatClick, { write: true }),
     // One window at a time on this computer: a second request waits for the first window to close.
     '/confirm': (body, ctx) => oneAtATime('window', () => doConfirm(body, ctx)),

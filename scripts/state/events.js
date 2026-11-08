@@ -426,7 +426,7 @@ const PLAIN_SHAPES = {
   // decision log: when it was logged (`at`), what it decided, the options it saw, why, and its kind (one of the agents').
   // Unsigned: it informs the digest and the director's pull-back, and decides nothing.
   // `key`: the call's stable key (a hash of its line), so a call sent twice is read once.
-  'agent-call': { must: ['work', 'at', 'decided', 'options', 'why', 'kind'], may: ['key'] },
+  'agent-call': { must: ['work', 'at', 'decided', 'options', 'why', 'kind'], may: ['key', 'where'] },
   // The end of a red-main incident: the incident and why it ended.
   'incident-closed': { must: ['incident', 'why'], may: [] },
   // A bug's reproduction, kept once for its work: the commit that proved it red, its done check and its test files.
@@ -619,7 +619,10 @@ function checkPlain(kind, data) {
     if (!ISO_TIME.test(data.at)) bad('needs at to be a time such as 2026-11-08T01:00:00.000Z');
     if (!Array.isArray(data.options) || data.options.length < 2 || !data.options.every(isText)) bad('needs options to be a list of two or more');
     if (data.key !== undefined && !(typeof data.key === 'string' && /^[0-9a-f]{24}$/.test(data.key))) bad('needs key to be 24 hex characters');
-    if (!AGENT_KINDS.includes(data.kind)) bad(`needs kind to be one of ${AGENT_KINDS.join(', ')}: any other kind is the director's to decide`);
+    if (data.where !== undefined && data.where !== 'helm') bad('needs where to be helm or left out');
+    // A call the director made at the helm may be of a director's kind: it was theirs, asked and answered at once.
+    if (data.where === 'helm') text('kind');
+    else if (!AGENT_KINDS.includes(data.kind)) bad(`needs kind to be one of ${AGENT_KINDS.join(', ')}: any other kind is the director's to decide`);
   } else if (kind === 'question') {
     slug('work');
     const named = typeof data.id === 'string' ? questionIdOf(data.id) : null;

@@ -2132,7 +2132,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page\n$/);
+    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page, helm\n$/);
     const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -2192,7 +2192,7 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page\n');
+  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page, helm\n');
   assert.equal(done.stdout, '');
 });
 
@@ -2553,4 +2553,49 @@ test('cli: page reports a helper that refuses', async () => {
 
 test('cli: page is a seat write', async () => {
   assert.ok(SEAT_WRITES.includes('page'));
+});
+
+// The helper's answer to `helm`: kept calls, and the lines or refusal the test gives.
+function helmHelper(answer) {
+  const helper = fakeHelper();
+  const asked = [];
+  helper.client.crew = { helm: async (body) => { asked.push(body); return answer(body); } };
+  return { helper, asked };
+}
+
+test('cli: helm is a seat write and a command', () => {
+  assert.ok(SEAT_WRITES.includes('helm'));
+});
+
+test('cli: helm asks the helper and prints its lines, and the folder and the session go with it', async () => {
+  const lines = ['login is ready for you now. Run this to open it:', '```bash', 'node <plugin root>/scripts/crew/helm.js open login', '```'];
+  const { helper, asked } = helmHelper(() => ({ ok: true, lines }));
+  const out = await run(helper, ['helm', 'take', 'login']);
+  assert.equal(out.code, 0, out.err);
+  assert.equal(out.out, `${lines.join('\n')}\n`);
+  assert.deepEqual(asked, [{ cwd: CWD, work: 'login', action: 'take' }]);
+  assert.deepEqual(helper.calls, [], 'nothing is written or read here');
+  const seated = await run(helper, ['helm', 'steer', 'search'], undefined, { env: {} });
+  assert.equal(seated.code, 0);
+  assert.equal(asked[1].action, 'steer');
+});
+
+test('cli: helm says the helper\'s refusal, and takes only a known action and a piece name', async () => {
+  const { helper, asked } = helmHelper(() => ({ ok: false, refused: 'login is already at the helm.' }));
+  const out = await run(helper, ['helm', 'take', 'login']);
+  assert.equal(out.code, 1);
+  assert.equal(out.err, 'login is already at the helm.\n');
+  assert.equal((await run(helper, ['helm', 'drive', 'login'])).code, 1);
+  assert.match((await run(helper, ['helm', 'take', '../x'])).err, /no open piece/);
+  assert.equal((await run(helper, ['helm', 'take'])).code, 1);
+  assert.equal(asked.length, 1, 'only the valid request reached the helper');
+});
+
+test('cli: helm from a window without the First Mate\'s seat is refused before the helper', async () => {
+  const { helper, asked } = helmHelper(() => ({ ok: true, lines: ['x'] }));
+  helper.client.session.seat = async () => ({ ok: true, holds: false });
+  const out = await run(helper, ['helm', 'take', 'login'], undefined, { env: { CLAUDE_CODE_SESSION_ID: 'other' } });
+  assert.equal(out.code, 1);
+  assert.equal(out.err, `${SEAT_REFUSAL}\n`);
+  assert.deepEqual(asked, []);
 });

@@ -89,6 +89,7 @@ import { projectConfig } from '../watcher/main.js';
 import { inWorktreesFolder, plainWorktreePath, recordedBriefs } from '../watcher/sources.js';
 import { readCursor } from '../watcher/core.js';
 import { readWake, watcherDir, watcherFolder } from '../watcher/waker.js';
+import { unopenedSteers } from '../crew/hold.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
 // A refusal, said to the foreman as one plain line.
@@ -202,6 +203,7 @@ export async function loadViews(project, client, { kept = false } = {}) {
   };
   if (fresh) await markSettled(project, client, out.views);
   markStopped(out.views, (work) => worktreeOf(project, out.views, work));
+  markUnopenedSteers(out.views, project);
   return out;
 }
 
@@ -218,6 +220,18 @@ export function markStopped(views, find) {
       if (waits.some((id) => !answeredQuestion(views.questions, id))) f.stopped = true;
     } catch { /* unreadable: it keeps its slot */ }
   }
+}
+
+// Marks (as `unopenedSteer`, on the view only) each feature the director chose to steer from the start and has not yet opened:
+// the queue counts no slot for it until its helm is opened (crew visibility design, 9.1).
+export function markUnopenedSteers(views, project) {
+  let works;
+  try {
+    works = unopenedSteers(project);
+  } catch {
+    return;
+  }
+  for (const work of works) if (isPlain(views.features?.[work])) views.features[work].unopenedSteer = true;
 }
 
 // Whether the director has answered the question `id` the session waits on, following it to the question that took its place: one

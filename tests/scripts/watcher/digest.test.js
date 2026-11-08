@@ -146,3 +146,16 @@ test('a helper that gives no answer is logged and the digest is still made', () 
   assert.equal(got.digest.made, true);
   assert.match(logged[0], /A phone alert couldn't be sent: the helper gave no answer/u);
 }));
+
+test('digest: a held piece is listed as waiting', () => inHome(async () => {
+  const held = new Date(2026, 10, 8, 14, 2);
+  keep(makeEvent({ kind: 'helm', data: { work: 'login-retry', at: iso(held) }, now: () => held }));
+  keep(makeEvent({ kind: 'helm', data: { work: 'search', at: iso(held) }, now: () => new Date(held.getTime() + 1) }));
+  keep(makeEvent({ kind: 'helm-ended', data: { work: 'search', at: iso(held) }, now: () => new Date(held.getTime() + 2) }));
+  const { ticker } = setup({ clock: day(8, 17, 1) });
+  assert.equal((await ticker.tick()).digest.made, true);
+  const text = readDigest(P).text;
+  assert.match(text, /Waiting on your decisions\n- login-retry, held by you at the helm since 14:02\n/u);
+  assert.doesNotMatch(text, /search, held by you/u, 'a piece handed back is not listed');
+  assert.doesNotMatch(text, /Held by you at the helm\n/u, 'no section of its own');
+}));

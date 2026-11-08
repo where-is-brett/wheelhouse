@@ -139,3 +139,16 @@ test('the answer is trimmed to the phone limit', async () => {
     assert.ok(got.answer.length <= PHONE_CHARS);
   });
 });
+
+test('the fallback leaves out the director\'s own helm calls from the piece\'s calls', async () => {
+  await inHome(async () => {
+    ID = raiseBuildQuestion('q-w-tide-1-1', AT).id;
+    keep(makeEvent({ kind: 'report', data: { work: 'w-tide-1', outcome: 'merged', summary: 'Done.', rulings: [], pr: 5 }, now: () => new Date(AT) }));
+    keep(makeEvent({ kind: 'agent-call', data: { work: 'w-tide-1', at: AT, decided: 'used a plain table', options: ['table', 'grid'], why: 'it is simplest', kind: 'structure' }, now: () => new Date(AT) }));
+    const later = '2026-11-08T02:00:00.000Z';
+    keep(makeEvent({ kind: 'agent-call', data: { work: 'w-tide-1', at: later, decided: 'The director steered this piece from 14:02 to 14:31', options: ['a', 'b'], why: 'The director took the helm of this piece.', kind: 'helm', where: 'helm' }, now: () => new Date(later) }));
+    const got = await askWhy({ project: P, id: ID, run: async () => reply('x', FORK_1) });
+    assert.match(got.fallback, /used a plain table/);
+    assert.equal(/steered this piece/.test(got.fallback), false);
+  });
+});

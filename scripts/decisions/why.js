@@ -18,7 +18,7 @@ import { wheelhouseHome, stateDir } from '../lib/paths.js';
 import { readCapped } from '../feature/status.js';
 import { sessionFile } from '../watcher/waker.js';
 import { readDecisions } from './pending.js';
-import { callsFrom } from './calls.js';
+import { callsFrom, isHelmCall } from './calls.js';
 
 // The longest a why run may take. The front desk runs it through a shell command whose own limit is two minutes, so this
 // stays under that, and the front desk's skill asks for a longer limit than this one.
@@ -70,7 +70,7 @@ function finishedWork(work, events) {
 
 // What the director is told when the copy can't be asked: the card's own reason and the calls the piece logged.
 function fallbackText(decision, work, events, why) {
-  const calls = work === null ? [] : callsFrom(events).filter((c) => c.work === work).slice(-5);
+  const calls = work === null ? [] : callsFrom(events).filter((c) => c.work === work && !isHelmCall(c)).slice(-5);
   return trimTo([
     `${why} Here is what the card itself says.`,
     ...(decision.why ? [`Why it comes to you: ${decision.why}`] : []),

@@ -65,6 +65,17 @@ test('log refuses a call with a part missing and writes nothing', () => {
   assert.equal(fs.existsSync(featurePaths(tree).decisions), false);
 });
 
+test('log: --where helm keeps a director\'s kind, and any other place fails', () => {
+  const tree = feature();
+  const kind = (k) => LOG.map((a) => (a === 'structure' ? k : a));
+  assert.throws(() => log({ worktree: tree, argv: kind('behaviour') }), CliError);
+  const line = log({ worktree: tree, argv: [...kind('behaviour'), '--where', 'helm'], now: NOW });
+  assert.equal(line.where, 'helm');
+  assert.equal(readLog(tree)[0].where, 'helm');
+  assert.throws(() => log({ worktree: tree, argv: [...kind('structure'), '--where', 'desk'] }), (e) => e instanceof CliError && /--where is helm or left out/.test(e.message));
+  assert.equal(readLog(tree).length, 1);
+});
+
 test('the log command prints a line and the main command line runs it', async () => {
   const tree = feature();
   let out = '';

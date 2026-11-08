@@ -1,20 +1,23 @@
 // scripts/crew/helm.js
 // The director's helm of a feature piece (crew visibility design, 9.1): opening the piece's own session in this terminal,
 // holding it while they work, and handing it back with a wake when the terminal closes. The CLI is
-// `node scripts/crew/helm.js open <work>`.
+// `node scripts/crew/helm.js open <work>`, and `node scripts/crew/helm.js now <work>` ends the piece's current run.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as spawnChild } from 'node:child_process';
 import sessionsAdapter from '../../adapters/claude-code/sessions.js';
 import { helmHeld, readHold, takeHold, markOpened, releaseHold, claimHandBack } from './hold.js';
 import {
-  runningFile, sessionFile, processStartTime, pidAlive, writeWake, PROMPTS, STARTING_MS, locateFeature, makeWaker,
+  runningFile, sessionFile, processStartTime, pidAlive, writeWake, PROMPTS, STARTING_MS, locateFeature, makeWaker, firstPrompt, STEER_NAMES_ITSELF,
 } from '../watcher/waker.js';
+import { sessionsOfProject } from '../agents/project-agent.js';
 import { stateDir } from '../lib/paths.js';
 import { listEvents } from '../state/events.js';
 import { readEnrolled } from '../state/signing.js';
 import { buildViews } from '../state/views.js';
 import { SLUG } from '../lib/build-loop.js';
+import { findTranscript } from './runs.js';
 
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -73,9 +76,14 @@ export async function openHelm(project, work, {
   if (typeof kept.worktree === 'string' && kept.worktree !== '' && path.resolve(kept.worktree) !== path.resolve(worktree)) {
     return refuse(`${work}'s session is kept for a different folder than its worktree.`);
   }
+  // A piece steered from the start has no transcript until its first open, which starts the session; any later open resumes it.
+  const starting = readHold(project, work)?.fromStart === true && findTranscript({ sessionId: kept.sessionId, env }) === null;
   let call;
   try {
-    call = sessionsAdapter.featureHelmCall({ config, sessionId: kept.sessionId, allowed, env, claude, platform });
+    call = sessionsAdapter.featureHelmCall({
+      config, sessionId: kept.sessionId, allowed, env, claude, platform,
+      ...(starting ? { start: true, prompt: firstPrompt(project, work, { config, now }) } : {}),
+    });
   } catch (error) {
     return refuse(error instanceof Error ? error.message : 'The session could not be opened.');
   }
@@ -185,13 +193,127 @@ export async function handBack(project, work, {
   }
 }
 
+// "Now": ends the held piece's current run at once, so the director need not wait for its quiet point. The step in
+// flight is cut off; the session keeps everything before it. It acts only on a piece that is held. At the director's own
+// terminal it checks that no agent is typing; `atFrontDesk` is for the front desk, which acts on the director's own words
+// and is itself an agent's session. Resolves `{ code }`; a refusal carries `why`, one line.
+export async function stopNow(project, work, {
+  env = process.env, stdin = process.stdin, config = {}, wakerFor = null, print = (line) => process.stderr.write(`${line}\n`), atFrontDesk = false,
+} = {}) {
+  if (!atFrontDesk && !isDirector(env, stdin)) return refuse('The helm is for the director at their own terminal, not an agent.');
+  if (typeof work !== 'string' || !SLUG.test(work)) return refuse('Name the piece by its short name.');
+  if (!helmHeld(project, work)) return refuse(`${work} is not at the helm.`);
+  let got;
+  try {
+    got = await (wakerFor ?? ((cfg) => makeWaker({ shape: 1, project, config: cfg, print })))(config).stopRun(work);
+  } catch (error) {
+    return refuse(error instanceof Error ? error.message : `${work}'s run could not be ended.`);
+  }
+  if (got?.stopped !== true) return refuse(`${work} has no run to end.`);
+  print(`${work}'s current step is ended.`);
+  return { code: 0 };
+}
+
+// --- At the front desk ---
+// The director's words at the front desk ("take the helm of login-retry", "I'll steer it", "hand back login-retry", "now"):
+// the front desk runs these through `cli.js helm`, which acts on those words, so none of them asks for a terminal.
+
+// The command the director runs to open the piece, as the front desk prints it: `<plugin root>` is left for the front desk to
+// write as the plugin's folder, as the page's follow command leaves it. On Windows the script is quoted for `cmd.exe`.
+export function openCommand(work, { platform = process.platform } = {}) {
+  const script = '<plugin root>/scripts/crew/helm.js';
+  return `node ${platform === 'win32' ? `"${script}"` : script} open ${work}`;
+}
+
+// A throwaway start call, to learn whether the agent's sessions name themselves (`idFromRun`): the one test the waker's start
+// makes. Resolves the refusal to give, or null; a call that can't be made is left to the start, which refuses it itself.
+export function steerRefusal(project, work, config, { sessions = null, env = process.env, platform = process.platform, claude = null } = {}) {
+  try {
+    const adapter = sessions ?? sessionsOfProject(config);
+    const call = adapter.featureStartCall({
+      config, project, work, sessionId: crypto.randomUUID(), prompt: '', allowed: [], env, claude, platform,
+    });
+    return call?.idFromRun === true ? STEER_NAMES_ITSELF : null;
+  } catch {
+    return null;
+  }
+}
+
+// Takes the helm of `work` on the director's word: the hold and its `helm` record, then what to run. With `fromStart` (the
+// director chose at intake to steer the piece from its first step) the piece need not have begun; otherwise it must be an
+// open piece with a session. Resolves `{ code: 0, lines }`, or `{ code: 1, why }`.
+export async function takeAtDesk(project, work, {
+  fromStart = false, config = {}, sessions = null, now = () => new Date(), env = process.env, platform = process.platform,
+  alive = pidAlive, startTimeOf = processStartTime,
+} = {}) {
+  if (typeof work !== 'string' || !SLUG.test(work)) return refuse('Name the piece by its short name.');
+  if (work === 'foreman' || work === 'bosun') return refuse('The helm is for a feature piece: the Bosun and the helpers a session starts can\'t be taken.');
+  let sessionId = null;
+  if (fromStart) {
+    const why = steerRefusal(project, work, config, { sessions, env, platform });
+    if (why !== null) return refuse(why);
+  } else {
+    const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled());
+    const feature = views.features?.[work]?.data;
+    if (!isPlain(feature) || feature.step === 'closed') return refuse(`${work} is not an open piece.`);
+    const kept = readJson(sessionFile(project, work));
+    if (!isPlain(kept) || typeof kept.sessionId !== 'string' || kept.sessionId === '') return refuse(`${work} has no session to open yet.`);
+    sessionId = kept.sessionId;
+  }
+  try {
+    await takeHold(project, { work, sessionId, fromStart, now });
+  } catch (error) {
+    if (error?.code === 'HELD') return refuse(`${work} is already at the helm.`);
+    return refuse(error instanceof Error ? error.message : `The helm of ${work} could not be taken.`);
+  }
+  const block = ['```bash', openCommand(work, { platform }), '```'];
+  if (fromStart) return { code: 0, lines: [`${work} will be ready to steer once the crew has made its folder. Run this to open it:`, ...block] };
+  // The record gives when the run began but no length for its step, so the wait is said as the step's end.
+  const live = await runIsLive(project, work, { now, alive, startTimeOf });
+  return {
+    code: 0,
+    lines: live
+      ? [`${work} will be ready when its current step ends. Run this once it is, or say "now" to stop the step:`, ...block]
+      : [`${work} is ready for you now. Run this to open it:`, ...block],
+  };
+}
+
+export const HELM_STILL_OPEN = (work) => `${work}'s helm session is still open. Leave it with /exit first.`;
+
+// Hands `work` back on the director's word. It refuses while the opened session's process is still the one the hold names. A
+// helm never opened goes with no wake: nothing was done in it. Resolves `{ code: 0, lines }`, or `{ code: 1, why }`.
+export async function backAtDesk(project, work, {
+  now = () => new Date(), config = null, wakerFor = null, alive = pidAlive, startTimeOf = processStartTime, print = () => {}, env = process.env,
+} = {}) {
+  if (typeof work !== 'string' || !SLUG.test(work)) return refuse('Name the piece by its short name.');
+  if (!helmHeld(project, work)) return refuse(`${work} is not at the helm.`);
+  const hold = readHold(project, work);
+  if (hold?.opened === true && Number.isInteger(hold.pid) && alive(hold.pid)) {
+    // A start time that can't be read, where the hold has one, leaves the session counted as open.
+    const started = typeof hold.startTime === 'string' ? await startTimeOf(hold.pid) : null;
+    if (typeof hold.startTime !== 'string' || typeof started !== 'string' || started === hold.startTime) return refuse(HELM_STILL_OPEN(work));
+  }
+  if (hold?.opened === true) {
+    if (!await handBack(project, work, { why: 'closed', now, config, wakerFor, print })) return refuse(`${work} is already being handed back.`);
+  } else {
+    // A piece steered from the start was made but never launched: the session file its steer start wrote names a session that
+    // does not exist, so it goes, and the foreman's next pass starts the piece as usual.
+    if (hold?.fromStart === true && typeof hold.sessionId === 'string' && findTranscript({ sessionId: hold.sessionId, env }) === null) {
+      const file = sessionFile(project, work);
+      if (readJson(file)?.sessionId === hold.sessionId) fs.rmSync(file, { force: true });
+    }
+    await releaseHold(project, work, { why: 'closed', now });
+  }
+  return { code: 0, lines: [`${work} is back with the crew.`] };
+}
+
 // A helm opened on Windows gets no build grants (the allowed rules are made for the platform they are read on); Windows is out of
 // scope for now.
 async function main(argv) {
   const [command, work] = argv;
   const say = (line) => process.stderr.write(`${line}\n`);
-  if (command !== 'open' || work === undefined) {
-    say('Usage: helm.js open <work>');
+  if ((command !== 'open' && command !== 'now') || work === undefined) {
+    say('Usage: helm.js open <work> | helm.js now <work>');
     return 1;
   }
   const { projectOf } = await import('../hooks/kit.js');
@@ -207,6 +329,11 @@ async function main(argv) {
   if (read.config === null) {
     say(`The project's configuration can't be read: ${read.why}`);
     return 1;
+  }
+  if (command === 'now') {
+    const stopped = await stopNow(found.project, work, { config: read.config });
+    if (stopped.why) say(stopped.why);
+    return stopped.code;
   }
   const allowed = [...featureAllowRules(read.config, { platform: process.platform }), ...featureFileRules()];
   const result = await openHelm(found.project, work, { config: read.config, allowed });

@@ -19,7 +19,7 @@ test('intake: the watch phrases record a watch event at the level they name', ()
     assert.match(text, /"background" or "don't show me this one"[^\n]*`off`/i);
     assert.match(text, /"steps" or "keep me posted"[^\n]*`steps`/i);
     assert.match(text, /"full transcript" or "show me everything"[^\n]*`transcript`/i);
-    assert.match(text, /"I'll steer it" or "let me drive this one"[^\n]*`transcript`[^\n]*not ready yet/i);
+    assert.match(text, /"I'll steer it" or "let me drive this one"[^\n]*`transcript`[^\n]*`helm steer <work id>`/i);
     assert.match(text, /record watch/);
   }
 });

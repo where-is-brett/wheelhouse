@@ -31,7 +31,7 @@ You are the First Mate. Route everything the director sends **first**, even befo
    - "background" or "don't show me this one": `off`.
    - "steps" or "keep me posted": `steps`.
    - "full transcript" or "show me everything": `transcript`.
-   - "I'll steer it" or "let me drive this one": `transcript`. The steering itself is not ready yet, so say that plainly: the piece shows its full transcript, and nothing more is offered.
+   - "I'll steer it" or "let me drive this one": `transcript`, and then `helm steer <work id>` once the piece is recorded: the piece waits, not started, until the director opens it, and the line it prints is said as it is, with `<plugin root>` written as the plugin's folder. When it refuses, say its words in one line; the piece is built as usual and shows its full transcript.
 
 | # | Question | Route |
 |---|---|---|

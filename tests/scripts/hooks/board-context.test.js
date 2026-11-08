@@ -1296,3 +1296,36 @@ test('the holder\'s prompt refreshes the seat', async () => {
     assert.ok(Date.parse(readSeat(P).seenAt) > Date.parse(old));
   });
 });
+
+// A helm note the piece's crew wrote, kept in the project's record as the helper would have.
+function keepNote(work, text, at) {
+  const event = makeEvent({ kind: 'helm-note', data: { work, text }, now: () => new Date(at) });
+  const file = path.join(stateDir(P), eventPath(event));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(event));
+}
+
+test('board-context: shows a helm note once', async () => {
+  await withProject(async ({ repo }) => {
+    markSeen(P, { promptAt: new Date('2026-10-19T11:59:00.000Z') });
+    keepNote('login', 'Use the old form.\nKeep the logo.\u202E', '2026-10-19T11:59:30.000Z');
+    // A note from before the last turn is not told again.
+    keepNote('search', 'Old note', '2026-10-19T10:00:00.000Z');
+    const text = contextOf(await run(repo, 'What is going on?', NOW));
+    assert.ok(text.includes('While you had the helm of login: Use the old form. Keep the logo.'), text);
+    assert.ok(!text.includes('Old note') && !text.includes('\u202E'));
+    // The next turn does not bring it back.
+    const later = contextOf(await run(repo, 'And now?', '2026-10-19T12:01:00.000Z'));
+    assert.ok(!(later ?? '').includes('While you had the helm'));
+  });
+});
+
+test('board-context: with more helm notes than it names, it names the newest', async () => {
+  await withProject(async ({ repo }) => {
+    markSeen(P, { promptAt: new Date('2026-10-19T11:59:00.000Z') });
+    for (let n = 1; n <= 7; n += 1) keepNote('login', `Note number ${n}.`, `2026-10-19T11:59:${String(10 + n).padStart(2, '0')}.000Z`);
+    const text = contextOf(await run(repo, 'What is going on?', NOW));
+    assert.ok(text.includes('Note number 7.') && text.includes('Note number 3.'), text);
+    assert.ok(!text.includes('Note number 2.') && !text.includes('Note number 1.'), text);
+  });
+});

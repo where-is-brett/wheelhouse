@@ -102,7 +102,9 @@ export function nextWork({ work, features, reports, now, fiveHourTight, builderC
   // A piece that asked still builds on its recommendation, so it keeps its slot. Only one that has reached a step it can't undo
   // and said so (`wait-for`: marked `stopped` on the view by wake.js's markStopped) gives its slot up (design section 6.4).
   const stopped = (id) => features?.[id]?.stopped === true;
-  const holdsSlot = (id) => !stopped(id) && (stepOf(id) === 'building' || (stepOf(id) === 'started' && NO_PLAN.includes(laneOf(id))));
+  // A piece the director chose to steer from the start takes its slot only once they open it (marked `unopened` on the view by wake.js's markUnopenedSteers).
+  const unopened = (id) => features?.[id]?.unopenedSteer === true;
+  const holdsSlot = (id) => !stopped(id) && !unopened(id) && (stepOf(id) === 'building' || (stepOf(id) === 'started' && NO_PLAN.includes(laneOf(id))));
   const closed = (w) => stepOf(w.key) === 'closed' && since(features[w.key], w);
 
   const slots = Object.keys(features ?? {}).filter(holdsSlot);
@@ -111,7 +113,7 @@ export function nextWork({ work, features, reports, now, fiveHourTight, builderC
 
   const candidates = Object.values(work ?? {})
     .map((w) => w.work)
-    .filter((w) => !holdsSlot(w.key) && !stopped(w.key) && !closed(w) && !endedBy(reports, w.key, w))
+    .filter((w) => !holdsSlot(w.key) && !unopened(w.key) && !stopped(w.key) && !closed(w) && !endedBy(reports, w.key, w))
     .map((w) => ({ ...w, since: work[w.key].since ?? w.at }))
     .sort((a, b) => {
       const pa = a.data.place;

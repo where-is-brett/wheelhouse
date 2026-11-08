@@ -77,6 +77,10 @@ When you ask to watch a piece of work, Wheelhouse writes what its crew did so fa
 
 The page stays on this computer. Writing it costs no model tokens, it goes into no record, digest, alert or message, and the chat gets one line: where the page is. It is written again each time you ask, or every two seconds while you follow it in a terminal, and it is removed when the piece closes. A page is written only when you ask for it, and asking raises the piece to the full transcript, even if it was set to "background". Until you ask, a piece set to "background" has no page and its run is not read.
 
+When you take the helm of a piece (say "take the helm of login" or "let me steer login" at the front desk), Wheelhouse holds the piece while you work in its own session. The hold is one small file for the piece in the project's watcher folder on this computer, `helm/<piece>.json`. It names the piece's session, when you took it, whether you chose to steer it from the start, and, once you open it, the process id and start time of your terminal's session, so a terminal closed without leaving it can be told from one still open. It holds no transcript and nothing you said. It goes when you hand the piece back, or when the session ends.
+
+Three records, kept with the project's others, say what happened. `helm` says when the piece was taken and whether from its start. `helm-ended` says when it was handed back, and why (the session closed, ended or failed). `helm-note` is a note the piece's own crew writes when it is handed back, in at most five lines in its own words, of what you asked it to change and any call you made; the First Mate reads it with the board's other news. A piece's decision log also gets one line, "The director steered this piece from 14:02 to 14:31". If the crew writes no note, the Logbook says so. While the piece is held it reads "with the director since" the time you took it, and the daily digest lists it under what is waiting.
+
 ## The build engine
 
 *Parked from v0.3.0; what an earlier release kept. The update to v0.3.0 moves these folders to the archive (above).*

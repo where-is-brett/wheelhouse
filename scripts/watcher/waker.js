@@ -158,7 +158,7 @@ import { pathWithNode } from '../lib/claude.js';
 import { run as runProgram } from '../lib/run.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { stopState } from '../lib/stop.js';
-import { ROLE_VARIABLE, featureModeOf, sessionEnv, sessionModeOf } from '../../adapters/claude-code/sessions.js';
+import claudeSessions, { ROLE_VARIABLE, featureModeOf, sessionEnv, sessionModeOf } from '../../adapters/claude-code/sessions.js';
 import { sessionsOfProject } from '../agents/project-agent.js';
 import { PLUGIN_ROOT, foremanCommands } from '../foreman/tools.js';
 import { lockedByPath } from '../hooks/kit.js';
@@ -168,7 +168,7 @@ import { CONTROL_PATHS, listEvents } from '../state/events.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { buildViews } from '../state/views.js';
 import { balancedRouting, columnLines, promptWithColumn, roleOf, routingInForce } from '../routing/in-force.js';
-import { helmHeld } from '../crew/hold.js';
+import { helmHeld, readHold, setHoldSession } from '../crew/hold.js';
 import { refusalOf, restUntil } from '../routing/premium.js';
 import { hostApprovalReady } from '../host/approval-ready.js';
 import { guardedCommand, guardedReady, labelWorktree, readSelfTest } from '../windows/low.js';
@@ -202,6 +202,27 @@ export const PROMPTS = Object.freeze({
   helmBack: 'The director has handed this piece back from the helm. Read what they did there. Record a helm-note of at most five lines saying what changed. '
     + 'Record each call the director made at the helm as a decision with where: \'helm\'. Then carry on with the work.',
 });
+
+// Whether the piece's hold is one from the start that has no session and has not been opened.
+function steersFromStart(project, work) {
+  if (!helmHeld(project, work)) return false;
+  const hold = readHold(project, work);
+  return isPlain(hold) && hold.fromStart === true && hold.opened !== true && (typeof hold.sessionId !== 'string' || hold.sessionId === '');
+}
+
+// The prompt a start would pipe to the piece's session: the brief's own, with the column for its subagents after it when the
+// agent takes one. The helm passes it to a session it starts itself.
+export function firstPrompt(project, work, { config = {}, adapter = claudeSessions, now = () => new Date() } = {}) {
+  if (adapter?.takesColumn !== true) return PROMPTS.start;
+  let found;
+  try {
+    found = routingInForce(project, config, { now });
+  } catch {
+    found = null;
+  }
+  if (!isPlain(found) || !isPlain(found.roles)) found = balancedRouting(config);
+  return promptWithColumn(PROMPTS.start, found);
+}
 
 // The role variable, the modes and the session environment are the adapter's (they come with how it starts a
 // session); they stay exported here for the callers that have always taken them from the waker.
@@ -633,6 +654,10 @@ export function spawnDetached(file, args, { cwd, env, input = '', windowsVerbati
   });
 }
 
+// Said when a piece is to be steered from its start on an agent whose sessions name themselves: the helm names its own
+// session when it starts, so such a piece can't be steered from the start.
+export const STEER_NAMES_ITSELF = "This agent's sessions name themselves, so a piece can't be steered from its start";
+
 // Whether a process with this id is running. EPERM means it exists.
 export function pidAlive(pid) {
   try {
@@ -641,6 +666,18 @@ export function pidAlive(pid) {
   } catch (error) {
     return error.code === 'EPERM';
   }
+}
+
+// Ends a recorded session's process, and the ones it started with it where the system lets us (on macOS and Linux it
+// leads its own group). Says whether the signal was sent.
+export function endProcess(pid) {
+  for (const target of process.platform === 'win32' ? [pid] : [-pid, pid]) {
+    try {
+      process.kill(target, 'SIGTERM');
+      return true;
+    } catch { /* try the process alone */ }
+  }
+  return false;
 }
 
 // When each of these processes started, as the system says it, in one call:
@@ -730,6 +767,7 @@ export function makeWaker({
   print = (line) => process.stdout.write(`${line}\n`),
   now = () => new Date(),
   alive = pidAlive,
+  kill = endProcess,
   startTimeOf = null,
   bootedAt = bootTime,
   stopped = () => stopState().on,
@@ -1232,6 +1270,11 @@ export function makeWaker({
     if (started.exited && typeof started.exited.then === 'function') {
       started.exited.then((code) => serial(async () => {
         const mine = forget(target, started.pid);
+        // A run the director's "now" ended (here or in the helm's own process) has had its record taken from the held
+        // piece and its wakes put back, whatever code it exits with: nothing more to settle.
+        if (!mine && target !== 'foreman' && helmHeld(project, nameOf(target))) {
+          return deliver();
+        }
         if (kept?.premium === true && mine && await premiumRefused(target, kept, code, entries)) {
           // Rests the premium model, and its wake goes again on the most capable model.
         } else {
@@ -1684,7 +1727,9 @@ export function makeWaker({
       mayStart('checkFeature');
       if (typeof work !== 'string' || !SLUG.test(work)) throw new Error('A work id is lower-case letters, digits and hyphens');
       if (!featureWorktreeOk(project, worktree)) throw new Error("This isn't a feature worktree of the project");
-      if (helmHeld(project, work)) throw new Error(`${work} is with the director at the helm. It waits until they hand it back.`);
+      // A piece the director chose to steer from the start is held with no session yet: it is made like any start, and not launched.
+      const steer = steersFromStart(project, work);
+      if (!steer && helmHeld(project, work)) throw new Error(`${work} is with the director at the helm. It waits until they hand it back.`);
       const brief = featurePaths(worktree).brief;
       if (briefFile !== undefined && path.resolve(briefFile) !== brief) throw new Error("The brief must be the worktree's own .wheelhouse/feature/brief.md");
       if (!lstatOf(brief)?.isFile()) throw new Error("The feature's brief isn't there");
@@ -1693,6 +1738,31 @@ export function makeWaker({
         // The files that steer agents are checked as before a wake: a worktree a closed feature
         // left, started again, may hold some an earlier session planted (ruling P7-33).
         if (await controlHeld(work, worktree, [])) throw new Error("the files in its folder that steer agents are new or changed, or can't be checked, so its session waits for the director's card");
+        if (steer) {
+          const target = targetOf(work);
+          const state = await stateOf(target);
+          if (state?.live) throw new Error(`The ${work} session is already running`);
+          if (state?.ended) await endRecord(target, state);
+          const adapter = sessionsOf();
+          adapter.checkFeature(config);
+          const sessionId = crypto.randomUUID();
+          const feature = await levelInputs(work, worktree);
+          const column = columnNow();
+          const call = adapter.featureStartCall({
+            config, project, work, sessionId, prompt: withColumn(adapter, PROMPTS.start, column), allowed: feature.allowed, env: baseEnv, claude, platform,
+            ...feature.inputs, ...roleOf(column, 'feature'),
+          });
+          // The helm names its own session when it starts, so an adapter whose sessions name themselves can't be steered from the start.
+          if (call.idFromRun === true) throw new Error(STEER_NAMES_ITSELF);
+          if (stopped()) throw new Error('All stop is on: no session is started');
+          feature.recordUsed(call);
+          await noteLevel(call.level, work);
+          watcherFolder(project, 'sessions');
+          writeJsonFile(sessionFile(project, work), { sessionId, worktree, at: now().toISOString() });
+          if (setHoldSession(project, work, sessionId) === null) throw new Error(`The hold on ${work} can't be read`);
+          print(`START feature ${work} ${worktree} held`);
+          return { printed: true, held: true, sessionId };
+        }
         if (shape === 2) {
           // The column for its subagents, in a wake of its own in the feature's wakes folder, which its brief names.
           const add = shape2Column();
@@ -1776,6 +1846,32 @@ export function makeWaker({
           },
         });
         return { pid, sessionId };
+      });
+    },
+    // Ends the held piece's current run on the director's word ("now", crew visibility design 9.2). Not All stop: it
+    // touches nothing but this piece's run. The process its record names is ended only when it is live with the start
+    // time the record gives; the record goes; the wakes the run had taken are sent again (they wait while the piece is
+    // held); no lost marker is written, so the crash resume leaves it. Refused unless the piece is held.
+    async stopRun(work) {
+      if (typeof work !== 'string' || !SLUG.test(work)) throw new Error('A work id is lower-case letters, digits and hyphens');
+      return serial(async () => {
+        if (!helmHeld(project, work)) return { stopped: false, why: 'not held' };
+        const target = targetOf(work);
+        const state = await stateOf(target);
+        if (state === null) return { stopped: false, why: 'no run' };
+        const record = state.live ?? state.ended;
+        // A record still being made names no process yet: there is nothing to end.
+        if (state.live && !Number.isInteger(record.pid)) return { stopped: false, why: 'starting' };
+        const same = (r) => r.at === record.at && r.pid === record.pid && r.state === record.state;
+        // A process is ended when it is live, or has overrun its time and is still the one recorded, and only when its
+        // start time can be checked against the record's: a pid whose identity can't be verified is left alone.
+        const running = state.live !== undefined || state.why === 'overran';
+        if (running && typeof record.startTime === 'string' && await timeOf(record.pid, [], { fresh: true }) === record.startTime) {
+          kill(record.pid);
+        }
+        if (claimRecord(target, same) === null) return { stopped: false, why: 'ended elsewhere' };
+        settle(list(record.entries).filter((x) => typeof x === 'string'), 'again');
+        return { stopped: true };
       });
     },
     // Delivers what has been waiting: a session has ended, STOP has lifted, a wait has passed.

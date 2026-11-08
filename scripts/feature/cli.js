@@ -429,12 +429,13 @@ export async function waitFor({ client, worktree, questionId, now = () => new Da
 // --- log ---
 
 // Adds one call to the piece's log: what the session decided on its own side of the decision line, the options it saw and
-// why. A director's kind is refused, with the words to ask instead. Returns the line kept.
+// why. A director's kind is refused, with the words to ask instead, unless `--where helm` says the call was the director's, made
+// at the piece's helm. Returns the line kept.
 export function log({ worktree, argv, now }) {
-  const found = flagsOf(argv, ['decided', 'option', 'why', 'kind']);
+  const found = flagsOf(argv, ['decided', 'option', 'why', 'kind', 'where']);
   const fail = (message) => { throw new CliError(message); };
   return appendCall({
-    worktree, decided: single(found, 'decided'), options: found.option, why: single(found, 'why'), kind: single(found, 'kind'), fail,
+    worktree, decided: single(found, 'decided'), options: found.option, why: single(found, 'why'), kind: single(found, 'kind'), where: single(found, 'where'), fail,
     ...(now === undefined ? {} : { now }),
   });
 }

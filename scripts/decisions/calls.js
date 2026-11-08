@@ -7,6 +7,10 @@ import { stateDir } from '../lib/paths.js';
 // The most calls the record gives back at once, the latest.
 export const MOST_CALLS = 200;
 
+// Whether `call` (as callsFrom gives it) is the director's own, made at a piece's helm, and so not one the agents made on their own.
+// Every reader that shows the calls as the agents' own leaves these out.
+export const isHelmCall = (call) => call !== null && typeof call === 'object' && call.where === 'helm';
+
 // What a ruling or a request that names a call says: `[call <first 8 of its id>]`.
 export const callMark = (id) => `[call ${String(id).slice(0, 8)}]`;
 
@@ -24,7 +28,7 @@ export function callsFrom(events, { since } = {}) {
     if (d === null || typeof d !== 'object' || typeof e.id !== 'string') continue;
     const at = typeof d.at === 'string' && !Number.isNaN(Date.parse(d.at)) ? d.at : e.at;
     if (Date.parse(at) < from) continue;
-    found.push({ id: e.id, work: d.work, at, decided: d.decided, options: d.options, why: d.why, kind: d.kind, key: d.key, logged: e.at });
+    found.push({ id: e.id, work: d.work, at, decided: d.decided, options: d.options, why: d.why, kind: d.kind, ...(d.where === undefined ? {} : { where: d.where }), key: d.key, logged: e.at });
   }
   // Earliest event first, so a repeat of a key is the later one.
   found.sort((a, b) => (a.logged < b.logged ? -1 : a.logged > b.logged ? 1 : a.id < b.id ? -1 : 1));

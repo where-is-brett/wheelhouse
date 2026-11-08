@@ -17,7 +17,7 @@ import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'brief', 'sendBacks', 'slept', 'watch', 'helm', 'helmNotes'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'brief', 'sendBacks', 'slept', 'watch', 'helm', 'helmNotes', 'helmBacks'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -1739,4 +1739,23 @@ test('views: a helm lasts until it is ended, and notes gather by piece', () => {
   assert.deepEqual(v.helmNotes, { login: [{ at: T(3), text: 'use the old form' }] });
   assert.deepEqual(build([]).helm, {});
   assert.deepEqual(build([]).helmNotes, {});
+});
+
+test('views: a hand-back says whether a note followed the helm', () => {
+  const events = [
+    ev('helm', 1, { work: 'a', at: T(1) }),
+    ev('helm-ended', 2, { work: 'a', at: T(2) }),
+    ev('helm', 3, { work: 'b', at: T(3) }),
+    ev('helm-note', 4, { work: 'b', text: 'noted at the helm' }),
+    ev('helm-ended', 5, { work: 'b', at: T(5) }),
+    ev('helm', 6, { work: 'c', at: T(6) }),
+    ev('helm-ended', 7, { work: 'c', at: T(7) }),
+    ev('helm-note', 8, { work: 'c', text: 'noted after' }),
+    ev('helm', 9, { work: 'a', at: T(9) }),
+  ];
+  const v = build(events);
+  assert.equal(v.helmBacks.a, undefined, 'a new helm clears the hand-back');
+  assert.equal(v.helmBacks.b.noted, true);
+  assert.equal(v.helmBacks.c.noted, true);
+  assert.equal(build(events.slice(0, 2)).helmBacks.a.noted, false);
 });

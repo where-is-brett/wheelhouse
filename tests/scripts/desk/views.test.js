@@ -1,7 +1,7 @@
 // tests/scripts/desk/views.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readView, deskWords } from '../../../scripts/desk/views.js';
+import { readView, deskWords, withOpened } from '../../../scripts/desk/views.js';
 import { fileSource } from '../../../scripts/desk/file-source.js';
 import { loadBoardInputs } from '../../../scripts/board/inputs.js';
 import { glanceLine, renderBoard } from '../../../scripts/board/render.js';
@@ -19,6 +19,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { writeJsonFile, runningFile, sessionFile } from '../../../scripts/watcher/waker.js';
+import { holdFile } from '../../../scripts/crew/hold.js';
 import { P, NOW, now, CARD, writeRecord, upClient, put, viewsDir } from './fixture.js';
 
 function withRecord(fn) {
@@ -338,4 +339,52 @@ test("the desk's work line shows the latest did step and never the said sentence
   } finally {
     if (was === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = was;
   }
+});
+
+test('desk: an unopened steer reads ready for you to steer', () => {
+  const at = { since: '2026-10-29T06:00:00.000Z', fromStart: true };
+  const lineWith = (helm) => workLines({ ...crewViews, features: { login: { at: '2026-10-29T06:00:00.000Z', data: { step: 'started' } } }, helm }, [], {})[0];
+  assert.match(lineWith({ login: { ...at, opened: false } }), /not running, ready for you to steer/);
+  assert.match(lineWith({ login: { ...at, opened: true } }), /running/);
+  assert.doesNotMatch(lineWith({ login: { ...at, opened: true } }), /ready for you to steer/);
+  assert.doesNotMatch(lineWith({ login: { since: at.since, fromStart: false, opened: false } }), /ready for you to steer/);
+  assert.doesNotMatch(lineWith({}), /ready for you to steer/);
+});
+
+test('desk: a hold file says whether a steer is opened', () => {
+  const views = { helm: { login: { since: 'x', fromStart: true }, other: { since: 'x', fromStart: false } } };
+  assert.equal(withOpened(views, undefined), views);
+  const marked = withOpened(views, 'no__such-project');
+  assert.deepEqual(marked.helm, views.helm, 'no hold file: nothing is marked');
+});
+
+test('desk: a real hold file marks the helm opened or not', () => withRuns(async () => {
+  const hold = (work, opened) => {
+    fs.mkdirSync(path.dirname(holdFile(P, work)), { recursive: true });
+    fs.writeFileSync(holdFile(P, work), `${JSON.stringify({ work, sessionId: 's', at: 'x', fromStart: true, opened, pid: null, startTime: null })}\n`);
+  };
+  hold('login', false);
+  hold('search', true);
+  const views = { helm: { login: { since: 'x', fromStart: true }, search: { since: 'x', fromStart: true } } };
+  const marked = withOpened(views, P);
+  assert.equal(marked.helm.login.opened, false);
+  assert.equal(marked.helm.search.opened, true);
+}));
+
+test('board-context: says when no note came', () => {
+  const base = { ...crewViews, features: { login: { at: '2026-10-29T06:00:00.000Z', data: { step: 'started' } } } };
+  const lines = (helmBacks, helm = {}) => workLines({ ...base, helm, helmBacks }, [], {});
+  const said = 'login was handed back; no note from the helm.';
+  assert.ok(lines({ login: { at: '2026-11-08T03:31:00.000Z', noted: false } }).includes(said));
+  assert.ok(!lines({ login: { at: '2026-11-08T03:31:00.000Z', noted: true } }).includes(said), 'a note came');
+  assert.ok(!lines({}).includes(said), 'no hand-back');
+  assert.ok(!lines({ login: { at: 'x', noted: false } }, { login: { since: 'x', fromStart: false } }).includes(said), 'held again');
+});
+
+test('desk: a held piece reads with the director since 14:02', () => {
+  const since = new Date(2026, 10, 8, 14, 2).toISOString();
+  const lineWith = (helm) => workLines({ ...crewViews, features: { login: { at: '2026-10-29T06:00:00.000Z', data: { step: 'building' } } }, helm }, [], {})[0];
+  assert.match(lineWith({ login: { since, fromStart: false, opened: true } }), /not running, with the director since 14:02/);
+  assert.doesNotMatch(lineWith({ login: { since, fromStart: false, opened: false } }), /with the director since/);
+  assert.doesNotMatch(lineWith({}), /with the director since/);
 });

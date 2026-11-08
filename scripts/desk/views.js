@@ -14,10 +14,11 @@ import { dataHash } from '../state/events.js';
 import { cardOutcomes, latestFor } from '../state/views.js';
 import { decisionsFrom } from '../decisions/pending.js';
 import { canPrivate as canPrivateIn } from '../decisions/visibility.js';
-import { callsFrom } from '../decisions/calls.js';
+import { callsFrom, isHelmCall } from '../decisions/calls.js';
 import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { crewNow } from '../crew/runs.js';
+import { listHolds } from '../crew/hold.js';
 import { contextText } from './context.js';
 import { readStatus } from '../safekeeping/readings.js';
 import { answeredLines, buildLines, runningLines, shippedLines } from '../engine/words.js';
@@ -105,13 +106,44 @@ export function surveyLines(survey) {
 // What the new engine's run came to, for open work: only a finished run has built anything.
 const RUN_ENDED_WORDS = { completed: 'built by the new engine', failed: 'stopped by a problem on the new engine', cancelled: 'cancelled on the new engine' };
 
+// What the Logbook says of a piece handed back from the helm whose crew wrote no note of it.
+export const HELM_NO_NOTE = (work) => `${work} was handed back; no note from the helm.`;
+
+// What an unopened steer reads on the board and in the Logbook.
+export const STEER_WORDS = 'ready for you to steer';
+
+// The local time of day as HH:MM, for a record's time.
+const clockOf = (iso) => {
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime()) ? null : `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+};
+
+// The views with each helm marked as opened or not, as the project's hold files say (the records don't carry it): a piece
+// steered from the start reads as waiting until its helm is opened. Views and project are left as given when there are no holds.
+export function withOpened(views, project) {
+  if (typeof project !== 'string' || !isPlain(views?.helm)) return views;
+  let holds;
+  try {
+    holds = listHolds(project);
+  } catch {
+    return views;
+  }
+  const helm = { ...views.helm };
+  for (const { work, hold } of holds) if (isPlain(helm[work])) helm[work] = { ...helm[work], opened: hold.opened === true };
+  return { ...views, helm };
+}
+
 // Open work's step or state in words, and whether a feature runs for it: one that is writing its
 // plan or building. A quick or bug feature has no plan, so it builds from its start. A planned one
 // waits for the go-ahead, and one the director's Not now to its build commands holds (`held`, as the
 // board reads it) waits on them. Work whose feature closed before a `work` event queued it again
 // hasn't started this time.
-function workState(entry, feature, held, run) {
+function workState(entry, feature, held, run, helm) {
   const { lane, visible } = entry.work?.data ?? {};
+  // A piece the director chose to steer from the start waits for them until they open it.
+  if (helm?.fromStart === true && helm.opened === false) return { running: false, state: STEER_WORDS };
+  // A piece whose helm is open reads as with the director, since when they took it.
+  if (helm?.opened === true) return { running: false, state: `with the director since ${clockOf(helm.since) ?? 'now'}` };
   // The new engine's run for it, since it was queued: its records sit beside the old engine's features.
   if (isPlain(run?.data) && since(run, entry.work) && !isPlain(feature?.data)) {
     if (run.data.state !== 'ended') return { running: true, state: 'building on the new engine' };
@@ -215,7 +247,7 @@ export function workLines(views, answers, words, prs = {}, crew = {}) {
   };
   const asks = Object.values(isPlain(views.gateAsks) ? views.gateAsks : {}).filter((a) => isPlain(a?.data));
   const open = Object.entries(isPlain(views.work) ? views.work : {}).filter(([id, entry]) => isPlain(entry?.work?.data) && isOpen(views, id))
-    .map(([id, entry]) => ({ id, entry, ...workState(entry, features[id], held(id), latestRun(views, id)) }))
+    .map(([id, entry]) => ({ id, entry, ...workState(entry, features[id], held(id), latestRun(views, id), isPlain(views.helm) ? views.helm[id] : undefined) }))
     .sort((a, b) => Number(b.running) - Number(a.running) || String(a.entry.since ?? a.entry.work.at).localeCompare(String(b.entry.since ?? b.entry.work.at))
       || a.id.localeCompare(b.id));
   // Work that has ended but whose pull request was never recorded as merged: its changes may be stranded on its branch,
@@ -245,7 +277,11 @@ export function workLines(views, answers, words, prs = {}, crew = {}) {
   // The steps are already in plain words, so they are added after the lines have been through the glossary.
   const worded = plainWords(lines.join('\n'), words.glossary, { ...words, protect }).text.split('\n');
   const seen = didOnly(crew);
-  return worded.map((line, i) => (i < open.length && open[i].running ? line + stepEnd(seen[open[i].id]) : line));
+  // A piece handed back from the helm whose crew wrote no note of it says so, as fixed words.
+  const backs = isPlain(views.helmBacks) ? views.helmBacks : {};
+  const unnoted = open.filter(({ id }) => isPlain(backs[id]) && backs[id].noted === false && !(isPlain(views.helm) && views.helm[id] !== undefined))
+    .map(({ id }) => HELM_NO_NOTE(id)).sort();
+  return [...worded.map((line, i) => (i < open.length && open[i].running ? line + stepEnd(seen[open[i].id]) : line)), ...unnoted];
 }
 
 // The one sentence the front desk says before card n on a Why?, word for word: the everyday example
@@ -326,6 +362,14 @@ function stuckNotes(events) {
   return events
     .filter((e) => e.kind === 'note' && e.data?.about === 'stuck' && typeof e.data.work === 'string' && typeof e.data.words === 'string')
     .map((e) => ({ work: e.data.work, at: typeof e.data.at === 'string' ? e.data.at : e.at, words: e.data.words, recorded: e.at }))
+    .sort((a, b) => Date.parse(a.recorded) - Date.parse(b.recorded));
+}
+
+// The notes a piece's crew left of what the director did at its helm, oldest first: { work, text, recorded } each.
+function helmNoteEvents(events) {
+  return events
+    .filter((e) => e.kind === 'helm-note' && typeof e.data?.work === 'string' && typeof e.data.text === 'string')
+    .map((e) => ({ work: e.data.work, text: e.data.text, recorded: e.at }))
     .sort((a, b) => Date.parse(a.recorded) - Date.parse(b.recorded));
 }
 
@@ -419,10 +463,12 @@ const VIEWS = {
     // The decisions waiting and answered, numbered as the chat shows them (scripts/decisions/pending.js).
     const decisions = typeof source.events === 'function' ? { decisions: decisionsFrom(source.events(), source.enrolled?.() ?? [], { canPrivate: typeof source.project === 'string' && canPrivateIn(source.project) }) } : {};
     // With `calls: true`, the calls the agents logged on their own side of the decision line, for the director to pull one back.
-    const calls = args.calls === true && typeof source.events === 'function' ? { calls: callsFrom(source.events()) } : {};
+    const calls = args.calls === true && typeof source.events === 'function' ? { calls: callsFrom(source.events()).filter((c) => !isHelmCall(c)) } : {};
     // With `stuck: true`, the notes recording that a feature session sent its plain "stuck" message (`act stuck-note`), oldest first.
     const stuck = args.stuck === true && typeof source.events === 'function' ? { stuck: stuckNotes(source.events()) } : {};
-    return { ok: true, data: { ...got, numbered, ...given, ...decisions, ...calls, ...stuck }, lines };
+    // With `helmNotes: true`, the notes a piece's crew wrote of what the director did at its helm, oldest first.
+    const helmNotes = args.helmNotes === true && typeof source.events === 'function' ? { helmNotes: helmNoteEvents(source.events()) } : {};
+    return { ok: true, data: { ...got, numbered, ...given, ...decisions, ...calls, ...stuck, ...helmNotes }, lines };
   },
 
   async card(args, source) {
@@ -438,7 +484,7 @@ const VIEWS = {
     if (got.refused) return { ok: false, refused: got.refused };
     const own = await ownSettings(source);
     const crew = crewOfSource(source, got.views, own, now);
-    const lines = workLines(got.views, got.answers ?? [], deskWords(got.views, own, now(), got.names ?? []), {}, crew);
+    const lines = workLines(withOpened(got.views, source.project), got.answers ?? [], deskWords(got.views, own, now(), got.names ?? []), {}, crew);
     return { ok: true, data: got, lines: [...lines, ...runningLines(got.views, { now: now() })] };
   },
 

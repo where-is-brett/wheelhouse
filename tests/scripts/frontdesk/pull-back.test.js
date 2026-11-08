@@ -160,3 +160,28 @@ test('pull-back --change also files an intake request in the director\'s words',
     assert.ok(helper.held.some((e) => e.kind === 'ruling'), 'the ruling is written too');
   });
 });
+
+test('the calls offered for pull-back leave out the director\'s own helm calls', async () => {
+  await inHome(async () => {
+    const mine = call(1, { where: 'helm', kind: 'helm', decided: 'The director steered this piece from 14:02 to 14:31' });
+    const theirs = call(2);
+    const helper = fakeHelper([mine, theirs]);
+    const got = await helper.client.desk.read({ view: 'waiting', args: { calls: true } });
+    assert.deepEqual(got.data.calls.map((c) => c.id), [theirs.id]);
+    const out = await say(helper, ['pull-back', mine.id]);
+    assert.equal(out.code, 1);
+    assert.equal(helper.held.some((e) => e.kind === 'ruling'), false);
+  });
+});
+
+test('pull-back refuses a call made at the helm, saying it was the director\'s own', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper([]);
+    const mine = { id: 'abcdef12-0000-4000-8000-000000000000', work: 'w-tide-1', decided: 'Steered', kind: 'helm', where: 'helm' };
+    helper.client.desk.read = async () => ({ ok: true, data: { calls: [mine] } });
+    const out = await say(helper, ['pull-back', mine.id]);
+    assert.equal(out.code, 1);
+    assert.match(out.err, /your own|director's own/u);
+    assert.equal(helper.held.some((e) => e.kind === 'ruling'), false);
+  });
+});

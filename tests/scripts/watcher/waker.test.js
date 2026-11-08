@@ -24,7 +24,10 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { guardedCommand, selfTestFile } from '../../../scripts/windows/low.js';
 import { readBaseline, writeBaseline } from '../../../scripts/watcher/control-files.js';
-import { holdFile } from '../../../scripts/crew/hold.js';
+import { holdFile, readHold, helmHeld } from '../../../scripts/crew/hold.js';
+import { nextWork } from '../../../scripts/foreman/queue.js';
+import { markUnopenedSteers } from '../../../scripts/foreman/wake.js';
+import { PACE } from '../../../scripts/lib/build-loop.js';
 
 // The running node's folder is on the PATH of every session the waker starts, so these tests' PATH has it.
 const BIN = `${path.dirname(process.execPath)}:/bin`;
@@ -1637,4 +1640,172 @@ test('waker: a held run that ends leaves no lost marker', () => withHome(async (
   await flush();
   assert.equal(fs.existsSync(lostFile(P, 'login-page')), false);
   assert.equal(fs.existsSync(lostFile(P, 'search-box')), true, 'a piece that is not held still leaves its marker');
+}));
+
+// A hold the director's choice to steer a piece from the start leaves: named for no session yet.
+const steerHold = (work, over = {}) => {
+  fs.mkdirSync(path.dirname(holdFile(P, work)), { recursive: true });
+  fs.writeFileSync(holdFile(P, work), `${JSON.stringify({ work, sessionId: null, at: new Date(T0).toISOString(), fromStart: true, opened: false, pid: null, startTime: null, ...over })}\n`);
+};
+
+test('waker: a piece steered from the start is made but not launched', () => withHome(async () => {
+  checkout();
+  const dir = worktree();
+  writeBaseline(P, 'login-page', dir);
+  steerHold('login-page');
+  const fake = fakeRun();
+  const said = [];
+  const w = waker(fake, { platform: 'darwin', print: (line) => said.push(line) });
+  const started = await w.startFeature({ work: 'login-page', worktree: dir });
+  assert.equal(fake.calls.length, 0, 'no session is launched');
+  assert.match(started.sessionId, UUID);
+  assert.equal(JSON.parse(fs.readFileSync(sessionFile(P, 'login-page'), 'utf8')).sessionId, started.sessionId);
+  assert.equal(readHold(P, 'login-page').sessionId, started.sessionId, 'the hold names the session the helm will start');
+  assert.equal(readHold(P, 'login-page').fromStart, true);
+  assert.deepEqual(said, [`START feature login-page ${dir} held`]);
+  assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), false, 'nothing is recorded as running');
+  // Held for another reason, or already named: still refused.
+  await assert.rejects(w.startFeature({ work: 'login-page', worktree: dir }), /at the helm/);
+  hold('other-piece');
+  await assert.rejects(w.startFeature({ work: 'other-piece', worktree: worktree() }), /at the helm/);
+  steerHold('opened-piece', { opened: true });
+  await assert.rejects(w.startFeature({ work: 'opened-piece', worktree: worktree() }), /at the helm/);
+  assert.equal(fake.calls.length, 0);
+}));
+
+// Three pieces building and one more waiting, for the queue's slots; `steer` says what the director's steer holds.
+function slotsWith(steer) {
+  const T2 = (n) => `2026-11-08T02:00:${String(n).padStart(2, '0')}.000Z`;
+  const work = {};
+  const features = {};
+  const ids = Array.from({ length: PACE.building - 1 }, (_, i) => `w-tide-${i + 1}`);
+  // The steer is older than the new piece and sorts ahead of it by name too, so it would take the free slot if it were a candidate.
+  for (const id of [...ids, 'w-steer']) work[id] = { work: { key: id, at: T2(1), data: { lane: 'small' } }, approved: true, since: T2(1) };
+  work['w-znext'] = { work: { key: 'w-znext', at: T2(9), data: { lane: 'small' } }, approved: true, since: T2(9) };
+  for (const id of [...ids, 'w-steer']) features[id] = { key: id, at: T2(2), data: { step: 'building', lane: 'small' } };
+  steerHold('w-steer', steer);
+  const views = { work, features };
+  markUnopenedSteers(views, P);
+  return nextWork({ work, features: views.features, reports: {}, now: '2026-11-08T05:00:00.000Z', fiveHourTight: false });
+}
+
+test('waker: an unopened steer holds no slot', () => withHome(async () => {
+  checkout();
+  const got = slotsWith({});
+  assert.deepEqual(got.start, ['w-znext'], 'a further piece may still start beside the steer');
+  assert.ok(!got.start.includes('w-steer') && !got.hold.some((h) => h.work === 'w-steer'), 'the steer is neither started nor held');
+}));
+
+test('waker: an opened steer holds its slot', () => withHome(async () => {
+  checkout();
+  const got = slotsWith({ opened: true, pid: 4242 });
+  assert.deepEqual(got.start, []);
+  assert.deepEqual(got.hold, [{ work: 'w-znext', why: 'pace' }]);
+  assert.equal(helmHeld(P, 'w-steer'), true);
+}));
+
+// "Now": the held piece's current run is ended on the director's word. A feature run live for `login-page`, taking one wake.
+async function liveRun({ startTime = 'A' } = {}) {
+  checkout();
+  const dir = worktree();
+  keepSession('login-page', dir, SESSION);
+  const fake = fakeRun({ exits: true });
+  let current = startTime;
+  const killed = [];
+  const w = waker(fake, {
+    locate: () => dir, onError: () => {}, startTimeOf: async () => current, kill: (pid) => { killed.push(pid); fake.end(pid, 1); return true; },
+  });
+  const file = writeWake(P, featureBundle('login-page'));
+  await w.wakeFeature('login-page', file);
+  assert.equal(fake.calls.length, 1, 'the wake started a run');
+  return { w, fake, killed, file, dir, setStartTime: (t) => { current = t; } };
+}
+
+test('waker: now ends the held piece\'s run', () => withHome(async () => {
+  const { w, fake, killed } = await liveRun();
+  hold('login-page');
+  const got = await w.stopRun('login-page');
+  await flush();
+  assert.deepEqual(got.stopped, true);
+  assert.deepEqual(killed, [fake.calls[0].pid]);
+  assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), false);
+  assert.equal(fs.existsSync(lostFile(P, 'login-page')), false, 'no lost marker, so no crash resume');
+  assert.equal(fake.calls.length, 1, 'nothing is started in its place');
+}));
+
+test('waker: now puts the run\'s wakes back', () => withHome(async () => {
+  const { w, file } = await liveRun();
+  assert.equal(w.waiting()[0].flight !== null, true, 'the run holds the wake in flight');
+  hold('login-page');
+  await w.stopRun('login-page');
+  await flush();
+  const [entry] = w.waiting();
+  assert.equal(entry.file, file);
+  assert.equal(entry.flight, null, 'the wake is waiting again');
+  assert.equal(entry.failures, 0, 'the run\'s end counts no failure');
+  assert.equal(entry.retryAt, null);
+  assert.equal(fs.existsSync(file), true, 'its record is still in the wakes folder');
+}));
+
+test('waker: now leaves a reused pid alone', () => withHome(async () => {
+  const { w, killed, setStartTime } = await liveRun();
+  setStartTime('B'); // the pid now belongs to another process
+  hold('login-page');
+  const got = await w.stopRun('login-page');
+  assert.deepEqual(killed, [], 'no process is ended');
+  assert.equal(got.stopped, true);
+  assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), false, 'the stale record is removed');
+  assert.equal(w.waiting()[0].flight, null);
+}));
+
+test('waker: now refuses a piece not held', () => withHome(async () => {
+  const { w, killed } = await liveRun();
+  const got = await w.stopRun('login-page');
+  assert.equal(got.stopped, false);
+  assert.deepEqual(killed, []);
+  assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), true, 'the run is untouched');
+}));
+
+test('waker: a run ended by another process\'s now costs its wakes no failure', () => withHome(async () => {
+  const { w, fake, killed, dir } = await liveRun();
+  const other = waker(fake, { locate: () => dir, onError: () => {}, kill: (pid) => { killed.push(pid); fake.end(pid, 1); return true; } });
+  hold('login-page');
+  assert.equal((await other.stopRun('login-page')).stopped, true);
+  await flush();
+  const [entry] = w.waiting();
+  assert.equal(entry.flight, null);
+  assert.equal(entry.failures, 0, 'the watcher that started the run settles nothing when it sees the exit');
+  assert.equal(entry.retryAt, null);
+}));
+
+test('waker: a run another process\'s now ended, exiting with code 0, keeps its wakes', () => withHome(async () => {
+  const { w, fake, dir } = await liveRun();
+  const other = waker(fake, { locate: () => dir, onError: () => {}, startTimeOf: async () => 'A', kill: (pid) => { fake.end(pid, 0); return true; } });
+  hold('login-page');
+  assert.equal((await other.stopRun('login-page')).stopped, true);
+  await flush();
+  const [entry] = w.waiting();
+  assert.ok(entry, 'the wake is not settled done and dropped');
+  assert.equal(entry.flight, null);
+}));
+
+test('waker: now ends a run that has overrun its time and is still the recorded process', () => withHome(async () => {
+  const { w, killed, fake } = await liveRun();
+  w.clock.move(MAX_RUN_MS.feature + MIN);
+  hold('login-page');
+  const got = await w.stopRun('login-page');
+  assert.equal(got.stopped, true);
+  assert.deepEqual(killed, [fake.calls[0].pid]);
+  assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), false);
+  assert.equal(w.waiting()[0].flight, null);
+}));
+
+test('waker: now ends no process whose start time can\'t be verified', () => withHome(async () => {
+  const { w, killed } = await liveRun({ startTime: null });
+  hold('login-page');
+  const got = await w.stopRun('login-page');
+  assert.equal(got.stopped, true);
+  assert.deepEqual(killed, [], 'a record with no start time names a process that can\'t be told from another');
+  assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), false, 'the record is removed');
+  assert.equal(w.waiting()[0].flight, null, 'the wake is back');
 }));

@@ -111,7 +111,7 @@ import { briefHash } from '../feature/files.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { FINISHED_WORDS, prsOfWork, workFinished } from '../desk/work-prs.js';
-import { isOpen, surveyLines, whyNext, workLines, RECENT_MS, RECENT_LEAD, recentLines } from '../desk/views.js';
+import { isOpen, surveyLines, whyNext, workLines, withOpened, RECENT_MS, RECENT_LEAD, recentLines } from '../desk/views.js';
 import { answeredWords } from '../cards/answered.js';
 import { crewNow } from '../crew/runs.js';
 import { markHere } from '../lib/session-files.js';
@@ -142,7 +142,7 @@ export const RECORD_KINDS = Object.freeze([
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'brief']);
 // The commands that write a record, hand out a card or change the board: only the window that holds the First Mate's seat runs them.
 // Settings change through `record` and `suggest`, so they are covered. The rest only read, or keep a note by the session's own id.
-export const SEAT_WRITES = Object.freeze(['cards', 'pull-cards', 'again', 'card', 'record', 'confirm', 'suggest', 'pull-back', 'drop', 'ask-bosun', 'undo', 'move', 'carry-on', 'archive', 'restore', 'premium-card', 'page']);
+export const SEAT_WRITES = Object.freeze(['cards', 'pull-cards', 'again', 'card', 'record', 'confirm', 'suggest', 'pull-back', 'drop', 'ask-bosun', 'undo', 'move', 'carry-on', 'archive', 'restore', 'premium-card', 'page', 'helm']);
 export const SEAT_REFUSAL = 'The First Mate is in another window, so this window can look things up but not record anything or hand out cards. The director can move the First Mate here with the take-over card in this window.';
 
 // The refusal for a seat write from a window that doesn't hold the seat; null when the command may run. A script or test
@@ -158,7 +158,7 @@ export async function seatRefusal({ command, env, cwd, client }) {
   return got?.ok === true && got.holds === false ? SEAT_REFUSAL : null;
 }
 
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts', 'page'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts', 'page', 'helm'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -840,6 +840,7 @@ export async function pullBack({ client, cwd, call, change = false, now, makeId 
   if (found.length === 0) throw new CliError(`No call starting with ${call} is among the recent calls (the latest ${MOST_CALLS} are kept in view)`);
   if (found.length > 1) throw new CliError(`More than one recent call starts with ${call}: give more of its id`);
   const [chosen] = found;
+  if (chosen.where === 'helm') throw new CliError('That call was your own, made at the helm: there is nothing to pull back');
   const mark = callMark(chosen.id);
   // A ruling for the call stands once; a request to change what was built is filed once. With a ruling already, `change` files
   // only the request.
@@ -1162,6 +1163,20 @@ export async function page({ client, cwd, work }) {
   return `The page is at \`${got.file}\`. To follow it live: \`node <plugin root>/scripts/crew/runs.js --follow ${work} --folder "${path.resolve(cwd)}"\``;
 }
 
+// --- helm ---
+// The director's words at the front desk about a piece's helm: `take` (a piece under way), `steer` (from its first step), `back`
+// and `now`. The helper does the hold, its records and the stop, as it writes the page: this command can't write where they
+// are kept, and says what the helper answers.
+const HELM_USAGE = 'Give take, steer, back or now and the piece: helm take <work>';
+export async function helm({ client, cwd, action, work, session }) {
+  if (!['take', 'steer', 'back', 'now'].includes(action) || typeof work !== 'string' || work === '') throw new CliError(HELM_USAGE);
+  if (!SLUG.test(work)) throw new CliError(`There is no open piece called ${work}.`);
+  const got = await client.crew.helm({ cwd, work, action, ...(typeof session === 'string' && session !== '' ? { session } : {}) });
+  if (got?.ok !== true) throw new CliError(said(got, `The host helper did not do that for ${work}`));
+  if (!Array.isArray(got.lines) || got.lines.length === 0) throw new CliError(`The host helper gave no answer for ${work}`);
+  return got.lines;
+}
+
 // --- similar ---
 
 export async function similar({ client, cwd, text }) {
@@ -1220,7 +1235,7 @@ export async function view({ client, cwd, name, now, since: from }) {
     const own = await ownSettings(client, cwd);
     const found = projectOf(cwd);
     const crew = found === null ? {} : crewNow(found.project, views, effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now }));
-    return workLines(views, answers, await wordsOf(client, cwd, views, now, names), prsOfWork(views, cwd), crew);
+    return workLines(found === null ? views : withOpened(views, found.project), answers, await wordsOf(client, cwd, views, now, names), prsOfWork(views, cwd), crew);
   }
   // settings: the project's over the director's own, over the defaults
   const own = await ownSettings(client, cwd);
@@ -1493,6 +1508,9 @@ export async function main(argv, {
     } else if (command === 'page') {
       only(rest, 1, 'Give the piece to watch: page <work>');
       lines([await page({ client: helper, cwd: here, work: rest[0] })]);
+    } else if (command === 'helm') {
+      only(rest, 2, HELM_USAGE);
+      lines(await helm({ client: helper, cwd: here, action: rest[0], work: rest[1], session: env.CLAUDE_CODE_SESSION_ID }));
     } else if (command === 'similar') {
       // The request's words as the arguments, which STOP lets through, or its text on standard input.
       json(await similar({ client: helper, cwd: here, text: rest.length > 0 ? rest.join(' ') : await stdin() }));

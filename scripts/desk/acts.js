@@ -10,6 +10,7 @@ import { cardTextOf, hashOf } from './card-text.js';
 import { NOT_NOW, SUGGEST } from '../lib/calm-words.js';
 import { composeCard } from '../cards/compose.js';
 import { PAIR_LABEL } from '../state/card-lines.js';
+import { withOpened } from './views.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
@@ -86,9 +87,20 @@ const ACTS = {
     const refused = await recordAll(recorder, checked.records ?? []);
     return refused === null ? { ok: true, changed: ['setting'] } : no(`The setting wasn't changed: ${refused}`);
   },
-  async 'all-stop'(args, checked, { recorder }) {
+  // A helm session is the director's own, so All stop leaves it running and says so, once for each piece whose helm is open.
+  async 'all-stop'(args, checked, { source, recorder }) {
     const got = await recorder.setStop({ by: typeof args.by === 'string' ? args.by : 'helper' });
-    return got?.ok === false ? no(got.refused ?? 'All stop wasn\'t set') : { ok: true, changed: ['all-stop'] };
+    if (got?.ok === false) return no(got.refused ?? 'All stop wasn\'t set');
+    let held = [];
+    try {
+      const seen = await source?.views?.({});
+      // Only an opened helm is a session that runs; a piece taken or steered and not yet opened has none.
+      const marked = withOpened(seen?.views, source.project)?.helm;
+      held = Object.entries(isPlain(marked) ? marked : {}).filter(([, h]) => isPlain(h) && h.opened === true).map(([work]) => work).sort();
+    } catch {
+      // The pieces held can't be named; All stop is set all the same.
+    }
+    return { ok: true, changed: ['all-stop'], ...(held.length > 0 ? { says: held.map((work) => `The helm session for ${work} is the director's own, so it keeps running.`).join(' ') } : {}) };
   },
   // An app asks to pair: its request is kept, and one card, Pair this app, asks the director. It decides nothing
   // until the director's signed Pair it, which enrols the key (scripts/desk/clients.js).

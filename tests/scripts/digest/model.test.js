@@ -106,3 +106,15 @@ test('a model with nothing readable is empty and never throws', () => {
   assert.equal(typeof digestText(undefined), 'string');
   assert.equal(hasNews(digestModel()), false);
 });
+
+test('the weekly decision log leaves out the director\'s own calls made at the helm', () => inHome(() => {
+  const calls = [
+    { work: 'w-tide-1', at: iso(-2 * 24 * HOUR), decided: 'Show the tide times in a table', options: [], why: '', kind: 'product' },
+    { work: 'w-tide-1', at: iso(-1 * 24 * HOUR), decided: 'The director steered this piece from 14:02 to 14:31', options: [], why: '', kind: 'helm', where: 'helm' },
+  ];
+  const model = digestModel({ events: [], pending: [], calls, now: NOW, weekly: true });
+  assert.equal(model.calls.length, 1);
+  const text = digestText(model, { now: NOW });
+  assert.match(text, /Show the tide times in a table/u);
+  assert.equal(/steered this piece/u.test(text), false);
+}));
