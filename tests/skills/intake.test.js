@@ -1,0 +1,25 @@
+// tests/skills/intake.test.js
+// The intake's playbook, pinned: the confirming message names the piece's watch level, and the phrases that change it.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const intake = fs.readFileSync(path.join(ROOT, 'skills/intake/SKILL.md'), 'utf8').replaceAll('\r\n', '\n');
+const deskText = fs.readFileSync(path.join(ROOT, 'skills/front-desk/SKILL.md'), 'utf8').replaceAll('\r\n', '\n');
+
+test('intake: the confirming message names the watch level', () => {
+  assert.ok(intake.includes('Watch: steps. Say "background", "full transcript" or "I\'ll steer it" to change.'));
+});
+
+test('intake: the watch phrases record a watch event at the level they name', () => {
+  for (const text of [intake, deskText]) {
+    assert.match(text, /"background" or "don't show me this one"[^\n]*`off`/i);
+    assert.match(text, /"steps" or "keep me posted"[^\n]*`steps`/i);
+    assert.match(text, /"full transcript" or "show me everything"[^\n]*`transcript`/i);
+    assert.match(text, /"I'll steer it" or "let me drive this one"[^\n]*`transcript`[^\n]*not ready yet/i);
+    assert.match(text, /record watch/);
+  }
+});
