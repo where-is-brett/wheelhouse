@@ -82,13 +82,13 @@ test('parseAmount has the planted bug, and dates read DD/MM/YYYY without a clock
   }
 });
 
-test('project settings run every session on haiku with no advisor and switch Wheelhouse on for the project', () => {
+test('project settings run every session on haiku with no advisor and no survey, and switch Wheelhouse on for the project', () => {
   const { dir } = fresh();
   try {
     const settings = JSON.parse(fs.readFileSync(path.join(dir, '.claude/settings.json'), 'utf8'));
     // As `claude plugin install wheelhouse@wheelhouse --scope project` would: the hooks act only in a folder whose own settings
     // switch the plugin on, so without it the session start never starts the helper and setup cannot begin.
-    assert.deepEqual(settings, { model: 'haiku', env: { CLAUDE_CODE_SUBAGENT_MODEL: 'haiku', CLAUDE_CODE_DISABLE_ADVISOR_TOOL: '1' }, enabledPlugins: { 'wheelhouse@wheelhouse': true } });
+    assert.deepEqual(settings, { model: 'haiku', env: { CLAUDE_CODE_SUBAGENT_MODEL: 'haiku', CLAUDE_CODE_DISABLE_ADVISOR_TOOL: '1', CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: '1' }, enabledPlugins: { 'wheelhouse@wheelhouse': true } });
   } finally {
     cleanup(dir);
   }
