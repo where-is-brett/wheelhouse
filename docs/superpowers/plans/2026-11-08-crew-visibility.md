@@ -1,0 +1,44 @@
+<!-- docs/superpowers/plans/2026-11-08-crew-visibility.md -->
+
+# Crew Visibility Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Let the director choose, per piece as they start it, how much of its crew they see (background, steps, transcript), with a project default `watchCrew`, and take the helm of one piece: open its own session in a terminal on this computer, talk to it, and hand it back, with what they say there recorded for the First Mate.
+
+**Architecture:** A read-only script (`scripts/crew/runs.js`) finds a run's transcript on disk by session id, turns its tail into plain step lines, and writes a Markdown page on request; the Logbook asks it only for pieces at `steps` or above. The helm is a hold file in the watcher's folder (`helm/<work>.json`) that one gate, `helmHeld(project, work)`, makes every start, wake, resume, routine move and Bosun `act` respect; `scripts/crew/helm.js` takes, opens (through the adapter's interactive `featureHelmCall`) and hands back, and a `SessionEnd` hook ends the hold. Nothing changes how the watcher runs sessions.
+
+**Tech Stack:** Node.js (CommonJS, as the rest of `scripts/`), `node:test`, `node:fs`. No new dependencies.
+
+**Spec:** `docs/specs/2026-11-08-crew-visibility-design.md` (section numbers below are the spec's). Each task names the sections its implementer reads.
+
+## Global Constraints
+
+- **Path comment.** Every file starts with a comment giving its repository-relative path (`// scripts/crew/runs.js`), straight after any front matter. JSON is exempt.
+- **Language.** British or Australian English. Dates as day month year. Never use "enhanced", "improved" or "fixed" in names, comments or user-facing text. Refer to the director as "the director", with they/them.
+- **No attribution.** Commits, pull requests and comments carry no model identifiers and no AI attribution (no `Co-Authored-By`, no "Generated with").
+- **Scripts and hooks are Node.js**, and run on macOS and Windows: paths through `path.join`, no shell strings.
+- **Watching costs no model tokens and pushes nothing** (section 3, 6.3): no alert, digest line, desk change or message is produced because a step happened.
+- **Transcripts stay on this computer** (section 8.1 rule 5): no transcript text goes to records, the repository, the digest, an alert, a remote or a model's context. The chat gets at most one line per page.
+- **Read-only** (rule 2): transcripts are opened read-only; links and anything not a plain file are refused; the only file `runs.js` writes is its own page under `.wheelhouse/watch/`.
+- **Off means off** (rule 6): for a piece at `off`, no transcript is opened.
+- **One gate.** Every path that starts, wakes, resumes, pauses, merges or moves a piece asks `helmHeld(project, work)`; nothing re-implements the check.
+- **`#400` seams.** Changes to `scripts/lib/role.js` and `scripts/hooks/session-start.js` stay small and in their own clearly separated block; every PR body lists any change to those two files, because the one-First-Mate build will add an `aside` role and change `session-start.js`.
+- **Out of bounds.** Never touch `probes/haiku-trial/` or `tests/probes/haiku-trial/`.
+- **Tests.** Run only the test files a task touches; CI runs the full suite.
+
+## Parts and branches
+
+One branch and pull request per part, base `main`, stacked only where a part needs another's code.
+
+| Part | Branch | Needs | Spec |
+|---|---|---|---|
+| 1. Reader and the Bosun's session id | `feature/crew-runs-reader` | none | 4, 7.1, 7.2, 8.1 |
+| 2. `watchCrew`, the `watch` event and the "Watch:" line | `feature/crew-watch-level` | none | 6.1, 6.2, 12 |
+| 3. Steps in the Logbook | `feature/crew-steps` | 1, 2 | 6.3, 7.2 |
+| 4. The transcript page and `--follow` | `feature/crew-page` | 1, 2 | 7.3, 8.1 |
+| 5. The helm: hold, gate, open, hand back | `feature/crew-helm` | 2 | 8.2, 9.1, 9.2 |
+| 6. The helm: steering from the start, "now", the note, the desk | `feature/crew-helm-desk` | 5 | 9.1, 9.2, 9.4 (note, calls) |
+| 7. Answers at the helm | `feature/crew-helm-answers` | 6, #400's seat | 9.4 (answers) |
+
+Parts 1, 2 run side by side; 3 and 4 side by side once 1 and 2 are on main; part 7 waits for #400.
