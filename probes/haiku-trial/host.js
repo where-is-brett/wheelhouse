@@ -22,11 +22,31 @@ import { listEvents } from '../../scripts/state/events.js';
 import { stateDir, engineDir } from '../../scripts/lib/paths.js';
 import { queueFolderOf } from '../../scripts/engine/queue-place.js';
 import { typedRepliesOn } from '../../scripts/decisions/answer.js';
+import { visibleFromChange } from '../../scripts/gate/visible.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const IDENTITY = ['-c', 'user.name=Wheelhouse probe', '-c', 'user.email=probe@wheelhouse.invalid', '-c', 'commit.gpgsign=false'];
 // The cards a stand-in director answers with a pick. Decisions, undo approvals and lifts are never in this list.
-const PICKED = ['approve-work', 'approval', 'confirm', 'ci-push'];
+const PICKED = ['approve-work', 'approval', 'confirm', 'ci-push', 'setup', 'confirm-all', 'baseline', 'trust'];
+
+// A `gh` call with the test repository's name filled in. Everything but `api` (which carries the repository in its path) and
+// `repo` (which names it) is scoped with --repo, so a command run from a Wheelhouse checkout never reads Wheelhouse's own records.
+export function ghArgs(args, slug) {
+  const [owner = '', name = ''] = String(slug).split('/');
+  const filled = args.map((a) => String(a).replaceAll('{owner}/{repo}', slug).replaceAll('{owner}', owner).replaceAll('{repo}', name));
+  return filled[0] === 'api' || filled[0] === 'repo' ? filled : [...filled, '--repo', slug];
+}
+
+// What the gate reads of a pull request's change: its files and its diff, through `visibleFromChange`, which is pure.
+export async function readGateWith({ gh, change }) {
+  if (typeof change !== 'string' || change === '') return null;
+  const pulls = (await gh(['api', 'repos/{owner}/{repo}/pulls?state=all&per_page=100'])) ?? [];
+  const pull = pulls.find((p) => `${p.head?.ref ?? ''} ${p.title ?? ''}`.toLowerCase().includes(change.toLowerCase()));
+  if (!pull) return null;
+  const files = (await gh(['api', `repos/{owner}/{repo}/pulls/${pull.number}/files?per_page=100`])) ?? [];
+  const diff = await gh(['api', `repos/{owner}/{repo}/pulls/${pull.number}`, '-H', 'Accept: application/vnd.github.v3.diff']);
+  return visibleFromChange({ paths: files.map((f) => f.filename), diff: typeof diff === 'string' ? diff : undefined });
+}
 
 const run = (command, args, options = {}) => spawnSync(command, args, { encoding: 'utf8', ...options });
 const text = (got) => String(got.stdout ?? '').trim();
@@ -37,11 +57,10 @@ export function buildRealIo(env = process.env) {
   const tmux = makeTmux();
 
   const gh = async (args) => {
-    const filled = args.map((a) => String(a).replaceAll('{owner}/{repo}', slug).replaceAll('{owner}', slug.split('/')[0]).replaceAll('{repo}', slug.split('/')[1] ?? ''));
-    const withRepo = filled[0] === 'pr' ? [...filled, '--repo', slug] : filled;
-    const got = run('gh', withRepo);
+    const full = ghArgs(args, slug);
+    const got = run('gh', full);
     if (got.status !== 0) {
-      if (filled[0] !== 'api') throw new Error(String(got.stderr || got.error?.message || `exit ${got.status}`).trim());
+      if (full[0] !== 'api') throw new Error(String(got.stderr || got.error?.message || `exit ${got.status}`).trim());
       return null;
     }
     try { return JSON.parse(got.stdout); } catch { return text(got); }
@@ -91,8 +110,8 @@ export function buildRealIo(env = process.env) {
       const got = run('git', ['show', `origin/main:${file}`], { cwd: project });
       return got.status === 0 ? got.stdout : null;
     },
-    // The row 30 gate result has no record the runner can read in this build, so it is left unknown.
-    readGate: async () => null,
+    // Row 30: the gate's own reading of P8's change, from its pull request's files and diff.
+    readGate: async ({ change }) => readGateWith({ gh, change }),
     // { ok: true, amount } or { ok: false, why }: a read that failed is never taken for a bug still planted.
     async mainParseAmount({ project }) {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'haiku-main-'));

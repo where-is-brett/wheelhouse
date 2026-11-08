@@ -184,7 +184,7 @@ test('restore stops only what the run recorded', async (t) => {
   const before = fs.readdirSync(folder).sort();
   const got = await restore({ folder, io });
   assert.deepEqual(io.timeline.filter((e) => e.kind === 'tmux.kill').map((e) => e.args[0]), ['haiku-trial-desk']);
-  assert.deepEqual(io.timeline.filter((e) => e.kind === 'kill').map((e) => e.args[0]), [4242]);
+  assert.deepEqual(io.timeline.filter((e) => e.kind === 'kill').map((e) => e.args[0]), [-4242], 'the whole process group, not only the leader');
   assert.deepEqual(got.stopped, ['haiku-trial-desk', 'pid 4242']);
   assert.deepEqual(fs.readdirSync(folder).sort(), before, 'nothing is deleted');
 });

@@ -644,10 +644,16 @@ export async function restore({ folder, io }) {
     stopped.push(name);
   }
   for (const pid of pids) {
+    // Each was started in its own process group, so the whole group goes; a pid that is no group's leader goes alone.
     try {
-      io.kill(pid, 'SIGTERM');
+      io.kill(-pid, 'SIGTERM');
       stopped.push(`pid ${pid}`);
-    } catch { /* already gone */ }
+    } catch {
+      try {
+        io.kill(pid, 'SIGTERM');
+        stopped.push(`pid ${pid}`);
+      } catch { /* already gone */ }
+    }
   }
   return { stopped };
 }
