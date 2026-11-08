@@ -158,6 +158,15 @@ export function takeOverLine(holder, counter) {
 }
 export const TAKEOVER_LINE = /^Take over the lock from computer ([0-9a-f]{8}), counter ([1-9][0-9]*)$/;
 
+// The line on the same card when the First Mate's seat (one window on this computer) is what it offers to move: the
+// session that holds the seat and since when, so a click stands for the seat as the card showed it, and no later one.
+export const SEAT_SESSION = /^[A-Za-z0-9_-]{1,128}$/;
+export const isSeatSince = (value) => typeof value === 'string' && Number.isFinite(Date.parse(value)) && /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z$/.test(value);
+export function seatTakeOverLine(session, since) {
+  return `Take over the First Mate from window session ${session}, since ${since}`;
+}
+export const SEAT_TAKEOVER_LINE = /^Take over the First Mate from window session ([A-Za-z0-9_-]{1,128}), since ([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z)$/;
+
 // The line on the card that asks the director to approve the project's move to a Wheelhouse release that is not pins-only
 // (update design, section 6.2): the release's tag and its commit in full, so a click stands for that release at that commit
 // and no other. The card is named `release-<commit>`.
@@ -312,6 +321,7 @@ export const SET_LINES = [
   new RegExp(`^${literal(BASELINE_WORDS)}, [0-9a-f]{12}$`, 'm'),
   new RegExp(TRUST_LINE.source, 'm'),
   new RegExp(TAKEOVER_LINE.source, 'm'),
+  new RegExp(SEAT_TAKEOVER_LINE.source, 'm'),
   new RegExp(RELEASE_LINE.source, 'm'),
   new RegExp(UPDATE_HELPER_LINE.source, 'm'),
   new RegExp(UPDATE_LINE.source, 'm'),

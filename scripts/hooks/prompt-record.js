@@ -84,7 +84,9 @@ import { PUT_OFF } from '../lib/front-desk.js';
 import { whenSaid, askOf, countedOf } from '../cards/answered.js';
 import { settingKey, UNATTENDED_CARD, USE_GUARDED } from '../protection/windows-builds.js';
 import { startedAsScript } from '../lib/started-as-script.js';
-import { recordAnswer } from '../decisions/answer.js';
+import { recordAnswer, startedByScript } from '../decisions/answer.js';
+import { sessionRole } from '../lib/role.js';
+import { readSeat, takeSeat, refreshSeat } from '../lib/first-mate-seat.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const SHA12 = '([0-9a-f]{12})(?![0-9a-fA-F])';
@@ -913,6 +915,19 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
   return out;
 }
 
+// A front-desk session that doesn't hold the First Mate's seat takes it here when it is free (a session that began before
+// the seat existed, or whose holder has since ended). A seat another live session holds is never taken: takeSeat leaves it,
+// and moving it is the take-over card's click, not this. It informs, so a failure leaves the seat as it was.
+async function takeFreeSeat({ project, input, env, now }) {
+  try {
+    const session = input.session_id;
+    if (typeof session !== 'string' || session === '' || startedByScript(env)) return;
+    if (sessionRole({ sessionId: session, env, prompt: input.prompt, cwd: input.cwd, seat: null }) !== 'front-desk') return;
+    if (readSeat(project)?.session === session) refreshSeat(project, session, { now });
+    else await takeSeat(project, { session, folder: input.cwd }, { now });
+  } catch { /* the seat is taken at a later hook */ }
+}
+
 // The director's typed reply to a decision shown in the chat (scripts/decisions/answer.js), on UserPromptSubmit. The prompt is
 // the director's own words only in a front-desk session that no script started, which recordAnswer checks. It records, and gives what
 // it made of the reply back as this turn's own context (a hook of the same event runs beside this one, so nothing is left for a
@@ -922,6 +937,7 @@ async function decideReply(input, { client, now, find, dir, budget, env }) {
     if (typeof input.prompt !== 'string') return undefined;
     const found = find(input.cwd, { dir });
     if (!found) return undefined;
+    await takeFreeSeat({ project: found.project, input, env, now });
     const done = await recordAnswer({ project: found.project, sessionId: input.session_id, prompt: input.prompt, at: now(), cwd: input.cwd, env, client, budget });
     return typeof done.note === 'string' && done.note !== '' ? answer.context('UserPromptSubmit', done.note) : undefined;
   } catch {

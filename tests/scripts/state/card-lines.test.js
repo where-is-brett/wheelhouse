@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   replyCode, replyCodeLine, setLineOf, SET_LINES, CODE_ALPHABET, usageLine, USAGE_LINE, premiumLine, PREMIUM_LINE,
   approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, LIFT_LABEL, LIFT_LABELS, isLiftStopLine, runbookLine, ciPushLine,
-  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, dayOf, TRUST_LINE, takeOverLine, TAKEOVER_LINE, releaseLine, RELEASE_LINE, updateHelperLine, updateLine, pairLine, unpairLine,
+  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, dayOf, TRUST_LINE, takeOverLine, TAKEOVER_LINE, seatTakeOverLine, SEAT_TAKEOVER_LINE, releaseLine, RELEASE_LINE, updateHelperLine, updateLine, pairLine, unpairLine,
   uninstallLine, UNINSTALL_LINE, UNINSTALL_LABEL, isLineName, keepControlLine, chatCopy,
 } from '../../../scripts/state/card-lines.js';
 
@@ -80,7 +80,7 @@ test('each line the build loop writes is found by setLineOf, and matches exactly
   const all = [
     ...BUILD_LINES, approvalLine(12, FULL), confirmLine({ kind: 'ruling', id: 'x', data: { words: 'w' } }),
     LIFT_STOP, ciPushLine('main', FULL), runbookLine(1), setupLine(10, FULL), confirmAllLine(FULL, 3), baselineLine(FULL),
-    trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', FULL), takeOverLine('0a1b2c3d', 4), releaseLine('v0.2.6', 'v0.2.7', FULL), updateHelperLine('update-helper-4242-x'), updateLine('v0.2.6', 'v0.2.7', 'release', FULL), pairLine('phone-app', FULL), unpairLine('phone-app', FULL), uninstallLine('o__Cafe-Menu', FULL),
+    trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', FULL), takeOverLine('0a1b2c3d', 4), seatTakeOverLine('abc-1', '2026-11-08T01:00:00.000Z'), releaseLine('v0.2.6', 'v0.2.7', FULL), updateHelperLine('update-helper-4242-x'), updateLine('v0.2.6', 'v0.2.7', 'release', FULL), pairLine('phone-app', FULL), unpairLine('phone-app', FULL), uninstallLine('o__Cafe-Menu', FULL),
     usageLine('lean', '2026-10-26T01:00:00.000Z'), premiumLine('2026-10-26T01:00:00.000Z'),
   ];
   for (const pattern of SET_LINES) assert.ok(all.some((line) => new RegExp(pattern.source, pattern.flags).test(line)), String(pattern));
@@ -210,4 +210,14 @@ test('chatCopy leaves out a card\'s set line and reply code, and keeps them wher
   const wrong = `Ask.\n${approvalLine(7, FULL)}\n${replyCodeLine('ZZZZ')}`;
   assert.equal(chatCopy(wrong), wrong);
   assert.equal(chatCopy(undefined), undefined);
+});
+
+test('the window take-over line names the session and since, and is its own set line', () => {
+  const line = seatTakeOverLine('abc-1', '2026-11-08T01:00:00.000Z');
+  assert.equal(line, 'Take over the First Mate from window session abc-1, since 2026-11-08T01:00:00.000Z');
+  assert.equal(setLineOf(`What this is.\n${line}`), line);
+  assert.equal(SET_LINES.filter((p) => new RegExp(p.source, p.flags).test(line)).length, 1);
+  assert.deepEqual(SEAT_TAKEOVER_LINE.exec(line).slice(1), ['abc-1', '2026-11-08T01:00:00.000Z']);
+  assert.equal(SEAT_TAKEOVER_LINE.test('Take over the First Mate from window session a b, since 2026-11-08T01:00:00.000Z'), false);
+  assert.equal(TAKEOVER_LINE.test(line), false);
 });

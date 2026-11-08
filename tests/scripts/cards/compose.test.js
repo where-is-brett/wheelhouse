@@ -10,7 +10,7 @@ import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, pairLine, uninstallLine, keepControlLine, usageLine, premiumLine, releaseLine, updateHelperLine, updateLine, replyCode, replyCodeLine, setLineOf,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, pairLine, uninstallLine, keepControlLine, usageLine, premiumLine, releaseLine, updateHelperLine, updateLine, replyCode, replyCodeLine, setLineOf, SET_LINES,
 } from '../../../scripts/state/card-lines.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../../../scripts/lib/front-desk.js';
@@ -972,4 +972,26 @@ test('a recorded build-command question keeps its own Not now', () => {
 
 test('a recorded question whose recommendation is a put-off is still refused, not given another recommendation', () => {
   assert.match(questionProblem({ ...OLD_BY_HAND(), recommendation: 'Not now' }, { recorded: true }), /must not use Not now/);
+});
+
+test('a window take-over card names the session and since', () => {
+  const since = '2026-11-08T01:00:00.000Z';
+  const { question } = composeCard({
+    ...input('take-over'),
+    what: 'The First Mate is in another window, session abc, last active 4 minutes ago; this window can only read and talk.',
+    target: { session: 'abc', since },
+  });
+  assert.ok(question.question.includes(`Take over the First Mate from window session abc, since ${since}`));
+  assert.ok(SET_LINES.some((pattern) => pattern.test(setLineOf(question.question))));
+  assert.equal(cardProblems(question).length, 0, cardProblems(question).join('; '));
+  // The title is the window's.
+  assert.ok(question.question.startsWith('Move the First Mate to this window?'));
+  // It must name the session it moves from.
+  assert.throws(() => composeCard({ ...input('take-over'), what: 'The First Mate is in another window.', target: { session: 'abc', since } }), /must name.*abc/);
+});
+
+test('a computer take-over card is as before', () => {
+  const { question } = composeCard(input('take-over'));
+  assert.ok(question.question.includes('Take over the lock from computer 0a1b2c3d, counter 4'));
+  assert.ok(!question.question.includes('Take over the First Mate'));
 });

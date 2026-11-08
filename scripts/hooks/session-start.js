@@ -56,8 +56,10 @@ import { buildsShown, settingKey } from '../protection/windows-builds.js';
 import { listEvents, makeEvent } from '../state/events.js';
 import { buildViews } from '../state/views.js';
 import { startBackground, startDetached } from '../lib/background.js';
-import { sessionRole } from '../lib/role.js';
-import { RECENT_MS } from '../lib/first-mate-seat.js';
+import { sessionRole, asideKind } from '../lib/role.js';
+import { RECENT_MS, readSeat, takeSeat, refreshSeat, seatInUse, firstMatePid } from '../lib/first-mate-seat.js';
+import { startedByScript } from '../decisions/answer.js';
+import { asideLine } from '../lib/front-desk.js';
 import { projectConfig } from '../watcher/main.js';
 import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
 import { readProject } from '../lib/projects.js';
@@ -434,8 +436,12 @@ async function keepLock(project, client, left, seen = {}) {
 }
 
 // The words before the take-over card's AskUserQuestion input, as JSON on the same line.
+// The words before the window take-over card's AskUserQuestion input.
+export const SEAT_TAKEOVER_ASK = 'The First Mate is in another window: show the director this card with AskUserQuestion, exactly as given, as a question of its own, when they ask for Wheelhouse work: ';
 export const TAKEOVER_ASK = 'Another computer has the First Mate: show the director the Logbook as it stands, read-only, and ask them this card with AskUserQuestion, exactly as given, as a question of its own: ';
-// RECENT_MS (imported): within this long since the other computer last wrote, it counts as in use. (A lock idle two hours is taken at once.)
+// RECENT_MS (imported from the seat's module, one number for both cards): within this long since the other computer or
+// window last wrote, it counts as in use. (A lock idle two hours is taken at once.)
+export { RECENT_MS };
 const agoWords = (ms) => {
   const minutes = Math.max(0, Math.floor(ms / 60000));
   if (minutes < 1) return 'just now';
@@ -477,6 +483,61 @@ async function takeOverNotes({ client, left, project, now }) {
   }
 }
 
+// The seat card for an aside session in the main folder: the window that holds the First Mate's seat, as the seat names
+// it now. Composed as takeOverNotes composes the computer's. It informs, so anything that fails gives no line.
+function seatTakeOverNotes({ seat, now }) {
+  try {
+    if (!seat) return [];
+    const ago = agoWords(now().getTime() - Date.parse(seat.seenAt));
+    const inUse = seatInUse(seat, { now });
+    const { question } = composeCard({
+      kind: 'take-over',
+      level: 3,
+      what: `The First Mate is in another window, session ${seat.session}, last active ${ago}; this window can only read and talk until you move it here.`,
+      why: 'Only one window is the First Mate at a time, so two never write the same records or answer the same card.',
+      options: [
+        { label: TAKEOVER_LABEL, says: `The First Mate moves to this window, and window session ${seat.session} becomes an ordinary session.` },
+        { label: LEAVE_LABEL, says: 'The First Mate stays in the other window, and this one stays an ordinary session.' },
+      ],
+      recommend: inUse ? LEAVE_LABEL : TAKEOVER_LABEL,
+      because: inUse ? `the other window was in use ${ago}` : `nothing has been written from the other window since ${ago}`,
+      meanwhile: 'This window reads and talks, and leaves Wheelhouse\'s records alone.',
+      target: { session: seat.session, since: seat.since },
+    });
+    return [`${SEAT_TAKEOVER_ASK}${JSON.stringify(question)}`];
+  } catch {
+    return [];
+  }
+}
+
+// Takes the First Mate's seat for this session where the computer can hold it, keeps it fresh where it is held,
+// and says which part the session plays: the front desk (it holds the seat, or none is held and it can't take one)
+// or an aside (another window holds it, or the session chose to be one: `chosen`). A session with no id, or one a script
+// started, only reads the seat (design 6.8, case 10). While another computer holds the lock (`lockFree` false) nothing is
+// taken (case 8), and that session keeps the computer's take-over card. A compaction keeps the id and so the seat (case 7).
+// It informs: where the seat can't be read or written, the part is judged from what can be read.
+export async function keepSeat({ project, input, env = process.env, lockFree = true, now = () => new Date(), seat: given, options = {} }) {
+  const session = input?.session_id;
+  const opts = { ...options, now };
+  const read = () => { try { return given !== undefined ? given : readSeat(project, opts); } catch { return null; } };
+  const roleOf = (seat) => sessionRole({ sessionId: session, env, prompt: input?.prompt, cwd: input?.cwd, seat });
+  // A part the session has by its own doing (a feature, the foreman, a why copy, a chosen aside) isn't the seat's to give.
+  const chosen = roleOf(null);
+  const before = read();
+  if (chosen !== 'front-desk') return { role: chosen, seat: before, chosen: true };
+  if (typeof session !== 'string' || session === '' || startedByScript(env) || !lockFree) return { role: roleOf(before), seat: before, chosen: false };
+  try {
+    const mine = await firstMatePid(opts);
+    if (before?.session === session && before.pid === mine.pid && before.pidStart === mine.pidStart) {
+      refreshSeat(project, session, opts);
+    } else {
+      await takeSeat(project, { session, folder: input.cwd }, opts);
+    }
+  } catch { /* the seat is judged from what can be read */ }
+  const after = read();
+  return { role: roleOf(after), seat: after, chosen: false };
+}
+
 async function ensureWatcher(project, client, { spawn, pluginRoot, env = process.env, folder = null }) {
   // This session has the PATH that finds claude; keep the full path for a watcher that is started with a bare one.
   try { recordClaudePath({ env, inside: folder }); } catch { /* the watcher looks in the usual places */ }
@@ -497,7 +558,7 @@ const isBuildsProposal = (u) => u?.kind === 'setting' && [u.key, u.data?.key].so
 // Unattended line after that while it is on. All come before the lists, so the cut at MAX_CHARS
 // never takes them. `sheet` (toolSheetLines) comes after the front desk's line and before the notes and the lists, so
 // a cut takes the briefing and never the tool sheet.
-export function reload({ views, stop, lineage = [], notes, feature, stateRoot, windows, builds, frontDesk = false, sheet = [], where = '' }) {
+export function reload({ views, stop, lineage = [], notes, feature, stateRoot, windows, builds, frontDesk = false, aside = null, sheet = [], where = '' }) {
   const lines = [];
   if (stop?.on) lines.push(`All stop is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
   lines.push(...lineage);
@@ -508,6 +569,7 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   const damaged = Array.isArray(views?.damaged) ? views.damaged.map((d) => (typeof d === 'string' ? d : JSON.stringify(d))) : [];
   lines.push(...section('Damaged state:', damaged));
   if (frontDesk) lines.push(FRONT_DESK_LINE);
+  else if (aside !== null) lines.push(aside);
   lines.push(...sheet);
   lines.push(...notes);
   // After a compaction: where the session was (scripts/hooks/where.js), before the lists so a cut takes them first.
@@ -798,6 +860,8 @@ async function started(input, deps) {
   const usage = Promise.resolve().then(() => background({ pluginRoot, session: input.session_id, cwd: input.cwd, project, spawn, now })).catch(() => null);
   let views = null;
   const lockSeen = {};
+  // Whether this computer holds the lock or can take it (or the helper is down, so nothing can be asked): the seat may be taken.
+  let lockFree = true;
   if (!up) notes.push(NO_HELPER);
   else {
     const mine = ownVersion(pluginRoot);
@@ -821,6 +885,7 @@ async function started(input, deps) {
       notes.push(...await importNotes(asks, { left }));
     }
     const lockLine = await keepLock(project, clientNow(), left, lockSeen);
+    lockFree = lockLine === null;
     if (lockLine !== null) notes.push(lockLine);
     const got = await left(clientNow().state.views({ project }));
     if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
@@ -851,7 +916,17 @@ async function started(input, deps) {
   if (setup === null) clearRequest(found.record?.folder ?? input.cwd);
   // The front desk's session: not a feature's, nor the foreman's own. Only it is told why the
   // foreman is held back, as it is the session that speaks to the director.
-  const deskSession = madeFeatureSlug(input.cwd) === null && sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk';
+  // The First Mate's seat (one-First-Mate design, section 6.1): taken here where it is free, so the part is judged after it.
+  const kept = await keepSeat({ project, input, env, lockFree, now, ...(deps.seatOptions ? { options: deps.seatOptions } : {}) });
+  const deskSession = madeFeatureSlug(input.cwd) === null && kept.role === 'front-desk';
+  // An aside session (another window holds the seat, the aside command, or a linked worktree): told so in place of the
+  // front desk's line. The window take-over card goes only to a seat-made aside in the main folder.
+  const aside = kept.role === 'aside';
+  const asideWhere = aside ? asideKind({ cwd: input.cwd }) : null;
+  const holder = aside && kept.seat && kept.seat.session !== input.session_id ? kept.seat : null;
+  const seatCard = holder !== null && asideWhere === 'main' && kept.chosen === false;
+  const asideNote = aside ? asideLine({ ago: holder ? agoWords(now().getTime() - Date.parse(holder.seenAt)) : null, kind: asideWhere, card: seatCard }) : null;
+  if (seatCard) notes.push(...seatTakeOverNotes({ seat: holder, now }));
   if (trouble !== null && deskSession) notes.push(trouble === 'newer' ? FOREMAN_HELD_NEWER : FOREMAN_HELD_UNREADABLE);
 
   const stateRoot = stateDir(project);
@@ -907,7 +982,7 @@ async function started(input, deps) {
     resetEpisode(project, input.session_id);
   }
   const text = reload({
-    views, stop: stopOf(), lineage, notes, feature: featureSlug(input.cwd), stateRoot, windows, builds, frontDesk, where,
+    views, stop: stopOf(), lineage, notes, feature: featureSlug(input.cwd), stateRoot, windows, builds, frontDesk, aside: asideNote, where,
     sheet: toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: commandRoot({ dir, self }, pluginRoot), platform }),
   });
   return text === '' ? undefined : answer.context('SessionStart', text);

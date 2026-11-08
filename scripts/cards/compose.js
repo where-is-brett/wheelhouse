@@ -11,7 +11,7 @@
 // uninstall's card by the helper, for setup's playbook to ask as it is.
 import {
   approvalLine, confirmLine, confirmWords, LIFT_STOP, LIFT_LABEL, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, TAKEOVER_LABEL, LEAVE_LABEL, pairLine, PAIR_LABEL, APP_ID, uninstallLine, keepControlLine, usageLine, premiumLine, releaseLine, updateHelperLine, updateLine, UPDATE_LABEL, RELEASE_LABEL, RELEASE_TAG, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, seatTakeOverLine, SEAT_SESSION, isSeatSince, TAKEOVER_LABEL, LEAVE_LABEL, pairLine, PAIR_LABEL, APP_ID, uninstallLine, keepControlLine, usageLine, premiumLine, releaseLine, updateHelperLine, updateLine, UPDATE_LABEL, RELEASE_LABEL, RELEASE_TAG, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
   RUNBOOK_TITLES, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, TRUST_LABEL, UNINSTALL_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
@@ -146,7 +146,7 @@ const ASKS = Object.freeze({
   'lift-incident': () => 'End the incident?',
   'incident-fix': () => 'Merge this fix?',
   'keep-control-files': () => 'Keep these files as they are?',
-  'take-over': () => 'Move the First Mate to this computer?',
+  'take-over': (t) => (t?.session !== undefined ? 'Move the First Mate to this window?' : 'Move the First Mate to this computer?'),
   pair: () => 'Pair this app?',
   release: (t) => `Move this project to Wheelhouse ${t.release}?`,
   'update-helper': () => 'What should the update do about the old helper?',
@@ -265,6 +265,10 @@ function lineFor(kind, target) {
     if (typeof t.client !== 'string' || !APP_ID.test(t.client) || typeof t.fingerprint !== 'string' || !/^[0-9a-f]{12}/.test(t.fingerprint)) bad('needs the app\'s id and its key\'s fingerprint');
     return pairLine(t.client, t.fingerprint);
   }
+  if (kind === 'take-over' && t.session !== undefined) {
+    if (typeof t.session !== 'string' || !SEAT_SESSION.test(t.session) || !isSeatSince(t.since)) bad('needs the id of the window session that holds the seat and the time it took it');
+    return seatTakeOverLine(t.session, t.since);
+  }
   if (kind === 'take-over') {
     if (typeof t.holder !== 'string' || !/^[0-9a-f]{8}$/.test(t.holder) || !isCount(t.counter)) bad('needs the id of the computer that holds the lock and the counter it holds it at');
     return takeOverLine(t.holder, t.counter);
@@ -339,7 +343,7 @@ export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
   if (kind === 'setup') need = [new RegExp(`\\bstep ${target.step}(?![0-9])`, 'i').test(what), `step ${target.step}`];
   if (kind === 'confirm-all') need = [new RegExp(`(?<![0-9])${target.count} rules?\\b`, 'i').test(what), `how many rules it lists, ${target.count}`];
   if (kind === 'trust') need = [nameId(target.computer), `the computer ${target.computer}`];
-  if (kind === 'take-over') need = [nameId(target.holder), `the computer ${target.holder}`];
+  if (kind === 'take-over') need = target.session !== undefined ? [nameId(target.session), `the window session ${target.session}`] : [nameId(target.holder), `the computer ${target.holder}`];
   if (kind === 'pair') need = [nameId(target.client), `the app ${target.client}`];
   if (kind === 'uninstall') need = [nameId(target.project), `the project ${target.project}`];
   if (kind === 'update') need = [nameId(target.to), `the release ${target.to}`];

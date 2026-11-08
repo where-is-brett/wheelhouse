@@ -44,3 +44,16 @@ export const PUT_OFF = Object.freeze(['Not now', 'Explain more', 'Show me', 'Why
 // The option a confirm card for a proposal offers in place of Show me (ruling F48): it decides the
 // card, signs nothing, and holds the proposal back for a while.
 export const KEEP_AS_IS = 'Keep as is';
+
+// What a session that isn't the First Mate is told at its start (the one-First-Mate design, sections 6.3 and 6.4).
+// The first sentences are shared; `ago` is how long since the First Mate's window was last active (null when
+// no window holds the seat). `card` is true where the take-over card follows.
+const ASIDE_FIRST = (ago) => (ago === null ? 'This session isn\'t the First Mate.' : `This session isn't the First Mate: it is in another window, last active ${ago}.`);
+const ASIDE_WORK = 'Work here as an ordinary session, and leave Wheelhouse\'s records to the First Mate. If the director asks for Wheelhouse work (a request to build, a decision, a card), say the First Mate is in another window';
+export const ASIDE_LINE_MAIN = 'Here you can read, talk and look things up, but not edit the product\'s files. For edits, start a session in a worktree.';
+export const ASIDE_LINE_WORKTREE = 'Edit freely on this branch. If it touches files a crew piece is changing, you\'ll be told.';
+export const asideLine = ({ ago = null, kind = 'main', card = false } = {}) => (
+  `${ASIDE_FIRST(ago)} ${ASIDE_WORK}${card ? ', and offer this card.' : '.'} ${kind === 'worktree' ? ASIDE_LINE_WORKTREE : ASIDE_LINE_MAIN}`
+);
+// The one line the old window gets once the seat has moved to another.
+export const SEAT_MOVED_LINE = 'The First Mate moved to another window; this session is now an ordinary one';
