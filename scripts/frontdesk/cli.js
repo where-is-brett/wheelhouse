@@ -135,6 +135,24 @@ export const RECORD_KINDS = Object.freeze([
   'work', 'amendment', 'incident', 'note', 'brief', 'watch',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'brief']);
+// The commands that write a record, hand out a card or change the board: only the window that holds the First Mate's seat runs them.
+// Settings change through `record` and `suggest`, so they are covered. The rest only read, or keep a note by the session's own id.
+export const SEAT_WRITES = Object.freeze(['cards', 'pull-cards', 'again', 'card', 'record', 'confirm', 'suggest', 'pull-back', 'drop', 'ask-bosun', 'undo', 'move', 'carry-on', 'archive', 'restore', 'premium-card']);
+export const SEAT_REFUSAL = 'The First Mate is in another window, so this window can look things up but not record anything or hand out cards. The director can move the First Mate here with the take-over card in this window.';
+
+// The refusal for a seat write from a window that doesn't hold the seat; null when the command may run. A script or test
+// (no session id) and a folder in no project are never refused. The seat is read through the host helper, since this
+// command runs in the project's sandbox, which cannot read the Wheelhouse home; refused only on its plain answer that
+// another window holds the seat.
+export async function seatRefusal({ command, env, cwd, client }) {
+  if (!SEAT_WRITES.includes(command)) return null;
+  const session = env?.CLAUDE_CODE_SESSION_ID;
+  if (typeof session !== 'string' || session === '') return null;
+  let got;
+  try { got = await client.session.seat({ cwd, session }); } catch { return null; }
+  return got?.ok === true && got.holds === false ? SEAT_REFUSAL : null;
+}
+
 const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
@@ -1379,6 +1397,8 @@ export async function main(argv, {
     const [command, ...rest] = argv;
     if (!COMMANDS.includes(command)) throw new CliError(`Commands: ${COMMANDS.join(', ')}`);
     const helper = client ?? helperClient(command === 'confirm' ? { timeout: CONFIRM_WAIT_MS } : {});
+    const refused = await seatRefusal({ command, env, cwd, client: helper });
+    if (refused !== null) throw new CliError(refused);
     const here = path.resolve(cwd);
     const stdin = async () => (input === undefined ? readInput() : input);
     const json = (value) => out(`${JSON.stringify(inChatWords(value), null, 2)}\n`);

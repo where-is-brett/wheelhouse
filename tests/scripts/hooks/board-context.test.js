@@ -30,7 +30,8 @@ import { deskCore } from '../../../scripts/desk/core.js';
 import { fileSource } from '../../../scripts/desk/file-source.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
 import { markOpen, readOpen } from '../../../scripts/lib/session-files.js';
-import { seatFile } from '../../../scripts/lib/first-mate-seat.js';
+import { seatFile, readSeat, handOverSeat } from '../../../scripts/lib/first-mate-seat.js';
+import { SEAT_MOVED_LINE } from '../../../scripts/lib/front-desk.js';
 import { makeFeatureFolder } from '../../helpers/made-feature.js';
 
 const P = 'owner__name';
@@ -1232,5 +1233,33 @@ test('a seat-made aside is not recorded', async () => {
     put(seat, { session: 'other', pid: null, pidStart: null, folder: repo, since: NOW, seenAt: NOW });
     assert.equal(await decide(prompt(repo, 'Hello', 's-seat'), { now: at(NOW), env: {}, client }), undefined);
     assert.equal(fs.existsSync(roleFile('s-seat')), false);
+  });
+});
+
+test('an aside session gets no board or cards lines', async () => {
+  await withProject(async ({ repo }) => {
+    put(seatFile(P), { session: 'other', pid: null, pidStart: null, folder: repo, since: NOW, seenAt: NOW });
+    assert.equal(await run(repo, 'What is new?', NOW), undefined);
+  });
+});
+
+test('the old window is told once that the First Mate moved', async () => {
+  await withProject(async ({ repo }) => {
+    const first = '2026-10-19T11:00:00.000Z';
+    put(seatFile(P), { session: 'a', pid: null, pidStart: null, folder: repo, since: first, seenAt: first });
+    const moved = await handOverSeat(P, { session: 'b', folder: repo, from: { session: 'a', since: first } }, { now: at(NOW) });
+    assert.equal(moved.moved, true);
+    const prompted = (id) => decide(prompt(repo, 'Hello', id), { now: at(NOW), env: {}, client });
+    assert.equal(contextOf(await prompted('a')), SEAT_MOVED_LINE);
+    assert.notEqual(contextOf(await prompted('a')), SEAT_MOVED_LINE);
+  });
+});
+
+test('the holder\'s prompt refreshes the seat', async () => {
+  await withProject(async ({ repo }) => {
+    const old = '2026-10-19T11:57:00.000Z';
+    put(seatFile(P), { session: 's1', pid: null, pidStart: null, folder: repo, since: old, seenAt: old });
+    await run(repo, 'Hello', NOW);
+    assert.ok(Date.parse(readSeat(P).seenAt) > Date.parse(old));
   });
 });

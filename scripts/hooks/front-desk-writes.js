@@ -15,7 +15,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { answer, runAndExit, projectOf, beingSetUp, worktreeRoot, sameFolder } from './kit.js';
 import { segmentsWithOperators } from './shell-words.js';
-import { sessionRole } from '../lib/role.js';
+import { sessionRole, asideKind } from '../lib/role.js';
+import { refreshSeat } from '../lib/first-mate-seat.js';
 import { ownRun } from '../protection/archon.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -28,7 +29,12 @@ export const SETUP_LIVE_MS = 2 * 60 * 60 * 1000;
 
 export const FRONT_DESK_NO_WRITES = (file) => `Wheelhouse does not let the front desk write the product's own files (${file}). `
   + 'Record the change through intake as a plan or work and ask its card; the builders make the change. '
-  + `Your briefs and notes go in ${OWN_FOLDER}/work/<id>.md.`;
+  + `Your briefs and notes go in ${OWN_FOLDER}/work/<id>.md. `
+  + 'To edit by hand, start a session in a worktree; its changes reach main through the director\'s own pull request.';
+
+export const ASIDE_NO_WRITES = (file) => `This window isn't the First Mate and stands in the project's main folder, so it can't change the product's files here (${file}). `
+  + 'To edit by hand, start a session in a worktree; its changes reach main through the director\'s own pull request. '
+  + `Notes you need to keep go in ${OWN_FOLDER}/work/<id>.md.`;
 
 // The real path of `file`, which may not exist yet: its nearest folder that does, with the rest after it.
 function realPath(file) {
@@ -167,6 +173,9 @@ export function shellChanges(command, cwd, { windows = false, home = os.homedir(
   return { paths, here: here ? at : null };
 }
 
+// The holder's hook keeps the seat's `seenAt` fresh. Never throws.
+const refreshHeld = (project, session) => refreshSeat(project, session);
+
 // The hook's answer: undefined to let the tool run.
 export function decide(input, { env = process.env, find = projectOf, setUp = beingSetUp, role = sessionRole, now = Date.now } = {}) {
   const tool = input?.tool_name;
@@ -178,7 +187,10 @@ export function decide(input, { env = process.env, find = projectOf, setUp = bei
   if (!folder) return undefined;
   const running = setUp(input.cwd);
   if (running !== null && setupLive(running.run, now())) return undefined;
-  if (role({ sessionId: input.session_id, env, cwd: input.cwd }) !== 'front-desk') return undefined;
+  const kind = role({ sessionId: input.session_id, env, cwd: input.cwd });
+  if (kind === 'front-desk') refreshHeld(found.project, input.session_id);
+  else if (!(kind === 'aside' && asideKind({ cwd: input.cwd }) === 'main')) return undefined;
+  const noWrites = kind === 'front-desk' ? FRONT_DESK_NO_WRITES : ASIDE_NO_WRITES;
   // A linked worktree the session stands in is its own checkout (an engine worktree, a job folder); a nested repository
   // made inside the project (`git init`) is not.
   const root = worktreeRoot(input.cwd);
@@ -201,7 +213,7 @@ export function decide(input, { env = process.env, find = projectOf, setUp = bei
     targets = changes.here === null ? changes.paths : [...changes.paths, changes.here];
   }
   const first = targets.find(refused);
-  return first === undefined ? undefined : answer.deny(FRONT_DESK_NO_WRITES(named(first)));
+  return first === undefined ? undefined : answer.deny(noWrites(named(first)));
 }
 
 if (startedAsScript(import.meta.url)) await runAndExit(decide, { failClosed: false, event: 'PreToolUse' });
