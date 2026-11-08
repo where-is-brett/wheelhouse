@@ -241,3 +241,16 @@ test('the warning names each piece, and joins two or more files with commas and 
   assert.match(words, /changes `x\.ts`, which the crew piece billing is also changing\./);
   assert.match(words, /You could wait for billing to merge and then bring this branch up to date, or ask the First Mate to hold it\.$/);
 });
+
+test('the planned files of a feature the foreman is building warn', async () => {
+  const { side } = makeAside();
+  put(side, 'src/login.ts');
+  git(side, 'add', '.');
+  git(side, 'commit', '-q', '-m', 'login');
+  const desk = deskWith({});
+  desk.views.work = { 'login-retry': { work: { id: 'w', at: WORK_AT, data: { id: 'login-retry', title: 'x', lane: 'small', visible: false, dependsOn: [] } }, approved: true, since: WORK_AT } };
+  desk.views.features = { 'login-retry': { data: { work: 'login-retry', step: 'building', files: ['src/login.ts'] } } };
+  const got = await run(side, desk);
+  assert.match(got.reason, /crew piece login-retry/);
+  assert.deepEqual(desk.writes[0].data.files, ['src/login.ts']);
+});

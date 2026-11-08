@@ -21,17 +21,23 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { main as cli } from '../../scripts/frontdesk/cli.js';
+import { main as cli, SEAT_REFUSAL } from '../../scripts/frontdesk/cli.js';
 import { decide as boardContext, cardsLine, HEADINGS } from '../../scripts/hooks/board-context.js';
 import { decide as cardCheck } from '../../scripts/hooks/card-check.js';
 import { decide as promptRecord } from '../../scripts/hooks/prompt-record.js';
+import { decide as sessionStart, FRONT_DESK_LINE, SEAT_TAKEOVER_ASK } from '../../scripts/hooks/session-start.js';
 import { startHelper } from '../../scripts/host/helper.js';
+import { decide as asideOverlap } from '../../scripts/hooks/aside-overlap.js';
+import { loadBoardInputs } from '../../scripts/board/inputs.js';
+import { deskClient } from '../../scripts/desk/client.js';
 import { helperClient } from '../../scripts/host/helper-client.js';
 import { BUNDLE_MS } from '../../scripts/lib/build-loop.js';
+import { readSeat } from '../../scripts/lib/first-mate-seat.js';
+import { SEAT_MOVED_LINE } from '../../scripts/lib/front-desk.js';
 import { profileDir, stateDir, wheelhouseHome } from '../../scripts/lib/paths.js';
 import { writeProject } from '../../scripts/lib/projects.js';
-import { answerLine, approvalLine, confirmLine, setLineOf } from '../../scripts/state/card-lines.js';
-import { listEvents, makeEvent, confirmationFor } from '../../scripts/state/events.js';
+import { answerLine, approvalLine, confirmLine, seatTakeOverLine, setLineOf } from '../../scripts/state/card-lines.js';
+import { listEvents, makeEvent, confirmationFor, eventPath } from '../../scripts/state/events.js';
 import { enrol, makeSigningKey } from '../../scripts/state/signing.js';
 import { readHandled } from '../../scripts/watcher/handled.js';
 import { projectConfig, runWatcher } from '../../scripts/watcher/main.js';
@@ -678,5 +684,131 @@ test('a gate\'s approval card steered with Suggest a change… is revised at the
     await ask(world, [revised.question], { [revised.question.question]: 'Approve' });
     assert.deepEqual(eventsOf('approval').map((e) => [e.data.pr, e.data.commit]), [[7, head2]]);
     assert.deepEqual(await merge(world, 7), { ok: true, merged: true, sha: head2, guardrailPaths: [], criticalAreas: [] });
+  });
+});
+
+// --- Two windows in one project (one-First-Mate design, sections 6.1 to 6.6) ---
+
+// A window's session start, as Claude Code sends it, with the real helper behind it. Resolves with the context it adds.
+async function windowStarts(world, session, cwd = world.checkout) {
+  const out = await sessionStart(
+    { session_id: session, cwd, hook_event_name: 'SessionStart', source: 'startup' },
+    {
+      client: world.client, env: {}, now: world.now, dir: NO_MANAGED, platform: 'darwin', pause: async () => {},
+      background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: () => ({ ok: true, mismatches: [], manifest: true, upstreams: {}, kept: true }),
+      guardedSelfTest: async () => null, startLowNodeCopy: () => true, refreshLocal: () => {}, spawn: () => ({ unref() {}, on() {} }),
+    },
+  );
+  return out?.hookSpecificOutput?.additionalContext ?? '';
+}
+
+// The front desk's command as one window runs it: its session id in the environment. Resolves { code, out, err }.
+async function windowRuns(world, session, argv, input) {
+  const said = { out: '', err: '' };
+  const code = await sandboxed(world, () => cli(argv, {
+    cwd: world.checkout, client: world.client, now: world.now, env: { CLAUDE_CODE_SESSION_ID: session },
+    ...(input === undefined ? {} : { input: JSON.stringify(input) }),
+    out: (t) => { said.out += t; },
+    err: (t) => { said.err += t; },
+  }));
+  return { code, ...said };
+}
+
+// A window's next prompt, as the board-context hook sees it: the text it adds, or ''.
+async function windowPrompt(world, session, text) {
+  freshFacts(world.now());
+  const out = await boardContext(
+    { session_id: session, cwd: world.checkout, hook_event_name: 'UserPromptSubmit', prompt: text },
+    { now: world.now, env: {}, client: world.client, dir: NO_MANAGED, waitMs: HOOK_WAIT_MS },
+  );
+  return out?.hookSpecificOutput?.additionalContext ?? '';
+}
+
+// The director's click on `question` in one window: the card check, then the prompt record.
+async function windowClicks(world, session, question, label) {
+  const call = { session_id: session, cwd: world.checkout, permission_mode: 'default', tool_name: 'AskUserQuestion' };
+  assert.equal(await cardCheck({ ...call, hook_event_name: 'PreToolUse', tool_input: { questions: [question] } }, { dir: NO_MANAGED, now: world.now }), undefined);
+  const answers = { [question.question]: label };
+  await promptRecord({
+    ...call, hook_event_name: 'PostToolUse', tool_input: { questions: [question], answers }, tool_response: { questions: [question], answers }, tool_use_id: 'toolu_seat',
+  }, { client: world.client, now: world.now, dir: NO_MANAGED, env: {} });
+}
+
+const WORK = { id: 'export', title: 'The orders export', lane: 'quick', visible: false, dependsOn: [] };
+
+test('two windows: only the seat holder records', async () => {
+  await onComputer(async (world) => {
+    // Window a starts first and takes the seat; its record goes through.
+    const first = await windowStarts(world, 'a');
+    assert.ok(first.includes(FRONT_DESK_LINE), 'a is the front desk');
+    assert.equal(readSeat(P)?.session, 'a');
+    const recorded = await windowRuns(world, 'a', ['record', 'work'], WORK);
+    assert.equal(recorded.code, 0, recorded.err);
+
+    // Window b starts second: it is an aside, told so, and offered the take-over card.
+    const second = await windowStarts(world, 'b');
+    assert.ok(!second.includes(FRONT_DESK_LINE));
+    assert.match(second, /This session isn't the First Mate: it is in another window/);
+    const row = second.split('\n').find((l) => l.startsWith(SEAT_TAKEOVER_ASK));
+    assert.ok(row, 'b is given the take-over card');
+    const card = JSON.parse(row.slice(SEAT_TAKEOVER_ASK.length));
+    const seat = readSeat(P);
+    assert.equal(seat.session, 'a', 'b did not take the seat');
+    assert.equal(setLineOf(card.question ?? card), seatTakeOverLine('a', seat.since));
+
+    // b may not record; the helper says so, and the command says why.
+    const refused = await windowRuns(world, 'b', ['record', 'work'], { ...WORK, id: 'search', title: 'Searching the menu' });
+    assert.notEqual(refused.code, 0);
+    assert.ok(refused.err.includes(SEAT_REFUSAL), refused.err);
+    assert.deepEqual(eventsOf('work').map((e) => e.data.id), ['export']);
+
+    // The director's click on Take over here moves the seat to b.
+    await windowClicks(world, 'b', card, 'Take over here');
+    assert.equal(readSeat(P)?.session, 'b');
+    const now = await windowRuns(world, 'b', ['record', 'work'], { ...WORK, id: 'search', title: 'Searching the menu' });
+    assert.equal(now.code, 0, now.err);
+    assert.deepEqual(eventsOf('work').map((e) => e.data.id).sort(), ['export', 'search']);
+
+    // a is refused from here on, and its next prompt says the First Mate moved, once.
+    const again = await windowRuns(world, 'a', ['record', 'work'], { ...WORK, id: 'third', title: 'A third piece' });
+    assert.notEqual(again.code, 0);
+    assert.ok(again.err.includes(SEAT_REFUSAL));
+    assert.ok((await windowPrompt(world, 'a', 'Anything new?')).includes(SEAT_MOVED_LINE));
+    assert.ok(!(await windowPrompt(world, 'a', 'And now?')).includes(SEAT_MOVED_LINE), 'told once');
+  });
+});
+
+test('a worktree aside overlapping a recorded piece is warned once', async () => {
+  await onComputer(async (world) => {
+    // A piece the foreman is building, with src/a.js in its plan.
+    await buildLoop(world, 'work', { id: 'export', title: 'The orders export', lane: 'small', visible: false, dependsOn: [] });
+    await buildLoop(world, 'feature', { work: 'export', step: 'building', branch: 'feature/export', session: 'sess-export', files: ['src/a.js'] });
+    // A linked worktree of the project whose branch commits src/a.js.
+    const tree = path.join(tempFolder('wh-aside-'), 'side');
+    await g(world.checkout, 'worktree', 'add', '-q', '-b', 'side', tree);
+    writeFiles(tree, { 'src/a.js': 'export const a = 1;\n' });
+    await g(tree, 'add', '-A');
+    await g(tree, 'commit', '-q', '-m', 'Touch a');
+
+    const desk = deskClient({ client: world.client, project: P });
+    const stop = () => asideOverlap(
+      { session_id: 'side-session', cwd: tree, hook_event_name: 'Stop' },
+      { env: {}, now: world.now, desk: { read: (view) => desk.read(view), write: (kind, data) => world.client.state.write({ project: P, kind, data }) } },
+    );
+
+    const warned = await stop();
+    assert.match(warned.systemMessage, /crew piece export/);
+    assert.match(warned.systemMessage, /src\/a\.js/);
+    assert.equal(warned.decision, 'block');
+    assert.deepEqual(eventsOf('aside-overlap').map((e) => [e.data.branch, e.data.pieces, e.data.files]), [['side', ['export'], ['src/a.js']]]);
+    // The second Stop has nothing new to say.
+    assert.equal(await stop(), undefined);
+    assert.equal(eventsOf('aside-overlap').length, 1);
+
+    // The board carries the overlap as a watch line.
+    freshFacts(world.now());
+    const board = await loadBoardInputs({ cwd: world.checkout, client: world.client, now: world.now });
+    const line = board.model.director.health.find((l) => /side branch/.test(l.text));
+    assert.deepEqual(line && [line.level, line.text], ['watch', 'A side branch (side) overlaps export']);
   });
 });

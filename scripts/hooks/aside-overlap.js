@@ -4,7 +4,7 @@
 // else: never the front desk, a main-folder aside, the foreman, a feature (a helm session included) or a why copy.
 //
 // The aside's files are those its branch changed since it left the project's main branch, plus its uncommitted and untracked
-// files. The crew's files are the dispatcher's own list (`crewRunning`), from the views the desk gives. `clashCheck` judges
+// files. The crew's files are the dispatcher's own list (`crewRunning`) and the planned files of the foreman's features, from the views the desk gives. `clashCheck` judges
 // them with the project's `hotFiles`. A clash not yet warned of gives a `systemMessage` for the director and, once, a block
 // that asks the session to say it in its reply; the (piece, file) pairs warned of are kept in the worktree, so only a new
 // piece or a new file warns again, and a piece that ends drops out. The First Mate hears through one `aside-overlap` record.
@@ -17,6 +17,7 @@ import { startedAsScript } from '../lib/started-as-script.js';
 import { sessionRole, asideKind } from '../lib/role.js';
 import { clashCheck } from '../foreman/queue.js';
 import { crewRunning } from '../engine/dispatcher.js';
+import { runningFiles } from '../foreman/wake.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { deskClient, unreached } from '../desk/client.js';
 import { helperClient } from '../host/helper-client.js';
@@ -166,10 +167,18 @@ export async function decide(input, {
 
     const settings = flatSettings(views, clock);
     // Reservations, pieces on their way back and admitted ones live in the dispatcher's own process, so they are empty here.
-    const running = crewRunning({
+    const engine = crewRunning({
       work: views.work, runs: views.runs, reports: views.reports, features: views.features, settings,
       waiting: waitingPieces(views), reserved: {}, returning: [], admitted: [], stoppedFeatures: [],
     });
+    // The foreman's features keep their planned files on the feature record, which the foreman's own clash check reads
+    // (runningFiles); a piece in both lists has the files of each.
+    const running = [...engine];
+    for (const { work, files: planned } of runningFiles({ features: isPlain(views.features) ? views.features : {} }, null)) {
+      const at = running.findIndex((r) => r.work === work);
+      if (at === -1) running.push({ work, files: planned });
+      else running[at] = { work, files: [...new Set([...running[at].files, ...planned])] };
+    }
     const { clashes } = clashCheck({ files, running, hotFiles: Array.isArray(settings.hotFiles) ? settings.hotFiles : [] });
 
     const file = warnedFile(cwd);
