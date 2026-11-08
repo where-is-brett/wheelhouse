@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { sessionRole, recordRole, roleFile } from '../../../scripts/lib/role.js';
+import { sessionRole, recordRole, roleFile, ROLES, ASIDE_COMMAND, asideKind } from '../../../scripts/lib/role.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 import { withHome } from '../../helpers/homes.js';
 import { makeFeatureFolder } from '../../helpers/made-feature.js';
@@ -62,7 +62,10 @@ test('a session in a feature worktree is a feature session; in the main folder i
     makeFeatureFolder(tree, 'gift-cards');
     assert.equal(sessionRole({ sessionId: 's1', env: {}, cwd: tree }), 'feature');
     fs.writeFileSync(path.join(home, 'main', '.git', 'worktrees', 'tree', 'HEAD'), 'ref: refs/heads/main\n');
-    assert.equal(sessionRole({ sessionId: 's2', env: {}, cwd: tree }), 'front-desk');
+    assert.equal(sessionRole({ sessionId: 's2', env: {}, cwd: tree }), 'aside');
+    const main = path.join(home, 'main');
+    fs.mkdirSync(path.join(main, '.git'), { recursive: true });
+    assert.equal(sessionRole({ sessionId: 's3', env: {}, cwd: main, seat: null }), 'front-desk');
   });
 });
 
@@ -118,5 +121,76 @@ test('a helm worktree stays a feature session', () => {
     // helm: the crew visibility build gives the helm's worktree its own marker; until it is on main this is a plain made feature worktree.
     const tree = makeFeatureFolder(worktree(home, 'feature/helm'), 'helm');
     assert.equal(sessionRole({ sessionId: 's1', env: {}, cwd: tree }), 'feature');
+  });
+});
+
+test('aside is a role, and the aside command is /wheelhouse:aside', () => {
+  assert.ok(ROLES.includes('aside'));
+  assert.equal(ASIDE_COMMAND, '/wheelhouse:aside');
+});
+
+test('the seat holder is the front desk; another session\'s seat makes this one aside; no seat is the front desk', () => {
+  withHome(() => {
+    assert.equal(sessionRole({ sessionId: 'a', env: {}, seat: { session: 'a' } }), 'front-desk');
+    assert.equal(sessionRole({ sessionId: 'a', env: {}, seat: { session: 'b' } }), 'aside');
+    assert.equal(sessionRole({ sessionId: 'a', env: {}, seat: null }), 'front-desk');
+    assert.equal(sessionRole({ sessionId: 'a', env: {}, seat: {} }), 'front-desk');
+  });
+});
+
+test('a recorded front desk follows the seat', () => {
+  withHome(() => {
+    recordRole('a', 'front-desk');
+    assert.equal(sessionRole({ sessionId: 'a', env: {}, seat: { session: 'b' } }), 'aside');
+    assert.equal(sessionRole({ sessionId: 'a', env: {}, seat: { session: 'a' } }), 'front-desk');
+  });
+});
+
+test('the aside command makes an aside', () => {
+  withHome(() => {
+    assert.equal(sessionRole({ sessionId: 'a', env: {}, prompt: '/wheelhouse:aside', seat: null }), 'aside');
+    assert.equal(sessionRole({ sessionId: 'a', env: {}, prompt: '/wheelhouse:asides', seat: null }), 'aside');
+    assert.equal(sessionRole({ sessionId: 'a', env: {}, prompt: 'what is /wheelhouse:aside', seat: null }), 'front-desk');
+  });
+});
+
+test('a linked worktree that isn\'t a feature is aside; a made feature worktree is a feature whatever the seat', () => {
+  withHome((home) => {
+    const tree = worktree(home, 'feature/desk');
+    assert.equal(sessionRole({ sessionId: 'a', env: {}, cwd: tree, seat: null }), 'aside');
+    makeFeatureFolder(tree, 'desk');
+    assert.equal(sessionRole({ sessionId: 'a', env: {}, cwd: tree, seat: { session: 'b' } }), 'feature');
+    assert.equal(sessionRole({ sessionId: 'a', env: {}, cwd: tree, seat: null }), 'feature');
+  });
+});
+
+test('why and foreman come before the seat', () => {
+  withHome(() => {
+    assert.equal(sessionRole({ sessionId: 'a', env: { WHEELHOUSE_ROLE: 'why' }, seat: { session: 'b' } }), 'why');
+    assert.equal(sessionRole({ sessionId: 'a', env: { WHEELHOUSE_ROLE: 'foreman' }, seat: { session: 'b' } }), 'foreman');
+  });
+});
+
+test('no session id is the front desk, whatever the seat', () => {
+  withHome(() => {
+    assert.equal(sessionRole({ sessionId: undefined, env: {}, seat: { session: 'b' } }), 'front-desk');
+  });
+});
+
+test('with no seat given, the seat is read from the cwd\'s project; no project is the front desk', () => {
+  withHome((home) => {
+    const main = path.join(home, 'plain');
+    fs.mkdirSync(path.join(main, '.git'), { recursive: true });
+    assert.equal(sessionRole({ sessionId: 'a', env: {}, cwd: main }), 'front-desk');
+  });
+});
+
+test('asideKind: the main checkout is main; a linked worktree is worktree', () => {
+  withHome((home) => {
+    const main = path.join(home, 'plain');
+    fs.mkdirSync(path.join(main, '.git'), { recursive: true });
+    assert.equal(asideKind({ cwd: main }), 'main');
+    assert.equal(asideKind({ cwd: worktree(home, 'feature/desk') }), 'worktree');
+    assert.equal(asideKind({}), 'main');
   });
 });

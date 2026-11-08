@@ -16,6 +16,7 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { clicksDir, noteShown, noteAsked, noteUninstallShown, uninstallShownFor, freshUninstallClicks, useClick } from '../../../scripts/setup/clicks.js';
 import { CLICK_FRESH_MS } from '../../../scripts/lib/setup-numbers.js';
 import { markOpen, readOpen } from '../../../scripts/lib/session-files.js';
+import { readSeat, seatFile } from '../../../scripts/lib/first-mate-seat.js';
 import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
@@ -1976,5 +1977,39 @@ test('the closing line appearing in a question or a response does not stop a rea
       await decide(call, deps(d));
       assert.equal(d.calls.record.length, 1, JSON.stringify(extra));
     }
+  });
+});
+
+const promptIn = (session) => ({ cwd: '/x', hook_event_name: 'UserPromptSubmit', session_id: session, prompt: 'hello' });
+const heldSeat = (session) => ({ session, pid: process.pid, pidStart: null, folder: '/x', since: '2026-10-18T04:00:00.000Z', seenAt: '2026-10-18T04:59:00.000Z' });
+
+test('a front desk prompt takes a free seat', async () => {
+  await withHome(async () => {
+    assert.equal(readSeat(P), null);
+    await decide(promptIn('a'), deps(fake()));
+    assert.equal(readSeat(P)?.session, 'a');
+  });
+});
+
+test('a prompt never takes a held seat', async () => {
+  await withHome(async () => {
+    const file = seatFile(P);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(heldSeat('b')));
+    await decide(promptIn('a'), deps(fake()));
+    assert.deepEqual(readSeat(P), heldSeat('b'));
+  });
+});
+
+test('a prompt takes no seat while another computer holds the lock', async () => {
+  await withHome(async () => {
+    const c = fake();
+    c.lock = { read: async () => ({ ok: true, result: { computer: '0a1b2c3d', counter: 4, takenAt: '2026-10-18T00:00:00.000Z', lastWriteAt: '2026-10-18T04:50:00.000Z' } }) };
+    await decide(promptIn('a'), deps(c));
+    assert.equal(readSeat(P), null);
+    // The same lock idle for over two hours is takeable, so the seat is taken.
+    c.lock.read = async () => ({ ok: true, result: { computer: '0a1b2c3d', counter: 4, takenAt: '2026-10-17T00:00:00.000Z', lastWriteAt: '2026-10-18T02:00:00.000Z' } });
+    await decide(promptIn('a'), deps(c));
+    assert.equal(readSeat(P)?.session, 'a');
   });
 });

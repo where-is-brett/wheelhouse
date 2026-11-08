@@ -9,8 +9,9 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
   decide, toolSheetLines, NO_HELPER, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
-  importedLine, importFailedLine, keptLine, NOT_SET_UP, TITLES, sessionTitle, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, heldElsewhere, TAKEOVER_ASK,
+  importedLine, importFailedLine, keptLine, NOT_SET_UP, TITLES, sessionTitle, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, heldElsewhere, TAKEOVER_ASK, SEAT_TAKEOVER_ASK, RECENT_MS,
 } from '../../../scripts/hooks/session-start.js';
+import { readSeat, seatFile } from '../../../scripts/lib/first-mate-seat.js';
 import { USAGE_ASK } from '../../../scripts/routing/offer.js';
 import { keepRequest } from '../../../scripts/lib/kept-request.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
@@ -2193,5 +2194,140 @@ test('madeFeatureSlug: the slug for a made feature worktree', async () => {
     assert.equal(madeFeatureSlug(tree), 'login');
     makeFeatureFolder(tree, 'other');
     assert.equal(madeFeatureSlug(tree), null, 'a brief for another piece');
+  });
+});
+
+// --- The First Mate's seat (one-First-Mate design, sections 6.1 and 6.3) ---
+
+const SEAT_BASE = Date.parse('2026-10-27T03:00:00.000Z');
+const seatLine = (session, minutesAgo, over = {}) => ({
+  session, pid: process.pid, pidStart: null, folder: '/x',
+  since: new Date(SEAT_BASE - 3 * 3600000).toISOString(), seenAt: new Date(SEAT_BASE - minutesAgo * 60000).toISOString(), ...over,
+});
+const putSeat = (seat) => {
+  const file = seatFile(P);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(seat));
+};
+const asideFirst = (ago) => `This session isn't the First Mate: it is in another window, last active ${ago}.`;
+const seatCard = (out) => {
+  const row = text(out).split('\n').find((l) => l.startsWith(SEAT_TAKEOVER_ASK));
+  return row === undefined ? null : JSON.parse(row.slice(SEAT_TAKEOVER_ASK.length));
+};
+const linkedTree = (home, branch = 'feature/side') => {
+  const tree = path.join(home, 'side-tree');
+  const gitdir = path.join(home, 'main', '.git', 'worktrees', 'side-tree');
+  fs.mkdirSync(tree, { recursive: true });
+  fs.mkdirSync(gitdir, { recursive: true });
+  fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${gitdir}\n`);
+  fs.writeFileSync(path.join(gitdir, 'HEAD'), `ref: refs/heads/${branch}\n`);
+  return tree;
+};
+
+test('RECENT_MS is exported', () => {
+  assert.equal(RECENT_MS, 30 * 60 * 1000);
+});
+
+test('the first session takes the seat', async () => {
+  await withHome(async () => {
+    const out = await run(fake(), { env: {}, now: SOON(0) }, { session_id: 'a' });
+    assert.equal(readSeat(P)?.session, 'a');
+    assert.ok(text(out).split('\n').includes(FRONT_DESK_LINE));
+  });
+});
+
+test('a second session is aside: the seat stays, and it gets the aside line and the window take-over card', async () => {
+  await withHome(async () => {
+    putSeat(seatLine('a', 4));
+    const out = await run(fake(), { env: {}, now: SOON(0) }, { session_id: 'b' });
+    assert.equal(readSeat(P).session, 'a');
+    assert.ok(!text(out).split('\n').includes(FRONT_DESK_LINE));
+    assert.ok(text(out).includes(asideFirst('4 minutes ago')));
+    assert.ok(text(out).includes('Here you can read, talk and look things up, but not edit the product\'s files. For edits, start a session in a worktree.'));
+    const card = seatCard(out);
+    assert.equal(setLineOf(card.question), `Take over the First Mate from window session a, since ${seatLine('a', 4).since}`);
+    assert.deepEqual(cardProblems(card), []);
+  });
+});
+
+test('the card recommends Leave it there while the seat is in use, and Take over here after 30 minutes', async () => {
+  await withHome(async () => {
+    const recommended = (card) => card.options.find((o) => o.description.startsWith('Recommended:')).label;
+    putSeat(seatLine('a', 5));
+    assert.equal(recommended(seatCard(await run(fake(), { env: {}, now: SOON(0) }, { session_id: 'b' }))), 'Leave it there');
+    putSeat(seatLine('a', 45));
+    assert.equal(recommended(seatCard(await run(fake(), { env: {}, now: SOON(0) }, { session_id: 'b' }))), 'Take over here');
+  });
+});
+
+test('a worktree aside gets the worktree line and no card', async () => {
+  await withHome(async (home) => {
+    putSeat(seatLine('a', 4));
+    const out = await run(fake(), { env: {}, now: SOON(0) }, { session_id: 'b', cwd: linkedTree(home) });
+    assert.ok(text(out).includes('Edit freely on this branch. If it touches files a crew piece is changing, you\'ll be told.'));
+    assert.ok(!text(out).includes('not edit the product'));
+    assert.equal(seatCard(out), null);
+    assert.equal(readSeat(P).session, 'a');
+  });
+});
+
+test('a command-made aside gets the main-folder line and no card, and takes no seat', async () => {
+  await withHome(async () => {
+    recordRole('s-aside', 'aside');
+    putSeat(seatLine('a', 4));
+    const out = await run(fake(), { env: {}, now: SOON(0) }, { session_id: 's-aside' });
+    assert.ok(text(out).includes('not edit the product\'s files'));
+    assert.equal(seatCard(out), null);
+    assert.equal(readSeat(P).session, 'a');
+    // With the seat free, it still takes nothing.
+    fs.rmSync(seatFile(P));
+    await run(fake(), { env: {}, now: SOON(0) }, { session_id: 's-aside' });
+    assert.equal(readSeat(P), null);
+  });
+});
+
+test('no session id, and a script-started session, never take the seat', async () => {
+  await withHome(async () => {
+    await run(fake(), { env: {}, now: SOON(0) }, { session_id: undefined });
+    assert.equal(readSeat(P), null);
+    await run(fake(), { env: { CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' }, now: SOON(0) }, { session_id: 'script' });
+    assert.equal(readSeat(P), null);
+  });
+});
+
+test('a compaction keeps the seat and refreshes seenAt', async () => {
+  await withHome(async () => {
+    putSeat(seatLine('a', 10));
+    const out = await run(fake(), { env: {}, now: SOON(0) }, { session_id: 'a', source: 'compact' });
+    assert.ok(text(out).split('\n').includes(FRONT_DESK_LINE));
+    const seat = readSeat(P);
+    assert.equal(seat.session, 'a');
+    assert.equal(seat.since, seatLine('a', 10).since);
+    assert.equal(seat.seenAt, new Date(SEAT_BASE).toISOString());
+  });
+});
+
+test('another computer\'s lock comes first: the computer card, and no seat', async () => {
+  await withHome(async () => {
+    const out = await run(heldBy(fake(), '2026-10-27T02:40:00.000Z'), { env: {}, now: SOON(0) }, { session_id: 'a' });
+    assert.notEqual(takeOverCard(out), null);
+    assert.equal(readSeat(P), null);
+  });
+});
+
+test('with the helper down the seat is still taken', async () => {
+  await withHome(async () => {
+    const out = await run(fake({ startsUp: false }), { env: {}, now: SOON(0) }, { session_id: 'a' });
+    assert.ok(text(out).includes(NO_HELPER));
+    assert.equal(readSeat(P)?.session, 'a');
+  });
+});
+
+test('only the First Mate writes the running model', async () => {
+  await withHome(async () => {
+    await run(fake(), { env: {}, now: SOON(0) }, { session_id: 'a', model: 'model-first' });
+    assert.equal(runningModel(P).model, 'model-first');
+    await run(fake(), { env: {}, now: SOON(1) }, { session_id: 'b', model: 'model-aside' });
+    assert.equal(runningModel(P).model, 'model-first');
   });
 });

@@ -56,7 +56,9 @@ function recordPart({ session, project, cwd, env, now }) {
     if (role === 'why') return;
     // A session in a feature worktree is feature work, whatever role was recorded, unless it is the foreman.
     const feature = role === 'foreman' ? null : madeFeatureSlug(cwd);
-    recordSession({ session, project, role: feature ? 'feature' : role, ...(feature ? { work: feature } : {}), at: now() });
+    // An aside is the director's other window: its usage counts with the front desk's.
+    const kept = role === 'aside' ? 'front-desk' : role;
+    recordSession({ session, project, role: feature ? 'feature' : kept, ...(feature ? { work: feature } : {}), at: now() });
   } catch { /* a session that can't be recorded is still a session */ }
 }
 

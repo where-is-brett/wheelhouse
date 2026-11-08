@@ -9,7 +9,7 @@ import { loadBoardInputs } from '../../../scripts/board/inputs.js';
 import { NOTE_LEAD } from '../../../scripts/cards/answered.js';
 import { decide, HEADINGS, WAIT_MS, LEARN_WAIT_MS, briefingIn, cardsDue, cardsLine, FOREMAN_LINE, SINCE_LEAD, STOPPED_LEAD, DECISIONS_TAIL } from '../../../scripts/hooks/board-context.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
-import { roleFile } from '../../../scripts/lib/role.js';
+import { roleFile, ASIDE_COMMAND } from '../../../scripts/lib/role.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { readSeen, readSurveyAt, readSurveyAgainAt, markSeen, readVisits } from '../../../scripts/briefing/seen.js';
 import { carryOnCard, LEAVE_FOR_NOW, CARRY_ON } from '../../../scripts/survey/words.js';
@@ -30,6 +30,7 @@ import { deskCore } from '../../../scripts/desk/core.js';
 import { fileSource } from '../../../scripts/desk/file-source.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
 import { markOpen, readOpen } from '../../../scripts/lib/session-files.js';
+import { seatFile } from '../../../scripts/lib/first-mate-seat.js';
 import { makeFeatureFolder } from '../../helpers/made-feature.js';
 
 const P = 'owner__name';
@@ -1197,5 +1198,39 @@ test('an unreadable transcript adds nothing and lets the prompt through', async 
   await withProject(async ({ repo }) => {
     seenAt();
     assert.equal(await hook(withTranscript(repo, 'Hi', '/nowhere/transcript.jsonl')), undefined);
+  });
+});
+
+// A linked worktree of `repo` on feature/desk with no feature folder, so not a made feature.
+function plainWorktree(home, repo) {
+  const gitdir = path.join(repo, '.git', 'worktrees', 'desk');
+  put(path.join(gitdir, 'HEAD'), 'ref: refs/heads/feature/desk\n');
+  put(path.join(gitdir, 'commondir'), '../..\n');
+  const tree = path.join(home, 'desk');
+  put(path.join(tree, '.git'), `gitdir: ${gitdir}\n`);
+  return tree;
+}
+
+test('the aside command is recorded as aside', async () => {
+  await withProject(async ({ repo }) => {
+    assert.equal(await decide(prompt(repo, ASIDE_COMMAND, 's-aside'), { now: at(NOW), env: {}, client }), undefined);
+    assert.deepEqual(JSON.parse(fs.readFileSync(roleFile('s-aside'), 'utf8')), { role: 'aside' });
+  });
+});
+
+test('a linked worktree\'s aside is recorded', async () => {
+  await withProject(async ({ home, repo }) => {
+    const tree = plainWorktree(home, repo);
+    await decide(prompt(tree, 'Hello', 's-tree'), { now: at(NOW), env: {}, client });
+    assert.deepEqual(JSON.parse(fs.readFileSync(roleFile('s-tree'), 'utf8')), { role: 'aside' });
+  });
+});
+
+test('a seat-made aside is not recorded', async () => {
+  await withProject(async ({ repo }) => {
+    const seat = seatFile(P);
+    put(seat, { session: 'other', pid: null, pidStart: null, folder: repo, since: NOW, seenAt: NOW });
+    assert.equal(await decide(prompt(repo, 'Hello', 's-seat'), { now: at(NOW), env: {}, client }), undefined);
+    assert.equal(fs.existsSync(roleFile('s-seat')), false);
   });
 });
