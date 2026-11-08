@@ -56,8 +56,8 @@ import { readSeen, readSurveyAt, markSeen, readVisits } from '../briefing/seen.j
 import { readDigest, clearDigest } from '../digest/due.js';
 import { takeFailures } from '../alerts/tick.js';
 import { markRaised as realMarkRaised } from '../usage/figures.js';
-import { sessionRole, recordRole, asideByChoice } from '../lib/role.js';
-import { refreshSeat, movedAway } from '../lib/first-mate-seat.js';
+import { sessionRole, recordRole, recordAside, asideByChoice } from '../lib/role.js';
+import { refreshSeat, movedAway, releaseSeat } from '../lib/first-mate-seat.js';
 import { SEAT_MOVED_LINE } from '../lib/front-desk.js';
 import { existingCard } from '../cards/visit.js';
 import { controlFilesDue, gateAsksDue, holdsDue, premiumFailuresDue } from '../cards/build-loop.js';
@@ -376,6 +376,11 @@ export async function decide(input, deps = {}) {
     // An aside the seat made (another session holds it) is not recorded: the seat can change, a choice can't.
     const keep = role !== 'aside' || attempt(() => asideByChoice({ prompt: input.prompt, cwd: input.cwd }), false);
     const first = writes && keep ? attempt(() => recordRole(input.session_id, role), false) : false;
+    // The aside command typed after the session start took the seat: the record turns aside and the seat is given up.
+    if (writes && role === 'aside' && keep) {
+      attempt(() => recordAside(input.session_id));
+      attempt(() => releaseSeat(found.project, input.session_id));
+    }
     // A foreman known only from its first prompt was pointed at the front desk by the session start.
     if (role === 'foreman' && first && env?.WHEELHOUSE_ROLE !== 'foreman') return answer.context('UserPromptSubmit', FOREMAN_LINE);
     if (setup !== null && role === 'front-desk') return answer.context('UserPromptSubmit', SETUP_FIRST);

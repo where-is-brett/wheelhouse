@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { sessionRole, recordRole, roleFile, ROLES, ASIDE_COMMAND, asideKind } from '../../../scripts/lib/role.js';
+import { sessionRole, recordRole, recordAside, roleFile, ROLES, ASIDE_COMMAND, asideKind, asideByChoice } from '../../../scripts/lib/role.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 import { withHome } from '../../helpers/homes.js';
 import { makeFeatureFolder } from '../../helpers/made-feature.js';
@@ -149,7 +149,8 @@ test('a recorded front desk follows the seat', () => {
 test('the aside command makes an aside', () => {
   withHome(() => {
     assert.equal(sessionRole({ sessionId: 'a', env: {}, prompt: '/wheelhouse:aside', seat: null }), 'aside');
-    assert.equal(sessionRole({ sessionId: 'a', env: {}, prompt: '/wheelhouse:asides', seat: null }), 'aside');
+    assert.equal(sessionRole({ sessionId: 'a', env: {}, prompt: '/wheelhouse:aside research', seat: null }), 'aside');
+    assert.equal(sessionRole({ sessionId: 'a', env: {}, prompt: '/wheelhouse:asides', seat: null }), 'front-desk');
     assert.equal(sessionRole({ sessionId: 'a', env: {}, prompt: 'what is /wheelhouse:aside', seat: null }), 'front-desk');
   });
 });
@@ -193,4 +194,26 @@ test('asideKind: the main checkout is main; a linked worktree is worktree', () =
     assert.equal(asideKind({ cwd: worktree(home, 'feature/desk') }), 'worktree');
     assert.equal(asideKind({}), 'main');
   });
+});
+
+test('recordAside turns a recorded front desk into an aside, and replaces nothing else', () => {
+  withHome(() => {
+    assert.equal(recordAside('s-none'), false);
+    assert.equal(fs.existsSync(roleFile('s-none')), false);
+    recordRole('s-desk', 'front-desk');
+    assert.equal(recordAside('s-desk'), true);
+    assert.equal(JSON.parse(fs.readFileSync(roleFile('s-desk'), 'utf8')).role, 'aside');
+    for (const role of ['feature', 'foreman', 'why']) {
+      recordRole(`s-${role}`, role);
+      assert.equal(recordAside(`s-${role}`), false);
+      assert.equal(JSON.parse(fs.readFileSync(roleFile(`s-${role}`), 'utf8')).role, role);
+    }
+  });
+});
+
+test('only the aside command as a word counts: /wheelhouse:asides does not', () => {
+  assert.equal(asideByChoice({ prompt: ASIDE_COMMAND }), true);
+  assert.equal(asideByChoice({ prompt: `${ASIDE_COMMAND} research` }), true);
+  assert.equal(asideByChoice({ prompt: `${ASIDE_COMMAND}s` }), false);
+  assert.equal(asideByChoice({ prompt: `${ASIDE_COMMAND}-x` }), false);
 });

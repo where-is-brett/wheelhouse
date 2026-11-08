@@ -206,11 +206,23 @@ test('it does nothing outside a worktree aside', async () => {
 
 test('the base branch falls back to origin/HEAD', async () => {
   const { main } = makeAside();
+  git(main, 'branch', '-m', 'trunk');
   assert.equal(await mainBranchOf({ cwd: main, views: { settings: {} } }), null);
+  git(main, 'branch', '-m', 'main');
   git(main, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
   git(main, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
   assert.equal(await mainBranchOf({ cwd: main, views: { settings: {} } }), 'origin/main');
   assert.equal(await mainBranchOf({ cwd: main, views: { settings: { baseBranch: { value: 'trunk' } } } }), 'trunk');
+});
+
+test('with no origin/HEAD the base falls back to a local main, then master, else none', async () => {
+  const { main } = makeAside();
+  git(main, 'branch', '-m', 'main');
+  assert.equal(await mainBranchOf({ cwd: main, views: { settings: {} } }), 'main');
+  git(main, 'branch', '-m', 'master');
+  assert.equal(await mainBranchOf({ cwd: main, views: { settings: {} } }), 'master');
+  git(main, 'branch', '-m', 'trunk');
+  assert.equal(await mainBranchOf({ cwd: main, views: { settings: {} } }), null);
 });
 
 test('the aside\'s files are the branch\'s changes, uncommitted and untracked files, once each', async () => {

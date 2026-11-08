@@ -2081,6 +2081,17 @@ test('a stale Take over here is refused and names the holder', async () => {
   });
 });
 
+test('a Take over here whose record could not be sent leaves the seat and tells the director', async () => {
+  await withHome(async () => {
+    writeSeat('b');
+    const card = seatCard();
+    const out = await decide(inSession(takeOverAnswer(card, 'Take over here'), 'a'), deps(fake({ refuse: true })));
+    assert.equal(readSeat(P)?.session, 'b');
+    assert.match(contextOf(out), /did not move/);
+    assert.match(contextOf(out), /take-over did not happen/);
+  });
+});
+
 test('no reply code for the window take-over card', async () => {
   await withHome(async () => {
     writeSeat('b');

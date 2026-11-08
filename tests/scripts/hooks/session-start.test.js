@@ -2108,6 +2108,40 @@ test('a session is titled by its role when it starts afresh, and keeps its own t
   });
 });
 
+test('an aside is titled Aside, not First Mate', async () => {
+  await withHome(async (home) => {
+    const f = fake();
+    putSeat(seatLine('a', 4));
+    const out = await run(f, { env: {}, now: SOON(0) }, { source: 'startup', session_id: 'b' });
+    assert.equal(out?.hookSpecificOutput?.sessionTitle, TITLES.aside);
+    assert.notEqual(TITLES.aside, TITLES.firstMate);
+    recordRole('s-cmd', 'aside');
+    const cmd = await run(f, { env: {}, now: SOON(0) }, { source: 'startup', session_id: 's-cmd' });
+    assert.equal(cmd?.hookSpecificOutput?.sessionTitle, TITLES.aside);
+  });
+});
+
+test('an aside on a feature/ worktree Wheelhouse did not make is told no feature ledger', async () => {
+  await withHome(async (home) => {
+    const out = await run(fake(), { env: {}, now: SOON(0) }, { session_id: 'b', cwd: linkedTree(home, 'feature/side') });
+    assert.ok(!text(out).includes('Your feature\'s ledger'));
+  });
+});
+
+test('the aside line says the First Mate is in another window only when a window holds the seat', async () => {
+  await withHome(async (home) => {
+    putSeat(seatLine('a', 4));
+    assert.ok(text(await run(fake(), { env: {}, now: SOON(0) }, { session_id: 'b' })).includes('the First Mate is in another window'));
+    fs.rmSync(seatFile(P));
+    recordRole('s-cmd', 'aside');
+    const none = text(await run(fake(), { env: {}, now: SOON(0) }, { session_id: 's-cmd' }));
+    assert.ok(!none.includes('the First Mate is in another window'));
+    assert.ok(none.includes('no window is the First Mate right now'));
+    const tree = text(await run(fake(), { env: {}, now: SOON(0) }, { session_id: 's-tree', cwd: linkedTree(home) }));
+    assert.ok(tree.includes('no window is the First Mate right now'));
+  });
+});
+
 test('a folder being set up is titled Setup', async () => {
   await withHome(async () => {
     const folder = tempFolder('wh-setup-');

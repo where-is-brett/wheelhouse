@@ -9,7 +9,7 @@ import { loadBoardInputs } from '../../../scripts/board/inputs.js';
 import { NOTE_LEAD } from '../../../scripts/cards/answered.js';
 import { decide, HEADINGS, WAIT_MS, LEARN_WAIT_MS, briefingIn, cardsDue, cardsLine, FOREMAN_LINE, SINCE_LEAD, STOPPED_LEAD, DECISIONS_TAIL } from '../../../scripts/hooks/board-context.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
-import { roleFile, ASIDE_COMMAND } from '../../../scripts/lib/role.js';
+import { roleFile, ASIDE_COMMAND, recordRole } from '../../../scripts/lib/role.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { readSeen, readSurveyAt, readSurveyAgainAt, markSeen, readVisits } from '../../../scripts/briefing/seen.js';
 import { carryOnCard, LEAVE_FOR_NOW, CARRY_ON } from '../../../scripts/survey/words.js';
@@ -1216,6 +1216,28 @@ test('the aside command is recorded as aside', async () => {
   await withProject(async ({ repo }) => {
     assert.equal(await decide(prompt(repo, ASIDE_COMMAND, 's-aside'), { now: at(NOW), env: {}, client }), undefined);
     assert.deepEqual(JSON.parse(fs.readFileSync(roleFile('s-aside'), 'utf8')), { role: 'aside' });
+  });
+});
+
+test('the aside command, after the session start took the seat, gives the seat up and turns the role aside', async () => {
+  await withProject(async ({ repo }) => {
+    put(seatFile(P), { session: 's-first', pid: null, pidStart: null, folder: repo, since: NOW, seenAt: NOW });
+    recordRole('s-first', 'front-desk');
+    assert.equal(await decide(prompt(repo, ASIDE_COMMAND, 's-first'), { now: at(NOW), env: {}, client }), undefined);
+    assert.equal(readSeat(P), null);
+    assert.deepEqual(JSON.parse(fs.readFileSync(roleFile('s-first'), 'utf8')), { role: 'aside' });
+    // Later prompts stay aside and take nothing.
+    await decide(prompt(repo, 'Hello', 's-first'), { now: at(NOW), env: {}, client });
+    assert.equal(readSeat(P), null);
+    assert.deepEqual(JSON.parse(fs.readFileSync(roleFile('s-first'), 'utf8')), { role: 'aside' });
+  });
+});
+
+test('the aside command leaves a seat another session holds alone', async () => {
+  await withProject(async ({ repo }) => {
+    put(seatFile(P), { session: 'other', pid: null, pidStart: null, folder: repo, since: NOW, seenAt: NOW });
+    await decide(prompt(repo, ASIDE_COMMAND, 's-second'), { now: at(NOW), env: {}, client });
+    assert.equal(readSeat(P).session, 'other');
   });
 });
 

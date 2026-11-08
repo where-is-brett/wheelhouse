@@ -28,6 +28,7 @@ import { SINCE_LEAD } from '../../../scripts/cards/panel-words.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { approvalLine, answerLine, chatCopy, ciPushLine, confirmLine, keepControlLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
+import { writeJsonFile, runningFile, sessionFile } from '../../../scripts/watcher/waker.js';
 import { setStop, stopState } from '../../../scripts/lib/stop.js';
 import { decide as cardCheck, cardProblems } from '../../../scripts/hooks/card-check.js';
 import { decide as promptRecord } from '../../../scripts/hooks/prompt-record.js';
@@ -1812,6 +1813,39 @@ test('views work lists the running and waiting work in plain words, titles as wr
 
     const none = await run(fakeHelper({ events: [work('opening-hours', 'Opening hours', 'quick', 1), report('opening-hours', 'merged', 2)] }), ['views', 'work']);
     assert.equal(none.out, 'No work is open: nothing is running or waiting.\n');
+  });
+});
+
+test('views work ends a running piece\'s line with its latest step, finding the project from the folder', async () => {
+  await inHome(async () => {
+    const folder = path.join(tempFolder('wh-frontdesk-crew-'), 'shop');
+    fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
+    writeProject('o__p', { folder, remoteUrl: 'https://example.test/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+    const keep = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); writeJsonFile(file, value); };
+    keep(runningFile('o__p', 'feature-login'), { state: 'running', pid: process.pid, at: '2026-11-08T01:00:00.000Z' });
+    keep(sessionFile('o__p', 'login'), { sessionId: 's1' });
+    const config = tempFolder('wh-frontdesk-config-');
+    fs.mkdirSync(path.join(config, 'projects', 'a'), { recursive: true });
+    const step = { type: 'assistant', timestamp: '2026-11-08T01:00:00Z', cwd: '/w/tree', message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: '/w/tree/a.ts' } }] } };
+    fs.writeFileSync(path.join(config, 'projects', 'a', 's1.jsonl'), `${JSON.stringify(step)}\n`);
+    const helper = fakeHelper({
+      events: [
+        makeEvent({ kind: 'work', data: { id: 'login', title: 'The login page', lane: 'quick', visible: false, dependsOn: [] }, now: () => T(1) }),
+        makeEvent({ kind: 'feature', data: { work: 'login', step: 'building' }, now: () => T(2) }),
+      ],
+    });
+    const was = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = config;
+    try {
+      const out = await run(helper, ['views', 'work'], undefined, { cwd: folder });
+      assert.equal(out.code, 0, out.err);
+      assert.ok(out.out.split('\n').find((l) => l.startsWith('login: ')).endsWith(' \u00b7 Reading `a.ts`'), out.out);
+      // A folder in no project shows the same work with no step.
+      const none = await run(helper, ['views', 'work']);
+      assert.doesNotMatch(none.out, /Reading/);
+    } finally {
+      if (was === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = was;
+    }
   });
 });
 
