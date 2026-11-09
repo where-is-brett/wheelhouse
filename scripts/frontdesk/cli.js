@@ -1120,12 +1120,13 @@ function readBackLine(readBack) {
 // (lane-facts.js). The model sized it when it carries no `from`, no work event is on record for its id
 // and its brief is under `.wheelhouse/work/`; any other work is left to its lane as given.
 async function refuseLaneFromFacts(client, cwd, data) {
+  if (data.lane !== 'small' && data.lane !== 'quick') return;
   if (data.from !== undefined) return;
-  const { views } = await viewsOf(client, cwd);
-  if (views.work?.[data.id]?.work !== undefined) return;
   const relative = typeof data.doc?.path === 'string' ? path.relative(cwd, path.resolve(cwd, data.doc.path)) : '';
   const parts = relative.split(path.sep);
   if (parts[0] !== '.wheelhouse' || parts[1] !== 'work' || parts.length < 3 || parts.includes('..')) return;
+  const { views } = await viewsOf(client, cwd);
+  if (views.work?.[data.id]?.work !== undefined) return;
   const problem = laneFactsProblem(fs.readFileSync(path.resolve(cwd, data.doc.path), 'utf8'), data.lane);
   if (problem !== null) throw new CliError(problem);
 }

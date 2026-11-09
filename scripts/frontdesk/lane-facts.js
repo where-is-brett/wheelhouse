@@ -9,7 +9,8 @@ export const FACTS = Object.freeze({
   parsesInput: 'it parses input',
   touchesMoreThanOneArea: 'it touches more than one area',
 });
-export const MISSING = 'This brief has no facts block: add a ```wheelhouse-facts block answering addsPage, storesData, parsesInput and touchesMoreThanOneArea, then record it again.';
+const EXAMPLE = '{"addsPage": false, "storesData": false, "parsesInput": false, "touchesMoreThanOneArea": false}';
+export const MISSING = `This brief has no facts block. End it with this, each answer true or false, then record it again:\n\`\`\`${FACTS_FENCE}\n${EXAMPLE}\n\`\`\``;
 
 const FENCE = new RegExp(`^\`\`\`${FACTS_FENCE}[ \\t]*\\r?\\n([\\s\\S]*?)\\r?\\n\`\`\`[ \\t]*$`, 'm');
 const NEEDS = `The brief's \`${FACTS_FENCE}\` block needs addsPage, storesData, parsesInput and touchesMoreThanOneArea, each true or false`;

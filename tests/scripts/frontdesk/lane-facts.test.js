@@ -78,3 +78,11 @@ test('a malformed block gives its problem on small work only', () => {
   assert.equal(laneFactsProblem(text, 'small'), readFacts(text).problem);
   assert.equal(laneFactsProblem(text, 'feature'), null);
 });
+
+test('the missing-block message carries the block\'s shape, and the shape reads as all no', () => {
+  assert.ok(MISSING.includes('```wheelhouse-facts'));
+  const example = /```wheelhouse-facts\n(\{[^}]*\})\n```/.exec(MISSING);
+  assert.ok(example, 'the message holds the literal object');
+  assert.equal(example[1], '{"addsPage": false, "storesData": false, "parsesInput": false, "touchesMoreThanOneArea": false}');
+  assert.deepEqual(readFacts(block(example[1])).facts, { addsPage: false, storesData: false, parsesInput: false, touchesMoreThanOneArea: false });
+});

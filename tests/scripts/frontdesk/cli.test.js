@@ -1038,7 +1038,8 @@ test('record work refuses small or quick work whose brief has no facts block', a
       const out = await run(helper, ['record', 'work'], JSON.stringify(briefWork('tidy-up', lane)), { cwd: dir });
       assert.notEqual(out.code, 0, lane);
       assert.ok(out.err.includes('This brief has no facts block'), out.err);
-      assert.ok(out.err.includes('addsPage, storesData, parsesInput and touchesMoreThanOneArea'), out.err);
+      assert.ok(out.err.includes('```wheelhouse-facts'), out.err);
+      assert.ok(out.err.includes('{"addsPage": false, "storesData": false, "parsesInput": false, "touchesMoreThanOneArea": false}'), out.err);
       nothingWritten(helper);
     }
   });
@@ -1116,6 +1117,31 @@ test('record work does not check a brief outside .wheelhouse/work', async () => 
     const helper = fakeHelper();
     const dir = projectWithDoc('tidy-up');
     const out = await run(helper, ['record', 'work'], JSON.stringify(briefWork('tidy-up', 'small', { doc: 'docs/tidy-up.md' })), { cwd: dir });
+    assert.equal(out.code, 0, out.err);
+  });
+});
+
+test('record work does not check a brief whose path climbs out of .wheelhouse/work or lies outside the project', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('tidy-up');
+    fs.writeFileSync(path.join(dir, 'x.md'), 'No block here.\n');
+    const climbing = await run(helper, ['record', 'work'], JSON.stringify(briefWork('tidy-up', 'small', { doc: '.wheelhouse/work/../../x.md' })), { cwd: dir });
+    assert.equal(climbing.code, 0, climbing.err);
+    const outside = tempFolder('wh-frontdesk-outside-');
+    const abs = path.join(outside, 'y.md');
+    fs.writeFileSync(abs, 'No block here.\n');
+    const other = fakeHelper();
+    const absolute = await run(other, ['record', 'work'], JSON.stringify(briefWork('tidy-up', 'small', { doc: abs })), { cwd: dir });
+    assert.equal(absolute.code, 0, absolute.err);
+  });
+});
+
+test('record work does not check quick work with visible false and no doc', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = tempFolder('wh-frontdesk-nodoc-');
+    const out = await run(helper, ['record', 'work'], JSON.stringify({ id: 'drop-flag', title: 'Drop a flag.', lane: 'quick', visible: false, dependsOn: [] }), { cwd: dir });
     assert.equal(out.code, 0, out.err);
   });
 });
