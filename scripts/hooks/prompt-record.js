@@ -53,6 +53,8 @@ import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/s
 import { profileDir, stateDir, computerId } from '../lib/paths.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { makeEvent, listEvents, confirmationFor, dataHash, CONFIRMABLE_KINDS } from '../state/events.js';
+import { briefHash } from '../feature/files.js';
+import { keepApprovedText, approvedText, installText } from '../state/approved-text.js';
 import { asQuestion } from '../cards/visit.js';
 import { scanContent } from '../state/secret-scan.js';
 import {
@@ -528,6 +530,45 @@ export async function earned({ project, question, label, card, client, now, left
     return action({ action: 'incident-fix', incident: m[2], pr: Number(m[1]) });
   }
   return null;
+}
+
+// Keeping the approved text, and installing an amendment's text, happen after the click's record is built and never
+// stop it from signing: each failure is swallowed.
+const textAt = (folder, file) => fs.readFileSync(path.resolve(folder, file), 'utf8');
+
+// An Approve click on a work card: the latest work event's document, kept only while it still has the text the event hashed.
+function keepDocument(project, folder, record) {
+  const latest = held(project, 'work').filter((e) => e.data?.id === record.work).at(-1);
+  const file = latest?.data?.doc?.path;
+  if (typeof file !== 'string' || typeof folder !== 'string') return;
+  const text = textAt(folder, file);
+  if (briefHash(text) === record.hash) keepApprovedText(project, text);
+}
+
+// A Change it click: the changed text is kept, then installed over the work's document, but only while that document
+// still holds a text the director approved (one with a kept copy), so a text edited since is never overwritten.
+function installAmendment(project, folder, record) {
+  if (typeof folder !== 'string') return;
+  const amendment = held(project, 'amendment').filter((e) => e.data?.work === record.work && e.data?.hash === record.hash && typeof e.data?.doc === 'string').at(-1);
+  if (!amendment) return;
+  const changed = textAt(folder, amendment.data.doc);
+  if (briefHash(changed) !== record.hash) return;
+  keepApprovedText(project, changed);
+  const latest = held(project, 'work').filter((e) => e.data?.id === record.work).at(-1);
+  const file = latest?.data?.doc?.path;
+  if (typeof file !== 'string') return;
+  if (approvedText(project, briefHash(textAt(folder, file))) === null) return;
+  installText(path.resolve(folder, file), changed);
+}
+
+function keepAfterClick(project, folder, made) {
+  const data = made?.data;
+  try {
+    if (data?.action === 'approve-work') keepDocument(project, folder, data);
+    else if (data?.action === 'amend') installAmendment(project, folder, data);
+  } catch {
+    // The click signs whatever happens here.
+  }
 }
 
 // The signed record a Go ahead on a setup card earns: the card carries one set line, setup's, and
@@ -1093,6 +1134,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
       const got = await earned({ project, ...click, client: api, now: clock, left, stopState, ...(ready === undefined ? {} : { ready }), ...(premiumIn === undefined ? {} : { premiumIn }) });
       if (got) {
         queued.push(keepEarned(project, got, { now: clock, liftStop, proof }));
+        keepAfterClick(project, found.record?.folder, got.made);
         if (got.takeOver) takeOvers.push(queued.at(-1));
         if (got.seatTakeOver) seatMoves.push({ kept: queued.at(-1), from: { session: got.made.data.session, since: got.made.data.since } });
       }
