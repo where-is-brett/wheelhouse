@@ -1487,10 +1487,29 @@ test('ask records the foreman\'s own question with an id the feature can never u
   assert.equal(fake.writes.at(-1).data.options[0].says.length, 300);
 }));
 
+test('ask refuses an option whose command has a placeholder, and a question whose options are all waiting', () => withHome(async () => {
+  const { views } = await questionScene();
+  const fake = fakeClient({ views });
+  const base = ['ask', 'mine', '--what', 'x', '--why', 'y'];
+  const end = ['--recommend', 'a', '--level', '2'];
+  const placeholder = await act([...base, '--option', 'a=act start mine --goal … --done … --appetite-sessions … --appetite-tokens …', '--option', 'b=waiting', ...end], { client: fake.client });
+  refusedInOneLine(placeholder);
+  assert.match(placeholder.err, /^--option "a" has a placeholder .* instead of asking/);
+  const dots = await act([...base, '--option', 'a=act start mine --appetite-sessions ... --appetite-tokens 1', '--option', 'b=waiting', ...end], { client: fake.client });
+  assert.match(dots.err, /has a placeholder/);
+  const allWaiting = await act([...base, '--option', 'a=waiting', '--option', 'b=waiting', ...end], { client: fake.client });
+  refusedInOneLine(allWaiting);
+  assert.match(allWaiting.err, /^Every option is "waiting"/);
+  assert.deepEqual(fake.writes, []);
+  // A real command with its values, beside waiting, is taken; so is prose that merely ends in dots.
+  const ok = await act([...base, '--option', 'a=act start mine --goal \'g\' --done \'d\' --appetite-sessions 4 --appetite-tokens 1000000', '--option', 'b=waiting', ...end], { client: fake.client });
+  assert.equal(ok.code, 0, ok.err);
+}));
+
 test('ask refuses a question the director\'s card could not carry, in the composer\'s words, and writes nothing', () => withHome(async () => {
   const { views } = await questionScene();
   const fake = fakeClient({ views });
-  const options = (labels) => labels.flatMap((label) => ['--option', `${label}=waiting`]);
+  const options = (labels) => labels.flatMap((label, i) => ['--option', `${label}=${i === 0 ? 'act merge mine' : 'waiting'}`]);
   for (const [name, rest, why] of [
     ['five options', [...options(['a', 'b', 'c', 'd', 'e']), '--recommend', 'a'], /at most 4/],
     ['a put-off label', [...options(['a', 'Show me']), '--recommend', 'a'], /Show me/],
@@ -2096,7 +2115,7 @@ test('work that ends partial or blocked is put to the director, and once queued 
   const [, askLine] = /Next: (act ask .*)$/m.exec(closed.out) ?? [];
   assert.ok(askLine, closed.out);
   assert.match(closed.out, /^It ended partial: ask the director whether to queue it again, and in which lane, or to drop it\. Next: act ask add-export /m);
-  assert.match(askLine, /--option 'small=waiting' --option 'feature=waiting' --option 'drop=waiting' --recommend small --level 2$/);
+  assert.match(askLine, /--option 'small=The front desk queues it again as small work' --option 'feature=The front desk queues it again as feature work' --option 'drop=The front desk drops it' --recommend small --level 2$/);
   // The line runs as printed.
   const asked = await act(words(askLine, false).slice(1), { client: fake.client });
   assert.equal(asked.code, 0, asked.err);

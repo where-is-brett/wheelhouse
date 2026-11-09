@@ -26,14 +26,16 @@ export const FOREMAN_FALLBACK_COMPACT = 100000;
 export const REPORT_WORDS = 300;
 
 export const LANES = Object.freeze(['quick', 'small', 'feature', 'bug']);
-// The appetite the foreman gives quick, bug and small work, whose documents set none: only a feature's pitch
-// proposes one (design section 7.4), yet every brief carries one (build-loop design, section 5). Generous, since a
+// The appetite the foreman gives work whose document sets none. A feature's pitch proposes one (design section 7.4),
+// but the front desk's work document may carry none, and a start must still have real numbers; every brief carries
+// one (build-loop design, section 5). Generous, since a
 // one-task build with its reviews took about 0.5 to 2 million tokens in the evaluation (docs/evals/build-loop.md).
 // A document that sets its own is read instead. Designer's call.
 export const LANE_APPETITE = Object.freeze({
   quick: Object.freeze({ sessions: 1, tokens: 1500000 }),
   bug: Object.freeze({ sessions: 1, tokens: 2000000 }),
   small: Object.freeze({ sessions: 1, tokens: 3000000 }),
+  feature: Object.freeze({ sessions: 4, tokens: 1000000 }),
 });
 export const FEATURE_STEPS = Object.freeze(['started', 'planned', 'building', 'paused', 'closed']);
 export const REPORT_OUTCOMES = Object.freeze(['merged', 'closed', 'blocked']);

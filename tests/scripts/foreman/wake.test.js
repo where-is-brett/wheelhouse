@@ -140,7 +140,7 @@ test('wake read: a next plan waits while the feature\'s own pull request is open
   assert.match(text, /^- build t: waits: its pull request #9 is still open; the next plan is checked once it merges\.$/m);
 }));
 
-test('quick, bug and small work, whose documents set no appetite, start on their lane\'s; a feature\'s comes from its pitch', () => withHome(async () => {
+test('work whose document sets no appetite, a feature included, starts on its lane\'s, with real numbers', () => withHome(async () => {
   const checkout = await project();
   const views = emptyViews();
   for (const [id, lane] of [['q', 'quick'], ['b', 'bug'], ['s', 'small'], ['f', 'feature']]) {
@@ -149,14 +149,15 @@ test('quick, bug and small work, whose documents set no appetite, start on their
   const { client } = fakeClient({ views });
   const file = wakeFile(path.join(checkout, 'w'), 'one', { events: [ev('work-ready', 'q', 'x', { lane: 'quick' })] });
   const text = (await readWakeLines({ file, project: P, client, now })).lines.join('\n');
-  for (const [id, lane] of [['q', 'quick'], ['b', 'bug'], ['s', 'small']]) {
+  for (const [id, lane] of [['q', 'quick'], ['b', 'bug'], ['s', 'small'], ['f', 'feature']]) {
     const own = LANE_APPETITE[lane];
     assert.ok(own.sessions >= 1 && own.tokens >= 1, lane);
     assert.ok(text.includes(`Next: act start ${id} --goal … --done … --appetite-sessions ${own.sessions} --appetite-tokens ${own.tokens} (from its approved document, `), `${lane}: ${text}`);
     assert.ok(text.includes(`; the ${lane} lane's appetite)`), lane);
   }
-  assert.equal(LANE_APPETITE.feature, undefined, 'a feature has no lane appetite: its pitch proposes one');
-  if (text.includes('start f ')) assert.ok(text.includes('Next: act start f --goal … --done … --appetite-sessions … --appetite-tokens … (from its approved document, '), text);
+  assert.deepEqual({ ...LANE_APPETITE.feature }, { sessions: 4, tokens: 1000000 });
+  assert.ok(text.includes('Next: act start f --goal … --done … --appetite-sessions 4 --appetite-tokens 1000000 (from its approved document, '), text);
+  assert.doesNotMatch(text, /--appetite-sessions …/);
 }));
 
 test('wake read names the approved document each start reads from, and lists the rulings in force by id (R84)', () => withHome(async () => {
