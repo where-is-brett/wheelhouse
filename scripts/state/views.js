@@ -71,7 +71,7 @@ export function latestFor(viewsMap, pr) {
 // latest verified approval of the pull request at that commit, or verified CI push of that branch
 // at that commit. A later record for a pull request takes the place of an earlier one, since the
 // gate waits for one click at a time. The front desk makes and asks the cards from this (ruling F72).
-function gateAsksOf(sorted, { enrolled, approvals, handedOut }) {
+function gateAsksOf(sorted, { enrolled, approvals, handedOutBy }) {
   const cards = sorted.filter((e) => e.kind === 'card');
   const pushes = sorted.filter((e) => e.kind === 'action' && e.data?.action === 'ci-push' && verify(e, enrolled));
   const out = {};
@@ -90,7 +90,7 @@ function gateAsksOf(sorted, { enrolled, approvals, handedOut }) {
       continue;
     }
     const card = cards.filter((c) => c.data?.line === line).at(-1);
-    const asked = card === undefined ? undefined : handedOut.filter((h) => h.data.cards.includes(card.id)).at(-1);
+    const asked = card === undefined ? undefined : handedOutBy(card);
     out[String(d.pr)] = { id: e.id, at: e.at, data: d, line, card: card?.id ?? null, askedAt: asked?.at ?? null, clickedAt: clicked?.at ?? null };
   }
   return out;
@@ -674,7 +674,19 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const loop = buildLoopViews(sorted, enrolled);
   const outdated = outdatedBy(sorted, loop.reports);
   const revised = revisedBy(sorted);
+  const shownRecords = sorted.filter((e) => e.kind === 'shown' && verify(e, enrolled)
+    && typeof e.data?.code === 'string' && typeof e.data?.question === 'string' && Array.isArray(e.data?.options));
   const handedOut = sorted.filter((e) => e.kind === 'asked' && Array.isArray(e.data?.cards));
+  // A card is handed out when a visit's `asked` record names it (the older record, and the only one a card the picker can't
+  // mark gets), or when the picker showed it: a verified `shown` record with the card's own question, made after the card.
+  // The later of the two is when.
+  const latestShownBy = new Map();
+  for (const e of shownRecords) latestShownBy.set(e.data.question, e);
+  const laterOf = (a, b) => (a === undefined ? b : b === undefined ? a : byOrder(a, b) < 0 ? b : a);
+  const handedOutBy = (card) => {
+    const seen = latestShownBy.get(card.data?.question);
+    return laterOf(handedOut.filter((e) => e.data.cards.includes(card.id)).at(-1), seen !== undefined && byOrder(card, seen) < 0 ? seen : undefined);
+  };
   const outcomes = outcomesOf(sorted, { confirmations: closing, answeredBy });
   stampSteers(loop.questions, outcomes, sorted);
   const waiting = [];
@@ -694,7 +706,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     if (gone === 'head') outdatedCards.push({ id: card.id, at: card.at, data: card.data, steered });
     if (gone !== false) continue;
     const last = mine.at(-1);
-    const shown = handedOut.filter((e) => e.data.cards.includes(card.id)).at(-1);
+    const shown = handedOutBy(card);
     const asked = shown && (!last || byOrder(last, shown) < 0) ? { at: shown.at, label: null }
       : last ? { at: last.at, label: last.data?.label ?? null } : null;
     waiting.push({ id: card.id, at: card.at, data: card.data, asked, steered });
@@ -713,7 +725,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   for (const e of sorted) {
     if (e.kind === 'provenance' && typeof e.data?.branch === 'string' && isPlainObject(e.data.provenance) && verify(e, enrolled)) provenance[e.data.branch] = e.data.provenance;
   }
-  const gateAsks = gateAsksOf(sorted, { enrolled, approvals, handedOut });
+  const gateAsks = gateAsksOf(sorted, { enrolled, approvals, handedOutBy });
   const lineageHolds = lineageHoldsOf(sorted, liftedHolds);
 
   // Launch blockers, shortcuts taken and decisions told.
@@ -725,8 +737,6 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   // Cards shown to the director, from verified records only. A code held by two different
   // questions is ambiguous, so neither is kept. A card is spent once a later verified record
   // carries its question or confirms the one event its confirm line names.
-  const shownRecords = sorted.filter((e) => e.kind === 'shown' && verify(e, enrolled)
-    && typeof e.data?.code === 'string' && typeof e.data?.question === 'string' && Array.isArray(e.data?.options));
   const spentBy = (shownEvent) => {
     if (answeredBy.some((e) => byOrder(shownEvent, e) < 0 && e.data.question === shownEvent.data.question)) return true;
     return confirmedAfter(confirmations, shownEvent, confirmNamed(shownEvent.data.question)) !== undefined;

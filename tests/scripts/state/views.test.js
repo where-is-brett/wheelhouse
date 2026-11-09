@@ -870,6 +870,47 @@ test('Not now, Explain more and Show me keep a card waiting, marked asked', asyn
   });
 });
 
+test('a card is asked once a signed shown record carries its question and follows the card', async () => {
+  await withHome(() => {
+    const question = 'Approve the sign-in wording?';
+    const card = ev('card', 5, cardData(question));
+    const shownAt = (n, q = question) => ev('shown', n, shownData('K7M2', q));
+    assert.equal(build([card]).waiting[0].asked, null);
+    assert.deepEqual(build([card, shownAt(7)]).waiting[0].asked, { at: T(7), label: null });
+    assert.equal(build([card, shownAt(7, 'Another question?')]).waiting[0].asked, null, 'other words');
+    assert.equal(build([shownAt(3), card]).waiting[0].asked, null, 'a record made before the card existed');
+    const unsignedShown = unsigned(shownAt(7));
+    assert.equal(build([card, unsignedShown]).waiting[0].asked, null, 'an unsigned record');
+    // The latest answer that did not close the card still wins over an earlier shown record.
+    const notNow = ev('card-answer', 9, { card: card.id, label: 'Not now' });
+    assert.deepEqual(build([card, shownAt(7), notNow]).waiting[0].asked, { at: T(9), label: 'Not now' });
+  });
+});
+
+test('an asked record and a shown record both hand a card out, and the later of the two is when', async () => {
+  await withHome(() => {
+    const question = 'Approve the sign-in wording?';
+    const card = ev('card', 5, cardData(question));
+    const old = ev('asked', 6, { cards: [card.id] });
+    const shown = ev('shown', 8, shownData('K7M2', question));
+    assert.deepEqual(build([card, old]).waiting[0].asked, { at: T(6), label: null });
+    assert.deepEqual(build([card, old, shown]).waiting[0].asked, { at: T(8), label: null });
+    assert.deepEqual(build([card, shown, ev('asked', 9, { cards: [card.id] })]).waiting[0].asked, { at: T(9), label: null });
+  });
+});
+
+test('the click the merge gate waits for is asked at the time its card was shown', async () => {
+  await withHome(() => {
+    const HEAD = 'abcdef1234567890abcdef1234567890abcdef12';
+    const line = approvalLine(7, HEAD);
+    const question = `What this is: #7.\n${line}`;
+    const asks = ev('gate-asks', 1, { work: 'export-csv', pr: 7, ask: 'approval', sha: HEAD });
+    const card = ev('card', 3, cardData(question, { line }));
+    assert.equal(build([asks, card]).gateAsks[7].askedAt, null);
+    assert.equal(build([asks, card, ev('shown', 6, shownData('K7M2', question))]).gateAsks[7].askedAt, T(6));
+  });
+});
+
 test('a card a visit handed out is marked asked until a later answer says more', async () => {
   await withHome(() => {
     const card = ev('card', 1, cardData('Approve pull request #7 at commit abcdef123456?'));
