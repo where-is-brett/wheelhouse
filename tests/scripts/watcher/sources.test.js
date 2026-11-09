@@ -366,9 +366,12 @@ test('a head with no signed review of its own counts as reviewed when the helper
   };
 
   assert.deepEqual(await review({ ok: true, review: 'clean', upToDate: true, earlier: true }), { review: 'clean', calls: [{ project: P, number: 7 }] });
-  // Any other answer, a refusal or a throw leaves it unreviewed.
-  for (const answer of [{ ok: true, review: 'none', upToDate: true }, { ok: true, review: 'none', upToDate: true, earlier: false }, { ok: true, review: 'none', earlier: 'yes' },
-    { ok: false, refused: 'no' }, { ok: true }, null, () => { throw new Error('down'); }]) {
+  // The record holds an earlier signed review, so a head the helper says has no carried review needs one of its own.
+  for (const answer of [{ ok: true, review: 'none', upToDate: true }, { ok: true, review: 'none', upToDate: true, earlier: false }, { ok: true, review: 'none', earlier: 'yes' }]) {
+    assert.equal((await review(answer)).review, 'needed', JSON.stringify(answer));
+  }
+  // A refusal, an answer that says nothing or a throw leaves it unreviewed.
+  for (const answer of [{ ok: false, refused: 'no' }, { ok: true }, null, () => { throw new Error('down'); }]) {
     assert.equal((await review(answer)).review, 'none', JSON.stringify(answer));
   }
   // M4: /pr/carried changes what is raised only once CI has passed, so it is asked only then.
@@ -411,6 +414,21 @@ test('a green head whose earlier CLEAN review did not carry over wakes its sessi
   // Routed to the session, which pulls and dispatches the reviewer on the head.
   assert.deepEqual(route(raised).features['login-page'].map((e) => e.type), ['review-needed']);
   assert.match(raised[0].detail.next, new RegExp(`wheelhouse:reviewer now with pr: 7 on ${HEAD}`));
+}));
+
+test('a green head whose only earlier signed review is FINDINGS needs a review of its own', () => withHome(async () => {
+  enrolHere();
+  const wt = worktree({ status: JSON.stringify(status('login-page')) });
+  record('feature', { work: 'login-page', step: 'building', worktree: wt, branch: 'login-page' }, 0);
+  record('review', { pr: 7, commit: 'e'.repeat(40), verdict: 'FINDINGS', findings: 1, blocking: 1 }, SEC);
+  const open = { 7: { headSha: HEAD, headRef: 'login-page', mergeable: 'yes', state: 'open' } };
+  const make = (ci) => { const c = fakeClient({ prs: open, carried: { ok: true, review: 'none', upToDate: true, earlier: false } }); c.ci = async (a) => ({ ok: true, result: { sha: a.sha, state: ci } }); return c; };
+  const obs = await observe({ project: P, client: make('success'), now: at(2 * SEC) });
+  assert.equal(obs.prs[7].review, 'needed');
+  const raised = diff(null, obs, { seen: new Set() }).filter((e) => e.type === 'review-needed');
+  assert.deepEqual(raised.map((e) => [e.work, e.pr]), [['login-page', 7]]);
+  // Not before CI has passed.
+  assert.equal((await observe({ project: P, client: make('pending'), now: at(2 * SEC) })).prs[7].review, 'none');
 }));
 
 test('worktree paths from state are followed only inside the project\'s checkout', () => withHome(async () => {

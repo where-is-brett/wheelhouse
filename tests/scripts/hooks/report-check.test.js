@@ -233,6 +233,34 @@ const pendingFiles = (route) => {
   return route ? names.filter((n) => JSON.parse(fs.readFileSync(path.join(folder, n), 'utf8')).route === route) : names;
 };
 
+test('a review dropped because the head moved tells the reviewer, once, to hand the builder the push-then-redispatch step', async () => {
+  await withHome(async () => {
+    const moved = fake({ pr: { ok: true, result: { headSha: '1'.repeat(40), state: 'open' } } });
+    const first = await decide(stop('wheelhouse:reviewer', reviewer()), deps(moved));
+    assert.equal(first.decision, 'block');
+    assert.match(first.reason, /Push your fix, then dispatch the reviewer again on the pushed head/);
+    assert.equal(moved.calls.record.length, 0);
+    const second = await decide(stop('wheelhouse:reviewer', reviewer()), deps(moved));
+    assert.equal(second, undefined);
+  });
+});
+
+test('a short hash that prefixes the pull request head is accepted and signed with the full hash', async () => {
+  await withHome(async () => {
+    const c = fake();
+    const out = await decide(stop('wheelhouse:reviewer', reviewer().replace(`commit: ${FULL}`, `commit: ${FULL.slice(0, 8)}`)), deps(c));
+    assert.equal(out, undefined);
+    assert.equal(c.calls.record.length, 1);
+    assert.equal(c.calls.record[0].event.data.commit, FULL);
+    // A short hash of another commit, or one too short, is not accepted.
+    const other = fake({ pr: { ok: true, result: { headSha: '2'.repeat(40), state: 'open' } } });
+    await decide(stop('wheelhouse:reviewer', reviewer().replace(`commit: ${FULL}`, `commit: ${FULL.slice(0, 8)}`)), deps(other));
+    assert.equal(other.calls.record.length, 0);
+    assert.match(noteTexts(other)[0], /head has moved/);
+    assert.ok(parseReport(reviewer().replace(`commit: ${FULL}`, 'commit: abc12'), 'reviewer').missing.includes('commit'));
+  });
+});
+
 test('a complete report that cannot be recorded writes a note naming why', async () => {
   await withHome(async () => {
     const moved = fake({ pr: { ok: true, result: { headSha: '1'.repeat(40), state: 'open' } } });

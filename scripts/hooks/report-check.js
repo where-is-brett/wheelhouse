@@ -40,7 +40,8 @@ export function parseReport(text, role) {
   need('role', (v) => (role === undefined ? v === 'builder' || v === 'reviewer' : v === role));
   // `none` is for work done before the feature has a pull request; only a number can sign.
   need('pr', (v) => v === 'none' || (/^[1-9][0-9]*$/.test(v ?? '') && Number.isSafeInteger(Number(v))));
-  need('commit', (v) => /^[0-9a-f]{40}$/.test(v ?? ''));
+  // A full hash, or a short one of at least seven digits, which a reviewer's report is checked against the pull request's head.
+  need('commit', (v) => /^[0-9a-f]{7,40}$/.test(v ?? ''));
   const kind = fields.role ?? role;
   if (kind === 'builder') {
     need('status', (v) => ['done', 'blocked', 'partial'].includes(v));
@@ -101,6 +102,20 @@ function writeCount(file, count) {
   }
 }
 
+const REDISPATCH = 'The builder pushes its fix first, then dispatches the reviewer again on the pushed head, so the new head gets a review of its own.';
+
+// The reviewer is told once to end its reply with the builder's next step, which the builder reads as the reviewer's result.
+function answerDropped(file) {
+  const flag = `${file}.dropped`;
+  if (fs.existsSync(flag)) {
+    fs.rmSync(flag, { force: true });
+    return undefined;
+  }
+  fs.mkdirSync(path.dirname(flag), { recursive: true });
+  fs.writeFileSync(flag, '1\n');
+  return answer.block(`Your review was not recorded: the pull request's head is not the commit you reviewed. End your reply with this line for the builder: "Review not recorded. Push your fix, then dispatch the reviewer again on the pushed head." ${REDISPATCH}`);
+}
+
 export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS + helperGrace() } = {}) {
   const role = ROLES[input.agent_type];
   if (role === undefined) return undefined;
@@ -119,7 +134,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
       writeCount(file, sent + 1);
       return answer.block(`Your report is missing or has an invalid: ${missing.join(', ')}. End your work again with the WHEELHOUSE REPORT block in full.`);
     }
-    const body = { project, kind: 'note', data: { text: `An agent of type ${input.agent_type} ended without a complete report (missing or invalid: ${missing.join(', ')}).` } };
+    const body = { project, kind: 'note', data: { text: `An agent of type ${input.agent_type} ended without a complete report (missing or invalid: ${missing.join(', ')}).${missing.includes('commit') ? ` Its review was not recorded. ${REDISPATCH}` : ''}` } };
     try {
       const result = await left(api.state.write(body));
       if (!taken(result)) keep(project, 'write', body, now);
@@ -148,10 +163,14 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
     await note('the pull request is not open');
     return undefined;
   }
-  if (state.result?.headSha !== fields.commit) {
+  const head = state.result?.headSha;
+  // A short hash counts when it prefixes the head; the signed record always carries the full one.
+  const same = typeof head === 'string' && head !== '' && (head === fields.commit || (fields.commit.length >= 7 && head.startsWith(fields.commit)));
+  if (!same) {
     await note('the head has moved since the review');
-    return undefined;
+    return answerDropped(file);
   }
+  fields.commit = head;
   const seen = fromTranscript(input.agent_transcript_path);
   const data = {
     pr,

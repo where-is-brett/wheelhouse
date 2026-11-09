@@ -259,13 +259,18 @@ function findingsOf(views, pr, head) {
 // own carry-over rule (/pr/carried), says an earlier commit's CLEAN review still holds for it:
 // so a branch the gate brought up to date raises merge-ready again once CI is green. When none
 // carries but an earlier CLEAN review is on record, the head needs a review of its own
-// ('needed', ruling R119), which wakes its session. Any other answer, or none, leaves it unreviewed.
-async function carriedReview({ project, client, number }) {
+// ('needed', ruling R119), which wakes its session; so does any earlier signed review, FINDINGS included. Any other answer, or none, leaves it unreviewed.
+async function carriedReview({ project, client, number, views, head }) {
   try {
     const answer = await client.carried({ project, number });
     if (answer?.ok !== true) return 'none';
     if (answer.review === 'clean') return 'clean';
-    return answer.review === 'none' && answer.earlier === true ? 'needed' : 'none';
+    if (answer.review !== 'none') return 'none';
+    // An earlier CLEAN review that did not carry over, or any earlier signed review (FINDINGS included) of a commit
+    // that is not the head: the builder fixed and pushed, so the head needs a review of its own.
+    const reviews = views.reviews?.[String(number)];
+    const earlierSigned = isPlain(reviews) && Object.keys(reviews).some((commit) => commit !== head && isPlain(reviews[commit]?.data));
+    return answer.earlier === true || earlierSigned ? 'needed' : 'none';
   } catch {
     return 'none';
   }
@@ -306,7 +311,7 @@ async function readPr({ project, client, number, works, branchOf, views }) {
     branch: pr.headRef,
     ci: ci.result.state,
     mergeable: MERGEABLE.includes(pr.mergeable) ? pr.mergeable : 'unknown',
-    review: asked ? await carriedReview({ project, client, number }) : own,
+    review: asked ? await carriedReview({ project, client, number, views, head: pr.headSha }) : own,
     ...findingsOf(views, number, pr.headSha),
   };
 }
