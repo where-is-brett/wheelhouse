@@ -27,7 +27,7 @@ test('a visible small change: one Approve card, then it starts by itself, builds
   return world({ recordings }, async (w) => {
     await w.watch();
     await record(w, 'flag', { lane: 'small', visible: true });
-    const card = await approvalOf(w, 'flag');
+    const card = approvalOf(w, 'flag');
     assert.equal(card.code, 0, card.err);
     assert.equal(approveCards(w).length, 1, 'one Approve card is raised');
     await w.tick();
@@ -165,12 +165,12 @@ test('with typed replies on, a run\'s question is a decision in chat, a typed re
 // Guards: a dropped work's Approve card stayed in the waiting view, to be asked for work that would never be built.
 test('dropping work with an open Approve card takes the card out of the waiting view', { timeout: 120000 }, () => world({ recordings: { flag: running('flag') } }, async (w) => {
   await record(w, 'flag', { lane: 'small', visible: true });
-  const card = await approvalOf(w, 'flag');
+  const card = approvalOf(w, 'flag');
   assert.equal(card.code, 0, card.err);
-  assert.match(await waitingCards(w), /Add the flag change/, 'the card waits');
+  assert.match(await waitingCards(w), /Work flag: The flag change/, 'the card waits');
   const dropped = await w.desk(['drop', 'flag']);
   assert.equal(dropped.code, 0, dropped.err);
-  assert.doesNotMatch(await waitingCards(w), /Add the flag change/, 'the card has left the waiting view');
+  assert.doesNotMatch(await waitingCards(w), /Work flag: The flag change/, 'the card has left the waiting view');
   assert.deepEqual((await w.desk(['cards'])).json.questions, [], 'and is not asked');
   await w.tick();
   assert.equal(w.starts().length, 0, 'the dropped work never starts');
