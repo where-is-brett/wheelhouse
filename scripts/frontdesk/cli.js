@@ -1134,10 +1134,14 @@ async function withHash(client, cwd, kind, input) {
   return { ...input, hash: documentHash(cwd, file, input.hash) };
 }
 
-// Work the director approves before it is built: the small and feature lanes, and any work users would see.
+// Work the director approves before it is built: the small and feature lanes, any work users would see, and
+// ready-made work carried on (`from`), whatever its lane (the foreman holds it the same way).
 export function needsApproval(data) {
-  return data.lane === 'small' || data.lane === 'feature' || data.visible === true;
+  return data.lane === 'small' || data.lane === 'feature' || data.visible === true || data.from !== undefined;
 }
+
+// The most a titled `what` may run to, so the whole card stays under the composer's limit.
+const TITLED_MOST = 200;
 
 const APPROVE_WHY = {
   small: 'It is a small change people will see, so it comes to you before it is built.',
@@ -1149,17 +1153,19 @@ const APPROVE_WHY = {
 // The composer's input for the approve-work card of a recorded work `data`, with the words in `override`
 // ({ what, why, because, meanwhile, options }) laid over the defaults. The target is always built here.
 // A title the composer would refuse in `what` (a hex-looking word reads as a commit) gives way to a plain line
-// naming the work; a `what` given in the override is the caller's own and is left as it is.
+// naming the work, as does a title too long for the card; a `what` given in the override is the caller's own and is left as it is.
+// The title's white space is collapsed to single spaces, so a line break in it cannot refuse the card. The card is shown first
+// (`shownFirst`) only for work users would see, as the record says (`visible`).
 export function approveWorkInput(data, override) {
   const given = isPlain(override) ? override : {};
   const { target: ignored, ...words } = given;
-  const title = String(data.title ?? '').trim().replace(/\.+$/, '').trim();
-  const target = { work: data.id, lane: data.lane, hash: data.doc?.hash, shownFirst: true };
+  const title = String(data.title ?? '').replace(/\s+/g, ' ').trim().replace(/\.+$/, '').trim();
+  const target = { work: data.id, lane: data.lane, hash: data.doc?.hash, shownFirst: data.visible === true };
   const titled = `Work ${data.id}: ${title}.`;
   return {
     kind: 'approve-work',
     level: 3,
-    what: whatProblem('approve-work', titled, target) === null ? titled : `Work ${data.id}, as its document describes.`,
+    what: titled.length <= TITLED_MOST && whatProblem('approve-work', titled, target) === null ? titled : `Work ${data.id}, as its document describes.`,
     why: APPROVE_WHY[data.lane] ?? APPROVE_WHY.quick,
     options: [
       { label: 'Approve', says: 'Wheelhouse builds it and tests it, then shows you the result. It only goes into your product when you say yes to that.' },

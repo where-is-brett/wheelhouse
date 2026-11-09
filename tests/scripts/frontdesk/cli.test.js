@@ -10,7 +10,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { main, readInput, SEAT_WRITES, SEAT_REFUSAL, seatRefusal, RECORD_KINDS, MEANWHILE, CHECKS_UNSAID, RECENT_MS, RECENT_LEAD } from '../../../scripts/frontdesk/cli.js';
+import { main, readInput, SEAT_WRITES, SEAT_REFUSAL, seatRefusal, RECORD_KINDS, needsApproval, MEANWHILE, CHECKS_UNSAID, RECENT_MS, RECENT_LEAD } from '../../../scripts/frontdesk/cli.js';
 import { cardsDue } from '../../../scripts/hooks/board-context.js';
 import { numberedWaiting } from '../../../scripts/board/model.js';
 import { composeCard, whatProblem } from '../../../scripts/cards/compose.js';
@@ -1037,6 +1037,62 @@ test('record work for a title with a hex-looking word still writes a card, with 
     assert.equal(out.code, 0, out.err);
     assert.equal(cardsOf(helper).length, 1);
     assert.equal(cardsOf(helper)[0].data.parts.what, 'Work hex-export, as its document describes.');
+  });
+});
+
+test('ready-made work carried on (from) needs approval whatever its lane or visibility: record work asks its card, and cards re-offers it if unasked', async () => {
+  await inHome(async () => {
+    const from = { sha: 'a'.repeat(40), ref: 'refs/wheelhouse/from/archive-2' };
+    assert.equal(needsApproval({ lane: 'quick', visible: false, from }), true, 'as the foreman holds it');
+    assert.equal(needsApproval({ lane: 'quick', visible: false }), false);
+    // The record command itself requires visible true for ready-made work, so a quick one is asked its card.
+    const helper = fakeHelper();
+    const dir = projectWithDoc('archive-2');
+    const work = { id: 'archive-2', title: 'Carry on an archive', lane: 'quick', visible: true, dependsOn: [], from, doc: 'docs/archive-2.md' };
+    const out = await run(helper, ['record', 'work'], JSON.stringify(work), { cwd: dir });
+    assert.equal(out.code, 0, out.err);
+    assert.equal(cardsOf(helper).length, 1, 'a card event was written');
+    assert.equal(cardsOf(helper)[0].data.line, approveWorkLine('archive-2', 'quick', out.json.hash, { shownFirst: true }));
+    assert.match(out.json.card.question.question, /Work archive-2: Carry on an archive\./);
+    // (A work event refuses from with visible false, so the quick lane's ready-made work is always visible.) With no card
+    // ever written, cards offers it.
+    const unasked = fakeHelper({ events: [unaskedWork('archive-3', { lane: 'quick', visible: true, from: { ...from, ref: 'refs/wheelhouse/from/archive-3', request: 1 } })] });
+    const cards = await run(unasked, ['cards']);
+    assert.equal(cards.code, 0, cards.err);
+    assert.equal(cardsOf(unasked).length, 1);
+    assert.equal(cardsOf(unasked)[0].data.line, approveWorkLine('archive-3', 'quick', DOC, { shownFirst: true }));
+    // The work still names its document.
+    const bare = await run(fakeHelper(), ['record', 'work'], JSON.stringify({ ...work, doc: undefined }));
+    assert.equal(bare.code, 1);
+    assert.match(bare.err, /an approval names the work's document/);
+  });
+});
+
+test('record work for a title with a line break, or one far too long, still writes the work once with a card', async () => {
+  await inHome(async () => {
+    for (const [id, title, expected] of [
+      ['multi-line', 'Import a\nstatement\n\n  fast', /^Work multi-line: Import a statement fast\.$/],
+      ['long-title', `Import ${'a very long statement '.repeat(80)}`, /^Work long-title, as its document describes\.$/],
+    ]) {
+      const helper = fakeHelper();
+      const dir = projectWithDoc(id);
+      const out = await run(helper, ['record', 'work'], JSON.stringify({ id, title, lane: 'small', visible: true, dependsOn: [], doc: `docs/${id}.md` }), { cwd: dir });
+      assert.equal(out.code, 0, out.err);
+      assert.equal(helper.held.filter((e) => e.kind === 'work').length, 1, `${id}: the work is recorded once`);
+      assert.equal(cardsOf(helper).length, 1, id);
+      assert.match(cardsOf(helper)[0].data.parts.what, expected);
+    }
+  });
+});
+
+test('record work for small work users will not see gives the plain line, with no show-first tail', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('quiet-small');
+    const out = await run(helper, ['record', 'work'], JSON.stringify({ id: 'quiet-small', title: 'Tidy a script', lane: 'small', visible: false, dependsOn: [], doc: 'docs/quiet-small.md' }), { cwd: dir });
+    assert.equal(out.code, 0, out.err);
+    assert.equal(cardsOf(helper)[0].data.line, approveWorkLine('quiet-small', 'small', out.json.hash));
+    assert.doesNotMatch(cardsOf(helper)[0].data.line, /show it to me before it merges/);
   });
 });
 

@@ -173,8 +173,20 @@ test('the intake\'s bug route names where the report goes and records it with it
     assert.equal(work.data.doc.path, data.doc);
     assert.equal(JSON.parse(out).hash, work.data.doc.hash);
   } finally { fs.rmSync(project, { recursive: true, force: true }); }
-  // The approve-work card's target names what the composer takes.
-  assert.match(route, /ask it as printed/);
+  // `record work` composes the approve-work card itself, so the route gives no target and says to ask the card it printed.
+  assert.doesNotMatch(route, /target/);
+  assert.match(route, /`record` prints the work's approve-work `card`: ask it as printed/);
+});
+
+// `record work` composes and asks the approve-work card; the session asks what it prints, and names work by its slug.
+test('the intake and the playbook tell the session what `record work` prints, and which id names the work', () => {
+  assert.match(intake, /never the `eventId` that `record` prints/);
+  const nothing = 'If `record work` prints `approved` or `asked` instead of a `card`, nothing is asked: say so. If the `card` says `alreadyAsked`, don\'t ask it again.';
+  assert.ok(intake.includes(nothing), 'the intake says what to do when no card is printed');
+  assert.ok(playbook.includes(nothing), 'the playbook says what to do when no card is printed');
+  assert.match(playbook, /\*\*Every card\*\* comes from `card`, `cards`, `again`, `record work`, `record ruling` or `record setting`/);
+  assert.match(intake, /`visible` decides whether users would see it/);
+  assert.doesNotMatch(intake, /You decide at approval whether users would see it/);
 });
 
 test('the playbook gives JSON input from a file in the scratchpad, written with the Write tool, never a heredoc or a pipe (F81)', () => {
