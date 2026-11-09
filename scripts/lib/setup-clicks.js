@@ -372,6 +372,46 @@ export function askedFor({ cwd, card }) {
   return found.filter((r) => depth(r) === nearest).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
 }
 
+// The cards setup showed (the plan card, with its set line) and asked (its own questions) for the folder holding `cwd`, in the
+// shape of a waiting card so the card check's matching takes them: { card: { id, data }, decided: null, setup: true }. Only the
+// records of `runId` when given, else of the newest run in the nearest folder holding `cwd`. Ids are `setup:<run>-<step>` and
+// `setup:<run>-<step>-<id>`. Never throws: a folder that can't be read gives [].
+export function setupCardsFor(cwd, runId) {
+  try {
+    if (typeof cwd !== 'string') return [];
+    const read = (dir, reader) => {
+      let names = [];
+      try {
+        names = fs.readdirSync(dir).filter((n) => n.endsWith('.json'));
+      } catch { /* none kept */ }
+      return names.map((n) => reader(path.join(dir, n))).filter((r) => r !== null && holds(r.folder, cwd));
+    };
+    let shown = read(shownDir(), readShown);
+    let asked = read(askedDir(), readAsked);
+    const all = [...shown, ...asked];
+    let run = RUN_ID.test(String(runId)) ? runId : null;
+    if (run === null) {
+      if (all.length === 0) return [];
+      const depth = (r) => keyOf(realPath(r.folder) ?? '').length;
+      const nearest = Math.max(...all.map(depth));
+      run = all.filter((r) => depth(r) === nearest).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1).runId;
+    }
+    shown = shown.filter((r) => r.runId === run);
+    asked = asked.filter((r) => r.runId === run);
+    const make = (id, c) => ({
+      card: { id, data: { question: c.question, header: c.header, options: c.options.map((o) => o.label), descriptions: c.options.map((o) => o.description) } },
+      decided: null,
+      setup: true,
+    });
+    return [
+      ...shown.map((r) => make(`setup:${r.runId}-${r.step}`, shownCard(r.card))),
+      ...asked.map((r) => make(`setup:${r.runId}-${r.step}-${r.id}`, shownCard(r.card))),
+    ];
+  } catch {
+    return [];
+  }
+}
+
 // ---- Uninstall's card and click (ruling R90) ----
 
 // Where uninstall's card shown for a folder is kept: one file per folder, named by the SHA-256 of its

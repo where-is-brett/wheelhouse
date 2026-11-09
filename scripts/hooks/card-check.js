@@ -34,6 +34,7 @@
 import tools from '../../adapters/claude-code/tools.js';
 import { asQuestion } from '../cards/visit.js';
 import { runAndExit, answer, projectOf, beingSetUp, readTailEntries } from './kit.js';
+import { setupCardsFor } from '../lib/setup-clicks.js';
 import { looksLikeBaseline, holdsFigures, cardHash, readShown, cardText, sweepStale } from '../lib/measures-clicks.js';
 import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT, SUGGEST, SHOW_ME, NOT_NOW, SEND_BACK } from '../lib/calm-words.js';
@@ -265,39 +266,10 @@ function decidedDeny(found, at) {
 const LIFT_ID = 'lift-stop';
 const isLiftQuestion = (q) => typeof q?.question === 'string' && isLiftStopLine(setLineOf(q.question));
 
-function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop }) {
-  const questions = input.tool_input.questions;
-  const at = now();
-  const found = cardsOf(questions, project, outcomes);
-  const decided = decidedDeny(found, at);
-  if (decided !== undefined) return { deny: decided };
-  const open = allOutcomes(project, outcomes).filter((o) => o.decided === null && typeof o.card?.data?.question === 'string');
-  // Each question's card: the one it names exactly, else the waiting card it is a reworded copy of; null for neither.
-  const matched = questions.map((q, i) => {
-    if (typeof q?.question !== 'string') return null;
-    const swap = swapFor(q, found[i], open);
-    return swap === null ? null : { card: swap.card };
-  });
-  // The picker is for a decision only while typed replies are off, so on it a decision is answered by typing instead.
-  if (typedRepliesOn(project) && matched.some((m) => m && isDecisionCard(m.card.data))) return { deny: DECISION_IN_CHAT };
-  // The Lift All stop question is composed on each visit and never recorded as a card, so the state can't say it is
-  // decided: STOP being off is what says so.
-  const lifts = questions.map(isLiftQuestion);
-  if (lifts.includes(true) && !stop().on) {
-    const others = lifts.includes(false);
-    return { deny: `All stop is already lifted, so that question is not asked. Say so in one plain line, and ask nothing about it again.${others ? ' Ask only the others.' : ''}` };
-  }
-  const waiting = matched.filter(Boolean);
-  const session = input.session_id;
-  const pane = (f) => cardButtons(f.card.data).buttons.some((b) => b.does === 'record' || b.does === 'turn');
-  // Each question the live pane answers with its own buttons: a card with buttons, and Lift All stop (the pane's Lift STOP).
-  const heldAt = questions.map((_, i) => lifts[i] || (matched[i] ? pane(matched[i]) : false));
-  const held = [...waiting.filter(pane).map((f) => f.card.id), ...(lifts.includes(true) ? [LIFT_ID] : [])];
-  if (held.length > 0 && holdForPane && role({ sessionId: session, cwd: input.cwd }) === 'front-desk'
-    && live(session, at.getTime()) && !take(session, held, at.getTime())) {
-    return { deny: paneLine(held.length, { others: heldAt.includes(false) }) };
-  }
-  // The questions as the director is shown them: a card that is not as printed is the stored card, once.
+// The questions as the director is shown them: a question that is not its card as printed is the stored card, once (a
+// second question for a card already taken is dropped). `matched` is each question's card as { card }, or null.
+// `origins` is each shown question's index in the call, so a fault is numbered as the model numbered its questions.
+function swapQuestions(questions, matched) {
   const taken = new Set();
   const swapped = new Set();
   const next = [];
@@ -314,7 +286,45 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
     next.push(stored);
   });
   const changed = next.length !== questions.length || next.some((q, i) => q !== questions[i]);
-  return { open: waiting.map((f) => f.card.id), questions: changed ? next : null, swapped, origins };
+  return { questions: next, swapped, origins, changed };
+}
+
+function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop }) {
+  const questions = input.tool_input.questions;
+  const at = now();
+  const found = cardsOf(questions, project, outcomes);
+  const decided = decidedDeny(found, at);
+  if (decided !== undefined) return { deny: decided };
+  // A folder that is being set up as well adds setup's cards after the state's, so a state card wins.
+  const open = [...allOutcomes(project, outcomes).filter((o) => o.decided === null && typeof o.card?.data?.question === 'string'),
+    ...(beingSetUp(input.cwd) === null ? [] : setupCardsFor(input.cwd, beingSetUp(input.cwd).run?.id))];
+  // Each question's card: the one it names exactly, else the waiting card it is a reworded copy of; null for neither.
+  const matched = questions.map((q, i) => {
+    if (typeof q?.question !== 'string') return null;
+    const swap = swapFor(q, found[i], open);
+    return swap === null ? null : { card: swap.card, setup: swap.setup === true };
+  });
+  // The picker is for a decision only while typed replies are off, so on it a decision is answered by typing instead.
+  if (typedRepliesOn(project) && matched.some((m) => m && !m.setup && isDecisionCard(m.card.data))) return { deny: DECISION_IN_CHAT };
+  // The Lift All stop question is composed on each visit and never recorded as a card, so the state can't say it is
+  // decided: STOP being off is what says so.
+  const lifts = questions.map(isLiftQuestion);
+  if (lifts.includes(true) && !stop().on) {
+    const others = lifts.includes(false);
+    return { deny: `All stop is already lifted, so that question is not asked. Say so in one plain line, and ask nothing about it again.${others ? ' Ask only the others.' : ''}` };
+  }
+  const waiting = matched.filter(Boolean);
+  const session = input.session_id;
+  const pane = (f) => !f.setup && cardButtons(f.card.data).buttons.some((b) => b.does === 'record' || b.does === 'turn');
+  // Each question the live pane answers with its own buttons: a card with buttons, and Lift All stop (the pane's Lift STOP).
+  const heldAt = questions.map((_, i) => lifts[i] || (matched[i] ? pane(matched[i]) : false));
+  const held = [...waiting.filter(pane).map((f) => f.card.id), ...(lifts.includes(true) ? [LIFT_ID] : [])];
+  if (held.length > 0 && holdForPane && role({ sessionId: session, cwd: input.cwd }) === 'front-desk'
+    && live(session, at.getTime()) && !take(session, held, at.getTime())) {
+    return { deny: paneLine(held.length, { others: heldAt.includes(false) }) };
+  }
+  const { questions: next, swapped, origins, changed } = swapQuestions(questions, matched);
+  return { open: waiting.filter((f) => !f.setup).map((f) => f.card.id), questions: changed ? next : null, swapped, origins };
 }
 
 // Only the repeat refusal, for an agent whose question tool the form check and the pane hold don't apply to: a
@@ -380,6 +390,26 @@ export async function decideStop(input, { projectOf: find = projectOf, dir, role
   }
 }
 
+// In a folder being set up (no project yet), a reworded setup card is swapped for the card setup showed or asked, found by
+// the same rules as a waiting card's. No form check, pane hold or open-noting here. A failure lets the call through.
+function swapSetupCards(input, questions) {
+  try {
+    const setup = beingSetUp(input.cwd);
+    if (setup === null) return undefined;
+    const open = setupCardsFor(input.cwd, setup.run?.id);
+    if (open.length === 0) return undefined;
+    const matched = questions.map((q) => {
+      if (typeof q?.question !== 'string') return null;
+      const swap = swapFor(q, null, open);
+      return swap === null ? null : { card: swap.card };
+    });
+    const swapped = swapQuestions(questions, matched);
+    return swapped.changed ? answer.update({ ...input.tool_input, questions: swapped.questions }) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function decide(input, {
   projectOf: find = projectOf, dir, now = () => new Date(), outcomes, paneLive: live = paneLive, takeHere: take = takeHere,
   markOpen: open = markOpen, holdForPane = HOLD_FOR_PANE, role = sessionRole, stop = stopState, env = process.env, decisions,
@@ -392,7 +422,7 @@ export async function decide(input, {
   const recorded = inProject || beingSetUp(input.cwd) !== null;
   const baseline = baselineFaults(questions, now, { figures: recorded });
   if (baseline.length > 0) return answer.deny(`The director has not seen this card. ${baseline.join(' ')}`);
-  if (!inProject) return undefined;
+  if (!inProject) return swapSetupCards(input, questions);
   let open_ = null;
   let checked_ = null;
   try {
