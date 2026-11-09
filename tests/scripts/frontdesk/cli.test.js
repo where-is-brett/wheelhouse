@@ -1017,6 +1017,155 @@ test('record work refuses an approval with no document, writing nothing', async 
   });
 });
 
+// A brief under `.wheelhouse/work/`, the folder the facts rule reads, holding `text`.
+function projectWithBrief(id, text) {
+  const dir = tempFolder('wh-frontdesk-facts-');
+  fs.mkdirSync(path.join(dir, '.wheelhouse', 'work'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.wheelhouse', 'work', `${id}.md`), text);
+  return dir;
+}
+const factsBlock = (facts) => `The brief.\n\n\`\`\`wheelhouse-facts\n${JSON.stringify({ addsPage: false, storesData: false, parsesInput: false, touchesMoreThanOneArea: false, ...facts })}\n\`\`\`\n`;
+const briefWork = (id, lane, extra = {}) => ({ id, title: 'Do a thing.', lane, visible: lane !== 'quick' && lane !== 'bug', dependsOn: [], doc: `.wheelhouse/work/${id}.md`, ...extra });
+const nothingWritten = (helper) => assert.equal(helper.held.length, 0, 'no work event and no card event written');
+
+test('record work refuses small work whose brief says it adds a page and stores data', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithBrief('export-csv', factsBlock({ addsPage: true, storesData: true }));
+    const out = await run(helper, ['record', 'work'], JSON.stringify(briefWork('export-csv', 'small')), { cwd: dir });
+    assert.notEqual(out.code, 0);
+    assert.ok(out.err.includes('this is a feature: it adds a page and it stores data'), out.err);
+    nothingWritten(helper);
+  });
+});
+
+test('record work refuses quick work whose brief says it adds a page and stores data', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithBrief('export-csv', factsBlock({ addsPage: true, storesData: true }));
+    const out = await run(helper, ['record', 'work'], JSON.stringify(briefWork('export-csv', 'quick')), { cwd: dir });
+    assert.notEqual(out.code, 0);
+    assert.ok(out.err.includes('this is a feature: it adds a page and it stores data'), out.err);
+    nothingWritten(helper);
+  });
+});
+
+test('record work refuses small or quick work whose brief has no facts block', async () => {
+  await inHome(async () => {
+    for (const lane of ['small', 'quick']) {
+      const helper = fakeHelper();
+      const dir = projectWithBrief('tidy-up', 'The brief.\n');
+      const out = await run(helper, ['record', 'work'], JSON.stringify(briefWork('tidy-up', lane)), { cwd: dir });
+      assert.notEqual(out.code, 0, lane);
+      assert.ok(out.err.includes('This brief has no facts block'), out.err);
+      assert.ok(out.err.includes('```wheelhouse-facts'), out.err);
+      assert.ok(out.err.includes('{"addsPage": false, "storesData": false, "parsesInput": false, "touchesMoreThanOneArea": false}'), out.err);
+      nothingWritten(helper);
+    }
+  });
+});
+
+test('record work refuses a facts block that is broken', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithBrief('tidy-up', 'The brief.\n\n```wheelhouse-facts\n{"addsPage":"yes","storesData":false,"parsesInput":false,"touchesMoreThanOneArea":false}\n```\n');
+    const out = await run(helper, ['record', 'work'], JSON.stringify(briefWork('tidy-up', 'small')), { cwd: dir });
+    assert.notEqual(out.code, 0);
+    assert.ok(out.err.includes('wheelhouse-facts') && out.err.includes('true or false'), out.err);
+    nothingWritten(helper);
+  });
+});
+
+test('record work records feature work whatever the facts say, and with no block', async () => {
+  await inHome(async () => {
+    for (const text of [factsBlock({ addsPage: true, storesData: true }), 'The brief.\n']) {
+      const helper = fakeHelper();
+      const dir = projectWithBrief('export-csv', text);
+      const out = await run(helper, ['record', 'work'], JSON.stringify(briefWork('export-csv', 'feature')), { cwd: dir });
+      assert.equal(out.code, 0, out.err);
+      assert.equal(helper.held.filter((e) => e.kind === 'work').length, 1);
+      assert.equal(cardsOf(helper).length, 1);
+    }
+  });
+});
+
+test('record work records small and quick work whose brief\'s facts are all no', async () => {
+  await inHome(async () => {
+    for (const lane of ['small', 'quick']) {
+      const helper = fakeHelper();
+      const dir = projectWithBrief('tidy-up', factsBlock({}));
+      const out = await run(helper, ['record', 'work'], JSON.stringify(briefWork('tidy-up', lane)), { cwd: dir });
+      assert.equal(out.code, 0, out.err);
+      assert.equal(helper.held.filter((e) => e.kind === 'work').length, 1, lane);
+    }
+  });
+});
+
+test('record work does not check facts for a bug, work carried on, or a work already on record', async () => {
+  await inHome(async () => {
+    const bug = fakeHelper();
+    const bugDir = projectWithBrief('stuck-button', 'The brief.\n');
+    const bugOut = await run(bug, ['record', 'work'], JSON.stringify(briefWork('stuck-button', 'bug')), { cwd: bugDir });
+    assert.equal(bugOut.code, 0, bugOut.err);
+
+    const carried = fakeHelper();
+    const carriedDir = projectWithBrief('carry-on-1', 'The brief.\n');
+    const from = { sha: 'a'.repeat(40), ref: 'refs/wheelhouse/from/carry-on-1', request: 1 };
+    const carriedOut = await run(carried, ['record', 'work'], JSON.stringify(briefWork('carry-on-1', 'small', { from })), { cwd: carriedDir });
+    assert.equal(carriedOut.code, 0, carriedOut.err);
+
+    // First recorded feature, then again small with a brief that has no block (the Bosun's re-record).
+    const again = fakeHelper();
+    const againDir = projectWithBrief('export-csv', 'The brief.\n');
+    const first = await run(again, ['record', 'work'], JSON.stringify(briefWork('export-csv', 'feature')), { cwd: againDir });
+    assert.equal(first.code, 0, first.err);
+    const second = await run(again, ['record', 'work'], JSON.stringify(briefWork('export-csv', 'small')), { cwd: againDir });
+    assert.equal(second.code, 0, second.err);
+
+    // An order change: the same work again with `place`, its brief now without the block, is not re-read.
+    const placed = fakeHelper();
+    const placedDir = projectWithBrief('tidy-up', factsBlock({}));
+    const one = await run(placed, ['record', 'work'], JSON.stringify(briefWork('tidy-up', 'small')), { cwd: placedDir });
+    assert.equal(one.code, 0, one.err);
+    const two = await run(placed, ['record', 'work'], JSON.stringify(briefWork('tidy-up', 'small', { place: 2 })), { cwd: placedDir });
+    assert.equal(two.code, 0, two.err);
+  });
+});
+
+test('record work does not check a brief outside .wheelhouse/work', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('tidy-up');
+    const out = await run(helper, ['record', 'work'], JSON.stringify(briefWork('tidy-up', 'small', { doc: 'docs/tidy-up.md' })), { cwd: dir });
+    assert.equal(out.code, 0, out.err);
+  });
+});
+
+test('record work does not check a brief whose path climbs out of .wheelhouse/work or lies outside the project', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('tidy-up');
+    fs.writeFileSync(path.join(dir, 'x.md'), 'No block here.\n');
+    const climbing = await run(helper, ['record', 'work'], JSON.stringify(briefWork('tidy-up', 'small', { doc: '.wheelhouse/work/../../x.md' })), { cwd: dir });
+    assert.equal(climbing.code, 0, climbing.err);
+    const outside = tempFolder('wh-frontdesk-outside-');
+    const abs = path.join(outside, 'y.md');
+    fs.writeFileSync(abs, 'No block here.\n');
+    const other = fakeHelper();
+    const absolute = await run(other, ['record', 'work'], JSON.stringify(briefWork('tidy-up', 'small', { doc: abs })), { cwd: dir });
+    assert.equal(absolute.code, 0, absolute.err);
+  });
+});
+
+test('record work does not check quick work with visible false and no doc', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = tempFolder('wh-frontdesk-nodoc-');
+    const out = await run(helper, ['record', 'work'], JSON.stringify({ id: 'drop-flag', title: 'Drop a flag.', lane: 'quick', visible: false, dependsOn: [] }), { cwd: dir });
+    assert.equal(out.code, 0, out.err);
+  });
+});
+
 test('record work again for a work already approved at that hash and lane asks nothing and says approved', async () => {
   await inHome(async () => {
     const dir = projectWithDoc('statement-import');
