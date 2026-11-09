@@ -156,3 +156,14 @@ test('in a project being set up, a setup card is swapped, never held for the pan
   assert.deepEqual(swappedOf(out), [printedOf(form)]);
   assert.equal(readOpen(SID), null);
 }));
+
+test('two state cards sharing a first line are ambiguous: no setup card is swapped in for them', () => inProject(async ({ folder, first }) => {
+  const line = stateCard.question.question.split('\n')[0];
+  const twin = { card: { id: 'c-2', data: { ...stateCard.card, question: `${line}\nA second card's other words.` } }, decided: null };
+  noteAsked({ runId: first.id, folder, step: 4, id: 'other', card: { ...ASKED, question: `${line}\nOther words entirely.`, options: [{ label: 'Foo', description: 'a' }, { label: 'Bar', description: 'b' }] }, now: () => NOW });
+  const q = { question: line, header: 'Question', options: [{ label: 'X', description: 'x' }, { label: 'Y', description: 'y' }], multiSelect: false };
+  // Matching no card, it is judged as any question that is no card: its form is refused, and nothing is swapped.
+  const out = await inProjectRun({ ...call(folder, q), session_id: SID }, { outcomes: () => [STATE, twin] });
+  assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
+  assert.equal(out.hookSpecificOutput.updatedInput, undefined);
+}));

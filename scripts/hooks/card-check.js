@@ -255,6 +255,14 @@ function swapFor(q, f, open) {
   return rewordedOf(q, open);
 }
 
+// Whether any waiting card has the question's set line or first line: when it does and `swapFor` found none, the match was
+// ambiguous, and no other list of cards is tried.
+function sharesLine(q, open) {
+  const line = setLineOf(q.question);
+  const first = firstLineOf(q.question);
+  return open.some((o) => (line !== null && setLineOf(o.card.data.question) === line) || (first !== '' && firstLineOf(o.card.data.question) === first));
+}
+
 // The deny for cards the director has decided already, or for cards the live pane answers, or undefined; and the
 // ids a call that goes through is open on. Hooks inform and fail open: any failure here lets the questions through.
 function decidedDeny(found, at) {
@@ -304,7 +312,8 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
   // Each question's card: the one it names exactly, else the waiting card it is a reworded copy of; null for neither.
   const matched = questions.map((q, i) => {
     if (typeof q?.question !== 'string') return null;
-    const swap = swapFor(q, found[i], open) ?? (setupOpen.length === 0 ? null : swapFor(q, null, setupOpen));
+    const swap = swapFor(q, found[i], open)
+      ?? (setupOpen.length === 0 || sharesLine(q, open) ? null : swapFor(q, null, setupOpen));
     return swap === null ? null : { card: swap.card, setup: swap.setup === true };
   });
   // The picker is for a decision only while typed replies are off, so on it a decision is answered by typing instead.
