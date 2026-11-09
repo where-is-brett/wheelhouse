@@ -341,7 +341,10 @@ export function documentOf(project, views, work) {
     const enrolled = readEnrolled();
     const clicked = (a) => events.some((e) => e.kind === 'action' && e.data?.action === 'amend' && e.data.work === work && e.data.hash === a.data.hash && verify(e, enrolled));
     const proposed = events.filter((e) => e.kind === 'amendment' && e.data?.work === work);
-    const waiting = proposed.some((a) => !clicked(a));
+    // Only a change with its own text (`doc`) that came after the work was last recorded holds it, and until it is clicked:
+    // recording the work again lets go of a change the director no longer wants. A work event comes before an amendment of the same instant.
+    const recordedAt = events.filter((e) => e.kind === 'work' && e.data?.id === work).map((e) => e.at).sort().at(-1) ?? '';
+    const waiting = proposed.some((a) => typeof a.data.doc === 'string' && a.at >= recordedAt && !clicked(a));
     if (now !== approved) {
       const pending = waiting || proposed.some((a) => a.data.hash === now);
       drift = { pending, restorable: approvedText(project, approved) !== null };
@@ -677,7 +680,7 @@ function queueLines(ctx) {
     const data = views.work[id].work.data;
     const doc = documentOf(ctx.project, views, id);
     if (doc === null) return 'It names no document to read its goal from. Ask the director: act ask';
-    if (doc.drift?.pending) return 'It waits: the director has not yet answered the change card for it. Nothing to do.';
+    if (doc.drift?.pending) return 'It waits: the director has not yet answered the change card for it. Nothing to do. If the director no longer wants the change, the front desk records the work again.';
     if (doc.drift) return `Its document ${doc.path} ${doc.problem}. Ask the director in this one command: ${driftAskCommand(id, { restorable: doc.drift.restorable })}`;
     if (doc.problem !== null) return `Its document ${doc.path} ${doc.problem}. Ask the director: act ask`;
     if (typeof data.parent === 'string') {

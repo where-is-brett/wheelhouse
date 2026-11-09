@@ -703,3 +703,38 @@ test('wake read holds work with a change the director has not yet clicked, whate
   assert.match(after, /Next: act start a /);
   assert.doesNotMatch(after, /has not yet answered/);
 }));
+
+// Work `a` with its approved document unchanged, and a reader of its wake.
+async function heldScene() {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.a = approvedDoc(checkout, workView('a', { since: '2026-10-19T07:00:00.000Z' }), 'a');
+  const file = wakeFile(path.join(checkout, 'w'), 'one', { events: [ev('work-ready', 'a', 'x', { lane: 'small' })] });
+  const read = async () => (await readWakeLines({ file, project: P, client: fakeClient({ views }).client, now })).lines.join('\n');
+  return { views, read };
+}
+const CHANGE = { work: 'a', change: 'The changed text.', hash: briefHash('# a\n\nThe changed text.\n') };
+
+test('wake read ends the hold when the work is recorded again after the change was proposed', () => withHome(async () => {
+  const { views, read } = await heldScene();
+  recordInState('amendment', { ...CHANGE, doc: '.wheelhouse/work/a.change.md' }, T0 - 5000);
+  assert.match(await read(), /has not yet answered the change card/);
+  recordInState('work', views.work.a.work.data, T0 - 2000);
+  const text = await read();
+  assert.match(text, /Next: act start a /);
+  assert.doesNotMatch(text, /has not yet answered/);
+}));
+
+test('wake read does not hold work for an amendment that carries no changed text', () => withHome(async () => {
+  const { read } = await heldScene();
+  recordInState('amendment', CHANGE, T0 - 5000);
+  const text = await read();
+  assert.match(text, /Next: act start a /);
+  assert.doesNotMatch(text, /has not yet answered/);
+}));
+
+test('the wait line for an unclicked change says how it ends', () => withHome(async () => {
+  const { read } = await heldScene();
+  recordInState('amendment', { ...CHANGE, doc: '.wheelhouse/work/a.change.md' }, T0 - 5000);
+  assert.match(await read(), /Nothing to do\. If the director no longer wants the change, the front desk records the work again\./);
+}));
