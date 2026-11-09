@@ -348,6 +348,26 @@ export function setLineOf(question) {
   return found.length === 1 ? found[0] : null;
 }
 
+// The set lines of the cards that have no reply code (the director's click on the card itself is the only record they
+// earn): setup's step line, the rules found, the trust, take-over, uninstall and keep-control cards, the usage card and the
+// premium model's card.
+const SETUP_STEP_LINE = /^Set up step [0-9]{1,2} as listed, [0-9a-f]{12}$/;
+const CONFIRM_ALL_LINE = /^Confirm all [1-9][0-9]* rules? as listed, [0-9a-f]{12}$/;
+const WITHOUT_REPLY_CODE = [SETUP_STEP_LINE, CONFIRM_ALL_LINE, TRUST_LINE, TAKEOVER_LINE, SEAT_TAKEOVER_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE];
+
+// The set line and reply code of a question that the picker's hook gives a `shown` record, or null: the question carries
+// exactly one set line, that line is not one of the kinds without a reply code, and the question carries exactly one
+// reply code line, the line's own. `shownFor` in scripts/hooks/prompt-record.js decides by this, and so does the front desk
+// when it works out whether the picker can mark a card it hands out as asked.
+export function replyCodeOf(question) {
+  if (typeof question !== 'string') return null;
+  const line = setLineOf(question);
+  if (line === null || WITHOUT_REPLY_CODE.some((pattern) => pattern.test(line))) return null;
+  const code = replyCode(line);
+  const codes = question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
+  return codes.length === 1 && codes[0] === replyCodeLine(code) ? { line, code } : null;
+}
+
 // The card's text as the chat shows it to the director: its plain lines alone, without the set line and the reply code
 // at its end, which are for the signing, not for them to read. The prompt record finds the card again from these words
 // (scripts/hooks/prompt-record.js) and signs from the text the state keeps, so a click signs as it always has. A card
