@@ -266,7 +266,7 @@ export function decide(input, { env = process.env, find = projectOf, setUp = bei
   }
   let held = [];
   try {
-    held = locked(found.project, folder);
+    if (targets.length > 0) held = locked(found.project, folder);
   } catch { /* can't tell: allow */ }
   const lockedHit = Array.isArray(held) ? held.find((d) => typeof d?.file === 'string' && targets.some((t) => keyOf(realPath(t)) === keyOf(realPath(d.file)))) : undefined;
   if (lockedHit !== undefined) return answer.deny(APPROVED_LOCKED(lockedHit.work, named(lockedHit.file)));

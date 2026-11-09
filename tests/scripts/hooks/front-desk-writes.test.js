@@ -12,6 +12,8 @@ import {
 import { sessionRole } from '../../../scripts/lib/role.js';
 import { readSeat } from '../../../scripts/lib/first-mate-seat.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { inHome, keep } from '../../helpers/decisions-world.js';
+import { makeEvent } from '../../../scripts/state/events.js';
 
 const denied = (out) => out?.hookSpecificOutput?.permissionDecision === 'deny';
 
@@ -285,4 +287,30 @@ test('lockedDocuments lists open approved work with its path and approval hash',
   assert.equal(listed.find((l) => l.work === 'none'), undefined);
   assert.equal(lockedDocuments(endedViews, folder).find((l) => l.work === 'done'), undefined);
   assert.ok(listed.find((l) => l.work === 'done'));
+});
+
+test('the default lock reads the real record: an approved document is refused, and allowed once the work is reported', async () => {
+  const { folder } = project();
+  const P = 'owner__lock-demo';
+  const rel = '.wheelhouse/work/w-lock.md';
+  const text = '# Design\n\nIt does a thing.\n';
+  fs.mkdirSync(path.join(folder, '.wheelhouse', 'work'), { recursive: true });
+  fs.writeFileSync(path.join(folder, rel), text);
+  const hash = 'b'.repeat(64);
+  const at = (n) => () => new Date(Date.UTC(2026, 10, 9, 1, 0, n));
+  await inHome(async () => {
+    keep(makeEvent({ kind: 'work', data: { id: 'w-lock', title: 'Lock', lane: 'small', doc: { path: rel, hash }, visible: true, dependsOn: [] }, now: at(0) }), P);
+    keep(makeEvent({
+      kind: 'action',
+      data: { action: 'approve-work', work: 'w-lock', lane: 'small', hash, shownFirst: false, question: 'Approve w-lock?', label: 'Approve' },
+      now: at(1),
+    }), P);
+    const opts = { env: {}, find: () => ({ project: P, record: { folder } }), setUp: () => null, role: () => 'front-desk' };
+    const out = decide(write(folder, path.join(folder, rel)), opts);
+    assert.ok(denied(out), 'refused while approved and open');
+    assert.equal(out.hookSpecificOutput.permissionDecisionReason, APPROVED_LOCKED('w-lock', rel));
+    assert.equal(decide(write(folder, path.join(folder, '.wheelhouse', 'work', 'w-lock.change.md')), opts), undefined);
+    keep(makeEvent({ kind: 'report', data: { work: 'w-lock', outcome: 'merged', summary: 'Done.', rulings: [], pr: 1 }, now: at(5) }), P);
+    assert.equal(decide(write(folder, path.join(folder, rel)), opts), undefined, 'allowed once the work is reported');
+  });
 });
