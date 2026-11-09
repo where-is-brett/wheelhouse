@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  ALWAYS_READY, REWORK_LINE, SECOND_REVIEWER_LINE, balancedRouting, columnLines, columnsReadyOf, premiumViewOf, routingFrom, routingInForce,
+  ALWAYS_READY, REWORK_LINE, SECOND_REVIEWER_LINE, agentAlias, balancedRouting, columnLines, columnsReadyOf, premiumViewOf, roleOf, routingFrom, routingInForce,
 } from '../../../scripts/routing/in-force.js';
 import { resolveRouting } from '../../../scripts/routing/thoroughness.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -157,4 +157,35 @@ test('columnLines names each subagent role\'s model and effort, and the level\'s
   assert.ok(none.includes("builder: model the session's own, effort medium"));
   assert.equal(REWORK_LINE, 'When a task is sent back by its review, build it again at effort high.');
   assert.equal(SECOND_REVIEWER_LINE, 'Critical-area work gets a second fresh Lookout; both must report CLEAN.');
+});
+
+test('agentAlias gives the Agent tool\'s short name from the shape of a full model id', () => {
+  assert.equal(agentAlias('claude-alpha-4-5-20260101'), 'alpha');
+  assert.equal(agentAlias('claude-alpha-4-5'), 'alpha');
+  assert.equal(agentAlias('claude-alpha-4-5[1m]'), 'alpha', 'a context-size suffix is dropped');
+  assert.equal(agentAlias('claude-3-5-beta-20241022'), 'beta', 'the older shape puts the version first');
+  assert.equal(agentAlias('claude-3-5-beta'), 'beta');
+});
+
+test('agentAlias leaves anything it does not recognise as it was', () => {
+  for (const same of ['model-top', 'alpha', 'beta[1m]', 'claude-4-5', 'claude-', 'claude', '', 'Claude-alpha-4', 'claude-ALPHA-4']) assert.equal(agentAlias(same), same, same);
+  for (const same of [undefined, null, 7, {}]) assert.equal(agentAlias(same), same);
+});
+
+test('columnLines gives each role\'s model as the alias a full id has, and a name that is not an id as it is', () => {
+  const full = { routing: { foreman: 'model-flat' }, tiers: { pins: { mostCapable: 'claude-alpha-4-5-20260101', midSized: 'claude-3-5-beta-20241022', premium: 'model-premium' } } };
+  const lines = columnLines(routingFrom({ config: full, views: { settings: settingsAt('balanced'), columnsReady: ready('lean', 'lightest', 'premium') }, now }));
+  assert.ok(lines.includes('builder: model alpha, effort medium'), lines.join('\n'));
+  assert.ok(lines.includes('reviewer: model beta, effort high'), lines.join('\n'));
+  assert.ok(!lines.some((l) => l.includes('claude-')), 'no full id is left in the wake');
+  // An id this rule does not read is still given whole, so a made-up name reaches the wake as it is.
+  const made = columnLines(routingFrom({ config, views: { settings: settingsAt('balanced'), columnsReady: ready('lean', 'lightest', 'premium') }, now }));
+  assert.ok(made.includes('builder: model model-top, effort medium'));
+});
+
+test('roleOf is unchanged: it still gives the adapters the full id', () => {
+  const full = { routing: { foreman: 'model-flat' }, tiers: { pins: { mostCapable: 'claude-alpha-4-5-20260101', midSized: 'claude-3-5-beta-20241022', premium: 'model-premium' } } };
+  const routing = routingFrom({ config: full, views: { settings: settingsAt('balanced'), columnsReady: ready('lean', 'lightest', 'premium') }, now });
+  assert.equal(roleOf(routing, 'builder').model, 'claude-alpha-4-5-20260101');
+  assert.equal(roleOf(routing, 'reviewer').model, 'claude-3-5-beta-20241022');
 });

@@ -11,7 +11,7 @@
 //              tiers?: { pins: { mostCapable?, midSized?, premium? } },
 //              sessionMode?: string, buildCommands?: [string], watcherShape?: 1 | 2,
 //              hotFiles?: [glob], flagFiles?: [glob], pages?: [path], gitlabHosts?: [string],
-//              glabFrom?: string, signsApps?: boolean, visibility?: { paths?: [glob] },
+//              glabFrom?: string, signsApps?: boolean, localListening?: boolean, visibility?: { paths?: [glob] },
 //              agentRouting?: { <agent>: { <role>: model | null } } }
 // Other keys are kept and ignored.
 //
@@ -30,6 +30,12 @@
 // the project's settings leave it open (scripts/protection/settings.js, check 73). Left out or
 // false, the keychain stays shut. The file is a guardrail, so the switch moves only by a reviewed
 // pull request with the director's approval.
+//
+// `localListening: true` lets the commands of the project's agents listen on a local port, for a test or a preview
+// (sandbox.network.allowLocalBinding, scripts/protection/settings.js). It is all or nothing, and while it is on those
+// commands may also connect to anything else listening on this computer's local ports. Left out or false, nothing
+// may listen. Like `signsApps`, it moves only by a reviewed pull request with the director's approval, and setup
+// honours only a true that is in the last commit of the folder, on the default branch.
 //
 // The build loop's keys (build-loop design, section 11; main design, section 8),
 // filled in by readConfig when left out:
@@ -194,6 +200,7 @@ function shapeOk(c) {
   }
   if (c.pages !== undefined && !(Array.isArray(c.pages) && c.pages.length <= MOST_PAGES && c.pages.every(isPage))) return false;
   if (c.signsApps !== undefined && typeof c.signsApps !== 'boolean') return false;
+  if (c.localListening !== undefined && typeof c.localListening !== 'boolean') return false;
   if (c.preview !== undefined && !previewOk(c.preview)) return false;
   if (c.testCommand !== undefined && !testCommandOk(c.testCommand)) return false;
   if (c.checks !== undefined && !checksOk(c.checks)) return false;
