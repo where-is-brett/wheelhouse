@@ -1109,7 +1109,7 @@ test('Bash reads heredoc bodies as the shell does, and keeps refusing what they 
       'cat <<\'EOF\'\nit\'s\nEOF\ngh pr list\n\'\nEOF',
       'cat <<EOF\nit\'s\nEOF\ngh pr list\n\'\nEOF',
       'cat <<EOF\nx $(echo "\nEOF\n")',
-      'cat <<\'EOF\'\nDon\'t\nEOF',
+      'bash <<\'EOF\'\nDon\'t\nEOF', 'cat <<\'EOF\' | bash\nDon\'t\nEOF',
       'bash <<\'EOF\'\ngh pr list\nEOF', 'sh -s <<EOF\ngh pr list\nEOF', 'cat <<\'EOF\' | sh\ngh pr list\nEOF',
       'source /dev/stdin <<EOF\ngh pr list\nEOF', 'source <(cat <<\'EOF\'\ngh pr list\nEOF\n)',
       '. <(cat <<\'EOF\'\ngh pr list\nEOF\n)', 'eval "$(cat <<\'EOF\'\ngh pr list\nEOF\n)"',
@@ -1123,6 +1123,40 @@ test('Bash reads heredoc bodies as the shell does, and keeps refusing what they 
       'cat <<EOF\nhello $(echo "a b")\nEOF\necho done',
     ];
     for (const command of allowed) assert.equal(await bash(ctx, command), undefined, command);
+  });
+});
+
+test('a quoted heredoc that writes a file is data, and one a shell reads is still code', async () => {
+  await inProject(async (ctx) => {
+    const allowed = [
+      "cat > .wheelhouse/tmp/t.mjs <<'EOF'\nimport fs from 'node:fs';\nconst sample = fs.readFileSync(new URL('../../data/s.csv', import.meta.url), 'utf8');\nEOF\nnode .wheelhouse/tmp/t.mjs",
+      "cat > f.mjs <<'EOF'\nconst a = `x ${b}` ?? 'y';\nconst c = d ?? (e || `f`);\nEOF",
+      "cat > f.txt <<'EOF'\nDon't stop (really)\nEOF",
+      "tee f.sh <<'EOF'\n./missing/run.sh\nEOF",
+    ];
+    for (const command of allowed) assert.equal(await bash(ctx, command), undefined, command);
+    const refused = [
+      "bash <<'EOF'\ngh pr merge 1\nEOF",
+      "cat <<'EOF' | bash\ngh pr merge 1\nEOF",
+      "cat > f.sh <<'EOF'\ngh pr merge 1\nEOF",
+      "cat > f.sh <<'EOF'\ngit push origin main\nEOF",
+      "cat > f.sh <<'EOF'\ncat .env\nEOF",
+      "cat > f.mjs <<'EOF'\nconst a = `gh pr list`;\nEOF",
+      "sh <<'EOF'\n./missing/run.sh\nEOF",
+      "bash <<'EOF'\nconst a = `x` ?? 1;\nDon't\nEOF",
+    ];
+    for (const command of refused) assert.ok(denied(await bash(ctx, command)), command);
+  });
+});
+
+test('a script that does not exist is refused with its own message', async () => {
+  await inProject(async (ctx) => {
+    const out = await bash(ctx, 'bash ./not-there.sh');
+    assert.ok(denied(out));
+    assert.match(out.hookSpecificOutput.permissionDecisionReason, /not there when the command starts \(\.\/not-there\.sh\)/);
+    assert.doesNotMatch(out.hookSpecificOutput.permissionDecisionReason, /host tools/);
+    const host = await bash(ctx, 'gh pr list');
+    assert.match(host.hookSpecificOutput.permissionDecisionReason, /host tools/);
   });
 });
 
