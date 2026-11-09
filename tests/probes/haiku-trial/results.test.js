@@ -24,6 +24,15 @@ test('runFolder is under .wheelhouse-trials', () => {
   assert.deepEqual(LABELS, ['kit fault', 'Wheelhouse fault', 'Haiku floor']);
 });
 
+test('writeSummary names the model the run was on, Haiku unless it said otherwise', () => {
+  const dir = scratch();
+  const file = path.join(dir, 'docs', 'trials', 'a.md');
+  assert.match(writeSummary({ file, date: '2026-11-08', rows, score, audit, usage }), /every assistant turn ran on Haiku/);
+  const sonnet = writeSummary({ file, date: '2026-11-08', rows, score, audit, usage, model: 'sonnet' });
+  assert.match(sonnet, /every assistant turn ran on Sonnet/);
+  assert.match(sonnet, /Model: Sonnet/);
+});
+
 test('writeSummary has the six sections and labels each failure', () => {
   const dir = scratch();
   const file = path.join(dir, 'docs', 'trials', '2026-11-08-haiku-trial-results.md');

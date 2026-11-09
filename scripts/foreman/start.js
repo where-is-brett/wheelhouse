@@ -42,6 +42,7 @@ import {
   pidAlive, processStartTime, runningFile, sessionEnv, watcherFolder, writeJsonFile,
 } from '../watcher/waker.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { sameStart, startSeconds } from '../lib/start-time.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -114,7 +115,8 @@ export async function stopWatcher(project, { alive, now, kill = process.kill, st
   stateDir(project); // a project name that is not a folder name throws here
   const found = watcherPid(project, { alive, now });
   if (found === null) return { stopped: false, why: 'not running' };
-  const started = Date.parse((await startTime(found.pid)) ?? '');
+  const seconds = startSeconds(await startTime(found.pid));
+  const started = seconds === null ? NaN : seconds * 1000;
   if (!Number.isFinite(started) || started > found.since + SECOND_MS) return { stopped: false, why: 'its process could not be told apart from another, so it was left running' };
   return askToStop(found.pid, kill);
 }
@@ -135,7 +137,7 @@ export async function stopForeman(project, { alive = pidAlive, kill = process.ki
   const pid = record?.pid;
   if (record?.state !== 'running' || !Number.isInteger(pid) || pid <= 0 || !alive(pid)) return { stopped: false, why: 'not running' };
   const now = typeof record.startTime === 'string' ? await startTime(pid) : null;
-  if (now === null || now !== record.startTime) return { stopped: false, why: 'its process could not be told apart from another, so it was left running' };
+  if (now === null || !sameStart(now, record.startTime)) return { stopped: false, why: 'its process could not be told apart from another, so it was left running' };
   return askToStop(pid, kill);
 }
 

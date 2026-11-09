@@ -882,9 +882,10 @@ test('a findings wake says in Wheelhouse\'s words whether the review holds the m
   const prs = (p) => ({ prs: { 7: { work: 'w', head: HEAD, ci: 'success', mergeable: 'yes', ...p } } });
   const events = (p) => diff({ prs: {} }, { ...prs(p), events: [], features: {}, testMerges: [], stop: false, at: '2026-11-06T00:00:00.000Z' }, {});
   const held = events({ review: 'findings', findings: 3, blocking: null }).find((e) => e.type === 'findings');
-  assert.match(held.detail.next, /signed review of aaaaaaa holds the merge \(3 findings; no severity count\)\. Fix every finding it lists, push, then dispatch wheelhouse:reviewer on the new head\. You can't defer these\./);
+  assert.match(held.detail.next, /signed review of aaaaaaa holds the merge \(3 findings; no severity count\)\. Fix the BLOCKER and HIGH findings it lists and defer its MEDIUM and LOW ones as minors, push, then dispatch wheelhouse:reviewer on the new head\. You can't defer the blocking ones\./);
   const some = events({ review: 'findings', findings: 3, blocking: 1 }).find((e) => e.type === 'findings');
   assert.match(some.detail.next, /1 of them BLOCKER or HIGH/);
+  assert.match(some.detail.next, /Fix the 1 BLOCKER or HIGH finding it lists and defer its MEDIUM and LOW ones as minors/, 'a mixed review: fix the blocking, defer the minors');
   const minor = events({ review: 'clean', findings: 2, blocking: 0 });
   assert.match(minor.find((e) => e.type === 'review-passed').detail.next, /leaves only minor findings; they're deferred and the merge goes ahead; nothing to do\./);
   assert.ok(minor.some((e) => e.type === 'merge-ready'), 'and the merge is raised');

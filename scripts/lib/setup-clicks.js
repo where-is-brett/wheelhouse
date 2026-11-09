@@ -295,11 +295,43 @@ export function sameWords(text) {
     .replace(/…/g, '...').replace(/[  ]/g, ' ').replace(/[ \t]+$/gm, '');
 }
 
-// One key for a card, read as sameWords reads its words; null when it isn't a card.
+// What the question tool's description tells the model to put on the recommended option's label.
+export const RECOMMENDED_SUFFIX = ' (Recommended)';
+
+// A label without a trailing "(Recommended)"; as it is when that would leave nothing, or when it isn't a string.
+export function bareLabel(label) {
+  if (typeof label !== 'string' || !label.endsWith(RECOMMENDED_SUFFIX) || label.length === RECOMMENDED_SUFFIX.length) return label;
+  return label.slice(0, -RECOMMENDED_SUFFIX.length);
+}
+
+// One key for a card, read as sameWords reads its words (and its labels without a trailing "(Recommended)");
+// null when it isn't a card.
 export function cardKey(card) {
   const shown = shownCard(card);
   if (shown === null) return null;
-  return JSON.stringify({ question: sameWords(shown.question), header: sameWords(shown.header), options: shown.options.map((o) => ({ label: sameWords(o.label), description: sameWords(o.description) })) });
+  return JSON.stringify({ question: sameWords(shown.question), header: sameWords(shown.header), options: shown.options.map((o) => ({ label: sameWords(bareLabel(o.label)), description: sameWords(o.description) })) });
+}
+
+// The parts in which a card asked differs from the one stored, as clauses for a log line: empty when none. Read as cardKey
+// reads them. Never quotes a description or typed text, only the headers and labels, which are the card's own words.
+export function cardDifferences(asked, stored) {
+  const a = shownCard(asked);
+  const b = shownCard(stored);
+  if (a === null || b === null) return [];
+  const out = [];
+  if (sameWords(a.question) !== sameWords(b.question)) out.push('its question is not worded as printed');
+  if (sameWords(a.header) !== sameWords(b.header)) out.push(`its header is "${a.header}", and the card's is "${b.header}"`);
+  if (a.options.length !== b.options.length) {
+    out.push(`it has ${a.options.length} options, and the card has ${b.options.length}`);
+    return out;
+  }
+  a.options.forEach((o, i) => {
+    const mine = sameWords(bareLabel(o.label));
+    const theirs = sameWords(bareLabel(b.options[i].label));
+    if (mine !== theirs) out.push(`option ${i + 1}'s label is "${mine}", and the card's is "${theirs}"`);
+    if (sameWords(o.description) !== sameWords(b.options[i].description)) out.push(`option ${i + 1}'s description is not worded as printed`);
+  });
+  return out;
 }
 
 // A shown record kept in setup/shown/, or null when the file isn't one.
@@ -338,6 +370,46 @@ export function shownHash({ cwd, step, h12, card }) {
   return { runId: chosen.runId, hash: chosen.hash };
 }
 
+// The newest of the records of the nearest folder holding `cwd`, or null when there are none.
+function nearestNewest(found, cwd) {
+  const here = found.filter((r) => holds(r.folder, cwd));
+  if (here.length === 0) return null;
+  const depth = (r) => keyOf(realPath(r.folder) ?? '').length;
+  const nearest = Math.max(...here.map(depth));
+  return here.filter((r) => depth(r) === nearest).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
+}
+
+// The record shownHash selects, without the comparison of the card: the shown record for `step` whose list's hash starts
+// with `h12`, of the nearest folder holding `cwd`, newest; null when there is none.
+export function shownNear({ cwd, step, h12 }) {
+  if (typeof cwd !== 'string' || !/^[0-9a-f]{12}$/.test(String(h12))) return null;
+  let names;
+  try {
+    names = fs.readdirSync(shownDir()).filter((n) => n.endsWith('.json'));
+  } catch {
+    return null;
+  }
+  return nearestNewest(names.map((n) => readShown(path.join(shownDir(), n))).filter((r) => r !== null && r.step === step && r.hash.startsWith(h12)), cwd);
+}
+
+// The first line of a text that isn't blank, trimmed, as sameWords reads it.
+const firstLineOf = (text) => sameWords(String(text)).split('\n').map((l) => l.trim()).find((l) => l !== '') ?? '';
+
+// The asked record of the nearest folder holding `cwd` whose question's first non-blank line is the asked card's, newest;
+// null when there is none. For naming how a card setup asked differs from the one a click was on.
+export function askedLike({ cwd, card }) {
+  const asked = shownCard(card);
+  if (typeof cwd !== 'string' || asked === null) return null;
+  const line = firstLineOf(asked.question);
+  let names;
+  try {
+    names = fs.readdirSync(askedDir()).filter((n) => n.endsWith('.json'));
+  } catch {
+    return null;
+  }
+  return nearestNewest(names.map((n) => readAsked(path.join(askedDir(), n))).filter((r) => r !== null && firstLineOf(r.card.question) === line), cwd);
+}
+
 // An asked record kept in setup/asked/, or null when the file isn't one.
 export function readAsked(file) {
   try {
@@ -370,6 +442,46 @@ export function askedFor({ cwd, card }) {
   const depth = (r) => keyOf(realPath(r.folder) ?? '').length;
   const nearest = Math.max(...found.map(depth));
   return found.filter((r) => depth(r) === nearest).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
+}
+
+// The cards setup showed (the plan card, with its set line) and asked (its own questions) for the folder holding `cwd`, in the
+// shape of a waiting card so the card check's matching takes them: { card: { id, data }, decided: null, setup: true }. Only the
+// records of `runId` when given, else of the newest run in the nearest folder holding `cwd`. Ids are `setup:<run>-<step>` and
+// `setup:<run>-<step>-<id>`. Never throws: a folder that can't be read gives [].
+export function setupCardsFor(cwd, runId) {
+  try {
+    if (typeof cwd !== 'string') return [];
+    const read = (dir, reader) => {
+      let names = [];
+      try {
+        names = fs.readdirSync(dir).filter((n) => n.endsWith('.json'));
+      } catch { /* none kept */ }
+      return names.map((n) => reader(path.join(dir, n))).filter((r) => r !== null && holds(r.folder, cwd));
+    };
+    let shown = read(shownDir(), readShown);
+    let asked = read(askedDir(), readAsked);
+    const all = [...shown, ...asked];
+    let run = RUN_ID.test(String(runId)) ? runId : null;
+    if (run === null) {
+      if (all.length === 0) return [];
+      const depth = (r) => keyOf(realPath(r.folder) ?? '').length;
+      const nearest = Math.max(...all.map(depth));
+      run = all.filter((r) => depth(r) === nearest).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1).runId;
+    }
+    shown = shown.filter((r) => r.runId === run);
+    asked = asked.filter((r) => r.runId === run);
+    const make = (id, c) => ({
+      card: { id, data: { question: c.question, header: c.header, options: c.options.map((o) => o.label), descriptions: c.options.map((o) => o.description) } },
+      decided: null,
+      setup: true,
+    });
+    return [
+      ...shown.map((r) => make(`setup:${r.runId}-${r.step}`, shownCard(r.card))),
+      ...asked.map((r) => make(`setup:${r.runId}-${r.step}-${r.id}`, shownCard(r.card))),
+    ];
+  } catch {
+    return [];
+  }
 }
 
 // ---- Uninstall's card and click (ruling R90) ----
