@@ -440,6 +440,7 @@ test('the playbook offers a GitLab or GitHub connector once, recommends Not now 
   // yes is recorded in the small lane.
   assert.match(section, /`record work` in the `small` lane with `visible: true`/);
   assert.doesNotMatch(section, /`quick` lane/);
+  assert.match(section, /ending with the `wheelhouse-facts` block, all false/);
   assert.match(section, /write tools come with it/);
   assert.match(section, /I never depend on it/);
   assert.ok(CARD_KINDS.includes('question'));
@@ -506,4 +507,9 @@ test('front-desk skill: names take the helm, I\'ll steer it and hand back', () =
   assert.match(playbook, /Bosun and the helpers a session starts can't be taken/);
   assert.match(playbook, /"why" about its decisions works as ever/);
   assert.match(read('commands/logbook.md'), /helm take <piece>/);
+});
+
+test('the front desk skips brainstorming\'s chat questions and sends any left through card', () => {
+  assert.match(playbook, /skip brainstorming's questions/);
+  assert.match(playbook, /goes through `card`, never chat/);
 });

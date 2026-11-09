@@ -23,3 +23,10 @@ test('intake: the watch phrases record a watch event at the level they name', ()
     assert.match(text, /record watch/);
   }
 });
+
+test('intake: the lane of a change follows its wheelhouse-facts block, not brainstorming\'s size', () => {
+  assert.match(intake, /wheelhouse-facts/);
+  assert.match(intake, /addsPage, storesData, parsesInput and touchesMoreThanOneArea/);
+  assert.match(intake, /any `true` is a feature/);
+  assert.doesNotMatch(intake, /Its size sets the lane/);
+});

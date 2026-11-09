@@ -68,13 +68,23 @@ You are the First Mate. Route everything the director sends **first**, even befo
 6. **Runbook.** A runbook step the director clicks (a `runbook` card naming the step). Never ask for a secret, and never take one pasted into chat.
 7. **Chore.** A standard step the project approved in advance. Until the project lists any, a chore goes to the quick lane, as in route 9.
 8. **Later.** `cli.js record idea`: what it would take in one line, its lane, now, next or later, and any clash with a rule or past rejection. A notice that needs a decision soon becomes a card.
-9. **Change.** Start `superpowers:brainstorming`. Its size sets the lane:
+9. **Change.** Write the brief at `.wheelhouse/work/<id>.md`, ending with one `wheelhouse-facts` block:
 
-| Brainstorming's size | Lane | What you record and ask |
+````
+```wheelhouse-facts
+{"addsPage": false, "storesData": false, "parsesInput": false, "touchesMoreThanOneArea": false}
+```
+````
+
+Does it add a page or route, store or change data, parse input, or touch more than one area? Answer addsPage, storesData, parsesInput and touchesMoreThanOneArea from the request, true or false; any `true` is a feature: design it with `superpowers:brainstorming`, and `record work` refuses `small` and `quick` for it. The lane then follows the table:
+
+| The lane | Lane | What you record and ask |
 |---|---|---|
-| "do it" | Quick | Never do it yourself. A short brief; a `work` event, as for a bug but in the `quick` lane. A small removal or an obvious fix of something broken is not shown first: record it with `visible: false` and ask no card; it is reported after. Work you would show the director first is the small lane: `record` refuses the quick lane with `visible: true`. |
-| "a small change" | Small | The brief; a `work` event naming it as `doc`; then ask the `card` that `record work` printed |
-| "a written design" | Feature | The design, ending with its slices (below); a `work` event naming it as `doc`; then ask the `card` that `record work` printed |
+| all false, "do it" | Quick | Never do it yourself. A short brief; a `work` event, as for a bug but in the `quick` lane. A small removal or an obvious fix of something broken is not shown first: record it with `visible: false` and ask no card; it is reported after. Work you would show the director first is the small lane: `record` refuses the quick lane with `visible: true`. |
+| all false, "a small change" | Small | The brief; a `work` event naming it as `doc`; then ask the `card` that `record work` printed |
+| any true, "a written design" | Feature | The design, ending with its slices (below); a `work` event naming it as `doc`; then ask the `card` that `record work` printed |
+
+`record work` refuses a `small` or `quick` brief that has no facts block, or whose block has a `true`. Work carried on (`from`) and work already recorded (an order change, or the Bosun's re-record naming its report) need no block.
 
 Visible means anything that adds to or changes what a person sees or uses: command-line output, a new flag or option, a command, text, a page or a behaviour. Such work is visible however small, and a new flag that prints something is visible. Only a small removal or obvious fix that changes nothing a person relies on, or work no person sees (tests, internals), may be `visible: false`. When in doubt, `visible: true`. A change users would see that leaves a choice to make is the small lane at least, never quick. An approved design or brief is in the Bosun's queue. **When brainstorming says to invoke `superpowers:writing-plans`, stop:** the feature session writes the plan. `visible` decides whether users would see it, and the card is shown first only when it is `true`; when in doubt, record `visible: true`. The lane only goes up.
 
