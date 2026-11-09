@@ -1133,6 +1133,23 @@ test('cards re-offers the approve-work card for open work that waits for approva
   });
 });
 
+test('cards offers the approve-work card for the new hash once act reapprove has recorded the changed document', async () => {
+  await inHome(async () => {
+    const CHANGED_DOC = '0123456789abcdef'.repeat(4);
+    // As `act reapprove` leaves the record: the director approved DOC, then a work event names the changed document, so no
+    // approval stands for the work, and its old card is in the record.
+    const approved = makeEvent({ kind: 'action', now: () => T(2), data: { action: 'approve-work', work: 'statement-import', lane: 'small', hash: DOC, shownFirst: true, question: 'as shown', label: 'Approve' } });
+    const reapproved = unaskedWork('statement-import', { doc: { path: 'docs/statement-import.md', hash: CHANGED_DOC } });
+    reapproved.at = T(3).toISOString();
+    const helper = fakeHelper({ events: [unaskedWork(), approved, reapproved] });
+    const out = await run(helper, ['cards']);
+    assert.equal(out.code, 0, out.err);
+    assert.equal(out.json.problems, undefined);
+    assert.equal(cardsOf(helper).length, 1);
+    assert.equal(cardsOf(helper)[0].data.line, approveWorkLine('statement-import', 'small', CHANGED_DOC, { shownFirst: true }));
+  });
+});
+
 test('cards writes no new approve-work card for work whose card exists in any state', async () => {
   await inHome(async () => {
     const first = fakeHelper({ events: [unaskedWork()] });

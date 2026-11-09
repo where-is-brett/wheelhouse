@@ -20,6 +20,30 @@ export function stuckAskCommand(work, { phase = null, still = 0, findings = fals
   return `act ask ${work} --what '${q.what}' --why '${q.why}' ${opts} --recommend '${q.recommendation}' --level ${q.level}`;
 }
 
+// The question for work whose approved document has changed since the director approved it, and the command that puts it:
+// the restore is offered only while a copy of the approved text was kept.
+export function driftQuestion(work, { restorable = false } = {}) {
+  const restore = 'Restore the approved text';
+  const reapprove = 'Re-approve the change';
+  return {
+    what: `The approved document of ${work} has changed since you approved it. What should happen?`,
+    why: 'Nothing starts from a document you did not approve. The work holds its place while it waits.',
+    options: [
+      ...(restorable ? [{ label: restore, says: `act restore ${work}` }] : []),
+      { label: reapprove, says: `act reapprove ${work}` },
+      { label: 'Wait', says: 'Nothing to do now; the Bosun raises it again if the document is still different' },
+    ],
+    recommendation: restorable ? restore : reapprove,
+    level: 3,
+  };
+}
+
+export function driftAskCommand(work, { restorable = false } = {}) {
+  const q = driftQuestion(work, { restorable });
+  const opts = q.options.map((o) => `--option '${o.label}=${o.says}'`).join(' ');
+  return `act ask ${work} --what '${q.what}' --why '${q.why}' ${opts} --recommend '${q.recommendation}' --level ${q.level} --about start`;
+}
+
 export const ASK_HELP = [
   'act ask <work> --what <the question> --why <why it comes to the director> --option "<label>=<what it means>" (two or more) --recommend <one of the labels> --level <1 to 4>',
   'Every flag takes a value; give --option once for each choice. Type it all on one line. For example:',

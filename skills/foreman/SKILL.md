@@ -45,6 +45,7 @@ A line with `Next: act start W` names a document. Read that, and nothing else. T
 - **Missing done lines, a feature's appetite,** or anything unclear: `act ask` instead.
 - **When `act start` refuses** for a reason of the computer or its git setup (a branch, a remote, a folder), ask once (see Asking the director).
 - **Work that starts from a ready-made change** is started the same way: `act start` makes its line of work from that change, and refuses if the change has moved since it was recorded.
+- **A document changed since its approval:** the wake prints the `act ask` command; run it as printed. After the director answers, run the `act` command their option names.
 
 ## Asking the director
 

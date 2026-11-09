@@ -8,6 +8,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { clashFor, loadViews, main, measures, measuresFile, readWakeLines, recordDone } from '../../../scripts/foreman/wake.js';
 import { foremanCommands } from '../../../scripts/foreman/tools.js';
+import { driftAskCommand } from '../../../scripts/foreman/ask-help.js';
+import { keepApprovedText } from '../../../scripts/state/approved-text.js';
 import { briefHash, featurePaths, writeStatus } from '../../../scripts/feature/files.js';
 import { LANE_APPETITE } from '../../../scripts/lib/build-loop.js';
 import { liftStop, setStop } from '../../../scripts/lib/stop.js';
@@ -180,7 +182,7 @@ test('wake read names the approved document each start reads from, and lists the
   // Small work's document sets no appetite (only a feature's pitch does, design section 7.4): the wake gives the lane's.
   const small = LANE_APPETITE.small;
   assert.match(text, new RegExp(`^- start a \\(small\\): approved\\. Next: act start a --goal … --done … --appetite-sessions ${small.sessions} --appetite-tokens ${small.tokens} \\(from its approved document, ${a}; the small lane's appetite\\)$`, 'm'));
-  assert.match(text, new RegExp(`^- start b \\(small\\): approved\\. Its document ${esc(elsewhere)} is not the one approved: it has changed since\\. Ask the director: act ask$`, 'm'));
+  assert.match(text, new RegExp(`^- start b \\(small\\): approved\\. Its document ${esc(elsewhere)} is not the one approved: it has changed since\\. Ask the director in this one command: ${esc(driftAskCommand('b', { restorable: false }))}$`, 'm'));
   assert.match(text, /^- start c \(small\): approved\. It names no document to read its goal from\. Ask the director: act ask$/m);
   assert.match(text, /^Rulings in force: 1; give each that applies with --ruling <id>\.$/m);
   assert.match(text, /^- ruling r-one: Dates read day month year\.$/m);
@@ -633,4 +635,52 @@ test('a merged work whose status reads done, with the host agreeing, holds no fi
   assert.equal(await clash({ prState: { ok: false, refused: 'no answer' } }), false, 'no word from the host: it still clashes');
   fs.writeFileSync(featurePaths(wt).pr, `${JSON.stringify({ pr: 4, plan: 'p.md' })}\n`);
   assert.equal(await clash(host('merged')), false, 'not marked merged: it still clashes');
+}));
+
+// Approved work whose document changed after the click, with the text approved kept or not.
+async function driftScene({ keep }) {
+  const checkout = await project();
+  const approved = '# a\n\nThe text the director approved.\n';
+  const views = emptyViews();
+  views.work.a = approvedDoc(checkout, workView('a', { since: '2026-10-19T07:00:00.000Z' }), 'a', approved);
+  if (keep) keepApprovedText(P, approved);
+  const changed = `${approved}A line added afterwards.\n`;
+  fs.writeFileSync(path.join(checkout, 'docs', 'specs', 'a.md'), changed);
+  const file = wakeFile(path.join(checkout, 'w'), 'one', { events: [ev('work-ready', 'a', 'x', { lane: 'small' })] });
+  const read = async (v = views) => (await readWakeLines({ file, project: P, client: fakeClient({ views: v }).client, now })).lines.join('\n');
+  return { checkout, views, changed, read };
+}
+
+test('wake read asks the director to restore or re-approve a document that changed after its approval', () => withHome(async () => {
+  const { read } = await driftScene({ keep: true });
+  const text = await read();
+  const command = driftAskCommand('a', { restorable: true });
+  assert.ok(text.split('\n').some((l) => l.endsWith(`Ask the director in this one command: ${command}`)), text);
+  assert.ok(command.includes('Restore the approved text') && command.includes('Re-approve the change') && command.endsWith('--about start'));
+}));
+
+test('wake read offers only Re-approve and Wait for a changed document with no kept copy', () => withHome(async () => {
+  const { read } = await driftScene({ keep: false });
+  const text = await read();
+  const command = driftAskCommand('a', { restorable: false });
+  assert.ok(text.split('\n').some((l) => l.endsWith(command)), text);
+  assert.ok(command.includes('Re-approve the change') && command.includes('Wait') && !command.includes('Restore the approved text'));
+}));
+
+test('wake read waits, with no ask command, for a change the director has not yet answered', () => withHome(async () => {
+  const { read, changed } = await driftScene({ keep: true });
+  recordInState('amendment', { work: 'a', change: 'A line added afterwards.', hash: briefHash(changed), doc: '.wheelhouse/work/a.change.md' }, T0 - 1000);
+  const text = await read();
+  assert.match(text, /It waits: the director has not yet answered the change card for it\. Nothing to do/);
+  assert.doesNotMatch(text, /act ask a /);
+  assert.doesNotMatch(text, /Ask the director in this one command/);
+}));
+
+test('wake read keeps the old line for a document that cannot be read', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.gone = workView('gone', { doc: { path: 'docs/specs/missing.md', hash: 'c'.repeat(64) } });
+  const file = wakeFile(path.join(checkout, 'w'), 'one', { events: [ev('work-ready', 'gone', 'x', { lane: 'small' })] });
+  const text = (await readWakeLines({ file, project: P, client: fakeClient({ views }).client, now })).lines.join('\n');
+  assert.match(text, /can't be read\. Ask the director: act ask$/m);
 }));

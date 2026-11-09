@@ -47,6 +47,10 @@
 //   amend <work> <hash>   applies the director's approved amendment with that
 //       hash; each wake names its own, so several are applied in turn. Work
 //       not started yet needs nothing: the start reads the amended document.
+//   restore <work>  for work not started whose approved document has changed since the click: puts the kept text
+//       of the approval back over it. Refuses when none was kept, or when the change waits for its card.
+//   reapprove <work>  for the same work: records the document as it now stands in a `work` event, which has no
+//       approval, so the First Mate offers its approval card. Run again, it records nothing more.
 //   merge <work>    brings the pull request up to date, merges it, marks the
 //       merge in pr.json and writes the feature's status again, as its status
 //       hook would, so the watcher sees it move to the next slice or to done.
@@ -125,9 +129,10 @@ import path from 'node:path';
 import { PLUGIN_ROOT } from './tools.js';
 import {
   ForemanError, NO_PLAN, PLANS_WHILE_HELD, SAYS_CHARS, TamperedBrief, checkoutOf, clashFor, featureOf, haltFor, haltOf, laneOf, loadConfig, loadViews, oneLine,
-  builderCapOf, openPrWait, pausedBy, planOf, projectHere, queueToStart, queuedAgain, recordedBriefOf, slotFor, stateEvents, waitText, whyText, worktreeOf,
+  builderCapOf, currentFeatureOf, documentOf, openPrWait, pausedBy, planOf, projectHere, queueToStart, queuedAgain, recordedBriefOf, slotFor, stateEvents, waitText, whyText, worktreeOf,
 } from './wake.js';
 import { questionProblem, shapeProblems } from '../cards/compose.js';
+import { approvedText, installText } from '../state/approved-text.js';
 import { amendBrief, renderBrief } from '../feature/brief.js';
 import { approvedDocument, placeApproved } from '../feature/approved.js';
 import { report as reportCheck, STUCK_AFTER } from '../feature/cli.js';
@@ -1259,6 +1264,49 @@ async function amend(ctx, work, rest) {
   ctx.say(`Amended ${work}'s brief to version ${parseBrief(next).fields.version} (${short(hash)}); its session is woken with brief-changed.`);
 }
 
+// --- restore and reapprove ---
+
+// The drifted document of work not started, for `restore` and `reapprove`: `{ entry, doc, approved }`, where `approved`
+// is the hash the director approved. Refuses work that has started, one with no document, one whose document is not
+// the approved one, and one whose change still waits for its card.
+function driftedDocument(ctx, views, work) {
+  const entry = views.work[work];
+  if (!isPlain(entry?.work?.data)) refuse(`There is no work named ${work} in state`);
+  if (currentFeatureOf(views, work) !== null) refuse(`${work} has started, so its document is not restored or approved again here`);
+  const doc = documentOf(ctx.project, views, work);
+  if (doc === null) refuse(`${work} names no document`);
+  if (doc.drift === null) refuse(`${work}'s document ${doc.problem ?? 'is the one the director approved'}, so there is nothing to restore or approve again`);
+  if (doc.drift.pending) refuse(`${work}'s document ${doc.problem}`);
+  return { entry, doc, approved: typeof entry.approval?.hash === 'string' ? entry.approval.hash : entry.work.data.doc.hash };
+}
+
+async function restore(ctx, work, rest) {
+  if (rest.length > 0) refuse('restore takes only the work id');
+  const { doc, approved } = driftedDocument(ctx, await ctx.views(), work);
+  const text = approvedText(ctx.project, approved);
+  if (text === null) refuse(`No copy of the approved text was kept for ${work} (${short(approved)}): re-approve the change, or ask the director`);
+  installText(doc.file, text);
+  ctx.say(`Restored ${work}'s document to the text the director approved (${short(approved)}).`);
+}
+
+async function reapprove(ctx, work, rest) {
+  if (rest.length > 0) refuse('reapprove takes only the work id');
+  const views = await ctx.views();
+  const entry = views.work[work];
+  const recorded = entry?.work?.data;
+  // The latest work event holds the document's text already (no approval stands for it): nothing more to record.
+  if (isPlain(recorded?.doc) && entry.approval === undefined && currentFeatureOf(views, work) === null && documentOf(ctx.project, views, work)?.problem === null) {
+    ctx.say(`The changed document of ${work} is recorded already (${short(recorded.doc.hash)}). It has no approval yet: the First Mate offers its approval card.`);
+    return;
+  }
+  const { doc } = driftedDocument(ctx, views, work);
+  const text = readCapped(doc.file, 1024 * 1024);
+  if (text === null) refuse(`${work}'s document can't be read`);
+  const hash = briefHash(text);
+  await ctx.write('work', { ...recorded, doc: { path: recorded.doc.path, hash } });
+  ctx.say(`Recorded the changed document of ${work} (${short(hash)}). It has no approval yet: the First Mate offers its approval card.`);
+}
+
 // --- merge and close ---
 
 // The feature's status rebuilt from its files, and written when it changed,
@@ -1653,7 +1701,7 @@ async function restart(ctx, work, rest) {
 // --- The command line ---
 
 const COMMANDS = {
-  start, 'plan-ready': planReady, build, pause, resume, question, 'extra-plan': extraPlan, 'stuck-note': stuckNote, ask, amend, merge, close, restart,
+  start, 'plan-ready': planReady, build, pause, resume, question, 'extra-plan': extraPlan, 'stuck-note': stuckNote, ask, amend, restore, reapprove, merge, close, restart,
 };
 const USAGE = `Commands: ${Object.keys(COMMANDS).join(', ')}, each followed by the work id`;
 
