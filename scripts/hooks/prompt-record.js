@@ -813,9 +813,9 @@ export { sendPending, BUDGET_MS };
 // card check counts: they name what its set line decides, so a line the director wasn't shown signs only what they read.
 export function storedText(project, q, { events = listEvents(stateDir(project), { report: () => {} }), waiting } = {}) {
   if (typeof q?.question !== 'string' || !Array.isArray(q.options) || setLineOf(q.question) !== null) return null;
-  const labels = JSON.stringify(q.options.map((o) => o?.label));
+  const labels = JSON.stringify(q.options.map((o) => bareLabel(o?.label)));
   const texts = [...new Set(events.filter((e) => e.kind === 'card' && typeof e.data?.question === 'string' && e.data.question !== q.question
-    && chatCopy(e.data.question) === q.question && JSON.stringify(e.data.options) === labels).map((e) => e.data.question))]
+    && chatCopy(e.data.question) === q.question && JSON.stringify(Array.isArray(e.data.options) ? e.data.options.map(bareLabel) : e.data.options) === labels).map((e) => e.data.question))]
     .filter((text) => cardProblems(text).length === 0);
   if (texts.length <= 1) return texts[0] ?? null;
   const live = new Set((waiting ?? localViews(project, ['waiting'])?.waiting ?? []).map((c) => c?.data?.question));

@@ -147,6 +147,21 @@ test('Approve on a card asked in the chat\'s words is signed as a click on the c
   });
 });
 
+test('a chat-copy card with a "(Recommended)" label keeps its stored text, and the click is recorded on the card', async () => {
+  await withHome(async () => {
+    const composed = APPROVE_7(FULL);
+    keepEvent(makeEvent({ kind: 'card', data: composed.card, now: () => NOW }));
+    const copy = asCopy(composed);
+    const shown = { ...copy, options: copy.options.map((o, i) => (i === 0 ? { ...o, label: `${o.label} (Recommended)` } : o)) };
+    const asked = { cwd: '/x', hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [shown], answers: { [shown.question]: shown.options[0].label } } };
+    assert.equal(storedText(P, shown), composed.card.question);
+    const c = fake();
+    await decide(asked, deps(c));
+    assert.deepEqual(c.calls.write.map((w) => [w.kind, w.data.question, w.data.label]), [['card-answer', composed.card.question, 'Approve']]);
+    assert.ok(kinds(c).includes('approval'), kinds(c).join());
+  });
+});
+
 test('a kept card whose words don\'t name what its hidden line decides is never signed from its chat copy', async () => {
   await withHome(async () => {
     // A card written by hand: harmless plain lines, and a runbook line the chat copy would hide.
