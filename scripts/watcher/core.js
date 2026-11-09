@@ -412,12 +412,12 @@ const reviewNeededText = (pr, head) => `Wheelhouse checked its record of signed 
 const reviewAgainText = (pr, head) => `Second notice. Wheelhouse checked its record of signed reviews again: ${head} still has no review, and the pull request cannot merge without one. `
   + `Dispatch wheelhouse:reviewer now with pr: ${pr} on ${head}. Do nothing else first, and don't stop until it has run.`;
 // What the session reads in a findings wake or a review-passed note, decided here from the signed review's counts: it
-// never judges severity itself. A review that holds the merge says to fix every finding; one that leaves only minors
+// never judges severity itself. A review that holds the merge says to fix its blocking findings and defer any minors; one that leaves only minors
 // says they are deferred.
 const short = (head) => String(head ?? '').slice(0, 7);
 export const findingsText = (head, p) => `Wheelhouse's signed review of ${short(head)} holds the merge (${p.findings ?? 'an unknown number of'} findings; `
   + `${Number.isInteger(p.blocking) ? `${p.blocking} of them BLOCKER or HIGH` : 'no severity count'}). `
-  + "Fix every finding it lists, push, then dispatch wheelhouse:reviewer on the new head. You can't defer these.";
+  + `Fix the ${Number.isInteger(p.blocking) ? `${p.blocking} BLOCKER or HIGH finding${p.blocking === 1 ? '' : 's'}` : 'BLOCKER and HIGH findings'} it lists and defer its MEDIUM and LOW ones as minors, push, then dispatch wheelhouse:reviewer on the new head. You can't defer the blocking ones.`;
 export const minorsText = (head) => `The review of ${short(head)} leaves only minor findings; they're deferred and the merge goes ahead; nothing to do.`;
 
 // The PRs this observation names, each against its last known state.
