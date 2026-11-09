@@ -253,9 +253,16 @@ function optionsOf(found, recommendation) {
     if (/[^\S ]| {2}/.test(says) || says.length > SAYS_CHARS) {
       refuse(`--option "${label}" must say what it means on one line, with single spaces, in at most ${SAYS_CHARS} characters`);
     }
+    // A placeholder is not a command: the director would be offered a line that cannot run.
+    if (/…|(?:^|\s)\.\.\.(?:\s|$)/.test(says)) {
+      refuse(`--option "${label}" has a placeholder (… or ...) where a value goes. Write the real command, with its real values, or the word waiting. If the values are in the work's document, read it and start the work with \`act start\` instead of asking`);
+    }
     return { label, says };
   });
   if (options.length < 2) refuse('Give two or more options, each with --option "<label>=<what it means>"');
+  if (options.every((o) => o.says === 'waiting')) {
+    refuse('Every option is "waiting", so the director would have nothing to decide. Ask only when an option does something: give each a real command (act start …, act merge …) with its values, or do not ask and let the work wait');
+  }
   if (new Set(options.map((o) => o.label)).size !== options.length) refuse('Each option needs its own label');
   if (!options.some((o) => o.label === recommendation)) refuse(`--recommend must be the label of one option (${options.map((o) => o.label).join(', ')})`);
   return options;
@@ -1659,12 +1666,12 @@ const LANES_UP = Object.freeze(['quick', 'bug', 'small', 'feature']);
 
 // The question to put to the director when work ends partial or blocked (ruling
 // R102): queue it again, in the small lane or a bigger one (never a smaller
-// lane than its own), or drop it. Each option says `waiting`: the front desk
+// lane than its own), or drop it. Each option says what the front desk does: it
 // records the work again from the director's answer, and the foreman has
 // nothing to run for it. Nothing the session wrote goes into the command.
 function queueAgainLine(work, status, lane) {
   const lanes = LANES_UP.slice(Math.max(LANES_UP.indexOf(lane), LANES_UP.indexOf('small')));
-  const options = [...lanes.map((l) => `--option '${l}=waiting'`), "--option 'drop=waiting'"].join(' ');
+  const options = [...lanes.map((l) => `--option '${l}=The front desk queues it again as ${l} work'`), "--option 'drop=The front desk drops it'"].join(' ');
   const why = status === 'partial' ? 'Its report says part is done, or it proved bigger than its lane' : 'Its report says it could not go on';
   return `It ended ${status}: ask the director whether to queue it again, and in which lane, or to drop it. `
     + `Next: act ask ${work} --what '${work} ended ${status}: queue it again, or drop it?' --why '${why}' ${options} --recommend ${lanes[0]} --level 2`;

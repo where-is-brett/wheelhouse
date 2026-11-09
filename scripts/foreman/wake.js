@@ -685,7 +685,7 @@ function queueLines(ctx) {
       return `It is an extra plan of ${data.parent}, titled "${oneLine(data.title, 120)}". Next: act start ${id} --goal '<its title>' ${flags} `
         + `(from the part of ${data.parent}'s approved document, ${doc.path}, that its title names)`;
     }
-    // Quick, bug and small work: the lane's appetite, where the document sets none (LANE_APPETITE).
+    // The lane's appetite, where the document sets none (LANE_APPETITE).
     const own = LANE_APPETITE[data.lane];
     // Changes made by hand: the goal and done lines are fixed, so there is nothing to ask.
     if (own && views.work[id].approval?.byHand === true) {
