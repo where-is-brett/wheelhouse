@@ -29,13 +29,22 @@ export function driftQuestion(work, { restorable = false } = {}) {
     what: `The approved document of ${work} has changed since you approved it. What should happen?`,
     why: 'Nothing starts from a document you did not approve. The work holds its place while it waits.',
     options: [
-      ...(restorable ? [{ label: restore, says: `act restore ${work}` }] : []),
-      { label: reapprove, says: `act reapprove ${work}` },
+      ...(restorable ? [{ label: restore, says: 'Wheelhouse puts back the text you approved, and the work carries on from it' }] : []),
+      { label: reapprove, says: 'Wheelhouse takes the changed text as the one you approved, and the work carries on from it' },
       { label: 'Wait', says: 'Nothing to do now; the Bosun raises it again if the document is still different' },
     ],
     recommendation: restorable ? restore : reapprove,
     level: 3,
   };
+}
+
+// The command the foreman runs for the label the director clicked on the drift question, or null when the
+// question is not that one or the label asks for nothing (Wait). The options' own words are for the director only.
+export function driftAnswerCommand(work, what, label) {
+  if (what !== driftQuestion(work).what) return null;
+  if (label === 'Restore the approved text') return `act restore ${work}`;
+  if (label === 'Re-approve the change') return `act reapprove ${work}`;
+  return null;
 }
 
 export function driftAskCommand(work, { restorable = false } = {}) {

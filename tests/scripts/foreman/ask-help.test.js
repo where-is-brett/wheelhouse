@@ -2,7 +2,7 @@
 // The question put to the director when an approved document has changed since its approval.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { driftAskCommand, driftQuestion } from '../../../scripts/foreman/ask-help.js';
+import { driftAnswerCommand, driftAskCommand, driftQuestion } from '../../../scripts/foreman/ask-help.js';
 import { questionProblem } from '../../../scripts/cards/compose.js';
 
 for (const restorable of [true, false]) {
@@ -20,3 +20,12 @@ for (const restorable of [true, false]) {
     assert.ok(command.includes(`--recommend '${q.recommendation}'`));
   });
 }
+
+test('the drift question\'s options are plain words, and the foreman maps the clicked label to its command', () => {
+  const q = driftQuestion('export-csv', { restorable: true });
+  for (const o of q.options) assert.doesNotMatch(o.says, /\bact\b/);
+  assert.equal(driftAnswerCommand('export-csv', q.what, 'Restore the approved text'), 'act restore export-csv');
+  assert.equal(driftAnswerCommand('export-csv', q.what, 'Re-approve the change'), 'act reapprove export-csv');
+  assert.equal(driftAnswerCommand('export-csv', q.what, 'Wait'), null);
+  assert.equal(driftAnswerCommand('export-csv', 'Merge?', 'Re-approve the change'), null);
+});

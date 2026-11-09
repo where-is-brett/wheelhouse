@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { clashFor, loadViews, main, measures, measuresFile, readWakeLines, recordDone } from '../../../scripts/foreman/wake.js';
 import { foremanCommands } from '../../../scripts/foreman/tools.js';
-import { driftAskCommand } from '../../../scripts/foreman/ask-help.js';
+import { driftAskCommand, driftQuestion } from '../../../scripts/foreman/ask-help.js';
 import { keepApprovedText } from '../../../scripts/state/approved-text.js';
 import { briefHash, featurePaths, writeStatus } from '../../../scripts/feature/files.js';
 import { LANE_APPETITE } from '../../../scripts/lib/build-loop.js';
@@ -337,6 +337,22 @@ test('wake read falls back to the views kept on disk when the helper gives none,
   const text = (await readWakeLines({ file, project: P, client, now })).lines.join('\n');
   assert.match(text, /^The helper gave no views \(the host helper could not be reached: is it running\?\), so these are the last ones it wrote\.$/m);
   assert.match(text, /^- start a \(small\)/m);
+}));
+
+test('wake read: an answer to the drift question is acted on as the act command its label stands for', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.a = workView('a', { since: '2026-10-19T06:00:00.000Z' });
+  views.features.a = featureView('a', { step: 'building', worktree: worktree(checkout, 'a'), files: [] });
+  const q = driftQuestion('a', { restorable: true });
+  views.questions['q-a-1000001'] = { question: { key: 'q-a-1000001', data: { id: 'q-a-1000001', work: 'a', what: q.what, options: q.options } }, answer: null };
+  const { client } = fakeClient({ views });
+  const lines = async (label) => {
+    const file = wakeFile(path.join(checkout, 'w'), `drift-${label.length}`, { events: [ev('answer', 'a', `a-${label.length}`, { questionId: 'q-a-1000001', label, foreman: true })] });
+    return (await readWakeLines({ file, project: P, client, now })).lines.join('\n');
+  };
+  assert.match(await lines('Restore the approved text'), /which says: act restore a\. Act on it\./);
+  assert.match(await lines('Re-approve the change'), /which says: act reapprove a\. Act on it\./);
 }));
 
 test('wake read: an answer to the foreman\'s own question is the foreman\'s to act on; a director\'s pause is never offered back; held bug work waits', () => withHome(async () => {

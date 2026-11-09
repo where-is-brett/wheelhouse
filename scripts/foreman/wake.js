@@ -66,7 +66,7 @@
 //
 // The shared pieces here (ForemanError, the views, the configuration, a
 // feature's worktree and plan, the clash and slot answers) are act.js's too.
-import { driftAskCommand, holdingReview, stuckAskCommand } from './ask-help.js';
+import { driftAnswerCommand, driftAskCommand, holdingReview, stuckAskCommand } from './ask-help.js';
 import { approvedText } from '../state/approved-text.js';
 import { readEnrolled } from '../state/signing.js';
 import { changeWaiting } from '../state/views.js';
@@ -583,6 +583,8 @@ function eventLine(e, ctx) {
       const asked = typeof q?.what === 'string' ? ` ("${oneLine(q.what, 100)}")` : '';
       const says = Array.isArray(q?.options) ? q.options.find((o) => isPlain(o) && o.label === d.label)?.says : undefined;
       const answered = `${head}: the director answered your question ${oneLine(d.questionId, 60)}${asked}: "${oneLine(d.label, 60)}"`;
+      const drift = driftAnswerCommand(work, q?.what, d.label);
+      if (drift !== null) return `${answered}, which says: ${drift}. Act on it.`;
       if (typeof says !== 'string') return `${answered}, but that option's words can't be read. Ask the director: act ask`;
       return `${answered}, which says: ${oneLine(says, SAYS_CHARS)}. Act on it.`;
     }
