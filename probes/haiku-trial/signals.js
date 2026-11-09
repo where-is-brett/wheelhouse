@@ -56,7 +56,8 @@ export const EVENT_KINDS = Object.freeze([
 // The line setup ends on, as scripts/setup/engine.js words it: "Every step is done." or the phone-notifications line.
 export const SETUP_DONE_LINE = 'Every step is done';
 const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-export const SETUP_DONE = new RegExp(`${escaped(SETUP_DONE_LINE)}|${escaped(PHONE_NEXT.split('.')[0])}`, 'i');
+// Case counts: the desk's own "kept until setup is finished" is not the engine's "Setup is finished." (run 2026-11-09-e).
+export const SETUP_DONE = new RegExp(`${escaped(SETUP_DONE_LINE)}|${escaped(PHONE_NEXT.split('.')[0])}`);
 
 // The branches the runner or Wheelhouse itself makes, which are not a piece's work.
 export const OWN_BRANCH = /^(trial\/|wheelhouse\/(undo|decisions))/;

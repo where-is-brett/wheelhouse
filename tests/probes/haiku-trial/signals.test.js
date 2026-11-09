@@ -66,6 +66,7 @@ test('the setup pattern matches what the engine says, and the engine still says 
   assert.match('Every step is done.', SETUP_DONE);
   assert.match('Setup is finished. Phone notifications come next, and are optional.', SETUP_DONE);
   assert.doesNotMatch('setup is not finished', SETUP_DONE);
+  assert.doesNotMatch('Your request is kept until setup is finished, and I\'ll hand it on then. Setup is still unfinished.', SETUP_DONE);
   assert.ok(scriptsText().includes("'Every step is done.'"));
 });
 

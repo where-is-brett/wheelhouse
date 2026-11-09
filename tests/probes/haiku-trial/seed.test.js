@@ -7,6 +7,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { makeTestProject } from '../../../probes/haiku-trial/seed.js';
+import { readConfig } from '../../../scripts/gate/guardrails.js';
 
 function childEnv(extra = {}) {
   const env = { ...process.env, ...extra };
@@ -89,6 +90,19 @@ test('project settings run every session on haiku with no advisor and no survey,
     // As `claude plugin install wheelhouse@wheelhouse --scope project` would: the hooks act only in a folder whose own settings
     // switch the plugin on, so without it the session start never starts the helper and setup cannot begin.
     assert.deepEqual(settings, { model: 'haiku', env: { CLAUDE_CODE_SUBAGENT_MODEL: 'haiku', CLAUDE_CODE_DISABLE_ADVISOR_TOOL: '1', CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: '1' }, enabledPlugins: { 'wheelhouse@wheelhouse': true } });
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('the seed commits a configuration Wheelhouse can read with localListening: true, so tests and the preview can listen', () => {
+  const { dir } = fresh();
+  try {
+    // Setup honours a true only from the last commit (scripts/setup/project-files.js, committedListening), and a file
+    // Wheelhouse can't read stops setup before it asks anything.
+    const committed = spawnSync('git', ['show', 'HEAD:.claude/wheelhouse.json'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(committed.status, 0, committed.stderr);
+    assert.equal(readConfig(committed.stdout).localListening, true);
   } finally {
     cleanup(dir);
   }
