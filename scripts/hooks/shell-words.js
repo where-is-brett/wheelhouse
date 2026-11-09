@@ -36,6 +36,14 @@
 // such as gh in a body are still seen and a body the command scanner cannot read
 // (an apostrophe, for one) makes the whole command unreadable.
 //
+// A body whose delimiter is quoted is data to the command the heredoc feeds, and
+// bodies[k] says so for each of its segments: { delimiter, lineEnd } name the
+// segment holding the delimiter word and the first segment after the heredoc's
+// line, so a caller can tell what command the heredoc feeds and whether anything
+// else (a pipe into a shell, say) sits on that line. A quoted body the scanner
+// cannot read is given as one segment of its plain words, with unreadable: true,
+// and the caller decides whether that matters. Every other segment has null.
+//
 // Bodies are read again in full (comments and heredocs inside them too), to a
 // depth of MAX_BODY_LEVEL.
 //
@@ -68,9 +76,10 @@ const MAX_BODY_LEVEL = 4;
 const CODE = new Set(['top', 'group', 'paren', 'tick']);
 
 // level counts the heredoc bodies being read again inside one another.
-function scan(command, windows, strict, operators = [], level = 0) {
+function scan(command, windows, strict, operators = [], level = 0, bodies = []) {
   const segments = [[]];
   operators.push(null);
+  bodies.push(null);
   let current = null;
   let quotedWord = false;
   let braceChecked = 0;
@@ -129,24 +138,32 @@ function scan(command, windows, strict, operators = [], level = 0) {
   };
   const isDelimiter = (h, text) => (h.strip ? text.replace(/^\t+/, '') : text) === h.delimiter;
   // A body's text is scanned again as a command of its own; its segments follow.
-  const reread = (text) => {
+  const reread = (text, h) => {
     const subOperators = [];
-    const found = level >= MAX_BODY_LEVEL ? null : scan(text, windows, false, subOperators, level + 1);
+    let found = level >= MAX_BODY_LEVEL ? null : scan(text, windows, false, subOperators, level + 1);
+    const data = h?.quoted ? { delimiter: h.seg, lineEnd: h.lineEnd } : null;
     if (found === null) {
-      unreadable = true;
-      return false;
+      if (data === null) {
+        unreadable = true;
+        return false;
+      }
+      found = [text.split(/[\s;&|<>()`'"]+/).filter(Boolean)];
+      data.unreadable = true;
     }
     for (const [k, seg] of found.entries()) {
       if (k === 0 && segments.at(-1).length === 0) {
         segments.at(-1).push(...seg);
+        bodies[bodies.length - 1] = data;
       } else {
         segments.push(seg);
         operators.push(k === 0 ? '\n' : subOperators[k]);
+        bodies.push(data);
       }
     }
     if (segments.at(-1).length > 0) {
       segments.push([]);
       operators.push('\n');
+      bodies.push(null);
     }
     return true;
   };
@@ -170,7 +187,7 @@ function scan(command, windows, strict, operators = [], level = 0) {
         if (p > chars.length) return false; // no delimiter line
         const { text, end } = lineAt(p);
         if (isDelimiter(h, text)) {
-          if (!reread(chars.slice(pos, end).join(''))) return false;
+          if (!reread(chars.slice(pos, end).join(''), h)) return false;
           queue.shift();
           if (queue.length === 0) i = end - 1;
           pos = end + 1;
@@ -221,6 +238,7 @@ function scan(command, windows, strict, operators = [], level = 0) {
     if (segments.at(-1).length > 0) {
       segments.push([]);
       operators.push(operator);
+      bodies.push(null);
     } else if (operator === '<' || operator === '>') {
       operators[operators.length - 1] = operator; // a redirect written before the command
     } else if (operator === '(' && ['<', '>'].includes(operators.at(-1))) {
@@ -235,7 +253,7 @@ function scan(command, windows, strict, operators = [], level = 0) {
       if (ended !== hdInfos.at(-1) || stack.at(-1) !== 'hd') return null;
       stack.pop();
       hdInfos.pop();
-      if (!reread(chars.slice(ended.start, ended.end).join(''))) return null;
+      if (!reread(chars.slice(ended.start, ended.end).join(''), ended.queue[0])) return null;
       ended.queue.shift();
       if (ended.queue.length === 0) i = ended.end - 1;
       else if (!startBodies(ended.end + 1, ended.queue)) return null;
@@ -365,11 +383,12 @@ function scan(command, windows, strict, operators = [], level = 0) {
       while (chars[j] === ' ' || chars[j] === '\t') j += 1;
       const found = delimiterAt(j);
       if (found === null) return null;
-      pending.push({ ...found, strip, depth: stack.length });
       endSegment(ch);
+      pending.push({ ...found, strip, depth: stack.length, seg: segments.length - 1 });
     } else if (OPERATORS.has(ch)) {
       endSegment(ch);
       if (ch === '\n' && pending.length > 0) {
+        for (const h of pending) h.lineEnd = segments.length - 1;
         if (pending.some((h) => h.depth !== stack.length)) return null;
         if (!startBodies(i + 1, pending.splice(0))) return null;
       }
@@ -408,9 +427,11 @@ export function segments(command, windows) {
 
 // The segments as segments() gives them, and for each the operator that opened
 // it (null for the first; '(' or a backtick for a substitution inside double
-// quotes). A segment opened by < or > holds a redirect's target.
+// quotes). A segment opened by < or > holds a redirect's target. bodies says which
+// segments are the text of a quoted heredoc (see Heredocs above).
 export function segmentsWithOperators(command, windows) {
   const operators = [];
-  const found = scan(command, windows, false, operators);
-  return found === null ? null : { segments: found, operators };
+  const bodies = [];
+  const found = scan(command, windows, false, operators, 0, bodies);
+  return found === null ? null : { segments: found, operators, bodies };
 }

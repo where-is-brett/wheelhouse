@@ -45,6 +45,7 @@ function foldFor(platform) {
 }
 
 const UNREADABLE = 'Wheelhouse could not read this command with certainty. Write it more simply (no comments that hold quotes, backticks or backslashes, no CRLF line endings, no unclosed quotes), or put it in a file: ' + HELPER;
+const MISSING_SCRIPT = (file) => `Wheelhouse does not run a script that is not there when the command starts (${file}). Write the file in one command and run it in the next, or ${HELPER}`;
 const refuse = (what) => answer.deny(`Wheelhouse does not let an agent ${what}: ${HELPER}`);
 // The build engine (spec 12.2): its program and the engine room's port, and its own files.
 const ENGINE = 'Wheelhouse does not let an agent run or reach the build engine: it answers only to the helper. Say what the work needs instead';
@@ -505,7 +506,9 @@ function scriptRefused(file, ctx, named, byPath = false) {
   if (name.startsWith('~')) return true;
   // With no folder known, a path that climbs out or passes a dev or proc folder may reach /dev/stdin.
   if (!absolute && ctx.dirs === null) return /^\.\.\/|(^|\/)(dev|proc)(\/|$)/.test(path.posix.normalize(name.replace(/\\/g, '/')));
-  return !candidates.some((c) => fs.existsSync(c));
+  const missing = !candidates.some((c) => fs.existsSync(c));
+  if (missing && ctx.state) ctx.state.missing = file;
+  return missing;
 }
 
 // The index of a POSIX shell's script word, past its options and their values, or -1.
@@ -595,7 +598,7 @@ function bashRefused(command, ctx, depth = 0) {
     ctx.state.unreadable = true;
     return true;
   }
-  const { segments: segs, operators } = split;
+  const { segments: segs, operators, bodies } = split;
   const inContext = (dirs) => ({ ...ctx, dirs });
   let dirs = ctx.dirs === undefined ? (ctx.cwd ? [ctx.cwd] : null) : ctx.dirs;
   const again = (text) => bashRefused(text, inContext(dirs), depth + 1);
@@ -611,6 +614,22 @@ function bashRefused(command, ctx, depth = 0) {
     if (!['.gitconfig', 'gitconfig', 'config'].includes(lastPart(given).toLowerCase())) return false;
     const resolved = path.resolve(ctx.cwd ?? '.', expandHome(given, ctx.home, windows));
     return spellings(resolved, ctx.cwd ?? '.').some((c) => ctx.settings.includes(fold(c)));
+  };
+  // Whether a segment is the text of a heredoc with a quoted delimiter that only `cat` or `tee` is fed (nothing else
+  // on the heredoc's line takes it on): file contents, not commands. Its words are still looked at for the host tools,
+  // push, .env and the keychain; only the check on a path it names as a script to run is left out.
+  const dataBody = (index) => {
+    const mark = bodies?.[index];
+    if (!mark) return false;
+    for (let j = mark.delimiter + 1; j < mark.lineEnd; j += 1) {
+      if (segs[j].length > 0 && operators[j] !== '<' && operators[j] !== '>') return false;
+    }
+    let owner = mark.delimiter - 1;
+    while (owner >= 0 && (operators[owner] === '<' || operators[owner] === '>')) owner -= 1;
+    if (owner < 0) return false;
+    const names = segs[owner].map(nameOf);
+    const k = commandAt(segs[owner], names, ctx);
+    return k < segs[owner].length && ['cat', 'tee'].includes(names[k]);
   };
   // The words of a command that are scripts it runs, as [index, run by its path].
   // A runner's is the command it starts, its first plain word, when that has a slash.
@@ -644,6 +663,12 @@ function bashRefused(command, ctx, depth = 0) {
   // A variable set to `security` makes a command word that starts with `$` count as it.
   const securityVariable = segs.some((seg) => seg.some((w) => ASSIGNMENT.test(w) && isSecurity(w.slice(w.indexOf('=') + 1))));
   for (const [index, seg] of segs.entries()) {
+    const data = dataBody(index);
+    // A quoted body that could not be read is fine as file contents, and not as input to anything else.
+    if (bodies?.[index]?.unreadable && !data) {
+      ctx.state.unreadable = true;
+      return true;
+    }
     const names = seg.map(nameOf);
     for (let i = 0; i < seg.length; i += 1) {
       const word = seg[i];
@@ -688,10 +713,10 @@ function bashRefused(command, ctx, depth = 0) {
     }
     const places = seg.map((_, i) => `${index} ${i}`);
     if (operators[index] !== '<' && operators[index] !== '>') {
-      pending = { words: [...seg], places };
+      pending = { words: [...seg], places, data };
       checks.push(pending);
     } else {
-      checks.push({ words: seg.slice(1), places: places.slice(1) });
+      checks.push({ words: seg.slice(1), places: places.slice(1), data });
       if (pending === null) checks.push(pending = { words: [], places: [] });
       pending.words.push(...seg.slice(1));
       pending.places.push(...places.slice(1));
@@ -871,7 +896,7 @@ function bashRefused(command, ctx, depth = 0) {
     const named = (file) => (counts.get(fold(lastPart(file))) ?? 0) > 0;
     return scriptsRun(seg, segNames, k).some(([j, byPath]) => scriptRefused(seg[j], inContext(dirs), named(seg[j]), byPath));
   };
-  return checks.some(({ words }) => commandRefused(words));
+  return checks.some(({ words, data }) => !data && commandRefused(words));
 }
 
 // The servers the project allows, or null when the configuration cannot be read.
@@ -1058,7 +1083,9 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
     if (state.keychain) return answer.deny(KEYCHAIN);
     if (state.engine) return answer.deny(ENGINE);
     if (state.nested) return answer.deny(NESTED);
-    return state.unreadable ? answer.deny(UNREADABLE) : refuse('run the host tools, push, or read a .env file');
+    if (state.unreadable) return answer.deny(UNREADABLE);
+    if (state.missing !== undefined) return answer.deny(MISSING_SCRIPT(state.missing));
+    return refuse('run the host tools, push, or read a .env file');
   }
   // The folders a project's own files are placed from: the project's main folder and the worktree
   // the session is in.
