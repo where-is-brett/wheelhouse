@@ -108,8 +108,19 @@ export const REWORK_LINE = 'When a task is sent back by its review, build it aga
 export const SECOND_REVIEWER_LINE = 'Critical-area work gets a second fresh Lookout; both must report CLEAN.';
 const LEVEL_NAMES = Object.freeze({ lightest: 'Lightest', lean: 'Lean', balanced: 'Balanced', thorough: 'Thorough' });
 
+// The name the Agent tool takes for a model, from the shape of a full id: Claude Code's ids run `claude-<name>-<version…>`
+// (older ones `claude-<version…>-<name>-<date>`), and the tool takes <name>. A trailing `[…]` (a context-size suffix) is
+// dropped first. Anything else, a name that is already short or an id this does not read, is given back as it was.
+export function agentAlias(model) {
+  if (typeof model !== 'string') return model;
+  const bare = model.replace(/\[[^\]]*\]$/, '');
+  if (!bare.startsWith('claude-')) return model;
+  return bare.split('-').slice(1).find((part) => /^[a-z]+$/.test(part)) ?? model;
+}
+
 // The lines a feature wake's prompt carries for the subagents it dispatches (design section 14.6): one per role,
-// "<role>: model <name or the session's own>, effort <effort>", then the rework line at Lean and Lightest and the
+// "<role>: model <name or the session's own>, effort <effort>", the model given as the Agent tool's name for it
+// (agentAlias), then the rework line at Lean and Lightest and the
 // second reviewer's at Thorough. A role the routing doesn't name is left out.
 export function columnLines(routing) {
   const level = Object.hasOwn(LEVEL_NAMES, routing?.level) ? routing.level : 'balanced';
@@ -117,7 +128,7 @@ export function columnLines(routing) {
   for (const role of SUBAGENT_ROLES) {
     const r = routing?.roles?.[role];
     if (!isPlain(r) || typeof r.effort !== 'string') continue;
-    lines.push(`${role}: model ${typeof r.model === 'string' && r.model !== '' ? r.model : "the session's own"}, effort ${r.effort}`);
+    lines.push(`${role}: model ${typeof r.model === 'string' && r.model !== '' ? agentAlias(r.model) : "the session's own"}, effort ${r.effort}`);
   }
   if (COLUMNS[level].builder.rework === 'high') lines.push(REWORK_LINE);
   if (routing?.extra?.secondReviewer === true) lines.push(SECOND_REVIEWER_LINE);

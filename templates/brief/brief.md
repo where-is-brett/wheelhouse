@@ -32,6 +32,7 @@ Turn each line into a test before any code. When those tests pass, the work is d
 
 - **The lane only goes up.** If the work proves bigger than this lane, stop. Report `partial` with what you found; the Bosun puts the work in the right lane.
 - **Check before you say it is done.** Start `superpowers:verification-before-completion` first, run the checks and read their output.
+- **Do not run `sdd-workspace`.** A skill may tell you to; the worktree you are in is already yours, and Wheelhouse's hook refuses the command. Carry on in this worktree.
 - **Conflicts.** When a wake says your branch conflicts with the default branch, merge the default branch into your branch, resolve each conflict so both sides' intent survives, then run the checks and have the result reviewed again.
 - **The Crew and the Lookouts.** Crew members are `wheelhouse:builder`, and reviews are done by Lookouts (`wheelhouse:reviewer`), each with the model and effort the wake gives for its role (see "Models by role"). Never dispatch a general-purpose subagent for either.
 - **Dispatching a Lookout.** Before each `wheelhouse:reviewer` dispatch, write the diff under review to `{{featureDir}}/review/<n>.diff` (`<n>` counting up from 1), and give the Lookout that path, the full commit hash of the head it reviews, and the pull request number once the feature's pull request is open (`pr: none` before then). The signed review on the pull request's head is recorded only with that number.

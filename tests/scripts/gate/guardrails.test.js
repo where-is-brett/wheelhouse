@@ -136,6 +136,16 @@ test('readConfig: signsApps is true or false when given, and any other value can
   }
 });
 
+test('readConfig: localListening is true or false when given, and any other value can\'t be read', () => {
+  const base = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
+  assert.equal(readConfig(JSON.stringify(base)).localListening, undefined, 'left out: no command may listen on a local port');
+  assert.equal(readConfig(JSON.stringify({ ...base, localListening: true })).localListening, true);
+  assert.equal(readConfig(JSON.stringify({ ...base, localListening: false })).localListening, false);
+  for (const localListening of ['true', 1, null, [], {}]) {
+    assert.throws(() => readConfig(JSON.stringify({ ...base, localListening })), { message: "The project's Wheelhouse configuration can't be read" }, JSON.stringify(localListening));
+  }
+});
+
 test('readConfig: preview is a command, a port and a ready line when given, and any other shape can\'t be read', () => {
   const base = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
   assert.equal(readConfig(JSON.stringify(base)).preview, undefined, 'left out: the host preview, or none');

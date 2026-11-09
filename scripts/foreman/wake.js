@@ -572,9 +572,9 @@ function eventLine(e, ctx) {
       : said('the director changed it, but the change\'s hash can\'t be read', 'Ask the director: act ask');
     case 'question': return said(e.id, `Next: act question ${work} ${e.id}`);
     case 'extra-plan': return said(e.id, `Next: act extra-plan ${work} ${e.id}`);
-    // The session's own plain message that it can't get a decision into its shape: noted once, nothing to ask the director.
+    // The session's own plain message that it can't get a decision into its shape: the Bosun notes it for the director, and asks nothing itself.
     case 'stuck-note': return typeof d.at === 'string'
-      ? said(`its session says it is stuck: ${oneLine(d.why, 200)}`, `Next: act stuck-note ${work} ${d.at}`)
+      ? said(`its session says it is stuck: ${oneLine(d.why, 200)}`, `Next: act stuck-note ${work} ${d.at}. It notes the message for the director, who is told once on their next message; ask nothing yourself`)
       : said('its session says it is stuck, but the time of the message can\'t be read', 'Nothing to do');
     case 'answer': {
       if (questionIdOf(d.questionId)?.foreman !== true) return said(`${d.questionId} answered "${oneLine(d.label, 60)}"`, 'Nothing to do: the watcher wakes its session.');

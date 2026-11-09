@@ -96,7 +96,7 @@ import { typedRepliesIn } from '../decisions/switch.js';
 import { confirmWords } from '../state/card-lines.js';
 import { joinersOf } from '../state/joiners.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
-import { controlFileInput, controlFilesDue, controlFilesNamed, gateAsksDue, gateInput, holdInput, holdsDue, premiumFailuresDue, stillWaits, withPutBack } from '../cards/build-loop.js';
+import { approvalCandidates, needsApproval, controlFileInput, controlFilesDue, controlFilesNamed, gateAsksDue, gateInput, holdInput, holdsDue, premiumFailuresDue, stillWaits, withPutBack } from '../cards/build-loop.js';
 import { COMPACT_NAME, COMPACT_WORK } from '../settings/compact-window-pr.js';
 import { SWITCH_NAME, SWITCH_WORK } from '../engine/switch.js';
 import { failedInput } from '../routing/premium.js';
@@ -111,6 +111,7 @@ import { answerLine, approveWorkLine, chatCopy, ID, keepControlLine } from '../s
 import { gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
 import { readSlices } from '../engine/feature.js';
+import { laneFactsProblem } from './lane-facts.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { FINISHED_WORDS, prsOfWork, workFinished } from '../desk/work-prs.js';
@@ -514,14 +515,7 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
 // answered, outdated) carries its set line. Resolves with how many cards were recorded. One work's card that can't be made
 // or recorded goes into `problems` and leaves the others.
 async function approvalCards({ client, cwd, views, words, problems }) {
-  const candidates = [];
-  for (const [id, entry] of Object.entries(isPlain(views.work) ? views.work : {})) {
-    const data = entry?.work?.data;
-    if (!isPlain(data) || !isOpen(views, id) || !needsApproval(data) || typeof data.doc?.hash !== 'string') continue;
-    if (entry.approval !== undefined && entry.approval !== null) continue;
-    if ((isPlain(views.runs) && Array.isArray(views.runs[id]) && views.runs[id].length > 0) || isPlain(views.features?.[id]?.data)) continue;
-    candidates.push({ id, data: { ...data, id } });
-  }
+  const candidates = approvalCandidates(views, isOpen);
   if (candidates.length === 0) return 0;
   let events;
   try {
@@ -1137,6 +1131,21 @@ function checkSlices(cwd, file) {
   }
 }
 
+// A small or quick work the model sized is refused when its brief's facts say feature, or give none
+// (lane-facts.js). The model sized it when it carries no `from`, no work event is on record for its id
+// and its brief is under `.wheelhouse/work/`; any other work is left to its lane as given.
+async function refuseLaneFromFacts(client, cwd, data) {
+  if (data.lane !== 'small' && data.lane !== 'quick') return;
+  if (data.from !== undefined) return;
+  const relative = typeof data.doc?.path === 'string' ? path.relative(cwd, path.resolve(cwd, data.doc.path)) : '';
+  const parts = relative.split(path.sep);
+  if (parts[0] !== '.wheelhouse' || parts[1] !== 'work' || parts.length < 3 || parts.includes('..')) return;
+  const { views } = await viewsOf(client, cwd);
+  if (views.work?.[data.id]?.work !== undefined) return;
+  const problem = laneFactsProblem(fs.readFileSync(path.resolve(cwd, data.doc.path), 'utf8'), data.lane);
+  if (problem !== null) throw new CliError(problem);
+}
+
 // A work event's document, or an amendment of the one file open work names, with its hash worked out.
 async function withHash(client, cwd, kind, input) {
   // A document named by its path alone, as plain text, is the same as { path }.
@@ -1166,11 +1175,7 @@ async function withHash(client, cwd, kind, input) {
   return { ...input, hash };
 }
 
-// Work the director approves before it is built: the small and feature lanes, any work users would see, and
-// ready-made work carried on (`from`), whatever its lane (the foreman holds it the same way).
-export function needsApproval(data) {
-  return data.lane === 'small' || data.lane === 'feature' || data.visible === true || data.from !== undefined;
-}
+export { needsApproval };
 
 // The most a titled `what` may run to, so the whole card stays under the composer's limit.
 const TITLED_MOST = 200;
@@ -1216,7 +1221,8 @@ export function approveWorkInput(data, override) {
 // amendment, `say` for an amendment (its route line and read-back), and for a ruling or a setting its confirm card, recorded too, as { question, id }. A setting the catalogue refuses is refused here, before
 // the helper is asked; the director's own settings go to their profile (writeSetting). A ruling keeps its words exactly as given: its card is composed
 // first, under the id the ruling is then written with, so a ruling whose words no card can carry
-// is never written. The confirm card is recorded as asked.
+// is never written. The confirm card is recorded as asked. A small or quick work the model sized (no `from`, none on record,
+// brief under `.wheelhouse/work/`) is refused when its brief's facts say feature or are missing (lane-facts.js).
 export async function record({ client, cwd, kind, input, now, ready, makeId = () => crypto.randomUUID() }) {
   if (!RECORD_KINDS.includes(kind)) throw new CliError(`record takes one of: ${RECORD_KINDS.join(', ')}`);
   if (!isPlain(input)) throw new CliError(`Give the ${kind} as a JSON object on standard input`);
@@ -1262,6 +1268,7 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     if (needsApproval(work) && work.doc === undefined) throw new CliError('an approval names the work\'s document: give `doc`, the path of the brief written first');
     const data = await withHash(client, cwd, kind, work);
     refuseFeatureWithoutSlices(cwd, data);
+    await refuseLaneFromFacts(client, cwd, data);
     const hash = data.doc?.hash;
     const written = await write(client, cwd, kind, data);
     const out = { work: data.id, eventId: written.id, pushed: written.pushed === true, ...(typeof hash === 'string' ? { hash } : {}), recordHash: dataHash(data) };

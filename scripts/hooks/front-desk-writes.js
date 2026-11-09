@@ -202,7 +202,8 @@ export function shellChanges(command, cwd, { windows = false, home = os.homedir(
     else if (name === 'sed' || name === 'perl') {
       if (args.some((a) => /^-[A-Za-z]*i|^--in-place/.test(a))) {
         const given = [];
-        args.forEach((a, k) => { if (!a.startsWith('-') && !['-e', '-pe', '-ne', '-f'].includes(args[k - 1])) given.push(a); });
+        // BSD sed takes an empty word after -i for "no backup"; it is not the script.
+        args.forEach((a, k) => { if (!a.startsWith('-') && !['-e', '-pe', '-ne', '-f'].includes(args[k - 1]) && !(a === '' && args[k - 1] === '-i')) given.push(a); });
         const withScript = args.some((a) => ['-e', '-pe', '-ne', '-f', '--expression', '--file'].includes(a));
         (withScript ? given : given.slice(1)).forEach(place);
       }

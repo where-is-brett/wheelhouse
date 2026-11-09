@@ -267,6 +267,7 @@ test('runSession runs the session in Claude Code\'s sandbox as a project\'s own 
   const spellings = [...new Set([socket, path.join(fs.realpathSync(path.dirname(socket)), 'helper.sock')])];
   assert.deepEqual(settings.sandbox.network.allowUnixSockets, spellings);
   assert.equal(settings.sandbox.network.allowAllUnixSockets, undefined);
+  assert.equal(settings.sandbox.network.allowLocalBinding, false, 'a trial session cannot listen on a local port unless its project carries the switch');
   assert.deepEqual(settings.sandbox.filesystem.allowRead, ['/plugin/root']);
   assert.deepEqual(settings.sandbox.filesystem.allowWrite, ['/main/.git']);
   // Still F90's settings beside it.

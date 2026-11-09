@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  decide, FRONT_DESK_NO_WRITES, ASIDE_NO_WRITES, lockedDocuments, APPROVED_LOCKED, NO_STATUS_LINE, statusLineIn,
+  decide, shellChanges, FRONT_DESK_NO_WRITES, ASIDE_NO_WRITES, lockedDocuments, APPROVED_LOCKED, NO_STATUS_LINE, statusLineIn,
 } from '../../../scripts/hooks/front-desk-writes.js';
 import { sessionRole } from '../../../scripts/lib/role.js';
 import { readSeat } from '../../../scripts/lib/first-mate-seat.js';
@@ -313,4 +313,23 @@ test('the default lock reads the real record: an approved document is refused, a
     keep(makeEvent({ kind: 'report', data: { work: 'w-lock', outcome: 'merged', summary: 'Done.', rulings: [], pr: 1 }, now: at(5) }), P);
     assert.equal(decide(write(folder, path.join(folder, rel)), opts), undefined, 'allowed once the work is reported');
   });
+});
+
+test('BSD sed\'s empty suffix after -i is not read as a path, and GNU forms read as before', () => {
+  const paths = (command) => shellChanges(command, '/p').paths;
+  assert.deepEqual(paths("sed -i '' s/a/b/ src/a.js"), ['/p/src/a.js']);
+  assert.deepEqual(paths("sed -i '' 's/a/b/' src/a.js src/b.js"), ['/p/src/a.js', '/p/src/b.js']);
+  assert.deepEqual(paths("sed -i '' -e s/a/b/ src/a.js"), ['/p/src/a.js']);
+  assert.deepEqual(paths("sed -i '' s/a/b/ /tmp/x.js"), ['/tmp/x.js']);
+  assert.deepEqual(paths('sed -i s/a/b/ src/a.js'), ['/p/src/a.js']);
+  assert.deepEqual(paths('sed -i.bak s/a/b/ src/a.js'), ['/p/src/a.js']);
+  assert.deepEqual(paths('sed -i -e s/a/b/ /tmp/x.js'), ['/tmp/x.js']);
+  assert.deepEqual(paths('sed -n 1,20p src/a.js'), [], 'no -i, no write');
+});
+
+test('a BSD sed edit of a file outside the product passes, and one of a product file is refused', () => {
+  const { folder } = project();
+  assert.equal(decide(bash(folder, "sed -i '' s/a/b/ /tmp/x.js"), options(folder)), undefined);
+  assert.ok(denied(decide(bash(folder, "sed -i '' s/a/b/ src/a.js"), options(folder))));
+  assert.ok(denied(decide(bash(folder, "sed -i '' 's/a/b/' src/a.js"), options(folder))));
 });

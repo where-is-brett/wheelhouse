@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { readFacts } from '../../scripts/frontdesk/lane-facts.js';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -31,4 +32,27 @@ test('intake: route 3 sends a change to its own file through `record amendment` 
   assert.ok(rule.includes('If the director drops a change, `record work` again with the same document; that lets the work go.'));
   assert.doesNotMatch(intake, /edit the approved document in place|replace its approval line|replace its approval/i);
   assert.match(intake, /`record work` refuses a feature design that has no such block\./);
+});
+
+test('intake: the lane of a change follows its wheelhouse-facts block, not brainstorming\'s size', () => {
+  assert.match(intake, /wheelhouse-facts/);
+  assert.match(intake, /addsPage, storesData, parsesInput and touchesMoreThanOneArea/);
+  assert.match(intake, /any `true` is a feature/);
+  assert.doesNotMatch(intake, /Its size sets the lane/);
+});
+
+test('intake: a chore brief ends with the all-false facts block', () => {
+  assert.match(intake, /goes to the quick lane, as in route 9, its brief ending with the `wheelhouse-facts` block, all false\./);
+});
+
+test('intake: a follow-up to finished work gets a brief ending with the facts block', () => {
+  assert.match(intake, /is new work: `cli\.js record work` with a new id[^\n]*its brief ending with the `wheelhouse-facts` block as in route 9/);
+});
+
+test('intake: route 9\'s example facts block reads as all false', () => {
+  const found = /^```wheelhouse-facts\n([\s\S]*?)\n```$/m.exec(intake);
+  assert.ok(found, 'route 9 holds a wheelhouse-facts example');
+  const read = readFacts(found[0]);
+  assert.equal(read.problem, undefined);
+  assert.deepEqual(read.facts, { addsPage: false, storesData: false, parsesInput: false, touchesMoreThanOneArea: false });
 });
