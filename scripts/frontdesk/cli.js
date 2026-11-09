@@ -40,7 +40,8 @@
 //                   work; shipping as it is is never offered while a signed review holds the merge) and prints the line to say
 //   record <kind>   records something the front desk decided: one of RECORD_KINDS, the data as JSON;
 //                   for a work event's document and an amendment, it works out the hash and prints it; a work also
-//                   prints `recordHash`, the hash of its record as written;
+//                   prints its slug (`work`), `eventId`, `recordHash`, the hash of its record as written, and, for work
+//                   the director is to approve, its approve-work card, composed and asked by the helper;
 //                   an amendment needs its read-back, and prints the route line and the read-back to say
 //   note            asks the host helper to write this session's note, up to 1,200 characters on standard input (four lines: the task, what
 //                   is done, what is next, the decisions open), to <wheelhouse home>/projects/<project>/sessions/<session id>.md,
@@ -87,7 +88,7 @@ import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
 import { WINDOW_MS } from '../confirm/window.js';
 import { dataHash } from '../state/events.js';
-import { composeCard, answerInput } from '../cards/compose.js';
+import { composeCard, answerInput, whatProblem } from '../cards/compose.js';
 import { decisionText } from '../decisions/message.js';
 import { isDecisionCard } from '../decisions/pending.js';
 import { askWhy } from '../decisions/why.js';
@@ -106,7 +107,7 @@ import { checkSetting, definitionOf, SETTINGS, WINDOWS_BUILD_COMMANDS, OWN_GITHU
 import { CARD, WORK_REPORTS } from '../lib/front-desk.js';
 import { effectiveSettings, settingsText, settingWords } from '../settings/effective.js';
 import { similar as similarTo } from '../intake/similar.js';
-import { answerLine, chatCopy, ID, keepControlLine } from '../state/card-lines.js';
+import { answerLine, approveWorkLine, chatCopy, ID, keepControlLine } from '../state/card-lines.js';
 import { gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
@@ -117,7 +118,7 @@ import { answeredWords } from '../cards/answered.js';
 import { crewNow } from '../crew/runs.js';
 import { markHere, paneLive } from '../lib/session-files.js';
 import { sinceLine } from '../cards/panel-words.js';
-import { SLUG } from '../lib/build-loop.js';
+import { SLUG, UUID } from '../lib/build-loop.js';
 
 // How far back `views waiting` looks for answers, and its lead (scripts/desk/views.js).
 export { RECENT_MS, RECENT_LEAD };
@@ -517,7 +518,44 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
       problems.push(`The card for the premium model's failed trial wasn't made: ${error.message}`);
     }
   }
+  made += await approvalCards({ client, cwd, views, words, problems });
   return { made, again };
+}
+
+// The approve-work card for each open work that waits for approval and never had one: it needs approval, names its document,
+// has no approval on record, has not begun building (as `drop` checks), and no card event in any state (waiting, put off,
+// answered, outdated) carries its set line. Resolves with how many cards were recorded. One work's card that can't be made
+// or recorded goes into `problems` and leaves the others.
+async function approvalCards({ client, cwd, views, words, problems }) {
+  const candidates = [];
+  for (const [id, entry] of Object.entries(isPlain(views.work) ? views.work : {})) {
+    const data = entry?.work?.data;
+    if (!isPlain(data) || !isOpen(views, id) || !needsApproval(data) || typeof data.doc?.hash !== 'string') continue;
+    if (entry.approval !== undefined && entry.approval !== null) continue;
+    if ((isPlain(views.runs) && Array.isArray(views.runs[id]) && views.runs[id].length > 0) || isPlain(views.features?.[id]?.data)) continue;
+    candidates.push({ id, data: { ...data, id } });
+  }
+  if (candidates.length === 0) return 0;
+  let events;
+  try {
+    events = (await viewsOf(client, cwd, { cards: true })).cards;
+  } catch (error) {
+    problems.push(`The cards already asked couldn't be read, so work waiting for approval wasn't checked: ${error.message}`);
+    return 0;
+  }
+  const lines = new Set(events.map((e) => e?.data?.line));
+  let made = 0;
+  for (const { id, data } of candidates) {
+    // The line has two wordings: with the show-first tail, and plain (as `card` words non-visible work, and older cards carry).
+    if (lines.has(approveWorkLine(id, data.lane, data.doc.hash, { shownFirst: true })) || lines.has(approveWorkLine(id, data.lane, data.doc.hash))) continue;
+    try {
+      await write(client, cwd, 'card', composePlain(approveWorkInput(data), words).card);
+      made += 1;
+    } catch (error) {
+      problems.push(`The approval card for ${id} wasn't made: ${error.message}`);
+    }
+  }
+  return made;
 }
 
 // An answer card for each open question from the build that no waiting card asks yet, or whose joiners changed: how many were
@@ -637,6 +675,21 @@ function topicOf(given) {
   return topic;
 }
 
+// The slug of the work whose latest work event has the id `eventId`, or null.
+async function slugForEvent(views, eventId) {
+  for (const entry of Object.values(isPlain(views.work) ? views.work : {})) {
+    if (entry?.work?.id === eventId && typeof entry.work.data?.id === 'string') return entry.work.data.id;
+  }
+  return null;
+}
+
+// Refuses an event id given where a work id belongs, naming the slug when it is known.
+async function refuseEventId(views, given) {
+  if (typeof given !== 'string' || !UUID.test(given)) return;
+  const slug = await slugForEvent(views, given);
+  throw new CliError(slug === null ? 'the work id is the slug you recorded it under, not an event id' : `the work id is the slug you recorded it under: ${slug}`);
+}
+
 // Composes one card and records it, unless a waiting card already carries its set line: then that
 // card comes back as it was recorded, so the director is asked the card the state holds, with
 // `alreadyAsked` when it counts as asked. A card the picker can mark counts as asked once the picker has shown it; one it cannot
@@ -658,6 +711,7 @@ export async function card({ client, cwd, input, now, session }) {
   const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
   const { views, names, outcomes } = await viewsOf(client, cwd, { since: new Date(at.getTime() - RECENT_MS) });
   let target = input.target;
+  if (input.kind === 'approve-work' && isPlain(target)) await refuseEventId(views, target.work);
   if (input.kind === 'approval' && isPlain(target) && target.sha === undefined && Number.isSafeInteger(target.pr) && target.pr >= 1) {
     const state = await client.prState({ cwd, number: target.pr });
     if (state?.ok !== true) throw new CliError(said(state, `The host helper couldn't read pull request #${target.pr}`));
@@ -1101,7 +1155,53 @@ async function withHash(client, cwd, kind, input) {
   return { ...input, hash: documentHash(cwd, file, input.hash) };
 }
 
-// Records one event and resolves with { id, pushed }, with `hash` for a work event's document or an
+// Work the director approves before it is built: the small and feature lanes, any work users would see, and
+// ready-made work carried on (`from`), whatever its lane (the foreman holds it the same way).
+export function needsApproval(data) {
+  return data.lane === 'small' || data.lane === 'feature' || data.visible === true || data.from !== undefined;
+}
+
+// The most a titled `what` may run to, so the whole card stays under the composer's limit.
+const TITLED_MOST = 200;
+
+const APPROVE_WHY = {
+  small: 'It is a small change people will see, so it comes to you before it is built.',
+  feature: 'It is built from the design you shaped, so it starts only once you approve it.',
+  bug: 'People will see the fix, so it comes to you before it is built.',
+  quick: 'People will see this change, so it comes to you before it is built.',
+};
+
+// The composer's input for the approve-work card of a recorded work `data`, with the words in `override`
+// ({ what, why, because, meanwhile, options }) laid over the defaults. The target is always built here.
+// A title the composer would refuse in `what` (a hex-looking word reads as a commit) gives way to a plain line
+// naming the work, as does a title too long for the card; a `what` given in the override is the caller's own and is left as it is.
+// The title's white space is collapsed to single spaces, so a line break in it cannot refuse the card. The card is shown first
+// (`shownFirst`) only for work users would see, as the record says (`visible`).
+export function approveWorkInput(data, override) {
+  const given = isPlain(override) ? override : {};
+  const { target: ignored, ...words } = given;
+  const title = String(data.title ?? '').replace(/\s+/g, ' ').trim().replace(/\.+$/, '').trim();
+  const target = { work: data.id, lane: data.lane, hash: data.doc?.hash, shownFirst: data.visible === true };
+  const titled = `Work ${data.id}: ${title}.`;
+  return {
+    kind: 'approve-work',
+    level: 3,
+    what: titled.length <= TITLED_MOST && whatProblem('approve-work', titled, target) === null ? titled : `Work ${data.id}, as its document describes.`,
+    why: APPROVE_WHY[data.lane] ?? APPROVE_WHY.quick,
+    options: [
+      { label: 'Approve', says: 'Wheelhouse builds it and tests it, then shows you the result. It only goes into your product when you say yes to that.' },
+      { label: 'Not now' },
+    ],
+    recommend: 'Approve',
+    because: data.lane === 'feature' ? 'it is the design you shaped, and you\'ll see the result before it goes live' : 'you\'ll see it before it goes live',
+    meanwhile: 'Nothing is built until you approve.',
+    ...words,
+    target,
+  };
+}
+
+// Records one event and resolves with { id, pushed }, except a work, which resolves with { work, eventId, pushed, recordHash }
+// and its card, or `approved`, or `asked` (see the work branch), with `hash` for a work event's document or an
 // amendment, `say` for an amendment (its route line and read-back), and for a ruling or a setting its confirm card, recorded too, as { question, id }. A setting the catalogue refuses is refused here, before
 // the helper is asked; the director's own settings go to their profile (writeSetting). A ruling keeps its words exactly as given: its card is composed
 // first, under the id the ruling is then written with, so a ruling whose words no card can carry
@@ -1142,9 +1242,31 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     if (input.lane === 'quick' && input.visible === true && input.from === undefined) {
       throw new CliError('Work users would see goes in the small lane at least, shown to the director first: record it in the small lane, with an approve-work card (shownFirst). The quick lane is for work users won\'t see (visible false)');
     }
-    const data = await withHash(client, cwd, kind, input);
+    if (Array.isArray(input.dependsOn)) {
+      const { views } = await viewsOf(client, cwd);
+      for (const d of input.dependsOn) await refuseEventId(views, d);
+    }
+    // The card's words may be given beside the work; they are not part of the work event.
+    const { card: override, ...work } = input;
+    if (needsApproval(work) && work.doc === undefined) throw new CliError('an approval names the work\'s document: give `doc`, the path of the brief written first');
+    const data = await withHash(client, cwd, kind, work);
     const hash = data.doc?.hash;
-    return { ...answered(await write(client, cwd, kind, data)), ...(typeof hash === 'string' ? { hash } : {}), recordHash: dataHash(data) };
+    const written = await write(client, cwd, kind, data);
+    const out = { work: data.id, eventId: written.id, pushed: written.pushed === true, ...(typeof hash === 'string' ? { hash } : {}), recordHash: dataHash(data) };
+    if (!needsApproval(data)) return out;
+    const { views } = await viewsOf(client, cwd);
+    const approvedNow = () => {
+      const approval = views.work?.[data.id]?.approval;
+      return approval?.hash === hash && approval?.lane === data.lane;
+    };
+    if (approvedNow()) return { ...out, approved: true };
+    try {
+      return { ...out, card: await card({ client, cwd, input: approveWorkInput(data, override), now }) };
+    } catch (error) {
+      // Decided before: approved only when the views hold the approval; a "Not now" says so in `asked`, and nothing is approved.
+      if (error instanceof CliError && error.message.startsWith('Already ')) return { ...out, ...(approvedNow() ? { approved: true } : { asked: error.message }) };
+      throw error;
+    }
   }
   if (kind === 'amendment') {
     // The read-back is said, not stored: the event is the amendment as the foreman applies it.

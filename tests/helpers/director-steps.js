@@ -17,18 +17,20 @@ export const world = (options, fn) => inDirectorWorld(options, async (w) => {
   }
 });
 
-// The front desk's approve-work card for `work`, recorded with `record` first.
-export const approvalOf = (w, work) => w.desk(['card'], {
-  kind: 'approve-work', level: 3, what: `Add the ${work} change.`, why: 'Users will see it, so it is shown to you first.',
-  options: [{ label: 'Approve', says: 'It is built and shown to you before it merges.' }], recommend: 'Approve', because: 'it is small', meanwhile: 'Nothing starts.',
-  target: { work, lane: 'small', hash: w.hashes[work] },
-});
-// The front desk recording a piece of work, with its brief in the folder's own section.
+// The approve-work card `record work` composed and asked for `work` (see `record`), in the shape of a desk call's result.
+export const approvalOf = (w, work) => {
+  const card = w.cards?.[work];
+  assert.ok(card, `record work printed a card for ${work}`);
+  return { code: 0, err: '', json: card };
+};
+// The front desk recording a piece of work, with its brief in the folder's own section. For work that needs approval,
+// `record work` composes and asks the card itself and prints it; it is kept in `w.cards[work]`.
 export const record = async (w, work, { lane, visible, title = `The ${work} change`, from }) => {
   const doc = w.writeDoc(work);
   const got = await w.desk(['record', 'work'], { id: work, title, lane, visible, dependsOn: [], doc, ...(from ? { from } : {}) });
   assert.equal(got.code, 0, got.err);
   w.hashes[work] = got.json.hash;
+  if (got.json.card !== undefined) (w.cards ??= {})[work] = got.json.card;
   return got;
 };
 export const waitingCards = async (w) => (await w.desk(['views', 'waiting'])).out;
