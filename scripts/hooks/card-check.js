@@ -9,6 +9,8 @@
 // pull request or commit. Given the question object, its options are checked too: two to four, one
 // recommended, and none Explain more. The prompt record is what refuses a wrong click, so this
 // only informs: it refuses nothing it can't read, and a failure of its own lets the card through.
+// In a folder being set up, a card reworded from the one setup showed or asked is swapped the same way (swapSetupCards), and in a project
+// that is also being set up setup's cards are matched after the state's. No form check, pane hold or noting applies to them.
 // A card that doesn't come from scripts/cards/compose.js can fail it; one that does cannot.
 // A decision (an answer card or a product question, scripts/decisions/pending.js) is shown as a chat message, never through the
 // question picker: the picker is refused for one, saying to print `decision show <n>`. On Stop, in a front-desk session, every
@@ -296,12 +298,13 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
   const decided = decidedDeny(found, at);
   if (decided !== undefined) return { deny: decided };
   // A folder that is being set up as well adds setup's cards after the state's, so a state card wins.
-  const open = [...allOutcomes(project, outcomes).filter((o) => o.decided === null && typeof o.card?.data?.question === 'string'),
-    ...(beingSetUp(input.cwd) === null ? [] : setupCardsFor(input.cwd, beingSetUp(input.cwd).run?.id))];
+  const setup = beingSetUp(input.cwd);
+  const open = allOutcomes(project, outcomes).filter((o) => o.decided === null && typeof o.card?.data?.question === 'string');
+  const setupOpen = setup === null ? [] : setupCardsFor(input.cwd, setup.run?.id);
   // Each question's card: the one it names exactly, else the waiting card it is a reworded copy of; null for neither.
   const matched = questions.map((q, i) => {
     if (typeof q?.question !== 'string') return null;
-    const swap = swapFor(q, found[i], open);
+    const swap = swapFor(q, found[i], open) ?? (setupOpen.length === 0 ? null : swapFor(q, null, setupOpen));
     return swap === null ? null : { card: swap.card, setup: swap.setup === true };
   });
   // The picker is for a decision only while typed replies are off, so on it a decision is answered by typing instead.

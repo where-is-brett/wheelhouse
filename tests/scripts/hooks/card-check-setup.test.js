@@ -10,6 +10,10 @@ import path from 'node:path';
 import { decide } from '../../../scripts/hooks/card-check.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { baselineCard } from '../../../scripts/measures/baseline.js';
+import { asQuestion } from '../../../scripts/cards/visit.js';
+import { markPane, readOpen } from '../../../scripts/lib/session-files.js';
+import { writeProject } from '../../../scripts/lib/projects.js';
+import { setupCardsFor } from '../../../scripts/lib/setup-clicks.js';
 import { setLineOf } from '../../../scripts/state/card-lines.js';
 import { startRun } from '../../../scripts/setup/journal.js';
 import { noteShown, noteAsked } from '../../../scripts/setup/clicks.js';
@@ -104,8 +108,51 @@ test('a record of another run is not used', () => inSetup(async ({ folder }) => 
   assert.equal(await run(call(folder, rewordedPlan())), undefined);
 }));
 
-test('the baseline refusal and the set-up swap do not mix up', () => inSetup(async ({ folder }) => {
+test('the baseline refusal comes before the swap, even for a card setup showed', () => inSetup(async ({ folder, first }) => {
   const figures = { usd: 4127.35, merges: 37, from: '2026-09-01', to: '2026-09-30', counted: 'Every merged pull request on the first version, counted by hand.' };
-  const out = await run(call(folder, baselineCard(figures, DOC)));
-  assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
+  const baseline = baselineCard(figures, DOC);
+  assert.equal((await run(call(folder, baseline))).hookSpecificOutput.permissionDecision, 'deny');
+  // The same words as a record setup holds for a step: still refused, not swapped for it.
+  noteShown({ runId: first.id, folder, step: 7, hash: DOC, card: baseline, now: () => NOW });
+  const reworded = { ...baseline, question: `${baseline.question.split('\n')[0]}\nand more words` };
+  assert.equal((await run(call(folder, reworded))).hookSpecificOutput.permissionDecision, 'deny');
+}));
+
+test('with no run named, the cards are those of the newest run in the folder', () => inSetup(async ({ folder, first }) => {
+  const later = startRun({ folder, now: () => new Date(NOW.getTime() + 60000) });
+  noteShown({ runId: later.id, folder, step: 6, hash: DOC, card: PLAN, now: () => new Date(NOW.getTime() + 60000) });
+  const ids = setupCardsFor(folder).map((c) => c.card.id);
+  assert.deepEqual(ids, [`setup:${later.id}-6`]);
+  assert.deepEqual(setupCardsFor(folder, first.id).map((c) => c.card.id).sort(), [`setup:${first.id}-4-product-launched`, `setup:${first.id}-6`].sort());
+}));
+
+// A project that is also being set up.
+const PROJECT = 'owner__name';
+const SID = 'sess-setup';
+const T0 = Date.UTC(2026, 10, 4, 0, 0, 0);
+const inProject = (fn) => inSetup(async (world) => {
+  writeProject(PROJECT, { folder: world.folder, remoteUrl: null, host: 'local', repo: `local/${PROJECT}`, connection: { mode: 'none' } });
+  return fn(world);
+});
+const stateCard = composeCard({ ...common, kind: 'question', recommend: 'Comma', what: 'The export needs to know which separator to use.', options: [
+  { label: 'Comma', says: 'Commas between values.' }, { label: 'Tab', says: 'Tabs between values.' }] });
+const STATE = { card: { id: 'c-1', data: stateCard.card }, decided: null };
+const inProjectRun = (input, over = {}) => decide(input, { projectOf: () => ({ project: PROJECT }), now: () => new Date(T0), stop: () => ({ on: true }), role: () => 'front-desk', holdForPane: false, outcomes: () => [STATE], ...over });
+
+test('in a project being set up, the state card wins over a setup card sharing its first line', () => inProject(async ({ folder, first }) => {
+  const line = stateCard.question.question.split('\n')[0];
+  noteAsked({ runId: first.id, folder, step: 4, id: 'other', card: { ...ASKED, question: `${line}\nOther words entirely.`, options: [{ label: 'Foo', description: 'a' }, { label: 'Bar', description: 'b' }] }, now: () => NOW });
+  const q = { question: line, header: 'Question', options: [{ label: 'X', description: 'x' }, { label: 'Y', description: 'y' }], multiSelect: false };
+  assert.deepEqual(swappedOf(await inProjectRun({ ...call(folder, q), session_id: SID })), [asQuestion({ data: stateCard.card })]);
+}));
+
+test('in a project being set up, a setup card is swapped, never held for the pane, and not noted open', () => inProject(async ({ folder, first }) => {
+  // A card in the form a card takes, which a state card of it would hold for a live pane.
+  const form = stateCard.question;
+  noteAsked({ runId: first.id, folder, step: 4, id: 'form', card: form, now: () => NOW });
+  markPane(SID, { at: T0, drawn: T0, surface: 'desktop' });
+  const reworded = { ...form, question: form.question.split('\n')[0], options: [{ label: 'Comma', description: 'x' }, { label: 'Tab', description: 'y' }] };
+  const out = await inProjectRun({ ...call(folder, reworded), session_id: SID }, { outcomes: () => [], holdForPane: true });
+  assert.deepEqual(swappedOf(out), [printedOf(form)]);
+  assert.equal(readOpen(SID), null);
 }));
