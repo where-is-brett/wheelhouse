@@ -19,6 +19,11 @@ import { sessionRole, asideKind } from '../lib/role.js';
 import { refreshSeat } from '../lib/first-mate-seat.js';
 import { ownRun } from '../protection/archon.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { buildViews } from '../state/views.js';
+import { listEvents } from '../state/events.js';
+import { readEnrolled } from '../state/signing.js';
+import { stateDir } from '../lib/paths.js';
+import { isOpen } from '../desk/views.js';
 
 export const WRITING = Object.freeze({ Edit: 'file_path', Write: 'file_path', MultiEdit: 'file_path', NotebookEdit: 'notebook_path' });
 const SHELL = ['Bash', 'PowerShell'];
@@ -35,6 +40,83 @@ export const FRONT_DESK_NO_WRITES = (file) => `Wheelhouse does not let the front
 export const ASIDE_NO_WRITES = (file) => `This window isn't the First Mate and stands in the project's main folder, so it can't change the product's files here (${file}). `
   + 'To edit by hand, start a session in a worktree; its changes reach main through the director\'s own pull request. '
   + `Notes you need to keep go in ${OWN_FOLDER}/work/<id>.md.`;
+
+export const APPROVED_LOCKED = (work, file) => `${file} is the approved document of ${work}, so it is locked. `
+  + 'Changing an approved design is an amendment: write the changed text to its own file, '
+  + `such as ${OWN_FOLDER}/work/${work}.change.md, and run \`record amendment\` naming it as doc. `
+  + 'The director\'s click on the change card puts it in place.';
+
+export const NO_STATUS_LINE = 'Where work stands is kept in the Logbook (`views work`), not in the document: '
+  + 'a status line in a design goes out of date and an edit to an approved document breaks its approval. Leave the status line out.';
+
+// Whether a line of `text` reads as a status written into a document: `Status: draft`, `**Status:** approved`,
+// `> Status: pending`, after any list, quote, heading or bold marks.
+const STATUS_LINE = /^[\s>*_#\-+]*status\s*(?::\s*[*_]*|[*_]+\s*:[*_]*)\s*(draft|approved|awaiting|waiting|pending|proposed|changed since)\b/i;
+// Only the top of a document is read: its front matter, or else its first TOP_LINES lines. A "Status: pending"
+// bullet deeper in is the product's own content.
+const TOP_LINES = 5;
+export function statusLineIn(text) {
+  if (typeof text !== 'string') return false;
+  const lines = text.split(/\r?\n/);
+  let top = lines.slice(0, TOP_LINES);
+  if (lines[0]?.trim() === '---') {
+    const end = lines.findIndex((line, i) => i > 0 && line.trim() === '---');
+    if (end > 0) top = lines.slice(0, end + 1);
+  }
+  return top.some((line) => STATUS_LINE.test(line));
+}
+
+// The approved documents of open work: [{ work, file (full path), hash }]. Closed or finished work, and work with no
+// approval, is not listed.
+export function lockedDocuments(views, folder) {
+  const listed = [];
+  const work = views?.work;
+  if (work === null || typeof work !== 'object') return listed;
+  for (const [id, entry] of Object.entries(work)) {
+    const docPath = entry?.work?.data?.doc?.path;
+    const hash = entry?.approval?.hash;
+    if (!entry?.approval || typeof docPath !== 'string' || docPath === '' || typeof hash !== 'string' || !isOpen(views, id)) continue;
+    listed.push({ work: id, file: path.isAbsolute(docPath) ? docPath : path.join(folder, docPath), hash });
+  }
+  return listed;
+}
+
+function lockedNow(project, folder) {
+  try {
+    return lockedDocuments(buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled()), folder);
+  } catch {
+    return [];
+  }
+}
+
+// The text a write tool puts into its file, for the status check.
+function writtenText(input, file) {
+  const t = input.tool_input ?? {};
+  if (input.tool_name === 'Write') return [t.content];
+  // An edit is judged on the file as it would stand, since only its top is read; a file that can't be read is judged on the new text alone.
+  const edits = input.tool_name === 'Edit' ? [t] : input.tool_name === 'MultiEdit' && Array.isArray(t.edits) ? t.edits : null;
+  if (edits === null) return [];
+  let text = null;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+    for (const e of edits) {
+      if (typeof e?.old_string !== 'string' || typeof e?.new_string !== 'string') continue;
+      text = e.replace_all === true ? text.split(e.old_string).join(e.new_string) : text.replace(e.old_string, () => e.new_string);
+    }
+  } catch {
+    text = null;
+  }
+  return text === null ? edits.map((e) => e?.new_string) : [text];
+}
+
+// Whether `folder` is an existing folder.
+function isFolder(folder) {
+  try {
+    return fs.statSync(folder).isDirectory();
+  } catch {
+    return false;
+  }
+}
 
 // The real path of `file`, which may not exist yet: its nearest folder that does, with the rest after it.
 function realPath(file) {
@@ -155,7 +237,18 @@ export function shellChanges(command, cwd, { windows = false, home = os.homedir(
         const withScript = args.some((a) => ['-e', '-pe', '-ne', '-f', '--expression', '--file'].includes(a));
         (withScript ? given : given.slice(1)).forEach(place);
       }
-    } else if (name === 'cp' || name === 'mv' || name === 'install' || name === 'ln') place(flagless(args).at(-1));
+    } else if (name === 'cp' || name === 'mv' || name === 'install' || name === 'ln') {
+      const named = flagless(args);
+      const target = named.at(-1);
+      place(target);
+      // A folder as the target: each source lands in it under its own name, and that file is what is written.
+      if (typeof target === 'string' && named.length > 1 && !/[$`*?]/.test(target) && (target.endsWith('/') || isFolder(path.resolve(at, target)))) {
+        for (const source of named.slice(0, -1)) {
+          if (/[$`*?]/.test(source)) continue;
+          paths.push(path.join(path.resolve(at, target), path.basename(source)));
+        }
+      }
+    }
     else if (name === 'touch' || name === 'mkdir' || name === 'truncate') flagless(args).forEach(place);
     else if (name === 'git' && flagless(args)[0] === 'init') place(flagless(args)[1] ?? '.');
     else if (['npm', 'pnpm', 'yarn', 'bun'].includes(name) && ['create', 'init'].includes(flagless(args)[0])) here = true;
@@ -178,7 +271,7 @@ export function shellChanges(command, cwd, { windows = false, home = os.homedir(
 const refreshHeld = (project, session) => refreshSeat(project, session);
 
 // The hook's answer: undefined to let the tool run.
-export function decide(input, { env = process.env, find = projectOf, setUp = beingSetUp, role = sessionRole, now = Date.now } = {}) {
+export function decide(input, { env = process.env, find = projectOf, setUp = beingSetUp, role = sessionRole, now = Date.now, locked = lockedNow } = {}) {
   const tool = input?.tool_name;
   const field = WRITING[tool];
   if ((field === undefined && !SHELL.includes(tool)) || typeof input.cwd !== 'string' || !path.isAbsolute(input.cwd)) return undefined;
@@ -212,6 +305,16 @@ export function decide(input, { env = process.env, find = projectOf, setUp = bei
     const changes = shellChanges(command, input.cwd, { windows: tool === 'PowerShell' });
     if (changes === null) return undefined;
     targets = changes.here === null ? changes.paths : [...changes.paths, changes.here];
+  }
+  let held = [];
+  try {
+    if (targets.length > 0) held = locked(found.project, folder);
+  } catch { /* can't tell: allow */ }
+  const lockedHit = Array.isArray(held) ? held.find((d) => typeof d?.file === 'string' && targets.some((t) => keyOf(realPath(t)) === keyOf(realPath(d.file)))) : undefined;
+  if (lockedHit !== undefined) return answer.deny(APPROVED_LOCKED(lockedHit.work, named(lockedHit.file)));
+  if (field !== undefined && field !== 'notebook_path') {
+    const work = path.join(folder, OWN_FOLDER, 'work');
+    if (inside(work, targets[0]) && targets[0].endsWith('.md') && writtenText(input, targets[0]).some(statusLineIn)) return answer.deny(NO_STATUS_LINE);
   }
   const first = targets.find(refused);
   return first === undefined ? undefined : answer.deny(noWrites(named(first)));

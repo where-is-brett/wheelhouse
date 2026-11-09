@@ -73,6 +73,9 @@ export function clashCheck({ files, running, hotFiles }) {
 const FEATURE_LANE = 'feature';
 // The lanes whose work needs no approval unless it is shown to the director first (rulings R60, R78).
 export const STARTS_UNAPPROVED = Object.freeze(['quick', 'bug']);
+// Whether work needs the director's approval before it starts: any lane but quick and bug, any work shown first
+// (`visible`), and work from a ready-made change (`from`).
+export const needsApprovalOfWork = (data) => !STARTS_UNAPPROVED.includes(data?.lane) || data?.visible === true || data?.from !== undefined;
 // The lanes with no plan, whose work builds as soon as it starts.
 export const NO_PLAN = Object.freeze(['quick', 'bug']);
 // A report with one of these outcomes ends the work; a blocked one leaves it in the queue.
@@ -129,10 +132,10 @@ export function nextWork({ work, features, reports, now, fiveHourTight, builderC
   const hold = [];
   for (const w of candidates) {
     const id = w.key;
-    const { lane, visible } = w.data;
+    const { lane } = w.data;
     // Work from a ready-made change (`from`: a request carried on, an archive) always waits for the
     // director's approval, whatever its lane.
-    const needsApproval = !STARTS_UNAPPROVED.includes(lane) || visible === true || w.data.from !== undefined;
+    const needsApproval = needsApprovalOfWork(w.data);
     if (needsApproval && work[id].approved !== true) {
       hold.push({ work: id, why: 'unapproved' });
     } else if ((w.data.dependsOn ?? []).some((dep) => reports?.[dep]?.data?.outcome !== 'merged')) {

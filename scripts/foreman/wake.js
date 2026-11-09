@@ -66,7 +66,10 @@
 //
 // The shared pieces here (ForemanError, the views, the configuration, a
 // feature's worktree and plan, the clash and slot answers) are act.js's too.
-import { holdingReview, stuckAskCommand } from './ask-help.js';
+import { driftAnswerCommand, driftAskCommand, holdingReview, stuckAskCommand } from './ask-help.js';
+import { approvedText } from '../state/approved-text.js';
+import { readEnrolled } from '../state/signing.js';
+import { changeWaiting } from '../state/views.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { clashCheck, fileMapOf, nextWork, since } from './queue.js';
@@ -310,6 +313,9 @@ export function recordedBriefOf(project, work, events = stateEvents(project)) {
 // main checkout), and the problem null only when the file is the one approved
 // (ruling R97): its hash is the approval's, or for work that starts with no
 // approval, the one the work event recorded. Null when the work names none.
+// `file` is the full path; `drift` is null, or when the file is readable and not the approved one,
+// `{ pending, restorable }`: `pending` when an amendment of the work names the file's text (the change was
+// proposed and not yet clicked), `restorable` when a copy of the approved text was kept.
 export function documentOf(project, views, work) {
   const entry = views.work?.[work];
   const doc = entry?.work?.data?.doc;
@@ -325,9 +331,26 @@ export function documentOf(project, views, work) {
   const text = readCapped(full, DOCUMENT_BYTES);
   const approved = typeof entry.approval?.hash === 'string' ? entry.approval.hash : doc.hash;
   let problem = null;
+  let drift = null;
+  const PENDING = 'holds a change the director has not yet approved: its change card decides it';
   if (text === null) problem = "can't be read";
-  else if (briefHash(text) !== approved) problem = 'is not the one approved: it has changed since';
-  return { path: oneLine(full, 300), problem };
+  else {
+    const now = briefHash(text);
+    const events = stateEvents(project);
+    const proposed = events.filter((e) => e.kind === 'amendment' && e.data?.work === work);
+    // Only a change with its own text (`doc`) that came after the work was last recorded holds it, and until it is clicked
+    // (changeWaiting says; the file's own text is no sign, since a change lives in its own file until the click installs it).
+    const waiting = changeWaiting(events, work, readEnrolled());
+    if (now !== approved) {
+      const pending = waiting || proposed.some((a) => a.data.hash === now);
+      drift = { pending, restorable: approvedText(project, approved) !== null };
+      problem = pending ? PENDING : 'is not the one approved: it has changed since';
+    } else if (waiting) {
+      drift = { pending: true, restorable: false };
+      problem = PENDING;
+    }
+  }
+  return { path: oneLine(full, 300), file: full, problem, drift };
 }
 
 // What holds back every start and go-ahead (ruling R95): STOP, or an open
@@ -560,6 +583,8 @@ function eventLine(e, ctx) {
       const asked = typeof q?.what === 'string' ? ` ("${oneLine(q.what, 100)}")` : '';
       const says = Array.isArray(q?.options) ? q.options.find((o) => isPlain(o) && o.label === d.label)?.says : undefined;
       const answered = `${head}: the director answered your question ${oneLine(d.questionId, 60)}${asked}: "${oneLine(d.label, 60)}"`;
+      const drift = driftAnswerCommand(work, q?.what, d.label);
+      if (drift !== null) return `${answered}, which says: ${drift}. Act on it.`;
       if (typeof says !== 'string') return `${answered}, but that option's words can't be read. Ask the director: act ask`;
       return `${answered}, which says: ${oneLine(says, SAYS_CHARS)}. Act on it.`;
     }
@@ -653,6 +678,8 @@ function queueLines(ctx) {
     const data = views.work[id].work.data;
     const doc = documentOf(ctx.project, views, id);
     if (doc === null) return 'It names no document to read its goal from. Ask the director: act ask';
+    if (doc.drift?.pending) return 'It waits: the director has not yet answered the change card for it. Nothing to do. If the director no longer wants the change, the front desk records the work again.';
+    if (doc.drift) return `Its document ${doc.path} ${doc.problem}. Ask the director in this one command: ${driftAskCommand(id, { restorable: doc.drift.restorable })}`;
     if (doc.problem !== null) return `Its document ${doc.path} ${doc.problem}. Ask the director: act ask`;
     if (typeof data.parent === 'string') {
       return `It is an extra plan of ${data.parent}, titled "${oneLine(data.title, 120)}". Next: act start ${id} --goal '<its title>' ${flags} `

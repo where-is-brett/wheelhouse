@@ -327,7 +327,7 @@ const PLAIN_SHAPES = {
   // A red-main incident (design on Archon, section 7.7) names its kind, the pull request the merge queue suspects
   // (or null) and the fix's work; the helper opens and closes it, and the director never needs to.
   incident: { must: ['id', 'what'], may: ['kind', 'suspect', 'work'] },
-  amendment: { must: ['work', 'change', 'hash'], may: [] },
+  amendment: { must: ['work', 'change', 'hash'], may: ['doc'] },
   // `event`: the id of the record a card without a set line was made from (a lineage hold), so it is made once.
   // `parts`: the card's parts as the composer gives them; `revises`: the id of the card a revised proposal replaces;
   // `joiners`: the questions its answer also answers, each piece named on the card; `saidBefore`: the answer it says was given before.
@@ -685,6 +685,7 @@ function checkPlain(kind, data) {
     slug('work');
     text('change');
     if (typeof data.hash !== 'string' || !HASH.test(data.hash)) bad('needs the hash of the changed document');
+    if (data.doc !== undefined) text('doc');
   } else if (kind === 'card') {
     // The question and its header as AskUserQuestion takes them; composing keeps them within CARD's limits.
     text('question');

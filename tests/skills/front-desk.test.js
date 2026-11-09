@@ -270,20 +270,20 @@ test('the intake ends with Change, and neither skill names a goal sheet or its c
   assert.doesNotMatch(playbook, /start-goal|goal-draft|goal-card|goal-baseline|narrow-goal|end-goal/);
 });
 
-test('the intake writes a changed approved document in place and marks it as changed since the approval, never as approved (F75, F80)', () => {
+test('the intake writes a change to an approved document to its own file, never in place, and the document has no status line (F75, F80)', () => {
   const rule = intake.split('\n').find((line) => line.includes('**A change to what an approved brief or design builds')) ?? '';
-  assert.match(rule, /in place, in the one file the work names/);
-  assert.match(rule, /approval line/);
-  // The line stays true after the click, since the amendment's hash pins its text (ruling F80).
-  assert.ok(rule.includes('"Changed since the director\'s approval; the change card decides it."'), 'the timeless line');
-  assert.doesNotMatch(rule, /waits for/);
-  assert.match(rule, /stays in git at the hash the approval names/);
-  assert.match(rule, /`cli\.js record amendment` \(the work, the change and `readBack`[^)]*works out the changed document's hash and prints it/);
+  assert.match(rule, /the approved document is locked and carries no status line/);
+  assert.match(rule, /Write the changed document in full to its own file, `\.wheelhouse\/work\/<id>\.change\.md`/);
+  assert.match(rule, /`cli\.js record amendment` \(the work, the change, `readBack`, and `doc`: that file; it works out the changed text's hash and prints it, and prints `say`\)/);
   assert.match(rule, /`amend` card/);
+  assert.match(rule, /The click puts the changed text in place/);
   // Nothing holds a build for an amendment waiting for its click (ruling F84).
   assert.match(rule, /its meanwhile says the build keeps to the approved design until the click/);
+  // No sentence tells the front desk to edit the approved document or to replace its approval line.
+  assert.doesNotMatch(intake, /write the changed document in place|replace its approval line|stays in git at the hash/);
+  assert.match(intake, /Wheelhouse keeps the approved text\./);
   // The red flags say the same.
-  assert.match(intake, /\n\| "[^"\n]*approval line[^"\n]*" \| Replace it: "Changed since the director's approval; the change card decides it\." \|\n/);
+  assert.match(intake, /\n\| "I'll edit the approved document and fix its status line" \| It is locked and has no status line: write the change to its own file, then `record amendment` \|\n/);
 });
 
 test('the intake reads running work back before anything else, in the read-back\'s own words, and its red flags say so (F89)', () => {
@@ -295,8 +295,8 @@ test('the intake reads running work back before anything else, in the read-back\
 
 test('the intake gives an amendment its read-back through the record command, and says the line it prints first (scenario 26)', () => {
   const rule = intake.split('\n').find((line) => line.includes('**A change to what an approved brief or design builds')) ?? '';
-  // The command refuses an amendment without the read-back, and prints the route line and the read-back as one.
-  assert.match(rule, /`cli\.js record amendment` \(the work, the change and `readBack`: `doing`, `notDoing` and `doneWhen`, each one line; it refuses an amendment without them, works out the changed document's hash and prints it, and prints `say`\)/);
+  // The command prints the route line and the read-back as one.
+  assert.match(rule, /`cli\.js record amendment` \(the work, the change, `readBack`, and `doc`: that file; it works out the changed text's hash and prints it, and prints `say`\)/);
   assert.match(rule, /Put `say` first in your reply, word for word: it is the route line and the read-back/);
 });
 

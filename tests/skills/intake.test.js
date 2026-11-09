@@ -25,6 +25,17 @@ test('intake: the watch phrases record a watch event at the level they name', ()
   }
 });
 
+test('intake: route 3 sends a change to its own file through `record amendment` with `doc`, and route 9 says record work refuses a design with no slices', () => {
+  const rule = intake.split('\n').find((line) => line.includes('**A change to what an approved brief or design builds')) ?? '';
+  assert.match(rule, /`cli\.js record amendment`/);
+  assert.match(rule, /and `doc`: that file/);
+  assert.ok(rule.includes('If the director drops a change, `record work` again with the same document; that lets the work go.'));
+  const pause = intake.split('\n').find((line) => line.includes('**A pause or a resume:**')) ?? '';
+  assert.match(pause, /and no `doc`/);
+  assert.doesNotMatch(intake, /edit the approved document in place|replace its approval line|replace its approval/i);
+  assert.match(intake, /`record work` refuses a feature design that has no such block\./);
+});
+
 test('intake: the lane of a change follows its wheelhouse-facts block, not brainstorming\'s size', () => {
   assert.match(intake, /wheelhouse-facts/);
   assert.match(intake, /addsPage, storesData, parsesInput and touchesMoreThanOneArea/);

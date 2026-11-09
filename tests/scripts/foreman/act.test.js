@@ -27,7 +27,11 @@ import { computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths
 import { selfTestFile } from '../../../scripts/windows/low.js';
 import { setStop } from '../../../scripts/lib/stop.js';
 import { writeReadyRecord } from '../../../scripts/survey/ready-record.js';
-import { eventPath, makeEvent } from '../../../scripts/state/events.js';
+import { eventPath, makeEvent, listEvents } from '../../../scripts/state/events.js';
+import { needsApprovalOfWork } from '../../../scripts/foreman/queue.js';
+import { buildViews } from '../../../scripts/state/views.js';
+import { readEnrolled } from '../../../scripts/state/signing.js';
+import { approvedText, keepApprovedText } from '../../../scripts/state/approved-text.js';
 import { HAND_DONE, HAND_GOAL } from '../../../scripts/lib/by-hand-done.js';
 import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
 import { sessionFile } from '../../../scripts/watcher/waker.js';
@@ -36,7 +40,7 @@ import { g, makeBareRemote } from '../../helpers/git-fixture.js';
 import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 import { NULL_FILE } from '../../../scripts/lib/safe-git.js';
 import { holdFile } from '../../../scripts/crew/hold.js';
-import { withHome } from '../../helpers/homes.js';
+import { withHome, tempFolder } from '../../helpers/homes.js';
 import {
   P, T0, HASH, config, emptyViews, fakeClient, featureView, planText, project, recordInState, reportText, workView, worktree,
 } from '../../helpers/foreman.js';
@@ -202,6 +206,39 @@ test('start copies the approved document into the worktree, names it in the brie
   assert.equal(parseBrief(text).fields.approved, briefHash(design));
   assert.match(text, /`\.wheelhouse\/feature\/approved\.md`/);
   assert.match(r2.out, /^Copied the approved document into the worktree\.$/m);
+}));
+
+test('start refuses while a change to the approved document waits for the director\'s card, and starts once it is clicked', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  const design = '# Export\n\nThe report downloads as CSV, with the columns the table shows.\n';
+  fs.mkdirSync(path.join(checkout, '.wheelhouse', 'work'), { recursive: true });
+  fs.writeFileSync(path.join(checkout, '.wheelhouse', 'work', 'add-export.md'), design);
+  const views = startViews();
+  views.work['add-export'] = workView('add-export', { shownFirst: true, doc: { path: '.wheelhouse/work/add-export.md', hash: briefHash(design) } });
+  views.work['add-export'].approval.hash = briefHash(design);
+  try {
+    enrol({ ...makeSigningKey(), enrolledAt: '2026-10-18T00:00:00.000Z' });
+  } catch (error) {
+    if (!/already exists/.test(error.message)) throw error;
+  }
+  const put = (event) => {
+    const at = path.join(stateDir(P), eventPath(event));
+    fs.mkdirSync(path.dirname(at), { recursive: true });
+    fs.writeFileSync(at, JSON.stringify(event));
+  };
+  const changeHash = briefHash('The changed design.\n');
+  put(makeEvent({ kind: 'amendment', data: { work: 'add-export', change: 'Changed.', hash: changeHash, doc: '.wheelhouse/work/add-export.change.md' }, now: () => new Date(T0 - 80000) }));
+  const waker = fakeWaker();
+  const held = fakeClient({ views });
+  const r1 = await act(START, { client: held.client, wakerFor: waker.wakerFor });
+  refusedInOneLine(r1);
+  assert.match(r1.err, /add-export can't start: the director has not yet answered the change card for it/);
+  assert.equal(fs.existsSync(path.join(checkout, '.claude', 'worktrees', 'add-export')), false);
+  assert.deepEqual(held.writes, []);
+
+  put(makeEvent({ kind: 'action', data: { action: 'amend', work: 'add-export', hash: changeHash, question: 'as shown', label: 'Change it' }, now: () => new Date(T0 - 70000) }));
+  const r2 = await act(START, { client: fakeClient({ views }).client, wakerFor: waker.wakerFor });
+  assert.equal(r2.code, 0, r2.err);
 }));
 
 test('start gives slices and a plan to the brief, and a feature started before its session began starts the session only', () => withHome(async () => {
@@ -2314,4 +2351,157 @@ test('act: start refuses a held piece', () => withHome(async () => {
   const r = await act(['start', 'mine', '--goal', 'g', '--done', 'd', '--appetite-sessions', '1', '--appetite-tokens', '1000'], { client: fake.client });
   assert.equal(r.out, 'mine is with the director at the helm. It waits until they hand it back.\n');
   assert.deepEqual(fake.calls.map(([name]) => name), []);
+}));
+
+// --- restore and reapprove ---
+
+const APPROVED = '# Export\n\nThe report downloads as CSV.\n';
+const CHANGED = `${APPROVED}A line added after the approval.\n`;
+
+// Work not started, approved at APPROVED, whose document now holds CHANGED. The records are in the state clone as the
+// helper keeps them: the work event, and the director's signed approval of the approved text.
+async function driftedWork({ keep = true, started = false, lane = 'small', approved: signed = true, doc: docPath, visible = false } = {}) {
+  const checkout = await project();
+  fs.mkdirSync(path.join(checkout, '.wheelhouse', 'work'), { recursive: true });
+  const rel = docPath ?? '.wheelhouse/work/add-export.md';
+  const file = path.resolve(checkout, rel);
+  const hash = briefHash(APPROVED);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, CHANGED);
+  if (keep) keepApprovedText(P, APPROVED);
+  try {
+    enrol({ ...makeSigningKey(), enrolledAt: '2026-10-18T00:00:00.000Z' });
+  } catch (error) {
+    if (!/already exists/.test(error.message)) throw error;
+  }
+  const views = emptyViews();
+  views.work['add-export'] = workView('add-export', { lane, visible, approved: signed, doc: { path: rel, hash } });
+  if (signed) views.work['add-export'].approval.hash = hash;
+  const put = (event) => {
+    const at = path.join(stateDir(P), eventPath(event));
+    fs.mkdirSync(path.dirname(at), { recursive: true });
+    fs.writeFileSync(at, JSON.stringify(event));
+  };
+  put(makeEvent({ kind: 'work', data: views.work['add-export'].work.data, now: () => new Date(T0 - 100000) }));
+  if (signed) put(makeEvent({ kind: 'action', data: { action: 'approve-work', work: 'add-export', lane, hash, shownFirst: false, question: 'as shown', label: 'Approve' }, now: () => new Date(T0 - 90000) }));
+  if (started) views.features['add-export'] = featureView('add-export', { step: 'started', worktree: worktree(checkout, 'add-export'), branch: 'feature/add-export' });
+  return { checkout, file, rel, hash, views };
+}
+
+test('restore puts the approved text back, so the document hashes to the approval again', () => withHome(async () => {
+  const { file, hash, views } = await driftedWork();
+  const fake = fakeClient({ views });
+  const r = await act(['restore', 'add-export'], { client: fake.client });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(fs.readFileSync(file, 'utf8'), APPROVED);
+  assert.equal(briefHash(fs.readFileSync(file, 'utf8')), hash);
+  assert.equal(r.out, `Restored add-export's document to the text the director approved (${hash.slice(0, 12)}).\n`);
+  assert.equal(approvedText(P, briefHash(CHANGED)), CHANGED, 'the drifted text it overwrote is kept under its own hash');
+  assert.deepEqual(fake.writes, []);
+}));
+
+test('restore refuses when no copy was kept, when the work has started, and when the change is pending', () => withHome(async () => {
+  const none = await driftedWork({ keep: false });
+  const r1 = await act(['restore', 'add-export'], { client: fakeClient({ views: none.views }).client });
+  refusedInOneLine(r1);
+  assert.match(r1.err, /No copy of the approved text was kept/);
+  assert.equal(fs.readFileSync(none.file, 'utf8'), CHANGED);
+
+  const started = await driftedWork({ started: true });
+  const r2 = await act(['restore', 'add-export'], { client: fakeClient({ views: started.views }).client });
+  refusedInOneLine(r2);
+  assert.match(r2.err, /started/);
+  assert.equal(fs.readFileSync(started.file, 'utf8'), CHANGED);
+
+  const pending = await driftedWork();
+  const amendment = makeEvent({ kind: 'amendment', data: { work: 'add-export', change: 'A line added.', hash: briefHash(CHANGED), doc: '.wheelhouse/work/add-export.change.md' }, now: () => new Date(T0 - 80000) });
+  fs.writeFileSync(path.join(stateDir(P), eventPath(amendment)), JSON.stringify(amendment));
+  const r3 = await act(['restore', 'add-export'], { client: fakeClient({ views: pending.views }).client });
+  refusedInOneLine(r3);
+  assert.match(r3.err, /holds a change the director has not yet approved/);
+  assert.equal(fs.readFileSync(pending.file, 'utf8'), CHANGED);
+}));
+
+test('reapprove records the changed document as the work\'s own, so it has no approval, and records nothing twice', () => withHome(async () => {
+  const { rel, views } = await driftedWork();
+  const fake = fakeClient({ views });
+  const r = await act(['reapprove', 'add-export'], { client: fake.client });
+  assert.equal(r.code, 0, r.err);
+  const hash = briefHash(CHANGED);
+  assert.equal(r.out, `Recorded the changed document of add-export (${hash.slice(0, 12)}). It has no approval yet: the First Mate offers its approval card.\n`);
+  assert.equal(fake.writes.length, 1);
+  const [w] = fake.writes;
+  assert.equal(w.kind, 'work');
+  assert.deepEqual(w.data, { ...views.work['add-export'].work.data, doc: { path: rel, hash } });
+  assert.equal(w.handledFirst, true);
+
+  const shown = buildViews(listEvents(stateDir(P), { report: () => {} }), readEnrolled());
+  assert.equal(shown.work['add-export'].approval, undefined);
+  assert.equal(shown.work['add-export'].work.data.doc.hash, hash);
+
+  const second = fakeClient({ views: shown });
+  const again = await act(['reapprove', 'add-export'], { client: second.client });
+  assert.equal(again.code, 0, again.err);
+  assert.deepEqual(second.writes, []);
+  assert.equal(listEvents(stateDir(P), { report: () => {} }).filter((e) => e.kind === 'work').length, 2);
+}));
+
+test('reapprove refuses work that has started and a change that is pending', () => withHome(async () => {
+  const started = await driftedWork({ started: true });
+  const fake = fakeClient({ views: started.views });
+  const r1 = await act(['reapprove', 'add-export'], { client: fake.client });
+  refusedInOneLine(r1);
+  assert.deepEqual(fake.writes, []);
+
+  const pending = await driftedWork();
+  const amendment = makeEvent({ kind: 'amendment', data: { work: 'add-export', change: 'A line added.', hash: briefHash(CHANGED), doc: '.wheelhouse/work/add-export.change.md' }, now: () => new Date(T0 - 80000) });
+  fs.writeFileSync(path.join(stateDir(P), eventPath(amendment)), JSON.stringify(amendment));
+  const fake2 = fakeClient({ views: pending.views });
+  const r2 = await act(['reapprove', 'add-export'], { client: fake2.client });
+  refusedInOneLine(r2);
+  assert.match(r2.err, /holds a change the director has not yet approved/);
+  assert.deepEqual(fake2.writes, []);
+}));
+
+test('reapprove tells the truth about a lane that starts without an approval card, by the queue\'s own rule', () => withHome(async () => {
+  for (const [lane, visible] of [['small', false], ['quick', false], ['quick', true]]) {
+    const { views } = await driftedWork({ lane, visible });
+    const fake = fakeClient({ views });
+    const r = await act(['reapprove', 'add-export'], { client: fake.client });
+    assert.equal(r.code, 0, r.err);
+    const hash = briefHash(CHANGED).slice(0, 12);
+    const needs = needsApprovalOfWork(views.work['add-export'].work.data);
+    assert.equal(needs, !(lane === 'quick' && !visible));
+    assert.equal(r.out, needs
+      ? `Recorded the changed document of add-export (${hash}). It has no approval yet: the First Mate offers its approval card.\n`
+      : `Recorded the changed document of add-export (${hash}). Its lane starts without an approval card, so it starts from this text.\n`);
+  }
+}));
+
+test('restore and reapprove refuse work that needs approval and has none on record', () => withHome(async () => {
+  for (const command of ['restore', 'reapprove']) {
+    const { file, views } = await driftedWork({ approved: false });
+    const fake = fakeClient({ views });
+    const r = await act([command, 'add-export'], { client: fake.client });
+    refusedInOneLine(r);
+    assert.match(r.err, /add-export has no approval yet, so there is nothing to restore or re-approve: its approval card decides it\./);
+    assert.deepEqual(fake.writes, []);
+    assert.equal(fs.readFileSync(file, 'utf8'), CHANGED);
+  }
+  // A lane that starts without approval keeps the work event's own hash as the approved one.
+  const { views } = await driftedWork({ approved: false, lane: 'quick' });
+  const r = await act(['reapprove', 'add-export'], { client: fakeClient({ views }).client });
+  assert.equal(r.code, 0, r.err);
+}));
+
+test('restore refuses a document outside the main checkout', () => withHome(async () => {
+  for (const where of ['absolute', 'escaping']) {
+    const outside = path.join(tempFolder('wh-outside-'), 'doc.md');
+    const { checkout, file, views } = await driftedWork({ doc: where === 'absolute' ? outside : '../outside-doc.md' });
+    const r = await act(['restore', 'add-export'], { client: fakeClient({ views }).client });
+    refusedInOneLine(r);
+    assert.match(r.err, /outside the main checkout/, where);
+    assert.equal(fs.readFileSync(file, 'utf8'), CHANGED);
+    if (where === 'escaping') fs.rmSync(path.resolve(checkout, '../outside-doc.md'), { force: true });
+  }
 }));

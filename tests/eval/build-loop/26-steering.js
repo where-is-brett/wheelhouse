@@ -56,6 +56,19 @@ day, customer, items, total and status. Totals at the foot of each sheet.
 
 The button gives a workbook that opens in Excel and Numbers, with every order
 of the days chosen and the right totals.
+
+\`\`\`wheelhouse-slices
+${JSON.stringify({
+  goal: 'Staff download the orders for the days chosen as a workbook',
+  flag: { name: 'orders-export' },
+  demo: 'end',
+  slices: [
+    { title: 'The rows', goal: 'The orders for the days chosen, as rows', done: [{ test: 'the rows hold every order of the days chosen' }] },
+    { title: 'The workbook', goal: 'The rows written as an .xlsx file, a sheet per day', done: [{ test: 'the workbook has a sheet per day with totals' }] },
+    { title: 'The button', goal: 'The button on the staff page gives the workbook', done: [{ test: 'the button gives a workbook' }] },
+  ],
+})}
+\`\`\`
 `);
 
 const WORKTREE_FILES = {

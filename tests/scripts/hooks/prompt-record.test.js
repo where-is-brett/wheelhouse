@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { decide, sendPending, SIGNED_LABELS, signsOn, storedText } from '../../../scripts/hooks/prompt-record.js';
+import { briefHash } from '../../../scripts/feature/files.js';
+import { approvedDir, keepApprovedText, approvedText } from '../../../scripts/state/approved-text.js';
 import { cardHash } from '../../../scripts/lib/measures-clicks.js';
 import { makeEvent, eventPath, dataHash, confirmationFor, eventHash, listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
@@ -2152,5 +2154,193 @@ test('no reply code for the window take-over card', async () => {
     writeSeat('a');
     await decide(inSession(takeOverAnswer(card, 'Leave it there'), 'a'), deps(c));
     assert.deepEqual(c.calls.record, []);
+  });
+});
+
+// --- the approved text is kept at the click ---
+
+const folderDeps = (c, folder) => ({ client: c, now: () => NOW, projectOf: () => ({ project: P, record: { folder } }) });
+const withFolder = async (fn) => withHome(async () => fn(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-pr-folder-'))));
+
+test('Approve on an approve-work card keeps the document text the work event hashed, and still signs', async () => {
+  await withFolder(async (folder) => {
+    const text = 'The design, as the director read it.\n';
+    const hash = briefHash(text);
+    fs.writeFileSync(path.join(folder, 'd.md'), text);
+    keepEvent(workEvent({ doc: { path: 'd.md', hash } }));
+    const c = fake();
+    const q = `${approveWorkLine('export-csv', 'feature', hash)}?`;
+    await decide(input({ [q]: 'Approve' }), folderDeps(c, folder));
+    assert.deepEqual(recorded(c).map((d) => d.action), ['approve-work']);
+    assert.equal(approvedText(P, hash), text);
+  });
+});
+
+test('Approve with the document edited since keeps nothing and still signs', async () => {
+  await withFolder(async (folder) => {
+    const hash = briefHash('What the work event hashed.\n');
+    fs.writeFileSync(path.join(folder, 'd.md'), 'Edited since.\n');
+    keepEvent(workEvent({ doc: { path: 'd.md', hash } }));
+    const c = fake();
+    const q = `${approveWorkLine('export-csv', 'feature', hash)}?`;
+    await decide(input({ [q]: 'Approve' }), folderDeps(c, folder));
+    assert.equal(recorded(c).length, 1);
+    assert.equal(approvedText(P, hash), null);
+    assert.equal(fs.existsSync(approvedDir(P)), false);
+  });
+});
+
+test('Approve whose keeping throws still signs', async () => {
+  await withFolder(async (folder) => {
+    const text = 'Kept or not.\n';
+    const hash = briefHash(text);
+    fs.writeFileSync(path.join(folder, 'd.md'), text);
+    keepEvent(workEvent({ doc: { path: 'd.md', hash } }));
+    // A file where the folder should go.
+    fs.mkdirSync(path.dirname(approvedDir(P)), { recursive: true });
+    fs.writeFileSync(approvedDir(P), 'in the way');
+    const c = fake();
+    const q = `${approveWorkLine('export-csv', 'feature', hash)}?`;
+    await decide(input({ [q]: 'Approve' }), folderDeps(c, folder));
+    assert.deepEqual(recorded(c).map((d) => d.action), ['approve-work']);
+  });
+});
+
+const CHANGE_DOC = '.wheelhouse/work/x.change.md';
+const amendSetup = (folder, { current, changed = 'The changed design.\n', doc = CHANGE_DOC } = {}) => {
+  fs.mkdirSync(path.join(folder, '.wheelhouse/work'), { recursive: true });
+  fs.writeFileSync(path.join(folder, 'd.md'), current);
+  if (doc) fs.writeFileSync(path.join(folder, doc), changed);
+  keepEvent(workEvent({ doc: { path: 'd.md', hash: briefHash(current) } }));
+  const hash = briefHash(changed);
+  keepEvent(makeEvent({ kind: 'amendment', data: { work: 'export-csv', change: 'CSV, not Excel', hash, ...(doc ? { doc } : {}) }, now: () => NOW }));
+  return { hash, question: `${amendLine('export-csv', hash)}?` };
+};
+
+test('Change it keeps the changed text and installs it over the approved document', async () => {
+  await withFolder(async (folder) => {
+    const approved = 'The approved design.\n';
+    keepApprovedText(P, approved);
+    const { hash, question } = amendSetup(folder, { current: approved });
+    const c = fake();
+    await decide(input({ [question]: 'Change it' }), folderDeps(c, folder));
+    assert.deepEqual(recorded(c).map((d) => d.action), ['amend']);
+    assert.equal(approvedText(P, hash), 'The changed design.\n');
+    assert.equal(fs.readFileSync(path.join(folder, 'd.md'), 'utf8'), 'The changed design.\n');
+  });
+});
+
+test('Change it leaves a document that matches neither the approval nor the work event as it is, and still signs', async () => {
+  await withFolder(async (folder) => {
+    const { question } = amendSetup(folder, { current: 'What the work event hashed.\n' });
+    fs.writeFileSync(path.join(folder, 'd.md'), 'Edited by someone, never approved.\n');
+    const c = fake();
+    await decide(input({ [question]: 'Change it' }), folderDeps(c, folder));
+    assert.deepEqual(recorded(c).map((d) => d.action), ['amend']);
+    assert.equal(fs.readFileSync(path.join(folder, 'd.md'), 'utf8'), 'Edited by someone, never approved.\n');
+  });
+});
+
+test('Change it installs over a document with no kept copy when it is the text the work event hashed, and keeps what it replaces', async () => {
+  await withFolder(async (folder) => {
+    const current = 'Approved before copies were kept.\n';
+    const { question } = amendSetup(folder, { current });
+    const c = fake();
+    await decide(input({ [question]: 'Change it' }), folderDeps(c, folder));
+    assert.deepEqual(recorded(c).map((d) => d.action), ['amend']);
+    assert.equal(fs.readFileSync(path.join(folder, 'd.md'), 'utf8'), 'The changed design.\n');
+    assert.equal(approvedText(P, briefHash(current)), current);
+  });
+});
+
+test('Change it installs on work in a lane that starts without an approval', async () => {
+  await withFolder(async (folder) => {
+    fs.mkdirSync(path.join(folder, '.wheelhouse/work'), { recursive: true });
+    const current = 'A quick change.\n';
+    fs.writeFileSync(path.join(folder, 'd.md'), current);
+    fs.writeFileSync(path.join(folder, CHANGE_DOC), 'The quick change, changed.\n');
+    keepEvent(workEvent({ lane: 'quick', visible: false, doc: { path: 'd.md', hash: briefHash(current) } }));
+    const hash = briefHash('The quick change, changed.\n');
+    keepEvent(makeEvent({ kind: 'amendment', data: { work: 'export-csv', change: 'x', hash, doc: CHANGE_DOC }, now: () => NOW }));
+    const c = fake();
+    await decide(input({ [`${amendLine('export-csv', hash)}?`]: 'Change it' }), folderDeps(c, folder));
+    assert.deepEqual(recorded(c).map((d) => d.action), ['amend']);
+    assert.equal(fs.readFileSync(path.join(folder, 'd.md'), 'utf8'), 'The quick change, changed.\n');
+  });
+});
+
+test('Change it with the document file gone signs and installs nothing, without a crash', async () => {
+  await withFolder(async (folder) => {
+    const { question } = amendSetup(folder, { current: 'Gone soon.\n' });
+    fs.rmSync(path.join(folder, 'd.md'));
+    const c = fake();
+    await decide(input({ [question]: 'Change it' }), folderDeps(c, folder));
+    assert.deepEqual(recorded(c).map((d) => d.action), ['amend']);
+    assert.equal(fs.existsSync(path.join(folder, 'd.md')), false);
+  });
+});
+
+test('Change it whose install throws still signs', async () => {
+  await withFolder(async (folder) => {
+    const { question } = amendSetup(folder, { current: 'Kept or not.\n' });
+    fs.mkdirSync(path.dirname(approvedDir(P)), { recursive: true });
+    fs.writeFileSync(approvedDir(P), 'in the way');
+    const c = fake();
+    await decide(input({ [question]: 'Change it' }), folderDeps(c, folder));
+    assert.deepEqual(recorded(c).map((d) => d.action), ['amend']);
+  });
+});
+
+test('Change it, clicked twice in a row, installs each change over the one before', async () => {
+  await withFolder(async (folder) => {
+    const first = 'The first change.\n';
+    const second = 'The second change.\n';
+    const { hash, question } = amendSetup(folder, { current: 'The approved design.\n', changed: first });
+    const approvedHash = briefHash('The approved design.\n');
+    keepEvent(makeEvent({ kind: 'action', data: { action: 'approve-work', work: 'export-csv', lane: 'feature', hash: approvedHash, shownFirst: false, question: 'as shown', label: 'Approve' }, now: () => new Date(NOW.getTime() + 1000) }));
+    const c = fake();
+    await decide(input({ [question]: 'Change it' }), folderDeps(c, folder));
+    assert.equal(fs.readFileSync(path.join(folder, 'd.md'), 'utf8'), first);
+    keepEvent(makeEvent({ kind: 'action', data: recorded(c)[0], now: () => new Date(NOW.getTime() + 2000) }));
+    const secondHash = briefHash(second);
+    fs.writeFileSync(path.join(folder, '.wheelhouse/work/y.change.md'), second);
+    keepEvent(makeEvent({ kind: 'amendment', data: { work: 'export-csv', change: 'again', hash: secondHash, doc: '.wheelhouse/work/y.change.md' }, now: () => new Date(NOW.getTime() + 3000) }));
+    const c2 = fake();
+    await decide(input({ [`${amendLine('export-csv', secondHash)}?`]: 'Change it' }), folderDeps(c2, folder));
+    assert.deepEqual(recorded(c2).map((d) => d.action), ['amend']);
+    assert.equal(fs.readFileSync(path.join(folder, 'd.md'), 'utf8'), second);
+    assert.equal(approvedText(P, hash), first);
+  });
+});
+
+test('Change it will not install into a document path outside the checkout', async () => {
+  await withFolder(async (folder) => {
+    const outside = path.join(os.tmpdir(), `wh-outside-${process.pid}.md`);
+    fs.writeFileSync(outside, 'Outside.\n');
+    try {
+      fs.mkdirSync(path.join(folder, '.wheelhouse/work'), { recursive: true });
+      fs.writeFileSync(path.join(folder, CHANGE_DOC), 'The changed design.\n');
+      keepEvent(workEvent({ doc: { path: path.relative(folder, outside), hash: briefHash('Outside.\n') } }));
+      const hash = briefHash('The changed design.\n');
+      keepEvent(makeEvent({ kind: 'amendment', data: { work: 'export-csv', change: 'x', hash, doc: CHANGE_DOC }, now: () => NOW }));
+      const c = fake();
+      await decide(input({ [`${amendLine('export-csv', hash)}?`]: 'Change it' }), folderDeps(c, folder));
+      assert.deepEqual(recorded(c).map((d) => d.action), ['amend']);
+      assert.equal(fs.readFileSync(outside, 'utf8'), 'Outside.\n');
+    } finally {
+      fs.rmSync(outside, { force: true });
+    }
+  });
+});
+
+test('Change it on an amendment from before doc was recorded signs and installs nothing', async () => {
+  await withFolder(async (folder) => {
+    const approved = 'The approved design.\n';
+    keepApprovedText(P, approved);
+    const { question } = amendSetup(folder, { current: approved, doc: null });
+    const c = fake();
+    await decide(input({ [question]: 'Change it' }), folderDeps(c, folder));
+    assert.deepEqual(recorded(c).map((d) => d.action), ['amend']);
+    assert.equal(fs.readFileSync(path.join(folder, 'd.md'), 'utf8'), approved);
   });
 });

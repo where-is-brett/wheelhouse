@@ -19,6 +19,7 @@ import { briefText, wholeBrief, BRIEF_WORDS_MOST } from '../../../scripts/state/
 import { makeEvent, dataHash, listEvents, writeEvent, confirmationFor, PROTECTED_KINDS } from '../../../scripts/state/events.js';
 import { deskCore } from '../../../scripts/desk/core.js';
 import { levelWords } from '../../../scripts/settings/effective.js';
+import { designWithSlices } from '../../helpers/slices.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
@@ -902,12 +903,15 @@ test('record brief refuses what can\'t stand, before anything is written', async
 test('record work, amendment, incident and note write the build loop\'s kinds', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
-    const dir = projectWithDoc('export-csv');
+    const dir = projectWithDoc('export-csv', designWithSlices('Export a report'));
     const at = { cwd: dir };
-    const docHash = createHash('sha256').update('The brief.\n').digest('hex');
+    const docHash = createHash('sha256').update(designWithSlices('Export a report')).digest('hex');
+    const changedBrief = designWithSlices('Export a report, changed');
+    fs.writeFileSync(path.join(dir, 'docs', 'export-csv.change.md'), changedBrief);
+    const changeHash = createHash('sha256').update(changedBrief).digest('hex');
     const records = {
       work: { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'feature', visible: true, dependsOn: [], doc: { path: 'docs/export-csv.md', hash: docHash } },
-      amendment: { work: 'export-csv', change: 'Add a total row', hash: docHash },
+      amendment: { work: 'export-csv', change: 'Add a total row', hash: changeHash, doc: 'docs/export-csv.change.md' },
       incident: { id: 'bad-total', what: 'Totals are wrong on the invoice page' },
       // The no-blame account once an incident is over (intake, route 1).
       note: { incident: 'bad-total', text: 'A rounding change reached the invoice page; the fix and a check are in.' },
@@ -985,7 +989,7 @@ test('record work composes, records and prints the approve-work card for a small
   await inHome(async () => {
     for (const [lane, id] of [['small', 'statement-import'], ['feature', 'export-csv']]) {
       const helper = fakeHelper();
-      const dir = projectWithDoc(id);
+      const dir = projectWithDoc(id, lane === 'feature' ? designWithSlices('Import a statement') : undefined);
       const work = { id, title: 'Import a statement.', lane, visible: true, dependsOn: [], doc: `docs/${id}.md` };
       const out = await run(helper, ['record', 'work'], JSON.stringify(work), { cwd: dir });
       assert.equal(out.code, 0, out.err);
@@ -1026,6 +1030,67 @@ test('record work refuses an approval with no document, writing nothing', async 
     assert.equal(out.code, 1);
     assert.match(out.err, /an approval names the work's document/);
     assert.equal(helper.held.length, 0);
+  });
+});
+
+const FEATURE = { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'feature', visible: true, dependsOn: [], doc: 'docs/export-csv.md' };
+
+test('record work refuses a feature design with no slices block, writing nothing', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('export-csv');
+    const out = await run(helper, ['record', 'work'], JSON.stringify(FEATURE), { cwd: dir });
+    assert.notEqual(out.code, 0);
+    assert.match(out.err, /wheelhouse-slices/);
+    assert.match(out.err, /Add one/);
+    assert.equal(helper.held.filter((e) => e.kind === 'work' || e.kind === 'card').length, 0);
+  });
+});
+
+test('record work names the problem in a feature design\'s broken slices block', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const broken = '# Export\n\n```wheelhouse-slices\n{"goal":"Export","flag":{"name":"export"},"demo":"end","slices":[{"title":"One","goal":"One"}]}\n```\n';
+    const dir = projectWithDoc('export-csv', broken);
+    const out = await run(helper, ['record', 'work'], JSON.stringify(FEATURE), { cwd: dir });
+    assert.notEqual(out.code, 0);
+    assert.match(out.err, /slice 1 needs at least one done check/);
+    assert.equal(helper.held.length, 0);
+  });
+});
+
+test('record work records a feature design with a good slices block and prints its card', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('export-csv', designWithSlices('Export a report'));
+    const out = await run(helper, ['record', 'work'], JSON.stringify(FEATURE), { cwd: dir });
+    assert.equal(out.code, 0, out.err);
+    assert.equal(typeof out.json.card.id, 'string');
+    assert.equal(cardsOf(helper).length, 1);
+  });
+});
+
+test('record work asks for no slices from small or bug work, or from feature work carried on', async () => {
+  await inHome(async () => {
+    const dir = projectWithDoc('export-csv');
+    const small = await run(fakeHelper(), ['record', 'work'], JSON.stringify({ ...FEATURE, id: 'small-one', lane: 'small' }), { cwd: dir });
+    assert.equal(small.code, 0, small.err);
+    const bug = await run(fakeHelper(), ['record', 'work'], JSON.stringify({ id: 'a-bug', title: 'A bug', lane: 'bug', visible: false, dependsOn: [] }), { cwd: dir });
+    assert.equal(bug.code, 0, bug.err);
+    const carried = await run(fakeHelper(), ['record', 'work'], JSON.stringify({ ...FEATURE, id: 'carried-on', from: { sha: 'a'.repeat(40), ref: 'refs/wheelhouse/from/carried-on', request: 1 } }), { cwd: dir });
+    assert.equal(carried.code, 0, carried.err);
+  });
+});
+
+test('record work again for approved feature work, its design holding its block, is not refused', async () => {
+  await inHome(async () => {
+    const dir = projectWithDoc('export-csv', designWithSlices('Export a report'));
+    const first = fakeHelper();
+    const made = await run(first, ['record', 'work'], JSON.stringify(FEATURE), { cwd: dir });
+    assert.equal(made.code, 0, made.err);
+    const approved = fakeHelper({ events: [...first.held, ...approvalEvents({ work: 'export-csv', lane: 'feature', hash: made.json.hash, shownFirst: true })] });
+    const again = await run(approved, ['record', 'work'], JSON.stringify({ ...FEATURE, dependsOn: ['a-first-thing'] }), { cwd: dir });
+    assert.equal(again.code, 0, again.err);
   });
 });
 
@@ -1090,7 +1155,7 @@ test('record work refuses a facts block that is broken', async () => {
 
 test('record work records feature work whatever the facts say, and with no block', async () => {
   await inHome(async () => {
-    for (const text of [factsBlock({ addsPage: true, storesData: true }), 'The brief.\n']) {
+    for (const text of [`${designWithSlices('Export')}${factsBlock({ addsPage: true, storesData: true })}`, designWithSlices('Export')]) {
       const helper = fakeHelper();
       const dir = projectWithBrief('export-csv', text);
       const out = await run(helper, ['record', 'work'], JSON.stringify(briefWork('export-csv', 'feature')), { cwd: dir });
@@ -1128,7 +1193,7 @@ test('record work does not check facts for a bug, work carried on, or a work alr
 
     // First recorded feature, then again small with a brief that has no block (the Bosun's re-record).
     const again = fakeHelper();
-    const againDir = projectWithBrief('export-csv', 'The brief.\n');
+    const againDir = projectWithBrief('export-csv', designWithSlices('Export'));
     const first = await run(again, ['record', 'work'], JSON.stringify(briefWork('export-csv', 'feature')), { cwd: againDir });
     assert.equal(first.code, 0, first.err);
     const second = await run(again, ['record', 'work'], JSON.stringify(briefWork('export-csv', 'small')), { cwd: againDir });
@@ -1312,6 +1377,23 @@ test('cards re-offers the approve-work card for open work that waits for approva
   });
 });
 
+test('cards offers the approve-work card for the new hash once act reapprove has recorded the changed document', async () => {
+  await inHome(async () => {
+    const CHANGED_DOC = '0123456789abcdef'.repeat(4);
+    // As `act reapprove` leaves the record: the director approved DOC, then a work event names the changed document, so no
+    // approval stands for the work, and its old card is in the record.
+    const approved = makeEvent({ kind: 'action', now: () => T(2), data: { action: 'approve-work', work: 'statement-import', lane: 'small', hash: DOC, shownFirst: true, question: 'as shown', label: 'Approve' } });
+    const reapproved = unaskedWork('statement-import', { doc: { path: 'docs/statement-import.md', hash: CHANGED_DOC } });
+    reapproved.at = T(3).toISOString();
+    const helper = fakeHelper({ events: [unaskedWork(), approved, reapproved] });
+    const out = await run(helper, ['cards']);
+    assert.equal(out.code, 0, out.err);
+    assert.equal(out.json.problems, undefined);
+    assert.equal(cardsOf(helper).length, 1);
+    assert.equal(cardsOf(helper)[0].data.line, approveWorkLine('statement-import', 'small', CHANGED_DOC, { shownFirst: true }));
+  });
+});
+
 test('cards writes no new approve-work card for work whose card exists in any state', async () => {
   await inHome(async () => {
     const first = fakeHelper({ events: [unaskedWork()] });
@@ -1378,11 +1460,13 @@ const READ_BACK = { doing: 'The export as one CSV file', notDoing: 'An Excel opt
 test('record amendment takes the read-back, refuses without it, and prints the route line and the read-back to say (scenario 26)', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
-    const dir = projectWithDoc('export-csv');
+    const dir = projectWithDoc('export-csv', designWithSlices('Export a report'));
     const at = { cwd: dir };
     const work = { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'feature', visible: true, dependsOn: [], doc: 'docs/export-csv.md' };
     await run(helper, ['record', 'work'], JSON.stringify(work), at);
-    const amendment = { work: 'export-csv', change: 'Make the export CSV, not Excel', hash: createHash('sha256').update('The brief.\n').digest('hex') };
+    const changedDesign = designWithSlices('Export a report as CSV');
+    fs.writeFileSync(path.join(dir, 'docs', 'export-csv.change.md'), changedDesign);
+    const amendment = { work: 'export-csv', change: 'Make the export CSV, not Excel', hash: createHash('sha256').update(changedDesign).digest('hex'), doc: 'docs/export-csv.change.md' };
 
     // Without the read-back, or with a part missing, empty or on two lines, nothing is written.
     const bad = [
@@ -1396,15 +1480,94 @@ test('record amendment takes the read-back, refuses without it, and prints the r
     }
     assert.equal(helper.held.filter((e) => e.kind === 'amendment').length, 0, 'nothing refused was written');
 
+    // The approved document is locked: no `doc`, the document itself, or a copy of it is refused, and nothing is written.
+    const { doc: _doc, hash: _hash, ...bare } = amendment;
+    const lockedWords = /The approved document docs\/export-csv\.md is locked: changing it is an amendment\. Write the changed text to its own file, such as docs\/export-csv\.change\.md, and give it as doc/;
+    for (const doc of [undefined, 'docs/export-csv.md', './docs/export-csv.md']) {
+      const refused = await run(helper, ['record', 'amendment'], JSON.stringify({ ...bare, ...(doc === undefined ? {} : { doc }), readBack: READ_BACK }), at);
+      assert.equal(refused.code, 1, String(doc));
+      assert.match(refused.err, lockedWords);
+    }
+    fs.writeFileSync(path.join(dir, 'docs', 'copy.md'), designWithSlices('Export a report'));
+    const same = await run(helper, ['record', 'amendment'], JSON.stringify({ ...bare, doc: 'docs/copy.md', readBack: READ_BACK }), at);
+    assert.equal(same.code, 1);
+    assert.match(same.err, /The changed document is the approved one: nothing changes/);
+    assert.equal(helper.held.filter((e) => e.kind === 'amendment').length, 0, 'nothing refused was written');
+
     // With it, the event is the amendment alone, and `say` is the route line and the read-back, in one.
     const out = await run(helper, ['record', 'amendment'], JSON.stringify({ ...amendment, readBack: { ...READ_BACK, doing: 'The export as one CSV file.' } }), at);
     assert.equal(out.code, 0, out.err);
     assert.deepEqual(helper.held.at(-1).data, amendment, 'the read-back is said, not stored');
     assert.equal(out.json.say, "I've treated this as a change to work already running; say if it's something else. "
       + 'Doing: The export as one CSV file. Not doing: An Excel option. Done when: The button gives a CSV file that opens in Numbers.');
-    // A part that ends in its own mark keeps it, with no full stop after it.
+    // A part that ends in its own mark keeps it, with no full stop after it. The first change is dropped by recording the work again.
+    await run(helper, ['record', 'work'], JSON.stringify(work), at);
     const asked = await run(helper, ['record', 'amendment'], JSON.stringify({ ...amendment, readBack: { ...READ_BACK, notDoing: 'Excel, for now!' } }), at);
     assert.match(asked.json.say, /Not doing: Excel, for now! Done when:/);
+  });
+});
+
+test('record amendment of a feature design runs the slices check on the change file, and refuses with the same words', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('export-csv', designWithSlices('Export a report'));
+    const at = { cwd: dir };
+    await run(helper, ['record', 'work'], JSON.stringify(FEATURE), at);
+    fs.writeFileSync(path.join(dir, 'docs', 'export-csv.change.md'), 'The design, with no block.\n');
+    const amendment = { work: 'export-csv', change: 'Make the export CSV', doc: 'docs/export-csv.change.md', readBack: READ_BACK };
+    const refused = await run(helper, ['record', 'amendment'], JSON.stringify(amendment), at);
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /A feature's design ends with its slices, .*Add one `wheelhouse-slices` block at the end of docs\/export-csv\.change\.md/);
+    assert.equal(helper.held.filter((e) => e.kind === 'amendment').length, 0, 'nothing was written');
+    fs.writeFileSync(path.join(dir, 'docs', 'export-csv.change.md'), designWithSlices('Export a report as CSV'));
+    const made = await run(helper, ['record', 'amendment'], JSON.stringify(amendment), at);
+    assert.equal(made.code, 0, made.err);
+    assert.equal(helper.held.filter((e) => e.kind === 'amendment').length, 1);
+  });
+});
+
+test('record amendment refuses a second change while the first waits for its card, until it is clicked or the work is recorded again', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('export-csv', designWithSlices('Export a report'));
+    const at = { cwd: dir };
+    await run(helper, ['record', 'work'], JSON.stringify(FEATURE), at);
+    const change = (text, name) => {
+      fs.writeFileSync(path.join(dir, 'docs', name), designWithSlices(text));
+      return { work: 'export-csv', change: text, doc: `docs/${name}`, readBack: READ_BACK };
+    };
+    const first = await run(helper, ['record', 'amendment'], JSON.stringify(change('Export as CSV', 'export-csv.change.md')), at);
+    assert.equal(first.code, 0, first.err);
+    const second = await run(helper, ['record', 'amendment'], JSON.stringify(change('Export as TSV', 'export-csv.change.md')), at);
+    assert.equal(second.code, 1);
+    assert.match(second.err, /export-csv already has a change waiting for the director's card\. One change at a time: wait for their answer, or record the work again to drop it, then record this change\./);
+    assert.equal(helper.held.filter((e) => e.kind === 'amendment').length, 1, 'nothing refused was written');
+    // Once the director clicks the first card, the next change is taken.
+    helper.held.push(makeEvent({ kind: 'action', now: () => T(900), data: { action: 'amend', work: 'export-csv', hash: first.json.hash, question: 'as shown', label: 'Change it' } }));
+    const third = await run(helper, ['record', 'amendment'], JSON.stringify(change('Export as TSV', 'export-csv.change2.md')), at);
+    assert.equal(third.code, 0, third.err);
+    // Recording the work again lets go of a change that waits.
+    await run(helper, ['record', 'work'], JSON.stringify(FEATURE), at);
+    const fourth = await run(helper, ['record', 'amendment'], JSON.stringify(change('Export as JSON', 'export-csv.change3.md')), at);
+    assert.equal(fourth.code, 0, fourth.err);
+  });
+});
+
+test('record amendment takes a pause or a resume with no doc, keeps the approved hash, and holds nothing for a card', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('export-csv', designWithSlices('Export a report'));
+    const at = { cwd: dir };
+    const made = await run(helper, ['record', 'work'], JSON.stringify(FEATURE), at);
+    for (const change of ['Pause the work until the director says go', 'Resume the work.']) {
+      const out = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'export-csv', change, readBack: READ_BACK }), at);
+      assert.equal(out.code, 0, out.err);
+      const written = helper.held.filter((e) => e.kind === 'amendment').at(-1).data;
+      assert.equal(written.doc, undefined, 'no document is named');
+      assert.equal(written.hash, made.json.hash, 'the approved document\'s hash stays');
+    }
+    const views = buildViews(helper.held, readEnrolled());
+    assert.notEqual(views.work['export-csv'].changeWaiting, true, 'a pause holds no change for a card');
   });
 });
 
@@ -1452,14 +1615,14 @@ test('record works out the hash of the document a work or an amendment names, an
       assert.match(huge.err, /docs\/bugs\/huge\.md is over 1 MB/);
     }
 
-    // An amendment: the changed document is the one file the work names, written in place.
-    write('docs/bugs/total.md', 'The total leaves cancelled orders out, and says so.\n');
-    const amended = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'staff-total', change: 'Say that cancelled orders are left out', readBack: READ_BACK }), at);
+    // An amendment: the changed text is in its own file, named as `doc`; the approved document stays as it was.
+    write('docs/bugs/total.change.md', 'The total leaves cancelled orders out, and says so.\n');
+    const amended = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'staff-total', change: 'Say that cancelled orders are left out', doc: 'docs/bugs/total.change.md', readBack: READ_BACK }), at);
     assert.equal(amended.code, 0, amended.err);
     const changed = hashOf('The total leaves cancelled orders out, and says so.\n');
-    assert.deepEqual(helper.held.at(-1).data, { work: 'staff-total', change: 'Say that cancelled orders are left out', hash: changed });
+    assert.deepEqual(helper.held.at(-1).data, { work: 'staff-total', change: 'Say that cancelled orders are left out', doc: 'docs/bugs/total.change.md', hash: changed });
     assert.equal(amended.json.hash, changed);
-    const stale = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'staff-total', change: 'x', hash, readBack: READ_BACK }), at);
+    const stale = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'staff-total', change: 'x', doc: 'docs/bugs/total.change.md', hash, readBack: READ_BACK }), at);
     assert.equal(stale.code, 1);
     assert.match(stale.err, /is not the document's as it stands/);
     // An amendment of work that isn't open is refused, with a hash or without.

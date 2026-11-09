@@ -39,7 +39,8 @@
 //                   Bosun's question to them in its own fixed words (fix the findings or restart the builder, or stop the
 //                   work; shipping as it is is never offered while a signed review holds the merge) and prints the line to say
 //   record <kind>   records something the front desk decided: one of RECORD_KINDS, the data as JSON;
-//                   for a work event's document and an amendment, it works out the hash and prints it; a work also
+//                   for a work event's document and an amendment, it works out the hash and prints it (an amendment
+//                   of a work with a document names the changed text's own file as `doc`, and its hash is that file's); a work also
 //                   prints its slug (`work`), `eventId`, `recordHash`, the hash of its record as written, and, for work
 //                   the director is to approve, its approve-work card, composed and asked by the helper;
 //                   an amendment needs its read-back, and prints the route line and the read-back to say
@@ -110,6 +111,7 @@ import { similar as similarTo } from '../intake/similar.js';
 import { answerLine, approveWorkLine, chatCopy, ID, keepControlLine } from '../state/card-lines.js';
 import { gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
+import { readSlices } from '../engine/feature.js';
 import { laneFactsProblem } from './lane-facts.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -1133,6 +1135,23 @@ function readBackLine(readBack) {
   return `I've treated this as a change to work already running; say if it's something else. Doing: ${doing} Not doing: ${notDoing} Done when: ${doneWhen}`;
 }
 
+// A feature's design ends with its slices block: a feature design without one, or with one that can't be
+// built from, is refused before anything is written, in words that say what to add. Work carried on
+// (`from`) has no design of its own here, and only the feature lane is checked.
+function refuseFeatureWithoutSlices(cwd, data) {
+  if (data.lane !== 'feature' || data.from !== undefined || typeof data.doc?.path !== 'string') return;
+  checkSlices(cwd, data.doc.path);
+}
+
+function checkSlices(cwd, file) {
+  try {
+    readSlices(fs.readFileSync(path.resolve(cwd, file), 'utf8'));
+  } catch (error) {
+    const message = String(error.message).replace(/^./, (c) => c.toLowerCase());
+    throw new CliError(`A feature's design ends with its slices, and ${message}. Add one \`wheelhouse-slices\` block at the end of ${file}: the goal, the flag's name, the demo (midpoint or end), and each slice's title, goal and done checks (intake, "A feature's slices"); then record it again`);
+  }
+}
+
 // A small or quick work the model sized is refused when its brief's facts say feature, or give none
 // (lane-facts.js). The model sized it when it carries no `from`, no work event is on record for its id
 // and its brief is under `.wheelhouse/work/`; any other work is left to its lane as given.
@@ -1164,7 +1183,25 @@ async function withHash(client, cwd, kind, input) {
     if (input.hash !== undefined) return input;
     throw new CliError(`The work ${input.work} names no document, so give the changed document's hash`);
   }
-  return { ...input, hash: documentHash(cwd, file, input.hash) };
+  // A pause or a resume changes no text: it names no `doc` and keeps the approved document's hash, so no change
+  // is held for the director's card and nothing is put over the approved text. The foreman reads it by the
+  // change's first word (act.js), in the same way.
+  const firstWord = typeof input.change === 'string' ? input.change.trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z]/g, '') : '';
+  if (firstWord === 'pause' || firstWord === 'resume') {
+    const { doc: ignored, hash: ignoredHash, ...rest } = input;
+    return { ...rest, hash: views.work[input.work].work.data.doc.hash };
+  }
+  // The approved document is locked: the changed text is written to its own file, named as `doc`.
+  const locked = `The approved document ${file} is locked: changing it is an amendment. Write the changed text to its own file, such as ${file.replace(/(\.[^./]*)?$/, '.change$1')}, and give it as doc`;
+  if (typeof input.doc !== 'string' || input.doc.trim() === '' || path.resolve(cwd, input.doc) === path.resolve(cwd, file)) throw new CliError(locked);
+  const hash = documentHash(cwd, input.doc, input.hash);
+  if (hash === views.work[input.work].work.data.doc.hash) throw new CliError('The changed document is the approved one: nothing changes');
+  const recorded = views.work[input.work].work.data;
+  if (recorded.lane === 'feature' && recorded.from === undefined) checkSlices(cwd, input.doc);
+  if (views.work[input.work].changeWaiting === true) {
+    throw new CliError(`${input.work} already has a change waiting for the director's card. One change at a time: wait for their answer, or record the work again to drop it, then record this change.`);
+  }
+  return { ...input, hash };
 }
 
 export { needsApproval };
@@ -1208,7 +1245,7 @@ export function approveWorkInput(data, override) {
   };
 }
 
-// Records one event and resolves with { id, pushed }, except a work, which resolves with { work, eventId, pushed, recordHash }
+// Records one event and resolves with { id, pushed }, except a work (a feature's design with no slices block is refused first), which resolves with { work, eventId, pushed, recordHash }
 // and its card, or `approved`, or `asked` (see the work branch), with `hash` for a work event's document or an
 // amendment, `say` for an amendment (its route line and read-back), and for a ruling or a setting its confirm card, recorded too, as { question, id }. A setting the catalogue refuses is refused here, before
 // the helper is asked; the director's own settings go to their profile (writeSetting). A ruling keeps its words exactly as given: its card is composed
@@ -1259,6 +1296,7 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     const { card: override, ...work } = input;
     if (needsApproval(work) && work.doc === undefined) throw new CliError('an approval names the work\'s document: give `doc`, the path of the brief written first');
     const data = await withHash(client, cwd, kind, work);
+    refuseFeatureWithoutSlices(cwd, data);
     await refuseLaneFromFacts(client, cwd, data);
     const hash = data.doc?.hash;
     const written = await write(client, cwd, kind, data);

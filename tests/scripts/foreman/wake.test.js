@@ -8,11 +8,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { clashFor, loadViews, main, measures, measuresFile, readWakeLines, recordDone } from '../../../scripts/foreman/wake.js';
 import { foremanCommands } from '../../../scripts/foreman/tools.js';
+import { driftAskCommand, driftQuestion } from '../../../scripts/foreman/ask-help.js';
+import { keepApprovedText } from '../../../scripts/state/approved-text.js';
 import { briefHash, featurePaths, writeStatus } from '../../../scripts/feature/files.js';
 import { LANE_APPETITE } from '../../../scripts/lib/build-loop.js';
 import { liftStop, setStop } from '../../../scripts/lib/stop.js';
 import { writeCursor } from '../../../scripts/watcher/core.js';
 import { HAND_DONE, HAND_GOAL } from '../../../scripts/lib/by-hand-done.js';
+import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 import {
   P, T0, config, emptyViews, fakeClient, featureView, project, recordInState, wakeFile, workView, worktree,
@@ -180,7 +183,7 @@ test('wake read names the approved document each start reads from, and lists the
   // Small work's document sets no appetite (only a feature's pitch does, design section 7.4): the wake gives the lane's.
   const small = LANE_APPETITE.small;
   assert.match(text, new RegExp(`^- start a \\(small\\): approved\\. Next: act start a --goal … --done … --appetite-sessions ${small.sessions} --appetite-tokens ${small.tokens} \\(from its approved document, ${a}; the small lane's appetite\\)$`, 'm'));
-  assert.match(text, new RegExp(`^- start b \\(small\\): approved\\. Its document ${esc(elsewhere)} is not the one approved: it has changed since\\. Ask the director: act ask$`, 'm'));
+  assert.match(text, new RegExp(`^- start b \\(small\\): approved\\. Its document ${esc(elsewhere)} is not the one approved: it has changed since\\. Ask the director in this one command: ${esc(driftAskCommand('b', { restorable: false }))}$`, 'm'));
   assert.match(text, /^- start c \(small\): approved\. It names no document to read its goal from\. Ask the director: act ask$/m);
   assert.match(text, /^Rulings in force: 1; give each that applies with --ruling <id>\.$/m);
   assert.match(text, /^- ruling r-one: Dates read day month year\.$/m);
@@ -334,6 +337,22 @@ test('wake read falls back to the views kept on disk when the helper gives none,
   const text = (await readWakeLines({ file, project: P, client, now })).lines.join('\n');
   assert.match(text, /^The helper gave no views \(the host helper could not be reached: is it running\?\), so these are the last ones it wrote\.$/m);
   assert.match(text, /^- start a \(small\)/m);
+}));
+
+test('wake read: an answer to the drift question is acted on as the act command its label stands for', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.a = workView('a', { since: '2026-10-19T06:00:00.000Z' });
+  views.features.a = featureView('a', { step: 'building', worktree: worktree(checkout, 'a'), files: [] });
+  const q = driftQuestion('a', { restorable: true });
+  views.questions['q-a-1000001'] = { question: { key: 'q-a-1000001', data: { id: 'q-a-1000001', work: 'a', what: q.what, options: q.options } }, answer: null };
+  const { client } = fakeClient({ views });
+  const lines = async (label) => {
+    const file = wakeFile(path.join(checkout, 'w'), `drift-${label.length}`, { events: [ev('answer', 'a', `a-${label.length}`, { questionId: 'q-a-1000001', label, foreman: true })] });
+    return (await readWakeLines({ file, project: P, client, now })).lines.join('\n');
+  };
+  assert.match(await lines('Restore the approved text'), /which says: act restore a\. Act on it\./);
+  assert.match(await lines('Re-approve the change'), /which says: act reapprove a\. Act on it\./);
 }));
 
 test('wake read: an answer to the foreman\'s own question is the foreman\'s to act on; a director\'s pause is never offered back; held bug work waits', () => withHome(async () => {
@@ -633,6 +652,107 @@ test('a merged work whose status reads done, with the host agreeing, holds no fi
   assert.equal(await clash({ prState: { ok: false, refused: 'no answer' } }), false, 'no word from the host: it still clashes');
   fs.writeFileSync(featurePaths(wt).pr, `${JSON.stringify({ pr: 4, plan: 'p.md' })}\n`);
   assert.equal(await clash(host('merged')), false, 'not marked merged: it still clashes');
+}));
+
+// Approved work whose document changed after the click, with the text approved kept or not.
+async function driftScene({ keep }) {
+  const checkout = await project();
+  const approved = '# a\n\nThe text the director approved.\n';
+  const views = emptyViews();
+  views.work.a = approvedDoc(checkout, workView('a', { since: '2026-10-19T07:00:00.000Z' }), 'a', approved);
+  if (keep) keepApprovedText(P, approved);
+  const changed = `${approved}A line added afterwards.\n`;
+  fs.writeFileSync(path.join(checkout, 'docs', 'specs', 'a.md'), changed);
+  const file = wakeFile(path.join(checkout, 'w'), 'one', { events: [ev('work-ready', 'a', 'x', { lane: 'small' })] });
+  const read = async (v = views) => (await readWakeLines({ file, project: P, client: fakeClient({ views: v }).client, now })).lines.join('\n');
+  return { checkout, views, changed, read };
+}
+
+test('wake read asks the director to restore or re-approve a document that changed after its approval', () => withHome(async () => {
+  const { read } = await driftScene({ keep: true });
+  const text = await read();
+  const command = driftAskCommand('a', { restorable: true });
+  assert.ok(text.split('\n').some((l) => l.endsWith(`Ask the director in this one command: ${command}`)), text);
+  assert.ok(command.includes('Restore the approved text') && command.includes('Re-approve the change') && command.endsWith('--about start'));
+}));
+
+test('wake read offers only Re-approve and Wait for a changed document with no kept copy', () => withHome(async () => {
+  const { read } = await driftScene({ keep: false });
+  const text = await read();
+  const command = driftAskCommand('a', { restorable: false });
+  assert.ok(text.split('\n').some((l) => l.endsWith(command)), text);
+  assert.ok(command.includes('Re-approve the change') && command.includes('Wait') && !command.includes('Restore the approved text'));
+}));
+
+test('wake read waits, with no ask command, for a change the director has not yet answered', () => withHome(async () => {
+  const { read, changed } = await driftScene({ keep: true });
+  recordInState('amendment', { work: 'a', change: 'A line added afterwards.', hash: briefHash(changed), doc: '.wheelhouse/work/a.change.md' }, T0 - 1000);
+  const text = await read();
+  assert.match(text, /It waits: the director has not yet answered the change card for it\. Nothing to do/);
+  assert.doesNotMatch(text, /act ask a /);
+  assert.doesNotMatch(text, /Ask the director in this one command/);
+}));
+
+test('wake read keeps the old line for a document that cannot be read', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.gone = workView('gone', { doc: { path: 'docs/specs/missing.md', hash: 'c'.repeat(64) } });
+  const file = wakeFile(path.join(checkout, 'w'), 'one', { events: [ev('work-ready', 'gone', 'x', { lane: 'small' })] });
+  const text = (await readWakeLines({ file, project: P, client: fakeClient({ views }).client, now })).lines.join('\n');
+  assert.match(text, /can't be read\. Ask the director: act ask$/m);
+}));
+
+test('wake read holds work with a change the director has not yet clicked, whatever the document file holds, until the click', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.a = approvedDoc(checkout, workView('a', { since: '2026-10-19T07:00:00.000Z' }), 'a');
+  const file = wakeFile(path.join(checkout, 'w'), 'one', { events: [ev('work-ready', 'a', 'x', { lane: 'small' })] });
+  const read = async () => (await readWakeLines({ file, project: P, client: fakeClient({ views }).client, now })).lines.join('\n');
+  const changeHash = briefHash('# a\n\nThe changed text.\n');
+  recordInState('amendment', { work: 'a', change: 'The changed text.', hash: changeHash, doc: '.wheelhouse/work/a.change.md' }, T0 - 5000);
+  const held = await read();
+  assert.match(held, /It waits: the director has not yet answered the change card for it\. Nothing to do/);
+  assert.doesNotMatch(held, /act start a /);
+  enrol({ ...makeSigningKey(), enrolledAt: '2026-10-18T00:00:00.000Z' });
+  recordInState('action', { action: 'amend', question: 'Change it?', label: 'Change it', work: 'a', hash: changeHash }, T0 - 1000);
+  const after = await read();
+  assert.match(after, /Next: act start a /);
+  assert.doesNotMatch(after, /has not yet answered/);
+}));
+
+// Work `a` with its approved document unchanged, and a reader of its wake.
+async function heldScene() {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.a = approvedDoc(checkout, workView('a', { since: '2026-10-19T07:00:00.000Z' }), 'a');
+  const file = wakeFile(path.join(checkout, 'w'), 'one', { events: [ev('work-ready', 'a', 'x', { lane: 'small' })] });
+  const read = async () => (await readWakeLines({ file, project: P, client: fakeClient({ views }).client, now })).lines.join('\n');
+  return { views, read };
+}
+const CHANGE = { work: 'a', change: 'The changed text.', hash: briefHash('# a\n\nThe changed text.\n') };
+
+test('wake read ends the hold when the work is recorded again after the change was proposed', () => withHome(async () => {
+  const { views, read } = await heldScene();
+  recordInState('amendment', { ...CHANGE, doc: '.wheelhouse/work/a.change.md' }, T0 - 5000);
+  assert.match(await read(), /has not yet answered the change card/);
+  recordInState('work', views.work.a.work.data, T0 - 2000);
+  const text = await read();
+  assert.match(text, /Next: act start a /);
+  assert.doesNotMatch(text, /has not yet answered/);
+}));
+
+test('wake read does not hold work for an amendment that carries no changed text', () => withHome(async () => {
+  const { read } = await heldScene();
+  recordInState('amendment', CHANGE, T0 - 5000);
+  const text = await read();
+  assert.match(text, /Next: act start a /);
+  assert.doesNotMatch(text, /has not yet answered/);
+}));
+
+test('the wait line for an unclicked change says how it ends', () => withHome(async () => {
+  const { read } = await heldScene();
+  recordInState('amendment', { ...CHANGE, doc: '.wheelhouse/work/a.change.md' }, T0 - 5000);
+  assert.match(await read(), /Nothing to do\. If the director no longer wants the change, the front desk records the work again\./);
 }));
 
 test('wake read: a stuck note says the session is stuck and the exact act to run, with its message cut to one line of 200 characters', () => withHome(async () => {
