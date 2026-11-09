@@ -4,6 +4,8 @@
 export const answer = {
   deny: (reason) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }),
   allow: (reason) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: reason } }),
+  // Hands the tool its input changed, with no decision: the picker shows the changed input.
+  update: (toolInput) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: toolInput } }),
   context: (event, text) => ({ hookSpecificOutput: { hookEventName: event, additionalContext: text } }),
   block: (reason) => ({ decision: 'block', reason }),
 };

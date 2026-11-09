@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ROWS, KINDS, EVENT_KINDS, STEPS, SETUP_DONE, OWN_BRANCH, FULL_ONLY, PROOF_HEADINGS, checkAll, gatherContext } from '../../../probes/haiku-trial/signals.js';
+import { FRONT_DESK_LINE } from '../../../scripts/hooks/session-start.js';
 import { PLAIN_KINDS, PROTECTED_KINDS } from '../../../scripts/state/events.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -32,7 +33,7 @@ test('there are 45 rows, numbered 1 to 45, each with a check', () => {
 
 test('the smoke rows are exactly the listed ones', () => {
   const smoke = ROWS.filter((r) => r.smoke).map((r) => r.id);
-  assert.deepEqual(smoke, [1, 2, 3, 4, 5, 7, 8, 9, 13, 16, 17, 18, 21, 22, 25, 26, 27, 28, 29, 31, 33, 43, 44, 45]);
+  assert.deepEqual(smoke, [1, 2, 3, 4, 5, 7, 8, 9, 13, 16, 17, 18, 21, 22, 25, 26, 27, 28, 29, 31, 33, 44, 45]);
   assert.deepEqual(FULL_ONLY, [34, 41]);
 });
 
@@ -72,6 +73,84 @@ const workCtx = (merged) => ctxWith({
   pieces: { P6: { change: 'quick-ci', prs: [6] } },
   prs: [pr(6)],
   events: [ev('work', { id: 'quick-ci', title: 'ci', lane: 'quick', visible: false, dependsOn: [] }, '2026-11-08T01:00:00Z'), ev('self-merged', { pr: 6, commit: 'a'.repeat(40), reason: merged, work: 'quick-ci' }, '2026-11-08T02:00:00Z')],
+});
+
+const takeBack = () => ({ number: 9, title: 'Take back: money edge', head: 'wheelhouse/undo-0123456789ab-ba9876543210', mergedAt: '2026-11-08T05:00:00Z', commits: [] });
+const EDGE = 'tests/money-edge.test.js';
+
+const EDGE_NOTES = [
+  'could answer decision 1 or 2', 'decision 1 was already answered', 'a reply that named an option decision 2 doesn\'t offer',
+  'No decision 3 is waiting, so nothing was recorded', 'asked why about decision 1',
+].join('\n');
+const answer = (n, question, label = 'A') => ev('decision-answer', { n, question, label }, '2026-11-08T03:00:00Z');
+
+test('row 19 counts one answer per decision, not per number: the same number in two works is two decisions', () => {
+  const base = { panes: { replies: [EDGE_NOTES] } };
+  const two = row(19).check(ctxWith({ ...base, events: [answer(1, 'q-import-1'), answer(1, 'q-export-1')] }));
+  assert.equal(two.pass, true, two.evidence);
+  const twice = row(19).check(ctxWith({ ...base, events: [answer(1, 'q-import-1'), answer(1, 'q-import-1')] }));
+  assert.equal(twice.pass, false);
+  assert.match(twice.evidence, /answered twice/);
+});
+
+const p6Ctx = (over = {}) => ctxWith({
+  pieces: { P6: { change: 'money-edge', prs: [6] } },
+  prs: [pr(6, { mergedAt: '2026-11-08T02:00:00Z' })],
+  runLog: [{ at: '2026-11-08T01:00:00Z', step: 'work-ready', work: 'money-edge' }],
+  ...over,
+});
+
+test('row 4 needs a merged pull request, not only a work that became ready', () => {
+  assert.equal(row(4).check(p6Ctx()).pass, true);
+  const open = row(4).check(p6Ctx({ prs: [pr(6)] }));
+  assert.equal(open.pass, false);
+  assert.match(open.evidence, /merged/);
+});
+
+test('row 2 judges finished replies, not a spinner or an empty capture', () => {
+  const lineIn = (t) => ({ panes: { 'front-desk': [FRONT_DESK_LINE], replies: t } });
+  const spinner = row(2).check(ctxWith(lineIn(['✻ Pondering… (3s · esc to interrupt)'])));
+  assert.equal(spinner.pass, false);
+  assert.match(spinner.evidence, /no finished front-desk reply/);
+  assert.equal(row(2).check(ctxWith(lineIn(['Got it. I will plan that and ask you one thing.']))).pass, true);
+});
+
+test('rows 37, 38 and 40 are not covered, rather than failed, when the run never reached their faults', () => {
+  for (const id of [37, 38, 40]) {
+    const r = row(id).check(ctxWith({ runLog: [] }));
+    assert.equal(r.pass, null, `row ${id}: ${r.evidence}`);
+    assert.match(r.evidence, /not covered/);
+  }
+  const set = row(38).check(ctxWith({ runLog: [{ at: '2026-11-08T01:00:00Z', step: 'stop-set' }] }));
+  assert.equal(set.pass, false);
+});
+
+test('row 44 asks for tests the builders wrote, not for points the seed gives for free', () => {
+  const scores = (parts, points) => ({ detail: { ownTests: { points, parts } } });
+  const free = row(44).check({ scores: scores({ written: 0, green: 3, kept: 2, bite: 0 }, 5) });
+  assert.equal(free.pass, false);
+  const wrote = row(44).check({ scores: scores({ written: 2, green: 3, kept: 2, bite: 0 }, 7) });
+  assert.equal(wrote.pass, true);
+  assert.equal(row(44).check({ scores: null }).pass, null);
+});
+
+test('row 36 passes when the take-back merged and main no longer holds the piece\'s file', () => {
+  const ok = row(36).check({ prs: [takeBack()], mainFiles: { [EDGE]: null, 'package.json': '{}' } });
+  assert.equal(ok.pass, true, ok.evidence);
+  const still = row(36).check({ prs: [takeBack()], mainFiles: { [EDGE]: 'test()', 'package.json': '{}' } });
+  assert.equal(still.pass, false);
+  assert.match(still.evidence, /money-edge/);
+});
+
+test('row 36 is not covered when the run never reached the undo, and failed when it did and nothing merged', () => {
+  assert.equal(row(36).check({ prs: [], runLog: [] }).pass, null);
+  assert.equal(row(36).check({ prs: [], runLog: [{ step: 'F5a', at: '2026-11-08T04:00:00Z' }] }).pass, false);
+});
+
+test('row 36 does not read a failed read of main as a take-back that worked', () => {
+  const r = row(36).check({ prs: [takeBack()], mainFiles: { [EDGE]: null, 'package.json': null } });
+  assert.equal(r.pass, null);
+  assert.equal(row(36).check({ prs: [takeBack()] }).pass, null);
 });
 
 test('row 29 passes on a self-merge for internal and fails on another reason', () => {
@@ -248,8 +327,14 @@ test('smoke checkAll leaves out full-only rows', () => {
 
 test('row 43 reads the ntfy message', () => {
   assert.equal(row(43).check(ctxWith({ ntfy: [{ at: '2026-11-08T01:00:00Z', text: '1 decision waits in budget-app' }] })).pass, true);
-  assert.equal(row(43).check(ctxWith({ ntfy: [{ at: '2026-11-08T01:00:00Z', text: '2 decisions wait in budget-app' }] })).pass, false);
-  assert.equal(row(43).check(ctxWith()).pass, false);
+  assert.equal(row(43).check(ctxWith({ ntfySetUp: true, ntfy: [{ at: '2026-11-08T01:00:00Z', text: '2 decisions wait in budget-app' }] })).pass, false);
+  // The click that sets ntfy up is the director's: a run that never got it covers nothing here, and one that did, and still heard nothing, fails.
+  assert.equal(row(43).check(ctxWith()).pass, null);
+  assert.match(row(43).check(ctxWith()).evidence, /not covered/);
+  assert.equal(row(43).check(ctxWith({ ntfySetUp: false })).pass, null);
+  assert.equal(row(43).check(ctxWith({ ntfySetUp: true })).pass, false);
+  assert.equal(row(43).check(ctxWith({ ntfySetUp: true, ntfy: [{ at: '2026-11-08T01:00:00Z', text: '1 decision waits in budget-app' }] })).pass, true);
+  assert.equal(ROWS.find((r) => r.id === 43).smoke, false, 'a smoke run has no ntfy step');
 });
 
 test('row 1 wants every role and both pins on haiku with premium off', () => {
@@ -264,6 +349,22 @@ test('row 1 wants every role and both pins on haiku with premium off', () => {
   const result = row(1).check(bad);
   assert.equal(result.pass, false);
   assert.match(result.evidence, /foreman/);
+});
+
+test('row 1 checks the roles against the model the run was given', () => {
+  const ctx = (model) => ctxWith({
+    model,
+    config: { routing: { frontDesk: 'claude-sonnet-4-5', foreman: 'claude-sonnet-4-5' }, tiers: { pins: { mostCapable: 'claude-sonnet-4-5', midSized: 'claude-sonnet-4-5' } } },
+    panes: { setup: ['Every step is done.'] },
+    runLog: [{ at: '2026-11-08T00:10:00Z', step: 'health', note: 'all pass' }],
+  });
+  assert.equal(row(1).check(ctx('sonnet')).pass, true, row(1).check(ctx('sonnet')).evidence);
+  assert.equal(row(1).check(ctx('haiku')).pass, false);
+});
+
+test('row 45 reads "every model is <model>" for the run\'s model', () => {
+  const ctx = ctxWith({ model: 'sonnet', transcripts: ['front-desk', 'feature', 'foreman'].map((role) => ({ role, file: `/${role}` })) });
+  assert.match(row(45).check(ctx).evidence, /every model is sonnet/);
 });
 
 const PIECES_IDS = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8'];

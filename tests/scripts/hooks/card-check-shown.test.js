@@ -115,6 +115,16 @@ test('the question picker is refused for a decision, with the way to show it', a
   });
 });
 
+test('a reworded decision card is refused for the picker, as the exact one is', async () => {
+  await inHome(async () => {
+    const card = raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    const stored = asQuestion({ data: card.data });
+    const reworded = { ...stored, question: 'Other words entirely about the digest.' };
+    const out = await decide({ cwd: '/x', session_id: 's-desk', hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [reworded] } }, { projectOf: () => ({ project: P }), env: {} });
+    assert.equal(out.hookSpecificOutput.permissionDecisionReason, DECISION_IN_CHAT);
+  });
+});
+
 test('typed replies switched off: the question picker is allowed for a decision, as on main', async () => {
   await inHomeOff(async () => {
     turnOff();

@@ -10,7 +10,7 @@ import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { RELEASE_LABEL, RELEASE_TAG, releaseLine, UPDATE_LABEL, updateLine, keepControlLine, approvalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, seatTakeOverLine, SEAT_SESSION, isSeatSince, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
-import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH, mayReplace } from '../lib/build-loop.js';
+import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, UUID, HASH, mayReplace } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 import { SEND_BACK } from '../lib/calm-words.js';
@@ -347,7 +347,7 @@ const PLAIN_SHAPES = {
   // head, or their CI push of the update merge `sha` to `branch`, made from the head `from` when the
   // host gave it (ruling F78), so a pushed update can be told from one not yet pushed. Recorded by
   // the foreman's merge.
-  'gate-asks': { must: ['work', 'pr', 'ask', 'sha'], may: ['branch', 'from'] },
+  'gate-asks': { must: ['work', 'ask', 'sha'], may: ['pr', 'branch', 'from'] },
   // A session start held the project's edits and commands because the installed upstream skills
   // differ from Wheelhouse's manifest (ruling R146): when, and which upstreams and paths. An
   // upstream of null is the manifest itself, which could not be read. The front desk's card. An agent's starter
@@ -535,10 +535,12 @@ function checkPlain(kind, data) {
   }
   if (kind === 'work') {
     slug('id');
+    if (UUID.test(data.id)) bad('needs its id to be the work\'s slug, not an event id');
     text('title');
     if (!LANES.includes(data.lane)) bad('needs its lane to be quick, small, feature or bug');
     if (typeof data.visible !== 'boolean') bad('needs visible to be true or false');
     if (!Array.isArray(data.dependsOn) || !data.dependsOn.every(isSlug)) bad('needs dependsOn to be a list of work ids');
+    if (data.dependsOn.some((d) => UUID.test(d))) bad('needs dependsOn to name each work by the slug it was recorded under, not an event id');
     // The work's decision level, which the build engine's permit reads (level 4 waits for the director's approval).
     if (data.level !== undefined && ![1, 2, 3, 4].includes(data.level)) bad('has a level that is not 1, 2, 3 or 4');
     if (data.doc !== undefined && !(isPlain(data.doc) && Object.keys(data.doc).length === 2 && isText(data.doc.path) && typeof data.doc.hash === 'string' && HASH.test(data.doc.hash))) {
@@ -720,7 +722,8 @@ function checkPlain(kind, data) {
     }
   } else if (kind === 'gate-asks') {
     slug('work');
-    if (!Number.isInteger(data.pr) || data.pr < 1) bad('needs the pull request number');
+    // A CI push may be asked of a branch before its pull request exists (the feature's first push), so it may name no pull request; an approval always names one.
+    if (!(data.ask === 'ci-push' && data.pr === undefined) && (!Number.isInteger(data.pr) || data.pr < 1)) bad('needs the pull request number');
     if (!GATE_ASKS.includes(data.ask)) bad('needs ask to be approval or ci-push');
     if (typeof data.sha !== 'string' || !/^[0-9a-f]{40}$/.test(data.sha)) bad('needs the full commit');
     if (data.ask === 'ci-push' && !isText(data.branch)) bad('needs the branch the CI push is for');

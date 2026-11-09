@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { modelPattern } from './models.js';
 
 export const HAIKU = /haiku/i;
 export const PEEK_PATTERNS = [/probes\/haiku-trial/, /held-back/, /reference-app/];
@@ -59,9 +60,20 @@ function jsonlFiles(dir) {
 }
 
 // The role a transcript's folder shows: the project's own folder is the front desk's, a worktree Wheelhouse made is a feature session's.
-const WORKTREES = path.join('.wheelhouse', 'worktrees');
+// Wheelhouse's own engine keeps them under .wheelhouse/worktrees; the front desk's feature command makes them under
+// .claude/worktrees, a folder to each work.
+const WORKTREES = [path.join('.wheelhouse', 'worktrees'), path.join('.claude', 'worktrees')];
 function roleByFolder(project, cwd) {
-  return isWithin(path.join(project, WORKTREES), cwd) && path.resolve(cwd) !== path.resolve(project, WORKTREES) ? 'feature' : 'front-desk';
+  const inWorktree = WORKTREES.some((rel) => isWithin(path.join(project, rel), cwd) && path.resolve(cwd) !== path.resolve(project, rel));
+  return inWorktree ? 'feature' : 'front-desk';
+}
+
+// A role the session records of itself: its WHEELHOUSE_ROLE, as it shows in the first lines of its transcript. A foreman is
+// started in the project's own folder, so its folder alone would call it a front desk.
+const OWN_ROLE = /WHEELHOUSE_ROLE["'\s:=]+(foreman|feature|why)\b/;
+function ownRole(file) {
+  const head = readText(file).split('\n', 40).join('\n');
+  return OWN_ROLE.exec(head)?.[1] ?? null;
 }
 
 function projectFiles(claudeHome, project) {
@@ -75,7 +87,9 @@ function projectFiles(claudeHome, project) {
     }
     for (const file of candidates) {
       const cwd = cwdOf(file);
-      if (cwd !== null && isWithin(project, cwd)) found.push({ file, role: roleByFolder(project, cwd), session: sessionOf(file) });
+      if (cwd === null || !isWithin(project, cwd)) continue;
+      const byFolder = roleByFolder(project, cwd);
+      found.push({ file, role: byFolder === 'front-desk' ? (ownRole(file) ?? byFolder) : byFolder, session: sessionOf(file) });
     }
   }
   return found;
@@ -116,7 +130,9 @@ export function findTranscripts({ project, claudeHome = path.join(os.homedir(), 
 
 const ADVISOR = 'advisor';
 
-export function auditModels(transcripts) {
+// `model` is the one the run was given (haiku unless the run asked for sonnet): a turn on any other model is an offender.
+export function auditModels(transcripts, { model: wanted = 'haiku' } = {}) {
+  const allowed = modelPattern(wanted);
   const offenders = [];
   for (const { file, role, session } of transcripts) {
     const counts = new Map();
@@ -127,7 +143,7 @@ export function auditModels(transcripts) {
         if (block?.type === 'server_tool_use' && block.name === ADVISOR) counts.set(ADVISOR, (counts.get(ADVISOR) ?? 0) + 1);
       }
       const model = entry.message?.model;
-      if (typeof model !== 'string' || model === '<synthetic>' || HAIKU.test(model)) continue;
+      if (typeof model !== 'string' || model === '<synthetic>' || allowed.test(model)) continue;
       counts.set(model, (counts.get(model) ?? 0) + 1);
     }
     for (const [model, count] of counts) offenders.push({ file, role, session, model, count });

@@ -9,11 +9,12 @@ import { fileURLToPath } from 'node:url';
 import { appendJsonl } from '../lib/log.js';
 import { projectSlug } from '../../scripts/lib/paths.js';
 import { runFolder } from './results.js';
-import { openPicker, readyToSubmit, HIGHLIGHTED, PICKED } from './stand-in.js';
-import { PIECES, WAVES, P5_SPARE, F2_ANSWER } from './requests.js';
+import { openPicker, readyToSubmit, deskBusy, HIGHLIGHTED, PICKED } from './stand-in.js';
+import { PIECES, WAVES, P5_SPARE, F2_ANSWER, P6_FILE } from './requests.js';
 import { SESSION_PREFIX, frontDeskCommand } from './tmux.js';
 import { STEPS as LOG, SETUP_DONE, OWN_BRANCH } from './signals.js';
 import { auditModels } from './audit.js';
+import { parseModel, DEFAULT_MODEL, MODELS } from './models.js';
 import { STARTS_UNAPPROVED } from '../../scripts/foreman/queue.js';
 import { installCommand, removeCommands } from './stage-plugin.js';
 import { reviewCard, stepsPage, writeTryMe, reviewAsDecision, answerLetter } from './review-card.js';
@@ -25,6 +26,10 @@ const WHY_WAIT_MS = 100 * 1000 + 20 * 1000;
 const WAVE_WAIT_MS = { 2: 90 * MINUTE, 3: 150 * MINUTE, 4: 90 * MINUTE };
 const SPARE_BRANCH = 'trial/spare-bug';
 const SETUP_WAIT_MS = 45 * MINUTE;
+// `alerts ntfy` waits two minutes for the click, so the desk is given a little longer to say how it went.
+const NTFY_WAIT_MS = 150 * 1000;
+const NOT_CLICKED = /did not click|nothing was changed|refused/i;
+const NO_CHANNEL = /no channels?|nothing (?:is )?(?:set up|kept)|none (?:is |are )?set up/i;
 // Setup's skill gives this line in prose, so the session words it its own way: "setup needs one new session on this
 // folder", "the last safety checks need one new session in this folder: close this session, start a new one here".
 export const NEW_SESSION = /needs? one new session|new session (?:on|in) this folder|start a new (?:one|session) (?:here|in this folder|on this folder)/i;
@@ -78,7 +83,7 @@ const NOTHING = {
   applySpareBug: () => ({ applied: false, why: 'not wired' }),
   startTunnel: async () => ({}),
   hasCommand: async () => true,
-  stopWheelhouse: async () => [],
+  stopWheelhouse: async () => ({ stopped: [], kept: [] }),
   installedProblem: async () => 'not wired',
   useRepo: () => {},
 };
@@ -166,6 +171,9 @@ function mustBeAlive(ctx) {
   }
 }
 
+// The feature record steps in which the work's session is running (planned, paused and closed are not).
+const FEATURE_RUNNING = ['started', 'building'];
+
 // One look at the project: events become log entries, open cards get the director's stand-in answer, and F3b fires when armed.
 async function tick(ctx) {
   const { io, state } = ctx;
@@ -180,6 +188,9 @@ async function tick(ctx) {
       : e.kind === 'action' && e.data?.action === 'approve-work' && (e.verified === true || e.sig) ? e.data.work : null;
     if (typeof ready === 'string') await note(ctx, LOG.workReady, `work-ready ${ready}`, { work: ready, at: e.at ?? iso(ctx) });
     if (e.kind === 'run' && e.data?.state === 'started') await note(ctx, LOG.start, `started ${e.data.work ?? ''}`, { work: e.data.work, at: e.at ?? iso(ctx) });
+    // The front desk's own layout keeps a feature's session in its feature record, not in a run record: a session starts when
+    // its record says started or building.
+    if (e.kind === 'feature' && FEATURE_RUNNING.includes(e.data?.step)) await note(ctx, LOG.start, `started ${e.data.work ?? ''}`, { work: e.data.work, at: e.at ?? iso(ctx) });
   }
   const open = new Set();
   let features = 0;
@@ -187,9 +198,16 @@ async function tick(ctx) {
     const key = e.data?.runId ?? e.id;
     if (e.data?.state === 'started') { open.add(key); if (e.data.lane === 'feature') features += 1; } else open.delete(key);
   }
-  if (open.size > 0 && state.pace !== `${open.size},${features}`) {
-    state.pace = `${open.size},${features}`;
-    await note(ctx, LOG.pace, `building ${open.size}, feature ${features}`);
+  // A feature work counts while its latest record says its session is running.
+  const running = new Set();
+  for (const e of events.filter((x) => x.kind === 'feature' && typeof x.data?.work === 'string')) {
+    if (FEATURE_RUNNING.includes(e.data.step)) running.add(e.data.work); else running.delete(e.data.work);
+  }
+  const building = open.size + running.size;
+  const lanes = features + running.size;
+  if (building > 0 && state.pace !== `${building},${lanes}`) {
+    state.pace = `${building},${lanes}`;
+    await note(ctx, LOG.pace, `building ${building}, feature ${lanes}`);
   }
   await linkLateWork(ctx, events);
   // P4's decisions are the live decision script's own (s9), so the stand-in leaves them to it.
@@ -210,13 +228,20 @@ async function tick(ctx) {
   }
 }
 
-async function waitMerged(ctx, count, wave) {
+// Waits for `count` merged pull requests. A shortfall stops the run, or with `soft` is returned as the number merged, so a
+// wave that did not merge what it should still leaves the later waves to give their evidence.
+async function waitMerged(ctx, count, wave, { soft = false } = {}) {
   const ok = await waitFor(async () => {
     await tick(ctx);
     return (await mergedPulls(ctx)).length >= count;
   }, { io: ctx.io, timeoutMs: WAVE_WAIT_MS[wave] ?? 60 * MINUTE });
-  if (!ok) throw new Stop(`fewer than ${count} pull requests merged in time for wave ${wave}`);
+  if (ok) return count;
+  const merged = (await mergedPulls(ctx)).length;
+  if (!soft) throw new Stop(`fewer than ${count} pull requests merged in time for wave ${wave}`);
+  return merged;
 }
+// What a later wave waits for: the count it would, less what wave 2 fell short by.
+const mergesBy = (ctx, count) => Math.max(0, count - (ctx.state.shortfall ?? 0));
 
 // Whether a branch in the project's own folder that names the piece has a commit of its own. A build commits in its
 // worktree and pushes only when it opens its pull request, so GitHub sees the first commit late or not at all.
@@ -231,21 +256,34 @@ async function localCommit(ctx, piece) {
   }
 }
 
-// Types a piece's request, answers intake's visibility question for P8, and notes which work event it became.
-// Text typed while a picker is open goes into the picker, not the chat, so the stand-in answers the picker first. After
-// the wait it is typed anyway, and the wait is noted.
+// Text typed while a picker is open goes into the picker, and text typed while the desk is working lands in a reply being
+// written or is lost. So before anything is typed to the front desk it waits for no picker, no submit page and no
+// spinner, seen twice a few seconds apart. After ten minutes it types anyway, and the wait is noted.
+const DESK_CALM_MS = 3000;
 async function deskFree(ctx) {
   const { io } = ctx;
-  const open = () => { const pane = io.tmux.capture(DESK); return openPicker(pane) !== null || readyToSubmit(pane); };
-  if (!open()) return;
-  const free = await waitFor(async () => { await tick(ctx); return !open(); }, { io, timeoutMs: 10 * MINUTE, everyMs: 10000 });
-  if (!free) await note(ctx, LOG.health, 'a picker stayed open in the front desk for 10 minutes; typing anyway');
+  const taken = () => { const pane = io.tmux.capture(DESK); return openPicker(pane) !== null || readyToSubmit(pane) || deskBusy(pane); };
+  const calm = async () => {
+    if (taken()) return false;
+    await io.clock.sleep(DESK_CALM_MS);
+    return !taken();
+  };
+  if (await calm()) return;
+  const free = await waitFor(async () => { await tick(ctx); return calm(); }, { io, timeoutMs: 10 * MINUTE, everyMs: 10000 });
+  if (!free) await note(ctx, LOG.health, 'the front desk stayed busy or had a picker open for 10 minutes; typing anyway');
+}
+
+// Types to the front desk once it is free.
+async function typeToDesk(ctx, text) {
+  await deskFree(ctx);
+  ctx.io.tmux.type(DESK, text);
 }
 
 // The stand-in director's reply when a request is met with questions in the chat and no card: what a director who takes
 // every recommendation would say.
 export const FOLLOW_UP = 'Go with what you recommend on each question, and take it to a card.';
 
+// Types a piece's request, answers intake's visibility question for P8, and notes which work event it became.
 async function typeRequest(ctx, id, text = pieceOf(id).text) {
   const { io, state } = ctx;
   await deskFree(ctx);
@@ -263,13 +301,13 @@ async function typeRequest(ctx, id, text = pieceOf(id).text) {
     const work = (await io.host.events({ project: ctx.projectName })).filter((e) => e.kind === 'work' && !known.has(e.data?.id));
     if (work.length > 0) { found.push(work[0]); return true; }
     const pane = io.tmux.capture(DESK);
-    if (id === 'P8' && !answered && /nobody sees|anyone see|visible/i.test(pane)) { answered = true; io.tmux.type(DESK, F2_ANSWER); }
+    if (id === 'P8' && !answered && /nobody sees|anyone see|visible/i.test(pane)) { answered = true; await typeToDesk(ctx, F2_ANSWER); }
     still = pane === last ? still + 1 : 0;
     last = pane;
     // The desk has finished its reply, made no work, opened no picker, and asked something: the stand-in answers once.
     if (!followed && id !== 'P8' && still >= 2 && io.clock.now() - started >= 2 * MINUTE && openPicker(pane) === null && /\?/.test(newLines(before, pane))) {
       followed = true;
-      io.tmux.type(DESK, FOLLOW_UP);
+      await typeToDesk(ctx, FOLLOW_UP);
       await note(ctx, id, `the desk asked questions and made no work; the stand-in answered: ${FOLLOW_UP}`);
     }
     await tick(ctx);
@@ -336,9 +374,12 @@ async function spareBugCheck(ctx) {
 const piecesTyped = (wave) => async (ctx) => typeWave(ctx, wave);
 const needsGo = true;
 
+// The model's name as a person reads it: Haiku, Sonnet.
+const modelName = (ctx) => { const m = ctx.model ?? DEFAULT_MODEL; return m[0].toUpperCase() + m.slice(1); };
+
 async function desk(ctx, name, extraEnv = {}) {
   const { io } = ctx;
-  const { command, env } = frontDeskCommand({ claude: ctx.claude });
+  const { command, env } = frontDeskCommand({ claude: ctx.claude, model: ctx.model });
   // The trial's own Wheelhouse home and Claude config folder go in explicitly: the session starts with `env -i`, and the helper it
   // wakes (and so every feature session) takes its environment from this one.
   const own = { WHEELHOUSE_HOME: ctx.env.WHEELHOUSE_HOME, ...(ctx.env.HAIKU_TRIAL_CONFIG_DIR ? { CLAUDE_CONFIG_DIR: ctx.env.HAIKU_TRIAL_CONFIG_DIR } : {}) };
@@ -401,13 +442,19 @@ export function waitingInRecord(events) {
   const answeredQuestions = new Set(events.filter((e) => e.kind === 'action' && e.data?.action === 'answer').map((e) => e.data?.questionId));
   const cards = events.filter((e) => e.kind === 'card' && PICKED.includes(e.data?.kind) && !answeredCards.has(e.id));
   const questions = events.filter((e) => e.kind === 'question' && typeof e.data?.id === 'string' && !answeredQuestions.has(e.data.id));
-  return cards.length + questions.length;
+  // A visible work waits for the director's approval from the moment of intake, before any card is raised for it: the desk
+  // may not have raised one at all, and the stand-in would never see a card to answer.
+  const approved = new Set(events.filter((e) => e.kind === 'action' && e.data?.action === 'approve-work').map((e) => e.data?.work));
+  const carded = events.filter((e) => e.kind === 'card' && e.data?.kind === 'approve-work').map((e) => JSON.stringify(e.data));
+  const unseen = events.filter((e) => e.kind === 'work' && e.data?.visible === true && typeof e.data.id === 'string'
+    && !approved.has(e.data.id) && !carded.some((c) => c.includes(e.data.id)));
+  return cards.length + questions.length + unseen.length;
 }
 async function checkIn(ctx, events) {
   const { io, state } = ctx;
   if (ctx.directorStep || (ctx.session ?? DESK) !== DESK) { ctx.deskIdle = undefined; return; }
   const pane = io.tmux.capture(DESK);
-  if (pane === '' || openPicker(pane) !== null) { ctx.deskIdle = undefined; return; }
+  if (pane === '' || openPicker(pane) !== null || deskBusy(pane)) { ctx.deskIdle = undefined; return; }
   if (ctx.deskIdle?.pane !== pane) { ctx.deskIdle = { pane, since: io.clock.now() }; return; }
   if (io.clock.now() - ctx.deskIdle.since < CHECK_IN_IDLE_MS) return;
   if (state.checkedInAt !== undefined && io.clock.now() - state.checkedInAt < CHECK_IN_EVERY_MS) return;
@@ -438,7 +485,7 @@ async function pieceEnv(ctx, id) {
   const piece = ctx.state.pieces[id]?.change ?? id.toLowerCase();
   let got;
   const found = await waitFor(async () => {
-    try { got = await ctx.io.faults.featureEnvOf({ project: ctx.projectDir, piece }); return true; } catch { await tick(ctx); return false; }
+    try { got = await ctx.io.faults.featureEnvOf({ project: ctx.projectDir, name: ctx.projectName, piece }); return true; } catch { await tick(ctx); return false; }
   }, { io: ctx.io, timeoutMs: 40 * MINUTE });
   if (!found) throw new Stop(`no running feature session names ${id}`);
   return got;
@@ -454,8 +501,8 @@ const directorAsk = async (ctx, text) => {
 const auditStep = (wave, smoke = true) => ({
   id: `w${wave}-audit`, wave, smoke,
   async run(ctx, io) {
-    const models = auditModels(io.host.findTranscripts({ project: ctx.projectName, dir: ctx.projectDir }));
-    await note(ctx, `w${wave}-audit`, models.clean ? 'every assistant turn so far ran on Haiku' : `offenders: ${JSON.stringify(models.offenders.map((o) => `${o.role} ${o.model} x${o.count}`))}`);
+    const models = auditModels(io.host.findTranscripts({ project: ctx.projectName, dir: ctx.projectDir }), { model: ctx.model });
+    await note(ctx, `w${wave}-audit`, models.clean ? `every assistant turn so far ran on ${modelName(ctx)}` : `offenders: ${JSON.stringify(models.offenders.map((o) => `${o.role} ${o.model} x${o.count}`))}`);
     if (!models.clean) throw new Stop(`a session ran on another model: ${models.offenders.map((o) => `${o.role} (${o.model})`).join(', ')}`);
   },
 });
@@ -483,7 +530,7 @@ export const STEPS = [
   },
   {
     id: 'install', wave: 1, smoke: true, needsGo,
-    asks: () => 'Install the staged plugin into Claude Code and use Haiku for the trial? Answer go.',
+    asks: (ctx) => `Install the staged plugin into Claude Code and use ${modelName(ctx)} for the trial? Answer go.`,
     async run(ctx, io) {
       const configDir = ctx.env.HAIKU_TRIAL_CONFIG_DIR;
       // A copy an earlier run installed is taken out first: an install of the same version keeps it as it is.
@@ -506,7 +553,7 @@ export const STEPS = [
   {
     id: 'seed', wave: 1, smoke: true,
     async run(ctx, io) {
-      const made = await io.host.makeProject({ dir: ctx.projectDir });
+      const made = await io.host.makeProject({ dir: ctx.projectDir, model: ctx.model });
       ctx.state.seedSha = made.sha;
       await io.host.git(['remote', 'add', 'origin', ctx.remote], { cwd: ctx.projectDir });
       await io.host.git(['push', '-u', 'origin', 'main'], { cwd: ctx.projectDir });
@@ -522,7 +569,7 @@ export const STEPS = [
     async run(ctx, io) {
       let restarted = false;
       const start = async () => {
-        await desk(ctx, SETUP, { WHEELHOUSE_SETUP_MODEL: 'haiku' });
+        await desk(ctx, SETUP, { WHEELHOUSE_SETUP_MODEL: ctx.model });
         io.tmux.type(SETUP, restarted ? 'carry on with setup' : '/wheelhouse:setup');
       };
       await start();
@@ -559,8 +606,20 @@ export const STEPS = [
       await desk(ctx, DESK);
       const on = await io.host.typedRepliesOn({ project: ctx.projectName });
       await note(ctx, 'front-desk', `typed replies on: ${on}`);
+    },
+  },
+  // The director's own click, asked for early and out loud: `alerts ntfy` opens a window in the helper that waits two minutes
+  // for a Yes and saves nothing without one, and the alerts also have to be switched on under Notifications. Left to the
+  // moment it was typed, it blocked the desk's turn with no one watching and the next piece was typed into it.
+  {
+    id: 'ntfy', wave: 1, smoke: false, director: true,
+    async run(ctx, io) {
       ctx.state.ntfyTopic = `haiku-trial-${ctx.date}-${Math.floor(io.clock.now() / 1000) % 100000}`;
-      await say(ctx, `alerts ntfy ${ctx.state.ntfyTopic}`);
+      await directorAsk(ctx, 'Phone alerts need your click. Watch for a window titled "Wheelhouse: phone alerts" in the next minute or two and click Yes in it, then switch ntfy on under Notifications in the front desk. Answer ready, and the runner asks for the window now.');
+      const reply = await say(ctx, `alerts ntfy ${ctx.state.ntfyTopic}`, { maxMs: NTFY_WAIT_MS });
+      const status = await say(ctx, 'alerts status');
+      ctx.state.ntfySetUp = !NOT_CLICKED.test(reply) && /ntfy/i.test(status) && !NO_CHANNEL.test(status);
+      await note(ctx, 'ntfy', ctx.state.ntfySetUp ? 'ntfy is set up (switch it on under Notifications for alerts to go)' : 'ntfy was not set up: row 43 is not covered', { reply: reply.slice(0, 300), status: status.slice(0, 300) });
     },
   },
   { id: 'w2-type', wave: 2, smoke: true, run: piecesTyped(2) },
@@ -579,16 +638,25 @@ export const STEPS = [
         const cmp = await io.gh(['api', `repos/{owner}/{repo}/compare/main...${branch}`]);
         return (cmp?.ahead_by ?? 0) > 0;
       }, { io, timeoutMs: 45 * MINUTE });
-      if (!found) throw new Stop("P1's branch never got a first commit");
+      // No first commit is evidence about Wheelhouse or the model, not a reason to end the run: the fault is noted as not
+      // exercised and the later waves still run.
+      if (!found) { await note(ctx, LOG.fault('F3'), "not exercised: P1's branch never got a first commit"); return; }
       // P1 may not run as a feature session (intake can size it smaller); the fault is then noted as not exercised and
       // the run goes on.
-      const killed = await io.faults.f3KillFeature({ project: ctx.projectDir, piece }).catch((error) => ({ error: error.message }));
+      const killed = await io.faults.f3KillFeature({ project: ctx.projectDir, name: ctx.projectName, piece }).catch((error) => ({ error: error.message }));
       await note(ctx, LOG.fault('F3'), killed?.error ? `not exercised: ${killed.error}` : `killed P1's feature session ${JSON.stringify(killed)}`);
     },
   },
   {
     id: 'w2-merge-wait', wave: 2, smoke: true,
-    async run(ctx) { await waitMerged(ctx, 3, 2); await spareBugCheck(ctx); },
+    async run(ctx) {
+      const merged = await waitMerged(ctx, 3, 2, { soft: true });
+      if (merged < 3) {
+        ctx.state.shortfall = 3 - merged;
+        await note(ctx, 'w2-merge-wait', `missed: ${merged} of 3 pull requests merged in time for wave 2; the run goes on and later waits ask for ${ctx.state.shortfall} fewer`);
+      }
+      await spareBugCheck(ctx);
+    },
   },
   auditStep(2),
   { id: 'w3-type', wave: 3, smoke: false, run: piecesTyped(3) },
@@ -619,6 +687,7 @@ export const STEPS = [
   {
     id: 'f6-stop', wave: 3, smoke: false,
     async run(ctx, io) {
+      await deskFree(ctx);
       ctx.state.stopAt = io.clock.now();
       await io.faults.f6AllStop(io.tmux);
       await io.clock.sleep(10000);
@@ -630,6 +699,7 @@ export const STEPS = [
     id: 'f6-undo', wave: 3, smoke: false,
     async run(ctx, io) {
       const sha = await p6Sha(ctx);
+      await deskFree(ctx);
       await io.faults.undoTyped(io.tmux, sha);
       await io.clock.sleep(20000);
       await note(ctx, 'f6-undo', `undo typed under All stop: ${io.tmux.capture(DESK).split('\n').filter((l) => /All stop is on/.test(l)).join(' ') || 'no refusal text seen'}`);
@@ -647,6 +717,7 @@ export const STEPS = [
   {
     id: 'f6-lift', wave: 3, smoke: false, director: true,
     async run(ctx, io) {
+      await deskFree(ctx);
       await io.faults.liftTyped(io.tmux);
       const lifted = await waitFor(async () => {
         await tick(ctx);
@@ -659,13 +730,15 @@ export const STEPS = [
   {
     id: 'f5a-undo-p6', wave: 3, smoke: false, director: true,
     async run(ctx, io) {
-      await io.faults.undoTyped(io.tmux, await p6Sha(ctx));
+      const sha = await p6Sha(ctx);
+      await deskFree(ctx);
+      await io.faults.undoTyped(io.tmux, sha);
       await directorAsk(ctx, "Approve the undo of piece P6's merge in the helper window (the first of two), then answer done.");
       await waitFor(async () => { await tick(ctx); return (await ghPulls(ctx)).some((p) => /^wheelhouse\/undo-/.test(p.head?.ref ?? '') && p.merged_at); }, { io, timeoutMs: 20 * MINUTE });
       await note(ctx, LOG.fault('F5a'), 'undo of P6 approved; waited for the take-back merge');
     },
   },
-  { id: 'w3-merge-wait', wave: 3, smoke: false, async run(ctx) { await waitMerged(ctx, 3 + (ctx.state.p5 === 'not-covered' ? 3 : 4), 3); } },
+  { id: 'w3-merge-wait', wave: 3, smoke: false, async run(ctx) { await waitMerged(ctx, mergesBy(ctx, 3 + (ctx.state.p5 === 'not-covered' ? 3 : 4)), 3); } },
   auditStep(3, false),
   { id: 'w4-type', wave: 4, smoke: true, async run(ctx) { await typeWave(ctx, 4, ctx.smoke ? { only: ['P4'] } : {}); } },
   {
@@ -691,7 +764,7 @@ export const STEPS = [
       await io.clock.sleep(30000);
     }
     try {
-      const env = await io.faults.featureEnvOf({ project: ctx.projectDir, piece: ctx.state.pieces.P4?.change ?? 'p4' });
+      const env = await io.faults.featureEnvOf({ project: ctx.projectDir, name: ctx.projectName, piece: ctx.state.pieces.P4?.change ?? 'p4' });
       const natural = io.faults.naturalSendBacks?.(env);
       if (Number.isInteger(natural)) ctx.state.faults.F1 = { ...(ctx.state.faults.F1 ?? {}), naturalSendBacks: natural };
     } catch { /* no running P4 session to read */ }
@@ -720,6 +793,7 @@ export const STEPS = [
     async run(ctx, io) {
       const pulls = await ghPulls(ctx);
       const p2 = pullOf(pulls, ctx.state.pieces.P2?.change ?? 'categor');
+      await deskFree(ctx);
       await io.faults.undoTyped(io.tmux, p2?.merge_commit_sha ?? 'unknown');
       await directorAsk(ctx, "Approve the undo of piece P2's merge in the helper window (the second of two), then answer done. It should clash.");
       await note(ctx, LOG.fault('F5b'), `undo of P2 approved; reply: ${io.tmux.capture(DESK).split('\n').filter((l) => /clashes with later work/.test(l)).join(' ') || 'no clash text seen'}`);
@@ -740,6 +814,7 @@ export const STEPS = [
       const at = new Date(io.clock.now() + 10 * MINUTE);
       at.setSeconds(0, 0); // the setting is a minute, and the digest is due when that minute starts
       ctx.state.digestAt = at.toISOString();
+      await deskFree(ctx);
       const set = await io.host.setDigest({ project: ctx.projectName, at });
       await note(ctx, 'digest-set', `digest due ${ctx.state.digestAt}: ${JSON.stringify(set)}`);
       const arrived = await waitFor(async () => { await tick(ctx); return /Daily digest,/.test(io.tmux.capture(DESK)); }, { io, timeoutMs: 20 * MINUTE });
@@ -747,8 +822,8 @@ export const STEPS = [
     },
   },
   // A smoke run starts only P4 in this wave, so only P4 has to merge before it is scored.
-  { id: 'w4-smoke-merge', wave: 4, smoke: true, smokeOnly: true, async run(ctx) { await waitMerged(ctx, 4, 4); } },
-  { id: 'w4-merge-wait', wave: 4, smoke: false, async run(ctx) { await waitMerged(ctx, 3 + (ctx.state.p5 === 'not-covered' ? 3 : 4) + 2, 4); } },
+  { id: 'w4-smoke-merge', wave: 4, smoke: true, smokeOnly: true, async run(ctx) { await waitMerged(ctx, mergesBy(ctx, 4), 4); } },
+  { id: 'w4-merge-wait', wave: 4, smoke: false, async run(ctx) { await waitMerged(ctx, mergesBy(ctx, 3 + (ctx.state.p5 === 'not-covered' ? 3 : 4) + 2), 4); } },
   auditStep(4),
   {
     id: 'w5-incident', wave: 5, smoke: false,
@@ -798,7 +873,7 @@ export const STEPS = [
       const runLog = readLog(ctx.logFile);
       io.results.writeRaw({ folder: ctx.folder, transcripts, events: await io.host.events({ project: ctx.projectName }), panes: ctx.state.panes, runLog, usage });
       const file = path.join(ctx.folder, 'summary', `${ctx.date}-haiku-trial-results.md`);
-      io.results.writeSummary({ file, date: ctx.date, rows: ctx.state.rows ?? [], score: ctx.state.score, audit: ctx.state.audit, usage });
+      io.results.writeSummary({ file, date: ctx.date, rows: ctx.state.rows ?? [], score: ctx.state.score, audit: ctx.state.audit, usage, model: ctx.model });
       await note(ctx, 'results', `raw results and summary under ${ctx.folder}`);
     },
   },
@@ -850,7 +925,7 @@ export const STEPS = [
 
 async function p6Sha(ctx) {
   const pulls = await ghPulls(ctx);
-  return (pullOf(pulls, ctx.state.pieces.P6?.change) ?? pullOf(pulls, 'node 24'))?.merge_commit_sha ?? 'unknown';
+  return (pullOf(pulls, ctx.state.pieces.P6?.change) ?? pullOf(pulls, 'money-edge'))?.merge_commit_sha ?? 'unknown';
 }
 
 const readLog = (file) => {
@@ -867,12 +942,14 @@ async function gatherAndCheck(ctx, io) {
   const transcripts = io.host.findTranscripts({ project: ctx.projectName, dir: ctx.projectDir });
   const pieces = state.pieces;
   if (pieces.P8) pieces.P8.gate = await io.host.readGate({ change: pieces.P8.change, project: ctx.projectName });
-  const mainCi = await io.host.readMain({ dir: ctx.projectDir, file: '.github/workflows/ci.yml' });
+  // A file that is absent and a read that failed both come back null, so package.json is read too: it is always on main.
+  const mainFiles = {};
+  for (const file of ['package.json', P6_FILE]) mainFiles[file] = await io.host.readMain({ dir: ctx.projectDir, file });
   const config = state.config ?? (await io.host.readConfig({ dir: ctx.projectDir }));
   const full = await io.signals.gatherContext({
     project: ctx.projectName, gh: io.gh, runLog: readLog(ctx.logFile).filter((e) => e.done !== true), panes: state.panes, transcripts, pieces,
-    scores: state.score, previews: ctx.preview, config, ntfy: state.ntfy, faults: state.faults,
-    branches: state.branches, mainCi, digestAt: state.digestAt, projectName: ctx.repoName,
+    scores: state.score, previews: ctx.preview, config, ntfy: state.ntfy, ntfySetUp: state.ntfySetUp, faults: state.faults,
+    branches: state.branches, mainFiles, model: ctx.model, digestAt: state.digestAt, projectName: ctx.repoName,
   });
   for (const [id, piece] of Object.entries(pieces)) {
     piece.prs = piece.change ? (full.prs ?? []).filter((p) => `${p.head} ${p.title}`.toLowerCase().includes(String(piece.change).toLowerCase())).map((p) => p.number) : [];
@@ -915,7 +992,7 @@ function contextFor({ mode, io, folder, date, env }) {
   };
 }
 
-export async function run({ mode = 'full', io: given, from, until, folder, date, env = process.env } = {}) {
+export async function run({ mode = 'full', io: given, from, until, folder, date, model, env = process.env } = {}) {
   const problem = homeProblem(env);
   if (problem) return { done: [], stoppedAt: 'wheelhouse-home', why: problem };
   const io = { ...given, host: { ...NOTHING, ...(given.host ?? {}) } };
@@ -923,6 +1000,14 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
   const where = folder ?? io.results.runFolder(day);
   fs.mkdirSync(where, { recursive: true });
   const ctx = contextFor({ mode, io, folder: where, date: day, env });
+  // The project and every session it starts are pinned to one model, so a resume keeps the model the run began on.
+  const asked = model === undefined ? undefined : parseModel(model);
+  const began = ctx.state.model;
+  if (began !== undefined && asked !== undefined && began !== asked) {
+    return { done: [], stoppedAt: 'model', why: `this run began on ${began}, so --model ${asked} would put the rest on another model. Start a new run with its own --date to use ${asked}.` };
+  }
+  ctx.model = began ?? asked ?? DEFAULT_MODEL;
+  ctx.state.model = ctx.model;
   io.host.useRepo(ctx.repoSlug);
   const plan = planRun({ mode });
   let start = 0;
@@ -965,8 +1050,11 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
 }
 
 // Stops what this run started, as its log records it, and nothing else. It deletes nothing.
-export async function restore({ folder, io }) {
+// Wheelhouse's own side (the helper, watchers and foremen) is kept while a feature session is still running, since stopping
+// it takes its records and its way to open a pull request with it; `force` stops it anyway.
+export async function restore({ folder, io, force = false }) {
   const stopped = [];
+  let kept = [];
   const entries = readLog(path.join(folder, 'run-log.jsonl'));
   const names = new Set(entries.flatMap((e) => [].concat(e.detail?.tmux ?? [])).filter((n) => String(n).startsWith(SESSION_PREFIX)));
   const pids = new Set(entries.flatMap((e) => [e.detail?.productPid, e.detail?.tunnelPid]).filter((p) => Number.isInteger(p)));
@@ -988,8 +1076,13 @@ export async function restore({ folder, io }) {
       } catch { /* already gone */ }
     }
   }
-  for (const what of (await io.host.stopWheelhouse?.()) ?? []) stopped.push(what);
-  return { stopped };
+  const wheelhouse = (await io.host.stopWheelhouse?.({ force })) ?? [];
+  if (Array.isArray(wheelhouse)) stopped.push(...wheelhouse);
+  else {
+    stopped.push(...(wheelhouse.stopped ?? []));
+    kept = wheelhouse.kept ?? [];
+  }
+  return { stopped, kept };
 }
 
 // --- the command line ---
@@ -1008,7 +1101,7 @@ export function runLabel({ arg, env = process.env } = {}) {
   return given;
 }
 
-const USAGE = 'usage: node probes/haiku-trial/runner.js full | smoke | restore | plan [--from <step>] [--out <folder>] [--until <step>] [--date <label>]\n  --date <label> (or HAIKU_TRIAL_DATE) names the run: YYYY-MM-DD with an optional -suffix such as 2026-11-08-b';
+const USAGE = 'usage: node probes/haiku-trial/runner.js full | smoke | restore | plan [--from <step>] [--out <folder>] [--until <step>] [--date <label>] [--model <haiku|sonnet>] [--force]\n  --model <haiku|sonnet> runs the whole trial on that model (haiku by default); one sonnet run tells kit faults from model faults\n  --force (restore) stops the helper, watchers and foremen even while a feature session is still running\n  --date <label> (or HAIKU_TRIAL_DATE) names the run: YYYY-MM-DD with an optional -suffix such as 2026-11-08-b';
 
 function parseArgs(argv) {
   const out = { command: argv[0], from: undefined, folder: undefined, until: undefined, date: undefined };
@@ -1017,6 +1110,8 @@ function parseArgs(argv) {
     else if (argv[i] === '--out') out.folder = argv[(i += 1)];
     else if (argv[i] === '--until') out.until = argv[(i += 1)];
     else if (argv[i] === '--date') out.date = argv[(i += 1)] ?? '';
+    else if (argv[i] === '--model') out.model = argv[(i += 1)] ?? '';
+    else if (argv[i] === '--force') out.force = true;
   }
   return out;
 }
@@ -1025,6 +1120,7 @@ export async function main(argv, { print = console.log, buildIo, env = process.e
   const args = parseArgs(argv);
   let label;
   try {
+    if (args.model !== undefined) parseModel(args.model);
     label = runLabel({ arg: args.date, env });
   } catch (error) {
     print(error.message);
@@ -1053,10 +1149,10 @@ export async function main(argv, { print = console.log, buildIo, env = process.e
   if (problem) { print(JSON.stringify({ stoppedAt: 'wheelhouse-home', why: problem })); return 1; }
   fs.mkdirSync(home, { recursive: true });
   if (args.command === 'restore') {
-    print(JSON.stringify(await restore({ folder, io })));
+    print(JSON.stringify(await restore({ folder, io, force: args.force === true })));
     return 0;
   }
-  const result = await run({ mode: args.command, io, from: args.from ?? 'auto', until: args.until, folder, date: label, env: given });
+  const result = await run({ mode: args.command, io, from: args.from ?? 'auto', until: args.until, folder, date: label, model: args.model, env: given });
   print(JSON.stringify(result));
   return result.stoppedAt ? 1 : 0;
 }

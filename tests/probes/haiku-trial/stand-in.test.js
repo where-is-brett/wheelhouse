@@ -1,7 +1,7 @@
 // tests/probes/haiku-trial/stand-in.test.js
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { standInAnswers, recommendedIndex, decisionWork, PICKED, openPicker, readyToSubmit } from '../../../probes/haiku-trial/stand-in.js';
+import { standInAnswers, recommendedIndex, decisionWork, PICKED, openPicker, readyToSubmit, deskBusy } from '../../../probes/haiku-trial/stand-in.js';
 
 const approval = (id, work) => ({
   id, kind: 'card',
@@ -116,4 +116,25 @@ test('a decision already answered in the chat is not answered again', () => {
   const one = decision('d1', 'bank-statement-import', 1, 'Repeated lines in one statement');
   const done = { id: 'x', kind: 'action', data: { action: 'answer', questionId: 'q-bank-statement-import-1' } };
   assert.deepEqual(standInAnswers({ events: [one, done], pane: 'Decision needed (1): Repeated lines in one statement' }), []);
+});
+
+const SPINNER = '✻ Pondering… (12s · ↓ 340 tokens · esc to interrupt)';
+
+test('deskBusy sees a working desk by its spinner or its interrupt hint, and an idle desk by neither', () => {
+  assert.equal(deskBusy(`Some reply\n${SPINNER}\n> `), true);
+  assert.equal(deskBusy('Some reply\n  esc to interrupt\n'), true);
+  assert.equal(deskBusy('Some reply\n\n> \n? for shortcuts'), false);
+  assert.equal(deskBusy(''), false);
+  // An old spinner far up the history does not count.
+  assert.equal(deskBusy([SPINNER, ...Array.from({ length: 40 }, (_, i) => `line ${i}`)].join('\n')), false);
+});
+
+test('a typed decision reply waits for a busy desk and for another picker', () => {
+  const one = decision('d1', 'bank-statement-import', 1, 'Repeated lines in one statement');
+  const chat = 'Decision needed (1): Repeated lines in one statement   (holds up: Merging this change)';
+  assert.deepEqual(standInAnswers({ events: [one], pane: `${chat}\n${SPINNER}` }), [], 'the desk is working');
+  const other = approval('c9', 'something-else');
+  const open = picker(other.data.question, other.data.options, 0);
+  assert.deepEqual(standInAnswers({ events: [one], pane: `${chat}\n${open}` }), [], 'a picker is open: the text would go into it');
+  assert.equal(standInAnswers({ events: [one], pane: chat }).length, 1);
 });

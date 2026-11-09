@@ -20,7 +20,10 @@ const P4 =
   'Let me move a transaction to a different category. On the month page, list that month\'s transactions, each linking to /edit?id=<id>. The edit page has a form that posts to /edit with a hidden `id` and a select `name="category"` with a label, whose options are the category keys; after saving, go back to that month.';
 
 const P5 = 'A $40 refund shows as spending';
-const P6 = 'Make CI also run on Node 24';
+// A tests-only change in one new file: no guardrail (CI files are guardrails) and no visible text, so Wheelhouse's own gate
+// can self-merge it as internal. The take-back (row 36) checks that main no longer holds this file.
+export const P6_FILE = 'tests/money-edge.test.js';
+const P6 = `Add tests for parseAmount in src/lib/money.js: a blank amount, a negative amount and an amount with a thousands comma, as it behaves today. Put them in a new file ${P6_FILE} and change no other file.`;
 const P7 =
   "A button to download this month as a spreadsheet. Put a link 'Download this month' on the month page, going to /export?m=YYYY-MM, which sends a CSV named spending-YYYY-MM.csv with the header Date,Description,Amount,Category and that month's transactions.";
 const P8 =

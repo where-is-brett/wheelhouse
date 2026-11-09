@@ -348,6 +348,10 @@ test('each new plain kind is accepted with its shape and refused without it', as
       { ...w, lane: 'huge' }, { ...w, visible: 'yes' }, { ...w, dependsOn: 'login' }, { ...w, dependsOn: ['Not A Slug'] },
       { ...w, doc: { path: 'x' } }, { ...w, doc: { path: 'x', hash: 'zz' } }, { ...w, place: 'first' }, { ...w, parent: 'No' }, { ...w, title: '' },
     ]) assert.throws(() => makeEvent({ kind: 'work', data: bad }), /work event/);
+    // An event id is not a work id, nor something work depends on.
+    const EVENT_ID = '65b530ed-b8e7-4a1c-9d2e-0123456789ab';
+    assert.throws(() => makeEvent({ kind: 'work', data: { ...w, id: EVENT_ID } }), /not an event id/);
+    assert.throws(() => makeEvent({ kind: 'work', data: { ...w, dependsOn: [EVENT_ID] } }), /by the slug it was recorded under/);
     const f = SHAPES.feature;
     for (const bad of [
       { ...f, step: 'done' }, { ...f, files: 'a' }, { ...f, slice: { n: 3, m: 2 } }, { ...f, slice: { n: 1 } }, { ...f, brief: 4 },
@@ -389,6 +393,17 @@ test('a gate-asks record names the click the gate waits for: an approval of a he
       // The head an update was made from only with a CI push, and in full.
       { ...a, from: 'c'.repeat(40) }, { ...ci, from: 'c'.repeat(12) }, { ...ci, from: 7 },
     ]) assert.throws(() => makeEvent({ kind: 'gate-asks', data: bad }), /gate-asks event/, JSON.stringify(bad));
+  });
+});
+
+test('a CI push ask may name a branch and no pull request: the first push of a branch comes before its pull request', async () => {
+  await withHome(() => {
+    const first = { work: 'ci-node-24', ask: 'ci-push', sha: 'b'.repeat(40), branch: 'feature/ci-node-24' };
+    assert.deepEqual(makeEvent({ kind: 'gate-asks', data: first }).data, first);
+    // An approval still needs its pull request.
+    assert.throws(() => makeEvent({ kind: 'gate-asks', data: { ...first, ask: 'approval', branch: undefined } }), /needs the pull request number/);
+    // A pull request that is named still has to be a number.
+    assert.throws(() => makeEvent({ kind: 'gate-asks', data: { ...first, pr: '7' } }), /needs the pull request number/);
   });
 });
 

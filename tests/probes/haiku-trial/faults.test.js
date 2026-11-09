@@ -191,3 +191,44 @@ test('reviewDecision raises the card as a decision and naturalSendBacks counts a
   const got = faults.reviewDecision({ env: process.env, cwd: tree, card, run });
   assert.equal(got.code, 0, got.stdout);
 });
+
+// The layout the real runs had: a feature's worktree is <project>/.claude/worktrees/<work>, and Wheelhouse records the
+// running session under the project's NAME.
+function claudeWorktree(work, sub = '') {
+  const tree = path.join(project, '.claude', 'worktrees', work);
+  write(path.join(tree, '.git'), `gitdir: /somewhere/.git/worktrees/${work}\n`);
+  makeFeatureFolder(tree, work);
+  return sub === '' ? tree : path.join(tree, sub);
+}
+
+test('a feature session in .claude/worktrees is found by its running record', async () => {
+  const tree = claudeWorktree('p1-import-bank-csv');
+  const kills = [];
+  const rows = async () => [LINE(301, tree)];
+  const recorded = () => [{ work: 'p1-import-bank-csv', pid: 301, at: '2026-11-09T01:00:00Z' }];
+  const got = await faults.f3KillFeature({ project, name: 'owner__repo', piece: 'p1', listProcesses: rows, cwdOf, recorded, kill: (pid, sig) => kills.push([pid, sig]) });
+  assert.deepEqual(got, { pid: 301 });
+  assert.deepEqual(kills, [[301, 'SIGKILL']]);
+});
+
+test('a recorded session whose process is a wrapper is killed through its claude -p child', async () => {
+  const tree = claudeWorktree('p2-export-year');
+  cwds.set(402, tree);
+  const rows = async () => [{ pid: 401, ppid: 1, pgid: 401, command: 'node waker.js' }, { pid: 402, ppid: 401, pgid: 401, command: 'claude -p --model haiku WHEELHOUSE_SESSION=s402 HOME=/h' }];
+  const recorded = () => [{ work: 'p2-export-year', pid: 401, at: 'x' }];
+  const got = await featureEnvOf({ project, name: 'owner__repo', piece: 'p2', listProcesses: rows, cwdOf, recorded });
+  assert.equal(got.cwd, tree);
+  assert.equal(got.env.WHEELHOUSE_SESSION, 's402');
+});
+
+test('a claude -p in .claude/worktrees is found without a record, by its folder name', async () => {
+  const tree = claudeWorktree('p3-tags');
+  const got = await featureEnvOf({ project, piece: 'p3', listProcesses: async () => [LINE(501, claudeWorktree('p3-tags', 'src'))], cwdOf });
+  assert.equal(got.cwd, claudeWorktree('p3-tags', 'src'), 'the process folder, not the worktree root');
+  assert.ok(tree);
+});
+
+test('p1 does not match a recorded p10 session', async () => {
+  const recorded = () => [{ work: 'p10-other', pid: 601, at: 'x' }];
+  await assert.rejects(faults.f3KillFeature({ project, name: 'owner__repo', piece: 'p1', listProcesses: async () => [], cwdOf, recorded, kill: () => assert.fail('killed') }), /p1/);
+});
