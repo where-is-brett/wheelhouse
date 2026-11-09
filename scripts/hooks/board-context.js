@@ -46,7 +46,8 @@ import { answer, runAndExit, projectOf, beingSetUp, readTailEntries } from './ki
 import { stoppedQuestion } from './stopped-question.js';
 import { answeredWords, subjectOf, NOTE_LEAD } from '../cards/answered.js';
 import { SINCE_LEAD, SINCE_TAIL } from '../cards/panel-words.js';
-import { chatCopy } from '../state/card-lines.js';
+import { chatCopy, approveWorkLinePrefix } from '../state/card-lines.js';
+import { nextWork } from '../foreman/queue.js';
 import { readOpen, clearOpen } from '../lib/session-files.js';
 import { featureSlug, madeFeatureSlug, SETUP_FIRST } from './session-start.js';
 import { keepRequest } from '../lib/kept-request.js';
@@ -204,6 +205,43 @@ export async function stuckLine(desk, since, at) {
     .slice(0, STUCK_NOTES);
   if (notes.length === 0) return null;
   return notes.map((e) => `${e.work} is stuck: its session says "${e.words.replace(/\s+/g, ' ').trim()}" (sent ${e.at}).`).join(' ');
+}
+
+// The most works the approval line names.
+const ORPHAN_NAMED = 3;
+
+// The works the build queue holds for the director's approval that no card in the waiting view asks about, in queue order. A card
+// counts whether or not it was asked, and whichever its wording (with or without the show-first tail): the line starts the same.
+// A view it can't read gives none.
+export function orphanedApprovals(views) {
+  if (!isRecord(views) || !isRecord(views.work)) return [];
+  const cards = Array.isArray(views.waiting) ? views.waiting.filter(isRecord) : [];
+  const lines = cards.map((c) => c.data?.line).filter((l) => typeof l === 'string');
+  let held;
+  try {
+    held = nextWork({ work: views.work, features: isRecord(views.features) ? views.features : {}, reports: isRecord(views.reports) ? views.reports : {}, now: new Date() }).hold;
+  } catch {
+    return [];
+  }
+  return (Array.isArray(held) ? held : [])
+    .filter((h) => isRecord(h) && h.why === 'unapproved' && typeof h.work === 'string')
+    .map((h) => h.work)
+    .filter((id) => !lines.some((l) => l.startsWith(approveWorkLinePrefix(id))));
+}
+
+// The line that tells the desk to make the approval cards those works lack. `cli.js cards` makes a missing approval card and hands it out.
+export function orphanLine(works) {
+  if (!Array.isArray(works) || works.length === 0) return null;
+  const named = works.slice(0, ORPHAN_NAMED).join(', ');
+  const rest = works.length - ORPHAN_NAMED;
+  return `Waiting for the director's approval with no card: ${named}${rest > 0 ? ` and ${rest} more` : ''}. Run \`cli.js cards\`: it makes each one's approval card. Ask the cards it hands out this turn.`;
+}
+
+async function orphanLineOf(desk) {
+  if (stopState().on) return null;
+  const got = await desk.read('waiting');
+  if (got?.ok !== true || !isRecord(got.data?.views)) return null;
+  return orphanLine(orphanedApprovals(got.data.views));
 }
 
 // The most helm notes one line names: the newest, since the oldest were recorded first.
@@ -440,11 +478,12 @@ export async function decide(input, deps = {}) {
     const decisionLine = await within(() => decisionLineOf(desk, typed), waitMs);
     const stuck = await within(() => stuckLine(desk, seen.promptAt, at), waitMs);
     const helmNote = await within(() => helmNoteLine(desk, seen.promptAt, at), waitMs);
+    const orphans = await within(() => orphanLineOf(desk), waitMs);
     // The daily digest the watcher made waits for the director's next message and is shown once, here (scripts/digest/due.js). A hook that
     // only reads leaves it for one that can take it away.
     // A session a script started is no director arriving, so it never uses the digest up.
     const digest = writes && !startedByScript(env) ? attempt(() => readDigest(project), null) : null;
-    const notes = [decisionLine, digest?.text ?? null, stuck, helmNote, ...((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
+    const notes = [decisionLine, orphans, digest?.text ?? null, stuck, helmNote, ...((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
     const reserve = (cards === null ? 0 : cards.length + 2) + notes.reduce((sum, line) => sum + line.length + 2, 0);
     // A survey not worked out in time is left to the briefing view, which takes the record's latest.
     const survey = want === 'briefing' ? (await within(() => surveyOf({ project, client, desk }), learnWaitMs)) ?? undefined : null;
