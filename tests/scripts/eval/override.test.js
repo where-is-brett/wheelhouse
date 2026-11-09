@@ -42,3 +42,9 @@ test('rule 1 counts only BLOCKER and HIGH findings as open, as Superpowers count
   const rule = text.split(/^(?=\*\*\d\. )/m)[1];
   assert.match(rule, /A finding is open when Wheelhouse's Lookout rates it BLOCKER or HIGH, as Superpowers' Critical and Important are; MEDIUM and LOW are minors: record them in the ledger as deferred, and they never extend the loop or go to the director\./);
 });
+
+test('rule 1 defers minors on the review command\'s say-so, not a wake\'s', () => {
+  const rule = text.split(/^(?=\*\*\d\. )/m)[1];
+  assert.match(rule, /You defer minors only when the `review` command says the review leaves only minors; never judge a finding's severity yourself, and fix every finding a wake says holds the merge\./);
+  assert.doesNotMatch(rule, /only when Wheelhouse's wake says/);
+});

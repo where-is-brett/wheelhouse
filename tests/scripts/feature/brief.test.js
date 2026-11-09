@@ -402,3 +402,13 @@ test('every brief says how to test when the whole suite runs longer than one com
   const text = fs.readFileSync(new URL('../../../templates/brief/brief.md', import.meta.url), 'utf8');
   assert.match(text, /\*\*Long test runs\.\*\* One command runs for at most ten minutes, .* the pull request's checks run all of it/);
 });
+
+test('every lane\'s brief says how to read a Lookout\'s verdict with the review command, right after how to dispatch one', () => {
+  for (const lane of LANES) {
+    const text = render(lane);
+    const bullet = `- **Reading a Lookout's verdict.** After each Lookout reports, write its whole reply to \`.wheelhouse/feature/review/<n>.md\` and run \`${CLI} review --task <task> --file .wheelhouse/feature/review/<n>.md\` (\`--task branch\` for the whole-branch review). It counts the findings and says the next step: do what it says, and never rule on a finding's severity yourself.`;
+    assert.ok(text.includes(bullet), `${lane}: the bullet is in the brief`);
+    assert.ok(text.indexOf('- **Dispatching a Lookout.**') < text.indexOf('- **Reading a Lookout\'s verdict.**'), `${lane}: after the dispatch bullet`);
+    assert.ok(text.indexOf('- **Reading a Lookout\'s verdict.**') < text.indexOf('- **Long test runs.**'), `${lane}: before the long test runs`);
+  }
+});
