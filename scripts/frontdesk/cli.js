@@ -110,6 +110,7 @@ import { similar as similarTo } from '../intake/similar.js';
 import { answerLine, approveWorkLine, chatCopy, ID, keepControlLine } from '../state/card-lines.js';
 import { gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
+import { readSlices } from '../engine/feature.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { FINISHED_WORDS, prsOfWork, workFinished } from '../desk/work-prs.js';
@@ -1116,6 +1117,19 @@ function readBackLine(readBack) {
   return `I've treated this as a change to work already running; say if it's something else. Doing: ${doing} Not doing: ${notDoing} Done when: ${doneWhen}`;
 }
 
+// A feature's design ends with its slices block: a feature design without one, or with one that can't be
+// built from, is refused before anything is written, in words that say what to add. Work carried on
+// (`from`) has no design of its own here, and only the feature lane is checked.
+function refuseFeatureWithoutSlices(cwd, data) {
+  if (data.lane !== 'feature' || data.from !== undefined || typeof data.doc?.path !== 'string') return;
+  try {
+    readSlices(fs.readFileSync(path.resolve(cwd, data.doc.path), 'utf8'));
+  } catch (error) {
+    const message = String(error.message).replace(/^./, (c) => c.toLowerCase());
+    throw new CliError(`A feature's design ends with its slices, and ${message}. Add one \`wheelhouse-slices\` block at the end of ${data.doc.path}: the goal, the flag's name, the demo (midpoint or end), and each slice's title, goal and done checks (intake, "A feature's slices"); then record it again`);
+  }
+}
+
 // A work event's document, or an amendment of the one file open work names, with its hash worked out.
 async function withHash(client, cwd, kind, input) {
   // A document named by its path alone, as plain text, is the same as { path }.
@@ -1185,7 +1199,7 @@ export function approveWorkInput(data, override) {
   };
 }
 
-// Records one event and resolves with { id, pushed }, except a work, which resolves with { work, eventId, pushed, recordHash }
+// Records one event and resolves with { id, pushed }, except a work (a feature's design with no slices block is refused first), which resolves with { work, eventId, pushed, recordHash }
 // and its card, or `approved`, or `asked` (see the work branch), with `hash` for a work event's document or an
 // amendment, `say` for an amendment (its route line and read-back), and for a ruling or a setting its confirm card, recorded too, as { question, id }. A setting the catalogue refuses is refused here, before
 // the helper is asked; the director's own settings go to their profile (writeSetting). A ruling keeps its words exactly as given: its card is composed
@@ -1235,6 +1249,7 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     const { card: override, ...work } = input;
     if (needsApproval(work) && work.doc === undefined) throw new CliError('an approval names the work\'s document: give `doc`, the path of the brief written first');
     const data = await withHash(client, cwd, kind, work);
+    refuseFeatureWithoutSlices(cwd, data);
     const hash = data.doc?.hash;
     const written = await write(client, cwd, kind, data);
     const out = { work: data.id, eventId: written.id, pushed: written.pushed === true, ...(typeof hash === 'string' ? { hash } : {}), recordHash: dataHash(data) };

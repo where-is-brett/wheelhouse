@@ -23,3 +23,11 @@ test('intake: the watch phrases record a watch event at the level they name', ()
     assert.match(text, /record watch/);
   }
 });
+
+test('intake: route 3 sends a change to its own file through `record amendment` with `doc`, and route 9 says record work refuses a design with no slices', () => {
+  const rule = intake.split('\n').find((line) => line.includes('**A change to what an approved brief or design builds')) ?? '';
+  assert.match(rule, /`cli\.js record amendment`/);
+  assert.match(rule, /and `doc`: that file/);
+  assert.doesNotMatch(intake, /edit the approved document in place|replace its approval line|replace its approval/i);
+  assert.match(intake, /`record work` refuses a feature design that has no such block\./);
+});

@@ -19,6 +19,7 @@ import { briefText, wholeBrief, BRIEF_WORDS_MOST } from '../../../scripts/state/
 import { makeEvent, dataHash, listEvents, confirmationFor, PROTECTED_KINDS } from '../../../scripts/state/events.js';
 import { deskCore } from '../../../scripts/desk/core.js';
 import { levelWords } from '../../../scripts/settings/effective.js';
+import { designWithSlices } from '../../helpers/slices.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
@@ -871,9 +872,9 @@ test('record brief refuses what can\'t stand, before anything is written', async
 test('record work, amendment, incident and note write the build loop\'s kinds', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
-    const dir = projectWithDoc('export-csv');
+    const dir = projectWithDoc('export-csv', designWithSlices('Export a report'));
     const at = { cwd: dir };
-    const docHash = createHash('sha256').update('The brief.\n').digest('hex');
+    const docHash = createHash('sha256').update(designWithSlices('Export a report')).digest('hex');
     fs.writeFileSync(path.join(dir, 'docs', 'export-csv.change.md'), 'The changed brief.\n');
     const changeHash = createHash('sha256').update('The changed brief.\n').digest('hex');
     const records = {
@@ -955,7 +956,7 @@ test('record work composes, records and prints the approve-work card for a small
   await inHome(async () => {
     for (const [lane, id] of [['small', 'statement-import'], ['feature', 'export-csv']]) {
       const helper = fakeHelper();
-      const dir = projectWithDoc(id);
+      const dir = projectWithDoc(id, lane === 'feature' ? designWithSlices('Import a statement') : undefined);
       const work = { id, title: 'Import a statement.', lane, visible: true, dependsOn: [], doc: `docs/${id}.md` };
       const out = await run(helper, ['record', 'work'], JSON.stringify(work), { cwd: dir });
       assert.equal(out.code, 0, out.err);
@@ -996,6 +997,67 @@ test('record work refuses an approval with no document, writing nothing', async 
     assert.equal(out.code, 1);
     assert.match(out.err, /an approval names the work's document/);
     assert.equal(helper.held.length, 0);
+  });
+});
+
+const FEATURE = { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'feature', visible: true, dependsOn: [], doc: 'docs/export-csv.md' };
+
+test('record work refuses a feature design with no slices block, writing nothing', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('export-csv');
+    const out = await run(helper, ['record', 'work'], JSON.stringify(FEATURE), { cwd: dir });
+    assert.notEqual(out.code, 0);
+    assert.match(out.err, /wheelhouse-slices/);
+    assert.match(out.err, /Add one/);
+    assert.equal(helper.held.filter((e) => e.kind === 'work' || e.kind === 'card').length, 0);
+  });
+});
+
+test('record work names the problem in a feature design\'s broken slices block', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const broken = '# Export\n\n```wheelhouse-slices\n{"goal":"Export","flag":{"name":"export"},"demo":"end","slices":[{"title":"One","goal":"One"}]}\n```\n';
+    const dir = projectWithDoc('export-csv', broken);
+    const out = await run(helper, ['record', 'work'], JSON.stringify(FEATURE), { cwd: dir });
+    assert.notEqual(out.code, 0);
+    assert.match(out.err, /slice 1 needs at least one done check/);
+    assert.equal(helper.held.length, 0);
+  });
+});
+
+test('record work records a feature design with a good slices block and prints its card', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('export-csv', designWithSlices('Export a report'));
+    const out = await run(helper, ['record', 'work'], JSON.stringify(FEATURE), { cwd: dir });
+    assert.equal(out.code, 0, out.err);
+    assert.equal(typeof out.json.card.id, 'string');
+    assert.equal(cardsOf(helper).length, 1);
+  });
+});
+
+test('record work asks for no slices from small or bug work, or from feature work carried on', async () => {
+  await inHome(async () => {
+    const dir = projectWithDoc('export-csv');
+    const small = await run(fakeHelper(), ['record', 'work'], JSON.stringify({ ...FEATURE, id: 'small-one', lane: 'small' }), { cwd: dir });
+    assert.equal(small.code, 0, small.err);
+    const bug = await run(fakeHelper(), ['record', 'work'], JSON.stringify({ id: 'a-bug', title: 'A bug', lane: 'bug', visible: false, dependsOn: [] }), { cwd: dir });
+    assert.equal(bug.code, 0, bug.err);
+    const carried = await run(fakeHelper(), ['record', 'work'], JSON.stringify({ ...FEATURE, id: 'carried-on', from: { sha: 'a'.repeat(40), ref: 'refs/wheelhouse/from/carried-on', request: 1 } }), { cwd: dir });
+    assert.equal(carried.code, 0, carried.err);
+  });
+});
+
+test('record work again for approved feature work, its design holding its block, is not refused', async () => {
+  await inHome(async () => {
+    const dir = projectWithDoc('export-csv', designWithSlices('Export a report'));
+    const first = fakeHelper();
+    const made = await run(first, ['record', 'work'], JSON.stringify(FEATURE), { cwd: dir });
+    assert.equal(made.code, 0, made.err);
+    const approved = fakeHelper({ events: [...first.held, ...approvalEvents({ work: 'export-csv', lane: 'feature', hash: made.json.hash, shownFirst: true })] });
+    const again = await run(approved, ['record', 'work'], JSON.stringify({ ...FEATURE, dependsOn: ['a-first-thing'] }), { cwd: dir });
+    assert.equal(again.code, 0, again.err);
   });
 });
 
@@ -1216,7 +1278,7 @@ const READ_BACK = { doing: 'The export as one CSV file', notDoing: 'An Excel opt
 test('record amendment takes the read-back, refuses without it, and prints the route line and the read-back to say (scenario 26)', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
-    const dir = projectWithDoc('export-csv');
+    const dir = projectWithDoc('export-csv', designWithSlices('Export a report'));
     const at = { cwd: dir };
     const work = { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'feature', visible: true, dependsOn: [], doc: 'docs/export-csv.md' };
     await run(helper, ['record', 'work'], JSON.stringify(work), at);
@@ -1243,7 +1305,7 @@ test('record amendment takes the read-back, refuses without it, and prints the r
       assert.equal(refused.code, 1, String(doc));
       assert.match(refused.err, lockedWords);
     }
-    fs.writeFileSync(path.join(dir, 'docs', 'copy.md'), 'The brief.\n');
+    fs.writeFileSync(path.join(dir, 'docs', 'copy.md'), designWithSlices('Export a report'));
     const same = await run(helper, ['record', 'amendment'], JSON.stringify({ ...bare, doc: 'docs/copy.md', readBack: READ_BACK }), at);
     assert.equal(same.code, 1);
     assert.match(same.err, /The changed document is the approved one: nothing changes/);
