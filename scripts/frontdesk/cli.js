@@ -116,7 +116,7 @@ import { FINISHED_WORDS, prsOfWork, workFinished } from '../desk/work-prs.js';
 import { isOpen, surveyLines, whyNext, workLines, withOpened, RECENT_MS, RECENT_LEAD, recentLines } from '../desk/views.js';
 import { answeredWords } from '../cards/answered.js';
 import { crewNow } from '../crew/runs.js';
-import { markHere, paneLive } from '../lib/session-files.js';
+import { markHere } from '../lib/session-files.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { SLUG, UUID } from '../lib/build-loop.js';
 
@@ -212,20 +212,26 @@ const deskOf = (client, cwd) => deskClient({ cwd, client, local: 'never' });
 // The record as the desk's waiting view gives it (the helper's views, its card events and whether
 // STOP is on), with `answers` the card-answer events; or the
 // helper's refusal, thrown as it said it.
-async function recordOf(client, cwd, { answers = false, since } = {}) {
-  const got = await deskOf(client, cwd).read('waiting', { ...(answers ? { answers: true } : {}), ...(since === undefined ? {} : { outcomes: { since: since.toISOString() } }) });
+// With `session`, the helper also says whether a live panel is beside that session (`paneLive`): this command is in the
+// sandbox, which can't read the session's files, so the helper, outside it, decides.
+async function recordOf(client, cwd, { answers = false, since, session } = {}) {
+  const got = await deskOf(client, cwd).read('waiting', {
+    ...(answers ? { answers: true } : {}),
+    ...(since === undefined ? {} : { outcomes: { since: since.toISOString() } }),
+    ...(typeof session === 'string' && session !== '' ? { session } : {}),
+  });
   if (got?.ok !== true || !isPlain(got.data?.views)) throw new CliError(said(got, 'The host helper gave no views'));
   return got.data;
 }
 
 // The views, whether STOP is on, with `cards` the card events the board numbers its list from, and
 // with `answers` the card-answer events.
-async function viewsOf(client, cwd, { cards = false, answers = false, since } = {}) {
-  const got = await recordOf(client, cwd, { answers, since });
+async function viewsOf(client, cwd, { cards = false, answers = false, since, session } = {}) {
+  const got = await recordOf(client, cwd, { answers, since, session });
   if (cards && !Array.isArray(got.cards)) throw new CliError('The host helper gave no card events');
   if (answers && !Array.isArray(got.answers)) throw new CliError('The host helper gave no card answers');
   // A helper that gives no outcomes (an older one) leaves the decided-card checks out, as they only inform.
-  return { views: got.views, stop: got.stop === true, cards: cards ? got.cards : [], answers: answers ? got.answers : [], outcomes: Array.isArray(got.outcomes) ? got.outcomes : [], names: namesIn(got) };
+  return { views: got.views, stop: got.stop === true, cards: cards ? got.cards : [], answers: answers ? got.answers : [], outcomes: Array.isArray(got.outcomes) ? got.outcomes : [], names: namesIn(got), paneLive: got.paneLive === true };
 }
 
 // The director's own settings view, as the desk's settings view gives it; none when it can't be read.
@@ -280,9 +286,6 @@ async function handOut(client, cwd, handed, { stop, inChat = false, panel = fals
   const ids = handed.filter(({ question }) => inChat || panel || replyCodeOf(question) === null).map(({ id }) => id);
   return markAsked(client, cwd, ids, stop);
 }
-
-// Whether a live panel is beside the session at `at`: no picker call is allowed then, so no `shown` record can arrive.
-const paneIsLive = (session, at) => typeof session === 'string' && session !== '' && paneLive(session, at.getTime());
 
 const withProblems = (problems) => (problems.length > 0 ? { problems } : {});
 
@@ -601,7 +604,8 @@ async function questionCards({ client, cwd, views, words, stop, problems }) {
 // in `left`, for the visit after STOP is lifted.
 export async function cards({ client, cwd, now, onAsked, session }) {
   const problems = [];
-  let { views, stop, names } = await viewsOf(client, cwd);
+  // `panel`: whether a live panel is beside the session, as the helper says; no picker call is allowed then, so no `shown` record can arrive.
+  let { views, stop, names, paneLive: panel } = await viewsOf(client, cwd, { session });
   const words = await wordsOf(client, cwd, views, now, names);
   const lift = stop ? composePlain(LIFT_STOP_CARD, words).question : null;
   const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
@@ -621,7 +625,6 @@ export async function cards({ client, cwd, now, onAsked, session }) {
   const typed = typedRepliesIn(views.settings);
   const forVisit = withPutBack(views, again, events);
   const chosen = cardsForVisit({ ...forVisit, waiting: (Array.isArray(forVisit.waiting) ? forVisit.waiting : []).filter((c) => !typed || !isDecisionCard(c?.data)) }, { room: lift === null ? CARD.questions : 0 });
-  const panel = paneIsLive(session, at);
   problems.push(...await handOut(client, cwd, chosen.ids.map((id, i) => ({ id, question: chosen.questions[i].question })), { stop, inChat: typeof onAsked === 'function', panel }));
   if (typeof onAsked === 'function') await onAsked(chosen.ids);
   return { questions: [...(lift === null ? [] : [lift]), ...chosen.questions], left: chosen.left, ...(chosen.heldBack > 0 ? { heldBack: chosen.heldBack } : {}), ...withProblems(problems) };
@@ -709,7 +712,7 @@ export async function card({ client, cwd, input, now, session }) {
   if (input.event !== undefined) throw new CliError('A card for a record of the build\'s comes from `cards`, made once from the record');
   const topic = input.topic === undefined ? undefined : topicOf(input.topic);
   const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
-  const { views, names, outcomes } = await viewsOf(client, cwd, { since: new Date(at.getTime() - RECENT_MS) });
+  const { views, names, outcomes, paneLive: panel } = await viewsOf(client, cwd, { since: new Date(at.getTime() - RECENT_MS), session });
   let target = input.target;
   if (input.kind === 'approve-work' && isPlain(target)) await refuseEventId(views, target.work);
   if (input.kind === 'approval' && isPlain(target) && target.sha === undefined && Number.isSafeInteger(target.pr) && target.pr >= 1) {
@@ -749,12 +752,12 @@ export async function card({ client, cwd, input, now, session }) {
   if (found !== null) {
     const waiting = views.waiting.find((c) => c.id === found);
     if (waiting.asked !== null && waiting.asked !== undefined) return { question: asQuestion(waiting), id: found, alreadyAsked: true };
-    return { question: asQuestion(waiting), id: found, ...withProblems(await handOut(client, cwd, [{ id: found, question: waiting.data.question }], { stop: false, panel: paneIsLive(session, at) })) };
+    return { question: asQuestion(waiting), id: found, ...withProblems(await handOut(client, cwd, [{ id: found, question: waiting.data.question }], { stop: false, panel })) };
   }
   const decided = decidedBefore(outcomes, data, at);
   if (decided !== null) throw new CliError(decided);
   const { id } = await write(client, cwd, 'card', data);
-  return { question, id, ...withProblems(await handOut(client, cwd, [{ id, question: data.question }], { stop: false, panel: paneIsLive(session, at) })) };
+  return { question, id, ...withProblems(await handOut(client, cwd, [{ id, question: data.question }], { stop: false, panel })) };
 }
 
 // "Already approved in the panel at 10:34; nothing to ask." when a card carrying the same set line was decided: an

@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { writeJsonFile, runningFile, sessionFile } from '../../../scripts/watcher/waker.js';
 import { holdFile } from '../../../scripts/crew/hold.js';
+import { markPane } from '../../../scripts/lib/session-files.js';
 import { P, NOW, now, CARD, writeRecord, upClient, put, viewsDir } from './fixture.js';
 
 function withRecord(fn) {
@@ -51,6 +52,19 @@ test('waiting numbers cards as the Logbook does', () => withRecord(async ({ sour
   assert.deepEqual(got.data.numbered, numberedWaiting(localViews(P, null), []));
   assert.deepEqual(got.lines, got.data.numbered.map((item) => `${item.n}. ${item.what}`));
   assert.equal(got.data.numbered.length, 1);
+}));
+
+test('waiting with a session says whether a live panel is beside it, as the helper reads it; with none it says nothing', () => withRecord(async ({ source }) => {
+  assert.equal(markPane('s-live', { at: Date.parse(NOW), drawn: Date.parse(NOW), surface: 'desktop' }), true);
+  assert.equal(markPane('s-terminal', { at: Date.parse(NOW), drawn: Date.parse(NOW), surface: 'terminal' }), true);
+  assert.equal(markPane('s-stale', { at: Date.parse(NOW) - 60 * 60 * 1000, drawn: Date.parse(NOW) - 60 * 60 * 1000, surface: 'desktop' }), true);
+  const paneOf = async (args) => (await readView('waiting', args, source, { now })).data.paneLive;
+  assert.equal(await paneOf({ session: 's-live' }), true);
+  assert.equal(await paneOf({ session: 's-terminal' }), false, 'a terminal session draws no panel');
+  assert.equal(await paneOf({ session: 's-stale' }), false, 'a panel that stopped ticking is not live');
+  assert.equal(await paneOf({ session: 's-none' }), false);
+  assert.equal(await paneOf({}), undefined);
+  assert.equal(await paneOf({ session: '' }), undefined);
 }));
 
 test('card carries its buttons, its pane hash and its data hash', () => withRecord(async ({ source }) => {

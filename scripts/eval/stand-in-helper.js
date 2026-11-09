@@ -33,6 +33,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { replyCode } from '../state/card-lines.js';
 import { PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, RED_MAIN_FIELDS, RED_MAIN_OWN, confirmationFor, makeEvent, carriesBaseline } from '../state/events.js';
 import { buildViews, latestFor } from '../state/views.js';
 import { gateDecision } from '../gate/conditions.js';
@@ -137,7 +138,7 @@ export function standInViews(events, approved = {}, enrolled = []) {
 // plugin's hooks ask it, with the event and what Claude Code gave them. `home` is the session's
 // scratch WHEELHOUSE_HOME, where the baseline's files are kept and the director's clicks are read;
 // without it the stand-in keeps them in its scratch folder, removed on close. Resolves with
-// { address, records(), events(), views(), confirm(id), close() }: records() gives every request in
+// { address, records(), events(), views(), confirm(id), shown(id), close() }: records() gives every request in
 // the order it came, as { at, route, ...what it asked, ...what was answered }; events() gives the
 // state's events, those the state started with and those written since; views() the views of
 // them; confirm(id) records, signed by the stand-in's own key, the confirmation of the ruling,
@@ -423,6 +424,16 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
       const event = inHome(scratch, () => makeEvent(confirmationFor(target)));
       events.push(event);
       record({ route: 'eval/click', confirms: id, id: event.id });
+      return event;
+    },
+    // Records, signed by the stand-in's own key, that the question picker showed the card `id`, as the picker's hook does (the
+    // `shown` record, which counts a card with a reply code as asked); a card with no reply code is never shown by the picker.
+    shown: (id) => {
+      const card = events.find((e) => e.kind === 'card' && e.id === id);
+      if (card === undefined) throw new Error(`The state holds no card ${id} to show`);
+      const event = inHome(scratch, () => makeEvent({ kind: 'shown', data: { code: replyCode(card.data.line), question: card.data.question, options: card.data.options } }));
+      events.push(event);
+      record({ route: 'eval/shown', shows: id, id: event.id });
       return event;
     },
     close: () => new Promise((resolve) => {

@@ -16,7 +16,7 @@ import { numberedWaiting } from '../../../scripts/board/model.js';
 import { composeCard, whatProblem } from '../../../scripts/cards/compose.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { briefText, wholeBrief, BRIEF_WORDS_MOST } from '../../../scripts/state/brief.js';
-import { makeEvent, dataHash, listEvents, confirmationFor, PROTECTED_KINDS } from '../../../scripts/state/events.js';
+import { makeEvent, dataHash, listEvents, writeEvent, confirmationFor, PROTECTED_KINDS } from '../../../scripts/state/events.js';
 import { deskCore } from '../../../scripts/desk/core.js';
 import { levelWords } from '../../../scripts/settings/effective.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
@@ -30,6 +30,7 @@ import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/sign
 import { approveWorkLine, approvalLine, answerLine, chatCopy, replyCode, replyCodeOf, ciPushLine, confirmLine, keepControlLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
 import { writeJsonFile, runningFile, sessionFile } from '../../../scripts/watcher/waker.js';
 import { markPane } from '../../../scripts/lib/session-files.js';
+import { sandboxed } from '../../helpers/sandbox-wall.js';
 import { setStop, stopState } from '../../../scripts/lib/stop.js';
 import { decide as cardCheck, cardProblems } from '../../../scripts/hooks/card-check.js';
 import { decide as promptRecord } from '../../../scripts/hooks/prompt-record.js';
@@ -2387,6 +2388,51 @@ test('cards and card still mark a card as asked at print while the panel is live
   });
 });
 
+test('cards and card read nothing in the Wheelhouse home: the helper says whether a panel is live, and the panel case still marks', async () => {
+  await inHome(async () => {
+    const home = process.env.WHEELHOUSE_HOME;
+    const session = 'session-live';
+    assert.equal(markPane(session, { at: NOW.getTime(), drawn: NOW.getTime(), surface: 'desktop' }), true);
+    // The helper's answers are taken outside the wall, as the helper runs outside the sandbox; the command then runs behind it,
+    // handed the answers as they were given, and so can't read the home to find out.
+    const visit = async (argv, input, env) => {
+      const helper = fakeHelper({ events: argv[0] === 'cards' ? [cardEvent({ ...APPROVAL, target: { pr: 7, sha: FULL } }, 1)] : [] });
+      const kept = [];
+      const keyOf = (body) => JSON.stringify(body);
+      const taken = {
+        session: { seat: async (body) => { const got = await helper.client.session.seat(body); kept.push(['seat', keyOf(body), got]); return got; } },
+        desk: { read: async (body) => { const got = await helper.client.desk.read(body); kept.push(['read', keyOf(body), got]); return got; } },
+        state: { write: async (body) => helper.client.state.write(body) },
+        prState: helper.client.prState,
+      };
+      let out = '';
+      const first = await main(argv, { cwd: CWD, client: taken, input, env, now: () => NOW, out: (t) => { out += t; }, err: () => {} });
+      assert.equal(first, 0);
+      const writes = [];
+      const replay = {
+        session: { seat: async (body) => kept.find(([k, key]) => k === 'seat' && key === keyOf(body))[2] },
+        desk: { read: async (body) => kept.find(([k, key]) => k === 'read' && key === keyOf(body))[2] },
+        state: { write: async (body) => { writes.push(body); return { ok: true, id: 'e-1', pushed: true }; } },
+        prState: async () => ({ ok: true, result: { headSha: FULL, state: 'open', mergeable: 'clean' } }),
+      };
+      await sandboxed([home], async () => {
+        const code = await main(argv, { cwd: CWD, client: replay, input, env, now: () => NOW, out: () => {}, err: () => {} });
+        assert.equal(code, 0);
+      });
+      return { writes, reads: kept.filter(([k]) => k === 'read').map(([, , got]) => got) };
+    };
+    const cardsVisit = await visit(['cards'], undefined, { CLAUDE_CODE_SESSION_ID: session });
+    assert.ok(cardsVisit.reads.some((got) => got.data?.paneLive === true), 'the helper said the panel is live');
+    assert.deepEqual(cardsVisit.writes.map((w) => [w.kind, w.data.cards?.length]), [['asked', 1]]);
+    const cardVisit = await visit(['card'], JSON.stringify({ ...APPROVAL, target: { pr: 7 } }), { CLAUDE_CODE_SESSION_ID: session });
+    assert.deepEqual(cardVisit.writes.map((w) => w.kind), ['card', 'asked']);
+    // No panel beside the session: the card with a reply code is left for the picker to mark.
+    const quiet = await visit(['cards'], undefined, { CLAUDE_CODE_SESSION_ID: 'session-quiet' });
+    assert.ok(quiet.reads.every((got) => got.data?.paneLive !== true));
+    assert.deepEqual(quiet.writes, []);
+  });
+});
+
 test('preview gives the address of a pull request\'s preview, or says in a sentence that there is none', async () => {
   const asked = [];
   const answers = [
@@ -2544,14 +2590,21 @@ test('through the real helper, the command places the project from its folder an
         const ruling = JSON.parse(await say(['record', 'ruling'], JSON.stringify({ words: 'Money is shown in dollars' })));
         const approval = JSON.parse(await say(['card'], JSON.stringify({ ...APPROVAL, target: { pr: 7 } })));
         assert.equal(approval.question.question.includes(approvalLine(7, FULL)), false);
-        // Both cards were handed out as they were made, so the visit has none left to ask.
+        // The ruling's card has no reply code, so the picker can never mark it: it was handed out as it was made. The approval's
+        // card has one, so printing it is not asking it: the visit has that card to ask, and so has the next.
         const visit = JSON.parse(await say(['cards']));
-        assert.deepEqual(visit, { questions: [], left: 0 });
+        assert.deepEqual(visit.questions.map((q) => q.header), ['Approval']);
+        assert.equal(visit.left, 0);
+        const unshown = JSON.parse(await say(['cards']));
+        assert.deepEqual(unshown.questions.map((q) => q.header), ['Approval'], 'a card printed and never shown comes back');
         assert.match(await say(['views', 'rulebook']), /^Money is shown in dollars \(waiting for the director to confirm it\)$/m);
         const events = listEvents(stateDir('o__p'), { report: () => {} });
-        assert.deepEqual(events.map((e) => e.kind).sort(), ['asked', 'asked', 'card', 'card', 'ruling']);
+        assert.deepEqual(events.map((e) => e.kind).sort(), ['asked', 'card', 'card', 'ruling']);
         assert.equal(events.find((e) => e.kind === 'ruling').id, ruling.id);
-        assert.deepEqual(events.filter((e) => e.kind === 'asked').flatMap((e) => e.data.cards).sort(), [ruling.card.id, approval.id].sort());
+        assert.deepEqual(events.filter((e) => e.kind === 'asked').flatMap((e) => e.data.cards), [ruling.card.id]);
+        // Once the picker's hook has written its signed shown record for the approval, the visit has nothing left to ask.
+        await writeEvent({ project: 'o__p', event: shownRecord(events.find((e) => e.kind === 'card' && e.id === approval.id), new Date(Date.now() + 60 * 1000)) });
+        assert.deepEqual(JSON.parse(await say(['cards'])), { questions: [], left: 0 });
         // Under STOP the real helper's views say so, and the visit's one card is Lift All stop.
         setStop({ by: 'prompt' });
         const stopped = JSON.parse(await say(['cards']));
