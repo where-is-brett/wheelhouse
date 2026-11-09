@@ -548,7 +548,7 @@ function setupClickOf(cwd, { question, label, card }) {
   if (shown !== null) return { made: { kind: 'action', data: { action: 'setup', runId: shown.runId, step, hash: shown.hash, question, label } } };
   const near = shownNear({ cwd, step, h12: m[2] });
   if (near === null) return null;
-  return { why: `the card is not the one setup showed: ${cardDifferences(card, near.card).join('; ')}` };
+  return { why: `the card is not the one setup showed: ${cardDifferences(card, near.card).join('; ') || 'no part of it differs that the log can name'}` };
 }
 
 // The signed record an answer to a setup step's question earns (ruling R30): the card is exactly
@@ -566,7 +566,7 @@ function setupAnswerOf(cwd, { question, label, card, signable, typed, why }) {
   if (asked === null) {
     const like = askedLike({ cwd, card });
     return { why: like === null ? 'no card setup asked for a folder holding this session\'s folder reads as this one'
-      : `the card is not the one setup asked: ${cardDifferences(card, like.card).join('; ')}` };
+      : `the card is not the one setup asked: ${cardDifferences(card, like.card).join('; ') || 'no part of it differs that the log can name'}` };
   }
   if (sameWords(asked.card.question) !== sameWords(question)) return { why: 'the answer names another question than the card\'s' };
   const data = { action: 'setup-answer', runId: asked.runId, step: asked.step, questionId: asked.id, question: asked.card.question };
@@ -791,7 +791,7 @@ function clicks(input) {
     // A label the model wrote with a trailing "(Recommended)" is read as the bare label the stored card has; `offered` was
     // judged on the label as asked.
     const bare = offered ? bareLabel(raw) : raw;
-    const card = offered && bare !== raw ? { ...q, options: q.options.map((o) => (typeof o?.label !== 'string' ? o : { ...o, label: bareLabel(o.label) })) } : q;
+    const card = offered ? { ...q, options: q.options.map((o) => (typeof o?.label !== 'string' ? o : { ...o, label: bareLabel(o.label) })) } : q;
     out.push({
       question,
       label: many ? raw.join(', ') : bare,

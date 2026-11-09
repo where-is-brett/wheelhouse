@@ -49,7 +49,7 @@ test('cardKey reads a trailing "(Recommended)" on a label as the bare label', ()
   assert.equal(bareLabel('Go ahead (Recommended)'), 'Go ahead');
   assert.equal(bareLabel('Go ahead (Recommended) now'), 'Go ahead (Recommended) now');
   assert.equal(bareLabel(5), 5);
-  assert.equal(cardKey(withLabel(' (Recommended)')), cardKey(withLabel(' (Recommended)')));
+  assert.notEqual(cardKey(withLabel(' (Recommended)')), cardKey(withLabel('')), 'a label of the suffix alone is kept whole');
 });
 
 test('cardDifferences names each part that differs', () => {

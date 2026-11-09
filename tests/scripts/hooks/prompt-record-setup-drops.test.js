@@ -260,7 +260,7 @@ const PLAN = (step, hash) => composeCard({
 });
 const HASH = 'ab'.repeat(32);
 const planShown = (c) => ({ question: c.question.question, header: c.question.header, options: c.question.options.map(({ label, description }) => ({ label, description })), multiSelect: false });
-const keptClickFiles = (home) => {
+const keptClickFiles = () => {
   try {
     return fs.readdirSync(clicksDir());
   } catch {
@@ -275,7 +275,7 @@ test('a setup plan card reworded around its set line keeps no click, and the log
     const asked = planShown(plan);
     const reworded = { ...asked, question: `Go ahead with step 4?\n${setLineOf(asked.question)}` };
     await run(clickOn(folder, reworded, 'Go ahead'));
-    assert.deepEqual(keptClickFiles(home), []);
+    assert.deepEqual(keptClickFiles(), []);
     assert.match(dropped(home), /its question is not worded as printed/);
   });
 });
@@ -287,6 +287,24 @@ test('a setup plan card with "Go ahead (Recommended)" and its own words keeps it
     const asked = planShown(plan);
     const suffixed = { ...asked, options: asked.options.map((o, i) => (i === 0 ? { ...o, label: 'Go ahead (Recommended)' } : o)) };
     await run(clickOn(folder, suffixed, 'Go ahead (Recommended)'));
-    assert.equal(keptClickFiles(home).length, 1);
+    assert.equal(keptClickFiles().length, 1);
+  });
+});
+
+test('"(Recommended)" on one label with another label changed is still dropped, and the log names the changed label', async () => {
+  await inSetup(async ({ home, folder }) => {
+    const label = `${README} (Recommended)`;
+    const card = { ...shown, options: [{ ...CARD.options[0], label }, { ...CARD.options[1], label: 'Later' }] };
+    await run(clickOn(folder, card, label));
+    assert.deepEqual(keptLabels(home), []);
+    assert.match(dropped(home), /option 2's label is "Later", and the card's is "Describe it later"/);
+  });
+});
+
+test('a card that reads as none setup asked leaves no line when the click was not refused (Not now)', async () => {
+  await inSetup(async ({ home, folder }) => {
+    const card = { ...shown, options: [{ ...CARD.options[0], description: 'Recommended: a trimmed one.' }, CARD.options[1]] };
+    await run(clickOn(folder, card, 'Not now'));
+    assert.equal(dropped(home), '');
   });
 });
