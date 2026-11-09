@@ -29,7 +29,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { safeGit } from '../lib/safe-git.js';
-import { QUESTION_ID, QUESTION_KINDS, appendLine, featurePaths, parseReport, questionTrail, readQuestions, reworksIn, waitingFor } from './files.js';
+import { QUESTION_ID, QUESTION_KINDS, appendLine, featurePaths, parseReport, questionTrail, readQuestions, reworksIn, waitingFor, waitingForPrs } from './files.js';
 import {
   planIn, planInside, readBrief, readCapped, readPlan, readPrRecord, safeFeatureFolder, writeWhole, SMALL_BYTES,
 } from './status.js';
@@ -427,6 +427,23 @@ export async function waitFor({ client, worktree, questionId, now = () => new Da
   if (said?.ok !== true) throw new CliError(said?.refused ?? 'The host helper gave no answer');
   if (typeof said.answer === 'string' && said.answer !== '') return { waiting: false, answer: said.answer };
   if (!waitingFor(file, { maxBytes: QUESTIONS_BYTES }).includes(questionId)) addLine(file, { waitFor: questionId, at: now().toISOString() });
+  return { waiting: true };
+}
+
+// Says the piece can do nothing more until pull request `pr` has merged or closed (work that builds on it, say), and gives its
+// slot up: the status then reads `waiting` on `merge`. The watcher wakes the session once the pull request has merged or
+// closed; `end` says the wait is over. One line in questions.jsonl, kept once. Returns `{ waiting: true }` or, after `end`, `{ waiting: false }`.
+export function waitForPr({ worktree, pr, end = false, now = () => new Date() }) {
+  if (!Number.isSafeInteger(pr) || pr < 1) throw new CliError('Give the pull request as a number: wait-for --pr <number>');
+  readBriefOrSay(worktree);
+  if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
+  const file = featurePaths(worktree).questions;
+  const waiting = waitingForPrs(file, { maxBytes: QUESTIONS_BYTES }).includes(pr);
+  if (end) {
+    if (waiting) addLine(file, { waitPrEnded: pr, at: now().toISOString() });
+    return { waiting: false };
+  }
+  if (!waiting) addLine(file, { waitPr: pr, at: now().toISOString() });
   return { waiting: true };
 }
 
@@ -885,7 +902,15 @@ export async function main(argv, {
       stuck({ worktree, argv: rest });
       out('Noted: the director will be told you are stuck. Carry on with what does not depend on the answer.\n');
     } else if (command === 'wait-for') {
-      if (rest.length !== 1) throw new CliError('Give the id of the decision: wait-for <questionId>');
+      if (rest[0] === '--pr') {
+        const n = /^\d+$/.test(rest[1] ?? '') ? Number(rest[1]) : NaN;
+        const end = rest[2] === '--end';
+        if (rest.length !== (end ? 3 : 2) || !Number.isSafeInteger(n)) throw new CliError('Give the pull request: wait-for --pr <number>, and --end once it has merged or closed and you carry on');
+        waitForPr({ worktree, pr: n, end });
+        out(end ? `No longer waiting on pull request #${n}.\n` : `Waiting for pull request #${n} to merge or close: your slot is free. End your turn; its merge or closing wakes you.\n`);
+        return 0;
+      }
+      if (rest.length !== 1) throw new CliError('Give the id of the decision: wait-for <questionId>, or the pull request: wait-for --pr <number>');
       const got = await waitFor({ client: helper(), worktree, questionId: rest[0] });
       out(got.waiting
         ? 'Waiting for the director: your slot is free. End your turn; the answer wakes you.\n'

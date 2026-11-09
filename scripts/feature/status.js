@@ -9,7 +9,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { featurePaths, openRegular, parseBrief, parseReport, readCalls, readQuestions, waitingFor } from './files.js';
+import { featurePaths, openRegular, parseBrief, parseReport, readCalls, readQuestions, waitingFor, waitingForPrs } from './files.js';
 import { findRepoRoot } from '../hooks/kit.js';
 import { projectForFolder } from '../lib/projects.js';
 import { wheelhouseHome } from '../lib/paths.js';
@@ -400,7 +400,8 @@ export function buildStatus({ worktree, now = () => new Date(), tokens = null, a
   const done = builds.length + waits.length > 0 ? answered(worktree) : new Set();
   const waitingOnBuild = builds.some((q) => !done.has(q.id));
   const waitingOnDecision = waits.some((id) => !done.has(id));
-  const waiting = waitingOnBuild || waitingOnDecision;
+  const waitingOnMerge = waitingForPrs(p.questions).length > 0;
+  const waiting = waitingOnBuild || waitingOnDecision || waitingOnMerge;
   const kept = readPrRecord(worktree);
   const pr = kept?.pr ?? null;
   const currentSlice = slice(worktree, brief.work);
@@ -428,7 +429,7 @@ export function buildStatus({ worktree, now = () => new Date(), tokens = null, a
     phase,
     task,
     fixRound,
-    waitingOn: waitingOnBuild ? 'question' : waitingOnDecision ? 'decision' : null,
+    waitingOn: waitingOnBuild ? 'question' : waitingOnDecision ? 'decision' : waitingOnMerge ? 'merge' : null,
     head: gitHead(worktree),
     pr,
     slice: currentSlice,

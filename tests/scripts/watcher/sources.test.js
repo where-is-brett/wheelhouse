@@ -648,3 +648,36 @@ test('a signed press that lands last, after the tie and the work, wakes the fore
   assert.deepEqual(await readyAt(state, 40 * SEC), ['carry-on-2']);
   assert.deepEqual(await readyAt(state, 60 * SEC), []);
 }));
+
+test('a pull request a held feature waits on is asked about and its state is observed', () => withHome(async () => {
+  const held = worktree({
+    brief: briefText('login-page'),
+    status: JSON.stringify(status('login-page', { phase: 'waiting', waitingOn: 'merge', pr: null })),
+    questions: `${JSON.stringify({ waitPr: 2, at: '2026-10-19T08:00:00.000Z' })}\n`,
+  });
+  record('feature', { work: 'login-page', step: 'building', worktree: held, branch: 'feature/login-page' }, -30 * SEC);
+  const open = fakeClient({ prs: { 2: { headSha: HEAD, headRef: 'feature/other', mergeable: 'yes', state: 'open' } } });
+  const first = await observe({ project: P, client: open, now: at(0) });
+  assert.deepEqual(first.features['login-page'].prWaits, [{ pr: 2, state: 'open' }]);
+  assert.deepEqual(names(open.calls).filter((n) => n === 'prState'), ['prState']);
+  const cursor = step({ seen: [], prev: null }, first).cursor;
+  const merged = fakeClient({ prs: { 2: { headSha: HEAD, headRef: 'feature/other', mergeable: 'unknown', state: 'merged' } } });
+  const second = await observe({ project: P, client: merged, now: at(61 * SEC), prev: cursor.prev });
+  assert.deepEqual(second.features['login-page'].prWaits, [{ pr: 2, state: 'merged' }]);
+  const events = diff(cursor.prev, second, { seen: new Set(cursor.seen) }).filter((e) => e.type === 'pr-settled');
+  assert.deepEqual(events.map((e) => [e.work, e.pr]), [['login-page', 2]]);
+}));
+
+test('a pull request already merged when the feature waits on it wakes the session on the first pass', () => withHome(async () => {
+  const held = worktree({
+    brief: briefText('login-page'),
+    status: JSON.stringify(status('login-page', { phase: 'waiting', waitingOn: 'merge', pr: null })),
+    questions: `${JSON.stringify({ waitPr: 2, at: '2026-10-19T08:00:00.000Z' })}\n`,
+  });
+  record('feature', { work: 'login-page', step: 'building', worktree: held, branch: 'feature/login-page' }, -30 * SEC);
+  const client = fakeClient({ prs: { 2: { headSha: HEAD, headRef: 'feature/other', mergeable: 'unknown', state: 'merged' } } });
+  const first = await observe({ project: P, client, now: at(0) });
+  assert.deepEqual(first.features['login-page'].prWaits, [{ pr: 2, state: 'merged' }]);
+  const events = diff(null, first, { seen: new Set() }).filter((e) => e.type === 'pr-settled');
+  assert.deepEqual(events.map((e) => [e.work, e.pr]), [['login-page', 2]]);
+}));

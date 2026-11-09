@@ -422,3 +422,14 @@ test('every lane\'s brief says how to read a Lookout\'s verdict with the review 
     assert.ok(text.indexOf('- **Reading a Lookout\'s verdict.**') < text.indexOf('- **Long test runs.**'), `${lane}: before the long test runs`);
   }
 });
+
+test('the brief names the base ref and says to compare against it, never the local default branch', () => {
+  for (const lane of LANES) {
+    const text = render(lane);
+    assert.ok(!text.includes('{{'), `${lane}: no placeholder is left`);
+    assert.ok(text.includes('**The base.**'), `${lane}: the base rule is there`);
+    assert.ok(text.includes('git diff origin/HEAD...HEAD'), `${lane}: compares against the base ref`);
+    assert.ok(text.includes('git fetch origin'), `${lane}: fetches before comparing`);
+    assert.ok(text.includes('never the local default branch'), `${lane}: not the local default branch`);
+  }
+});
