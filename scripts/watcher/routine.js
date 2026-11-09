@@ -1,10 +1,10 @@
 // scripts/watcher/routine.js
 // The script's routine moves (director's way of working, design section 10). Starting the next piece, waking a session after
 // an answer, closing a finished piece and opening the gate (merging) are a script's job. The foreman model wakes only for
-// judgement: an ambiguous report, work that is stuck, or something no rule covers (JUDGEMENT).
+// judgement: an ambiguous report, work that is stuck (a session's own stuck note included), or something no rule covers (JUDGEMENT).
 //
 // The moves are the foreman's own commands, `act start`, `plan-ready`, `build`, `resume`, `pause`, `question`, `extra-plan`,
-// `stuck-note`, `amend`, `merge` and `close`, run through the helper's /foreman/run (the same route, and the same one-at-a-time
+// `amend`, `merge` and `close`, run through the helper's /foreman/run (the same route, and the same one-at-a-time
 // queue, as the foreman's) so the script and a foreman session never run two of them at once. Inside a piece the feature
 // session still runs Superpowers' own loop; this never splits a piece into calls. Nothing here is restored from Archon's
 // dispatcher.
@@ -178,7 +178,7 @@ export function triage(state) {
       case 'question': add({ act: 'question', args: [work, e.id] }, e.id); break;
       case 'extra-plan': add({ act: 'extra-plan', args: [work, e.id] }, e.id); break;
       case 'stuck-note':
-        if (typeof d.at === 'string') add({ act: 'stuck-note', args: [work, d.at] }, e.id);
+        if (typeof d.at === 'string') ask(e, 'stuck');
         else handled.push(e.id);
         break;
       case 'answer':
