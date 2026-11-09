@@ -372,6 +372,9 @@ test('each new plain kind is accepted with its shape and refused without it', as
       assert.throws(() => makeEvent({ kind: 'report', data: bad }), /report event/);
     }
     assert.throws(() => makeEvent({ kind: 'amendment', data: { ...SHAPES.amendment, hash: 'short' } }), /amendment event/);
+    // The changed text's own file, when named, is non-empty text.
+    assert.ok(makeEvent({ kind: 'amendment', data: { ...SHAPES.amendment, doc: 'x.change.md' } }));
+    for (const doc of ['', 3]) assert.throws(() => makeEvent({ kind: 'amendment', data: { ...SHAPES.amendment, doc } }), /amendment event/);
     assert.throws(() => makeEvent({ kind: 'incident', data: { id: 'Has Spaces', what: 'x' } }), /incident event/);
   });
 });

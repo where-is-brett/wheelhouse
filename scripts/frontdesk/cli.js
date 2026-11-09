@@ -39,7 +39,8 @@
 //                   Bosun's question to them in its own fixed words (fix the findings or restart the builder, or stop the
 //                   work; shipping as it is is never offered while a signed review holds the merge) and prints the line to say
 //   record <kind>   records something the front desk decided: one of RECORD_KINDS, the data as JSON;
-//                   for a work event's document and an amendment, it works out the hash and prints it; a work also
+//                   for a work event's document and an amendment, it works out the hash and prints it (an amendment
+//                   of a work with a document names the changed text's own file as `doc`, and its hash is that file's); a work also
 //                   prints its slug (`work`), `eventId`, `recordHash`, the hash of its record as written, and, for work
 //                   the director is to approve, its approve-work card, composed and asked by the helper;
 //                   an amendment needs its read-back, and prints the route line and the read-back to say
@@ -1131,7 +1132,12 @@ async function withHash(client, cwd, kind, input) {
     if (input.hash !== undefined) return input;
     throw new CliError(`The work ${input.work} names no document, so give the changed document's hash`);
   }
-  return { ...input, hash: documentHash(cwd, file, input.hash) };
+  // The approved document is locked: the changed text is written to its own file, named as `doc`.
+  const locked = `The approved document ${file} is locked: changing it is an amendment. Write the changed text to its own file, such as ${file.replace(/(\.[^./]*)?$/, '.change$1')}, and give it as doc`;
+  if (typeof input.doc !== 'string' || input.doc.trim() === '' || path.resolve(cwd, input.doc) === path.resolve(cwd, file)) throw new CliError(locked);
+  const hash = documentHash(cwd, input.doc, input.hash);
+  if (hash === views.work[input.work].work.data.doc.hash) throw new CliError('The changed document is the approved one: nothing changes');
+  return { ...input, hash };
 }
 
 // Work the director approves before it is built: the small and feature lanes, any work users would see, and

@@ -874,9 +874,11 @@ test('record work, amendment, incident and note write the build loop\'s kinds', 
     const dir = projectWithDoc('export-csv');
     const at = { cwd: dir };
     const docHash = createHash('sha256').update('The brief.\n').digest('hex');
+    fs.writeFileSync(path.join(dir, 'docs', 'export-csv.change.md'), 'The changed brief.\n');
+    const changeHash = createHash('sha256').update('The changed brief.\n').digest('hex');
     const records = {
       work: { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'feature', visible: true, dependsOn: [], doc: { path: 'docs/export-csv.md', hash: docHash } },
-      amendment: { work: 'export-csv', change: 'Add a total row', hash: docHash },
+      amendment: { work: 'export-csv', change: 'Add a total row', hash: changeHash, doc: 'docs/export-csv.change.md' },
       incident: { id: 'bad-total', what: 'Totals are wrong on the invoice page' },
       // The no-blame account once an incident is over (intake, route 1).
       note: { incident: 'bad-total', text: 'A rounding change reached the invoice page; the fix and a check are in.' },
@@ -1201,7 +1203,8 @@ test('record amendment takes the read-back, refuses without it, and prints the r
     const at = { cwd: dir };
     const work = { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'feature', visible: true, dependsOn: [], doc: 'docs/export-csv.md' };
     await run(helper, ['record', 'work'], JSON.stringify(work), at);
-    const amendment = { work: 'export-csv', change: 'Make the export CSV, not Excel', hash: createHash('sha256').update('The brief.\n').digest('hex') };
+    fs.writeFileSync(path.join(dir, 'docs', 'export-csv.change.md'), 'The brief, as CSV.\n');
+    const amendment = { work: 'export-csv', change: 'Make the export CSV, not Excel', hash: createHash('sha256').update('The brief, as CSV.\n').digest('hex'), doc: 'docs/export-csv.change.md' };
 
     // Without the read-back, or with a part missing, empty or on two lines, nothing is written.
     const bad = [
@@ -1213,6 +1216,20 @@ test('record amendment takes the read-back, refuses without it, and prints the r
       assert.equal(refused.code, 1, JSON.stringify(readBack));
       assert.match(refused.err, /Read the change back first: give readBack as \{ doing, notDoing, doneWhen \}, each one line/);
     }
+    assert.equal(helper.held.filter((e) => e.kind === 'amendment').length, 0, 'nothing refused was written');
+
+    // The approved document is locked: no `doc`, the document itself, or a copy of it is refused, and nothing is written.
+    const { doc: _doc, hash: _hash, ...bare } = amendment;
+    const lockedWords = /The approved document docs\/export-csv\.md is locked: changing it is an amendment\. Write the changed text to its own file, such as docs\/export-csv\.change\.md, and give it as doc/;
+    for (const doc of [undefined, 'docs/export-csv.md', './docs/export-csv.md']) {
+      const refused = await run(helper, ['record', 'amendment'], JSON.stringify({ ...bare, ...(doc === undefined ? {} : { doc }), readBack: READ_BACK }), at);
+      assert.equal(refused.code, 1, String(doc));
+      assert.match(refused.err, lockedWords);
+    }
+    fs.writeFileSync(path.join(dir, 'docs', 'copy.md'), 'The brief.\n');
+    const same = await run(helper, ['record', 'amendment'], JSON.stringify({ ...bare, doc: 'docs/copy.md', readBack: READ_BACK }), at);
+    assert.equal(same.code, 1);
+    assert.match(same.err, /The changed document is the approved one: nothing changes/);
     assert.equal(helper.held.filter((e) => e.kind === 'amendment').length, 0, 'nothing refused was written');
 
     // With it, the event is the amendment alone, and `say` is the route line and the read-back, in one.
@@ -1271,14 +1288,14 @@ test('record works out the hash of the document a work or an amendment names, an
       assert.match(huge.err, /docs\/bugs\/huge\.md is over 1 MB/);
     }
 
-    // An amendment: the changed document is the one file the work names, written in place.
-    write('docs/bugs/total.md', 'The total leaves cancelled orders out, and says so.\n');
-    const amended = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'staff-total', change: 'Say that cancelled orders are left out', readBack: READ_BACK }), at);
+    // An amendment: the changed text is in its own file, named as `doc`; the approved document stays as it was.
+    write('docs/bugs/total.change.md', 'The total leaves cancelled orders out, and says so.\n');
+    const amended = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'staff-total', change: 'Say that cancelled orders are left out', doc: 'docs/bugs/total.change.md', readBack: READ_BACK }), at);
     assert.equal(amended.code, 0, amended.err);
     const changed = hashOf('The total leaves cancelled orders out, and says so.\n');
-    assert.deepEqual(helper.held.at(-1).data, { work: 'staff-total', change: 'Say that cancelled orders are left out', hash: changed });
+    assert.deepEqual(helper.held.at(-1).data, { work: 'staff-total', change: 'Say that cancelled orders are left out', doc: 'docs/bugs/total.change.md', hash: changed });
     assert.equal(amended.json.hash, changed);
-    const stale = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'staff-total', change: 'x', hash, readBack: READ_BACK }), at);
+    const stale = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'staff-total', change: 'x', doc: 'docs/bugs/total.change.md', hash, readBack: READ_BACK }), at);
     assert.equal(stale.code, 1);
     assert.match(stale.err, /is not the document's as it stands/);
     // An amendment of work that isn't open is refused, with a hash or without.
