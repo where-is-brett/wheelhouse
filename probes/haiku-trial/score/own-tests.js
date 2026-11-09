@@ -38,8 +38,14 @@ function exportedNames(text) {
   return names;
 }
 
-function writtenParts(dir) {
-  const tests = filesUnder(dir).filter(isTestFile).map((rel) => read(dir, rel));
+// The test files the builders wrote or changed: a file still exactly as the seed had it at baseSha is not theirs.
+function writtenParts(dir, baseSha, run) {
+  const seedText = (rel) => {
+    if (baseSha === undefined) return null;
+    const got = run('git', ['show', `${baseSha}:${rel}`], { cwd: dir });
+    return got.status === 0 ? got.stdout : null;
+  };
+  const tests = filesUnder(dir).filter(isTestFile).filter((rel) => seedText(rel) !== read(dir, rel)).map((rel) => read(dir, rel));
   const calls = (name) => new RegExp(`\\b${name}\\s*\\(`);
   const categoriesFile = path.join(dir, 'src/lib/categories.js');
   const categorisers = new Set(['categorise']);
@@ -163,7 +169,7 @@ export async function ownTests({ dir, baseSha, gh, run = defaultRun }) {
   const notes = [];
   const parts = { written: 0, green: 0, kept: 0, bite: 0 };
 
-  const found = writtenParts(dir);
+  const found = writtenParts(dir, baseSha, run);
   for (const [name, ok] of Object.entries(found)) {
     if (ok) parts.written += 1;
     else notes.push(`written: no ${name} test`);

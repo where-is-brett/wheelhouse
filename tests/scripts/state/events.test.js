@@ -399,6 +399,17 @@ test('a gate-asks record names the click the gate waits for: an approval of a he
   });
 });
 
+test('a CI push ask may name a branch and no pull request: the first push of a branch comes before its pull request', async () => {
+  await withHome(() => {
+    const first = { work: 'ci-node-24', ask: 'ci-push', sha: 'b'.repeat(40), branch: 'feature/ci-node-24' };
+    assert.deepEqual(makeEvent({ kind: 'gate-asks', data: first }).data, first);
+    // An approval still needs its pull request.
+    assert.throws(() => makeEvent({ kind: 'gate-asks', data: { ...first, ask: 'approval', branch: undefined } }), /needs the pull request number/);
+    // A pull request that is named still has to be a number.
+    assert.throws(() => makeEvent({ kind: 'gate-asks', data: { ...first, pr: '7' } }), /needs the pull request number/);
+  });
+});
+
 test('a column-ready record names the column, the pins it ran on and the evaluation\'s records', async () => {
   await withHome(() => {
     assert.equal(PLAIN_KINDS.includes('column-ready'), true);

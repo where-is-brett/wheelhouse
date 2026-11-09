@@ -68,7 +68,7 @@ import {
 } from '../state/card-lines.js';
 import {
   keepClick, shownHash, keepAnswer, askedFor, claimAnswer, claimedAt, noteClaimed, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords, sameWords,
-  noteDropped, askedAnywhere,
+  noteDropped, askedAnywhere, bareLabel, cardDifferences, shownNear, askedLike,
 } from '../lib/setup-clicks.js';
 import { setupRecordsOf } from '../lib/setup-writes.js';
 import { settingWords } from '../settings/effective.js';
@@ -595,6 +595,8 @@ function keepAfterClick(project, folder, made) {
 // right set line earns nothing.
 // The record names the run the card was shown for and that list's full hash, which the helper
 // matches against its run for the folder and the list it works out again.
+// Gives { made }, the record; { why } when the set line is right but the card is not the one shown (naming the parts that
+// differ); or null.
 function setupClickOf(cwd, { question, label, card }) {
   if (label !== SETUP_LABEL) return null;
   const m = only(SETUP, question);
@@ -602,7 +604,10 @@ function setupClickOf(cwd, { question, label, card }) {
   const step = Number(m[1]);
   if (!Object.hasOwn(SETUP_TITLES, step) || setLineOf(question) !== setupLine(step, m[2])) return null;
   const shown = shownHash({ cwd, step, h12: m[2], card });
-  return shown === null ? null : { kind: 'action', data: { action: 'setup', runId: shown.runId, step, hash: shown.hash, question, label } };
+  if (shown !== null) return { made: { kind: 'action', data: { action: 'setup', runId: shown.runId, step, hash: shown.hash, question, label } } };
+  const near = shownNear({ cwd, step, h12: m[2] });
+  if (near === null) return null;
+  return { why: `the card is not the one setup showed: ${cardDifferences(card, near.card).join('; ') || 'no part of it differs that the log can name'}` };
 }
 
 // The signed record an answer to a setup step's question earns (ruling R30): the card is exactly
@@ -617,7 +622,11 @@ function setupAnswerOf(cwd, { question, label, card, signable, typed, why }) {
   if (PUT_OFF.includes(label)) return { why: null };
   if (!(signable || typed)) return { why: why ?? 'the answer was neither a click on one of the card\'s buttons nor text typed on it' };
   const asked = askedFor({ cwd, card });
-  if (asked === null) return { why: 'no card setup asked for a folder holding this session\'s folder reads as this one' };
+  if (asked === null) {
+    const like = askedLike({ cwd, card });
+    return { why: like === null ? 'no card setup asked for a folder holding this session\'s folder reads as this one'
+      : `the card is not the one setup asked: ${cardDifferences(card, like.card).join('; ') || 'no part of it differs that the log can name'}` };
+  }
   if (sameWords(asked.card.question) !== sameWords(question)) return { why: 'the answer names another question than the card\'s' };
   const data = { action: 'setup-answer', runId: asked.runId, step: asked.step, questionId: asked.id, question: asked.card.question };
   if (signable) {
@@ -639,9 +648,13 @@ function keepSetupClicks(cwd, out, now, project = null, dropped = new Map()) {
   const queued = [];
   for (const click of out) {
     try {
-      const made = click.signable ? setupClickOf(cwd, click) : null;
-      if (made) {
-        keepClick(makeEvent({ ...made, now }));
+      const clicked = click.signable ? setupClickOf(cwd, click) : null;
+      if (clicked?.made) {
+        keepClick(makeEvent({ ...clicked.made, now }));
+        continue;
+      }
+      if (clicked?.why) {
+        noteDropped({ asked: null, cwd, why: clicked.why, now });
         continue;
       }
       const answer = setupAnswerOf(cwd, click);
@@ -709,9 +722,11 @@ function noteSetupDrops(input, out, { dropped = new Map(), whyNone = null, now }
   // And the answers to questions the hook was not shown, matched by their question alone.
   const unshown = out.filter((c) => !shown.some((q) => q.question === c.question)).map((c) => ({ question: c.question }));
   for (const q of [...shown, ...unshown]) {
-    const asked = askedAnywhere(q);
-    if (asked.length === 0) continue;
     const click = out.find((c) => c.question === q.question || sameWords(c.question) === sameWords(q.question));
+    // A card that reads as none setup asked still counts when its first line is one setup asked and the answer was refused for it.
+    const like = askedAnywhere(q).length === 0 && click !== undefined && dropped.has(click.question) ? askedLike({ cwd: input.cwd, card: q }) : null;
+    const asked = like === null ? askedAnywhere(q) : [like];
+    if (asked.length === 0) continue;
     const answered = click !== undefined;
     if (answered && PUT_OFF.includes(click.label)) continue;
     let why = whyNone ?? (answered ? dropped.get(click.question) : 'no answer to it reached the hook: neither the tool input nor the tool response held one');
@@ -832,12 +847,16 @@ function clicks(input) {
       : !Array.isArray(q?.options) ? 'the answer names a question that is not among the questions asked'
         : !agrees ? 'the tool response gives another answer to the question than the tool input'
           : 'the answer is to a question taking several answers';
+    // A label the model wrote with a trailing "(Recommended)" is read as the bare label the stored card has; `offered` was
+    // judged on the label as asked.
+    const bare = offered ? bareLabel(raw) : raw;
+    const card = offered ? { ...q, options: q.options.map((o) => (typeof o?.label !== 'string' ? o : { ...o, label: bareLabel(o.label) })) } : q;
     out.push({
       question,
-      label: many ? raw.join(', ') : raw,
+      label: many ? raw.join(', ') : bare,
       signable: offered && single,
       typed: !offered && single,
-      card: q,
+      card,
       ...(why === undefined ? {} : { why }),
     });
   }
@@ -853,9 +872,9 @@ export { sendPending, BUDGET_MS };
 // card check counts: they name what its set line decides, so a line the director wasn't shown signs only what they read.
 export function storedText(project, q, { events = listEvents(stateDir(project), { report: () => {} }), waiting } = {}) {
   if (typeof q?.question !== 'string' || !Array.isArray(q.options) || setLineOf(q.question) !== null) return null;
-  const labels = JSON.stringify(q.options.map((o) => o?.label));
+  const labels = JSON.stringify(q.options.map((o) => bareLabel(o?.label)));
   const texts = [...new Set(events.filter((e) => e.kind === 'card' && typeof e.data?.question === 'string' && e.data.question !== q.question
-    && chatCopy(e.data.question) === q.question && JSON.stringify(e.data.options) === labels).map((e) => e.data.question))]
+    && chatCopy(e.data.question) === q.question && JSON.stringify(Array.isArray(e.data.options) ? e.data.options.map(bareLabel) : e.data.options) === labels).map((e) => e.data.question))]
     .filter((text) => cardProblems(text).length === 0);
   if (texts.length <= 1) return texts[0] ?? null;
   const live = new Set((waiting ?? localViews(project, ['waiting'])?.waiting ?? []).map((c) => c?.data?.question));

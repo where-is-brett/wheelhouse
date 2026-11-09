@@ -162,6 +162,26 @@ test('the test counts install each commit\'s dependencies before counting', asyn
   assert.ok(commands.filter((c) => c === 'npm install').length >= 1, commands.join(', '));
 });
 
+test('ownTests gives no written credit for the seed\'s own tests, only for tests the builders wrote', async () => {
+  const dir = tmp('seeded');
+  git(dir, 'init', '--quiet', '-b', 'main');
+  const seedTest = "import { test } from 'node:test';\nimport { parseAmount } from '../src/lib/money.js';\ntest('seed', () => parseAmount('1.00'));\n";
+  write(dir, { 'package.json': PACKAGE, 'src/lib/money.js': MONEY, 'tests/smoke.test.js': seedTest });
+  git(dir, 'add', '.');
+  git(dir, 'commit', '--quiet', '-m', 'base');
+  const baseSha = git(dir, 'rev-parse', 'HEAD');
+  write(dir, { 'src/lib/other.js': 'export const x = 1;\n' });
+  git(dir, 'add', '.');
+  git(dir, 'commit', '--quiet', '-m', 'work');
+  const untouched = await ownTests({ dir, baseSha, gh: greenGh });
+  assert.ok(untouched.notes.includes('written: no parseAmount test'), untouched.notes.join(' | '));
+  write(dir, { 'tests/money-edge.test.js': "import { test } from 'node:test';\nimport { parseAmount } from '../src/lib/money.js';\ntest('edge', () => parseAmount('-2.00'));\n" });
+  git(dir, 'add', '.');
+  git(dir, 'commit', '--quiet', '-m', 'tests');
+  const written = await ownTests({ dir, baseSha, gh: greenGh });
+  assert.equal(written.notes.includes('written: no parseAmount test'), false);
+});
+
 test('ownTests keeps all four kept points when nothing is deleted, skipped or lost', async () => {
   const { dir, baseSha } = fixtureRepo({ deleted: false, skipped: false });
   const result = await ownTests({ dir, baseSha, gh: greenGh });

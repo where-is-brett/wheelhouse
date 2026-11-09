@@ -2277,7 +2277,7 @@ test('restart wakes the feature to fix the findings when a signed review holds i
   const [event] = woken[0].wake.events;
   assert.equal(event.type, 'findings');
   assert.equal(event.pr, 7);
-  assert.match(event.detail.next, /Fix every finding.*dispatch wheelhouse:reviewer/);
+  assert.match(event.detail.next, /Fix its BLOCKER and HIGH findings.*dispatch wheelhouse:reviewer/);
   assert.equal(fake.writes.length, 0);
 }));
 

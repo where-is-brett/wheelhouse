@@ -48,7 +48,8 @@ const NEXT = {
   'Haiku floor': 'Record it as a known floor, with the role it affects, and suggest a larger model for that role.',
 };
 
-export function writeSummary({ file, date, rows, score, audit, usage, labels = {}, verdict }) {
+export function writeSummary({ file, date, rows, score, audit, usage, labels = {}, verdict, model = 'haiku' }) {
+  const modelName = model[0].toUpperCase() + model.slice(1);
   const out = [`<!-- docs/trials/${date}-haiku-trial-results.md -->`, `# The Haiku trial, ${said(date)}`, ''];
 
   const failed = rows.filter((r) => r.pass === false);
@@ -79,7 +80,8 @@ export function writeSummary({ file, date, rows, score, audit, usage, labels = {
   out.push('## Model audit', '');
   const models = audit?.models ?? { clean: true, offenders: [] };
   const peek = audit?.peek ?? { clean: true, hits: [] };
-  out.push(`- Models: ${models.clean ? 'clean, every assistant turn ran on Haiku' : 'not clean'}.`);
+  out.push(`- Model: ${modelName}${model === 'haiku' ? '' : ' (a run to tell kit faults from model faults, not the Haiku claim)'}.`);
+  out.push(`- Models: ${models.clean ? `clean, every assistant turn ran on ${modelName}` : 'not clean'}.`);
   for (const o of models.offenders ?? []) out.push(`  - ${plain(o.role)}, session ${plain(o.session)}: ${plain(o.model)}, ${o.count} turn${o.count === 1 ? '' : 's'}.`);
   out.push(`- Peek: ${peek.clean ? 'clean, no session named the held-back files' : 'not clean'}.`);
   for (const h of peek.hits ?? []) out.push(`  - ${plain(h.role)} used ${plain(h.tool)} on the held-back files.`);

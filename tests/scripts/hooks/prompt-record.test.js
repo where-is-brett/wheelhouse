@@ -21,6 +21,8 @@ import { markOpen, readOpen } from '../../../scripts/lib/session-files.js';
 import { readSeat, seatFile } from '../../../scripts/lib/first-mate-seat.js';
 import { FRONT_DESK_LINE } from '../../../scripts/hooks/session-start.js';
 import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
+import { openJournal } from '../../../scripts/update/journal.js';
+import { updateLine } from '../../../scripts/state/card-lines.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { listHash } from '../../../scripts/lib/setup-writes.js';
@@ -147,6 +149,21 @@ test('Approve on a card asked in the chat\'s words is signed as a click on the c
   });
 });
 
+test('a chat-copy card with a "(Recommended)" label keeps its stored text, and the click is recorded on the card', async () => {
+  await withHome(async () => {
+    const composed = APPROVE_7(FULL);
+    keepEvent(makeEvent({ kind: 'card', data: composed.card, now: () => NOW }));
+    const copy = asCopy(composed);
+    const shown = { ...copy, options: copy.options.map((o, i) => (i === 0 ? { ...o, label: `${o.label} (Recommended)` } : o)) };
+    const asked = { cwd: '/x', hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [shown], answers: { [shown.question]: shown.options[0].label } } };
+    assert.equal(storedText(P, shown), composed.card.question);
+    const c = fake();
+    await decide(asked, deps(c));
+    assert.deepEqual(c.calls.write.map((w) => [w.kind, w.data.question, w.data.label]), [['card-answer', composed.card.question, 'Approve']]);
+    assert.ok(kinds(c).includes('approval'), kinds(c).join());
+  });
+});
+
 test('a kept card whose words don\'t name what its hidden line decides is never signed from its chat copy', async () => {
   await withHome(async () => {
     // A card written by hand: harmless plain lines, and a runbook line the chat copy would hide.
@@ -160,6 +177,37 @@ test('a kept card whose words don\'t name what its hidden line decides is never 
     await decide(copyClick(shown, 'Do it'), deps(c));
     assert.ok(!kinds(c).includes('action'), kinds(c).join());
     assert.equal(storedText(P, shown, { events: listEvents(stateDir(P), { report: () => {} }), waiting: [] }), null);
+  });
+});
+
+test('a "Do it (Recommended)" click on a card asked with that label records the same action as "Do it"', async () => {
+  await withHome(async () => {
+    const line = runbookLine(1);
+    const answerWith = async (labels, answer) => {
+      const c = fake();
+      const shown = { question: line, header: 'Tidy', options: labels.map((label) => ({ label })), multiSelect: false };
+      await decide({ ...input({ [line]: answer }), tool_input: { questions: [shown], answers: { [line]: answer } } }, deps(c));
+      return c.calls.record.filter((r) => r.event.kind === 'action').map((r) => r.event.data);
+    };
+    const plain = await answerWith(['Do it', 'Not now'], 'Do it');
+    const suffixed = await answerWith(['Do it (Recommended)', 'Not now'], 'Do it (Recommended)');
+    assert.equal(plain.length, 1, 'the plain click records an action');
+    assert.deepEqual(suffixed, plain);
+  });
+});
+
+test('a click on the plain option of a card whose other option is "(Recommended)" is read against the bare labels, update card included', async () => {
+  await withHome(async () => {
+    const hash = 'a'.repeat(64);
+    const question = `Update Wheelhouse?\n${updateLine('v1.0.0', 'v1.1.0', 'release', hash)}`;
+    const folder = openJournal(P).folder;
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, 'plan.json'), JSON.stringify({ hash, plan: { from: 'v1.0.0', to: 'v1.1.0', put: 'release' }, card: { question, options: [{ label: 'Update' }, { label: 'Not now' }] } }));
+    const c = fake();
+    const shown = { question, header: 'Update', options: [{ label: 'Update (Recommended)' }, { label: 'Not now' }], multiSelect: false };
+    await decide({ ...input({ [question]: 'Not now' }), tool_input: { questions: [shown], answers: { [question]: 'Not now' } } }, deps(c));
+    const made = c.calls.record.filter((r) => r.event.kind === 'action').map((r) => r.event.data);
+    assert.deepEqual(made.map((d) => [d.action, d.label]), [['update-click', 'Not now']]);
   });
 });
 

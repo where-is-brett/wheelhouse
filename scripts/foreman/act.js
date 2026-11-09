@@ -1673,7 +1673,7 @@ function queueAgainLine(work, status, lane) {
 // --- restart ---
 
 // The option a stuck work's card offers: wakes the feature's own session. With a signed review that holds its pull
-// request, the wake tells it to fix every finding, push and dispatch the reviewer; otherwise to carry on from where it
+// request, the wake tells it to fix the blocking findings, push and dispatch the reviewer; otherwise to carry on from where it
 // left off. The words are fixed here; no caller supplies any.
 async function restart(ctx, work, rest) {
   flagsOf(rest, [], 'restart');
@@ -1693,7 +1693,7 @@ async function restart(ctx, work, rest) {
     ? {
       type: 'findings', work, pr: kept.pr, id, detail: {
         head: held.commit,
-        next: `Pull request #${kept.pr}'s review at ${held.commit} holds it with findings. Fix every finding (a failing test first, as your instructions say), commit and push, then dispatch wheelhouse:reviewer on the new head.`,
+        next: `Pull request #${kept.pr}'s review at ${held.commit} holds it with findings. Fix its BLOCKER and HIGH findings and defer its MEDIUM and LOW ones as minors (a failing test first, as your instructions say), commit and push, then dispatch wheelhouse:reviewer on the new head.`,
       },
     }
     : {
