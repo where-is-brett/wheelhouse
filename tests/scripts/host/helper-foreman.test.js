@@ -522,3 +522,20 @@ test('the front desk\'s ask-bosun card is written by the helper, in fixed words,
   assert.match(out.madeUp.skipped ?? '', /no such work/);
   assert.match(out.text.skipped ?? '', /already/, 'a caller\'s own pull request number or words are not read: the card asked above stands');
 });
+
+test('the ask-bosun card is placed from the caller\'s folder when it gives `cwd` and no project', async () => {
+  const p = await project();
+  const out = {};
+  try {
+    await withHelper(p.home, async (client) => {
+      await as(p.home, async () => {
+        await client.state.write({ project: P, kind: 'feature', data: { work: 'mine', step: 'building' } });
+      });
+      out.placed = await client.state.workCard({ cwd: p.checkout, work: 'mine' });
+      out.none = await client.state.workCard({ work: 'mine' });
+    });
+  } finally { p.remote.cleanup(); }
+  assert.equal(out.placed.ok, true, JSON.stringify(out.placed));
+  assert.match(out.placed.id ?? '', /^[0-9a-f-]{36}$/);
+  assert.equal(out.none.ok, false);
+});

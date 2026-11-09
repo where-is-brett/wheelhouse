@@ -927,7 +927,7 @@ const PLACED_ROUTES = [
   '/desk/read', '/desk/act', '/desk/watch',
   '/local/undo', '/undo', '/local/move',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
-  '/engine-switch', '/compact-window',
+  '/engine-switch', '/compact-window', '/state/work-card',
   '/alerts/ntfy', '/alerts/telegram', '/alerts/status', '/alerts/off',
 ];
 
