@@ -45,6 +45,6 @@ test('rule 1 counts only BLOCKER and HIGH findings as open, as Superpowers count
 
 test('rule 1 defers minors on the review command\'s say-so, not a wake\'s', () => {
   const rule = text.split(/^(?=\*\*\d\. )/m)[1];
-  assert.match(rule, /You defer minors only when the `review` command says the review leaves only minors; never judge a finding's severity yourself, and fix every finding a wake says holds the merge\./);
+  assert.match(rule, /You defer minors only when the `review` command says the review leaves only minors; never judge a finding's severity yourself, and fix the blocking findings a wake names\./);
   assert.doesNotMatch(rule, /only when Wheelhouse's wake says/);
 });
