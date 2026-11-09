@@ -21,6 +21,13 @@ export function approvedPath(worktree) {
   return path.join(featurePaths(worktree).dir, APPROVED_FILE);
 }
 
+// The full path of `docPath` taken from the main checkout `checkout`, or null when it falls outside it.
+export function insideCheckout(checkout, docPath) {
+  const root = path.resolve(checkout);
+  const full = path.resolve(root, docPath);
+  return full === root || full.startsWith(root + path.sep) ? full : null;
+}
+
 // The approved document of `work` in `views`: `{ text, hash }` when the file in the main checkout
 // `checkout` is the one approved, `{ problem }` when the work names one that isn't (changed since,
 // gone, or outside the checkout), and null when the work names no document.
@@ -28,9 +35,8 @@ export function approvedDocument({ checkout, views, work }) {
   const entry = views?.work?.[work];
   const doc = entry?.work?.data?.doc;
   if (!isPlain(doc) || typeof doc.path !== 'string' || doc.path.trim() === '') return null;
-  const root = path.resolve(checkout);
-  const full = path.resolve(root, doc.path);
-  if (full !== root && !full.startsWith(root + path.sep)) return { problem: 'is outside the main checkout' };
+  const full = insideCheckout(checkout, doc.path);
+  if (full === null) return { problem: 'is outside the main checkout' };
   const approved = typeof entry.approval?.hash === 'string' ? entry.approval.hash : doc.hash;
   const text = readCapped(full, DOCUMENT_BYTES);
   if (text === null) return { problem: "can't be read" };
