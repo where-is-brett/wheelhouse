@@ -109,6 +109,7 @@ import { similar as similarTo } from '../intake/similar.js';
 import { answerLine, approveWorkLine, chatCopy, ID, keepControlLine } from '../state/card-lines.js';
 import { gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
+import { laneFactsProblem } from './lane-facts.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { FINISHED_WORDS, prsOfWork, workFinished } from '../desk/work-prs.js';
@@ -1115,6 +1116,20 @@ function readBackLine(readBack) {
   return `I've treated this as a change to work already running; say if it's something else. Doing: ${doing} Not doing: ${notDoing} Done when: ${doneWhen}`;
 }
 
+// A small or quick work the model sized is refused when its brief's facts say feature, or give none
+// (lane-facts.js). The model sized it when it carries no `from`, no work event is on record for its id
+// and its brief is under `.wheelhouse/work/`; any other work is left to its lane as given.
+async function refuseLaneFromFacts(client, cwd, data) {
+  if (data.from !== undefined) return;
+  const { views } = await viewsOf(client, cwd);
+  if (views.work?.[data.id]?.work !== undefined) return;
+  const relative = typeof data.doc?.path === 'string' ? path.relative(cwd, path.resolve(cwd, data.doc.path)) : '';
+  const parts = relative.split(path.sep);
+  if (parts[0] !== '.wheelhouse' || parts[1] !== 'work' || parts.length < 3 || parts.includes('..')) return;
+  const problem = laneFactsProblem(fs.readFileSync(path.resolve(cwd, data.doc.path), 'utf8'), data.lane);
+  if (problem !== null) throw new CliError(problem);
+}
+
 // A work event's document, or an amendment of the one file open work names, with its hash worked out.
 async function withHash(client, cwd, kind, input) {
   // A document named by its path alone, as plain text, is the same as { path }.
@@ -1184,7 +1199,8 @@ export function approveWorkInput(data, override) {
 // amendment, `say` for an amendment (its route line and read-back), and for a ruling or a setting its confirm card, recorded too, as { question, id }. A setting the catalogue refuses is refused here, before
 // the helper is asked; the director's own settings go to their profile (writeSetting). A ruling keeps its words exactly as given: its card is composed
 // first, under the id the ruling is then written with, so a ruling whose words no card can carry
-// is never written. The confirm card is recorded as asked.
+// is never written. The confirm card is recorded as asked. A small or quick work the model sized (no `from`, none on record,
+// brief under `.wheelhouse/work/`) is refused when its brief's facts say feature or are missing (lane-facts.js).
 export async function record({ client, cwd, kind, input, now, ready, makeId = () => crypto.randomUUID() }) {
   if (!RECORD_KINDS.includes(kind)) throw new CliError(`record takes one of: ${RECORD_KINDS.join(', ')}`);
   if (!isPlain(input)) throw new CliError(`Give the ${kind} as a JSON object on standard input`);
@@ -1229,6 +1245,7 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     const { card: override, ...work } = input;
     if (needsApproval(work) && work.doc === undefined) throw new CliError('an approval names the work\'s document: give `doc`, the path of the brief written first');
     const data = await withHash(client, cwd, kind, work);
+    await refuseLaneFromFacts(client, cwd, data);
     const hash = data.doc?.hash;
     const written = await write(client, cwd, kind, data);
     const out = { work: data.id, eventId: written.id, pushed: written.pushed === true, ...(typeof hash === 'string' ? { hash } : {}), recordHash: dataHash(data) };
