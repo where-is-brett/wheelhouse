@@ -1122,11 +1122,15 @@ function readBackLine(readBack) {
 // (`from`) has no design of its own here, and only the feature lane is checked.
 function refuseFeatureWithoutSlices(cwd, data) {
   if (data.lane !== 'feature' || data.from !== undefined || typeof data.doc?.path !== 'string') return;
+  checkSlices(cwd, data.doc.path);
+}
+
+function checkSlices(cwd, file) {
   try {
-    readSlices(fs.readFileSync(path.resolve(cwd, data.doc.path), 'utf8'));
+    readSlices(fs.readFileSync(path.resolve(cwd, file), 'utf8'));
   } catch (error) {
     const message = String(error.message).replace(/^./, (c) => c.toLowerCase());
-    throw new CliError(`A feature's design ends with its slices, and ${message}. Add one \`wheelhouse-slices\` block at the end of ${data.doc.path}: the goal, the flag's name, the demo (midpoint or end), and each slice's title, goal and done checks (intake, "A feature's slices"); then record it again`);
+    throw new CliError(`A feature's design ends with its slices, and ${message}. Add one \`wheelhouse-slices\` block at the end of ${file}: the goal, the flag's name, the demo (midpoint or end), and each slice's title, goal and done checks (intake, "A feature's slices"); then record it again`);
   }
 }
 
@@ -1151,6 +1155,11 @@ async function withHash(client, cwd, kind, input) {
   if (typeof input.doc !== 'string' || input.doc.trim() === '' || path.resolve(cwd, input.doc) === path.resolve(cwd, file)) throw new CliError(locked);
   const hash = documentHash(cwd, input.doc, input.hash);
   if (hash === views.work[input.work].work.data.doc.hash) throw new CliError('The changed document is the approved one: nothing changes');
+  const recorded = views.work[input.work].work.data;
+  if (recorded.lane === 'feature' && recorded.from === undefined) checkSlices(cwd, input.doc);
+  if (views.work[input.work].changeWaiting === true) {
+    throw new CliError(`${input.work} already has a change waiting for the director's card. One change at a time: wait for their answer, or record the work again to drop it, then record this change.`);
+  }
   return { ...input, hash };
 }
 

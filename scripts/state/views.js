@@ -368,6 +368,16 @@ export function signedCardOutcomes(events, enrolled) {
 // The most of the card router's Logbook lines the views keep.
 const ENGINE_NOTES = 30;
 
+// Whether `work` has a change waiting for the director's card: an amendment of it that carries its own text (`doc`),
+// came after the work was last recorded, and no verified `amend` click names. Recording the work again lets go of
+// a change; a work event comes before an amendment of the same instant. The hold on the document, the desk's
+// refusal of a second change and `act start` all read it from here.
+export function changeWaiting(events, work, enrolled) {
+  const recordedAt = events.filter((e) => e.kind === 'work' && e.data?.id === work).map((e) => e.at).sort().at(-1) ?? '';
+  const clicked = (a) => events.some((e) => e.kind === 'action' && e.data?.action === 'amend' && e.data.work === work && e.data.hash === a.data.hash && verify(e, enrolled));
+  return events.some((e) => e.kind === 'amendment' && e.data?.work === work && typeof e.data.doc === 'string' && e.at >= recordedAt && !clicked(e));
+}
+
 // The build loop's views: work and its approvals, features, questions and incidents.
 // Every approval, answer, amendment and lift here is read from a verified action,
 // so a plain event of any kind stands in for none of them.
@@ -421,7 +431,7 @@ function buildLoopViews(sorted, enrolled) {
     // Whether any record of the work ever marked it visible: the mark only goes up, so a later record can't lower it.
     const everVisible = sorted.some((e) => e.kind === 'work' && e.data?.id === id && e.data.visible === true);
     work[id] = {
-      work: { key: id, ...mark(w) }, ...(everVisible ? { everVisible } : {}), since, approved: approval !== null, ...(approval ? { approval } : {}), ...(shownFirst ? { shownFirst } : {}),
+      work: { key: id, ...mark(w) }, ...(everVisible ? { everVisible } : {}), ...(changeWaiting(sorted, id, enrolled) ? { changeWaiting: true } : {}), since, approved: approval !== null, ...(approval ? { approval } : {}), ...(shownFirst ? { shownFirst } : {}),
     };
   }
 

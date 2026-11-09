@@ -68,7 +68,8 @@
 // feature's worktree and plan, the clash and slot answers) are act.js's too.
 import { driftAskCommand, holdingReview, stuckAskCommand } from './ask-help.js';
 import { approvedText } from '../state/approved-text.js';
-import { readEnrolled, verify } from '../state/signing.js';
+import { readEnrolled } from '../state/signing.js';
+import { changeWaiting } from '../state/views.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { clashCheck, fileMapOf, nextWork, since } from './queue.js';
@@ -336,15 +337,10 @@ export function documentOf(project, views, work) {
   else {
     const now = briefHash(text);
     const events = stateEvents(project);
-    // A change counts as clicked when a verified `amend` action names it, as the views read it; the file's own text is no
-    // sign, since a change lives in its own file until the click installs it.
-    const enrolled = readEnrolled();
-    const clicked = (a) => events.some((e) => e.kind === 'action' && e.data?.action === 'amend' && e.data.work === work && e.data.hash === a.data.hash && verify(e, enrolled));
     const proposed = events.filter((e) => e.kind === 'amendment' && e.data?.work === work);
-    // Only a change with its own text (`doc`) that came after the work was last recorded holds it, and until it is clicked:
-    // recording the work again lets go of a change the director no longer wants. A work event comes before an amendment of the same instant.
-    const recordedAt = events.filter((e) => e.kind === 'work' && e.data?.id === work).map((e) => e.at).sort().at(-1) ?? '';
-    const waiting = proposed.some((a) => typeof a.data.doc === 'string' && a.at >= recordedAt && !clicked(a));
+    // Only a change with its own text (`doc`) that came after the work was last recorded holds it, and until it is clicked
+    // (changeWaiting says; the file's own text is no sign, since a change lives in its own file until the click installs it).
+    const waiting = changeWaiting(events, work, readEnrolled());
     if (now !== approved) {
       const pending = waiting || proposed.some((a) => a.data.hash === now);
       drift = { pending, restorable: approvedText(project, approved) !== null };

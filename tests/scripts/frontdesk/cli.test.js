@@ -875,8 +875,9 @@ test('record work, amendment, incident and note write the build loop\'s kinds', 
     const dir = projectWithDoc('export-csv', designWithSlices('Export a report'));
     const at = { cwd: dir };
     const docHash = createHash('sha256').update(designWithSlices('Export a report')).digest('hex');
-    fs.writeFileSync(path.join(dir, 'docs', 'export-csv.change.md'), 'The changed brief.\n');
-    const changeHash = createHash('sha256').update('The changed brief.\n').digest('hex');
+    const changedBrief = designWithSlices('Export a report, changed');
+    fs.writeFileSync(path.join(dir, 'docs', 'export-csv.change.md'), changedBrief);
+    const changeHash = createHash('sha256').update(changedBrief).digest('hex');
     const records = {
       work: { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'feature', visible: true, dependsOn: [], doc: { path: 'docs/export-csv.md', hash: docHash } },
       amendment: { work: 'export-csv', change: 'Add a total row', hash: changeHash, doc: 'docs/export-csv.change.md' },
@@ -1282,8 +1283,9 @@ test('record amendment takes the read-back, refuses without it, and prints the r
     const at = { cwd: dir };
     const work = { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'feature', visible: true, dependsOn: [], doc: 'docs/export-csv.md' };
     await run(helper, ['record', 'work'], JSON.stringify(work), at);
-    fs.writeFileSync(path.join(dir, 'docs', 'export-csv.change.md'), 'The brief, as CSV.\n');
-    const amendment = { work: 'export-csv', change: 'Make the export CSV, not Excel', hash: createHash('sha256').update('The brief, as CSV.\n').digest('hex'), doc: 'docs/export-csv.change.md' };
+    const changedDesign = designWithSlices('Export a report as CSV');
+    fs.writeFileSync(path.join(dir, 'docs', 'export-csv.change.md'), changedDesign);
+    const amendment = { work: 'export-csv', change: 'Make the export CSV, not Excel', hash: createHash('sha256').update(changedDesign).digest('hex'), doc: 'docs/export-csv.change.md' };
 
     // Without the read-back, or with a part missing, empty or on two lines, nothing is written.
     const bad = [
@@ -1317,9 +1319,56 @@ test('record amendment takes the read-back, refuses without it, and prints the r
     assert.deepEqual(helper.held.at(-1).data, amendment, 'the read-back is said, not stored');
     assert.equal(out.json.say, "I've treated this as a change to work already running; say if it's something else. "
       + 'Doing: The export as one CSV file. Not doing: An Excel option. Done when: The button gives a CSV file that opens in Numbers.');
-    // A part that ends in its own mark keeps it, with no full stop after it.
+    // A part that ends in its own mark keeps it, with no full stop after it. The first change is dropped by recording the work again.
+    await run(helper, ['record', 'work'], JSON.stringify(work), at);
     const asked = await run(helper, ['record', 'amendment'], JSON.stringify({ ...amendment, readBack: { ...READ_BACK, notDoing: 'Excel, for now!' } }), at);
     assert.match(asked.json.say, /Not doing: Excel, for now! Done when:/);
+  });
+});
+
+test('record amendment of a feature design runs the slices check on the change file, and refuses with the same words', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('export-csv', designWithSlices('Export a report'));
+    const at = { cwd: dir };
+    await run(helper, ['record', 'work'], JSON.stringify(FEATURE), at);
+    fs.writeFileSync(path.join(dir, 'docs', 'export-csv.change.md'), 'The design, with no block.\n');
+    const amendment = { work: 'export-csv', change: 'Make the export CSV', doc: 'docs/export-csv.change.md', readBack: READ_BACK };
+    const refused = await run(helper, ['record', 'amendment'], JSON.stringify(amendment), at);
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /A feature's design ends with its slices, .*Add one `wheelhouse-slices` block at the end of docs\/export-csv\.change\.md/);
+    assert.equal(helper.held.filter((e) => e.kind === 'amendment').length, 0, 'nothing was written');
+    fs.writeFileSync(path.join(dir, 'docs', 'export-csv.change.md'), designWithSlices('Export a report as CSV'));
+    const made = await run(helper, ['record', 'amendment'], JSON.stringify(amendment), at);
+    assert.equal(made.code, 0, made.err);
+    assert.equal(helper.held.filter((e) => e.kind === 'amendment').length, 1);
+  });
+});
+
+test('record amendment refuses a second change while the first waits for its card, until it is clicked or the work is recorded again', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('export-csv', designWithSlices('Export a report'));
+    const at = { cwd: dir };
+    await run(helper, ['record', 'work'], JSON.stringify(FEATURE), at);
+    const change = (text, name) => {
+      fs.writeFileSync(path.join(dir, 'docs', name), designWithSlices(text));
+      return { work: 'export-csv', change: text, doc: `docs/${name}`, readBack: READ_BACK };
+    };
+    const first = await run(helper, ['record', 'amendment'], JSON.stringify(change('Export as CSV', 'export-csv.change.md')), at);
+    assert.equal(first.code, 0, first.err);
+    const second = await run(helper, ['record', 'amendment'], JSON.stringify(change('Export as TSV', 'export-csv.change.md')), at);
+    assert.equal(second.code, 1);
+    assert.match(second.err, /export-csv already has a change waiting for the director's card\. One change at a time: wait for their answer, or record the work again to drop it, then record this change\./);
+    assert.equal(helper.held.filter((e) => e.kind === 'amendment').length, 1, 'nothing refused was written');
+    // Once the director clicks the first card, the next change is taken.
+    helper.held.push(makeEvent({ kind: 'action', now: () => T(900), data: { action: 'amend', work: 'export-csv', hash: first.json.hash, question: 'as shown', label: 'Change it' } }));
+    const third = await run(helper, ['record', 'amendment'], JSON.stringify(change('Export as TSV', 'export-csv.change2.md')), at);
+    assert.equal(third.code, 0, third.err);
+    // Recording the work again lets go of a change that waits.
+    await run(helper, ['record', 'work'], JSON.stringify(FEATURE), at);
+    const fourth = await run(helper, ['record', 'amendment'], JSON.stringify(change('Export as JSON', 'export-csv.change3.md')), at);
+    assert.equal(fourth.code, 0, fourth.err);
   });
 });
 
