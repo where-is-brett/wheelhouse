@@ -444,9 +444,12 @@ export const CHECK_IN = 'Anything waiting for me?';
 const CHECK_IN_IDLE_MS = 3 * MINUTE;
 const CHECK_IN_EVERY_MS = 10 * MINUTE;
 export function waitingInRecord(events) {
-  const answeredCards = new Set(events.filter((e) => e.kind === 'card-answer').map((e) => e.data?.card));
+  // A card-answer names the card's question text (`{question, label, where}`); a record that names the card's id is read too.
+  const answers = events.filter((e) => e.kind === 'card-answer');
+  const answeredCards = new Set(answers.map((e) => e.data?.card).filter((c) => typeof c === 'string'));
+  const answeredAsked = new Set(answers.map((e) => e.data?.question).filter((q) => typeof q === 'string' && q !== ''));
   const answeredQuestions = new Set(events.filter((e) => e.kind === 'action' && e.data?.action === 'answer').map((e) => e.data?.questionId));
-  const cards = events.filter((e) => e.kind === 'card' && PICKED.includes(e.data?.kind) && !answeredCards.has(e.id));
+  const cards = events.filter((e) => e.kind === 'card' && PICKED.includes(e.data?.kind) && !answeredCards.has(e.id) && !answeredAsked.has(e.data?.question));
   const questions = events.filter((e) => e.kind === 'question' && typeof e.data?.id === 'string' && !answeredQuestions.has(e.data.id));
   // A visible work waits for the director's approval from the moment of intake, before any card is raised for it: the desk
   // may not have raised one at all, and the stand-in would never see a card to answer.

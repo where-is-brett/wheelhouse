@@ -655,6 +655,16 @@ test('a visible work that waits for approval with no approve-work card yet count
   assert.equal(waitingInRecord([work('b', { visible: false }), work('c', { lane: 'quick', visible: false })]), 0);
 });
 
+test('an approve-work card answered by a real card-answer ({question, label, where}) no longer counts as waiting', () => {
+  const question = 'Approve this work?\nWork a: it does a.';
+  const work = { id: 'w-a', kind: 'work', data: { id: 'a', title: 'a', lane: 'small', visible: true, dependsOn: [] } };
+  const card = { id: 'c1', kind: 'card', data: { kind: 'approve-work', question } };
+  assert.equal(waitingInRecord([work, card]), 1);
+  assert.equal(waitingInRecord([work, card, { id: 'x', kind: 'card-answer', data: { question, label: 'Approve', where: 'panel' } }]), 0);
+  // An answer to another question leaves it waiting.
+  assert.equal(waitingInRecord([work, card, { id: 'x', kind: 'card-answer', data: { question: 'Something else?', label: 'Yes', where: 'panel' } }]), 1);
+});
+
 test('F3 with no feature session to kill is noted as not exercised and the run goes on', async (t) => {
   const folder = scratch(t);
   const io = fakeIo({});
