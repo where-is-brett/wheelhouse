@@ -53,7 +53,7 @@ A line with `Next: act start W` names a document. Read that, and nothing else. T
 
 - **Single quotes again,** for the same reason.
 - **Each option's `says`** is one whole command, written as the wake writes them after `Next:` (`act merge W`, say), or the word `waiting`.
-- **A question about work that could not start** takes `--about start`, and is put in plain words for a product owner: say that the work could not begin and that Wheelhouse will try again by itself. Offer only what the director can do: wait, or drop the work. Never offer to fix a remote, a branch or a setting, and never use git words in the card. While that question is open, another `--about start` question for the same work asks nothing more; a question about anything else is still asked.
+- **A question about work that could not start** takes `--about start`, and is put in plain words for a product owner: say that the work could not begin and that Wheelhouse will try again by itself. Offer only what the director can do: wait, or drop the work. The exception is the card for a document changed since its approval, which the wake's command puts with its own options. Never offer to fix a remote, a branch or a setting, and never use git words in the card. While that question is open, another `--about start` question for the same work asks nothing more; a question about anything else is still asked.
 - **Never offer `act pause`:** only the director's own amendment pauses work.
 - **When the answer comes,** it prints "which says: …": run that, or nothing for `waiting`.
 

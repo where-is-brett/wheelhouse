@@ -68,6 +68,7 @@
 // feature's worktree and plan, the clash and slot answers) are act.js's too.
 import { driftAskCommand, holdingReview, stuckAskCommand } from './ask-help.js';
 import { approvedText } from '../state/approved-text.js';
+import { readEnrolled, verify } from '../state/signing.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { clashCheck, fileMapOf, nextWork, since } from './queue.js';
@@ -330,14 +331,25 @@ export function documentOf(project, views, work) {
   const approved = typeof entry.approval?.hash === 'string' ? entry.approval.hash : doc.hash;
   let problem = null;
   let drift = null;
+  const PENDING = 'holds a change the director has not yet approved: its change card decides it';
   if (text === null) problem = "can't be read";
-  else if (briefHash(text) !== approved) {
+  else {
     const now = briefHash(text);
-    const pending = stateEvents(project).some((e) => e.kind === 'amendment' && e.data?.work === work && e.data.hash === now);
-    drift = { pending, restorable: approvedText(project, approved) !== null };
-    problem = pending
-      ? 'holds a change the director has not yet approved: its change card decides it'
-      : 'is not the one approved: it has changed since';
+    const events = stateEvents(project);
+    // A change counts as clicked when a verified `amend` action names it, as the views read it; the file's own text is no
+    // sign, since a change lives in its own file until the click installs it.
+    const enrolled = readEnrolled();
+    const clicked = (a) => events.some((e) => e.kind === 'action' && e.data?.action === 'amend' && e.data.work === work && e.data.hash === a.data.hash && verify(e, enrolled));
+    const proposed = events.filter((e) => e.kind === 'amendment' && e.data?.work === work);
+    const waiting = proposed.some((a) => !clicked(a));
+    if (now !== approved) {
+      const pending = waiting || proposed.some((a) => a.data.hash === now);
+      drift = { pending, restorable: approvedText(project, approved) !== null };
+      problem = pending ? PENDING : 'is not the one approved: it has changed since';
+    } else if (waiting) {
+      drift = { pending: true, restorable: false };
+      problem = PENDING;
+    }
   }
   return { path: oneLine(full, 300), file: full, problem, drift };
 }

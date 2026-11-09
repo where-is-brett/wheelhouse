@@ -15,6 +15,7 @@ import { LANE_APPETITE } from '../../../scripts/lib/build-loop.js';
 import { liftStop, setStop } from '../../../scripts/lib/stop.js';
 import { writeCursor } from '../../../scripts/watcher/core.js';
 import { HAND_DONE, HAND_GOAL } from '../../../scripts/lib/by-hand-done.js';
+import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 import {
   P, T0, config, emptyViews, fakeClient, featureView, project, recordInState, wakeFile, workView, worktree,
@@ -683,4 +684,22 @@ test('wake read keeps the old line for a document that cannot be read', () => wi
   const file = wakeFile(path.join(checkout, 'w'), 'one', { events: [ev('work-ready', 'gone', 'x', { lane: 'small' })] });
   const text = (await readWakeLines({ file, project: P, client: fakeClient({ views }).client, now })).lines.join('\n');
   assert.match(text, /can't be read\. Ask the director: act ask$/m);
+}));
+
+test('wake read holds work with a change the director has not yet clicked, whatever the document file holds, until the click', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.a = approvedDoc(checkout, workView('a', { since: '2026-10-19T07:00:00.000Z' }), 'a');
+  const file = wakeFile(path.join(checkout, 'w'), 'one', { events: [ev('work-ready', 'a', 'x', { lane: 'small' })] });
+  const read = async () => (await readWakeLines({ file, project: P, client: fakeClient({ views }).client, now })).lines.join('\n');
+  const changeHash = briefHash('# a\n\nThe changed text.\n');
+  recordInState('amendment', { work: 'a', change: 'The changed text.', hash: changeHash, doc: '.wheelhouse/work/a.change.md' }, T0 - 5000);
+  const held = await read();
+  assert.match(held, /It waits: the director has not yet answered the change card for it\. Nothing to do/);
+  assert.doesNotMatch(held, /act start a /);
+  enrol({ ...makeSigningKey(), enrolledAt: '2026-10-18T00:00:00.000Z' });
+  recordInState('action', { action: 'amend', question: 'Change it?', label: 'Change it', work: 'a', hash: changeHash }, T0 - 1000);
+  const after = await read();
+  assert.match(after, /Next: act start a /);
+  assert.doesNotMatch(after, /has not yet answered/);
 }));

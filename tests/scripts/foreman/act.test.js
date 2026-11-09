@@ -28,6 +28,7 @@ import { selfTestFile } from '../../../scripts/windows/low.js';
 import { setStop } from '../../../scripts/lib/stop.js';
 import { writeReadyRecord } from '../../../scripts/survey/ready-record.js';
 import { eventPath, makeEvent, listEvents } from '../../../scripts/state/events.js';
+import { needsApprovalOfWork } from '../../../scripts/foreman/queue.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { readEnrolled } from '../../../scripts/state/signing.js';
 import { keepApprovedText } from '../../../scripts/state/approved-text.js';
@@ -39,7 +40,7 @@ import { g, makeBareRemote } from '../../helpers/git-fixture.js';
 import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 import { NULL_FILE } from '../../../scripts/lib/safe-git.js';
 import { holdFile } from '../../../scripts/crew/hold.js';
-import { withHome } from '../../helpers/homes.js';
+import { withHome, tempFolder } from '../../helpers/homes.js';
 import {
   P, T0, HASH, config, emptyViews, fakeClient, featureView, planText, project, recordInState, reportText, workView, worktree,
 } from '../../helpers/foreman.js';
@@ -2326,12 +2327,13 @@ const CHANGED = `${APPROVED}A line added after the approval.\n`;
 
 // Work not started, approved at APPROVED, whose document now holds CHANGED. The records are in the state clone as the
 // helper keeps them: the work event, and the director's signed approval of the approved text.
-async function driftedWork({ keep = true, started = false } = {}) {
+async function driftedWork({ keep = true, started = false, lane = 'small', approved: signed = true, doc: docPath, visible = false } = {}) {
   const checkout = await project();
   fs.mkdirSync(path.join(checkout, '.wheelhouse', 'work'), { recursive: true });
-  const rel = '.wheelhouse/work/add-export.md';
-  const file = path.join(checkout, rel);
+  const rel = docPath ?? '.wheelhouse/work/add-export.md';
+  const file = path.resolve(checkout, rel);
   const hash = briefHash(APPROVED);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, CHANGED);
   if (keep) keepApprovedText(P, APPROVED);
   try {
@@ -2340,15 +2342,15 @@ async function driftedWork({ keep = true, started = false } = {}) {
     if (!/already exists/.test(error.message)) throw error;
   }
   const views = emptyViews();
-  views.work['add-export'] = workView('add-export', { doc: { path: rel, hash } });
-  views.work['add-export'].approval.hash = hash;
+  views.work['add-export'] = workView('add-export', { lane, visible, approved: signed, doc: { path: rel, hash } });
+  if (signed) views.work['add-export'].approval.hash = hash;
   const put = (event) => {
     const at = path.join(stateDir(P), eventPath(event));
     fs.mkdirSync(path.dirname(at), { recursive: true });
     fs.writeFileSync(at, JSON.stringify(event));
   };
   put(makeEvent({ kind: 'work', data: views.work['add-export'].work.data, now: () => new Date(T0 - 100000) }));
-  put(makeEvent({ kind: 'action', data: { action: 'approve-work', work: 'add-export', lane: 'small', hash, shownFirst: false, question: 'as shown', label: 'Approve' }, now: () => new Date(T0 - 90000) }));
+  if (signed) put(makeEvent({ kind: 'action', data: { action: 'approve-work', work: 'add-export', lane, hash, shownFirst: false, question: 'as shown', label: 'Approve' }, now: () => new Date(T0 - 90000) }));
   if (started) views.features['add-export'] = featureView('add-export', { step: 'started', worktree: worktree(checkout, 'add-export'), branch: 'feature/add-export' });
   return { checkout, file, rel, hash, views };
 }
@@ -2425,4 +2427,47 @@ test('reapprove refuses work that has started and a change that is pending', () 
   refusedInOneLine(r2);
   assert.match(r2.err, /holds a change the director has not yet approved/);
   assert.deepEqual(fake2.writes, []);
+}));
+
+test('reapprove tells the truth about a lane that starts without an approval card, by the queue\'s own rule', () => withHome(async () => {
+  for (const [lane, visible] of [['small', false], ['quick', false], ['quick', true]]) {
+    const { views } = await driftedWork({ lane, visible });
+    const fake = fakeClient({ views });
+    const r = await act(['reapprove', 'add-export'], { client: fake.client });
+    assert.equal(r.code, 0, r.err);
+    const hash = briefHash(CHANGED).slice(0, 12);
+    const needs = needsApprovalOfWork(views.work['add-export'].work.data);
+    assert.equal(needs, !(lane === 'quick' && !visible));
+    assert.equal(r.out, needs
+      ? `Recorded the changed document of add-export (${hash}). It has no approval yet: the First Mate offers its approval card.\n`
+      : `Recorded the changed document of add-export (${hash}). Its lane starts without an approval card, so it starts from this text.\n`);
+  }
+}));
+
+test('restore and reapprove refuse work that needs approval and has none on record', () => withHome(async () => {
+  for (const command of ['restore', 'reapprove']) {
+    const { file, views } = await driftedWork({ approved: false });
+    const fake = fakeClient({ views });
+    const r = await act([command, 'add-export'], { client: fake.client });
+    refusedInOneLine(r);
+    assert.match(r.err, /add-export has no approval yet, so there is nothing to restore or re-approve: its approval card decides it\./);
+    assert.deepEqual(fake.writes, []);
+    assert.equal(fs.readFileSync(file, 'utf8'), CHANGED);
+  }
+  // A lane that starts without approval keeps the work event's own hash as the approved one.
+  const { views } = await driftedWork({ approved: false, lane: 'quick' });
+  const r = await act(['reapprove', 'add-export'], { client: fakeClient({ views }).client });
+  assert.equal(r.code, 0, r.err);
+}));
+
+test('restore refuses a document outside the main checkout', () => withHome(async () => {
+  for (const where of ['absolute', 'escaping']) {
+    const outside = path.join(tempFolder('wh-outside-'), 'doc.md');
+    const { checkout, file, views } = await driftedWork({ doc: where === 'absolute' ? outside : '../outside-doc.md' });
+    const r = await act(['restore', 'add-export'], { client: fakeClient({ views }).client });
+    refusedInOneLine(r);
+    assert.match(r.err, /outside the main checkout/, where);
+    assert.equal(fs.readFileSync(file, 'utf8'), CHANGED);
+    if (where === 'escaping') fs.rmSync(path.resolve(checkout, '../outside-doc.md'), { force: true });
+  }
 }));

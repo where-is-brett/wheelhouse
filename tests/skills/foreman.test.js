@@ -210,3 +210,7 @@ test('the skill says what to do when a document changed since its approval', () 
   assert.match(body, /\*\*A document changed since its approval:\*\* the wake prints the `act ask` command; run it as printed\. After the director answers, run the `act` command their option names\./);
   assert.ok(WAKE_JS.includes('Ask the director in this one command: '));
 });
+
+test('the skill makes the drift card the one exception to waiting or dropping at a start question', () => {
+  assert.match(body, /wait, or drop the work\. The exception is the card for a document changed since its approval, which the wake's command puts with its own options\./);
+});
