@@ -450,3 +450,31 @@ test('routine: removes a closed piece\'s page, and leaves an open piece\'s', () 
   assert.ok(fs.existsSync(pagePath(folder, 'w-open')), 'the open piece\'s page stays');
   assert.ok(!fs.existsSync(pagePath(folder, 'w-shut')), 'the closed piece\'s page is gone');
 }));
+
+const STUCK_AT = '2026-11-08T08:00:00.000Z';
+const stuckNote = (detail) => ev('stuck-note', 'w-tide-1', { id: `stuck-note:w-tide-1:${STUCK_AT}`, detail });
+
+test('a stuck note wakes the foreman, with no move made', async () => {
+  const e = stuckNote({ at: STUCK_AT, why: 'The meanwhile line keeps failing' });
+  const { act, calls } = fakeAct();
+  const out = await routineOf(state(), act).run({ events: [e] });
+  assert.equal(out.reasons.get(e.id), 'stuck');
+  assert.equal(out.handled.has(e.id), false);
+  assert.deepEqual(calls, []);
+});
+
+test('a stuck note whose time cannot be read is handled and wakes nobody', async () => {
+  const e = stuckNote({ why: 'x' });
+  const { act } = fakeAct();
+  const out = await routineOf(state(), act).run({ events: [e] });
+  assert.equal(out.handled.has(e.id), true);
+  assert.equal(out.reasons.size, 0);
+});
+
+test('a stuck note for a piece at the helm waits', () => {
+  const e = stuckNote({ at: STUCK_AT, why: 'x' });
+  const t = triage(state({ events: [e], helmed: ['w-tide-1'] }));
+  assert.ok(t.handled.includes(e.id));
+  assert.ok(t.defer.includes(e));
+  assert.deepEqual(t.wake, []);
+});

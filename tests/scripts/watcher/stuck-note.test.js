@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { diff, route } from '../../../scripts/watcher/core.js';
+import { diff, route, step } from '../../../scripts/watcher/core.js';
 import { observe } from '../../../scripts/watcher/sources.js';
 import { featurePaths } from '../../../scripts/feature/files.js';
 import { readProject, writeProject } from '../../../scripts/lib/projects.js';
@@ -57,3 +57,14 @@ test('observe reads the stuck lines of a session\'s questions file, and a passin
   assert.deepEqual(again.features['w-tide-1'].stuckNotes, [NOTE]);
   assert.deepEqual(diff(seen, again, { handled: new Set() }).filter((e) => e.type === 'stuck-note'), []);
 }));
+
+test('one note, one wake across passes', () => {
+  const next = observation({ features: { 'w-tide-1': feature({ stuckNotes: [NOTE] }) } });
+  const first = step({}, next);
+  assert.equal(first.events.filter((e) => e.type === 'stuck-note').length, 1);
+  const again = step(first.cursor, next);
+  assert.deepEqual(again.events.filter((e) => e.type === 'stuck-note'), []);
+  // A restart that lost `prev` but kept `seen` wakes nobody twice.
+  const restarted = step({ ...first.cursor, prev: null }, next);
+  assert.deepEqual(restarted.events.filter((e) => e.type === 'stuck-note'), []);
+});

@@ -248,3 +248,26 @@ export function withPutBack(views, ids, events = []) {
   }
   return { ...views, waiting };
 }
+
+// Work the director approves before it is built: the small and feature lanes, any work users would see, and
+// ready-made work carried on (`from`), whatever its lane (the foreman holds it the same way).
+export function needsApproval(data) {
+  return data.lane === 'small' || data.lane === 'feature' || data.visible === true || data.from !== undefined;
+}
+
+// The open works `cli.js cards` makes an approve-work card for, if none carries the line yet: each needs approval, names its
+// document by hash, has no approval on record, and has not begun building (no run, no feature record). `isOpen(views, id)` says
+// whether a work is open. Each is { id, data } with the id laid into the work's data. The board-context hook names the same
+// works, so the two agree on which works lack a card.
+export function approvalCandidates(views, isOpen) {
+  const out = [];
+  if (!isRecord(views) || !isRecord(views.work)) return out;
+  for (const [id, entry] of Object.entries(views.work)) {
+    const data = entry?.work?.data;
+    if (!isRecord(data) || !isOpen(views, id) || !needsApproval(data) || typeof data.doc?.hash !== 'string') continue;
+    if (entry.approval !== undefined && entry.approval !== null) continue;
+    if ((isRecord(views.runs) && Array.isArray(views.runs[id]) && views.runs[id].length > 0) || isRecord(views.features?.[id]?.data)) continue;
+    out.push({ id, data: { ...data, id } });
+  }
+  return out;
+}

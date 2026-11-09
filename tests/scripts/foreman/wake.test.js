@@ -634,3 +634,23 @@ test('a merged work whose status reads done, with the host agreeing, holds no fi
   fs.writeFileSync(featurePaths(wt).pr, `${JSON.stringify({ pr: 4, plan: 'p.md' })}\n`);
   assert.equal(await clash(host('merged')), false, 'not marked merged: it still clashes');
 }));
+
+test('wake read: a stuck note says the session is stuck and the exact act to run, with its message cut to one line of 200 characters', () => withHome(async () => {
+  const { checkout, views } = await scene();
+  const { client } = fakeClient({ views });
+  const at = '2026-11-08T08:00:00.000Z';
+  const long = `Line one\n${'x'.repeat(300)}`;
+  const events = [
+    ev('stuck-note', 'g', `stuck-note:g:${at}`, { at, why: 'The meanwhile line keeps failing' }),
+    ev('stuck-note', 'e', `stuck-note:e:${at}`, { at, why: long }),
+    ev('stuck-note', 'd', 'stuck-note:d:none', { why: 'x' }),
+  ];
+  const file = wakeFile(path.join(checkout, '.wheelhouse', 'foreman', 'wakes'), '2026-10-19T09-00-00-000Z', { events, digest: [], dropped: 0 });
+  const { lines } = await readWakeLines({ file, project: P, client, now });
+  const next = (w) => `Next: act stuck-note ${w} ${at}. It notes the message for the director, who is told once on their next message; ask nothing yourself`;
+  assert.ok(lines.includes(`- stuck-note g: its session says it is stuck: The meanwhile line keeps failing. ${next('g')}`));
+  // The whole phrase, not the message alone, is held to one line of 200 characters.
+  const cut = `its session says it is stuck: Line one ${'x'.repeat(300)}`.slice(0, 199);
+  assert.ok(lines.includes(`- stuck-note e: ${cut}…. ${next('e')}`), lines.join('\n'));
+  assert.ok(lines.includes('- stuck-note d: its session says it is stuck, but the time of the message can\'t be read. Nothing to do'));
+}));
