@@ -307,6 +307,17 @@ test('wait <step> waits while the step runs, and is over once it stops, within W
   assert.equal(slept.reduce((a, b) => a + b, 0), WAIT_MOST_MS);
 });
 
+// The session's start goes to the helper with every request, when the command can tell it.
+test('every request carries when the session started, when the command knows it', async () => {
+  const started = '2026-10-17T01:02:03.000Z';
+  const c = fakeClient({ plan: { ok: true, wait: 30000, why: 'x' } });
+  await run(['plan', '10'], { client: c, started });
+  assert.equal(c.calls[0][1].sessionStartedAt, started);
+  const none = fakeClient({ plan: { ok: true, wait: 30000, why: 'x' } });
+  await run(['plan', '10'], { client: none });
+  assert.equal('sessionStartedAt' in none.calls[0][1], false);
+});
+
 // Step 10's own checks done: its plan is the session's part (the trials), not a wait to sit through.
 test('wait 10 is over once step 10\'s own checks are done', async () => {
   let clock = T0.getTime();

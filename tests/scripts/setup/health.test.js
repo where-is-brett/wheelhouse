@@ -76,6 +76,29 @@ test('step 10 is filled by health.js: long, after Locked and the project\'s file
   assert.deepEqual(step.after, [7, 8]);
 });
 
+// A session that started after step 7 wrote the sandbox's limit already has it: the plan says the
+// trials run there, with no new session. One that started before it says to stop for a new session
+// (the loop seen in a trial: the new session was told again that it needed a new session).
+test('step 10\'s plan, trial open, says from the session\'s start whether it has the sandbox\'s limit', async () => {
+  await withProject(async ({ folder }) => {
+    const run = runWith(folder, { upTo: 9, checks: GREEN_CHECKS });
+    const planAt = (sessionStartedAt) => healthStep().plan({ folder, runId: run.id, sessionStartedAt });
+    const after = await planAt(new Date(T0.getTime() + 60 * 1000).toISOString());
+    assert.match(after.why, /already has the limit/);
+    assert.match(after.why, /here and now, with no new session/);
+    assert.doesNotMatch(after.why, /one new session/);
+    const same = await planAt(T0.toISOString());
+    assert.match(same.why, /already has the limit/);
+    const before = await planAt(new Date(T0.getTime() - 60 * 1000).toISOString());
+    assert.match(before.why, /starts only in a new session, so do not run the trials here/);
+    assert.match(before.why, /one new session on this folder/);
+    assert.doesNotMatch(before.why, /already has the limit/);
+    const unknown = await planAt(undefined);
+    assert.match(unknown.why, /not known, so the trials decide/);
+    assert.match(unknown.why, /run cli\.js health/);
+  }, { connected: true });
+});
+
 test('step 10\'s plan waits for the project, then lists the trial branch and its pull request, the same each time', async () => {
   await withProject(async ({ folder }) => {
     const step = healthStep();

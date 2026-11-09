@@ -481,7 +481,9 @@ export function setupRoutes({
   // Whether the request being answered came from a session in the Desktop app (the command says so, only then): a terminal
   // session has no app to show a window, or to be open.
   let sessionIsApp = false;
-  const ctxFor = (folder, n, runId, startedAt) => ({ folder, step: n, runId, startedAt, now, userHome, platform, desktop: sessionIsApp, answers: answersWithConsent(runId).answers });
+  // When the session asking started (the command says so, when it can tell): step 10's plan reads from it whether the session has the sandbox's limit.
+  let sessionStartedAt;
+  const ctxFor = (folder, n, runId, startedAt) => ({ folder, step: n, runId, startedAt, now, userHome, platform, desktop: sessionIsApp, sessionStartedAt, answers: answersWithConsent(runId).answers });
 
   // ---- The one card, Customise and changing an answer (design section 15.1) ----
 
@@ -916,8 +918,9 @@ export function setupRoutes({
   }
 
   const aware = (route) => (body) => {
-    const { desktop, ...rest } = body ?? {};
+    const { desktop, sessionStartedAt: started, ...rest } = body ?? {};
     sessionIsApp = desktop === true;
+    sessionStartedAt = typeof started === 'string' && Number.isFinite(Date.parse(started)) ? started : undefined;
     return route(rest);
   };
   const routes = Object.fromEntries(Object.entries({
