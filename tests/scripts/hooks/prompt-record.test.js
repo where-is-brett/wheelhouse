@@ -161,6 +161,22 @@ test('a kept card whose words don\'t name what its hidden line decides is never 
   });
 });
 
+test('a "Do it (Recommended)" click on a card asked with that label records the same action as "Do it"', async () => {
+  await withHome(async () => {
+    const line = runbookLine(1);
+    const answerWith = async (labels, answer) => {
+      const c = fake();
+      const shown = { question: line, header: 'Tidy', options: labels.map((label) => ({ label })), multiSelect: false };
+      await decide({ ...input({ [line]: answer }), tool_input: { questions: [shown], answers: { [line]: answer } } }, deps(c));
+      return c.calls.record.filter((r) => r.event.kind === 'action').map((r) => r.event.data);
+    };
+    const plain = await answerWith(['Do it', 'Not now'], 'Do it');
+    const suffixed = await answerWith(['Do it (Recommended)', 'Not now'], 'Do it (Recommended)');
+    assert.equal(plain.length, 1, 'the plain click records an action');
+    assert.deepEqual(suffixed, plain);
+  });
+});
+
 test('where two kept cards share the chat\'s words, only the one still waiting is matched, and with none waiting nothing is', () => {
   const older = APPROVE_7('1'.repeat(40));
   const newer = APPROVE_7(FULL);
