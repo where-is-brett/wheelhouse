@@ -46,8 +46,8 @@ import { answer, runAndExit, projectOf, beingSetUp, readTailEntries } from './ki
 import { stoppedQuestion } from './stopped-question.js';
 import { answeredWords, subjectOf, NOTE_LEAD } from '../cards/answered.js';
 import { SINCE_LEAD, SINCE_TAIL } from '../cards/panel-words.js';
-import { chatCopy, approveWorkLinePrefix } from '../state/card-lines.js';
-import { nextWork } from '../foreman/queue.js';
+import { chatCopy, approveWorkLine } from '../state/card-lines.js';
+import { isOpen } from '../desk/views.js';
 import { readOpen, clearOpen } from '../lib/session-files.js';
 import { featureSlug, madeFeatureSlug, SETUP_FIRST } from './session-start.js';
 import { keepRequest } from '../lib/kept-request.js';
@@ -61,7 +61,7 @@ import { sessionRole, recordRole, recordAside, asideByChoice } from '../lib/role
 import { refreshSeat, movedAway, releaseSeat } from '../lib/first-mate-seat.js';
 import { SEAT_MOVED_LINE } from '../lib/front-desk.js';
 import { existingCard } from '../cards/visit.js';
-import { controlFilesDue, gateAsksDue, holdsDue, premiumFailuresDue } from '../cards/build-loop.js';
+import { approvalCandidates, controlFilesDue, gateAsksDue, holdsDue, premiumFailuresDue } from '../cards/build-loop.js';
 import { questionProblem } from '../cards/compose.js';
 import { answerLine } from '../state/card-lines.js';
 import { helperClient } from '../host/helper-client.js';
@@ -210,23 +210,21 @@ export async function stuckLine(desk, since, at) {
 // The most works the approval line names.
 const ORPHAN_NAMED = 3;
 
-// The works the build queue holds for the director's approval that no card in the waiting view asks about, in queue order. A card
-// counts whether or not it was asked, and whichever its wording (with or without the show-first tail): the line starts the same.
-// A view it can't read gives none.
+// The works `cli.js cards` would make an approval card for (scripts/cards/build-loop.js: approvalCandidates) that no card in the
+// waiting view asks about, in the view's order. A card counts whether or not it was asked, but only for the work's current
+// document: its line is matched whole, in both wordings (with the show-first tail and plain), as `cards` matches it. A view it
+// can't read gives none.
 export function orphanedApprovals(views) {
   if (!isRecord(views) || !isRecord(views.work)) return [];
   const cards = Array.isArray(views.waiting) ? views.waiting.filter(isRecord) : [];
-  const lines = cards.map((c) => c.data?.line).filter((l) => typeof l === 'string');
-  let held;
+  const lines = new Set(cards.map((c) => c.data?.line).filter((l) => typeof l === 'string'));
   try {
-    held = nextWork({ work: views.work, features: isRecord(views.features) ? views.features : {}, reports: isRecord(views.reports) ? views.reports : {}, now: new Date() }).hold;
+    return approvalCandidates(views, isOpen)
+      .filter(({ id, data }) => !lines.has(approveWorkLine(id, data.lane, data.doc.hash, { shownFirst: true })) && !lines.has(approveWorkLine(id, data.lane, data.doc.hash)))
+      .map(({ id }) => id);
   } catch {
     return [];
   }
-  return (Array.isArray(held) ? held : [])
-    .filter((h) => isRecord(h) && h.why === 'unapproved' && typeof h.work === 'string')
-    .map((h) => h.work)
-    .filter((id) => !lines.some((l) => l.startsWith(approveWorkLinePrefix(id))));
 }
 
 // The line that tells the desk to make the approval cards those works lack. `cli.js cards` makes a missing approval card and hands it out.

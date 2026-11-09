@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { decide, orphanedApprovals, orphanLine } from '../../../scripts/hooks/board-context.js';
+import { approvalCandidates } from '../../../scripts/cards/build-loop.js';
+import { isOpen } from '../../../scripts/desk/views.js';
 import { approveWorkLine } from '../../../scripts/state/card-lines.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { markSeen } from '../../../scripts/briefing/seen.js';
@@ -23,9 +25,9 @@ const put = (file, value) => {
 const workView = (id, lane, { approved = false, visible, from, when = '2026-11-08T08:00:00.000Z' } = {}) => ({
   work: { key: id, id: `e-${id}`, at: when, data: { id, lane, doc: { hash: HASH }, ...(visible === undefined ? {} : { visible }), ...(from === undefined ? {} : { from }) } },
   since: when,
-  approved,
+  ...(approved ? { approval: { id: `e-ok-${id}`, at: when, data: { work: id, hash: HASH } } } : {}),
 });
-const card = (work, asked = null) => ({ id: `c-${work}`, asked, data: { kind: 'approve-work', line: approveWorkLine(work, 'small', HASH) } });
+const card = (work, asked = null, hash = HASH) => ({ id: `c-${work}`, asked, data: { kind: 'approve-work', line: approveWorkLine(work, 'small', hash) } });
 
 test('an unapproved small-lane work with no card is orphaned', () => {
   assert.deepEqual(orphanedApprovals({ work: { 'a-1': workView('a-1', 'small') }, features: {}, reports: {}, waiting: [] }), ['a-1']);
@@ -98,4 +100,44 @@ test('no line under All stop, or with the card waiting', async () => {
     const repo = register(home, { waiting: [card('a-1')] });
     assert.ok(!String(contextOf(await ask(repo, 'Hello')) ?? '').includes('no card'));
   });
+});
+
+test('a card for an older hash does not hide the work\'s new hash', () => {
+  const views = { work: { 'a-1': workView('a-1', 'small') }, features: {}, reports: {}, waiting: [card('a-1', null, 'b'.repeat(64))] };
+  assert.deepEqual(orphanedApprovals(views), ['a-1']);
+});
+
+test('a card in the show-first wording hides the work', () => {
+  const shown = { id: 'c-a-1', asked: null, data: { kind: 'approve-work', line: approveWorkLine('a-1', 'small', HASH, { shownFirst: true }) } };
+  assert.deepEqual(orphanedApprovals({ work: { 'a-1': workView('a-1', 'small') }, features: {}, reports: {}, waiting: [shown] }), []);
+});
+
+// Every work the hook names must be one `cli.js cards` would make a card for: the hook's list is a subset of approvalCandidates.
+test('the hook names only works approvalCandidates would make a card for', () => {
+  const requeued = workView('a-1', 'small', { when: '2026-11-08T09:00:00.000Z' });
+  const noHash = workView('a-2', 'small');
+  delete noHash.work.data.doc;
+  const views = {
+    work: {
+      'a-1': requeued,
+      'a-2': noHash,
+      'a-3': workView('a-3', 'feature'),
+      'a-4': workView('a-4', 'weird'),
+      'a-5': workView('a-5', 'small'),
+      'a-6': workView('a-6', 'small'),
+    },
+    // a-1: the old feature record closed before the new work event; a-3: a feature record at step started.
+    features: {
+      'a-1': { at: '2026-11-08T08:00:00.000Z', data: { step: 'closed' } },
+      'a-3': { at: '2026-11-08T10:00:00.000Z', data: { step: 'started' } },
+    },
+    reports: { 'a-1': { at: '2026-11-08T08:30:00.000Z', data: { outcome: 'merged' } } },
+    runs: { 'a-5': [{ id: 'r1' }] },
+    waiting: [],
+  };
+  const named = orphanedApprovals(views);
+  const made = approvalCandidates(views, isOpen).map((c) => c.id);
+  for (const id of named) assert.ok(made.includes(id), `${id} is named but cards would make nothing`);
+  assert.ok(!named.includes('a-2') && !named.includes('a-3') && !named.includes('a-4') && !named.includes('a-5'));
+  assert.ok(named.includes('a-6'));
 });

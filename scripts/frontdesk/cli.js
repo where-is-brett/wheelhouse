@@ -95,7 +95,7 @@ import { typedRepliesIn } from '../decisions/switch.js';
 import { confirmWords } from '../state/card-lines.js';
 import { joinersOf } from '../state/joiners.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
-import { controlFileInput, controlFilesDue, controlFilesNamed, gateAsksDue, gateInput, holdInput, holdsDue, premiumFailuresDue, stillWaits, withPutBack } from '../cards/build-loop.js';
+import { approvalCandidates, needsApproval, controlFileInput, controlFilesDue, controlFilesNamed, gateAsksDue, gateInput, holdInput, holdsDue, premiumFailuresDue, stillWaits, withPutBack } from '../cards/build-loop.js';
 import { COMPACT_NAME, COMPACT_WORK } from '../settings/compact-window-pr.js';
 import { SWITCH_NAME, SWITCH_WORK } from '../engine/switch.js';
 import { failedInput } from '../routing/premium.js';
@@ -512,14 +512,7 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
 // answered, outdated) carries its set line. Resolves with how many cards were recorded. One work's card that can't be made
 // or recorded goes into `problems` and leaves the others.
 async function approvalCards({ client, cwd, views, words, problems }) {
-  const candidates = [];
-  for (const [id, entry] of Object.entries(isPlain(views.work) ? views.work : {})) {
-    const data = entry?.work?.data;
-    if (!isPlain(data) || !isOpen(views, id) || !needsApproval(data) || typeof data.doc?.hash !== 'string') continue;
-    if (entry.approval !== undefined && entry.approval !== null) continue;
-    if ((isPlain(views.runs) && Array.isArray(views.runs[id]) && views.runs[id].length > 0) || isPlain(views.features?.[id]?.data)) continue;
-    candidates.push({ id, data: { ...data, id } });
-  }
+  const candidates = approvalCandidates(views, isOpen);
   if (candidates.length === 0) return 0;
   let events;
   try {
@@ -1137,11 +1130,7 @@ async function withHash(client, cwd, kind, input) {
   return { ...input, hash: documentHash(cwd, file, input.hash) };
 }
 
-// Work the director approves before it is built: the small and feature lanes, any work users would see, and
-// ready-made work carried on (`from`), whatever its lane (the foreman holds it the same way).
-export function needsApproval(data) {
-  return data.lane === 'small' || data.lane === 'feature' || data.visible === true || data.from !== undefined;
-}
+export { needsApproval };
 
 // The most a titled `what` may run to, so the whole card stays under the composer's limit.
 const TITLED_MOST = 200;
