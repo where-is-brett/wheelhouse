@@ -437,6 +437,8 @@ export function controlFileCard(record, views, words) {
 // Whether the pull request a gate-asks names still waits for its click, as the host says (see
 // stillWaits; `again` for a card asked again). A read that fails says it does: asking is the safe side.
 async function gateStillWaits(client, cwd, entry, again) {
+  // A CI push asked before its pull request exists has none to read: it waits for its click.
+  if (!Number.isInteger(entry.data.pr)) return true;
   try {
     const got = await client.prState({ cwd, number: entry.data.pr });
     return got?.ok === true ? stillWaits(entry, got.result, { again }) : true;
@@ -456,6 +458,7 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
   const again = new Set();
   for (const due of gateAsksDue(views, now)) {
     const { pr } = due.entry.data;
+    const named = Number.isInteger(pr) ? `pull request #${pr}` : `branch ${due.entry.data.branch}`;
     if (!(await gateStillWaits(client, cwd, due.entry, due.again !== undefined))) continue;
     if (due.again !== undefined) {
       again.add(due.again);
@@ -465,14 +468,14 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
     try {
       ({ card } = gateCard(due.entry, views, words));
     } catch (error) {
-      problems.push(`The click pull request #${pr} waits for couldn't be made a card: ${error.message}`);
+      problems.push(`The click ${named} waits for couldn't be made a card: ${error.message}`);
       continue;
     }
     try {
       await write(client, cwd, 'card', card);
       made += 1;
     } catch (error) {
-      problems.push(`The card for pull request #${pr} wasn't recorded: ${error.message}`);
+      problems.push(`The card for ${named} wasn't recorded: ${error.message}`);
     }
   }
   for (const hold of holdsDue(views)) {

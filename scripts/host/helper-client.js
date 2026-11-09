@@ -75,7 +75,6 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     foreman: {
       run: post('/foreman/run'), // { folder, script: 'act' | 'wake', argv } -> { ok, code, stdout, stderr }: the foreman's command, run by the helper outside the sandbox; `folder` must be the project's main checkout; answered under STOP
     },
-    ciPushLine: post('/ci-push/line'), // { project, branch, sha } -> { ok, line }
     // /push, /pull, /pr/open, /state/answer and /config take `cwd`, a full
     // path, in place of or beside `project`, and the helper places the project from it (scripts/feature/cli.js
     // runs where ~/.wheelhouse cannot be read); given both, the folder must be in the project named.

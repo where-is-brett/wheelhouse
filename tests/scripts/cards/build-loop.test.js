@@ -71,3 +71,16 @@ test('a hold\'s card names each kit with its first paths, or with how many files
   assert.ok(!short.what.includes('skills/a'));
   for (const input of [full, short]) assert.equal(composeCard(input).card.event, 'h1');
 });
+
+test('a CI push asked before its pull request exists is asked again by a newer record after a lapsed click', () => {
+  const asked = { work: 'x', ask: 'ci-push', sha: MERGE, branch: 'feature/x' };
+  const lapsed = ago(CLICK_MS + 5000);
+  // The first record, its card handed out, the click made and lapsed: nothing new on record, nothing due.
+  assert.deepEqual(due(entry(asked, { at: ago(CLICK_MS + 9000), askedAt: ago(CLICK_MS + 8000), clickedAt: lapsed })), []);
+  // The push found the click lapsed and recorded the ask again: a fresh card is due until it is handed out.
+  assert.deepEqual(due(entry(asked, { at: ago(1000), askedAt: ago(CLICK_MS + 8000), clickedAt: lapsed })), ['again c1']);
+  assert.deepEqual(due(entry(asked, { at: ago(1000), askedAt: null, clickedAt: lapsed })), ['again c1']);
+  assert.deepEqual(due(entry(asked, { at: ago(1000), askedAt: ago(500), clickedAt: lapsed })), []);
+  // A click still inside its window needs nothing.
+  assert.deepEqual(due(entry(asked, { at: ago(CLICK_MS), askedAt: ago(CLICK_MS), clickedAt: ago(1000) })), []);
+});
