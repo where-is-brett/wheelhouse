@@ -97,12 +97,27 @@ const BREAKS = /\s*[\r\n\v\f\u0085\u2028\u2029]+\s*/g;
 
 // Whether the form being run is in the Desktop app's session; every request says so, for the cards that differ there.
 let inApp = false;
+// When this session started, as an ISO time, or null when it can't be told.
+let sessionStart = null;
+
+// When the Claude Code process this command runs under started: the session's start. Its nearest Claude
+// Code ancestor is the session; null when none is found (Windows lists no processes today).
+export async function sessionStartedAt() {
+  try {
+    const { firstMatePid } = await import('../lib/first-mate-seat.js');
+    const { pidStart } = await firstMatePid();
+    const at = Date.parse(pidStart);
+    return Number.isFinite(at) ? new Date(at).toISOString() : null;
+  } catch {
+    return null;
+  }
+}
 
 // Asks one route and gives its answer when it is ok; otherwise the helper's own words.
 async function ask(route, body) {
   let got;
   try {
-    got = await route(inApp ? { ...body, desktop: true } : body);
+    got = await route({ ...body, ...(inApp ? { desktop: true } : {}), ...(sessionStart === null ? {} : { sessionStartedAt: sessionStart }) });
   } catch (error) {
     throw new CliError(`The host helper didn't answer: ${error instanceof Error ? error.message : 'unknown error'}`);
   }
@@ -132,9 +147,10 @@ async function plan(client, folder, step) {
 export async function main(argv, {
   cwd = process.cwd(), client, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
   now = () => Date.now(), sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
-  entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, env = process.env,
+  entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, env = process.env, started = null,
 } = {}) {
   inApp = inDesktopApp(entrypoint, env);
+  sessionStart = started;
   try {
     const [form, ...rest] = argv;
     const json = (value) => out(`${JSON.stringify(value, null, 2)}\n`);
@@ -230,5 +246,5 @@ export async function main(argv, {
 }
 
 if (startedAsScript(import.meta.url)) {
-  process.exitCode = await main(process.argv.slice(2));
+  process.exitCode = await main(process.argv.slice(2), { started: await sessionStartedAt() });
 }

@@ -503,6 +503,26 @@ async function readProtectionNow({ host, repo, run, realUsers = false, base, via
   return read.available === false ? 'not offered' : 'off';
 }
 
+// Whether this session already has the sandbox's network limit, which step 7 writes and which takes
+// effect only in a session started after it: true when the session started at or after step 7's
+// doneAt, false when it started before, null when the session's start is not known.
+export function limitHere(setupRun, sessionStartedAt) {
+  const started = Date.parse(sessionStartedAt);
+  const written = Date.parse(setupRun?.steps?.[7]?.doneAt);
+  if (!Number.isFinite(started) || !Number.isFinite(written)) return null;
+  return started >= written;
+}
+
+// Step 10's wait once its own checks are done: what the session does next, said by the engine so the
+// session never works out for itself whether it needs a new session.
+export function trialWhy(pr, here) {
+  const open = `step 10's own checks are done and its trial pull request, number ${pr}, is open`;
+  const trials = 'run cli.js health, then the trials it names in this session\'s Bash, then cli.js health with every line they printed, and show its Logbook';
+  if (here === true) return `${open}. This session started after the sandbox's limit was written, so it already has the limit: ${trials}, here and now, with no new session`;
+  if (here === false) return `${open}. The sandbox's limit was written in this session and starts only in a new session, so do not run the trials here: tell the director in one line that setup needs one new session on this folder, that it carries on by itself there and that their request is kept, then stop`;
+  return `${open}. Whether this session has the sandbox's limit is not known, so the trials decide: ${trials}; a Not yet line that says a new session is needed means tell the director in one line that setup needs one new session on this folder, that it carries on by itself there and that their request is kept, then stop`;
+}
+
 // Whether step 10's apply, the helper's half, has finished: done or not, the board decides that.
 const applied = (run) => typeof run?.steps?.[HEALTH_STEP]?.doneAt === 'string';
 
@@ -538,7 +558,7 @@ export function healthStep({
       const setupRun = readJournal().runs.find((r) => r?.id === ctx.runId) ?? null;
       const trial = openTrial(setupRun);
       if (trial !== null) {
-        const why = `step 10's own checks are done and its trial pull request, number ${trial.pr}, is open: run cli.js health, then the trials it names in this session's Bash, then cli.js health with every line they printed, and show its Logbook`;
+        const why = trialWhy(trial.pr, limitHere(setupRun, ctx.sessionStartedAt));
         return { wait: 30 * 1000, why: record.host === 'local' ? localWords(why) : why };
       }
       const local = record.host === 'local';
