@@ -214,7 +214,7 @@ export async function openDirectorWorld({ recordings = {}, says, lanes = ['quick
     tickUntil: (found, what) => untilTrue(async () => { await world.tick(); return found(); }, what),
     eventsOf: (kind) => listEvents(stateDir(PROJECT), { report: () => {} }).filter((e) => e.kind === kind),
     // A document the work names, in the folder's `.wheelhouse/work/`, which git leaves out.
-    writeDoc(id, text = `The brief for ${id}.\n`) {
+    writeDoc(id, text = `The brief for ${id}.\n\n\`\`\`wheelhouse-facts\n{"addsPage":false,"storesData":false,"parsesInput":false,"touchesMoreThanOneArea":false}\n\`\`\`\n`) {
       const file = path.join(world.folder, '.wheelhouse', 'work', `${id}.md`);
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, text);

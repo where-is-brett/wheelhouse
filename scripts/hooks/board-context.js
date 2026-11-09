@@ -46,7 +46,8 @@ import { answer, runAndExit, projectOf, beingSetUp, readTailEntries } from './ki
 import { stoppedQuestion } from './stopped-question.js';
 import { answeredWords, subjectOf, NOTE_LEAD } from '../cards/answered.js';
 import { SINCE_LEAD, SINCE_TAIL } from '../cards/panel-words.js';
-import { chatCopy } from '../state/card-lines.js';
+import { chatCopy, approveWorkLine } from '../state/card-lines.js';
+import { isOpen } from '../desk/views.js';
 import { readOpen, clearOpen } from '../lib/session-files.js';
 import { featureSlug, madeFeatureSlug, SETUP_FIRST } from './session-start.js';
 import { keepRequest } from '../lib/kept-request.js';
@@ -60,7 +61,7 @@ import { sessionRole, recordRole, recordAside, asideByChoice } from '../lib/role
 import { refreshSeat, movedAway, releaseSeat } from '../lib/first-mate-seat.js';
 import { SEAT_MOVED_LINE } from '../lib/front-desk.js';
 import { existingCard } from '../cards/visit.js';
-import { controlFilesDue, gateAsksDue, holdsDue, premiumFailuresDue } from '../cards/build-loop.js';
+import { approvalCandidates, controlFilesDue, gateAsksDue, holdsDue, premiumFailuresDue } from '../cards/build-loop.js';
 import { questionProblem } from '../cards/compose.js';
 import { answerLine } from '../state/card-lines.js';
 import { helperClient } from '../host/helper-client.js';
@@ -204,6 +205,41 @@ export async function stuckLine(desk, since, at) {
     .slice(0, STUCK_NOTES);
   if (notes.length === 0) return null;
   return notes.map((e) => `${e.work} is stuck: its session says "${e.words.replace(/\s+/g, ' ').trim()}" (sent ${e.at}).`).join(' ');
+}
+
+// The most works the approval line names.
+const ORPHAN_NAMED = 3;
+
+// The works `cli.js cards` would make an approval card for (scripts/cards/build-loop.js: approvalCandidates) that no card in the
+// waiting view asks about, in the view's order. A card counts whether or not it was asked, but only for the work's current
+// document: its line is matched whole, in both wordings (with the show-first tail and plain), as `cards` matches it. A view it
+// can't read gives none.
+export function orphanedApprovals(views) {
+  if (!isRecord(views) || !isRecord(views.work)) return [];
+  const cards = Array.isArray(views.waiting) ? views.waiting.filter(isRecord) : [];
+  const lines = new Set(cards.map((c) => c.data?.line).filter((l) => typeof l === 'string'));
+  try {
+    return approvalCandidates(views, isOpen)
+      .filter(({ id, data }) => !lines.has(approveWorkLine(id, data.lane, data.doc.hash, { shownFirst: true })) && !lines.has(approveWorkLine(id, data.lane, data.doc.hash)))
+      .map(({ id }) => id);
+  } catch {
+    return [];
+  }
+}
+
+// The line that tells the desk to make the approval cards those works lack. `cli.js cards` makes a missing approval card and hands it out.
+export function orphanLine(works) {
+  if (!Array.isArray(works) || works.length === 0) return null;
+  const named = works.slice(0, ORPHAN_NAMED).join(', ');
+  const rest = works.length - ORPHAN_NAMED;
+  return `Waiting for the director's approval with no card: ${named}${rest > 0 ? ` and ${rest} more` : ''}. Run \`cli.js cards\`: it makes each one's approval card. Ask the cards it hands out this turn.`;
+}
+
+async function orphanLineOf(desk) {
+  if (stopState().on) return null;
+  const got = await desk.read('waiting');
+  if (got?.ok !== true || !isRecord(got.data?.views)) return null;
+  return orphanLine(orphanedApprovals(got.data.views));
 }
 
 // The most helm notes one line names: the newest, since the oldest were recorded first.
@@ -440,11 +476,12 @@ export async function decide(input, deps = {}) {
     const decisionLine = await within(() => decisionLineOf(desk, typed), waitMs);
     const stuck = await within(() => stuckLine(desk, seen.promptAt, at), waitMs);
     const helmNote = await within(() => helmNoteLine(desk, seen.promptAt, at), waitMs);
+    const orphans = await within(() => orphanLineOf(desk), waitMs);
     // The daily digest the watcher made waits for the director's next message and is shown once, here (scripts/digest/due.js). A hook that
     // only reads leaves it for one that can take it away.
     // A session a script started is no director arriving, so it never uses the digest up.
     const digest = writes && !startedByScript(env) ? attempt(() => readDigest(project), null) : null;
-    const notes = [decisionLine, digest?.text ?? null, stuck, helmNote, ...((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
+    const notes = [decisionLine, orphans, digest?.text ?? null, stuck, helmNote, ...((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
     const reserve = (cards === null ? 0 : cards.length + 2) + notes.reduce((sum, line) => sum + line.length + 2, 0);
     // A survey not worked out in time is left to the briefing view, which takes the record's latest.
     const survey = want === 'briefing' ? (await within(() => surveyOf({ project, client, desk }), learnWaitMs)) ?? undefined : null;

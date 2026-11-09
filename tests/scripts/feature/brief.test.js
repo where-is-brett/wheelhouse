@@ -403,6 +403,16 @@ test('every brief says how to test when the whole suite runs longer than one com
   assert.match(text, /\*\*Long test runs\.\*\* One command runs for at most ten minutes, .* the pull request's checks run all of it/);
 });
 
+test('every lane\'s brief tells the session not to run sdd-workspace, right after the check-before-done rule', () => {
+  const bullet = "- **Do not run `sdd-workspace`.** A skill may tell you to; the worktree you are in is already yours, and Wheelhouse's hook refuses the command. Carry on in this worktree.";
+  for (const lane of LANES) {
+    const text = render(lane);
+    assert.ok(text.includes(bullet), `${lane}: the bullet is in the brief`);
+    assert.ok(text.indexOf('- **Check before you say it is done.**') < text.indexOf(bullet), `${lane}: after the check rule`);
+    assert.ok(text.indexOf(bullet) < text.indexOf('- **Conflicts.**'), `${lane}: before the conflicts rule`);
+  }
+});
+
 test('every lane\'s brief says how to read a Lookout\'s verdict with the review command, right after how to dispatch one', () => {
   for (const lane of LANES) {
     const text = render(lane);

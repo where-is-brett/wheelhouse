@@ -336,7 +336,10 @@ function otherPlugins(configDir) {
 
 // Host names that reach this computer itself. The sandbox's proxy reaches only the domains listed, by host and not by
 // port, so listing one of these would open every local port to agents, the engine room's among them (spec 12.2).
-// (cleanDomain already drops `::1`, which holds a colon.)
+// (cleanDomain already drops `::1`, which holds a colon.) Listening on a local port is a separate switch,
+// `localListening` in the project's configuration, off unless it is true (sandbox.network.allowLocalBinding): it lets
+// a test or a preview bind a port and opens no domain to the proxy, but Claude Code's setting is one boolean with no
+// list of ports, so it cannot be narrowed to the project's own and, while on, commands may reach other local ports too.
 const LOOPBACK = /^(\*\.)?localhost$|^127(\.\d{1,3}){3}$|^0\.0\.0\.0$/;
 
 // `release` is { ref } when the project follows a Wheelhouse release; without it the
@@ -371,7 +374,11 @@ export function projectSettings(config, { release = null, keepCompaction = false
         files: keychainShut ? [{ path: KEYCHAINS, mode: 'deny' }] : [],
         envVars: HOST_TOKENS.map((name) => ({ name, mode: 'deny' })),
       },
-      network: { allowedDomains: unique(['registry.npmjs.org', ...config.webDomains.map(cleanDomain).filter((d) => d !== null && !LOOPBACK.test(d))]) },
+      network: {
+        allowedDomains: unique(['registry.npmjs.org', ...config.webDomains.map(cleanDomain).filter((d) => d !== null && !LOOPBACK.test(d))]),
+        // Always written, false when off, so a project that has switched it off gets the false over an earlier true.
+        allowLocalBinding: config.localListening === true,
+      },
     },
     ...pluginSettings(release),
     ...(keepCompaction ? {} : { autoCompactWindow: COMPACT_WINDOW }),

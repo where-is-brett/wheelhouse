@@ -234,7 +234,13 @@ export const QUESTION_ID = 'q-[a-z0-9-]+-[0-9]+';
 // The line that asks the director to approve a piece of work as written. With
 // `shownFirst`, the director is to see it before it merges.
 export function approveWorkLine(work, lane, hash, { shownFirst = false } = {}) {
-  return `Approve ${work} (${lane} lane) as written, ${sha12(hash)}${shownFirst ? ', and show it to me before it merges' : ''}`;
+  return `${approveWorkLinePrefix(work)}${lane} lane) as written, ${sha12(hash)}${shownFirst ? ', and show it to me before it merges' : ''}`;
+}
+
+// The start every approval line for `work` shares, up to the lane: with the opening bracket, so one work's id never
+// matches another's it is the start of.
+export function approveWorkLinePrefix(work) {
+  return `Approve ${work} (`;
 }
 
 // The line on a question card; the click on an option answers the question.

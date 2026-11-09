@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   projectFilesStep, yoursAsk, NEGATED_LINE, starterConfig, foundAtHead, projectFilesChange, projectFilesCard, commitAuthor, COMMIT_MESSAGE, SETUP_FILES, COMPACT_HEADING, COMPACT_SECTION, EARLIER_COMPACT_HASHES, sectionHash, withCurrentSection,
-  EXCLUDE_LINE, WHEELHOUSE_LINE, putYoursIn, LEAVE_YOURS, leftYoursLine,
+  EXCLUDE_LINE, WHEELHOUSE_LINE, putYoursIn, LEAVE_YOURS, leftYoursLine, listeningNotice,
 } from '../../../scripts/setup/project-files.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { runApply, setupRoutes } from '../../../scripts/setup/engine.js';
@@ -82,7 +82,7 @@ const MID_MODEL = 'model-mid-1';
 const OWN_SETTINGS = { theme: 'dark', permissions: { allow: ['Bash(ls:*)'] }, enabledPlugins: { 'their-own@elsewhere': true } };
 const STEP_ONE = { 'wheelhouse@wheelhouse': true };
 
-async function seedBare(dir, branch = 'main', { stepOne = 'committed', gitignore = null } = {}) {
+async function seedBare(dir, branch = 'main', { stepOne = 'committed', gitignore = null, config = null } = {}) {
   fs.mkdirSync(path.dirname(dir), { recursive: true });
   const made = await realRun('git', ['init', '--bare', '-q', '-b', branch, dir]);
   if (made.code !== 0) throw new Error('git init --bare failed');
@@ -96,6 +96,10 @@ async function seedBare(dir, branch = 'main', { stepOne = 'committed', gitignore
       fs.mkdirSync(path.join(work, '.claude'));
       const committed = stepOne === 'committed' ? { ...OWN_SETTINGS, enabledPlugins: { ...STEP_ONE, ...OWN_SETTINGS.enabledPlugins } } : OWN_SETTINGS;
       fs.writeFileSync(path.join(work, '.claude', 'settings.json'), `${JSON.stringify(committed, null, 2)}\n`);
+    }
+    if (config !== null) {
+      fs.mkdirSync(path.join(work, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(work, '.claude', 'wheelhouse.json'), `${JSON.stringify(config, null, 2)}\n`);
     }
     // Committed as written, CRLF included, whatever this computer's git would do with line endings.
     await g(work, '-c', 'core.autocrlf=false', 'add', '-A');
@@ -129,14 +133,14 @@ function kits(root) {
 // installed, and `w.gitFails(args)` makes a git call fail.
 async function world({
   defaultBranch = 'main', branch = 'main', claudeMissing = false, release = REF, host = 'github', stepOne = 'committed', gitignore = COVERED, ownStatusLine = null, baseUrl = null,
-  engine = 'wheelhouse',
+  engine = 'wheelhouse', config = null,
 } = {}) {
   const w = { calls: [], protection: [], asked: [], gitCalls: [], duringInstall: () => {}, gitFails: () => false, api: [], layout: (o) => JSON.stringify(o), best: BEST_MODEL, mid: MID_MODEL, bestAsked: 0, aliases: [], env: {} };
   w.noGlobal = path.join(tempFolder('wh-git-'), 'empty-config');
   fs.writeFileSync(w.noGlobal, '');
   const hostRoot = tempFolder('wh-host-');
   w.bare = path.join(hostRoot, `${REPO}.git`);
-  await seedBare(w.bare, branch, { stepOne, gitignore });
+  await seedBare(w.bare, branch, { stepOne, gitignore, config });
   w.user = tempFolder('wh-user zoë ');
   w.folder = path.join(w.user, 'Projects', 'Shop');
   fs.mkdirSync(path.dirname(w.folder), { recursive: true });
@@ -1325,6 +1329,46 @@ test('only the director\'s Yes on step 4\'s Apple apps question opens the keycha
   assert.ok(JSON.stringify(settingsEdits(edits(null))).includes(KEYCHAINS));
 });
 
+test('only a localListening: true that is committed lets commands listen on a local port; a true in the working copy is set back', () => {
+  const folder = tempFolder('wh-listening-');
+  const answers = { '4.live-data': { label: LIVE_DATA.no, text: null } };
+  const local = { address: ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT, platform: 'darwin', claudeHome: tempFolder('wh-claude-') };
+  fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+  const write = (rel, value) => fs.writeFileSync(path.join(folder, '.claude', rel), `${JSON.stringify(value, null, 2)}\n`);
+  const plain = starterConfig({ answers, host: 'github' });
+  const edits = (listens) => projectFilesChange({ folder, config: starterConfig({ answers, host: 'github', listens }), release: null, local });
+  const keyEdit = (list, file, key) => list.find((c) => c.target.endsWith(file) && c.key?.join('.') === key);
+  assert.equal(Object.hasOwn(plain, 'localListening'), false, 'no setup question adds it');
+  assert.equal(starterConfig({ answers, listens: true }).localListening, true);
+  assert.equal(Object.hasOwn(starterConfig({ answers, listens: false }), 'localListening'), false);
+  assert.equal(Object.hasOwn(starterConfig({ answers, listens: 'true' }), 'localListening'), false);
+
+  // An agent wrote localListening: true into the working copy and the last commit has none: it is set back, and the settings stay shut.
+  write('wheelhouse.json', { ...plain, localListening: true });
+  write('settings.json', projectSettings(plain));
+  const planted = edits(false);
+  assert.equal(keyEdit(planted, 'wheelhouse.json', 'localListening')?.after, false);
+  assert.equal(keyEdit(planted, 'settings.json', 'sandbox.network.allowLocalBinding'), undefined, 'already false there');
+
+  // Committed true: the configuration keeps it and the settings open, over an earlier false.
+  write('wheelhouse.json', { ...plain, localListening: true });
+  write('settings.json', projectSettings(plain));
+  const opened = edits(true);
+  assert.equal(keyEdit(opened, 'wheelhouse.json', 'localListening'), undefined, 'kept as it is');
+  assert.equal(keyEdit(opened, 'settings.json', 'sandbox.network.allowLocalBinding')?.after, true);
+
+  // Committed true and the settings open, then the line removed in a reviewed pull request: the settings shut again.
+  write('wheelhouse.json', plain);
+  write('settings.json', projectSettings({ ...plain, localListening: true }));
+  assert.equal(keyEdit(edits(false), 'settings.json', 'sandbox.network.allowLocalBinding')?.after, false);
+});
+
+test('setup says what local listening allows when the project has it on, and says nothing when it is off', () => {
+  const on = listeningNotice({ localListening: true });
+  assert.equal(on, 'This project lets agents\' commands listen on local ports (`localListening` in .claude/wheelhouse.json). While it is on, those commands may also connect to anything else listening on this computer\'s local ports, such as the engine room on port 3090. To turn it off, remove the line in a reviewed pull request.');
+  for (const config of [{}, { localListening: false }, { localListening: 'true' }, null]) assert.equal(listeningNotice(config), null, JSON.stringify(config));
+});
+
 test('step 7 is setup\'s own step 7, after the host and the questions, run in its own process', () => {
   const step = STEPS.find((s) => s.n === 7);
   assert.equal(step.long, true);
@@ -2171,5 +2215,81 @@ test('a director with their own full sign-in is never asked for the one-off key'
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
     assert.equal(w.switched.env, undefined);
+  });
+});
+
+// ---- The listening statement reaches the director ----
+
+const CARD_TEXT = (args) => composeCard({ ...projectFilesCard(args), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
+const LISTENING_CHANGES = [
+  { kind: 'json-key', target: '/p/.claude/wheelhouse.json', key: ['a'], after: 1 },
+  { kind: 'process', target: `superpowers@${MARKETPLACE}` },
+];
+
+test('the plan card says what local listening allows when it is on, in the full card and in both short ones', () => {
+  const base = { changes: LISTENING_CHANGES, host: 'gitlab', branch: 'main', release: { ref: 'v1.4.0' } };
+  const full = CARD_TEXT({ ...base, listens: true });
+  assert.ok(full.includes(listeningNotice({ localListening: true }).replace(/ To turn it off.*$/, '').replace(/\.$/, '')), full);
+  assert.match(full, /engine room on port 3090/);
+  assert.doesNotMatch(CARD_TEXT(base), /local ports/);
+  assert.doesNotMatch(CARD_TEXT({ ...base, listens: false }), /local ports/);
+  // Too long for the full card: the short one keeps the clause.
+  const long = CARD_TEXT({ ...base, release: { ref: `v${'9'.repeat(900)}` }, listens: true });
+  assert.ok(long.length <= 1200);
+  assert.match(long, /local listening is on: sandboxed agents' commands may reach other local ports, the engine room's 3090 among them/);
+  // The joining form, full and short.
+  const mine = [
+    { kind: 'json-key', target: '/p/.claude/settings.local.json', key: ['b'], after: 2 },
+    { kind: 'process', target: `superpowers@${MARKETPLACE}` },
+  ];
+  const joinBase = { changes: mine, host: 'gitlab', branch: null, release: { ref: 'v1.4.0' }, joining: true };
+  assert.match(CARD_TEXT({ ...joinBase, listens: true }), /engine room on port 3090/);
+  assert.doesNotMatch(CARD_TEXT(joinBase), /local ports/);
+  const joinLong = CARD_TEXT({ ...joinBase, release: { ref: `v${'9'.repeat(900)}` }, listens: true });
+  assert.ok(joinLong.length <= 1200);
+  assert.match(joinLong, /local listening is on: sandboxed agents' commands may reach other local ports, the engine room's 3090 among them/);
+});
+
+test('a plan with a committed localListening: true puts the statement on its card, and apply leaves it as the last thing the director is told', async () => {
+  await withHome(async () => {
+    const w = await world({ config: { ...starterConfig({ answers: { '4.live-data': { label: LIVE_DATA.yes, text: null } }, host: 'github' }), localListening: true } });
+    const planned = await w.plan();
+    assert.match(planned.card.what, /engine room on port 3090/);
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(w.json('.claude/settings.json').sandbox.network.allowLocalBinding, true);
+    const said = done.run.steps[7].say.line;
+    assert.match(said, /local listening is on: sandboxed agents' commands may reach other local ports, the engine room's 3090 among them/i);
+    assert.match(said, /blocks direct pushes/);
+  });
+  await withHome(async () => {
+    const w = await world();
+    assert.doesNotMatch((await w.plan()).card.what, /local ports/);
+  });
+});
+
+test('a joining computer is told about local listening on its card and on its settling line', async () => {
+  await withHome(async () => {
+    const { w, plan } = await negatedWorld();
+    const config = w.json('.claude/wheelhouse.json');
+    fs.writeFileSync(path.join(w.folder, '.claude', 'wheelhouse.json'), `${JSON.stringify({ ...config, localListening: true }, null, 2)}\n`);
+    await g(w.folder, 'commit', '-q', '-am', 'Allow local listening');
+    fs.rmSync(excludeFile(w));
+    const planned = await plan();
+    assert.equal(planned.ok, true, JSON.stringify(planned));
+    assert.match(planned.card.question, /engine room on port 3090/);
+  });
+  await withHome(async () => {
+    const { w, plan } = await negatedWorld();
+    const config = w.json('.claude/wheelhouse.json');
+    fs.writeFileSync(path.join(w.folder, '.claude', 'wheelhouse.json'), `${JSON.stringify({ ...config, localListening: true }, null, 2)}\n`);
+    await g(w.folder, 'commit', '-q', '-am', 'Allow local listening');
+    const done = await w.apply((await plan()).changes);
+    assert.equal(done.ok, true, done.reason);
+    const again = startRun({ folder: w.folder, now: () => T0 });
+    addChanges(again.id, [{ id: newId('chg'), step: 3, kind: 'answer', target: 'step 3', before: null, after: { joined: REPO, found: true } }]);
+    const settled = await plan();
+    assert.equal(settled.done, true, JSON.stringify(settled));
+    assert.match(settled.said, /engine room on port 3090/, settled.said);
   });
 });

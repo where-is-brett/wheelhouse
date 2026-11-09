@@ -584,3 +584,28 @@ test('the helper socket is allowed by every spelling of its path, so a home unde
   assert.deepEqual(localSettings({ address }).sandbox.network.allowUnixSockets, [address, path.join(real, 'helper.sock')]);
   assert.deepEqual(localSettings({ address: '/nowhere/at/all/helper.sock' }).sandbox.network.allowUnixSockets, ['/nowhere/at/all/helper.sock']);
 });
+
+test('the sandbox lets no command listen on a local port unless the project says so, with the network list as it was', () => {
+  const s = projectSettings(config);
+  assert.equal(s.sandbox.network.allowLocalBinding, false, 'written explicitly, so a switch-off takes effect over an earlier true');
+  assert.deepEqual(s.sandbox.network.allowedDomains, ['registry.npmjs.org', 'example.com', 'docs.example.org']);
+  assert.equal(s.sandbox.network.allowUnixSockets, undefined);
+  for (const localListening of [false, 'true', 1, null, {}, []]) {
+    assert.equal(projectSettings({ ...config, localListening }).sandbox.network.allowLocalBinding, false, JSON.stringify(localListening));
+  }
+});
+
+test('localListening: true lets a command listen on a local port, and the network list is still as it was', () => {
+  const s = projectSettings({ ...config, localListening: true });
+  assert.equal(s.sandbox.network.allowLocalBinding, true);
+  assert.deepEqual(s.sandbox.network.allowedDomains, ['registry.npmjs.org', 'example.com', 'docs.example.org']);
+});
+
+test('merging with the switch off puts false over an earlier true, and with it on keeps the director\'s own domains', () => {
+  const had = { sandbox: { network: { allowedDomains: ['mine.com'], allowLocalBinding: true } } };
+  const off = mergeSettings(had, projectSettings(config));
+  assert.equal(off.sandbox.network.allowLocalBinding, false);
+  assert.deepEqual(off.sandbox.network.allowedDomains.slice(0, 2), ['mine.com', 'registry.npmjs.org']);
+  const on = mergeSettings({ sandbox: { network: { allowedDomains: ['mine.com'] } } }, projectSettings({ ...config, localListening: true }));
+  assert.equal(on.sandbox.network.allowLocalBinding, true);
+});
