@@ -133,9 +133,9 @@ import {
 } from './wake.js';
 import { questionProblem, shapeProblems } from '../cards/compose.js';
 import { needsApprovalOfWork } from './queue.js';
-import { approvedText, installText } from '../state/approved-text.js';
+import { approvedText, installText, keepApprovedText } from '../state/approved-text.js';
 import { amendBrief, renderBrief } from '../feature/brief.js';
-import { approvedDocument, placeApproved } from '../feature/approved.js';
+import { approvedDocument, insideCheckout, placeApproved } from '../feature/approved.js';
 import { report as reportCheck, STUCK_AFTER } from '../feature/cli.js';
 import {
   briefHash, ensureIgnored, featurePaths, parseBrief, parseReport, appendLine, questionTrail, QUESTIONS_READ_BYTES, readQuestions, readStatus, writeStatus,
@@ -1288,11 +1288,12 @@ function driftedDocument(ctx, views, work) {
 async function restore(ctx, work, rest) {
   if (rest.length > 0) refuse('restore takes only the work id');
   const { doc, approved } = driftedDocument(ctx, await ctx.views(), work);
-  const root = path.resolve(checkoutOf(ctx.project));
-  const inside = path.resolve(doc.file);
-  if (inside !== root && !inside.startsWith(root + path.sep)) refuse(`${work}'s document is outside the main checkout, so it was not restored`);
+  if (insideCheckout(checkoutOf(ctx.project), doc.file) === null) refuse(`${work}'s document is outside the main checkout, so it was not restored`);
   const text = approvedText(ctx.project, approved);
   if (text === null) refuse(`No copy of the approved text was kept for ${work} (${short(approved)}): re-approve the change, or ask the director`);
+  // The drifted text is kept under its own hash before it is overwritten, so it can be got back.
+  const drifted = readCapped(doc.file, 1024 * 1024);
+  if (drifted !== null) keepApprovedText(ctx.project, drifted);
   installText(doc.file, text);
   ctx.say(`Restored ${work}'s document to the text the director approved (${short(approved)}).`);
 }

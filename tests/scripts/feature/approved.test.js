@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { APPROVED_FILE, approvedDocument, approvedPath, placeApproved } from '../../../scripts/feature/approved.js';
+import { APPROVED_FILE, approvedDocument, insideCheckout, approvedPath, placeApproved } from '../../../scripts/feature/approved.js';
 import { briefHash, featurePaths } from '../../../scripts/feature/files.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -75,4 +75,12 @@ test('placing refuses a feature folder that is a link out of the worktree', { sk
   fs.symlinkSync(elsewhere, featurePaths(worktree).dir);
   assert.throws(() => placeApproved(worktree, DESIGN), /feature folder/);
   assert.deepEqual(fs.readdirSync(elsewhere), []);
+});
+
+test('insideCheckout gives the full path of a file in the checkout, and null for one outside it', () => {
+  const checkout = tempFolder('wh-inside-');
+  assert.equal(insideCheckout(checkout, '.wheelhouse/work/a.md'), path.join(path.resolve(checkout), '.wheelhouse', 'work', 'a.md'));
+  assert.equal(insideCheckout(checkout, '../elsewhere.md'), null);
+  assert.equal(insideCheckout(checkout, path.join(path.dirname(path.resolve(checkout)), 'elsewhere.md')), null);
+  assert.equal(insideCheckout(checkout, 'sub/../../out.md'), null);
 });

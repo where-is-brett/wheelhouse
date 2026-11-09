@@ -237,7 +237,7 @@ Every message is sorted before anything is done, by the intake's two checks and 
 | **Ruling** | | Goes into the rulebook verbatim, with an ID, date and scope. It is never paraphrased into a narrower form |
 | **A request that conflicts with a standing rule** | | Flagged, not quietly obeyed or refused |
 
-**A change to approved work** (the intake's route 3) is written where the director will read it. Before it asks the `amend` card, the front desk writes the changed document in place, in the one file the work names, and replaces its approval line with one that stays true after the click: "Changed since the director's approval; the change card decides it." The approved text stays in git at the hash the approval names, and the front desk's command works out the changed document's hash when it records the amendment, so the working copy never claims an approval no click gave (`docs/specs/2026-10-18-build-loop-design.md`, section 3). *Designer's call.*
+**A change to approved work** (the intake's route 3) is written where the director will read it. The approved document is locked: the front desk writes the changed text to its own file and records it as an amendment, and the director's click puts it in place, so the working copy never claims an approval no click gave (`docs/specs/2026-10-18-build-loop-design.md`, section 3). *Designer's call.*
 
 ### 5.5 Learning, in two layers
 

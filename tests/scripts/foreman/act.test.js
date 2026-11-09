@@ -31,7 +31,7 @@ import { eventPath, makeEvent, listEvents } from '../../../scripts/state/events.
 import { needsApprovalOfWork } from '../../../scripts/foreman/queue.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { readEnrolled } from '../../../scripts/state/signing.js';
-import { keepApprovedText } from '../../../scripts/state/approved-text.js';
+import { approvedText, keepApprovedText } from '../../../scripts/state/approved-text.js';
 import { HAND_DONE, HAND_GOAL } from '../../../scripts/lib/by-hand-done.js';
 import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
 import { sessionFile } from '../../../scripts/watcher/waker.js';
@@ -2396,6 +2396,7 @@ test('restore puts the approved text back, so the document hashes to the approva
   assert.equal(fs.readFileSync(file, 'utf8'), APPROVED);
   assert.equal(briefHash(fs.readFileSync(file, 'utf8')), hash);
   assert.equal(r.out, `Restored add-export's document to the text the director approved (${hash.slice(0, 12)}).\n`);
+  assert.equal(approvedText(P, briefHash(CHANGED)), CHANGED, 'the drifted text it overwrote is kept under its own hash');
   assert.deepEqual(fake.writes, []);
 }));
 
