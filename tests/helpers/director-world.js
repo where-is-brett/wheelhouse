@@ -108,6 +108,14 @@ export async function openDirectorWorld({ recordings = {}, says, lanes = ['quick
         tool_response: { questions: [question], answers: { [question.question]: label } },
       }, { client, now, dir: NO_MANAGED });
     },
+    // The picker showing `question` to the director who then dismisses it: the shown record is written, no answer is.
+    async show(question) {
+      await promptRecord({
+        session_id: session.id, cwd: world.folder, permission_mode: 'default', tool_name: 'AskUserQuestion', hook_event_name: 'PostToolUse',
+        tool_use_id: `toolu_${Math.random().toString(36).slice(2)}`,
+        tool_input: { questions: [question] }, tool_response: { questions: [question], answers: {} },
+      }, { client, now, dir: NO_MANAGED });
+    },
     // The director's typed reply in the front desk's chat, as the prompt record hook sees the prompt they send.
     async type(words) {
       await promptRecord(

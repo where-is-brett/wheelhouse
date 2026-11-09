@@ -93,7 +93,9 @@ test('a hand edit, work recorded by another hand first, then press and tie: only
   await git([...HAND, 'commit', '-q', '-am', 'A hand commit'], w.folder);
   const tip = await git(['rev-parse', 'HEAD'], w.folder);
   const card = await handCardRaised(w);
-  await record(w, 'carry-on-1', { lane: 'small', visible: true, title: 'Your edit to the README', from: { sha: tip, ref: 'refs/wheelhouse/from/carry-on-1', request: 1 } });
+  // The front desk shows the card `record work` printed for the other work; the director leaves it unanswered.
+  const other = await record(w, 'carry-on-1', { lane: 'small', visible: true, title: 'Your edit to the README', from: { sha: tip, ref: 'refs/wheelhouse/from/carry-on-1', request: 1 } });
+  await w.show(other.json.card.question);
   await w.tick();
   assert.equal(w.starts().length, 0, 'it does not start before the press');
   await w.watch();
