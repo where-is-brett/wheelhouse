@@ -12,6 +12,9 @@ import { FEATURE_DIR, parseBrief } from './files.js';
 import { APPROVED_PATH } from './approved.js';
 import { FIX_ROUNDS, REPORT_WORDS } from '../lib/build-loop.js';
 
+// The ref a feature's worktree is cut from and compared against: the remote's default branch, never the local one.
+export const BASE_REF = 'origin/HEAD';
+
 const TEMPLATES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'templates', 'brief');
 
 // A template's text with line endings evened to LF and its path comment taken off.
@@ -114,7 +117,7 @@ export function renderBrief({ fields, pluginRoot, windowsBuilds = null } = {}) {
   const { fields: f } = parseBrief(block);
 
   const cli = `node "${path.join(pluginRoot, 'scripts', 'feature', 'cli.js')}"`;
-  const shared = { cli, featureDir: FEATURE_DIR, fixRounds: String(FIX_ROUNDS), reportWords: String(REPORT_WORDS), work: f.work, lane: f.lane };
+  const shared = { baseRef: BASE_REF, cli, featureDir: FEATURE_DIR, fixRounds: String(FIX_ROUNDS), reportWords: String(REPORT_WORDS), work: f.work, lane: f.lane };
   const laneTemplate = template('lanes', `${f.lane}.md`);
   const laneText = fill(laneTemplate, shared).trim();
 
