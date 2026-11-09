@@ -33,3 +33,20 @@ export function severityCounts(text) {
   }
   return { total, blocking };
 }
+
+// The step a review's counts lead to, and the line that says it (the feature CLI's `review` prints it). `total` is every
+// finding and `blocking` those rated BLOCKER or HIGH, as `severityCounts` gives them; `round` is this review's number for
+// its task (the first review is round 1, and the fix that follows it is fix round 1); `fixRounds` is how many fix rounds a
+// task gets. No findings: clean. Findings but none blocking: only minors, deferred and the loop stopped, at any round.
+// Blocking findings: a fix round while rounds are left, and the director's question once they are not.
+export function reviewStep({ total, blocking, round, fixRounds }) {
+  if (total === 0) return { step: 'clean', line: "Clean: the Lookout found nothing. This task's review is done; go on." };
+  if (blocking === 0) {
+    return { step: 'minors', line: `Only minors left (${total}): defer each in the ledger as deferred, do not fix them, and stop this task's review loop. Go on.` };
+  }
+  const found = blocking === 1 ? '1 blocking finding' : `${blocking} blocking findings`;
+  if (round > fixRounds) {
+    return { step: 'limit', line: `Round limit reached: ${found} ${blocking === 1 ? 'is' : 'are'} still open after ${fixRounds} fix rounds. Put them to the director as one question with ask; do not fix them yourself.` };
+  }
+  return { step: 'fix', line: `${found} to fix: fix round ${round} of ${fixRounds}. Fix them, then have a Lookout review again.` };
+}

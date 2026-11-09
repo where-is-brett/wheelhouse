@@ -6,6 +6,7 @@
 //   wait-for says the piece has reached a step it can't undo and has nothing else to do until a decision is answered; only
 //            this sets the waiting phase and gives the slot up (asking leaves the piece building on its recommendation)
 //   log      adds one call you made on your own side of the decision line to the piece's log (decisions.jsonl)
+//   review   reads a Lookout's reply from a file, counts its findings and the task's rounds, and prints the next step: clean, only minors left, a fix round, or the round limit
 //   answer   prints the director's answer to a question, once it is signed; --applied says the change it asks for is pushed
 //            and --no-change that it asks for none, either of which lets the merge's hold on the decision go
 //   plan     records the plan just written, in plan.json, for the status and the foreman
@@ -24,6 +25,7 @@
 // (ruling R150): nothing here reads it. Each helper request carries the worktree's
 // folder as `cwd`, and the helper places the project from it; STOP, too, comes
 // from the helper.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { safeGit } from '../lib/safe-git.js';
@@ -35,7 +37,8 @@ import { questionProblem, shapeProblems } from '../cards/compose.js';
 import { featureWorktree } from '../hooks/feature-status.js';
 import { branchOf } from '../hooks/session-start.js';
 import { helperClient } from '../host/helper-client.js';
-import { REPORT_WORDS } from '../lib/build-loop.js';
+import { FIX_ROUNDS, REPORT_WORDS } from '../lib/build-loop.js';
+import { reviewStep, severityCounts } from '../lib/review-verdict.js';
 import { dataModelPaths, readConfig } from '../gate/guardrails.js';
 import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, isConfiguredBuildCommand } from '../protection/windows-builds.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -440,6 +443,46 @@ export function log({ worktree, argv, now }) {
   });
 }
 
+// --- review ---
+
+const TASK_NAME = /^[A-Za-z0-9._-]{1,40}$/;
+const REVIEW_BYTES = 1024 * 1024;
+
+// Reads a Lookout's reply from `--file` (a path inside the worktree), counts its findings by the severity each line
+// starts with, numbers this review among the task's (`--task`, or `branch` for the whole-branch review) in reviews.jsonl,
+// and returns the next step (reviewStep). The same reply given again for the task is the same round, not a new one. A reply
+// with no finding line counts as clean only when it carries `verdict: CLEAN`; anything else with no finding line is refused.
+export function review({ worktree, argv, now = () => new Date() }) {
+  const found = flagsOf(argv, ['task', 'file']);
+  const task = needed(found, 'task');
+  if (!TASK_NAME.test(task)) throw new CliError('--task is a short name of letters, digits, dots, dashes and underscores, such as 3 or branch');
+  const given = needed(found, 'file');
+  if (!planInside(worktree, given)) throw new CliError('--file is a path inside this worktree');
+  const text = readCapped(path.resolve(worktree, given), REVIEW_BYTES);
+  if (text === null) throw new CliError(`${given} can't be read: write the Lookout's reply there first`);
+  const { total, blocking } = severityCounts(text);
+  if (total === 0 && !/^\s*verdict:\s*CLEAN\s*$/m.test(text)) {
+    throw new CliError(`${given} doesn't read as a Lookout's reply: it lists no finding (a line starting - BLOCKER:, - HIGH:, - MEDIUM: or - LOW:) and doesn't say verdict: CLEAN. Paste the whole reply.`);
+  }
+  if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
+  const file = path.join(featurePaths(worktree).dir, 'reviews.jsonl');
+  const seen = (readCapped(file, QUESTIONS_BYTES) ?? '').split('\n').filter((l) => l !== '').map((l) => {
+    try { return JSON.parse(l); } catch { return null; }
+  }).filter((l) => l !== null && l.task === task);
+  const hash = crypto.createHash('sha256').update(text).digest('hex');
+  const last = seen.at(-1);
+  const repeat = last !== undefined && last.hash === hash;
+  const round = repeat ? last.round : seen.length + 1;
+  if (!repeat) {
+    try {
+      appendLine(file, { v: 1, task, round, total, blocking, hash, at: now().toISOString() });
+    } catch {
+      throw new CliError("reviews.jsonl can't be added to");
+    }
+  }
+  return { ...reviewStep({ total, blocking, round, fixRounds: FIX_ROUNDS }), round, total, blocking, repeat };
+}
+
 // --- report ---
 
 // The report's missing fields, said by name, when its first json block can be read at all.
@@ -816,7 +859,7 @@ export async function openPr({ client, worktree, argv, dataClient = client, data
 
 // --- The command line ---
 
-const COMMANDS = ['ask', 'stuck', 'wait-for', 'log', 'answer', 'plan', 'report', 'push', 'pull', 'open-pr'];
+const COMMANDS = ['ask', 'stuck', 'wait-for', 'log', 'review', 'answer', 'plan', 'report', 'push', 'pull', 'open-pr'];
 
 // Runs a command and resolves with the exit code. `out` and `err` take text to show.
 export async function main(argv, {
@@ -844,6 +887,8 @@ export async function main(argv, {
     } else if (command === 'log') {
       log({ worktree, argv: rest });
       out('Logged.\n');
+    } else if (command === 'review') {
+      out(`${review({ worktree, argv: rest }).line}\n`);
     } else if (command === 'answer') {
       const flag = rest.length === 2 ? rest[1] : null;
       const noChange = flag === '--no-change';
