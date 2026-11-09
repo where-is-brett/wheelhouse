@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   projectFilesStep, yoursAsk, NEGATED_LINE, starterConfig, foundAtHead, projectFilesChange, projectFilesCard, commitAuthor, COMMIT_MESSAGE, SETUP_FILES, COMPACT_HEADING, COMPACT_SECTION, EARLIER_COMPACT_HASHES, sectionHash, withCurrentSection,
-  EXCLUDE_LINE, WHEELHOUSE_LINE, putYoursIn, LEAVE_YOURS, leftYoursLine,
+  EXCLUDE_LINE, WHEELHOUSE_LINE, putYoursIn, LEAVE_YOURS, leftYoursLine, listeningNotice,
 } from '../../../scripts/setup/project-files.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { runApply, setupRoutes } from '../../../scripts/setup/engine.js';
@@ -1323,6 +1323,46 @@ test('only the director\'s Yes on step 4\'s Apple apps question opens the keycha
   write('wheelhouse.json', plain);
   write('settings.json', projectSettings({ ...plain, signsApps: true }));
   assert.ok(JSON.stringify(settingsEdits(edits(null))).includes(KEYCHAINS));
+});
+
+test('only a localListening: true that is committed lets commands listen on a local port; a true in the working copy is set back', () => {
+  const folder = tempFolder('wh-listening-');
+  const answers = { '4.live-data': { label: LIVE_DATA.no, text: null } };
+  const local = { address: ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT, platform: 'darwin', claudeHome: tempFolder('wh-claude-') };
+  fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+  const write = (rel, value) => fs.writeFileSync(path.join(folder, '.claude', rel), `${JSON.stringify(value, null, 2)}\n`);
+  const plain = starterConfig({ answers, host: 'github' });
+  const edits = (listens) => projectFilesChange({ folder, config: starterConfig({ answers, host: 'github', listens }), release: null, local });
+  const keyEdit = (list, file, key) => list.find((c) => c.target.endsWith(file) && c.key?.join('.') === key);
+  assert.equal(Object.hasOwn(plain, 'localListening'), false, 'no setup question adds it');
+  assert.equal(starterConfig({ answers, listens: true }).localListening, true);
+  assert.equal(Object.hasOwn(starterConfig({ answers, listens: false }), 'localListening'), false);
+  assert.equal(Object.hasOwn(starterConfig({ answers, listens: 'true' }), 'localListening'), false);
+
+  // An agent wrote localListening: true into the working copy and the last commit has none: it is set back, and the settings stay shut.
+  write('wheelhouse.json', { ...plain, localListening: true });
+  write('settings.json', projectSettings(plain));
+  const planted = edits(false);
+  assert.equal(keyEdit(planted, 'wheelhouse.json', 'localListening')?.after, false);
+  assert.equal(keyEdit(planted, 'settings.json', 'sandbox.network.allowLocalBinding'), undefined, 'already false there');
+
+  // Committed true: the configuration keeps it and the settings open, over an earlier false.
+  write('wheelhouse.json', { ...plain, localListening: true });
+  write('settings.json', projectSettings(plain));
+  const opened = edits(true);
+  assert.equal(keyEdit(opened, 'wheelhouse.json', 'localListening'), undefined, 'kept as it is');
+  assert.equal(keyEdit(opened, 'settings.json', 'sandbox.network.allowLocalBinding')?.after, true);
+
+  // Committed true and the settings open, then the line removed in a reviewed pull request: the settings shut again.
+  write('wheelhouse.json', plain);
+  write('settings.json', projectSettings({ ...plain, localListening: true }));
+  assert.equal(keyEdit(edits(false), 'settings.json', 'sandbox.network.allowLocalBinding')?.after, false);
+});
+
+test('setup says what local listening allows when the project has it on, and says nothing when it is off', () => {
+  const on = listeningNotice({ localListening: true });
+  assert.equal(on, 'This project lets agents\' commands listen on local ports (`localListening` in .claude/wheelhouse.json). While it is on, those commands may also connect to anything else listening on this computer\'s local ports, such as the engine room on port 3090. To turn it off, remove the line in a reviewed pull request.');
+  for (const config of [{}, { localListening: false }, { localListening: 'true' }, null]) assert.equal(listeningNotice(config), null, JSON.stringify(config));
 });
 
 test('step 7 is setup\'s own step 7, after the host and the questions, run in its own process', () => {

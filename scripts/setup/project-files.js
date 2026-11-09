@@ -296,12 +296,15 @@ function sameContent(rel, a, b) {
 // screenshot), and `liveData` from step 4's answer (ruling R31). Real users are the `phase` setting
 // in state, never a key here (ruling R38). The configuration is the same on GitHub and GitLab.
 // `everyRole` is one model for the whole routing table (see best-model.js's SOLE_MODEL_VARIABLE).
-export function starterConfig({ answers = {}, frontDesk = null, midSized = null, found = null, everyRole = null } = {}) {
+// `listens` is true only when the last commit's configuration holds `localListening: true` (see committedListening):
+// no question asks for it, and a true that is only in the working copy is not honoured.
+export function starterConfig({ answers = {}, frontDesk = null, midSized = null, found = null, everyRole = null, listens = false } = {}) {
   const live = answers['4.live-data'];
   if (live?.label !== LIVE_DATA.yes && live?.label !== LIVE_DATA.no) throw new Error('Step 4 has not been told whether the product holds live data yet');
   const starter = { ...readConfig(null), pages: [], liveData: live.label === LIVE_DATA.yes };
   // Only the director's Yes on step 4's question opens the keychain (check 73), never the working copy.
   if (answers['4.apple-apps']?.label === SIGNS_APPS.yes) starter.signsApps = true;
+  if (listens === true) starter.localListening = true;
   // What the finder found in the project as committed (spec 4.5).
   if (found) {
     starter.testCommand = found.testCommand;
@@ -323,6 +326,20 @@ export async function foundAtHead(git) {
   for (const file of ['package.json', 'Makefile'].filter((f) => files.includes(f))) texts[file] = await git.out(['show', `HEAD:${file}`]);
   return findCommand({ list: () => files, read: (file) => texts[file] ?? null });
 }
+
+// Whether the project's last commit holds `localListening: true`: the only place a true is honoured from.
+export async function committedListening(git) {
+  try {
+    return JSON.parse(((await headText(git, CONFIG)) ?? '').replace(/^\uFEFF/, '')).localListening === true;
+  } catch {
+    return false;
+  }
+}
+
+// What setup says when a project lets its agents' commands listen on local ports; null when it does not.
+export const listeningNotice = (config) => (config?.localListening === true
+  ? 'This project lets agents\' commands listen on local ports (`localListening` in .claude/wheelhouse.json). While it is on, those commands may also connect to anything else listening on this computer\'s local ports, such as the engine room on port 3090. To turn it off, remove the line in a reviewed pull request.'
+  : null);
 
 // The front desk's model a configuration pins (design section 8), or null when it pins none.
 export const frontDeskPin = (config) => (isModelName(config?.routing?.frontDesk) ? config.routing.frontDesk : null);
@@ -347,6 +364,9 @@ function configFrom(existing, starter) {
   // give is set back to false (a key edit can't remove a key), so an agent's write can't open the keychain.
   if (starter.signsApps === true) out.signsApps = true;
   else if (Object.hasOwn(out, 'signsApps')) out.signsApps = false;
+  // `localListening` is the same: a true that the last commit doesn't hold is set back to false.
+  if (starter.localListening === true) out.localListening = true;
+  else if (Object.hasOwn(out, 'localListening')) out.localListening = false;
   // A project set up before the front desk had a model gets the starter's pin; a pin it holds stays.
   if (frontDeskPin(out) === null && frontDeskPin(starter) !== null && isObject(out.routing)) out.routing = { ...out.routing, frontDesk: starter.routing.frontDesk };
   // The same for the classes' pins (design section 8): one the configuration holds stays, one it lacks is added.
@@ -1251,7 +1271,7 @@ export function projectFilesStep({
       // The lighter model for Lean and Lightest the same way: the pin held, else what its alias stands for, asked once.
       const held = midSizedPin(objectIn(CONFIG, readText(at(CONFIG))));
       const mid = held ?? await bestOnce(found.project, ctx.runId, sole ?? MID_SIZED_ALIAS, best);
-      const config = starterConfig({ answers: ctx.answers, frontDesk: pin, midSized: mid, found: await foundAtHead(git), everyRole: sole === null ? null : pin });
+      const config = starterConfig({ answers: ctx.answers, frontDesk: pin, midSized: mid, found: await foundAtHead(git), everyRole: sole === null ? null : pin, listens: await committedListening(git) });
       const home = claudeHome();
       const release = wheelhouseRelease({ folder, claudeHome: home });
       const targets = targetsFor({ folder, config, release, claudeHome: home });
@@ -1398,6 +1418,9 @@ export function projectFilesStep({
           }
         }
       }
+      // The project's settings are written: say plainly what local listening allows, when the project has it on.
+      const notice = listeningNotice(objectIn(CONFIG, readText(at(CONFIG))));
+      if (notice !== null && typeof ctx.say === 'function') ctx.say(notice);
       // What this apply wrote into the shared files and the .gitignore: the commit takes them only as they are.
       const wrote = Object.fromEntries([...SETUP_FILES, GITIGNORE, ...ENGINE_FILES].map((rel) => [rel, readText(at(rel))]));
       halt();
@@ -1431,7 +1454,8 @@ export function projectFilesStep({
           }
         } else {
           const now = objectIn(SETTINGS, readText(settingsFile)) ?? {};
-          const wanted = targetsFor({ folder, config: starterConfig({ answers: ctx.answers }), release: wheelhouseRelease({ folder, claudeHome: claudeHome() }), claudeHome: claudeHome() })[SETTINGS](readText(settingsFile));
+          const listens = await committedListening(await gitFor({ host, platform, folder, remoteUrl, base: record.connection?.baseUrl }));
+          const wanted = targetsFor({ folder, config: starterConfig({ answers: ctx.answers, listens }), release: wheelhouseRelease({ folder, claudeHome: claudeHome() }), claudeHome: claudeHome() })[SETTINGS](readText(settingsFile));
           for (const { key, value } of keyEdits(now, wanted)) ctx.applyJsonKey({ file: settingsFile, key, value, project });
         }
         say(`${listed(pins.map((c) => pinName(c.target)))} ${pins.length === 1 ? 'is' : 'are'} installed for this project`);
