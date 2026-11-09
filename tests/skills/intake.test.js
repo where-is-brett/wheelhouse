@@ -30,6 +30,8 @@ test('intake: route 3 sends a change to its own file through `record amendment` 
   assert.match(rule, /`cli\.js record amendment`/);
   assert.match(rule, /and `doc`: that file/);
   assert.ok(rule.includes('If the director drops a change, `record work` again with the same document; that lets the work go.'));
+  const pause = intake.split('\n').find((line) => line.includes('**A pause or a resume:**')) ?? '';
+  assert.match(pause, /and no `doc`/);
   assert.doesNotMatch(intake, /edit the approved document in place|replace its approval line|replace its approval/i);
   assert.match(intake, /`record work` refuses a feature design that has no such block\./);
 });

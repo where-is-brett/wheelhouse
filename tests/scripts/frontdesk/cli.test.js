@@ -1541,6 +1541,24 @@ test('record amendment refuses a second change while the first waits for its car
   });
 });
 
+test('record amendment takes a pause or a resume with no doc, keeps the approved hash, and holds nothing for a card', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('export-csv', designWithSlices('Export a report'));
+    const at = { cwd: dir };
+    const made = await run(helper, ['record', 'work'], JSON.stringify(FEATURE), at);
+    for (const change of ['Pause the work until the director says go', 'Resume the work.']) {
+      const out = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'export-csv', change, readBack: READ_BACK }), at);
+      assert.equal(out.code, 0, out.err);
+      const written = helper.held.filter((e) => e.kind === 'amendment').at(-1).data;
+      assert.equal(written.doc, undefined, 'no document is named');
+      assert.equal(written.hash, made.json.hash, 'the approved document\'s hash stays');
+    }
+    const views = buildViews(helper.held, readEnrolled());
+    assert.notEqual(views.work['export-csv'].changeWaiting, true, 'a pause holds no change for a card');
+  });
+});
+
 test('record works out the hash of the document a work or an amendment names, and prints it', async () => {
   await inHome(async () => {
     const dir = tempFolder('wh-frontdesk-docs-');

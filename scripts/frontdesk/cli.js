@@ -1162,6 +1162,14 @@ async function withHash(client, cwd, kind, input) {
     if (input.hash !== undefined) return input;
     throw new CliError(`The work ${input.work} names no document, so give the changed document's hash`);
   }
+  // A pause or a resume changes no text: it names no `doc` and keeps the approved document's hash, so no change
+  // is held for the director's card and nothing is put over the approved text. The foreman reads it by the
+  // change's first word (act.js), in the same way.
+  const firstWord = typeof input.change === 'string' ? input.change.trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z]/g, '') : '';
+  if (firstWord === 'pause' || firstWord === 'resume') {
+    const { doc: ignored, hash: ignoredHash, ...rest } = input;
+    return { ...rest, hash: views.work[input.work].work.data.doc.hash };
+  }
   // The approved document is locked: the changed text is written to its own file, named as `doc`.
   const locked = `The approved document ${file} is locked: changing it is an amendment. Write the changed text to its own file, such as ${file.replace(/(\.[^./]*)?$/, '.change$1')}, and give it as doc`;
   if (typeof input.doc !== 'string' || input.doc.trim() === '' || path.resolve(cwd, input.doc) === path.resolve(cwd, file)) throw new CliError(locked);
