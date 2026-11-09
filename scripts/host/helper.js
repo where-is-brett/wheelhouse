@@ -1348,9 +1348,9 @@ export async function startHelper({
 
   // Whether this computer's director clicked the card for pushing this branch in the last ten minutes: a signed
   // `action` event. It stands for this exact commit, and for any later one whose changes since the clicked commit
-  // are decision records only (everything under docs/decisions/), which no CI configuration reads. A git failure
+  // are decision records only (everything under docs/decisions/) that match none of the project's CI file patterns. A git failure
   // counts as no click.
-  async function ciClick(project, branch, sha, { mirror, run: git } = {}) {
+  async function ciClick(project, branch, sha, { mirror, run: git, config } = {}) {
     const enrolled = readEnrolled();
     const nowMs = now().getTime();
     const clicked = listEvents(stateDir(project), { report: () => {} }).filter((e) => {
@@ -1367,10 +1367,24 @@ export async function startHelper({
         if ((await git('git', [...NO_HOOKS, 'merge-base', '--is-ancestor', from, sha], { cwd: mirror, input: '' })).code !== 0) continue;
         const listed = await git('git', [...NO_HOOKS, 'diff', '--name-only', '-z', '--no-renames', from, sha], { cwd: mirror, input: '' });
         if (listed.code !== 0) continue;
-        if (listed.stdout.split('\0').filter((p) => p !== '').every((p) => p.startsWith('docs/decisions/'))) return true;
+        const later = listed.stdout.split('\0').filter((p) => p !== '');
+        if (later.every((p) => p.startsWith('docs/decisions/')) && !touchesCi(later, config)) return true;
       } catch { /* a git failure is no click */ }
     }
     return false;
+  }
+
+  // Whether a CI push gate-asks for this branch and commit waits for its click: one is on record and no
+  // verified click of that branch and commit came after it. A click that has lapsed leaves nothing to click,
+  // so the push that finds it lapsed asks again.
+  function ciCardWaits(project, branch, sha) {
+    const enrolled = readEnrolled();
+    const all = listEvents(stateDir(project), { report: () => {} });
+    const asks = all.filter((e) => e.kind === 'gate-asks' && e.data?.ask === 'ci-push' && e.data.branch === branch && e.data.sha === sha);
+    if (asks.length === 0) return false;
+    const last = Math.max(...asks.map((e) => Date.parse(e.at)));
+    return !all.some((e) => e.kind === 'action' && e.data?.action === 'ci-push' && e.data.branch === branch && e.data.sha === sha
+      && verify(e, enrolled) && Date.parse(e.at) > last);
   }
 
   // The as-is push (design section 4.1): git runs in the mirror with the director's own global and
@@ -1529,7 +1543,7 @@ export async function startHelper({
           return { ok: false, refused: PUSH_REFUSALS.unchecked };
         }
         if (touchesCi(changes.paths, changes.config)) {
-          if (!(await ciClick(project, branch, checked.sha, { mirror, run: keyed }))) return { ok: false, refused: PUSH_REFUSALS.ciFile, ciPush: { branch, sha: checked.sha } };
+          if (!(await ciClick(project, branch, checked.sha, { mirror, run: keyed, config: changes.config }))) return { ok: false, refused: PUSH_REFUSALS.ciFile, ciPush: { branch, sha: checked.sha } };
           pusher = directorGit();
         }
       }
@@ -1628,14 +1642,18 @@ export async function startHelper({
     if (answer.rejected === 'non-fast-forward') return { ...answer, refused: RELEASE_BRANCH.test(branch) ? EXISTING_BRANCH_LINE : PUSH_REFUSALS.movedOn };
     // A feature branch the rules turned back for its CI file raises its own card, for the commit that was checked.
     const work = FEATURE_BRANCH.exec(branch)?.[1];
-    if (!answer.ok && answer.refused === PUSH_REFUSALS.ciFile && answer.ciPush && work !== undefined) {
-      const { sha } = answer.ciPush;
-      try {
-        writePending(project, { branch, sha, at: now().toISOString() });
-        const asked = listEvents(stateDir(project), { report: () => {} }).some((e) => e.kind === 'gate-asks' && e.data?.ask === 'ci-push'
-          && e.data.branch === branch && e.data.sha === sha);
-        if (!asked) await engineWrite(project, 'gate-asks', { work, ask: 'ci-push', sha, branch });
-      } catch { /* the refusal stands without its card */ }
+    if (!answer.ok && answer.refused === PUSH_REFUSALS.ciFile && answer.ciPush) {
+      // `ciPush` tells the session a card went to the director, so it stays only when the card is on record.
+      let carded = false;
+      if (work !== undefined) {
+        const { sha } = answer.ciPush;
+        try {
+          writePending(project, { branch, sha, at: now().toISOString() });
+          if (!ciCardWaits(project, branch, sha)) await engineWrite(project, 'gate-asks', { work, ask: 'ci-push', sha, branch });
+          carded = ciCardWaits(project, branch, sha);
+        } catch { /* the refusal stands without its card */ }
+      }
+      if (!carded) return { ok: false, refused: answer.refused };
     }
     return answer.ok ? { ok: true } : answer;
   }

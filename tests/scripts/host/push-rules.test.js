@@ -259,9 +259,9 @@ function click(overrides = {}, ago = 1) {
   fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
 }
 
-async function viaHelper(s, fn, { env = {}, runWith = hostGuard } = {}) {
+async function viaHelper(s, fn, { env = {}, runWith = hostGuard, at = () => NOW } = {}) {
   await as(s.home, async () => {
-    const helper = await startHelper({ address: testAddress(s.home), adapterFor, envFor: async () => env, now: () => NOW, run: runWith });
+    const helper = await startHelper({ address: testAddress(s.home), adapterFor, envFor: async () => env, now: at, run: runWith });
     try { await fn(helperClient({ address: helper.address }), helper); } finally { await helper.close(); }
   });
 }
@@ -271,7 +271,8 @@ test('a branch that changes .github/workflows is refused, naming the rule', asyn
   const s = await scenario({ change: { '.github/workflows/ci.yml': 'on: push\n', 'src/a.js': 'a\n' } });
   try {
     await viaHelper(s, async (client) => {
-      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: 'feature' }), { ok: false, refused: PUSH_REFUSALS.ciFile, ciPush: { branch: 'feature', sha: s.sha } });
+      // A branch that is not a feature session's raises no card, so the refusal carries no `ciPush`.
+      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: 'feature' }), { ok: false, refused: PUSH_REFUSALS.ciFile });
     });
     assert.doesNotMatch(await heads(s), /feature/);
   } finally { s.cleanup(); }
@@ -463,6 +464,59 @@ test('a click stands over later commits that add only decision records, and not 
     await as(s.home, async () => {
       assert.deepEqual(ciAsks().map((e) => e.data.sha), [code]);
       assert.notEqual(code, docs);
+    });
+  } finally { s.cleanup(); }
+});
+
+test('a refusal that could not record its card names no card', async () => {
+  const s = await scenario({ branch: FEATURE, change: CI_CHANGE });
+  try {
+    await as(s.home, async () => {
+      // A folder where the pending file belongs: writing it fails.
+      const blocked = path.join(s.home, 'projects', 'o__p', 'ci-pending.json');
+      fs.mkdirSync(blocked, { recursive: true });
+      fs.writeFileSync(path.join(blocked, 'keep'), 'x\n');
+    });
+    await viaHelper(s, async (client) => {
+      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: FEATURE }), { ok: false, refused: PUSH_REFUSALS.ciFile });
+    });
+    await as(s.home, async () => { assert.deepEqual(ciAsks(), []); });
+  } finally { s.cleanup(); }
+});
+
+test('a click that has lapsed at the same commit leaves a new ask, and the push that follows a click goes through without one', async () => {
+  const s = await scenario({ branch: FEATURE, change: CI_CHANGE });
+  try {
+    // The first push, fifteen minutes ago, asks; the click came four minutes later, and has lapsed by now.
+    await viaHelper(s, async (client) => {
+      assert.equal((await client.push({ project: 'o__p', dir: s.work, refspec: FEATURE })).refused, PUSH_REFUSALS.ciFile);
+    }, { at: minutesAgo(15) });
+    await as(s.home, async () => { click({ sha: s.sha, branch: FEATURE }, 11); });
+    await viaHelper(s, async (client) => {
+      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: FEATURE }), { ok: false, refused: PUSH_REFUSALS.ciFile, ciPush: { branch: FEATURE, sha: s.sha } });
+      // Asked again, not again and again: the new record stands until a click follows it.
+      assert.equal((await client.push({ project: 'o__p', dir: s.work, refspec: FEATURE })).ciPush?.sha, s.sha);
+    });
+    await as(s.home, async () => { assert.equal(ciAsks().length, 2); });
+    assert.doesNotMatch(await heads(s), /ci-node-24/);
+    // A fresh click at the commit lets the push go, and writes no further ask.
+    await as(s.home, async () => { click({ sha: s.sha, branch: FEATURE }, 1); });
+    await viaHelper(s, async (client) => {
+      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: FEATURE }), { ok: true });
+    });
+    await as(s.home, async () => { assert.equal(ciAsks().length, 2); });
+    assert.match(await heads(s), /ci-node-24/);
+  } finally { s.cleanup(); }
+});
+
+test('a click does not carry over a decision record that a configured CI pattern matches', async () => {
+  const config = `${JSON.stringify({ v: 1, criticalAreas: [], ciFiles: ['docs/decisions/**'], mcpServers: [], webDomains: [] })}\n`;
+  const s = await scenario({ base: { '.claude/wheelhouse.json': config }, branch: FEATURE, change: CI_CHANGE });
+  try {
+    await as(s.home, async () => { click({ sha: s.sha, branch: FEATURE }); });
+    const docs = await commitMore(s, { 'docs/decisions/0001-x.md': 'x\n' }, 'Record');
+    await viaHelper(s, async (client) => {
+      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: FEATURE }), { ok: false, refused: PUSH_REFUSALS.ciFile, ciPush: { branch: FEATURE, sha: docs } });
     });
   } finally { s.cleanup(); }
 });

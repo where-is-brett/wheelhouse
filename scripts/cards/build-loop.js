@@ -28,7 +28,13 @@ function clicked(entry, nowMs) {
 // asked once, and put off by Not now.
 function lapsedPush(entry) {
   const { ask, from } = entry.data;
-  if (ask !== 'ci-push' || typeof from !== 'string' || typeof entry.clickedAt !== 'string') return false;
+  if (ask !== 'ci-push' || typeof entry.clickedAt !== 'string') return false;
+  // A CI push asked before its pull request exists names no head to check, but a record made after its click lapsed
+  // (the retry found the click gone) is a new ask: its card comes back once, until it is handed out again.
+  if (!Number.isInteger(entry.data.pr)) {
+    return Date.parse(entry.at) > Date.parse(entry.clickedAt) && (typeof entry.askedAt !== 'string' || Date.parse(entry.askedAt) <= Date.parse(entry.at));
+  }
+  if (typeof from !== 'string') return false;
   return typeof entry.askedAt !== 'string' || Date.parse(entry.askedAt) <= Date.parse(entry.clickedAt);
 }
 
