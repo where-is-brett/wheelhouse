@@ -167,9 +167,8 @@ test('with Wheelhouse, the scratch plugin holds the real front desk, its command
     const asked = await cli(['card'], JSON.stringify(input));
     assert.equal(asked.code, 0, asked.err);
     const written = context.evidence().written;
-    assert.deepEqual(written.map((e) => e.kind), ['work', 'card', 'asked']);
+    assert.deepEqual(written.map((e) => e.kind), ['work', 'card'], 'printing is not asking: the picker\'s shown record marks a card with a reply code');
     assert.equal(written[1].data.line, card.line);
-    assert.deepEqual(written[2].data.cards, [JSON.parse(asked.out).id]);
   } finally {
     await context.close();
     await project.cleanup();

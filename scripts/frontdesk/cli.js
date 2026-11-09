@@ -552,10 +552,10 @@ async function questionCards({ client, cwd, views, words, stop, problems }) {
 
 // This visit's cards: { questions, left }, and `problems` when something couldn't be done. An open
 // question from the build that no waiting card asks gets its answer card first, and the build
-// loop's records theirs (buildLoopCards). A card the picker can mark counts as asked once the picker has shown it (its `shown`
-// record), so a card printed and never shown comes back; a card it cannot mark, a card handed out for the chat (`onAsked`) and
-// one handed out under a live panel are recorded as asked when printed, so they aren't offered on every turn. A write the helper refuses is a problem,
-// not a failure: the cards waiting are still given. Under STOP the visit's one card is Lift STOP:
+// loop's records theirs (buildLoopCards). A card the picker can mark counts as asked once the picker has shown it (its
+// `shown` record), so a card printed and never shown comes back; a card it cannot mark, a card handed out for the chat
+// (`onAsked`) and one handed out under a live panel are recorded as asked when printed, so they aren't offered on every
+// turn. A write the helper refuses is a problem, not a failure: the cards waiting are still given. Under STOP the visit's one card is Lift STOP:
 // the helper writes nothing, so no card is made, and the cards waiting stay on the board, counted
 // in `left`, for the visit after STOP is lifted.
 export async function cards({ client, cwd, now, onAsked, session }) {
