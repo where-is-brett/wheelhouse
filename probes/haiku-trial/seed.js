@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { assertUnderTmp } from '../lib/scratch.js';
 import { makeStatement, SAMPLE } from './statement.js';
+import { readConfig } from '../../scripts/gate/guardrails.js';
 
 export const SEED_DIR = fileURLToPath(new URL('./seed/', import.meta.url));
 
@@ -25,6 +26,10 @@ export function makeTestProject({ dir, git: useGit = true, allowAnywhere = false
     settings.env.CLAUDE_CODE_SUBAGENT_MODEL = model;
     fs.writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`);
   }
+  // The project's committed configuration lets agents' commands listen on a local port, so the HTTP tests and the
+  // preview can run under the sandbox setup writes. Setup honours that only from the last commit, and refuses a file
+  // without the configuration's full shape, so the seed writes the empty configuration with the one key added.
+  fs.writeFileSync(path.join(dir, '.claude', 'wheelhouse.json'), `${JSON.stringify({ ...readConfig(null), localListening: true }, null, 2)}\n`);
   fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'data', 'sample-statement.csv'), makeStatement(SAMPLE).csv, 'utf8');
   if (!useGit) return { dir, sha: null };
