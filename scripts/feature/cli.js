@@ -67,6 +67,7 @@ export const STUCK_AFTER = 3;
 const FOLDER = "The feature's folder isn't a real folder inside this worktree";
 const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const QUESTIONS_BYTES = 8 * 1024 * 1024;
+const REVIEWS_BYTES = 1024 * 1024;
 const REPORT_BYTES = 1024 * 1024;
 const RULINGS_BYTES = 8 * 1024 * 1024;
 const REQUIRED_FIELDS = ['v', 'work', 'status', 'tests', 'assumptions', 'concerns', 'rulings'];
@@ -466,7 +467,7 @@ export function review({ worktree, argv, now = () => new Date() }) {
   }
   if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
   const file = path.join(featurePaths(worktree).dir, 'reviews.jsonl');
-  const seen = (readCapped(file, QUESTIONS_BYTES) ?? '').split('\n').filter((l) => l !== '').map((l) => {
+  const seen = (readCapped(file, REVIEWS_BYTES) ?? '').split('\n').filter((l) => l !== '').map((l) => {
     try { return JSON.parse(l); } catch { return null; }
   }).filter((l) => l !== null && l.task === task);
   const hash = crypto.createHash('sha256').update(text).digest('hex');

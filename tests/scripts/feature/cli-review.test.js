@@ -58,7 +58,7 @@ test('review numbers a task\'s rounds, and stops at the round limit', () => {
   const tree = feature();
   const steps = [1, 2, 3, 4].map((n) => ruled(tree, 'task-3', file(tree, `${n}.md`, `${reply('BLOCKER', 'MEDIUM', ...(n === 3 ? ['LOW'] : []))}\nround ${n}`)));
   assert.deepEqual(steps.map((s) => [s.round, s.step]), [[1, 'fix'], [2, 'fix'], [3, 'fix'], [4, 'limit']]);
-  assert.equal(steps[2].line, '1 blocking finding to fix: fix round 3 of 3. Fix them, then have a Lookout review again.');
+  assert.equal(steps[2].line, '1 blocking finding to fix: fix round 3 of 3. Fix them, defer the reply\'s MEDIUM and LOW findings as minors, then have a Lookout review again.');
   assert.equal(steps[3].line, 'Round limit reached: 1 blocking finding is still open after 3 fix rounds. Put them to the director as one question with ask; do not fix them yourself.');
   // Another task starts again at round 1.
   assert.equal(ruled(tree, 'task-4', file(tree, '5.md', reply('HIGH'))).round, 1);
@@ -111,7 +111,7 @@ test('the review command prints the line and exits 0 at each step', async () => 
   const err = [];
   const run = (argv) => main(argv, { cwd: tree, out: (t) => out.push(t), err: (t) => err.push(t), client: {} });
   assert.equal(await run(['review', '--task', 'a', '--file', file(tree, '1.md', reply('HIGH'))]), 0);
-  assert.equal(out.at(-1), '1 blocking finding to fix: fix round 1 of 3. Fix them, then have a Lookout review again.\n');
+  assert.equal(out.at(-1), '1 blocking finding to fix: fix round 1 of 3. Fix them, defer the reply\'s MEDIUM and LOW findings as minors, then have a Lookout review again.\n');
   assert.equal(await run(['review', '--task', 'a', '--file', file(tree, '2.md', reply('LOW'))]), 0);
   assert.match(out.at(-1), /^Only minors left \(1\)/);
   assert.equal(await run(['review', '--task', 'a']), 1);

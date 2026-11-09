@@ -48,5 +48,5 @@ export function reviewStep({ total, blocking, round, fixRounds }) {
   if (round > fixRounds) {
     return { step: 'limit', line: `Round limit reached: ${found} ${blocking === 1 ? 'is' : 'are'} still open after ${fixRounds} fix rounds. Put them to the director as one question with ask; do not fix them yourself.` };
   }
-  return { step: 'fix', line: `${found} to fix: fix round ${round} of ${fixRounds}. Fix them, then have a Lookout review again.` };
+  return { step: 'fix', line: `${found} to fix: fix round ${round} of ${fixRounds}. Fix them, defer the reply's MEDIUM and LOW findings as minors, then have a Lookout review again.` };
 }

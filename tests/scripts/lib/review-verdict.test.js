@@ -40,9 +40,9 @@ test('reviewStep says only minors left at any round, as soon as no finding is BL
 
 test('reviewStep asks for a fix round while the rounds last, and stops once they are used', () => {
   assert.deepEqual(reviewStep({ total: 3, blocking: 1, round: 1, fixRounds: 3 }), {
-    step: 'fix', line: '1 blocking finding to fix: fix round 1 of 3. Fix them, then have a Lookout review again.',
+    step: 'fix', line: '1 blocking finding to fix: fix round 1 of 3. Fix them, defer the reply\'s MEDIUM and LOW findings as minors, then have a Lookout review again.',
   });
-  assert.equal(reviewStep({ total: 3, blocking: 2, round: 3, fixRounds: 3 }).line, '2 blocking findings to fix: fix round 3 of 3. Fix them, then have a Lookout review again.');
+  assert.equal(reviewStep({ total: 3, blocking: 2, round: 3, fixRounds: 3 }).line, '2 blocking findings to fix: fix round 3 of 3. Fix them, defer the reply\'s MEDIUM and LOW findings as minors, then have a Lookout review again.');
   assert.deepEqual(reviewStep({ total: 3, blocking: 2, round: 4, fixRounds: 3 }), {
     step: 'limit', line: 'Round limit reached: 2 blocking findings are still open after 3 fix rounds. Put them to the director as one question with ask; do not fix them yourself.',
   });
