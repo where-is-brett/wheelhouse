@@ -259,6 +259,35 @@ test('a status line written into a design under .wheelhouse/work is refused', ()
   assert.equal(decide({ tool_name: 'Write', cwd: folder, session_id: 's1', tool_input: { file_path: outside, content: 'Status: draft' } }, opts), undefined);
 });
 
+test('a status bullet deep in a design is the product\'s content and is allowed, and one at the top is refused', () => {
+  const { folder } = project();
+  const file = path.join(folder, '.wheelhouse', 'work', 'x.md');
+  const opts = options(folder);
+  const deep = `# D\n\nIt does a thing.\n\n## Orders\n\n- Each order has a state.\n- Status: pending\n- Status: waiting\n`;
+  assert.equal(decide({ tool_name: 'Write', cwd: folder, session_id: 's1', tool_input: { file_path: file, content: deep } }, opts), undefined);
+  assert.ok(!statusLineIn(deep));
+  assert.ok(statusLineIn('---\ntitle: D\nstatus: draft\n---\n\nText\n'));
+  assert.ok(!statusLineIn('---\ntitle: D\n---\n\nText\n\n\n\n\n\nStatus: draft\n'));
+  // An edit is judged on the file as it would stand: a status bullet added deep in an existing file passes.
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, deep);
+  const edit = { tool_name: 'Edit', cwd: folder, session_id: 's1', tool_input: { file_path: file, old_string: '- Each order has a state.', new_string: '- Status: proposed' } };
+  assert.equal(decide(edit, opts), undefined);
+});
+
+test('a cp or mv into a folder is judged by the file it would create there', () => {
+  const { folder } = project();
+  const work = path.join(folder, '.wheelhouse', 'work');
+  fs.mkdirSync(work, { recursive: true });
+  const opts = options(folder, { locked: lockedAt(folder) });
+  assert.deepEqual(shellChanges('cp /tmp/w1.md .wheelhouse/work/', folder).paths.slice(-1), [path.join(work, 'w1.md')]);
+  assert.ok(denied(decide(bash2(folder, 'cp /tmp/w1.md .wheelhouse/work/'), opts)), 'cp into the folder over a locked document');
+  assert.ok(denied(decide(bash2(folder, 'mv new/w1.md .wheelhouse/work'), opts)), 'mv into the existing folder');
+  assert.ok(denied(decide(bash2(work, 'cp /tmp/w1.md .'), opts)), 'a command run inside the folder');
+  assert.equal(decide(bash2(folder, 'cp /tmp/w1.change.md .wheelhouse/work/'), opts), undefined, 'the change file is not locked');
+  assert.equal(decide(bash2(folder, 'cp /tmp/w3.md .wheelhouse/work/'), opts), undefined, 'a new brief');
+});
+
 test('statusLineIn reads status lines and not prose', () => {
   assert.ok(statusLineIn('Status: Awaiting review'));
   assert.ok(statusLineIn('- status: changed since the click'));
