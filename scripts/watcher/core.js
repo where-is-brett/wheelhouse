@@ -98,7 +98,7 @@ export const FOREMAN_TYPES = Object.freeze([
   'over-appetite', 'clash', 'stop', 'incident', 'brief-tampered', 'plan-ready', 'report', 'lift-incident', 'incident-fix',
   'approval', 'ci-push', 'stuck-note',
 ]);
-export const FEATURE_TYPES = Object.freeze(['ci-red', 'findings', 'conflict', 'review-needed', 'brief-changed', 'answer', 'build']);
+export const FEATURE_TYPES = Object.freeze(['ci-red', 'findings', 'conflict', 'review-needed', 'brief-changed', 'answer', 'build', 'ci-push-ready']);
 export const DIGEST_TYPES = Object.freeze(['task-done', 'review-passed', 'ci-running', 'pushed', 'progress', 'skipped-lines']);
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -244,10 +244,13 @@ function openPr(prs, holds) {
   return found ? [Number(found[0]), found[1]] : null;
 }
 
+const FEATURE_BRANCH = /^feature\/([a-z0-9][a-z0-9-]*)(?:\/[^/]+)?$/;
+
 // The events from state: every one in the observation is after the cursor; only signed clicks count
 // as actions. `prs` is the open pull requests as last known, for the clicks the merge gate waits on
 // (ruling R117): a signed approval of an open pull request's current head, and a CI push for an open
 // pull request's branch, each wake the foreman, which merges the ready pull request from the cursor.
+
 function stateEvents(next, prs, out) {
   for (const e of list(next.events)) {
     if (!isPlain(e) || typeof e.id !== 'string' || !isPlain(e.data)) continue;
@@ -291,6 +294,10 @@ function stateEvents(next, prs, out) {
           const [pr, p] = found;
           out.push({ type: 'ci-push', work: p.work, pr, id, detail: { pr, branch: data.branch, sha: data.sha } });
         }
+        // The feature session's push was held for the click, with or without a pull request, so its session is woken to push again.
+        const work = typeof data.branch === 'string' ? FEATURE_BRANCH.exec(data.branch)?.[1] : undefined;
+        // With a pull request open the foreman event holds the click's id (an id is kept once), so the wake takes a second one.
+        if (work !== undefined) out.push({ type: 'ci-push-ready', work, id: found !== null ? `${id}:ready` : id, detail: { branch: data.branch, sha: data.sha } });
       }
     }
   }
@@ -405,12 +412,12 @@ const reviewNeededText = (pr, head) => `Wheelhouse checked its record of signed 
 const reviewAgainText = (pr, head) => `Second notice. Wheelhouse checked its record of signed reviews again: ${head} still has no review, and the pull request cannot merge without one. `
   + `Dispatch wheelhouse:reviewer now with pr: ${pr} on ${head}. Do nothing else first, and don't stop until it has run.`;
 // What the session reads in a findings wake or a review-passed note, decided here from the signed review's counts: it
-// never judges severity itself. A review that holds the merge says to fix every finding; one that leaves only minors
+// never judges severity itself. A review that holds the merge says to fix its blocking findings and defer any minors; one that leaves only minors
 // says they are deferred.
 const short = (head) => String(head ?? '').slice(0, 7);
 export const findingsText = (head, p) => `Wheelhouse's signed review of ${short(head)} holds the merge (${p.findings ?? 'an unknown number of'} findings; `
   + `${Number.isInteger(p.blocking) ? `${p.blocking} of them BLOCKER or HIGH` : 'no severity count'}). `
-  + "Fix every finding it lists, push, then dispatch wheelhouse:reviewer on the new head. You can't defer these.";
+  + `Fix the ${Number.isInteger(p.blocking) ? `${p.blocking} BLOCKER or HIGH finding${p.blocking === 1 ? '' : 's'}` : 'BLOCKER and HIGH findings'} it lists and defer its MEDIUM and LOW ones as minors, push, then dispatch wheelhouse:reviewer on the new head. You can't defer the blocking ones.`;
 export const minorsText = (head) => `The review of ${short(head)} leaves only minor findings; they're deferred and the merge goes ahead; nothing to do.`;
 
 // The PRs this observation names, each against its last known state.

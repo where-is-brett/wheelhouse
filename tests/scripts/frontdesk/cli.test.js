@@ -487,6 +487,26 @@ test('a gate-asks for a CI push becomes a CI push card for its branch and the up
   });
 });
 
+test('a CI push asked before its pull request exists becomes a card without the host being asked about a pull request', async () => {
+  await inHome(async () => {
+    const ask = makeEvent({ kind: 'gate-asks', data: { work: 'export-csv', ask: 'ci-push', sha: MERGE, branch: BRANCH }, now: () => T(5) });
+    const helper = fakeHelper({ events: [EXPORT, ask], pr: () => { throw new Error('the host was asked'); } });
+    const first = await run(helper, ['cards']);
+    assert.equal(first.code, 0, first.err);
+    assert.equal(first.json.problems, undefined);
+    const [card, ...more] = cardWrites(helper);
+    assert.equal(more.length, 0);
+    assert.equal(card.kind, 'ci-push');
+    assert.equal(card.line, ciPushLine(BRANCH, MERGE));
+    assert.equal(first.json.questions.length, 1);
+    assert.ok(first.json.inReply[0].includes(ciPushLine(BRANCH, MERGE)), JSON.stringify(first.json));
+    assert.equal(helper.calls.filter(([name]) => name === 'prState').length, 0);
+    const second = await run(helper, ['cards']);
+    assert.equal(second.json.problems, undefined);
+    assert.equal(cardWrites(helper).length, 1);
+  });
+});
+
 test('no gate card when the click is on record, the pull request has moved on, or the work is finished', async () => {
   await inHome(async () => {
     const question = 'as shown';

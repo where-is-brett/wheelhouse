@@ -31,6 +31,7 @@ import { FOREMAN_TYPES } from './core.js';
 import { helmHeld, listHolds } from '../crew/hold.js';
 import { handBack } from '../crew/helm.js';
 import { makeStartTimes, pidAlive } from './waker.js';
+import { sameStart } from '../lib/start-time.js';
 import { recordIncident } from './reliability.js';
 import {
   FIVE_HOUR_TIGHT, ForemanError, NO_PLAN, PLANS_WHILE_HELD, builderCapOf, checkoutOf, clashFor, currentFeatureOf, haltFor, haltOf, laneOf, loadConfig,
@@ -79,7 +80,7 @@ export async function handBackClosed(project, {
       }
       if (typeof hold.startTime !== 'string') continue;
       const started = await startTimeOf(hold.pid);
-      if (typeof started === 'string' && started !== hold.startTime) closed.push(work);
+      if (typeof started === 'string' && !sameStart(started, hold.startTime)) closed.push(work);
     }
     if (closed.length === 0) return [];
     let config = null;

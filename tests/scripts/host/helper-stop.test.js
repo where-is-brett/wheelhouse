@@ -134,7 +134,6 @@ test('under STOP the helper refuses every write route and answers reads, sync, c
           stateWrite: client.state.write({ ...base, kind: 'note', data: {} }),
           lockTake: client.lock.take(base),
           lockTouch: client.lock.touch(base),
-          ciPushLine: client.ciPushLine({ ...base, branch: 'feature', sha: HEAD }),
           updateBranch: client.updateBranch({ ...base, number: 7 }),
         };
         for (const [name, pending] of Object.entries(writes)) {

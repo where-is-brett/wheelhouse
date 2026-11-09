@@ -29,20 +29,23 @@ const recorded = (over = {}) => ({
 // A stand-in for run that answers by program name and records what it was asked.
 function fakeRun(answers) {
   const calls = [];
-  const run = async (file, args) => {
+  const options = [];
+  const run = async (file, args, opts) => {
     calls.push([file, ...args]);
+    options.push(opts);
     const answer = answers[file];
     if (answer instanceof Error) throw answer;
     return typeof answer === 'function' ? answer(args) : answer;
   };
-  return { run, calls };
+  return { run, calls, options };
 }
 // ps answers the row (user, start, command) and, asked for comm, the executable's own path.
 const ps = (user, command, lstart = LSTART, comm = command.split(' ')[0]) => (args) => (args.includes('comm=') ? { code: 0, stdout: `${comm}\n` } : { code: 0, stdout: `${user} ${lstart} ${command}\n` });
 const raw = (stdout) => () => ({ code: 0, stdout });
 const mac = (answers, extra = {}) => findByAddress({ address: SOCK, platform: 'darwin', user: 'dir', version: '0.2.6', cacheRoot: CACHE, ...fakeRun(answers), ...extra });
 
-test('startSeconds reads the two shapes and nothing else', () => {
+test('startSeconds reads the shapes and nothing else', () => {
+  assert.equal(startSeconds('Tue 4 Nov 10:00:01 2026'), startSeconds(LSTART), 'day first, as ps prints it under en_AU');
   assert.equal(startSeconds('2026-11-04T10:00:01.900Z'), startSeconds('2026-11-04T10:00:01Z'));
   assert.equal(startSeconds(LSTART), startSeconds('Tue Nov 4 10:00:01 2026'));
   assert.notEqual(startSeconds(LSTART), startSeconds('Tue Nov  4 10:00:02 2026'));
@@ -110,6 +113,19 @@ test('old helper: the one process at the address, ours, in the cache, at the rep
   assert.deepEqual(out, { pid: 4242, startTime: LSTART, command: COMMAND });
   assert.deepEqual(calls[0], ['lsof', '-t', '--', SOCK]);
   assert.deepEqual(calls[1], ['ps', '-o', 'user=,lstart=,command=', '-p', '4242']);
+});
+
+test('old helper: ps is asked in the C locale, and a day-first row (an en_AU Mac) is still read', async () => {
+  const dayFirst = 'Tue 4 Nov 10:00:01 2026';
+  const { run, calls, options } = fakeRun({ lsof: { code: 0, stdout: '4242\n' }, ps: ps('dir', COMMAND, dayFirst) });
+  const out = await findByAddress({ address: SOCK, platform: 'darwin', user: 'dir', version: '0.2.6', cacheRoot: CACHE, run });
+  assert.deepEqual(out, { pid: 4242, startTime: dayFirst, command: COMMAND });
+  assert.equal(options[calls.findIndex((c) => c.includes('user=,lstart=,command='))]?.env?.LC_ALL, 'C');
+});
+
+test('old helper: a record written day first proves against the same process read month first', async () => {
+  const proof = await proveRecorded(recorded({ read: () => record({ startTime: 'Tue  4 Nov 10:00:01 2026' }) }));
+  assert.equal(proof.pid, 4242);
 });
 
 test("old helper: another user's process stops nothing", async () => {

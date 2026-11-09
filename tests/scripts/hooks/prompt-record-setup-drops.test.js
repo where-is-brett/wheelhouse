@@ -12,7 +12,9 @@ import crypto from 'node:crypto';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { startRun } from '../../../scripts/setup/journal.js';
-import { noteAsked } from '../../../scripts/setup/clicks.js';
+import { noteAsked, noteShown, clicksDir } from '../../../scripts/setup/clicks.js';
+import { composeCard } from '../../../scripts/cards/compose.js';
+import { setLineOf } from '../../../scripts/state/card-lines.js';
 
 const NOW = new Date('2026-11-03T00:00:00.000Z');
 const PLAIN = 'A stock tool for shift leads (SLs) in example distribution centres.';
@@ -224,5 +226,85 @@ test('an answer to the description under one phase\'s id takes back the records 
     await clickAt(click(folder), at(91 * 1000));
     assert.deepEqual(phasesKept(home), ['launched']);
     assert.equal(recordsKept(home).filter((b) => b.kind === 'glossary').length, 1);
+  });
+});
+
+// A card with a different first option label and/or descriptions, as the session writes it to the question tool.
+const clickOn = (cwd, shownCard, label) => ({
+  cwd, hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
+  tool_input: { questions: [shownCard], answers: { [shownCard.question]: label } },
+  tool_response: { questions: [shownCard], answers: { [shownCard.question]: label } },
+});
+
+test('a "(Recommended)" label on a setup question\'s button is kept as the card\'s own label', async () => {
+  await inSetup(async ({ home, folder }) => {
+    const label = `${README} (Recommended)`;
+    const card = { ...shown, options: [{ ...CARD.options[0], label }, CARD.options[1]] };
+    await run(clickOn(folder, card, label));
+    assert.deepEqual(keptLabels(home), [README]);
+  });
+});
+
+test('a setup question with a trimmed description is dropped, and the log names the option', async () => {
+  await inSetup(async ({ home, folder }) => {
+    const card = { ...shown, options: [{ ...CARD.options[0], description: 'Recommended: a trimmed one.' }, CARD.options[1]] };
+    await run(clickOn(folder, card, README));
+    assert.deepEqual(keptLabels(home), []);
+    assert.match(dropped(home), /option 1's description is not worded as printed/);
+  });
+});
+
+const PLAN = (step, hash) => composeCard({
+  kind: 'setup', level: 3, what: `Setup step ${step}, Three questions: nothing changes on this computer.`, why: 'Setup asks first.',
+  options: [{ label: 'Go ahead', says: 'Setup records it.' }], recommend: 'Go ahead', because: 'nothing changes', meanwhile: 'Setup waits.', target: { step, hash },
+});
+const HASH = 'ab'.repeat(32);
+const planShown = (c) => ({ question: c.question.question, header: c.question.header, options: c.question.options.map(({ label, description }) => ({ label, description })), multiSelect: false });
+const keptClickFiles = () => {
+  try {
+    return fs.readdirSync(clicksDir());
+  } catch {
+    return [];
+  }
+};
+
+test('a setup plan card reworded around its set line keeps no click, and the log names the question', async () => {
+  await inSetup(async ({ home, folder, run: started }) => {
+    const plan = PLAN(4, HASH);
+    noteShown({ runId: started.id, folder, step: 4, hash: HASH, card: plan.question, now: () => NOW });
+    const asked = planShown(plan);
+    const reworded = { ...asked, question: `Go ahead with step 4?\n${setLineOf(asked.question)}` };
+    await run(clickOn(folder, reworded, 'Go ahead'));
+    assert.deepEqual(keptClickFiles(), []);
+    assert.match(dropped(home), /its question is not worded as printed/);
+  });
+});
+
+test('a setup plan card with "Go ahead (Recommended)" and its own words keeps its click', async () => {
+  await inSetup(async ({ home, folder, run: started }) => {
+    const plan = PLAN(4, HASH);
+    noteShown({ runId: started.id, folder, step: 4, hash: HASH, card: plan.question, now: () => NOW });
+    const asked = planShown(plan);
+    const suffixed = { ...asked, options: asked.options.map((o, i) => (i === 0 ? { ...o, label: 'Go ahead (Recommended)' } : o)) };
+    await run(clickOn(folder, suffixed, 'Go ahead (Recommended)'));
+    assert.equal(keptClickFiles().length, 1);
+  });
+});
+
+test('"(Recommended)" on one label with another label changed is still dropped, and the log names the changed label', async () => {
+  await inSetup(async ({ home, folder }) => {
+    const label = `${README} (Recommended)`;
+    const card = { ...shown, options: [{ ...CARD.options[0], label }, { ...CARD.options[1], label: 'Later' }] };
+    await run(clickOn(folder, card, label));
+    assert.deepEqual(keptLabels(home), []);
+    assert.match(dropped(home), /option 2's label is "Later", and the card's is "Describe it later"/);
+  });
+});
+
+test('a card that reads as none setup asked leaves no line when the click was not refused (Not now)', async () => {
+  await inSetup(async ({ home, folder }) => {
+    const card = { ...shown, options: [{ ...CARD.options[0], description: 'Recommended: a trimmed one.' }, CARD.options[1]] };
+    await run(clickOn(folder, card, 'Not now'));
+    assert.equal(dropped(home), '');
   });
 });

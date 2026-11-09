@@ -28,7 +28,13 @@ function clicked(entry, nowMs) {
 // asked once, and put off by Not now.
 function lapsedPush(entry) {
   const { ask, from } = entry.data;
-  if (ask !== 'ci-push' || typeof from !== 'string' || typeof entry.clickedAt !== 'string') return false;
+  if (ask !== 'ci-push' || typeof entry.clickedAt !== 'string') return false;
+  // A CI push asked before its pull request exists names no head to check, but a record made after its click lapsed
+  // (the retry found the click gone) is a new ask: its card comes back once, until it is handed out again.
+  if (!Number.isInteger(entry.data.pr)) {
+    return Date.parse(entry.at) > Date.parse(entry.clickedAt) && (typeof entry.askedAt !== 'string' || Date.parse(entry.askedAt) <= Date.parse(entry.at));
+  }
+  if (typeof from !== 'string') return false;
   return typeof entry.askedAt !== 'string' || Date.parse(entry.askedAt) <= Date.parse(entry.clickedAt);
 }
 
@@ -96,6 +102,20 @@ export function gateInput(entry, name) {
       because: 'everything else the merge checks for has passed, and your approval is all it waits for',
       meanwhile: 'It waits; other work carries on.',
       target: { pr, sha },
+    };
+  }
+  // A CI push asked before its pull request exists (the feature's first push of its branch) names the branch only.
+  if (!Number.isInteger(pr)) {
+    return {
+      kind: 'ci-push',
+      level: 3,
+      what: `The branch ${branch} for ${name} is ready to be pushed, and it changes a file that runs the automatic checks.`,
+      why: 'A change to the automatic checks is pushed only with your own sign-in, so it comes to you.',
+      options: [{ label: 'Push it', says: 'The branch is pushed with your sign-in.' }],
+      recommend: 'Push it',
+      because: 'it is the change you approved, and it waits for this push',
+      meanwhile: 'The branch waits; other work carries on.',
+      target: { branch, sha },
     };
   }
   return {

@@ -87,6 +87,6 @@ export function makeTmux({ run = spawnSync, pause = wait } = {}) {
 }
 
 // The front desk's command and its clean environment.
-export function frontDeskCommand({ claude = 'claude' } = {}) {
-  return { command: [claude, '--model', 'haiku'], env: cleanEnv() };
+export function frontDeskCommand({ claude = 'claude', model = 'haiku' } = {}) {
+  return { command: [claude, '--model', model], env: cleanEnv() };
 }

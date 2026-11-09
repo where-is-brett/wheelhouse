@@ -683,7 +683,10 @@ test('the director\'s approval of an open pull request\'s head, or CI push of it
   ]);
   assert.deepEqual(routed.foreman[0].detail, { pr: 7, head: 'ddd444' });
   assert.deepEqual(routed.foreman[1].detail, { pr: 7, branch: 'feature/login-page', sha: 'e'.repeat(40) });
-  assert.deepEqual(routed.features, {});
+  // A click naming a branch wakes that feature to push again, and the foreman too only where a pull request is open.
+  assert.deepEqual(Object.keys(routed.features).sort(), ['login-page', 'search-box']);
+  assert.deepEqual(routed.features['search-box'].map((e) => e.type), ['ci-push-ready']);
+  assert.deepEqual(routed.features['login-page'].map((e) => e.type), ['ci-push-ready']);
   // Once per event id: a restart from the cursor sends neither again.
   const first = step({ seen: [], prev }, observation({ events }));
   assert.equal(first.events.filter((e) => e.type === 'approval' || e.type === 'ci-push').length, 2);
@@ -879,10 +882,31 @@ test('a findings wake says in Wheelhouse\'s words whether the review holds the m
   const prs = (p) => ({ prs: { 7: { work: 'w', head: HEAD, ci: 'success', mergeable: 'yes', ...p } } });
   const events = (p) => diff({ prs: {} }, { ...prs(p), events: [], features: {}, testMerges: [], stop: false, at: '2026-11-06T00:00:00.000Z' }, {});
   const held = events({ review: 'findings', findings: 3, blocking: null }).find((e) => e.type === 'findings');
-  assert.match(held.detail.next, /signed review of aaaaaaa holds the merge \(3 findings; no severity count\)\. Fix every finding it lists, push, then dispatch wheelhouse:reviewer on the new head\. You can't defer these\./);
+  assert.match(held.detail.next, /signed review of aaaaaaa holds the merge \(3 findings; no severity count\)\. Fix the BLOCKER and HIGH findings it lists and defer its MEDIUM and LOW ones as minors, push, then dispatch wheelhouse:reviewer on the new head\. You can't defer the blocking ones\./);
   const some = events({ review: 'findings', findings: 3, blocking: 1 }).find((e) => e.type === 'findings');
   assert.match(some.detail.next, /1 of them BLOCKER or HIGH/);
+  assert.match(some.detail.next, /Fix the 1 BLOCKER or HIGH finding it lists and defer its MEDIUM and LOW ones as minors/, 'a mixed review: fix the blocking, defer the minors');
   const minor = events({ review: 'clean', findings: 2, blocking: 0 });
   assert.match(minor.find((e) => e.type === 'review-passed').detail.next, /leaves only minor findings; they're deferred and the merge goes ahead; nothing to do\./);
   assert.ok(minor.some((e) => e.type === 'merge-ready'), 'and the merge is raised');
+});
+
+test('a CI push click for a branch with no pull request wakes its feature session once, and an open pull request keeps the foreman event', () => {
+  const sha = 'e'.repeat(40);
+  const events = [
+    action('ev-ready', { action: 'ci-push', branch: 'feature/ci-node-24', sha }),
+    action('ev-ready-forged', { action: 'ci-push', branch: 'feature/ci-node-24', sha }, false),
+    action('ev-ready-odd', { action: 'ci-push', branch: 'main', sha }),
+  ];
+  const routed = route(diff(observation({}), observation({ events }), { handled: new Set() }));
+  assert.deepEqual(routed.foreman, []);
+  assert.deepEqual(Object.keys(routed.features), ['ci-node-24']);
+  assert.deepEqual(routed.features['ci-node-24'].map((e) => [e.type, e.id, e.detail]), [['ci-push-ready', 'ev-ready', { branch: 'feature/ci-node-24', sha }]]);
+  const first = step({ seen: [], prev: observation({}) }, observation({ events }));
+  assert.equal(first.events.filter((e) => e.type === 'ci-push-ready').length, 1);
+  assert.deepEqual(step(first.cursor, observation({ events })).events.filter((e) => e.type === 'ci-push-ready'), []);
+  const open = { 7: prState({ head: 'ddd444', branch: 'feature/ci-node-24', ci: 'success', review: 'clean', mergeable: 'yes' }) };
+  const withPr = route(diff(observation({ prs: open }), observation({ events }), { handled: new Set() }));
+  assert.deepEqual(withPr.foreman.map((e) => e.type), ['ci-push']);
+  assert.deepEqual(withPr.features['ci-node-24'].map((e) => [e.type, e.id, e.detail]), [['ci-push-ready', 'ev-ready:ready', { branch: 'feature/ci-node-24', sha }]]);
 });
