@@ -54,9 +54,11 @@ export function makeTmux({ run = spawnSync, pause = wait } = {}) {
   const tmux = (...args) => run('tmux', args, { encoding: 'utf8' });
   const said = (got) => String(got?.stdout ?? '');
   return {
-    // The session starts with exactly `env`, nothing inherited from the tmux server.
+    // The session starts with exactly `env`, nothing inherited from the tmux server, in place of any session of the same name.
     start({ name, cwd, command, env }) {
       const pairs = Object.entries(env ?? {}).filter(([, v]) => typeof v === 'string').map(([k, v]) => `${k}=${v}`);
+      // A session left by an earlier run under the same name would take this run's typing, so it goes first.
+      tmux('kill-session', '-t', named(name));
       // The history size is read when a pane is made, so it is set first, for sessions made after this one too.
       tmux('set-option', '-g', 'history-limit', String(HISTORY_LINES));
       return tmux('new-session', '-d', '-s', named(name), '-x', String(PANE_COLUMNS), '-y', String(PANE_ROWS), '-c', cwd, 'env', '-i', ...pairs, ...command);
