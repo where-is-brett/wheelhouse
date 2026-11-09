@@ -5,28 +5,15 @@
 // strictly. `run`, `kill`, `startTime`, `alive` and the clock are passed in, so a test never touches a real process.
 import os from 'node:os';
 import path from 'node:path';
+import { LSTART, PS_ENV, startSeconds } from '../lib/start-time.js';
 
 // The line the board and the card give where the computer won't say which program holds the helper's address.
 export const RESTART_LINE = "Wheelhouse can't tell which program is the old helper on this computer, so it leaves it running. The new helper takes over when the computer restarts, or when you sign out and in.";
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const NOT_OURS = "not Wheelhouse's helper from the plugin cache at the reported version";
 
-// A process start time as whole seconds since 1970, or null when it is not one of the two shapes read here: `ps`'s
-// lstart ("Tue Nov  4 10:00:01 2026", local time) or an ISO time ("2026-11-04T10:00:01.123Z").
-export function startSeconds(text) {
-  if (typeof text !== 'string' || text.length > 64) return null;
-  const iso = /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:\.\d{1,7})?Z$/.exec(text.trim());
-  if (iso) {
-    const ms = Date.UTC(+iso[1], +iso[2] - 1, +iso[3], +iso[4], +iso[5], +iso[6]);
-    return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
-  }
-  const ps = /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +(\d{1,2}) (\d\d):(\d\d):(\d\d) (\d{4})$/.exec(text.trim());
-  if (!ps) return null;
-  const date = new Date(+ps[6], MONTHS.indexOf(ps[1]), +ps[2], +ps[3], +ps[4], +ps[5]);
-  const ms = date.getTime();
-  return Number.isFinite(ms) && date.getDate() === +ps[2] ? Math.floor(ms / 1000) : null;
-}
+// A process start time as whole seconds since 1970, or null; see ../lib/start-time.js. Kept here for the callers that read it here.
+export { startSeconds };
 
 const goodPid = (pid) => Number.isInteger(pid) && pid > 1 && pid <= 0x7fffffff;
 
@@ -106,10 +93,10 @@ async function inspectOnUnix({ address, platform, run, user, version, cacheRoot 
   if (pids.length !== 1) return { why: 'more than one process at the address' };
   const pid = pids[0];
   if (!goodPid(pid)) return { why: 'not told' };
-  const shown = await run('ps', ['-o', 'user=,lstart=,command=', '-p', String(pid)], { timeoutMs: 5000 });
+  const shown = await run('ps', ['-o', 'user=,lstart=,command=', '-p', String(pid)], { timeoutMs: 5000, env: PS_ENV });
   const row = lines(shown.stdout);
   if (row.length !== 1) return { why: 'not told' };
-  const m = /^(\S+)\s+((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) \w{3} +\d{1,2} \d\d:\d\d:\d\d \d{4})\s+(\S.*)$/.exec(row[0]);
+  const m = new RegExp(`^(\\S+)\\s+(${LSTART})\\s+(\\S.*)$`).exec(row[0]);
   if (!m || startSeconds(m[2]) === null) return { why: 'not told' };
   if (m[1] !== user) return { why: "another user's process" };
   const named = await run('ps', ['-o', 'comm=', '-p', String(pid)], { timeoutMs: 5000 });

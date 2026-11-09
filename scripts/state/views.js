@@ -70,14 +70,16 @@ export function latestFor(viewsMap, pr) {
 // (its id, or null), when a visit last handed that card out, and when the click was made: the
 // latest verified approval of the pull request at that commit, or verified CI push of that branch
 // at that commit. A later record for a pull request takes the place of an earlier one, since the
-// gate waits for one click at a time. The front desk makes and asks the cards from this (ruling F72).
+// gate waits for one click at a time. A CI push asked before its pull request exists names only
+// its branch, and is keyed `branch:<branch>`: a later one for that branch takes its place. The front desk makes and asks the cards from this (ruling F72).
 function gateAsksOf(sorted, { enrolled, approvals, handedOutBy }) {
   const cards = sorted.filter((e) => e.kind === 'card');
   const pushes = sorted.filter((e) => e.kind === 'action' && e.data?.action === 'ci-push' && verify(e, enrolled));
   const out = {};
   for (const e of sorted) {
     const d = e.data;
-    if (e.kind !== 'gate-asks' || !Number.isInteger(d?.pr) || typeof d.sha !== 'string') continue;
+    if (e.kind !== 'gate-asks' || typeof d?.sha !== 'string') continue;
+    if (!Number.isInteger(d.pr) && !(d.pr === undefined && d.ask === 'ci-push' && isPlainKey(d.branch))) continue;
     let line;
     let clicked;
     if (d.ask === 'approval') {
@@ -91,7 +93,7 @@ function gateAsksOf(sorted, { enrolled, approvals, handedOutBy }) {
     }
     const card = cards.filter((c) => c.data?.line === line).at(-1);
     const asked = card === undefined ? undefined : handedOutBy(card);
-    out[String(d.pr)] = { id: e.id, at: e.at, data: d, line, card: card?.id ?? null, askedAt: asked?.at ?? null, clickedAt: clicked?.at ?? null };
+    out[Number.isInteger(d.pr) ? String(d.pr) : `branch:${d.branch}`] = { id: e.id, at: e.at, data: d, line, card: card?.id ?? null, askedAt: asked?.at ?? null, clickedAt: clicked?.at ?? null };
   }
   return out;
 }
@@ -105,8 +107,8 @@ const FINISHED = ['merged', 'closed'];
 // doesn't end a later one's. With no work known, a report naming the pull request.
 export function prFinished(reports, { work, pr, at }) {
   const all = reports !== null && typeof reports === 'object' ? reports : {};
-  const named = isPlainKey(work) ? [all[work]] : Object.values(all).filter((r) => r?.data?.pr === pr);
-  return named.some((r) => FINISHED.includes(r?.data?.outcome) && (r.data.pr === pr || (typeof r.at === 'string' && typeof at === 'string' && r.at >= at)));
+  const named = isPlainKey(work) ? [all[work]] : Object.values(all).filter((r) => Number.isInteger(pr) && r?.data?.pr === pr);
+  return named.some((r) => FINISHED.includes(r?.data?.outcome) && ((Number.isInteger(pr) && r.data.pr === pr) || (typeof r.at === 'string' && typeof at === 'string' && r.at >= at)));
 }
 
 // The set lines of the cards about a piece of work: its approval ("Approve <work> (<lane> lane) as written, ...") and a
@@ -114,7 +116,7 @@ export function prFinished(reports, { work, pr, at }) {
 const WORK_CARD_LINE = /^(?:Approve ([a-z0-9][a-z0-9-]*) \((?:[a-z-]+) lane\) as written, [0-9a-f]{12}|Change the approved ([a-z0-9][a-z0-9-]*) to this, [0-9a-f]{12})/;
 const APPROVAL_LINE =/^Approve pull request #([1-9][0-9]*) at commit [0-9a-f]{12}$/;
 // The line a gate-asks record's card carries, or null.
-const gateLineOf = (d) => (d.ask === 'approval' ? approvalLine(d.pr, d.sha) : d.ask === 'ci-push' && isPlainKey(d.branch) ? ciPushLine(d.branch, d.sha) : null);
+const gateLineOf = (d) => (d.ask === 'approval' && Number.isInteger(d.pr) ? approvalLine(d.pr, d.sha) : d.ask === 'ci-push' && isPlainKey(d.branch) ? ciPushLine(d.branch, d.sha) : null);
 
 // Why an approval or CI push card no longer waits, because the decision it asks for is gone
 // (ruling F107): 'finished' when its pull request has finished (prFinished), 'head' when the gate
@@ -124,8 +126,11 @@ const gateLineOf = (d) => (d.ask === 'approval' ? approvalLine(d.pr, d.sha) : d.
 // line. An approval may carry across a clean update, so a CI push asked later leaves an approval
 // card waiting. Any other card is never outdated here.
 function outdatedBy(sorted, reports) {
-  const asks = sorted.filter((e) => e.kind === 'gate-asks' && Number.isInteger(e.data?.pr) && typeof e.data.sha === 'string')
+  const asks = sorted.filter((e) => e.kind === 'gate-asks' && typeof e.data?.sha === 'string'
+    && (Number.isInteger(e.data.pr) || (e.data.pr === undefined && e.data.ask === 'ci-push')))
     .map((e) => ({ e, line: gateLineOf(e.data) })).filter((a) => a.line !== null);
+  // What a gate-asks is about: its pull request, or for a CI push asked before one exists, its branch.
+  const subject = (a) => (Number.isInteger(a.e.data.pr) ? a.e.data.pr : `branch:${a.e.data.branch}`);
   return (card) => {
     const line = card.data?.line;
     if (typeof line !== 'string') return false;
@@ -139,12 +144,13 @@ function outdatedBy(sorted, reports) {
     const approval = APPROVAL_LINE.exec(line);
     const ask = approval ? 'approval' : asks.some((a) => a.line === line && a.e.data.ask === 'ci-push') ? 'ci-push' : null;
     if (ask === null) return false;
-    const pr = approval ? Number(approval[1]) : asks.filter((a) => a.line === line).at(-1).e.data.pr;
-    const mine = asks.filter((a) => a.e.data.pr === pr && a.e.data.ask === ask);
+    const target = approval ? Number(approval[1]) : subject(asks.filter((a) => a.line === line).at(-1));
+    const mine = asks.filter((a) => subject(a) === target && a.e.data.ask === ask);
     const own = mine.filter((a) => a.line === line).at(-1);
     const latest = mine.at(-1);
-    const work = (own ?? asks.filter((a) => a.e.data.pr === pr).at(-1))?.e.data.work;
-    if (prFinished(reports, { work, pr, at: (own?.e ?? card).at })) return 'finished';
+    const work = (own ?? asks.filter((a) => subject(a) === target).at(-1))?.e.data.work;
+    // A branch has no pull request to name, so for its card the work's own report says it has finished.
+    if (prFinished(reports, { work, pr: Number.isInteger(target) ? target : undefined, at: (own?.e ?? card).at })) return 'finished';
     return latest !== undefined && latest.line !== line && byOrder(card, latest.e) < 0 ? 'head' : false;
   };
 }

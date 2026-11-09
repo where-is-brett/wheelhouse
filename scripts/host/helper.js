@@ -122,7 +122,7 @@ import { askInWindow, NOT_NOW } from '../confirm/window.js';
 import { composeCard, questionProblem } from '../cards/compose.js';
 import { LIFT_STOP_CARD } from '../frontdesk/cli.js';
 import { matchGlob } from '../gate/glob.js';
-import { ciPushLine, answerLine } from '../state/card-lines.js';
+import { answerLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
 import { READY_LEVELS, PREMIUM_LEVEL, barFailures, readiness, samePins } from '../routing/column-ready.js';
 import { PREMIUM_ASK, PREMIUM_DO, checkRefusal, foundPremium, offeredFrom, premiumInput, premiumRefusal, premiumPinOf } from '../routing/premium.js';
@@ -1346,17 +1346,45 @@ export async function startHelper({
     return found.length === 0 ? null : { holder: found[0].data.holder, counter: found[0].data.counter };
   }
 
-  // Whether this computer's director clicked the card for pushing this exact
-  // commit of this branch in the last ten minutes: a signed `action` event.
-  function ciClick(project, branch, sha) {
+  // Whether this computer's director clicked the card for pushing this branch in the last ten minutes: a signed
+  // `action` event. It stands for this exact commit, and for any later one whose changes since the clicked commit
+  // are decision records only (everything under docs/decisions/) that match none of the project's CI file patterns. A git failure
+  // counts as no click.
+  async function ciClick(project, branch, sha, { mirror, run: git, config } = {}) {
     const enrolled = readEnrolled();
     const nowMs = now().getTime();
-    return listEvents(stateDir(project), { report: () => {} }).some((e) => {
+    const clicked = listEvents(stateDir(project), { report: () => {} }).filter((e) => {
       const age = nowMs - Date.parse(e.at);
-      return e.kind === 'action' && e.data?.action === 'ci-push' && e.data.branch === branch && e.data.sha === sha
+      return e.kind === 'action' && e.data?.action === 'ci-push' && e.data.branch === branch && typeof e.data.sha === 'string'
         && e.computer === computerId() && e.sig?.computer === computerId() && verify(e, enrolled)
         && age <= CLICK_MS && age >= -60 * 1000;
-    });
+    }).map((e) => e.data.sha);
+    if (clicked.includes(sha)) return true;
+    if (git === undefined || mirror === undefined) return false;
+    for (const from of new Set(clicked)) {
+      if (!FULL_SHA.test(from)) continue;
+      try {
+        if ((await git('git', [...NO_HOOKS, 'merge-base', '--is-ancestor', from, sha], { cwd: mirror, input: '' })).code !== 0) continue;
+        const listed = await git('git', [...NO_HOOKS, 'diff', '--name-only', '-z', '--no-renames', from, sha], { cwd: mirror, input: '' });
+        if (listed.code !== 0) continue;
+        const later = listed.stdout.split('\0').filter((p) => p !== '');
+        if (later.every((p) => p.startsWith('docs/decisions/')) && !touchesCi(later, config)) return true;
+      } catch { /* a git failure is no click */ }
+    }
+    return false;
+  }
+
+  // Whether a CI push gate-asks for this branch and commit waits for its click: one is on record and no
+  // verified click of that branch and commit came after it. A click that has lapsed leaves nothing to click,
+  // so the push that finds it lapsed asks again.
+  function ciCardWaits(project, branch, sha) {
+    const enrolled = readEnrolled();
+    const all = listEvents(stateDir(project), { report: () => {} });
+    const asks = all.filter((e) => e.kind === 'gate-asks' && e.data?.ask === 'ci-push' && e.data.branch === branch && e.data.sha === sha);
+    if (asks.length === 0) return false;
+    const last = Math.max(...asks.map((e) => Date.parse(e.at)));
+    return !all.some((e) => e.kind === 'action' && e.data?.action === 'ci-push' && e.data.branch === branch && e.data.sha === sha
+      && verify(e, enrolled) && Date.parse(e.at) > last);
   }
 
   // The as-is push (design section 4.1): git runs in the mirror with the director's own global and
@@ -1515,7 +1543,7 @@ export async function startHelper({
           return { ok: false, refused: PUSH_REFUSALS.unchecked };
         }
         if (touchesCi(changes.paths, changes.config)) {
-          if (!ciClick(project, branch, checked.sha)) return { ok: false, refused: PUSH_REFUSALS.ciFile };
+          if (!(await ciClick(project, branch, checked.sha, { mirror, run: keyed, config: changes.config }))) return { ok: false, refused: PUSH_REFUSALS.ciFile, ciPush: { branch, sha: checked.sha } };
           pusher = directorGit();
         }
       }
@@ -1612,6 +1640,21 @@ export async function startHelper({
     if (!(await lockHeld(project, ctx))) return { ok: false, refused: LOCK_REASON };
     const answer = await pushFrom({ project, branch, source: dir, root: recordOf(project).folder, refspec, defaultBranch, ciGuard: true }, ctx);
     if (answer.rejected === 'non-fast-forward') return { ...answer, refused: RELEASE_BRANCH.test(branch) ? EXISTING_BRANCH_LINE : PUSH_REFUSALS.movedOn };
+    // A feature branch the rules turned back for its CI file raises its own card, for the commit that was checked.
+    const work = FEATURE_BRANCH.exec(branch)?.[1];
+    if (!answer.ok && answer.refused === PUSH_REFUSALS.ciFile && answer.ciPush) {
+      // `ciPush` tells the session a card went to the director, so it stays only when the card is on record.
+      let carded = false;
+      if (work !== undefined) {
+        const { sha } = answer.ciPush;
+        try {
+          writePending(project, { branch, sha, at: now().toISOString() });
+          if (!ciCardWaits(project, branch, sha)) await engineWrite(project, 'gate-asks', { work, ask: 'ci-push', sha, branch });
+          carded = ciCardWaits(project, branch, sha);
+        } catch { /* the refusal stands without its card */ }
+      }
+      if (!carded) return { ok: false, refused: answer.refused };
+    }
     return answer.ok ? { ok: true } : answer;
   }
 
@@ -3588,7 +3631,6 @@ export async function startHelper({
       fs.rmSync(temp, { force: true });
       throw error;
     }
-    return { ok: true, line: ciPushLine(entry.branch, entry.sha) };
   }
 
 
@@ -5086,12 +5128,6 @@ export async function startHelper({
       ok: true, result: await touchLock({ project, push: pushFor(project, ctx), now, env: ctx.gitEnv }),
     }), { write: true, local: { touched: true, local: true } }),
     '/lock/read': lockRoute(async ({ project }, ctx) => ({ ok: true, result: await readLock({ project, env: ctx.gitEnv }) }), { local: null }),
-    '/ci-push/line': (body) => {
-      if (stopped()) return STOP_REFUSAL;
-      if (!plainBranch(body.branch)) refuse('the branch name is not valid');
-      if (typeof body.sha !== 'string' || !/^[0-9a-f]{40}$/.test(body.sha)) refuse('the commit must be written in full');
-      return writePending(body.project, { branch: body.branch, sha: body.sha, at: now().toISOString() });
-    },
     '/pr/open': async (body, ctx) => {
       if (stopped()) return STOP_REFUSAL;
       const adapter = await ctx.adapter();

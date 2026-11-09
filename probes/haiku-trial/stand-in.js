@@ -88,6 +88,15 @@ export function readyToSubmit(pane) {
   return SUBMIT_PAGE.test(tail) && SUBMIT.test(tail);
 }
 
+// Whether the desk is working on something: a spinner or its interrupt hint in the last lines of the pane. Text typed then
+// lands in a reply being written, or is swallowed, so a typed reply waits for the desk to be still.
+const BUSY = [/esc to interrupt/i, /\(\d+s\b.*(tokens|thinking)/i, /^\s*[✻✽✶✳✢·✦*]\s+\S.*…/];
+const BUSY_LINES = 12;
+export function deskBusy(pane) {
+  const tail = String(pane).split('\n').filter((l) => l.trim() !== '').slice(-BUSY_LINES);
+  return tail.some((l) => BUSY.some((re) => re.test(l)));
+}
+
 // The chat number the front desk gave a decision ("Decision needed (2): <its title>"), or null.
 function decisionNumber(pane, data) {
   const title = String(data?.question ?? '').split('\n')[0].trim();
@@ -123,7 +132,8 @@ export function standInAnswers({ events, pane, done = new Set(), skipWork = new 
       if (keys) actions.push({ card: card.id, label, keys });
       continue;
     }
-    if (isDecision) {
+    // A reply typed while another picker is open goes into that picker, and one typed over a working desk is lost.
+    if (isDecision && picker === null && !deskBusy(pane)) {
       const n = decisionNumber(pane, data);
       if (n !== null) actions.push({ card: card.id, label, type: `${n} ${String.fromCharCode(65 + index)}` });
     }

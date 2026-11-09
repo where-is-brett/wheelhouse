@@ -1075,6 +1075,29 @@ test('the click the merge gate waits for: the latest gate-asks of each pull requ
   });
 });
 
+test('a CI push asked before its pull request exists is keyed by its branch; a later ask for the branch replaces it and outdates its card', async () => {
+  await withHome(() => {
+    const BR = 'feature/ci-node-24';
+    const SHA1 = 'a'.repeat(40);
+    const SHA2 = 'b'.repeat(40);
+    const ask = (n, sha) => ev('gate-asks', n, { work: 'ci-node-24', ask: 'ci-push', sha, branch: BR });
+    const first = ask(1, SHA1);
+    assert.deepEqual(build([first]).gateAsks, {
+      [`branch:${BR}`]: { id: first.id, at: first.at, data: first.data, line: ciPushLine(BR, SHA1), card: null, askedAt: null, clickedAt: null },
+    });
+    const second = ask(3, SHA2);
+    assert.equal(build([first, second]).gateAsks[`branch:${BR}`].line, ciPushLine(BR, SHA2));
+    const card = ev('card', 2, cardData(`What this is: a push.\n${ciPushLine(BR, SHA1)}`, { line: ciPushLine(BR, SHA1) }));
+    assert.deepEqual(build([first, card]).waiting.map((c) => c.id), [card.id]);
+    const v = build([first, card, second]);
+    assert.deepEqual(v.waiting, []);
+    assert.deepEqual(v.outdated.map((c) => c.id), [card.id]);
+    // Another branch's ask leaves it standing, and a pull request's own ask is kept apart.
+    const other = ev('gate-asks', 4, { work: 'ci-node-24', ask: 'ci-push', sha: SHA2, branch: 'feature/other' });
+    assert.deepEqual(build([first, card, other]).waiting.map((c) => c.id), [card.id]);
+  });
+});
+
 // --- a gate card leaves the waiting list once its decision is gone (ruling F107) ---
 
 const A = 'a'.repeat(40);

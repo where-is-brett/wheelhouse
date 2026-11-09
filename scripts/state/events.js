@@ -347,7 +347,7 @@ const PLAIN_SHAPES = {
   // head, or their CI push of the update merge `sha` to `branch`, made from the head `from` when the
   // host gave it (ruling F78), so a pushed update can be told from one not yet pushed. Recorded by
   // the foreman's merge.
-  'gate-asks': { must: ['work', 'pr', 'ask', 'sha'], may: ['branch', 'from'] },
+  'gate-asks': { must: ['work', 'ask', 'sha'], may: ['pr', 'branch', 'from'] },
   // A session start held the project's edits and commands because the installed upstream skills
   // differ from Wheelhouse's manifest (ruling R146): when, and which upstreams and paths. An
   // upstream of null is the manifest itself, which could not be read. The front desk's card. An agent's starter
@@ -720,7 +720,8 @@ function checkPlain(kind, data) {
     }
   } else if (kind === 'gate-asks') {
     slug('work');
-    if (!Number.isInteger(data.pr) || data.pr < 1) bad('needs the pull request number');
+    // A CI push may be asked of a branch before its pull request exists (the feature's first push), so it may name no pull request; an approval always names one.
+    if (!(data.ask === 'ci-push' && data.pr === undefined) && (!Number.isInteger(data.pr) || data.pr < 1)) bad('needs the pull request number');
     if (!GATE_ASKS.includes(data.ask)) bad('needs ask to be approval or ci-push');
     if (typeof data.sha !== 'string' || !/^[0-9a-f]{40}$/.test(data.sha)) bad('needs the full commit');
     if (data.ask === 'ci-push' && !isText(data.branch)) bad('needs the branch the CI push is for');

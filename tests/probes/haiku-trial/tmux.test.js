@@ -63,6 +63,10 @@ test('front desk runs on haiku', () => {
   assert.equal(startedByScript(frontDeskCommand().env), false);
 });
 
+test('front desk runs on the model it is given', () => {
+  assert.deepEqual(frontDeskCommand({ model: 'sonnet' }).command, ['claude', '--model', 'sonnet']);
+});
+
 test('capture joins wrapped lines and reads the whole history', () => {
   const calls = [];
   const tmux = makeTmux({ run: (cmd, args) => { calls.push(args); return { status: 0, stdout: 'text' }; } });
