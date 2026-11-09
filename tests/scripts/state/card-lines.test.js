@@ -5,7 +5,7 @@ import {
   replyCode, replyCodeLine, setLineOf, SET_LINES, CODE_ALPHABET, usageLine, USAGE_LINE, premiumLine, PREMIUM_LINE,
   approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, LIFT_LABEL, LIFT_LABELS, isLiftStopLine, runbookLine, ciPushLine,
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, dayOf, TRUST_LINE, takeOverLine, TAKEOVER_LINE, seatTakeOverLine, SEAT_TAKEOVER_LINE, releaseLine, RELEASE_LINE, updateHelperLine, updateLine, pairLine, unpairLine,
-  uninstallLine, UNINSTALL_LINE, UNINSTALL_LABEL, isLineName, keepControlLine, chatCopy,
+  uninstallLine, UNINSTALL_LINE, UNINSTALL_LABEL, isLineName, keepControlLine, chatCopy, replyCodeOf, SETUP_TITLES,
 } from '../../../scripts/state/card-lines.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -220,4 +220,32 @@ test('the window take-over line names the session and since, and is its own set 
   assert.deepEqual(SEAT_TAKEOVER_LINE.exec(line).slice(1), ['abc-1', '2026-11-08T01:00:00.000Z']);
   assert.equal(SEAT_TAKEOVER_LINE.test('Take over the First Mate from window session a b, since 2026-11-08T01:00:00.000Z'), false);
   assert.equal(TAKEOVER_LINE.test(line), false);
+});
+
+test('replyCodeOf gives the set line and its code for a question that carries exactly its own reply code line', () => {
+  const line = approvalLine(7, FULL);
+  const code = replyCode(line);
+  assert.deepEqual(replyCodeOf(`Approve the sign-in wording?\n${line}\n${replyCodeLine(code)}`), { line, code });
+  assert.equal(replyCodeOf(`Approve?\n${line}`), null, 'no reply code line');
+  assert.equal(replyCodeOf(`Approve?\n${line}\n${replyCodeLine('AAAA')}`), null, 'a code that is not the line\'s');
+  assert.equal(replyCodeOf(`Approve?\n${line}\n${replyCodeLine(code)}\n${replyCodeLine(code)}`), null, 'two reply code lines');
+  assert.equal(replyCodeOf('Which name suits the page?'), null, 'no set line');
+  assert.equal(replyCodeOf(`Two?\n${line}\n${approvalLine(8, FULL)}`), null, 'two set lines');
+  assert.equal(replyCodeOf(undefined), null);
+  assert.equal(replyCodeOf(42), null);
+});
+
+test('replyCodeOf gives none for the kinds of card that have no reply code, whatever lines they carry', () => {
+  const step = Number(Object.keys(SETUP_TITLES)[0]);
+  const own = [
+    setupLine(step, FULL), confirmAllLine(FULL, 2), trustLine('abcd1234', '2026-10-01', FULL), takeOverLine('abcd1234', FULL),
+    usageLine('lean', '2026-10-24T09:00:00.000Z'), premiumLine('2026-10-24T09:00:00.000Z'), keepControlLine('login-page', FULL),
+  ];
+  let checked = 0;
+  for (const line of own) {
+    if (setLineOf(`Ask?\n${line}`) === null) continue;
+    checked += 1;
+    assert.equal(replyCodeOf(`Ask?\n${line}\n${replyCodeLine(replyCode(line))}`), null, line);
+  }
+  assert.ok(checked >= 4, 'the table exercised the kinds');
 });

@@ -16,7 +16,7 @@ import { numberedWaiting } from '../../../scripts/board/model.js';
 import { composeCard, whatProblem } from '../../../scripts/cards/compose.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { briefText, wholeBrief, BRIEF_WORDS_MOST } from '../../../scripts/state/brief.js';
-import { makeEvent, dataHash, listEvents, confirmationFor, PROTECTED_KINDS } from '../../../scripts/state/events.js';
+import { makeEvent, dataHash, listEvents, writeEvent, confirmationFor, PROTECTED_KINDS } from '../../../scripts/state/events.js';
 import { deskCore } from '../../../scripts/desk/core.js';
 import { levelWords } from '../../../scripts/settings/effective.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
@@ -27,8 +27,10 @@ import { stateDir, computerId } from '../../../scripts/lib/paths.js';
 import { SINCE_LEAD } from '../../../scripts/cards/panel-words.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
-import { approveWorkLine, approvalLine, answerLine, chatCopy, ciPushLine, confirmLine, keepControlLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
+import { approveWorkLine, approvalLine, answerLine, chatCopy, replyCode, replyCodeOf, ciPushLine, confirmLine, keepControlLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
 import { writeJsonFile, runningFile, sessionFile } from '../../../scripts/watcher/waker.js';
+import { markPane } from '../../../scripts/lib/session-files.js';
+import { sandboxed } from '../../helpers/sandbox-wall.js';
 import { setStop, stopState } from '../../../scripts/lib/stop.js';
 import { decide as cardCheck, cardProblems } from '../../../scripts/hooks/card-check.js';
 import { decide as promptRecord } from '../../../scripts/hooks/prompt-record.js';
@@ -172,6 +174,9 @@ const APPROVAL = {
   kind: 'approval', level: 3, what: 'Pull request #7 changes the wording on the sign-in page.', why: 'It changes what users see.',
   options: [says('Approve')], recommend: 'Approve', because: 'the checks passed', meanwhile: 'Nothing is released.',
 };
+// The record the question picker's hook writes when it shows a card: a card with a reply code counts as asked from it. `n` is a
+// time, or a number of seconds past T(0).
+const shownRecord = (card, n) => makeEvent({ kind: 'shown', data: { code: replyCode(card.data.line), question: card.data.question, options: card.data.options }, now: () => (n instanceof Date ? n : T(n)) });
 const cardEvent = (input, n) => makeEvent({ kind: 'card', data: composeCard(input).card, now: () => T(n) });
 const QUESTION = {
   id: 'q-export-csv-1', work: 'export-csv', what: 'The export needs to know which separator to use.', why: 'It changes the file people download.',
@@ -453,11 +458,15 @@ test('a gate-asks for an approval becomes one approval card for that pull reques
     assert.deepEqual(first.json.questions.map((q) => q.question), [chatCopy(card.question)]);
     // Its whole text, set line and reply code with it, is printed beside the cards for a reply with no clickable question.
     assert.deepEqual(first.json.inReply, [card.question]);
-    assert.deepEqual(helper.writes().at(-1), { cwd: CWD, kind: 'asked', data: { cards: [helper.held.find((e) => e.kind === 'card').id] } });
+    assert.equal(helper.writes().some((w) => w.kind === 'asked'), false, 'printing is not asking: the picker\'s shown record marks it');
     assert.deepEqual(cardProblems(card.question), []);
     // The host was asked whether the pull request is still at that commit.
     assert.deepEqual(helper.calls.filter(([name]) => name === 'prState'), [['prState', { cwd: CWD, number: 7 }]]);
-    // The next visit makes no second card, and has nothing to ask.
+    // Until the picker shows it the card comes back, and no second card is made.
+    const back = await run(helper, ['cards']);
+    assert.deepEqual(back.json.questions.map((q) => q.question), [chatCopy(card.question)]);
+    // Once shown, the next visit makes no second card, and has nothing to ask.
+    helper.held.push(shownRecord(helper.held.find((e) => e.kind === 'card'), new Date(NOW.getTime() + 1000)));
     const second = await run(helper, ['cards']);
     assert.deepEqual(second.json, { questions: [], left: 0 });
     assert.equal(cardWrites(helper).length, 1);
@@ -571,8 +580,9 @@ test('R121: a CI push card whose click lapsed before the push comes back once; o
     assert.equal(back.code, 0, back.err);
     assert.deepEqual(back.json.questions.map((q) => q.question), [chatCopy(push.data.question)]);
     assert.equal(cardWrites(lapsed).length, 0, 'not composed twice');
-    assert.deepEqual(lapsed.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [push.id] } }]);
-    // Once for that click: the next visit doesn't ask it again.
+    assert.deepEqual(lapsed.writes(), [], 'printing is not asking');
+    // Once for that click: shown after the click, the next visit doesn't ask it again.
+    lapsed.held.push(shownRecord(push, new Date(NOW.getTime() + 1000)));
     assert.deepEqual((await run(lapsed, ['cards'])).json, { questions: [], left: 0 });
     // Once the head has moved past the head the update was made from (pushed, then built on), no card.
     for (const head of [MERGE, LATER]) {
@@ -752,8 +762,9 @@ test('card fills a pull request\'s head and records the card once', async () => 
     assert.equal(cards.length, 1);
     assert.equal(first.json.id, helper.held.find((e) => e.kind === 'card').id);
     assert.equal(cards[0].data.line, approvalLine(7, FULL));
-    // The card handed out is recorded as asked, so no later visit offers it again.
-    assert.deepEqual(helper.writes().map((w) => [w.kind, w.data.cards]), [['card', undefined], ['asked', [first.json.id]]]);
+    // Printing is not asking: the card is counted as asked once the picker has shown it.
+    assert.deepEqual(helper.writes().map((w) => [w.kind, w.data.cards]), [['card', undefined]]);
+    helper.held.push(shownRecord(helper.held.find((e) => e.kind === 'card'), new Date(NOW.getTime() + 1000)));
     // Composed again, with other words, the waiting card comes back as it was recorded, marked as
     // asked already, so the director isn't asked it twice; nothing more is written.
     const second = await run(helper, ['card'], JSON.stringify({ ...APPROVAL, because: 'the review was clean', target: { pr: 7 } }));
@@ -761,7 +772,7 @@ test('card fills a pull request\'s head and records the card once', async () => 
     assert.equal(second.json.id, first.json.id);
     assert.deepEqual(second.json.question, first.json.question);
     assert.equal(second.json.alreadyAsked, true);
-    assert.equal(helper.writes().length, 2);
+    assert.equal(helper.writes().length, 1);
     // A target that names its commit is kept as it is.
     const named = await run(helper, ['card'], JSON.stringify({ ...APPROVAL, what: 'Pull request #8 changes the footer.', target: { pr: 8, sha: DOC } }));
     assert.ok(cardWrites(helper).some((c) => c.question.includes(approvalLine(8, DOC))));
@@ -909,7 +920,8 @@ test('record work, amendment, incident and note write the build loop\'s kinds', 
       const written = kind === 'work' ? helper.held.find((e) => e.kind === 'work') : helper.held.at(-1);
       assert.equal(out.json[kind === 'work' ? 'eventId' : 'id'], written.id);
     }
-    assert.deepEqual(helper.held.map((e) => e.kind), ['work', 'card', 'asked', 'amendment', 'incident', 'note']);
+    // The work's card is not yet asked: the picker's shown record marks it.
+    assert.deepEqual(helper.held.map((e) => e.kind), ['work', 'card', 'amendment', 'incident', 'note']);
     for (const kind of ['idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal']) assert.ok(RECORD_KINDS.includes(kind), kind);
   });
 });
@@ -1929,7 +1941,7 @@ test('card with revises and changed composes a revised card; revises naming no w
     assert.equal(recorded.data.revises, old.id);
     assert.equal(recorded.data.parts.changed, 'It now says the review was clean.');
     assert.notEqual(recorded.data.line, old.data.line);
-    assert.deepEqual(helper.writes().map((w) => w.kind), ['card', 'asked']);
+    assert.deepEqual(helper.writes().map((w) => w.kind), ['card']);
     // It replaces the card it revises on the board.
     assert.deepEqual(helper.views().waiting.map((c) => c.id).sort(), [other.id, elsewhere.id, done.json.id].sort());
   });
@@ -1956,7 +1968,7 @@ test('card with revises may name an approval card closed by a later head, and th
     const done = await run(helper, ['card'], JSON.stringify({ ...revision, target: { pr: 7 } }));
     assert.equal(done.code, 0, done.err);
     assert.notEqual(done.json.id, plain.id);
-    assert.deepEqual(helper.writes().map((w) => w.kind), ['card', 'asked']);
+    assert.deepEqual(helper.writes().map((w) => w.kind), ['card']);
     const recorded = helper.held.find((e) => e.id === done.json.id);
     assert.equal(recorded.data.line, approvalLine(7, LATER));
     assert.equal(recorded.data.revises, old.id);
@@ -2137,7 +2149,7 @@ test('card refuses another kind\'s set line decided within the hour, and lets it
     const later = fakeHelper({ events: [old, answerAt(old, 'Do it', RECENT_MS + 1, 'chat')] });
     const made = await run(later, ['card'], JSON.stringify(input));
     assert.equal(made.code, 0, made.err);
-    assert.deepEqual(later.writes().map((w) => w.kind), ['card', 'asked']);
+    assert.deepEqual(later.writes().map((w) => w.kind), ['card']);
   });
 });
 
@@ -2449,7 +2461,7 @@ test('card and record ruling put their cards in plain words too, keeping what th
   });
 });
 
-test('card gives back a waiting card no visit has asked, and records it as asked', async () => {
+test('card gives back a waiting card no visit has asked, and leaves it unasked until the picker shows it', async () => {
   await inHome(async () => {
     const waiting = makeEvent({ kind: 'card', data: composeCard({ ...APPROVAL, target: { pr: 7, sha: FULL } }).card, now: () => T(1) });
     const helper = fakeHelper({ events: [waiting] });
@@ -2458,7 +2470,115 @@ test('card gives back a waiting card no visit has asked, and records it as asked
     assert.equal(out.json.id, waiting.id);
     assert.equal(out.json.question.question, chatCopy(waiting.data.question));
     assert.equal(out.json.alreadyAsked, undefined);
-    assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [waiting.id] } }]);
+    assert.deepEqual(helper.writes(), [], 'a card with a reply code is asked once the picker shows it, not when printed');
+  });
+});
+
+test('card marks nothing as asked when it prints a card with a reply code: the picker\'s shown record is the mark', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const input = JSON.stringify({ ...APPROVAL, target: { pr: 7 } });
+    const first = await run(helper, ['card'], input);
+    assert.equal(first.code, 0, first.err);
+    const second = await run(helper, ['card'], input);
+    assert.equal(second.json.id, first.json.id);
+    assert.equal(second.json.alreadyAsked, undefined, 'printed twice and never shown: not asked');
+    assert.deepEqual(helper.writes().map((w) => w.kind), ['card'], 'no asked record was written');
+    helper.held.push(shownRecord(helper.held.find((e) => e.kind === 'card'), 300));
+    const third = await run(helper, ['card'], input);
+    assert.equal(third.json.id, first.json.id);
+    assert.equal(third.json.alreadyAsked, true, 'shown: asked');
+    assert.deepEqual(helper.writes().map((w) => w.kind), ['card'], 'still no asked record');
+  });
+});
+
+test('cards leaves a printed card on the board until the picker shows it, and still marks one that has no reply code', async () => {
+  await inHome(async () => {
+    const approval = cardEvent({ ...APPROVAL, target: { pr: 7, sha: FULL } }, 1);
+    const plain = cardEvent(PRODUCT(1), 2);
+    assert.equal(replyCodeOf(plain.data.question), null, 'the plain card carries no reply code');
+    const helper = fakeHelper({ events: [approval, plain] });
+    const first = await run(helper, ['cards']);
+    assert.equal(first.code, 0, first.err);
+    assert.equal(first.json.questions.length, 2);
+    assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [plain.id] } }], 'only the card no picker record can mark');
+    const second = await run(helper, ['cards']);
+    assert.deepEqual(second.json.questions.map((q) => q.question), [chatCopy(approval.data.question)], 'the unshown card comes back');
+    assert.equal(helper.writes().length, 1, 'and nothing more is written');
+    helper.held.push(shownRecord(approval, 300));
+    const third = await run(helper, ['cards']);
+    assert.deepEqual(third.json, { questions: [], left: 0 });
+  });
+});
+
+test('cards --here hands cards out for the chat, which the picker never shows, so it still marks them as asked', async () => {
+  await inHome(async () => {
+    const approval = cardEvent({ ...APPROVAL, target: { pr: 7, sha: FULL } }, 1);
+    const helper = fakeHelper({ events: [approval] });
+    const out = await run(helper, ['cards', '--here'], undefined, { env: { CLAUDE_CODE_SESSION_ID: 'session-1' } });
+    assert.equal(out.code, 0, out.err);
+    assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [approval.id] } }]);
+  });
+});
+
+test('cards and card still mark a card as asked at print while the panel is live, since no picker call can show it then', async () => {
+  await inHome(async () => {
+    const approval = cardEvent({ ...APPROVAL, target: { pr: 7, sha: FULL } }, 1);
+    const helper = fakeHelper({ events: [approval] });
+    const session = 'session-live';
+    assert.equal(markPane(session, { at: NOW.getTime(), drawn: NOW.getTime(), surface: 'desktop' }), true);
+    const out = await run(helper, ['cards'], undefined, { env: { CLAUDE_CODE_SESSION_ID: session } });
+    assert.equal(out.code, 0, out.err);
+    assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [approval.id] } }]);
+    const fresh = fakeHelper();
+    const made = await run(fresh, ['card'], JSON.stringify({ ...APPROVAL, target: { pr: 7 } }), { env: { CLAUDE_CODE_SESSION_ID: session } });
+    assert.equal(made.code, 0, made.err);
+    assert.deepEqual(fresh.writes().map((w) => w.kind), ['card', 'asked']);
+  });
+});
+
+test('cards and card read nothing in the Wheelhouse home: the helper says whether a panel is live, and the panel case still marks', async () => {
+  await inHome(async () => {
+    const home = process.env.WHEELHOUSE_HOME;
+    const session = 'session-live';
+    assert.equal(markPane(session, { at: NOW.getTime(), drawn: NOW.getTime(), surface: 'desktop' }), true);
+    // The helper's answers are taken outside the wall, as the helper runs outside the sandbox; the command then runs behind it,
+    // handed the answers as they were given, and so can't read the home to find out.
+    const visit = async (argv, input, env) => {
+      const helper = fakeHelper({ events: argv[0] === 'cards' ? [cardEvent({ ...APPROVAL, target: { pr: 7, sha: FULL } }, 1)] : [] });
+      const kept = [];
+      const keyOf = (body) => JSON.stringify(body);
+      const taken = {
+        session: { seat: async (body) => { const got = await helper.client.session.seat(body); kept.push(['seat', keyOf(body), got]); return got; } },
+        desk: { read: async (body) => { const got = await helper.client.desk.read(body); kept.push(['read', keyOf(body), got]); return got; } },
+        state: { write: async (body) => helper.client.state.write(body) },
+        prState: helper.client.prState,
+      };
+      let out = '';
+      const first = await main(argv, { cwd: CWD, client: taken, input, env, now: () => NOW, out: (t) => { out += t; }, err: () => {} });
+      assert.equal(first, 0);
+      const writes = [];
+      const replay = {
+        session: { seat: async (body) => kept.find(([k, key]) => k === 'seat' && key === keyOf(body))[2] },
+        desk: { read: async (body) => kept.find(([k, key]) => k === 'read' && key === keyOf(body))[2] },
+        state: { write: async (body) => { writes.push(body); return { ok: true, id: 'e-1', pushed: true }; } },
+        prState: async () => ({ ok: true, result: { headSha: FULL, state: 'open', mergeable: 'clean' } }),
+      };
+      await sandboxed([home], async () => {
+        const code = await main(argv, { cwd: CWD, client: replay, input, env, now: () => NOW, out: () => {}, err: () => {} });
+        assert.equal(code, 0);
+      });
+      return { writes, reads: kept.filter(([k]) => k === 'read').map(([, , got]) => got) };
+    };
+    const cardsVisit = await visit(['cards'], undefined, { CLAUDE_CODE_SESSION_ID: session });
+    assert.ok(cardsVisit.reads.some((got) => got.data?.paneLive === true), 'the helper said the panel is live');
+    assert.deepEqual(cardsVisit.writes.map((w) => [w.kind, w.data.cards?.length]), [['asked', 1]]);
+    const cardVisit = await visit(['card'], JSON.stringify({ ...APPROVAL, target: { pr: 7 } }), { CLAUDE_CODE_SESSION_ID: session });
+    assert.deepEqual(cardVisit.writes.map((w) => w.kind), ['card', 'asked']);
+    // No panel beside the session: the card with a reply code is left for the picker to mark.
+    const quiet = await visit(['cards'], undefined, { CLAUDE_CODE_SESSION_ID: 'session-quiet' });
+    assert.ok(quiet.reads.every((got) => got.data?.paneLive !== true));
+    assert.deepEqual(quiet.writes, []);
   });
 });
 
@@ -2619,14 +2739,21 @@ test('through the real helper, the command places the project from its folder an
         const ruling = JSON.parse(await say(['record', 'ruling'], JSON.stringify({ words: 'Money is shown in dollars' })));
         const approval = JSON.parse(await say(['card'], JSON.stringify({ ...APPROVAL, target: { pr: 7 } })));
         assert.equal(approval.question.question.includes(approvalLine(7, FULL)), false);
-        // Both cards were handed out as they were made, so the visit has none left to ask.
+        // The ruling's card has no reply code, so the picker can never mark it: it was handed out as it was made. The approval's
+        // card has one, so printing it is not asking it: the visit has that card to ask, and so has the next.
         const visit = JSON.parse(await say(['cards']));
-        assert.deepEqual(visit, { questions: [], left: 0 });
+        assert.deepEqual(visit.questions.map((q) => q.header), ['Approval']);
+        assert.equal(visit.left, 0);
+        const unshown = JSON.parse(await say(['cards']));
+        assert.deepEqual(unshown.questions.map((q) => q.header), ['Approval'], 'a card printed and never shown comes back');
         assert.match(await say(['views', 'rulebook']), /^Money is shown in dollars \(waiting for the director to confirm it\)$/m);
         const events = listEvents(stateDir('o__p'), { report: () => {} });
-        assert.deepEqual(events.map((e) => e.kind).sort(), ['asked', 'asked', 'card', 'card', 'ruling']);
+        assert.deepEqual(events.map((e) => e.kind).sort(), ['asked', 'card', 'card', 'ruling']);
         assert.equal(events.find((e) => e.kind === 'ruling').id, ruling.id);
-        assert.deepEqual(events.filter((e) => e.kind === 'asked').flatMap((e) => e.data.cards).sort(), [ruling.card.id, approval.id].sort());
+        assert.deepEqual(events.filter((e) => e.kind === 'asked').flatMap((e) => e.data.cards), [ruling.card.id]);
+        // Once the picker's hook has written its signed shown record for the approval, the visit has nothing left to ask.
+        await writeEvent({ project: 'o__p', event: shownRecord(events.find((e) => e.kind === 'card' && e.id === approval.id), new Date(Date.now() + 60 * 1000)) });
+        assert.deepEqual(JSON.parse(await say(['cards'])), { questions: [], left: 0 });
         // Under STOP the real helper's views say so, and the visit's one card is Lift All stop.
         setStop({ by: 'prompt' });
         const stopped = JSON.parse(await say(['cards']));
@@ -2727,7 +2854,10 @@ test('typed replies switched off: cards hands an open question out as an answer 
     assert.equal(first.code, 0, first.err);
     assert.equal(first.json.questions.length, 1);
     assert.deepEqual(first.json.questions[0].options.map((o) => o.label), ['Comma', 'Tab', 'Suggest a change…']);
-    assert.deepEqual(helper.writes().at(-1), { cwd: CWD, kind: 'asked', data: { cards: [helper.held.find((e) => e.kind === 'card').id] } });
+    assert.equal(helper.writes().some((w) => w.kind === 'asked'), false, 'an answer card has a reply code: the picker\'s shown record marks it');
+    const stored = helper.held.find((e) => e.kind === 'card');
+    assert.equal((await run(helper, ['cards'])).json.questions.length, 1, 'printed and never shown: it comes back');
+    helper.held.push(shownRecord(stored, new Date(NOW.getTime() + 1000)));
     assert.deepEqual((await run(helper, ['cards'])).json, { questions: [], left: 0 });
   });
 });

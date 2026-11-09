@@ -243,9 +243,14 @@ test('with a last prompt, the scratch plugin\'s hooks ask the stand-in: the relo
     assert.equal(cards.code, 0, cards.err);
     const card = context.helper.events().find((e) => e.kind === 'card');
     assert.equal(card.data.line, approvalLine(12, context.head));
-    // The next prompt: the card is handed out and the gap hasn't passed, so nothing.
-    assert.equal((await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'And?' })).out, '');
-    assert.deepEqual(context.hooksGave().map((h) => h.event), ['SessionStart', 'SessionStart', 'UserPromptSubmit', 'UserPromptSubmit']);
+    // The next prompt: the card was only printed, and printing is not asking (a card with a reply code counts as asked once the
+    // picker has shown it), so the cards line still stands.
+    const unshown = JSON.parse((await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'And?' })).out).hookSpecificOutput.additionalContext;
+    assert.equal(unshown, cardsLine(1));
+    // Once the picker has shown it the card is handed out, and the gap hasn't passed, so nothing.
+    context.helper.shown(card.id);
+    assert.equal((await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'And now?' })).out, '');
+    assert.deepEqual(context.hooksGave().map((h) => h.event), ['SessionStart', 'SessionStart', 'UserPromptSubmit', 'UserPromptSubmit', 'UserPromptSubmit']);
     // A hook that can't reach the stand-in adds nothing, and its failure is kept, not swallowed (F93).
     await context.helper.close();
     const failed = await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'Still there?' });
@@ -270,9 +275,15 @@ test('scenario 5\'s state gives the answer card on the first visit, once', async
     const first = await cli('cards');
     assert.equal(first.code, 0, first.err);
     assert.equal(JSON.parse(first.out).questions.length, 1);
+    // Printing is not asking: the card has a reply code, so it counts as asked once the picker has shown it (its `shown` record).
+    const unshown = await cli('cards');
+    assert.equal(JSON.parse(unshown.out).questions.length, 1, 'a card printed and never shown comes back');
+    const card = context.helper.events().find((e) => e.kind === 'card' && e.data.line === answerLine(QUESTION));
+    assert.ok(card);
+    assert.equal(context.helper.events().filter((e) => e.kind === 'card' && e.data.line === answerLine(QUESTION)).length, 1, 'and is not made again');
+    context.helper.shown(card.id);
     const again = await cli('cards');
     assert.deepEqual(JSON.parse(again.out).questions, [], 'handed out once');
-    assert.ok(context.helper.events().some((e) => e.kind === 'card' && e.data.line === answerLine(QUESTION)));
   } finally {
     await context.close();
     await project.cleanup();

@@ -60,7 +60,7 @@ import {
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import {
-  chatCopy, setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
+  chatCopy, setLineOf, setLinesOf, replyCodeOf, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
   RELEASE_LABEL, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LABEL, UPDATE_LINE, TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, SEAT_TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE,
 } from '../state/card-lines.js';
 import {
@@ -97,8 +97,6 @@ const AMEND = new RegExp(`Change the approved (${ID}) to this, ${SHA12}`, 'g');
 const LIFT_INCIDENT = new RegExp(`End incident (${ID}) and let merges carry on`, 'g');
 const INCIDENT_FIX = new RegExp(`Merge pull request #([1-9][0-9]*) as the fix for incident (${ID})(?![a-z0-9-])`, 'g');
 const SETUP = new RegExp(`Set up step ([0-9]{1,2}) as listed, ${SHA12}`, 'g');
-const SETUP_LINE = new RegExp(`^${SETUP.source}$`);
-const CONFIRM_ALL_LINE = /^Confirm all [1-9][0-9]* rules? as listed, [0-9a-f]{12}$/;
 const CI_PUSH = new RegExp(`Push the CI change on (\\S+) at commit ${SHA12} with your own sign-in`, 'g');
 const BASELINE_TEXT = BASELINE_WORDS.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const BASELINE = new RegExp(`${BASELINE_TEXT}, ${SHA12}`, 'g');
@@ -928,14 +926,9 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
   for (const q of questions) {
     if (typeof q?.question !== 'string' || q.multiSelect === true || !Array.isArray(q.options)) continue;
     if (carrying.has(q.question)) continue;
-    const line = setLineOf(q.question);
-    // A setup card, setup's card of the rules found, a trust card, uninstall's card, a Keep card, a usage card and the
-    // premium model's card have no reply code (rulings R36, R80, R90, P7-31; design section 14.6): only the click on
-    // the card itself counts.
-    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || TAKEOVER_LINE.test(line) || SEAT_TAKEOVER_LINE.test(line) || UNINSTALL_LINE.test(line) || KEEP_CONTROL_LINE.test(line) || USAGE_LINE.test(line) || PREMIUM_LINE.test(line)) continue;
-    const code = replyCode(line);
-    const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
-    if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;
+    const found = replyCodeOf(q.question);
+    if (found === null) continue;
+    const { line, code } = found;
     const was = held && Object.hasOwn(held, code) ? held[code] : null;
     const stop = isLiftStopLine(line) ? stopState() : null;
     const beforeStop = stop?.on === true && !(Date.parse(was?.at) > Date.parse(stop.at));
