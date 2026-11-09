@@ -341,6 +341,10 @@ export const listeningNotice = (config) => (config?.localListening === true
   ? 'This project lets agents\' commands listen on local ports (`localListening` in .claude/wheelhouse.json). While it is on, those commands may also connect to anything else listening on this computer\'s local ports, such as the engine room on port 3090. To turn it off, remove the line in a reviewed pull request.'
   : null);
 
+// The short form of the same statement, for a line or a short card that has no room for the whole of it.
+const LISTENING_CLAUSE = 'local listening is on: sandboxed agents\' commands may reach other local ports, the engine room\'s 3090 among them';
+const capital = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+
 // The front desk's model a configuration pins (design section 8), or null when it pins none.
 export const frontDeskPin = (config) => (isModelName(config?.routing?.frontDesk) ? config.routing.frontDesk : null);
 
@@ -995,7 +999,7 @@ async function switchFolder(ctx, c, { git, project, author }) {
   return { again: true, changes: [] };
 }
 
-export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [], negated = [], frontDesk = null, midSized = null }) {
+export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [], negated = [], frontDesk = null, midSized = null, listens = false }) {
   const local = host === 'local';
   const files = changes.filter((c) => (c.kind === 'json-key' || c.kind === 'file') && c.line === undefined && c.engine !== true && c.what !== 'mirror');
   // The lines that keep .env files out of git: in the project's .gitignore, or, on a joining
@@ -1022,6 +1026,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   if (negated.length > 0 && secrets !== 'here') parts.push(NEGATED_PART);
   if (changes.some((c) => c.engine === true)) parts.push(host === 'local' ? 'the build engine\'s settings into .archon/' : 'the build engine\'s merge policy and settings into .archon/, naming the GitHub account Wheelhouse signs reviews as');
   if (changes.some((c) => c.what === 'mirror')) parts.push('the build engine reads this project from Wheelhouse\'s own copy, so it never holds a key');
+  if (listens) parts.push(listeningNotice({ localListening: true }).replace(/ To turn it off.*$/, '').replace(/\.$/, ''));
   const pins = changes.filter((c) => c.kind === 'process').map((c) => pinName(c.target));
   if (pins.length > 0) parts.push(`${listed(pins)} installed for this project at tested versions`);
   const up = changes.find((c) => c.kind === 'host' && (c.action === 'commit' || c.action === 'push'));
@@ -1065,13 +1070,13 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   if (joining) {
     const mine = [
       ...(files.length > 0 || excluded || ours ? ['this computer\'s settings'] : []), ...(secrets ? [negated.length > 0 ? 'some .env files kept out of git' : '.env files kept out of git'] : []), ...(negated.length > 0 ? ['.gitignore lets some .env files in: raise it on the computer that set the project up'] : []), ...(pins.length > 0 ? ['the pinned kits'] : []),
-      'nothing committed', ...(differ.length > 0 ? [`${listed(differ)} left as ${differ.length === 1 ? 'it is' : 'they are'}`] : []),
+      ...(listens ? [LISTENING_CLAUSE] : []), 'nothing committed', ...(differ.length > 0 ? [`${listed(differ)} left as ${differ.length === 1 ? 'it is' : 'they are'}`] : []),
     ];
     return card(`Setup step 7, ${SETUP_TITLES[7]}, for this computer: ${mine.join(', ')}. Wheelhouse never updates itself.`);
   }
   const short = [
     ...(shared.length > 0 ? ['the project\'s own files'] : []), ...(files.length > shared.length || excluded || ours ? ['this computer\'s settings'] : []),
-    ...(secrets ? ['.env files kept out of git'] : []), ...(pins.length > 0 ? ['the pinned kits'] : []), ...(up ? [`the setup commit ${local ? `onto ${cut(branch)}` : `up to ${cut(branch)} on ${NAME[host]}`}${yours === '' ? '' : ', with your changes'}${ownPart === '' ? '' : ', with your product\'s own files'}`] : []),
+    ...(secrets ? ['.env files kept out of git'] : []), ...(listens ? [LISTENING_CLAUSE] : []), ...(pins.length > 0 ? ['the pinned kits'] : []), ...(up ? [`the setup commit ${local ? `onto ${cut(branch)}` : `up to ${cut(branch)} on ${NAME[host]}`}${yours === '' ? '' : ', with your changes'}${ownPart === '' ? '' : ', with your product\'s own files'}`] : []),
     ...(local ? [] : [`${up ? 'then ' : ''}protection on ${up ? 'it' : cut(branch)}`]),
   ];
   return card(`Setup step 7, ${SETUP_TITLES[7]}: ${short.join(', ')}${local ? '' : ', all with your sign-in'}. Wheelhouse never updates itself.`);
@@ -1182,6 +1187,7 @@ export function projectFilesStep({
     const home = claudeHome();
     const release = wheelhouseRelease({ folder, claudeHome: home });
     const pin = frontDeskPin(objectIn(CONFIG, committed));
+    const listens = listeningNotice(objectIn(CONFIG, committed)) !== null;
     const blocked = [];
     const changes = [
       ...localFilesChange({ folder, local: { address: address(), node, pluginRoot, platform, claudeHome: home, model: pin } }),
@@ -1190,13 +1196,15 @@ export function projectFilesStep({
     ];
     if (changes.length === 0) {
       // One line: the engine keeps only the last one a settling says.
-      if (differ.length > 0 || blocked.length > 0) {
+      if (differ.length > 0 || blocked.length > 0 || listens) {
         const notes = [...(blocked.length > 0 ? [NEGATED_LINE] : []), ...(differ.length > 0 ? [`${listed(differ)} ${differ.length === 1 ? 'differs' : 'differ'} from what is committed, and setup leaves ${differ.length === 1 ? 'it as it is' : 'them as they are'}`] : [])];
-        ctx.say?.(`Setup step 7, ${SETUP_TITLES[7]}: this computer's files are in place; ${notes.join('; ')}.`);
+        // The statement comes first, so a long note can't push it out of what the journal keeps.
+        const head = `Setup step 7, ${SETUP_TITLES[7]}: this computer's files are in place`;
+        ctx.say?.(listens ? sayFit([head, listeningNotice({ localListening: true }), ...notes]) : `${head}; ${notes.join('; ')}.`);
       }
       return { settled: { record: { nothing: true, ...(differ.length > 0 ? { differ } : {}) } } };
     }
-    return { changes, card: projectFilesCard({ changes, host, branch: null, release, joining: true, differ, negated: blocked, frontDesk: frontDeskOf(changes, pin) }), director: 'One click' };
+    return { changes, card: projectFilesCard({ changes, host, branch: null, release, joining: true, differ, negated: blocked, frontDesk: frontDeskOf(changes, pin), listens }), director: 'One click' };
   };
 
   return {
@@ -1366,12 +1374,16 @@ export function projectFilesStep({
       if (commit) changes.push({ kind: 'host', target, action: 'commit', branch, base: tip, message: COMMIT_MESSAGE, files: commitFiles, ...(yours.length > 0 ? { yours } : {}), ...(own.length > 0 ? { own } : {}), ...(left ? { ownLeft: true } : {}) });
       else if (unpushed) changes.push({ kind: 'host', target, action: 'push', branch, base: tip, commit: head, files: ((await git.out(['diff-tree', '--no-commit-id', '--name-only', '-r', head])) ?? '').split('\n').filter(Boolean) });
       if (!local) changes.push({ kind: 'host', target: `${repo} protection`, action: 'protect', branch });
-      return { changes, card: projectFilesCard({ changes, host, branch, release, frontDesk: pin === null ? NO_PIN : frontDeskOf(changes, pin), midSized: held !== null ? null : mid === null ? NO_PIN : mid }), director: 'One click' };
+      return { changes, card: projectFilesCard({ changes, host, branch, release, frontDesk: pin === null ? NO_PIN : frontDeskOf(changes, pin), midSized: held !== null ? null : mid === null ? NO_PIN : mid, listens: config.localListening === true }), director: 'One click' };
     },
 
     async apply(ctx, changes) {
       const platform = ctx.platform ?? process.platform;
-      const say = typeof ctx.say === 'function' ? ctx.say : () => {};
+      // When the written configuration lets agents' commands listen, every line setup says from here on carries
+      // the short statement, since the engine keeps only the last line of a step. The card holds the whole of it.
+      let tail = null;
+      const sayRaw = typeof ctx.say === 'function' ? ctx.say : () => {};
+      const say = (line) => sayRaw(tail === null || String(line).includes(tail) ? line : `${String(line).replace(/\.$/, '')}. ${tail}`);
       const halt = () => { if (ctx.stopped?.()) throw new Error(STOPPED); };
       const found = projectForFolder(ctx.folder);
       if (found === null) throw new Error('the project is not registered on this computer; run step 3 first');
@@ -1418,9 +1430,7 @@ export function projectFilesStep({
           }
         }
       }
-      // The project's settings are written: say plainly what local listening allows, when the project has it on.
-      const notice = listeningNotice(objectIn(CONFIG, readText(at(CONFIG))));
-      if (notice !== null && typeof ctx.say === 'function') ctx.say(notice);
+      if (listeningNotice(objectIn(CONFIG, readText(at(CONFIG)))) !== null) tail = capital(LISTENING_CLAUSE);
       // What this apply wrote into the shared files and the .gitignore: the commit takes them only as they are.
       const wrote = Object.fromEntries([...SETUP_FILES, GITIGNORE, ...ENGINE_FILES].map((rel) => [rel, readText(at(rel))]));
       halt();
@@ -1576,7 +1586,7 @@ export function projectFilesStep({
         // The gaps about the project's secrets come last: there can be many, and "(and N more)" then
         // only ever stands for secrets' names.
         const gaps = got.gaps ?? [];
-        const parts = [got.line];
+        const parts = [...(tail === null ? [] : [tail]), got.line];
         if (realUsers && host === 'gitlab') parts.push('A project with real users is merged by Maintainers only on GitLab, so Wheelhouse\'s key is refused and a person presses Merge');
         if (got.askPipelines) parts.push(`"Pipelines must succeed" is left off on ${protect.branch}, since the project has no pipeline yet; once it has one, Wheelhouse asks you to switch it on`);
         parts.push(...gaps.filter((g) => !/\bsecrets?\b/i.test(g)), ...gaps.filter((g) => /\bsecrets?\b/i.test(g)));
