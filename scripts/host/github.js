@@ -15,7 +15,7 @@ export const STATE = { OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' };
 // No rollup (no checks at all) or a commit GitHub does not have is 'none'.
 export const ROLLUP = { SUCCESS: 'success', PENDING: 'pending', EXPECTED: 'pending', FAILURE: 'failure', ERROR: 'failure' };
 
-export const CI_QUERY = 'query($owner:String!,$name:String!,$sha:GitObjectID!){repository(owner:$owner,name:$name){object(oid:$sha){... on Commit{oid statusCheckRollup{state}}}}}';
+export const CI_QUERY = 'query($owner:String!,$name:String!,$sha:GitObjectID!){repository(owner:$owner,name:$name){object(oid:$sha){... on Commit{oid statusCheckRollup{state} checkSuites(first:20){nodes{status conclusion checkRuns(first:1){totalCount}}}}}}}';
 
 export const CONTEXTS_QUERY = 'query($owner:String!,$name:String!,$sha:GitObjectID!){repository(owner:$owner,name:$name){object(oid:$sha){... on Commit{statusCheckRollup{contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion startedAt completedAt checkSuite{app{slug}}} ... on StatusContext{context state createdAt creator{login}}}}}}}}}';
 // A check run's words, and a status's. A run that started and ended in the same moment, or that couldn't start, ran no job.
@@ -54,10 +54,19 @@ function checksAnswer(answer) {
   return answer.data;
 }
 
-// The commit's rollup state from the CI_QUERY answer. No rollup, or a commit GitHub does not have, is 'none'.
+// A check suite that ended without a single run: the workflow could not start (a bad workflow file, say), so no check reports
+// and the rollup stays empty though CI failed.
+const FAILED_SUITE = ['FAILURE', 'STARTUP_FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED'];
+const failedToStart = (suite) => suite?.status === 'COMPLETED' && FAILED_SUITE.includes(suite?.conclusion) && suite?.checkRuns?.totalCount === 0;
+
+// The commit's rollup state from the CI_QUERY answer. No rollup, or a commit GitHub does not have, is 'none', unless a check
+// suite failed before any run started, which is 'failure': otherwise nothing would ever say CI is red.
 export function rollupOf(answer, sha) {
-  const rollup = checksAnswer(answer)?.repository?.object?.statusCheckRollup;
-  return { sha, state: rollup ? (ROLLUP[rollup.state] ?? 'pending') : 'none' };
+  const commit = checksAnswer(answer)?.repository?.object;
+  const rollup = commit?.statusCheckRollup;
+  if (rollup) return { sha, state: ROLLUP[rollup.state] ?? 'pending' };
+  const suites = Array.isArray(commit?.checkSuites?.nodes) ? commit.checkSuites.nodes : [];
+  return { sha, state: suites.some(failedToStart) ? 'failure' : 'none' };
 }
 
 // Everything that reports on the commit, from the CONTEXTS_QUERY answer.

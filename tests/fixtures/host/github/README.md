@@ -18,6 +18,7 @@ What `gh` printed, as the adapter's tests feed it back. Owner and repository are
 
 **From documentation**, written to the documented output, because making them needs a change to a repository:
 
+- `ci-startup-failure.json`, `ci-none-queued.json`: no rollup, with the commit's check suites (`checkSuites`): one that ended in `FAILURE` with no check runs (a workflow that could not start; seen on a real pull request on 10 November 2026), and one still queued.
 - `pr-view-conflicting.json`, `ci-pending.json`, `ci-failure.json`, `issue-list.json`: recorded shapes with the documented values `CONFLICTING`, `PENDING` and `FAILURE`, and one issue.
 - `pr-create.txt`, `pr-edit.txt`, `issue-create.txt`, `issue-edit.txt`: these commands print the web address of the pull request or issue.
 - `merge-refused.txt`: the error `gh pr merge --match-head-commit` gives when the head has moved.

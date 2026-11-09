@@ -78,6 +78,8 @@ export const cases = [
   { name: 'ciState success', call: (a) => a.ciState(SHA), ...same(ghFile('ci-success.json')), expect: { sha: SHA, state: 'success' } },
   { name: 'ciState pending', call: (a) => a.ciState(SHA), ...same(ghFile('ci-pending.json')), expect: { sha: SHA, state: 'pending' } },
   { name: 'ciState none', call: (a) => a.ciState(SHA), ...same(ghFile('ci-none.json')), expect: { sha: SHA, state: 'none' } },
+  { name: 'ciState reads a check suite that failed before any run as failure', call: (a) => a.ciState(SHA), ...same(ghFile('ci-startup-failure.json')), expect: { sha: SHA, state: 'failure' } },
+  { name: 'ciState keeps a queued suite with no runs as none', call: (a) => a.ciState(SHA), ...same(ghFile('ci-none-queued.json')), expect: { sha: SHA, state: 'none' } },
   { name: 'ciState turns a GraphQL error into an error', call: (a) => a.ciState(SHA), ...same({ data: null, errors: [{ message: 'boom' }] }), throws: /could not read the commit's checks/ },
   { name: 'checkContexts', call: (a) => a.checkContexts(SHA),
     ...same({ data: { repository: { object: { statusCheckRollup: { contexts: { nodes: [
