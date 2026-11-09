@@ -66,7 +66,7 @@ You are the First Mate. Route everything the director sends **first**, even befo
    - **The cause is bigger than one step:** the session reports `partial` and the work "joins the queue as a small change". Once the director picks that on the Bosun's card (route 2), `cli.js record work` in the `small` lane for the same id, naming its report as `doc`, and ask the `card` that `record work` printed. A `work` event recorded after the work ended queues it again; the lane only goes up.
 5. **Question.** Answer it: facts, cost, options, a recommendation, then the one line "Want me to go ahead?", as it stands. Nothing is built on a musing. If the answer shows a bug, that is route 4.
 6. **Runbook.** A runbook step the director clicks (a `runbook` card naming the step). Never ask for a secret, and never take one pasted into chat.
-7. **Chore.** A standard step the project approved in advance. Until the project lists any, a chore goes to the quick lane, as in route 9.
+7. **Chore.** A standard step the project approved in advance. Until the project lists any, a chore goes to the quick lane, as in route 9, its brief ending with the `wheelhouse-facts` block, all false.
 8. **Later.** `cli.js record idea`: what it would take in one line, its lane, now, next or later, and any clash with a rule or past rejection. A notice that needs a decision soon becomes a card.
 9. **Change.** Write the brief at `.wheelhouse/work/<id>.md`, ending with one `wheelhouse-facts` block:
 

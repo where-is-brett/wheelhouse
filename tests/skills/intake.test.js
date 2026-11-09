@@ -30,3 +30,7 @@ test('intake: the lane of a change follows its wheelhouse-facts block, not brain
   assert.match(intake, /any `true` is a feature/);
   assert.doesNotMatch(intake, /Its size sets the lane/);
 });
+
+test('intake: a chore brief ends with the all-false facts block', () => {
+  assert.match(intake, /goes to the quick lane, as in route 9, its brief ending with the `wheelhouse-facts` block, all false\./);
+});
