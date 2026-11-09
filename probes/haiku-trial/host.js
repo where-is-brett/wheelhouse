@@ -56,14 +56,11 @@ export async function readGateWith({ gh, change }) {
   return visibleFromChange({ paths: files.map((f) => f.filename), diff: typeof diff === 'string' ? diff : undefined });
 }
 
-// A process start time as whole seconds, from `ps`'s lstart in either order: month first ("Mon Nov  9 00:36:26 2026"), as the
-// helper records it, or day first ("Mon  9 Nov 00:36:26 2026"), as `ps` prints it under a day-first locale such as en_AU.
-// Wheelhouse's own startSeconds reads only the first, so restore read no helper as the trial's on such a computer.
+// A process start time as whole seconds, from `ps`'s lstart in either order: month first ("Mon Nov  9 00:36:26 2026") or
+// day first ("Mon  9 Nov 00:36:26 2026"), as `ps` prints it under a day-first locale such as en_AU. Wheelhouse's own
+// startSeconds now reads both, so this is that, kept under the name the trial's tests use.
 export function startOf(text) {
-  const seconds = startSeconds(text);
-  if (seconds !== null || typeof text !== 'string') return seconds;
-  const dayFirst = /^(\w{3}) +(\d{1,2}) (\w{3}) (.+)$/.exec(text.trim());
-  return dayFirst ? startSeconds(`${dayFirst[1]} ${dayFirst[3]} ${dayFirst[2].padStart(2, ' ')} ${dayFirst[4]}`) : null;
+  return startSeconds(text);
 }
 
 // Wheelhouse keeps a project's records under its NAME (owner__repo); the runner's processes work in its FOLDER. These two
