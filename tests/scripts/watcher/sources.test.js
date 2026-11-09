@@ -667,3 +667,17 @@ test('a pull request a held feature waits on is asked about and its state is obs
   const events = diff(cursor.prev, second, { seen: new Set(cursor.seen) }).filter((e) => e.type === 'pr-settled');
   assert.deepEqual(events.map((e) => [e.work, e.pr]), [['login-page', 2]]);
 }));
+
+test('a pull request already merged when the feature waits on it wakes the session on the first pass', () => withHome(async () => {
+  const held = worktree({
+    brief: briefText('login-page'),
+    status: JSON.stringify(status('login-page', { phase: 'waiting', waitingOn: 'merge', pr: null })),
+    questions: `${JSON.stringify({ waitPr: 2, at: '2026-10-19T08:00:00.000Z' })}\n`,
+  });
+  record('feature', { work: 'login-page', step: 'building', worktree: held, branch: 'feature/login-page' }, -30 * SEC);
+  const client = fakeClient({ prs: { 2: { headSha: HEAD, headRef: 'feature/other', mergeable: 'unknown', state: 'merged' } } });
+  const first = await observe({ project: P, client, now: at(0) });
+  assert.deepEqual(first.features['login-page'].prWaits, [{ pr: 2, state: 'merged' }]);
+  const events = diff(null, first, { seen: new Set() }).filter((e) => e.type === 'pr-settled');
+  assert.deepEqual(events.map((e) => [e.work, e.pr]), [['login-page', 2]]);
+}));

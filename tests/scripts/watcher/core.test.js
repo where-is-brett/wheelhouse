@@ -938,3 +938,14 @@ test('a feature held on a merge is not counted stuck', () => {
   cursor = settle(cursor, { ...held, awake: STUCK_MS * 2 });
   assert.equal(cursor.features['login-page'].still, 0);
 });
+
+test('a wait on a pull request ends by itself once it settles, so the stuck timer runs again with no --end', () => {
+  const held = (state) => observation({ features: { 'login-page': feature({ status: status({ phase: 'waiting', waitingOn: 'merge' }), waitPrs: [2], prWaits: [{ pr: 2, state }] }) } });
+  let open = settle(null, held('open'));
+  open = settle(open, { ...held('open'), awake: STUCK_MS * 2 });
+  assert.equal(open.features['login-page'].still, 0, 'an open pull request still holds the timer off');
+  const cursor = settle(null, held('merged'));
+  assert.equal(settle(cursor, { ...held('merged'), awake: STUCK_MS }).features['login-page'].still, STUCK_MS);
+  const events = diff(cursor, { ...held('merged'), awake: STUCK_MS }, { handled: new Set() });
+  assert.ok(events.some((e) => e.type === 'stuck' && e.work === 'login-page'));
+});

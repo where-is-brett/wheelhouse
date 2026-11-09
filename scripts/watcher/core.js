@@ -148,7 +148,11 @@ function knownMerges(prev, next) {
 function isWaiting(f, prs) {
   const s = f.status;
   if (!isPlain(s)) return false;
-  if (s.waitingOn !== null && s.waitingOn !== undefined) return true;
+  // A wait on pull requests (`wait-for --pr`) ends by itself once every one has merged or closed: the watcher has woken the
+  // session by then, so its stillness counts again whether or not it ran `--end`.
+  const prWaits = list(f.prWaits);
+  const settledWaits = s.waitingOn === 'merge' && prWaits.length > 0 && prWaits.every((w) => isPlain(w) && ['merged', 'closed'].includes(w.state));
+  if (s.waitingOn !== null && s.waitingOn !== undefined && !settledWaits) return true;
   if (s.phase === 'done') return true;
   if (s.phase === 'pr-open') {
     const pr = prs[s.pr];
