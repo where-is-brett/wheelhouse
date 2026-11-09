@@ -38,7 +38,7 @@
 import { reviewClear } from '../lib/review-verdict.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import { featurePaths, briefHash, parseBrief, parseReport, questionTrail, QUESTIONS_READ_BYTES, readQuestions, readStatus } from '../feature/files.js';
+import { featurePaths, briefHash, parseBrief, parseReport, questionTrail, QUESTIONS_READ_BYTES, readQuestions, readStatus, waitingForPrs } from '../feature/files.js';
 import { readCapped, safeFeatureFolder } from '../feature/status.js';
 import { SLUG } from '../lib/build-loop.js';
 import { stateDir } from '../lib/paths.js';
@@ -192,6 +192,7 @@ function readFeature(work, worktree, checkout) {
   const status = readStatus(p.status);
   const asked = readQuestions(p.questions, { maxBytes: QUESTIONS_READ_BYTES });
   const stuckNotes = questionTrail(p.questions, { maxBytes: QUESTIONS_READ_BYTES }).stuck;
+  const waitPrs = waitingForPrs(p.questions, { maxBytes: QUESTIONS_READ_BYTES });
   const brief = readCapped(p.brief, BRIEF_BYTES);
   let appetite = null;
   if (brief !== null) {
@@ -215,6 +216,8 @@ function readFeature(work, worktree, checkout) {
     skipped: asked.skipped,
     // The session's own plain "stuck" messages (cli.js stuck), left out when it sent none.
     ...(stuckNotes.length === 0 ? {} : { stuckNotes }),
+    // The pull requests the session waits on (cli.js wait-for --pr), left out when it waits on none.
+    ...(waitPrs.length === 0 ? {} : { waitPrs }),
     briefHash: brief === null ? null : briefHash(brief),
     appetite,
     report,
@@ -412,6 +415,32 @@ export async function observe({ project, client, now = () => new Date(), interva
     if (isPlain(pr)) delete prAsked[key];
     else prAsked[key] = iso;
   }
+  // The pull requests a held feature waits on (`wait-for --pr`), each as the host has it: `prWaits` is `[{ pr, state }]`, with
+  // `state` open, merged or closed. Asked again when the pull request interval has passed; a state not asked for now, or one the
+  // helper could not give, is the earlier one, or open when there is none.
+  for (const [work, f] of Object.entries(features)) {
+    if (!Array.isArray(f.waitPrs)) continue;
+    const earlier = prev?.features?.[work]?.prWaits;
+    const prWaits = [];
+    for (const number of f.waitPrs) {
+      const key = `wait:${number}`;
+      const known = Array.isArray(earlier) ? earlier.find((w) => w?.pr === number) : undefined;
+      let state = known?.state ?? 'open';
+      if (known === undefined || known.state === 'open') {
+        if (dueSince(prAsked[key], every.prs)) {
+          try {
+            const answer = await client.prState({ project, number });
+            const got = answer?.ok === true && isPlain(answer.result) ? answer.result.state : null;
+            if (got === 'open' || got === 'merged' || got === 'closed') state = got;
+            prAsked[key] = iso;
+          } catch { /* asked again at the next interval */ }
+        }
+      }
+      prWaits.push({ pr: number, state });
+    }
+    features[work] = { ...f, prWaits };
+  }
+
   if (prsDue) polled.prs = iso;
   const asked = Object.entries(prAsked).filter(([, when]) => typeof when === 'string')
     .sort(([, x], [, y]) => (x < y ? -1 : x > y ? 1 : 0)).slice(-PR_ASKED_CAP);

@@ -109,7 +109,7 @@ const FOREMAN_ONLY = new Set(FOREMAN_TYPES);
 const keyOf = (move) => [move.act, ...move.args].join(' ');
 
 // The events about one piece that wait while the director has it at the helm.
-const PIECE_EVENTS = new Set(['report', 'amended', 'merge-ready', 'plan-ready', 'question', 'extra-plan', 'stuck-note', 'answer']);
+const PIECE_EVENTS = new Set(['report', 'amended', 'merge-ready', 'plan-ready', 'question', 'extra-plan', 'stuck-note', 'answer', 'pr-settled']);
 // The events that need no move and no foreman: they say what happened, and the script's own moves follow from the views.
 const NOTED = ['clash', 'stop', 'incident', 'lift-incident', 'incident-fix', 'approval', 'ci-push'];
 
@@ -186,6 +186,7 @@ export function triage(state) {
         if (questionIdOf(d.questionId)?.foreman === true) ask(e, 'unknown');
         else add({ act: 'wake-session', args: [work] }, e.id);
         break;
+      case 'pr-settled': add({ act: 'wake-session', args: [work] }, e.id); break;
       case 'merge-ready':
         if (mergeWait(halt, e.pr) !== null) handled.push(e.id);
         else add({ act: 'merge', args: [work] }, e.id);

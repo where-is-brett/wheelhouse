@@ -478,3 +478,15 @@ test('a stuck note for a piece at the helm waits', () => {
   assert.ok(t.defer.includes(e));
   assert.deepEqual(t.wake, []);
 });
+
+test('a pull request a held session waited on settling wakes its session with no foreman wake', () => withHome(async () => {
+  const { act, calls } = fakeAct();
+  const e = ev('pr-settled', 'w-tide-1', { pr: 2, detail: { pr: 2, state: 'merged', next: 'carry on' } });
+  const out = await routineOf(state(), act).run({ events: [e] });
+  assert.ok(out.handled.has(e.id));
+  assert.equal(calls.length, 0, 'the watcher already routes it to the feature session');
+  assert.deepEqual(routineMoves(state({ events: [e] })).map((m) => m.act), ['wake-session']);
+  const routed = route([{ ...e, handled: true }]);
+  assert.equal(routed.foreman.length, 0);
+  assert.equal(routed.features['w-tide-1'].length, 1);
+}));

@@ -96,9 +96,9 @@ export const DIGEST_CAP = 200;
 export const FOREMAN_TYPES = Object.freeze([
   'work-ready', 'amended', 'question', 'extra-plan', 'answer', 'merge-ready', 'stuck', 'review-overdue',
   'over-appetite', 'clash', 'stop', 'incident', 'brief-tampered', 'plan-ready', 'report', 'lift-incident', 'incident-fix',
-  'approval', 'ci-push', 'stuck-note',
+  'approval', 'ci-push', 'stuck-note', 'pr-settled',
 ]);
-export const FEATURE_TYPES = Object.freeze(['ci-red', 'findings', 'conflict', 'review-needed', 'brief-changed', 'answer', 'build', 'ci-push-ready']);
+export const FEATURE_TYPES = Object.freeze(['ci-red', 'findings', 'conflict', 'review-needed', 'brief-changed', 'answer', 'build', 'ci-push-ready', 'pr-settled']);
 export const DIGEST_TYPES = Object.freeze(['task-done', 'review-passed', 'ci-running', 'pushed', 'progress', 'skipped-lines']);
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -344,6 +344,12 @@ function featureEvents(prev, next, settled, out) {
       out.push({ type: 'brief-changed', work, id: `brief-changed:${work}:${hash}:${anchor}`, detail: { hash } });
     }
 
+    // A pull request the session waits on (`wait-for --pr`) has merged or closed: the held session is woken, once for each.
+    for (const w of list(f.prWaits)) {
+      if (!isPlain(w) || !Number.isSafeInteger(w.pr) || !['merged', 'closed'].includes(w.state)) continue;
+      out.push({ type: 'pr-settled', work, pr: w.pr, id: `pr-settled:${work}:${w.pr}`, detail: { pr: w.pr, state: w.state, next: prSettledText(w.pr, w.state) } });
+    }
+
     const status = isPlain(f.status) ? f.status : null;
     const ps = isPlain(pf?.status) ? pf.status : null;
     if (status && pf && statusKey(status) !== statusKey(ps)) {
@@ -391,6 +397,9 @@ function featureEvents(prev, next, settled, out) {
     }
   }
 }
+
+// What the session reads when the pull request it waits on has merged or closed.
+const prSettledText = (pr, state) => `Pull request #${pr} you were waiting on has ${state}. Run \`wait-for --pr ${pr} --end\`, fetch origin and bring ${state === 'merged' ? 'its merged work in from' : 'your branch up to date with'} origin/HEAD, then carry on from where you left off.`;
 
 // What a pull request's state says, each to whom section 11 sends it.
 const PR_CONDITIONS = [

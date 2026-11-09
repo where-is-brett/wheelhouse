@@ -910,3 +910,31 @@ test('a CI push click for a branch with no pull request wakes its feature sessio
   assert.deepEqual(withPr.foreman.map((e) => e.type), ['ci-push']);
   assert.deepEqual(withPr.features['ci-node-24'].map((e) => [e.type, e.id, e.detail]), [['ci-push-ready', 'ev-ready:ready', { branch: 'feature/ci-node-24', sha }]]);
 });
+
+test('a pull request a held feature waits on that merged or closed wakes its session, once', () => {
+  const held = (state) => feature({ status: status({ phase: 'waiting', waitingOn: 'merge' }), waitPrs: [2], prWaits: [{ pr: 2, state }] });
+  const open = observation({ features: { 'login-page': held('open') } });
+  assert.deepEqual(diff(open, open, { handled: new Set() }).filter((e) => e.type === 'pr-settled'), []);
+  for (const state of ['merged', 'closed']) {
+    const next = observation({ features: { 'login-page': held(state) } });
+    const events = diff(open, next, { handled: new Set() }).filter((e) => e.type === 'pr-settled');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].work, 'login-page');
+    assert.equal(events[0].pr, 2);
+    assert.equal(events[0].detail.state, state);
+    assert.match(events[0].detail.next, /wait-for --pr 2 --end/);
+    const routed = route(events);
+    assert.deepEqual(routed.features['login-page'].map((e) => e.type), ['pr-settled']);
+    // The id is kept once.
+    const first = step({ seen: [], prev: open }, next);
+    assert.equal(first.events.filter((e) => e.type === 'pr-settled').length, 1);
+    assert.deepEqual(step(first.cursor, next).events.filter((e) => e.type === 'pr-settled'), []);
+  }
+});
+
+test('a feature held on a merge is not counted stuck', () => {
+  const held = observation({ features: { 'login-page': feature({ status: status({ phase: 'waiting', waitingOn: 'merge' }) }) } });
+  let cursor = settle(null, held);
+  cursor = settle(cursor, { ...held, awake: STUCK_MS * 2 });
+  assert.equal(cursor.features['login-page'].still, 0);
+});

@@ -248,7 +248,7 @@ function scanQuestions(file, { maxBytes = READ_BYTES } = {}) {
   let text;
   let cut = false;
   const fd = openRegular(file);
-  if (fd === null) return { questions: [], skipped: 0, truncated: false, failures: 0, stuck: [], waits: [] };
+  if (fd === null) return { questions: [], skipped: 0, truncated: false, failures: 0, stuck: [], waits: [], prWaits: [] };
   try {
     try {
       const size = fs.fstatSync(fd).size;
@@ -260,7 +260,7 @@ function scanQuestions(file, { maxBytes = READ_BYTES } = {}) {
       fs.closeSync(fd);
     }
   } catch {
-    return { questions: [], skipped: 0, truncated: false, failures: 0, stuck: [], waits: [] };
+    return { questions: [], skipped: 0, truncated: false, failures: 0, stuck: [], waits: [], prWaits: [] };
   }
   let skipped = 0;
   if (cut) {
@@ -273,12 +273,17 @@ function scanQuestions(file, { maxBytes = READ_BYTES } = {}) {
   const questions = [];
   const stuck = [];
   const waits = [];
+  const prWaits = [];
   let failures = 0;
   for (const line of text.split('\n')) {
     if (line.trim() === '') continue;
     try {
       const q = JSON.parse(line);
-      if (isPlain(q) && q.waitFor !== undefined) {
+      if (isPlain(q) && (q.waitPr !== undefined || q.waitPrEnded !== undefined)) {
+        const key = q.waitPr !== undefined ? 'waitPr' : 'waitPrEnded';
+        if (hasOnly(q, [key, 'at']) && Number.isSafeInteger(q[key]) && q[key] >= 1 && isTime(q.at)) prWaits.push({ pr: q[key], ended: key === 'waitPrEnded' });
+        else skipped += 1;
+      } else if (isPlain(q) && q.waitFor !== undefined) {
         if (hasOnly(q, ['waitFor', 'at']) && isQuestionId(q.waitFor) && isTime(q.at)) waits.push(q.waitFor);
         else skipped += 1;
       } else if (isPlain(q) && q.sentBack === true && hasOnly(q, ['sentBack', 'at', 'problems'])) failures += 1;
@@ -294,7 +299,7 @@ function scanQuestions(file, { maxBytes = READ_BYTES } = {}) {
       skipped += 1;
     }
   }
-  return { questions, skipped, truncated: cut, failures, stuck, waits };
+  return { questions, skipped, truncated: cut, failures, stuck, waits, prWaits };
 }
 
 export function readQuestions(file, opts) {
@@ -335,6 +340,18 @@ export function appendLine(file, object) {
 // The decisions the session has said it is waiting on (`wait-for`), by question id, each once, in the order they were said.
 export function waitingFor(file, opts) {
   return [...new Set(scanQuestions(file, opts).waits)];
+}
+
+// The pull requests the session waits on (`wait-for --pr`), each once, in the order they were said, leaving out any it has ended.
+// The lines are `{ waitPr: <number>, at }` and, when the wait is over, `{ waitPrEnded: <number>, at }`.
+export function waitingForPrs(file, opts) {
+  const open = [];
+  for (const { pr, ended } of scanQuestions(file, opts).prWaits) {
+    const at = open.indexOf(pr);
+    if (ended && at !== -1) open.splice(at, 1);
+    else if (!ended && at === -1) open.push(pr);
+  }
+  return open;
 }
 
 // The tries of a session that failed the shape: `failures` in a row at the end of the file, and the `stuck` messages it sent.

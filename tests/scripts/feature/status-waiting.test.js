@@ -4,8 +4,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ask, answer, waitFor, main, CliError } from '../../../scripts/feature/cli.js';
-import { featurePaths, readQuestions } from '../../../scripts/feature/files.js';
+import { ask, answer, waitFor, waitForPr, main, CliError } from '../../../scripts/feature/cli.js';
+import { featurePaths, readQuestions, waitingForPrs } from '../../../scripts/feature/files.js';
 import { buildStatus } from '../../../scripts/feature/status.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -110,4 +110,39 @@ test('wait-for through the command line, and answer --applied', async () => {
   // Naming both flags is one too many.
   const code3 = await main(['answer', 'q-w-tide-1-1', '--applied', '--no-change'], { cwd: tree, client, out: () => {}, err: () => {}, find: () => ({ root: tree }) });
   assert.equal(code3, 1);
+});
+
+test('wait-for --pr holds the piece on a merge and frees its slot; --end releases it', async () => {
+  const tree = feature();
+  assert.deepEqual(waitForPr({ worktree: tree, pr: 2, now: () => NOW }), { waiting: true });
+  const status = statusOf(tree);
+  assert.equal(status.phase, 'waiting');
+  assert.equal(status.waitingOn, 'merge');
+  // Saying it twice keeps one line, and the line is not a malformed question.
+  waitForPr({ worktree: tree, pr: 2, now: () => NOW });
+  assert.equal(fs.readFileSync(featurePaths(tree).questions, 'utf8').split('\n').filter((l) => l.includes('waitPr')).length, 1);
+  assert.equal(readQuestions(featurePaths(tree).questions).skipped, 0);
+  assert.deepEqual(waitingForPrs(featurePaths(tree).questions), [2]);
+  // A decision wait names the decision first; the merge wait stays until it is ended.
+  assert.deepEqual(waitForPr({ worktree: tree, pr: 2, end: true, now: () => NOW }), { waiting: false });
+  assert.equal(statusOf(tree).waitingOn, null);
+  assert.notEqual(statusOf(tree).phase, 'waiting');
+});
+
+test('wait-for --pr through the command line, and it refuses a bad number', async () => {
+  const tree = feature();
+  const run = async (argv) => {
+    const out = [];
+    const err = [];
+    const code = await main(argv, { cwd: tree, client: {}, out: (t) => out.push(t), err: (t) => err.push(t), find: () => ({ root: tree }) });
+    return { code, out: out.join(''), err: err.join('') };
+  };
+  const waiting = await run(['wait-for', '--pr', '3']);
+  assert.equal(waiting.code, 0, waiting.err);
+  assert.match(waiting.out, /pull request #3/);
+  assert.equal(statusOf(tree).waitingOn, 'merge');
+  assert.equal((await run(['wait-for', '--pr', 'x'])).code, 1);
+  assert.equal((await run(['wait-for', '--pr'])).code, 1);
+  assert.equal((await run(['wait-for', '--pr', '3', '--end'])).code, 0);
+  assert.equal(statusOf(tree).waitingOn, null);
 });
