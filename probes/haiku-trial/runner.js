@@ -12,7 +12,8 @@ import { runFolder } from './results.js';
 import { openPicker, readyToSubmit, deskBusy, HIGHLIGHTED, PICKED } from './stand-in.js';
 import { PIECES, WAVES, P5_SPARE, F2_ANSWER, P6_FILE } from './requests.js';
 import { SESSION_PREFIX, frontDeskCommand } from './tmux.js';
-import { STEPS as LOG, SETUP_DONE, OWN_BRANCH } from './signals.js';
+import { STEPS as LOG, SETUP_DONE, setupJournalDone, OWN_BRANCH } from './signals.js';
+import { STEPS as SETUP_STEPS } from '../../scripts/setup/steps.js';
 import { auditModels } from './audit.js';
 import { parseModel, DEFAULT_MODEL, MODELS } from './models.js';
 import { STARTS_UNAPPROVED } from '../../scripts/foreman/queue.js';
@@ -46,7 +47,12 @@ const holds = (outer, inner) => {
   const rel = path.relative(outer, inner);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 };
-export const realWheelhouseHome = () => path.resolve(os.homedir(), '.wheelhouse');
+// The trial's setup journal, or null when it is missing, half written or not JSON: then setup is not known to be done.
+export function readSetupJournal(home) {
+  if (!home) return null;
+  try { return JSON.parse(fs.readFileSync(path.join(home, 'setup', 'journal.json'), 'utf8')); } catch { return null; }
+}
+export const realWheelhouseHome =() => path.resolve(os.homedir(), '.wheelhouse');
 
 // Where the trial keeps Wheelhouse's records, helper and engine state: its own folder, never the director's.
 export function trialHome({ folder, env }) {
@@ -582,7 +588,14 @@ export const STEPS = [
         await answerPicker(ctx, SETUP);
         const pane = io.tmux.capture(SETUP);
         // The engine's last words also open the phone card, so setup is done only once no picker is open.
-        if (SETUP_DONE.test(pane) && openPicker(pane) === null) return true;
+        if (openPicker(pane) === null) {
+          if (SETUP_DONE.test(pane)) { ctx.state.setupEndedBy = 'the engine\'s words in the pane'; return true; }
+          // The pane shows the engine's words only if the model repeats them exactly, so the journal is the other signal.
+          if (setupJournalDone(readSetupJournal(ctx.env.WHEELHOUSE_HOME), ctx.projectDir, SETUP_STEPS.map((s) => s.n))) {
+            ctx.state.setupEndedBy = 'the setup journal, every step done';
+            return true;
+          }
+        }
         if (!restarted && NEW_SESSION.test(pane)) {
           ctx.state.panes.setup.push(pane);
           endSession(ctx, SETUP);
@@ -595,6 +608,7 @@ export const STEPS = [
       ctx.session = undefined;
       ctx.state.panes.setup.push(io.tmux.capture(SETUP));
       await note(ctx, LOG.health, done ? 'pass' : 'fail: setup did not finish in time');
+      if (done) await note(ctx, LOG.health, `setup ended on ${ctx.state.setupEndedBy}`);
       ctx.state.config = await io.host.readConfig({ dir: ctx.projectDir });
       endSession(ctx, SETUP);
       if (!done) throw new Stop('setup did not finish');

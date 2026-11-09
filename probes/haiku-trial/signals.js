@@ -1,5 +1,7 @@
 // probes/haiku-trial/signals.js
 // The 45 path rows of the Haiku trial (spec section 6): each reads one pass signal from the context the runner gathers.
+import fs from 'node:fs';
+import path from 'node:path';
 import { listEvents } from '../../scripts/state/events.js';
 import { buildViews } from '../../scripts/state/views.js';
 import { readEnrolled } from '../../scripts/state/signing.js';
@@ -58,6 +60,20 @@ export const SETUP_DONE_LINE = 'Every step is done';
 const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Case counts: the desk's own "kept until setup is finished" is not the engine's "Setup is finished." (run 2026-11-09-e).
 export const SETUP_DONE = new RegExp(`${escaped(SETUP_DONE_LINE)}|${escaped(PHONE_NEXT.split('.')[0])}`);
+
+// Whether setup's journal says setup is over for a folder: its latest run for that folder has every step in `steps` (the step
+// numbers the engine runs) marked done. The pane shows the engine's closing words only when the model repeats them word for word.
+export function setupJournalDone(journal, folder, steps) {
+  if (!Array.isArray(journal?.runs) || !Array.isArray(steps) || steps.length === 0 || typeof folder !== 'string') return false;
+  const mine = journal.runs.filter((run) => run && typeof run.folder === 'string' && sameFolder(run.folder, folder));
+  const latest = mine[mine.length - 1];
+  if (!latest || typeof latest.steps !== 'object' || latest.steps === null) return false;
+  return steps.every((n) => Boolean(latest.steps[n]?.doneAt));
+}
+const sameFolder = (a, b) => {
+  if (path.resolve(a) === path.resolve(b)) return true;
+  try { return fs.realpathSync(a) === fs.realpathSync(b); } catch { return false; }
+};
 
 // The branches the runner or Wheelhouse itself makes, which are not a piece's work.
 export const OWN_BRANCH = /^(trial\/|wheelhouse\/(undo|decisions))/;

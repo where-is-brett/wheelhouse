@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ROWS, KINDS, EVENT_KINDS, STEPS, SETUP_DONE, OWN_BRANCH, FULL_ONLY, PROOF_HEADINGS, checkAll, gatherContext } from '../../../probes/haiku-trial/signals.js';
+import { ROWS, KINDS, EVENT_KINDS, STEPS, SETUP_DONE, setupJournalDone, OWN_BRANCH, FULL_ONLY, PROOF_HEADINGS, checkAll, gatherContext } from '../../../probes/haiku-trial/signals.js';
 import { FRONT_DESK_LINE } from '../../../scripts/hooks/session-start.js';
 import { PLAIN_KINDS, PROTECTED_KINDS } from '../../../scripts/state/events.js';
 
@@ -446,4 +446,17 @@ test('gatherContext reads the record and calls gh api for pulls, commits and sta
     else process.env.WHEELHOUSE_HOME = saved;
     fs.rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('setup counts as done when the journal\'s latest run for the folder has every step done', () => {
+  const steps = [1, 2, 3];
+  const done = (...ns) => Object.fromEntries(ns.map((n) => [n, { doneAt: '2026-11-09T01:00:00Z' }]));
+  const journal = (runs) => ({ v: 1, runs });
+  assert.equal(setupJournalDone(journal([{ folder: '/p', steps: done(1, 2, 3) }]), '/p', steps), true);
+  assert.equal(setupJournalDone(journal([{ folder: '/p', steps: done(1, 2) }]), '/p', steps), false, 'a step without doneAt');
+  assert.equal(setupJournalDone(journal([{ folder: '/p', steps: { ...done(1, 2), 3: { shownAt: 'x' } } }]), '/p', steps), false);
+  assert.equal(setupJournalDone(journal([{ folder: '/other', steps: done(1, 2, 3) }]), '/p', steps), false, 'another folder');
+  assert.equal(setupJournalDone(journal([{ folder: '/p', steps: done(1, 2, 3) }, { folder: '/p', steps: done(1) }]), '/p', steps), false, 'only the latest run counts');
+  assert.equal(setupJournalDone(journal([{ folder: '/p', steps: {} }]), '/p', []), false, 'no step list is never done');
+  for (const bad of [null, undefined, 'text', {}, { runs: 'x' }, { runs: [] }]) assert.equal(setupJournalDone(bad, '/p', steps), false);
 });

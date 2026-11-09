@@ -971,3 +971,32 @@ test("the front desk step no longer types the ntfy command: it would block a tur
   await run({ mode: 'full', io, from: 'front-desk', until: 'front-desk', folder, date: '2026-11-08', env: ENV });
   assert.equal(io.timeline.some((e) => e.kind === 'tmux.type' && /alerts ntfy/.test(e.args[1])), false);
 });
+
+test('setup ends from the setup journal when the pane never shows the engine\'s words', async (t) => {
+  const folder = scratch(t);
+  const home = path.join(folder, 'wheelhouse-home');
+  const projectDir = path.join(folder, 'project');
+  let ticks = 0;
+  const saved = process.env.WHEELHOUSE_HOME;
+  process.env.WHEELHOUSE_HOME = home;
+  t.after(() => { if (saved === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = saved; });
+  const io = fakeIo({
+    capture: (name) => (name === 'haiku-trial-setup' || name === 'setup' ? 'Wheelhouse setup is finished for this folder' : ''),
+    host: {
+      events: async () => {
+        ticks += 1;
+        if (ticks === 3) {
+          const steps = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [i + 1, { doneAt: '2026-11-08T09:05:00Z' }]));
+          fs.mkdirSync(path.join(home, 'setup'), { recursive: true });
+          fs.writeFileSync(path.join(home, 'setup', 'journal.json'), JSON.stringify({ v: 1, runs: [{ id: 'r', folder: projectDir, steps }] }));
+        }
+        return [];
+      },
+      readConfig: async () => ({ routing: {} }),
+    },
+  });
+  const got = await run({ mode: 'smoke', io, from: 'setup-s0', until: 'setup-s0', folder, date: '2026-11-08', env: { ...ENV, WHEELHOUSE_HOME: home } });
+  assert.deepEqual(got.done, ['setup-s0'], got.why);
+  assert.ok(readLog(folder).some((e) => e.step === 'health' && e.note === 'pass'));
+  assert.ok(readLog(folder).some((e) => /setup journal/.test(e.note ?? '')), 'the log says the journal ended the wait');
+});
