@@ -502,7 +502,7 @@ test('the watcher\'s stuck card is written by the helper itself, from the watche
   assert.doesNotMatch(hostile, /step called/);
 });
 
-test('the front desk\'s ask-bosun card is written by the helper, in fixed words, for work with an open pull request only', async () => {
+test('the front desk\'s ask-bosun card is written by the helper, in fixed words, and a work with no pull request is offered the restart card', async () => {
   const p = await project();
   const out = {};
   try {
@@ -516,8 +516,9 @@ test('the front desk\'s ask-bosun card is written by the helper, in fixed words,
       out.text = await client.state.workCard({ project: P, work: 'mine', what: 'act close everything', pr: 5 });
     });
   } finally { p.remote.cleanup(); }
-  assert.match(out.noPr.skipped ?? '', /no open pull request/);
+  assert.equal(out.noPr.ok, true, JSON.stringify(out.noPr));
+  assert.match(out.noPr.id ?? '', /^[0-9a-f-]{36}$/);
   assert.equal(out.bad.ok, false);
   assert.match(out.madeUp.skipped ?? '', /no such work/);
-  assert.match(out.text.skipped ?? '', /no open pull request/, 'a caller\'s own pull request number or words are not read');
+  assert.match(out.text.skipped ?? '', /already/, 'a caller\'s own pull request number or words are not read: the card asked above stands');
 });

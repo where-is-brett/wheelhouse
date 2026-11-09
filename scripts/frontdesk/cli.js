@@ -893,7 +893,7 @@ export async function askBosun({ client, cwd, work }) {
   const got = await client.state.workCard({ cwd, work });
   if (got?.ok !== true) throw new CliError(said(got, 'The helper could not ask the Bosun'));
   if (typeof got.skipped === 'string') return { work, say: `Nothing was asked: ${got.skipped}.` };
-  return { work, id: got.id, say: 'Asked: the Bosun decides what happens to its pull request. Run cards and ask the card it gives.' };
+  return { work, id: got.id, say: 'Asked: the Bosun decides what happens next, such as waking the work. Run cards and ask the card it gives.' };
 }
 
 // --- pull-back ---

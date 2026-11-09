@@ -1,6 +1,6 @@
 // tests/scripts/foreman/work-card.test.js
 // The question a director's "fix it" or "ship it" puts to the Bosun: fixed words, never "ship it as it is" while a
-// signed review holds the merge, and none without an open pull request.
+// signed review holds the merge, and with no pull request it offers to wake the session.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { stuckAskCommand, workCardFor, workQuestion, FIX_FINDINGS, RESTART_BUILDER } from '../../../scripts/foreman/ask-help.js';
@@ -34,12 +34,24 @@ test('with no review that holds it, the builder is restarted where it left off',
   assert.doesNotMatch(data.what, /holds the merge/);
 });
 
-test('no card without the work, an open pull request, or when the Bosun has asked already', () => {
+test('no card without the work, or when the Bosun has asked already', () => {
   assert.match(workCardFor(views(null), { work: 'other', pr: 2 }).skip, /no such work/);
-  assert.match(workCardFor(views(null), { work: 'mine', pr: null }).skip, /no open pull request/);
   assert.match(workCardFor(views(null, { features: { mine: { data: { step: 'closed' } } } }), { work: 'mine', pr: 2 }).skip, /ended/);
   const asked = views(null, { questions: { 'q-mine-1000001': { question: { at: '2026-11-05T10:00:00.000Z', data: { id: 'q-mine-1000001', work: 'mine' } }, answer: null } } });
   assert.match(workCardFor(asked, { work: 'mine', pr: 2 }).skip, /already/);
+});
+
+test('a work with no pull request is offered the restart card, so a held session can be woken', () => {
+  const { data } = workCardFor(views(null), { work: 'mine', pr: null });
+  assert.equal(data.what, 'mine has no pull request yet, and its session may be holding for something that has since happened. What should happen?');
+  assert.deepEqual(data.options, [
+    { label: RESTART_BUILDER, says: 'act restart mine' },
+    { label: 'Leave it for now', says: 'Nothing to do now; the work waits as it is' },
+  ]);
+  assert.equal(questionProblem(data), null);
+  assert.match(workCardFor(views(null), { work: 'mine', pr: null, merged: true }).skip, /merged/);
+  assert.match(workCardFor(views(null, { features: { mine: { data: { step: 'closed' } } } }), { work: 'mine', pr: null }).skip, /ended/);
+  assert.match(workCardFor(views(null), { work: 'mine', pr: null, stuck: true }).skip, /stuck card/);
 });
 
 test('the words are fixed: a work name is the only thing in them', () => {

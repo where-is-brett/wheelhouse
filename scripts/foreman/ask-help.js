@@ -106,42 +106,45 @@ export function stuckCardFor(views, { work, phase = null, still = 0, pr = null }
   return problem === null ? { data } : { skip: `the card can't be composed: ${problem}` };
 }
 
-// The question put to the Bosun about work with an open pull request. It words only what the helper checked: the
+// The question put to the Bosun about work with an open pull request, or with none yet. It words only what the helper checked: the
 // helper cannot prove the director asked, so the card claims no request. While a signed review holds the merge, shipping it
 // as it is is not offered (the gate's rules stand). No option closes the work: `act close` needs the builder's report, and
 // only the director's own amendment pauses work, so the second option leaves things as they are.
 export const LEAVE_WORK = 'Leave it for now';
 export const WORK_CARD_COOLDOWN_MS = 30 * 60 * 1000;
 
-export function workQuestion(work, { pr, findings = false }) {
+export function workQuestion(work, { pr = null, findings = false }) {
   const move = findings ? FIX_FINDINGS : RESTART_BUILDER;
   return {
-    what: `${work} has pull request #${pr} open.${findings ? ' Its signed review holds the merge.' : ''} What should happen?`,
+    what: pr === null
+      ? `${work} has no pull request yet, and its session may be holding for something that has since happened. What should happen?`
+      : `${work} has pull request #${pr} open.${findings ? ' Its signed review holds the merge.' : ''} What should happen?`,
     why: 'Only the Bosun can move it.',
     options: [
       { label: move, says: `act restart ${work}` },
-      { label: LEAVE_WORK, says: 'Nothing to do now; the pull request waits as it is' },
+      { label: LEAVE_WORK, says: pr === null ? 'Nothing to do now; the work waits as it is' : 'Nothing to do now; the pull request waits as it is' },
     ],
     recommendation: move,
     level: 2,
   };
 }
 
-// The card for `work`'s open pull request `pr`, as the helper writes it: `{ data }`, or `{ skip }` saying why none.
+// The card for `work`, with its open pull request `pr` or, with none, to wake a session that may be holding; as the helper writes it: `{ data }`, or `{ skip }` saying why none.
 // A stuck work's own card goes first (`stuck`), a merged pull request has nothing to ask, and no card is made within
 // the cooldown of the last one for the work or of an answer to it.
 export function workCardFor(views, { work, pr = null, merged = false, stuck = false, now = new Date() }) {
   if (views?.features?.[work] === undefined) return { skip: 'there is no such work' };
   if (views.features[work].data?.step === 'closed') return { skip: 'the work has ended' };
   if (merged === true) return { skip: 'its pull request has merged' };
-  if (!Number.isSafeInteger(pr) || pr <= 0) return { skip: 'the work has no open pull request' };
+  // A work with no pull request is offered the same restart: its session may be holding for work that has merged since.
+  const open = Number.isSafeInteger(pr) && pr > 0 ? pr : null;
   if (stuck === true) return { skip: 'the work is stuck, and its stuck card is the one to ask' };
   const own = Object.values(views?.questions ?? {}).filter((q) => questionIdOf(q?.question?.data?.id)?.work === work && questionIdOf(q.question.data.id).foreman);
   if (own.some((q) => q.answer === null)) return { skip: 'the Bosun has asked already' };
   const last = Math.max(0, ...own.flatMap((q) => [Date.parse(q.question?.at), Date.parse(q.answer?.at)]).filter(Number.isFinite));
   if (now.getTime() - last < WORK_CARD_COOLDOWN_MS) return { skip: 'the Bosun was asked about it less than 30 minutes ago' };
   const n = Math.max(FOREMAN_QUESTIONS, ...own.map((q) => questionIdOf(q.question.data.id).n)) + 1;
-  const data = { id: `q-${work}-${n}`, work, ...workQuestion(work, { pr, findings: holdingReview(views, pr) !== null }) };
+  const data = { id: `q-${work}-${n}`, work, ...workQuestion(work, { pr: open, findings: open !== null && holdingReview(views, open) !== null }) };
   const problem = questionProblem(data);
   return problem === null ? { data } : { skip: `the card can't be composed: ${problem}` };
 }
