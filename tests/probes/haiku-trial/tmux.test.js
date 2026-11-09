@@ -49,12 +49,13 @@ test('no burst ends with a semicolon, which tmux would drop, and every character
   for (const b of got.slice(0, -1)) assert.ok(!b.endsWith(';'), b);
 });
 
-test('start gives the session only the environment it is handed, and list shows only the trial\'s sessions', () => {
+test('start ends a session left under the same name, gives the new one only the environment it is handed, and list shows only the trial\'s sessions', () => {
   const calls = [];
   const tmux = makeTmux({ run: (cmd, args) => { calls.push(args); return { status: 0, stdout: 'haiku-trial-desk\nmine\n' }; } });
   tmux.start({ name: 'desk', cwd: '/w', command: ['claude', '--model', 'haiku'], env: { PATH: '/bin' } });
-  assert.deepEqual(calls[0], ['set-option', '-g', 'history-limit', '20000']);
-  assert.deepEqual(calls[1], ['new-session', '-d', '-s', 'haiku-trial-desk', '-x', '220', '-y', '60', '-c', '/w', 'env', '-i', 'PATH=/bin', 'claude', '--model', 'haiku']);
+  assert.deepEqual(calls[0], ['kill-session', '-t', 'haiku-trial-desk']);
+  assert.deepEqual(calls[1], ['set-option', '-g', 'history-limit', '20000']);
+  assert.deepEqual(calls[2], ['new-session', '-d', '-s', 'haiku-trial-desk', '-x', '220', '-y', '60', '-c', '/w', 'env', '-i', 'PATH=/bin', 'claude', '--model', 'haiku']);
   assert.deepEqual(tmux.list(), ['haiku-trial-desk']);
 });
 
