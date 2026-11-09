@@ -76,8 +76,9 @@
 // writes a director's answer but `why`, which notes only that they asked why (a Why? answer, which
 // decides nothing): `record` takes only the plain kinds the front desk decides, never a card, a
 // card's answer, a shown or asked record, or a signed kind, and an answer card's options come only
-// from the question the build recorded. Every card handed out is recorded as asked, and
-// its words are put in the glossary's plain words. Errors are one line on standard error.
+// from the question the build recorded. A card the question picker can mark is counted as asked when the picker shows it (its
+// `shown` record); a card it cannot mark, and a card handed out for the chat or for a live panel, is recorded as asked when
+// printed. A card's words are put in the glossary's plain words. Errors are one line on standard error.
 import { HAND_DONE, HAND_GOAL } from '../lib/by-hand-done.js';
 import { BRIEF_LINES, addFact, briefProblem, briefText, wholeBrief } from '../state/brief.js';
 import crypto from 'node:crypto';
@@ -91,7 +92,7 @@ import { decisionText } from '../decisions/message.js';
 import { isDecisionCard } from '../decisions/pending.js';
 import { askWhy } from '../decisions/why.js';
 import { typedRepliesIn } from '../decisions/switch.js';
-import { confirmWords } from '../state/card-lines.js';
+import { confirmWords, replyCodeOf } from '../state/card-lines.js';
 import { joinersOf } from '../state/joiners.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
 import { controlFileInput, controlFilesDue, controlFilesNamed, gateAsksDue, gateInput, holdInput, holdsDue, premiumFailuresDue, stillWaits, withPutBack } from '../cards/build-loop.js';
@@ -114,7 +115,7 @@ import { FINISHED_WORDS, prsOfWork, workFinished } from '../desk/work-prs.js';
 import { isOpen, surveyLines, whyNext, workLines, withOpened, RECENT_MS, RECENT_LEAD, recentLines } from '../desk/views.js';
 import { answeredWords } from '../cards/answered.js';
 import { crewNow } from '../crew/runs.js';
-import { markHere } from '../lib/session-files.js';
+import { markHere, paneLive } from '../lib/session-files.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { SLUG } from '../lib/build-loop.js';
 
@@ -267,6 +268,20 @@ async function markAsked(client, cwd, ids, stop) {
     return stop ? [] : [`The cards weren't marked as asked, so they may be offered again: ${error.message}`];
   }
 }
+
+// Records, as asked, the cards handed out that the question picker can never mark: a card whose question carries no reply code
+// (no set line, or a kind of set line with none), a card handed out for the chat (`inChat`), which no picker shows, and a card
+// handed out while a live panel is beside the session (`panel`), where no picker call is allowed. A card with a reply code is
+// not marked here otherwise: it counts as asked once the picker's hook has written the signed `shown` record for it
+// (scripts/hooks/prompt-record.js, read by the waiting view), so a card printed and never shown comes back.
+// `handed` is [{ id, question }], the card's stored question text. Resolves with the problems to report.
+async function handOut(client, cwd, handed, { stop, inChat = false, panel = false }) {
+  const ids = handed.filter(({ question }) => inChat || panel || replyCodeOf(question) === null).map(({ id }) => id);
+  return markAsked(client, cwd, ids, stop);
+}
+
+// Whether a live panel is beside the session at `at`: no picker call is allowed then, so no `shown` record can arrive.
+const paneIsLive = (session, at) => typeof session === 'string' && session !== '' && paneLive(session, at.getTime());
 
 const withProblems = (problems) => (problems.length > 0 ? { problems } : {});
 
@@ -537,12 +552,13 @@ async function questionCards({ client, cwd, views, words, stop, problems }) {
 
 // This visit's cards: { questions, left }, and `problems` when something couldn't be done. An open
 // question from the build that no waiting card asks gets its answer card first, and the build
-// loop's records theirs (buildLoopCards). The cards handed out are recorded as asked, so a card
-// dismissed with no answer isn't offered on every turn. A write the helper refuses is a problem,
+// loop's records theirs (buildLoopCards). A card the picker can mark counts as asked once the picker has shown it (its `shown`
+// record), so a card printed and never shown comes back; a card it cannot mark, a card handed out for the chat (`onAsked`) and
+// one handed out under a live panel are recorded as asked when printed, so they aren't offered on every turn. A write the helper refuses is a problem,
 // not a failure: the cards waiting are still given. Under STOP the visit's one card is Lift STOP:
 // the helper writes nothing, so no card is made, and the cards waiting stay on the board, counted
 // in `left`, for the visit after STOP is lifted.
-export async function cards({ client, cwd, now, onAsked }) {
+export async function cards({ client, cwd, now, onAsked, session }) {
   const problems = [];
   let { views, stop, names } = await viewsOf(client, cwd);
   const words = await wordsOf(client, cwd, views, now, names);
@@ -564,7 +580,8 @@ export async function cards({ client, cwd, now, onAsked }) {
   const typed = typedRepliesIn(views.settings);
   const forVisit = withPutBack(views, again, events);
   const chosen = cardsForVisit({ ...forVisit, waiting: (Array.isArray(forVisit.waiting) ? forVisit.waiting : []).filter((c) => !typed || !isDecisionCard(c?.data)) }, { room: lift === null ? CARD.questions : 0 });
-  problems.push(...await markAsked(client, cwd, chosen.ids, stop));
+  const panel = paneIsLive(session, at);
+  problems.push(...await handOut(client, cwd, chosen.ids.map((id, i) => ({ id, question: chosen.questions[i].question })), { stop, inChat: typeof onAsked === 'function', panel }));
   if (typeof onAsked === 'function') await onAsked(chosen.ids);
   return { questions: [...(lift === null ? [] : [lift]), ...chosen.questions], left: chosen.left, ...(chosen.heldBack > 0 ? { heldBack: chosen.heldBack } : {}), ...withProblems(problems) };
 }
@@ -601,11 +618,11 @@ export async function decisionShow({ client, cwd, n }) {
 
 // The director's Show them: the cards held back are named as pulled, which spends none of the day's budget, then this
 // visit's cards come as `cards` gives them. It raises cards and decides nothing.
-export async function pullCards({ client, cwd, now, onAsked }) {
+export async function pullCards({ client, cwd, now, onAsked, session }) {
   const { views } = await viewsOf(client, cwd);
   const ids = Array.isArray(views.cardsWaiting?.ids) ? views.cardsWaiting.ids : [];
   if (ids.length > 0) await write(client, cwd, 'note', { about: 'cards-pulled', ids });
-  return cards({ client, cwd, now, onAsked });
+  return cards({ client, cwd, now, onAsked, session });
 }
 
 // --- card ---
@@ -619,7 +636,8 @@ function topicOf(given) {
 
 // Composes one card and records it, unless a waiting card already carries its set line: then that
 // card comes back as it was recorded, so the director is asked the card the state holds, with
-// `alreadyAsked` when a visit has handed it out already. The card handed out is recorded as asked.
+// `alreadyAsked` when it counts as asked. A card the picker can mark counts as asked once the picker has shown it; one it cannot
+// mark, and one handed out under a live panel, is recorded as asked when printed.
 // An approval whose target names only the pull request gets its head commit from the host. A
 // topic is kept in lower case. A revised card names the
 // card it replaces by `revises`, which must wait now, or have been closed by a later head of its pull
@@ -627,7 +645,7 @@ function topicOf(given) {
 // only when it is itself a revised card: the gate's plain card for that head is replaced instead.
 // An approval or CI push card revised at the same head commit is refused: the change must be committed first.
 // An outdated card may be revised only after a suggested change on it that came before the gate's record for the head.
-export async function card({ client, cwd, input, now }) {
+export async function card({ client, cwd, input, now, session }) {
   if (!isPlain(input)) throw new CliError('Give the card as a JSON object on standard input');
   if (input.kind === 'answer') throw new CliError('An answer card comes from `cards`, made from the question as the build recorded it');
   if (input.kind === 'usage') throw new CliError('A usage card comes from the session start, made from the allowance as it reads it');
@@ -674,12 +692,12 @@ export async function card({ client, cwd, input, now }) {
   if (found !== null) {
     const waiting = views.waiting.find((c) => c.id === found);
     if (waiting.asked !== null && waiting.asked !== undefined) return { question: asQuestion(waiting), id: found, alreadyAsked: true };
-    return { question: asQuestion(waiting), id: found, ...withProblems(await markAsked(client, cwd, [found], false)) };
+    return { question: asQuestion(waiting), id: found, ...withProblems(await handOut(client, cwd, [{ id: found, question: waiting.data.question }], { stop: false, panel: paneIsLive(session, at) })) };
   }
   const decided = decidedBefore(outcomes, data, at);
   if (decided !== null) throw new CliError(decided);
   const { id } = await write(client, cwd, 'card', data);
-  return { question, id, ...withProblems(await markAsked(client, cwd, [id], false)) };
+  return { question, id, ...withProblems(await handOut(client, cwd, [{ id, question: data.question }], { stop: false, panel: paneIsLive(session, at) })) };
 }
 
 // "Already approved in the panel at 10:34; nothing to ask." when a card carrying the same set line was decided: an
@@ -1461,13 +1479,13 @@ export async function main(argv, {
     if (command === 'pull-cards') {
       const { left, onAsked } = await hereMark(rest);
       only(left, 0, 'pull-cards takes no arguments');
-      json(await pullCards({ client: helper, cwd: here, now, onAsked }));
+      json(await pullCards({ client: helper, cwd: here, now, onAsked, session: env.CLAUDE_CODE_SESSION_ID }));
       return 0;
     }
     if (command === 'cards') {
       const { left, onAsked } = await hereMark(rest);
       only(left, 0, 'cards takes no arguments');
-      json(await cards({ client: helper, cwd: here, now, onAsked }));
+      json(await cards({ client: helper, cwd: here, now, onAsked, session: env.CLAUDE_CODE_SESSION_ID }));
     } else if (command === 'decision') {
       const usage = 'Give decision list, or decision show <n> with the decision\'s number';
       if (rest[0] === 'list' && rest.length === 1) lines(await decisionList({ client: helper, cwd: here, now }));
@@ -1477,7 +1495,7 @@ export async function main(argv, {
       lines(await alerts({ client: helper, cwd: here, args: rest }));
     } else if (command === 'card') {
       only(rest, 0, 'card takes no arguments: give the card as JSON on standard input');
-      json(await card({ client: helper, cwd: here, input: parsed(await stdin()), now }));
+      json(await card({ client: helper, cwd: here, input: parsed(await stdin()), now, session: env.CLAUDE_CODE_SESSION_ID }));
     } else if (command === 'again') {
       const { left, onAsked } = await hereMark(rest);
       if (left.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(left[0])) throw new CliError('Give the card\'s number in the Logbook: again <n> [--here]');
