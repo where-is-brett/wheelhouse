@@ -6,7 +6,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { decide, FRONT_DESK_NO_WRITES, ASIDE_NO_WRITES } from '../../../scripts/hooks/front-desk-writes.js';
+import {
+  decide, FRONT_DESK_NO_WRITES, ASIDE_NO_WRITES, lockedDocuments, APPROVED_LOCKED, NO_STATUS_LINE, statusLineIn,
+} from '../../../scripts/hooks/front-desk-writes.js';
 import { sessionRole } from '../../../scripts/lib/role.js';
 import { readSeat } from '../../../scripts/lib/first-mate-seat.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -209,4 +211,78 @@ test('the holder\'s write refreshes the seat', () => {
     decide(write(folder, path.join(folder, 'src', 'a.js')), bySeat(folder));
     assert.ok(Date.parse(JSON.parse(fs.readFileSync(file, 'utf8')).seenAt) > Date.parse(old));
   });
+});
+
+// ---- Approved documents are locked ----
+
+const HASH = 'a'.repeat(64);
+const lockedAt = (folder) => () => [{ work: 'w1', file: path.join(folder, '.wheelhouse', 'work', 'w1.md'), hash: HASH }];
+const bash2 = (cwd, command) => ({ tool_name: 'Bash', cwd, session_id: 's1', tool_input: { command } });
+
+test('an approved document cannot be written by a file tool or the shell, but its change file can', () => {
+  const { folder } = project();
+  const file = path.join(folder, '.wheelhouse', 'work', 'w1.md');
+  const opts = options(folder, { locked: lockedAt(folder) });
+  for (const tool of ['Write', 'Edit', 'MultiEdit']) {
+    const out = decide(write(folder, file, tool), opts);
+    assert.ok(denied(out), tool);
+    assert.equal(out.hookSpecificOutput.permissionDecisionReason, APPROVED_LOCKED('w1', '.wheelhouse/work/w1.md'));
+  }
+  assert.ok(denied(decide(bash2(folder, `sed -i 's/a/b/' ${file}`), opts)), 'sed -i');
+  assert.ok(denied(decide(bash2(folder, `echo hi > ${file}`), opts)), 'redirect');
+  assert.equal(decide(write(folder, path.join(folder, '.wheelhouse', 'work', 'w1.change.md')), opts), undefined);
+  assert.equal(decide(write(folder, path.join(folder, '.wheelhouse', 'work', 'w2.md')), opts), undefined, 'a new brief');
+});
+
+test('a document with nothing locked, and a hook that cannot read the record, allow the write', () => {
+  const { folder } = project();
+  const file = path.join(folder, '.wheelhouse', 'work', 'w1.md');
+  assert.equal(decide(write(folder, file), options(folder, { locked: () => [] })), undefined);
+  assert.equal(decide(write(folder, file), options(folder, { locked: () => { throw new Error('unreadable'); } })), undefined);
+});
+
+test('a status line written into a design under .wheelhouse/work is refused', () => {
+  const { folder } = project();
+  const file = path.join(folder, '.wheelhouse', 'work', 'x.md');
+  const opts = options(folder);
+  const out = decide({ tool_name: 'Write', cwd: folder, session_id: 's1', tool_input: { file_path: file, content: "# D\n\nStatus: draft, waiting for the director's approval\n" } }, opts);
+  assert.ok(denied(out));
+  assert.equal(out.hookSpecificOutput.permissionDecisionReason, NO_STATUS_LINE);
+  const edit = decide({ tool_name: 'Edit', cwd: folder, session_id: 's1', tool_input: { file_path: file, old_string: 'a', new_string: "**Status:** approved by the director's click" } }, opts);
+  assert.ok(denied(edit));
+  const multi = decide({ tool_name: 'MultiEdit', cwd: folder, session_id: 's1', tool_input: { file_path: file, edits: [{ old_string: 'a', new_string: '> Status: pending' }] } }, opts);
+  assert.ok(denied(multi));
+  assert.equal(decide({ tool_name: 'Write', cwd: folder, session_id: 's1', tool_input: { file_path: file, content: '# Design\n\nIt does a thing.\n' } }, opts), undefined);
+  const outside = path.join(tempFolder('wh-fdw-out-'), 'x.md');
+  assert.equal(decide({ tool_name: 'Write', cwd: folder, session_id: 's1', tool_input: { file_path: outside, content: 'Status: draft' } }, opts), undefined);
+});
+
+test('statusLineIn reads status lines and not prose', () => {
+  assert.ok(statusLineIn('Status: Awaiting review'));
+  assert.ok(statusLineIn('- status: changed since the click'));
+  assert.ok(statusLineIn('## Status: proposed'));
+  assert.ok(!statusLineIn('The status: unknown to us'));
+  assert.ok(!statusLineIn('Status codes are listed below'));
+});
+
+test('lockedDocuments lists open approved work with its path and approval hash', () => {
+  const folder = path.join(path.sep, 'proj');
+  const entry = (over = {}) => ({ work: { at: '2026-11-09T00:00:00Z', data: { doc: { path: '.wheelhouse/work/a.md' } } }, approval: { hash: HASH }, ...over });
+  const views = {
+    work: {
+      a: entry(),
+      abs: entry({ work: { data: { doc: { path: path.join(path.sep, 'else', 'abs.md') } } } }),
+      none: entry({ approval: undefined }),
+      done: entry(),
+    },
+    features: {},
+    reports: {},
+  };
+  const endedViews = { ...views, reports: { done: { at: '2026-11-09T01:00:00Z', data: { outcome: 'merged' } } } };
+  const listed = lockedDocuments(views, folder);
+  assert.deepEqual(listed.find((l) => l.work === 'a'), { work: 'a', file: path.join(folder, '.wheelhouse', 'work', 'a.md'), hash: HASH });
+  assert.equal(listed.find((l) => l.work === 'abs').file, path.join(path.sep, 'else', 'abs.md'));
+  assert.equal(listed.find((l) => l.work === 'none'), undefined);
+  assert.equal(lockedDocuments(endedViews, folder).find((l) => l.work === 'done'), undefined);
+  assert.ok(listed.find((l) => l.work === 'done'));
 });
