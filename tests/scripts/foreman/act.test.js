@@ -208,6 +208,39 @@ test('start copies the approved document into the worktree, names it in the brie
   assert.match(r2.out, /^Copied the approved document into the worktree\.$/m);
 }));
 
+test('start refuses while a change to the approved document waits for the director\'s card, and starts once it is clicked', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  const design = '# Export\n\nThe report downloads as CSV, with the columns the table shows.\n';
+  fs.mkdirSync(path.join(checkout, '.wheelhouse', 'work'), { recursive: true });
+  fs.writeFileSync(path.join(checkout, '.wheelhouse', 'work', 'add-export.md'), design);
+  const views = startViews();
+  views.work['add-export'] = workView('add-export', { shownFirst: true, doc: { path: '.wheelhouse/work/add-export.md', hash: briefHash(design) } });
+  views.work['add-export'].approval.hash = briefHash(design);
+  try {
+    enrol({ ...makeSigningKey(), enrolledAt: '2026-10-18T00:00:00.000Z' });
+  } catch (error) {
+    if (!/already exists/.test(error.message)) throw error;
+  }
+  const put = (event) => {
+    const at = path.join(stateDir(P), eventPath(event));
+    fs.mkdirSync(path.dirname(at), { recursive: true });
+    fs.writeFileSync(at, JSON.stringify(event));
+  };
+  const changeHash = briefHash('The changed design.\n');
+  put(makeEvent({ kind: 'amendment', data: { work: 'add-export', change: 'Changed.', hash: changeHash, doc: '.wheelhouse/work/add-export.change.md' }, now: () => new Date(T0 - 80000) }));
+  const waker = fakeWaker();
+  const held = fakeClient({ views });
+  const r1 = await act(START, { client: held.client, wakerFor: waker.wakerFor });
+  refusedInOneLine(r1);
+  assert.match(r1.err, /add-export can't start: the director has not yet answered the change card for it/);
+  assert.equal(fs.existsSync(path.join(checkout, '.claude', 'worktrees', 'add-export')), false);
+  assert.deepEqual(held.writes, []);
+
+  put(makeEvent({ kind: 'action', data: { action: 'amend', work: 'add-export', hash: changeHash, question: 'as shown', label: 'Change it' }, now: () => new Date(T0 - 70000) }));
+  const r2 = await act(START, { client: fakeClient({ views }).client, wakerFor: waker.wakerFor });
+  assert.equal(r2.code, 0, r2.err);
+}));
+
 test('start gives slices and a plan to the brief, and a feature started before its session began starts the session only', () => withHome(async () => {
   const checkout = await project({ git: true });
   const views = startViews();

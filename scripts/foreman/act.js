@@ -643,6 +643,8 @@ async function start(ctx, work, rest) {
   // The approved document, which the brief names as the spec (build-loop design, section 13).
   const approved = approvedDocument({ checkout: checkoutOf(ctx.project), views, work });
   if (approved?.problem) refuse(`${work}'s approved document ${approved.problem}, so it was not started: ask the director`);
+  // A change the director has not yet answered holds the work, as the wake says; recording the work again lets it go.
+  if (documentOf(ctx.project, views, work)?.drift?.pending) refuse(`${work} can't start: the director has not yet answered the change card for it. If the director no longer wants the change, the front desk records the work again`);
   // The brief carries no models: the watcher gives each wake the column in force (design section 14.6).
   // `routing` stays in the brief's shape, empty, so an older brief's is still read (and ignored).
   const fields = {
