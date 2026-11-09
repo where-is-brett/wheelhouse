@@ -94,6 +94,17 @@ test('project settings run every session on haiku with no advisor and no survey,
   }
 });
 
+test('a sonnet seed pins sonnet in the project settings and nothing else changes', () => {
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'haiku-seed-')), 'project');
+  try {
+    makeTestProject({ dir, model: 'sonnet' });
+    const settings = JSON.parse(fs.readFileSync(path.join(dir, '.claude/settings.json'), 'utf8'));
+    assert.deepEqual(settings, { model: 'sonnet', env: { CLAUDE_CODE_SUBAGENT_MODEL: 'sonnet', CLAUDE_CODE_DISABLE_ADVISOR_TOOL: '1', CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: '1' }, enabledPlugins: { 'wheelhouse@wheelhouse': true } });
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('ci runs npm ci and npm test on Node 22', () => {
   const { dir } = fresh();
   try {

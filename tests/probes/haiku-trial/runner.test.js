@@ -89,7 +89,7 @@ test('full plan follows the waves', () => {
   assert.ok(all.indexOf('f6-lift') < all.indexOf('f5a-undo-p6'));
   assert.ok(all.indexOf('w2-merge-wait') < all.indexOf('w3-type'));
   assert.deepEqual(STEPS.filter((s) => s.needsGo).map((s) => s.id), ['create-repo', 'create-preview', 'install']);
-  assert.deepEqual(STEPS.filter((s) => s.director).map((s) => s.id).sort(), ['create-preview', 'f5a-undo-p6', 'f5b-undo-p2', 'f6-lift', 'review-card']);
+  assert.deepEqual(STEPS.filter((s) => s.director).map((s) => s.id).sort(), ['create-preview', 'f5a-undo-p6', 'f5b-undo-p2', 'f6-lift', 'ntfy', 'review-card']);
 });
 
 test('smoke plan is section 14', () => {
@@ -645,6 +645,16 @@ test('the stand-in checks in when the desk is idle and something waits in the re
   assert.equal(waitingInRecord([...events, { id: 'a', kind: 'action', data: { action: 'answer', questionId: 'q-statement-import-1' } }]), 0);
 });
 
+test('a visible work that waits for approval with no approve-work card yet counts as waiting, so the stand-in asks the desk', () => {
+  const work = (id, over = {}) => ({ id: `w-${id}`, kind: 'work', data: { id, title: id, lane: 'small', visible: true, dependsOn: [], ...over } });
+  assert.equal(waitingInRecord([work('shop-categories')]), 1);
+  // A card already stands for it (shown or answered), or the director's click was already recorded.
+  assert.equal(waitingInRecord([work('a'), { id: 'c1', kind: 'card', data: { kind: 'approve-work', question: 'Approve this work?\nWork a: it does a.' } }, { id: 'x', kind: 'card-answer', data: { card: 'c1' } }]), 0);
+  assert.equal(waitingInRecord([work('a'), { id: 'k', kind: 'action', data: { action: 'approve-work', work: 'a' } }]), 0);
+  // Work nobody sees, or that needs no approval, is not waiting.
+  assert.equal(waitingInRecord([work('b', { visible: false }), work('c', { lane: 'quick', visible: false })]), 0);
+});
+
 test('F3 with no feature session to kill is noted as not exercised and the run goes on', async (t) => {
   const folder = scratch(t);
   const io = fakeIo({});
@@ -750,4 +760,214 @@ test('the usage line and plan name the label, the repository and the folder', as
   assert.match(text, /run 2026-11-08-b/);
   assert.match(text, /trial-owner\/haiku-trial-2026-11-08-b/);
   assert.match(text, /haiku-2026-11-08-b/);
+});
+
+test('F3 with no first commit by the deadline is a note, and the step is done', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo({ gh: (args) => (args[1].includes('/branches') ? [] : null) });
+  const got = await run({ mode: 'full', io, from: 'f3-kill-p1', until: 'f3-kill-p1', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['f3-kill-p1']);
+  assert.equal(got.stoppedAt, undefined);
+  assert.ok(readLog(folder).some((e) => /not exercised.*first commit/.test(e.note)));
+  assert.equal(io.timeline.some((e) => e.kind === 'f3'), false, 'nothing is killed without a first commit');
+});
+
+test('F3 looks for the session by the project name as well as its folder', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo({ gh: (args) => (args[1].includes('/branches') ? [{ name: 'feature/p1-import' }] : { ahead_by: 1 }) });
+  await run({ mode: 'full', io, from: 'f3-kill-p1', until: 'f3-kill-p1', folder, date: '2026-11-08', env: ENV });
+  const asked = io.timeline.find((e) => e.kind === 'f3').args[0];
+  assert.equal(asked.name, 'trial-owner__haiku-trial-2026-11-08');
+  assert.equal(asked.project, path.join(folder, 'project'));
+});
+
+test('a wave 2 merge shortfall is a note, the step is done, and later waits ask for that many fewer', async (t) => {
+  const folder = scratch(t);
+  const one = (args) => (args[1].startsWith('repos/{owner}/{repo}/pulls') ? [{ number: 1, merged_at: '2026-11-08T10:00:00Z', head: { ref: 'feature/w1' } }] : null);
+  const io = fakeIo({ gh: one });
+  const got = await run({ mode: 'full', io, from: 'w2-merge-wait', until: 'w2-merge-wait', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['w2-merge-wait']);
+  assert.ok(readLog(folder).some((e) => /missed.*1 of 3/.test(e.note)));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).shortfall, 2);
+  const merged = (n) => (args) => (args[1].startsWith('repos/{owner}/{repo}/pulls') ? Array.from({ length: n }, (_, i) => ({ number: i + 1, merged_at: '2026-11-08T10:00:00Z', head: { ref: `feature/w${i}` } })) : null);
+  const later = await run({ mode: 'full', io: fakeIo({ gh: merged(5) }), from: 'w3-merge-wait', until: 'w3-merge-wait', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(later.done, ['w3-merge-wait'], 'seven less the two that did not merge in wave 2');
+  const fresh = await run({ mode: 'full', io: fakeIo({ gh: merged(5) }), from: 'w3-merge-wait', until: 'w3-merge-wait', folder: scratch(t), date: '2026-11-08', env: ENV });
+  assert.equal(fresh.stoppedAt, 'w3-merge-wait', 'without the shortfall five is not enough');
+});
+
+// A desk that is working until `until` (by the fake clock), then idle.
+const BUSY_PANE = 'Looking into it\n✻ Pondering… (12s · ↓ 340 tokens · esc to interrupt)\n> ';
+const busyUntil = (io, until) => () => (io.clock.now() < until ? BUSY_PANE : 'All done.\n\n> \n? for shortcuts');
+
+test('typing waits for a working desk: a request, the faults, a pull-back and the digest each go in only once it is idle', async (t) => {
+  for (const [from, until, text] of [['w2-type', 'w2-type', /./], ['f6-stop', 'f6-undo', /^(all stop|undo )/], ['digest', 'digest', /Send me the daily digest/]]) {
+    const folder = scratch(t);
+    const io = fakeIo();
+    const free = T0 + 5 * 60 * 1000;
+    io.tmux.capture = busyUntil(io, free);
+    const typed = [];
+    const wrapped = io.tmux.type;
+    io.tmux.type = (name, line) => { typed.push([line, io.clock.now()]); return wrapped(name, line); };
+    io.host.setDigest = async ({ at }) => { typed.push([`Send me the daily digest at ${at}`, io.clock.now()]); return { ok: true }; };
+    const undo = io.faults.undoTyped;
+    io.faults.undoTyped = (tmux, sha) => { typed.push([`undo ${sha}`, io.clock.now()]); return undo(tmux, sha); };
+    const stop = io.faults.f6AllStop;
+    io.faults.f6AllStop = (tmux) => { typed.push(['all stop', io.clock.now()]); return stop(tmux); };
+    await run({ mode: 'full', io, from, until, folder, date: '2026-11-08', env: ENV });
+    const wanted = typed.filter(([line]) => text.test(line));
+    assert.ok(wanted.length > 0, `${from}: something was typed`);
+    for (const [line, at] of wanted) assert.ok(at >= free, `${from}: "${line.slice(0, 20)}" was typed at +${(at - T0) / 1000}s, while the desk was working`);
+  }
+});
+
+test('the stand-in does not check in while the desk is working', async (t) => {
+  const folder = scratch(t);
+  const typed = [];
+  const events = [{ id: 'q1', kind: 'question', data: { id: 'q-statement-import-1', work: 'statement-import' } }];
+  const io = fakeIo({ host: { events: async () => events } });
+  io.tmux.capture = () => BUSY_PANE;
+  const wrapped = io.tmux.type;
+  io.tmux.type = (name, text) => { typed.push(text); return wrapped(name, text); };
+  let looks = 0;
+  io.gh = async () => { looks += 1; return looks > 120 ? [{ name: 'p1' }] : []; };
+  await run({ mode: 'smoke', io, from: 'f3-kill-p1', until: 'f3-kill-p1', folder, date: '2026-11-08', env: ENV });
+  assert.equal(typed.includes(CHECK_IN), false);
+});
+
+test("a request is typed in one go: one tmux type call per request, however long it is", async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo();
+  await run({ mode: 'full', io, from: 'w2-type', until: 'w2-type', folder, date: '2026-11-08', env: ENV });
+  const typed = io.timeline.filter((e) => e.kind === 'tmux.type' && e.args[0] === 'desk');
+  assert.equal(new Set(typed.map((e) => e.args[1])).size, typed.length, 'no request is typed twice');
+});
+
+test("a feature session's own records (the front desk's layout) give the start and pace notes, as run records do", async (t) => {
+  const folder = scratch(t);
+  const feature = (id, at, work, step) => ({ id, at, kind: 'feature', data: { work, step } });
+  const events = [
+    feature('f1', '2026-11-08T09:01:00Z', 'import-csv', 'started'),
+    feature('f2', '2026-11-08T09:02:00Z', 'export-year', 'started'),
+    feature('f3', '2026-11-08T09:03:00Z', 'import-csv', 'planned'),
+    feature('f4', '2026-11-08T09:04:00Z', 'import-csv', 'building'),
+  ];
+  const io = fakeIo({ gh: threeMerged, host: { events: async () => events } });
+  await run({ mode: 'full', io, from: 'w2-merge-wait', until: 'w2-merge-wait', folder, date: '2026-11-08', env: ENV });
+  const log = readLog(folder);
+  assert.deepEqual(log.filter((e) => e.step === 'start').map((e) => [e.work, e.at]), [
+    ['import-csv', '2026-11-08T09:01:00Z'], ['export-year', '2026-11-08T09:02:00Z'], ['import-csv', '2026-11-08T09:04:00Z'],
+  ]);
+  assert.ok(log.some((e) => e.step === 'pace' && /building 2, feature 2/.test(e.note)), log.filter((e) => e.step === 'pace').map((e) => e.note).join('; '));
+});
+
+test('restore passes the force flag to the Wheelhouse teardown and reports what it kept as well as what it stopped', async (t) => {
+  const folder = scratch(t);
+  fs.writeFileSync(path.join(folder, 'run-log.jsonl'), '');
+  const calls = [];
+  const io = fakeIo({ host: { stopWheelhouse: async (x) => { calls.push(x); return { stopped: ['watcher a__b'], kept: ['helper: the p1 session is still running'] }; } } });
+  const got = await restore({ folder, io });
+  assert.deepEqual(calls, [{ force: false }]);
+  assert.deepEqual(got, { stopped: ['watcher a__b'], kept: ['helper: the p1 session is still running'] });
+  await restore({ folder, io, force: true });
+  assert.deepEqual(calls.at(-1), { force: true });
+});
+
+test('restore still takes a teardown that returns a plain list', async (t) => {
+  const folder = scratch(t);
+  fs.writeFileSync(path.join(folder, 'run-log.jsonl'), '');
+  const io = fakeIo({ host: { stopWheelhouse: async () => ['helper pid 9'] } });
+  assert.deepEqual(await restore({ folder, io }), { stopped: ['helper pid 9'], kept: [] });
+});
+
+test('the restore command line takes --force', async (t) => {
+  const folder = scratch(t);
+  fs.writeFileSync(path.join(folder, 'run-log.jsonl'), '');
+  const calls = [];
+  const io = fakeIo({ host: { stopWheelhouse: async (x) => { calls.push(x); return []; } } });
+  io.results.runFolder = () => folder;
+  const before = process.env.WHEELHOUSE_HOME;
+  t.after(() => { process.env.WHEELHOUSE_HOME = before; });
+  const printed = [];
+  await main(['restore', '--force', '--out', folder], { print: (l) => printed.push(l), buildIo: async () => io, env: { ...ENV, HAIKU_TRIAL_WHEELHOUSE_HOME: before } });
+  assert.deepEqual(calls, [{ force: true }]);
+});
+
+test('--model sonnet reaches the seed, the setup session and the front desk, and is kept for a resume', async (t) => {
+  const folder = scratch(t);
+  const seeded = [];
+  const io = fakeIo({ host: { makeProject: async (x) => { seeded.push(x.model); return { sha: 'abc' }; } } });
+  io.ask = async () => 'go';
+  const got = await run({ mode: 'full', io, model: 'sonnet', from: 'seed', until: 'seed', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['seed'], got.why);
+  assert.deepEqual(seeded, ['sonnet']);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).model, 'sonnet');
+  // A resume with no --model keeps the model the run began on; a different one is refused, since the project is pinned to the first.
+  const again = fakeIo({ host: { makeProject: async (x) => { seeded.push(x.model); return { sha: 'abc' }; } } });
+  const clash = await run({ mode: 'full', io: again, model: 'haiku', from: 'seed', until: 'seed', folder, date: '2026-11-08', env: ENV });
+  assert.equal(clash.stoppedAt, 'model');
+  assert.match(clash.why, /began on sonnet/);
+});
+
+test('the setup session and the front desk start on the run\'s model', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo({ capture: () => '', host: { events: async () => [], readConfig: async () => ({ routing: {} }) } });
+  await run({ mode: 'smoke', io, model: 'sonnet', from: 'setup-s0', until: 'setup-s0', folder, date: '2026-11-08', env: ENV }).catch(() => {});
+  const started = io.timeline.filter((e) => e.kind === 'tmux.start').map((e) => e.args[0]);
+  assert.ok(started.length > 0);
+  for (const x of started) {
+    assert.deepEqual(x.command.slice(-2), ['--model', 'sonnet']);
+    assert.equal(x.env.WHEELHOUSE_SETUP_MODEL, 'sonnet');
+  }
+});
+
+test('--model is read from the command line and anything but haiku or sonnet is refused with the usage', async (t) => {
+  const folder = scratch(t);
+  const printed = [];
+  const code = await main(['smoke', '--model', 'opus', '--out', folder], { print: (l) => printed.push(l), buildIo: async () => fakeIo(), env: ENV });
+  assert.equal(code, 2);
+  assert.ok(printed.some((l) => /--model must be haiku or sonnet/.test(l)));
+  assert.ok(printed.some((l) => /--model <haiku\|sonnet>/.test(l)));
+});
+
+test('the ntfy click is its own director step early in wave 1, announced, and only in a full run', async (t) => {
+  assert.ok(ids('full').indexOf('front-desk') < ids('full').indexOf('ntfy') && ids('full').indexOf('ntfy') < ids('full').indexOf('w2-type'));
+  assert.equal(ids('smoke').includes('ntfy'), false);
+  const folder = scratch(t);
+  const replies = { 'alerts ntfy': 'Alerts will go to ntfy.', 'alerts status': 'ntfy: on, topic kept' };
+  const io = fakeIo();
+  const wrapped = io.tmux.type;
+  io.tmux.type = (name, text) => { wrapped(name, text); };
+  const got = await run({ mode: 'full', io, from: 'ntfy', until: 'ntfy', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['ntfy'], got.why);
+  const asked = io.timeline.findIndex((e) => e.kind === 'ask' && /Yes/.test(e.args[0]) && /Notifications/.test(e.args[0]) && /phone alerts/i.test(e.args[0]));
+  const typed = io.timeline.findIndex((e) => e.kind === 'tmux.type' && /^alerts ntfy haiku-trial-/.test(e.args[1]));
+  assert.ok(asked !== -1, 'the director is told what to click, and where to switch it on');
+  assert.ok(typed > asked, 'the command is typed after the announcement');
+  assert.ok(replies);
+  assert.match(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).ntfyTopic, /^haiku-trial-2026-11-08-/);
+});
+
+test('ntfy is recorded as set up only when the status afterwards names it, and refused when the click did not come', async (t) => {
+  const cases = [
+    ['Alerts will go to ntfy.', 'ntfy: on, topic kept', true],
+    ['Alerts will go to ntfy.', 'no channels are set up', false],
+    ["the director did not click Yes in the helper's window, so nothing was changed", 'ntfy: not set up', false],
+  ];
+  for (const [saidFirst, saidStatus, want] of cases) {
+    const folder = scratch(t);
+    let typed = '';
+    const io = fakeIo({ capture: () => (typed.startsWith('alerts status') ? `${saidStatus}` : typed.startsWith('alerts ntfy') ? saidFirst : 'idle') });
+    const wrapped = io.tmux.type;
+    io.tmux.type = (name, text) => { typed = text; return wrapped(name, text); };
+    await run({ mode: 'full', io, from: 'ntfy', until: 'ntfy', folder, date: '2026-11-08', env: ENV });
+    assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).ntfySetUp, want, `${saidFirst} / ${saidStatus}`);
+  }
+});
+
+test("the front desk step no longer types the ntfy command: it would block a turn and nobody would be watching for the window", async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo();
+  await run({ mode: 'full', io, from: 'front-desk', until: 'front-desk', folder, date: '2026-11-08', env: ENV });
+  assert.equal(io.timeline.some((e) => e.kind === 'tmux.type' && /alerts ntfy/.test(e.args[1])), false);
 });

@@ -13,10 +13,18 @@ function git(dir, args) {
   return execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
-export function makeTestProject({ dir, git: useGit = true, allowAnywhere = false }) {
+export function makeTestProject({ dir, git: useGit = true, allowAnywhere = false, model = 'haiku' }) {
   if (!allowAnywhere) assertUnderTmp(dir);
   fs.mkdirSync(dir, { recursive: true });
   fs.cpSync(SEED_DIR, dir, { recursive: true });
+  // The seed pins every session to haiku; a run on another model pins that one instead, and nothing else changes.
+  if (model !== 'haiku') {
+    const file = path.join(dir, '.claude', 'settings.json');
+    const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
+    settings.model = model;
+    settings.env.CLAUDE_CODE_SUBAGENT_MODEL = model;
+    fs.writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`);
+  }
   fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'data', 'sample-statement.csv'), makeStatement(SAMPLE).csv, 'utf8');
   if (!useGit) return { dir, sha: null };

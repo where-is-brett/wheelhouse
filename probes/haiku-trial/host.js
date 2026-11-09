@@ -18,6 +18,7 @@ import { makeTestProject } from './seed.js';
 import { applySpareBug } from './spare-bug.js';
 import { makeBrowse } from './score/a11y.js';
 import { findTranscripts } from './audit.js';
+import { liveFeatureSessions } from './sessions.js';
 import { readUsage } from './usage.js';
 import { listEvents } from '../../scripts/state/events.js';
 import { stateDir, engineDir, projectsDir } from '../../scripts/lib/paths.js';
@@ -109,7 +110,7 @@ export function buildRealIo(env = process.env) {
     stage: ({ out }) => stagePlugin({ repo: REPO_ROOT, out }),
     exec: (argv, { cwd } = {}) => run(argv[0], argv.slice(1), { cwd }),
     installedProblem: async ({ configDir, pluginDir }) => installedProblem({ configDir, pluginDir }),
-    makeProject: async ({ dir }) => makeTestProject({ dir, allowAnywhere: true }),
+    makeProject: async ({ dir, model }) => makeTestProject({ dir, allowAnywhere: true, model }),
     git: async (args, options) => git(args, options),
     events: async ({ project }) => listEvents(stateDir(nameOf(project)), { report: () => {} }),
     hasCommand: async (name) => !run(name, ['--version']).error,
@@ -214,8 +215,15 @@ export function buildRealIo(env = process.env) {
 
     // `restore`: stops the trial's own helper, watchers and foremen, which live under the trial's Wheelhouse home (the caller
     // has set WHEELHOUSE_HOME to it). The helper is stopped only while it is still the process its record names.
-    async stopWheelhouse() {
+    // While a feature session is still running, none of it is stopped (the session needs the helper to open its pull request
+    // and the watcher to see it through) unless `force`; what is kept is said.
+    async stopWheelhouse({ force = false, live = liveFeatureSessions } = {}) {
       const stopped = [];
+      const running = force ? [] : live();
+      if (running.length > 0) {
+        const works = running.map((s) => s.work).join(', ');
+        return { stopped, kept: [`helper, watchers and foremen: ${running.length} feature session${running.length === 1 ? ' is' : 's are'} still running (${works}); run restore again once they have finished, or restore --force to stop them now`] };
+      }
       let names = [];
       try { names = fs.readdirSync(projectsDir()); } catch { /* no projects yet */ }
       for (const name of names.filter((n) => NAME_SHAPE.test(n))) {
@@ -232,7 +240,7 @@ export function buildRealIo(env = process.env) {
           try { process.kill(record.pid, 'SIGTERM'); stopped.push(`helper pid ${record.pid}`); } catch { /* already gone */ }
         }
       }
-      return stopped;
+      return { stopped, kept: [] };
     },
   };
 
