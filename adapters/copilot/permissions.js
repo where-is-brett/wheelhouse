@@ -26,7 +26,8 @@
 //   path rules are not relied on to hold writes; the guard checks the real path.
 // - Whether Copilot accepts `write(<glob>)`, `url(..)`, `~/` and the loop's tool names, and whether a `write(..)` deny
 //   fires, is the first real run's (preflight section 5, T2): an unsupported form might make Copilot refuse to start,
-//   which that run finds before any project relies on it.
+//   which that run finds before any project relies on it. The same run must confirm that `shell(npx wrangler@*)` and
+//   the other `@*` denies match a versioned package name (`npx wrangler@3`).
 import path from 'node:path';
 import { hostApprovalReady } from '../../scripts/host/approval-ready.js';
 import { AGENT_CONTROL, homeControlPaths, homeGitSettingsPaths, systemGitSettingsPaths } from '../../scripts/lib/agent-control.js';
@@ -111,7 +112,7 @@ function denies(allowed) {
     ...homeControlPaths().flatMap((f) => [`write(~/${f})`, `write(~/${f}/**)`]),
     // The director's own git settings, which a push runs with, as Claude Code's project settings deny them.
     ...homeGitSettingsPaths().map((f) => `write(~/${f})`),
-    ...systemGitSettingsPaths().map((f) => `write(/${f})`),
+    ...systemGitSettingsPaths().map((f) => `write(${f})`),
     ...unique(['darwin', 'linux', 'win32'].flatMap((p) => credentialPaths(p))).flatMap((c) => [`write(~/${c})`, `write(~/${c}/**)`]),
     ...shellDenies(allowed),
     ...TOOL_DENIES,

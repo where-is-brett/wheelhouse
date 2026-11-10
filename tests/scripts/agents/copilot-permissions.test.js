@@ -126,7 +126,9 @@ test('the credential and control-file denies are on every level', () => {
     for (const pattern of AGENT_CONTROL) assert.ok(deny.includes(`write(${pattern})`), `${level}: ${pattern}`);
     for (const folder of homeControlPaths()) assert.ok(deny.includes(`write(~/${folder})`) && deny.includes(`write(~/${folder}/**)`), `${level}: ${folder}`);
     for (const f of homeGitSettingsPaths()) assert.ok(deny.includes(`write(~/${f})`), `${level}: ~/${f}`);
-    for (const f of systemGitSettingsPaths()) assert.ok(deny.includes(`write(/${f})`), `${level}: /${f}`);
+    for (const rule of ['write(/etc/gitconfig)', 'write(/usr/local/etc/gitconfig)', 'write(/opt/homebrew/etc/gitconfig)']) assert.ok(deny.includes(rule), `${level}: ${rule}`);
+    assert.ok(!deny.some((r) => r.startsWith('write(//')), level);
+    assert.equal(deny.filter((r) => r.startsWith('write(') && systemGitSettingsPaths().includes(r.slice(6, -1))).length, systemGitSettingsPaths().length, level);
     for (const c of credentials) assert.ok(deny.includes(`write(~/${c})`) && deny.includes(`write(~/${c}/**)`), `${level}: ${c}`);
     for (const folder of ['~/.wheelhouse', home, '~/.claude']) assert.ok(deny.includes(`write(${folder})`) && deny.includes(`write(${folder}/**)`), `${level}: ${folder}`);
     for (const file of ['.claude/settings.json', '.claude/settings.local.json', '.claude/hooks/**']) assert.ok(deny.includes(`write(${file})`), `${level}: ${file}`);
