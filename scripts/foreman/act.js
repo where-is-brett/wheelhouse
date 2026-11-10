@@ -172,7 +172,7 @@ import { readEnrolled, verify } from '../state/signing.js';
 import { recordHandled } from '../watcher/handled.js';
 import { recordedBriefs } from '../watcher/sources.js';
 import { writeBaseline } from '../watcher/control-files.js';
-import { makeWaker, sessionFile, watcherDir, writeJsonFile, writeWake } from '../watcher/waker.js';
+import { makeWaker, pidAlive, sessionFile, watcherDir, writeJsonFile, writeWake } from '../watcher/waker.js';
 import { helmHeld } from '../crew/hold.js';
 import { guardedCardInput, guardedCommand, readSelfTest } from '../windows/low.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -1526,6 +1526,16 @@ async function merge(ctx, work, rest) {
   ctx.say(`Merged pull request #${pr} for ${work} at ${short(merged.sha)}; its status reads ${phase}.${Array.isArray(merged.answeredNoChange) && merged.answeredNoChange.length > 0 ? ` The session marked the director's answer to ${merged.answeredNoChange.join(', ')} as needing no change.` : ''}`);
 }
 
+// Whether the work's session is running: its running record says so and the process it names is alive.
+function sessionRunning(ctx, work) {
+  try {
+    const r = JSON.parse(readCapped(path.join(watcherDir(ctx.project), 'running', `feature-${work}.json`), 64 * 1024) ?? 'null');
+    return isPlain(r) && r.state === 'running' && Number.isInteger(r.pid) && pidAlive(r.pid);
+  } catch {
+    return false;
+  }
+}
+
 async function close(ctx, work, rest) {
   flagsOf(rest, [], 'close');
   const views = await ctx.views();
@@ -1564,6 +1574,15 @@ async function close(ctx, work, rest) {
   const kept = readPrRecord(worktree);
   const pr = kept?.pr ?? null;
   const status = parsed.fields.status;
+  // Mid-slices, the report, the status and the kept pull request may be an earlier slice's while the session builds the
+  // next: closing then would drop the feature from the watch and lose the slice to come. Work that ended blocked or
+  // partial is not building, so it still closes. A status at done with no live session recorded means nothing is
+  // building the next slice, so that refusal goes to the director; a live session is left to build it.
+  const earlier = kept?.plan != null && typeof f.plan === 'string' && kept.plan !== f.plan && !NO_PLAN.includes(laneOf(views, work));
+  if (earlier && status !== 'blocked' && status !== 'partial') {
+    const ended = readStatus(featurePaths(worktree).status)?.phase === 'done' && !sessionRunning(ctx, work);
+    refuse(`${work} is still building its next slice: its report and pull request are an earlier slice's. Wait for that slice; don't close it${ended ? ': ask the director' : ''}`);
+  }
   let outcome = status === 'blocked' ? 'blocked' : 'closed';
   if (pr !== null) {
     const state = await ctx.client.prState({ project: ctx.project, number: pr });

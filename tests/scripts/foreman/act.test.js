@@ -16,6 +16,8 @@ import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { briefingLine } from '../../../scripts/lineage/release.js';
 import { CARD } from '../../../scripts/lib/front-desk.js';
 import { briefHash, featurePaths, parseBrief } from '../../../scripts/feature/files.js';
+import { spawnSync } from 'node:child_process';
+import { watcherDir } from '../../../scripts/watcher/waker.js';
 import {
   BUILD_QUESTION_OPTIONS, GUARDED_SETTING_WORDS, UNATTENDED_CARD, settingKey,
 } from '../../../scripts/protection/windows-builds.js';
@@ -2083,8 +2085,6 @@ test('a feature that ends blocked or partial never closes as merged, even after 
   const slice1 = { pr: 5, plan: 'docs/plans/slice-1.md', merged: true };
   add('partial', reportText('partial', { status: 'partial' }), slice1);
   add('blocked', reportText('blocked', { status: 'blocked' }), slice1);
-  // Done by its own word, but the pull request merged is an earlier slice's.
-  add('early', reportText('early'), slice1);
   add('whole', reportText('whole'), { pr: 6, plan: 'docs/plans/slice-2.md', merged: true });
   const fake = fakeClient({ views, answers: { prState: { ok: true, result: { state: 'merged' } } } });
   const outcome = async (work) => {
@@ -2094,8 +2094,49 @@ test('a feature that ends blocked or partial never closes as merged, even after 
   };
   assert.equal(await outcome('partial'), 'closed');
   assert.equal(await outcome('blocked'), 'blocked');
-  assert.equal(await outcome('early'), 'closed');
   assert.equal(await outcome('whole'), 'merged');
+}));
+
+test('close refuses, writing nothing, while a sliced feature builds past the slice its report and pull request belong to', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  const slice2 = { pr: 6, plan: 'docs/plans/slice-2.md', merged: true };
+  const add = (work, { lane = 'feature', slice = { n: 3, m: 3 }, plan = 'docs/plans/slice-3.md', pr = slice2, status = 'done', phase, running } = {}) => {
+    views.work[work] = workView(work, { lane });
+    const dir = worktree(checkout, work, { brief: { lane }, pr, report: reportText(work, { status }) });
+    views.features[work] = featureView(work, { step: 'building', worktree: dir, ...(slice ? { slice } : {}), ...(plan ? { plan } : {}) });
+    if (running) {
+      fs.mkdirSync(path.join(watcherDir(P), 'running'), { recursive: true });
+      fs.writeFileSync(path.join(watcherDir(P), 'running', `feature-${work}.json`), JSON.stringify({ state: 'running', pid: running, at: '2026-11-05T21:57:00.000Z' }));
+    }
+    if (phase) writeStatus(featurePaths(dir).status, { v: 1, work, lane, phase, task: null, fixRound: null, waitingOn: null, head: null, pr: null, slice: null, tokens: null, updatedAt: '2026-11-05T21:57:00.000Z' });
+  };
+  add('moved-on');
+  add('ended-early', { phase: 'done' });
+  add('still-running', { phase: 'done', running: process.pid });
+  add('gone', { phase: 'done', running: spawnSync(process.execPath, ['-e', '']).pid });
+  add('blocked', { status: 'blocked' });
+  add('partial', { status: 'partial' });
+  add('quick', { lane: 'quick', slice: null, plan: null });
+  add('bug', { lane: 'bug', slice: null, plan: null });
+  add('no-plan-kept', { pr: { pr: 6, merged: true } });
+  add('no-pr', { pr: null });
+  add('more-remain-one-plan', { slice: { n: 2, m: 3 }, plan: 'docs/plans/slice-2.md' });
+  const fake = fakeClient({ views, answers: { prState: { ok: true, result: { state: 'merged' } } } });
+
+  for (const work of ['moved-on', 'ended-early', 'still-running', 'gone']) {
+    const r = await act(['close', work], { client: fake.client });
+    assert.notEqual(r.code, 0, work);
+    assert.match(r.err, /still building its next slice/, work);
+    assert.equal(/: ask the director/.test(r.err), ['ended-early', 'gone'].includes(work), work);
+  }
+  assert.deepEqual(fake.writes, []);
+
+  for (const work of ['blocked', 'partial', 'quick', 'bug', 'no-plan-kept', 'no-pr', 'more-remain-one-plan']) {
+    const r = await act(['close', work], { client: fake.client });
+    assert.equal(r.code, 0, `${work}: ${r.err}`);
+    assert.equal(fake.writes.filter((w) => w.kind === 'feature' && w.data.work === work).at(-1).data.step, 'closed', work);
+  }
 }));
 
 test('work that ends partial or blocked is put to the director, and once queued again it starts afresh in its worktree (R102)', () => withHome(async () => {
