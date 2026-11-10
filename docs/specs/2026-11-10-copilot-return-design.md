@@ -2,7 +2,7 @@
 
 # Bringing Copilot back: design (10 November 2026)
 
-**Status:** draft for the director, 10 November 2026. Design only: no code changes, no Copilot requests and no paid trials were made to write it.
+**Status:** decided by the director, 10 November 2026: all three decisions (section 9) took the recommended option, and the design is fitted to the director's plan, Copilot Student, where Auto is the only model choice. Design only: no code changes, no Copilot requests and no paid trials were made to write it.
 
 **What it covers:** how GitHub Copilot comes back as a second coding agent against today's code, after it was parked by the core cut (`docs/specs/2026-11-07-core-cut-design.md`, section 4.2; `docs/parked.md`, "Copilot, with its Lean tier"). It is the "short design against the core of that day" that `docs/parked.md` asks for before a parked piece is built again from its tag.
 
@@ -17,10 +17,10 @@ Copilot comes back as **a second crew**, not a second Wheelhouse. The First Mate
 Three things are different from the parked version:
 
 1. **No Archon, no Lean, no add-on.** The parked work leaned on Archon (now parked) for its background builders, and on Lean and the VS Code add-on for computers that can't run Node.js. This return uses Wheelhouse's own engine (the watcher, the foreman and headless sessions) and needs Node.js, as Claude Code projects do. Lean and the add-on stay parked (Decision 3).
-2. **Billing changed.** Since 1 June 2026 GitHub bills Copilot in AI credits, not premium requests (section 5). The design works with either, because a plan bought yearly before then may still count premium requests.
-3. **Cheap models by default.** Every Copilot role starts on the cheapest models the plan offers, and moves up only where the evaluation shows it must (section 5.3).
+2. **The director's plan is Copilot Student, with a small allowance.** On 29 October 2026 GitHub reported the account's plan as `free_educational_quota`: 200 requests a month, reset on the 1st, with extra use switched off. Every Copilot step draws on those 200 (section 5).
+3. **Auto picks the model.** On Copilot Student, Auto is the only model choice ([plans](https://docs.github.com/en/copilot/get-started/plans)). Wheelhouse passes no model, records which model Auto chose, and saves the allowance by doing fewer Copilot steps, not by picking cheaper models (section 5.3).
 
-What the director would notice, in short: the same chat and cards; a safety line on the Logbook that names the few things Copilot holds less tightly than Claude Code (section 3); a monthly Copilot figure in the briefing instead of the weekly Claude figure; and, near the month's limit, a card before anything stops (section 5.4).
+What the director would notice, in short: the same chat and cards; a safety line on the Logbook that names the few things Copilot holds less tightly than Claude Code (section 3); a monthly Copilot figure in the briefing ("Copilot: 120 of 200 this month") instead of the weekly Claude figure; and, at 75% of the month's 200, a card before anything stops (section 5.4).
 
 ## 2. What the parked work gives us
 
@@ -76,17 +76,17 @@ Each row: what Wheelhouse uses today, what Copilot has, the verdict (**matches**
 | **Hooks on prompts, session start, stop, subagents** | `UserPromptSubmit`, `SessionStart`, `Stop`, `SubagentStop`, `SessionEnd`; context added with `additionalContext`; `Stop` and `SubagentStop` can send work back | `userPromptSubmitted`, `sessionStart`, `agentStop`, `subagentStart`, `subagentStop`, `sessionEnd`, `preCompact` exist ([hooks reference](https://docs.github.com/en/copilot/reference/hooks-configuration)). Whether each can add context or block **(not confirmed)** | **Works round** | If `agentStop` can't block, a card left malformed at the end of a turn is caught at the next prompt rather than at once; a builder's report missing its parts is caught by the waker reading the final answer |
 | **Where hooks run and write** | Outside Claude Code's sandbox, so they sign records and start the helper | Inside Copilot's sandbox when it is on. Hooks read the Wheelhouse home but **write only through the helper** (`writes: 'helper'`, as on the tag) | **Works round** | Nothing. If the helper isn't running, a Copilot session refuses as it does under STOP |
 | **Headless sessions** | `claude -p`, a session id given up front, `--resume`, permission mode, allowed tools, model and effort per role | `copilot -p` with `--output-format json`, `--allow-tool`, `--deny-tool`, `--model`, `--resume <id>` ([programmatic reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-programmatic-reference); [command reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference)). A session id given up front **(not confirmed)**; the tag read it from the run's output instead (`idFromRun`) | **Matches**, with the id read after the run | Nothing |
-| **Effort per role** | `--effort` per role from the Thoroughness table | No effort flag found; the docs say only that higher reasoning uses more credits ([about Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli)) **(not confirmed)** | **Loses** | Thoroughness on Copilot changes the model, not the effort |
+| **Model and effort per role** | A model and an effort per role from the Thoroughness table | On Copilot Student, Auto is the only model choice ([plans](https://docs.github.com/en/copilot/get-started/plans); [changelog, 24 June 2026](https://github.blog/changelog/2026-06-24-changes-to-model-selection-for-free-and-student-plans/)). No effort flag found **(not confirmed)** | **Loses** | Thoroughness doesn't change Copilot's model or effort on this plan; it changes how many Copilot steps a piece of work takes (section 5.3). The record shows which model Auto chose |
 | **Crash resume** | The waker resumes a feature session that died with no report | `--resume <id>` in the same Copilot home | **Matches** | Nothing |
 | **A read-only fork for "why?"** | `whyCall`: `--resume --fork-session` in plan mode with reading tools | No fork found | **Works round** | "Why did you do that?" on a Copilot session is answered by a fresh read-only session given the session's record and final answer, not its live memory. The answer can be thinner |
 | **Transcripts** | The context gauge reads token counts from the transcript; the crew view (`scripts/crew/runs.js`) reads each session's JSONL; a skipped card is found in it | Each session's events are kept at `~/.copilot/session-state/<id>/events.jsonl` (under `COPILOT_HOME`) ([config folder reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)). Its record format **(not confirmed)**; per-turn token counts **(not confirmed)** | **Works round** | The crew view shows Copilot sessions once a reader for its events is written. If token counts aren't there, the context gauge on a Copilot session says "not measured" |
-| **Subagents** | Plugin agents `wheelhouse:builder`, `reviewer`, `tester`, each with its own model; `SubagentStop` names the agent | Custom agents (`.agent.md`) with their own model and tool list; a `task` tool runs them ([command reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference); [VS Code subagents](https://code.visualstudio.com/docs/agents/subagents)). Whether `subagentStop` names the agent **(not confirmed)** | **Matches** if it names the agent; otherwise **works round** | If it doesn't, a builder's report is checked by the waker after the session rather than as the subagent stops |
+| **Subagents** | Plugin agents `wheelhouse:builder`, `reviewer`, `tester`, each with its own model; `SubagentStop` names the agent | Custom agents (`.agent.md`) with their own tool list, and their own model on a plan with model choice (on an Auto-only plan Wheelhouse gives them none); a `task` tool runs them ([command reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference); [VS Code subagents](https://code.visualstudio.com/docs/agents/subagents)). Whether `subagentStop` names the agent **(not confirmed)** | **Matches** if it names the agent; otherwise **works round** | If it doesn't, a builder's report is checked by the waker after the session rather than as the subagent stops |
 | **Nested sessions** | The foreman starts feature sessions as separate processes; agents may not start `claude` or `copilot` from a shell | The same: the waker starts each `copilot -p`; the guard refuses `claude` and `copilot` as nested programs | **Matches** | Nothing |
 | **Cards and approvals** | `AskUserQuestion`; `card-check` before it, `prompt-record` records the click after it; reply codes typed in the chat | `ask_user` in the CLI, `askQuestions` in VS Code. Whether a `postToolUse` hook sees the director's answer, and whether the agent can fill one in itself, **(not confirmed)**: it was the old check C6, never run | **Works round** until the check passes | Section 3.5 |
 | **The sandbox** | Claude Code's sandbox settings written into the project (macOS); Windows at Standard with Guarded build commands | Copilot CLI has its own sandbox (`/sandbox`) ([command reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference)); in VS Code it is Preview on macOS and Experimental on Windows ([approvals](https://code.visualstudio.com/docs/agents/run/approvals)). The tag wrote it into each session's clean home, never the project | **Works round** | On the Mac, the safety line says whether the sandbox test passed. On Windows, nothing changes: Standard, as for Claude Code |
 | **Locked** | `managed-settings.json` on macOS | Copilot has managed settings and policy hooks, both needing admin rights ([hooks reference](https://docs.github.com/en/copilot/reference/hooks-configuration)) | **Loses**, for now | Locked isn't offered on a Copilot computer. The parked `locked.js` is kept for a later design |
 | **Plugin packaging** | A Claude Code plugin from Wheelhouse's marketplace, pinned | The CLI reads plugins, skills (`.github/`, `.agents/`, `.claude/`) and agents ([command reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference)). Wheelhouse doesn't install a Copilot plugin: each session gets a clean home holding only Wheelhouse's agents and pinned skills, as on the tag | **Works round** | Nothing |
-| **Usage** | The weekly allowance, read from Claude Code's records | A monthly allowance in AI credits or premium requests (section 5). The tag read per-session use from `--usage-output-file`; its contents under credit billing **(not confirmed)** | **Works round** | The briefing shows "Copilot this month" with the share used |
+| **Usage** | The weekly allowance, read from Claude Code's records | A monthly allowance; on the director's plan, 200 requests (section 5). The tag read per-session use from `--usage-output-file` (`premiumRequests`); whether it still reports that on this plan **(not confirmed)** | **Works round** | The briefing shows "Copilot this month" as requests used out of 200 |
 | **The compaction hold** | `PreCompact` blocks an automatic compaction until the session has written its notes | `preCompact` exists; whether it can block **(not confirmed)** | **Loses** if it can't block | A long Copilot session may compact before its notes are written. Headless sessions are short, so this rarely matters |
 | **Phone notifications** | Wheelhouse's own routes (section 13 of the main design), not Claude Code's | Unchanged | **Matches** | Nothing |
 
@@ -104,7 +104,9 @@ An unknown tool is refused, and `apply_patch` gives one guard check per path, as
 
 ### 3.2 Sessions
 
-Kept from the tag: every session is `copilot -p <prompt> --output-format json --no-ask-user --agent wheelhouse-<role> --model <m>` with narrow `--allow-tool` and `--deny-tool` rules, its own Copilot home (`COPILOT_HOME`), and an environment cleared to an allow-list. Wide switches (`--allow-all`, `--yolo`, `--add-dir`) are refused by the adapter. The flags were read from the CLI at version 1.0.101; every one is re-checked against `copilot --help` at the pinned version before use, as the evaluation harness already does for Claude Code.
+Kept from the tag: every session is `copilot -p <prompt> --output-format json --no-ask-user --agent wheelhouse-<role>` with narrow `--allow-tool` and `--deny-tool` rules, its own Copilot home (`COPILOT_HOME`), and an environment cleared to an allow-list. Wide switches (`--allow-all`, `--yolo`, `--add-dir`) are refused by the adapter. The flags were read from the CLI at version 1.0.101; every one is re-checked against `copilot --help` at the pinned version before use, as the evaluation harness already does for Claude Code.
+
+On a plan where Auto is the only choice, the sessions part passes **no `--model`** and no `COPILOT_MODEL`, so Auto chooses. The model Auto chose is read from the session's output and kept in the session's record and the usage store. The CLI shows which model Auto used ([changelog, 17 April 2026](https://github.blog/changelog/2026-04-17-github-copilot-cli-now-supports-copilot-auto-model-selection/)); where that appears in `--output-format json` **(not confirmed)**, and until it is found the record says "Auto". On a plan with a model choice, the sessions part reads the model from the routing table's Copilot column (section 4).
 
 ### 3.3 Where the director talks
 
@@ -134,85 +136,105 @@ Said plainly on the Logbook and at setup, in the old design's words where they s
 |---|---|---|
 | `capRequests` ("AI credits a month", 0 to 10,000) | Retired with Copilot (`RETIRED` in `scripts/settings/catalogue.js`) | **Stays retired.** It was read only by Archon's spend meter, and its default of 0 meant "work that needs credits waits", which made sense only beside Archon. Old records still load |
 | `agents` (per-computer agent, in the project's configuration) | Kept, read only to say Copilot is parked | **Read again:** which agent this computer's crew uses. Set by setup, changed by the First Mate as a level-3 decision |
-| `agentRouting.copilot.<role>` | Removed with the cut | **Replaced** by a Copilot column in the routing table: each cell names a class (cheapest, mid-priced, most capable), and `scripts/agents/copilot/` pins each class to a model ID once, as section 14.6 of the main design does for Claude Code |
-| **`copilotPlan`** (new, profile) | | How this person's Copilot is billed: `credits` (monthly, since 1 June 2026) or `requests` (a yearly plan still on premium requests), with the month's included amount. Setup asks once; the default is `credits` with 1,500 included |
-| **`copilotCeiling`** (new, profile) | | The most the director wants Copilot to cost a month, in US dollars, plan included. Default **20**. Wheelhouse paces work to it; GitHub's own budget, which only the director can set, is the hard stop (section 5.4) |
-| `usageMark` (Usage nudge) | Nudges at a share of the weekly allowance | Unchanged, read against the Copilot month on a Copilot computer |
-| `efficiency` (Thoroughness) | Picks the column of the routing table | Unchanged. On Copilot it moves models only (no effort flag), and the default for a Copilot computer is **Lightest** |
-| `premium` (Premium model) | `off`, `within-plan`, `paid-too` | Unchanged. On Copilot, "premium" means the most capable class; `off` by default |
+| `agentRouting.copilot.<role>` | Removed with the cut | **Not brought back.** On an Auto-only plan there is nothing to route. For a plan with a model choice, a Copilot column in the routing table names a class per role (cheapest, mid-priced, most capable), pinned to model IDs once in `scripts/agents/copilot/`, as section 14.6 of the main design does for Claude Code. That column is built only when a director on such a plan needs it (section 8, part 8) |
+| **`copilotPlan`** (new, profile) | | What this person's Copilot plan allows. **`auto-only`**: Auto is the only model choice, and the allowance is counted in requests (Copilot Student and Copilot Free, as observed on 29 October 2026). **`credits`**: a paid monthly plan with model choice, billed in AI credits. **`requests`**: a yearly plan still on premium requests, with model choice. Setup reads it once from what GitHub reports for the account and the models the CLI offers, and asks only if it can't tell. The default is `auto-only` |
+| **`copilotAllowance`** (new, profile) | | The month's allowance in the plan's own unit, as GitHub reports it: **200** requests on the director's plan. Setup reads it and re-reads it on the 1st |
+| **`copilotCeiling`** (new, profile) | | The most the director wants Copilot to cost a month, in US dollars, plan included. Default **20** (Decision 1). It applies only on a plan that can charge; on the director's plan extra use is off and GitHub charges nothing, so the 200 requests are the limit |
+| `usageMark` (Usage nudge) | Nudges at a share of the weekly allowance | Unchanged, read against the Copilot month on a Copilot computer: 75% of 200 is **150 requests** |
+| `efficiency` (Thoroughness) | Picks the column of the routing table | On an Auto-only plan it changes **how many Copilot steps** a piece of work takes (section 5.3), not the model or effort. The default for a Copilot computer is **Lightest** |
+| `premium` (Premium model) | `off`, `within-plan`, `paid-too` | Not offered on an Auto-only plan, where there are no premium choices. On a plan with model choice, "premium" means the most capable class; `off` by default |
 | Switches in `copilot-numbers.js` | On the tag: `BACKGROUND_SESSIONS_READY`, `REVIEW_SESSION_READY`, `COPILOT_SANDBOX_CHECKED`, `C6_PASSED`, `ADDON_LEAN_READY`, `CLAUDE_HARNESS_CHECKED` | The first four come back, all off, each turned on by a passed trial stage. `ADDON_LEAN_READY` and `CLAUDE_HARNESS_CHECKED` are dropped with Lean and the add-on |
 
 The file moves from `scripts/lib/copilot-numbers.js` to `scripts/agents/copilot/numbers.js`, so it sits inside the folders the guard test allows.
 
 ## 5. Cost
 
-### 5.1 What Copilot Pro costs today
+### 5.1 The director's plan
 
-From GitHub's own pages, read 10 November 2026:
+**Observed on the director's account, 29 October 2026:**
 
-- **Monthly Pro, AI credits (since 1 June 2026):** US$10 a month, with 1,500 AI credits included (1,000 base and 500 "flex", which can change). One credit is US$0.01, worked out from each model's price per million tokens in and out. When the included credits run out, work stops until the month resets, unless the person has set a budget for extra use; extra use is billed at the end of the month. Credits reset at 00:00 UTC on the 1st and don't carry over. Completions in the editor use none. ([usage-based billing for individuals](https://docs.github.com/copilot/concepts/billing/usage-based-billing-for-individuals); [changelog, 1 June 2026](https://github.blog/changelog/2026-06-01-updates-to-github-copilot-billing-and-plans/))
-- **Yearly Pro bought before then, premium requests:** 300 premium requests a month, US$0.04 for each extra one; when they run out, work carries on with the included models. In agent mode a request is counted per prompt, not per tool call. ([premium requests](https://docs.github.com/en/copilot/concepts/billing/copilot-requests))
-- **Auto model choice** takes 10% off in the chat and the cloud agent; not stated for the CLI. ([usage-based billing](https://docs.github.com/copilot/concepts/billing/usage-based-billing-for-individuals))
+- GitHub reported the plan as `free_educational_quota`: **200 requests a month**, reset on the 1st, with **extra use switched off**.
+- The Copilot CLI offered only **Auto, at 1x**. Every Copilot step uses the allowance; no model is free.
+- So Copilot costs the director nothing in money. The limit is the 200 requests, and when they're gone GitHub stops Copilot work until the 1st.
 
-**The brief's "about 200 premium requests a month"** fits only the yearly plan: 200 of the 300 as Wheelhouse's working ceiling leaves 100 for the director's own use. On monthly credit billing the equivalent is about US$20 a month in total: the US$10 plan with its 1,500 credits, plus up to 1,000 extra credits (US$10) if the director sets that budget on GitHub. **Which billing the director's plan uses (not confirmed)**: setup reads it from the director's answer, and the first trial stage checks it against the usage the CLI reports.
+**What GitHub's pages say, read 10 November 2026:**
 
-**Not confirmed:** the default budget for an individual account; whether a session's credit use is reported per session by the CLI; how a subagent's use is counted under credit billing.
+- Copilot Student is free to verified students. On Copilot Free and Copilot Student, "access to models is available through auto model selection only", and all plans include the Copilot CLI ([plans](https://docs.github.com/en/copilot/get-started/plans)).
+- From 24 June 2026, Free and Student use Auto as "the default and only model selection experience" ([changelog](https://github.blog/changelog/2026-06-24-changes-to-model-selection-for-free-and-student-plans/)).
+- Auto "is billed based on the model it selects"; in the CLI it uses models with multipliers from 0x to 1x, and the CLI shows which model it used. The 10% discount for Auto is for paid plans only ([changelog, 17 April 2026](https://github.blog/changelog/2026-04-17-github-copilot-cli-now-supports-copilot-auto-model-selection/); [Auto model selection](https://docs.github.com/en/copilot/concepts/models/auto-model-selection)).
+- In the CLI, a prompt counts as one request at the model's multiplier ([requests](https://docs.github.com/en/copilot/concepts/billing/copilot-requests)).
+
+**Where the pages and the account differ:** GitHub's pages now describe Copilot Student's allowance in AI credits, without a figure ([usage-based billing for individuals](https://docs.github.com/en/copilot/concepts/billing/billing-for-individuals)), while the account reported 200 requests. Wheelhouse goes by what the account reports, read by setup and again on the 1st. If GitHub moves the account to credits, `copilotAllowance` changes unit and the 75% card follows.
+
+**Not confirmed:** whether a subagent's turn within one `copilot -p` prompt counts as its own request; whether resuming a session counts as a new prompt; whether Auto on this plan ever picks a 0x model (observed: always 1x); the date the allowance resets for Student (the account said the 1st); whether a step that fails part-way still counts.
+
+**Other plans,** for a director who isn't on Copilot Student: paid monthly Pro bills in AI credits (US$10 a month with 1,500 credits, extra use only with a budget set) ([usage-based billing for individuals](https://docs.github.com/en/copilot/concepts/billing/billing-for-individuals)); yearly plans bought before 1 June 2026 keep 300 premium requests a month ([requests](https://docs.github.com/en/copilot/concepts/billing/copilot-requests)). `copilotPlan` covers both; their details aren't designed further here.
 
 ### 5.2 What a piece of work might cost
 
-An estimate, to be replaced by measurement at trial stage T3. On credit billing the cheapest models are listed at about US$0.10 per million tokens in and US$0.50 out ([models and pricing](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing)). An agent loop re-reads its context on every turn, so a small feature session might read 2 to 5 million tokens and write a few hundred thousand, roughly 30 to 100 credits on the cheapest models. That puts the 1,500 included credits at somewhere between 15 and 50 small pieces of work a month on the cheapest models, and far fewer on mid-priced ones. On the yearly plan a headless session is one request per prompt, so a feature session with a handful of wakes might be 3 to 10 requests, and 200 requests covers 20 to 60 pieces.
+An estimate, to be replaced by measurement at trial stage T3. Counting one request per `copilot -p` prompt at 1x:
 
-### 5.3 Which work uses which model
+- a quick change: one feature session and one or two resumes, about **3 to 5 requests**;
+- a small feature: a plan, a build in a few wakes, a review, about **8 to 15 requests**;
+- each foreman wake that needs a Copilot session: **1 request**;
+- each message the director sends the First Mate in Copilot's chat: **1 request**.
 
-Copilot's column of the routing table, by class. The classes are pinned to model IDs in `scripts/agents/copilot/`, never written here.
+If subagents count separately, a piece costs more; T3 finds out. At these figures, 200 requests is roughly 10 to 20 small pieces a month alongside the director's own chat.
 
-| Job | Lightest (Copilot's default) | Balanced | Why |
-|---|---|---|---|
-| First Mate (the director's chat) | mid-priced | mid-priced | The director's words and cards matter most; the chat is a small share of the use |
-| Foreman | cheapest | cheapest | Its choices that matter are checked by scripts |
-| Design and critical work | mid-priced | most capable | Planning is where a cheap model costs most in rework |
-| Builders and testers | cheapest | mid-priced | Well-defined tasks |
-| Mechanical builds | cheapest | cheapest | |
-| Routine reviews | cheapest | mid-priced | |
-| Reviews of critical work | mid-priced | mid-priced | The one fresh pair of eyes on the riskiest changes stays above the cheapest |
+### 5.3 Using fewer requests, since the model can't be chosen
 
-On the yearly plan, a model the plan counts as included (a multiplier of zero) takes the "cheapest" class. Which models are included on that plan today **(not confirmed)**: none are listed under credit billing.
+On an Auto-only plan Wheelhouse passes no model (section 3.2) and saves the allowance by doing fewer Copilot steps:
+
+- **The foreman runs as scripts where it can.** A wake whose outcome the scripts can settle (a merge, a lane change, a report filed) uses no Copilot session; only a wake that needs judgement starts one.
+- **Thoroughness counts steps.** At Lightest (the default on Copilot): a quick change is one session that builds and checks its own work, with the helper's tests as the review; a feature has one plan, one build session and one review. At Balanced: a separate reviewer for every piece, and a tester for features. Thorough isn't offered on this plan.
+- **Reviews of critical work** keep their own reviewer at every setting. If the allowance can't cover one, the work waits rather than merging unreviewed.
+- **Every session records what Auto chose**, so the director can see it and the evaluation can tell whether Auto's choices change results.
+
+On a plan with model choice, the cheapest class goes to the foreman, builders, testers and routine reviews, and the mid-priced class to the First Mate, design and critical reviews; "most capable" only with `premium` on.
 
 ### 5.4 Near the limit
 
-Wheelhouse reads the month's use after every Copilot session and paces to `copilotCeiling`:
+Wheelhouse reads the month's use after every Copilot session and paces to `copilotAllowance` (and to `copilotCeiling` on a plan that can charge):
 
-1. **At the usage nudge (75% by default):** one card. "Copilot has used 75% of this month's US$20. Carry on as now / Move everything to the cheapest models / Hold new work until the 1st." Recommended: the cheapest models. Meanwhile, work in progress carries on.
-2. **At 90%:** new work isn't started; work in progress finishes its current task and stops at a clean point, with its worktree and commits kept. One card says so, with the date the month resets.
-3. **At the ceiling, or when GitHub stops the work:** a session that GitHub refuses ends with its worktree kept; the waker recognises the refusal and holds the piece as "waiting for the month", never as a failure, and resumes it on the 1st with "carry on from what's there". STOP, the First Mate's cards and the helper keep working, since they use no Copilot credits except the First Mate's chat.
+1. **At the usage nudge, 150 of 200 requests (75%):** one card. "Copilot has used 150 of this month's 200 requests. Carry on as now / Hold new work until the 1st / Finish what's started, then hold." Recommended: finish what's started, then hold. Meanwhile, work in progress carries on.
+2. **At 180 of 200 (90%):** new work isn't started; work in progress finishes its current task and stops at a clean point, with its worktree and commits kept. One card says so, with the date the month resets.
+3. **At 200, when GitHub refuses:** with extra use off, GitHub stops Copilot work. A session that GitHub refuses ends with its worktree kept; the waker recognises the refusal and holds the piece as "waiting for the month", never as a failure, and resumes it on the 1st with "carry on from what's there". STOP, the cards and the helper keep working, since they use no requests. The First Mate's chat in VS Code stops too, so the waiting card is also shown by the helper's own window.
 
-The hard stop is GitHub's budget. Wheelhouse never sets or raises it; setup's card tells the director where it is and recommends US$10 of extra use (Decision 1).
+Wheelhouse never turns on extra use or sets a budget on GitHub.
 
-## 6. What is decided here without the director
+## 6. Decided
+
+By this design:
 
 - Copilot returns as a crew on Wheelhouse's own engine, with the First Mate, helper, gate and STOP unchanged.
-- Node.js is required, as for Claude Code (Lean stays parked unless Decision 3 says otherwise).
+- Node.js is required, as for Claude Code.
 - The director's chat is VS Code's Copilot chat; the CLI is for headless sessions and the trial.
 - Approvals follow the director's ruling of 21 October 2026, marked not proven until check C6 passes.
-- Cheapest models by default; Thoroughness on Copilot starts at Lightest.
-- `capRequests` stays retired; `copilotPlan` and `copilotCeiling` replace it.
+- On an Auto-only plan Wheelhouse passes no model and records what Auto chose; Thoroughness on Copilot starts at Lightest.
+- `capRequests` stays retired; `copilotPlan`, `copilotAllowance` and `copilotCeiling` replace it.
 - The guard test needs no change: the design lives in `docs/`, and the code goes in folders it already allows.
+
+By the director, 10 November 2026 (section 9): pace to US$20 a month with a card at 75%; the Mac first, then a Windows work computer; Lean and the add-on stay parked.
 
 ## 7. The trial
 
-Real runs on the cheapest models, driven by agents in nested sessions on the Mac through tmux, as today's trials are. The director is needed only for clicks only they can make: signing in to Copilot (the device sign-in), setting GitHub's budget if they choose one, and the Windows stage on a work computer. Every stage stops when its budget is used, and reports its credit use.
+Real runs, driven by agents in nested sessions on the Mac through tmux, as today's trials are. The director is needed only for clicks only they can make: signing in to Copilot (the device sign-in), one card click (T5), and the Windows stage on a work computer (T6).
+
+**Testing always uses the cheapest models.** On the director's plan that means **Auto with no premium choices**: no `--model`, no `COPILOT_MODEL`, and no model picker touched in VS Code. On a plan with model choice, the trial passes the cheapest class.
+
+**Budget.** The whole trial is sized at **about 40 requests**, a fifth of the month's 200, with a hard stop at 60. Before each stage the trial reads the month's use and doesn't start the stage if it would pass 60 for the trial or 150 for the month. Every `copilot -p` run is counted before it starts, and the stage stops at its own budget.
 
 | Stage | What runs | Answers | Budget | Needs the director |
 |---|---|---|---|---|
-| **T0, offline** | The restored adapter against the kept fixtures and stand-ins (`fake-copilot`) | That the parts fit today's core | none | no |
-| **T1, capture** | `copilot --help` at the pinned version; one `copilot -p` hello on the cheapest model in a throwaway folder, with a logging hook on every event | The flags; the hook input for each tool and event; whether a session id can be given up front; the events file's format and token counts; how use is reported; which billing the plan uses | 20 credits | the Copilot sign-in, once |
-| **T2, guards** | Scripted sessions that try what the guards refuse: a write outside the worktree, a key read, a nested `claude`, an unknown tool, a hook that hangs, a malformed card | That denials hold; how a time-out shows; whether `agentStop` and `subagentStop` can block and name the agent; whether `preCompact` can block | 60 credits | no |
-| **T3, a piece of work** | A quick-lane change and a small feature on a throwaway test project kept on the computer (local hosting), from the First Mate's order to the helper's merge | The whole loop; crash resume (the session is killed mid-task); real credit use per piece, replacing section 5.2's estimate | 300 credits | no |
-| **T4, the evaluation** | The safety scenarios and Copilot's four (38 to 41) through the Copilot runner | The bar for offering Copilot (section 9 of the old design) | 400 credits | no |
-| **T5, C6: the click** | A card in VS Code's Copilot chat answered by the director, then the same card answered by an agent | Whether a chat click can be proven | 10 credits | **yes**: one click |
-| **T6, a Windows work computer** | Setup on Windows with a company GitLab project, one quick change to merge | PowerShell and the `.cmd` shim, the hook forms, the company's program rules | 100 credits | **yes**: the computer and its sign-ins |
+| **T0, offline** | The restored adapter against the kept fixtures and the probes' stand-ins (`fake-copilot.js`) | That the parts fit today's core | none | no |
+| **T1, capture** | `copilot --help` at the pinned version (no request); one `copilot -p` hello with no model given, in a throwaway folder, with a logging hook on every event | The flags; the hook input for each tool and event; whether a session id can be given up front; the events file's format and token counts; how use is reported; what the account reports as its plan and allowance; where the model Auto chose appears | 2 requests | the Copilot sign-in, once |
+| **T2, guards** | Scripted sessions, several attempts each, that try what the guards refuse: a write outside the worktree, a key read, a nested `claude`, an unknown tool, a hook that hangs, a malformed card | That denials hold; how a time-out shows; whether `agentStop` and `subagentStop` can block and name the agent; whether `preCompact` can block; whether a resume counts as a request | 8 requests | no |
+| **T3, a piece of work** | One quick-lane change on a throwaway test project kept on the computer (local hosting), from the First Mate's order to the helper's merge, killed once mid-task to test crash resume | The whole loop; crash resume; real requests per piece, and whether subagents count, replacing section 5.2's estimate | 10 requests | no |
+| **T4, the evaluation** | Copilot's four safety scenarios (38 to 41) and the shared safety scenarios that touch guards, once each | The bar for offering Copilot (section 9 of the old design) | 15 requests | no |
+| **T5, C6: the click** | A card in VS Code's Copilot chat answered by the director, then the same card answered by an agent | Whether a chat click can be proven | 2 requests | **yes**: one click |
+| **T6, a Windows work computer** | Setup on Windows with a company GitLab project, one quick change to merge | PowerShell and the `.cmd` shim, the hook forms, the company's program rules | 5 requests | **yes**: the computer and its sign-ins |
 
-Total about 900 credits (about US$9), inside the included 1,500 on credit billing, or about 60 to 80 requests on the yearly plan. The trial doesn't start until the director answers Decision 1, since it uses their allowance.
+T1 to T4 run early in a month, so a stage that finds a surprise has room to repeat. A small feature, the full evaluation suite and longer runs wait for a month with room after T3 has measured the real cost.
 
 ## 8. The build parts
 
@@ -224,31 +246,35 @@ Each part is its own fresh session, runs the tests of the files it touches, and 
 4. **The hook entry.** Rewrite `scripts/agents/copilot/hook-entry.js` to section 3.1's step list, writes through the helper, its own deadline inside the registered limit. **Done when** each kept hook-input fixture gives the same answer as the Claude Code input for the same action, and a hook given no helper refuses.
 5. **Trial stage T1 and T2.** Run them (section 7); re-capture fixtures; record the answers in `docs/checks/`. **Done when** each "not confirmed" in sections 3 and 5 has an answer or is marked as still open, and parts 2 to 4 are adjusted to what was found.
 6. **Kits, home and pin.** Rewrite `scripts/agents/copilot/home.js` to build each session's clean home from today's `skills/` and `agents/`; restore `kits.js`, `versions.js`, `plugin.js`; the `agents.copilot.cli` pin in `lineage/manifest.json` and its check in `scripts/lineage/`. **Done when** the home is built from a clean checkout and the lineage check holds a Copilot session when the installed CLI differs from the pin.
-7. **Sessions.** Rewrite `adapters/copilot/sessions.js` against today's waker: foreman and feature calls, resume, final answer, the session id read from the run, the waiting-for-the-month refusal. **Done when** the waker's tests run against a Copilot stand-in, including crash resume, and `BACKGROUND_SESSIONS_READY` stays off.
-8. **Models, usage and the month.** The Copilot column of the routing table; `copilotPlan` and `copilotCeiling` in `scripts/settings/catalogue.js`; a reader for Copilot's use (`scripts/agents/copilot/usage.js`) feeding `scripts/usage/`; the nudge, the 90% hold and the briefing line. **Done when** a test month of recorded use walks through section 5.4's three steps with the right cards.
+7. **Sessions.** Rewrite `adapters/copilot/sessions.js` against today's waker: foreman and feature calls, resume, final answer, the session id read from the run, the waiting-for-the-month refusal. On an `auto-only` plan no `--model` and no `COPILOT_MODEL` are passed, and the model Auto chose is read from the output and kept in the session's record. **Done when** the waker's tests run against a Copilot stand-in, including crash resume and a run where no model is passed, and `BACKGROUND_SESSIONS_READY` stays off.
+8. **The plan, usage and the month.** `copilotPlan`, `copilotAllowance` and `copilotCeiling` in `scripts/settings/catalogue.js`; Thoroughness as a count of steps on Copilot (section 5.3); the foreman's script-only wakes; a reader for Copilot's use (`scripts/agents/copilot/usage.js`) feeding `scripts/usage/`; the nudge at 150, the hold at 180, the waiting state at 200 and the briefing line. The routing column for plans with model choice is left out until a director on such a plan needs it. **Done when** a test month of recorded requests walks through section 5.4's three steps with the right cards.
 9. **Chat clicks and the First Mate in VS Code.** The `/cards/chat-click` route in `scripts/host/helper.js` with the not-proven proof; the First Mate's agent and instructions in the person's Copilot folder; a reader for Copilot's events in `scripts/crew/` for the crew view. **Done when** a stand-in click is recorded as not proven, and every confirmed step still goes to the helper's window.
-10. **Evaluation runner, and trial stages T3 and T4.** Restore `adapters/copilot/eval-runner.js` and scenarios 38 to 41 against today's harness; run T3 and T4. **Done when** the safety scenarios pass on the Mac and section 5.2 holds measured figures.
-11. **Setup, update and switching on.** Setup's agent choice per computer, the hooks file, the Copilot sign-in step and the budget card; uninstall; the update drops the "Copilot is parked" card; `BACKGROUND_SESSIONS_READY` turns on. **Done when** an agent sets up a fresh project on Copilot from the First Mate's chat and a quick change merges.
+10. **Evaluation runner, and trial stages T3 and T4.** Restore `adapters/copilot/eval-runner.js` and scenarios 38 to 41 against today's harness, passing no model on an `auto-only` plan; run T3 and T4 within their budgets. **Done when** the safety scenarios pass on the Mac and section 5.2 holds measured figures.
+11. **Setup, update and switching on.** Setup's agent choice per computer, the hooks file, the Copilot sign-in step, reading the plan and allowance from the account; uninstall; the update drops the "Copilot is parked" card; `BACKGROUND_SESSIONS_READY` turns on. **Done when** an agent sets up a fresh project on Copilot from the First Mate's chat and a quick change merges.
 12. **Documents.** `docs/parked.md` moves Copilot to "brought back" (Lean stays listed), `docs/copilot/tested-versions.md` and `trial-harness.md`, section 22 of the main design, `HANDOVER.md` and `docs/data.md`. **Done when** they match what was built.
 
 Trial stages T5 and T6 follow part 11, as the director's two sittings. Parts 2 and 3 can run side by side; parts 6 and 8 can run side by side after part 5.
 
 ## 9. Decisions
 
-Three, each for the director to click.
+All three decided by the director on 10 November 2026, each with the recommended option. The cards are kept as asked.
 
 ### Decision 1: how much Copilot may cost a month
 
-- **What this is:** Copilot now charges by AI credits. The US$10 plan includes 1,500 credits a month (about US$15 of work). Beyond that, work stops unless you set an extra budget on GitHub's billing page, which only you can do.
-- **Why it comes to you:** it's your money, and the trial (about US$9 of credits) uses this month's allowance.
+**Decided 10 November 2026: option 1.** Wheelhouse paces to US$20 a month with a card at 75%. On the director's plan (Copilot Student, extra use off) Copilot costs nothing in money, so the binding limit is the 200 requests and the card comes at 150 of them (section 5.4). The US$20 ceiling applies if the plan ever changes to one that can charge.
+
+- **What this is:** Copilot charges by use beyond a monthly allowance. Beyond the allowance, work stops unless you set an extra budget on GitHub's billing page, which only you can do.
+- **Why it comes to you:** it's your money, and the trial uses this month's allowance.
 - **Options:**
-  1. **US$20 in all:** set US$10 of extra use on GitHub. Wheelhouse paces work to US$20 and asks at 75%.
-  2. **The plan only:** no extra budget. Work stops when the 1,500 credits are used and carries on next month.
+  1. **US$20 in all:** Wheelhouse paces work to US$20 and asks at 75%.
+  2. **The plan only:** no extra budget. Work stops when the allowance is used and carries on next month.
   3. **More than US$20:** you name the figure.
-- **Recommendation:** option 1. It matches the US$20 you named, and the trial fits inside the included credits either way.
+- **Recommendation:** option 1.
 - **Meanwhile:** the build parts that spend nothing (1 to 4) start; the trial waits for your answer.
 
 ### Decision 2: where Copilot is first used for real
+
+**Decided 10 November 2026: option 1.** The Mac first, then a Windows work computer.
 
 - **What this is:** after the trial on this Mac, Copilot needs one real project to prove itself.
 - **Why it comes to you:** it decides which computer you sit at for the two short sittings (a card click, and setup on a Windows work computer).
@@ -259,6 +285,8 @@ Three, each for the director to click.
 - **Meanwhile:** the build goes on; nothing is set up on either computer until part 11.
 
 ### Decision 3: Lean and the VS Code add-on
+
+**Decided 10 November 2026: option 1.** Lean and the add-on stay parked.
 
 - **What this is:** Lean ran Wheelhouse with no Node.js, for work computers that block it, and the add-on drew a Wheelhouse panel in VS Code. Both are parked and would add about 6,000 lines back.
 - **Why it comes to you:** bringing a parked piece back is your call.
