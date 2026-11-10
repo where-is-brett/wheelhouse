@@ -665,6 +665,19 @@ test('an approve-work card answered by a real card-answer ({question, label, whe
   assert.equal(waitingInRecord([work, card, { id: 'x', kind: 'card-answer', data: { question: 'Something else?', label: 'Yes', where: 'panel' } }]), 1);
 });
 
+test('a click the merge gate waits for with no card yet counts as waiting, so the stand-in asks the desk', () => {
+  const ask = { id: 'g', kind: 'gate-asks', at: '2026-11-10T00:11:00Z', data: { work: 'shop-categories', pr: 4, ask: 'approval', sha: 'abc' } };
+  assert.equal(waitingInRecord([ask]), 1);
+  // A card now stands for it, the click is on record, or the work has reported.
+  const card = { id: 'c', kind: 'card', at: '2026-11-10T00:12:00Z', data: { kind: 'approval', line: 'Merge pull request #4 into main', question: 'Merge it?' } };
+  assert.equal(waitingInRecord([ask, card]), 1, 'the card itself waits until it is answered');
+  assert.equal(waitingInRecord([ask, card, { id: 'x', kind: 'card-answer', at: '2026-11-10T00:13:00Z', data: { card: 'c' } }]), 0);
+  assert.equal(waitingInRecord([ask, { id: 'a', kind: 'approval', at: '2026-11-10T00:12:00Z', data: { pr: 4 } }]), 0);
+  assert.equal(waitingInRecord([ask, { id: 'r', kind: 'report', at: '2026-11-10T00:12:00Z', data: { work: 'shop-categories', outcome: 'merged' } }]), 0);
+  // A card for another pull request leaves it waiting.
+  assert.equal(waitingInRecord([ask, { ...card, data: { ...card.data, line: 'Merge pull request #5 into main' } }, { id: 'x', kind: 'card-answer', at: '2026-11-10T00:13:00Z', data: { card: 'c' } }]), 1);
+});
+
 test('F3 with no feature session to kill is noted as not exercised and the run goes on', async (t) => {
   const folder = scratch(t);
   const io = fakeIo({});
