@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome } from '../lib/paths.js';
 import { SLUG } from '../lib/build-loop.js';
+import { TO_KNOW_MORE } from '../lib/calm-words.js';
 
 export const KINDS = Object.freeze(['lost', 'stalled', 'resumed']);
 // More than this many incidents inside the window is over the bar.
@@ -225,7 +226,7 @@ export function engineTroubleCard(count) {
   const options = [LOOK, KEEP];
   const because = 'the count has passed the bar you agreed, and a comparison costs little and changes nothing';
   return {
-    question: [ask, what, why, meanwhile].join('\n'),
+    question: [ask, what, why, meanwhile, TO_KNOW_MORE].join('\n'),
     header: 'Engine trouble',
     kind: 'question',
     level: 2,
