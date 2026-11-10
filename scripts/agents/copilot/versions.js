@@ -97,15 +97,16 @@ async function cliFromRun({ run, env, platform }) {
 }
 
 // readVersions({ home, env, run, platform }) -> Promise<{ vscode, runtime, cli }>
-//   The versions of VS Code, its Copilot runtime and Copilot CLI in use here, each a version or null, never guessed:
-//   from the add-on's record (`<home>/agents/copilot-versions.json`) when it is there; else the CLI's alone, from
-//   COPILOT_CLI_BINARY_VERSION (a Copilot hook's environment, check 58: the hook's input carries no version); else
-//   from `copilot --version` through `run`, asked once per process. Without `run`, nothing is started.
+//   The versions of VS Code, its Copilot runtime and Copilot CLI in use here, each a version or null, never guessed.
+//   The CLI's is never read from a file: a file on this computer could claim the pinned version. It comes from
+//   COPILOT_CLI_BINARY_VERSION (a Copilot hook's environment, check 58: the hook's input carries no version), else from
+//   `copilot --version` through `run`, asked once per process; without `run`, nothing is started. VS Code's and the
+//   runtime's come from the add-on's record (`<home>/agents/copilot-versions.json`) when it is there; the add-on is parked.
 export async function readVersions({ home = wheelhouseHome(), env = process.env, run = null, platform = process.platform } = {}) {
   const kept = readJson(versionsFile(home));
   const vscode = versionOrNull(kept?.vscode);
   const runtime = versionOrNull(kept?.runtime);
-  let cli = versionOrNull(kept?.cli) ?? versionOrNull(env?.COPILOT_CLI_BINARY_VERSION);
+  let cli = versionOrNull(env?.COPILOT_CLI_BINARY_VERSION);
   if (cli === null && typeof run === 'function') cli = await cliFromRun({ run, env, platform });
   return { vscode, runtime, cli };
 }

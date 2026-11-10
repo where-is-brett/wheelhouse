@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { tempFolder } from '../../../helpers/homes.js';
 import tools from '../../../../adapters/copilot/tools.js';
 import {
-  CLAUDE_TO_COPILOT, HOME_DIR, SOURCES, buildCleanHome, buildHome, checkHome, cleanCheckout, gitBlobHash, writeHome,
+  CLAUDE_TO_COPILOT, FOREMAN_RULES, HOME_DIR, SOURCES, buildCleanHome, buildHome, checkHome, cleanCheckout, gitBlobHash, writeHome,
 } from '../../../../scripts/agents/copilot/home.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
@@ -106,8 +106,32 @@ test('the home is byte-stable: LF only, sorted, the same on every build', () => 
   }
 });
 
-test('the home holds the four agents and their manifest, and no skill, hook or instruction', () => {
-  assert.deepEqual([...home.keys()], ['MANIFEST.txt', ...AGENTS.map((a) => `agents/wheelhouse-${a}.agent.md`)]);
+test('the home holds the four agents, the foreman\'s rule and the manifest, and no skill, hook or instruction', () => {
+  assert.deepEqual([...home.keys()], ['MANIFEST.txt', ...AGENTS.map((a) => `agents/wheelhouse-${a}.agent.md`), 'rules/wheelhouse-foreman.json']);
+});
+
+test('the foreman gets one command, not the shell: its agent holds no tool and its rule names the command', () => {
+  const { front } = split(home.get('agents/wheelhouse-foreman.agent.md'));
+  assert.deepEqual(front.tools, [], 'neither bash nor powershell is granted whole');
+  const rule = JSON.parse(home.get(FOREMAN_RULES));
+  assert.deepEqual(rule, { agent: 'wheelhouse-foreman', shell: [...tools.shell], allow: ["node '<wheelhouse-root>/scripts/foreman/wake.js':*"] });
+  // The pattern is the source's, with Claude Code's root word replaced by the home's own.
+  assert.match(fs.readFileSync(path.join(ROOT, 'skills', 'foreman', 'SKILL.md'), 'utf8'), /^allowed-tools: Bash\(node '\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/foreman\/wake\.js':\*\)$/m);
+  assert.ok(!home.get(FOREMAN_RULES).includes('CLAUDE_PLUGIN_ROOT'));
+  // No file of the home grants the shell whole to the foreman.
+  for (const [file, text] of home) if (file.startsWith('agents/') && file.includes('foreman')) assert.doesNotMatch(text, /tools:.*(bash|powershell)/);
+});
+
+test('the build refuses a pattern an agent file can\'t carry, and a foreman grant that isn\'t one command', () => {
+  const edit = (rel, from, to) => {
+    const root = copyOfSources();
+    const file = path.join(root, ...rel.split('/'));
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(from, to));
+    return root;
+  };
+  assert.throws(() => buildHome({ root: edit('agents/tester.md', 'tools: Read, Grep, Glob, WebFetch, Bash', "tools: Read, Grep, Glob, WebFetch, Bash(node 'x.js':*)") }), /only for a pattern.*widened/);
+  assert.throws(() => buildHome({ root: edit('skills/foreman/SKILL.md', /^allowed-tools:.*$/m, 'allowed-tools: Bash') }), /Bash for a command pattern and nothing else/);
+  assert.throws(() => buildHome({ root: edit('skills/foreman/SKILL.md', /^allowed-tools:.*$/m, "allowed-tools: Bash(node 'a.js':*), Read") }), /Bash for a command pattern and nothing else/);
 });
 
 test('the reviewer\'s tools are reading and searching only', () => {
@@ -118,13 +142,12 @@ test('the reviewer\'s tools are reading and searching only', () => {
 test('every agent\'s tools are Copilot\'s names, and no agent but the builder may edit', () => {
   for (const agent of AGENTS) {
     const { front } = split(home.get(`agents/wheelhouse-${agent}.agent.md`));
-    assert.ok(Array.isArray(front.tools) && front.tools.length > 0, `${agent} has tools`);
+    assert.ok(Array.isArray(front.tools) && (agent === 'foreman' ? front.tools.length === 0 : front.tools.length > 0), `${agent} has tools`);
     for (const tool of front.tools) assert.ok(ALL_COPILOT_TOOLS.has(tool), `${agent}: ${tool} is not a Copilot tool`);
     assert.equal(new Set(front.tools).size, front.tools.length, `${agent} names no tool twice`);
     for (const forbidden of ['task', 'skill', 'sql', 'ask_user']) assert.ok(!front.tools.includes(forbidden), `${agent} has ${forbidden}`);
     if (agent !== 'builder') assert.deepEqual(front.tools.filter((t) => tools.edit.includes(t)), [], agent);
   }
-  assert.deepEqual(split(home.get('agents/wheelhouse-foreman.agent.md')).front.tools, [...tools.shell]);
   assert.deepEqual([...split(home.get('agents/wheelhouse-tester.agent.md')).front.tools].sort(), ['bash', 'glob', 'powershell', 'rg', 'view', 'web_fetch']);
   const builder = split(home.get('agents/wheelhouse-builder.agent.md')).front.tools;
   for (const tool of ['apply_patch', ...tools.shell]) assert.ok(builder.includes(tool), `the builder has ${tool}`);
@@ -161,7 +184,7 @@ test('the foreman agent\'s prompt is the foreman playbook\'s body', () => {
 
 test('every file starts with its path comment, after front matter, and names the file that built it', () => {
   for (const [file, text] of home) {
-    if (file === 'MANIFEST.txt') continue;
+    if (file === 'MANIFEST.txt' || file.endsWith('.json')) continue;
     assert.match(text, /^---\n[\s\S]*?\n---\n<!-- /, `${file}: the comment follows the front matter`);
     const first = text.split('\n---\n')[1].split('\n')[0];
     assert.match(first, new RegExp(`^<!-- ${HOME_DIR}/${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\(built from (agents/[a-z]+\\.md|skills/foreman/SKILL\\.md) by npm run copilot-home\\) -->$`), `${file}: ${first}`);
@@ -176,7 +199,7 @@ test('no file names a Claude Code tool, a model, a personal path or an attributi
   for (const [file, text] of home) {
     for (const name of CLAUDE_ONLY) assert.ok(!text.includes(name), `${file} names ${name}`);
     for (const tool of CLAUDE_TOOLS) assert.ok(!text.includes(`\`${tool}\``), `${file} names \`${tool}\``);
-    assert.ok(!('allowed-tools' in (file === 'MANIFEST.txt' ? {} : split(text).front)), `${file} keeps allowed-tools`);
+    assert.ok(!('allowed-tools' in (file.startsWith('agents/') ? split(text).front : {})), `${file} keeps allowed-tools`);
     assert.doesNotMatch(text, /Co-Authored-By|Generated with/i, file);
     assert.doesNotMatch(text, /\b(opus|sonnet|haiku|fable)\b/i, file);
     assert.doesNotMatch(text, /\/Users\/|(^|[\s\"'(])\/home\/[a-z]|C:\\Users/, file);

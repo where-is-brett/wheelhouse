@@ -127,23 +127,26 @@ test('a hold\'s words stay within what the record may carry, and name the pin', 
 
 // ---- The versions in use ----
 
-test('readVersions reads COPILOT_CLI_BINARY_VERSION, then the add-on\'s record, then `copilot --version`', () => withHome(async (home) => {
+test('readVersions takes the CLI\'s version from the environment or from `copilot --version`, never from a file', () => withHome(async (home) => {
   let started = 0;
   const run = async () => { started += 1; return { code: 0, stdout: 'GitHub Copilot CLI 7.0.9.\n' }; };
   assert.deepEqual(await readVersions({ home, env: { COPILOT_CLI_BINARY_VERSION: '7.0.1' }, run }), { vscode: null, runtime: null, cli: '7.0.1' });
-  assert.equal(started, 0);
+  assert.equal(started, 0, 'the environment settles it, and nothing is started');
+  // The add-on's record names VS Code and the runtime; its `cli` is ignored, so a written file can't claim the pin.
   fs.mkdirSync(path.dirname(versionsFile(home)), { recursive: true });
-  fs.writeFileSync(versionsFile(home), JSON.stringify(NEWER));
-  assert.deepEqual(await readVersions({ home, env: { COPILOT_CLI_BINARY_VERSION: '7.0.1' } }), NEWER);
-  fs.writeFileSync(versionsFile(home), JSON.stringify({ vscode: 'latest', runtime: 2, cli: '7.0.2' }));
-  assert.deepEqual(await readVersions({ home, env: {} }), { vscode: null, runtime: null, cli: '7.0.2' });
+  fs.writeFileSync(versionsFile(home), JSON.stringify({ ...NEWER, cli: COPILOT_VERSION }));
+  assert.deepEqual(await readVersions({ home, env: { COPILOT_CLI_BINARY_VERSION: '7.0.1' } }), { vscode: '9.1.0', runtime: '2.3.4', cli: '7.0.1' });
+  assert.deepEqual(await readVersions({ home, env: {} }), { vscode: '9.1.0', runtime: '2.3.4', cli: null }, 'a file alone names no CLI');
+  const claimed = await readVersions({ home, env: {}, run: async () => ({ code: 0, stdout: 'GitHub Copilot CLI 7.0.9.\n' }), platform: 'linux' });
+  assert.equal(claimed.cli, '7.0.9', 'the program\'s own answer decides, not the file\'s claim of the pin');
+  fs.writeFileSync(versionsFile(home), JSON.stringify({ vscode: 'latest', runtime: 2 }));
+  assert.deepEqual(await readVersions({ home, env: { COPILOT_CLI_BINARY_VERSION: 'not a version' } }), { vscode: null, runtime: null, cli: null });
   fs.rmSync(versionsFile(home));
-  assert.deepEqual(await readVersions({ home, env: {} }), { vscode: null, runtime: null, cli: null });
   const asked = [];
   const once = async (file, args) => { asked.push([file, ...args]); return { code: 0, stdout: 'GitHub Copilot CLI 7.0.3.\n' }; };
-  assert.equal((await readVersions({ home, env: {}, run: once, platform: 'linux' })).cli, '7.0.3');
-  assert.equal((await readVersions({ home, env: {}, run: once, platform: 'linux' })).cli, '7.0.3');
-  assert.deepEqual(asked, [['copilot', '--version']]);
+  // `copilot --version` is asked once per process: the answer above is kept.
+  assert.equal((await readVersions({ home, env: {}, run: once, platform: 'linux' })).cli, '7.0.9');
+  assert.deepEqual(asked, []);
 }));
 
 test('copilotModels reads the models Copilot offers, and guesses none', async () => {

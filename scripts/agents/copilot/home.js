@@ -1,5 +1,6 @@
 // scripts/agents/copilot/home.js
-// Builds the agents a Copilot session's clean home holds: the builder, reviewer, tester and foreman, from the same
+// Builds the agents a Copilot session's clean home holds: the builder, reviewer, tester and foreman (with the one command
+// the foreman may run, in a record beside it), from the same
 // playbooks as Claude Code's (agents/ and skills/foreman), so there is one text. Each is given Copilot's names and front
 // matter, with Claude Code's tool words mapped to Copilot's by one table. The home's skills are the pinned kits' (kits.js)
 // and nothing else of Wheelhouse's; its hooks are written with the session (adapters/copilot/hooks.js), and the sessions part
@@ -60,6 +61,8 @@ const BUILDER_TOOLS = Object.freeze(['view', 'glob', 'rg', ...tools.edit, ...too
 // The explicit list of sources. A source missing from the tree is an error, never skipped.
 const AGENT_SOURCES = Object.freeze(['builder', 'reviewer', 'tester']);
 const FOREMAN_SOURCE = 'skills/foreman/SKILL.md';
+// The record of the one command the foreman may run (JSON has no comments, so it carries no path comment).
+export const FOREMAN_RULES = 'rules/wheelhouse-foreman.json';
 export const SOURCES = Object.freeze([...AGENT_SOURCES.map((agent) => `agents/${agent}.md`), FOREMAN_SOURCE]);
 
 // ---- Reading the sources ----
@@ -122,25 +125,49 @@ function assemble({ file, source, front, rest }) {
   return text.endsWith('\n') ? text : `${text}\n`;
 }
 
-// Copilot names for the tools a Claude Code `tools` or `allowed-tools` line grants, through the one table.
-// `Bash(node '...':*)` grants Bash, which is `bash`; the pattern in the brackets is Claude Code's own packaging.
-function grantedTools(line, rel) {
-  const names = [];
+// The items of a Claude Code `tools` or `allowed-tools` line, each { name, pattern }: `Bash(node '...':*)` is the name Bash
+// with the pattern `node '...':*`, which limits it to that command; a bare name has the pattern null.
+function itemsOf(line) {
+  const raw = [];
   let depth = 0;
   let current = '';
   for (const ch of line) {
     if (ch === '(') depth += 1;
     if (ch === ')') depth -= 1;
-    if (ch === ',' && depth === 0) { names.push(current); current = ''; } else current += ch;
+    if (ch === ',' && depth === 0) { raw.push(current); current = ''; } else current += ch;
   }
-  names.push(current);
+  raw.push(current);
+  return raw.map((n) => n.trim()).filter(Boolean).map((item) => {
+    const m = /^([A-Za-z]+)(?:\(([\s\S]*)\))?$/.exec(item);
+    if (!m) throw new Error(`"${item}" is not a tool a playbook may grant`);
+    return { name: m[1], pattern: m[2] ?? null };
+  });
+}
+
+// Copilot names for the tools a Claude Code `tools` line grants, through the one table. A bracketed pattern is refused: Copilot's
+// agent file names tools whole, so keeping the name alone would widen `Bash(node '...':*)` to the whole shell.
+function grantedTools(line, rel) {
   const out = [];
-  for (const raw of names.map((n) => n.trim()).filter(Boolean)) {
-    const name = raw.replace(/\(.*$/s, '').trim();
+  for (const { name, pattern } of itemsOf(line)) {
+    if (pattern !== null) throw new Error(`${rel} grants ${name} only for a pattern, which an agent file can't carry; it would be widened to every ${name} command`);
     if (!Object.hasOwn(CLAUDE_TO_COPILOT, name)) throw new Error(`${rel} grants ${name}, which CLAUDE_TO_COPILOT has no entry for`);
     for (const tool of CLAUDE_TO_COPILOT[name]) if (!out.includes(tool)) out.push(tool);
   }
   return out;
+}
+
+// The foreman's grant is Bash for one command, and nothing else. Its agent file holds no tool, so it can't run the shell
+// whole; the command goes in a record beside it (`rules/wheelhouse-foreman.json`) for the sessions part to turn into the
+// session's allow rule. `${CLAUDE_PLUGIN_ROOT}` is the folder Wheelhouse is in, which only the session knows.
+const ROOT_WORD = '${CLAUDE_PLUGIN_ROOT}';
+function foremanRule(line, rel) {
+  const items = itemsOf(line);
+  if (items.length === 0 || items.some((i) => i.name !== 'Bash' || i.pattern === null)) throw new Error(`${rel}'s allowed-tools must be Bash for a command pattern and nothing else`);
+  return {
+    agent: 'wheelhouse-foreman',
+    shell: [...CLAUDE_TO_COPILOT.Bash],
+    allow: items.map((i) => i.pattern.replaceAll(ROOT_WORD, '<wheelhouse-root>')),
+  };
 }
 
 function agentFrom(root, agent) {
@@ -163,13 +190,17 @@ function agentFrom(root, agent) {
   return [file, assemble({ file, source, front: { name: `wheelhouse-${agent}`, description: front.description, tools: granted }, rest })];
 }
 
-// The foreman's prompt is the foreman playbook's body; its tools are what its allowed-tools grant.
+// The foreman's prompt is the foreman playbook's body. Its agent file holds no tool; what it may run is in its rule record.
 function foremanFrom(root) {
   const { front, body } = parse(readSource(root, FOREMAN_SOURCE), FOREMAN_SOURCE);
   const file = 'agents/wheelhouse-foreman.agent.md';
-  if (!front['allowed-tools']) throw new Error(`${FOREMAN_SOURCE} has no allowed-tools to give the foreman agent its tools`);
+  if (!front['allowed-tools']) throw new Error(`${FOREMAN_SOURCE} has no allowed-tools to give the foreman agent its rule`);
+  const rule = foremanRule(front['allowed-tools'], FOREMAN_SOURCE);
   const rest = renameSkills(mapToolWords(withoutPathComment(body, FOREMAN_SOURCE), FOREMAN_SOURCE));
-  return [file, assemble({ file, source: FOREMAN_SOURCE, front: { name: 'wheelhouse-foreman', description: front.description, tools: grantedTools(front['allowed-tools'], FOREMAN_SOURCE) }, rest })];
+  return [
+    [file, assemble({ file, source: FOREMAN_SOURCE, front: { name: 'wheelhouse-foreman', description: front.description, tools: [] }, rest })],
+    [FOREMAN_RULES, `${JSON.stringify(rule, null, 2)}\n`],
+  ];
 }
 
 // ---- The manifest ----
@@ -190,7 +221,7 @@ function manifestOf(files) {
 // can't be read.
 export function buildHome({ root = REPO } = {}) {
   const files = new Map();
-  for (const entry of [...AGENT_SOURCES.map((agent) => agentFrom(root, agent)), foremanFrom(root)]) files.set(entry[0], entry[1]);
+  for (const entry of [...AGENT_SOURCES.map((agent) => agentFrom(root, agent)), ...foremanFrom(root)]) files.set(entry[0], entry[1]);
   files.set('MANIFEST.txt', manifestOf(files));
   return new Map([...files.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
 }
