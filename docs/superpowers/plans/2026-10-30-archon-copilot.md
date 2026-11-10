@@ -1,4 +1,6 @@
 <!-- docs/superpowers/plans/2026-10-30-archon-copilot.md -->
+
+> **Parked on 7 November 2026:** this plan built Copilot on Archon, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
 # Part 4.9: Copilot projects on the Archon engine (stub 4.5)
 
 **Goal:** a Copilot project's work runs through Archon's Copilot provider, from the CLI pinned into the engine folder and a clean home, on the routing table's Copilot column, with every prompt counted by the spend meter.

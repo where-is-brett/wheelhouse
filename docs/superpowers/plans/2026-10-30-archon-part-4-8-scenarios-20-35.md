@@ -1,5 +1,7 @@
 <!-- docs/superpowers/plans/2026-10-30-archon-part-4-8-scenarios-20-35.md -->
 
+> **Parked on 7 November 2026:** this plan built Wheelhouse on Archon, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
+
 # Part 4.8: the build-loop scenarios 20 to 35 against the pack
 
 **Goal.** The Archon design (`docs/specs/2026-10-29-wheelhouse-on-archon-design.md`, the evaluation runner's row and section 18) says the build-loop scenarios 20 to 35 are rewritten against the pack, played on the fake engine in tests and on real Archon in the counted evaluation. Each kept scenario keeps what it proves, and no pass is made weaker.

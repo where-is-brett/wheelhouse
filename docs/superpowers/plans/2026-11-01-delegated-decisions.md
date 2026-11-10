@@ -1,4 +1,6 @@
 <!-- docs/superpowers/plans/2026-11-01-delegated-decisions.md -->
+
+> **Parked on 7 November 2026:** this plan built delegated decisions, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
 # Delegated decisions: the build plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

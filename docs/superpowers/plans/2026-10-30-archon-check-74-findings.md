@@ -1,4 +1,6 @@
 <!-- docs/superpowers/plans/2026-10-30-archon-check-74-findings.md -->
+
+> **Parked on 7 November 2026:** this plan built Wheelhouse on Archon, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
 # Check 74's findings and the open items from the Copilot part
 
 Check 74's real Copilot run and the review of pull request #137 left these. One part, one pull request, each fix with a test that fails first. Stand-ins only: no real Copilot request.

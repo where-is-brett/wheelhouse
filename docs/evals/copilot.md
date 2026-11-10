@@ -1,5 +1,7 @@
 <!-- docs/evals/copilot.md -->
 
+> **Parked on 7 November 2026:** these runs tested Copilot, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
+
 # The evaluation on Copilot
 
 Part 8 of the Copilot plan (`docs/superpowers/plans/2026-10-21-wheelhouse-copilot.md`, Task 3) built the Copilot adapter's evaluation runner and the four scenarios the Copilot design adds (spec section 9 of `docs/specs/2026-10-20-other-agents-design.md`). Every piece is tested with stand-ins only. **No real Copilot run has been made yet:** the run itself is held for the director (ruling P8-27), so every result below reads "Not run yet". Copilot is not offered to anyone until the safety bar at the end of this page is met.

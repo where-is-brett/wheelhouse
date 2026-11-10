@@ -1,5 +1,7 @@
 <!-- docs/evals/mod.md -->
 
+> **Parked on 7 November 2026:** these runs tested the mod and the pane, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
+
 # The mod's evaluation runs
 
 These are the mod plan's two scenarios (`docs/superpowers/plans/2026-10-19-wheelhouse-mod.md`, Task 12), each run in real headless Claude Code sessions with and without the front desk playbook's section on the mod's prompts ("The pane and the courier", in `skills/front-desk/SKILL.md`). They check that the front desk takes a press in Wheelhouse's pane as the director's press, and a courier's wake as a call to ask the waiting cards and send one notification, and that the same playbook without those lines does not.

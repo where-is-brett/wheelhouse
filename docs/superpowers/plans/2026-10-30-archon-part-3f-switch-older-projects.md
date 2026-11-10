@@ -1,4 +1,6 @@
 <!-- docs/superpowers/plans/2026-10-30-archon-part-3f-switch-older-projects.md -->
+
+> **Parked on 7 November 2026:** this plan built Wheelhouse on Archon, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
 # Part 3f: a project set up before v0.2.0 switches to the build engine
 
 **Goal:** a project set up before v0.2.0 is offered the switch too. Confirming it makes the helper open a pull request that adds the project's `.archon/` files. That pull request merges through the helper's own gate, with the director's signed approval, like any other level-3 change. The engine is on for that project only once the merge lands. Until then nothing changes, and work runs on the old engine.

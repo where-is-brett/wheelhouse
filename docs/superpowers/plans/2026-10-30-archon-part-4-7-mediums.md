@@ -1,4 +1,6 @@
 <!-- docs/superpowers/plans/2026-10-30-archon-part-4-7-mediums.md -->
+
+> **Parked on 7 November 2026:** this plan built Wheelhouse on Archon, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
 # Part 4.7: the Archon build's open MEDIUMs
 
 **Goal.** Before the director's first real use on the Mac, close the MEDIUMs from pull requests #118 to #129 that would bite there, and show a real Archon run's tokens in the evaluation's report.

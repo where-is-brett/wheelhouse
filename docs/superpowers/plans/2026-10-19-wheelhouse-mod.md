@@ -1,5 +1,7 @@
 <!-- docs/superpowers/plans/2026-10-19-wheelhouse-mod.md -->
 
+> **Parked on 7 November 2026:** this plan built the mod and the pane, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
+
 # Wheelhouse mod: implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

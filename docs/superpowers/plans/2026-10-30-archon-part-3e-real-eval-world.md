@@ -1,4 +1,6 @@
 <!-- docs/superpowers/plans/2026-10-30-archon-part-3e-real-eval-world.md -->
+
+> **Parked on 7 November 2026:** this plan built Wheelhouse on Archon, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
 # Part 3e: a counted-evaluation world that runs real Archon
 
 **Goal:** the counted evaluation's engine scenarios (42 to 55, 60 to 62) can play on the real, source-built Archon (spec, section 18), beside the fake engine, with the report saying which scenarios ran for real and which played their recording. v0.2.0's tag waits for one such run.

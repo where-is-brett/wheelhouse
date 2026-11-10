@@ -1,4 +1,6 @@
 <!-- docs/engine/archon-upstream-note.md -->
+
+> **Parked on 7 November 2026:** Archon is parked, so this note describes a piece that is not in use. What is parked, and how it comes back, is in `docs/parked.md`.
 # Archon: Claude steps in a mode that keeps Claude Code's sandbox
 
 A short note to go with Wheelhouse's patch when it is offered upstream to Archon (coleam00/Archon). The patch is `scripts/engine/archon/patch/claude-permission-mode.patch`, against v0.13.0 (commit 0d39c1f2).

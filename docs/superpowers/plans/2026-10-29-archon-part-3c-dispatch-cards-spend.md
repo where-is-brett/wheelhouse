@@ -1,4 +1,6 @@
 <!-- docs/superpowers/plans/2026-10-29-archon-part-3c-dispatch-cards-spend.md -->
+
+> **Parked on 7 November 2026:** this plan built Wheelhouse on Archon, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
 # Wheelhouse on Archon, part 3c: the dispatcher, the card router and the spend meter
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

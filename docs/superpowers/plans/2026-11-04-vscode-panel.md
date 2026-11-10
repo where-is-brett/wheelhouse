@@ -1,4 +1,6 @@
 <!-- docs/superpowers/plans/2026-11-04-vscode-panel.md -->
+
+> **Parked on 7 November 2026:** this plan built the VS Code add-on, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
 # The Wheelhouse panel in VS Code: the build plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan part by part. Steps use checkbox (`- [ ]`) syntax for tracking.
