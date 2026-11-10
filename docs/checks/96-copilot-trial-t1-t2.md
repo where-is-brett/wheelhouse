@@ -2,7 +2,7 @@
 
 # Check 96: Copilot trial stages T1 and T2
 
-**Answer:** Mostly. Run on 10 November 2026 on the Mac. Copilot's hooks can add context at the start of a session and of a prompt, a turn's end and a subagent's end can send work back, and a subagent's stop names the agent. A session id can be given up front, and the events file carries token counts. A compaction cannot be stopped by a hook, a hook past its time-out lets the action through, and a resume counts as a request. Five items stay open (the list at the end).
+**Answer:** Mostly. Run on 10 November 2026 on the Mac. Copilot's hooks can add context at the start of a session and of a prompt, a turn's end and a subagent's end can send work back, and a subagent's stop names the agent. A session id can be given up front, and the events file carries token counts. A compaction cannot be stopped by a hook, a hook past its time-out lets the action through, and a resume counts as a request. Six items stay open (the list at the end).
 
 ## Question
 
@@ -67,3 +67,4 @@ The CLI counted **6 requests** (1, 1, 2, 1, 0, 1). T1's budget was 2 and T2's 8;
 - Whether a step that fails part-way still counts as a request, and whether Auto ever picks a model that costs nothing (the plan offered one model).
 - Whether a block answered with exit 2 also works at `agentStop` (the entry sends exit 0).
 - A prompt made of a hook's own block reason reaches `userPromptSubmitted` as if typed; the entry cannot tell it from the director's words. It matters only to `prompt-record`, and only for a reply code, which a reason would not hold.
+- A top-level session's input that carried `agentId` and `parentAgentId` would have its prompt and `agentStop` steps skipped. None was seen: only a subagent's inputs carry both.

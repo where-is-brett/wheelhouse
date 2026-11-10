@@ -266,10 +266,10 @@ async function decideEvent(event, { stdin, env, deps, seen }) {
     if (event === GUARD_EVENT && !copilotTools.read.includes(raw.toolName)) return answer.deny(LOCAL_HARNESS);
     return undefined;
   }
-  // A subagent's own prompt and its own stop come through these two events too, named by `agentId` (check 96). The
+  // A subagent's own prompt and its own stop come through these two events too, named by `agentId` and `parentAgentId`, both present in the captured inputs (check 96). The
   // prompt is the parent's task, not the director's words, and a block at a subagent's `agentStop` is ignored:
   // the subagent is held by `subagentStop`, which the parent's run sees.
-  if ((event === 'userPromptSubmitted' || event === 'agentStop') && typeof raw.agentId === 'string' && raw.agentId !== '') return undefined;
+  if ((event === 'userPromptSubmitted' || event === 'agentStop') && isText(raw.agentId) && raw.agentId !== '' && isText(raw.parentAgentId) && raw.parentAgentId !== '') return undefined;
   const client = deps.client ?? helperClient({ timeout: GUARD_DEADLINE_MS });
   const placedIn = (deps.projectOf ?? projectOf)(raw.cwd, { dir })?.project;
   // A mark informs: one that fails or is late is lost, and the event is answered as it would be.

@@ -300,7 +300,7 @@ test('a context line that reads as a header once trimmed refuses the whole patch
   assert.deepEqual(patchPaths(plain), ['a.txt']);
 });
 
-// Check 80: a subagent's prompt and its own stop come through userPromptSubmitted and agentStop with an agentId.
+// Check 96: a subagent's prompt and its own stop come through userPromptSubmitted and agentStop with an agentId.
 test('a subagent\'s own prompt and agentStop run no step, and its subagentStop still does', async () => {
   for (const [event, name] of [['userPromptSubmitted', 'camel-userPromptSubmitted-subagent.json'], ['agentStop', 'camel-agentStop-subagent.json']]) {
     const r = recording();
@@ -326,8 +326,21 @@ test('a block at the end of a turn is written as Copilot acts on it: the body, w
 });
 
 test('the kept fixtures for the other events read as the entry takes them', async () => {
-  for (const [event, name] of [['sessionEnd', 'camel-sessionEnd-none.json'], ['preCompact', 'camel-preCompact-none.json']]) {
-    const got = await run(event, fixture(name), { steps: recording().steps });
+  for (const [event, name, ran] of [['sessionEnd', 'camel-sessionEnd-none.json', ['stopGuard', 'helmEnd']], ['preCompact', 'camel-preCompact-none.json', []]]) {
+    const r = recording();
+    const got = await run(event, fixture(name), { steps: r.steps });
     assert.equal(got.code, 0, event);
+    assert.deepEqual(names(r.calls), ran, event);
   }
+  // A subagent's id on its own is not enough to skip a prompt.
+  const r = recording();
+  await run('userPromptSubmitted', { ...fixture('camel-userPromptSubmitted-none.json'), agentId: 'a1' }, { steps: r.steps });
+  assert.equal(r.calls.length, 4);
+});
+
+test('a preToolUse input carrying agentId and parentAgentId is still guarded: a denying step exits 2', async () => {
+  const r = recording({ answers: { toolGuard: () => deny('no') } });
+  const got = await run('preToolUse', call('view', { path: `${PROJECT}/a` }, { agentId: 'a1', parentAgentId: 'p1', agentType: 'probe' }), { steps: r.steps });
+  assert.equal(got.code, 2);
+  assert.equal(JSON.parse(got.text).permissionDecision, 'deny');
 });

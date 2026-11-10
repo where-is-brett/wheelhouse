@@ -332,7 +332,7 @@ test('a deny answer becomes Copilot\'s deny with its reason, and exit code 2', a
   // A block sent back at the end of a turn goes with exit 0 (check 96); anywhere else it still refuses.
   assert.equal(exitCodeFor({ decision: 'block', reason: 'x' }, 'agentStop'), 0);
   assert.equal(exitCodeFor({ decision: 'block', reason: 'x' }, 'subagentStop'), 0);
-  assert.equal(exitCodeFor({ decision: 'block', reason: 'x' }, 'preToolUse'), 2);
+  for (const event of ['preToolUse', 'sessionEnd', 'userPromptSubmitted', 'preCompact']) assert.equal(exitCodeFor({ decision: 'block', reason: 'x' }, event), 2, event);
   assert.equal(exitCodeFor({ decision: 'block', reason: 'x' }), 2);
   // A guard's deny through the kit is written in Copilot's shape.
   const h = harness(fixture('camel-preToolUse-view.json'));

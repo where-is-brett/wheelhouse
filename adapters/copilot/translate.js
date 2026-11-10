@@ -278,7 +278,7 @@ export function fromGuardAnswer(out, event) {
 export function exitCodeFor(shaped, event) {
   if (!isObject(shaped)) return 0;
   if (shaped.permissionDecision === 'deny') return 2;
-  return shaped.decision === 'block' && (event === undefined || event === 'preToolUse') ? 2 : 0;
+  return shaped.decision === 'block' && event !== 'agentStop' && event !== 'subagentStop' ? 2 : 0;
 }
 
 export default Object.freeze({ toGuardInput, fromGuardAnswer, UNKNOWN_TOOL });
