@@ -457,7 +457,14 @@ export function waitingInRecord(events) {
   const carded = events.filter((e) => e.kind === 'card' && e.data?.kind === 'approve-work').map((e) => JSON.stringify(e.data));
   const unseen = events.filter((e) => e.kind === 'work' && e.data?.visible === true && typeof e.data.id === 'string'
     && !approved.has(e.data.id) && !carded.some((c) => c.includes(e.data.id)));
-  return cards.length + questions.length + unseen.length;
+  // A click the merge gate waits for (a gate-asks record) waits from the moment it is recorded: the desk makes its card only
+  // when it next runs, so until a card stands for it, or the click or the work's report is on record, it counts here.
+  const after = (e, g) => Date.parse(e.at ?? '') >= Date.parse(g.at ?? '');
+  const asks = events.filter((g) => g.kind === 'gate-asks' && typeof g.data?.work === 'string' && !events.some((e) => after(e, g) && (
+    (e.kind === 'card' && e.data?.kind === g.data.ask && JSON.stringify(e.data).includes(Number.isInteger(g.data.pr) ? `#${g.data.pr}` : g.data.work))
+    || (e.kind === 'approval' && Number.isInteger(g.data.pr) && e.data?.pr === g.data.pr)
+    || (e.kind === 'report' && e.data?.work === g.data.work))));
+  return cards.length + questions.length + unseen.length + asks.length;
 }
 async function checkIn(ctx, events) {
   const { io, state } = ctx;
