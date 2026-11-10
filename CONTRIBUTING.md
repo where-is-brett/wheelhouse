@@ -38,7 +38,7 @@ node --test --import ./tests/helpers/test-home.js tests/github/plan.test.js
 ## Finding your way around
 
 - [`docs/specs/2026-10-17-wheelhouse-design.md`](docs/specs/2026-10-17-wheelhouse-design.md): the design. Section 22 has its rulings.
-- [`docs/specs/2026-11-07-core-cut-design.md`](docs/specs/2026-11-07-core-cut-design.md) and [`docs/parked.md`](docs/parked.md): what the core is, and the parked pieces (Archon and its notes in [`docs/engine/`](docs/engine/), Copilot, the pane, the VS Code add-on) with the tag each is kept under.
+- [`docs/specs/2026-11-07-core-cut-design.md`](docs/specs/2026-11-07-core-cut-design.md) and [`docs/parked.md`](docs/parked.md): what the core is, and the parked pieces (Archon and its notes in [`docs/engine/`](docs/engine/), the second coding agent, the pane, the VS Code add-on) with the tag each is kept under.
 - [`docs/checks/`](docs/checks/): what was tried on real tools, and what it showed.
 - [`docs/evals/`](docs/evals/): the evaluation of the agents' behaviour.
 - [`docs/lineage/upgrading.md`](docs/lineage/upgrading.md): moving the pinned upstream skills, and releases.
