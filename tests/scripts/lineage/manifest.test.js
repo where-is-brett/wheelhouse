@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { COPILOT_VERSION } from '../../../scripts/agents/copilot/numbers.js';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
 import { skillCopyNames } from '../../../scripts/lineage/copies.js';
 import {
@@ -65,7 +66,7 @@ test('the manifest names each upstream folder and file with its fingerprint, and
     copies: manifest.copies,
     claudeCode: { floor: CLAUDE_CODE_FLOOR },
     node: { floor: '22.0.0' },
-    agents: {},
+    agents: { copilot: { cli: COPILOT_VERSION } },
     models: MODELS,
   });
   assert.equal(CLAUDE_CODE_FLOOR, '2.1.299');

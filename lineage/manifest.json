@@ -116,6 +116,10 @@
   "node": {
     "floor": "22.0.0"
   },
-  "agents": {},
+  "agents": {
+    "copilot": {
+      "cli": "1.0.105"
+    }
+  },
   "models": "the routing table in .claude/wheelhouse.json"
 }
