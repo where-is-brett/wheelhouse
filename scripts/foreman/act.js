@@ -1564,6 +1564,15 @@ async function close(ctx, work, rest) {
   const kept = readPrRecord(worktree);
   const pr = kept?.pr ?? null;
   const status = parsed.fields.status;
+  // Mid-slices, the report, the status and the kept pull request may be an earlier slice's while the session builds the
+  // next: closing then would drop the feature from the watch and lose the slice to come. Work that ended blocked or
+  // partial is not building, so it still closes.
+  const s = f.slice;
+  const more = isPlain(s) && Number.isInteger(s.n) && Number.isInteger(s.m) && s.n < s.m;
+  const earlier = kept?.plan != null && typeof f.plan === 'string' && kept.plan !== f.plan && !NO_PLAN.includes(laneOf(views, work));
+  if ((more || earlier) && status !== 'blocked' && status !== 'partial') {
+    refuse(`${work} is still building its next slice: its report and pull request are an earlier slice's. Wait for that slice; don't close it`);
+  }
   let outcome = status === 'blocked' ? 'blocked' : 'closed';
   if (pr !== null) {
     const state = await ctx.client.prState({ project: ctx.project, number: pr });

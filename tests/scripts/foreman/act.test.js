@@ -2094,8 +2094,29 @@ test('a feature that ends blocked or partial never closes as merged, even after 
   };
   assert.equal(await outcome('partial'), 'closed');
   assert.equal(await outcome('blocked'), 'blocked');
-  assert.equal(await outcome('early'), 'closed');
   assert.equal(await outcome('whole'), 'merged');
+}));
+
+test('close refuses, writing nothing, while a sliced feature is still building its next slice', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  const add = (work, slice, plan, pr) => {
+    views.work[work] = workView(work, { lane: 'feature' });
+    views.features[work] = featureView(work, {
+      step: 'building', worktree: worktree(checkout, work, { brief: { lane: 'feature', slices: slice.m }, pr, report: reportText(work) }), slice, plan,
+    });
+  };
+  // The report and the kept pull request are slice 2's; the feature has moved on to slice 3.
+  add('moved-on', { n: 3, m: 3 }, 'docs/plans/slice-3.md', { pr: 6, plan: 'docs/plans/slice-2.md', merged: true });
+  // The feature's slice says more remain.
+  add('more-remain', { n: 2, m: 3 }, 'docs/plans/slice-2.md', { pr: 6, plan: 'docs/plans/slice-2.md', merged: true });
+  const fake = fakeClient({ views, answers: { prState: { ok: true, result: { state: 'merged' } } } });
+  for (const work of ['moved-on', 'more-remain']) {
+    const r = await act(['close', work], { client: fake.client });
+    assert.notEqual(r.code, 0, work);
+    assert.match(r.err, /still building its next slice/, work);
+  }
+  assert.deepEqual(fake.writes, []);
 }));
 
 test('work that ends partial or blocked is put to the director, and once queued again it starts afresh in its worktree (R102)', () => withHome(async () => {
