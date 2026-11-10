@@ -57,13 +57,15 @@ export const SETTINGS = {
   usageMark: { label: 'Usage nudge', group: 'everyday', levels: ['off', 50, 65, 75, 90], default: 75, home: 'profile' },
   // Copilot's plan, the month's allowance in the plan's own unit and the most Copilot may cost a month in US dollars
   // (Copilot return design, section 4). The ceiling applies only on a plan that can charge.
+  // Group `agent`: kept for the agent a computer runs on, and not in the settings text a Claude Code director reads (part 11
+  // shows them where a computer runs Copilot).
   // `say` is a setting's value in plain words, where the value alone doesn't read (scripts/settings/effective.js).
   copilotPlan: {
-    label: 'Copilot plan', group: 'everyday', levels: ['auto-only', 'credits', 'requests'], default: 'auto-only', home: 'profile',
+    label: 'Copilot plan', group: 'agent', levels: ['auto-only', 'credits', 'requests'], default: 'auto-only', home: 'profile',
     say: (v) => ({ 'auto-only': 'Auto only, counted in requests', credits: 'model choice, billed in AI credits', requests: 'model choice, counted in premium requests' })[v] ?? String(v),
   },
-  copilotAllowance: { label: 'Copilot allowance a month', group: 'everyday', check: wholeBetween(1, 100000), default: 200, home: 'profile', say: (v) => `${v} requests` },
-  copilotCeiling: { label: 'Copilot ceiling a month (US dollars)', group: 'everyday', check: wholeBetween(0, 10000), default: 20, home: 'profile', say: (v) => `US$${v}` },
+  copilotAllowance: { label: 'Copilot allowance a month', group: 'agent', check: wholeBetween(1, 100000), default: 200, home: 'profile', say: (v) => `${v} requests` },
+  copilotCeiling: { label: 'Copilot ceiling a month (US dollars)', group: 'agent', check: wholeBetween(0, 10000), default: 20, home: 'profile', say: (v) => `US$${v}` },
   boardTab: { label: 'Logbook opens on', group: 'everyday', levels: ['director', 'build'], default: 'director', home: 'profile' },
   hours: { label: 'Working hours', group: 'everyday', check: checkHours, default: null, home: 'profile' },
   // The local time of day the daily digest is made (scripts/digest/due.js); it waits for the director's next message.
