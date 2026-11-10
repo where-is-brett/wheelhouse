@@ -112,27 +112,32 @@ export function harnessOf(raw, env = process.env) {
   return 'unknown';
 }
 
-// A patch's header lines (check 58's patch shape): `*** ` and a word, read with any spaces before them, so a
-// header indented by mistake is still read. Those that name a file, and those that name none.
+// A patch's header lines (check 58's patch shape): `*** ` and a word, with nothing before them. Those that name a
+// file, and those that name none. A line with something before such a word (a context line is a space first) is a
+// file's own text and never a header; a patch holding one is refused whole (see patchPaths), since a reader that
+// took it for a header, or one that did not, would disagree with the other about which files the patch changes.
 const HEADER = /^\*\*\* [A-Za-z]/;
 const PATH_LINE = /^\*\*\* (?:Add File|Update File|Delete File|Move to): *(.*?) *\r?$/;
 const PLAIN_LINE = /^\*\*\* (?:Begin Patch|End Patch|End of File) *\r?$/;
 
 // The paths an apply_patch changes, in the order given, or null when the patch is not a string, names no path,
-// or holds a header line Wheelhouse doesn't know (a new kind of change it cannot read the path of). A line of
-// a file's own text that starts with `+` or `-` is never read as a header; a context line (a space first) that
-// looks like one is, which can only refuse the call or check one path more, never let a path by unchecked.
+// or holds a header line Wheelhouse doesn't know (a new kind of change it cannot read the path of). Only a line
+// with nothing before its `***` is a header. A line of a file's own text that starts with `+` or `-` is never one;
+// a context line (a space first, or any other white space) that would read as one once trimmed refuses the whole
+// patch, so a header hidden in a comment's context can't be taken for text by one reader and a header by another.
 export function patchPaths(patch) {
   if (typeof patch !== 'string') return null;
   const paths = [];
   for (const line of patch.split('\n')) {
-    const trimmed = line.trimStart();
-    if (!HEADER.test(trimmed)) continue;
-    const named = PATH_LINE.exec(trimmed);
+    if (!HEADER.test(line)) {
+      if (HEADER.test(line.trimStart())) return null;
+      continue;
+    }
+    const named = PATH_LINE.exec(line);
     if (named) {
       if (named[1] === '') return null;
       if (!paths.includes(named[1])) paths.push(named[1]);
-    } else if (!PLAIN_LINE.test(trimmed)) return null;
+    } else if (!PLAIN_LINE.test(line)) return null;
   }
   return paths.length > 0 ? paths : null;
 }
@@ -157,10 +162,9 @@ export function patchChanges(patch) {
     file = null;
   };
   for (const line of patch.split('\n')) {
-    const trimmed = line.trimStart();
-    const named = HEADER.test(trimmed) ? PATH_LINE.exec(trimmed) : null;
+    const named = HEADER.test(line) ? PATH_LINE.exec(line) : null;
     if (named) {
-      const kind = /^\*\*\* (Add|Update|Delete|Move)/.exec(trimmed)[1];
+      const kind = /^\*\*\* (Add|Update|Delete|Move)/.exec(line)[1];
       if (kind === 'Move') {
         if (file !== null && file.kind === 'update') file.moved = named[1];
         continue;
@@ -169,7 +173,7 @@ export function patchChanges(patch) {
       file = kind === 'Add' ? { kind: 'add', path: named[1], added: [] } : kind === 'Delete' ? { kind: 'delete', path: named[1] } : { kind: 'update', path: named[1], moved: null, hunks: [{ old: [], new: [] }] };
       continue;
     }
-    if (file === null || HEADER.test(trimmed)) continue;
+    if (file === null || HEADER.test(line)) continue;
     const text = line.replace(/\r$/, '');
     if (file.kind === 'add') {
       if (text.startsWith('+')) file.added.push(text.slice(1));

@@ -10,7 +10,7 @@ import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { runEntry, EVENT_NAMES, DEADLINE, COULD_NOT_RUN, APP_TOOL, NO_TEXT } from '../../../../scripts/agents/copilot/hook-entry.js';
 import { GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC } from '../../../../scripts/agents/copilot/numbers.js';
-import { toGuardInput, patchChanges } from '../../../../adapters/copilot/translate.js';
+import { toGuardInput, patchChanges, patchPaths } from '../../../../adapters/copilot/translate.js';
 import { NO_HELPER_STOP } from '../../../../scripts/lib/stop.js';
 import { hookMain } from '../../../../scripts/hooks/kit.js';
 
@@ -274,3 +274,28 @@ test('a subagent named for Wheelhouse\'s builder and reviewer reaches report-che
 function fixtureStop(type) {
   return { ...fixture('camel-subagentStop-none.json'), agentType: type, agentName: type };
 }
+
+test('a context line that reads as a header once trimmed refuses the whole patch', async () => {
+  const hidden = [
+    '*** Begin Patch',
+    '*** Update File: tests/a.test.js',
+    '@@',
+    ' /*',
+    ' *** Update File: docs/notes.md',
+    ' */',
+    '-it("x", () => {});',
+    '+it.skip("x", () => {});',
+    '*** End Patch',
+    '',
+  ].join('\n');
+  assert.equal(patchPaths(hidden), null);
+  assert.equal(patchChanges(hidden), null);
+  for (const indent of [' ', '\t', '  ']) assert.equal(patchPaths(hidden.replace(' *** Update', `${indent}*** Update`)), null);
+  const r = recording();
+  const got = await run('preToolUse', call('apply_patch', hidden), { steps: r.steps });
+  assert.equal(got.code, 2);
+  assert.deepEqual(r.calls, []);
+  // Header lines with nothing before them, and file text that starts with + or -, are read as they were.
+  const plain = '*** Begin Patch\n*** Update File: a.txt\n@@\n-*** Update File: b\n+*** Update File: c\n*** End Patch\n';
+  assert.deepEqual(patchPaths(plain), ['a.txt']);
+});
