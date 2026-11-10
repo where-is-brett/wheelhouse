@@ -73,6 +73,21 @@ test('a question tied to a change by hand, or with an id the work did not raise,
   assert.deepEqual(questionsOf({ questions: { 'q-w-1': entry('q-w-1', { byHand: { n: 1 } }), 'by-hand-3': entry('by-hand-3'), 'q-other-1': entry('q-other-1') } }, 'w'), []);
 });
 
+test("the foreman's own question on the work, answered after the review, never holds a merge", () => {
+  const late = { label: 'Wait', at: '2026-11-06T11:00:00.000Z' };
+  const views = { questions: { 'q-w-1000001': entry('q-w-1000001', {}, late), 'q-w-1000002': entry('q-w-1000002') } };
+  assert.deepEqual(questionsOf(views, 'w'), []);
+  assert.equal(questionHold({ views, work: 'w', review: review('2026-11-06T10:00:00.000Z') }), null);
+});
+
+test("a feature's question the foreman recorded again still holds the merge", () => {
+  const views = { questions: { 'q-w-1000003': entry('q-w-1000003', { data: { replaces: 'q-w-2' } }) } };
+  assert.deepEqual(questionsOf(views, 'w').map((f) => f.id), ['q-w-1000003']);
+  // A `replaces` naming another work's question, or another foreman question, is not a copy of this work's own.
+  const odd = { questions: { 'q-w-1000004': entry('q-w-1000004', { data: { replaces: 'q-x-2' } }), 'q-w-1000005': entry('q-w-1000005', { data: { replaces: 'q-w-1000001' } }) } };
+  assert.deepEqual(questionsOf(odd, 'w'), []);
+});
+
 test('a plain question the work raised counts, answered or not', () => {
   const found = questionsOf({ questions: { 'q-w-1': entry('q-w-1'), 'q-w-2': entry('q-w-2', {}, { label: 'x', at: '2026-11-06T11:00:00.000Z' }) } }, 'w');
   assert.deepEqual(found.map((f) => [f.id, f.answered]), [['q-w-1', false], ['q-w-2', true]]);
