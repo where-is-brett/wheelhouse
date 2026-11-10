@@ -663,11 +663,14 @@ const UNREADABLE = 'The host helper gave an answer this could not read, so nothi
 
 // Brings the host's copy of the worktree's branch into it (final review, I1). The
 // helper, which alone can reach the host, fetches it into its own mirror and brings it together
-// with the worktree's branch there: a fast-forward, or a plain merge it makes itself, refusing a
-// conflict. It hands back only the commits, as a git bundle; no key or setting of the helper's
-// comes with them. The session's own git, here in the sandbox, fetches them from the bundle and
-// moves the branch on with a fast-forward, which git refuses if it would overwrite uncommitted
-// changes. Returns `{ branch, already, merged?, sha? }`.
+// with the worktree's branch there: a fast-forward, or a plain merge it makes itself. It hands back
+// only the commits, as a git bundle; no key or setting of the helper's comes with them. The
+// session's own git, here in the sandbox, fetches them from the bundle and moves the branch on with
+// a fast-forward, which git refuses if it would overwrite uncommitted changes. When the two
+// branches change the same lines the helper makes no merge: it hands back the host's tip with the
+// files that clash, and the merge is made here, in the worktree, and left for the session to
+// resolve. Returns `{ branch, already, merged?, sha? }`, or with `conflict: true` and `conflicts`
+// when the worktree is left mid-merge.
 export async function pull({ client, worktree }) {
   const branch = branchOf(worktree);
   if (branch === null) throw new CliError("This worktree isn't on a branch, so there is nothing to bring the host's branch into");
@@ -678,6 +681,10 @@ export async function pull({ client, worktree }) {
     throw new CliError(`The host's branch was not brought in: ${got?.refused ?? 'the host helper gave no answer'}${files}`);
   }
   if (got.already === true) return { branch, already: true };
+  const clash = got.conflict === true;
+  if (clash && !(Array.isArray(got.conflicts) && got.conflicts.length > 0 && got.conflicts.every((f) => typeof f === 'string'))) {
+    throw new CliError(UNREADABLE);
+  }
   if (!FULL_SHA.test(got.sha ?? '') || !FULL_SHA.test(got.from ?? '') || typeof got.bundle !== 'string' || !BASE64.test(got.bundle)) {
     throw new CliError(UNREADABLE);
   }
@@ -694,9 +701,21 @@ export async function pull({ client, worktree }) {
     }
   };
   try {
+    if (clash) {
+      const dirty = await git(['status', '--porcelain', '--untracked-files=no']);
+      if (dirty.code !== 0) throw new CliError(`git could not check the worktree: ${firstLine(dirty.stderr)}`);
+      if (dirty.stdout.trim() !== '') throw new CliError("git could not bring the host's branch in: this worktree has changes that are not committed. Commit them, then run pull again");
+    }
     writeWhole(file, Buffer.from(got.bundle, 'base64'));
     const fetched = await git(['fetch', '-q', '--no-tags', file, 'refs/wheelhouse/pulled']);
     if (fetched.code !== 0) throw new CliError(`git could not read the commits the helper handed back: ${firstLine(fetched.stderr)}`);
+    if (clash) {
+      const joined = await git(['merge', '--no-ff', '--no-edit', got.sha]);
+      if (joined.code === 0) return { branch, already: false, merged: true, sha: (await git(['rev-parse', 'HEAD'])).stdout.trim() };
+      const midway = await git(['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
+      if (midway.code !== 0) throw new CliError(`git could not bring the host's branch in: ${firstLine(joined.stderr)}. If changes are not yet committed, commit them, then run pull again`);
+      return { branch, already: false, conflict: true, conflicts: got.conflicts, sha: got.sha };
+    }
     const moved = await git(['merge', '-q', '--ff-only', got.sha]);
     if (moved.code !== 0) throw new CliError(`git could not bring the host's branch in: ${firstLine(moved.stderr)}. If changes are not yet committed, commit them, then run pull again`);
   } finally {
@@ -959,7 +978,10 @@ export async function main(argv, {
     } else if (command === 'pull') {
       if (rest.length > 0) throw new CliError('pull takes no arguments');
       const pulled = await pull({ client: helper(), worktree });
-      if (pulled.already) out(`Already up to date with the host's ${pulled.branch}\n`);
+      if (pulled.conflict) {
+        out(`The host's ${pulled.branch} is merged into this worktree, but these files clash:\n${pulled.conflicts.map((f) => `  ${f}\n`).join('')}`
+          + 'Open each one, keep both sides\' intent, and remove the conflict markers. Then `git add` each file, run `git commit --no-edit`, run the tests, and push.\n');
+      } else if (pulled.already) out(`Already up to date with the host's ${pulled.branch}\n`);
       else if (pulled.merged) out(`Brought in the host's ${pulled.branch}: merged with this branch at ${pulled.sha.slice(0, 12)}\n`);
       else out(`Brought in the host's ${pulled.branch}: this branch is now at ${pulled.sha.slice(0, 12)}\n`);
     } else {

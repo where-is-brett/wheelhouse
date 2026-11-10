@@ -171,7 +171,7 @@ test('every brief has the signed review of the pull request\'s head dispatched o
     const finish = text.slice(text.indexOf('# How to finish'), text.indexOf('# Models by role'));
     const flat = finish.replace(/\s+/g, ' ');
     assert.match(flat, /Once `open-pr` prints the pull request's number \(#n\), dispatch `wheelhouse:reviewer` on its head commit with `pr: n`/, lane);
-    assert.match(flat, /fix them, push with `node "[^"]+[\\/]scripts[\\/]feature[\\/]cli\.js" push` \(when it says the host's branch has moved on, bring it in with `node "[^"]+[\\/]scripts[\\/]feature[\\/]cli\.js" pull`, then push again\), and dispatch `wheelhouse:reviewer` again on the new head with `pr: n`/, lane);
+    assert.match(flat, /fix them, push with `node "[^"]+[\\/]scripts[\\/]feature[\\/]cli\.js" push` \(when it says the host's branch has moved on, bring it in with `node "[^"]+[\\/]scripts[\\/]feature[\\/]cli\.js" pull`, then push again; when `node "[^"]+[\\/]scripts[\\/]feature[\\/]cli\.js" pull` says files clash, the host's branch is already merged into yours and stopped on those files: open each, keep both sides' intent, remove the markers, `git add` them, run `git commit --no-edit`, run the tests, then push\. Don't call `stuck` for it\), and dispatch `wheelhouse:reviewer` again on the new head with `pr: n`/, lane);
     // The gate's update is brought in with the helper's pull: the session has no key to pull with (I1).
     assert.match(flat, /`review-needed`: the gate brought the branch up to date and the review didn't carry over\), bring the host's branch in with `node "[^"]+[\\/]scripts[\\/]feature[\\/]cli\.js" pull`, then dispatch/, lane);
     assert.doesNotMatch(flat, /pull the branch/, lane);

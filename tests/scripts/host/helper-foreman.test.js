@@ -273,7 +273,7 @@ async function commitIn(dir, file, text, message) {
   return g(dir, 'rev-parse', 'HEAD');
 }
 
-test('a feature session\'s pull brings the host\'s branch into its own, by fast-forward or a plain merge made by the helper, and refuses a conflict (I1)', async () => {
+test('a feature session\'s pull brings the host\'s branch into its own, by fast-forward or a plain merge made by the helper, and hands a conflict back to be resolved in the worktree (I1)', async () => {
   const p = await project();
   const KEY = 'ghs_STANDINPULLKEY0123456789abcdef';
   try {
@@ -317,17 +317,28 @@ test('a feature session\'s pull brings the host\'s branch into its own, by fast-
       assert.equal(await g(p.remote.url, 'rev-parse', 'refs/heads/feature/export'), onHost);
       await g(worktree, 'push', '-q', 'origin', 'feature/export');
 
-      // Both change the same line: nothing is brought in, and the files are named.
+      // Both change the same line: the host's tip is handed back with the files named, no merge is
+      // made in the mirror, and the session makes and resolves the merge in its worktree.
       await g(other, 'pull', '-q', '--ff-only');
-      await commitIn(other, 'export.js', 'export const csv = 1;\n', 'One way');
+      const theirs = await commitIn(other, 'export.js', 'export const csv = 1;\n', 'One way');
       await g(other, 'push', '-q', 'origin', 'feature/export');
       const mine = await commitIn(worktree, 'export.js', 'export const csv = 2;\n', 'The other way');
       const conflict = await ask();
-      assert.equal(conflict.ok, false);
-      assert.match(conflict.refused, /the host's branch and this one change the same lines/);
-      assert.deepEqual(conflict.conflicts, ['export.js']);
-      await assert.rejects(cliPull({ client, worktree }), /export\.js/);
-      assert.equal(await g(worktree, 'rev-parse', 'HEAD'), mine, 'nothing was brought in');
+      assert.equal(conflict.ok, true, JSON.stringify(conflict));
+      assert.deepEqual({ ...conflict, bundle: typeof conflict.bundle }, { ok: true, already: false, conflict: true, conflicts: ['export.js'], from: mine, sha: theirs, bundle: 'string' });
+      assert.equal(JSON.stringify(conflict).includes(KEY), false, 'no key comes back');
+      const clash = await cliPull({ client, worktree });
+      assert.deepEqual(clash, { branch: 'feature/export', already: false, conflict: true, conflicts: ['export.js'], sha: theirs });
+      assert.equal(await g(worktree, 'rev-parse', 'MERGE_HEAD'), theirs, 'the worktree is mid-merge');
+      assert.match(fs.readFileSync(path.join(worktree, 'export.js'), 'utf8'), /^<<<<<<< /m);
+      assert.equal(fs.readdirSync(featurePaths(worktree).dir).length, 0, 'the bundle is not left behind');
+      // Resolved and committed: the host's tip is an ancestor, so a push is a fast-forward.
+      fs.writeFileSync(path.join(worktree, 'export.js'), 'export const csv = 3;\n');
+      await g(worktree, 'add', 'export.js');
+      await g(worktree, 'commit', '-q', '--no-edit');
+      await g(worktree, 'merge-base', '--is-ancestor', theirs, 'HEAD');
+      await g(worktree, 'push', '-q', 'origin', 'feature/export');
+      assert.equal(await g(p.remote.url, 'rev-parse', 'refs/heads/feature/export'), await g(worktree, 'rev-parse', 'HEAD'));
 
       // Only the worktree's own feature branch, from a folder in the project, and not under STOP.
       assert.match((await ask({ branch: 'feature/other' })).refused, /not the branch this folder is on/);
