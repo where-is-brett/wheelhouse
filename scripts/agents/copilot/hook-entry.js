@@ -12,7 +12,8 @@
 //                        is checked once for each; the first refusal wins
 //   postToolUse          prompt-record on the ask tool (once check C6 passes), feature-status on every tool
 //   subagentStop         report-check, feature-status
-//   agentStop            card-check, feature-status, aside-overlap
+//   agentStop            card-check, feature-status, aside-overlap. A block here sends the reason back as a new prompt
+//                        (check 96), so the entry answers it with exit 0 and the body
 //   sessionEnd           stop-guard, helm-end
 //   preCompact           records the compaction and answers nothing: Copilot compacts whatever a hook answers
 //                        (check 60), so nothing may rely on this hook to keep the briefing or a rule in context
@@ -265,6 +266,10 @@ async function decideEvent(event, { stdin, env, deps, seen }) {
     if (event === GUARD_EVENT && !copilotTools.read.includes(raw.toolName)) return answer.deny(LOCAL_HARNESS);
     return undefined;
   }
+  // A subagent's own prompt and its own stop come through these two events too, named by `agentId` and `parentAgentId`, both present in the captured inputs (check 96). The
+  // prompt is the parent's task, not the director's words, and a block at a subagent's `agentStop` is ignored:
+  // the subagent is held by `subagentStop`, which the parent's run sees.
+  if ((event === 'userPromptSubmitted' || event === 'agentStop') && isText(raw.agentId) && raw.agentId !== '' && isText(raw.parentAgentId) && raw.parentAgentId !== '') return undefined;
   const client = deps.client ?? helperClient({ timeout: GUARD_DEADLINE_MS });
   const placedIn = (deps.projectOf ?? projectOf)(raw.cwd, { dir })?.project;
   // A mark informs: one that fails or is late is lost, and the event is answered as it would be.
@@ -335,7 +340,7 @@ export async function runEntry(event, { stdin = process.stdin, env = process.env
   try {
     const shaped = out === undefined || out === null ? null : fromGuardAnswer(out, event);
     if (!isObject(shaped)) return { text: '', code: 0 };
-    return { text: `${JSON.stringify(shaped)}\n`, code: exitCodeFor(shaped) };
+    return { text: `${JSON.stringify(shaped)}\n`, code: exitCodeFor(shaped, event) };
   } catch {
     return event === GUARD_EVENT ? { text: `${JSON.stringify({ permissionDecision: 'deny', permissionDecisionReason: COULD_NOT_RUN })}\n`, code: 2 } : { text: '', code: 0 };
   }

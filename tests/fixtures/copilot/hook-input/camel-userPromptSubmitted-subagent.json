@@ -1,0 +1,9 @@
+{
+  "sessionId": "<ID>",
+  "timestamp": 0,
+  "cwd": "<PROJECT>",
+  "prompt": "Say hello, then report exactly what you said.",
+  "agentId": "<ID>",
+  "agentType": "probe",
+  "parentAgentId": "<ID>"
+}

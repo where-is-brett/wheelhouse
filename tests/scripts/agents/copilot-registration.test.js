@@ -92,8 +92,8 @@ test('registration sets timeoutSec to GUARD_TIMEOUT_SEC on every entry', () => {
 });
 
 test('the registration writes only wheelhouse.json in the hook folder, with camelCase event names', () => {
-  // Ruling P5-12: these four, each camelCase, once each; no second spelling (checks 56, 58 and 60).
-  assert.deepEqual(EVENTS, ['sessionStart', 'userPromptSubmitted', 'preToolUse', 'preCompact']);
+  // Ruling P5-12 and check 96: these seven, each camelCase, once each; no second spelling (checks 56, 58 and 60).
+  assert.deepEqual(EVENTS, ['sessionStart', 'userPromptSubmitted', 'preToolUse', 'preCompact', 'agentStop', 'subagentStop', 'sessionEnd']);
   const node = '/usr/local/bin/node';
   const root = '/opt/wheelhouse';
   const reg = registration({ node, root, platform: 'darwin' });
@@ -104,7 +104,7 @@ test('the registration writes only wheelhouse.json in the hook folder, with came
     assert.ok(reg.hooks[event][0].command.endsWith(` ${event}`), event);
     assert.ok(reg.hooks[event][0].command.includes(`${root}/${ENTRY}`), event);
   }
-  assert.ok(!/postToolUse|subagentStop|UserPromptSubmit|PreToolUse|SessionStart|PreCompact/.test(JSON.stringify(reg)));
+  assert.ok(!/postToolUse|UserPromptSubmit|PreToolUse|SessionStart|PreCompact|SubagentStop|SessionEnd/.test(JSON.stringify(reg)));
 
   // The hook file is <home>/hooks/wheelhouse.json, the home being COPILOT_HOME or ~/.copilot.
   const home = path.join(tempFolder('wh-copilot-home-'), 'copilot');

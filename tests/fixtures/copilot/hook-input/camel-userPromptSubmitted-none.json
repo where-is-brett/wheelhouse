@@ -1,0 +1,6 @@
+{
+  "sessionId": "<ID>",
+  "timestamp": 0,
+  "cwd": "<PROJECT>",
+  "prompt": "Run 'echo ALPHA' in bash and tell me the output."
+}

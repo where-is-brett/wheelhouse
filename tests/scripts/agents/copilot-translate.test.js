@@ -63,8 +63,9 @@ const KEYS = {
   initialPrompt: 'initial_prompt', transcriptPath: 'transcript_path', agentId: 'agent_id', agentType: 'agent_type',
   agentName: 'agent_name', agentDisplayName: 'agent_display_name', agentDescription: 'agent_description',
   response: 'last_assistant_message', stopReason: 'stop_reason', stop_hook_active: 'stop_hook_active', parentAgentId: 'parent_agent_id',
+  prompt: 'prompt', reason: 'reason', trigger: 'trigger', customInstructions: 'custom_instructions',
 };
-const EVENT_NAMES = { preToolUse: 'PreToolUse', postToolUse: 'PostToolUse', postToolUseFailure: 'PostToolUseFailure', sessionStart: 'SessionStart', subagentStart: 'SubagentStart', subagentStop: 'SubagentStop' };
+const EVENT_NAMES = { preToolUse: 'PreToolUse', postToolUse: 'PostToolUse', postToolUseFailure: 'PostToolUseFailure', sessionStart: 'SessionStart', subagentStart: 'SubagentStart', subagentStop: 'SubagentStop', userPromptSubmitted: 'UserPromptSubmit', agentStop: 'Stop', sessionEnd: 'SessionEnd', preCompact: 'PreCompact' };
 
 // Each recorded tool's Claude Code name and the arguments the guards read (check 58's table; ruling P5-4).
 function expectedTool(raw) {
@@ -82,7 +83,7 @@ function expectedTool(raw) {
 }
 
 test('each recorded Copilot input translates to the Claude Code input the guards read', async () => {
-  assert.equal(camelFiles.length, 19);
+  assert.equal(camelFiles.length, 25);
   for (const file of camelFiles) {
     const raw = fixture(file);
     const event = eventOf(file);
@@ -328,6 +329,11 @@ test('a deny answer becomes Copilot\'s deny with its reason, and exit code 2', a
   assert.equal(fromGuardAnswer(undefined, 'PreToolUse'), undefined);
   assert.equal(exitCodeFor(undefined), 0);
   assert.equal(exitCodeFor({ permissionDecision: 'allow' }), 0);
+  // A block sent back at the end of a turn goes with exit 0 (check 96); anywhere else it still refuses.
+  assert.equal(exitCodeFor({ decision: 'block', reason: 'x' }, 'agentStop'), 0);
+  assert.equal(exitCodeFor({ decision: 'block', reason: 'x' }, 'subagentStop'), 0);
+  for (const event of ['preToolUse', 'sessionEnd', 'userPromptSubmitted', 'preCompact']) assert.equal(exitCodeFor({ decision: 'block', reason: 'x' }, event), 2, event);
+  assert.equal(exitCodeFor({ decision: 'block', reason: 'x' }), 2);
   // A guard's deny through the kit is written in Copilot's shape.
   const h = harness(fixture('camel-preToolUse-view.json'));
   await hookMain(() => answer.deny('not this one'), { failClosed: true, event: 'PreToolUse' }, h.io);

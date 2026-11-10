@@ -1,0 +1,36 @@
+{
+  "totalPremiumRequestCost": 1,
+  "totalUserRequests": 1,
+  "totalNanoAiu": 356168700,
+  "aiCreditsStatus": "complete",
+  "tokenDetails": {
+    "input": {
+      "tokenCount": 6
+    },
+    "cache_read": {
+      "tokenCount": 14179
+    },
+    "cache_write": {
+      "tokenCount": 14273
+    },
+    "output": {
+      "tokenCount": 87
+    }
+  },
+  "currentModel": "<MODEL>",
+  "modelMetrics": {
+    "<MODEL>": {
+      "requests": {
+        "count": 2,
+        "cost": 1
+      },
+      "usage": {
+        "inputTokens": 28458,
+        "outputTokens": 87,
+        "cacheReadTokens": 14179,
+        "cacheWriteTokens": 14273,
+        "reasoningTokens": 10
+      }
+    }
+  }
+}

@@ -17,9 +17,9 @@ import path from 'node:path';
 import { quoteForCmd } from '../../scripts/lib/claude.js';
 import { GUARD_TIMEOUT_SEC, HOOK_FILE } from '../../scripts/agents/copilot/numbers.js';
 
-// The events registered (ruling P5-12). `postToolUse` waits for sitting S1 to show ask_user's input, and
-// `subagentStop` for a task that uses it.
-export const EVENTS = Object.freeze(['sessionStart', 'userPromptSubmitted', 'preToolUse', 'preCompact']);
+// The events registered (ruling P5-12, widened by check 96). `postToolUse` waits for sitting S1 to show ask_user's
+// input. `agentStop` and `subagentStop` can send work back, and `subagentStop` names the agent (check 96).
+export const EVENTS = Object.freeze(['sessionStart', 'userPromptSubmitted', 'preToolUse', 'preCompact', 'agentStop', 'subagentStop', 'sessionEnd']);
 
 // The hook entry, from the Wheelhouse folder (ruling P5-11).
 export const ENTRY = 'scripts/agents/copilot/hook-entry.js';
