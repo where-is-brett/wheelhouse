@@ -362,6 +362,12 @@ export async function answer({ client, worktree, questionId, noChange = false, a
     }
     if (label === null && typeof decision.words === 'string' && decision.words !== '' && decision.option === '') kept.own = decision.words;
   }
+  // An answer that is the recommendation the piece was built on asks nothing more of this branch: say so, since a session that
+  // reads it as work for a later piece waits for that piece, which in turn waits for this merge.
+  if (!noChange && !applied && typeof label === 'string' && label !== '' && safeFeatureFolder(worktree)) {
+    const asked = readQuestions(featurePaths(worktree).questions, { maxBytes: QUESTIONS_BYTES }).questions.find((q) => q.id === questionId);
+    if (asked?.recommendation === label) kept.recommended = true;
+  }
   return { answer: label, ...kept };
 }
 
@@ -933,6 +939,10 @@ export async function main(argv, {
       if (got.record !== undefined) out(`The decision record was written at ${got.record.path}. Commit it with your work on this branch.\n`);
       if (got.warning !== undefined) out(`No decision record was kept: ${got.warning}\n`);
       if (got.private === true) out('The director kept this answer private: no file was written in the project.\n');
+      if (got.recommended === true) {
+        out(`This is your recommendation, which this piece is built on. Unless this pull request itself still needs a change for it, run \`answer ${rest[0]} --no-change\` now: `
+          + 'work the answer asks of a later piece belongs to that piece, and this pull request stays held until you say so.\n');
+      }
     } else if (command === 'plan') {
       out(`Recorded the plan: ${recordPlan({ worktree, argv: rest }).plan}\n`);
     } else if (command === 'report') {

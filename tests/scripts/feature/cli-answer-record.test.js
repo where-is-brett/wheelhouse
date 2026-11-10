@@ -52,7 +52,7 @@ test('answer writes the record in the folder and commits nothing', async () => {
   const head = git(tree, 'rev-parse', 'HEAD');
 
   const got = await answer({ client: helper(said()), worktree: tree, questionId: id });
-  assert.deepEqual(got, { answer: 'Show them', record: { path: FILE } });
+  assert.deepEqual(got, { answer: 'Show them', record: { path: FILE }, recommended: true });
   const text = fs.readFileSync(path.join(tree, FILE), 'utf8');
   assert.match(text, /^<!-- docs\/decisions\/2026-11-07-should-the-harbour-map-show-tide-times\.md -->\n# Should the harbour map show tide times\?\n/);
   assert.match(text, /- \*\*Piece:\*\* w-tide-1\n/);
@@ -67,7 +67,7 @@ test('answer writes the record in the folder and commits nothing', async () => {
   // Reading it again finds the identical record and does not write it again.
   const before = fs.statSync(path.join(tree, FILE)).mtimeMs;
   const again = await answer({ client: helper(said()), worktree: tree, questionId: id });
-  assert.deepEqual(again, { answer: 'Show them', record: { path: FILE } });
+  assert.deepEqual(again, { answer: 'Show them', record: { path: FILE }, recommended: true });
   assert.equal(fs.statSync(path.join(tree, FILE)).mtimeMs, before);
   assert.deepEqual(fs.readdirSync(path.join(tree, 'docs', 'decisions')), [path.basename(FILE)]);
   assert.equal(git(tree, 'rev-parse', 'HEAD'), head);
@@ -86,7 +86,7 @@ test('the director\'s own words are kept as their own words', async () => {
 test('a private reply writes no file and keeps the signed record', async () => {
   const { tree, id } = await piece();
   const got = await answer({ client: helper(said({ private: true })), worktree: tree, questionId: id });
-  assert.deepEqual(got, { answer: 'Show them', private: true });
+  assert.deepEqual(got, { answer: 'Show them', private: true, recommended: true });
   assert.equal(fs.existsSync(path.join(tree, 'docs', 'decisions')), false);
   assert.equal(git(tree, 'rev-list', '--count', 'HEAD'), '1');
   // The answer is still the director's: it is read as it was.
@@ -107,12 +107,14 @@ const run = async (tree, id, client) => {
   const code = await main(['answer', id], { cwd: tree, client, find: () => ({ root: tree }), out: (t) => { heard += t; }, err: (t) => { heard += t; } });
   return { code, heard };
 };
+const NO_CHANGE = (id) => `This is your recommendation, which this piece is built on. Unless this pull request itself still needs a change for it, run \`answer ${id} --no-change\` now: `
+  + 'work the answer asks of a later piece belongs to that piece, and this pull request stays held until you say so.\n';
 
 test('a private reply, end to end through the command, prints the answer, writes no file and makes no commit', async () => {
   const { tree, id } = await piece();
   const { code, heard } = await run(tree, id, helper(said({ private: true })));
   assert.equal(code, 0);
-  assert.equal(heard, 'Show them\nThe director kept this answer private: no file was written in the project.\n');
+  assert.equal(heard, `Show them\nThe director kept this answer private: no file was written in the project.\n${NO_CHANGE(id)}`);
   assert.equal(fs.existsSync(path.join(tree, 'docs')), false);
   assert.equal(git(tree, 'rev-list', '--count', 'HEAD'), '1');
   assert.equal(git(tree, 'status', '--porcelain', '--', 'docs'), '');
@@ -124,7 +126,7 @@ test('the command says where the record was written and to commit it with the wo
     if (detach) git(tree, 'checkout', '-q', '--detach');
     const { code, heard } = await run(tree, id, helper(said()));
     assert.equal(code, 0);
-    assert.equal(heard, `Show them\nThe decision record was written at ${FILE}. Commit it with your work on this branch.\n`);
+    assert.equal(heard, `Show them\nThe decision record was written at ${FILE}. Commit it with your work on this branch.\n${NO_CHANGE(id)}`);
     assert.equal(fs.existsSync(path.join(tree, FILE)), true);
     assert.equal(git(tree, 'rev-list', '--count', 'HEAD'), '1');
   }
@@ -158,4 +160,15 @@ test('marking an answer applied or needing no change keeps no record', async () 
   const code = await main(['answer', id, '--applied'], { cwd: tree, client: helper(said()), find: () => ({ root: tree }), out: () => {}, err: () => {} });
   assert.equal(code, 0);
   assert.equal(fs.existsSync(path.join(tree, 'docs', 'decisions')), false);
+});
+
+test('the recommendation as the answer says to mark it needing no change; another answer, a mark or no answer does not', async () => {
+  const { tree, id } = await piece();
+  assert.ok((await run(tree, id, helper(said()))).heard.endsWith(NO_CHANGE(id)));
+  const other = await run(tree, id, helper(said({ option: 'Leave them out' }), 'Leave them out'));
+  assert.ok(!other.heard.includes('--no-change'));
+  const none = await run(tree, id, { state: { answer: async () => ({ ok: true, answer: null }) } });
+  assert.equal(none.heard, 'There is no answer yet.\n');
+  const marked = await answer({ client: helper(), worktree: tree, questionId: id, noChange: true });
+  assert.equal(marked.recommended, undefined);
 });
