@@ -110,3 +110,13 @@ test('helm-end: exits 0 on bad input', () => {
   }
   assert.ok(fs.existsSync(SCRIPT));
 });
+
+test('helm-end: for an agent whose hooks only read it hands nothing back', async () => {
+  await withHome(async () => {
+    await takeHold(P, { work: 'login', sessionId: 's-1' });
+    const woken = [];
+    await decide(input('s-1'), deps(woken, { writeVia: 'helper' }));
+    assert.equal(helmHeld(P, 'login'), true);
+    assert.equal(woken.length, 0);
+  });
+});

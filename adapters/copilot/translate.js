@@ -53,6 +53,9 @@ const ARGUMENT_MAP = Object.freeze({
   glob: { paths: 'path' },
 });
 
+// The tools that search under `paths`.
+const SEARCH_TOOLS = Object.freeze(['rg', 'glob']);
+
 // Every name in the adapter's tool lists (carry-over e, ruling P5-10).
 export const KNOWN_TOOLS = Object.freeze([...new Set([...tools.read, ...tools.halt, ...tools.notify, tools.ask, ...tools.shell, ...tools.edit, ...tools.other])]);
 
@@ -109,29 +112,83 @@ export function harnessOf(raw, env = process.env) {
   return 'unknown';
 }
 
-// A patch's header lines (check 58's patch shape): `*** ` and a word, read with any spaces before them, so a
-// header indented by mistake is still read. Those that name a file, and those that name none.
+// A patch's header lines (check 58's patch shape): `*** ` and a word, with nothing before them. Those that name a
+// file, and those that name none. A line with something before such a word (a context line is a space first) is a
+// file's own text and never a header; a patch holding one is refused whole (see patchPaths), since a reader that
+// took it for a header, or one that did not, would disagree with the other about which files the patch changes.
 const HEADER = /^\*\*\* [A-Za-z]/;
 const PATH_LINE = /^\*\*\* (?:Add File|Update File|Delete File|Move to): *(.*?) *\r?$/;
 const PLAIN_LINE = /^\*\*\* (?:Begin Patch|End Patch|End of File) *\r?$/;
 
 // The paths an apply_patch changes, in the order given, or null when the patch is not a string, names no path,
-// or holds a header line Wheelhouse doesn't know (a new kind of change it cannot read the path of). A line of
-// a file's own text that starts with `+` or `-` is never read as a header; a context line (a space first) that
-// looks like one is, which can only refuse the call or check one path more, never let a path by unchecked.
+// or holds a header line Wheelhouse doesn't know (a new kind of change it cannot read the path of). Only a line
+// with nothing before its `***` is a header. A line of a file's own text that starts with `+` or `-` is never one;
+// a context line (a space first, or any other white space) that would read as one once trimmed refuses the whole
+// patch, so a header hidden in a comment's context can't be taken for text by one reader and a header by another.
 export function patchPaths(patch) {
   if (typeof patch !== 'string') return null;
   const paths = [];
   for (const line of patch.split('\n')) {
-    const trimmed = line.trimStart();
-    if (!HEADER.test(trimmed)) continue;
-    const named = PATH_LINE.exec(trimmed);
+    if (!HEADER.test(line)) {
+      if (HEADER.test(line.trimStart())) return null;
+      continue;
+    }
+    const named = PATH_LINE.exec(line);
     if (named) {
       if (named[1] === '') return null;
       if (!paths.includes(named[1])) paths.push(named[1]);
-    } else if (!PLAIN_LINE.test(trimmed)) return null;
+    } else if (!PLAIN_LINE.test(line)) return null;
   }
   return paths.length > 0 ? paths : null;
+}
+
+// What an apply_patch changes, file by file, as the inputs the write guards read (Claude Code's Write and Edit): an
+// added file is a Write of its text, a deleted file a Write of nothing, and each hunk of an updated file an Edit of
+// the lines it takes out and the lines it puts in (a moved file's old path is a Write of nothing, as a delete). Null
+// when the patch holds a header line Wheelhouse doesn't know or names no path (as patchPaths).
+export function patchChanges(patch) {
+  if (patchPaths(patch) === null) return null;
+  const changes = [];
+  let file = null;
+  const close = () => {
+    if (file === null) return;
+    if (file.kind === 'add') changes.push({ tool_name: 'Write', tool_input: { file_path: file.path, content: file.added.join('\n') } });
+    else if (file.kind === 'delete') changes.push({ tool_name: 'Write', tool_input: { file_path: file.path, content: '' } });
+    else {
+      if (file.moved !== null) changes.push({ tool_name: 'Write', tool_input: { file_path: file.path, content: '' } });
+      const hunks = file.hunks.filter((hunk) => hunk.old.length > 0 || hunk.new.length > 0);
+      for (const hunk of hunks.length > 0 ? hunks : [file.hunks[0]]) changes.push({ tool_name: 'Edit', tool_input: { file_path: file.moved ?? file.path, old_string: hunk.old.join('\n'), new_string: hunk.new.join('\n') } });
+    }
+    file = null;
+  };
+  for (const line of patch.split('\n')) {
+    const named = HEADER.test(line) ? PATH_LINE.exec(line) : null;
+    if (named) {
+      const kind = /^\*\*\* (Add|Update|Delete|Move)/.exec(line)[1];
+      if (kind === 'Move') {
+        if (file !== null && file.kind === 'update') file.moved = named[1];
+        continue;
+      }
+      close();
+      file = kind === 'Add' ? { kind: 'add', path: named[1], added: [] } : kind === 'Delete' ? { kind: 'delete', path: named[1] } : { kind: 'update', path: named[1], moved: null, hunks: [{ old: [], new: [] }] };
+      continue;
+    }
+    if (file === null || HEADER.test(line)) continue;
+    const text = line.replace(/\r$/, '');
+    if (file.kind === 'add') {
+      if (text.startsWith('+')) file.added.push(text.slice(1));
+    } else if (file.kind === 'update') {
+      if (text.startsWith('@@')) file.hunks.push({ old: [], new: [] });
+      else {
+        const hunk = file.hunks[file.hunks.length - 1];
+        if (text.startsWith('+')) hunk.new.push(text.slice(1));
+        else if (text.startsWith('-')) hunk.old.push(text.slice(1));
+        else if (text.startsWith(' ')) { hunk.old.push(text.slice(1)); hunk.new.push(text.slice(1)); }
+      }
+    }
+  }
+  close();
+  return changes.length > 0 ? changes : null;
 }
 
 // The tool's arguments under the guards' names, or null when a renamed argument and one already under the
@@ -188,7 +245,15 @@ export function toGuardInput(raw, event) {
   if (toolName === null) return { unknownTool: name };
   const args = raw.toolArgs ?? {};
   const input = isObject(args) ? argumentsOf(name, args) : null;
-  return input === null ? null : { ...base, tool_name: toolName, tool_input: input };
+  if (input === null) return null;
+  // rg and glob take `paths`, which may be one path or a list: a list gives one input per path, so each is checked.
+  // An empty list, or a path that is not a non-empty string, is not read, so the call is refused.
+  if (SEARCH_TOOLS.includes(name) && Object.hasOwn(input, 'path')) {
+    const listed = Array.isArray(input.path) ? input.path : [input.path];
+    if (listed.length === 0 || !listed.every((one) => typeof one === 'string' && one !== '')) return null;
+    if (Array.isArray(input.path)) return listed.map((one) => ({ ...base, tool_name: toolName, tool_input: { ...input, path: one } }));
+  }
+  return { ...base, tool_name: toolName, tool_input: input };
 }
 
 // A guard's answer (Claude Code's shape, adapters/claude-code/answers.js) in Copilot's shape for `event`: a

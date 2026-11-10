@@ -116,7 +116,9 @@ function answerDropped(file) {
   return answer.block(`Your review was not recorded: the pull request's head is not the commit you reviewed. End your reply with this line for the builder: "Review not recorded. Push your fix, then dispatch the reviewer again on the pushed head." ${REDISPATCH}`);
 }
 
-export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS + helperGrace() } = {}) {
+// On an agent whose hooks only read (`writeVia: 'helper'`), nothing is kept under the Wheelhouse home: a report missing
+// its parts is not counted or sent back but noted to the helper, and a record the helper doesn't take is noted, not kept.
+export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS + helperGrace(), writeVia = 'self' } = {}) {
   const role = ROLES[input.agent_type];
   if (role === undefined) return undefined;
   const found = find(input.cwd, { dir });
@@ -128,8 +130,9 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   const id = text(input.agent_id) ?? text(input.session_id) ?? 'unknown';
   const file = countFile(project, id);
 
+  const own = writeVia === 'self';
   if (missing.length > 0) {
-    const sent = readCount(file);
+    const sent = own ? readCount(file) : SEND_BACKS;
     if (sent < SEND_BACKS) {
       writeCount(file, sent + 1);
       return answer.block(`Your report is missing or has an invalid: ${missing.join(', ')}. End your work again with the WHEELHOUSE REPORT block in full.`);
@@ -137,12 +140,12 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
     const body = { project, kind: 'note', data: { text: `An agent of type ${input.agent_type} ended without a complete report (missing or invalid: ${missing.join(', ')}).${missing.includes('commit') ? ` Its review was not recorded. ${REDISPATCH}` : ''}` } };
     try {
       const result = await left(api.state.write(body));
-      if (!taken(result)) keep(project, 'write', body, now);
+      if (!taken(result) && own) keep(project, 'write', body, now);
     } catch { /* a note is not worth failing for */ }
-    fs.rmSync(file, { force: true });
+    if (own) fs.rmSync(file, { force: true });
     return undefined;
   }
-  fs.rmSync(file, { force: true });
+  if (own) fs.rmSync(file, { force: true });
   if (input.agent_type !== 'wheelhouse:reviewer') return undefined;
   if (fields.pr === 'none') return undefined;
 
@@ -151,7 +154,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
     const body = { project, kind: 'note', data: { text: `A complete review report for pull request #${pr} was not recorded: ${why}.` } };
     try {
       const result = await left(api.state.write(body));
-      if (!taken(result)) keep(project, 'write', body, now);
+      if (!taken(result) && own) keep(project, 'write', body, now);
     } catch { /* a note is not worth failing for */ }
   };
   const state = await left(api.prState({ project, number: pr }));
@@ -168,7 +171,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   const same = typeof head === 'string' && head !== '' && (head === fields.commit || (fields.commit.length >= 7 && head.startsWith(fields.commit)));
   if (!same) {
     await note('the head has moved since the review');
-    return answerDropped(file);
+    return own ? answerDropped(file) : undefined;
   }
   fields.commit = head;
   const seen = fromTranscript(input.agent_transcript_path);
@@ -183,10 +186,10 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
     model: text(input.model) ?? text(seen.model) ?? 'unknown',
   };
   const body = { project, event: makeEvent({ kind: 'review', data, now }) };
-  const kept = keep(project, 'record', body, now);
+  const kept = own ? keep(project, 'record', body, now) : null;
   const result = await left(api.state.record(body));
   if (taken(result)) {
-    fs.rmSync(kept, { force: true });
+    if (kept !== null) fs.rmSync(kept, { force: true });
   } else {
     await note('the helper did not take the signed record, which stays pending');
   }

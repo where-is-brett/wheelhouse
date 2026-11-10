@@ -350,3 +350,19 @@ test('a reviewer report may give blocking, which must match the severity lines i
   assert.ok(report('verdict: FINDINGS\nfindings: 3\nblocking: -1', list).missing.length > 0);
   assert.ok(report('verdict: CLEAN\nblocking: 0').missing.includes('blocking'));
 });
+
+test('for an agent whose hooks only read, a missing report is noted to the helper and nothing is kept under the home', async () => {
+  await withHome(async () => {
+    const c = fake();
+    const out = await decide(stop('wheelhouse:builder', 'no report'), { ...deps(c), writeVia: 'helper' });
+    assert.equal(out, undefined);
+    assert.equal(noteTexts(c).length, 1);
+    assert.equal(fs.existsSync(countFile()), false);
+    // A review the helper does not take is noted, and no record is kept to send again.
+    const refusing = fake({ refuse: true });
+    await decide(stop('wheelhouse:reviewer', reviewer()), { ...deps(refusing), writeVia: 'helper' });
+    assert.equal(refusing.calls.record.length, 1);
+    assert.equal(pendingFiles('record').length, 0);
+    assert.equal(pendingFiles('write').length, 0);
+  });
+});

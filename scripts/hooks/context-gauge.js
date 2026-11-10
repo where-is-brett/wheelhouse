@@ -85,14 +85,15 @@ export function updateSession(file, fields) {
   }
 }
 
-export async function decide(input, { dir, now = () => new Date() } = {}) {
+export async function decide(input, { dir, now = () => new Date(), writeVia = 'self' } = {}) {
   if (typeof input.cwd !== 'string') return undefined;
   const project = projectNameOf(input.cwd, dir);
   if (project === null) return undefined;
   const tokens = contextSize(input.transcript_path);
   if (tokens === null) return undefined;
   const file = sessionFile(project, input.session_id);
-  if (file !== null) {
+  // On an agent whose hooks only read (`writeVia: 'helper'`), the reading is said and not kept under the Wheelhouse home.
+  if (file !== null && writeVia === 'self') {
     try {
       updateSession(file, { tokens, at: now().toISOString() });
     } catch {

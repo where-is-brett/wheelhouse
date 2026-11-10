@@ -36,6 +36,8 @@ async function readConfig(project) {
 export async function decide(input, deps = {}) {
   const { find = projectOf, roleOf = sessionRole, configOf = readConfig, wakerFor = null, now = () => new Date(), env = process.env, alive = pidAlive } = deps;
   try {
+    // On an agent whose hooks only read (`writeVia: 'helper'`) the hold is handed back by the helm process and the routine, not here.
+    if (deps.writeVia !== undefined && deps.writeVia !== 'self') return undefined;
     if (input?.hook_event_name !== 'SessionEnd' || isWhy(env)) return undefined;
     if (typeof input.cwd !== 'string' || typeof input.session_id !== 'string') return undefined;
     const found = find(input.cwd);
