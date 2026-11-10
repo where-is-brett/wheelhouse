@@ -1,0 +1,7 @@
+{
+  "sessionId": "<ID>",
+  "timestamp": 0,
+  "cwd": "<PROJECT>",
+  "source": "new",
+  "initialPrompt": "Do these steps in order, once each, using exactly the tool named. If a tool fails or is refused, say so and go on to the next step. Do not skip a step.\n1. Use the shell tool to run the command `echo probe58-shell`.\n2. Use the view tool to view README.md.\n3. Use the edit tool to change the word alpha to beta in edit-me.txt.\n4. Use the create tool to create out.txt containing the word went-through.\n5. Use the grep tool to search the folder for the word secret.\n6. Use the glob tool to find the files matching *.md.\n7. Use the web fetch tool to fetch http://127.0.0.1:<PORT>/probe58 and tell me its first line.\n8. Use the task tool to run the custom agent probe-agent with the prompt \"Reply ok\".\n9. Use the echo tool from the probe58 MCP server with the text probe58.\nThen say done."
+}

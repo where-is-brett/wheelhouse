@@ -1,0 +1,14 @@
+{
+  "sessionId": "<ID>",
+  "timestamp": 0,
+  "cwd": "<PROJECT>",
+  "toolName": "glob",
+  "toolArgs": {
+    "pattern": "*.md",
+    "paths": "<PROJECT>"
+  },
+  "toolResult": {
+    "resultType": "success",
+    "textResultForLlm": "<PROJECT>/.github/agents/probe-agent.agent.md\n<PROJECT>/README.md"
+  }
+}

@@ -27,6 +27,8 @@ export default Object.freeze({
   // File changes arrive as `apply_patch`, whose input is a patch string (check 58); `edit` and `create` were
   // not seen with that model and are entered under the names the research gives.
   edit: freeze(['apply_patch', 'edit', 'create']),
+  // The tools in this group keep their own names and the tool guard doesn't check them, so `sql`, `session_store_sql`
+  // and `run_dynamic_workflow` are refused as unsettled (UNSETTLED in ./translate.js) until a probe shows what they reach.
   // Dispatching a sub-agent (`task`), loading a skill (`skill`), the free-form `sql` tool, the wrapper that runs tools in parallel
   // (check 66; whether the hook sees each call inside it is still open), and the rest of what check 66 saw.
   other: freeze(['task', 'skill', 'sql', 'multi_tool_use.parallel', 'write_agent', 'session_store_sql', 'dynamic_workflows_manage', 'run_dynamic_workflow', 'lsp', 'store_memory', 'vote_memory']),

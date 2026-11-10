@@ -1,0 +1,14 @@
+{
+  "hook_event_name": "PostToolUse",
+  "session_id": "<ID>",
+  "timestamp": "<TIMESTAMP>",
+  "cwd": "<PROJECT>",
+  "tool_name": "probe58-echo",
+  "tool_input": {
+    "text": "probe58"
+  },
+  "tool_result": {
+    "result_type": "success",
+    "text_result_for_llm": "echo: probe58"
+  }
+}

@@ -1,7 +1,10 @@
 // adapters/copilot/settings.js
-// The adapter's settings part: a stand-in until the sandbox settings come back with the adapter's small parts (design
-// section 8, part 2). Nothing is written into a Copilot project, and nothing of the person's is held.
+// The adapter's settings part (design section 8.1): the sandbox settings for a Copilot project. Nothing is written
+// into a project (the documentation says sandbox settings are not supported in repository-level files); the writer
+// is the clean home's (scripts/agents/copilot/home.js, design section 8, part 6). `local` holds nothing of the person's.
+import { sandboxSettings } from './sandbox.js';
+
 export default Object.freeze({
-  project: () => ({}),
+  project: (options) => sandboxSettings(options),
   local: () => ({}),
 });

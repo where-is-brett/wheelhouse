@@ -1,0 +1,14 @@
+{
+  "sessionId": "<ID>",
+  "timestamp": 0,
+  "cwd": "<PROJECT>",
+  "transcriptPath": "<COPILOT_HOME>/session-state/<ID>/events.jsonl",
+  "agentId": "<ID>",
+  "agentType": "probe-agent",
+  "agentName": "probe-agent",
+  "agentDisplayName": "probe-agent",
+  "response": "ok",
+  "stopReason": "end_turn",
+  "stop_hook_active": false,
+  "parentAgentId": "<ID>"
+}

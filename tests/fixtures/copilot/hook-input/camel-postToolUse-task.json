@@ -1,0 +1,17 @@
+{
+  "sessionId": "<ID>",
+  "timestamp": 0,
+  "cwd": "<PROJECT>",
+  "toolName": "task",
+  "toolArgs": {
+    "description": "Run probe custom agent",
+    "prompt": "Reply ok",
+    "agent_type": "probe-agent",
+    "name": "probe-agent",
+    "mode": "sync"
+  },
+  "toolResult": {
+    "resultType": "success",
+    "textResultForLlm": "ok"
+  }
+}

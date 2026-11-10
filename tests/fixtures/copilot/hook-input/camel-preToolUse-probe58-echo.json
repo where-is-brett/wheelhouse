@@ -1,0 +1,9 @@
+{
+  "sessionId": "<ID>",
+  "timestamp": 0,
+  "cwd": "<PROJECT>",
+  "toolName": "probe58-echo",
+  "toolArgs": {
+    "text": "probe58"
+  }
+}
