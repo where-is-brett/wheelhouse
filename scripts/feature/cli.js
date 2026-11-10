@@ -710,7 +710,9 @@ export async function pull({ client, worktree }) {
     const fetched = await git(['fetch', '-q', '--no-tags', file, 'refs/wheelhouse/pulled']);
     if (fetched.code !== 0) throw new CliError(`git could not read the commits the helper handed back: ${firstLine(fetched.stderr)}`);
     if (clash) {
-      const joined = await git(['merge', '--no-ff', '--no-edit', got.sha]);
+      // The strategy is named and pull.twohead / pull.octopus are emptied, so a setting in the worktree's
+      // repository can neither run a git-merge-<name> program nor pick `ours` and drop the host's changes.
+      const joined = await git(['-c', 'pull.twohead=', '-c', 'pull.octopus=', 'merge', '-s', 'ort', '--no-ff', '--no-edit', got.sha]);
       if (joined.code === 0) return { branch, already: false, merged: true, sha: (await git(['rev-parse', 'HEAD'])).stdout.trim() };
       const midway = await git(['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
       if (midway.code !== 0) throw new CliError(`git could not bring the host's branch in: ${firstLine(joined.stderr)}. If changes are not yet committed, commit them, then run pull again`);
@@ -723,6 +725,9 @@ export async function pull({ client, worktree }) {
   }
   return { branch, already: false, merged: got.merged === true, sha: got.sha };
 }
+
+// A file name for printing: a control character (a newline, say) is shown as \xNN, so a name can't lay out the output.
+const plainName = (name) => name.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`);
 
 const firstLine = (text) => String(text ?? '').split(/\r?\n/).map((l) => l.replace(/^(?:error|fatal):\s*/, '').trim()).find((l) => l !== '') ?? 'no reason given';
 
@@ -979,7 +984,7 @@ export async function main(argv, {
       if (rest.length > 0) throw new CliError('pull takes no arguments');
       const pulled = await pull({ client: helper(), worktree });
       if (pulled.conflict) {
-        out(`The host's ${pulled.branch} is merged into this worktree, but these files clash:\n${pulled.conflicts.map((f) => `  ${f}\n`).join('')}`
+        out(`The host's ${pulled.branch} is merged into this worktree, but these files clash:\n${pulled.conflicts.map((f) => `  ${plainName(f)}\n`).join('')}`
           + 'Open each one, keep both sides\' intent, and remove the conflict markers. Then `git add` each file, run `git commit --no-edit`, run the tests, and push.\n');
       } else if (pulled.already) out(`Already up to date with the host's ${pulled.branch}\n`);
       else if (pulled.merged) out(`Brought in the host's ${pulled.branch}: merged with this branch at ${pulled.sha.slice(0, 12)}\n`);

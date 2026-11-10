@@ -590,6 +590,29 @@ test('a feature\'s pull on a clash leaves the worktree mid-merge with the host\'
   assert.match(said.out, /git add.*git commit --no-edit.*tests.*push/);
 });
 
+test('a feature\'s pull on a clash ignores pull.twohead and pull.octopus in the worktree, and prints a file name with a newline safely', async () => {
+  const { tree, git, client, answer } = pullFixture({ clash: true });
+  git(tree, 'config', 'pull.twohead', 'ours');
+  git(tree, 'config', 'pull.octopus', 'ours');
+  const got = await pull({ client, worktree: tree });
+  assert.equal(got.conflict, true, 'the host\'s change is not dropped by an ours strategy');
+  assert.equal(git(tree, 'rev-parse', 'MERGE_HEAD'), answer.sha);
+  assert.match(fs.readFileSync(path.join(tree, 'a.txt'), 'utf8'), /^<<<<<<< /m);
+
+  // A host change that does not clash still comes in, whatever the setting says.
+  const clean = pullFixture();
+  git(clean.tree, 'config', 'pull.twohead', 'ours');
+  assert.equal((await pull({ client: clean.client, worktree: clean.tree })).sha, clean.answer.sha);
+
+  const odd = pullFixture({ clash: true });
+  const named = { ...odd.answer, conflicts: ['a.txt', 'x\ny\u001b[2J.txt'] };
+  const said = { out: '', err: '' };
+  const io = { cwd: odd.tree, client: { pull: async () => named }, find: () => ({ root: odd.tree }), out: (t) => { said.out += t; }, err: (t) => { said.err += t; } };
+  assert.equal(await main(['pull'], io), 0, said.err);
+  assert.match(said.out, /\n {2}x\\x0ay\\x1b\[2J\.txt\n/);
+  assert.doesNotMatch(said.out, /\u001b/);
+});
+
 test('a feature\'s pull on a clash refuses before merging when the worktree has uncommitted changes, and reads the helper\'s answer strictly', async () => {
   const { tree, git, client, answer } = pullFixture({ clash: true });
   write(path.join(tree, 'a.txt'), 'uncommitted');
