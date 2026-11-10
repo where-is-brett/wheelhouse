@@ -273,10 +273,12 @@ export function fromGuardAnswer(out, event) {
 }
 
 // The exit code the hook entry ends with after writing `shaped`: 2 for a refusal, so a Copilot that ignored
-// the body still refuses (check 58), and 0 otherwise.
-export function exitCodeFor(shaped) {
+// the body still refuses (check 58), and 0 otherwise. A block sent back at the end of a turn (`agentStop`,
+// `subagentStop`) goes with exit 0: that is the form check 96 saw Copilot act on.
+export function exitCodeFor(shaped, event) {
   if (!isObject(shaped)) return 0;
-  return shaped.permissionDecision === 'deny' || shaped.decision === 'block' ? 2 : 0;
+  if (shaped.permissionDecision === 'deny') return 2;
+  return shaped.decision === 'block' && (event === undefined || event === 'preToolUse') ? 2 : 0;
 }
 
 export default Object.freeze({ toGuardInput, fromGuardAnswer, UNKNOWN_TOOL });

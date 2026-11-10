@@ -483,7 +483,7 @@ test('artefactsOf is the run\'s own artefacts folder in the engine\'s home, and 
   const home = '/engine/home';
   const a = adapter(fakeCli({}), { home });
   // Archon names a project's workspace after its remote, which is the fetch mirror <engine>/mirrors/<owner>__<name>.git
-  // (seen in check 80), so its runs' artefacts are under workspaces/mirrors/<owner>__<name>/.
+  // (seen in check 96), so its runs' artefacts are under workspaces/mirrors/<owner>__<name>/.
   assert.equal(a.artefactsOf(RUN, 'acme/web'), path.join(home, 'workspaces', 'mirrors', 'acme__web', 'artifacts', 'runs', RUN));
   assert.equal(a.artefactsOf(RUN, 'shop'), path.join(home, 'workspaces', 'mirrors', 'shop', 'artifacts', 'runs', RUN), 'a project in git alone is named after its own mirror');
   assert.equal(a.artefactsOf(RUN, 'acme/web', { folder: '/engine/readers/ab12' }), path.join(home, 'workspaces', '_folder', 'ab12', 'artifacts', 'runs', RUN), 'a reader\'s folder is a folder project of its own');

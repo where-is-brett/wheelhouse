@@ -1,0 +1,8 @@
+{
+  "sessionId": "<ID>",
+  "timestamp": 0,
+  "cwd": "<PROJECT>",
+  "transcriptPath": "<COPILOT_HOME>/session-state/<ID>/events.jsonl",
+  "stopReason": "end_turn",
+  "stop_hook_active": false
+}
