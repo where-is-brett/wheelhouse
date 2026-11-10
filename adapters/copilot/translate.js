@@ -53,6 +53,9 @@ const ARGUMENT_MAP = Object.freeze({
   glob: { paths: 'path' },
 });
 
+// The tools that search under `paths`.
+const SEARCH_TOOLS = Object.freeze(['rg', 'glob']);
+
 // Every name in the adapter's tool lists (carry-over e, ruling P5-10).
 export const KNOWN_TOOLS = Object.freeze([...new Set([...tools.read, ...tools.halt, ...tools.notify, tools.ask, ...tools.shell, ...tools.edit, ...tools.other])]);
 
@@ -134,6 +137,56 @@ export function patchPaths(patch) {
   return paths.length > 0 ? paths : null;
 }
 
+// What an apply_patch changes, file by file, as the inputs the write guards read (Claude Code's Write and Edit): an
+// added file is a Write of its text, a deleted file a Write of nothing, and each hunk of an updated file an Edit of
+// the lines it takes out and the lines it puts in (a moved file's old path is a Write of nothing, as a delete). Null
+// when the patch holds a header line Wheelhouse doesn't know or names no path (as patchPaths).
+export function patchChanges(patch) {
+  if (patchPaths(patch) === null) return null;
+  const changes = [];
+  let file = null;
+  const close = () => {
+    if (file === null) return;
+    if (file.kind === 'add') changes.push({ tool_name: 'Write', tool_input: { file_path: file.path, content: file.added.join('\n') } });
+    else if (file.kind === 'delete') changes.push({ tool_name: 'Write', tool_input: { file_path: file.path, content: '' } });
+    else {
+      if (file.moved !== null) changes.push({ tool_name: 'Write', tool_input: { file_path: file.path, content: '' } });
+      const hunks = file.hunks.filter((hunk) => hunk.old.length > 0 || hunk.new.length > 0);
+      for (const hunk of hunks.length > 0 ? hunks : [file.hunks[0]]) changes.push({ tool_name: 'Edit', tool_input: { file_path: file.moved ?? file.path, old_string: hunk.old.join('\n'), new_string: hunk.new.join('\n') } });
+    }
+    file = null;
+  };
+  for (const line of patch.split('\n')) {
+    const trimmed = line.trimStart();
+    const named = HEADER.test(trimmed) ? PATH_LINE.exec(trimmed) : null;
+    if (named) {
+      const kind = /^\*\*\* (Add|Update|Delete|Move)/.exec(trimmed)[1];
+      if (kind === 'Move') {
+        if (file !== null && file.kind === 'update') file.moved = named[1];
+        continue;
+      }
+      close();
+      file = kind === 'Add' ? { kind: 'add', path: named[1], added: [] } : kind === 'Delete' ? { kind: 'delete', path: named[1] } : { kind: 'update', path: named[1], moved: null, hunks: [{ old: [], new: [] }] };
+      continue;
+    }
+    if (file === null || HEADER.test(trimmed)) continue;
+    const text = line.replace(/\r$/, '');
+    if (file.kind === 'add') {
+      if (text.startsWith('+')) file.added.push(text.slice(1));
+    } else if (file.kind === 'update') {
+      if (text.startsWith('@@')) file.hunks.push({ old: [], new: [] });
+      else {
+        const hunk = file.hunks[file.hunks.length - 1];
+        if (text.startsWith('+')) hunk.new.push(text.slice(1));
+        else if (text.startsWith('-')) hunk.old.push(text.slice(1));
+        else if (text.startsWith(' ')) { hunk.old.push(text.slice(1)); hunk.new.push(text.slice(1)); }
+      }
+    }
+  }
+  close();
+  return changes.length > 0 ? changes : null;
+}
+
 // The tool's arguments under the guards' names, or null when a renamed argument and one already under the
 // guards' name disagree: which one the tool uses isn't known, so the guards can't be given the right one.
 function argumentsOf(name, args) {
@@ -188,7 +241,15 @@ export function toGuardInput(raw, event) {
   if (toolName === null) return { unknownTool: name };
   const args = raw.toolArgs ?? {};
   const input = isObject(args) ? argumentsOf(name, args) : null;
-  return input === null ? null : { ...base, tool_name: toolName, tool_input: input };
+  if (input === null) return null;
+  // rg and glob take `paths`, which may be one path or a list: a list gives one input per path, so each is checked.
+  // An empty list, or a path that is not a non-empty string, is not read, so the call is refused.
+  if (SEARCH_TOOLS.includes(name) && Object.hasOwn(input, 'path')) {
+    const listed = Array.isArray(input.path) ? input.path : [input.path];
+    if (listed.length === 0 || !listed.every((one) => typeof one === 'string' && one !== '')) return null;
+    if (Array.isArray(input.path)) return listed.map((one) => ({ ...base, tool_name: toolName, tool_input: { ...input, path: one } }));
+  }
+  return { ...base, tool_name: toolName, tool_input: input };
 }
 
 // A guard's answer (Claude Code's shape, adapters/claude-code/answers.js) in Copilot's shape for `event`: a
