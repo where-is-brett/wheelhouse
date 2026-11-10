@@ -677,7 +677,6 @@ export const PULL_REFUSALS = {
   notOwn: 'that is not the branch this folder is on: a pull brings in only the worktree\'s own branch',
   outsideProject: 'the folder to bring the branch into is not inside the project',
   shallow: 'a shallow repository cannot be checked, so nothing is brought in',
-  conflict: 'the host\'s branch and this one change the same lines, so nothing was brought in',
   tooLarge: 'what the host\'s branch adds is too large to hand back through the helper',
   unread: 'the host\'s branch could not be read',
 };
@@ -1687,9 +1686,11 @@ export async function startHelper({
   // no key; then fetches the host's copy with the key, in the mirror, which no session can reach.
   // It brings the two together there: nothing to do when the worktree's has everything the
   // host's has; a fast-forward when the host's is ahead; otherwise a plain merge, made here, the
-  // worktree's commit first, refused on a conflict and naming the files. The answer carries only
-  // the commits the worktree lacks (the bundle, base64), never a key or the mirror's settings; the
-  // session's own git brings them in, inside the sandbox. The host is only read. Refused under STOP.
+  // worktree's commit first. On a conflict no merge is made here: the host's own tip is handed
+  // back with `conflict: true` and the files that clash, and the session makes the merge in its
+  // worktree and resolves it there. The answer carries only the commits the worktree lacks (the
+  // bundle, base64), never a key or the mirror's settings; the session's own git brings them in,
+  // inside the sandbox. The host is only read. Refused under STOP.
   async function doPull({ project, dir, branch }, ctx) {
     if (stopped()) return STOP_REFUSAL;
     if (typeof dir !== 'string' || !path.isAbsolute(dir)) refuse('the folder to bring the branch into must be a full path');
@@ -1779,12 +1780,13 @@ export async function startHelper({
     };
     if (await within(theirs, ours)) return { ok: true, already: true };
     let sha = theirs;
+    let conflicts = null;
     const merged = !(await within(ours, theirs));
     if (merged) {
       const made = await git([...MERGE_ONLY, 'merge-tree', '--write-tree', '--name-only', '-z', '--no-messages', ours, theirs]);
-      if (made.code === 1) return { ok: false, refused: PULL_REFUSALS.conflict, conflicts: made.stdout.split('\0').slice(1).filter((name) => name !== '') };
-      if (made.code !== 0) throw new Error('git could not merge the host\'s branch in');
-      sha = await mergeCommit(git, made.stdout.split('\0')[0].trim(), ours, theirs, `Merge the host's ${branch} into this worktree's`);
+      if (made.code === 1) conflicts = made.stdout.split('\0').slice(1).filter((name) => name !== '');
+      else if (made.code !== 0) throw new Error('git could not merge the host\'s branch in');
+      else sha = await mergeCommit(git, made.stdout.split('\0')[0].trim(), ours, theirs, `Merge the host's ${branch} into this worktree's`);
     }
     if ((await git([...NO_HOOKS, 'update-ref', PULLED, sha])).code !== 0) throw new Error('keeping what is handed back failed');
     const file = path.join(stateDir(project), '..', `pull-${crypto.randomUUID()}.bundle`);
@@ -1792,6 +1794,7 @@ export async function startHelper({
       const bundled = await git([...NO_HOOKS, 'bundle', 'create', '-q', file, PULLED, `^${ours}`]);
       if (bundled.code !== 0) throw new Error('making the bundle failed');
       if (fs.statSync(file).size > PULL_BUNDLE_BYTES) return { ok: false, refused: PULL_REFUSALS.tooLarge };
+      if (conflicts !== null) return { ok: true, already: false, conflict: true, conflicts, from: ours, sha, bundle: fs.readFileSync(file).toString('base64') };
       return { ok: true, already: false, merged, from: ours, sha, bundle: fs.readFileSync(file).toString('base64') };
     } finally {
       fs.rmSync(file, { force: true });

@@ -86,7 +86,10 @@ export function reachFor(url, { platform = process.platform } = {}) {
 // --- The project list ---
 // The settings a director's project repository may hold, besides the own list's (the design review's
 // section 3). Wheelhouse runs only `symbolic-ref`, `rev-parse`, `worktree add`, `fetch`, `merge --ff-only`,
-// `log`, `rev-list`, `status`, `remote` and `worktree list` there. A setting is on it because it runs no
+// `merge -s ort --no-ff --no-edit` (a pull that clashes with the host's branch, with `pull.twohead` and
+// `pull.octopus` emptied on the command line, so the strategy is never read from the worktree), `log`,
+// `rev-list`, `status`, `remote` and `worktree list` there. That merge may make a merge commit in the
+// worktree's own repository and pushes nothing. A setting is on it because it runs no
 // program and changes nowhere git connects or writes, or because the fence sets the same key on every
 // call (PROJECT_OVERRIDDEN below, kept true by a test). It fails closed, as the own list does.
 // Case does not matter in a section or a key; a subsection is kept as written.

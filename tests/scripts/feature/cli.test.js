@@ -521,7 +521,7 @@ test('pull asks the helper for the host\'s copy of the worktree\'s own branch by
 });
 
 // A repository with a feature worktree, and a bundle of one more commit made on the main branch.
-function pullFixture() {
+function pullFixture({ clash = false } = {}) {
   const base = real(tempFolder('wh-cli-pull-'));
   const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
   const git = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'pipe', env, encoding: 'utf8' }).trim();
@@ -533,11 +533,14 @@ function pullFixture() {
   git(mainDir, 'commit', '-q', '-m', 'first');
   const tree = path.join(mainDir, '.claude', 'worktrees', 'login-page');
   git(mainDir, 'worktree', 'add', '-q', tree, '-b', 'feature/login-page');
+  // A merge commit needs an identity, which a session's worktree has.
+  git(tree, 'config', 'user.name', 't');
+  git(tree, 'config', 'user.email', 't@t');
   write(featurePaths(tree).brief, `${fence(brief())}\nThe brief.\n`);
   // The second commit is made in a copy, so the worktree is one commit behind.
   const copy = path.join(base, 'copy');
   git(base, 'clone', '-q', tree, copy);
-  write(path.join(copy, 'b.txt'), 'b');
+  write(path.join(copy, clash ? 'a.txt' : 'b.txt'), clash ? 'host' : 'b');
   git(copy, 'add', '.');
   git(copy, 'commit', '-q', '-m', 'second');
   const sha = git(copy, 'rev-parse', 'HEAD');
@@ -545,7 +548,15 @@ function pullFixture() {
   git(copy, 'update-ref', 'refs/wheelhouse/pulled', sha);
   const bundleFile = path.join(base, 'out.bundle');
   git(copy, 'bundle', 'create', bundleFile, 'refs/wheelhouse/pulled');
-  const answer = { ok: true, already: false, merged: false, sha, from, bundle: fs.readFileSync(bundleFile).toString('base64') };
+  const bundle = fs.readFileSync(bundleFile).toString('base64');
+  if (clash) {
+    // The worktree changes the same file after the copy was made, so the two branches clash.
+    write(path.join(tree, 'a.txt'), 'session');
+    git(tree, 'commit', '-q', '-am', 'session change');
+  }
+  const answer = clash
+    ? { ok: true, already: false, conflict: true, conflicts: ['a.txt'], sha, from: git(tree, 'rev-parse', 'HEAD'), bundle }
+    : { ok: true, already: false, merged: false, sha, from, bundle };
   return { tree, git, answer, client: { pull: async () => answer } };
 }
 
@@ -555,6 +566,61 @@ test('a feature\'s pull still brings the bundle\'s commits in', async () => {
   assert.deepEqual(got, { branch: 'feature/login-page', already: false, merged: false, sha: answer.sha });
   assert.equal(fs.readFileSync(path.join(tree, 'b.txt'), 'utf8'), 'b');
   assert.equal(fs.existsSync(featurePaths(tree).dir + '/pull.bundle'), false);
+});
+
+test('a feature\'s pull on a clash leaves the worktree mid-merge with the host\'s tip merged in, and says how to finish', async () => {
+  const { tree, git, client, answer } = pullFixture({ clash: true });
+  const got = await pull({ client, worktree: tree });
+  assert.deepEqual(got, { branch: 'feature/login-page', already: false, conflict: true, conflicts: ['a.txt'], sha: answer.sha });
+  assert.equal(git(tree, 'rev-parse', 'MERGE_HEAD'), answer.sha);
+  assert.match(fs.readFileSync(path.join(tree, 'a.txt'), 'utf8'), /^<<<<<<< /m);
+  assert.equal(fs.existsSync(featurePaths(tree).dir + '/pull.bundle'), false);
+  // Resolved and committed: the host's tip is an ancestor of the branch, which is what a push checks.
+  write(path.join(tree, 'a.txt'), 'both');
+  git(tree, 'add', 'a.txt');
+  git(tree, 'commit', '-q', '--no-edit');
+  git(tree, 'merge-base', '--is-ancestor', answer.sha, 'HEAD');
+
+  // What the command prints.
+  const second = pullFixture({ clash: true });
+  const said = { out: '', err: '' };
+  const io = { cwd: second.tree, client: second.client, find: () => ({ root: second.tree }), out: (t) => { said.out += t; }, err: (t) => { said.err += t; } };
+  assert.equal(await main(['pull'], io), 0, said.err);
+  assert.match(said.out, /merged into this worktree, but these files clash:\n {2}a\.txt\n/);
+  assert.match(said.out, /git add.*git commit --no-edit.*tests.*push/);
+});
+
+test('a feature\'s pull on a clash ignores pull.twohead and pull.octopus in the worktree, and prints a file name with a newline safely', async () => {
+  const { tree, git, client, answer } = pullFixture({ clash: true });
+  git(tree, 'config', 'pull.twohead', 'ours');
+  git(tree, 'config', 'pull.octopus', 'ours');
+  const got = await pull({ client, worktree: tree });
+  assert.equal(got.conflict, true, 'the host\'s change is not dropped by an ours strategy');
+  assert.equal(git(tree, 'rev-parse', 'MERGE_HEAD'), answer.sha);
+  assert.match(fs.readFileSync(path.join(tree, 'a.txt'), 'utf8'), /^<<<<<<< /m);
+
+  // A host change that does not clash still comes in, whatever the setting says.
+  const clean = pullFixture();
+  git(clean.tree, 'config', 'pull.twohead', 'ours');
+  assert.equal((await pull({ client: clean.client, worktree: clean.tree })).sha, clean.answer.sha);
+
+  const odd = pullFixture({ clash: true });
+  const named = { ...odd.answer, conflicts: ['a.txt', 'x\ny\u001b[2J.txt'] };
+  const said = { out: '', err: '' };
+  const io = { cwd: odd.tree, client: { pull: async () => named }, find: () => ({ root: odd.tree }), out: (t) => { said.out += t; }, err: (t) => { said.err += t; } };
+  assert.equal(await main(['pull'], io), 0, said.err);
+  assert.match(said.out, /\n {2}x\\x0ay\\x1b\[2J\.txt\n/);
+  assert.doesNotMatch(said.out, /\u001b/);
+});
+
+test('a feature\'s pull on a clash refuses before merging when the worktree has uncommitted changes, and reads the helper\'s answer strictly', async () => {
+  const { tree, git, client, answer } = pullFixture({ clash: true });
+  write(path.join(tree, 'a.txt'), 'uncommitted');
+  await assert.rejects(pull({ client, worktree: tree }), /Commit them, then run pull again/);
+  assert.throws(() => git(tree, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'));
+  for (const odd of [{ ...answer, conflicts: [] }, { ...answer, conflicts: [1] }, { ...answer, conflicts: 'a.txt' }]) {
+    await assert.rejects(pull({ client: { pull: async () => odd }, worktree: tree }), /could not read/);
+  }
 });
 
 test('a feature\'s pull refuses, naming it, a worktree whose config holds a key off the list, and its post-merge hook never runs', async () => {
