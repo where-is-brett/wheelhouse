@@ -88,6 +88,8 @@ export function sayValue(key, value) {
   if (key === 'capTokens') return Object.keys(CAP_NAMES).map((k) => `${CAP_NAMES[k]} ${value[k].toLocaleString('en-AU')}`).join(', ');
   if (key === 'bundleApprovals' || key === 'engineRoom') return value ? 'on' : 'off';
   if (key === 'premium') return PREMIUM_WORDS[value] ?? String(value);
+  const own = definitionOf(key)?.say;
+  if (typeof own === 'function') return own(value);
   if (key === 'usageMark') return value === 'off' ? 'off' : `at ${value}%`;
   if (typeof value === 'number') return value.toLocaleString('en-AU');
   return String(value);

@@ -3,13 +3,12 @@
 // usage figures (scripts/usage/figures.js) find these by the agent named in a run's record, so core code never names
 // an agent. An agent with no entry is said as Claude Code's use always has been.
 //
-// On Copilot only each session's own use can be read: the month's total isn't reachable with the person's sign-in, and
-// sessions the person starts by hand aren't counted. So nothing here claims a month's total or an allowance (the
-// allowance and the month come in part 8 of the build).
+// On Copilot the month is read by scripts/agents/usage-month.js: GitHub's figure where the account reports one, else the
+// count of the sessions Wheelhouse started. These words stand in only while no month can be read.
 export const USAGE_WORDS = Object.freeze({
   copilot: Object.freeze({
     // In place of the allowance line: why no allowance or month's total is shown.
-    allowance: "Copilot's use is counted session by session: this session's use, summed over the sessions Wheelhouse started. Sessions you start yourself aren't counted, and no month's total or allowance is shown, as Copilot doesn't give one to read",
+    allowance: "Copilot's use is counted session by session: this session's use, summed over the sessions Wheelhouse started. Sessions you start yourself aren't counted, and no month's total is shown until the account's figure has been read",
     // The usage section's note.
     note: "Each part's credits are the sessions Wheelhouse started, each counted as this session's use; sessions you start yourself aren't in them",
   }),

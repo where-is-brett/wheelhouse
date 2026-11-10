@@ -214,6 +214,8 @@ function usageLine(usage) {
     isNumber(week.usd) && week.usd >= 0 ? `about ${dollarWords(week.usd)} at API prices` : null,
     isNumber(week.share) && week.share >= 0 ? `${Math.round(week.share)}% of your weekly allowance` : null,
   ].filter(Boolean);
+  const month = typeof usage?.month?.line === 'string' && usage.month.line !== '' ? usage.month.line : null;
+  if (month !== null) return said.length > 0 ? `Usage this week: ${said.join(', ')}. ${month}.` : `${month}.`;
   return said.length > 0 ? `Usage this week: ${said.join(', ')}.` : null;
 }
 
