@@ -5,7 +5,7 @@ import '../../helpers/homes.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { LEVELS } from '../../../scripts/agents/copilot/numbers.js';
-import { AGENT_CONTROL, homeControlPaths } from '../../../scripts/lib/agent-control.js';
+import { AGENT_CONTROL, homeControlPaths, homeGitSettingsPaths, systemGitSettingsPaths } from '../../../scripts/lib/agent-control.js';
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
 import { wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { projectSettings } from '../../../scripts/protection/settings.js';
@@ -17,7 +17,8 @@ const GRANTS = [
   { questionId: 'q-1', commands: ['npm test'], scope: 'run' },
   { questionId: 'q-2', commands: ['npm run build'], scope: 'feature' },
 ];
-const rules = (level, extra = {}) => levelRules({ level, grants: GRANTS, runner: RUNNER, worktree: WORKTREE, domains: ['example.com'], platform: 'win32', ...extra });
+const BUILD_COMMANDS = ['npm test', 'npm run', 'node', 'npx', 'git', 'npx wrangler', 'npx wranglerish'];
+const rules = (level, extra = {}) => levelRules({ level, grants: GRANTS, buildCommands: BUILD_COMMANDS, runner: RUNNER, worktree: WORKTREE, domains: ['example.com'], platform: 'win32', ...extra });
 const shells = (list) => list.filter((rule) => rule === 'shell' || rule.startsWith('shell('));
 
 // Every command today's Claude Code project settings deny, as the Copilot rule it must have.
@@ -25,7 +26,8 @@ const CLAUDE_BASH_DENIES = projectSettings({ webDomains: [] }).permissions.deny.
 const copilotRule = (bash) => `shell(${bash.slice('Bash('.length)}`;
 const commandOf = (rule) => rule.slice('shell('.length, -1).replace(/(:\*|@\*)$/, '');
 // A grant for every command a deny names, so every deny is reachable at the levels that pass only reachable ones.
-const REACH_ALL = [{ questionId: 'q-all', commands: [...CLAUDE_BASH_DENIES.map((r) => commandOf(copilotRule(r))), 'git', 'security'], scope: 'feature' }];
+const REACH_COMMANDS = [...CLAUDE_BASH_DENIES.map((r) => commandOf(copilotRule(r))), 'git', 'security'];
+const REACH_ALL = [{ questionId: 'q-all', commands: REACH_COMMANDS, scope: 'feature' }];
 
 test('each of Claude Code\'s shell denies has its Copilot rule', () => {
   assert.ok(CLAUDE_BASH_DENIES.length > 100, 'the settings\' deny list was read');
@@ -37,9 +39,10 @@ test('each of Claude Code\'s shell denies has its Copilot rule', () => {
 
 test('every level passes every one of those rules where its allows could reach it, the shell allowed whole passes all', () => {
   for (const level of LEVELS) {
-    const { deny } = rules(level, { grants: REACH_ALL });
+    const { deny } = rules(level, { grants: REACH_ALL, buildCommands: REACH_COMMANDS });
     for (const bash of CLAUDE_BASH_DENIES) assert.ok(deny.includes(copilotRule(bash)), `${level}: ${bash}`);
     for (const rule of SHELL_DENIES) assert.ok(deny.includes(rule), `${level}: ${rule}`);
+    assert.equal(deny.filter((r) => r.startsWith('shell(')).length, SHELL_DENIES.length, level);
   }
   for (const level of ['sandbox', 'unattended']) {
     const { allow, deny } = rules(level, { grants: [] });
@@ -54,6 +57,8 @@ test('the shell allows follow the level', () => {
   assert.deepEqual(shells(rules('ask', { grants: [] }).allow), []);
   const odd = [null, 'npm test', { commands: 'npm test', scope: 'run' }, { commands: ['npm test'], scope: 'forever' }, { commands: ['--yolo', 'npm test && rm -rf ~', ''], scope: 'feature' }];
   assert.deepEqual(shells(rules('ask', { grants: odd }).allow), []);
+  // A grant for a command the project doesn't configure gives nothing.
+  assert.deepEqual(shells(rules('ask', { grants: [{ commands: ['rm -rf'], scope: 'feature' }] }).allow), []);
   for (const level of [undefined, 'Unattended', 'everything', 7]) assert.deepEqual(rules(level), rules('ask'), String(level));
 });
 
@@ -88,10 +93,10 @@ test('no wide switch can be produced', () => {
         assert.ok(['sandbox', 'unattended'].includes(level), String(level));
         for (const rule of SHELL_DENIES) assert.ok(deny.includes(rule), `${level}: ${rule}`);
       }
-      // A granted command never undoes a deny: any allow a deny's command begins with, or that begins with it, is denied.
+      // A granted command never undoes a deny: every deny whose command begins with an allow's, or the reverse, is passed.
       for (const rule of shells(allow).filter((r) => r !== 'shell')) {
-        for (const d of deny.filter((r) => r.startsWith('shell('))) {
-          const a = commandOf(rule);
+        const a = commandOf(rule);
+        for (const d of SHELL_DENIES) {
           const b = commandOf(d);
           if (b.startsWith(a) || a.startsWith(b)) assert.ok(deny.includes(d), `${level}: ${rule} against ${d}`);
         }
@@ -120,6 +125,8 @@ test('the credential and control-file denies are on every level', () => {
     const { deny, allow } = rules(level);
     for (const pattern of AGENT_CONTROL) assert.ok(deny.includes(`write(${pattern})`), `${level}: ${pattern}`);
     for (const folder of homeControlPaths()) assert.ok(deny.includes(`write(~/${folder})`) && deny.includes(`write(~/${folder}/**)`), `${level}: ${folder}`);
+    for (const f of homeGitSettingsPaths()) assert.ok(deny.includes(`write(~/${f})`), `${level}: ~/${f}`);
+    for (const f of systemGitSettingsPaths()) assert.ok(deny.includes(`write(/${f})`), `${level}: /${f}`);
     for (const c of credentials) assert.ok(deny.includes(`write(~/${c})`) && deny.includes(`write(~/${c}/**)`), `${level}: ${c}`);
     for (const folder of ['~/.wheelhouse', home, '~/.claude']) assert.ok(deny.includes(`write(${folder})`) && deny.includes(`write(${folder}/**)`), `${level}: ${folder}`);
     for (const file of ['.claude/settings.json', '.claude/settings.local.json', '.claude/hooks/**']) assert.ok(deny.includes(`write(${file})`), `${level}: ${file}`);

@@ -29,11 +29,12 @@
 //   which that run finds before any project relies on it.
 import path from 'node:path';
 import { hostApprovalReady } from '../../scripts/host/approval-ready.js';
-import { AGENT_CONTROL, homeControlPaths } from '../../scripts/lib/agent-control.js';
+import { AGENT_CONTROL, homeControlPaths, homeGitSettingsPaths, systemGitSettingsPaths } from '../../scripts/lib/agent-control.js';
 import { LEVELS } from '../../scripts/agents/copilot/numbers.js';
 import { credentialPaths } from '../../scripts/lib/credentials.js';
 import { wheelhouseHome } from '../../scripts/lib/paths.js';
-import { isBuildCommand } from '../../scripts/gate/guardrails.js';
+import { DEFAULT_BUILD_COMMANDS } from '../../scripts/gate/guardrails.js';
+import { isConfiguredBuildCommand } from '../../scripts/protection/windows-builds.js';
 import { cleanDomain, projectSettings } from '../../scripts/protection/settings.js';
 
 // The loop's tools, allowed by name at every level, because a tool no rule allows is refused at once headless
@@ -69,12 +70,12 @@ const RULE_BREAKERS = /[*,()]/;
 // (the feature's life), as buildGrants gives them (scripts/protection/windows-builds.js). Which grants are still in
 // force is buildGrants' and the waker's record of run grants used: a run grant given to one start is not passed to
 // the next (ruling P7-10).
-function grantedCommands(grants) {
+function grantedCommands(grants, buildCommands) {
   if (!Array.isArray(grants)) return [];
   return grants
     .filter((g) => isPlain(g) && (g.scope === 'run' || g.scope === 'feature') && Array.isArray(g.commands))
     .flatMap((g) => g.commands)
-    .filter(isBuildCommand);
+    .filter((c) => isConfiguredBuildCommand(c, buildCommands));
 }
 
 // The command a shell rule names: `shell(npx wrangler:*)` and `shell(npx wrangler@*)` both name `npx wrangler`.
@@ -108,6 +109,9 @@ function denies(allowed) {
     ...CLAUDE_FILES.map((p) => `write(${p})`),
     ...['~/.wheelhouse', home, '~/.claude'].flatMap((f) => [`write(${f})`, `write(${f}/**)`]),
     ...homeControlPaths().flatMap((f) => [`write(~/${f})`, `write(~/${f}/**)`]),
+    // The director's own git settings, which a push runs with, as Claude Code's project settings deny them.
+    ...homeGitSettingsPaths().map((f) => `write(~/${f})`),
+    ...systemGitSettingsPaths().map((f) => `write(/${f})`),
     ...unique(['darwin', 'linux', 'win32'].flatMap((p) => credentialPaths(p))).flatMap((c) => [`write(~/${c})`, `write(~/${c}/**)`]),
     ...shellDenies(allowed),
     ...TOOL_DENIES,
@@ -128,10 +132,10 @@ function checkWorktree(worktree, platform) {
 // and the web only to the project's domains: `url(<d>)` for each that cleanDomain keeps and that is a plain host name;
 // `droppedDomains` names the others. A runner holding a character that could break its rule is refused, so no rules
 // are made.
-export function levelRules({ level, grants = [], runner = null, worktree, domains = [], platform = process.platform } = {}) {
+export function levelRules({ level, grants = [], runner = null, worktree, domains = [], buildCommands = DEFAULT_BUILD_COMMANDS, platform = process.platform } = {}) {
   checkWorktree(worktree, platform);
   const at = LEVELS.includes(level) ? level : 'ask';
-  const granted = grantedCommands(grants).map((c) => `shell(${c}:*)`);
+  const granted = grantedCommands(grants, buildCommands).map((c) => `shell(${c}:*)`);
   let shell;
   if (at === 'sandbox' || at === 'unattended') shell = ['shell'];
   else if (at === 'guarded') {
