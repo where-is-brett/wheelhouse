@@ -9,6 +9,7 @@ import {
   BAR, checkReliability, claimFolder, noticeFile, recordClaimFolder, takeClaim, engineTroubleCard, overBar, readIncidents, recordIncident, reliabilityFile,
 } from '../../../scripts/watcher/reliability.js';
 import { wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { withHome } from '../../helpers/homes.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -109,6 +110,10 @@ test('the notice is a decision in the shape of section 6.2 and names no project'
   assert.equal(card.recommend, parts.options.find((o) => o.recommended).label);
   assert.doesNotMatch(JSON.stringify(card), /harbour/);
   assert.match(card.question, /4/);
+});
+
+test('the notice passes the card check the picker applies', () => {
+  assert.deepEqual(cardProblems(engineTroubleCard(4).question), []);
 });
 
 test('incidents more than 30 days older than the newest are dropped as one is added', () => withHome(async () => {
