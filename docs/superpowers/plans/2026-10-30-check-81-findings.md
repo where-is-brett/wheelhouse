@@ -1,4 +1,6 @@
 <!-- docs/superpowers/plans/2026-10-30-check-81-findings.md -->
+
+> **Parked on 7 November 2026:** this plan built Wheelhouse on Archon, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
 # Check 81's five findings
 
 Check 81 saw five things and changed none of them. All five go in one pull request, each fix with a test that fails first.

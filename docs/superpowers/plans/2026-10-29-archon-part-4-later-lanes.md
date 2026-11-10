@@ -1,4 +1,6 @@
 <!-- docs/superpowers/plans/2026-10-29-archon-part-4-later-lanes.md -->
+
+> **Parked on 7 November 2026:** this plan built Wheelhouse on Archon, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
 # Wheelhouse on Archon, part 4: the later lanes, Copilot, and the old engine's removal (v0.2.x to v0.3.0)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

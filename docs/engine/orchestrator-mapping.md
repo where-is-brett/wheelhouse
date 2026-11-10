@@ -1,4 +1,6 @@
 <!-- docs/engine/orchestrator-mapping.md -->
+
+> **Parked on 7 November 2026:** Archon is parked, so this note describes a piece that is not in use. What is parked, and how it comes back, is in `docs/parked.md`.
 # The engine interface, mapped to Orchestrator.inc
 
 The fallback if Archon fails (Archon design, section 6.5). This page maps each part of the engine interface (`scripts/engine/contract.js`) to what Orchestrator.inc offers, so a second adapter could be written behind the same interface. Check it at each monthly upgrade of Archon, beside the safety subset.

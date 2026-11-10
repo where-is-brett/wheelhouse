@@ -1,4 +1,6 @@
 <!-- docs/superpowers/plans/2026-10-29-archon-part-3d-setup-and-release.md -->
+
+> **Parked on 7 November 2026:** this plan built Wheelhouse on Archon, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
 # Wheelhouse on Archon, part 3d: setup, uninstall, and v0.2.0 on the Mac
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

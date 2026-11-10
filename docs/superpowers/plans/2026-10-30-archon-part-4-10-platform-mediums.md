@@ -1,4 +1,6 @@
 <!-- docs/superpowers/plans/2026-10-30-archon-part-4-10-platform-mediums.md -->
+
+> **Parked on 7 November 2026:** this plan built Wheelhouse on Archon, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
 # Part 4.10: the MEDIUMs only for GitLab, Windows or Linux
 
 **Goal.** Close the two MEDIUMs that part 4.7 left because they bite only off the Mac or off GitHub: #120's M5 and M7. Both can be tested on the Mac with the platform and the host given to the code. Nothing here needs real Windows.

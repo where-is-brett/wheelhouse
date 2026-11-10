@@ -1,4 +1,6 @@
 <!-- docs/superpowers/plans/2026-11-02-copilot-remaining-parts.md -->
+
+> **Parked on 7 November 2026:** this plan built Copilot, with its Lean tier, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
 # What is left of Copilot's Parts 9, 10 and 11: the build plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

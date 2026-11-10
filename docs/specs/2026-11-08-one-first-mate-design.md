@@ -2,7 +2,7 @@
 
 # One First Mate per project: design (8 November 2026)
 
-**Status:** decided. The director answered the three calls in section 5 on 8 November 2026 (1A, 2A, and 3A with an amendment), so no calls are open. Nothing is built. It builds on the core cut (`docs/specs/2026-11-07-core-cut-design.md`) and the way of working (`docs/specs/2026-11-07-director-way-of-working-design.md`), and changes neither. It agrees with the crew visibility design (`docs/specs/2026-11-08-crew-visibility-design.md`), whose helm sessions are feature sessions (section 6.7).
+**Status:** decided. The director answered the three calls in section 5 on 8 November 2026 (1A, 2A, and 3A with an amendment), so no calls are open. It is built (build plan `docs/superpowers/plans/2026-11-08-one-first-mate.md`). It builds on the core cut (`docs/specs/2026-11-07-core-cut-design.md`) and the way of working (`docs/specs/2026-11-07-director-way-of-working-design.md`), and changes neither. It agrees with the crew visibility design (`docs/specs/2026-11-08-crew-visibility-design.md`), whose helm sessions are feature sessions (section 6.7).
 
 ## 1. In plain words
 

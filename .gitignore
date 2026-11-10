@@ -10,3 +10,6 @@ probes/**/state/
 
 # Wheelhouse's own folder in a project (the chat's inbox)
 .wheelhouse/
+
+# Work folders that Claude Code sessions make for this repository
+.claude/worktrees/

@@ -1,4 +1,6 @@
 <!-- docs/superpowers/plans/2026-10-30-archon-run-fixes.md -->
+
+> **Parked on 7 November 2026:** this plan built Wheelhouse on Archon, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
 # Archon run fixes (part 4.6)
 
 Three engine defects that real Archon runs found. Each fix gets a test that fails first.

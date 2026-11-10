@@ -1,4 +1,6 @@
 <!-- docs/superpowers/plans/2026-10-29-wheelhouse-on-archon.md -->
+
+> **Parked on 7 November 2026:** this plan built Wheelhouse on Archon, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
 # Wheelhouse on Archon: the build plan
 
 **Goal:** Wheelhouse becomes the director's seat on top of Archon, as the approved design says, in the order of its migration (section 17): the desk interface first, then the early checks, then Archon lane by lane, then the old engine removed.

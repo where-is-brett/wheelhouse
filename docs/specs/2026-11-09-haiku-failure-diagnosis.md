@@ -1,6 +1,8 @@
+<!-- docs/specs/2026-11-09-haiku-failure-diagnosis.md -->
+
 # Haiku trial: why it fails, and what would make it pass
 
-Date: 2026-11-09. Diagnosis and design only. No Wheelhouse code changed and no trial was run.
+Date: 9 November 2026. Diagnosis and design only. No Wheelhouse code changed and no trial was run.
 
 ## 1. The answer in brief
 

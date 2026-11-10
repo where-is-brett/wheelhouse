@@ -65,7 +65,7 @@ What Wheelhouse protects you from, what it doesn't, and how to report a problem 
 
 ## Updating
 
-From the first release that has it, `/wheelhouse:update` updates Wheelhouse: type it in a session on your product. A computer on `v0.2.6` or earlier has no such command, so it updates once from Terminal, with one paste. Run it yourself: open Terminal (PowerShell on Windows) in your product's folder, and replace `<tag>` with the release you are moving to, such as the next version on Wheelhouse's [releases page](https://github.com/where-is-brett/wheelhouse/releases).
+Type `/wheelhouse:update` in a session on your product to update Wheelhouse. A computer on `v0.2.6` or earlier has no such command, so it updates once from Terminal, with one paste. Run it yourself: open Terminal (PowerShell on Windows) in your product's folder, and replace `<tag>` with the release you are moving to, such as the next version on Wheelhouse's [releases page](https://github.com/where-is-brett/wheelhouse/releases).
 
 macOS:
 

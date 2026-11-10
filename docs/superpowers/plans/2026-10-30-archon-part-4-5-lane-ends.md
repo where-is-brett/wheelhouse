@@ -1,4 +1,6 @@
 <!-- docs/superpowers/plans/2026-10-30-archon-part-4-5-lane-ends.md -->
+
+> **Parked on 7 November 2026:** this plan built Wheelhouse on Archon, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
 # Part 4.5: the engine lanes' loose ends
 
 **Goal.** Two gaps left by parts 4.1 to 4.4 (#119, #123): nothing on the new engine writes a `merged` report for quick, small or bug work, and a feature can hold the feature lane's place with no card.

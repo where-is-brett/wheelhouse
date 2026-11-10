@@ -1,3 +1,7 @@
+<!-- docs/handoffs/2026-11-07-build-kickoff.md -->
+
+> **Done:** the core cut and the way of working are merged and built (`docs/specs/2026-11-07-core-cut-design.md`, `docs/parked.md`). This page is the order the work started in, kept as it was.
+
 # Build kickoff: the core cut and the director's way of working (7 November 2026)
 
 ## Where things stand
