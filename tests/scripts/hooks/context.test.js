@@ -219,3 +219,17 @@ test('a tool call says nothing without a reading, a project or a usable session 
     }
   });
 });
+
+test('the gauge says the reading and keeps nothing under the home for an agent whose hooks only read', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const t = writeTranscript(base, [assistant(usage(1, 41000, 0))]);
+      const out = await gauge({ cwd: main, session_id: 's1', transcript_path: t }, { writeVia: 'helper' });
+      assert.equal(out.hookSpecificOutput.additionalContext, 'Context: about 41k tokens.');
+      assert.equal(fs.existsSync(sessionFile(home, 's1')), false);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});

@@ -172,15 +172,19 @@ function unreadable(input) {
   if (input.tool_name === 'Write') return !isText(given?.content);
   return false;
 }
-// The names Copilot's edit and create give their text, under the guards' names.
+// The names Copilot's edit and create give their text, under the guards' names. When both names for the same text are
+// given and differ, which one the tool writes isn't known, so neither is passed and the call is refused as unreadable.
 function withText(input) {
   const given = input.tool_input;
   if (!isObject(given) || !['Edit', 'Write'].includes(input.tool_name) || typeof given.patch === 'string') return input;
   const text = { ...given };
-  if (input.tool_name === 'Edit') {
-    text.old_string ??= given.old_str;
-    text.new_string ??= given.new_str;
-  } else text.content ??= given.file_text;
+  const pairs = input.tool_name === 'Edit' ? [['old_string', 'old_str'], ['new_string', 'new_str']] : [['content', 'file_text']];
+  for (const [guards, copilots] of pairs) {
+    if (guards in given && copilots in given && given[guards] !== given[copilots]) {
+      text[guards] = undefined;
+      delete text[copilots];
+    } else text[guards] ??= given[copilots];
+  }
   return { ...input, tool_input: text };
 }
 // The question tool's input as card-check reads it (check 59: `toolArgs.message` holds the card, and the answer comes

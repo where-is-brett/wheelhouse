@@ -222,6 +222,16 @@ test('an edit or create whose text the write guards cannot read is refused; Copi
   const ok = recording();
   await run('preToolUse', call('edit', { path: `${PROJECT}/a.test.js`, old_str: 'a', new_str: 'b' }), { steps: ok.steps });
   assert.deepEqual(ok.calls.find((c) => c.name === 'protectedTests').input.tool_input, { file_path: `${PROJECT}/a.test.js`, old_str: 'a', new_str: 'b', old_string: 'a', new_string: 'b' });
+  // Two names for the same text that differ: which one the tool writes is not known, so the call is refused.
+  const split = recording();
+  const conflict = await run('preToolUse', call('edit', { path: 'tests/a.test.js', old_str: 'it(', new_str: 'it.skip(', old_string: 'a', new_string: 'a' }), { steps: split.steps });
+  assert.equal(conflict.code, 2);
+  assert.match(conflict.text, new RegExp(NO_TEXT.slice(0, 30)));
+  assert.deepEqual(split.calls, []);
+  const same = recording();
+  assert.equal((await run('preToolUse', call('edit', { path: 'a.txt', old_str: 'a', new_str: 'b', old_string: 'a', new_string: 'b' }), { steps: same.steps })).code, 0);
+  const twice = recording();
+  assert.equal((await run('preToolUse', call('create', { path: 'a.txt', file_text: 'x', content: 'y' }), { steps: twice.steps })).code, 2);
   const file = recording();
   await run('preToolUse', call('create', { path: `${PROJECT}/a.txt`, file_text: 'hello' }), { steps: file.steps });
   assert.equal(file.calls.find((c) => c.name === 'protectedTests').input.tool_input.content, 'hello');
