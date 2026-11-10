@@ -2,7 +2,7 @@
 
 # Check 96: Copilot trial stages T1 and T2
 
-**Answer:** Mostly. Run on 10 November 2026 on the Mac. Copilot's hooks can add context at the start of a session and of a prompt, a turn's end and a subagent's end can send work back, and a subagent's stop names the agent. A session id can be given up front, and the events file carries token counts. A compaction cannot be stopped by a hook, a hook past its time-out lets the action through, and a resume counts as a request. Six items stay open (the list at the end).
+**Answer:** Partly. Run on 10 November 2026 on the Mac. Copilot's hooks can add context at the start of a session and of a prompt, a turn's end and a subagent's end can send work back, and a subagent's stop names the agent. A session id can be given up front, and the events file carries token counts. A compaction cannot be stopped by a hook, a hook past its time-out lets the action through, and a resume counts as a request. Six items stay open (the list at the end).
 
 ## Question
 
