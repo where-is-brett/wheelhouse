@@ -1,0 +1,10 @@
+{
+  "sessionId": "<ID>",
+  "timestamp": 0,
+  "cwd": "<PROJECT>",
+  "toolName": "web_fetch",
+  "toolArgs": {
+    "url": "http://127.0.0.1:<PORT>/probe58",
+    "max_length": 5000
+  }
+}

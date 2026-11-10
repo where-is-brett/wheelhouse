@@ -1,0 +1,11 @@
+{
+  "sessionId": "<ID>",
+  "timestamp": 0,
+  "cwd": "<PROJECT>",
+  "toolName": "web_fetch",
+  "toolArgs": {
+    "url": "http://127.0.0.1:<PORT>/probe58",
+    "max_length": 5000
+  },
+  "error": "WebFetchBlockedUrlError: web_fetch URL \"http://127.0.0.1:<PORT>/probe58\" resolves to blocked address 127.0.0.1. URLs must not target loopback, private, or link-local addresses."
+}

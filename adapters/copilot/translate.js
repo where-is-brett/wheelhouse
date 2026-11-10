@@ -56,9 +56,11 @@ const ARGUMENT_MAP = Object.freeze({
 // Every name in the adapter's tool lists (carry-over e, ruling P5-10).
 export const KNOWN_TOOLS = Object.freeze([...new Set([...tools.read, ...tools.halt, ...tools.notify, tools.ask, ...tools.shell, ...tools.edit, ...tools.other])]);
 
-// Known, but refused as unknown until it is settled whether `preToolUse` sees each call inside it or only the
-// wrapper (checks 58 and 66 left it open; ruling P5-10).
-const UNSETTLED = Object.freeze(['multi_tool_use.parallel']);
+// Known, but refused as unknown until what they reach is settled. `multi_tool_use.parallel`: whether `preToolUse`
+// sees each call inside it or only the wrapper (checks 58 and 66 left it open; ruling P5-10). `sql`,
+// `session_store_sql` and `run_dynamic_workflow` are in the tools' `other` group, which keeps its own names and
+// reaches no guard, so each could run unchecked; they stay refused until a probe shows what each can reach.
+export const UNSETTLED = Object.freeze(['multi_tool_use.parallel', 'sql', 'session_store_sql', 'run_dynamic_workflow']);
 
 // The refusal for a tool Wheelhouse doesn't know (Review Focus 1).
 export function UNKNOWN_TOOL(name) {

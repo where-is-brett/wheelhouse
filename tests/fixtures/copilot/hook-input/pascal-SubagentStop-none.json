@@ -1,0 +1,15 @@
+{
+  "hook_event_name": "SubagentStop",
+  "session_id": "<ID>",
+  "timestamp": "<TIMESTAMP>",
+  "cwd": "<PROJECT>",
+  "agent_id": "<ID>",
+  "agent_type": "probe-agent",
+  "parent_agent_id": "<ID>",
+  "transcript_path": "<COPILOT_HOME>/session-state/<ID>/events.jsonl",
+  "agent_name": "probe-agent",
+  "agent_display_name": "probe-agent",
+  "last_assistant_message": "ok",
+  "stop_reason": "end_turn",
+  "stop_hook_active": false
+}

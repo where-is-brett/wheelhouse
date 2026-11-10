@@ -1,0 +1,11 @@
+{
+  "hook_event_name": "PreToolUse",
+  "session_id": "<ID>",
+  "timestamp": "<TIMESTAMP>",
+  "cwd": "<PROJECT>",
+  "tool_name": "WebFetch",
+  "tool_input": {
+    "url": "http://127.0.0.1:<PORT>/probe58",
+    "max_length": 5000
+  }
+}

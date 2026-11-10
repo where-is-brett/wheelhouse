@@ -1,78 +1,28 @@
 // adapters/copilot/safety-line.js
-// What Copilot can't enforce, in plain sentences, for the board's health line, the full board view and the
-// data note (design section 6.6). Each line is the design's own words cut to one line, and none ends in a full
-// stop. It imports only the design's numbers, so the board can read it without loading the adapter.
-import { GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC, LEVELS, TIERS } from '../../scripts/agents/copilot/numbers.js';
+// What Copilot can't promise, in plain sentences, for the board's health line, the full board view and the data
+// note (design section 3.6). Each line is one line and none ends in a full stop. It imports only the design's
+// numbers, so the board can read it without loading the adapter.
+import { C6_PASSED, GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC, REVIEW_SESSION_READY } from '../../scripts/agents/copilot/numbers.js';
 
-// Copilot lets through a guard that runs past its time-out (check 58), which is why a guard answers sooner.
-const TIME_OUT = `Copilot lets a guard through if it runs past ${GUARD_TIMEOUT_SEC} seconds, so every guard answers within ${GUARD_DEADLINE_MS / 1000} seconds or refuses`;
-const RULES_NOT_FENCE = `Copilot's permission rules are rules, not a fence; a guard that runs past ${GUARD_TIMEOUT_SEC} seconds is let through, so every guard answers within ${GUARD_DEADLINE_MS / 1000} seconds or refuses`;
+// Copilot lets one action through when its guard runs past the time-out, which is why every guard answers sooner.
+const GUARD_HANG = `Copilot lets an action through if its guard runs past ${GUARD_TIMEOUT_SEC} seconds, so every guard answers within ${GUARD_DEADLINE_MS / 1000} seconds or refuses`;
+const APPROVALS = 'Approvals in Copilot\'s chat aren\'t proven until check C6 passes; the steps that matter most are confirmed in Wheelhouse\'s own window';
+const REVIEWS = 'Second looks at a change by Copilot aren\'t proven until the clean reviewer passes its check; until then they go to Claude Code\'s reviewer';
+const LOCKED = 'Copilot doesn\'t offer Locked';
+const WINDOWS = 'On Windows there is no sandbox, so builds run at Standard with Guarded build commands';
 
-// Section 6.6, item 1, by level: what holds on the computer without Copilot's sandbox.
-const WITHOUT_SANDBOX = {
-  guarded: 'Without Copilot\'s sandbox, at Guarded the network is open and only labelled folders are unreadable to builds',
-  ask: 'Without Copilot\'s sandbox, at Ask a command you allowed can do whatever your account can, and leave lasting changes',
-  unattended: 'Without Copilot\'s sandbox, at Unattended nothing holds on this computer',
-};
-
-// Section 6.6, item 6, by system.
-function networkLine(platform) {
-  if (platform === 'darwin') return 'The network is narrowed only by Copilot\'s sandbox, and listed hosts could still carry code out';
-  if (platform === 'win32') return 'On Windows nothing on this computer holds the network against a program that connects directly';
-  return 'Nothing on this computer holds the network against a program that connects directly';
-}
-
-// What Lean says of Wheelhouse's guards (ruling P5-31): while Wheelhouse's helper answers they run as Copilot
-// hooks (design section 6.4). Without it, on the Mac the kit's shell guard runs where setup put it in place (check 69;
-// ruling P5-35); on Windows none is known yet without Node.js, and where Node.js runs none runs until the helper does.
-function leanGuards({ helper, node, platform, shellGuard }) {
-  if (helper) return { line: null, running: true };
-  if (platform === 'darwin') {
-    return shellGuard
-      ? { line: 'Wheelhouse\'s shell guard runs on this Mac: it keeps the files that steer agents, and refuses a tool it doesn\'t know', running: true }
-      : { line: 'No Wheelhouse guards run on this computer yet', running: false };
-  }
-  if (node) return { line: 'No Wheelhouse guards run on this computer yet', running: false };
-  if (platform === 'win32') return { line: 'No Wheelhouse guards run on Windows without Node.js, until a way is found', running: false };
-  return { line: 'No Wheelhouse guards run on this computer without Node.js', running: false };
-}
-
-// The helper's block is chosen by `helper` alone, never by `node`: Node.js on the computer runs no guard.
-function lean(options) {
-  const { helper, addOn } = options;
-  const guards = leanGuards(options);
-  const lines = ['Nothing is held off this computer except the copy in your folder'];
-  lines.push(helper || addOn
-    ? 'Everyday approvals are clicks in the chat; the steps that matter most are confirmed outside it'
-    : 'Approvals are clicks in the chat, recorded as not proven');
-  if (helper) lines.push('All stop is enforced by Wheelhouse\'s guards, which run as Copilot hooks');
-  else if (addOn) lines.push('All stop is enforced by the add-on, which also cancels the chat\'s running request');
-  else lines.push('All stop isn\'t enforced: agents are told to stop, and VS Code\'s stop button ends the running request');
-  if (guards.line !== null) lines.push(guards.line);
-  if (guards.running) lines.push(TIME_OUT);
-  lines.push(
-    'A command you allow can change anything Wheelhouse keeps, history and record included',
-    'Copilot\'s command prompts aren\'t a control',
-    'Tests and second looks at a change aren\'t independent of the agent that built it',
-    'Not for projects with real users',
-  );
-  return lines;
-}
-
-// One line for each item of section 6.6 that applies to the level and the system.
-function upper({ level, sandbox, platform, phoneStop }) {
-  const sandboxOn = level === 'sandbox' || sandbox === true;
+// safetyLine({ platform, approvalsProven, reviewsProven }) -> string[]
+//   platform         the system, as process.platform names it
+//   approvalsProven  whether check C6 has passed (default: the design's switch)
+//   reviewsProven    whether the clean reviewer has passed its check (default: the design's switch)
+// Each of the design's items that applies, most important first. The Windows item applies on Windows alone.
+export default function safetyLine({ platform = process.platform, approvalsProven = C6_PASSED, reviewsProven = REVIEW_SESSION_READY } = {}) {
   return [
-    ...(sandboxOn ? [] : [WITHOUT_SANDBOX[level]]),
-    'Your sign-ins and Wheelhouse\'s keys stay on this computer, and the code host\'s controls hold only while no agent reaches them',
-    'The approval check, the second looks at changes and the activity record run on this computer, and hold only while build commands can\'t reach your level',
-    RULES_NOT_FENCE,
-    'At Standard, Wheelhouse\'s hooks run beside the agent, so no hook holds a secret an agent can\'t read',
-    networkLine(platform),
-    'You can lower the level, or switch the sandbox off, unless Locked or your company\'s settings hold it',
-    ...(phoneStop === true ? [] : ['Phone All stop isn\'t available until a way is found']),
-    'Wheelhouse can\'t pin VS Code or its Copilot runtime; it records them and runs its safety checks again when they change',
-    'Your company\'s own settings win over Wheelhouse\'s, Locked included, and can stop its hooks loading or Copilot\'s command-line agent running',
+    GUARD_HANG,
+    ...(approvalsProven === true ? [] : [APPROVALS]),
+    ...(reviewsProven === true ? [] : [REVIEWS]),
+    LOCKED,
+    ...(platform === 'win32' ? [WINDOWS] : []),
   ];
 }
 
@@ -80,21 +30,4 @@ function upper({ level, sandbox, platform, phoneStop }) {
 // is refused, so a Copilot update is waiting on Wheelhouse.
 export function updateWaiting(name) {
   return `Copilot has a tool Wheelhouse doesn't know yet, \`${name}\`: it is refused until Wheelhouse is updated`;
-}
-
-// safetyLine({ tier, level, platform, node, helper, addOn, sandbox, shellGuard, phoneStop }) -> string[]
-//   tier        'lean' (the default), 'middle' or 'full'
-//   level       at Middle and Full, the level builds run at: 'sandbox', 'guarded', 'ask' or 'unattended' (default 'ask')
-//   platform    the system, as process.platform names it
-//   node        whether Wheelhouse's own Node.js program may run here
-//   helper      whether Wheelhouse's helper is installed here and answering (at Lean, its block is chosen by this)
-//   addOn       whether the VS Code add-on is installed
-//   sandbox     whether Copilot's sandbox is in use, at a level that is not 'sandbox' itself
-//   shellGuard  whether the kit's shell guard for a Mac runs here (check 69): its hook file is in place and names it
-//   phoneStop   whether a route to STOP from the phone exists (check 12 finds none yet)
-export default function safetyLine({ tier = 'lean', level, platform = process.platform, node = false, helper = false, addOn = false, sandbox, shellGuard = false, phoneStop = false } = {}) {
-  if (!TIERS.includes(tier)) throw new Error(`${JSON.stringify(tier)} is not a tier; the tiers are ${TIERS.join(', ')}`);
-  if (level !== undefined && !LEVELS.includes(level)) throw new Error(`${JSON.stringify(level)} is not a level; the levels are ${LEVELS.join(', ')}`);
-  if (tier === 'lean') return lean({ node: node === true, helper: helper === true, addOn: addOn === true, platform, shellGuard: shellGuard === true });
-  return upper({ level: level ?? 'ask', sandbox, platform, phoneStop });
 }

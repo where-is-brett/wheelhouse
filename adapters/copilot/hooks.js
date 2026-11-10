@@ -55,10 +55,12 @@ function cmdQuoted(value) {
   return `"${value}"`;
 }
 
-// A path in PowerShell's literal form: single quotes, an apostrophe doubled. A line break is refused.
+// A path in PowerShell's literal form: single quotes, each single-quote character doubled. PowerShell reads the
+// typographic quotes U+2018, U+2019, U+201A and U+201B as single quotes too, so a path like O’Brien would end the
+// literal early if only the ASCII one were doubled. A line break is refused.
 function powershellQuoted(value) {
   if (/[\r\n]/.test(value)) throw unsafe(value);
-  return `'${value.replaceAll('\'', '\'\'')}'`;
+  return `'${value.replace(/['\u2018\u2019\u201A\u201B]/g, '$&$&')}'`;
 }
 
 function fullPath(value, platform, what) {
