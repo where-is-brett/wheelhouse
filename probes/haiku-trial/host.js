@@ -81,10 +81,10 @@ const RETRY_MS = 90 * 1000;
 const run = (command, args, options = {}) => spawnSync(command, args, { encoding: 'utf8', ...options });
 const text = (got) => String(got.stdout ?? '').trim();
 
-export function buildRealIo(env = process.env) {
+export function buildRealIo(env = process.env, label) {
   let slug = '';
   const acted = new Map();
-  const tmux = makeTmux();
+  const tmux = makeTmux({ label });
 
   const gh = async (args) => {
     const full = ghArgs(args, slug);

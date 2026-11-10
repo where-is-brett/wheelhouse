@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { run } from '../../../probes/haiku-trial/runner.js';
+import { sessionName } from '../../../probes/haiku-trial/tmux.js';
 import { buildRealIo } from '../../../probes/haiku-trial/host.js';
 import { gatherContext } from '../../../probes/haiku-trial/signals.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
@@ -42,7 +43,7 @@ function ioWith(real, { capture = () => '', over = {} } = {}) {
     tmux: {
       start: (x) => started.push(x), type: () => {}, keys: () => {}, capture,
       kill: (name) => { const at = started.findIndex((x) => x.name === name); if (at >= 0) started.splice(at, 1); },
-      list: () => started.map((x) => `haiku-trial-${x.name}`),
+      list: () => started.map((x) => sessionName(DATE, x.name)),
     },
     gh: async () => null,
     clock: { now: () => now, sleep: async (ms) => { now += ms; } },
