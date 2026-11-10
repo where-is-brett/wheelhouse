@@ -722,3 +722,39 @@ test('the status is written only when it changed', async () => {
   assert.equal(next.phase, 'building');
   assert.equal(next.updatedAt, new Date(NOW.getTime() + 120000).toISOString());
 });
+
+// A report is written and `open-pr` follows within the same turn: a status read on a tool call between the two must not end the work.
+const sliceReport = (state) => `${fence({ v: 1, work: 'login-page', status: state, tests: '10 pass', assumptions: [], concerns: [], rulings: [] })}\nSlice 1 of 5.\n`;
+
+test('a partial report with no pull request yet does not end the work until the turn ends', () => {
+  const tree = feature();
+  const p = featurePaths(tree);
+  ledger(tree, 'this', ['Task 1: complete']);
+  write(p.report, sliceReport('partial'));
+  assert.notEqual(status(tree, { turnEnded: false }).phase, 'done');
+  // The turn ended with no pull request opened: nothing more is coming, so the work ends.
+  assert.equal(status(tree, { turnEnded: true }).phase, 'done');
+  assert.equal(status(tree).phase, 'done');
+  // open-pr ran in the gap: the pull request is followed, not closed over.
+  write(p.pr, JSON.stringify({ pr: 5, plan: PLAN }));
+  assert.equal(status(tree, { turnEnded: false }).phase, 'pr-open');
+  assert.equal(status(tree, { turnEnded: true }).phase, 'pr-open');
+});
+
+test('a blocked report ends the work at once, with no pull request', () => {
+  const tree = feature();
+  write(featurePaths(tree).report, sliceReport('blocked'));
+  assert.equal(status(tree, { turnEnded: false }).phase, 'done');
+});
+
+test('the hook reads a partial report as the end only on Stop, not on a tool call', async () => {
+  const tree = feature();
+  const p = featurePaths(tree);
+  write(p.report, sliceReport('partial'));
+  await runHook(hookInput(tree, 'PostToolUse'), { now: () => NOW });
+  assert.notEqual(readStatus(p.status).phase, 'done');
+  await runHook(hookInput(tree, 'SubagentStop'), { now: at(60000) });
+  assert.notEqual(readStatus(p.status).phase, 'done');
+  await runHook(hookInput(tree, 'Stop'), { now: at(120000) });
+  assert.equal(readStatus(p.status).phase, 'done');
+});

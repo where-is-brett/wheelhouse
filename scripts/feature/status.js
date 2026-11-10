@@ -377,7 +377,7 @@ export function sliceInViews(worktree, work) {
 // the project's views unless a caller passes its own. `feature` is what
 // loadFeature read, when the caller has it already. Throws when the brief
 // can't be read, since the status names its work and lane.
-export function buildStatus({ worktree, now = () => new Date(), tokens = null, answered = answeredInViews, slice = sliceInViews, feature }) {
+export function buildStatus({ worktree, now = () => new Date(), tokens = null, answered = answeredInViews, slice = sliceInViews, feature, turnEnded = true }) {
   const { brief, plan, ledger } = feature ?? loadFeature(worktree);
   const p = featurePaths(worktree);
 
@@ -407,9 +407,13 @@ export function buildStatus({ worktree, now = () => new Date(), tokens = null, a
   const currentSlice = slice(worktree, brief.work);
 
   // The phase, in this order (ruling R88): a pull request not yet merged is
-  // open; a report ends the feature when it isn't `done` (it ended without a
+  // open; a report ends the feature when it is `blocked` or `partial` (it ended without a
   // pull request) or the last slice's pull request has merged; a plan that
   // isn't the one already merged is being built, or is ready to build.
+  // A `partial` report with no pull request yet ends it only once the session's
+  // turn has ended (`turnEnded`): the brief has the session run `report` and then
+  // `open-pr` within one turn, so a status read between the two, on a tool call,
+  // must not end the feature and leave the pull request that follows unclaimed.
   const report = reportStatus(worktree);
   const slicesLeft = currentSlice !== null && currentSlice.n < currentSlice.m;
   const mergedPlan = kept?.merged ? kept.plan : null;
@@ -417,7 +421,7 @@ export function buildStatus({ worktree, now = () => new Date(), tokens = null, a
   let phase;
   if (waiting) phase = 'waiting';
   else if (kept !== null && !kept.merged) phase = 'pr-open';
-  else if (report !== null && (report !== 'done' || (kept?.merged === true && !slicesLeft))) phase = 'done';
+  else if (report !== null && ((report === 'blocked' || (report === 'partial' && turnEnded)) || (kept?.merged === true && !slicesLeft))) phase = 'done';
   else if (building && current) phase = 'building';
   else if (current) phase = 'ready-to-build';
   else phase = 'planning';
