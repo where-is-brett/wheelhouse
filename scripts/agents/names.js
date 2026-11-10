@@ -6,9 +6,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { withoutBom } from '../gate/guardrails.js';
 
-export const AGENTS = Object.freeze(['claude-code']);
-// The agents whose steps read Wheelhouse's own skill copies rather than the kits: none, now that Claude Code is the only agent.
-export const readsOwnCopies = () => false;
+export const AGENTS = Object.freeze(['claude-code', 'copilot']);
+// The agents a project can run today. Copilot has an adapter but is switched on for a project only by the last part of its
+// build (docs/specs/2026-11-10-copilot-return-design.md, section 8, part 11), so a project that names it is still told
+// it is parked.
+const SWITCHED_ON = Object.freeze(['claude-code']);
+// The agents whose steps read Wheelhouse's own skill copies rather than the kits, so a project's hold goes by those
+// copies.
+const READ_OWN_COPIES = Object.freeze(['copilot']);
+export const readsOwnCopies = (agent) => READ_OWN_COPIES.includes(agent);
 
 const isMap = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -24,7 +30,7 @@ export function parkedAgentOf(config, { computerId: id } = {}) {
   const agents = config?.agents;
   if (isMap(agents) && typeof id === 'string' && Object.hasOwn(agents, id)) {
     const name = agents[id];
-    if (typeof name === 'string' && name !== '' && !AGENTS.includes(name)) return name;
+    if (typeof name === 'string' && name !== '' && !SWITCHED_ON.includes(name)) return name;
   }
   return null;
 }

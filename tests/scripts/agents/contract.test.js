@@ -47,7 +47,7 @@ test('checkAdapter names a missing checkForeman', () => {
 });
 
 test('adapterFor throws for an agent it does not know', () => {
-  assert.deepEqual(AGENTS, ['claude-code']);
+  assert.deepEqual(AGENTS, ['claude-code', 'copilot']);
   assert.equal(adapterFor('claude-code'), claudeCode);
   assert.throws(() => adapterFor('model-x'), /no adapter for the agent "model-x"/);
   assert.throws(() => adapterFor('toString'), /no adapter/);
@@ -57,6 +57,8 @@ test('adapterFor throws for an agent it does not know', () => {
 test('agentOfInput reads Claude Code\'s input as claude-code', () => {
   assert.equal(agentOfInput({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }), 'claude-code');
   assert.equal(agentOfInput({ hook_event_name: 'PreToolUse', toolName: 'bash', sessionId: 's' }), 'claude-code');
+  assert.equal(agentOfInput({ toolName: 'bash' }), 'copilot');
+  assert.equal(agentOfInput({ sessionId: 's' }), 'copilot');
 });
 
 test('agentOfInput gives null for input it cannot place', () => {

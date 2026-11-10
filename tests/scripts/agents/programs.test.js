@@ -6,14 +6,17 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import copilotPrograms from '../../../adapters/copilot/programs.js';
+import { AGENTS } from '../../../scripts/agents/project-agent.js';
 import { NESTED_PACKAGES, NESTED_REFUSED, PROGRAMS } from '../../../scripts/agents/programs.js';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
-test('Claude Code has no program of its own to refuse, and the nested agents have theirs', () => {
-  assert.deepEqual(Object.keys(PROGRAMS).sort(), ['claude-code', 'nested']);
+test("each agent has an entry, held to its adapter's own list; Claude Code has none", () => {
+  assert.deepEqual(Object.keys(PROGRAMS).sort(), [...AGENTS].sort());
+  assert.equal(PROGRAMS.copilot, copilotPrograms);
   assert.equal(PROGRAMS['claude-code'], null);
-  assert.deepEqual([...PROGRAMS.nested.programs], ['copilot']);
+  assert.deepEqual([...PROGRAMS.copilot.programs], ['copilot']);
 });
 
 test('the refused names are built from the lists: Copilot\'s program and package, and nothing of Claude Code\'s', () => {

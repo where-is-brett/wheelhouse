@@ -4,7 +4,10 @@
 // these from here: this file imports only each adapter's identity and safety-line modules.
 import claudeCodeIdentity from '../../adapters/claude-code/identity.js';
 import claudeCodeSafety, { updateWaiting as claudeCodeUpdate } from '../../adapters/claude-code/safety-line.js';
+import copilotIdentity from '../../adapters/copilot/identity.js';
+import copilotSafety, { updateWaiting as copilotUpdate } from '../../adapters/copilot/safety-line.js';
 
 export const SAFETY_LINES = Object.freeze({
   'claude-code': Object.freeze({ label: claudeCodeIdentity.label, safetyLine: claudeCodeSafety, updateWaiting: claudeCodeUpdate }),
+  copilot: Object.freeze({ label: copilotIdentity.label, safetyLine: copilotSafety, updateWaiting: copilotUpdate }),
 });
