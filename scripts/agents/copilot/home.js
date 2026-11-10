@@ -17,12 +17,12 @@
 //
 // The home is plain text and byte-stable: LF line endings, paths in order, every file ending in one newline.
 import crypto from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import tools from '../../../adapters/copilot/tools.js';
+import { safeGit } from '../../lib/safe-git.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -227,22 +227,22 @@ export function buildHome({ root = REPO } = {}) {
 }
 
 // A clean checkout of the sources at `ref`: each one read from the repository's own object store, never the working tree,
-// into a new folder. Gives { root, remove }. A source the commit doesn't hold throws.
-export function cleanCheckout({ ref = 'HEAD', repo = REPO } = {}) {
+// into a new folder, through the fenced git route (scripts/lib/safe-git.js; the repository is read, never changed). Gives
+// { root, remove }. A source the commit doesn't hold throws.
+export async function cleanCheckout({ ref = 'HEAD', repo = REPO } = {}) {
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(ref)) throw new Error(`${JSON.stringify(ref)} isn't a commit name`);
+  // The fence alone, with no look at the repository's settings: this reads one blob by `show <ref>:<path>`, which runs no filter,
+  // hook or program, and a developer's checkout often holds settings (a branch's base) that the look would refuse it for.
+  const git = safeGit({ cwd: repo, look: 'never' });
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-copilot-checkout-'));
   const remove = () => fs.rmSync(root, { recursive: true, force: true });
   try {
     for (const rel of SOURCES) {
-      let content;
-      try {
-        content = execFileSync('git', ['-C', repo, 'show', `${ref}:${rel}`], { maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
-      } catch (error) {
-        throw new Error(`The Copilot home can't be built: ${ref} holds no ${rel}`, { cause: error });
-      }
+      const shown = await git(['show', `${ref}:${rel}`]);
+      if (shown.code !== 0) throw new Error(`The Copilot home can't be built: ${ref} holds no ${rel}`);
       const target = path.join(root, ...rel.split('/'));
       fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, content);
+      fs.writeFileSync(target, shown.stdout);
     }
   } catch (error) {
     remove();
@@ -252,8 +252,8 @@ export function cleanCheckout({ ref = 'HEAD', repo = REPO } = {}) {
 }
 
 // The home built from a clean checkout of `ref`.
-export function buildCleanHome({ ref = 'HEAD', repo = REPO } = {}) {
-  const checkout = cleanCheckout({ ref, repo });
+export async function buildCleanHome({ ref = 'HEAD', repo = REPO } = {}) {
+  const checkout = await cleanCheckout({ ref, repo });
   try {
     return buildHome({ root: checkout.root });
   } finally {
@@ -301,12 +301,12 @@ export function writeHome({ root = REPO, built = buildHome({ root }) } = {}) {
   return [...built.keys()];
 }
 
-function main(argv) {
+async function main(argv) {
   const value = (flag) => (argv.includes(flag) ? argv[argv.indexOf(flag) + 1] : undefined);
   const root = value('--root') === undefined ? REPO : path.resolve(value('--root'));
   // --root and --tree read a tree as it stands; otherwise the sources come from a clean checkout of the commit.
   const fromTree = argv.includes('--tree') || value('--root') !== undefined;
-  const built = fromTree ? buildHome({ root }) : buildCleanHome({ ref: value('--ref') ?? 'HEAD', repo: REPO });
+  const built = fromTree ? buildHome({ root }) : await buildCleanHome({ ref: value('--ref') ?? 'HEAD', repo: REPO });
   if (argv.includes('--write')) {
     const written = writeHome({ root, built });
     process.stdout.write(`Wrote ${written.length} files to ${HOME_DIR}\n`);
@@ -319,7 +319,7 @@ function main(argv) {
 
 if (startedAsScript(import.meta.url)) {
   try {
-    process.exitCode = main(process.argv.slice(2));
+    process.exitCode = await main(process.argv.slice(2));
   } catch (error) {
     process.stderr.write(`${error.message}\n`);
     process.exitCode = 2;

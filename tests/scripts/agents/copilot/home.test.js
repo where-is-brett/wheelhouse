@@ -65,10 +65,10 @@ test('the committed home is exactly what the build gives', () => {
   assert.deepEqual(checkHome({ root: ROOT }), []);
 });
 
-test('the home is built from a clean checkout: the commit\'s sources, whatever the working tree holds', { skip: sourcesDirty() && 'the sources have edits not committed yet' }, () => {
-  assert.deepEqual([...buildCleanHome({ ref: 'HEAD', repo: ROOT }).entries()], [...home.entries()]);
+test('the home is built from a clean checkout: the commit\'s sources, whatever the working tree holds', { skip: sourcesDirty() && 'the sources have edits not committed yet' }, async () => {
+  assert.deepEqual([...(await buildCleanHome({ ref: 'HEAD', repo: ROOT })).entries()], [...home.entries()]);
   // The checkout holds the four sources and nothing else, read from git's own objects.
-  const checkout = cleanCheckout({ ref: 'HEAD', repo: ROOT });
+  const checkout = await cleanCheckout({ ref: 'HEAD', repo: ROOT });
   try {
     assert.deepEqual(filesUnder(checkout.root), [...SOURCES].sort());
   } finally {
@@ -77,7 +77,7 @@ test('the home is built from a clean checkout: the commit\'s sources, whatever t
   assert.ok(!fs.existsSync(checkout.root), 'removed after');
 });
 
-test('a clean checkout ignores an edit the working tree holds, and a ref that isn\'t a commit name or lacks a source throws', () => {
+test('a clean checkout ignores an edit the working tree holds, and a ref that isn\'t a commit name or lacks a source throws', async () => {
   const repo = tempFolder('wh-clean-repo-');
   const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
   git('init', '-q');
@@ -91,9 +91,9 @@ test('a clean checkout ignores an edit the working tree holds, and a ref that is
   fs.appendFileSync(path.join(repo, 'agents', 'builder.md'), 'An edit not committed.\n');
   fs.writeFileSync(path.join(repo, 'agents', 'notes.md'), 'A file git does not track.\n');
   assert.notDeepEqual([...buildHome({ root: repo }).entries()], [...committed.entries()], 'the working tree builds differently');
-  assert.deepEqual([...buildCleanHome({ ref: 'HEAD', repo }).entries()], [...committed.entries()]);
-  assert.throws(() => buildCleanHome({ ref: 'no-such-commit', repo }), /holds no agents\/builder\.md/);
-  assert.throws(() => buildCleanHome({ ref: '--upload-pack=x', repo }), /isn't a commit name/);
+  assert.deepEqual([...(await buildCleanHome({ ref: 'HEAD', repo })).entries()], [...committed.entries()]);
+  await assert.rejects(buildCleanHome({ ref: 'no-such-commit', repo }), /holds no agents\/builder\.md/);
+  await assert.rejects(buildCleanHome({ ref: '--upload-pack=x', repo }), /isn't a commit name/);
 });
 
 test('the home is byte-stable: LF only, sorted, the same on every build', () => {
