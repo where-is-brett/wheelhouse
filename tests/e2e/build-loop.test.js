@@ -453,7 +453,10 @@ test('a question goes from the feature file to state, a click answers it, and on
     assert.ok(file.startsWith(featurePaths(s.worktree).dir + path.sep), 'the wake is copied into the worktree');
     const wake = await sandboxed(world, () => readWake(file));
     assert.deepEqual(wake.events.map((e) => [e.type, e.detail.questionId, e.detail.label]), [['answer', id, 'CSV']]);
-    assert.deepEqual(await session(world, s, ['answer', id]), { code: 0, out: 'CSV\n', err: '' });
+    // CSV is the recommendation, so the helper also says to mark it needing no change.
+    const read = await session(world, s, ['answer', id]);
+    assert.deepEqual([read.code, read.err], [0, '']);
+    assert.match(read.out, new RegExp(`^CSV\\nThis is your recommendation, .*run \\\`answer ${id} --no-change\\\` now`));
     const carryingOn = await statusHook(world, s);
     assert.deepEqual([carryingOn.phase, carryingOn.waitingOn], ['planning', null], 'the feature carries on');
   });
