@@ -5,6 +5,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { mayReplace, questionIdOf } from '../lib/build-loop.js';
 
 // The ids a feature session's own `ask` gives: q-<work>-<n>.
 const QUESTION_ID = /^q-([a-z0-9-]+)-[0-9]+$/;
@@ -12,12 +13,16 @@ const isRecord = (x) => x !== null && typeof x === 'object' && !Array.isArray(x)
 
 // The open-able questions of `work` in the build loop's views, each { id, answered, at, differs } where `at` is when it was
 // answered and `differs` says the answer is not the recommendation the piece was built on. Only a plain question the work's own
-// session raised counts (an id q-<work>-<n>): not an engine question, one that joins another or is gone, one asked again that
-// the director had answered, or one tied to a change made by hand.
+// session raised counts (an id q-<work>-<n> below the foreman's counter, or the foreman's copy of one recorded again with
+// `replaces`): not the foreman's own question about the work (it steers the run, not the head), an engine question, one that
+// joins another or is gone, one asked again that the director had answered, or one tied to a change made by hand.
+const featureOwn = (id, e) => questionIdOf(id)?.foreman === false
+  || (typeof e?.question?.data?.replaces === 'string' && mayReplace(id, e.question.data.replaces));
+
 export function questionsOf(views, work) {
   if (typeof work !== 'string' || !isRecord(views?.questions)) return [];
   return Object.entries(views.questions)
-    .filter(([id, e]) => QUESTION_ID.exec(id)?.[1] === work
+    .filter(([id, e]) => QUESTION_ID.exec(id)?.[1] === work && featureOwn(id, e)
       && isRecord(e) && isRecord(e.question) && isRecord(e.question.data) && e.question.data.work === work
       && e.question.data.engine === undefined && e.question.data.key === undefined
       && e.joins === undefined && e.gone !== true && e.byHand === undefined
