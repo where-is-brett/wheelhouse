@@ -25,6 +25,7 @@ import { projectOf } from '../hooks/kit.js';
 import { localViews } from '../hooks/session-start.js';
 import { listEvents } from '../state/events.js';
 import { usageFigures, weeklyShare } from '../usage/figures.js';
+import { monthFor } from '../agents/usage-month.js';
 import { agentInFolder } from '../agents/names.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { readProfileViews } from '../profile/store.js';
@@ -169,7 +170,7 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
   const usageAgent = attempt(() => agentInFolder(record.folder, { computerId: computerId() })) ?? null;
   const usage = offline
     ? glanceUsage(clock, clockRead, typeof usageAgent === 'string' && usageAgent !== 'claude-code')
-    : attempt(() => usageFigures({ project, now: clock, factor, agent: usageAgent }));
+    : attempt(() => usageFigures({ project, now: clock, factor, agent: usageAgent, month: monthFor(usageAgent, { settings, now: clock }) }));
   const sources = offline ? null : readSources();
 
   const known = await helperFacts(project, { client, address, now: clock, offline, clockRead, waitMs }).catch(() => ({}));

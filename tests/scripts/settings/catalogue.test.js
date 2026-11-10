@@ -27,6 +27,9 @@ test('every setting in design section 14 is in the catalogue, with its default',
     briefingGapHours: ['profile', BRIEFING_GAP_HOURS],
     explanations: ['profile', 'plain'],
     usageMark: ['profile', 75],
+    copilotPlan: ['profile', 'auto-only'],
+    copilotAllowance: ['profile', 200],
+    copilotCeiling: ['profile', 20],
     notifications: ['profile', { channels: ['claude'] }],
     boardTab: ['profile', 'director'],
     hours: ['profile', null],
@@ -144,6 +147,19 @@ test('Thoroughness has four levels, Premium model three and Usage nudge five', (
   assert.doesNotThrow(() => checkSetting('usageMark', 90));
   assert.throws(() => checkSetting('usageMark', 80));
   assert.throws(() => checkSetting('premium', 'on'));
+});
+
+test('the Copilot settings: plan, allowance and ceiling', () => {
+  assert.deepEqual(SETTINGS.copilotPlan.levels, ['auto-only', 'credits', 'requests']);
+  for (const plan of ['auto-only', 'credits', 'requests']) assert.doesNotThrow(() => checkSetting('copilotPlan', plan));
+  assert.throws(() => checkSetting('copilotPlan', 'free'));
+  assert.doesNotThrow(() => checkSetting('copilotAllowance', 200));
+  for (const bad of [0, -1, 1.5, '200', 100001]) assert.throws(() => checkSetting('copilotAllowance', bad));
+  assert.doesNotThrow(() => checkSetting('copilotCeiling', 20));
+  assert.doesNotThrow(() => checkSetting('copilotCeiling', 0));
+  for (const bad of [-1, 20.5, '20', 10001]) assert.throws(() => checkSetting('copilotCeiling', bad));
+  assert.equal(SETTINGS.capRequests, undefined);
+  assert.equal(retiredPiece('capRequests'), 'copilot');
 });
 
 test('engine accepts wheelhouse and archon only', () => {

@@ -226,10 +226,11 @@ export function weeklyShare({ now } = {}) {
 // usageFigures({ project, now, factor, agent }): the figures described at the top of this file.
 // `project` limits the week, the parts, the features and unusual use to sessions whose session file
 // names that project (all sessions when null); the share is the account's whatever the project.
+// `month` is the agent's month (scripts/agents/usage-month.js), which the figures carry through for the board and the briefing.
 // `agent` is the agent the project runs on this computer: for any agent but Claude Code (ruling P8-32), and for
 // figures whose sessions an agent other than Claude Code recorded, the allowance is Claude's, not the project's, so
 // the figures carry no share, and the week is the last seven days rather than the allowance's window.
-export function usageFigures({ project = null, now, factor, agent = null } = {}) {
+export function usageFigures({ project = null, now, factor, agent = null, month = null } = {}) {
   const nowMs = instant(now);
   const today = dateOf(nowMs);
   const limit = typeof factor === 'number' && Number.isFinite(factor) && factor > 0 ? factor : UNUSUAL.factor;
@@ -301,7 +302,8 @@ export function usageFigures({ project = null, now, factor, agent = null } = {})
     .map(({ ratio, ...item }) => item);
 
   const missing = [];
-  if (words !== null) missing.push(words.allowance);
+  // An agent whose allowance is a month's gives it (scripts/agents/usage-month.js); until it does, its words say why none shows.
+  if (words !== null && month === null) missing.push(words.allowance);
   else if (!otherAgent) {
     if (!telemetry) missing.push(NO_TOKENS);
     if (!allowance) missing.push(NO_ALLOWANCE);
@@ -312,6 +314,7 @@ export function usageFigures({ project = null, now, factor, agent = null } = {})
       from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString(), ...figure(weekTotal, runs), share, shareAt,
     },
     ...(words !== null ? { words: { note: words.note } } : {}),
+    ...(month !== null && typeof month === 'object' ? { month } : {}),
     byPart,
     bySubagents: { tokens: subagents },
     byFeature,
