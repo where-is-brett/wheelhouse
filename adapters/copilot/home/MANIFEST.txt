@@ -1,0 +1,5 @@
+4acd13567e69ef9ffacee6aa85c8fa0176f3aa49 agents/wheelhouse-builder.agent.md
+98f7b5086b1d3c02276b6ad303a173c6fde3deea agents/wheelhouse-foreman.agent.md
+4c959fc19bf702ab93f3c7f349be606ccfe7fd73 agents/wheelhouse-reviewer.agent.md
+136265bef8ad8f02c9977a92d4492e5431c406f2 agents/wheelhouse-tester.agent.md
+da7125f773f52c5d72c8ed3abdc413e04da1c292 rules/wheelhouse-foreman.json

@@ -1,0 +1,10 @@
+{
+  "agent": "wheelhouse-foreman",
+  "shell": [
+    "bash",
+    "powershell"
+  ],
+  "allow": [
+    "node '<wheelhouse-root>/scripts/foreman/wake.js':*"
+  ]
+}

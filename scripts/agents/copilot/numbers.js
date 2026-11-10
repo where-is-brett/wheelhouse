@@ -22,8 +22,9 @@ export const CONFIRMED_STEPS = Object.freeze(['lift-stop', 'guardrail-change', '
 export const BOARD_FILE = 'wheelhouse/board.md';
 // The hook file's name, in the person's Copilot hook folder.
 export const HOOK_FILE = 'wheelhouse.json';
-// The version of Copilot CLI the probes install.
-export const COPILOT_VERSION = '1.0.101';
+// The version of Copilot CLI Wheelhouse is pinned to: the one the trial's checks ran on (check 96, 10 November 2026). The
+// fixtures captured at 1.0.101 are older than the pin and are re-captured against it as the trial runs.
+export const COPILOT_VERSION = '1.0.105';
 // How long a Copilot hook waits for the helper's /health before it takes the helper as not running (ruling P5-22).
 export const HELPER_PROBE_MS = 2000;
 // Whether check 59 (C6) has shown a hook can see ask_user's answer, so a click a hook saw can be recorded as
