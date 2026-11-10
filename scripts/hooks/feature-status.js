@@ -122,7 +122,7 @@ async function keepStatus(input, { now = () => new Date(), answered, slice, writ
   if (capture && attempt(() => (captureRulings({ worktree: root, feature }), true))) after.ledger = stamp;
   if (due) {
     attempt(() => {
-      const next = buildStatus({ worktree: root, now, feature, ...(answered ? { answered } : {}), ...(slice ? { slice } : {}) });
+      const next = buildStatus({ worktree: root, now, feature, turnEnded: input.hook_event_name === 'Stop', ...(answered ? { answered } : {}), ...(slice ? { slice } : {}) });
       if (!sameStatus(readStatus(p.status), next)) writeStatus(p.status, next);
     });
     after.at = nowMs;
