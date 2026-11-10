@@ -2,7 +2,7 @@
 
 # The Haiku trial
 
-8 November 2026. A design for a test project and a trial script that show Wheelhouse works when every model role is bound to Haiku. Design only: nothing here is built yet, and no repository has been made.
+8 November 2026. A design for a test project and a trial script that show Wheelhouse works when every model role is bound to Haiku. The trial kit built from it is in `probes/haiku-trial/` (plan `docs/superpowers/plans/2026-11-08-haiku-trial-kit.md`).
 
 ## 1. Why, and when it runs
 

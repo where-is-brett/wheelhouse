@@ -4,6 +4,8 @@
 
 The answers to the checks in section 20 of the design, and to checks 24 to 31 in section 16 of the build-loop design (`docs/specs/2026-10-18-build-loop-design.md`), and checks 54 to 72, which are the Copilot design's C1 to C19 (`docs/superpowers/plans/2026-10-21-wheelhouse-copilot.md`, "Check numbers"), and check 73, which is the security-gaps plan's (72 belongs to the Copilot plan), and checks 74 to 79, which are the Archon design's early checks E1 to E6 (`docs/superpowers/plans/2026-10-29-archon-part-2-early-checks.md`), and check 80, part 4.1's real small-lane run, and check 81, part 4.4's real two-slice feature run, and checks 82 to 84, which are the local-checks design's early checks, and checks 85 to 90, which are the delegated-decisions design's D1 to D5 and the goals draft's U3, and checks 92 and 93, which are the unattended goals design's U2 and U4, and checks 94 and 95, which are the update command's early checks and its Mac rehearsal, one note per check. Check 26 was not run and is no longer needed: Shape 1 was taken on check 27's Mac half, and Shape 2's wakes come from the mod's timer in the foreman's session, not a plugin monitor (build-loop design, section 11).
 
+Checks 9, 32, 33, 40 to 42 and 67 were about the mod and the pane; 56, 57, 63, 69 and 70 about Copilot and Lean; 54, 55 and 72 about the VS Code add-on; 74 to 81 about Archon. Those pieces are parked from v0.3.0 (`docs/parked.md`). The notes stay as the record of what was tried.
+
 | # | Check | Answer | Note |
 |---|---|---|---|
 | 7 | Telemetry receiver on both systems | Partly | [07-telemetry.md](07-telemetry.md) |

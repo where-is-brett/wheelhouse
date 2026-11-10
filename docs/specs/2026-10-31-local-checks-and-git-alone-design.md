@@ -2,7 +2,7 @@
 
 # Local checks and git alone: design
 
-**Status:** approved by the director on 31 October 2026 ("Build it"). The build plan is `docs/superpowers/plans/2026-10-31-local-checks-and-git-alone.md`. Nothing in it is built yet.
+**Status:** approved by the director on 31 October 2026 ("Build it"). The build plan is `docs/superpowers/plans/2026-10-31-local-checks-and-git-alone.md`. It is built.
 
 **The ruling this answers (the director, 31 October 2026).** Wheelhouse must not insist on GitHub or GitLab. A project kept only on this computer, in git alone with no code host, is fully supported, building included, on the Archon engine.
 
