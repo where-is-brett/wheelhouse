@@ -53,14 +53,14 @@ The CLI counted **6 requests** (1, 1, 2, 1, 0, 1). T1's budget was 2 and T2's 8;
 - Section 5.2's estimate holds in one respect: subagents are free of their own request. A blocked `agentStop` costs one more, so a card check that blocks should be rare.
 - The session id is given up front, so the sessions part needs no `idFromRun`.
 
-## What changed in parts 2 to 4
+### What changed in parts 2 to 4
 
 - `adapters/copilot/hooks.js` registers `agentStop`, `subagentStop` and `sessionEnd` as well (seven events). `postToolUse` stays out until check C6.
 - `adapters/copilot/translate.js`: a block at the end of a turn is answered with exit 0 (the form seen to work); `exitCodeFor` takes the event, and a block still exits 2 at `preToolUse` or when no event is given.
 - `scripts/agents/copilot/hook-entry.js`: a subagent's own `userPromptSubmitted` and `agentStop` (named by `agentId`) run no step. The prompt is the parent's task, not the director's words, and a block there is ignored.
 - Fixtures: `tests/fixtures/copilot/hook-input/` gains `userPromptSubmitted`, `agentStop` (main and subagent), `sessionEnd` and `preCompact`; `tests/fixtures/copilot/run/` holds one run's output lines and usage file. Model names are replaced by placeholders.
 
-## Still open
+### Still open
 
 - Whether `ask_user`'s answer reaches a `postToolUse` hook, and whether an agent can fill it in: check C6, stage T5.
 - Whether an automatic compaction can be held (only a manual one was run), and whether Auto honours `--reasoning-effort`.
@@ -68,3 +68,7 @@ The CLI counted **6 requests** (1, 1, 2, 1, 0, 1). T1's budget was 2 and T2's 8;
 - Whether a block answered with exit 2 also works at `agentStop` (the entry sends exit 0).
 - A prompt made of a hook's own block reason reaches `userPromptSubmitted` as if typed; the entry cannot tell it from the director's words. It matters only to `prompt-record`, and only for a reply code, which a reason would not hold.
 - A top-level session's input that carried `agentId` and `parentAgentId` would have its prompt and `agentStop` steps skipped. None was seen: only a subagent's inputs carry both.
+
+## Needs the director
+
+Nothing now. The open items above go to later trial stages.
