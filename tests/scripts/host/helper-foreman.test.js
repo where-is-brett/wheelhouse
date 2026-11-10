@@ -279,6 +279,8 @@ test('a feature session\'s pull brings the host\'s branch into its own, by fast-
   try {
     const worktree = path.join(p.checkout, '.claude', 'worktrees', 'export');
     await g(p.checkout, 'worktree', 'add', '-q', '-b', 'feature/export', worktree, 'origin/main');
+    await g(worktree, 'config', 'user.name', 'T');
+    await g(worktree, 'config', 'user.email', 't@example.com');
     fs.mkdirSync(featurePaths(worktree).dir, { recursive: true });
     const first = await commitIn(worktree, 'export.js', 'export const csv = true;\n', 'The export');
     await g(worktree, 'push', '-q', 'origin', 'feature/export');

@@ -533,6 +533,9 @@ function pullFixture({ clash = false } = {}) {
   git(mainDir, 'commit', '-q', '-m', 'first');
   const tree = path.join(mainDir, '.claude', 'worktrees', 'login-page');
   git(mainDir, 'worktree', 'add', '-q', tree, '-b', 'feature/login-page');
+  // A merge commit needs an identity, which a session's worktree has.
+  git(tree, 'config', 'user.name', 't');
+  git(tree, 'config', 'user.email', 't@t');
   write(featurePaths(tree).brief, `${fence(brief())}\nThe brief.\n`);
   // The second commit is made in a copy, so the worktree is one commit behind.
   const copy = path.join(base, 'copy');
