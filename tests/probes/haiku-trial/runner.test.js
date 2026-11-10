@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { STEPS, planRun, run, restore, waitFor, main, withoutChrome, runLabel, NEW_SESSION, FOLLOW_UP, CHECK_IN, waitingInRecord } from '../../../probes/haiku-trial/runner.js';
+import { sessionName } from '../../../probes/haiku-trial/tmux.js';
 import { P5_SPARE } from '../../../probes/haiku-trial/requests.js';
 
 const ENV = { WHEELHOUSE_HOME: process.env.WHEELHOUSE_HOME, HAIKU_TRIAL_GH_OWNER: 'trial-owner', HAIKU_TRIAL_CLAUDE: '/bin/claude', HAIKU_TRIAL_PREVIEW: 'none' };
@@ -22,7 +23,7 @@ function fakeIo(over = {}) {
   const timeline = [];
   const rec = (kind, ...args) => timeline.push({ kind, args, at: now });
   // The sessions started and not killed are the ones tmux lists, by their full names; `over.sessions` overrides the list.
-  const full = (name) => (String(name).startsWith('haiku-trial-') ? String(name) : `haiku-trial-${name}`);
+  const full = (name) => sessionName(over.label ?? '2026-11-08', name);
   const live = new Set();
   const io = {
     timeline,
@@ -251,7 +252,7 @@ test('setup answers its cards through the setup session, ends on the engine word
   const io = fakeIo({
     keys: (name, key) => { if (key === 'Down') onYes = true; if (key === 'Enter' && onYes) trusted = true; },
     capture: (name) => {
-      if (name !== 'haiku-trial-setup' && name !== 'setup') return '';
+      if (name !== 'haiku-trial-2026-11-08-setup' && name !== 'setup') return '';
       if (!trusted) return trustMenu(onYes);
       if (phase < 3) return 'Last safety checks need one new session on this folder.';
       if (phase < 5) return 'working';
@@ -363,7 +364,7 @@ test('a session that ends by itself stops the run at once instead of waiting it 
   });
   const got = await run({ mode: 'smoke', io, from: 'setup-s0', until: 'setup-s0', folder: scratch(t), date: '2026-11-08', env: ENV });
   assert.equal(got.stoppedAt, 'setup-s0');
-  assert.match(got.why, /the setup session ended by itself \(tmux haiku-trial-setup is gone\)/);
+  assert.match(got.why, /the setup session ended by itself \(tmux haiku-trial-2026-11-08-setup is gone\)/);
   assert.ok(io.clock.now() - T0 < 5 * 60 * 1000, 'stopped within minutes, not after the 45-minute wait');
 });
 
@@ -749,6 +750,17 @@ test('with no label the clock names the run, as before', async (t) => {
   assert.equal(io.timeline.find((e) => e.kind === 'gh' && e.args[0][0] === 'repo').args[0][2], 'trial-owner/haiku-trial-2026-11-08');
 });
 
+test('restore stops sessions recorded under the plain prefix and under the run\'s own', async (t) => {
+  const folder = scratch(t);
+  fs.writeFileSync(path.join(folder, 'run-log.jsonl'), [
+    { step: 'front-desk', note: 'x', detail: { tmux: 'haiku-trial-desk' } },
+    { step: 'front-desk', note: 'x', detail: { tmux: 'haiku-trial-2026-11-10-b-desk' } },
+  ].map((e) => JSON.stringify(e)).join('\n') + '\n');
+  const io = fakeIo({ sessions: ['haiku-trial-desk', 'haiku-trial-2026-11-10-b-desk', 'other-session'] });
+  const got = await restore({ folder, io });
+  assert.deepEqual(got.stopped, ['haiku-trial-desk', 'haiku-trial-2026-11-10-b-desk']);
+});
+
 test('restore --date finds that run\'s folder and stops what its log recorded', async (t) => {
   const { root, io, asked } = labelled(t, { sessions: ['haiku-trial-desk'] });
   const folder = path.join(root, 'haiku-2026-11-08-b');
@@ -1004,7 +1016,7 @@ test('setup ends from the setup journal when the pane never shows the engine\'s 
   process.env.WHEELHOUSE_HOME = home;
   t.after(() => { if (saved === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = saved; });
   const io = fakeIo({
-    capture: (name) => (name === 'haiku-trial-setup' || name === 'setup' ? 'Wheelhouse setup is finished for this folder' : ''),
+    capture: (name) => (name === 'haiku-trial-2026-11-08-setup' || name === 'setup' ? 'Wheelhouse setup is finished for this folder' : ''),
     host: {
       events: async () => {
         ticks += 1;

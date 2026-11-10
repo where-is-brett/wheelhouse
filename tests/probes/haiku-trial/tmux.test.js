@@ -1,7 +1,7 @@
 // tests/probes/haiku-trial/tmux.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cleanEnv, makeTmux, frontDeskCommand, bursts, TYPE_GAP_MS, SETTLE_MS } from '../../../probes/haiku-trial/tmux.js';
+import { cleanEnv, makeTmux, sessionPrefix, sessionName, frontDeskCommand, bursts, TYPE_GAP_MS, SETTLE_MS } from '../../../probes/haiku-trial/tmux.js';
 import { startedByScript } from '../../../scripts/decisions/answer.js';
 
 test('cleanEnv removes every starter variable', () => {
@@ -73,4 +73,21 @@ test('capture joins wrapped lines and reads the whole history', () => {
   const tmux = makeTmux({ run: (cmd, args) => { calls.push(args); return { status: 0, stdout: 'text' }; } });
   assert.equal(tmux.capture('desk'), 'text');
   assert.deepEqual(calls[0], ['capture-pane', '-p', '-J', '-S', '-', '-t', 'haiku-trial-desk']);
+});
+
+test('two run labels give separate session names, and list keeps to its own run', () => {
+  const up = 'haiku-trial-2026-11-10-desk\nhaiku-trial-2026-11-10-b-desk\nhaiku-trial-desk\nmine\n';
+  const callsA = [];
+  const callsB = [];
+  const a = makeTmux({ label: '2026-11-10', run: (cmd, args) => { callsA.push(args); return { status: 0, stdout: up }; } });
+  const b = makeTmux({ label: '2026-11-10-b', run: (cmd, args) => { callsB.push(args); return { status: 0, stdout: up }; } });
+  a.keys('desk', 'Enter');
+  b.keys('desk', 'Enter');
+  assert.deepEqual(callsA[0], ['send-keys', '-t', 'haiku-trial-2026-11-10-desk', 'Enter']);
+  assert.deepEqual(callsB[0], ['send-keys', '-t', 'haiku-trial-2026-11-10-b-desk', 'Enter']);
+  assert.deepEqual(b.list(), ['haiku-trial-2026-11-10-b-desk']);
+  assert.deepEqual(b.list({ all: true }), ['haiku-trial-2026-11-10-desk', 'haiku-trial-2026-11-10-b-desk', 'haiku-trial-desk']);
+  assert.equal(sessionPrefix('2026-11-10'), 'haiku-trial-2026-11-10-');
+  assert.equal(sessionPrefix(), 'haiku-trial-');
+  assert.equal(sessionName('2026-11-10', 'haiku-trial-desk'), 'haiku-trial-desk', 'a recorded full name is kept');
 });

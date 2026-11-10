@@ -135,6 +135,7 @@ test('typed commands go through the front desk', () => {
   faults.undoTyped(tmux, 'abc123');
   faults.liftTyped(tmux);
   assert.deepEqual(typed.map(([, text]) => text), ['all stop', 'undo abc123', 'lift all stop']);
+  assert.deepEqual([...new Set(typed.map(([name]) => name))], ['desk'], 'the run\'s own prefix is added by the tmux layer');
 });
 
 test('decisionFallback asks the spec\'s question at level 3', () => {

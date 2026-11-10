@@ -11,7 +11,7 @@ import { projectSlug } from '../../scripts/lib/paths.js';
 import { runFolder } from './results.js';
 import { openPicker, readyToSubmit, deskBusy, HIGHLIGHTED, PICKED } from './stand-in.js';
 import { PIECES, WAVES, P5_SPARE, F2_ANSWER, P6_FILE } from './requests.js';
-import { SESSION_PREFIX, frontDeskCommand } from './tmux.js';
+import { SESSION_PREFIX, sessionName, frontDeskCommand } from './tmux.js';
 import { STEPS as LOG, SETUP_DONE, setupJournalDone, OWN_BRANCH } from './signals.js';
 import { STEPS as SETUP_STEPS } from '../../scripts/setup/steps.js';
 import { auditModels } from './audit.js';
@@ -164,7 +164,7 @@ const pullOf = (pulls, text) => pulls.find((p) => text !== undefined && text !==
 
 // The tmux sessions this run started and has not ended itself. One that is gone ended by itself (a crash, or a prompt answered
 // the wrong way), and nothing the run waits for can come from it, so the run stops.
-const tmuxName = (name) => `${SESSION_PREFIX}${name}`;
+const tmuxName = (ctx, name) => sessionName(ctx.label, name);
 function endSession(ctx, name) {
   ctx.live?.delete(name);
   ctx.io.tmux.kill(name);
@@ -173,7 +173,7 @@ function mustBeAlive(ctx) {
   if (!ctx.live?.size) return;
   const up = new Set(ctx.io.tmux.list());
   for (const name of ctx.live) {
-    if (!up.has(tmuxName(name))) throw new Stop(`the ${name} session ended by itself (tmux ${tmuxName(name)} is gone)`);
+    if (!up.has(tmuxName(ctx, name))) throw new Stop(`the ${name} session ended by itself (tmux ${tmuxName(ctx, name)} is gone)`);
   }
 }
 
@@ -391,7 +391,7 @@ async function desk(ctx, name, extraEnv = {}) {
   const own = { WHEELHOUSE_HOME: ctx.env.WHEELHOUSE_HOME, ...(ctx.env.HAIKU_TRIAL_CONFIG_DIR ? { CLAUDE_CONFIG_DIR: ctx.env.HAIKU_TRIAL_CONFIG_DIR } : {}) };
   io.tmux.start({ name, cwd: ctx.projectDir, command, env: { ...env, ...own, ...extraEnv } });
   (ctx.live ??= new Set()).add(name);
-  await note(ctx, name === DESK ? 'front-desk' : name, `started tmux session ${SESSION_PREFIX}${name}`, { detail: { tmux: `${SESSION_PREFIX}${name}` } });
+  await note(ctx, name === DESK ? 'front-desk' : name, `started tmux session ${tmuxName(ctx, name)}`, { detail: { tmux: tmuxName(ctx, name) } });
   await ctx.io.clock.sleep(15000);
   // A fresh folder asks to be trusted before anything else. Its first choice is "No, exit", so Yes is chosen by moving down to it
   // and seeing it highlighted before Enter.
@@ -998,7 +998,7 @@ export function planRun({ mode = 'full' } = {}) {
 
 const lastDone = (file) => readLog(file).filter((e) => e.done === true).map((e) => e.step).filter((id) => STEPS.some((s) => s.id === id)).pop();
 
-function contextFor({ mode, io, folder, date, env }) {
+function contextFor({ mode, io, folder, date, label, env }) {
   const owner = env.HAIKU_TRIAL_GH_OWNER;
   const repoName = `haiku-trial-${date}`;
   const projectName = projectSlug(owner ?? 'unset', repoName);
@@ -1009,7 +1009,7 @@ function contextFor({ mode, io, folder, date, env }) {
     pieces: {}, faults: {}, ntfy: [], seen: [], branches: [], panes: { 'front-desk': [], replies: [] }, p5: 'original', ...saved,
   };
   return {
-    mode, io, env, folder, date, state, stateFile, smoke: mode === 'smoke', repoName, owner,
+    mode, io, env, folder, date, label, state, stateFile, smoke: mode === 'smoke', repoName, owner,
     repoSlug: `${owner}/${repoName}`, remote: `https://github.com/${owner}/${repoName}.git`,
     projectDir: path.join(folder, 'project'), projectName, logFile: path.join(folder, 'run-log.jsonl'),
     claude: env.HAIKU_TRIAL_CLAUDE ?? 'claude', preview: env.HAIKU_TRIAL_PREVIEW ?? 'none',
@@ -1017,13 +1017,14 @@ function contextFor({ mode, io, folder, date, env }) {
 }
 
 export async function run({ mode = 'full', io: given, from, until, folder, date, model, env = process.env } = {}) {
+  const label = date;
   const problem = homeProblem(env);
   if (problem) return { done: [], stoppedAt: 'wheelhouse-home', why: problem };
   const io = { ...given, host: { ...NOTHING, ...(given.host ?? {}) } };
   const day = date ?? new Date(io.clock.now()).toISOString().slice(0, 10);
   const where = folder ?? io.results.runFolder(day);
   fs.mkdirSync(where, { recursive: true });
-  const ctx = contextFor({ mode, io, folder: where, date: day, env });
+  const ctx = contextFor({ mode, io, folder: where, date: day, label, env });
   // The project and every session it starts are pinned to one model, so a resume keeps the model the run began on.
   const asked = model === undefined ? undefined : parseModel(model);
   const began = ctx.state.model;
@@ -1082,7 +1083,7 @@ export async function restore({ folder, io, force = false }) {
   const entries = readLog(path.join(folder, 'run-log.jsonl'));
   const names = new Set(entries.flatMap((e) => [].concat(e.detail?.tmux ?? [])).filter((n) => String(n).startsWith(SESSION_PREFIX)));
   const pids = new Set(entries.flatMap((e) => [e.detail?.productPid, e.detail?.tunnelPid]).filter((p) => Number.isInteger(p)));
-  const live = new Set(io.tmux.list());
+  const live = new Set(io.tmux.list({ all: true }));
   for (const name of names) {
     if (!live.has(name)) continue;
     io.tmux.kill(name);
@@ -1163,7 +1164,7 @@ export async function main(argv, { print = console.log, buildIo, env = process.e
     print(USAGE);
     return 2;
   }
-  const io = await buildIo(env);
+  const io = await buildIo(env, label);
   const folder = args.folder ?? io.results.runFolder(label ?? new Date(io.clock.now()).toISOString().slice(0, 10));
   // Everything Wheelhouse keeps follows WHEELHOUSE_HOME: set it to the trial's own folder before anything reads it, and refuse the real one.
   const home = trialHome({ folder, env });

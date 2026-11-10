@@ -9,6 +9,9 @@ const STARTER_VARIABLES = ['WHEELHOUSE_ROLE', 'WHEELHOUSE_SESSION', 'WHEELHOUSE_
 const SCRIPT_ENTRYPOINT = /^sdk-/;
 
 export const SESSION_PREFIX = 'haiku-trial-';
+// A run's sessions are named `haiku-trial-<label>-<name>`, so two runs on one Mac never share a tmux session. Without a label
+// the prefix is the plain one.
+export const sessionPrefix = (label) => (label ? `${SESSION_PREFIX}${label}-` : SESSION_PREFIX);
 // A wide, tall window, so a long line is one line on screen, and a deep history, so a long reply is still there to read.
 export const PANE_COLUMNS = 220;
 export const PANE_ROWS = 60;
@@ -47,10 +50,12 @@ export function bursts(text, size = TYPE_BURST) {
 }
 const wait = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-const named = (name) => (String(name).startsWith(SESSION_PREFIX) ? String(name) : `${SESSION_PREFIX}${name}`);
+// A name that already carries the trial prefix (one a run log recorded, under this run's prefix or an older plain one) is kept.
+export const sessionName = (label, name) => (String(name).startsWith(SESSION_PREFIX) ? String(name) : `${sessionPrefix(label)}${name}`);
 
-// The tmux calls the trial makes. `run(command, args)` is spawnSync-shaped; tests inject it.
-export function makeTmux({ run = spawnSync, pause = wait } = {}) {
+// The tmux calls the trial makes. `run(command, args)` is spawnSync-shaped; tests inject it. `label` is the run's label.
+export function makeTmux({ run = spawnSync, pause = wait, label } = {}) {
+  const named = (name) => sessionName(label, name);
   const tmux = (...args) => run('tmux', args, { encoding: 'utf8' });
   const said = (got) => String(got?.stdout ?? '');
   return {
@@ -82,8 +87,10 @@ export function makeTmux({ run = spawnSync, pause = wait } = {}) {
     kill(name) {
       return tmux('kill-session', '-t', named(name));
     },
-    list() {
-      return said(tmux('list-sessions', '-F', '#{session_name}')).split(/\r?\n/).filter((n) => n.startsWith(SESSION_PREFIX));
+    // This run's sessions; `all` lists every trial session, whichever run made it.
+    list({ all = false } = {}) {
+      const prefix = all ? SESSION_PREFIX : sessionPrefix(label);
+      return said(tmux('list-sessions', '-F', '#{session_name}')).split(/\r?\n/).filter((n) => n.startsWith(prefix));
     },
   };
 }

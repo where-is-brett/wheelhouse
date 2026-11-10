@@ -150,7 +150,7 @@ async function f3bKillForeman({ listProcesses = listWithEnv, kill = process.kill
   return { pid: found.pid };
 }
 
-const DESK = 'haiku-trial-desk';
+const DESK = 'desk';
 const f6AllStop = (tmux, name = DESK) => tmux.type(name, 'all stop');
 const undoTyped = (tmux, sha, name = DESK) => tmux.type(name, `undo ${sha}`);
 const liftTyped = (tmux, name = DESK) => tmux.type(name, 'lift all stop');
