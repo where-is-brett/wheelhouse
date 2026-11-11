@@ -501,7 +501,12 @@ async function pieceEnv(ctx, id) {
   const piece = ctx.state.pieces[id]?.change ?? id.toLowerCase();
   let got;
   const found = await waitFor(async () => {
-    try { got = await ctx.io.faults.featureEnvOf({ project: ctx.projectDir, name: ctx.projectName, piece }); return true; } catch { await tick(ctx); return false; }
+    try { got = await ctx.io.faults.featureEnvOf({ project: ctx.projectDir, name: ctx.projectName, piece }); return true; } catch (error) {
+      // Only a session not found yet is worth waiting for; any other error is the runner's own and stops it at once.
+      if (!/^No running feature session/.test(error?.message ?? '')) throw error;
+      await tick(ctx);
+      return false;
+    }
   }, { io: ctx.io, timeoutMs: 40 * MINUTE });
   if (!found) throw new Stop(`no running feature session names ${id}`);
   return got;

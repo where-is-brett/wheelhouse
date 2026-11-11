@@ -238,5 +238,5 @@ function naturalSendBacks({ cwd }) {
 
 export const faults = {
   f1WrongShape, f1bStuck, f1cDirectorKind, f3KillFeature, f3bKillForeman, f6AllStop, undoTyped, liftTyped, decisionFallback, secondDecision,
-  thirdDecision, reviewDecision, naturalSendBacks,
+  thirdDecision, reviewDecision, naturalSendBacks, featureEnvOf,
 };

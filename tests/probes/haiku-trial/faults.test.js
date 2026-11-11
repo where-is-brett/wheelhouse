@@ -29,6 +29,14 @@ function feature() {
 }
 const run = (command, args, opts) => spawnSync(command, args, { ...opts, encoding: 'utf8' });
 
+// The runner's tests stand in for io.faults, so they cannot see a fault the real object lacks; read what the runner calls instead.
+test('every fault the runner calls is on the faults object', () => {
+  const runner = fs.readFileSync(new URL('../../../probes/haiku-trial/runner.js', import.meta.url), 'utf8');
+  const called = [...new Set([...runner.matchAll(/\bio\.faults\.(\w+)\(/g)].map((m) => m[1]))];
+  assert.ok(called.includes('featureEnvOf'));
+  for (const name of called) assert.equal(typeof faults[name], 'function', `faults.${name}`);
+});
+
 test('f1 gets exit 2 and a send-back', () => {
   const tree = feature();
   const got = faults.f1WrongShape({ env: process.env, cwd: tree, run });
