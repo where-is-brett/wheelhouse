@@ -36,13 +36,13 @@
 import tools from '../../adapters/claude-code/tools.js';
 import { asQuestion } from '../cards/visit.js';
 import { runAndExit, answer, projectOf, beingSetUp, readTailEntries } from './kit.js';
-import { setupCardsFor } from '../lib/setup-clicks.js';
+import { setupCardsFor, bareLabel } from '../lib/setup-clicks.js';
 import { looksLikeBaseline, holdsFigures, cardHash, readShown, cardText, sweepStale } from '../lib/measures-clicks.js';
 import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT, SUGGEST, SHOW_ME, NOT_NOW, SEND_BACK } from '../lib/calm-words.js';
 import { CARD } from '../lib/front-desk.js';
 import {
-  chatCopy, setLinesOf, setLineOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, LIFT_STOP, LIFT_LABEL, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, SEAT_TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LINE,
+  chatCopy, setLinesOf, setLineOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, LIFT_STOP, LIFT_LABELS, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, SEAT_TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LINE,
 } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { cardOutcomes } from '../state/views.js';
@@ -279,9 +279,9 @@ const isLiftQuestion = (q) => typeof q?.question === 'string' && isLiftStopLine(
 // (scripts/hooks/prompt-record.js). A copy asked without them, an option Lift All stop and no set line, signs nothing,
 // so while STOP is on its last two lines are put back.
 const LIFT_TAIL = `\n${LIFT_STOP}\n${replyCodeLine(replyCode(LIFT_STOP))}`;
-const labelsOf = (q) => (Array.isArray(q?.options) ? q.options.map((o) => (typeof o === 'string' ? o : o?.label)) : []);
+const labelsOf = (q) => (Array.isArray(q?.options) ? q.options.map((o) => bareLabel(typeof o === 'string' ? o : o?.label)) : []);
 function wholeLift(q) {
-  if (typeof q?.question !== 'string' || !labelsOf(q).includes(LIFT_LABEL) || setLinesOf(q.question).length > 0) return q;
+  if (typeof q?.question !== 'string' || !labelsOf(q).some((l) => LIFT_LABELS.includes(l)) || setLinesOf(q.question).length > 0) return q;
   return { ...q, question: `${q.question.trimEnd()}${LIFT_TAIL}` };
 }
 

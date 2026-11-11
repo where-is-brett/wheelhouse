@@ -574,6 +574,9 @@ test('a Lift All stop question asked without its last two lines gets them back w
   // While STOP is off nothing is added: the copy signs nothing either way.
   const off = await run(withSession([bare]), { outcomes: () => [], stop: STOP_OFF });
   assert.ok(off === undefined || !JSON.stringify(off).includes(LIFT_STOP));
+  // A recommended label is read the same way.
+  const rec = { ...bare, options: bare.options.map((o) => (o.label === 'Lift All stop' ? { ...o, label: 'Lift All stop (Recommended)' } : o)) };
+  assert.equal(swapped(await run(withSession([rec]), { outcomes: () => [], stop: STOP_ON }))[0].question, LIFT.question);
   // A question without the Lift All stop option is left as it is.
   assert.equal(await run(withSession([PLAIN]), { outcomes: () => [], stop: STOP_ON }), undefined);
 }));
