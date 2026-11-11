@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import { parsePs } from '../../scripts/engine/stop.js';
 import { WORKTREE_PATH } from '../../scripts/engine/parts.js';
 import { madeFeatureSlug } from '../../scripts/hooks/session-start.js';
-import { recordedFeatureSessions } from './sessions.js';
+import { recordedFeatureSessions, recordedFeatureWorktrees } from './sessions.js';
 
 const PLUGIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CLI = (plugin) => path.join(plugin, 'scripts', 'feature', 'cli.js');
@@ -58,10 +58,14 @@ function workOf(base, cwd) {
   return base.endsWith(path.join('.claude', 'worktrees')) ? path.relative(base, cwd).split(path.sep)[0] : null;
 }
 
-// A feature session is found two ways. By Wheelhouse's own record of it (watcher/running/feature-<work>.json, under the
-// project's name): the recorded process, or the `claude -p` it started. Failing that, by a `claude -p` whose working folder
-// (read from the process, not from PWD) is a worktree in one of the worktree folders and whose feature slug names the piece.
-async function findFeature(project, piece, { listProcesses, cwdOf, name, recorded = recordedFeatureSessions }) {
+// A feature session is a run of `claude -p` that ends when the session has done its turn and starts again at the next wake, so
+// it has a process only while it runs. It is found three ways. By Wheelhouse's own record of a run (watcher/running/
+// feature-<work>.json, under the project's name): the recorded process, or the `claude -p` it started. Failing that, by a
+// `claude -p` whose working folder (read from the process, not from PWD) is a worktree in one of the worktree folders and
+// whose feature slug names the piece. Failing that, by the session record the watcher keeps for the work
+// (watcher/sessions/<work>.json) while its worktree is there: no process (pid null), the worktree as the working folder.
+// A command that only runs in the worktree (the feature command) can use that; one that needs the process (a kill) cannot.
+async function findFeature(project, piece, { listProcesses, cwdOf, name, recorded = recordedFeatureSessions, worktrees = recordedFeatureWorktrees }) {
   const rows = await listProcesses();
   const prints = rows.filter((p) => isClaudePrint(p.command)).map((p) => ({ pid: p.pid, ppid: p.ppid, vars: variablesOf(p.command) }));
   if (typeof name === 'string' && name !== '') {
@@ -83,6 +87,11 @@ async function findFeature(project, piece, { listProcesses, cwdOf, name, recorde
       if (slug !== null && namesPiece(slug, piece)) return { pid: session.pid, vars: session.vars, cwd };
     }
   }
+  if (typeof name === 'string' && name !== '') {
+    for (const r of worktrees(name)) {
+      if (namesPiece(r.work, piece)) return { pid: null, vars: {}, cwd: r.worktree };
+    }
+  }
   throw new Error(`No running feature session in ${project} names "${piece}"`);
 }
 
@@ -91,13 +100,13 @@ async function findFeature(project, piece, { listProcesses, cwdOf, name, recorde
 export function sessionEnv(vars, base = process.env) {
   const own = Object.fromEntries(Object.entries(vars).filter(([name, value]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && typeof value === 'string' && value !== ''));
   const kept = {};
-  for (const name of ['PATH', 'HOME', 'USER', 'LANG', 'TMPDIR']) if (typeof base[name] === 'string') kept[name] = base[name];
+  for (const name of ['PATH', 'HOME', 'USER', 'LANG', 'TMPDIR', 'WHEELHOUSE_HOME']) if (typeof base[name] === 'string') kept[name] = base[name];
   return { ...kept, ...own };
 }
 
 // A feature session's environment and its worktree, read from its process.
-export async function featureEnvOf({ project, piece, name, recorded, listProcesses = listWithEnv, cwdOf = lsofCwd }) {
-  const { vars, cwd } = await findFeature(project, piece, { listProcesses, cwdOf, name, recorded });
+export async function featureEnvOf({ project, piece, name, recorded, worktrees, listProcesses = listWithEnv, cwdOf = lsofCwd }) {
+  const { vars, cwd } = await findFeature(project, piece, { listProcesses, cwdOf, name, recorded, worktrees });
   return { env: sessionEnv(vars), cwd };
 }
 
@@ -137,8 +146,9 @@ function f1cDirectorKind({ env, cwd, run = spawnSync, plugin = PLUGIN }) {
   return { code: got.status, text: said(got) };
 }
 
-async function f3KillFeature({ project, piece, name, recorded, listProcesses = listWithEnv, cwdOf = lsofCwd, kill = process.kill }) {
-  const { pid } = await findFeature(project, piece, { listProcesses, cwdOf, name, recorded });
+async function f3KillFeature({ project, piece, name, recorded, worktrees, listProcesses = listWithEnv, cwdOf = lsofCwd, kill = process.kill }) {
+  const { pid } = await findFeature(project, piece, { listProcesses, cwdOf, name, recorded, worktrees });
+  if (!Number.isInteger(pid)) throw new Error(`No running feature session in ${project} names "${piece}"`);
   kill(pid, 'SIGKILL');
   return { pid };
 }

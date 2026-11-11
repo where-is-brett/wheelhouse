@@ -36,3 +36,20 @@ test('live feature sessions lists the works that are running, for every project'
   assert.deepEqual(got.map((s) => `${s.project}/${s.work}`).sort(), ['a__one/p1-import', 'b__two/p2-export']);
   assert.deepEqual(liveFeatureSessions({ projectsRoot: path.join(home, 'projects'), alive: () => false }), []);
 });
+
+test('recorded feature worktrees are the watcher session records whose worktree is there, newest first', async () => {
+  const { recordedFeatureWorktrees } = await import('../../../probes/haiku-trial/sessions.js');
+  const dir = tempFolder('wh-sessions-wt-');
+  const put2 = (file, obj) => {
+    fs.mkdirSync(path.join(dir, 'sessions'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'sessions', file), typeof obj === 'string' ? obj : JSON.stringify(obj));
+  };
+  put2('month-page.json', { sessionId: 'a', worktree: '/w/month-page', at: '2026-11-11T01:36:32.872Z' });
+  put2('refund.json', { sessionId: 'b', worktree: '/w/refund', at: '2026-11-11T01:36:22.000Z' });
+  put2('removed.json', { sessionId: 'c', worktree: '/w/removed', at: '2026-11-11T02:00:00.000Z' });
+  put2('broken.json', '{not json');
+  put2('noworktree.json', { sessionId: 'd' });
+  const got = recordedFeatureWorktrees('owner__repo', { dir, exists: (p) => p !== '/w/removed' });
+  assert.deepEqual(got.map((s) => `${s.work}:${s.worktree}`), ['month-page:/w/month-page', 'refund:/w/refund']);
+  assert.deepEqual(recordedFeatureWorktrees('owner__repo', { dir: path.join(dir, 'nothing') }), []);
+});
