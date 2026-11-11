@@ -42,7 +42,7 @@ import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT, SUGGEST, SHOW_ME, NOT_NOW, SEND_BACK } from '../lib/calm-words.js';
 import { CARD } from '../lib/front-desk.js';
 import {
-  chatCopy, setLinesOf, setLineOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, SEAT_TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LINE,
+  chatCopy, setLinesOf, setLineOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, LIFT_STOP, LIFT_LABEL, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, SEAT_TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LINE,
 } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { cardOutcomes } from '../state/views.js';
@@ -275,6 +275,15 @@ function decidedDeny(found, at) {
 // The id the Lift All stop question goes by in the hold, since it is not a card in the state.
 const LIFT_ID = 'lift-stop';
 const isLiftQuestion = (q) => typeof q?.question === 'string' && isLiftStopLine(setLineOf(q.question));
+// The Lift All stop question keeps its set line and reply code in the chat: the prompt record signs its pick from them
+// (scripts/hooks/prompt-record.js). A copy asked without them, an option Lift All stop and no set line, signs nothing,
+// so while STOP is on its last two lines are put back.
+const LIFT_TAIL = `\n${LIFT_STOP}\n${replyCodeLine(replyCode(LIFT_STOP))}`;
+const labelsOf = (q) => (Array.isArray(q?.options) ? q.options.map((o) => (typeof o === 'string' ? o : o?.label)) : []);
+function wholeLift(q) {
+  if (typeof q?.question !== 'string' || !labelsOf(q).includes(LIFT_LABEL) || setLinesOf(q.question).length > 0) return q;
+  return { ...q, question: `${q.question.trimEnd()}${LIFT_TAIL}` };
+}
 
 // The questions as the director is shown them: a question that is not its card as printed is the stored card, once (a
 // second question for a card already taken is dropped). `matched` is each question's card as { card }, or null.
@@ -300,7 +309,9 @@ function swapQuestions(questions, matched) {
 }
 
 function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop }) {
-  const questions = input.tool_input.questions;
+  const asked = input.tool_input.questions;
+  const questions = stop().on ? asked.map(wholeLift) : asked;
+  const restored = questions.some((q, i) => q !== asked[i]);
   const at = now();
   const found = cardsOf(questions, project, outcomes);
   const decided = decidedDeny(found, at);
@@ -336,7 +347,7 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
     return { deny: paneLine(held.length, { others: heldAt.includes(false) }) };
   }
   const { questions: next, swapped, origins, changed } = swapQuestions(questions, matched);
-  return { open: waiting.filter((f) => !f.setup).map((f) => f.card.id), questions: changed ? next : null, swapped, origins };
+  return { open: waiting.filter((f) => !f.setup).map((f) => f.card.id), questions: changed || restored ? next : null, swapped, origins };
 }
 
 // Only the repeat refusal, for an agent whose question tool the form check and the pane hold don't apply to: a
