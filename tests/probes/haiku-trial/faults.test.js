@@ -233,3 +233,27 @@ test('p1 does not match a recorded p10 session', async () => {
   const recorded = () => [{ work: 'p10-other', pid: 601, at: 'x' }];
   await assert.rejects(faults.f3KillFeature({ project, name: 'owner__repo', piece: 'p1', listProcesses: async () => [], cwdOf, recorded, kill: () => assert.fail('killed') }), /p1/);
 });
+
+// A feature session runs as a `claude -p` only for the length of one turn: the watcher removes its running record when the run
+// ends and starts another at the next wake. Between runs there is no process and no running record, only the session record
+// the watcher keeps (watcher/sessions/<work>.json), and the feature command still works from the worktree.
+test('a work between runs is found by the watcher session record, with the home in its environment', async () => {
+  const tree = claudeWorktree('month-page');
+  const worktrees = () => [{ work: 'month-page', worktree: tree, sessionId: 's1', at: '2026-11-11T01:36:32.872Z' }];
+  const got = await featureEnvOf({
+    project, name: 'owner__repo', piece: 'month-page', listProcesses: async () => [], cwdOf, recorded: () => [], worktrees,
+  });
+  assert.equal(got.cwd, tree);
+  assert.equal(got.env.WHEELHOUSE_HOME, process.env.WHEELHOUSE_HOME);
+  assert.equal(got.env.PATH, process.env.PATH);
+});
+
+test('a session record names the work by whole hyphen segments, and a kill needs a process', async () => {
+  const worktrees = () => [{ work: 'month-page', worktree: claudeWorktree('month-page'), sessionId: 's1', at: 'x' }];
+  await assert.rejects(featureEnvOf({ project, name: 'owner__repo', piece: 'mont', listProcesses: async () => [], cwdOf, recorded: () => [], worktrees }), /mont/);
+  await assert.rejects(featureEnvOf({ project, name: 'owner__repo', piece: 'page-x', listProcesses: async () => [], cwdOf, recorded: () => [], worktrees }), /page-x/);
+  await assert.rejects(
+    faults.f3KillFeature({ project, name: 'owner__repo', piece: 'month-page', listProcesses: async () => [], cwdOf, recorded: () => [], worktrees, kill: () => assert.fail('killed') }),
+    /month-page/,
+  );
+});

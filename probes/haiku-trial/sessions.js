@@ -26,6 +26,21 @@ export function recordedFeatureSessions(name, { dir = watcherDir(name), alive = 
   return out;
 }
 
+// [{ work, worktree, sessionId, at }] for a project: the session records the watcher keeps (watcher/sessions/<work>.json) whose
+// worktree is still there, newest first. A feature session has a process only while a run lasts, so this is what says a work has one.
+export function recordedFeatureWorktrees(name, { dir = watcherDir(name), exists = fs.existsSync } = {}) {
+  let files = [];
+  try { files = fs.readdirSync(path.join(dir, 'sessions')); } catch { return []; }
+  const out = [];
+  for (const file of files.sort()) {
+    if (!file.endsWith('.json')) continue;
+    const r = readJson(path.join(dir, 'sessions', file));
+    if (r === null || typeof r !== 'object' || typeof r.worktree !== 'string' || r.worktree === '' || !exists(r.worktree)) continue;
+    out.push({ work: file.slice(0, -'.json'.length), worktree: r.worktree, sessionId: r.sessionId, at: r.at });
+  }
+  return out.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+}
+
 // [{ project, work, pid, at }] across every project under the Wheelhouse home in force.
 export function liveFeatureSessions({ projectsRoot = projectsDir(), alive = pidAlive } = {}) {
   let names = [];
