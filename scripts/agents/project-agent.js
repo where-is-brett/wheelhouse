@@ -3,12 +3,12 @@
 // Kept apart from the registry (scripts/agents/index.js) because the registry loads whole adapters, with their
 // setup and evaluation code, and the hooks reach the waker; this file loads only each adapter's session code.
 import claudeSessions from '../../adapters/claude-code/sessions.js';
-import { pendingSessions as copilotSessions } from '../../adapters/copilot/index.js';
+import copilotSessions from '../../adapters/copilot/sessions.js';
 import { AGENTS, agentOfConfig } from './names.js';
 
 export { AGENTS, agentOfConfig, agentOfProject, parkedAgentOf } from './names.js';
 
-// Copilot's sessions part is not built yet, so its entry is the adapter's stub; no project is set to run on it (names.js).
+// Copilot's sessions part is built and switched off (BACKGROUND_SESSIONS_READY), and no project is set to run on it (names.js).
 const SESSIONS = Object.freeze({ 'claude-code': claudeSessions, copilot: copilotSessions });
 
 // The sentence for a name that is no agent's.
