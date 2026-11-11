@@ -29,9 +29,9 @@ import copilotSheet from '../../../adapters/copilot/tool-sheet.js';
 import identity from '../../../adapters/copilot/identity.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-// The sessions part left the list in Part 8 Task 1 (ruling P8-1): built, and switched off by its own switch. The
-// evaluation runner left it in Part 8 Task 3 (ruling P8-25), and the settings part in Part 9 Task 1.
-const PENDING = ['sessions', 'evalRunner'];
+// The sessions part left the list in part 7 of the return (built, and switched off by its own switch); the evaluation
+// runner is built in part 10.
+const PENDING = ['evalRunner'];
 // A part made pending again, to try the contract's rules on a stub.
 const STUBBED = { ...copilot, sessions: claudeCode.sessions, evalRunner: claudeCode.evalRunner, hooks: pendingPart('hooks', ['registration', 'file']) };
 
@@ -59,7 +59,7 @@ test('a part not built yet throws NOT_BUILT_YET naming the part', () => {
       assert.throws(() => fn(), (error) => error.code === NOT_BUILT_YET && error.part === part && error.message.includes(`The ${part} part`) && error.message.includes(member), `${part}.${member}`);
     }
   }
-  // The sessions and evaluation runner parts are the stubs part 1 left, and throw the same way.
+  // The evaluation runner part is the stub part 1 left, and throws the same way.
   for (const part of PENDING) {
     for (const [member, fn] of Object.entries(copilot[part])) {
       assert.throws(() => fn(), (error) => error.code === NOT_BUILT_YET && error.part === part && error.message.includes(member), `${part}.${member}`);
@@ -73,9 +73,9 @@ test('sessionsFor gives the very object the Copilot adapter holds', () => {
   assert.throws(() => sessionsFor('model-x'), /no adapter for the agent "model-x"; the agents are claude-code, copilot/);
 });
 
-test('the settings part is built; the sessions and evaluation runner parts are pending', () => {
+test('the settings and sessions parts are built; the evaluation runner part is pending', () => {
   assert.equal(isPendingPart(copilot.settings), false);
-  assert.equal(isPendingPart(copilot.sessions), true);
+  assert.equal(isPendingPart(copilot.sessions), false);
   assert.equal(isPendingPart(copilot.evalRunner), true);
 });
 
