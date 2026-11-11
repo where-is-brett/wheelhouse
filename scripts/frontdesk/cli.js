@@ -71,7 +71,7 @@
 //   confirm <card>  shows the card (its id in the state, or lift-stop) in the helper's own window,
 //                   where the director's click is the binding one, and waits for it; prints the
 //                   helper's answer, `"recorded":true` when the click was recorded (ruling P8-7). For
-//                   an agent whose chat clicks can't bind: Claude Code's front desk never needs it
+//                   an agent whose chat clicks can't bind, and for an undo that answers `needs` `window`
 // The front desk runs in the sandbox, which can't read ~/.wheelhouse/, so every read and write is
 // a request to the helper, naming this folder for the helper to place the project: it reads through
 // the desk (scripts/desk/), and writes through the helper's own routes. Nothing here
