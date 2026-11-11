@@ -565,6 +565,22 @@ test('a Lift All stop question goes through while STOP is on and no pane is live
   assert.equal(await run(withSession([LIFT]), { outcomes: () => [], stop: STOP_ON }), undefined);
 }));
 
+test('a Lift All stop question asked without its last two lines gets them back while STOP is on', () => withHome(async () => {
+  const lines = LIFT.question.split('\n');
+  const bare = { ...LIFT, question: lines.slice(0, -2).join('\n') };
+  assert.ok(!bare.question.includes(LIFT_STOP));
+  const out = await run(withSession([bare]), { outcomes: () => [], stop: STOP_ON });
+  assert.equal(swapped(out)[0].question, LIFT.question);
+  // While STOP is off nothing is added: the copy signs nothing either way.
+  const off = await run(withSession([bare]), { outcomes: () => [], stop: STOP_OFF });
+  assert.ok(off === undefined || !JSON.stringify(off).includes(LIFT_STOP));
+  // A recommended label is read the same way.
+  const rec = { ...bare, options: bare.options.map((o) => (o.label === 'Lift All stop' ? { ...o, label: 'Lift All stop (Recommended)' } : o)) };
+  assert.equal(swapped(await run(withSession([rec]), { outcomes: () => [], stop: STOP_ON }))[0].question, LIFT.question);
+  // A question without the Lift All stop option is left as it is.
+  assert.equal(await run(withSession([PLAIN]), { outcomes: () => [], stop: STOP_ON }), undefined);
+}));
+
 test('a live pane holds back the Lift All stop question, and here lets it through once', () => withHome(async () => {
   live();
   const out = reason(await run(withSession([LIFT]), { outcomes: () => [], stop: STOP_ON }));
