@@ -227,7 +227,7 @@ function sentence(raw) {
 
 // One transcript event in plain words, with whether it did something ('did') or said something
 // ('said'), or null for anything not known.
-function stepAndKind(event) {
+export function stepAndKind(event) {
   if (!event || typeof event !== 'object' || event.type !== 'assistant') return null;
   const content = event.message?.content;
   const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : [];
@@ -270,7 +270,7 @@ function worded(step, words) {
 }
 
 // A decision number to name: a positive whole number, and nothing else.
-function validWaiting(waiting) {
+export function validWaiting(waiting) {
   return Number.isInteger(waiting) && waiting > 0;
 }
 
@@ -330,13 +330,13 @@ function sendPhrase({ agentType, description } = {}) {
   return `sending out ${lowerFirst(role.name)} to ${role.base}${what ? ` ${what}` : ''}`;
 }
 
-function lowerFirst(text) {
+export function lowerFirst(text) {
   return text.charAt(0).toLowerCase() + text.slice(1);
 }
 
 // A step line in a third person: "<who> is reading `x`", or "<who> is thinking: <line>" for
 // anything that is not a phrase for what was done.
-function inThirdPerson(who, step) {
+export function inThirdPerson(who, step) {
   if (step.text === HIDDEN || step.kind === 'said') return `${who} is thinking: ${step.text}`;
   if (step.kind === 'sent') return `${who} is ${step.phrase}`;
   return `${who} is ${lowerFirst(step.text)}`;
@@ -453,7 +453,7 @@ function resultIds(events) {
   return ids;
 }
 
-const CREW_SHOWN = 5;
+export const CREW_SHOWN = 5;
 const STILL_WORKING_MS = 10 * 60 * 1000;
 
 function modifiedAt(file) {
@@ -534,7 +534,7 @@ function callOf(sub, calls, byAgent) {
 }
 
 // A step with its kind, and for a sent subagent the phrase "sending out ..." through the glossary.
-function withKind(raw, words) {
+export function withKind(raw, words) {
   const step = { ...worded(raw, words), kind: raw.kind };
   if (raw.kind === 'sent') {
     const phrase = sendPhrase(raw.agent);

@@ -19,6 +19,7 @@
     "test": "node --test --import ./tests/helpers/test-home.js --test-timeout=480000 \"tests/**/*.test.js\"",
     "eval": "node scripts/eval/run.js",
     "copilot-home": "node scripts/agents/copilot/home.js --write",
+    "copilot-first-mate": "node scripts/agents/copilot/first-mate.js --write",
     "private-check": "node scripts/install/private-words.js"
   }
 }
