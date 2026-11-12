@@ -67,7 +67,7 @@ export const SOURCES = Object.freeze([...AGENT_SOURCES.map((agent) => `agents/${
 
 // ---- Reading the sources ----
 
-function readSource(root, rel) {
+export function readSource(root, rel) {
   try {
     return fs.readFileSync(path.join(root, ...rel.split('/')), 'utf8').replaceAll('\r\n', '\n');
   } catch (error) {
@@ -76,7 +76,7 @@ function readSource(root, rel) {
 }
 
 // A source's front matter (single-line `key: value` fields) and its body.
-function parse(text, rel) {
+export function parse(text, rel) {
   const m = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(text);
   if (!m) throw new Error(`${rel} has no front matter`);
   const front = {};
@@ -89,7 +89,7 @@ function parse(text, rel) {
 }
 
 // The body without its own path comment (its first line), which the built file replaces with its own.
-function withoutPathComment(body, rel) {
+export function withoutPathComment(body, rel) {
   const m = /^\n?<!--[^\n]*-->\n/.exec(body);
   if (!m) throw new Error(`${rel} does not start, after its front matter, with its path comment`);
   return body.slice(m[0].length);
@@ -98,7 +98,7 @@ function withoutPathComment(body, rel) {
 // ---- Turning the text into Copilot's ----
 
 // Backticked Claude Code tool names to Copilot's, by the one table; a name with no entry throws.
-function mapToolWords(text, rel) {
+export function mapToolWords(text, rel) {
   return text.replace(new RegExp(`\`(${CLAUDE_TOOL_NAMES.join('|')})\``, 'g'), (_, name) => {
     if (!Object.hasOwn(CLAUDE_TO_COPILOT, name)) throw new Error(`${rel} names \`${name}\`, which CLAUDE_TO_COPILOT has no entry for`);
     return `\`${CLAUDE_TO_COPILOT[name][0]}\``;
@@ -106,7 +106,7 @@ function mapToolWords(text, rel) {
 }
 
 // Skills name each other with a colon in Claude Code (`wheelhouse:intake`) and by their Copilot names here.
-const renameSkills = (text) => text.replace(/\bwheelhouse:([a-z][a-z-]*)/g, 'wheelhouse-$1');
+export const renameSkills = (text) => text.replace(/\bwheelhouse:([a-z][a-z-]*)/g, 'wheelhouse-$1');
 
 function mapRulesFiles(text) {
   let out = text;
