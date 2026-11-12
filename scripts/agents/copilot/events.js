@@ -1,4 +1,4 @@
-// scripts/crew/copilot-events.js
+// scripts/agents/copilot/events.js
 // Copilot's events for the crew view (design section 8, part 9). A session's events are kept at
 // <COPILOT_HOME>/session-state/<id>/events.jsonl, one JSON object per line (`type`, `data`, `id`, `parentId`, `timestamp`;
 // check 96). This reads them, read-only and never through a link, and gives the steps and crew lines in the shape
@@ -7,10 +7,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { glossaryOf } from '../frontdesk/glossary.js';
+import { glossaryOf } from '../../frontdesk/glossary.js';
 import {
   CREW_SHOWN, inThirdPerson, lowerFirst, mask, plain, readTail, stepAndKind, subagentLine, validWaiting, withKind,
-} from './runs.js';
+} from '../../crew/runs.js';
 
 export function copilotHome(env = process.env) {
   return env.COPILOT_HOME || path.join(os.homedir(), '.copilot');

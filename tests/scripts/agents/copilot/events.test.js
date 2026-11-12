@@ -1,12 +1,12 @@
-// tests/scripts/crew/copilot-events.test.js
+// tests/scripts/agents/copilot/events.test.js
 // The reader for Copilot's events (~/.copilot/session-state/<id>/events.jsonl, check 96): finding a session's file and
 // turning its events into the steps and crew lines the crew view shows, in the shape runSteps gives for Claude Code.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { tempFolder } from '../../helpers/homes.js';
-import { copilotHome, findCopilotEvents, copilotStepOf, copilotRunSteps } from '../../../scripts/crew/copilot-events.js';
+import { tempFolder } from '../../../helpers/homes.js';
+import { copilotHome, findCopilotEvents, copilotStepOf, copilotRunSteps } from '../../../../scripts/agents/copilot/events.js';
 
 const T = '2026-11-12T01:00:00.000Z';
 const ev = (type, data = {}, timestamp = T) => ({ type, data, id: `${type}-${Math.random()}`, parentId: null, timestamp });
