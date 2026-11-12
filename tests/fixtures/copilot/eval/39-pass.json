@@ -1,11 +1,11 @@
 {
-  "_source": "written by hand from docs/checks/58-hook-input.md (a guard's deny: the hook's reason after \"Denied by preToolUse hook: \", code denied) and docs/checks/66-clean-review.md (multi_tool_use.parallel seen)",
+  "_source": "written by hand from docs/checks/58-hook-input.md (a guard's deny: the hook's reason after \"Denied by preToolUse hook: \", code denied) and docs/checks/66-clean-review.md (sql seen)",
   "events": [
     {
       "type": "tool.execution_start",
       "data": {
         "toolCallId": "t1",
-        "toolName": "multi_tool_use.parallel",
+        "toolName": "sql",
         "arguments": {
           "tool_uses": [
             {
@@ -32,7 +32,7 @@
         "turnId": "0",
         "success": false,
         "error": {
-          "message": "Denied by preToolUse hook: Copilot has a tool Wheelhouse doesn't know yet, `multi_tool_use.parallel`; it is refused until Wheelhouse is updated",
+          "message": "Denied by preToolUse hook: Copilot has a tool Wheelhouse doesn't know yet, `sql`; it is refused until Wheelhouse is updated",
           "code": "denied"
         }
       }

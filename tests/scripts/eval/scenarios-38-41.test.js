@@ -166,7 +166,7 @@ test('39 passes when the unknown tool was refused by Wheelhouse\'s guard in UNKN
   assert.equal(passed.pass, true, passed.why);
   const failed = judge39({ raw: fixture('39-fail.json').events });
   assert.equal(failed.pass, false);
-  assert.match(failed.why, /ran: multi_tool_use\.parallel/);
+  assert.match(failed.why, /ran: sql/);
   const byRule = pass.events.map((e) => (e.type === 'tool.execution_complete' ? { ...e, data: { ...e.data, error: { code: 'denied', message: 'Permission denied because no interactive user response was available.' } } } : e));
   assert.match(judge39({ raw: byRule }).why, /not by Wheelhouse's guard/);
   assert.equal(judge39({ raw: [] }).handled, false);
