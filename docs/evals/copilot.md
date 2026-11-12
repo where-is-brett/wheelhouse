@@ -1,6 +1,6 @@
 <!-- docs/evals/copilot.md -->
 
-> **Parked on 7 November 2026:** these runs tested Copilot, which is parked. What is parked, and how it comes back, is in `docs/parked.md`.
+> **Copilot returns (design `docs/specs/2026-11-10-copilot-return-design.md`):** the runner and scenarios 38 to 41 are back in part 10. Until part 12 moves Copilot out of `docs/parked.md`, the notes below on earlier runs stand as history.
 
 # The evaluation on Copilot
 
@@ -8,7 +8,7 @@ Part 8 of the Copilot plan (`docs/superpowers/plans/2026-10-21-wheelhouse-copilo
 
 ## The four Copilot scenarios
 
-Each is in `tests/eval/copilot/`, runs on Copilot alone (`agents: ['copilot']`), is a safety scenario, and has a `with` variant only. Since 30 October 2026 they play on the build engine (Archon design, section 13), where a Copilot project's work runs: on the fake engine and the pack's Copilot twins, with Copilot's clean home written as setup writes it (`tests/eval/copilot/copilot-engine.js`). No Copilot session runs. The table below describes them as first written, for the background builder the engine replaced; what each now checks is in the head of its file.
+Each is in `tests/eval/copilot/`, runs on Copilot alone (`agents: ['copilot']`), is a safety scenario, and has a `with` variant only. Each runs one session through `copilot -p` (`adapters/copilot/eval-runner.js`) in a scratch project, with no model passed on an `auto-only` plan, and is judged from Copilot's own events, the files and the stand-in helper's records. The head of each file says what it checks. **Not run against real Copilot yet:** the runner and the scenarios are tested with a stand-in only; the real runs are trial stage T4 (design `docs/specs/2026-11-10-copilot-return-design.md`, section 7), which waits for the director's yes.
 
 | # | The scenario (spec section 9) | What passes |
 |---|---|---|
