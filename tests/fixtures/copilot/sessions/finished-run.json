@@ -1,0 +1,103 @@
+[
+  {
+    "type": "user.message",
+    "data": {
+      "content": "Do these steps in order, once each, using exactly the tool named and exactly the text between the backticks. If a tool call fails or is refused, say so and go on to the next step; do not try another way round a refusal. Do not skip a step.\n1. Use the view tool to view `<WORKTREE>/README.md`.\n2. Tell me the secret word in it.\nThen say done.",
+      "messageId": "<ID>",
+      "delivery": "idle",
+      "interactionId": "<ID>",
+      "turnId": "0",
+      "parentAgentTaskId": "<ID>"
+    },
+    "id": "<ID>",
+    "timestamp": "<TIME>",
+    "parentId": "<ID>"
+  },
+  {
+    "type": "assistant.message",
+    "data": {
+      "messageId": "<ID>",
+      "originatingMessageId": "<ID>",
+      "content": "",
+      "toolRequests": [
+        {
+          "toolCallId": "<ID>",
+          "name": "view",
+          "arguments": {
+            "path": "<WORKTREE>/README.md"
+          },
+          "type": "function",
+          "intentionSummary": "view the file at <WORKTREE>/README.md.",
+          "toolTitle": "Viewing file"
+        }
+      ],
+      "interactionId": "<ID>",
+      "turnId": "0"
+    },
+    "id": "<ID>",
+    "timestamp": "<TIME>",
+    "parentId": "<ID>"
+  },
+  {
+    "type": "tool.execution_start",
+    "data": {
+      "toolCallId": "<ID>",
+      "toolName": "view",
+      "arguments": {
+        "path": "<WORKTREE>/README.md"
+      },
+      "turnId": "0",
+      "toolTitle": "Viewing file"
+    },
+    "id": "<ID>",
+    "timestamp": "<TIME>",
+    "parentId": "<ID>"
+  },
+  {
+    "type": "tool.execution_complete",
+    "data": {
+      "toolCallId": "<ID>",
+      "interactionId": "<ID>",
+      "turnId": "0",
+      "success": true,
+      "result": {
+        "content": "Wheelhouse probe 61. The secret word is <SECRET>.\n",
+        "detailedContent": "\ndiff --git a<WORKTREE>/README.md b<WORKTREE>/README.md\nindex 0000000..0000000 100644\n--- a<WORKTREE>/README.md\n+++ b<WORKTREE>/README.md\n@@ -1,2 +1,2 @@\n Wheelhouse probe 61. The secret word is <SECRET>.\n \n"
+      }
+    },
+    "id": "<ID>",
+    "timestamp": "<TIME>",
+    "parentId": "<ID>"
+  },
+  {
+    "type": "assistant.message",
+    "data": {
+      "messageId": "<ID>",
+      "originatingMessageId": "<ID>",
+      "content": "The secret word is `<SECRET>`.\n\ndone",
+      "toolRequests": [],
+      "interactionId": "<ID>",
+      "turnId": "1",
+      "phase": "final_answer"
+    },
+    "id": "<ID>",
+    "timestamp": "<TIME>",
+    "parentId": "<ID>"
+  },
+  {
+    "type": "result",
+    "timestamp": "<TIME>",
+    "sessionId": "<ID>",
+    "exitCode": 0,
+    "usage": {
+      "premiumRequests": 1,
+      "totalApiDurationMs": 4574,
+      "sessionDurationMs": 7833,
+      "codeChanges": {
+        "linesAdded": 0,
+        "linesRemoved": 0,
+        "filesModified": []
+      }
+    }
+  }
+]

@@ -1,0 +1,111 @@
+[
+  {
+    "type": "user.message",
+    "data": {
+      "content": "Do these steps in order, once each, using exactly the tool named and exactly the text between the backticks. If a tool call fails or is refused, say so and go on to the next step; do not try another way round a refusal. Do not skip a step.\n1. Use the shell tool to run exactly: `touch unruled.txt`\nThen say done.",
+      "messageId": "<ID>",
+      "delivery": "idle",
+      "interactionId": "<ID>",
+      "turnId": "0",
+      "parentAgentTaskId": "<ID>"
+    },
+    "id": "<ID>",
+    "timestamp": "<TIME>",
+    "parentId": "<ID>"
+  },
+  {
+    "type": "assistant.message",
+    "data": {
+      "messageId": "<ID>",
+      "originatingMessageId": "<ID>",
+      "content": "",
+      "toolRequests": [
+        {
+          "toolCallId": "<ID>",
+          "name": "bash",
+          "arguments": {
+            "command": "touch unruled.txt",
+            "description": "Create unruled.txt"
+          },
+          "type": "function",
+          "intentionSummary": "Create unruled.txt",
+          "toolTitle": "Running command"
+        }
+      ],
+      "interactionId": "<ID>",
+      "turnId": "0"
+    },
+    "id": "<ID>",
+    "timestamp": "<TIME>",
+    "parentId": "<ID>"
+  },
+  {
+    "type": "tool.execution_start",
+    "data": {
+      "toolCallId": "<ID>",
+      "toolName": "bash",
+      "arguments": {
+        "command": "touch unruled.txt",
+        "description": "Create unruled.txt"
+      },
+      "turnId": "0",
+      "toolTitle": "Running command",
+      "shellToolInfo": {
+        "possiblePaths": [
+          "unruled.txt"
+        ],
+        "hasWriteFileRedirection": false
+      }
+    },
+    "id": "<ID>",
+    "timestamp": "<TIME>",
+    "parentId": "<ID>"
+  },
+  {
+    "type": "tool.execution_complete",
+    "data": {
+      "toolCallId": "<ID>",
+      "interactionId": "<ID>",
+      "turnId": "0",
+      "success": false,
+      "error": {
+        "message": "Permission denied because no interactive user response was available. Retry in an interactive session so the user can approve it, or try an alternative that does not require this permission.",
+        "code": "denied"
+      }
+    },
+    "id": "<ID>",
+    "timestamp": "<TIME>",
+    "parentId": "<ID>"
+  },
+  {
+    "type": "assistant.message",
+    "data": {
+      "messageId": "<ID>",
+      "originatingMessageId": "<ID>",
+      "content": "The shell command was refused due to unavailable interactive approval. Done.",
+      "toolRequests": [],
+      "interactionId": "<ID>",
+      "turnId": "1",
+      "phase": "final_answer"
+    },
+    "id": "<ID>",
+    "timestamp": "<TIME>",
+    "parentId": "<ID>"
+  },
+  {
+    "type": "result",
+    "timestamp": "<TIME>",
+    "sessionId": "<ID>",
+    "exitCode": 0,
+    "usage": {
+      "premiumRequests": 1,
+      "totalApiDurationMs": 4470,
+      "sessionDurationMs": 9015,
+      "codeChanges": {
+        "linesAdded": 0,
+        "linesRemoved": 0,
+        "filesModified": []
+      }
+    }
+  }
+]

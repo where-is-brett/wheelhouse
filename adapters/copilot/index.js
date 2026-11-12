@@ -1,8 +1,6 @@
 // adapters/copilot/index.js
-// The Copilot adapter (design section 8, parts 1 and 7). The evalRunner part is not built yet: it is a stub that throws
-// NOT_BUILT_YET (scripts/agents/contract.js) and is listed in `pending`. The sessions part is built and switched off
+// The Copilot adapter (design section 8, parts 1, 7 and 10). Every part is built. The sessions part is switched off
 // (BACKGROUND_SESSIONS_READY). It imports nothing that reaches the hook kit, so the kit can import it without a cycle.
-import { pendingPart } from '../../scripts/agents/contract.js';
 import hooks from './hooks.js';
 import identity from './identity.js';
 import sessions from './sessions.js';
@@ -11,8 +9,6 @@ import settings from './settings.js';
 import tools from './tools.js';
 import toolSheet from './tool-sheet.js';
 import translate from './translate.js';
-
-const pendingEvalRunner = pendingPart('evalRunner', ['run']);
 
 export default Object.freeze({
   identity,
@@ -28,6 +24,8 @@ export default Object.freeze({
   packaging: Object.freeze({ files: () => [] }),
   toolSheet,
   safetyLine,
-  evalRunner: pendingEvalRunner,
-  pending: Object.freeze(['evalRunner']),
+  // One evaluation session through `copilot -p` (eval-runner.js), for `npm run eval -- --agent copilot`. Loaded only when
+  // a session is asked for, so nothing that loads the adapter loads the evaluation runner.
+  evalRunner: Object.freeze({ run: async (options) => (await import('./eval-runner.js')).run(options) }),
+  pending: Object.freeze([]),
 });

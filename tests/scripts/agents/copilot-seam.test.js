@@ -1,11 +1,10 @@
 // tests/scripts/agents/copilot-seam.test.js
-// Copilot's entries in the seam (design section 8, parts 1 and 7): the adapter holds every part but the evaluation
-// runner, which is pending, and each registry in scripts/agents/ holds the adapter's own part.
+// Copilot's entries in the seam (design section 8, parts 1, 7 and 10): the adapter holds every part, and each registry in scripts/agents/ holds the adapter's own part.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import copilot from '../../../adapters/copilot/index.js';
 import claudeCode from '../../../adapters/claude-code/index.js';
-import { NOT_BUILT_YET, checkAdapter } from '../../../scripts/agents/contract.js';
+import { checkAdapter } from '../../../scripts/agents/contract.js';
 import { AGENTS, adapterFor, agentOfConfig, agentOfInput, parkedAgentOf } from '../../../scripts/agents/index.js';
 import { sessionsFor, sessionsOfProject } from '../../../scripts/agents/project-agent.js';
 import { readsOwnCopies } from '../../../scripts/agents/names.js';
@@ -14,16 +13,15 @@ import { TOOL_SHEETS } from '../../../scripts/agents/tool-sheets.js';
 import { TRANSLATORS } from '../../../scripts/agents/translators.js';
 import { usageWords } from '../../../scripts/agents/usage-words.js';
 
-test('the adapter passes checkAdapter with the evalRunner part pending', () => {
-  assert.deepEqual(copilot.pending, ['evalRunner']);
+test('the adapter passes checkAdapter with no part pending', () => {
+  assert.deepEqual(copilot.pending, []);
   assert.deepEqual(checkAdapter(copilot), []);
-  assert.deepEqual(checkAdapter({ ...copilot, pending: [] }).length, 1);
+  assert.equal(typeof copilot.evalRunner.run, 'function');
   assert.equal(adapterFor('copilot'), copilot);
   assert.ok(AGENTS.includes('copilot'));
 });
 
-test('a pending part throws NOT_BUILT_YET when it is used', () => {
-  assert.throws(() => copilot.evalRunner.run(), { code: NOT_BUILT_YET, part: 'evalRunner' });
+test('the sessions part is the one the registry gives', () => {
   assert.equal(sessionsFor('copilot'), copilot.sessions);
 });
 
