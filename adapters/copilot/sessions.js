@@ -51,7 +51,7 @@ const WAKE_RULE = "node '<wheelhouse-root>/scripts/foreman/wake.js':*";
 // The plans a Copilot account can be on (the `copilotPlan` setting). Anything else is taken as the first, which passes no model.
 const PLANS = Object.freeze(['auto-only', 'credits', 'requests']);
 export const DEFAULT_PLAN = 'auto-only';
-const planOf = (plan) => (PLANS.includes(plan) ? plan : DEFAULT_PLAN);
+export const planOf = (plan) => (PLANS.includes(plan) ? plan : DEFAULT_PLAN);
 
 // The variables a session keeps from the environment it is started from. No token variable: check 61 signed in through
 // the keychain, found from config.json and the real HOME (a scratch HOME breaks it), so GH_TOKEN, GITHUB_TOKEN,

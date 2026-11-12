@@ -169,6 +169,13 @@ test('on an auto-only plan, the default, no --model and no COPILOT_MODEL is pass
   assert.ok(saw.args.includes('--session-id'));
 });
 
+test('a plan that is null, empty or misspelt is read as auto-only: a model is still not passed', async () => {
+  for (const plan of [null, '', 'request', 'REQUESTS', 7]) {
+    const { saw } = await viaStandIn(fixtureFile({ events: [] }), { model: 'model-a', plan });
+    assert.ok(!saw.args.some((a) => a === '--model' || a.startsWith('--model=')), `plan ${JSON.stringify(plan)}`);
+  }
+});
+
 test('a scenario\'s role names the session\'s agent, and a role with no agent in the home, or that isn\'t a plain name, starts nothing (P8-35)', async () => {
   const { saw } = await viaStandIn(fixtureFile({ events: [] }), { role: 'tester' });
   assert.equal(saw.args[saw.args.indexOf('--agent') + 1], 'wheelhouse-tester');

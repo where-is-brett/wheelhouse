@@ -43,7 +43,7 @@ import { assertUnderTmp } from '../../probes/lib/scratch.js';
 import { copilotHome, file as hookFile } from './hooks.js';
 import { levelRules } from './permissions.js';
 import { sessionUsage } from '../../scripts/agents/copilot/run-output.js';
-import { CMD_LINE_MOST, DEFAULT_PLAN, copilotSessionEnv, sessionArgs, writeHomeWithKits } from './sessions.js';
+import { CMD_LINE_MOST, DEFAULT_PLAN, copilotSessionEnv, planOf, sessionArgs, writeHomeWithKits } from './sessions.js';
 import { toGuardInput } from './translate.js';
 
 // The session home's target: a feature's, so it sits where a builder's would (sessions.js sessionHome).
@@ -297,7 +297,7 @@ export async function run({
   const logDir = path.join(scratch, 'logs');
   const usageFile = path.join(scratch, 'usage.json');
   try {
-    const args = sessionArgs({ prompt, sessionId: resume ? null : crypto.randomUUID(), resume: resume || null, logDir, usageFile, role, model: plan === DEFAULT_PLAN ? null : model || null, allow: rules.allow, deny: rules.deny });
+    const args = sessionArgs({ prompt, sessionId: resume ? null : crypto.randomUUID(), resume: resume || null, logDir, usageFile, role, model: planOf(plan) === DEFAULT_PLAN ? null : model || null, allow: rules.allow, deny: rules.deny });
     const environment = copilotSessionEnv({ ...process.env, ...given }, { home: ownHome, platform });
     const call = callOf({ command, commandArgs, args, env: environment, platform });
     const result = await realRun(call.file, call.args, { cwd: dir, env: environment, baseEnv: {}, input: '', timeoutMs, windowsVerbatimArguments: call.verbatim });
