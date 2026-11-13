@@ -107,4 +107,6 @@ test('snapshot points follow the spec and a smoke run takes only its own', () =>
   assert.deepEqual(pointsFor('full').map((p) => p.point), ['after-ntfy', 'after-w2-audit', 'before-f1', 'after-w3-audit', 'before-f4-check', 'before-s9-1', 'after-w4-audit']);
   assert.deepEqual(pointsFor('smoke').map((p) => p.point), ['after-front-desk', 'after-w2-audit', 'before-s9-1', 'after-w4-audit']);
   assert.ok(SNAPSHOT_POINTS.every((p) => (p.after === undefined) !== (p.before === undefined)));
+  assert.deepEqual(pointsFor('full', [1, 2]).slice(-2), [{ point: 'before-sitting-1', before: 'sitting-1', mode: 'full' }, { point: 'before-sitting-2', before: 'sitting-2', mode: 'full' }]);
+  assert.equal(pointsFor('smoke', [1]).some((p) => p.point.startsWith('before-sitting')), false);
 });

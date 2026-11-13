@@ -8,6 +8,8 @@ import { STEPS, planRun, run, resume, restore, waitFor, main, withoutChrome, run
 import { sessionName } from '../../../probes/haiku-trial/tmux.js';
 import { P5_SPARE } from '../../../probes/haiku-trial/requests.js';
 import { takeLocal, writeMeta, snapshotsDir } from '../../../probes/haiku-trial/snapshot.js';
+import { P6_FILE } from '../../../probes/haiku-trial/requests.js';
+import { ROWS, STEPS as LOG } from '../../../probes/haiku-trial/signals.js';
 
 const ENV = { WHEELHOUSE_HOME: process.env.WHEELHOUSE_HOME, HAIKU_TRIAL_GH_OWNER: 'trial-owner', HAIKU_TRIAL_CLAUDE: '/bin/claude', HAIKU_TRIAL_PREVIEW: 'none' };
 const T0 = Date.parse('2026-11-08T09:00:00Z');
@@ -20,7 +22,7 @@ function scratch(t) {
 
 // A fake io that records every call on one timeline and starts, finds and sleeps for nothing real.
 function fakeIo(over = {}) {
-  let now = T0;
+  let now = over.start ?? T0;
   const timeline = [];
   const rec = (kind, ...args) => timeline.push({ kind, args, at: now });
   // The sessions started and not killed are the ones tmux lists, by their full names; `over.sessions` overrides the list.
@@ -88,16 +90,16 @@ test('full plan follows the waves', () => {
   const first = (wave) => Math.min(...STEPS.map((s, i) => (s.wave === wave ? i : Infinity)));
   for (let w = 1; w < 6; w += 1) assert.ok(last(w) < first(w + 1), `wave ${w} ends before wave ${w + 1}`);
   for (const id of all.filter((i) => i.startsWith('w2-'))) for (const later of all.filter((i) => i.startsWith('w3-'))) assert.ok(all.indexOf(id) < all.indexOf(later));
-  assert.ok(all.indexOf('f6-lift') < all.indexOf('f5a-undo-p6'));
+  assert.ok(all.indexOf('w4-type') < all.indexOf('sitting-1') && all.indexOf('sitting-1') < all.indexOf('f4-check'));
   assert.ok(all.indexOf('w2-merge-wait') < all.indexOf('w3-type'));
   assert.deepEqual(STEPS.filter((s) => s.needsGo).map((s) => s.id), ['create-repo', 'create-preview', 'install']);
-  assert.deepEqual(STEPS.filter((s) => s.director).map((s) => s.id).sort(), ['create-preview', 'f5a-undo-p6', 'f5b-undo-p2', 'f6-lift', 'ntfy', 'review-card']);
+  assert.deepEqual(planRun({ mode: 'full' }).filter((s) => s.director).map((s) => s.id).sort(), ['create-preview', 'ntfy', 'review-card', 'sitting-1']);
 });
 
 test('smoke plan is section 14', () => {
   const smoke = ids('smoke');
   for (const id of ['setup-s0', 'w2-type', 'f3-kill-p1', 's9-1', 's9-2', 's9-4', 'score']) assert.ok(smoke.includes(id), id);
-  for (const id of ['f1', 'f6-stop', 'f5a-undo-p6', 's9-5', 'w5-midnight', 'review-card']) assert.equal(smoke.includes(id), false, id);
+  for (const id of ['f1', 'sitting-1', 's9-5', 'w5-midnight', 'review-card']) assert.equal(smoke.includes(id), false, id);
 });
 
 test('steps that create things wait for go', async (t) => {
@@ -178,12 +180,229 @@ test('spare bug that cannot apply marks P5 not covered', async (t) => {
 
 test('f6 waits five minutes with no new start', async (t) => {
   const folder = scratch(t);
-  const io = fakeIo();
-  const got = await run({ mode: 'full', io, from: 'f6-stop', until: 'f6-lift', folder, date: '2026-11-08', env: ENV });
-  assert.deepEqual(got.done, ['f6-stop', 'f6-undo', 'f6-wait-5m', 'f6-lift']);
+  const io = sittingIo();
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['sitting-1']);
   const stop = io.timeline.find((e) => e.kind === 'f6.stop');
   const lift = io.timeline.find((e) => e.kind === 'f6.lift');
   assert.ok(lift.at - stop.at >= 300000, `${lift.at - stop.at} ms between stop and lift`);
+});
+
+// A fake io for a sitting: the director clicks the moment a card asks, unless `noLift` or `noUndo` says they do not.
+const SHA6 = 'abc1234def5678';
+const SHA2 = 'fed4321cba8765';
+function sittingIo(over = {}) {
+  const records = [];
+  const io = fakeIo({
+    ...over,
+    gh: (args) => (args[1].startsWith('repos/{owner}/{repo}/pulls') ? [
+      { number: 6, title: 'money-edge', head: { ref: 'feature/money-edge' }, merged_at: '2026-11-08T08:00:00Z', merge_commit_sha: SHA6 },
+      { number: 2, title: 'categories', head: { ref: 'feature/categor' }, merged_at: '2026-11-08T08:00:00Z', merge_commit_sha: SHA2 },
+    ] : null),
+    host: { events: async () => records, ...(over.host ?? {}) },
+  });
+  const at = () => new Date(io.clock.now()).toISOString();
+  const click = (data) => records.push({ id: `e${records.length}`, kind: 'action', at: at(), data });
+  io.records = records;
+  io.faults.liftTyped = () => { io.timeline.push({ kind: 'f6.lift', args: [], at: io.clock.now() }); if (!over.noLift) click({ action: 'lift-stop' }); };
+  io.faults.undoTyped = (tmux, sha) => { io.timeline.push({ kind: 'undo', args: [sha], at: io.clock.now() }); if (!over.noUndo) click({ action: 'undo-merge', merge: sha }); };
+  return io;
+}
+const asks = (io) => io.timeline.filter((e) => e.kind === 'ask').map((e) => e.args[0]);
+
+test('the default plan has sitting-1 after w4-type and no f6 or f5 step ids', () => {
+  const all = ids('full');
+  assert.equal(all[all.indexOf('w4-type') + 1], 'sitting-1');
+  assert.deepEqual(all.filter((id) => /^(f6|f5)/.test(id)), []);
+  assert.deepEqual(ids('smoke').filter((id) => id.startsWith('sitting')), []);
+  const two = planRun({ mode: 'full', sittings: ['w3', 'w4'] }).map((s) => s.id);
+  assert.equal(two[two.indexOf('f1c') + 1], 'sitting-1');
+  assert.equal(two[two.indexOf('w4-type') + 1], 'sitting-2');
+  assert.equal(planRun({ mode: 'full' }).find((s) => s.id === 'sitting-1').director, true);
+});
+
+test('a sitting asks once and the trial never clicks', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo();
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['sitting-1'], got.why);
+  assert.deepEqual(asks(io), ['Sitting 1: 3 clicks in the helper window, about 10 minutes. Answer ready when you are at the screen.']);
+  assert.equal(io.timeline.some((e) => e.kind === 'tmux.keys'), false, 'no key reaches the screen');
+  assert.deepEqual(io.timeline.filter((e) => ['f6.stop', 'f6.lift', 'undo'].includes(e.kind)).map((e) => e.kind), ['f6.stop', 'undo', 'f6.lift', 'undo', 'undo']);
+  assert.deepEqual(io.timeline.filter((e) => e.kind === 'undo').map((e) => e.args[0]), [SHA6, SHA6, SHA2]);
+});
+
+test('F5a and F5b finish on the signed action without a done ask', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo();
+  await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.equal(asks(io).length, 1);
+  assert.equal(asks(io).some((a) => /done/i.test(a)), false);
+  const steps = readLog(folder).map((e) => e.step);
+  for (const step of ['f6-lift', LOG.fault('F6'), LOG.fault('F5a'), LOG.fault('F5b')]) assert.ok(steps.includes(step), step);
+  assert.equal(readLog(folder).some((e) => /did not come/.test(e.note ?? '')), false);
+});
+
+test('F5b is answered by the director keeping main as well as by an undo', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo();
+  const undo = io.faults.undoTyped;
+  io.faults.undoTyped = (tmux, sha) => {
+    if (sha !== SHA2) return undo(tmux, sha);
+    io.timeline.push({ kind: 'undo', args: [sha], at: io.clock.now() });
+    io.records.push({ id: 'keep', kind: 'action', at: new Date(io.clock.now()).toISOString(), data: { action: 'keep-main', from: 'a', to: 'b' } });
+  };
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.findings, []);
+  assert.ok(readLog(folder).some((e) => e.step === LOG.fault('F5b')));
+});
+
+test('a click that does not come is a finding, never a stop, and its row is not covered', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo({ noUndo: true });
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.equal(got.stoppedAt, undefined);
+  assert.deepEqual(got.done, ['sitting-1']);
+  assert.deepEqual(got.findings.map((f) => f.step), ['sitting-1', 'sitting-1']);
+  assert.match(got.findings[0].what, /the director's click did not come in sitting 1: the undo of P6/);
+  const steps = readLog(folder).map((e) => e.step);
+  assert.equal(steps.includes(LOG.fault('F5a')), false);
+  assert.equal(steps.includes(LOG.fault('F5b')), false);
+  const row = ROWS.find((r) => r.id === 36).check({ prs: [], runLog: readLog(folder), findings: got.findings });
+  assert.equal(row.pass, null);
+  assert.match(row.evidence, /^not covered: sitting-1 failed \(the director's click did not come in sitting 1/);
+});
+
+test('a lift that does not come leads to one terminal ask, and the run waits for it', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo({ noLift: true });
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  const terminal = asks(io).filter((a) => /All stop is still on/.test(a));
+  assert.equal(terminal.length, 1, 'one terminal ask, however many times the lift is looked for');
+  assert.match(terminal[0], /lift it in the helper window when you can/);
+  const kinds = io.timeline.map((e) => e.kind);
+  const ask = kinds.findIndex((k, i) => k === 'ask' && /All stop is still on/.test(io.timeline[i].args[0]));
+  const firstUndoAfterLift = kinds.indexOf('undo', kinds.indexOf('f6.lift') + 1);
+  assert.ok(ask > kinds.indexOf('f6.lift') && ask < firstUndoAfterLift, 'the ask comes after the lift is typed and before the next undo');
+  assert.ok(got.findings.some((f) => /lifting All stop/.test(f.what)));
+  assert.equal(readLog(folder).some((e) => e.step === 'f6-lift'), false, 'no lift is logged that did not happen');
+  assert.equal(got.stoppedAt, undefined);
+});
+
+test('All stop already set by a failed f6 step is lifted first', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo();
+  const undo = io.faults.undoTyped;
+  let first = true;
+  // The refused undo fails once the stop is typed: the F6 click stops half way with All stop set.
+  io.faults.undoTyped = (tmux, sha) => { if (first) { first = false; io.timeline.push({ kind: 'undo', args: [sha], at: io.clock.now() }); throw new Error('boom'); } return undo(tmux, sha); };
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.match(got.findings[0].what, /^F6: boom/);
+  const kinds = io.timeline.map((e) => e.kind);
+  assert.ok(kinds.indexOf('f6.lift') > kinds.indexOf('f6.stop'));
+  assert.ok(kinds.indexOf('f6.lift') < kinds.indexOf('undo', kinds.indexOf('undo') + 1), 'the lift is typed before the next undo');
+  assert.ok(readLog(folder).some((e) => e.step === 'f6-lift'));
+  // A stop the state says is on, with no lift in the record, is lifted before any click is waited for.
+  const again = sittingIo();
+  const f2 = scratch(t);
+  fs.writeFileSync(path.join(f2, 'state.json'), JSON.stringify({ stopAt: T0 }));
+  await run({ mode: 'full', io: again, from: 'sitting-1', until: 'sitting-1', folder: f2, date: '2026-11-08', env: ENV });
+  assert.equal(again.timeline.filter((e) => ['f6.stop', 'f6.lift'].includes(e.kind))[0].kind, 'f6.lift');
+});
+
+test('an F5a target touched later is a finding before the undo is typed', async (t) => {
+  const folder = scratch(t);
+  const calls = [];
+  const io = sittingIo({ host: { git: async (args) => { calls.push(args); return args[0] === 'log' ? `commit 9f8e7d6 Later edit\n${P6_FILE}\nsrc/other.js\n` : ''; } } });
+  const undo = io.faults.undoTyped;
+  const seen = [];
+  io.faults.undoTyped = (tmux, sha) => { seen.push([sha, readLog(folder).some((e) => /F5a will clash: 9f8e7d6 touched/.test(e.note ?? ''))]); return undo(tmux, sha); };
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.ok(got.findings.some((f) => f.what === `F5a will clash: 9f8e7d6 touched ${P6_FILE}`));
+  assert.deepEqual(seen.map(([, found]) => found), [false, true, true], 'the refused F6 undo comes first; the F5a undo follows the finding');
+  assert.ok(calls.some((a) => a[0] === 'log' && a[1] === `${SHA6}..origin/main` && a.includes('--name-only')));
+  assert.deepEqual(got.done, ['sitting-1'], 'the sitting still goes on');
+});
+
+// Local 09:00 on 8 November 2026, so a window is easy to place whatever the time zone.
+const NINE = new Date(2026, 10, 8, 9, 0).getTime();
+const hhmm = (ms) => `${String(new Date(ms).getHours()).padStart(2, '0')}:${String(new Date(ms).getMinutes()).padStart(2, '0')}`;
+const windowAt = (from, to) => ({ start: from, end: to });
+
+test('a sitting before its window keeps ticking and starts when the window opens', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo({ start: NINE });
+  let looks = 0;
+  const events = io.host.events;
+  io.host.events = async (x) => { looks += 1; return events(x); };
+  const opens = new Date(NINE + 90 * 60000);
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV, windows: [windowAt(opens.getHours() * 60 + opens.getMinutes(), opens.getHours() * 60 + opens.getMinutes() + 60)] });
+  assert.deepEqual(got.done, ['sitting-1'], got.why);
+  assert.equal(asks(io).length, 0, 'with a window the sitting does not ask');
+  assert.ok(looks >= 80, `${looks} looks while it waited for the window`);
+  const stop = io.timeline.find((e) => e.kind === 'f6.stop');
+  assert.ok(stop.at >= opens.getTime(), `All stop typed at ${hhmm(stop.at)}, before the window opened at ${hhmm(opens.getTime())}`);
+  assert.ok(stop.at < opens.getTime() + 5 * 60000);
+});
+
+test('a sitting after every window is skipped with a finding, and rows 36–40 say so', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo({ start: NINE });
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV, windows: [windowAt(7 * 60, 8 * 60)] });
+  assert.deepEqual(got.done, ['sitting-1']);
+  assert.equal(io.timeline.some((e) => ['tmux.type', 'ask', 'f6.stop'].includes(e.kind)), false);
+  assert.match(got.findings[0].what, /^skipped: every window had gone when sitting 1 came/);
+  for (const id of [36, 37, 38, 39, 40]) {
+    const row = ROWS.find((r) => r.id === id).check({ prs: [], runLog: readLog(folder), findings: got.findings, events: [], panes: {} });
+    assert.equal(row.pass, null, `row ${id}`);
+    assert.match(row.evidence, /^not covered: sitting-1 failed \(skipped: every window had gone/, `row ${id}`);
+  }
+});
+
+test('director.md is written at the start with each sitting, and its first line is logged', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo();
+  const lines = [];
+  io.log = (line) => lines.push(line);
+  await run({ mode: 'full', io, from: 'w4-type', until: 'w4-type', folder, date: '2026-11-08', env: ENV });
+  const text = fs.readFileSync(path.join(folder, 'director.md'), 'utf8');
+  assert.match(text, /Sitting 1.*between \d\d:\d\d and \d\d:\d\d.*3 clicks.*about 10 minutes/);
+  assert.ok(lines.some((l) => /^director\.md: - Sitting 1/.test(l)), lines.join(' | '));
+  const done = await run({ mode: 'full', io: sittingIo(), from: 'sitting-1', until: 'sitting-1', folder: scratch(t), date: '2026-11-08', env: ENV });
+  assert.deepEqual(done.done, ['sitting-1']);
+});
+
+test('director.md is written again at the end of a wave and says when none is left', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo();
+  const lines = [];
+  io.log = (line) => lines.push(line);
+  await run({ mode: 'full', io, from: 'sitting-1', until: 'w5-incident', folder, date: '2026-11-08', env: ENV });
+  assert.match(fs.readFileSync(path.join(folder, 'director.md'), 'utf8'), /No sitting is still to come/);
+});
+
+test('--sitting and --window set the plan and a bad one is refused', async (t) => {
+  const printed = [];
+  const io = fakeIo();
+  const code = await main(['plan', '--sitting', 'w3', '--sitting', 'w4'], { print: (l) => printed.push(l), buildIo: async () => io, env: ENV });
+  assert.equal(code, 0);
+  const full = printed.find((l) => l.startsWith('full:'));
+  assert.match(full, /f1c sitting-1\+ .*w4-type sitting-2\+/);
+  for (const bad of [['--sitting', 'w9'], ['--window', '9-10']]) {
+    const lines = [];
+    assert.equal(await main(['plan', ...bad], { print: (l) => lines.push(l), buildIo: async () => io, env: ENV }), 2);
+    assert.ok(lines.length > 0);
+  }
+});
+
+test('a snapshot is taken before each sitting', async (t) => {
+  const folder = scratch(t);
+  const taken = [];
+  const io = sittingIo();
+  io.snapshot = { take: async ({ point }) => { taken.push(point); return { name: point }; } };
+  await run({ mode: 'full', io, from: 'w4-type', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.ok(taken.includes('before-sitting-1'), taken.join(','));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).sittings[0], 'w4');
 });
 
 test('waitFor uses the injected clock and gives up at the timeout', async () => {
@@ -842,7 +1061,7 @@ const BUSY_PANE = 'Looking into it\n✻ Pondering… (12s · ↓ 340 tokens · e
 const busyUntil = (io, until) => () => (io.clock.now() < until ? BUSY_PANE : 'All done.\n\n> \n? for shortcuts');
 
 test('typing waits for a working desk: a request, the faults, a pull-back and the digest each go in only once it is idle', async (t) => {
-  for (const [from, until, text] of [['w2-type', 'w2-type', /./], ['f6-stop', 'f6-undo', /^(all stop|undo )/], ['digest', 'digest', /Send me the daily digest/]]) {
+  for (const [from, until, text] of [['w2-type', 'w2-type', /./], ['sitting-1', 'sitting-1', /^(all stop|undo )/], ['digest', 'digest', /Send me the daily digest/]]) {
     const folder = scratch(t);
     const io = fakeIo();
     const free = T0 + 5 * 60 * 1000;
@@ -1045,13 +1264,14 @@ test('setup ends from the setup journal when the pane never shows the engine\'s 
 test('a failing step that is not a foundation step is a finding and the run goes on', async (t) => {
   const folder = scratch(t);
   const io = fakeIo();
-  io.faults.f6AllStop = () => { throw new Error('boom'); };
-  const got = await run({ mode: 'full', io, from: 'f6-stop', until: 'f6-undo', folder, date: '2026-11-08', env: ENV });
-  assert.deepEqual(got.failed, ['f6-stop']);
-  assert.ok(got.done.includes('f6-undo'));
+  const type = io.tmux.type;
+  io.tmux.type = (name, text) => { if (text === '1 B') throw new Error('boom'); return type(name, text); };
+  const got = await run({ mode: 'full', io, from: 's9-4', until: 's9-5', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.failed, ['s9-4']);
+  assert.ok(got.done.includes('s9-5'));
   assert.equal(got.stoppedAt, undefined);
   assert.match(got.findings[0].what, /boom/);
-  assert.equal(readLog(folder).find((e) => e.step === 'f6-stop' && e.outcome).outcome, 'failed');
+  assert.equal(readLog(folder).find((e) => e.step === 's9-4' && e.outcome).outcome, 'failed');
   assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).findings.length, 1);
 });
 
@@ -1097,9 +1317,10 @@ test('the owner check still stops before anything is created, even in a step tha
 test('main exits 1 when the run has findings', async (t) => {
   const folder = scratch(t);
   const io = fakeIo();
-  io.faults.f6AllStop = () => { throw new Error('boom'); };
+  const type = io.tmux.type;
+  io.tmux.type = (name, text) => { if (text === '1 B') throw new Error('boom'); return type(name, text); };
   io.results.runFolder = () => folder;
-  const code = await main(['full', '--from', 'f6-stop', '--until', 'f6-stop', '--date', '2026-11-08'], { print: () => {}, buildIo: async () => io, env: { ...ENV, HAIKU_TRIAL_WHEELHOUSE_HOME: ENV.WHEELHOUSE_HOME } });
+  const code = await main(['full', '--from', 's9-4', '--until', 's9-4', '--date', '2026-11-08'], { print: () => {}, buildIo: async () => io, env: { ...ENV, HAIKU_TRIAL_WHEELHOUSE_HOME: ENV.WHEELHOUSE_HOME } });
   assert.equal(code, 1);
 });
 

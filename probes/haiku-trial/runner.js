@@ -19,6 +19,7 @@ import { parseModel, DEFAULT_MODEL, MODELS } from './models.js';
 import { STARTS_UNAPPROVED } from '../../scripts/foreman/queue.js';
 import { installCommand, removeCommands } from './stage-plugin.js';
 import { pointsFor, snapshotsDir, listSnapshots, readMeta, restoreLocal } from './snapshot.js';
+import { WAVE_WAIT_MS, placeClicks, parseWindow, windowState, estimate, directorNote, minutesFor } from './sittings.js';
 import { snapshotGh, rebuildGithub } from './github-snapshot.js';
 import { reviewCard, stepsPage, writeTryMe, reviewAsDecision, answerLetter } from './review-card.js';
 
@@ -26,7 +27,6 @@ const MINUTE = 60 * 1000;
 const DESK = 'desk';
 const SETUP = 'setup';
 const WHY_WAIT_MS = 100 * 1000 + 20 * 1000;
-const WAVE_WAIT_MS = { 2: 90 * MINUTE, 3: 150 * MINUTE, 4: 90 * MINUTE };
 const SPARE_BRANCH = 'trial/spare-bug';
 const SETUP_WAIT_MS = 45 * MINUTE;
 // `alerts ntfy` waits two minutes for the click, so the desk is given a little longer to say how it went.
@@ -279,7 +279,7 @@ async function snapshotAt(ctx, { point, step }) {
       await waitFor(async () => { await tick(ctx); running = runningWorks(await io.host.events({ project: ctx.projectName })); return running.length === 0; }, { io, timeoutMs: 10 * MINUTE, everyMs: 30000 });
     }
     writeState(ctx);
-    const meta = { label: ctx.label, mode: ctx.mode, point, step, at: iso(ctx), attempt: ctx.state.resumedFrom?.attempt ?? 1, pluginSha: ctx.state.stage?.sha, quiet: running.length === 0, running };
+    const meta = { label: ctx.label, mode: ctx.mode, sittings: ctx.state.sittings, point, step, at: iso(ctx), attempt: ctx.state.resumedFrom?.attempt ?? 1, pluginSha: ctx.state.stage?.sha, quiet: running.length === 0, running };
     const configDir = ctx.env.HAIKU_TRIAL_CONFIG_DIR;
     const transcripts = io.host.findTranscripts({ project: ctx.projectName, dir: ctx.projectDir }).map((t) => t.file).filter((f) => typeof f === 'string');
     const got = await io.snapshot.take({ label: ctx.label, point, folder: ctx.folder, configDir, transcripts, meta, seedSha: ctx.state.seedSha });
@@ -619,6 +619,170 @@ async function notExercised(ctx, id, why) {
   await note(ctx, LOG.fault(id), `not exercised: ${why}`);
 }
 
+// --- the director's sittings (spec 2026-11-13, section 5) ---
+
+const CLICK_WAIT_MS = 15 * MINUTE;
+const sittingId = (n) => `sitting-${n}`;
+const eventsOf = (ctx) => ctx.io.host.events({ project: ctx.projectName });
+const isAction = (e, ...actions) => e.kind === 'action' && actions.includes(e.data?.action);
+// An event made at or after `since` (one with no readable time counts: a record without a time cannot be told from a later one).
+const notBefore = (e, since) => !(Date.parse(e.at) < since);
+
+// Whether All stop was typed in this run and no signed lift followed it.
+const stopIsOn = async (ctx) => {
+  const { stopAt } = ctx.state;
+  if (stopAt === undefined) return false;
+  return !(await eventsOf(ctx)).some((e) => isAction(e, 'lift-stop') && notBefore(e, stopAt - 1000));
+};
+
+// Waits for the director's signed lift. If it does not come it is a finding, and the one terminal ask of the sitting follows: All
+// stop holds every merge and start until it is lifted, so nothing else goes on before that ask is answered.
+async function liftWatch(ctx, io, n) {
+  const lifted = async () => (await stopIsOn(ctx)) === false;
+  if (await waitFor(async () => { await tick(ctx); return lifted(); }, { io, timeoutMs: CLICK_WAIT_MS })) {
+    await note(ctx, 'f6-lift', 'All stop lifted');
+    return true;
+  }
+  await addFinding(ctx, sittingId(n), `the director's click did not come in sitting ${n}: lifting All stop`);
+  ctx.state.liftAskedIn = n;
+  await directorAsk(ctx, 'All stop is still on: lift it in the helper window when you can, then answer done.');
+  if (!(await lifted())) return false;
+  await note(ctx, 'f6-lift', 'All stop lifted');
+  return true;
+}
+
+// Before any click is waited for: a stop that is on (typed by an F6 that then failed, or by an earlier attempt) is lifted first.
+async function liftIfStopped(ctx, io, n) {
+  if (ctx.state.liftAskedIn === n || !(await stopIsOn(ctx))) return;
+  await deskFree(ctx);
+  await io.faults.liftTyped(io.tmux);
+  await liftWatch(ctx, io, n);
+}
+
+// What a later commit on main touched among P6's files: an undo of P6 that clashes is the kit's fault, not Wheelhouse's, so the
+// finding is made before the undo is typed.
+async function undoClash(ctx, sha, n) {
+  if (sha === 'unknown') return;
+  const git = (args) => ctx.io.host.git(args, { cwd: ctx.projectDir });
+  try { await git(['fetch', 'origin', 'main']); } catch { /* the local main is what there is */ }
+  let log;
+  try { log = String(await git(['log', `${sha}..origin/main`, '--name-only', '--format=commit %h %s'])); } catch {
+    try { log = String(await git(['log', `${sha}..main`, '--name-only', '--format=commit %h %s'])); } catch { return; }
+  }
+  let commit = '';
+  for (const line of log.split('\n').map((l) => l.trim()).filter(Boolean)) {
+    if (line.startsWith('commit ')) { commit = line.slice(7).split(' ')[0]; continue; }
+    if (line === P6_FILE) { await addFinding(ctx, sittingId(n), `F5a will clash: ${commit} touched ${line}`); return; }
+  }
+}
+
+// The director's signed answer to an undo card: an undo of that merge, or Keep it, made after the undo was typed.
+const sameSha = (a, b) => typeof a === 'string' && typeof b === 'string' && a.length >= 7 && b.length >= 7 && (a.startsWith(b) || b.startsWith(a));
+const undoAnswered = (ctx, sha, since) => async () => {
+  await tick(ctx);
+  return (await eventsOf(ctx)).some((e) => notBefore(e, since) && (
+    (isAction(e, 'undo-merge') && (sha === 'unknown' || sameSha(e.data?.merge, sha))) || isAction(e, 'keep-main')));
+};
+
+const clickSteps = {
+  // F6: All stop typed, an undo refused under it, five minutes, then the lift (the director's click).
+  async F6(ctx, io, { n }) {
+    await deskFree(ctx);
+    const at = io.clock.now();
+    await io.faults.f6AllStop(io.tmux);
+    ctx.state.stopAt = at;
+    await io.clock.sleep(10000);
+    await note(ctx, LOG.stopSet, 'All stop typed', { detail: { at } });
+    await note(ctx, LOG.fault('F6'), 'All stop set');
+    const sha = await p6Sha(ctx);
+    await deskFree(ctx);
+    await io.faults.undoTyped(io.tmux, sha);
+    await io.clock.sleep(20000);
+    await note(ctx, 'f6-undo', `undo typed under All stop: ${io.tmux.capture(DESK).split('\n').filter((l) => /All stop is on/.test(l)).join(' ') || 'no refusal text seen'}`);
+    const until = at + 5 * MINUTE;
+    await waitFor(async () => { await tick(ctx); return io.clock.now() >= until; }, { io, timeoutMs: 6 * MINUTE });
+    ctx.state.panes['front-desk'].push(io.tmux.capture(DESK));
+    await note(ctx, 'f6-wait-5m', 'five minutes with no new start allowed');
+    await deskFree(ctx);
+    await io.faults.liftTyped(io.tmux);
+    io.log?.('Click Lift All stop in the helper window.');
+    await liftWatch(ctx, io, n);
+  },
+  // F5a: the undo of P6, approved by the director's signed click.
+  async F5a(ctx, io, { n }) {
+    const sha = await p6Sha(ctx);
+    await undoClash(ctx, sha, n);
+    await deskFree(ctx);
+    const typedAt = io.clock.now();
+    await io.faults.undoTyped(io.tmux, sha);
+    io.log?.("Click Approve on the undo of piece P6's merge in the helper window (the first of two).");
+    if (!(await waitFor(undoAnswered(ctx, sha, typedAt), { io, timeoutMs: CLICK_WAIT_MS }))) {
+      await addFinding(ctx, sittingId(n), `the director's click did not come in sitting ${n}: the undo of P6`);
+      return;
+    }
+    await waitFor(async () => { await tick(ctx); return (await ghPulls(ctx)).some((p) => /^wheelhouse\/undo-/.test(p.head?.ref ?? '') && p.merged_at); }, { io, timeoutMs: 20 * MINUTE });
+    await note(ctx, LOG.fault('F5a'), 'undo of P6 approved; waited for the take-back merge');
+  },
+  // F5b: the undo of P2, which clashes with later work; the director's click is the answer to its card.
+  async F5b(ctx, io, { n }) {
+    const p2 = pullOf(await ghPulls(ctx), ctx.state.pieces.P2?.change ?? 'categor');
+    const sha = p2?.merge_commit_sha ?? 'unknown';
+    await deskFree(ctx);
+    const typedAt = io.clock.now();
+    await io.faults.undoTyped(io.tmux, sha);
+    io.log?.("Click Approve on the undo of piece P2's merge in the helper window (the second of two). It should clash.");
+    if (!(await waitFor(undoAnswered(ctx, sha, typedAt), { io, timeoutMs: CLICK_WAIT_MS }))) {
+      await addFinding(ctx, sittingId(n), `the director's click did not come in sitting ${n}: the undo of P2`);
+      return;
+    }
+    await note(ctx, LOG.fault('F5b'), `undo of P2 approved; reply: ${io.tmux.capture(DESK).split('\n').filter((l) => /clashes with later work/.test(l)).join(' ') || 'no clash text seen'}`);
+  },
+};
+
+// Minutes after midnight (of the day the run began) in local time, as `windowState` reads them.
+const localMinutes = (ctx) => (ctx.io.clock.now() - ctx.windowOrigin) / MINUTE;
+
+// The start of a sitting: asks once, or (with windows) waits for the director's window. False when the sitting is skipped.
+async function sittingStart(ctx, io, { n, clicks, windows }) {
+  if (windows.length === 0) {
+    const text = `Sitting ${n}: ${clicks.length} click${clicks.length === 1 ? '' : 's'} in the helper window, about ${minutesFor(clicks.length)} minutes. Answer ready when you are at the screen.`;
+    await directorAsk(ctx, text);
+    return true;
+  }
+  let state = windowState(windows, localMinutes(ctx));
+  if (state === 'before') {
+    await note(ctx, sittingId(n), 'waiting for the director\'s window; builds carry on meanwhile');
+    await waitFor(async () => { await tick(ctx); state = windowState(windows, localMinutes(ctx)); return state !== 'before'; }, { io, timeoutMs: 48 * 60 * MINUTE, everyMs: MINUTE });
+  }
+  if (state === 'past') {
+    await addFinding(ctx, sittingId(n), `skipped: every window had gone when sitting ${n} came, so its clicks (${clicks.join(', ')}) were not covered`);
+    return false;
+  }
+  return true;
+}
+
+// One step that does the typed parts of every click in a sitting and waits for the director's clicks together. A click that fails or
+// does not come is a finding and never a stop; the stop that a failed F6 may have left on is lifted before the next click.
+const WAVE_OF_POINT = { w3: 3, w4: 4, end: 5 };
+function sittingStep({ n, point, after, clicks }, windows) {
+  return {
+    id: sittingId(n), wave: WAVE_OF_POINT[point], smoke: false, director: true, after, n, clicks,
+    async run(ctx, io) {
+      if (!(await sittingStart(ctx, io, { n, clicks, windows }))) return;
+      await liftIfStopped(ctx, io, n);
+      for (const click of clicks) {
+        try {
+          await clickSteps[click](ctx, io, { n });
+        } catch (error) {
+          if (error instanceof HardStop) throw error;
+          await addFinding(ctx, sittingId(n), `${click}: ${error.message}`);
+        }
+        await liftIfStopped(ctx, io, n);
+      }
+    },
+  };
+}
+
 const s9 = (n, run) => ({ id: `s9-${n}`, wave: 4, smoke: [1, 2, 4].includes(n), run });
 
 export const STEPS = [
@@ -807,60 +971,6 @@ export const STEPS = [
       await note(ctx, LOG.fault('F1c'), `refused with code ${got.code}`);
     },
   },
-  {
-    id: 'f6-stop', wave: 3, smoke: false,
-    async run(ctx, io) {
-      await deskFree(ctx);
-      ctx.state.stopAt = io.clock.now();
-      await io.faults.f6AllStop(io.tmux);
-      await io.clock.sleep(10000);
-      await note(ctx, LOG.stopSet, 'All stop typed', { detail: { at: ctx.state.stopAt } });
-      await note(ctx, LOG.fault('F6'), 'All stop set');
-    },
-  },
-  {
-    id: 'f6-undo', wave: 3, smoke: false,
-    async run(ctx, io) {
-      const sha = await p6Sha(ctx);
-      await deskFree(ctx);
-      await io.faults.undoTyped(io.tmux, sha);
-      await io.clock.sleep(20000);
-      await note(ctx, 'f6-undo', `undo typed under All stop: ${io.tmux.capture(DESK).split('\n').filter((l) => /All stop is on/.test(l)).join(' ') || 'no refusal text seen'}`);
-    },
-  },
-  {
-    id: 'f6-wait-5m', wave: 3, smoke: false,
-    async run(ctx, io) {
-      const until = (ctx.state.stopAt ?? io.clock.now()) + 5 * MINUTE;
-      await waitFor(async () => { await tick(ctx); return io.clock.now() >= until; }, { io, timeoutMs: 6 * MINUTE });
-      ctx.state.panes['front-desk'].push(io.tmux.capture(DESK));
-      await note(ctx, 'f6-wait-5m', 'five minutes with no new start allowed');
-    },
-  },
-  {
-    id: 'f6-lift', wave: 3, smoke: false, director: true,
-    async run(ctx, io) {
-      await deskFree(ctx);
-      await io.faults.liftTyped(io.tmux);
-      const lifted = await waitFor(async () => {
-        await tick(ctx);
-        return (await io.host.events({ project: ctx.projectName })).some((e) => e.kind === 'action' && e.data?.action === 'lift-stop');
-      }, { io, timeoutMs: 2 * MINUTE });
-      if (!lifted) await directorAsk(ctx, 'Lift All stop in the helper window, then answer done.');
-      await note(ctx, 'f6-lift', 'All stop lifted');
-    },
-  },
-  {
-    id: 'f5a-undo-p6', wave: 3, smoke: false, director: true,
-    async run(ctx, io) {
-      const sha = await p6Sha(ctx);
-      await deskFree(ctx);
-      await io.faults.undoTyped(io.tmux, sha);
-      await directorAsk(ctx, "Approve the undo of piece P6's merge in the helper window (the first of two), then answer done.");
-      await waitFor(async () => { await tick(ctx); return (await ghPulls(ctx)).some((p) => /^wheelhouse\/undo-/.test(p.head?.ref ?? '') && p.merged_at); }, { io, timeoutMs: 20 * MINUTE });
-      await note(ctx, LOG.fault('F5a'), 'undo of P6 approved; waited for the take-back merge');
-    },
-  },
   { id: 'w3-merge-wait', wave: 3, smoke: false, async run(ctx) { await waitMerged(ctx, 3 + (ctx.state.p5 === 'not-covered' ? 3 : 4), 3); } },
   auditStep(3, false),
   { id: 'w4-type', wave: 4, smoke: true, async run(ctx) { await typeWave(ctx, 4, ctx.smoke ? { only: ['P4'] } : {}); } },
@@ -914,17 +1024,6 @@ export const STEPS = [
   s9(4, async (ctx) => { await note(ctx, 's9-4', `1 B: ${(await say(ctx, '1 B')).slice(0, 300)}`); }),
   s9(5, async (ctx) => { await note(ctx, 's9-5', `2 B private: ${(await say(ctx, '2 B private')).slice(0, 300)}`); }),
   s9(6, async (ctx) => { await note(ctx, 's9-6', `1 A again: ${(await say(ctx, '1 A')).slice(0, 300)}`); }),
-  {
-    id: 'f5b-undo-p2', wave: 4, smoke: false, director: true,
-    async run(ctx, io) {
-      const pulls = await ghPulls(ctx);
-      const p2 = pullOf(pulls, ctx.state.pieces.P2?.change ?? 'categor');
-      await deskFree(ctx);
-      await io.faults.undoTyped(io.tmux, p2?.merge_commit_sha ?? 'unknown');
-      await directorAsk(ctx, "Approve the undo of piece P2's merge in the helper window (the second of two), then answer done. It should clash.");
-      await note(ctx, LOG.fault('F5b'), `undo of P2 approved; reply: ${io.tmux.capture(DESK).split('\n').filter((l) => /clashes with later work/.test(l)).join(' ') || 'no clash text seen'}`);
-    },
-  },
   {
     id: 'pull-back', wave: 4, smoke: false,
     async run(ctx, io) {
@@ -1099,11 +1198,32 @@ async function gatherAndCheck(ctx, io) {
 
 // --- planning and running ---
 
-export function planRun({ mode = 'full' } = {}) {
-  return mode === 'smoke' ? STEPS.filter((s) => s.smoke) : STEPS.filter((s) => s.smokeOnly !== true);
+// The steps of a run. A full run gets a sitting step after each `SITTING_POINTS` step its sittings name (`--sitting`, `w4` by default);
+// a smoke run has none.
+export function planRun({ mode = 'full', sittings = ['w4'], windows = [] } = {}) {
+  if (mode === 'smoke') return STEPS.filter((s) => s.smoke);
+  const after = new Map(placeClicks(sittings).map((p) => [p.after, sittingStep(p, windows)]));
+  return STEPS.filter((s) => s.smokeOnly !== true).flatMap((s) => (after.has(s.id) ? [s, after.get(s.id)] : [s]));
 }
 
-const lastDone = (file) => readLog(file).filter((e) => e.done === true).map((e) => e.step).filter((id) => STEPS.some((s) => s.id === id)).pop();
+const lastDone = (file, plan) => readLog(file).filter((e) => e.done === true).map((e) => e.step).filter((id) => plan.some((s) => s.id === id)).pop();
+const sittingsIn = (plan) => plan.filter((s) => s.clicks !== undefined);
+
+// director.md (spec section 5.3): the sittings still to come, when each is likely and how long it takes. It is written at the start
+// of a run, at the end of each wave and on a resume, and its first line goes to the log.
+async function writeDirectorNote(ctx, plan, at) {
+  try {
+    const ahead = plan.slice(at);
+    const sittings = sittingsIn(ahead);
+    const now = ctx.io.clock.now();
+    const estimates = sittings.map((s) => estimate({ remaining: ahead.slice(0, ahead.indexOf(s)).filter((x) => x.clicks === undefined).map((x) => x.id), now }));
+    const text = directorNote({ sittings, estimates, windows: ctx.state.windows ?? [], now });
+    fs.writeFileSync(path.join(ctx.folder, 'director.md'), text);
+    ctx.io.log?.(`director.md: ${text.split('\n').find((l) => l.startsWith('- '))?.replace(/\*\*/g, '') ?? 'no sitting still to come'}`);
+  } catch (error) {
+    await note(ctx, 'director-note', `could not write director.md: ${error.message}`);
+  }
+}
 
 function contextFor({ mode, io, folder, date, label, env }) {
   const owner = env.HAIKU_TRIAL_GH_OWNER;
@@ -1123,7 +1243,7 @@ function contextFor({ mode, io, folder, date, label, env }) {
   };
 }
 
-export async function run({ mode = 'full', io: given, from, until, folder, date, model, env = process.env, goGiven = false } = {}) {
+export async function run({ mode = 'full', io: given, from, until, folder, date, model, env = process.env, goGiven = false, sittings, windows } = {}) {
   const label = date;
   const problem = homeProblem(env);
   if (problem) return { done: [], stoppedAt: 'wheelhouse-home', why: problem };
@@ -1150,10 +1270,15 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
   ctx.model = began ?? asked ?? DEFAULT_MODEL;
   ctx.state.model = ctx.model;
   io.host.useRepo(ctx.repoSlug);
-  const plan = planRun({ mode });
+  // The sittings and windows a run began with are kept in its state, so a later `--from auto` or a resume goes on with the same plan.
+  ctx.state.sittings = sittings ?? ctx.state.sittings ?? ['w4'];
+  ctx.state.windows = windows ?? ctx.state.windows ?? [];
+  const now = new Date(io.clock.now());
+  ctx.windowOrigin = now.setHours(0, 0, 0, 0);
+  const plan = planRun({ mode, sittings: ctx.state.sittings, windows: ctx.state.windows });
   let start = 0;
   if (from === 'auto') {
-    const at = plan.findIndex((s) => s.id === lastDone(ctx.logFile));
+    const at = plan.findIndex((s) => s.id === lastDone(ctx.logFile, plan));
     start = at < 0 ? 0 : at + 1;
   } else if (from) {
     start = plan.findIndex((s) => s.id === from);
@@ -1163,12 +1288,14 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
   if (ctx.preview === 'tunnel' && plan.slice(start).some((s) => s.id === 'create-preview') && !(await io.host.hasCommand('cloudflared'))) {
     return { done: [], stoppedAt: 'create-preview', why: 'HAIKU_TRIAL_PREVIEW is tunnel but cloudflared is not installed. Install it (brew install cloudflared) or use vercel or none. Nothing was created.' };
   }
-  const points = pointsFor(mode);
+  const points = pointsFor(mode, sittingsIn(plan).map((s) => s.n));
   const done = [];
   const failed = [];
   const skipped = [];
   const result = (extra = {}) => ({ done, findings: ctx.state.findings ?? [], failed, skipped, ...extra });
-  for (const step of plan.slice(start)) {
+  await writeDirectorNote(ctx, plan, start);
+  for (const [index, step] of plan.entries()) {
+    if (index < start) continue;
     const unmet = (step.needs ?? []).find((id) => failed.includes(id) || skipped.includes(id));
     if (unmet !== undefined) {
       const what = `skipped: needs ${unmet}, which failed`;
@@ -1214,6 +1341,7 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
     done.push(step.id);
     for (const p of points.filter((x) => x.after === step.id)) await snapshotAt(ctx, { point: p.point, step: step.id });
     if (until === step.id) break;
+    if (plan[index + 1] && plan[index + 1].wave > step.wave) await writeDirectorNote(ctx, plan, index + 1);
   }
   return result();
 }
@@ -1222,7 +1350,7 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
 
 // The step a resume goes on from: the step itself for a `before-` point, the one after it for an `after-` point.
 function stepAfterPoint(meta) {
-  const plan = planRun({ mode: meta.mode ?? 'full' }).map((s) => s.id);
+  const plan = planRun({ mode: meta.mode ?? 'full', sittings: meta.sittings }).map((s) => s.id);
   if (meta.point?.startsWith('before-')) return plan.includes(meta.step) ? meta.step : undefined;
   const at = plan.indexOf(meta.step);
   return at < 0 ? undefined : plan[at + 1];
@@ -1366,7 +1494,7 @@ export function runLabel({ arg, env = process.env } = {}) {
   return given;
 }
 
-const USAGE = 'usage: node probes/haiku-trial/runner.js full | smoke | restore | resume | plan [--from <step>] [--out <folder>] [--until <step>] [--date <label>] [--model <haiku|sonnet>] [--force]\n  --model <haiku|sonnet> runs the whole trial on that model (haiku by default); one sonnet run tells kit faults from model faults\n  --force (restore) stops the helper, watchers and foremen even while a feature session is still running\n  resume --date <label> --snapshot <nn-point> [--keep-plugin] starts the run again from a snapshot, as a new attempt\n  --date <label> (or HAIKU_TRIAL_DATE) names the run: YYYY-MM-DD with an optional -suffix such as 2026-11-08-b';
+const USAGE = 'usage: node probes/haiku-trial/runner.js full | smoke | restore | resume | plan [--from <step>] [--out <folder>] [--until <step>] [--date <label>] [--model <haiku|sonnet>] [--force]\n  --model <haiku|sonnet> runs the whole trial on that model (haiku by default); one sonnet run tells kit faults from model faults\n  --force (restore) stops the helper, watchers and foremen even while a feature session is still running\n  resume --date <label> --snapshot <nn-point> [--keep-plugin] starts the run again from a snapshot, as a new attempt\n  --sitting <w3|w4|end> (repeatable) puts the clicks of the director in a sitting after that point; w4 alone by default\n  --window <HH:MM-HH:MM> (repeatable, local time) holds a sitting to a window of the director\n  --date <label> (or HAIKU_TRIAL_DATE) names the run: YYYY-MM-DD with an optional -suffix such as 2026-11-08-b';
 
 function parseArgs(argv) {
   const out = { command: argv[0], from: undefined, folder: undefined, until: undefined, date: undefined };
@@ -1379,6 +1507,8 @@ function parseArgs(argv) {
     else if (argv[i] === '--force') out.force = true;
     else if (argv[i] === '--snapshot') out.snapshot = argv[(i += 1)] ?? '';
     else if (argv[i] === '--keep-plugin') out.keepPlugin = true;
+    else if (argv[i] === '--sitting') (out.sittings ??= []).push(argv[(i += 1)] ?? '');
+    else if (argv[i] === '--window') (out.windows ??= []).push(argv[(i += 1)] ?? '');
   }
   return out;
 }
@@ -1394,9 +1524,18 @@ export async function main(argv, { print = console.log, buildIo, env = process.e
     print(USAGE);
     return 2;
   }
+  let windows;
+  try {
+    if (args.sittings) placeClicks(args.sittings);
+    if (args.windows) windows = args.windows.map(parseWindow);
+  } catch (error) {
+    print(error.message);
+    print(USAGE);
+    return 2;
+  }
   if (args.command === 'plan') {
     for (const mode of ['full', 'smoke']) {
-      print(`${mode}: ${planRun({ mode }).map((s) => `${s.id}${s.needsGo ? '*' : ''}${s.director ? '+' : ''}`).join(' ')}`);
+      print(`${mode}: ${planRun({ mode, sittings: args.sittings, windows }).map((s) => `${s.id}${s.needsGo ? '*' : ''}${s.director ? '+' : ''}`).join(' ')}`);
     }
     print('* waits for the director\'s go, + needs the director');
     if (label !== undefined) print(`run ${label}: repository ${env.HAIKU_TRIAL_GH_OWNER ?? '<owner>'}/haiku-trial-${label}, folder ${args.folder ?? runFolder(label)}`);
@@ -1431,7 +1570,7 @@ export async function main(argv, { print = console.log, buildIo, env = process.e
     print(JSON.stringify(result));
     return result.stoppedAt || (result.findings ?? []).length > 0 ? 1 : 0;
   }
-  const result = await run({ mode: args.command, io, from: args.from ?? 'auto', until: args.until, folder, date: label, model: args.model, env: given });
+  const result = await run({ mode: args.command, io, from: args.from ?? 'auto', until: args.until, folder, date: label, model: args.model, env: given, sittings: args.sittings, windows });
   print(JSON.stringify(result));
   return result.stoppedAt || (result.findings ?? []).length > 0 ? 1 : 0;
 }

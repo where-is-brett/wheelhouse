@@ -18,7 +18,11 @@ export const SNAPSHOT_POINTS = [
   { point: 'after-w4-audit', after: 'w4-audit', mode: 'both' },
 ];
 
-export const pointsFor = (mode) => SNAPSHOT_POINTS.filter((p) => p.mode === 'both' || p.mode === mode);
+// `sittings` are the numbers of the director's sittings in the plan; each one gets a `before-sitting-<n>` point (full runs only).
+export const pointsFor = (mode, sittings = []) => [
+  ...SNAPSHOT_POINTS.filter((p) => p.mode === 'both' || p.mode === mode),
+  ...(mode === 'full' ? sittings.map((n) => ({ point: `before-sitting-${n}`, before: `sitting-${n}`, mode: 'full' })) : []),
+];
 
 const TRIALS = path.join(os.homedir(), '.wheelhouse-trials');
 export const snapshotsDir = (label, base = TRIALS) => path.join(base, `haiku-${label}.snapshots`);
