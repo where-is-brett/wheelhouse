@@ -1492,6 +1492,9 @@ async function merge(ctx, work, rest) {
   const markMerged = async () => {
     if (!safeFeatureFolder(worktree)) refuse("The worktree's feature folder isn't a real folder inside it");
     if (!kept.merged) writeWhole(featurePaths(worktree).pr, `${JSON.stringify({ pr, ...(kept.plan ? { plan: kept.plan } : {}), merged: true })}\n`);
+    // The mark is written first, so a settle that fails can be tried again (a merged pull request needs the mark), and the
+    // report before the status, so a status that fails to write can't strand what waits on the work.
+    await settleClosed();
     let status;
     try {
       status = writeFeatureStatus(ctx, views, work, worktree);
@@ -1501,7 +1504,7 @@ async function merge(ctx, work, rest) {
     return status.phase;
   };
   // The closed work's report read `closed`, so nothing that depends on the work could start; its own pull request merged,
-  // so it reads `merged` now. It is written before the status, so a status that fails to write can't strand what waits on
+  // so it reads `merged` now. It is written after the pr.json mark and before the status, so a status that fails to write can't strand what waits on
   // the work, and from the views as they are now: only a report still `closed` for this pull request is changed.
   const settleClosed = async () => {
     if (!closed) return;
@@ -1514,7 +1517,6 @@ async function merge(ctx, work, rest) {
   if (state?.ok === true && state.result?.state === 'merged') {
     if (closed && kept.merged !== true) refuse(`Pull request #${pr} for ${work} merged, but not through act merge: ask the director`);
     // Marked and its status written again: a stop between the merge and either is put right.
-    await settleClosed();
     const phase = await markMerged();
     ctx.say(`Pull request #${pr} for ${work} is merged already; its status reads ${phase}.`);
     return;
@@ -1551,7 +1553,6 @@ async function merge(ctx, work, rest) {
   }
   if (merged?.ok !== true) refuse(`Pull request #${pr} for ${work} was not merged: ${refusal(merged)}. Ask the director; don't try again.`);
   if (typeof merged.briefing === 'string' && merged.briefing !== '') await releaseMerged(ctx, pr, merged);
-  await settleClosed();
   const phase = await markMerged();
   ctx.say(`Merged pull request #${pr} for ${work} at ${short(merged.sha)}; its status reads ${phase}.${Array.isArray(merged.answeredNoChange) && merged.answeredNoChange.length > 0 ? ` The session marked the director's answer to ${merged.answeredNoChange.join(', ')} as needing no change.` : ''}`);
 }

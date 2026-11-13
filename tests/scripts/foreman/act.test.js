@@ -1923,6 +1923,29 @@ test('merge goes through for closed work whose own pull request is still open, o
   assert.deepEqual(again.writes.map((w) => w.data.outcome), ['merged']);
 }));
 
+test('a report that fails to settle after the host merge is settled on the retry, which the pr.json mark lets through', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.mine = workView('mine', { lane: 'feature' });
+  const wt = worktree(checkout, 'mine', { pr: { pr: 12, plan: 'docs/plans/p.md' }, report: reportText('mine') });
+  views.features.mine = featureView('mine', { step: 'closed', worktree: wt, plan: 'docs/plans/p.md' });
+  views.reports.mine = { data: { work: 'mine', outcome: 'closed', summary: 'Shipped.', rulings: [], pr: 12 } };
+  const answers = { prState: { ok: true, result: { state: 'open' } }, updateBranch: { ok: true, updated: false, head: 'b'.repeat(40) }, merge: { ok: true, sha: 'c'.repeat(40) } };
+  const fake = fakeClient({ views, answers });
+  const write = fake.client.state.write;
+  let failing = true;
+  fake.client.state.write = async (a) => { if (failing && a.kind === 'report') return { ok: false, refused: 'down' }; return write(a); };
+  const first = await act(['merge', 'mine'], { client: fake.client });
+  assert.notEqual(first.code, 0);
+  assert.equal(JSON.parse(fs.readFileSync(featurePaths(wt).pr, 'utf8')).merged, true, 'the mark is written before the settle');
+  // The host has merged it by now; the retry settles the report.
+  failing = false;
+  answers.prState = { ok: true, result: { state: 'merged' } };
+  const retry = await act(['merge', 'mine'], { client: fake.client });
+  assert.equal(retry.code, 0, retry.err);
+  assert.deepEqual(fake.writes.map((w) => [w.kind, w.data.outcome]), [['report', 'merged']]);
+}));
+
 test('a report already settled by someone else is not written again', () => withHome(async () => {
   const checkout = await project();
   const views = emptyViews();
