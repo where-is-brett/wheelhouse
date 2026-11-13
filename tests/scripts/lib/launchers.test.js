@@ -4,7 +4,9 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { BIN_DIR, LAUNCHERS, launcherOf, pathWithLaunchers } from '../../../scripts/lib/launchers.js';
+import os from 'node:os';
+import { BIN_DIR, COPILOT_SESSION, LAUNCHERS, launcherOf, pathWithLaunchers } from '../../../scripts/lib/launchers.js';
+import { launch, UNSAFE_ARGUMENT } from '../../../scripts/lib/launch.js';
 import { scriptArguments } from '../../../scripts/hooks/stop-guard.js';
 
 const ROOT = path.resolve(BIN_DIR, '..');
@@ -37,14 +39,41 @@ test('the launchers\' folder goes first on a PATH, once', () => {
   assert.equal(pathWithLaunchers(undefined, { binDir: '/w/bin', delimiter: ':' }), '/w/bin');
 });
 
-test('the stop guard reads a launcher by its bare name as its script, and no other command as one', () => {
-  const roots = ['/p'];
-  for (const platform of ['darwin', 'win32']) {
-    assert.deepEqual(scriptArguments('wh-frontdesk cards', roots, platform, 'scripts/frontdesk/cli.js'), ['cards']);
-    assert.deepEqual(scriptArguments('wh-feature answer q1', roots, platform, 'scripts/feature/cli.js'), ['answer', 'q1']);
-    assert.equal(scriptArguments('wh-feature report', roots, platform, 'scripts/frontdesk/cli.js'), null, 'a launcher is its own script only');
-    assert.equal(scriptArguments('wh-frontdesk cards; rm x', roots, platform, 'scripts/frontdesk/cli.js'), null);
-    assert.equal(scriptArguments('wh-frontdesk cards && wh-frontdesk cards', roots, platform, 'scripts/frontdesk/cli.js'), null);
-    assert.equal(scriptArguments('./wh-frontdesk cards', roots, platform, 'scripts/frontdesk/cli.js'), null);
+test('the stop guard reads a bare launcher name only in a Copilot session, and only when the PATH reaches this plugin\'s own bin/', () => {
+  const roots = [ROOT];
+  const front = 'scripts/frontdesk/cli.js';
+  const env = { [COPILOT_SESSION]: '1', PATH: pathWithLaunchers('/usr/bin:/bin') };
+  assert.deepEqual(scriptArguments('wh-frontdesk cards', roots, 'darwin', front, env), ['cards']);
+  assert.deepEqual(scriptArguments('wh-feature answer q1', roots, 'darwin', 'scripts/feature/cli.js', env), ['answer', 'q1']);
+  assert.equal(scriptArguments('wh-feature report', roots, 'darwin', front, env), null, 'a launcher is its own script only');
+  assert.equal(scriptArguments('wh-frontdesk cards; rm x', roots, 'darwin', front, env), null);
+  assert.equal(scriptArguments('wh-frontdesk cards && wh-frontdesk cards', roots, 'darwin', front, env), null);
+  assert.equal(scriptArguments('./wh-frontdesk cards', roots, 'darwin', front, env), null);
+  // Not in a Copilot session: no marker, or a marker that isn't 1.
+  assert.equal(scriptArguments('wh-frontdesk cards', roots, 'darwin', front, { PATH: env.PATH }), null);
+  assert.equal(scriptArguments('wh-frontdesk cards', roots, 'darwin', front, { ...env, [COPILOT_SESSION]: '0' }), null);
+  // A command of that name earlier on the PATH, or no launcher folder on it, or another plugin's folder: not the plugin's own.
+  const planted = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-planted-'));
+  try {
+    fs.writeFileSync(path.join(planted, 'wh-frontdesk'), '#!/bin/sh\n', { mode: 0o755 });
+    assert.equal(scriptArguments('wh-frontdesk cards', roots, 'darwin', front, { ...env, PATH: `${planted}:${env.PATH}` }), null);
+    assert.deepEqual(scriptArguments('wh-frontdesk cards', roots, 'darwin', front, { ...env, PATH: `${env.PATH}:${planted}` }), ['cards'], 'a later one is behind the plugin\'s own');
+    assert.equal(scriptArguments('wh-frontdesk cards', roots, 'darwin', front, { ...env, PATH: `${planted}` }), null);
+    assert.equal(scriptArguments('wh-frontdesk cards', [planted], 'darwin', front, env), null);
+  } finally {
+    fs.rmSync(planted, { recursive: true, force: true });
   }
+  assert.equal(scriptArguments('wh-frontdesk cards', roots, 'darwin', front, { [COPILOT_SESSION]: '1', PATH: '/usr/bin' }), null, 'no launcher folder on the PATH');
+});
+
+test('a launcher refuses an argument a Windows .cmd would read again as a command, on every system', () => {
+  for (const bad of ['x" & calc & "', '50%', 'a^b', 'a&b', 'a|b', 'a<b', 'a>b', 'a\nb', 'a\rb']) {
+    const codes = [];
+    launch('wh-frontdesk', ['cards', bad], { exit: (code) => codes.push(code) });
+    assert.deepEqual(codes, [2], JSON.stringify(bad));
+    assert.match(UNSAFE_ARGUMENT.source, /%/);
+  }
+  const ran = spawnSync(path.join(BIN_DIR, 'wh-frontdesk'), ['x" & calc & "'], { encoding: 'utf8' });
+  assert.equal(ran.status, 2);
+  assert.match(ran.stderr, /takes no argument/);
 });

@@ -28,6 +28,7 @@ import { queueFolderOf, queueProjectOf } from '../engine/queue-place.js';
 import { matchGlob } from '../gate/glob.js';
 import { readConfig, withoutBom } from '../gate/guardrails.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { LAUNCHERS } from '../lib/launchers.js';
 import { NESTED_PACKAGES, NESTED_REFUSED } from '../agents/programs.js';
 import { ARCHON_PROGRAMS, ENGINE_ROOM_PORT, ownRun, placeInHome } from '../protection/archon.js';
 import { readOnlyStep, shellWrite } from './read-only-shell.js';
@@ -45,6 +46,12 @@ function foldFor(platform) {
 }
 
 const UNREADABLE = 'Wheelhouse could not read this command with certainty. Write it more simply (no comments that hold quotes, backticks or backslashes, no CRLF line endings, no unclosed quotes), or put it in a file: ' + HELPER;
+// A launcher (bin/wh-*) is a .cmd on Windows, and cmd.exe parses a .cmd's arguments again, so a quote, `%`, `^`, `&`, `|`,
+// `<`, `>` or a line break in an argument could end the argument and run another command. None is let through, on any
+// system, as the launcher itself refuses them (scripts/lib/launch.js).
+const LAUNCHER_ARGUMENT = /["%^&|<>\r\n]/;
+const LAUNCHER_NAMES = new Set(Object.keys(LAUNCHERS).flatMap((name) => [name, `${name}.cmd`]));
+const LAUNCHER_ARGUMENTS = 'Wheelhouse does not run a launcher with a quote, %, ^, &, |, < or > or a line break in an argument: a Windows .cmd would read it again as a command of its own. Give the text in a file the command reads, or leave the character out';
 const MISSING_SCRIPT = (file) => `Wheelhouse does not run a script that is not there when the command starts (${file}). Write the file in one command and run it in the next, or ${HELPER}`;
 const refuse = (what) => answer.deny(`Wheelhouse does not let an agent ${what}: ${HELPER}`);
 // The build engine (spec 12.2): its program and the engine room's port, and its own files.
@@ -675,6 +682,10 @@ function bashRefused(command, ctx, depth = 0) {
       const value = word.slice(word.indexOf('=') + 1);
       // In the merge queue's folder a bare `gh` is the broker's, the first on the run's PATH (queue-folder.js); gh named
       // by a path, or one of gh's own variables set in the command, is refused there as everywhere.
+      if (!data && LAUNCHER_NAMES.has(names[i]) && seg.slice(i + 1).some((w) => LAUNCHER_ARGUMENT.test(w))) {
+        ctx.state.launcher = true;
+        return true;
+      }
       if (ctx.queue && /^(?:GH|GITHUB)_[A-Za-z0-9_]*=/i.test(word)) return true;
       if (ctx.queue && word === 'gh') continue;
       if (['gh', 'glab'].includes(names[i]) || ['gh', 'glab'].includes(nameOf(value))) return true;
@@ -1082,6 +1093,7 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
     if (!bashRefused(text, { windows, fold, cwd, home, root, state, queue: queue !== null, settings })) return undefined;
     if (state.keychain) return answer.deny(KEYCHAIN);
     if (state.engine) return answer.deny(ENGINE);
+    if (state.launcher) return answer.deny(LAUNCHER_ARGUMENTS);
     if (state.nested) return answer.deny(NESTED);
     if (state.unreadable) return answer.deny(UNREADABLE);
     if (state.missing !== undefined) return answer.deny(MISSING_SCRIPT(state.missing));

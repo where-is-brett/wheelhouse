@@ -14,6 +14,7 @@ The Wheelhouse playbooks name your tools in general words. In Copilot:
 - Read a sub-agent's answer with `read_agent`.
 - Load a skill with `skill` with {"skill": "<name>"}.
 - Keep your task list in the `sql` tool's `todos` table.
+- Wheelhouse's commands are launchers on your PATH, each named `wh-<name>`, typed alone with no `node` and no path. Where a playbook says to use the Wheelhouse command with another script in place of `scripts/frontdesk/cli.js`, run that script's launcher instead: `scripts/setup/cli.js` is `wh-setup`, `scripts/update/cli.js` is `wh-update`, `scripts/health/trials.js` is `wh-trials`, `scripts/feature/cli.js` is `wh-feature`.
 
 ## Clicks in the chat
 

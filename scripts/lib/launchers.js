@@ -23,6 +23,10 @@ export const LAUNCHERS = Object.freeze({
 // The launcher that runs `script`, or null.
 export const launcherOf = (script) => Object.entries(LAUNCHERS).find(([, s]) => s === script)?.[0] ?? null;
 
+// The marker copilotSessionEnv sets in a Copilot session's environment. A guard reads a bare launcher name as Wheelhouse's
+// own only in a session that has it (scripts/hooks/stop-guard.js).
+export const COPILOT_SESSION = 'WHEELHOUSE_COPILOT_SESSION';
+
 // The environment variable a launcher sets for the script it runs, so the script names its commands by launcher.
 export const LAUNCHED = 'WHEELHOUSE_LAUNCHED';
 

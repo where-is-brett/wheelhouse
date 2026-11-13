@@ -1654,3 +1654,24 @@ test('a byte-order mark at the start of the configuration or .mcp.json does not 
     } finally { fs.rmSync(bom.base, { recursive: true, force: true }); }
   });
 });
+
+test('a launcher given a quote, %, ^, &, |, < or > or a line break in an argument is refused, and a plain one or a redirect from a file is not', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const bash = (command) => run(base, home, call(main, 'Bash', { command }));
+      for (const command of [`wh-wake 'x" & calc & "'`, 'wh-frontdesk similar "50% off"', "wh-frontdesk note 'a^b'", "wh-frontdesk note 'a&b'", "wh-act note 'a|b'",
+        "wh-feature report 'a<b'", "wh-frontdesk note 'a>b'", "wh-frontdesk note 'a\nb'", `wh-wake.cmd 'x" & calc'`, 'wh-update plan "a\\"b"']) {
+        const out = await bash(command);
+        assert.ok(denied(out), command);
+        assert.match(out.hookSpecificOutput.permissionDecisionReason, /launcher/, command);
+      }
+      for (const command of ['wh-frontdesk cards', 'wh-frontdesk similar "Could we export the orders?"', 'wh-frontdesk card < ".wheelhouse/front-desk.json"', 'wh-wake read /tmp/x.json']) {
+        const out = await bash(command);
+        assert.ok(!/launcher/.test(out?.hookSpecificOutput?.permissionDecisionReason ?? ''), command);
+      }
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
