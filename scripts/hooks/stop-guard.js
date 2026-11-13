@@ -76,8 +76,11 @@ export function ownLauncher(name, pluginRoots, platform, env) {
   for (const dir of env.PATH.split(windows ? ';' : ':')) {
     if (dir === '' || !isAbsolute(dir)) continue;
     for (const kind of kinds) {
-      const found = real(path.join(dir, `${name}${kind}`));
-      if (found !== null) return mine.has(fold(found));
+      // Windows matches an extension in any case; a case-sensitive file system (the tests' Linux runs) needs both spellings.
+      for (const spelling of new Set([kind, kind.toLowerCase()])) {
+        const found = real(path.join(dir, `${name}${spelling}`));
+        if (found !== null) return mine.has(fold(found));
+      }
     }
   }
   return false;
