@@ -1357,6 +1357,14 @@ function stepAfterPoint(meta) {
 }
 
 const readAttempts = (dir) => readLog(path.join(dir, 'attempts.jsonl'));
+// The next attempt number: after every one on record, started or finished, so a number is never used twice.
+const nextAttempt = (dir) => readAttempts(dir).reduce((most, e, i) => Math.max(most, Number.isInteger(e.n) ? e.n : i + 1), 0) + 1;
+// Rewrites the record of attempt `n` with `change`, keeping the others as they are.
+function updateAttempt(dir, n, change) {
+  const file = path.join(dir, 'attempts.jsonl');
+  const lines = readAttempts(dir).map((e) => (e.n === n ? { ...e, ...change } : e));
+  fs.writeFileSync(file, lines.map((e) => `${JSON.stringify(e)}\n`).join(''));
+}
 
 // Starts a run again from a snapshot, as a new attempt of the same label (spec 2026-11-13, section 3.4). The attempt that was
 // there is moved aside, nothing is deleted. `base` is where snapshots are kept (tests give a folder of their own).
@@ -1384,16 +1392,20 @@ export async function resume({ folder, label, snapshot, io: given, keepPlugin = 
 
   const repoName = `haiku-trial-${label}`;
   const slug = `${owner}/${repoName}`;
-  const n = readAttempts(dir).length + 1;
+  const n = nextAttempt(dir);
+  const aside = `${folder}-a${n}`;
+  // Nothing already kept is ever written over: an attempt's folder that is there stops the resume before anything is touched.
+  if (fs.existsSync(aside)) return stop(`${aside} already exists; it is an earlier attempt and is kept as it is. Move it away, then resume`);
   const plugin = keepPlugin ? `the plugin staged in the snapshot (${meta.pluginSha ?? 'unknown'})` : `the plugin staged from this checkout (${(await io.host.checkoutSha?.()) ?? 'unknown'})`;
   // One go for everything outward; any other answer leaves everything as it was.
   const answer = await io.ask(`Resume ${label} from ${snapshot}: rename the repository ${repoName} to ${repoName}-a${n}, create a fresh public ${repoName} from the snapshot, install ${plugin} and spend tokens. Answer go.`);
   if (String(answer).trim().toLowerCase() !== 'go') return stop(`the answer was "${answer}", not go`);
 
+  // The number is reserved before anything is moved, so a resume that stops half way is never reused as the same attempt.
+  await appendJsonl(path.join(dir, 'attempts.jsonl'), { n, at: new Date(io.clock.now()).toISOString(), status: 'started', snapshot, aside, repository: `${repoName}-a${n}` });
   io.host.useRepo(slug);
   await restore({ folder, io, force: true });
   // Move the attempt aside: its folder, its transcripts and its repository.
-  const aside = `${folder}-a${n}`;
   const projectName = projectSlug(owner, repoName);
   const projects = path.join(configDir ?? path.join(os.homedir(), '.claude'), 'projects');
   for (const t of io.host.findTranscripts({ project: projectName, dir: path.join(folder, 'project') })) {
@@ -1424,7 +1436,7 @@ export async function resume({ folder, label, snapshot, io: given, keepPlugin = 
   };
   const resumedFrom = { snapshot, point: meta.point, attempt: n + 1, pluginBefore: meta.pluginSha, pluginNow: meta.pluginSha, maxNumber: meta.maxNumber ?? 0, quiet: meta.quiet, running: meta.running ?? [], reopened, since: meta.at };
   setState((state) => ({ ...state, resumedFrom }));
-  await appendJsonl(path.join(dir, 'attempts.jsonl'), { n, at: new Date(io.clock.now()).toISOString(), snapshot, aside, repository: `${repoName}-a${n}` });
+  updateAttempt(dir, n, { status: 'resumed' });
 
   // Go on: the plugin again (unless it is kept), a fresh front desk, then the steps from the point.
   const mode = meta.mode ?? 'full';

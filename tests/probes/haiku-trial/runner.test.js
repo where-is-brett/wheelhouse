@@ -1716,3 +1716,40 @@ test('resume refuses a snapshot name that is not a plain name, before anything i
   assert.equal(io.timeline.some((e) => e.kind === 'ask'), false);
   assert.equal(fs.readFileSync(path.join(fx.folder, 'marker.txt'), 'utf8'), 'the failed attempt');
 });
+
+test('a resume that fails after the move leaves its attempt on record, so the next one is a2 and a1 is kept whole', async (t) => {
+  // An earlier test's main() leaves the process's home at its own folder; a resume that goes on needs it to match ENV.
+  const saved = process.env.WHEELHOUSE_HOME;
+  process.env.WHEELHOUSE_HOME = ENV.WHEELHOUSE_HOME;
+  t.after(() => { process.env.WHEELHOUSE_HOME = saved; });
+  const fx = resumeFixture(t);
+  const first = resumeIo(t, { drift: 2 });
+  const got = await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io: first, configDir: fx.configDir, env: ENV, base: fx.base, until: 'w3-type' });
+  assert.match(got.why, /could not be rebuilt/);
+  const file = path.join(fx.base, 'haiku-2026-11-08.snapshots', 'attempts.jsonl');
+  const entries = () => fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.deepEqual(entries().map((e) => [e.n, e.status]), [[1, 'started']]);
+  assert.equal(fs.readFileSync(path.join(`${fx.folder}-a1`, 'marker.txt'), 'utf8'), 'the failed attempt');
+  const second = resumeIo(t);
+  const again = await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io: second, configDir: fx.configDir, env: ENV, base: fx.base, until: 'w3-type' });
+  assert.equal(again.stoppedAt, undefined, JSON.stringify(again));
+  assert.equal(second.timeline.find((e) => e.kind === 'github.rename').args[0].to, 'haiku-trial-2026-11-08-a2');
+  assert.equal(fs.readFileSync(path.join(`${fx.folder}-a1`, 'marker.txt'), 'utf8'), 'the failed attempt');
+  assert.ok(fs.existsSync(`${fx.folder}-a2`));
+  assert.deepEqual(entries().map((e) => [e.n, e.status]), [[1, 'started'], [2, 'resumed']]);
+});
+
+test('resume refuses before touching anything when the folder for its attempt already exists', async (t) => {
+  const fx = resumeFixture(t);
+  fs.mkdirSync(`${fx.folder}-a1`);
+  fs.writeFileSync(path.join(`${fx.folder}-a1`, 'earlier.txt'), 'an earlier attempt');
+  const io = resumeIo(t);
+  const got = await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base });
+  assert.equal(got.stoppedAt, 'resume');
+  assert.match(got.why, /already exists/);
+  assert.equal(io.timeline.some((e) => e.kind === 'ask'), false);
+  assert.equal(kinds(io, 'github.').length, 0);
+  assert.equal(fs.readFileSync(path.join(fx.folder, 'marker.txt'), 'utf8'), 'the failed attempt');
+  assert.equal(fs.readFileSync(path.join(`${fx.folder}-a1`, 'earlier.txt'), 'utf8'), 'an earlier attempt');
+  assert.equal(fs.existsSync(path.join(fx.base, 'haiku-2026-11-08.snapshots', 'attempts.jsonl')), false);
+});
