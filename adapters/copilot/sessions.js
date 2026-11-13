@@ -27,6 +27,7 @@ import { activitySummary, finalAnswer, modelOfRun, monthRefusedIn, sessionIdOf, 
 import { recordRefusal, recordRun } from '../../scripts/agents/copilot/usage.js';
 import { checkVersions, noSubsetRunner, readVersions } from '../../scripts/agents/copilot/versions.js';
 import { PLUGIN_ROOT, foremanCommands } from '../../scripts/foreman/tools.js';
+import { BIN_DIR, LAUNCHER_SESSION, pathWithLaunchers } from '../../scripts/lib/launchers.js';
 import { DEFAULT_BUILD_COMMANDS, isModelName } from '../../scripts/gate/guardrails.js';
 import { quoteForCmd, resolveCommand } from '../../scripts/lib/claude.js';
 import { commandPath } from '../../scripts/lib/command-path.js';
@@ -46,7 +47,7 @@ const HOME = path.join(path.dirname(fileURLToPath(import.meta.url)), 'home');
 // The record of the one command the foreman may run (scripts/agents/copilot/home.js builds it from the foreman's playbook).
 export const FOREMAN_RULES_FILE = path.join(HOME, 'rules', 'wheelhouse-foreman.json');
 // The one rule it may hold: the wake script, `<wheelhouse-root>` standing for the folder Wheelhouse is in.
-const WAKE_RULE = "node '<wheelhouse-root>/scripts/foreman/wake.js':*";
+const WAKE_RULE = 'wh-wake:*';
 
 // The plans a Copilot account can be on (the `copilotPlan` setting). Anything else is taken as the first, which passes no model.
 const PLANS = Object.freeze(['auto-only', 'credits', 'requests']);
@@ -77,11 +78,14 @@ export function activityFile(project, id) {
 
 // The environment a session gets: only KEPT_VARIABLES (when set), and COPILOT_HOME, its own home. On Windows names are
 // matched without regard to case, as Windows reads them, and keep the spelling they came with.
-export function copilotSessionEnv(env, { home, platform = process.platform } = {}) {
+export function copilotSessionEnv(env, { home, platform = process.platform, binDir = BIN_DIR } = {}) {
   if (typeof home !== 'string' || home === '') throw new Error('A Copilot session runs from a home of its own, and none was given');
   const same = (a, b) => (platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
-  const kept = Object.entries(env ?? {}).filter(([name, value]) => typeof value === 'string' && KEPT_VARIABLES.some((k) => same(k, name)));
-  return { ...Object.fromEntries(kept), COPILOT_HOME: home };
+  const kept = Object.fromEntries(Object.entries(env ?? {}).filter(([name, value]) => typeof value === 'string' && KEPT_VARIABLES.some((k) => same(k, name))));
+  // The launchers' folder comes first on the PATH (scripts/lib/launchers.js), under the name the PATH already has.
+  const pathName = Object.keys(kept).find((name) => same('PATH', name)) ?? 'PATH';
+  kept[pathName] = pathWithLaunchers(kept[pathName], { binDir, delimiter: platform === 'win32' ? ';' : ':' });
+  return { ...kept, [LAUNCHER_SESSION]: '1', COPILOT_HOME: home };
 }
 
 // The model a role's session is given, or null for Auto. On an `auto-only` plan always null, whatever the configuration
@@ -206,8 +210,8 @@ function sessionCall({ project, target, role, config, plan, prompt, sessionId = 
 }
 
 // The foreman's one allow rule, as the session's `--allow-tool`: the command in adapters/copilot/home/rules/
-// wheelhouse-foreman.json, which home.js builds from the foreman's playbook, with the folder Wheelhouse is in put where
-// `<wheelhouse-root>` stands. The record may hold the wake script and nothing else, and the rule it gives must be the
+// wheelhouse-foreman.json, which home.js builds from the foreman's playbook: the wake script's launcher, by its bare
+// name, which the session's PATH reaches (copilotSessionEnv). The record may hold the wake script and nothing else, and the rule it gives must be the
 // command the foreman's playbook is shown (foremanCommands), so the two can't drift. A record that can't be read, or holds
 // anything else, refuses the start: with no rule the foreman could run nothing. The foreman's agent file holds `tools: []`
 // (no tool); whether Copilot reads that as no tools is still open until the first real run (design section 3.2).
@@ -221,9 +225,8 @@ export function foremanAllow({ pluginRoot = PLUGIN_ROOT, platform = process.plat
   if (record === null || typeof record !== 'object' || record.agent !== 'wheelhouse-foreman' || !Array.isArray(record.allow) || record.allow.length !== 1 || record.allow[0] !== WAKE_RULE) {
     throw new Error("The foreman's rule record allows more or less than its wake script, so no foreman is started");
   }
-  const root = commandPath(pluginRoot, { platform }).slice(1, -1);
-  const command = record.allow[0].replace('<wheelhouse-root>', root).slice(0, -':*'.length);
-  if (command !== foremanCommands(pluginRoot, { platform }).wake) throw new Error("The foreman's rule record names a command the foreman's playbook doesn't, so no foreman is started");
+  const command = record.allow[0].slice(0, -':*'.length);
+  if (command !== foremanCommands(pluginRoot, { platform, launchers: true }).wake) throw new Error("The foreman's rule record names a command the foreman's playbook doesn't, so no foreman is started");
   return [`shell(${command}:*)`];
 }
 

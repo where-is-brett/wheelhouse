@@ -1,11 +1,11 @@
 {
-  "_source": "written by hand from docs/checks/66-clean-review.md (multi_tool_use.parallel seen), with the call let through",
+  "_source": "written by hand from docs/checks/66-clean-review.md (sql seen), with the call let through",
   "events": [
     {
       "type": "tool.execution_start",
       "data": {
         "toolCallId": "t1",
-        "toolName": "multi_tool_use.parallel",
+        "toolName": "sql",
         "arguments": {
           "tool_uses": [
             {

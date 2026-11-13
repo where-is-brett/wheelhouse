@@ -21,6 +21,7 @@ import { startedAsScript } from '../lib/started-as-script.js';
 import tools from '../../adapters/claude-code/tools.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 import { CHOICE_KEY } from '../lib/setup-run.js';
+import { LAUNCHER_SESSION, LAUNCHERS, LAUNCHER_COMMAND } from '../lib/launchers.js';
 
 // ToolSearch only loads tools' schemas, so the notification tool can be loaded under STOP; it runs
 // nothing, and every tool it loads still meets this guard and the lineage hold.
@@ -30,6 +31,7 @@ export const HALT_TOOLS = tools.halt;
 // Claude Code's own notification, so a session can still reach the director's phone under STOP. It only tells them. It is kept out of READ_TOOLS; the lineage hold lets it through separately (lineage-hold.js).
 export const NOTIFY_TOOLS = tools.notify;
 export const SANDBOX_NEEDED = 'Locked needs the sandbox on in this project\'s settings';
+export const LAUNCHER_STOPPED = 'All stop is on: this session runs no shell command, not even Wheelhouse\'s own, until the director lifts it. Wait for the director';
 export const DENIED = 'All stop is on: only reading, reporting and the runbook carry on';
 
 // The plugin's folder, from this script's own place: scripts/hooks/ is two down.
@@ -50,14 +52,53 @@ const QUIET_WINDOWS = /(?<!\\) +2>(?:\/dev\/null|[Nn][Uu][Ll]) *$/;
 // The one word allowed between `node` and the script (NO_SYSTEM_CA in scripts/protection/settings.js, which a hook can't load).
 const NO_SYSTEM_CA = '--no-use-system-ca';
 
-// The words after the script when `command` is `node [--no-use-system-ca] <pluginRoot>/<script> …` with no shell
-// syntax but one trailing QUIET, and the script in a real plugin root; null for anything else.
-export function scriptArguments(command, pluginRoots, platform, script) {
+// Whether the bare launcher `name` is, in `env`'s PATH, the one in a plugin root's bin/ folder: the session runs scripts
+// by launcher (its adapter's marker, LAUNCHER_SESSION) and the first file of that name on the PATH is the plugin's own, so a command of
+// that name planted earlier on the PATH is not taken for it.
+export function ownLauncher(name, pluginRoots, platform, env) {
+  if (env?.[LAUNCHER_SESSION] !== '1' || typeof env?.PATH !== 'string') return false;
+  const windows = platform === 'win32';
+  const real = (file) => {
+    try {
+      return fs.realpathSync(file);
+    } catch {
+      return null;
+    }
+  };
+  // Windows names a file in any case, so a hit is compared folded.
+  const fold = (f) => (windows ? f.toLowerCase() : f);
+  const mine = new Set(pluginRoots.map((root) => real(path.join(root, 'bin', windows ? `${name}.cmd` : name))).filter((f) => f !== null).map(fold));
+  const isAbsolute = (windows ? path.win32 : path).isAbsolute;
+  // On Windows the first hit of any of PATHEXT's, in its order (the env's own when set), in the first folder that has one;
+  // .PS1 is always among them.
+  const given = windows && typeof env.PATHEXT === 'string' ? env.PATHEXT.split(';').map((e) => e.trim().toUpperCase()).filter((e) => /^\.[A-Z0-9]+$/.test(e)) : [];
+  const kinds = windows ? [...new Set([...(given.length > 0 ? given : ['.COM', '.EXE', '.BAT', '.CMD']), '.PS1'])] : [''];
+  for (const dir of env.PATH.split(windows ? ';' : ':')) {
+    if (dir === '' || !isAbsolute(dir)) continue;
+    for (const kind of kinds) {
+      // Windows matches an extension in any case; a case-sensitive file system (the tests' Linux runs) needs both spellings.
+      for (const spelling of new Set([kind, kind.toLowerCase()])) {
+        const found = real(path.join(dir, `${name}${spelling}`));
+        if (found !== null) return mine.has(fold(found));
+      }
+    }
+  }
+  return false;
+}
+
+// The words after the script when `command` is `node [--no-use-system-ca] <pluginRoot>/<script> …`, or the script's
+// launcher by its bare name, with no shell syntax but one trailing QUIET, and the script in a real plugin root; null
+// for anything else.
+export function scriptArguments(command, pluginRoots, platform, script, env = process.env, { launcher = false } = {}) {
   if (typeof command !== 'string') return null;
   const windows = platform === 'win32';
   const bare = command.replace(windows ? QUIET_WINDOWS : QUIET, '');
   if (CONTROL.test(bare) || ODD_SPACE.test(bare)) return null;
   const parts = words(bare, windows);
+  // A launcher (scripts/lib/launchers.js) by its bare name, with no `node` and no path: only when the caller asks for it
+  // (`launcher`; the stop guard never does, as a launcher session's shell state can't be trusted under STOP), in a session that
+  // runs scripts by launcher, and only when the name is found on the PATH in this plugin's own bin/ folder.
+  if (launcher && parts && parts.length >= 1 && LAUNCHERS[parts[0]] === script && LAUNCHER_COMMAND.test(bare) && ownLauncher(parts[0], pluginRoots, platform, env)) return parts.slice(1);
   if (!parts || parts.length < 2 || parts[0] !== 'node') return null;
   if (parts[1] === NO_SYSTEM_CA) parts.splice(1, 1);
   if (parts.length < 2) return null;
@@ -232,6 +273,8 @@ export async function decide(input, {
   // A folder that cannot be placed is held, not waved through.
   if (!inProject && byPath !== null) return undefined;
   if (readTools.includes(input.tool_name) || haltTools.includes(input.tool_name) || notifyTools.includes(input.tool_name)) return undefined;
+  // A launcher session's shell may carry a function, alias or PATH the guards can't see, so under STOP none of its commands runs.
+  if (stopped && env?.[LAUNCHER_SESSION] === '1') return answer.deny(LAUNCHER_STOPPED);
   if (input.tool_name === 'Bash') {
     const roots = pluginRoots(dir, self, pluginRoot);
     const command = input.tool_input?.command;

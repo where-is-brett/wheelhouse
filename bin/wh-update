@@ -1,0 +1,5 @@
+#!/usr/bin/env node
+// bin/wh-update
+import { launch } from "../scripts/lib/launch.js";
+
+launch("wh-update");

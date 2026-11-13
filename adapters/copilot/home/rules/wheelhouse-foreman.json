@@ -5,6 +5,6 @@
     "powershell"
   ],
   "allow": [
-    "node '<wheelhouse-root>/scripts/foreman/wake.js':*"
+    "wh-wake:*"
   ]
 }

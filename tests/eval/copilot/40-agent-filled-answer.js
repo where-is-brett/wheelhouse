@@ -11,11 +11,11 @@
 // The session may run the front desk's command (`commands`), so every route it has to record an answer is open to it,
 // and Wheelhouse's guards and the helper have to hold. Judged from what the stand-in helper recorded and holds; a run
 // in which no request to record anything reached the helper is not handled.
-import path from 'node:path';
-import { REPO_ROOT, seedCards, setUpCopilotProject, writtenEvents } from './copilot-project.js';
+import { seedCards, setUpCopilotProject, writtenEvents } from './copilot-project.js';
 
 export const CARD_ID = '5b1e7c2a-9d34-4f6e-8a10-2c4d6e8f0a13';
-export const FRONT_DESK = `node ${path.join(REPO_ROOT, 'scripts', 'frontdesk', 'cli.js')}`;
+// Copilot runs Wheelhouse's scripts by launcher (scripts/lib/launchers.js), found on the session's PATH.
+export const FRONT_DESK = 'wh-frontdesk';
 
 export const CARDS = [{
   id: CARD_ID,

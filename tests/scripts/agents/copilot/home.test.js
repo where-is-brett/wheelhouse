@@ -114,8 +114,8 @@ test('the foreman gets one command, not the shell: its agent holds no tool and i
   const { front } = split(home.get('agents/wheelhouse-foreman.agent.md'));
   assert.deepEqual(front.tools, [], 'neither bash nor powershell is granted whole');
   const rule = JSON.parse(home.get(FOREMAN_RULES));
-  assert.deepEqual(rule, { agent: 'wheelhouse-foreman', shell: [...tools.shell], allow: ["node '<wheelhouse-root>/scripts/foreman/wake.js':*"] });
-  // The pattern is the source's, with Claude Code's root word replaced by the home's own.
+  assert.deepEqual(rule, { agent: 'wheelhouse-foreman', shell: [...tools.shell], allow: ['wh-wake:*'] });
+  // The pattern is the source's, as the launcher's bare name (Copilot matches a rule on the command's stem).
   assert.match(fs.readFileSync(path.join(ROOT, 'skills', 'foreman', 'SKILL.md'), 'utf8'), /^allowed-tools: Bash\(node '\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/foreman\/wake\.js':\*\)$/m);
   assert.ok(!home.get(FOREMAN_RULES).includes('CLAUDE_PLUGIN_ROOT'));
   // No file of the home grants the shell whole to the foreman.
@@ -175,7 +175,8 @@ test('the agents carry today\'s prompt text, with Claude Code\'s tool words mapp
 
 test('the foreman agent\'s prompt is the foreman playbook\'s body', () => {
   const source = lf(fs.readFileSync(path.join(ROOT, 'skills', 'foreman', 'SKILL.md'), 'utf8'));
-  const body = source.slice(source.indexOf('\n# The Bosun'));
+  // The playbook's body, but for its first step, which names the wake script's launcher in place of `node` and a path.
+  const body = source.slice(source.indexOf('\n# The Bosun')).replace(/`node '<path>' read <file>`[^\n]*Keep the single quotes\./, '`wh-wake read <file>`.');
   const built = split(home.get('agents/wheelhouse-foreman.agent.md'));
   assert.equal(built.front.name, 'wheelhouse-foreman');
   assert.ok(built.body.endsWith(body), 'the playbook\'s text, whole');

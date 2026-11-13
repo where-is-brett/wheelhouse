@@ -161,6 +161,7 @@ import { takeStartLock } from '../lib/start-lock.js';
 import { stopState } from '../lib/stop.js';
 import claudeSessions, { ROLE_VARIABLE, featureModeOf, sessionEnv, sessionModeOf } from '../../adapters/claude-code/sessions.js';
 import { sessionsOfProject } from '../agents/project-agent.js';
+import { BY_LAUNCHER } from '../agents/tool-sheets.js';
 import { PLUGIN_ROOT, foremanCommands } from '../foreman/tools.js';
 import { lockedByPath } from '../hooks/kit.js';
 import { featureAllowRules, featureFileRules } from '../protection/settings.js';
@@ -1673,7 +1674,12 @@ export function makeWaker({
       try {
         let pid;
         if (work === undefined) {
-          pid = await startForeman(cwd, PROMPTS.foreman(copy, wakeCommand), gathered);
+          // A foreman whose agent runs scripts by launcher runs its wake script so (scripts/lib/launchers.js).
+          let foremanWake = wakeCommand;
+          try {
+            if (BY_LAUNCHER.includes(agentOfConfig(config, { computerId: computerId() }))) foremanWake = foremanCommands(pluginRoot, { platform, launchers: true }).wake;
+          } catch { /* the agent can't be read here: the prompt names the command as Claude Code's */ }
+          pid = await startForeman(cwd, PROMPTS.foreman(copy, foremanWake), gathered);
         } else {
           const feature = await levelInputs(work, cwd);
           const column = columnNow();

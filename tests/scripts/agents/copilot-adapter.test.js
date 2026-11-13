@@ -210,9 +210,12 @@ test('toolSheetLines gives an unknown agent only the command line, and Copilot i
   const sheet = (agent, root = pluginRoot) => toolSheetLines(agent, { pluginRoot: root, platform: 'darwin', allowedFlags });
   assert.deepEqual(sheet('model-x'), [command]);
   assert.deepEqual(sheet(undefined), [command]);
-  assert.deepEqual(sheet('copilot'), [...copilotSheet.split('\n'), command]);
-  // A plugin folder that can't be typed as a command gives the sheet alone.
-  assert.deepEqual(sheet('copilot', '/plugin/$root'), copilotSheet.split('\n'));
+  // Copilot's sessions run Wheelhouse's scripts by launcher, named alone, so the plugin's folder is not part of the line.
+  const launcher = 'The Wheelhouse command is wh-frontdesk';
+  assert.deepEqual(sheet('copilot'), [...copilotSheet.split('\n'), launcher]);
+  assert.deepEqual(sheet('copilot', '/plugin/$root'), [...copilotSheet.split('\n'), launcher]);
+  // A plugin folder that can't be typed as a command gives another agent's sheet alone.
+  assert.deepEqual(sheet('model-x', '/plugin/$root'), []);
 });
 
 // ---- The safety lines ----
