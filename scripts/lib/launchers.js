@@ -44,7 +44,7 @@ export function pathWithLaunchers(current, { binDir = BIN_DIR, delimiter = path.
 // body holds no `;`, bracket or brace either. No `;`, pipe, `$`, bracket, backtick or second command can match.
 const BARE = String.raw`[A-Za-z0-9_.,:/=+-][A-Za-z0-9_.,:/=+@-]*`;
 const QUOTED = String.raw`'[^'"%^&|<>$` + '`' + String.raw`!;(){}\r\n]*'`;
-const NAMES = Object.keys(LAUNCHERS).map((name) => name.replace(/-/g, '\\-')).join('|');
+const NAMES = Object.keys(LAUNCHERS).map((name) => name.replace(/[\\^$.*+?()[\]{}|-]/g, '\\$&')).join('|');
 export const LAUNCHER_COMMAND = new RegExp(String.raw`^(?=[ -~]*$)[ \t]*(?:${NAMES})(?:\.cmd)?(?:[ \t]+(?:${BARE}|${QUOTED}))*(?:[ \t]+<[ \t]*(?!dev/)(?![^ \t]*/dev/)${BARE})?(?:[ \t]+2>(?:/dev/null|NUL))?[ \t]*$`, 'i');
 
 // How to write an argument the grammar takes.
