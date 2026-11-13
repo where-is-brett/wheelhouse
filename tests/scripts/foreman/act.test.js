@@ -2101,6 +2101,22 @@ test('close works out the outcome, and refuses a report that is missing or incom
   assert.equal(fake.writes.length, n);
 }));
 
+test('work that ends partial with no pull request does not close while other work depends on it', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.base = workView('base', { lane: 'feature' });
+  views.features.base = featureView('base', { step: 'building', worktree: worktree(checkout, 'base', { report: reportText('base', { status: 'partial' }) }) });
+  views.work.next = workView('next', { lane: 'feature', dependsOn: ['base'] });
+  const fake = fakeClient({ views });
+  const r = await act(['close', 'base'], { client: fake.client });
+  refusedInOneLine(r);
+  assert.match(r.err, /base reports partial with no pull request, and next depends on it: .*ask the director/);
+  assert.equal(fake.writes.length, 0);
+  // With nothing waiting on it, it closes and is put to the director as before.
+  delete views.work.next;
+  assert.equal((await act(['close', 'base'], { client: fake.client })).code, 0);
+}));
+
 test('a feature that ends blocked or partial never closes as merged, even after an earlier slice merged (I7)', () => withHome(async () => {
   const checkout = await project();
   const views = emptyViews();

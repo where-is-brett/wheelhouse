@@ -1596,6 +1596,12 @@ async function close(ctx, work, rest) {
     const ended = readStatus(featurePaths(worktree).status)?.phase === 'done' && !sessionRunning(ctx, work);
     refuse(`${work} is still building its next slice: its report and pull request are an earlier slice's. Wait for that slice; don't close it${ended ? ': ask the director' : ''}`);
   }
+  // Work that ends partial with no pull request leaves its finished slices only on its own branch. Closed while other work
+  // depends on it, it would never merge and that work would wait for good, so it goes to the director instead.
+  const waiting = Object.entries(views.work).filter(([name, w]) => name !== work && (w?.work?.data?.dependsOn ?? []).includes(work) && views.reports[name]?.data?.outcome === undefined);
+  if (status === 'partial' && pr === null && waiting.length > 0) {
+    refuse(`${work} reports partial with no pull request, and ${waiting.map(([name]) => name).join(', ')} depend${waiting.length === 1 ? 's' : ''} on it: its slices are only on its branch. Don't close it: ask the director`);
+  }
   let outcome = status === 'blocked' ? 'blocked' : 'closed';
   if (pr !== null) {
     const state = await ctx.client.prState({ project: ctx.project, number: pr });
