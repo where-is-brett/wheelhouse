@@ -21,7 +21,7 @@ import { startedAsScript } from '../lib/started-as-script.js';
 import tools from '../../adapters/claude-code/tools.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 import { CHOICE_KEY } from '../lib/setup-run.js';
-import { LAUNCHER_SESSION, LAUNCHERS } from '../lib/launchers.js';
+import { LAUNCHER_SESSION, LAUNCHERS, LAUNCHER_COMMAND } from '../lib/launchers.js';
 
 // ToolSearch only loads tools' schemas, so the notification tool can be loaded under STOP; it runs
 // nothing, and every tool it loads still meets this guard and the lineage hold.
@@ -64,11 +64,18 @@ function ownLauncher(name, pluginRoots, platform, env) {
       return null;
     }
   };
-  const mine = new Set(pluginRoots.map((root) => real(path.join(root, 'bin', windows ? `${name}.cmd` : name))).filter((f) => f !== null));
+  // Windows names a file in any case, so a hit is compared folded.
+  const fold = (f) => (windows ? f.toLowerCase() : f);
+  const mine = new Set(pluginRoots.map((root) => real(path.join(root, 'bin', windows ? `${name}.cmd` : name))).filter((f) => f !== null).map(fold));
+  const isAbsolute = (windows ? path.win32 : path).isAbsolute;
+  // On Windows the first hit of any of PATHEXT's four, in their order, in the first folder that has one.
+  const kinds = windows ? ['.COM', '.EXE', '.BAT', '.CMD'] : [''];
   for (const dir of env.PATH.split(windows ? ';' : ':')) {
-    if (dir === '') continue;
-    const found = real(path.join(dir, windows ? `${name}.cmd` : name));
-    if (found !== null) return mine.has(found);
+    if (dir === '' || !isAbsolute(dir)) continue;
+    for (const kind of kinds) {
+      const found = real(path.join(dir, `${name}${kind}`));
+      if (found !== null) return mine.has(fold(found));
+    }
   }
   return false;
 }
@@ -84,7 +91,7 @@ export function scriptArguments(command, pluginRoots, platform, script, env = pr
   const parts = words(bare, windows);
   // A launcher (scripts/lib/launchers.js) by its bare name, with no `node` and no path: only in a session that runs
   // scripts by launcher, and only when the name is found on the PATH in this plugin's own bin/ folder.
-  if (parts && parts.length >= 1 && LAUNCHERS[parts[0]] === script && ownLauncher(parts[0], pluginRoots, platform, env)) return parts.slice(1);
+  if (parts && parts.length >= 1 && LAUNCHERS[parts[0]] === script && LAUNCHER_COMMAND.test(bare) && ownLauncher(parts[0], pluginRoots, platform, env)) return parts.slice(1);
   if (!parts || parts.length < 2 || parts[0] !== 'node') return null;
   if (parts[1] === NO_SYSTEM_CA) parts.splice(1, 1);
   if (parts.length < 2) return null;

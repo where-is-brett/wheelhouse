@@ -77,3 +77,34 @@ test('a launcher refuses an argument a Windows .cmd would read again as a comman
   assert.equal(ran.status, 2);
   assert.match(ran.stderr, /takes no argument/);
 });
+
+test('the stop guard reads the bare form only when the command matches the launcher grammar', () => {
+  const roots = [ROOT];
+  const front = 'scripts/frontdesk/cli.js';
+  const env = { [LAUNCHER_SESSION]: '1', PATH: pathWithLaunchers('/usr/bin:/bin') };
+  assert.deepEqual(scriptArguments("wh-frontdesk similar 'a b'", roots, 'darwin', front, env), ['similar', 'a b']);
+  for (const command of ['wh-frontdesk similar "a b"', 'wh-frontdesk cards $x', 'wh-frontdesk cards @(1)', "wh-frontdesk similar 'a $x'", 'wh-frontdesk cards (1)', 'wh-frontdesk cards {1}']) {
+    assert.equal(scriptArguments(command, roots, 'darwin', front, env), null, command);
+  }
+});
+
+test('the stop guard looks for a launcher in PATHEXT order, and skips a relative PATH entry', () => {
+  const roots = [ROOT];
+  const front = 'scripts/frontdesk/cli.js';
+  const planted = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-planted-'));
+  try {
+    const win = { [LAUNCHER_SESSION]: '1' };
+    for (const ext of ['.exe', '.bat', '.com']) {
+      fs.writeFileSync(path.join(planted, `wh-frontdesk${ext}`), '');
+      assert.equal(scriptArguments('wh-frontdesk cards', roots, 'win32', front, { ...win, PATH: `${planted};${BIN_DIR}` }), null, ext);
+      fs.rmSync(path.join(planted, `wh-frontdesk${ext}`));
+    }
+    assert.deepEqual(scriptArguments('wh-frontdesk cards', roots, 'win32', front, { ...win, PATH: `${planted};${BIN_DIR}` }), ['cards']);
+    const relative = path.relative(process.cwd(), planted);
+    fs.writeFileSync(path.join(planted, 'wh-frontdesk'), '#!/bin/sh\n', { mode: 0o755 });
+    assert.deepEqual(scriptArguments('wh-frontdesk cards', roots, 'darwin', front, { ...win, PATH: `${relative}:.:${BIN_DIR}` }), ['cards'], 'a relative entry is skipped');
+  } finally {
+    fs.rmSync(planted, { recursive: true, force: true });
+  }
+});
+

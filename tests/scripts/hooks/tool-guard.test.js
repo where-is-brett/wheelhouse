@@ -1666,7 +1666,7 @@ test('a launcher given a quote, %, ^, &, |, < or > or a line break in an argumen
         assert.ok(denied(out), command);
         assert.match(out.hookSpecificOutput.permissionDecisionReason, /launcher/, command);
       }
-      for (const command of ['wh-frontdesk cards', 'wh-frontdesk similar "Could we export the orders?"', 'wh-frontdesk card < ".wheelhouse/front-desk.json"', 'wh-wake read /tmp/x.json']) {
+      for (const command of ['wh-frontdesk cards', "wh-frontdesk similar 'Could we export the orders?'", 'wh-frontdesk card < .wheelhouse/front-desk.json', 'wh-wake read /tmp/x.json']) {
         const out = await bash(command);
         assert.ok(!/launcher/.test(out?.hookSpecificOutput?.permissionDecisionReason ?? ''), command);
       }
@@ -1675,3 +1675,56 @@ test('a launcher given a quote, %, ^, &, |, < or > or a line break in an argumen
     }
   });
 });
+
+test('a launcher command is allowed only when it matches the strict grammar, and a refusal says how to write the argument', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const bash = (command, tool = 'Bash') => run(base, home, call(main, tool, { command }), 'win32');
+      for (const command of ['wh-act note $env:X', '$a="x"+[char]38+"calc"; wh-act note $a', 'wh-act @("a&b")', 'wh-act note @x', 'wh-act note a;calc', 'wh-act note a | more',
+        'wh-act note (1)', 'wh-act note {1}', 'wh-act note `calc', 'wh-act note "a b"', "wh-act note 'a $x'", "wh-act note 'it''s'", "wh-act note 'a!'", 'wh-act note $(calc)',
+        'wh-act note a && wh-act note b', 'echo hi; wh-act note a', 'wh-act.cmd note %PATH%', "wh-act note 'a`b'", "wh-act note 'a%b'"]) {
+        for (const tool of ['Bash', 'PowerShell']) {
+          const out = await bash(command, tool);
+          assert.ok(denied(out), `${tool}: ${command}`);
+          assert.match(out.hookSpecificOutput.permissionDecisionReason, /single quotes|read this command with certainty/, command);
+        }
+      }
+      for (const command of ['wh-act note abc', "wh-act note 'a note, with words: (and) {more}; ok'", 'wh-frontdesk similar \'x\'', 'wh-wake read /tmp/x.json', 'wh-feature answer q-1 --note=a+b', 'wh-frontdesk cards 2>/dev/null',
+        'wh-frontdesk card < .wheelhouse/front-desk.json']) {
+        const out = await bash(command);
+        assert.ok(!/single quotes/.test(out?.hookSpecificOutput?.permissionDecisionReason ?? ''), command);
+      }
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
+test('in a launcher session a command that sets PATH, defines a function or alias, or uses hash -p, enable -f or builtin is refused, at any time; elsewhere it is not', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const inSession = (command, tool = 'Bash') => runWithEnv(base, home, call(main, tool, { command }), { env: { WHEELHOUSE_LAUNCHER_SESSION: '1' } });
+      const bad = ['export PATH=/tmp/e:$PATH', 'PATH=/tmp/e:$PATH', 'Path=/tmp/e', 'export Path=/tmp/e:$Path', 'declare -x PATH=/tmp/e', 'env PATH=/tmp/e wh-act', 'PATH+=:/tmp/e', 'export $n=/tmp/e',
+        'wh-act() { node /tmp/e.js; }', 'wh-act () { :; }', 'function wh-act { calc }', 'function wh-act() { :; }', 'alias wh-act=calc', 'alias wh-act="node /tmp/e.js"',
+        '$env:PATH="C:\\e;$env:PATH"', '$env:Path = "C:\\e"', 'Set-Item env:PATH C:\\e', 'Set-Item -Path Env:Path -Value C:\\e', "[Environment]::SetEnvironmentVariable('PATH','C:\\e','Process')",
+        'Set-Alias wh-act calc', 'New-Alias wh-act calc', 'sal wh-act calc', 'nal wh-act calc', 'Set-Item alias:wh-act calc', 'Set-Item function:wh-act { calc }', 'hash -p /tmp/e/wh-act wh-act', 'enable -f ./x.so y', 'builtin cd /', 'ls; builtin command wh-act'];
+      for (const command of bad) {
+        for (const tool of ['Bash', 'PowerShell']) assert.ok(denied(await inSession(command, tool)), `${tool}: ${command}`);
+      }
+      const bare = (command) => runWithEnv(base, home, call(main, 'Bash', { command }), { env: {} });
+      for (const command of ['export PATH=/tmp/e:$PATH', 'alias ll=ls']) {
+        const out = await bare(command);
+        assert.ok(!/launcher session/.test(out?.hookSpecificOutput?.permissionDecisionReason ?? ''), command);
+      }
+      for (const command of ['ls -la', 'echo $PATHNAME', 'git status', 'node --version', 'wh-act note abc']) {
+        const out = await inSession(command);
+        assert.ok(!/launcher session/.test(out?.hookSpecificOutput?.permissionDecisionReason ?? ''), command);
+      }
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+

@@ -28,7 +28,7 @@ import { queueFolderOf, queueProjectOf } from '../engine/queue-place.js';
 import { matchGlob } from '../gate/glob.js';
 import { readConfig, withoutBom } from '../gate/guardrails.js';
 import { startedAsScript } from '../lib/started-as-script.js';
-import { LAUNCHERS } from '../lib/launchers.js';
+import { LAUNCHERS, LAUNCHER_COMMAND, LAUNCHER_SESSION, LAUNCHER_GRAMMAR_HELP } from '../lib/launchers.js';
 import { NESTED_PACKAGES, NESTED_REFUSED } from '../agents/programs.js';
 import { ARCHON_PROGRAMS, ENGINE_ROOM_PORT, ownRun, placeInHome } from '../protection/archon.js';
 import { readOnlyStep, shellWrite } from './read-only-shell.js';
@@ -46,12 +46,29 @@ function foldFor(platform) {
 }
 
 const UNREADABLE = 'Wheelhouse could not read this command with certainty. Write it more simply (no comments that hold quotes, backticks or backslashes, no CRLF line endings, no unclosed quotes), or put it in a file: ' + HELPER;
-// A launcher (bin/wh-*) is a .cmd on Windows, and cmd.exe parses a .cmd's arguments again, so a quote, `%`, `^`, `&`, `|`,
-// `<`, `>` or a line break in an argument could end the argument and run another command. None is let through, on any
-// system, as the launcher itself refuses them (scripts/lib/launch.js).
-const LAUNCHER_ARGUMENT = /["%^&|<>\r\n]/;
+// A launcher (bin/wh-*) is a .cmd on Windows, and cmd.exe parses a .cmd's arguments again, and PowerShell expands what a
+// literal check can't see (`$env:X`, `@(...)`, `[char]38`), so a command whose command word is a launcher is allowed only in
+// the one shape LAUNCHER_COMMAND gives (scripts/lib/launchers.js), on any system, as the launcher itself refuses the
+// characters a .cmd would re-read (scripts/lib/launch.js).
 const LAUNCHER_NAMES = new Set(Object.keys(LAUNCHERS).flatMap((name) => [name, `${name}.cmd`]));
-const LAUNCHER_ARGUMENTS = 'Wheelhouse does not run a launcher with a quote, %, ^, &, |, < or > or a line break in an argument: a Windows .cmd would read it again as a command of its own. Give the text in a file the command reads, or leave the character out';
+const LAUNCHER_ARGUMENTS = `Wheelhouse runs a launcher only as one plain command: ${LAUNCHER_GRAMMAR_HELP}`;
+// In a launcher session the guard can't see the live shell's PATH, functions or aliases, so a command that could change
+// what a bare launcher name runs is refused, at any time. The patterns are broad on purpose: a false refusal costs less
+// than a hole.
+const SHELL_STATE = [
+  /(?<![\w-])path\s*\+?=/i, // PATH=, Path+=, export PATH=, env PATH=
+  /(?<![\w])env:\s*path/i, // $env:PATH, Set-Item env:PATH, Env:Path
+  /\b(?:export|declare|typeset|readonly)\b[^\n;|&]*\$/i, // a variable's name given by another
+  /\bSet-Item\b|\bSetEnvironmentVariable\b|\[Environment\]/i,
+  /(?<![\w-])[\w.:-]+\s*\(\s*\)/, // name() { ... }
+  /(?<![\w-])(?:function|filter)\s+\S/i,
+  /(?<![\w-])(?:alias|unalias|Set-Alias|New-Alias|sal|nal)(?![\w-])/i,
+  /(?<![\w])(?:alias|function|variable):/i, // the PowerShell drives that hold them
+  /\bhash\b[^\n;|&]*\s-\w*p/, // hash -p
+  /\benable\b[^\n;|&]*\s-\w*f/, // enable -f
+  /\bbuiltin\b/,
+];
+const SHELL_STATE_REFUSED = 'Wheelhouse does not let a launcher session change its shell\'s PATH, or define a function or an alias (or use hash -p, enable -f or builtin): a launcher\'s bare name must keep meaning Wheelhouse\'s own. Run the command as it is, with no such line before it';
 const MISSING_SCRIPT = (file) => `Wheelhouse does not run a script that is not there when the command starts (${file}). Write the file in one command and run it in the next, or ${HELPER}`;
 const refuse = (what) => answer.deny(`Wheelhouse does not let an agent ${what}: ${HELPER}`);
 // The build engine (spec 12.2): its program and the engine room's port, and its own files.
@@ -608,7 +625,7 @@ function bashRefused(command, ctx, depth = 0) {
   const { segments: segs, operators, bodies } = split;
   const inContext = (dirs) => ({ ...ctx, dirs });
   let dirs = ctx.dirs === undefined ? (ctx.cwd ? [ctx.cwd] : null) : ctx.dirs;
-  const again = (text) => bashRefused(text, inContext(dirs), depth + 1);
+  const again = (text) => bashRefused(text, { ...inContext(dirs), raw: text }, depth + 1);
   const nameOf = (w) => fold(lastPart(w)).replace(/\.exe$/, '');
   // A variable that moves git's settings files, given anywhere on the line (`GIT_DIR=x git config`, `env GIT_DIR=x ...`,
   // `export GIT_DIR=x; ...`, `$env:GIT_DIR = 'x'`).
@@ -682,7 +699,7 @@ function bashRefused(command, ctx, depth = 0) {
       const value = word.slice(word.indexOf('=') + 1);
       // In the merge queue's folder a bare `gh` is the broker's, the first on the run's PATH (queue-folder.js); gh named
       // by a path, or one of gh's own variables set in the command, is refused there as everywhere.
-      if (!data && LAUNCHER_NAMES.has(names[i]) && seg.slice(i + 1).some((w) => LAUNCHER_ARGUMENT.test(w))) {
+      if (!data && LAUNCHER_NAMES.has(names[i]) && i === commandAt(seg, names, ctx) && !LAUNCHER_COMMAND.test(ctx.raw)) {
         ctx.state.launcher = true;
         return true;
       }
@@ -1085,12 +1102,13 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
     // In PowerShell a backtick before a new line continues the command, as a space does.
     const text = tool === 'PowerShell' ? command.replace(/(?<!`)((?:``)*)`\n/g, '$1 ') : command;
     const state = { unreadable: false, keychain: false, engine: false, nested: false };
+    if (env?.[LAUNCHER_SESSION] === '1' && SHELL_STATE.some((pattern) => pattern.test(text))) return answer.deny(SHELL_STATE_REFUSED);
     if (readsPlugin(text, { windows, fold, home, pluginRoots: [path.resolve(pluginRoot), resolveReal(pluginRoot, pluginRoot)] })) return answer.deny(PLUGIN_READ);
     if (reachesEngineRoom(text, windows)) return answer.deny(ENGINE);
     if (readsEngine(text, { windows, fold, home, cwd, engine: engineOf({ engineHome, env, projectDir, cwd }) })) return answer.deny(ENGINE_FILES);
     const homeReal = resolveReal(home, home);
     const settings = [home, homeReal].flatMap((h) => gitSettingsFiles({ home: h, platform, env })).flatMap((f) => spellings(f, home)).map(fold);
-    if (!bashRefused(text, { windows, fold, cwd, home, root, state, queue: queue !== null, settings })) return undefined;
+    if (!bashRefused(text, { raw: text, windows, fold, cwd, home, root, state, queue: queue !== null, settings })) return undefined;
     if (state.keychain) return answer.deny(KEYCHAIN);
     if (state.engine) return answer.deny(ENGINE);
     if (state.launcher) return answer.deny(LAUNCHER_ARGUMENTS);
