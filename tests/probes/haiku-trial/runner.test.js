@@ -387,7 +387,7 @@ test('--sitting and --window set the plan and a bad one is refused', async (t) =
   const code = await main(['plan', '--sitting', 'w3', '--sitting', 'w4'], { print: (l) => printed.push(l), buildIo: async () => io, env: ENV });
   assert.equal(code, 0);
   const full = printed.find((l) => l.startsWith('full:'));
-  assert.match(full, /f1c sitting-1\+ .*w4-type sitting-2\+/);
+  assert.match(full, /f1c sitting-1\+# .*w4-type sitting-2\+#/);
   for (const bad of [['--sitting', 'w9'], ['--window', '9-10']]) {
     const lines = [];
     assert.equal(await main(['plan', ...bad], { print: (l) => lines.push(l), buildIo: async () => io, env: ENV }), 2);
@@ -695,6 +695,28 @@ test('plan prints steps and calls nothing', async () => {
   assert.equal(built, 0);
   assert.match(lines[0], /^full: stage create-repo\*/);
   assert.match(lines.join('\n'), /smoke: .*setup-s0/);
+});
+
+test('plan prints snapshot points and sittings', async () => {
+  const plan = async (...args) => {
+    const lines = [];
+    assert.equal(await main(['plan', ...args], { print: (l) => lines.push(l), buildIo: async () => assert.fail('built'), env: ENV }), 0);
+    return lines;
+  };
+  const lines = await plan();
+  const at = (prefix) => lines.findIndex((l) => l.startsWith(prefix));
+  assert.ok(at('full:') < at('snapshots: after-ntfy') && at('snapshots: after-ntfy') < at('sittings: sitting-1') && at('sittings: sitting-1') < at('smoke:'), lines.join('\n'));
+  const snapshots = lines.filter((l) => l.startsWith('snapshots: '));
+  assert.equal(snapshots[0], 'snapshots: after-ntfy after-w2-audit before-f1 after-w3-audit before-f4-check before-s9-1 after-w4-audit before-sitting-1');
+  assert.equal(snapshots[1], 'snapshots: after-front-desk after-w2-audit before-s9-1 after-w4-audit');
+  assert.deepEqual(lines.filter((l) => l.startsWith('sittings: ')), ['sittings: sitting-1 after w4-type (F6, F5a, F5b)', 'sittings: none']);
+  assert.match(lines.find((l) => l.startsWith('full:')), / f1# /, 'a step with a snapshot point before it is marked');
+  assert.match(lines.find((l) => l.startsWith('full:')), / w2-audit# /, 'and one with a point after it');
+  assert.match(lines.find((l) => l.startsWith('full:')), / sitting-1\+# /);
+  assert.match(lines.join('\n'), /# snapshot point/);
+  const two = await plan('--sitting', 'w3', '--sitting', 'w4');
+  assert.ok(two.includes('sittings: sitting-1 after f1c (F6, F5a), sitting-2 after w4-type (F5b)'));
+  assert.match(two.find((l) => l.startsWith('snapshots: ')), /before-sitting-1 before-sitting-2$/);
 });
 
 test('a gh failure on repo create stops the run and logs no success', async (t) => {

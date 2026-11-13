@@ -1535,9 +1535,15 @@ export async function main(argv, { print = console.log, buildIo, env = process.e
   }
   if (args.command === 'plan') {
     for (const mode of ['full', 'smoke']) {
-      print(`${mode}: ${planRun({ mode, sittings: args.sittings, windows }).map((s) => `${s.id}${s.needsGo ? '*' : ''}${s.director ? '+' : ''}`).join(' ')}`);
+      const steps = planRun({ mode, sittings: args.sittings, windows });
+      const sittings = sittingsIn(steps);
+      const points = pointsFor(mode, sittings.map((x) => x.n));
+      const marked = (id) => points.some((p) => (p.before ?? p.after) === id);
+      print(`${mode}: ${steps.map((x) => `${x.id}${x.needsGo ? '*' : ''}${x.director ? '+' : ''}${marked(x.id) ? '#' : ''}`).join(' ')}`);
+      print(`snapshots: ${points.map((p) => p.point).join(' ')}`);
+      print(`sittings: ${sittings.length === 0 ? 'none' : sittings.map((x) => `${x.id} after ${x.after} (${x.clicks.join(', ')})`).join(', ')}`);
     }
-    print('* waits for the director\'s go, + needs the director');
+    print('* waits for the director\'s go, + needs the director, # snapshot point');
     if (label !== undefined) print(`run ${label}: repository ${env.HAIKU_TRIAL_GH_OWNER ?? '<owner>'}/haiku-trial-${label}, folder ${args.folder ?? runFolder(label)}`);
     return 0;
   }
