@@ -11,7 +11,7 @@ import { startRun } from '../../../probes/copilot-t3/session.js';
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-session.js');
 
 // A stand-in host: real child processes (so a kill is a real kill), no Copilot, no git.
-function standInHost({ month = 20, buildMode = 'hang', resumeRequests = 2, subagents = 0, merge = { merged: true, commit: 'abc' } } = {}) {
+function standInHost({ month = 20, buildMode = 'hang', resumeMode = 'finish', resumeRequests = 2, subagents = 0, merge = { merged: true, commit: 'abc' } } = {}) {
   const calls = [];
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-t3-host-'));
   const handle = (name, mode, requests, subs, sessionId) => startRun({
@@ -21,11 +21,12 @@ function standInHost({ month = 20, buildMode = 'hang', resumeRequests = 2, subag
   return {
     calls,
     dir,
+    attach: async ({ project, order }) => { calls.push(`attach:${project}:${order.work}`); },
     stage: async ({ folder }) => { calls.push('stage'); fs.mkdirSync(path.join(folder, 'project'), { recursive: true }); return { project: 'local__t3' }; },
     monthUsed: async () => { calls.push('monthUsed'); return month; },
     order: async () => { calls.push('order'); },
     start: async ({ sessionId }) => { calls.push('start'); return handle('build', buildMode, 1, subagents, sessionId); },
-    resume: async ({ sessionId }) => { calls.push('resume'); return handle('resume', 'finish', resumeRequests, 0, sessionId); },
+    resume: async ({ sessionId }) => { calls.push('resume'); return handle('resume', resumeMode, resumeRequests, 0, sessionId); },
     merge: async () => { calls.push('merge'); return merge; },
   };
 }
@@ -119,11 +120,29 @@ test('a later attempt with --from auto carries on from where the stage stopped, 
   assert.ok(!host.calls.includes('start'));
   assert.ok(!host.calls.includes('stage'));
   assert.equal(second.stoppedAt, null);
-  assert.deepEqual(host.calls, ['resume', 'merge']);
+  assert.deepEqual(host.calls, ['attach:local__t3:t3-greeting', 'resume', 'merge']);
   // The first attempt's build (1, assumed) is kept, and the resume reads 1 more from the session's cumulative figure.
   assert.equal(second.report.total, 2);
 });
 
 test('a label with a path in it is refused', async () => {
   await assert.rejects(runStage({ host: standInHost(), base: setup(), label: '../x' }), /label/);
+});
+
+test('a run is killed when its spend reaches what the budget has left, so the stage does not end over', async () => {
+  const base = setup();
+  // The build counts 1 (killed, no figure); the resume has 3 left (cumulative 4) and spends 6.
+  const r = await runStage({ host: standInHost({ resumeMode: 'spend', resumeRequests: 4 }), base, budgetLimit: 4, ...common });
+  assert.ok(r.findings.some((f) => f.step === 'resume' && /reached the 3 requests/.test(f.what)));
+  assert.deepEqual(r.report.steps.map((s) => [s.step, s.requests]), [['build', 1], ['resume', 3]]);
+  assert.ok(r.report.total <= 4);
+});
+
+test('a resume from a later step tells the host where the project is', async () => {
+  const base = setup();
+  const first = standInHost();
+  await runStage({ host: first, base, ...common });
+  const host = standInHost();
+  await runStage({ host, base, from: 'merge', ...common });
+  assert.deepEqual(host.calls, ['attach:local__t3:t3-greeting', 'merge']);
 });

@@ -4,14 +4,21 @@
 // the waker uses (scripts/agents/copilot/run-output.js).
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { eventsOf, sessionUsage } from '../../scripts/agents/copilot/run-output.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Starts `call` ({ file, args, env, input, verbatim, output, usageFile, sessionId }) in `cwd`. Resolves at once with a handle:
 // `done` settles with { code, signal, killed } when the process ends; `read()` is what it has written so far.
-export function startRun(call, { cwd }) {
+// On Windows a run is started through cmd.exe, so ending the direct child leaves Copilot running: the whole tree of the process
+// the runner itself started goes, by its id.
+export function killTreeOnWindows(pid) {
+  const got = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+  return got.status === 0;
+}
+
+export function startRun(call, { cwd, platform = process.platform, killTree = killTreeOnWindows }) {
   fs.mkdirSync(path.dirname(call.output), { recursive: true });
   const out = fs.openSync(call.output, 'w');
   const child = spawn(call.file, call.args, { cwd, env: call.env, stdio: ['pipe', out, out], windowsVerbatimArguments: call.verbatim === true });
@@ -32,6 +39,7 @@ export function startRun(call, { cwd }) {
     read: () => { try { return fs.readFileSync(call.output, 'utf8'); } catch { return ''; } },
     kill() {
       killed = true;
+      if (platform === 'win32' && child.pid !== undefined && killTree(child.pid)) return;
       try { child.kill('SIGKILL'); } catch { /* already ended */ }
     },
   };
@@ -60,11 +68,39 @@ export function readRun(handle) {
   const usage = sessionUsage({ usageFile: handle.usageFile, stdout });
   const events = eventsOf(stdout);
   return {
-    cumulative: usage.premiumRequests ?? usage.totalPremiumRequestCost ?? null,
+    cumulative: usage.premiumRequests ?? liveRequests(stdout) ?? usage.totalPremiumRequestCost ?? null,
     finished: events.some((e) => e.type === 'result'),
     events,
     // Tool calls to the `task` tool start a subagent (check 96); the run's own count says whether those were charged.
     subagents: events.filter((e) => e.type === 'tool.execution_start' && e.data?.toolName === 'task').length,
     tools: toolsEnded(stdout),
   };
+}
+
+// The requests a run has spent so far, as its own output says: the latest usage checkpoint's premium request cost, or the result's
+// count once it ends. null while the output holds neither.
+export function liveRequests(stdout) {
+  let spent = null;
+  for (const e of eventsOf(stdout)) {
+    const n = e.type === 'result' ? e.usage?.premiumRequests : e.type === 'session.usage_checkpoint' ? (e.data?.accountingSnapshot?.totalPremiumRequestCost ?? e.data?.totalPremiumRequestCost) : undefined;
+    if (Number.isFinite(n)) spent = n;
+  }
+  return spent;
+}
+
+// Watches a run's spend and kills it when the session's figure reaches `cumulativeCap`. Resolves with { capped } when the run ends.
+export async function holdToCap(handle, { cumulativeCap, pollMs = 200 }) {
+  let ended = false;
+  handle.done.then(() => { ended = true; });
+  let capped = false;
+  while (!ended) {
+    const spent = liveRequests(handle.read());
+    if (spent !== null && spent >= cumulativeCap) {
+      capped = true;
+      handle.kill();
+      break;
+    }
+    await sleep(pollMs);
+  }
+  return { capped };
 }

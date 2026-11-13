@@ -15,7 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BudgetStop, makeBudget, STAGE_BUDGET } from './budget.js';
-import { readRun, waitMidTask } from './session.js';
+import { holdToCap, readRun, waitMidTask } from './session.js';
 import { nextNumber, takeLocal, writeMeta } from '../haiku-trial/snapshot.js';
 
 const TRIALS = path.join(os.homedir(), '.wheelhouse-trials');
@@ -53,7 +53,7 @@ const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(f
 //   resume({ work, sessionId })            -> a run handle
 //   merge({ work })                        -> { merged, commit?, reason? }
 // `settings`: { label, from, base, midTaskTools, midTaskTimeoutMs, budgetLimit, sessionId, snapshot (false in tests that skip it) }.
-export async function runStage({ host, label, from = null, base = TRIALS, midTaskTools = 1, midTaskTimeoutMs = 10 * 60 * 1000, budgetLimit = STAGE_BUDGET, sessionId = null, snapshot = true } = {}) {
+export async function runStage({ host, label, from = null, base = TRIALS, midTaskTools = 1, midTaskTimeoutMs = 10 * 60 * 1000, capPollMs = 200, budgetLimit = STAGE_BUDGET, sessionId = null, snapshot = true } = {}) {
   if (typeof label !== 'string' || !LABEL.test(label)) throw new Error('A run needs a label of lowercase letters, digits and dashes');
   const folder = runFolder(label, base);
   const logFile = path.join(folder, 'run-log.jsonl');
@@ -83,7 +83,8 @@ export async function runStage({ host, label, from = null, base = TRIALS, midTas
 
   // The run's request figure goes through the budget: reserved before it starts, settled when it ends.
   async function spend(step, begin, { kill = false } = {}) {
-    budget.reserve(step);
+    const cap = budget.reserve(step);
+    const cumulativeCap = budget.base(session.id) + cap;
     let handle;
     try {
       handle = await begin();
@@ -93,6 +94,8 @@ export async function runStage({ host, label, from = null, base = TRIALS, midTas
     }
     handles[step] = handle;
     let killed = false;
+    // The run's own spend is watched, and the run killed when it reaches what the budget has left for it.
+    const hold = holdToCap(handle, { cumulativeCap, pollMs: capPollMs });
     if (kill) {
       const mid = await waitMidTask(handle, { after: midTaskTools, timeoutMs: midTaskTimeoutMs });
       if (mid.reached && !mid.ended) {
@@ -107,6 +110,10 @@ export async function runStage({ host, label, from = null, base = TRIALS, midTas
       }
     }
     const end = await handle.done;
+    if ((await hold).capped) {
+      killed = true;
+      finding(step, `The session reached the ${cap} requests the budget had left for it, so it was killed`);
+    }
     const run = readRun(handle);
     const requests = budget.settle(step, { session: session.id, cumulative: run.cumulative });
     session.cumulative = run.cumulative ?? session.cumulative;
@@ -177,6 +184,8 @@ export async function runStage({ host, label, from = null, base = TRIALS, midTas
     writeMeta(dest, { point, at: clock(), torn });
   };
 
+  // A stage this attempt does not run still leaves the host knowing the project, its home and the order, from what state kept.
+  if ((start > 0 || doneBefore.has('stage')) && state.project !== undefined) await host.attach?.({ folder, project: state.project, order: ORDER });
   let ranReport = false;
   let stoppedAt = null;
   let why = null;
@@ -191,13 +200,13 @@ export async function runStage({ host, label, from = null, base = TRIALS, midTas
       continue;
     }
     // A resumed run builds its budget from what the state kept, not from the month's figure again.
-    if (budget === null && !['stage', 'month-check'].includes(step.name) && step.name !== 'report') {
-      budget = makeBudget({ limit: budgetLimit, monthUsed: state.monthUsed });
-      budget.restore(state.budgetSteps);
-    }
     log({ step: step.name, state: 'start' });
     if (step.name === 'report') ranReport = true;
     try {
+      if (budget === null && !['stage', 'month-check'].includes(step.name) && step.name !== 'report') {
+        budget = makeBudget({ limit: budgetLimit, monthUsed: state.monthUsed });
+        budget.restore(state.budgetSteps);
+      }
       const result = await bodies[step.name]();
       state.steps[step.name] = { outcome: 'ok', result };
       log({ step: step.name, state: 'done', outcome: 'ok' });

@@ -41,12 +41,25 @@ export function realHost({ label, ghAccount = readGhAccount, plan = 'auto-only',
   };
   const trialEnv = () => ({ ...env, WHEELHOUSE_HOME: trial.home });
 
+  // What a later step needs of the stage: where the project and its home are, and the Wheelhouse home the process works in.
+  const place = (folder) => {
+    trial.home = path.join(folder, 'wheelhouse-home');
+    trial.folder = path.join(folder, 'project');
+    fs.mkdirSync(trial.home, { recursive: true });
+    process.env.WHEELHOUSE_HOME = trial.home;
+  };
+
   return {
+    // A resumed attempt that does not run `stage` again: the places come back from the run folder, and nothing is made.
+    async attach({ folder, project, order }) {
+      if (!fs.existsSync(path.join(folder, 'project', '.git'))) throw new Error('The run folder holds no project to carry on with');
+      place(folder);
+      trial.project = project;
+      trial.order = order;
+    },
+
     async stage({ folder }) {
-      trial.home = path.join(folder, 'wheelhouse-home');
-      trial.folder = path.join(folder, 'project');
-      fs.mkdirSync(trial.home, { recursive: true });
-      process.env.WHEELHOUSE_HOME = trial.home;
+      place(folder);
       fs.mkdirSync(trial.folder, { recursive: true });
       if (!fs.existsSync(path.join(trial.folder, '.git'))) {
         git(trial.folder, 'init', '--quiet', '-b', 'main');
@@ -72,7 +85,8 @@ export function realHost({ label, ghAccount = readGhAccount, plan = 'auto-only',
       let account = readAccount({ dir: realUsage });
       try {
         const fresh = accountOf(await ghAccount(), now);
-        if (fresh !== null) { recordAccount(fresh, { dir: realUsage }); account = fresh; }
+        // The reading is kept in the trial's own home: the real home is only read.
+        if (fresh !== null) { if (trial.home === undefined) throw new Error('no trial home'); recordAccount(fresh, { dir: usageDir() }); account = fresh; }
       } catch { /* the ledger's count stands */ }
       return monthState({ lines: readLedger({ dir: realUsage }), account, now }).used;
     },

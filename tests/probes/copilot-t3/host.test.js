@@ -37,12 +37,32 @@ test('the build prompt names the goal and never a model', () => {
   assert.doesNotMatch(prompt, /--model|claude|gpt/i);
 });
 
-test('the month is read from the account when gh can, and the stage passes no model', async (t) => {
+test('a resumed attempt that skips the stage gets its places back from the run folder, and writes nothing to the real usage folder', async (t) => {
   const was = process.env.WHEELHOUSE_HOME;
-  t.after(() => { if (was === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = was; });
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-t3-usage-'));
-  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
-  process.env.WHEELHOUSE_HOME = home;
-  const host = realHost({ label: 'unit', ghAccount: async () => ({ quota_remaining: 148, quota_snapshots: { premium_interactions: { entitlement: 200, remaining: 148 } }, quota_reset_date: '2099-01-01' }) });
-  assert.equal(await host.monthUsed(), 52);
+  const real = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-t3-real-home-')));
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-t3-attach-')));
+  t.after(() => {
+    if (was === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = was;
+    fs.rmSync(real, { recursive: true, force: true });
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+  process.env.WHEELHOUSE_HOME = real;
+  const account = async () => ({ quota_remaining: 100, quota_snapshots: { premium_interactions: { entitlement: 200, remaining: 100 } }, quota_reset_date: '2099-01-01' });
+  const first = realHost({ label: 'again', ghAccount: account });
+  const { project } = await first.stage({ folder: base });
+  await first.order(ORDER);
+  // A new process: nothing in memory, and WHEELHOUSE_HOME back at the real home.
+  process.env.WHEELHOUSE_HOME = real;
+  const realUsage = path.join(real, 'usage');
+  const second = realHost({ label: 'again', ghAccount: account });
+  await second.attach({ folder: base, project, order: ORDER });
+  assert.equal(process.env.WHEELHOUSE_HOME, path.join(base, 'wheelhouse-home'));
+  assert.equal(await second.monthUsed(), 100);
+  assert.equal(fs.existsSync(path.join(realUsage, 'copilot-account.json')), false);
+  assert.equal((await second.merge({ work: ORDER.work })).reason, 'The session left no commit');
+});
+
+test('attach refuses a run folder with no project', async () => {
+  const host = realHost({ label: 'none' });
+  await assert.rejects(host.attach({ folder: fs.mkdtempSync(path.join(os.tmpdir(), 'wh-t3-empty-')), project: 'p', order: ORDER }), /no project/);
 });

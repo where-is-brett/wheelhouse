@@ -30,12 +30,17 @@ export function makeBudget({ limit = STAGE_BUDGET, monthUsed, ceiling = MONTH_CE
     get used() { return used; },
     get steps() { return steps.map((s) => ({ ...s })); },
     remaining: () => limit - used,
-    // Before a run: refuses when one more request would pass the stage's budget or the month's ceiling.
+    // The session's figure at the last settled run: where the next run's own spend starts from.
+    base: (session) => last.get(session) ?? 0,
+    // Before a run: refuses when one more request would pass the stage's budget or the month's ceiling. Gives the run's cap, the
+    // most requests it may spend (what is left of the stage's budget and of the month's room): the runner watches the run and
+    // kills it when its spend reaches the cap, so a run that starts under the budget cannot end over it.
     reserve(step, { worst = 1 } = {}) {
       if (open !== null) throw new Error(`${open} has not been settled`);
       if (used + worst > limit) throw new BudgetStop(`${step} would take the stage to ${used + worst} of its ${limit} requests`);
       if (monthUsed + used + worst > ceiling) throw new BudgetStop(`${step} would take the month to ${monthUsed + used + worst} of ${ceiling}`);
       open = step;
+      return Math.min(limit - used, ceiling - monthUsed - used);
     },
     // After a run: `cumulative` is the session's figure as the CLI reports it, or null when none was left.
     settle(step, { session, cumulative = null }) {
