@@ -1871,27 +1871,73 @@ test('a merged pins-only release records its briefing line once, as the merge\'s
   assert.deepEqual(merges(again.writes), []);
 }));
 
-test('merge goes through for closed work whose own pull request is still open, and settles its report as merged', () => withHome(async () => {
+test('merge goes through for closed work whose own pull request is still open, only when close would have called it merged', () => withHome(async () => {
   const checkout = await project();
-  const views = emptyViews();
-  views.work.mine = workView('mine');
-  const wt = worktree(checkout, 'mine', { pr: { pr: 12 } });
-  views.features.mine = featureView('mine', { step: 'closed', worktree: wt, branch: 'feature/mine' });
-  views.reports.mine = { data: { work: 'mine', outcome: 'closed', summary: 'Shipped.', rulings: [], pr: 12 } };
   const current = { ok: true, updated: false, head: 'b'.repeat(40) };
   const merged = { ok: true, sha: 'c'.repeat(40) };
-  const fake = fakeClient({ views, answers: { prState: { ok: true, result: { state: 'open' } }, updateBranch: current, merge: merged } });
+  const setup = ({ pr = { pr: 12, plan: 'docs/plans/p.md' }, report = reportText('mine'), reportPr = 12, outcome = 'closed' } = {}) => {
+    const views = emptyViews();
+    views.work.mine = workView('mine', { lane: 'feature' });
+    const wt = worktree(checkout, 'mine', { pr, report });
+    views.features.mine = featureView('mine', { step: 'closed', worktree: wt, branch: 'feature/mine', plan: 'docs/plans/p.md' });
+    views.reports.mine = { data: { work: 'mine', outcome, summary: 'Shipped.', rulings: [], pr: reportPr } };
+    return { views, wt };
+  };
+  const answers = (state, over = {}) => ({ prState: { ok: true, result: { state } }, updateBranch: current, merge: merged, ...over });
+
+  const ok = setup();
+  const fake = fakeClient({ views: ok.views, answers: answers('open') });
   const r = await act(['merge', 'mine'], { client: fake.client });
   assert.equal(r.code, 0, r.err);
   assert.ok(fake.calls.some(([name]) => name === 'merge'));
   assert.deepEqual(fake.writes.map((w) => [w.kind, w.data.outcome]), [['report', 'merged']]);
-  assert.equal(JSON.parse(fs.readFileSync(featurePaths(wt).pr, 'utf8')).merged, true);
-  // Closed work whose pull request the host says is closed has nothing to merge.
-  const gone = fakeClient({ views, answers: { prState: { ok: true, result: { state: 'closed' } } } });
-  const refused = await act(['merge', 'mine'], { client: gone.client });
-  assert.notEqual(refused.code, 0);
-  assert.match(refused.err, /mine is closed/);
-  assert.equal(gone.writes.length, 0);
+  assert.equal(JSON.parse(fs.readFileSync(featurePaths(ok.wt).pr, 'utf8')).merged, true);
+
+  // Each of these is a close that would not have recorded the work as merged, or a pull request the report doesn't name.
+  const cases = {
+    'a report naming another pull request': () => setup({ reportPr: 99 }),
+    'a report that says partial': () => setup({ report: reportText('mine', { status: 'partial' }) }),
+    'a pull request for another plan': () => setup({ pr: { pr: 12, plan: 'docs/plans/other.md' } }),
+    'a report already settled': () => setup({ outcome: 'blocked' }),
+  };
+  for (const [what, c] of Object.entries(cases)) {
+    const f = fakeClient({ views: c().views, answers: answers('open') });
+    const refused = await act(['merge', 'mine'], { client: f.client });
+    assert.notEqual(refused.code, 0, what);
+    assert.match(refused.err, /mine is closed: ask the director/, what);
+    assert.equal(f.writes.length, 0, what);
+    assert.equal(f.calls.some(([name]) => name === 'merge'), false, what);
+  }
+  // A pull request the host shows closed has nothing to merge.
+  const gone = fakeClient({ views: setup().views, answers: answers('closed') });
+  assert.match((await act(['merge', 'mine'], { client: gone.client })).err, /mine is closed/);
+  // Merged on the host but not through act merge: the director's call.
+  const outside = fakeClient({ views: setup().views, answers: answers('merged') });
+  const out = await act(['merge', 'mine'], { client: outside.client });
+  assert.match(out.err, /merged, but not through act merge: ask the director/);
+  assert.equal(outside.writes.length, 0);
+  // Merged through act merge (pr.json marks it) but the report not yet settled: it is settled.
+  const marked = setup({ pr: { pr: 12, plan: 'docs/plans/p.md', merged: true } });
+  const again = fakeClient({ views: marked.views, answers: answers('merged') });
+  assert.equal((await act(['merge', 'mine'], { client: again.client })).code, 0);
+  assert.deepEqual(again.writes.map((w) => w.data.outcome), ['merged']);
+}));
+
+test('a report already settled by someone else is not written again', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.mine = workView('mine', { lane: 'feature' });
+  const wt = worktree(checkout, 'mine', { pr: { pr: 12, plan: 'docs/plans/p.md' }, report: reportText('mine') });
+  views.features.mine = featureView('mine', { step: 'closed', worktree: wt, plan: 'docs/plans/p.md' });
+  views.reports.mine = { data: { work: 'mine', outcome: 'closed', summary: 'Shipped.', rulings: [], pr: 12 } };
+  const fake = fakeClient({ views, answers: { prState: { ok: true, result: { state: 'open' } }, updateBranch: { ok: true, updated: false, head: 'b'.repeat(40) }, merge: { ok: true, sha: 'c'.repeat(40) } } });
+  // The views as they are when the merge ends say the report is merged already.
+  const first = fake.client.state.views;
+  let reads = 0;
+  fake.client.state.views = async (...a) => { const got = await first(...a); if (reads++ > 0) got.views.reports.mine.data.outcome = 'merged'; return got; };
+  const r = await act(['merge', 'mine'], { client: fake.client });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(fake.writes.length, 0);
 }));
 
 test('a merge that waits only for the director\'s click records what it waits for, once, and asks nothing (R117)', () => withHome(async () => {
@@ -2110,11 +2156,39 @@ test('work that ends partial with no pull request does not close while other wor
   const fake = fakeClient({ views });
   const r = await act(['close', 'base'], { client: fake.client });
   refusedInOneLine(r);
-  assert.match(r.err, /base reports partial with no pull request, and next depends on it: .*ask the director/);
+  assert.match(r.err, /base would close as closed, not merged, and next depends on it: .*ask the director/);
   assert.equal(fake.writes.length, 0);
   // With nothing waiting on it, it closes and is put to the director as before.
   delete views.work.next;
   assert.equal((await act(['close', 'base'], { client: fake.client })).code, 0);
+}));
+
+test('work that will not close as merged is not closed while a dependent still waits, by the queue\'s own test of waiting', () => withHome(async () => {
+  const checkout = await project();
+  const setup = (status, pr) => {
+    const views = emptyViews();
+    views.work.base = workView('base', { lane: 'feature' });
+    views.features.base = featureView('base', { step: 'building', worktree: worktree(checkout, 'base', { report: reportText('base', { status }), pr }), plan: 'p.md' });
+    views.work.next = workView('next', { lane: 'feature', dependsOn: ['base'] });
+    return views;
+  };
+  const refusedFor = async (views, state) => {
+    const fake = fakeClient({ views, answers: state === undefined ? {} : { prState: { ok: true, result: { state } } } });
+    const r = await act(['close', 'base'], { client: fake.client });
+    refusedInOneLine(r);
+    assert.match(r.err, /depends on it: don't close it: ask the director/);
+    assert.equal(fake.writes.length, 0);
+  };
+  await refusedFor(setup('blocked'));
+  await refusedFor(setup('partial', { pr: 5, plan: 'p.md' }), 'open');
+  await refusedFor(setup('done', { pr: 5, plan: 'p.md' }), 'closed');
+  // A dependent that ended after its work was last queued no longer waits; one queued again since does.
+  const ended = setup('blocked');
+  ended.reports.next = { key: 'next', at: '2026-10-19T09:00:00.000Z', data: { work: 'next', outcome: 'closed' } };
+  assert.equal((await act(['close', 'base'], { client: fakeClient({ views: ended }).client })).code, 0);
+  const again = setup('blocked');
+  again.reports.next = { key: 'next', at: '2026-10-19T07:00:00.000Z', data: { work: 'next', outcome: 'closed' } };
+  await refusedFor(again);
 }));
 
 test('a feature that ends blocked or partial never closes as merged, even after an earlier slice merged (I7)', () => withHome(async () => {
