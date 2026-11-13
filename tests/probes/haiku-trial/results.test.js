@@ -96,3 +96,26 @@ test('the public summary scrubs paths under /opt and /Library too', () => {
   const md = writeSummary({ file: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'haiku-scrub-')), 's.md'), date: '2026-11-08', rows: [{ id: 1, path: 'see /opt/tool/bin and /Library/Thing/x', pass: false }], score: null, audit: null, usage: {} });
   assert.doesNotMatch(md, /\/opt\/|\/Library\//);
 });
+
+test('the summary lists findings', () => {
+  const md = writeSummary({ file: path.join(scratch(), 's.md'), date: '2026-11-08', rows, score, audit, usage, findings: [{ step: 'f1', what: 'boom in /Users/x/y' }] });
+  assert.match(md, /## Findings/);
+  assert.match(md, /^- f1: boom in \[a path\]$/m);
+  assert.doesNotMatch(writeSummary({ file: path.join(scratch(), 's.md'), date: '2026-11-08', rows, score, audit, usage }), /## Findings/);
+});
+
+test('claimLost heads the summary', () => {
+  const md = writeSummary({ file: path.join(scratch(), 's.md'), date: '2026-11-08', rows, score, audit, usage, claimLost: 'model audit' });
+  assert.equal(md.split('\n').filter(Boolean)[2], 'This run cannot pass: model audit.');
+});
+
+test('a resumed summary is headed as resumed and says would pass, never passed', () => {
+  const resumedFrom = { snapshot: '03-after-w2-audit', attempt: 2, pluginBefore: 'aaa111', pluginNow: 'bbb222', maxNumber: 5, quiet: false, running: ['p3'], reopened: [4] };
+  const md = writeSummary({ file: path.join(scratch(), 's.md'), date: '2026-11-08', rows, score, audit, usage, resumedFrom });
+  assert.equal(md.split('\n').filter(Boolean)[2], 'Resumed from 03-after-w2-audit (attempt 2). Not a run for the record: a passing claim needs one whole run.');
+  assert.match(md, /aaa111/);
+  assert.match(md, /bbb222/);
+  assert.match(md, /Pass bar: would pass\./);
+  assert.doesNotMatch(md, /Pass bar: passed/);
+  assert.match(md, /p3 mid-build/);
+});

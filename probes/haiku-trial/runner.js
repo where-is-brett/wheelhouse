@@ -961,7 +961,9 @@ export const STEPS = [
       const runLog = readLog(ctx.logFile);
       io.results.writeRaw({ folder: ctx.folder, transcripts, events: await io.host.events({ project: ctx.projectName }), panes: ctx.state.panes, runLog, usage });
       const file = path.join(ctx.folder, 'summary', `${ctx.date}-haiku-trial-results.md`);
-      io.results.writeSummary({ file, date: ctx.date, rows: ctx.state.rows ?? [], score: ctx.state.score, audit: ctx.state.audit, usage, model: ctx.model });
+      const findings = ctx.state.findings ?? [];
+      const claimLost = findings.find((f) => f.claimLost)?.claimLost;
+      io.results.writeSummary({ file, date: ctx.date, rows: ctx.state.rows ?? [], score: ctx.state.score, audit: ctx.state.audit, usage, model: ctx.model, findings, claimLost, resumedFrom: ctx.state.resumedFrom });
       await note(ctx, 'results', `raw results and summary under ${ctx.folder}`);
     },
   },
@@ -1050,6 +1052,7 @@ async function gatherAndCheck(ctx, io) {
     }
   }
   state.audit = full.audit;
+  full.findings = state.findings ?? [];
   const rows = io.signals.checkAll(full, { smoke: ctx.smoke });
   return state.p5 === 'not-covered'
     ? rows.map((r) => (r.id === 6 ? { ...r, pass: null, evidence: `not covered: ${state.p5Why}` } : r))

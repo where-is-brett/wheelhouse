@@ -460,3 +460,22 @@ test('setup counts as done when the journal\'s latest run for the folder has eve
   assert.equal(setupJournalDone(journal([{ folder: '/p', steps: {} }]), '/p', []), false, 'no step list is never done');
   for (const bad of [null, undefined, 'text', {}, { runs: 'x' }, { runs: [] }]) assert.equal(setupJournalDone(bad, '/p', steps), false);
 });
+
+test('rows 14, 15 and 23 read notExercised as not covered with the reason', () => {
+  for (const [id, key] of [[14, 'F1'], [15, 'F1b'], [23, 'F1c']]) {
+    const r = row(id).check(ctxWith({ faults: { [key]: { notExercised: 'no running feature session names P3' } } }));
+    assert.equal(r.pass, null, `row ${id}`);
+    assert.equal(r.evidence, 'not covered: no running feature session names P3');
+  }
+});
+
+test('a row whose step failed says the step failed and why, rather than that the run stopped', () => {
+  const r = row(36).check(ctxWith({ prs: [], runLog: [], findings: [{ step: 'f5a-undo-p6', what: 'boom' }] }));
+  assert.equal(r.pass, null);
+  assert.equal(r.evidence, 'not covered: f5a-undo-p6 failed (boom)');
+  const sitting = row(40).check(ctxWith({ runLog: [], findings: [{ step: 'sitting-1', what: 'the click did not come' }] }));
+  assert.equal(sitting.evidence, 'not covered: sitting-1 failed (the click did not come)');
+  const f1 = row(14).check(ctxWith({ findings: [{ step: 'f1', what: 'boom' }] }));
+  assert.equal(f1.evidence, 'not covered: f1 failed (boom)');
+  assert.match(row(36).check(ctxWith({ prs: [], runLog: [] })).evidence, /the run stopped before/);
+});
