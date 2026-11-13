@@ -184,6 +184,7 @@
       "gui.trustmtime"
     ],
     "index": [
+      "index.maxPathLen",
       "index.recordEndOfIndexEntries",
       "index.recordOffsetTable",
       "index.skipHash",
