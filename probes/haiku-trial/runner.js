@@ -1404,7 +1404,7 @@ export async function resume({ folder, label, snapshot, io: given, keepPlugin = 
   // The number is reserved before anything is moved, so a resume that stops half way is never reused as the same attempt.
   await appendJsonl(path.join(dir, 'attempts.jsonl'), { n, at: new Date(io.clock.now()).toISOString(), status: 'started', snapshot, aside, repository: `${repoName}-a${n}` });
   io.host.useRepo(slug);
-  await restore({ folder, io, force: true });
+  await restore({ folder, io, force: true, label });
   // Move the attempt aside: its folder, its transcripts and its repository.
   const projectName = projectSlug(owner, repoName);
   const projects = path.join(configDir ?? path.join(os.homedir(), '.claude'), 'projects');
@@ -1460,8 +1460,9 @@ export async function resume({ folder, label, snapshot, io: given, keepPlugin = 
 // Stops what this run started, as its log records it, and nothing else. It deletes nothing.
 // Wheelhouse's own side (the helper, watchers and foremen) is kept while a feature session is still running, since stopping
 // it takes its records and its way to open a pull request with it; `force` stops it anyway.
-export async function restore({ folder, io, force = false }) {
+export async function restore({ folder, io, force = false, label }) {
   const stopped = [];
+  const skipped = [];
   let kept = [];
   const entries = readLog(path.join(folder, 'run-log.jsonl'));
   const names = new Set(entries.flatMap((e) => [].concat(e.detail?.tmux ?? [])).filter((n) => String(n).startsWith(SESSION_PREFIX)));
@@ -1472,7 +1473,17 @@ export async function restore({ folder, io, force = false }) {
     io.tmux.kill(name);
     stopped.push(name);
   }
+  // A pid in an old log may have been given to another process since: it is signalled only while its command line or its working
+  // folder still names this run's folder (or label). Anything that cannot be read is left alone.
+  const mine = (info) => [info?.command, info?.cwd].some((x) => typeof x === 'string' && (x.includes(path.resolve(folder)) || (label !== undefined && x.includes(label))));
   for (const pid of pids) {
+    let info = null;
+    try { info = (await io.processInfo?.(pid)) ?? null; } catch { /* unreadable: left alone */ }
+    if (!mine(info)) {
+      skipped.push(`pid ${pid}`);
+      io.log?.(`restore: left pid ${pid} alone, it is not this run's (${info ? `${info.command} in ${info.cwd}` : 'gone or unreadable'})`);
+      continue;
+    }
     // Each was started in its own process group, so the whole group goes; a pid that is no group's leader goes alone.
     try {
       io.kill(-pid, 'SIGTERM');
@@ -1490,7 +1501,7 @@ export async function restore({ folder, io, force = false }) {
     stopped.push(...(wheelhouse.stopped ?? []));
     kept = wheelhouse.kept ?? [];
   }
-  return { stopped, kept };
+  return skipped.length > 0 ? { stopped, kept, skipped } : { stopped, kept };
 }
 
 // --- the command line ---
@@ -1576,7 +1587,7 @@ export async function main(argv, { print = console.log, buildIo, env = process.e
   if (problem) { print(JSON.stringify({ stoppedAt: 'wheelhouse-home', why: problem })); return 1; }
   fs.mkdirSync(home, { recursive: true });
   if (args.command === 'restore') {
-    print(JSON.stringify(await restore({ folder, io, force: args.force === true })));
+    print(JSON.stringify(await restore({ folder, io, force: args.force === true, label })));
     return 0;
   }
   if (args.command === 'resume') {

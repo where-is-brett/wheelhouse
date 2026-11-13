@@ -55,6 +55,7 @@ function fakeIo(over = {}) {
     ask: async (text) => { rec('ask', text); return over.answer ?? 'go'; },
     log: () => {},
     kill: (pid, signal) => rec('kill', pid, signal),
+    processInfo: over.processInfo ?? ((pid) => ({ command: `npm start`, cwd: `/unused/${over.processOwner ?? 'current'}/project` })),
     host: {
       stage: async () => ({ pluginDir: '/p', marketplaceDir: '/m' }),
       exec: async (argv) => { rec('exec', argv); return over.exec ? over.exec(argv) : { status: 0 }; },
@@ -418,7 +419,7 @@ test('restore stops only what the run recorded', async (t) => {
     { step: 'front-desk', note: 'x', detail: { tmux: 'haiku-trial-desk' } },
     { step: 'tunnel', note: 'x', detail: { productPid: 4242 } },
   ].map((e) => JSON.stringify(e)).join('\n') + '\n');
-  const io = fakeIo({ sessions: ['haiku-trial-desk', 'other-session'] });
+  const io = fakeIo({ sessions: ['haiku-trial-desk', 'other-session'], processInfo: () => ({ command: 'npm start', cwd: path.join(folder, 'project') }) });
   const before = fs.readdirSync(folder).sort();
   const got = await restore({ folder, io });
   assert.deepEqual(io.timeline.filter((e) => e.kind === 'tmux.kill').map((e) => e.args[0]), ['haiku-trial-desk']);
@@ -1752,4 +1753,36 @@ test('resume refuses before touching anything when the folder for its attempt al
   assert.equal(fs.readFileSync(path.join(fx.folder, 'marker.txt'), 'utf8'), 'the failed attempt');
   assert.equal(fs.readFileSync(path.join(`${fx.folder}-a1`, 'earlier.txt'), 'utf8'), 'an earlier attempt');
   assert.equal(fs.existsSync(path.join(fx.base, 'haiku-2026-11-08.snapshots', 'attempts.jsonl')), false);
+});
+
+test('restore signals a pid only while it still belongs to this run, and says what it skipped', async (t) => {
+  const folder = scratch(t);
+  fs.writeFileSync(path.join(folder, 'run-log.jsonl'), [
+    { step: 'tunnel', note: 'x', detail: { productPid: 11, tunnelPid: 22 } },
+    { step: 'again', note: 'x', detail: { productPid: 33 } },
+    { step: 'again', note: 'x', detail: { productPid: 44 } },
+  ].map((e) => JSON.stringify(e)).join('\n') + '\n');
+  const info = {
+    11: { command: 'npm start', cwd: path.join(folder, 'project') },
+    22: { command: `cloudflared tunnel --url http://127.0.0.1:4173 --logfile ${path.join(folder, 'tunnel.log')}`, cwd: '/' },
+    33: { command: '/usr/bin/vim notes.txt', cwd: '/Users/someone/other-project' },
+    44: null,
+  };
+  const logged = [];
+  const io = fakeIo({ processInfo: (pid) => info[pid] });
+  io.log = (line) => logged.push(line);
+  const got = await restore({ folder, io });
+  assert.deepEqual(io.timeline.filter((e) => e.kind === 'kill').map((e) => e.args[0]), [-11, -22]);
+  assert.deepEqual(got.stopped, ['pid 11', 'pid 22']);
+  assert.deepEqual(got.skipped, ['pid 33', 'pid 44']);
+  assert.equal(logged.length, 2);
+  assert.match(logged[0], /pid 33.*not this run/);
+});
+
+test('a resume does not signal a pid from the old run log that belongs to something else', async (t) => {
+  const fx = resumeFixture(t);
+  fs.writeFileSync(path.join(fx.folder, 'run-log.jsonl'), `${JSON.stringify({ step: 'tunnel', note: 'x', detail: { productPid: 777 } })}\n`);
+  const io = resumeIo(t, { processInfo: () => ({ command: 'vim', cwd: '/elsewhere' }) });
+  await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base, until: 'w3-type' });
+  assert.equal(io.timeline.some((e) => e.kind === 'kill'), false);
 });

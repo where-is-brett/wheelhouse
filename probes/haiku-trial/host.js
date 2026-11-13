@@ -249,7 +249,7 @@ export function buildRealIo(env = process.env, label) {
         child.once('error', (error) => reject(new Error(`the tunnel preview's ${what} did not start: ${error.message}`)));
       });
       const app = await started(spawn('npm', ['start'], { cwd: dir, detached: true, stdio: 'ignore', env: { ...process.env, PORT: '4173', LEDGER_DB: ':memory:' } }), 'product');
-      const tunnel = await started(spawn('cloudflared', ['tunnel', '--url', 'http://127.0.0.1:4173'], { detached: true, stdio: 'ignore' }), 'tunnel');
+      const tunnel = await started(spawn('cloudflared', ['tunnel', '--url', 'http://127.0.0.1:4173', '--logfile', path.join(path.dirname(path.resolve(dir)), 'tunnel.log')], { detached: true, stdio: 'ignore' }), 'tunnel');
       app.unref();
       tunnel.unref();
       return { productPid: app.pid, tunnelPid: tunnel.pid };
@@ -317,6 +317,16 @@ export function buildRealIo(env = process.env, label) {
     score: { scoreAll },
     results: { runFolder, writeRaw, writeSummary },
     kill: (pid, signal) => process.kill(pid, signal),
+    // What a pid is running and where, so a pid out of an old log is signalled only while it is still this run's. Null when it cannot be read.
+    processInfo: (pid) => {
+      if (process.platform === 'win32') return null;
+      const ps = run('ps', ['-o', 'command=', '-p', String(pid)]);
+      const command = String(ps.stdout ?? '').trim();
+      if (ps.error || ps.status !== 0 || command === '') return null;
+      const lsof = run('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn']);
+      const cwd = String(lsof.stdout ?? '').split('\n').find((l) => l.startsWith('n'))?.slice(1) ?? '';
+      return { command, cwd };
+    },
     log: (line) => console.error(line),
     async ask(question) {
       const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
