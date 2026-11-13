@@ -20,8 +20,8 @@ const sameFolder = (a, b) => {
   return real(a) === real(b);
 };
 
-// `startHelper({ home })` -> { stop() }. Resolves once the helper answers in `home`; throws when it never does.
-export async function startHelper({ home, spawn = nodeSpawn, pluginRoot = ROOT, waitMs = 15000, pollMs = 200, graceMs = 3000, env = process.env } = {}) {
+// `startTrialHelper({ home })` -> { stop() }. Resolves once the helper answers in `home`; throws when it never does.
+export async function startTrialHelper({ home, spawn = nodeSpawn, pluginRoot = ROOT, waitMs = 15000, pollMs = 200, graceMs = 3000, env = process.env } = {}) {
   if (typeof home !== 'string' || home === '') throw new Error('The helper needs the trial\'s own Wheelhouse home');
   if (sameFolder(home, path.join(os.homedir(), '.wheelhouse'))) throw new Error('The trial never starts a helper for the real Wheelhouse home');
   fs.mkdirSync(home, { recursive: true });

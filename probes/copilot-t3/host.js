@@ -14,7 +14,7 @@ import { makeHome, projectFolder } from '../../scripts/host/local/home.js';
 import { localChanges } from '../../scripts/host/local/changes.js';
 import { makeLocalAdapter } from '../../scripts/host/local/adapter.js';
 import { startRun } from './session.js';
-import { startHelper } from './helper.js';
+import { startTrialHelper } from './helper.js';
 
 export const PROJECT_FILES = Object.freeze({
   'README.md': '# Greeter\n\nSays hello. A throwaway project for Wheelhouse trial stage T3.\n',
@@ -28,7 +28,7 @@ const git = (cwd, ...args) => execFileSync('git', [...GIT_IDENTITY, ...args], { 
 // The first prompt of the build session: the order's goal, in the words the waker's first prompt uses for a quick piece.
 export const buildPrompt = (order) => `${order.goal} This is a quick-lane change: build it, run the tests with \`npm test\`, and commit it on the current branch.`;
 
-export function realHost({ label, ghAccount = readGhAccount, plan = 'auto-only', sessions = sessionsPart({ ready: true, plan }), env = process.env, helper = startHelper } = {}) {
+export function realHost({ label, ghAccount = readGhAccount, plan = 'auto-only', sessions = sessionsPart({ ready: true, plan }), env = process.env, helper = startTrialHelper } = {}) {
   // The month's real ledger is read before WHEELHOUSE_HOME is pointed at the trial's own folder.
   const realUsage = usageDir();
   const trial = {};

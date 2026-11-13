@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { startHelper } from '../../../probes/copilot-t3/helper.js';
+import { startTrialHelper } from '../../../probes/copilot-t3/helper.js';
 import { helperAddress } from '../../../scripts/lib/paths.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 
@@ -31,7 +31,7 @@ test('the helper is started in the trial\'s own home, answers there, and is gone
   const dir = shortDir();
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, 'home');
-  const helper = await startHelper({ home, pluginRoot: fakePlugin(path.join(dir, 'plugin')), waitMs: 5000, pollMs: 50 });
+  const helper = await startTrialHelper({ home, pluginRoot: fakePlugin(path.join(dir, 'plugin')), waitMs: 5000, pollMs: 50 });
   const client = helperClient({ address: helperAddress({ home }), timeout: 1000 });
   assert.equal(helper.spawned, true);
   assert.equal((await client.health()).ok, true);
@@ -45,8 +45,8 @@ test('a helper already answering in the home is reused and asked to close, not s
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, 'home');
   const plugin = fakePlugin(path.join(dir, 'plugin'));
-  const first = await startHelper({ home, pluginRoot: plugin, waitMs: 5000, pollMs: 50 });
-  const second = await startHelper({ home, pluginRoot: plugin, waitMs: 5000, pollMs: 50 });
+  const first = await startTrialHelper({ home, pluginRoot: plugin, waitMs: 5000, pollMs: 50 });
+  const second = await startTrialHelper({ home, pluginRoot: plugin, waitMs: 5000, pollMs: 50 });
   assert.equal(second.spawned, false);
   await second.stop();
   const client = helperClient({ address: helperAddress({ home }), timeout: 1000 });
@@ -57,7 +57,7 @@ test('a helper already answering in the home is reused and asked to close, not s
 
 test('it never starts a helper for the real Wheelhouse home', async () => {
   let spawned = false;
-  await assert.rejects(startHelper({ home: path.join(os.homedir(), '.wheelhouse'), spawn: () => { spawned = true; } }), /real Wheelhouse home/);
+  await assert.rejects(startTrialHelper({ home: path.join(os.homedir(), '.wheelhouse'), spawn: () => { spawned = true; } }), /real Wheelhouse home/);
   assert.equal(spawned, false);
 });
 
@@ -67,5 +67,5 @@ test('a helper that never answers fails the start, in words', async (t) => {
   const plugin = path.join(dir, 'plugin');
   fs.mkdirSync(path.join(plugin, 'scripts', 'host'), { recursive: true });
   fs.writeFileSync(path.join(plugin, 'scripts', 'host', 'helper-main.js'), 'setTimeout(() => {}, 100);\n');
-  await assert.rejects(startHelper({ home: path.join(dir, 'home'), pluginRoot: plugin, waitMs: 300, pollMs: 50 }), /did not answer/);
+  await assert.rejects(startTrialHelper({ home: path.join(dir, 'home'), pluginRoot: plugin, waitMs: 300, pollMs: 50 }), /did not answer/);
 });
