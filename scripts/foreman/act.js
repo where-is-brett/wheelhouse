@@ -134,7 +134,7 @@ import {
   builderCapOf, currentFeatureOf, documentOf, openPrWait, pausedBy, planOf, projectHere, queueToStart, queuedAgain, recordedBriefOf, slotFor, stateEvents, waitText, whyText, worktreeOf,
 } from './wake.js';
 import { questionProblem, shapeProblems } from '../cards/compose.js';
-import { needsApprovalOfWork } from './queue.js';
+import { endedBy, needsApprovalOfWork } from './queue.js';
 import { approvedText, installText, keepApprovedText } from '../state/approved-text.js';
 import { amendBrief, renderBrief } from '../feature/brief.js';
 import { approvedDocument, insideCheckout, placeApproved } from '../feature/approved.js';
@@ -1465,17 +1465,36 @@ async function secondReviewWait(ctx, views, work, pr, head) {
 async function merge(ctx, work, rest) {
   flagsOf(rest, [], 'merge');
   const views = await ctx.views();
-  liveFeature(views, work);
+  // Work closed while its own pull request was still open (a close that went through before it was held back) still has that
+  // pull request to merge: the merge is let through for it, and settles the report so what waits on the work can go on.
+  const closed = featureOf(views, work)?.step === 'closed';
+  if (!closed) liveFeature(views, work);
   if (atTheHelm(ctx, work)) return;
   const worktree = worktreeOf(ctx.project, views, work);
   const kept = readPrRecord(worktree);
-  if (kept === null) refuse(`${work} has no pull request kept in its pr.json`);
+  if (kept === null) refuse(closed ? `${work} is closed` : `${work} has no pull request kept in its pr.json`);
   const pr = kept.pr;
+  // Closed work is let through only for what close would have recorded as merged: the signed report names this pull request,
+  // the report in the worktree says done, and the pull request is the one for the feature's current plan. pr.json alone,
+  // being in the worktree, is not trusted.
+  if (closed) {
+    const f = featureOf(views, work);
+    const report = views.reports[work]?.data;
+    let status;
+    try {
+      status = parseReport(readCapped(featurePaths(worktree).report, REPORT_BYTES)).fields.status;
+    } catch { /* an unreadable report is not done */ }
+    const current = NO_PLAN.includes(laneOf(views, work)) || kept.plan === (typeof f.plan === 'string' ? f.plan : null);
+    if (!(isPlain(report) && report.outcome === 'closed' && report.pr === pr && status === 'done' && current)) refuse(`${work} is closed: ask the director`);
+  }
   // pr.json marks the merge (ruling R88), and the status is rebuilt from it, so
   // the watcher sees the feature move on to the next slice or to done.
-  const markMerged = () => {
+  const markMerged = async () => {
     if (!safeFeatureFolder(worktree)) refuse("The worktree's feature folder isn't a real folder inside it");
     if (!kept.merged) writeWhole(featurePaths(worktree).pr, `${JSON.stringify({ pr, ...(kept.plan ? { plan: kept.plan } : {}), merged: true })}\n`);
+    // The mark is written first, so a settle that fails can be tried again (a merged pull request needs the mark), and the
+    // report before the status, so a status that fails to write can't strand what waits on the work.
+    await settleClosed();
     let status;
     try {
       status = writeFeatureStatus(ctx, views, work, worktree);
@@ -1484,11 +1503,21 @@ async function merge(ctx, work, rest) {
     }
     return status.phase;
   };
+  // The closed work's report read `closed`, so nothing that depends on the work could start; its own pull request merged,
+  // so it reads `merged` now. It is written after the pr.json mark and before the status, so a status that fails to write can't strand what waits on
+  // the work, and from the views as they are now: only a report still `closed` for this pull request is changed.
+  const settleClosed = async () => {
+    if (!closed) return;
+    const report = (await loadViews(ctx.project, ctx.client)).views.reports[work]?.data;
+    if (isPlain(report) && report.outcome === 'closed' && report.pr === pr) await ctx.write('report', { ...report, outcome: 'merged' });
+  };
   const number = { project: ctx.project, number: pr };
   const state = await ctx.client.prState(number);
+  if (closed && !(state?.ok === true && ['open', 'merged'].includes(state.result?.state))) refuse(`${work} is closed`);
   if (state?.ok === true && state.result?.state === 'merged') {
+    if (closed && kept.merged !== true) refuse(`Pull request #${pr} for ${work} merged, but not through act merge: ask the director`);
     // Marked and its status written again: a stop between the merge and either is put right.
-    const phase = markMerged();
+    const phase = await markMerged();
     ctx.say(`Pull request #${pr} for ${work} is merged already; its status reads ${phase}.`);
     return;
   }
@@ -1524,7 +1553,7 @@ async function merge(ctx, work, rest) {
   }
   if (merged?.ok !== true) refuse(`Pull request #${pr} for ${work} was not merged: ${refusal(merged)}. Ask the director; don't try again.`);
   if (typeof merged.briefing === 'string' && merged.briefing !== '') await releaseMerged(ctx, pr, merged);
-  const phase = markMerged();
+  const phase = await markMerged();
   ctx.say(`Merged pull request #${pr} for ${work} at ${short(merged.sha)}; its status reads ${phase}.${Array.isArray(merged.answeredNoChange) && merged.answeredNoChange.length > 0 ? ` The session marked the director's answer to ${merged.answeredNoChange.join(', ')} as needing no change.` : ''}`);
 }
 
@@ -1605,6 +1634,12 @@ async function close(ctx, work, rest) {
     // Quick and bug work have no plan to match.
     const current = NO_PLAN.includes(laneOf(views, work)) || kept.plan === (typeof f.plan === 'string' ? f.plan : null);
     if (merged && status === 'done' && current) outcome = 'merged';
+  }
+  // Work that doesn't end as merged, closed while other work depends on it, would leave that work waiting for good (its
+  // finished slices are on its branch, or its pull request is closed or open): it goes to the director instead.
+  const waiting = Object.keys(views.work).filter((name) => name !== work && (views.work[name]?.work?.data?.dependsOn ?? []).includes(work) && !endedBy(views.reports, name, views.work[name].work));
+  if (outcome !== 'merged' && waiting.length > 0) {
+    refuse(`${work} would close as ${outcome}, not merged, and ${waiting.join(', ')} depend${waiting.length === 1 ? 's' : ''} on it: don't close it: ask the director`);
   }
   const data = { work, outcome, summary, rulings: parsed.fields.rulings, ...(pr !== null ? { pr } : {}) };
   if (!same(views.reports[work]?.data, data)) await ctx.write('report', data);

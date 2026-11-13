@@ -599,7 +599,12 @@ const checks = {
     if (found.length === 0) return logOf(ctx, STEPS.fault('F5a')).length === 0 ? (failedFor(ctx, 'f5a-undo-p6', 'sitting') ?? unknown(NOT_REACHED('the undo of P6 (F5a)'))) : no('no merged "Take back:" pull request on a wheelhouse/undo branch');
     const files = ctx.mainFiles ?? {};
     if (typeof files['package.json'] !== 'string') return unknown(`main could not be read, so ${P6_FILE} could not be checked`);
-    return typeof files[P6_FILE] === 'string' ? no(`main still holds ${P6_FILE}`) : ok(`the undo merged and main no longer holds ${P6_FILE}`);
+    // The undo's target is the piece the runner chose; its files are what main must no longer hold.
+    const gone = ctx.undoFiles?.length > 0 ? ctx.undoFiles : [P6_FILE];
+    const unread = gone.filter((f) => files[f] === undefined);
+    if (unread.length > 0) return unknown(`main could not be read for ${unread.join(', ')}`);
+    const held = gone.filter((f) => typeof files[f] === 'string');
+    return held.length > 0 ? no(`main still holds ${held.join(', ')}`) : ok(`the undo merged and main no longer holds ${gone.join(', ')}`);
   },
   37(ctx) {
     if (logOf(ctx, STEPS.fault('F5b')).length === 0) return failedFor(ctx, 'f5b-undo-p2', 'sitting') ?? unknown(NOT_REACHED('the undo of P2 (F5b)'));
@@ -775,7 +780,7 @@ const REPO = 'repos/{owner}/{repo}';
 // Reads the project's record, the pull requests (through `gh api`), the incidents and the transcripts audit into one context.
 export async function gatherContext({
   project, gh, runLog = [], panes = {}, transcripts = [], pieces = {}, scores = null, previews = 'none', enrolled,
-  config = null, ntfy = [], ntfySetUp, faults = {}, branches = [], mainFiles = null, model = 'haiku', digestAt = null, projectName,
+  config = null, ntfy = [], ntfySetUp, faults = {}, branches = [], mainFiles = null, undoFiles = null, model = 'haiku', digestAt = null, projectName,
 }) {
   const events = listEvents(stateDir(project), { report: () => {} });
   const views = buildViews(events, enrolled ?? tryOr(() => readEnrolled(), []));
@@ -801,6 +806,6 @@ export async function gatherContext({
   const audit = { models: auditModels(transcripts, { model }), peek: auditPeek(transcripts) };
   return {
     events, views, prs, runs, transcripts, audit, panes, runLog, incidents, pieces, scores, previews,
-    config, ntfy, ntfySetUp, faults, branches, mainFiles, digestAt, project, projectName, model,
+    config, ntfy, ntfySetUp, faults, branches, mainFiles, undoFiles, digestAt, project, projectName, model,
   };
 }

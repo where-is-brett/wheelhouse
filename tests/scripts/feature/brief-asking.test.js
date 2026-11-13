@@ -48,3 +48,12 @@ test('override rule 3 says a level 3 or 4 matter is asked, and the work goes on 
   assert.doesNotMatch(rule3, /you pause on it/);
   for (const lane of LANES) assert.ok(render(lane).includes(rule3), `${lane}: the brief carries rule 3 whole`);
 });
+
+test('the brief tells a session refused an edit on another piece\'s branch to ask or report blocked, not wait in planning', () => {
+  for (const lane of LANES) {
+    const text = render(lane);
+    assert.match(text, /Another piece's branch or worktree is not yours/, lane);
+    assert.match(text, /"Operation not permitted", do not retry it, work around it or wait in planning/, lane);
+    assert.match(text, /report `blocked` with the same reason/, lane);
+  }
+});

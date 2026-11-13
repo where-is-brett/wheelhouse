@@ -662,21 +662,27 @@ async function liftIfStopped(ctx, io, n) {
   await liftWatch(ctx, io, n);
 }
 
-// What a later commit on main touched among P6's files: an undo of P6 that clashes is the kit's fault, not Wheelhouse's, so the
-// finding is made before the undo is typed.
-async function undoClash(ctx, sha, n) {
-  if (sha === 'unknown') return;
-  const git = (args) => ctx.io.host.git(args, { cwd: ctx.projectDir });
-  try { await git(['fetch', 'origin', 'main']); } catch { /* the local main is what there is */ }
-  let log;
-  try { log = String(await git(['log', `${sha}..origin/main`, '--name-only', '--format=commit %h %s'])); } catch {
-    try { log = String(await git(['log', `${sha}..main`, '--name-only', '--format=commit %h %s'])); } catch { return; }
+// F5a's target: a piece's merge that no later merged piece touches, so its undo cannot clash with later work (a clash is the
+// kit's fault, not Wheelhouse's). P6, which adds one new file, is preferred; then the newest merge first. The files come from
+// the merged pull requests, and a pull request whose files can't be read is not a target. Null when none qualifies.
+async function undoTarget(ctx) {
+  const merged = mergedWork(await ghPulls(ctx)).sort((a, b) => String(a.merged_at).localeCompare(String(b.merged_at)) || a.number - b.number);
+  const filesOf = async (p) => {
+    const got = await ctx.io.gh(['api', `repos/{owner}/{repo}/pulls/${p.number}/files?per_page=100`]);
+    return Array.isArray(got) ? got.map((f) => f.filename).filter((f) => typeof f === 'string') : null;
+  };
+  const files = new Map();
+  for (const p of merged) files.set(p.number, await filesOf(p));
+  const p6 = pullOf(merged, ctx.state.pieces.P6?.change) ?? pullOf(merged, 'money-edge');
+  const order = [...(p6 ? [p6] : []), ...merged.filter((p) => p !== p6).reverse()];
+  for (const p of order) {
+    const own = files.get(p.number);
+    if (!own || own.length === 0 || typeof p.merge_commit_sha !== 'string') continue;
+    const later = merged.slice(merged.indexOf(p) + 1);
+    if (later.some((l) => files.get(l.number) === null || files.get(l.number).some((f) => own.includes(f)))) continue;
+    return { number: p.number, sha: p.merge_commit_sha, title: p.title, files: own };
   }
-  let commit = '';
-  for (const line of log.split('\n').map((l) => l.trim()).filter(Boolean)) {
-    if (line.startsWith('commit ')) { commit = line.slice(7).split(' ')[0]; continue; }
-    if (line === P6_FILE) { await addFinding(ctx, sittingId(n), `F5a will clash: ${commit} touched ${line}`); return; }
-  }
+  return null;
 }
 
 // The director's signed answer to an undo card: an undo of that merge, or Keep it, made after the undo was typed.
@@ -713,18 +719,23 @@ const clickSteps = {
   },
   // F5a: the undo of P6, approved by the director's signed click.
   async F5a(ctx, io, { n }) {
-    const sha = await p6Sha(ctx);
-    await undoClash(ctx, sha, n);
+    const target = await undoTarget(ctx);
+    if (target === null) {
+      await addFinding(ctx, sittingId(n), 'F5a skipped: no merged piece is left that no later merged piece touched, so an undo would clash');
+      return;
+    }
+    const sha = target.sha;
+    ctx.state.undoTarget = { number: target.number, files: target.files };
     await deskFree(ctx);
     const typedAt = io.clock.now();
     await io.faults.undoTyped(io.tmux, sha);
-    io.log?.("Click Approve on the undo of piece P6's merge in the helper window (the first of two).");
+    io.log?.(`Click Approve on the undo of pull request #${target.number}'s merge in the helper window (the first of two).`);
     if (!(await waitFor(undoAnswered(ctx, sha, typedAt), { io, timeoutMs: CLICK_WAIT_MS }))) {
-      await addFinding(ctx, sittingId(n), `the director's click did not come in sitting ${n}: the undo of P6`);
+      await addFinding(ctx, sittingId(n), `the director's click did not come in sitting ${n}: the undo of ${target.title}`);
       return;
     }
     await waitFor(async () => { await tick(ctx); return (await ghPulls(ctx)).some((p) => /^wheelhouse\/undo-/.test(p.head?.ref ?? '') && p.merged_at); }, { io, timeoutMs: 20 * MINUTE });
-    await note(ctx, LOG.fault('F5a'), 'undo of P6 approved; waited for the take-back merge');
+    await note(ctx, LOG.fault('F5a'), `undo of ${target.title} approved; waited for the take-back merge`);
   },
   // F5b: the undo of P2, which clashes with later work; the director's click is the answer to its card.
   async F5b(ctx, io, { n }) {
@@ -1176,12 +1187,12 @@ async function gatherAndCheck(ctx, io) {
   if (pieces.P8) pieces.P8.gate = await io.host.readGate({ change: pieces.P8.change, project: ctx.projectName, gh: io.gh });
   // A file that is absent and a read that failed both come back null, so package.json is read too: it is always on main.
   const mainFiles = {};
-  for (const file of ['package.json', P6_FILE]) mainFiles[file] = await io.host.readMain({ dir: ctx.projectDir, file });
+  for (const file of ['package.json', P6_FILE, ...(state.undoTarget?.files ?? [])]) mainFiles[file] = await io.host.readMain({ dir: ctx.projectDir, file });
   const config = state.config ?? (await io.host.readConfig({ dir: ctx.projectDir }));
   const full = await io.signals.gatherContext({
     project: ctx.projectName, gh: io.gh, runLog: readLog(ctx.logFile).filter((e) => e.done !== true), panes: state.panes, transcripts, pieces,
     scores: state.score, previews: ctx.preview, config, ntfy: state.ntfy, ntfySetUp: state.ntfySetUp, faults: state.faults,
-    branches: state.branches, mainFiles, model: ctx.model, digestAt: state.digestAt, projectName: ctx.repoName,
+    branches: state.branches, mainFiles, undoFiles: state.undoTarget?.files, model: ctx.model, digestAt: state.digestAt, projectName: ctx.repoName,
   });
   for (const [id, piece] of Object.entries(pieces)) {
     piece.prs = piece.change ? (full.prs ?? []).filter((p) => `${p.head} ${p.title}`.toLowerCase().includes(String(piece.change).toLowerCase())).map((p) => p.number) : [];

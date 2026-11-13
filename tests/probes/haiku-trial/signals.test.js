@@ -143,6 +143,14 @@ test('row 36 passes when the take-back merged and main no longer holds the piece
   assert.match(still.evidence, /money-edge/);
 });
 
+test('row 36 reads the files of the target the runner chose for the undo', () => {
+  const ctx = (held) => ({ prs: [takeBack()], undoFiles: ['src/a.js'], mainFiles: { 'package.json': '{}', 'src/a.js': held } });
+  assert.equal(row(36).check(ctx(null)).pass, true);
+  const still = row(36).check(ctx('x'));
+  assert.equal(still.pass, false);
+  assert.match(still.evidence, /src\/a\.js/);
+});
+
 test('row 36 is not covered when the run never reached the undo, and failed when it did and nothing merged', () => {
   assert.equal(row(36).check({ prs: [], runLog: [] }).pass, null);
   assert.equal(row(36).check({ prs: [], runLog: [{ step: 'F5a', at: '2026-11-08T04:00:00Z' }] }).pass, false);
