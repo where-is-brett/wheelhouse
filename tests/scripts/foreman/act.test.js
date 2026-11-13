@@ -1871,6 +1871,29 @@ test('a merged pins-only release records its briefing line once, as the merge\'s
   assert.deepEqual(merges(again.writes), []);
 }));
 
+test('merge goes through for closed work whose own pull request is still open, and settles its report as merged', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.mine = workView('mine');
+  const wt = worktree(checkout, 'mine', { pr: { pr: 12 } });
+  views.features.mine = featureView('mine', { step: 'closed', worktree: wt, branch: 'feature/mine' });
+  views.reports.mine = { data: { work: 'mine', outcome: 'closed', summary: 'Shipped.', rulings: [], pr: 12 } };
+  const current = { ok: true, updated: false, head: 'b'.repeat(40) };
+  const merged = { ok: true, sha: 'c'.repeat(40) };
+  const fake = fakeClient({ views, answers: { prState: { ok: true, result: { state: 'open' } }, updateBranch: current, merge: merged } });
+  const r = await act(['merge', 'mine'], { client: fake.client });
+  assert.equal(r.code, 0, r.err);
+  assert.ok(fake.calls.some(([name]) => name === 'merge'));
+  assert.deepEqual(fake.writes.map((w) => [w.kind, w.data.outcome]), [['report', 'merged']]);
+  assert.equal(JSON.parse(fs.readFileSync(featurePaths(wt).pr, 'utf8')).merged, true);
+  // Closed work whose pull request the host says is closed has nothing to merge.
+  const gone = fakeClient({ views, answers: { prState: { ok: true, result: { state: 'closed' } } } });
+  const refused = await act(['merge', 'mine'], { client: gone.client });
+  assert.notEqual(refused.code, 0);
+  assert.match(refused.err, /mine is closed/);
+  assert.equal(gone.writes.length, 0);
+}));
+
 test('a merge that waits only for the director\'s click records what it waits for, once, and asks nothing (R117)', () => withHome(async () => {
   const checkout = await project();
   const views = emptyViews();
