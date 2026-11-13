@@ -67,6 +67,11 @@ const SHELL_STATE = [
   /\bhash\b[^\n;|&]*\s-\w*p/, // hash -p
   /\benable\b[^\n;|&]*\s-\w*f/, // enable -f
   /\bbuiltin\b/,
+  /(?<![\w-])(?:eval|Invoke-Expression|iex)(?![\w-])/i, // builds a command from pieces
+  /(?<![\w-])(?:source|Import-Module|ipmo)(?![\w-])/i, // runs or loads a file that may do any of the above
+  /(?:^|[;&|(\n`])[ \t]*\.[ \t]+\S/, // a leading `.`, dot-sourcing a file
+  /\bhash\b[^\n;|&]*\s[\w.-]+=/, // zsh: hash name=path
+  /(?<![\w-])(?:read|printf\s+-v|for|select|getopts|mapfile|readarray)\b[^\n;|&]*\bpath\b/i, // read -r PATH, printf -v PATH, for PATH in
 ];
 const SHELL_STATE_REFUSED = 'Wheelhouse does not let a launcher session change its shell\'s PATH, or define a function or an alias (or use hash -p, enable -f or builtin): a launcher\'s bare name must keep meaning Wheelhouse\'s own. Run the command as it is, with no such line before it';
 const MISSING_SCRIPT = (file) => `Wheelhouse does not run a script that is not there when the command starts (${file}). Write the file in one command and run it in the next, or ${HELPER}`;

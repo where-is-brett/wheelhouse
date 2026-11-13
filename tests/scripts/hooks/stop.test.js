@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { spawnSync } from 'node:child_process';
-import { decide as guard, isFrontDeskRead, scriptArguments, READ_TOOLS, HALT_TOOLS, NOTIFY_TOOLS, DENIED, SANDBOX_NEEDED } from '../../../scripts/hooks/stop-guard.js';
+import { decide as guard, isFrontDeskRead, scriptArguments, READ_TOOLS, HALT_TOOLS, NOTIFY_TOOLS, DENIED, SANDBOX_NEEDED, LAUNCHER_STOPPED } from '../../../scripts/hooks/stop-guard.js';
 import { decide as word, CONTEXT } from '../../../scripts/hooks/stop-word.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stopState, setStop, liftStop } from '../../../scripts/lib/stop.js';
@@ -872,3 +872,25 @@ test('SessionEnd releases the seat this session holds and leaves another\'s', as
     }
   });
 });
+
+test('under STOP a launcher session runs no shell command, the bare launcher and a read-only command included; a Claude Code session keeps its read-only commands', async () => {
+  await withHome(async () => {
+    const { base, main } = makeProject();
+    try {
+      setStop({ by: 'prompt' });
+      const front = path.join(PLUGIN, 'scripts/frontdesk/cli.js');
+      const inLauncher = { ...deps(base), env: { WHEELHOUSE_LAUNCHER_SESSION: '1', PATH: '/usr/bin' } };
+      for (const command of ['wh-frontdesk cards', 'wh-act note abc', `node ${front} cards`, 'node ' + path.join(PLUGIN, 'scripts/runbook/runbook.js') + ' step']) {
+        const out = await guard(bash(main, command), inLauncher);
+        assert.ok(denied(out), command);
+        assert.equal(out.hookSpecificOutput.permissionDecisionReason, LAUNCHER_STOPPED);
+      }
+      assert.match(LAUNCHER_STOPPED, /STOP|stop is on/i);
+      assert.match(LAUNCHER_STOPPED, /director/);
+      assert.equal(await guard(call(main, 'Read'), inLauncher), undefined, 'reading tools still run');
+      const plain = { ...deps(base), env: {} };
+      assert.equal(await guard(bash(main, `node ${front} cards`), plain), undefined);
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+

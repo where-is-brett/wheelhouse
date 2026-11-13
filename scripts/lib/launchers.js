@@ -39,12 +39,13 @@ export function pathWithLaunchers(current, { binDir = BIN_DIR, delimiter = path.
 // The one shape a launcher command may take (a Windows .cmd has cmd.exe read its arguments again, and PowerShell expands
 // what a literal-word check can't see, so an allowlist, not a list of bad characters): the launcher's name, then
 // arguments, each bare characters from `[A-Za-z0-9_.,:/=+@-]` (no `@` first) or one single-quoted string holding none of
-// `' " % ^ & | < > $` backtick `!` or a line break; then at most one `< <bare path>` and one `2>/dev/null` or `2>NUL`.
-// No `;`, pipe, `$`, bracket, backtick or second command can match.
+// `' " % ^ & | < > $` backtick `!` or a line break; then at most one `< <bare path>` (not under /dev/) and one `2>/dev/null` or `2>NUL`.
+// The whole command is printable ASCII (PowerShell reads U+2018 to U+201E as quotes), a space or tab apart, and a quoted
+// body holds no `;`, bracket or brace either. No `;`, pipe, `$`, bracket, backtick or second command can match.
 const BARE = String.raw`[A-Za-z0-9_.,:/=+-][A-Za-z0-9_.,:/=+@-]*`;
-const QUOTED = String.raw`'[^'"%^&|<>$` + '`' + String.raw`!\r\n]*'`;
+const QUOTED = String.raw`'[^'"%^&|<>$` + '`' + String.raw`!;(){}\r\n]*'`;
 const NAMES = Object.keys(LAUNCHERS).map((name) => name.replace(/-/g, '\\-')).join('|');
-export const LAUNCHER_COMMAND = new RegExp(String.raw`^[ \t]*(?:${NAMES})(?:\.cmd)?(?:[ \t]+(?:${BARE}|${QUOTED}))*(?:[ \t]+<[ \t]*${BARE})?(?:[ \t]+2>(?:/dev/null|NUL))?[ \t]*$`, 'i');
+export const LAUNCHER_COMMAND = new RegExp(String.raw`^(?=[ -~]*$)[ \t]*(?:${NAMES})(?:\.cmd)?(?:[ \t]+(?:${BARE}|${QUOTED}))*(?:[ \t]+<[ \t]*(?!dev/)(?![^ \t]*/dev/)${BARE})?(?:[ \t]+2>(?:/dev/null|NUL))?[ \t]*$`, 'i');
 
 // How to write an argument the grammar takes.
 export const LAUNCHER_GRAMMAR_HELP = 'give each argument as plain letters, digits and . , : / = + @ - , or as text in single quotes (never double quotes) with no \' " % ^ & | < > $ ! or backtick in it, one launcher command alone on the line (no ; | && or $variable), or put longer text in a file and read it with `< path`';

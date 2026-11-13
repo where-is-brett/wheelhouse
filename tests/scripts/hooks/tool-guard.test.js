@@ -1690,7 +1690,7 @@ test('a launcher command is allowed only when it matches the strict grammar, and
           assert.match(out.hookSpecificOutput.permissionDecisionReason, /single quotes|read this command with certainty/, command);
         }
       }
-      for (const command of ['wh-act note abc', "wh-act note 'a note, with words: (and) {more}; ok'", 'wh-frontdesk similar \'x\'', 'wh-wake read /tmp/x.json', 'wh-feature answer q-1 --note=a+b', 'wh-frontdesk cards 2>/dev/null',
+      for (const command of ['wh-act note abc', "wh-act note 'a note, with words: and more. ok'", 'wh-frontdesk similar \'x\'', 'wh-wake read /tmp/x.json', 'wh-feature answer q-1 --note=a+b', 'wh-frontdesk cards 2>/dev/null',
         'wh-frontdesk card < .wheelhouse/front-desk.json']) {
         const out = await bash(command);
         assert.ok(!/single quotes/.test(out?.hookSpecificOutput?.permissionDecisionReason ?? ''), command);
@@ -1709,7 +1709,8 @@ test('in a launcher session a command that sets PATH, defines a function or alia
       const bad = ['export PATH=/tmp/e:$PATH', 'PATH=/tmp/e:$PATH', 'Path=/tmp/e', 'export Path=/tmp/e:$Path', 'declare -x PATH=/tmp/e', 'env PATH=/tmp/e wh-act', 'PATH+=:/tmp/e', 'export $n=/tmp/e',
         'wh-act() { node /tmp/e.js; }', 'wh-act () { :; }', 'function wh-act { calc }', 'function wh-act() { :; }', 'alias wh-act=calc', 'alias wh-act="node /tmp/e.js"',
         '$env:PATH="C:\\e;$env:PATH"', '$env:Path = "C:\\e"', 'Set-Item env:PATH C:\\e', 'Set-Item -Path Env:Path -Value C:\\e', "[Environment]::SetEnvironmentVariable('PATH','C:\\e','Process')",
-        'Set-Alias wh-act calc', 'New-Alias wh-act calc', 'sal wh-act calc', 'nal wh-act calc', 'Set-Item alias:wh-act calc', 'Set-Item function:wh-act { calc }', 'hash -p /tmp/e/wh-act wh-act', 'enable -f ./x.so y', 'builtin cd /', 'ls; builtin command wh-act'];
+        'Set-Alias wh-act calc', 'New-Alias wh-act calc', 'sal wh-act calc', 'nal wh-act calc', 'Set-Item alias:wh-act calc', 'Set-Item function:wh-act { calc }', 'hash -p /tmp/e/wh-act wh-act', 'enable -f ./x.so y', 'builtin cd /', 'ls; builtin command wh-act',
+        'source ./f.sh', '. ./f.ps1', 'ls; . ./f.sh', 'Import-Module ./x.psm1', 'ipmo ./x', 'read -r PATH', 'printf -v PATH %s /tmp/e', 'for PATH in /tmp/e; do :; done', 'hash wh-act=/tmp/e/wh-act', 'eval "ali""as wh-act=calc"'];
       for (const command of bad) {
         for (const tool of ['Bash', 'PowerShell']) assert.ok(denied(await inSession(command, tool)), `${tool}: ${command}`);
       }
@@ -1721,6 +1722,25 @@ test('in a launcher session a command that sets PATH, defines a function or alia
       for (const command of ['ls -la', 'echo $PATHNAME', 'git status', 'node --version', 'wh-act note abc']) {
         const out = await inSession(command);
         assert.ok(!/launcher session/.test(out?.hookSpecificOutput?.permissionDecisionReason ?? ''), command);
+      }
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
+test('a launcher command with a curly quote or any non-ASCII character is refused, and a redirect from /dev/ is too', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      for (const q of ['\u2018', '\u2019', '\u201A', '\u201B', '\u201C', '\u201D', '\u201E']) {
+        for (const tool of ['Bash', 'PowerShell']) {
+          const out = await run(base, home, call(main, tool, { command: `wh-act 'x${q}+(calc)+${q}'` }), 'win32');
+          assert.ok(denied(out), `${tool} ${q}`);
+        }
+      }
+      for (const command of ["wh-act note 'a;b'", "wh-act note 'a(b)'", "wh-act note 'a{b}'", 'wh-frontdesk card < /dev/stdin', 'wh-frontdesk card < //dev/stdin']) {
+        assert.ok(denied(await run(base, home, call(main, 'Bash', { command }), 'win32')), command);
       }
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
