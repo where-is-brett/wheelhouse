@@ -2016,7 +2016,7 @@ test('close works out the outcome, and refuses a report that is missing or incom
   const open = await act(['close', 'open'], { client: fake.client });
   refusedInOneLine(open);
   assert.match(open.err, /pull request #7 is still open: merge it with act merge, then close/);
-  assert.doesNotMatch(open.err, /ask the director/);
+  assert.match(open.err, /merge it with act merge.*if it can't be merged, ask the director/);
   assert.equal(fake.writes.length, held, 'nothing is written while the pull request is open');
 
   // `merged` needs both pr.json's mark and the host's word.

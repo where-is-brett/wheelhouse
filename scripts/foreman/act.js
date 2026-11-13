@@ -1600,7 +1600,7 @@ async function close(ctx, work, rest) {
     // first (merge-ready wakes the foreman), then closed. Work that ended blocked or partial, or whose pull request the
     // host says is closed, is abandoned, not waiting on a merge, so it closes as it did.
     if (!merged && status === 'done' && state.result?.state === 'open') {
-      refuse(`${work}'s pull request #${pr} is still open: merge it with act merge, then close ${work}`);
+      refuse(`${work}'s pull request #${pr} is still open: merge it with act merge, then close ${work}; if it can't be merged, ask the director`);
     }
     // Quick and bug work have no plan to match.
     const current = NO_PLAN.includes(laneOf(views, work)) || kept.plan === (typeof f.plan === 'string' ? f.plan : null);
