@@ -196,9 +196,9 @@ function sittingIo(over = {}) {
   const records = [];
   const io = fakeIo({
     ...over,
-    gh: (args) => (args[1].startsWith('repos/{owner}/{repo}/pulls') ? [
-      { number: 6, title: 'money-edge', head: { ref: 'feature/money-edge' }, merged_at: '2026-11-08T08:00:00Z', merge_commit_sha: SHA6 },
-      { number: 2, title: 'categories', head: { ref: 'feature/categor' }, merged_at: '2026-11-08T08:00:00Z', merge_commit_sha: SHA2 },
+    gh: (args) => (/\/pulls\/(\d+)\/files/.test(args[1]) ? (over.files ?? { 6: [P6_FILE], 2: ['src/categories.js'] })[/\/pulls\/(\d+)\/files/.exec(args[1])[1]]?.map((filename) => ({ filename })) ?? null : args[1].startsWith('repos/{owner}/{repo}/pulls') ? [
+      { number: 6, title: 'money-edge', head: { ref: 'feature/money-edge' }, merged_at: over.mergedAt?.[6] ?? '2026-11-08T08:00:00Z', merge_commit_sha: SHA6 },
+      { number: 2, title: 'categories', head: { ref: 'feature/categor' }, merged_at: over.mergedAt?.[2] ?? '2026-11-08T08:00:00Z', merge_commit_sha: SHA2 },
     ] : null),
     host: { events: async () => records, ...(over.host ?? {}) },
   });
@@ -266,7 +266,7 @@ test('a click that does not come is a finding, never a stop, and its row is not 
   assert.equal(got.stoppedAt, undefined);
   assert.deepEqual(got.done, ['sitting-1']);
   assert.deepEqual(got.findings.map((f) => f.step), ['sitting-1', 'sitting-1']);
-  assert.match(got.findings[0].what, /the director's click did not come in sitting 1: the undo of P6/);
+  assert.match(got.findings[0].what, /the director's click did not come in sitting 1: the undo of money-edge/);
   const steps = readLog(folder).map((e) => e.step);
   assert.equal(steps.includes(LOG.fault('F5a')), false);
   assert.equal(steps.includes(LOG.fault('F5b')), false);
@@ -297,7 +297,7 @@ test('a lift or an undo that is not signed, or has no window proof, is not the d
     const io = sittingIo(over);
     const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
     assert.ok(got.findings.some((f) => /lifting All stop/.test(f.what)), JSON.stringify(over));
-    assert.ok(got.findings.some((f) => /the undo of P6/.test(f.what)), JSON.stringify(over));
+    assert.ok(got.findings.some((f) => /the undo of money-edge/.test(f.what)), JSON.stringify(over));
     const steps = readLog(folder).map((e) => e.step);
     for (const step of ['f6-lift', LOG.fault('F5a'), LOG.fault('F5b')]) assert.equal(steps.includes(step), false, `${step} ${JSON.stringify(over)}`);
   }
@@ -338,17 +338,22 @@ test('All stop already set by a failed f6 step is lifted first', async (t) => {
   assert.equal(again.timeline.filter((e) => ['f6.stop', 'f6.lift'].includes(e.kind))[0].kind, 'f6.lift');
 });
 
-test('an F5a target touched later is a finding before the undo is typed', async (t) => {
+test('F5a undoes a merge no later merged piece touched, chosen from the pull requests files', async (t) => {
   const folder = scratch(t);
-  const calls = [];
-  const io = sittingIo({ host: { git: async (args) => { calls.push(args); return args[0] === 'log' ? `commit 9f8e7d6 Later edit\n${P6_FILE}\nsrc/other.js\n` : ''; } } });
-  const undo = io.faults.undoTyped;
-  const seen = [];
-  io.faults.undoTyped = (tmux, sha) => { seen.push([sha, readLog(folder).some((e) => /F5a will clash: 9f8e7d6 touched/.test(e.note ?? ''))]); return undo(tmux, sha); };
+  // P6 merged first and P2 touched its file after, so P6 is no target; P2 merged last and nothing touched it.
+  const io = sittingIo({ files: { 6: [P6_FILE, 'src/a.js'], 2: ['src/a.js'] }, mergedAt: { 6: '2026-11-08T07:00:00Z', 2: '2026-11-08T08:00:00Z' } });
   const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
-  assert.ok(got.findings.some((f) => f.what === `F5a will clash: 9f8e7d6 touched ${P6_FILE}`));
-  assert.deepEqual(seen.map(([, found]) => found), [false, true, true], 'the refused F6 undo comes first; the F5a undo follows the finding');
-  assert.ok(calls.some((a) => a[0] === 'log' && a[1] === `${SHA6}..origin/main` && a.includes('--name-only')));
+  assert.deepEqual(io.timeline.filter((e) => e.kind === 'undo').map((e) => e.args[0]), [SHA6, SHA2, SHA2], 'the refused F6 undo is P6; F5a and F5b both name the untouched merge');
+  assert.deepEqual(got.done, ['sitting-1']);
+});
+
+test('F5a is skipped with a reason when no merge has files to judge by', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo({ files: {} });
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.ok(got.findings.some((f) => /^F5a skipped: no merged piece is left/.test(f.what)));
+  assert.equal(readLog(folder).some((e) => e.step === LOG.fault('F5a')), false);
+  assert.equal(io.timeline.filter((e) => e.kind === 'undo').length, 2, 'only the F6 and F5b undos are typed');
   assert.deepEqual(got.done, ['sitting-1'], 'the sitting still goes on');
 });
 
