@@ -14,6 +14,7 @@ import { makeHome, projectFolder } from '../../scripts/host/local/home.js';
 import { localChanges } from '../../scripts/host/local/changes.js';
 import { makeLocalAdapter } from '../../scripts/host/local/adapter.js';
 import { startRun } from './session.js';
+import { startHelper } from './helper.js';
 
 export const PROJECT_FILES = Object.freeze({
   'README.md': '# Greeter\n\nSays hello. A throwaway project for Wheelhouse trial stage T3.\n',
@@ -27,10 +28,12 @@ const git = (cwd, ...args) => execFileSync('git', [...GIT_IDENTITY, ...args], { 
 // The first prompt of the build session: the order's goal, in the words the waker's first prompt uses for a quick piece.
 export const buildPrompt = (order) => `${order.goal} This is a quick-lane change: build it, run the tests with \`npm test\`, and commit it on the current branch.`;
 
-export function realHost({ label, ghAccount = readGhAccount, plan = 'auto-only', sessions = sessionsPart({ ready: true, plan }), env = process.env } = {}) {
+export function realHost({ label, ghAccount = readGhAccount, plan = 'auto-only', sessions = sessionsPart({ ready: true, plan }), env = process.env, helper = startHelper } = {}) {
   // The month's real ledger is read before WHEELHOUSE_HOME is pointed at the trial's own folder.
   const realUsage = usageDir();
   const trial = {};
+  // Wheelhouse's helper for the trial's own home: started with the stage (or on attach) and stopped with the run.
+  const startOwnHelper = async () => { trial.helper ??= await helper({ home: trial.home }); };
 
   const worktreeOf = (work) => path.join(trial.folder, '.claude', 'worktrees', work);
   const call = async (kind, { work, sessionId }) => {
@@ -56,6 +59,7 @@ export function realHost({ label, ghAccount = readGhAccount, plan = 'auto-only',
       place(folder);
       trial.project = project;
       trial.order = order;
+      await startOwnHelper();
     },
 
     async stage({ folder }) {
@@ -76,7 +80,15 @@ export function realHost({ label, ghAccount = readGhAccount, plan = 'auto-only',
       // The trial's own home holds its own signing key, so the records the local merge writes are signed and never the director's.
       if (readEnrolled().length === 0) enrol({ ...makeSigningKey(), enrolledAt: new Date().toISOString() });
       await makeHome({ project: trial.project, folder: trial.folder, branch: 'main' });
+      await startOwnHelper();
       return { project: trial.project };
+    },
+
+    // Stops the helper this run started; safe to call twice, and when none was started.
+    async stop() {
+      const own = trial.helper;
+      trial.helper = undefined;
+      await own?.stop();
     },
 
     // The month's use: the account's own figure when `gh` can read it (it costs no request), else the ledger's count.
