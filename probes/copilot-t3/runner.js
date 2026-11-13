@@ -251,7 +251,8 @@ export async function runStage({ host, label, from = null, base = TRIALS, midTas
     // Whatever the run's end, a session still running is stopped (and has gone before this returns), then the helper.
     const ending = Object.values(handles).map((handle) => { handle.kill(); return handle.done; });
     await Promise.all(ending);
-    await host.stop?.();
+    // A helper that won't close is a finding; the report and summary are still written.
+    try { await host.stop?.(); } catch (error) { state.findings.push({ step: 'stop', what: `The trial's helper did not stop: ${error.message}`, at: new Date().toISOString() }); save(); }
   }
   if (stoppedAt !== null && !ranReport) {
     try { await bodies.report(); state.steps.report = { outcome: 'ok' }; } catch { /* the figures are in state.budgetSteps */ }
