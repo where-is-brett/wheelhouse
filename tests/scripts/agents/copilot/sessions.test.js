@@ -109,7 +109,7 @@ test("the foreman's call carries that one rule and no write, a session id given 
   for (const flag of ['--model', '--resume', '--trust-folder', '--allow-all', '--yolo', '--add-dir']) assert.equal(call.args.some((a) => a === flag || a.startsWith(`${flag}=`)), false, flag);
   for (const flag of ['--no-ask-user', '--disallow-temp-dir', '--output-format']) assert.ok(call.args.includes(flag), flag);
   assert.equal(call.env.COPILOT_HOME, sessionHome(P, 'foreman'));
-  assert.deepEqual(Object.keys(call.env).sort(), ['COPILOT_HOME', 'HOME', 'PATH', 'WHEELHOUSE_COPILOT_SESSION', 'WHEELHOUSE_HOME']);
+  assert.deepEqual(Object.keys(call.env).sort(), ['COPILOT_HOME', 'HOME', 'PATH', 'WHEELHOUSE_HOME', 'WHEELHOUSE_LAUNCHER_SESSION']);
   assert.equal(call.input, '');
   assert.equal(call.idFromRun, undefined, 'the id is given, not read from the run');
   assert.equal(call.output, call.activityFile);
@@ -160,9 +160,9 @@ test('no argument starts a session trusted or with every permission, whatever a 
   }
   // The prompt is the one argument not read as a flag, and a call refuses one that starts with a dash anyway.
   assert.doesNotThrow(() => sessionArgs({ ...base, prompt: '--yolo' }));
-  assert.deepEqual(copilotSessionEnv({ PATH: '/bin', COPILOT_MODEL: 'm', GH_TOKEN: 't' }, { home: '/h', binDir: '/wh/bin' }), { PATH: '/wh/bin:/bin', WHEELHOUSE_COPILOT_SESSION: '1', COPILOT_HOME: '/h' });
+  assert.deepEqual(copilotSessionEnv({ PATH: '/bin', COPILOT_MODEL: 'm', GH_TOKEN: 't' }, { home: '/h', binDir: '/wh/bin' }), { PATH: '/wh/bin:/bin', WHEELHOUSE_LAUNCHER_SESSION: '1', COPILOT_HOME: '/h' });
   // On Windows the folder goes first under the PATH's own spelling, with that system's separator.
-  assert.deepEqual(copilotSessionEnv({ Path: 'C:\\npm' }, { home: 'C:\\h', binDir: 'C:\\wh\\bin', platform: 'win32' }), { Path: 'C:\\wh\\bin;C:\\npm', WHEELHOUSE_COPILOT_SESSION: '1', COPILOT_HOME: 'C:\\h' });
+  assert.deepEqual(copilotSessionEnv({ Path: 'C:\\npm' }, { home: 'C:\\h', binDir: 'C:\\wh\\bin', platform: 'win32' }), { Path: 'C:\\wh\\bin;C:\\npm', WHEELHOUSE_LAUNCHER_SESSION: '1', COPILOT_HOME: 'C:\\h' });
 });
 
 // ---- The level is checked before its rules ----

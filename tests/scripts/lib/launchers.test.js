@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import os from 'node:os';
-import { BIN_DIR, COPILOT_SESSION, LAUNCHERS, launcherOf, pathWithLaunchers } from '../../../scripts/lib/launchers.js';
+import { BIN_DIR, LAUNCHER_SESSION, LAUNCHERS, launcherOf, pathWithLaunchers } from '../../../scripts/lib/launchers.js';
 import { launch, UNSAFE_ARGUMENT } from '../../../scripts/lib/launch.js';
 import { scriptArguments } from '../../../scripts/hooks/stop-guard.js';
 
@@ -42,7 +42,7 @@ test('the launchers\' folder goes first on a PATH, once', () => {
 test('the stop guard reads a bare launcher name only in a Copilot session, and only when the PATH reaches this plugin\'s own bin/', () => {
   const roots = [ROOT];
   const front = 'scripts/frontdesk/cli.js';
-  const env = { [COPILOT_SESSION]: '1', PATH: pathWithLaunchers('/usr/bin:/bin') };
+  const env = { [LAUNCHER_SESSION]: '1', PATH: pathWithLaunchers('/usr/bin:/bin') };
   assert.deepEqual(scriptArguments('wh-frontdesk cards', roots, 'darwin', front, env), ['cards']);
   assert.deepEqual(scriptArguments('wh-feature answer q1', roots, 'darwin', 'scripts/feature/cli.js', env), ['answer', 'q1']);
   assert.equal(scriptArguments('wh-feature report', roots, 'darwin', front, env), null, 'a launcher is its own script only');
@@ -51,7 +51,7 @@ test('the stop guard reads a bare launcher name only in a Copilot session, and o
   assert.equal(scriptArguments('./wh-frontdesk cards', roots, 'darwin', front, env), null);
   // Not in a Copilot session: no marker, or a marker that isn't 1.
   assert.equal(scriptArguments('wh-frontdesk cards', roots, 'darwin', front, { PATH: env.PATH }), null);
-  assert.equal(scriptArguments('wh-frontdesk cards', roots, 'darwin', front, { ...env, [COPILOT_SESSION]: '0' }), null);
+  assert.equal(scriptArguments('wh-frontdesk cards', roots, 'darwin', front, { ...env, [LAUNCHER_SESSION]: '0' }), null);
   // A command of that name earlier on the PATH, or no launcher folder on it, or another plugin's folder: not the plugin's own.
   const planted = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-planted-'));
   try {
@@ -63,7 +63,7 @@ test('the stop guard reads a bare launcher name only in a Copilot session, and o
   } finally {
     fs.rmSync(planted, { recursive: true, force: true });
   }
-  assert.equal(scriptArguments('wh-frontdesk cards', roots, 'darwin', front, { [COPILOT_SESSION]: '1', PATH: '/usr/bin' }), null, 'no launcher folder on the PATH');
+  assert.equal(scriptArguments('wh-frontdesk cards', roots, 'darwin', front, { [LAUNCHER_SESSION]: '1', PATH: '/usr/bin' }), null, 'no launcher folder on the PATH');
 });
 
 test('a launcher refuses an argument a Windows .cmd would read again as a command, on every system', () => {

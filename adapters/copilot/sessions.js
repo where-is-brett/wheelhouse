@@ -27,7 +27,7 @@ import { activitySummary, finalAnswer, modelOfRun, monthRefusedIn, sessionIdOf, 
 import { recordRefusal, recordRun } from '../../scripts/agents/copilot/usage.js';
 import { checkVersions, noSubsetRunner, readVersions } from '../../scripts/agents/copilot/versions.js';
 import { PLUGIN_ROOT, foremanCommands } from '../../scripts/foreman/tools.js';
-import { BIN_DIR, COPILOT_SESSION, pathWithLaunchers } from '../../scripts/lib/launchers.js';
+import { BIN_DIR, LAUNCHER_SESSION, pathWithLaunchers } from '../../scripts/lib/launchers.js';
 import { DEFAULT_BUILD_COMMANDS, isModelName } from '../../scripts/gate/guardrails.js';
 import { quoteForCmd, resolveCommand } from '../../scripts/lib/claude.js';
 import { commandPath } from '../../scripts/lib/command-path.js';
@@ -85,7 +85,7 @@ export function copilotSessionEnv(env, { home, platform = process.platform, binD
   // The launchers' folder comes first on the PATH (scripts/lib/launchers.js), under the name the PATH already has.
   const pathName = Object.keys(kept).find((name) => same('PATH', name)) ?? 'PATH';
   kept[pathName] = pathWithLaunchers(kept[pathName], { binDir, delimiter: platform === 'win32' ? ';' : ':' });
-  return { ...kept, [COPILOT_SESSION]: '1', COPILOT_HOME: home };
+  return { ...kept, [LAUNCHER_SESSION]: '1', COPILOT_HOME: home };
 }
 
 // The model a role's session is given, or null for Auto. On an `auto-only` plan always null, whatever the configuration

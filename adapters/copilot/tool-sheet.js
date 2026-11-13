@@ -13,4 +13,8 @@ export function readSheet(file = fileURLToPath(new URL('./tool-sheet.md', import
   return fs.readFileSync(file, 'utf8').replaceAll('\r\n', '\n').replace(PATH_COMMENT, '').trim();
 }
 
+// Copilot matches a shell rule on a command's stem, so its sessions run Wheelhouse's scripts by launcher
+// (scripts/lib/launchers.js; a rule `shell(wh-frontdesk:*)` matched on CLI 1.0.105, 13 November 2026).
+export const byLauncher = true;
+
 export default readSheet();

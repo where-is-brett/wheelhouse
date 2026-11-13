@@ -1,9 +1,9 @@
 // scripts/lib/launchers.js
-// The launchers: one bare command name for each of Wheelhouse's scripts a Copilot session runs, in `bin/`. Copilot
-// matches a shell rule on the command's stem (check 61, the T4 run), so `node <path>/cli.js` can only be allowed by
-// allowing every `node` command; a launcher's bare name can be allowed alone. A rule `shell(wh-frontdesk:*)` matched
-// and ran it (13 November 2026, CLI 1.0.105, with the folder of `bin/` on the session's PATH); the same rule naming
-// the launcher's full path did not. Claude Code keeps its `node "<path>"` commands.
+// The launchers: one bare command name for each of Wheelhouse's scripts, in `bin/`, for an agent that matches a shell
+// rule on the command's stem (its adapter's tool sheet says so: scripts/agents/tool-sheets.js's BY_LAUNCHER). For such
+// an agent `node <path>/cli.js` can only be allowed by allowing every `node` command; a launcher's bare name can be
+// allowed alone, with the folder of `bin/` on the session's PATH (check 61, the T4 run). An agent that matches the
+// whole command keeps its `node "<path>"` commands.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,9 +23,9 @@ export const LAUNCHERS = Object.freeze({
 // The launcher that runs `script`, or null.
 export const launcherOf = (script) => Object.entries(LAUNCHERS).find(([, s]) => s === script)?.[0] ?? null;
 
-// The marker copilotSessionEnv sets in a Copilot session's environment. A guard reads a bare launcher name as Wheelhouse's
-// own only in a session that has it (scripts/hooks/stop-guard.js).
-export const COPILOT_SESSION = 'WHEELHOUSE_COPILOT_SESSION';
+// The marker an adapter sets in the environment of a session that runs Wheelhouse's scripts by launcher. A guard reads a
+// bare launcher name as Wheelhouse's own only in a session that has it (scripts/hooks/stop-guard.js).
+export const LAUNCHER_SESSION = 'WHEELHOUSE_LAUNCHER_SESSION';
 
 // The environment variable a launcher sets for the script it runs, so the script names its commands by launcher.
 export const LAUNCHED = 'WHEELHOUSE_LAUNCHED';

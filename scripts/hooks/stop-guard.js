@@ -21,7 +21,7 @@ import { startedAsScript } from '../lib/started-as-script.js';
 import tools from '../../adapters/claude-code/tools.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 import { CHOICE_KEY } from '../lib/setup-run.js';
-import { COPILOT_SESSION, LAUNCHERS } from '../lib/launchers.js';
+import { LAUNCHER_SESSION, LAUNCHERS } from '../lib/launchers.js';
 
 // ToolSearch only loads tools' schemas, so the notification tool can be loaded under STOP; it runs
 // nothing, and every tool it loads still meets this guard and the lineage hold.
@@ -51,11 +51,11 @@ const QUIET_WINDOWS = /(?<!\\) +2>(?:\/dev\/null|[Nn][Uu][Ll]) *$/;
 // The one word allowed between `node` and the script (NO_SYSTEM_CA in scripts/protection/settings.js, which a hook can't load).
 const NO_SYSTEM_CA = '--no-use-system-ca';
 
-// Whether the bare launcher `name` is, in `env`'s PATH, the one in a plugin root's bin/ folder: the session is a Copilot
-// session (copilotSessionEnv's marker) and the first file of that name on the PATH is the plugin's own, so a command of
+// Whether the bare launcher `name` is, in `env`'s PATH, the one in a plugin root's bin/ folder: the session runs scripts
+// by launcher (its adapter's marker, LAUNCHER_SESSION) and the first file of that name on the PATH is the plugin's own, so a command of
 // that name planted earlier on the PATH is not taken for it.
 function ownLauncher(name, pluginRoots, platform, env) {
-  if (env?.[COPILOT_SESSION] !== '1' || typeof env?.PATH !== 'string') return false;
+  if (env?.[LAUNCHER_SESSION] !== '1' || typeof env?.PATH !== 'string') return false;
   const windows = platform === 'win32';
   const real = (file) => {
     try {
@@ -82,8 +82,8 @@ export function scriptArguments(command, pluginRoots, platform, script, env = pr
   const bare = command.replace(windows ? QUIET_WINDOWS : QUIET, '');
   if (CONTROL.test(bare) || ODD_SPACE.test(bare)) return null;
   const parts = words(bare, windows);
-  // A launcher (scripts/lib/launchers.js) by its bare name, as a Copilot session runs the script, with no `node` and no
-  // path: only in a Copilot session, and only when the name is found on the PATH in this plugin's own bin/ folder.
+  // A launcher (scripts/lib/launchers.js) by its bare name, with no `node` and no path: only in a session that runs
+  // scripts by launcher, and only when the name is found on the PATH in this plugin's own bin/ folder.
   if (parts && parts.length >= 1 && LAUNCHERS[parts[0]] === script && ownLauncher(parts[0], pluginRoots, platform, env)) return parts.slice(1);
   if (!parts || parts.length < 2 || parts[0] !== 'node') return null;
   if (parts[1] === NO_SYSTEM_CA) parts.splice(1, 1);
