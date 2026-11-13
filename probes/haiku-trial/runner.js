@@ -281,7 +281,7 @@ async function snapshotAt(ctx, { point, step }) {
     const meta = { label: ctx.label, point, step, at: iso(ctx), attempt: ctx.state.resumedFrom?.attempt ?? 1, pluginSha: ctx.state.stage?.sha, quiet: running.length === 0, running };
     const configDir = ctx.env.HAIKU_TRIAL_CONFIG_DIR;
     const transcripts = io.host.findTranscripts({ project: ctx.projectName, dir: ctx.projectDir }).map((t) => t.file).filter((f) => typeof f === 'string');
-    const got = await io.snapshot.take({ label: ctx.label, point, folder: ctx.folder, configDir, transcripts, meta });
+    const got = await io.snapshot.take({ label: ctx.label, point, folder: ctx.folder, configDir, transcripts, meta, seedSha: ctx.state.seedSha });
     await note(ctx, `snapshot-${point}`, `snapshot ${got?.name ?? point}${meta.quiet ? '' : ` (not quiet: ${running.join(', ')} still running)`}`);
   } catch (error) {
     await addFinding(ctx, `snapshot-${point}`, `snapshot ${point} failed: ${error.message}`);

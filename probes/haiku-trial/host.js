@@ -32,6 +32,7 @@ import { decisionNumber } from '../../scripts/decisions/pending.js';
 import { installDependencies } from './score/run.js';
 import { visibleFromChange } from '../../scripts/gate/visible.js';
 import { takeLocal, snapshotsDir, nextNumber, writeMeta } from './snapshot.js';
+import { captureGithub } from './github-snapshot.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const IDENTITY = ['-c', 'user.name=Wheelhouse probe', '-c', 'user.email=probe@wheelhouse.invalid', '-c', 'commit.gpgsign=false'];
@@ -101,6 +102,17 @@ export function buildRealIo(env = process.env, label) {
     const got = run('git', args, { cwd });
     if (got.status !== 0) throw new Error(`git ${args[0]} failed: ${String(got.stderr).trim()}`);
     return text(got);
+  };
+
+  // The members that touch the repository itself, beyond what `gh api` reads.
+  const github = {
+    // A mirror clone without the pull requests' refs, which GitHub refuses to take back in a push.
+    async mirror({ slug: repo, dir }) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      git(['clone', '--quiet', '--mirror', `https://github.com/${repo}.git`, dir], { cwd: os.tmpdir() });
+      const refs = run('git', ['for-each-ref', 'refs/pull', '--format=delete %(refname)'], { cwd: dir });
+      if (text(refs) !== '') run('git', ['update-ref', '--stdin'], { cwd: dir, input: `${text(refs)}\n` });
+    },
   };
 
   const host = {
@@ -244,16 +256,24 @@ export function buildRealIo(env = process.env, label) {
 
   return {
     tmux, gh, host, faults,
-    // A snapshot of the run so far, kept beside it (spec 2026-11-13, section 3.3). Only the local side so far.
+    github,
+    // A snapshot of the run so far, kept beside it (spec 2026-11-13, section 3.3): the local copy and the GitHub capture. A
+    // snapshot that cannot be finished is taken away again, so the list never holds half of one.
     snapshot: {
-      async take({ label, point, folder, configDir, transcripts, meta }) {
+      async take({ label, point, folder, configDir, transcripts, meta, seedSha }) {
         const dir = snapshotsDir(label);
         fs.mkdirSync(dir, { recursive: true });
         const name = `${nextNumber(dir)}-${point}`;
         const dest = path.join(dir, name);
-        const { torn } = takeLocal({ folder, dest, configDir, transcripts });
-        writeMeta(dest, { ...meta, torn });
-        return { name, torn };
+        try {
+          const { torn } = takeLocal({ folder, dest, configDir, transcripts });
+          const { maxNumber } = await captureGithub({ gh, github, slug, dest, seedSha });
+          writeMeta(dest, { ...meta, torn, maxNumber });
+          return { name, torn, maxNumber };
+        } catch (error) {
+          fs.rmSync(dest, { recursive: true, force: true });
+          throw error;
+        }
       },
     },
     clock: { now: () => Date.now(), sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)) },
