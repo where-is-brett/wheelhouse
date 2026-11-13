@@ -32,7 +32,7 @@ function standInHost({ month = 20, buildMode = 'hang', resumeMode = 'finish', re
 }
 
 const setup = () => fs.mkdtempSync(path.join(os.tmpdir(), 'wh-t3-'));
-const common = { label: 'a', midTaskTimeoutMs: 5000 };
+const common = { label: 'a', midTaskTimeoutMs: 5000, say: () => {} };
 
 test('plan names every step once', () => {
   assert.deepEqual(STEPS.map((s) => s.name), ['stage', 'month-check', 'order', 'build', 'resume', 'merge', 'report']);
@@ -49,7 +49,8 @@ test('a piece runs end to end: killed once mid-task, resumed, merged, and the re
   // The killed build left no figure, so it counts as 1 (assumed); the resumed session reads 2 cumulative, so 1 more.
   assert.deepEqual(r.report.steps.map((s) => [s.step, s.requests, s.assumed]), [['build', 1, true], ['resume', 1, false]]);
   assert.equal(r.report.total, 2);
-  assert.deepEqual(r.findings, []);
+  // The stand-in leaves no usage checkpoint, which is itself a finding; nothing else is.
+  assert.ok(r.findings.every((f) => /live cap could not be enforced/.test(f.what)));
   const log = fs.readFileSync(path.join(runFolder('a', base), 'run-log.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.ok(log.some((e) => e.step === 'build' && e.state === 'done' && e.outcome === 'ok'));
   assert.match(fs.readFileSync(path.join(runFolder('a', base), 'summary.md'), 'utf8'), /Requests used: \*\*2\*\* of 10/);
@@ -76,7 +77,7 @@ test('the stage stops before it goes over its budget and still reports', async (
   const host = standInHost();
   const r = await runStage({ host, base, budgetLimit: 1, ...common });
   assert.equal(r.stoppedAt, 'resume');
-  assert.match(r.why, /would take the stage to 2 of its 1/);
+  assert.match(r.why, /live cap could not be enforced on build/);
   assert.ok(!host.calls.includes('resume'));
   assert.equal(r.report.total, 1);
 });
@@ -111,17 +112,25 @@ test('a session that finishes before it is killed is a finding: crash resume was
   assert.ok(r.findings.some((f) => /crash resume was not exercised|ended before it could be killed/.test(f.what)));
 });
 
-test('a later attempt with --from auto carries on from where the stage stopped, with the budget already spent kept', async () => {
+test('a later attempt with --from auto goes on from the run-log, and a stop for an unenforced cap stays', async () => {
   const base = setup();
   const first = await runStage({ host: standInHost(), base, budgetLimit: 1, ...common });
   assert.equal(first.stoppedAt, 'resume');
   const host = standInHost();
   const second = await runStage({ host, base, from: 'auto', ...common });
-  assert.ok(!host.calls.includes('start'));
-  assert.ok(!host.calls.includes('stage'));
-  assert.equal(second.stoppedAt, null);
-  assert.deepEqual(host.calls, ['attach:local__t3:t3-greeting', 'resume', 'merge']);
-  // The first attempt's build (1, assumed) is kept, and the resume reads 1 more from the session's cumulative figure.
+  assert.deepEqual(host.calls, ['attach:local__t3:t3-greeting']);
+  assert.equal(second.stoppedAt, 'resume');
+  assert.match(second.why, /live cap could not be enforced on build/);
+});
+
+test('a later attempt goes on from where the stage stopped, with the budget already spent kept', async () => {
+  const base = setup();
+  // A whole first attempt, then a second from the merge step: the spend of the first is kept.
+  const first = await runStage({ host: standInHost(), base, budgetLimit: 2, midTaskTimeoutMs: 5000, say: () => {}, label: 'a' });
+  assert.equal(first.stoppedAt, null);
+  const host = standInHost();
+  const second = await runStage({ host, base, from: 'merge', ...common });
+  assert.deepEqual(host.calls, ['attach:local__t3:t3-greeting', 'merge']);
   assert.equal(second.report.total, 2);
 });
 
@@ -145,4 +154,22 @@ test('a resume from a later step tells the host where the project is', async () 
   const host = standInHost();
   await runStage({ host, base, from: 'merge', ...common });
   assert.deepEqual(host.calls, ['attach:local__t3:t3-greeting', 'merge']);
+});
+
+test('a run that left no checkpoint and spent all it was given stops the stage with a clear line', async () => {
+  const base = setup();
+  const said = [];
+  const host = standInHost({ month: 149, buildMode: 'finish' });
+  const r = await runStage({ host, base, ...common, say: (l) => said.push(l) });
+  assert.equal(r.stoppedAt, 'resume');
+  assert.match(r.why, /live cap could not be enforced on build/);
+  assert.ok(said.some((l) => /live cap could not be enforced/.test(l)));
+  assert.ok(!host.calls.includes('resume'));
+});
+
+test('a run that left no checkpoint but spent less than its cap lets the stage go on, with a finding', async () => {
+  const base = setup();
+  const r = await runStage({ host: standInHost(), base, ...common });
+  assert.equal(r.stoppedAt, null);
+  assert.ok(r.findings.some((f) => /live cap could not be enforced/.test(f.what)));
 });

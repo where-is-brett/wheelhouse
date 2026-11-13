@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { liveRequests, startRun } from '../../../probes/copilot-t3/session.js';
+import { liveRequests, readRun, startRun } from '../../../probes/copilot-t3/session.js';
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-session.js');
 const call = (dir) => ({ file: process.execPath, args: [FAKE, 'hang', path.join(dir, 'u.json'), '0'], env: process.env, input: '', verbatim: false, output: path.join(dir, 'o'), usageFile: path.join(dir, 'u.json'), sessionId: 's' });
@@ -34,4 +34,14 @@ test('a run\'s spend is read from its latest checkpoint, or its result', () => {
   assert.equal(liveRequests(''), null);
   assert.equal(liveRequests(line({ type: 'session.usage_checkpoint', data: { accountingSnapshot: { totalPremiumRequestCost: 2 } } }) + line({ type: 'session.usage_checkpoint', data: { accountingSnapshot: { totalPremiumRequestCost: 3 } } })), 3);
   assert.equal(liveRequests(line({ type: 'result', usage: { premiumRequests: 5 } })), 5);
+});
+
+test('a run is settled on the larger of the result\'s count and the checkpoint\'s cost, the figure the cap reads', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-t3-read-'));
+  const lines = [{ type: 'session.usage_checkpoint', data: { accountingSnapshot: { totalPremiumRequestCost: 5 } } }, { type: 'result', usage: { premiumRequests: 3 } }];
+  fs.writeFileSync(path.join(dir, 'o'), lines.map((e) => `${JSON.stringify(e)}\n`).join(''));
+  const run = readRun({ read: () => fs.readFileSync(path.join(dir, 'o'), 'utf8'), usageFile: path.join(dir, 'none.json') });
+  assert.equal(run.cumulative, 5);
+  assert.equal(run.checkpoints, true);
+  assert.equal(liveRequests(lines.map((e) => `${JSON.stringify(e)}\n`).join('')), 5);
 });

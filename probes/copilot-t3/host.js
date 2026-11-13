@@ -83,12 +83,16 @@ export function realHost({ label, ghAccount = readGhAccount, plan = 'auto-only',
     async monthUsed() {
       const now = new Date();
       let account = readAccount({ dir: realUsage });
+      let read = false;
       try {
         const fresh = accountOf(await ghAccount(), now);
         // The reading is kept in the trial's own home: the real home is only read.
-        if (fresh !== null) { if (trial.home === undefined) throw new Error('no trial home'); recordAccount(fresh, { dir: usageDir() }); account = fresh; }
+        if (fresh !== null) { if (trial.home === undefined) throw new Error('no trial home'); recordAccount(fresh, { dir: usageDir() }); account = fresh; read = true; }
       } catch { /* the ledger's count stands */ }
-      return monthState({ lines: readLedger({ dir: realUsage }), account, now }).used;
+      const lines = readLedger({ dir: realUsage });
+      // Neither GitHub's figure, an earlier reading nor a single ledger line: the month is unreadable, not empty.
+      if (!read && account === null && lines.length === 0) return null;
+      return monthState({ lines, account, now }).used;
     },
 
     async order(order) {

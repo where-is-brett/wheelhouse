@@ -66,3 +66,18 @@ test('attach refuses a run folder with no project', async () => {
   const host = realHost({ label: 'none' });
   await assert.rejects(host.attach({ folder: fs.mkdtempSync(path.join(os.tmpdir(), 'wh-t3-empty-')), project: 'p', order: ORDER }), /no project/);
 });
+
+test('a month that gh cannot read, with no earlier reading and an empty ledger, is unreadable, not zero', async (t) => {
+  const was = process.env.WHEELHOUSE_HOME;
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-t3-nomonth-')));
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-t3-nomonth-run-')));
+  t.after(() => {
+    if (was === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = was;
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+  process.env.WHEELHOUSE_HOME = home;
+  const host = realHost({ label: 'nomonth', ghAccount: async () => { throw new Error('offline'); } });
+  await host.stage({ folder: base });
+  assert.equal(await host.monthUsed(), null);
+});

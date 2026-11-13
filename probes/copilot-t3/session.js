@@ -68,7 +68,11 @@ export function readRun(handle) {
   const usage = sessionUsage({ usageFile: handle.usageFile, stdout });
   const events = eventsOf(stdout);
   return {
-    cumulative: usage.premiumRequests ?? liveRequests(stdout) ?? usage.totalPremiumRequestCost ?? null,
+    // The larger of the result's count and the checkpoints' cost, the figure the mid-run cap reads too, so a run is never settled
+    // above the cap it was held to.
+    cumulative: largest(usage.premiumRequests, liveRequests(stdout)) ?? usage.totalPremiumRequestCost ?? null,
+    // Whether any usage checkpoint was seen: without one the cap could not be enforced while the run went.
+    checkpoints: events.some((e) => e.type === 'session.usage_checkpoint'),
     finished: events.some((e) => e.type === 'result'),
     events,
     // Tool calls to the `task` tool start a subagent (check 96); the run's own count says whether those were charged.
@@ -77,13 +81,18 @@ export function readRun(handle) {
   };
 }
 
-// The requests a run has spent so far, as its own output says: the latest usage checkpoint's premium request cost, or the result's
-// count once it ends. null while the output holds neither.
+const largest = (...values) => {
+  const counts = values.filter((n) => Number.isFinite(n));
+  return counts.length === 0 ? null : Math.max(...counts);
+};
+
+// The requests a run has spent so far, as its own output says: the largest of the usage checkpoints' premium request costs and the
+// result's count. null while the output holds neither.
 export function liveRequests(stdout) {
   let spent = null;
   for (const e of eventsOf(stdout)) {
     const n = e.type === 'result' ? e.usage?.premiumRequests : e.type === 'session.usage_checkpoint' ? (e.data?.accountingSnapshot?.totalPremiumRequestCost ?? e.data?.totalPremiumRequestCost) : undefined;
-    if (Number.isFinite(n)) spent = n;
+    if (Number.isFinite(n)) spent = spent === null ? n : Math.max(spent, n);
   }
   return spent;
 }

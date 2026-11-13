@@ -41,3 +41,12 @@ test('a run is never reserved twice without settling', () => {
   b.release('a');
   b.reserve('b');
 });
+
+test('a restored stage carries what was spent, and the session\'s next figure counts from it', () => {
+  const b = makeBudget({ monthUsed: 0, limit: 4 });
+  b.restore([{ step: 'build', session: 's', requests: 1, assumed: true, total: 1 }]);
+  assert.equal(b.used, 1);
+  assert.equal(b.reserve('resume'), 3);
+  assert.equal(b.settle('resume', { session: 's', cumulative: 3 }), 2);
+  assert.equal(b.used, 3);
+});

@@ -41,3 +41,7 @@ Files in the run folder: `run-log.jsonl`, `state.json`, `summary.md`. After each
 ## Tests
 
 `tests/probes/copilot-t3/`: the budget, the runner against a stand-in host whose sessions are real child processes (so the kill is real), and the real host's project, worktree and merge with no session.
+
+## A limit of the live cap
+
+A run is killed when its spend reaches what the budget has left for it, read from its usage checkpoints. A run that ends with no checkpoint was never held to that cap while it went. It is settled on its final figure, with a finding and a line saying so, and if it spent all it was given the stage stops before the next run.

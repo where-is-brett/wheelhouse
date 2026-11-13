@@ -53,7 +53,7 @@ const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(f
 //   resume({ work, sessionId })            -> a run handle
 //   merge({ work })                        -> { merged, commit?, reason? }
 // `settings`: { label, from, base, midTaskTools, midTaskTimeoutMs, budgetLimit, sessionId, snapshot (false in tests that skip it) }.
-export async function runStage({ host, label, from = null, base = TRIALS, midTaskTools = 1, midTaskTimeoutMs = 10 * 60 * 1000, capPollMs = 200, budgetLimit = STAGE_BUDGET, sessionId = null, snapshot = true } = {}) {
+export async function runStage({ host, label, from = null, base = TRIALS, midTaskTools = 1, midTaskTimeoutMs = 10 * 60 * 1000, capPollMs = 200, say = (line) => process.stderr.write(line), budgetLimit = STAGE_BUDGET, sessionId = null, snapshot = true } = {}) {
   if (typeof label !== 'string' || !LABEL.test(label)) throw new Error('A run needs a label of lowercase letters, digits and dashes');
   const folder = runFolder(label, base);
   const logFile = path.join(folder, 'run-log.jsonl');
@@ -83,6 +83,11 @@ export async function runStage({ host, label, from = null, base = TRIALS, midTas
 
   // The run's request figure goes through the budget: reserved before it starts, settled when it ends.
   async function spend(step, begin, { kill = false } = {}) {
+    // A run that left no usage checkpoint was never held to its cap while it went; if it spent all it was given, the stage stops here.
+    if (state.unenforced) {
+      const u = state.unenforced;
+      throw new BudgetStop(`${step} not started: the live cap could not be enforced on ${u.step} (no usage checkpoint was seen) and it spent ${u.requests} of the ${u.cap} requests it was given`);
+    }
     const cap = budget.reserve(step);
     const cumulativeCap = budget.base(session.id) + cap;
     let handle;
@@ -117,6 +122,11 @@ export async function runStage({ host, label, from = null, base = TRIALS, midTas
     const run = readRun(handle);
     const requests = budget.settle(step, { session: session.id, cumulative: run.cumulative });
     session.cumulative = run.cumulative ?? session.cumulative;
+    if (!run.checkpoints) {
+      finding(step, 'The live cap could not be enforced: the session left no usage checkpoint, so it was settled on its final figure');
+      say(`${step}: the live cap could not be enforced (no usage checkpoint was seen)\n`);
+      if (requests >= cap) state.unenforced = { step, requests, cap };
+    }
     return { run, requests, killed: killed || end.killed === true, code: end.code };
   }
 
