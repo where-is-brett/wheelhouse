@@ -3,20 +3,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SITTING_POINTS, CLICKS, placeClicks, parseWindow, windowState, estimate, directorNote, TYPICAL_MS, WAVE_WAIT_MS } from '../../../probes/haiku-trial/sittings.js';
 
-test('placeClicks defaults to one sitting at w4 with all three clicks', () => {
-  assert.deepEqual(placeClicks(), [{ n: 1, point: 'w4', after: 'w4-type', clicks: ['F6', 'F5a', 'F5b'] }]);
+test('placeClicks defaults to one sitting at w4 with all four clicks', () => {
+  assert.deepEqual(placeClicks(), [{ n: 1, point: 'w4', after: 'w4-type', clicks: ['NTFY', 'F6', 'F5a', 'F5b'] }]);
   assert.deepEqual(placeClicks(['w4']), placeClicks());
-  assert.deepEqual(CLICKS.map((c) => c.id), ['F6', 'F5a', 'F5b']);
+  assert.deepEqual(CLICKS.map((c) => c.id), ['NTFY', 'F6', 'F5a', 'F5b']);
   assert.deepEqual(SITTING_POINTS, { w3: 'f1c', w4: 'w4-type', end: 'w5-midnight' });
 });
 
 test('w3 and w4 keep the original order', () => {
-  assert.deepEqual(placeClicks(['w3', 'w4']).map((s) => [s.n, s.after, s.clicks]), [[1, 'f1c', ['F6', 'F5a']], [2, 'w4-type', ['F5b']]]);
+  assert.deepEqual(placeClicks(['w3', 'w4']).map((s) => [s.n, s.after, s.clicks]), [[1, 'f1c', ['NTFY', 'F6', 'F5a']], [2, 'w4-type', ['F5b']]]);
   assert.deepEqual(placeClicks(['w4', 'w3']), placeClicks(['w3', 'w4']), 'the order given does not matter');
 });
 
 test('a click no sitting can take goes in one at the end, and an empty sitting is left out', () => {
-  assert.deepEqual(placeClicks(['w3']).map((s) => [s.point, s.clicks]), [['w3', ['F6', 'F5a']], ['end', ['F5b']]]);
+  assert.deepEqual(placeClicks(['w3']).map((s) => [s.point, s.clicks]), [['w3', ['NTFY', 'F6', 'F5a']], ['end', ['F5b']]]);
   assert.deepEqual(placeClicks(['w4', 'end']).map((s) => s.point), ['w4']);
   assert.throws(() => placeClicks(['w9']), /no sitting point called w9/);
 });
@@ -51,10 +51,10 @@ test('the director note names each sitting, its clicks and its time range', () =
   const sittings = placeClicks(['w3', 'w4']);
   const estimates = [{ early: now + 60 * 60000, late: now + 3 * 60 * 60000 }, { early: now + 4 * 60 * 60000, late: now + 30 * 60 * 60000 }];
   const note = directorNote({ sittings, estimates, now });
-  assert.match(note, /Sitting 1.*between 10:00 and 12:00 today.*2 clicks.*about 8 minutes/);
+  assert.match(note, /Sitting 1.*between 10:00 and 12:00 today.*3 clicks.*about 10 minutes/);
   assert.match(note, /Sitting 2.*between 13:00 and 15:00 tomorrow.*1 click in.*about 5 minutes/);
-  for (const id of ['F6', 'F5a', 'F5b']) assert.match(note, new RegExp(`- ${id}:`));
+  for (const id of ['NTFY', 'F6', 'F5a', 'F5b']) assert.match(note, new RegExp(`- ${id}:`));
   assert.match(note, /asks once/);
-  assert.match(directorNote({ sittings: placeClicks(), estimates: [estimate({ remaining: [], now })], now }), /3 clicks.*about 10 minutes/);
+  assert.match(directorNote({ sittings: placeClicks(), estimates: [estimate({ remaining: [], now })], now }), /4 clicks.*about 13 minutes/);
   assert.match(directorNote({ sittings, estimates, windows: [parseWindow('22:00-02:00')], now }), /Held to: 22:00-02:00/);
 });

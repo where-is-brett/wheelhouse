@@ -136,6 +136,13 @@ export function toolRuns(raw) {
   return runs;
 }
 
+// Whether the session ran a command matching `pattern`, in the arguments of any tool call it made, whether or not the
+// call was let through: an attempt shows in the events even where a guard or the command itself refused it before
+// anything reached the helper.
+export function ranCommand(raw, pattern) {
+  return toolRuns(raw).some((run) => pattern.test(typeof run.args?.command === 'string' ? run.args.command : ''));
+}
+
 // A pull request's head commit, as the stand-in host gives it to `card`.
 const HEAD = '3f9c2a1b7d4e5f60718293a4b5c6d7e8f9012345';
 

@@ -694,6 +694,18 @@ const undoAnswered = (ctx, sha, since) => async () => {
 };
 
 const clickSteps = {
+  // NTFY: `alerts ntfy` opens a window in the helper that waits two minutes for a Yes and saves nothing without one, and the alerts
+  // also have to be switched on under Notifications. It is a click in the sitting so the run waits for the director's window, not
+  // the director's window for the run: typed at once, it blocked the desk's turn with no one watching.
+  async NTFY(ctx, io) {
+    await deskFree(ctx);
+    ctx.state.ntfyTopic = `haiku-trial-${ctx.date}-${Math.floor(io.clock.now() / 1000) % 100000}`;
+    io.log?.('Click Yes in the "Wheelhouse: phone alerts" window, then switch ntfy on under Notifications in the front desk.');
+    const reply = await say(ctx, `alerts ntfy ${ctx.state.ntfyTopic}`, { maxMs: NTFY_WAIT_MS });
+    const status = await say(ctx, 'alerts status');
+    ctx.state.ntfySetUp = !NOT_CLICKED.test(reply) && /ntfy/i.test(status) && !NO_CHANNEL.test(status);
+    await note(ctx, 'ntfy', ctx.state.ntfySetUp ? 'ntfy is set up (switch it on under Notifications for alerts to go)' : 'ntfy was not set up: row 43 is not covered', { reply: reply.slice(0, 300), status: status.slice(0, 300) });
+  },
   // F6: All stop typed, an undo refused under it, five minutes, then the lift (the director's click).
   async F6(ctx, io, { n }) {
     await deskFree(ctx);
@@ -769,7 +781,7 @@ async function sittingStart(ctx, io, { n, clicks, windows }) {
     await waitFor(async () => { await tick(ctx); state = windowState(windows, localMinutes(ctx)); return state !== 'before'; }, { io, timeoutMs: 48 * 60 * MINUTE, everyMs: MINUTE });
   }
   if (state === 'past') {
-    await addFinding(ctx, sittingId(n), `skipped: every window had gone when sitting ${n} came, so its clicks (${clicks.join(', ')}) were not covered`);
+    await addFinding(ctx, sittingId(n), `skipped: every window had gone when sitting ${n} came, so its clicks (${clicks.join(', ')}) were not covered${clicks.includes('NTFY') ? '; row 43 is not covered' : ''}`);
     return false;
   }
   return true;
@@ -906,20 +918,6 @@ export const STEPS = [
       await desk(ctx, DESK);
       const on = await io.host.typedRepliesOn({ project: ctx.projectName });
       await note(ctx, 'front-desk', `typed replies on: ${on}`);
-    },
-  },
-  // The director's own click, asked for early and out loud: `alerts ntfy` opens a window in the helper that waits two minutes
-  // for a Yes and saves nothing without one, and the alerts also have to be switched on under Notifications. Left to the
-  // moment it was typed, it blocked the desk's turn with no one watching and the next piece was typed into it.
-  {
-    id: 'ntfy', wave: 1, smoke: false, director: true,
-    async run(ctx, io) {
-      ctx.state.ntfyTopic = `haiku-trial-${ctx.date}-${Math.floor(io.clock.now() / 1000) % 100000}`;
-      await directorAsk(ctx, 'Phone alerts need your click. Watch for a window titled "Wheelhouse: phone alerts" in the next minute or two and click Yes in it, then switch ntfy on under Notifications in the front desk. Answer ready, and the runner asks for the window now.');
-      const reply = await say(ctx, `alerts ntfy ${ctx.state.ntfyTopic}`, { maxMs: NTFY_WAIT_MS });
-      const status = await say(ctx, 'alerts status');
-      ctx.state.ntfySetUp = !NOT_CLICKED.test(reply) && /ntfy/i.test(status) && !NO_CHANNEL.test(status);
-      await note(ctx, 'ntfy', ctx.state.ntfySetUp ? 'ntfy is set up (switch it on under Notifications for alerts to go)' : 'ntfy was not set up: row 43 is not covered', { reply: reply.slice(0, 300), status: status.slice(0, 300) });
     },
   },
   { id: 'w2-type', wave: 2, smoke: true, run: piecesTyped(2) },

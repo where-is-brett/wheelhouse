@@ -35,9 +35,9 @@ The runner works with two names for the project: the **folder** (`<run folder>/p
 ## The director's four steps
 
 1. The preview sign-in, only with `vercel`.
-2. **The phone-alerts click (`ntfy`, full run only), early in wave 1.** The runner announces it: it asks, you answer `ready`, and it types `alerts ntfy <topic>`, which opens a helper window titled "Wheelhouse: phone alerts" that waits 120 seconds for a Yes click and saves nothing without one. Click Yes, and switch ntfy on under Notifications in the front desk. Without the click the run goes on and row 43 is "not covered", never failed.
-3. **The sittings** (full run only): by default one sitting of about 10 minutes, after `w4-type`, with three clicks in the helper window: the All stop lift (F6) and the two undo approvals (F5a, F5b). See "The director's sittings".
-4. The review at the end (`review-card`): a card that fits a phone, with the steps behind "Show the steps" and a generated `try-me.csv` of 41 rows to import. The card is written to the run folder.
+2. **The sittings** (full run only): by default one sitting of about 13 minutes, after `w4-type`, with four clicks in the helper window: the phone alerts (`NTFY`), the All stop lift (F6) and the two undo approvals (F5a, F5b). See "The director's sittings".
+   The phone-alerts click types `alerts ntfy <topic>`, which opens a helper window titled "Wheelhouse: phone alerts" that waits 120 seconds for a Yes click and saves nothing without one. Click Yes, and switch ntfy on under Notifications in the front desk. It waits for the director's window like the other clicks, and builds carry on meanwhile. Without the click, or if the sitting is skipped, the run goes on and row 43 is "not covered", never failed.
+3. The review at the end (`review-card`): a card that fits a phone, with the steps behind "Show the steps" and a generated `try-me.csv` of 41 rows to import. The card is written to the run folder.
 
 ## Carrying on past faults
 
@@ -53,7 +53,7 @@ At set points between steps the runner keeps a snapshot, so a fix can be checked
 
 | Point | When |
 |---|---|
-| `after-front-desk` (smoke), `after-ntfy` (full) | end of wave 1 |
+| `after-front-desk` | end of wave 1 |
 | `after-w2-audit` | end of wave 2 |
 | `before-f1` | wave 3, before F1 |
 | `after-w3-audit` | end of wave 3 |
@@ -99,7 +99,7 @@ After a resume the runner reads GitHub relative to the snapshot: lists (`pulls`,
 The director's own clicks (the F6 lift and the F5a and F5b undo approvals) gather in **sittings**: one step, `sitting-<n>`, does the typed parts of every click in it and waits for the director's signed clicks together. The trial never clicks for the director: it types, and watches the record for the signed action (`lift-stop`; `undo-merge` or `keep-main` naming the merge). Each click waits up to 15 minutes and there is no "done" question: the signed action is the answer.
 
 - **`--sitting <point>`** (repeatable) places a sitting. The points are `w3` (after `f1c`, the original moment for F6 and F5a), `w4` (after `w4-type`) and `end` (after `w5-midnight`). The default is one sitting at `w4`, the first point where all three clicks can be done together. A click goes in the first sitting where it can be ready: F6 and F5a from `w3`, F5b from `w4`. `--sitting w3 --sitting w4` keeps the original order.
-- **Asked once.** Without a window, the sitting asks once when its point comes: "Sitting 1: 3 clicks in the helper window, about 10 minutes. Answer ready when you are at the screen."
+- **Asked once.** Without a window, the sitting asks once when its point comes: "Sitting 1: 4 clicks in the helper window, about 13 minutes. Answer ready when you are at the screen."
 - **`--window HH:MM-HH:MM`** (repeatable, local time, such as `22:00-02:00` across midnight) holds the sittings to the director's windows. A sitting does not ask: if its point comes inside a window it starts at once; before a window it keeps looking (the stand-in still answers cards and checks in) until the window opens; with every window past it is skipped with a finding.
 - **`director.md`** in the run folder lists each sitting still to come, its clicks, a time range ("between 14:10 and 16:40 today") and how long it takes. It is written at the start of a run, at the end of each wave and on a resume, and its first line goes to the log. The early edge is the sum of the remaining steps' typical times, the late edge the sum of their time limits.
 - **A click that does not come** is a finding, never a stop: the rows that need it say "not covered". A lift that does not come leaves All stop on, so the sitting then asks once in the terminal, "All stop is still on: lift it in the helper window when you can", and waits for that before anything else. A stop that an earlier part of the sitting left on (for example an F6 that failed half way) is lifted before the next click.

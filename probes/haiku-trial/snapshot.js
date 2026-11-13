@@ -8,8 +8,7 @@ import path from 'node:path';
 // Where snapshots are taken. `after` points come once the named step has finished, `before` points just before it runs. A smoke
 // run takes only the points whose step is in its own plan; `before-sitting-<n>` is added with the sittings.
 export const SNAPSHOT_POINTS = [
-  { point: 'after-front-desk', after: 'front-desk', mode: 'smoke' },
-  { point: 'after-ntfy', after: 'ntfy', mode: 'full' },
+  { point: 'after-front-desk', after: 'front-desk', mode: 'both' },
   { point: 'after-w2-audit', after: 'w2-audit', mode: 'both' },
   { point: 'before-f1', before: 'f1', mode: 'full' },
   { point: 'after-w3-audit', after: 'w3-audit', mode: 'full' },

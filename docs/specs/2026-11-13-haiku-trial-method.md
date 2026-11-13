@@ -37,7 +37,7 @@ So the paths stay fixed, and what changes is which attempt is at them.
 
 | Point | When | Why here |
 |---|---|---|
-| `after-front-desk` (smoke) / `after-ntfy` (full) | end of wave 1 | setup is the slowest, flakiest step (three of the stops); every later fix skips it |
+| `after-front-desk` | end of wave 1 | setup is the slowest, flakiest step (three of the stops); every later fix skips it |
 | `after-w2-audit` | end of wave 2 | before wave 3's requests |
 | `before-f1` | wave 3, once P3's session is found | F1, F1b and F1c are the most often stopped steps |
 | `after-w3-audit` | end of wave 3 | before wave 4's requests |

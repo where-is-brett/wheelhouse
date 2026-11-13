@@ -94,7 +94,7 @@ test('full plan follows the waves', () => {
   assert.ok(all.indexOf('w4-type') < all.indexOf('sitting-1') && all.indexOf('sitting-1') < all.indexOf('f4-check'));
   assert.ok(all.indexOf('w2-merge-wait') < all.indexOf('w3-type'));
   assert.deepEqual(STEPS.filter((s) => s.needsGo).map((s) => s.id), ['create-repo', 'create-preview', 'install']);
-  assert.deepEqual(planRun({ mode: 'full' }).filter((s) => s.director).map((s) => s.id).sort(), ['create-preview', 'ntfy', 'review-card', 'sitting-1']);
+  assert.deepEqual(planRun({ mode: 'full' }).filter((s) => s.director).map((s) => s.id).sort(), ['create-preview', 'review-card', 'sitting-1']);
 });
 
 test('smoke plan is section 14', () => {
@@ -228,7 +228,7 @@ test('a sitting asks once and the trial never clicks', async (t) => {
   const io = sittingIo();
   const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
   assert.deepEqual(got.done, ['sitting-1'], got.why);
-  assert.deepEqual(asks(io), ['Sitting 1: 3 clicks in the helper window, about 10 minutes. Answer ready when you are at the screen.']);
+  assert.deepEqual(asks(io), ['Sitting 1: 4 clicks in the helper window, about 13 minutes. Answer ready when you are at the screen.']);
   assert.equal(io.timeline.some((e) => e.kind === 'tmux.keys'), false, 'no key reaches the screen');
   assert.deepEqual(io.timeline.filter((e) => ['f6.stop', 'f6.lift', 'undo'].includes(e.kind)).map((e) => e.kind), ['f6.stop', 'undo', 'f6.lift', 'undo', 'undo']);
   assert.deepEqual(io.timeline.filter((e) => e.kind === 'undo').map((e) => e.args[0]), [SHA6, SHA6, SHA2]);
@@ -385,6 +385,7 @@ test('a sitting after every window is skipped with a finding, and rows 36–40 s
   assert.deepEqual(got.done, ['sitting-1']);
   assert.equal(io.timeline.some((e) => ['tmux.type', 'ask', 'f6.stop'].includes(e.kind)), false);
   assert.match(got.findings[0].what, /^skipped: every window had gone when sitting 1 came/);
+  assert.match(got.findings[0].what, /row 43 is not covered/);
   for (const id of [36, 37, 38, 39, 40]) {
     const row = ROWS.find((r) => r.id === id).check({ prs: [], runLog: readLog(folder), findings: got.findings, events: [], panes: {} });
     assert.equal(row.pass, null, `row ${id}`);
@@ -399,7 +400,7 @@ test('director.md is written at the start with each sitting, and its first line 
   io.log = (line) => lines.push(line);
   await run({ mode: 'full', io, from: 'w4-type', until: 'w4-type', folder, date: '2026-11-08', env: ENV });
   const text = fs.readFileSync(path.join(folder, 'director.md'), 'utf8');
-  assert.match(text, /Sitting 1.*between \d\d:\d\d and \d\d:\d\d.*3 clicks.*about 10 minutes/);
+  assert.match(text, /Sitting 1.*between \d\d:\d\d and \d\d:\d\d.*4 clicks.*about 13 minutes/);
   assert.ok(lines.some((l) => /^director\.md: - Sitting 1/.test(l)), lines.join(' | '));
   const done = await run({ mode: 'full', io: sittingIo(), from: 'sitting-1', until: 'sitting-1', folder: scratch(t), date: '2026-11-08', env: ENV });
   assert.deepEqual(done.done, ['sitting-1']);
@@ -738,17 +739,17 @@ test('plan prints snapshot points and sittings', async () => {
   };
   const lines = await plan();
   const at = (prefix) => lines.findIndex((l) => l.startsWith(prefix));
-  assert.ok(at('full:') < at('snapshots: after-ntfy') && at('snapshots: after-ntfy') < at('sittings: sitting-1') && at('sittings: sitting-1') < at('smoke:'), lines.join('\n'));
+  assert.ok(at('full:') < at('snapshots: after-front-desk') && at('snapshots: after-front-desk') < at('sittings: sitting-1') && at('sittings: sitting-1') < at('smoke:'), lines.join('\n'));
   const snapshots = lines.filter((l) => l.startsWith('snapshots: '));
-  assert.equal(snapshots[0], 'snapshots: after-ntfy after-w2-audit before-f1 after-w3-audit before-f4-check before-s9-1 after-w4-audit before-sitting-1');
+  assert.equal(snapshots[0], 'snapshots: after-front-desk after-w2-audit before-f1 after-w3-audit before-f4-check before-s9-1 after-w4-audit before-sitting-1');
   assert.equal(snapshots[1], 'snapshots: after-front-desk after-w2-audit before-s9-1 after-w4-audit');
-  assert.deepEqual(lines.filter((l) => l.startsWith('sittings: ')), ['sittings: sitting-1 after w4-type (F6, F5a, F5b)', 'sittings: none']);
+  assert.deepEqual(lines.filter((l) => l.startsWith('sittings: ')), ['sittings: sitting-1 after w4-type (NTFY, F6, F5a, F5b)', 'sittings: none']);
   assert.match(lines.find((l) => l.startsWith('full:')), / f1# /, 'a step with a snapshot point before it is marked');
   assert.match(lines.find((l) => l.startsWith('full:')), / w2-audit# /, 'and one with a point after it');
   assert.match(lines.find((l) => l.startsWith('full:')), / sitting-1\+# /);
   assert.match(lines.join('\n'), /# snapshot point/);
   const two = await plan('--sitting', 'w3', '--sitting', 'w4');
-  assert.ok(two.includes('sittings: sitting-1 after f1c (F6, F5a), sitting-2 after w4-type (F5b)'));
+  assert.ok(two.includes('sittings: sitting-1 after f1c (NTFY, F6, F5a), sitting-2 after w4-type (F5b)'));
   assert.match(two.find((l) => l.startsWith('snapshots: ')), /before-sitting-1 before-sitting-2$/);
 });
 
@@ -1245,21 +1246,23 @@ test('--model is read from the command line and anything but haiku or sonnet is 
   assert.ok(printed.some((l) => /--model <haiku\|sonnet>/.test(l)));
 });
 
-test('the ntfy click is its own director step early in wave 1, announced, and only in a full run', async (t) => {
-  assert.ok(ids('full').indexOf('front-desk') < ids('full').indexOf('ntfy') && ids('full').indexOf('ntfy') < ids('full').indexOf('w2-type'));
-  assert.equal(ids('smoke').includes('ntfy'), false);
+test('the ntfy click is the first click of sitting 1, not a step of its own, and a smoke run has none', () => {
+  assert.equal(ids('full').includes('ntfy'), false);
+  assert.equal(ids('smoke').includes('sitting-1'), false);
+  assert.deepEqual(planRun({ mode: 'full' }).find((s) => s.id === 'sitting-1').clicks, ['NTFY', 'F6', 'F5a', 'F5b']);
+});
+
+test('the ntfy command is typed inside the sitting, after the director is asked once for the sitting, and the run goes on', async (t) => {
   const folder = scratch(t);
-  const replies = { 'alerts ntfy': 'Alerts will go to ntfy.', 'alerts status': 'ntfy: on, topic kept' };
-  const io = fakeIo();
-  const wrapped = io.tmux.type;
-  io.tmux.type = (name, text) => { wrapped(name, text); };
-  const got = await run({ mode: 'full', io, from: 'ntfy', until: 'ntfy', folder, date: '2026-11-08', env: ENV });
-  assert.deepEqual(got.done, ['ntfy'], got.why);
-  const asked = io.timeline.findIndex((e) => e.kind === 'ask' && /Yes/.test(e.args[0]) && /Notifications/.test(e.args[0]) && /phone alerts/i.test(e.args[0]));
+  const io = sittingIo();
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['sitting-1'], got.why);
+  assert.equal(asks(io).length, 1, 'the sitting asks once; the ntfy click has no ask of its own');
+  const askedAt = io.timeline.findIndex((e) => e.kind === 'ask');
   const typed = io.timeline.findIndex((e) => e.kind === 'tmux.type' && /^alerts ntfy haiku-trial-/.test(e.args[1]));
-  assert.ok(asked !== -1, 'the director is told what to click, and where to switch it on');
-  assert.ok(typed > asked, 'the command is typed after the announcement');
-  assert.ok(replies);
+  assert.ok(askedAt !== -1 && typed > askedAt, 'the command is typed after the sitting is announced');
+  const stopAt = io.timeline.findIndex((e) => e.kind === 'f6.stop');
+  assert.ok(typed < stopAt, 'it is the first click of the sitting');
   assert.match(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).ntfyTopic, /^haiku-trial-2026-11-08-/);
 });
 
@@ -1272,10 +1275,10 @@ test('ntfy is recorded as set up only when the status afterwards names it, and r
   for (const [saidFirst, saidStatus, want] of cases) {
     const folder = scratch(t);
     let typed = '';
-    const io = fakeIo({ capture: () => (typed.startsWith('alerts status') ? `${saidStatus}` : typed.startsWith('alerts ntfy') ? saidFirst : 'idle') });
+    const io = sittingIo({ capture: () => (typed.startsWith('alerts status') ? `${saidStatus}` : typed.startsWith('alerts ntfy') ? saidFirst : 'idle') });
     const wrapped = io.tmux.type;
     io.tmux.type = (name, text) => { typed = text; return wrapped(name, text); };
-    await run({ mode: 'full', io, from: 'ntfy', until: 'ntfy', folder, date: '2026-11-08', env: ENV });
+    await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
     assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).ntfySetUp, want, `${saidFirst} / ${saidStatus}`);
   }
 });
@@ -1418,11 +1421,11 @@ test('a front desk that ends is started again once in a wave, and a second loss 
   const type = io.tmux.type;
   io.tmux.type = (name, text) => { type(name, text); gone = true; };
   const got = await run({ mode: 'full', io, from: 'front-desk', until: 'w3-type', folder, date: '2026-11-08', env: ENV });
-  assert.equal(got.stoppedAt, 'ntfy', 'the first loss in wave 1 is mended, the second stops');
+  assert.equal(got.stoppedAt, 'w2-type', 'the first loss in wave 1 is mended, the second stops');
   assert.match(got.why, /ended by itself/);
   assert.equal(io.timeline.filter((e) => e.kind === 'tmux.start').length, 2, 'the desk once, then once again');
   assert.ok(got.findings.some((f) => /started again/.test(f.what)));
-  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).deskRestarts[1], 1);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).deskRestarts[2], 1);
 });
 
 test('a picker that never highlights is recorded once and the run goes on', async (t) => {
@@ -1470,24 +1473,24 @@ function withSnapshots(io, taken, { fail } = {}) {
   return io;
 }
 
-test('a full run takes after-ntfy, after-w2-audit, before-f1 and the rest in order', async (t) => {
+test('a full run takes after-front-desk, after-w2-audit, before-f1 and the rest in order', async (t) => {
   const folder = scratch(t);
   const taken = [];
   const io = withSnapshots(fakeIo(), taken);
   withLog(folder, []);
   // Steps are stubbed to nothing, so only the points show.
-  const steps = ['ntfy', 'w2-audit', 'f1', 'w3-audit', 'f4-check', 's9-1', 'w4-audit'];
+  const steps = ['front-desk', 'w2-audit', 'f1', 'w3-audit', 'f4-check', 's9-1', 'w4-audit'];
   const originals = STEPS.filter((s) => steps.includes(s.id)).map((s) => [s, s.run]);
   for (const [s] of originals) s.run = async () => {};
   t.after(() => { for (const [s, r] of originals) s.run = r; });
-  const got = await run({ mode: 'full', io, from: 'ntfy', until: 'w4-audit', folder, date: '2026-11-08', env: ENV });
+  const got = await run({ mode: 'full', io, from: 'front-desk', until: 'w4-audit', folder, date: '2026-11-08', env: ENV });
   assert.ok(got.done.includes('w4-audit'));
   const order = taken.map((x) => x.point);
-  assert.deepEqual(order.filter((p) => ['after-ntfy', 'after-w2-audit', 'before-f1', 'after-w3-audit', 'before-f4-check', 'before-s9-1', 'after-w4-audit'].includes(p)), ['after-ntfy', 'after-w2-audit', 'before-f1', 'after-w3-audit', 'before-f4-check', 'before-s9-1', 'after-w4-audit']);
+  assert.deepEqual(order.filter((p) => ['after-front-desk', 'after-w2-audit', 'before-f1', 'after-w3-audit', 'before-f4-check', 'before-s9-1', 'after-w4-audit'].includes(p)), ['after-front-desk', 'after-w2-audit', 'before-f1', 'after-w3-audit', 'before-f4-check', 'before-s9-1', 'after-w4-audit']);
   assert.equal(taken[0].meta.label, '2026-11-08');
   assert.equal(taken[0].meta.quiet, true);
   assert.equal(taken[0].folder, folder);
-  assert.ok(readLog(folder).some((e) => e.note?.startsWith('snapshot 01-after-ntfy')));
+  assert.ok(readLog(folder).some((e) => e.note?.startsWith('snapshot 01-after-front-desk')));
 });
 
 test('after- points wait for quiet up to ten minutes and record quiet false', async (t) => {
@@ -1710,7 +1713,7 @@ test('a before- point runs its own step again and does not take its own snapshot
   const got = await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base, until: 'f1' });
   assert.equal(got.stoppedAt, undefined);
   assert.deepEqual(stepIds(io), ['stage', 'install', 'front-desk', 'f1']);
-  assert.deepEqual(taken, []);
+  assert.deepEqual(taken, ['after-front-desk'], 'the earlier step runs again and takes its own point; before-f1 is not taken twice');
 });
 
 test('--keep-plugin skips stage', async (t) => {

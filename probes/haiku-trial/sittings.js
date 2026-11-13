@@ -14,13 +14,14 @@ const ORDER = ['w3', 'w4', 'end'];
 
 // The clicks, in the order they are done, and what each needs before it can be ready.
 export const CLICKS = [
+  { id: 'NTFY', ready: ['front-desk'] },
   { id: 'F6', ready: ['p6Merged', 'building'] },
   { id: 'F5a', ready: ['F6'] },
   { id: 'F5b', ready: ['p2Merged', 'p3Merged'] },
 ];
 // The earliest sitting point at which each click can be ready: P6 merges and a work is building by wave 3; P2 and P3 have both
 // merged only once wave 4 has begun.
-const EARLIEST = { F6: 'w3', F5a: 'w3', F5b: 'w4' };
+const EARLIEST = { NTFY: 'w3', F6: 'w3', F5a: 'w3', F5b: 'w4' };
 
 const pointIndex = (point) => {
   const at = ORDER.indexOf(point);
@@ -70,7 +71,7 @@ export function windowState(windows, now) {
 // Rough times for each step, in minutes, from the logs of the runs so far. They are rough: they only set the early edge of a
 // sitting's estimate. A step not listed counts as five.
 const TYPICAL_MIN = {
-  stage: 1, 'create-repo': 1, 'create-preview': 1, install: 2, seed: 2, 'setup-s0': 25, 'front-desk': 3, ntfy: 5,
+  stage: 1, 'create-repo': 1, 'create-preview': 1, install: 2, seed: 2, 'setup-s0': 25, 'front-desk': 3,
   'w2-type': 10, 'f3-kill-p1': 15, 'w2-merge-wait': 45, 'w2-audit': 1,
   'w3-type': 10, f1: 10, f1b: 10, f1c: 5, 'w3-merge-wait': 60, 'w3-audit': 1,
   'w4-type': 10, 'f4-check': 15, 'f3b-kill-foreman': 1, 's9-1': 20, 's9-2': 5, 's9-3': 5, 's9-4': 3, 's9-5': 3, 's9-6': 3,
@@ -100,7 +101,7 @@ export function estimate({ remaining, now }) {
 // About how long the clicks take the director: five minutes for one, ten for three.
 export const minutesFor = (clicks) => Math.ceil(5 + 2.5 * (Math.max(1, clicks) - 1));
 
-const NAMES = { F6: 'lift All stop', F5a: 'approve the undo of P6', F5b: 'approve the undo of P2' };
+const NAMES = { NTFY: 'switch on phone alerts (click Yes in the "Wheelhouse: phone alerts" window)', F6: 'lift All stop', F5a: 'approve the undo of P6', F5b: 'approve the undo of P2' };
 export const clickName = (id) => NAMES[id] ?? id;
 const pad = (n) => String(n).padStart(2, '0');
 const clock = (ms) => `${pad(new Date(ms).getHours())}:${pad(new Date(ms).getMinutes())}`;

@@ -93,9 +93,9 @@ test('restoreLocal puts the run back and refuses an existing folder', (t) => {
 
 test('listSnapshots sorts by number', (t) => {
   const dir = scratch(t);
-  for (const name of ['10-after-w4-audit', '02-before-f1', '01-after-ntfy']) writeMeta(path.join(dir, name), { point: name.slice(3) });
+  for (const name of ['10-after-w4-audit', '02-before-f1', '01-after-front-desk']) writeMeta(path.join(dir, name), { point: name.slice(3) });
   fs.mkdirSync(path.join(dir, 'not-numbered'));
-  assert.deepEqual(listSnapshots(dir).map((s) => s.name), ['01-after-ntfy', '02-before-f1', '10-after-w4-audit']);
+  assert.deepEqual(listSnapshots(dir).map((s) => s.name), ['01-after-front-desk', '02-before-f1', '10-after-w4-audit']);
   assert.equal(listSnapshots(dir)[1].meta.point, 'before-f1');
   assert.equal(nextNumber(dir), '11');
   assert.equal(nextNumber(path.join(dir, 'none')), '01');
@@ -104,7 +104,7 @@ test('listSnapshots sorts by number', (t) => {
 
 test('snapshot points follow the spec and a smoke run takes only its own', () => {
   assert.equal(snapshotsDir('2026-11-13', '/b'), '/b/haiku-2026-11-13.snapshots');
-  assert.deepEqual(pointsFor('full').map((p) => p.point), ['after-ntfy', 'after-w2-audit', 'before-f1', 'after-w3-audit', 'before-f4-check', 'before-s9-1', 'after-w4-audit']);
+  assert.deepEqual(pointsFor('full').map((p) => p.point), ['after-front-desk', 'after-w2-audit', 'before-f1', 'after-w3-audit', 'before-f4-check', 'before-s9-1', 'after-w4-audit']);
   assert.deepEqual(pointsFor('smoke').map((p) => p.point), ['after-front-desk', 'after-w2-audit', 'before-s9-1', 'after-w4-audit']);
   assert.ok(SNAPSHOT_POINTS.every((p) => (p.after === undefined) !== (p.before === undefined)));
   assert.deepEqual(pointsFor('full', [1, 2]).slice(-2), [{ point: 'before-sitting-1', before: 'sitting-1', mode: 'full' }, { point: 'before-sitting-2', before: 'sitting-2', mode: 'full' }]);
