@@ -45,3 +45,31 @@ test('a run is settled on the larger of the result\'s count and the checkpoint\'
   assert.equal(run.checkpoints, true);
   assert.equal(liveRequests(lines.map((e) => `${JSON.stringify(e)}\n`).join('')), 5);
 });
+
+const GRANDCHILD = path.join(path.dirname(fileURLToPath(import.meta.url)), 'grandchild.js');
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+test('off Windows the kill takes the run\'s grandchild too, and the run is done only once it has gone', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-t3-tree-'));
+  const pidFile = path.join(dir, 'grandchild');
+  const handle = startRun({ file: process.execPath, args: [GRANDCHILD, pidFile], env: process.env, input: '', verbatim: false, output: path.join(dir, 'o'), usageFile: path.join(dir, 'u.json'), sessionId: 's' }, { cwd: dir, platform: process.platform, graceMs: 200 });
+  for (let i = 0; i < 100 && !fs.existsSync(pidFile); i += 1) await new Promise((r) => setTimeout(r, 50));
+  const grandchild = Number(fs.readFileSync(pidFile, 'utf8'));
+  assert.ok(alive(grandchild));
+  handle.kill();
+  const end = await handle.done;
+  assert.equal(end.killed, true);
+  assert.equal(alive(grandchild), false);
+});
+
+test('a run that ignores SIGTERM is ended by SIGKILL after the grace', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-t3-term-'));
+  const script = path.join(dir, 'stubborn.js');
+  fs.writeFileSync(script, "process.on('SIGTERM', () => {}); process.stdout.write('x\\n'); setInterval(() => {}, 1000);\n");
+  const handle = startRun({ file: process.execPath, args: [script], env: process.env, input: '', verbatim: false, output: path.join(dir, 'o'), usageFile: path.join(dir, 'u.json'), sessionId: 's' }, { cwd: dir, platform: process.platform, graceMs: 200 });
+  await new Promise((r) => setTimeout(r, 300));
+  handle.kill();
+  const end = await handle.done;
+  assert.equal(end.signal, 'SIGKILL');
+  assert.equal(alive(handle.pid), false);
+});

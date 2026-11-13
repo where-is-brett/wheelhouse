@@ -18,15 +18,46 @@ export function killTreeOnWindows(pid) {
   return got.status === 0;
 }
 
-export function startRun(call, { cwd, platform = process.platform, killTree = killTreeOnWindows }) {
+// Whether any process of the group `pgid` is still there. Only ever asked of a group the runner started itself.
+const groupAlive = (pgid) => {
+  try { process.kill(-pgid, 0); return true; } catch (error) { return error.code === 'EPERM'; }
+};
+
+// Ends the process group `pgid` (a child the runner spawned detached, so it leads its own group): SIGTERM, then SIGKILL once
+// `graceMs` has passed with the group still there. Resolves when no process of the group is left (or `waitMs` has run out).
+export async function endGroup(pgid, { graceMs = 1500, waitMs = 5000, pollMs = 25 } = {}) {
+  if (!Number.isInteger(pgid) || pgid <= 1) return;
+  try { process.kill(-pgid, 'SIGTERM'); } catch { return; }
+  const stop = Date.now() + waitMs;
+  let killedHard = false;
+  const termBy = Date.now() + graceMs;
+  while (groupAlive(pgid) && Date.now() < stop) {
+    if (!killedHard && Date.now() >= termBy) {
+      try { process.kill(-pgid, 'SIGKILL'); } catch { /* already gone */ }
+      killedHard = true;
+    }
+    await sleep(pollMs);
+  }
+}
+
+export function startRun(call, { cwd, platform = process.platform, killTree = killTreeOnWindows, graceMs }) {
   fs.mkdirSync(path.dirname(call.output), { recursive: true });
   const out = fs.openSync(call.output, 'w');
-  const child = spawn(call.file, call.args, { cwd, env: call.env, stdio: ['pipe', out, out], windowsVerbatimArguments: call.verbatim === true });
+  // Off Windows the run leads its own process group, so a kill reaches whatever it started too.
+  const grouped = platform !== 'win32';
+  const child = spawn(call.file, call.args, { cwd, env: call.env, stdio: ['pipe', out, out], detached: grouped, windowsVerbatimArguments: call.verbatim === true });
   fs.closeSync(out);
   let killed = false;
+  let ended = false;
+  let ending = null;
+  // `done` settles only once the killed run's whole group has gone, so a resume never starts beside the first run's leftovers.
   const done = new Promise((resolve) => {
-    child.on('error', () => resolve({ code: null, signal: null, killed, failed: true }));
-    child.on('close', (code, signal) => resolve({ code, signal, killed }));
+    child.on('error', () => { ended = true; resolve({ code: null, signal: null, killed, failed: true }); });
+    child.on('close', async (code, signal) => {
+      ended = true;
+      if (ending !== null) await ending;
+      resolve({ code, signal, killed });
+    });
   });
   child.stdin.on('error', () => {});
   child.stdin.end(call.input ?? '');
@@ -38,9 +69,14 @@ export function startRun(call, { cwd, platform = process.platform, killTree = ki
     done,
     read: () => { try { return fs.readFileSync(call.output, 'utf8'); } catch { return ''; } },
     kill() {
+      if (ended || child.pid === undefined) return;
       killed = true;
-      if (platform === 'win32' && child.pid !== undefined && killTree(child.pid)) return;
-      try { child.kill('SIGKILL'); } catch { /* already ended */ }
+      if (!grouped) {
+        if (killTree(child.pid)) return;
+        try { child.kill('SIGKILL'); } catch { /* already ended */ }
+        return;
+      }
+      ending ??= endGroup(child.pid, { graceMs });
     },
   };
 }

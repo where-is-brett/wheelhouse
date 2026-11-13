@@ -194,60 +194,66 @@ export async function runStage({ host, label, from = null, base = TRIALS, midTas
     writeMeta(dest, { point, at: clock(), torn });
   };
 
-  // A stage this attempt does not run still leaves the host knowing the project, its home and the order, from what state kept.
-  if ((start > 0 || doneBefore.has('stage')) && state.project !== undefined) await host.attach?.({ folder, project: state.project, order: ORDER });
   let ranReport = false;
   let stoppedAt = null;
   let why = null;
-  for (const step of STEPS.slice(start)) {
-    if (doneBefore.has(step.name)) continue;
-    const unmet = (step.needs ?? []).find((n) => failedOrSkipped(n));
-    if (unmet !== undefined) {
-      state.steps[step.name] = { outcome: 'skipped' };
-      finding(step.name, `Skipped: ${unmet} did not complete`);
-      log({ step: step.name, state: 'done', outcome: 'skipped' });
+  try {
+    // A stage this attempt does not run still leaves the host knowing the project, its home and the order, from what state kept.
+    if ((start > 0 || doneBefore.has('stage')) && state.project !== undefined) await host.attach?.({ folder, project: state.project, order: ORDER });
+    for (const step of STEPS.slice(start)) {
+      if (doneBefore.has(step.name)) continue;
+      const unmet = (step.needs ?? []).find((n) => failedOrSkipped(n));
+      if (unmet !== undefined) {
+        state.steps[step.name] = { outcome: 'skipped' };
+        finding(step.name, `Skipped: ${unmet} did not complete`);
+        log({ step: step.name, state: 'done', outcome: 'skipped' });
+        save();
+        continue;
+      }
+      // A resumed run builds its budget from what the state kept, not from the month's figure again.
+      log({ step: step.name, state: 'start' });
+      if (step.name === 'report') ranReport = true;
+      try {
+        if (budget === null && !['stage', 'month-check'].includes(step.name) && step.name !== 'report') {
+          budget = makeBudget({ limit: budgetLimit, monthUsed: state.monthUsed });
+          budget.restore(state.budgetSteps);
+        }
+        const result = await bodies[step.name]();
+        state.steps[step.name] = { outcome: 'ok', result };
+        log({ step: step.name, state: 'done', outcome: 'ok' });
+      } catch (error) {
+        if (error instanceof BudgetStop) {
+          state.steps[step.name] = { outcome: 'stopped' };
+          stoppedAt = step.name;
+          why = error.message;
+          log({ step: step.name, state: 'done', outcome: 'stopped', why });
+          state.budgetSteps = budget?.steps ?? state.budgetSteps;
+          save();
+          break;
+        }
+        state.steps[step.name] = { outcome: 'failed', what: error.message };
+        finding(step.name, error.message);
+        log({ step: step.name, state: 'done', outcome: 'failed' });
+        if (step.foundation) {
+          stoppedAt = step.name;
+          why = error.message;
+          save();
+          break;
+        }
+      }
+      state.budgetSteps = budget?.steps ?? state.budgetSteps;
+      state.used = budget?.used ?? state.used;
       save();
-      continue;
+      snap(step.name);
     }
-    // A resumed run builds its budget from what the state kept, not from the month's figure again.
-    log({ step: step.name, state: 'start' });
-    if (step.name === 'report') ranReport = true;
-    try {
-      if (budget === null && !['stage', 'month-check'].includes(step.name) && step.name !== 'report') {
-        budget = makeBudget({ limit: budgetLimit, monthUsed: state.monthUsed });
-        budget.restore(state.budgetSteps);
-      }
-      const result = await bodies[step.name]();
-      state.steps[step.name] = { outcome: 'ok', result };
-      log({ step: step.name, state: 'done', outcome: 'ok' });
-    } catch (error) {
-      if (error instanceof BudgetStop) {
-        state.steps[step.name] = { outcome: 'stopped' };
-        stoppedAt = step.name;
-        why = error.message;
-        log({ step: step.name, state: 'done', outcome: 'stopped', why });
-        state.budgetSteps = budget?.steps ?? state.budgetSteps;
-        save();
-        break;
-      }
-      state.steps[step.name] = { outcome: 'failed', what: error.message };
-      finding(step.name, error.message);
-      log({ step: step.name, state: 'done', outcome: 'failed' });
-      if (step.foundation) {
-        stoppedAt = step.name;
-        why = error.message;
-        save();
-        break;
-      }
-    }
-    state.budgetSteps = budget?.steps ?? state.budgetSteps;
-    state.used = budget?.used ?? state.used;
-    save();
-    snap(step.name);
-  }
 
-  // Whatever the run's end, a session still running is stopped, and the report is written from what was measured.
-  for (const handle of Object.values(handles)) handle.kill();
+  } finally {
+    // Whatever the run's end, a session still running is stopped (and has gone before this returns), then the helper.
+    const ending = Object.values(handles).map((handle) => { handle.kill(); return handle.done; });
+    await Promise.all(ending);
+    // A helper that won't close is a finding; the report and summary are still written.
+    try { await host.stop?.(); } catch (error) { state.findings.push({ step: 'stop', what: `The trial's helper did not stop: ${error.message}`, at: new Date().toISOString() }); save(); }
+  }
   if (stoppedAt !== null && !ranReport) {
     try { await bodies.report(); state.steps.report = { outcome: 'ok' }; } catch { /* the figures are in state.budgetSteps */ }
     save();
