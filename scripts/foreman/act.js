@@ -67,7 +67,9 @@
 //       A pins-only release the gate merged without the director's approval
 //       carries the helper's line for the briefing: it is recorded once, as a
 //       `merge` event's words for users (ruling F73).
-//   close <work>    records the report and closes the feature. Work that ended
+//   close <work>    records the report and closes the feature. Work that reports
+//       done with its own pull request still open waits: it is merged first.
+//       Work that ended
 //       partial or blocked is put to the director (ruling R102), and it ends
 //       by saying to read the wake again: a slot or a dependency may be free.
 //
@@ -1592,6 +1594,13 @@ async function close(ctx, work, rest) {
       refuse(merged
         ? `Pull request #${pr} for ${work} merged, but not through act merge: ask the director`
         : `${work}'s pr.json says pull request #${pr} merged, but the host says it hasn't: ask the director`);
+    }
+    // Work that reports done has its own pull request still to merge: closing now would end the work (a merge refuses
+    // closed work) and leave that pull request open for good, with whatever waits on the work waiting too. It is merged
+    // first (merge-ready wakes the foreman), then closed. Work that ended blocked or partial, or whose pull request the
+    // host says is closed, is abandoned, not waiting on a merge, so it closes as it did.
+    if (!merged && status === 'done' && state.result?.state === 'open') {
+      refuse(`${work}'s pull request #${pr} is still open: merge it with act merge, then close ${work}; if it can't be merged, ask the director`);
     }
     // Quick and bug work have no plan to match.
     const current = NO_PLAN.includes(laneOf(views, work)) || kept.plan === (typeof f.plan === 'string' ? f.plan : null);

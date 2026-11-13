@@ -2011,8 +2011,13 @@ test('close works out the outcome, and refuses a report that is missing or incom
   assert.equal(fake.writes.at(-2).data.outcome, 'blocked');
   assert.equal((await act(['close', 'partial'], { client: fake.client })).code, 0);
   assert.equal(fake.writes.at(-2).data.outcome, 'closed');
-  assert.equal((await act(['close', 'open'], { client: fake.client })).code, 0);
-  assert.equal(fake.writes.at(-2).data.outcome, 'closed', 'an open pull request is not merged');
+  // Work that reports done keeps its feature while its own pull request is open: it is merged first, then closed.
+  const held = fake.writes.length;
+  const open = await act(['close', 'open'], { client: fake.client });
+  refusedInOneLine(open);
+  assert.match(open.err, /pull request #7 is still open: merge it with act merge, then close/);
+  assert.match(open.err, /merge it with act merge.*if it can't be merged, ask the director/);
+  assert.equal(fake.writes.length, held, 'nothing is written while the pull request is open');
 
   // `merged` needs both pr.json's mark and the host's word.
   add('unmarked', { pr: 8, report: reportText('unmarked') });
