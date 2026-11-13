@@ -4,9 +4,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { STEPS, planRun, run, restore, waitFor, main, withoutChrome, runLabel, NEW_SESSION, FOLLOW_UP, CHECK_IN, waitingInRecord } from '../../../probes/haiku-trial/runner.js';
+import { STEPS, planRun, run, resume, restore, waitFor, main, withoutChrome, runLabel, NEW_SESSION, FOLLOW_UP, CHECK_IN, waitingInRecord } from '../../../probes/haiku-trial/runner.js';
 import { sessionName } from '../../../probes/haiku-trial/tmux.js';
 import { P5_SPARE } from '../../../probes/haiku-trial/requests.js';
+import { takeLocal, writeMeta, snapshotsDir } from '../../../probes/haiku-trial/snapshot.js';
+import { P6_FILE } from '../../../probes/haiku-trial/requests.js';
+import { ROWS, STEPS as LOG } from '../../../probes/haiku-trial/signals.js';
 
 const ENV = { WHEELHOUSE_HOME: process.env.WHEELHOUSE_HOME, HAIKU_TRIAL_GH_OWNER: 'trial-owner', HAIKU_TRIAL_CLAUDE: '/bin/claude', HAIKU_TRIAL_PREVIEW: 'none' };
 const T0 = Date.parse('2026-11-08T09:00:00Z');
@@ -19,7 +22,7 @@ function scratch(t) {
 
 // A fake io that records every call on one timeline and starts, finds and sleeps for nothing real.
 function fakeIo(over = {}) {
-  let now = T0;
+  let now = over.start ?? T0;
   const timeline = [];
   const rec = (kind, ...args) => timeline.push({ kind, args, at: now });
   // The sessions started and not killed are the ones tmux lists, by their full names; `over.sessions` overrides the list.
@@ -52,6 +55,7 @@ function fakeIo(over = {}) {
     ask: async (text) => { rec('ask', text); return over.answer ?? 'go'; },
     log: () => {},
     kill: (pid, signal) => rec('kill', pid, signal),
+    processInfo: over.processInfo ?? ((pid) => ({ command: `npm start`, cwd: `/unused/${over.processOwner ?? 'current'}/project` })),
     host: {
       stage: async () => ({ pluginDir: '/p', marketplaceDir: '/m' }),
       exec: async (argv) => { rec('exec', argv); return over.exec ? over.exec(argv) : { status: 0 }; },
@@ -87,16 +91,16 @@ test('full plan follows the waves', () => {
   const first = (wave) => Math.min(...STEPS.map((s, i) => (s.wave === wave ? i : Infinity)));
   for (let w = 1; w < 6; w += 1) assert.ok(last(w) < first(w + 1), `wave ${w} ends before wave ${w + 1}`);
   for (const id of all.filter((i) => i.startsWith('w2-'))) for (const later of all.filter((i) => i.startsWith('w3-'))) assert.ok(all.indexOf(id) < all.indexOf(later));
-  assert.ok(all.indexOf('f6-lift') < all.indexOf('f5a-undo-p6'));
+  assert.ok(all.indexOf('w4-type') < all.indexOf('sitting-1') && all.indexOf('sitting-1') < all.indexOf('f4-check'));
   assert.ok(all.indexOf('w2-merge-wait') < all.indexOf('w3-type'));
   assert.deepEqual(STEPS.filter((s) => s.needsGo).map((s) => s.id), ['create-repo', 'create-preview', 'install']);
-  assert.deepEqual(STEPS.filter((s) => s.director).map((s) => s.id).sort(), ['create-preview', 'f5a-undo-p6', 'f5b-undo-p2', 'f6-lift', 'ntfy', 'review-card']);
+  assert.deepEqual(planRun({ mode: 'full' }).filter((s) => s.director).map((s) => s.id).sort(), ['create-preview', 'ntfy', 'review-card', 'sitting-1']);
 });
 
 test('smoke plan is section 14', () => {
   const smoke = ids('smoke');
   for (const id of ['setup-s0', 'w2-type', 'f3-kill-p1', 's9-1', 's9-2', 's9-4', 'score']) assert.ok(smoke.includes(id), id);
-  for (const id of ['f1', 'f6-stop', 'f5a-undo-p6', 's9-5', 'w5-midnight', 'review-card']) assert.equal(smoke.includes(id), false, id);
+  for (const id of ['f1', 'sitting-1', 's9-5', 'w5-midnight', 'review-card']) assert.equal(smoke.includes(id), false, id);
 });
 
 test('steps that create things wait for go', async (t) => {
@@ -177,12 +181,256 @@ test('spare bug that cannot apply marks P5 not covered', async (t) => {
 
 test('f6 waits five minutes with no new start', async (t) => {
   const folder = scratch(t);
-  const io = fakeIo();
-  const got = await run({ mode: 'full', io, from: 'f6-stop', until: 'f6-lift', folder, date: '2026-11-08', env: ENV });
-  assert.deepEqual(got.done, ['f6-stop', 'f6-undo', 'f6-wait-5m', 'f6-lift']);
+  const io = sittingIo();
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['sitting-1']);
   const stop = io.timeline.find((e) => e.kind === 'f6.stop');
   const lift = io.timeline.find((e) => e.kind === 'f6.lift');
   assert.ok(lift.at - stop.at >= 300000, `${lift.at - stop.at} ms between stop and lift`);
+});
+
+// A fake io for a sitting: the director clicks the moment a card asks, unless `noLift` or `noUndo` says they do not.
+const SHA6 = 'abc1234def5678';
+const SHA2 = 'fed4321cba8765';
+function sittingIo(over = {}) {
+  const records = [];
+  const io = fakeIo({
+    ...over,
+    gh: (args) => (args[1].startsWith('repos/{owner}/{repo}/pulls') ? [
+      { number: 6, title: 'money-edge', head: { ref: 'feature/money-edge' }, merged_at: '2026-11-08T08:00:00Z', merge_commit_sha: SHA6 },
+      { number: 2, title: 'categories', head: { ref: 'feature/categor' }, merged_at: '2026-11-08T08:00:00Z', merge_commit_sha: SHA2 },
+    ] : null),
+    host: { events: async () => records, ...(over.host ?? {}) },
+  });
+  const at = () => new Date(io.clock.now()).toISOString();
+  // The helper window signs a click and names its proof; `over.unsigned` and `over.noProof` make the kinds of record that must not count.
+  const click = (data) => records.push({ id: `e${records.length}`, kind: 'action', at: at(), data: { ...data, ...(over.noProof ? {} : { proof: 'window' }) }, ...(over.unsigned ? {} : { sig: { value: 'v' } }) });
+  io.records = records;
+  io.faults.liftTyped = () => { io.timeline.push({ kind: 'f6.lift', args: [], at: io.clock.now() }); if (!over.noLift) click({ action: 'lift-stop' }); };
+  io.faults.undoTyped = (tmux, sha) => { io.timeline.push({ kind: 'undo', args: [sha], at: io.clock.now() }); if (!over.noUndo) click({ action: 'undo-merge', merge: sha }); };
+  return io;
+}
+const asks = (io) => io.timeline.filter((e) => e.kind === 'ask').map((e) => e.args[0]);
+
+test('the default plan has sitting-1 after w4-type and no f6 or f5 step ids', () => {
+  const all = ids('full');
+  assert.equal(all[all.indexOf('w4-type') + 1], 'sitting-1');
+  assert.deepEqual(all.filter((id) => /^(f6|f5)/.test(id)), []);
+  assert.deepEqual(ids('smoke').filter((id) => id.startsWith('sitting')), []);
+  const two = planRun({ mode: 'full', sittings: ['w3', 'w4'] }).map((s) => s.id);
+  assert.equal(two[two.indexOf('f1c') + 1], 'sitting-1');
+  assert.equal(two[two.indexOf('w4-type') + 1], 'sitting-2');
+  assert.equal(planRun({ mode: 'full' }).find((s) => s.id === 'sitting-1').director, true);
+});
+
+test('a sitting asks once and the trial never clicks', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo();
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['sitting-1'], got.why);
+  assert.deepEqual(asks(io), ['Sitting 1: 3 clicks in the helper window, about 10 minutes. Answer ready when you are at the screen.']);
+  assert.equal(io.timeline.some((e) => e.kind === 'tmux.keys'), false, 'no key reaches the screen');
+  assert.deepEqual(io.timeline.filter((e) => ['f6.stop', 'f6.lift', 'undo'].includes(e.kind)).map((e) => e.kind), ['f6.stop', 'undo', 'f6.lift', 'undo', 'undo']);
+  assert.deepEqual(io.timeline.filter((e) => e.kind === 'undo').map((e) => e.args[0]), [SHA6, SHA6, SHA2]);
+});
+
+test('F5a and F5b finish on the signed action without a done ask', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo();
+  await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.equal(asks(io).length, 1);
+  assert.equal(asks(io).some((a) => /done/i.test(a)), false);
+  const steps = readLog(folder).map((e) => e.step);
+  for (const step of ['f6-lift', LOG.fault('F6'), LOG.fault('F5a'), LOG.fault('F5b')]) assert.ok(steps.includes(step), step);
+  assert.equal(readLog(folder).some((e) => /did not come/.test(e.note ?? '')), false);
+});
+
+test('F5b is answered by the director keeping main as well as by an undo', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo();
+  const undo = io.faults.undoTyped;
+  io.faults.undoTyped = (tmux, sha) => {
+    if (sha !== SHA2) return undo(tmux, sha);
+    io.timeline.push({ kind: 'undo', args: [sha], at: io.clock.now() });
+    io.records.push({ id: 'keep', kind: 'action', at: new Date(io.clock.now()).toISOString(), data: { action: 'keep-main', from: 'a', to: 'b', proof: 'window' }, sig: { value: 'v' } });
+  };
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.findings, []);
+  assert.ok(readLog(folder).some((e) => e.step === LOG.fault('F5b')));
+});
+
+test('a click that does not come is a finding, never a stop, and its row is not covered', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo({ noUndo: true });
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.equal(got.stoppedAt, undefined);
+  assert.deepEqual(got.done, ['sitting-1']);
+  assert.deepEqual(got.findings.map((f) => f.step), ['sitting-1', 'sitting-1']);
+  assert.match(got.findings[0].what, /the director's click did not come in sitting 1: the undo of P6/);
+  const steps = readLog(folder).map((e) => e.step);
+  assert.equal(steps.includes(LOG.fault('F5a')), false);
+  assert.equal(steps.includes(LOG.fault('F5b')), false);
+  const row = ROWS.find((r) => r.id === 36).check({ prs: [], runLog: readLog(folder), findings: got.findings });
+  assert.equal(row.pass, null);
+  assert.match(row.evidence, /^not covered: sitting-1 failed \(the director's click did not come in sitting 1/);
+});
+
+test('a lift that does not come leads to one terminal ask, and the run waits for it', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo({ noLift: true });
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  const terminal = asks(io).filter((a) => /All stop is still on/.test(a));
+  assert.equal(terminal.length, 1, 'one terminal ask, however many times the lift is looked for');
+  assert.match(terminal[0], /lift it in the helper window when you can/);
+  const kinds = io.timeline.map((e) => e.kind);
+  const ask = kinds.findIndex((k, i) => k === 'ask' && /All stop is still on/.test(io.timeline[i].args[0]));
+  const firstUndoAfterLift = kinds.indexOf('undo', kinds.indexOf('f6.lift') + 1);
+  assert.ok(ask > kinds.indexOf('f6.lift') && ask < firstUndoAfterLift, 'the ask comes after the lift is typed and before the next undo');
+  assert.ok(got.findings.some((f) => /lifting All stop/.test(f.what)));
+  assert.equal(readLog(folder).some((e) => e.step === 'f6-lift'), false, 'no lift is logged that did not happen');
+  assert.equal(got.stoppedAt, undefined);
+});
+
+test('a lift or an undo that is not signed, or has no window proof, is not the director\'s click', async (t) => {
+  for (const over of [{ unsigned: true }, { noProof: true }]) {
+    const folder = scratch(t);
+    const io = sittingIo(over);
+    const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+    assert.ok(got.findings.some((f) => /lifting All stop/.test(f.what)), JSON.stringify(over));
+    assert.ok(got.findings.some((f) => /the undo of P6/.test(f.what)), JSON.stringify(over));
+    const steps = readLog(folder).map((e) => e.step);
+    for (const step of ['f6-lift', LOG.fault('F5a'), LOG.fault('F5b')]) assert.equal(steps.includes(step), false, `${step} ${JSON.stringify(over)}`);
+  }
+});
+
+test('keeping main counts only when it is signed', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo();
+  const undo = io.faults.undoTyped;
+  io.faults.undoTyped = (tmux, sha) => {
+    if (sha !== SHA2) return undo(tmux, sha);
+    io.timeline.push({ kind: 'undo', args: [sha], at: io.clock.now() });
+    io.records.push({ id: 'keep', kind: 'action', at: new Date(io.clock.now()).toISOString(), data: { action: 'keep-main', from: 'a', to: 'b' } });
+  };
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.ok(got.findings.some((f) => /the director's click did not come in sitting 1/.test(f.what)));
+  assert.equal(readLog(folder).some((e) => e.step === LOG.fault('F5b')), false);
+});
+
+test('All stop already set by a failed f6 step is lifted first', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo();
+  const undo = io.faults.undoTyped;
+  let first = true;
+  // The refused undo fails once the stop is typed: the F6 click stops half way with All stop set.
+  io.faults.undoTyped = (tmux, sha) => { if (first) { first = false; io.timeline.push({ kind: 'undo', args: [sha], at: io.clock.now() }); throw new Error('boom'); } return undo(tmux, sha); };
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.match(got.findings[0].what, /^F6: boom/);
+  const kinds = io.timeline.map((e) => e.kind);
+  assert.ok(kinds.indexOf('f6.lift') > kinds.indexOf('f6.stop'));
+  assert.ok(kinds.indexOf('f6.lift') < kinds.indexOf('undo', kinds.indexOf('undo') + 1), 'the lift is typed before the next undo');
+  assert.ok(readLog(folder).some((e) => e.step === 'f6-lift'));
+  // A stop the state says is on, with no lift in the record, is lifted before any click is waited for.
+  const again = sittingIo();
+  const f2 = scratch(t);
+  fs.writeFileSync(path.join(f2, 'state.json'), JSON.stringify({ stopAt: T0 }));
+  await run({ mode: 'full', io: again, from: 'sitting-1', until: 'sitting-1', folder: f2, date: '2026-11-08', env: ENV });
+  assert.equal(again.timeline.filter((e) => ['f6.stop', 'f6.lift'].includes(e.kind))[0].kind, 'f6.lift');
+});
+
+test('an F5a target touched later is a finding before the undo is typed', async (t) => {
+  const folder = scratch(t);
+  const calls = [];
+  const io = sittingIo({ host: { git: async (args) => { calls.push(args); return args[0] === 'log' ? `commit 9f8e7d6 Later edit\n${P6_FILE}\nsrc/other.js\n` : ''; } } });
+  const undo = io.faults.undoTyped;
+  const seen = [];
+  io.faults.undoTyped = (tmux, sha) => { seen.push([sha, readLog(folder).some((e) => /F5a will clash: 9f8e7d6 touched/.test(e.note ?? ''))]); return undo(tmux, sha); };
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.ok(got.findings.some((f) => f.what === `F5a will clash: 9f8e7d6 touched ${P6_FILE}`));
+  assert.deepEqual(seen.map(([, found]) => found), [false, true, true], 'the refused F6 undo comes first; the F5a undo follows the finding');
+  assert.ok(calls.some((a) => a[0] === 'log' && a[1] === `${SHA6}..origin/main` && a.includes('--name-only')));
+  assert.deepEqual(got.done, ['sitting-1'], 'the sitting still goes on');
+});
+
+// Local 09:00 on 8 November 2026, so a window is easy to place whatever the time zone.
+const NINE = new Date(2026, 10, 8, 9, 0).getTime();
+const hhmm = (ms) => `${String(new Date(ms).getHours()).padStart(2, '0')}:${String(new Date(ms).getMinutes()).padStart(2, '0')}`;
+const windowAt = (from, to) => ({ start: from, end: to });
+
+test('a sitting before its window keeps ticking and starts when the window opens', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo({ start: NINE });
+  let looks = 0;
+  const events = io.host.events;
+  io.host.events = async (x) => { looks += 1; return events(x); };
+  const opens = new Date(NINE + 90 * 60000);
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV, windows: [windowAt(opens.getHours() * 60 + opens.getMinutes(), opens.getHours() * 60 + opens.getMinutes() + 60)] });
+  assert.deepEqual(got.done, ['sitting-1'], got.why);
+  assert.equal(asks(io).length, 0, 'with a window the sitting does not ask');
+  assert.ok(looks >= 80, `${looks} looks while it waited for the window`);
+  const stop = io.timeline.find((e) => e.kind === 'f6.stop');
+  assert.ok(stop.at >= opens.getTime(), `All stop typed at ${hhmm(stop.at)}, before the window opened at ${hhmm(opens.getTime())}`);
+  assert.ok(stop.at < opens.getTime() + 5 * 60000);
+});
+
+test('a sitting after every window is skipped with a finding, and rows 36–40 say so', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo({ start: NINE });
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV, windows: [windowAt(7 * 60, 8 * 60)] });
+  assert.deepEqual(got.done, ['sitting-1']);
+  assert.equal(io.timeline.some((e) => ['tmux.type', 'ask', 'f6.stop'].includes(e.kind)), false);
+  assert.match(got.findings[0].what, /^skipped: every window had gone when sitting 1 came/);
+  for (const id of [36, 37, 38, 39, 40]) {
+    const row = ROWS.find((r) => r.id === id).check({ prs: [], runLog: readLog(folder), findings: got.findings, events: [], panes: {} });
+    assert.equal(row.pass, null, `row ${id}`);
+    assert.match(row.evidence, /^not covered: sitting-1 failed \(skipped: every window had gone/, `row ${id}`);
+  }
+});
+
+test('director.md is written at the start with each sitting, and its first line is logged', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo();
+  const lines = [];
+  io.log = (line) => lines.push(line);
+  await run({ mode: 'full', io, from: 'w4-type', until: 'w4-type', folder, date: '2026-11-08', env: ENV });
+  const text = fs.readFileSync(path.join(folder, 'director.md'), 'utf8');
+  assert.match(text, /Sitting 1.*between \d\d:\d\d and \d\d:\d\d.*3 clicks.*about 10 minutes/);
+  assert.ok(lines.some((l) => /^director\.md: - Sitting 1/.test(l)), lines.join(' | '));
+  const done = await run({ mode: 'full', io: sittingIo(), from: 'sitting-1', until: 'sitting-1', folder: scratch(t), date: '2026-11-08', env: ENV });
+  assert.deepEqual(done.done, ['sitting-1']);
+});
+
+test('director.md is written again at the end of a wave and says when none is left', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo();
+  const lines = [];
+  io.log = (line) => lines.push(line);
+  await run({ mode: 'full', io, from: 'sitting-1', until: 'w5-incident', folder, date: '2026-11-08', env: ENV });
+  assert.match(fs.readFileSync(path.join(folder, 'director.md'), 'utf8'), /No sitting is still to come/);
+});
+
+test('--sitting and --window set the plan and a bad one is refused', async (t) => {
+  const printed = [];
+  const io = fakeIo();
+  const code = await main(['plan', '--sitting', 'w3', '--sitting', 'w4'], { print: (l) => printed.push(l), buildIo: async () => io, env: ENV });
+  assert.equal(code, 0);
+  const full = printed.find((l) => l.startsWith('full:'));
+  assert.match(full, /f1c sitting-1\+# .*w4-type sitting-2\+#/);
+  for (const bad of [['--sitting', 'w9'], ['--window', '9-10']]) {
+    const lines = [];
+    assert.equal(await main(['plan', ...bad], { print: (l) => lines.push(l), buildIo: async () => io, env: ENV }), 2);
+    assert.ok(lines.length > 0);
+  }
+});
+
+test('a snapshot is taken before each sitting', async (t) => {
+  const folder = scratch(t);
+  const taken = [];
+  const io = sittingIo();
+  io.snapshot = { take: async ({ point }) => { taken.push(point); return { name: point }; } };
+  await run({ mode: 'full', io, from: 'w4-type', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.ok(taken.includes('before-sitting-1'), taken.join(','));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).sittings[0], 'w4');
 });
 
 test('waitFor uses the injected clock and gives up at the timeout', async () => {
@@ -198,7 +446,7 @@ test('restore stops only what the run recorded', async (t) => {
     { step: 'front-desk', note: 'x', detail: { tmux: 'haiku-trial-desk' } },
     { step: 'tunnel', note: 'x', detail: { productPid: 4242 } },
   ].map((e) => JSON.stringify(e)).join('\n') + '\n');
-  const io = fakeIo({ sessions: ['haiku-trial-desk', 'other-session'] });
+  const io = fakeIo({ sessions: ['haiku-trial-desk', 'other-session'], processInfo: () => ({ command: 'npm start', cwd: path.join(folder, 'project') }) });
   const before = fs.readdirSync(folder).sort();
   const got = await restore({ folder, io });
   assert.deepEqual(io.timeline.filter((e) => e.kind === 'tmux.kill').map((e) => e.args[0]), ['haiku-trial-desk']);
@@ -215,14 +463,15 @@ test('the smoke plan waits for P4 to merge and the full plan has no smoke-only s
   assert.ok(ids('full').indexOf('w2-merge-wait') < ids('full').indexOf('w2-audit'));
 });
 
-test('an audit step stops the run on a session that ran on another model, and passes otherwise', async (t) => {
+test('an audit step records a session that ran on another model, and passes otherwise', async (t) => {
   const bad = fakeIo({ host: { findTranscripts: () => [{ file: '/none.jsonl', role: 'feature', session: 's' }] } });
   const dir = scratch(t);
   fs.writeFileSync(path.join(dir, 'x.jsonl'), `${JSON.stringify({ type: 'assistant', message: { model: 'other-model', content: [] } })}\n`);
   bad.host.findTranscripts = () => [{ file: path.join(dir, 'x.jsonl'), role: 'feature', session: 's' }];
   const got = await run({ mode: 'full', io: bad, from: 'w3-audit', until: 'w3-audit', folder: scratch(t), date: '2026-11-08', env: ENV });
-  assert.equal(got.stoppedAt, 'w3-audit');
-  assert.match(got.why, /feature \(other-model\)/);
+  assert.deepEqual(got.done, ['w3-audit']);
+  assert.match(got.findings[0].what, /feature \(other-model\)/);
+  assert.equal(got.findings[0].claimLost, 'model audit');
   const clean = await run({ mode: 'full', io: fakeIo(), from: 'w3-audit', until: 'w3-audit', folder: scratch(t), date: '2026-11-08', env: ENV });
   assert.deepEqual(clean.done, ['w3-audit']);
 });
@@ -432,7 +681,7 @@ test('decision 3 is raised in P4\'s saved environment and its number comes from 
   assert.equal(raised[0].cwd, worktree);
   assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).decisionN, 3);
   const lost = await run({ mode: 'full', io: fakeIo(), from: 'raise-decision-3', until: 'raise-decision-3', folder: scratch(t), date: '2026-11-08', env: ENV });
-  assert.equal(lost.stoppedAt, 'raise-decision-3');
+  assert.deepEqual(lost.failed, ['raise-decision-3']);
 });
 
 test('the review card goes through the front desk as a decision and takes the letter from the typed answer', async (t) => {
@@ -476,6 +725,28 @@ test('plan prints steps and calls nothing', async () => {
   assert.match(lines.join('\n'), /smoke: .*setup-s0/);
 });
 
+test('plan prints snapshot points and sittings', async () => {
+  const plan = async (...args) => {
+    const lines = [];
+    assert.equal(await main(['plan', ...args], { print: (l) => lines.push(l), buildIo: async () => assert.fail('built'), env: ENV }), 0);
+    return lines;
+  };
+  const lines = await plan();
+  const at = (prefix) => lines.findIndex((l) => l.startsWith(prefix));
+  assert.ok(at('full:') < at('snapshots: after-ntfy') && at('snapshots: after-ntfy') < at('sittings: sitting-1') && at('sittings: sitting-1') < at('smoke:'), lines.join('\n'));
+  const snapshots = lines.filter((l) => l.startsWith('snapshots: '));
+  assert.equal(snapshots[0], 'snapshots: after-ntfy after-w2-audit before-f1 after-w3-audit before-f4-check before-s9-1 after-w4-audit before-sitting-1');
+  assert.equal(snapshots[1], 'snapshots: after-front-desk after-w2-audit before-s9-1 after-w4-audit');
+  assert.deepEqual(lines.filter((l) => l.startsWith('sittings: ')), ['sittings: sitting-1 after w4-type (F6, F5a, F5b)', 'sittings: none']);
+  assert.match(lines.find((l) => l.startsWith('full:')), / f1# /, 'a step with a snapshot point before it is marked');
+  assert.match(lines.find((l) => l.startsWith('full:')), / w2-audit# /, 'and one with a point after it');
+  assert.match(lines.find((l) => l.startsWith('full:')), / sitting-1\+# /);
+  assert.match(lines.join('\n'), /# snapshot point/);
+  const two = await plan('--sitting', 'w3', '--sitting', 'w4');
+  assert.ok(two.includes('sittings: sitting-1 after f1c (F6, F5a), sitting-2 after w4-type (F5b)'));
+  assert.match(two.find((l) => l.startsWith('snapshots: ')), /before-sitting-1 before-sitting-2$/);
+});
+
 test('a gh failure on repo create stops the run and logs no success', async (t) => {
   const folder = scratch(t);
   const io = fakeIo({ gh: (args) => { if (args[0] === 'repo') throw new Error('name taken'); return null; } });
@@ -485,12 +756,15 @@ test('a gh failure on repo create stops the run and logs no success', async (t) 
   assert.equal(readLog(folder).some((e) => /^created /.test(e.note ?? '')), false);
 });
 
-test('a failed pr merge stops the run and P5 is not switched to the spare bug', async (t) => {
+test('a failed pr merge makes P5 not covered and the run goes on, and P5 is not switched to the spare bug', async (t) => {
   const folder = scratch(t);
   const io = fakeIo({ amount: -40, gh: (args) => (args[0] === 'pr' && args[1] === 'merge' ? { ok: false, why: 'checks failing' } : threeMerged(args)) });
   const got = await run({ mode: 'full', io, from: 'w2-merge-wait', until: 'w3-type', folder, date: '2026-11-08', env: ENV });
-  assert.equal(got.stoppedAt, 'w2-merge-wait');
-  assert.match(got.why, /checks failing/);
+  assert.deepEqual(got.failed, []);
+  assert.match(got.findings[0].what, /checks failing/);
+  const state = JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8'));
+  assert.equal(state.p5, 'not-covered');
+  assert.match(state.p5Why, /checks failing/);
   assert.equal(io.timeline.some((e) => e.kind === 'tmux.type' && e.args[1].includes(P5_SPARE)), false);
   assert.notEqual(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).p5, 'spare');
 });
@@ -828,7 +1102,8 @@ test('a wave 2 merge shortfall is a note, the step is done, and later waits ask 
   const later = await run({ mode: 'full', io: fakeIo({ gh: merged(5) }), from: 'w3-merge-wait', until: 'w3-merge-wait', folder, date: '2026-11-08', env: ENV });
   assert.deepEqual(later.done, ['w3-merge-wait'], 'seven less the two that did not merge in wave 2');
   const fresh = await run({ mode: 'full', io: fakeIo({ gh: merged(5) }), from: 'w3-merge-wait', until: 'w3-merge-wait', folder: scratch(t), date: '2026-11-08', env: ENV });
-  assert.equal(fresh.stoppedAt, 'w3-merge-wait', 'without the shortfall five is not enough');
+  assert.equal(fresh.stoppedAt, undefined);
+  assert.equal(fresh.findings.length, 1, 'without the shortfall five is not enough, and that is a finding, not a stop');
 });
 
 // A desk that is working until `until` (by the fake clock), then idle.
@@ -836,7 +1111,7 @@ const BUSY_PANE = 'Looking into it\n✻ Pondering… (12s · ↓ 340 tokens · e
 const busyUntil = (io, until) => () => (io.clock.now() < until ? BUSY_PANE : 'All done.\n\n> \n? for shortcuts');
 
 test('typing waits for a working desk: a request, the faults, a pull-back and the digest each go in only once it is idle', async (t) => {
-  for (const [from, until, text] of [['w2-type', 'w2-type', /./], ['f6-stop', 'f6-undo', /^(all stop|undo )/], ['digest', 'digest', /Send me the daily digest/]]) {
+  for (const [from, until, text] of [['w2-type', 'w2-type', /./], ['sitting-1', 'sitting-1', /^(all stop|undo )/], ['digest', 'digest', /Send me the daily digest/]]) {
     const folder = scratch(t);
     const io = fakeIo();
     const free = T0 + 5 * 60 * 1000;
@@ -959,7 +1234,7 @@ test('the setup session and the front desk start on the run\'s model', async (t)
 test('--model is read from the command line and anything but haiku or sonnet is refused with the usage', async (t) => {
   const folder = scratch(t);
   const printed = [];
-  const code = await main(['smoke', '--model', 'opus', '--out', folder], { print: (l) => printed.push(l), buildIo: async () => fakeIo(), env: ENV });
+  const code = await main(['smoke', '--model', 'other', '--out', folder], { print: (l) => printed.push(l), buildIo: async () => fakeIo(), env: ENV });
   assert.equal(code, 2);
   assert.ok(printed.some((l) => /--model must be haiku or sonnet/.test(l)));
   assert.ok(printed.some((l) => /--model <haiku\|sonnet>/.test(l)));
@@ -1034,4 +1309,507 @@ test('setup ends from the setup journal when the pane never shows the engine\'s 
   assert.deepEqual(got.done, ['setup-s0'], got.why);
   assert.ok(readLog(folder).some((e) => e.step === 'health' && e.note === 'pass'));
   assert.ok(readLog(folder).some((e) => /setup journal/.test(e.note ?? '')), 'the log says the journal ended the wait');
+});
+
+test('a failing step that is not a foundation step is a finding and the run goes on', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo();
+  const type = io.tmux.type;
+  io.tmux.type = (name, text) => { if (text === '1 B') throw new Error('boom'); return type(name, text); };
+  const got = await run({ mode: 'full', io, from: 's9-4', until: 's9-5', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.failed, ['s9-4']);
+  assert.ok(got.done.includes('s9-5'));
+  assert.equal(got.stoppedAt, undefined);
+  assert.match(got.findings[0].what, /boom/);
+  assert.equal(readLog(folder).find((e) => e.step === 's9-4' && e.outcome).outcome, 'failed');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).findings.length, 1);
+});
+
+test('a foundation step that fails still stops the run', async (t) => {
+  const io = fakeIo({ exec: () => ({ status: 1 }) });
+  const got = await run({ mode: 'full', io, from: 'install', until: 'seed', folder: scratch(t), date: '2026-11-08', env: ENV });
+  assert.equal(got.stoppedAt, 'install');
+  assert.deepEqual(got.done, []);
+});
+
+test('a step whose need failed is skipped with the reason', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo();
+  io.faults.f1WrongShape = () => { throw new Error('boom'); };
+  const got = await run({ mode: 'full', io, from: 'f1', until: 'f1c', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.failed, ['f1']);
+  assert.deepEqual(got.skipped, ['f1b', 'f1c']);
+  assert.equal(got.stoppedAt, undefined);
+  const entry = readLog(folder).find((e) => e.step === 'f1b' && e.outcome === 'skipped');
+  assert.equal(entry.note, 'skipped: needs f1, which failed');
+  assert.equal(entry.done, true);
+  assert.ok(got.findings.some((f) => f.step === 'f1b'));
+});
+
+test('--from auto moves past a failed step; --from <step> runs it again', async (t) => {
+  const folder = scratch(t);
+  withLog(folder, ['w3-type']);
+  fs.appendFileSync(path.join(folder, 'run-log.jsonl'), `${JSON.stringify({ at: '2026-11-08T09:00:00.000Z', step: 'f1', note: 'failed: boom', done: true, outcome: 'failed' })}\n`);
+  const auto = await run({ mode: 'full', io: fakeIo(), from: 'auto', until: 'f1b', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(auto.done, ['f1b']);
+  const again = await run({ mode: 'full', io: fakeIo(), from: 'f1', until: 'f1', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(again.done, ['f1']);
+});
+
+test('the owner check still stops before anything is created, even in a step that is not foundation', async (t) => {
+  const io = fakeIo();
+  const got = await run({ mode: 'full', io, from: 'create-preview', until: 'create-preview', folder: scratch(t), date: '2026-11-08', env: { WHEELHOUSE_HOME: ENV.WHEELHOUSE_HOME } });
+  assert.equal(got.stoppedAt, 'create-preview');
+  assert.match(got.why, /HAIKU_TRIAL_GH_OWNER/);
+  assert.equal(io.timeline.some((e) => e.kind === 'ask'), false);
+});
+
+test('main exits 1 when the run has findings', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo();
+  const type = io.tmux.type;
+  io.tmux.type = (name, text) => { if (text === '1 B') throw new Error('boom'); return type(name, text); };
+  io.results.runFolder = () => folder;
+  const code = await main(['full', '--from', 's9-4', '--until', 's9-4', '--date', '2026-11-08'], { print: () => {}, buildIo: async () => io, env: { ...ENV, HAIKU_TRIAL_WHEELHOUSE_HOME: ENV.WHEELHOUSE_HOME } });
+  assert.equal(code, 1);
+});
+
+const MINUTE_MS = 60 * 1000;
+const mergedN = (n) => (args) => (args[1].startsWith('repos/{owner}/{repo}/pulls') ? Array.from({ length: n }, (_, i) => ({ number: i + 1, merged_at: '2026-11-08T10:00:00Z', head: { ref: `feature/w${i}` } })) : null);
+const noSession = () => { throw new Error('No running feature session names p3'); };
+
+test('a short wave 3 is a shortfall and wave 4 asks for that many fewer', async (t) => {
+  const folder = scratch(t);
+  const got = await run({ mode: 'full', io: fakeIo({ gh: mergedN(5) }), from: 'w3-merge-wait', until: 'w3-merge-wait', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['w3-merge-wait']);
+  assert.equal(got.stoppedAt, undefined);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).shortfall, 2);
+  const w4 = await run({ mode: 'full', io: fakeIo({ gh: mergedN(7) }), from: 'w4-merge-wait', until: 'w4-merge-wait', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(w4.done, ['w4-merge-wait'], 'nine less the two missing');
+  assert.equal(w4.findings.length, 1, 'only wave 3 fell short');
+});
+
+test('f1 with no feature session records notExercised and f1b does not wait another 40 minutes', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo();
+  io.faults.featureEnvOf = noSession;
+  const got = await run({ mode: 'full', io, from: 'f1', until: 'f1c', folder, date: '2026-11-08', env: ENV });
+  const state = JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8'));
+  assert.match(state.faults.F1.notExercised, /no running feature session names P3/);
+  assert.ok(got.done.includes('f1') && got.done.includes('f1b') && got.done.includes('f1c'));
+  assert.ok(state.faults.F1b.notExercised && state.faults.F1c.notExercised);
+  assert.ok(io.clock.now() - T0 < 45 * MINUTE_MS, `${(io.clock.now() - T0) / MINUTE_MS} minutes in all`);
+  assert.ok(readLog(folder).some((e) => e.step === 'fault-F1' || /not exercised: no running feature session names P3/.test(e.note)));
+});
+
+test('a front desk that ends is started again once in a wave, and a second loss stops', async (t) => {
+  const folder = scratch(t);
+  let gone = false;
+  const io = fakeIo();
+  const list = io.tmux.list;
+  io.tmux.list = () => (gone ? list().filter((n) => !n.endsWith('-desk')) : list());
+  const start = io.tmux.start;
+  io.tmux.start = (x) => { gone = false; start(x); };
+  const type = io.tmux.type;
+  io.tmux.type = (name, text) => { type(name, text); gone = true; };
+  const got = await run({ mode: 'full', io, from: 'front-desk', until: 'w3-type', folder, date: '2026-11-08', env: ENV });
+  assert.equal(got.stoppedAt, 'ntfy', 'the first loss in wave 1 is mended, the second stops');
+  assert.match(got.why, /ended by itself/);
+  assert.equal(io.timeline.filter((e) => e.kind === 'tmux.start').length, 2, 'the desk once, then once again');
+  assert.ok(got.findings.some((f) => /started again/.test(f.what)));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).deskRestarts[1], 1);
+});
+
+test('a picker that never highlights is recorded once and the run goes on', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo({ capture: () => picker('A question', ['Not now', 'Go ahead (Recommended)'], 0) });
+  const got = await run({ mode: 'full', io, from: 'w2-type', until: 'w2-type', folder, date: '2026-11-08', env: ENV });
+  assert.equal(got.stoppedAt, undefined);
+  const state = JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8'));
+  assert.equal(state.pickersMissed.length, 1);
+});
+
+test('a model offence is a finding with claimLost and the run goes on', async (t) => {
+  const dir = scratch(t);
+  fs.writeFileSync(path.join(dir, 'x.jsonl'), `${JSON.stringify({ type: 'assistant', message: { model: 'other-model', content: [] } })}\n`);
+  const io = fakeIo({ host: { findTranscripts: () => [{ file: path.join(dir, 'x.jsonl'), role: 'feature', session: 's' }] } });
+  const got = await run({ mode: 'full', io, from: 'w3-audit', until: 'w3-audit', folder: scratch(t), date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['w3-audit']);
+  assert.equal(got.findings[0].claimLost, 'model audit');
+});
+
+test('decision 3 not raised is a finding and review-card shows the card without the typed answer', async (t) => {
+  const folder = scratch(t);
+  const worktree = scratch(t);
+  fs.writeFileSync(path.join(folder, 'state.json'), JSON.stringify({ p4env: { env: {}, cwd: worktree } }));
+  const io = fakeIo({ answer: 'A', host: { nextDecisionNumber: async () => 3 } });
+  io.faults.thirdDecision = () => ({ code: 1, stdout: 'nope' });
+  const got = await run({ mode: 'full', io, from: 'raise-decision-3', until: 'review-card', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.failed, ['raise-decision-3']);
+  assert.deepEqual(got.done, ['review-card']);
+  assert.ok(readLog(folder).some((e) => /typed answer not covered/.test(e.note)));
+  assert.doesNotMatch(fs.readFileSync(path.join(folder, 'steps.md'), 'utf8'), /type your answer to decision/);
+});
+
+// --- snapshots ---
+
+// A fake `io.snapshot` that records each point it is asked for, and the events the record shows at each look.
+function withSnapshots(io, taken, { fail } = {}) {
+  io.snapshot = {
+    take: async (x) => {
+      if (fail) throw new Error('disk full');
+      taken.push(x);
+      return { name: `${String(taken.length).padStart(2, '0')}-${x.point}`, torn: [] };
+    },
+  };
+  return io;
+}
+
+test('a full run takes after-ntfy, after-w2-audit, before-f1 and the rest in order', async (t) => {
+  const folder = scratch(t);
+  const taken = [];
+  const io = withSnapshots(fakeIo(), taken);
+  withLog(folder, []);
+  // Steps are stubbed to nothing, so only the points show.
+  const steps = ['ntfy', 'w2-audit', 'f1', 'w3-audit', 'f4-check', 's9-1', 'w4-audit'];
+  const originals = STEPS.filter((s) => steps.includes(s.id)).map((s) => [s, s.run]);
+  for (const [s] of originals) s.run = async () => {};
+  t.after(() => { for (const [s, r] of originals) s.run = r; });
+  const got = await run({ mode: 'full', io, from: 'ntfy', until: 'w4-audit', folder, date: '2026-11-08', env: ENV });
+  assert.ok(got.done.includes('w4-audit'));
+  const order = taken.map((x) => x.point);
+  assert.deepEqual(order.filter((p) => ['after-ntfy', 'after-w2-audit', 'before-f1', 'after-w3-audit', 'before-f4-check', 'before-s9-1', 'after-w4-audit'].includes(p)), ['after-ntfy', 'after-w2-audit', 'before-f1', 'after-w3-audit', 'before-f4-check', 'before-s9-1', 'after-w4-audit']);
+  assert.equal(taken[0].meta.label, '2026-11-08');
+  assert.equal(taken[0].meta.quiet, true);
+  assert.equal(taken[0].folder, folder);
+  assert.ok(readLog(folder).some((e) => e.note?.startsWith('snapshot 01-after-ntfy')));
+});
+
+test('after- points wait for quiet up to ten minutes and record quiet false', async (t) => {
+  const folder = scratch(t);
+  const taken = [];
+  const io = withSnapshots(fakeIo({ host: { events: async () => [{ id: 'e1', kind: 'run', at: '2026-11-08T09:00:00Z', data: { runId: 'r1', state: 'started', work: 'p3', lane: 'feature' } }] } }), taken);
+  const step = STEPS.find((s) => s.id === 'w2-audit');
+  const original = step.run;
+  step.run = async () => {};
+  t.after(() => { step.run = original; });
+  const before = io.clock.now();
+  await run({ mode: 'full', io, from: 'w2-audit', until: 'w2-audit', folder, date: '2026-11-08', env: ENV });
+  assert.equal(taken.length, 1);
+  assert.equal(taken[0].meta.quiet, false);
+  assert.deepEqual(taken[0].meta.running, ['p3']);
+  const waited = io.clock.now() - before;
+  assert.ok(waited >= 10 * 60 * 1000 && waited < 12 * 60 * 1000, `waited ${waited}`);
+});
+
+test('a before- point is taken at once even when sessions are running', async (t) => {
+  const folder = scratch(t);
+  const taken = [];
+  const io = withSnapshots(fakeIo({ host: { events: async () => [{ id: 'e1', kind: 'run', at: '2026-11-08T09:00:00Z', data: { runId: 'r1', state: 'started', work: 'p3', lane: 'feature' } }] } }), taken);
+  const step = STEPS.find((s) => s.id === 'f1');
+  const original = step.run;
+  step.run = async () => {};
+  t.after(() => { step.run = original; });
+  const before = io.clock.now();
+  await run({ mode: 'full', io, from: 'f1', until: 'f1', folder, date: '2026-11-08', env: ENV });
+  assert.equal(taken[0].point, 'before-f1');
+  assert.equal(taken[0].meta.quiet, false);
+  assert.ok(io.clock.now() - before < 60 * 1000);
+});
+
+test('a snapshot that fails is a finding and the run goes on', async (t) => {
+  const folder = scratch(t);
+  const io = withSnapshots(fakeIo(), [], { fail: true });
+  const step = STEPS.find((s) => s.id === 'w2-audit');
+  const original = step.run;
+  step.run = async () => {};
+  t.after(() => { step.run = original; });
+  const got = await run({ mode: 'full', io, from: 'w2-audit', until: 'w3-type', folder, date: '2026-11-08', env: ENV });
+  assert.equal(got.stoppedAt, undefined);
+  assert.ok(got.done.includes('w2-audit'));
+  assert.match(got.findings.find((f) => f.step === 'snapshot-after-w2-audit').what, /disk full/);
+});
+
+test('after a resume, the wave-4 merge wait counts merges from before the snapshot', async (t) => {
+  const folder = scratch(t);
+  const R = 'repos/{owner}/{repo}';
+  const pull = (number) => ({ number, state: 'closed', merged_at: '2026-11-08T10:00:00Z', head: { ref: `feature-p${number}` }, title: `Piece ${number}` });
+  fs.writeFileSync(path.join(folder, 'state.json'), JSON.stringify({ resumedFrom: { snapshot: '02-after-w2-audit', attempt: 2, maxNumber: 3, reopened: [], since: '2026-11-08T09:00:00.000Z' } }));
+  const capture = { [`${R}/pulls?state=all&per_page=100`]: [pull(3), pull(2), pull(1)] };
+  const live = (args) => (args[1] === `${R}/pulls?state=all&per_page=100` ? [pull(4)] : null);
+  const io = fakeIo({ gh: live });
+  io.snapshot = { readCapture: async ({ label, snapshot }) => { assert.equal(label, '2026-11-08'); assert.equal(snapshot, '02-after-w2-audit'); return capture; } };
+  const got = await run({ mode: 'smoke', io, from: 'w4-smoke-merge', until: 'w4-smoke-merge', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['w4-smoke-merge']);
+  assert.equal(got.findings.length, 0);
+  assert.ok(io.clock.now() - T0 < 5 * 60 * 1000, 'the four merges were found at once');
+  // Without the capture the same live repository holds one merge, and the wait runs out.
+  const plain = fakeIo({ gh: live });
+  fs.writeFileSync(path.join(folder, 'state.json'), '{}');
+  await run({ mode: 'smoke', io: plain, from: 'w4-smoke-merge', until: 'w4-smoke-merge', folder, date: '2026-11-08', env: ENV });
+  assert.ok(plain.clock.now() - T0 >= 90 * 60 * 1000);
+});
+
+test("after a resume, the score's own-tests reads see merges and CI runs from before the snapshot", async (t) => {
+  const folder = scratch(t);
+  const R = 'repos/{owner}/{repo}';
+  const pull = (number) => ({ number, state: 'closed', merged_at: '2026-11-08T10:00:00Z', base: { ref: 'main' }, merge_commit_sha: `m${number}`, head: { ref: `feature-p${number}` }, title: `Piece ${number}` });
+  fs.writeFileSync(path.join(folder, 'state.json'), JSON.stringify({ seedSha: 'seed', resumedFrom: { snapshot: '02-after-w2-audit', attempt: 2, maxNumber: 3, reopened: [], since: '2026-11-08T09:00:00.000Z' } }));
+  const capture = { [`${R}/pulls?state=all&per_page=100`]: [pull(3), pull(2), pull(1)], [`${R}/pulls/1/files?per_page=100`]: [{ filename: 'tests/a.test.js' }] };
+  const io = fakeIo({ gh: () => null });
+  const seen = [];
+  const reads = { 'pr list': [{ number: 4, mergeCommit: { oid: 'm4' }, files: [] }], 'run list': [] };
+  io.gh = async (args) => { seen.push(args); return reads[args.slice(0, 2).join(' ')] ?? null; };
+  io.snapshot = { readCapture: async () => capture };
+  let merges;
+  io.score.scoreAll = async ({ gh }) => {
+    merges = await gh(['pr', 'list', '--state', 'merged', '--base', 'main', '--limit', '200', '--json', 'number,mergeCommit,files']);
+    return { total: 0, parts: {} };
+  };
+  await run({ mode: 'smoke', io, from: 'score', until: 'score', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(merges.map((p) => p.number), [4, 3, 2, 1]);
+  assert.deepEqual(merges.find((p) => p.number === 1).files, [{ path: 'tests/a.test.js' }]);
+});
+
+// --- resume ---
+
+// A snapshot of a small run folder under `<root>/trials`, and a current attempt folder with a marker file in it.
+function resumeFixture(t, { point = 'after-w2-audit', step = 'w2-audit', mode = 'full', maxNumber = 5 } = {}) {
+  const root = scratch(t);
+  const label = '2026-11-08';
+  const source = path.join(root, 'source');
+  fs.mkdirSync(path.join(source, 'project'), { recursive: true });
+  fs.mkdirSync(path.join(source, 'plugin'), { recursive: true });
+  fs.writeFileSync(path.join(source, 'plugin', 'plugin.json'), '{}');
+  fs.writeFileSync(path.join(source, 'project', 'kept.txt'), 'from the snapshot');
+  fs.writeFileSync(path.join(source, 'state.json'), JSON.stringify({ stage: { sha: 'old', pluginDir: '/p', marketplaceDir: '/m' }, seedSha: 'seed' }));
+  fs.writeFileSync(path.join(source, 'run-log.jsonl'), '');
+  const base = path.join(root, 'trials');
+  const name = `02-${point}`;
+  const dest = path.join(snapshotsDir(label, base), name);
+  takeLocal({ folder: source, dest, configDir: path.join(root, 'claude') });
+  fs.mkdirSync(path.join(dest, 'github', 'mirror.git'), { recursive: true });
+  fs.writeFileSync(path.join(dest, 'github', 'open.json'), JSON.stringify([{ number: 4, head: 'feature-p4', base: 'main', title: 'Piece 4', body: 'b', draft: false }]));
+  fs.writeFileSync(path.join(dest, 'github', 'settings.json'), JSON.stringify({ repo: { allow_squash_merge: true }, protection: null, rulesets: [] }));
+  writeMeta(dest, { label, mode, point, step, at: '2026-11-08T09:30:00.000Z', attempt: 1, pluginSha: 'old', quiet: true, running: [], maxNumber, torn: [] });
+  const folder = path.join(root, 'current');
+  fs.mkdirSync(folder, { recursive: true });
+  fs.writeFileSync(path.join(folder, 'marker.txt'), 'the failed attempt');
+  return { root, label, base, folder, name, configDir: path.join(root, 'claude') };
+}
+
+// An io whose github members record on the timeline and number what they make in order; the steps are stubbed to record their id.
+function resumeIo(t, over = {}) {
+  const io = fakeIo({ gh: () => ({ login: 'trial-owner' }), ...over });
+  let next = 0;
+  const number = () => { next += 1; return over.drift === next ? next + 1 : next; };
+  io.github = {
+    rename: async (x) => { io.timeline.push({ kind: 'github.rename', args: [x] }); },
+    create: async (x) => { io.timeline.push({ kind: 'github.create', args: [x] }); },
+    pushMirror: async (x) => { io.timeline.push({ kind: 'github.pushMirror', args: [x] }); },
+    openPull: async (x) => { io.timeline.push({ kind: 'github.openPull', args: [x] }); return { number: number() }; },
+    placeholder: async (x) => { io.timeline.push({ kind: 'github.placeholder', args: [x] }); return { number: number() }; },
+    applySettings: async (x) => { io.timeline.push({ kind: 'github.applySettings', args: [x] }); },
+  };
+  io.host.checkoutSha = async () => 'new1234';
+  const originals = STEPS.map((s) => [s, s.run]);
+  for (const [step] of originals) {
+    step.run = async (ctx, using) => {
+      using.timeline.push({ kind: 'step', args: [step.id, fs.existsSync(path.join(ctx.folder, 'plugin'))] });
+      if (step.id === 'stage') ctx.state.stage = { sha: 'new1234', pluginDir: '/p2', marketplaceDir: '/m2' };
+    };
+  }
+  t.after(() => { for (const [step, original] of originals) step.run = original; });
+  return io;
+}
+const kinds = (io, prefix) => io.timeline.filter((e) => e.kind.startsWith(prefix)).map((e) => e.kind);
+const stepIds = (io) => io.timeline.filter((e) => e.kind === 'step').map((e) => e.args[0]);
+
+test('resume asks once and does nothing on another answer', async (t) => {
+  const fx = resumeFixture(t);
+  const io = resumeIo(t, { answer: 'not yet' });
+  const got = await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base });
+  assert.equal(got.stoppedAt, 'resume');
+  assert.equal(io.timeline.filter((e) => e.kind === 'ask').length, 1);
+  assert.match(io.timeline.find((e) => e.kind === 'ask').args[0], /Resume 2026-11-08 from 02-after-w2-audit: rename the repository haiku-trial-2026-11-08 to haiku-trial-2026-11-08-a1, create a fresh public haiku-trial-2026-11-08 from the snapshot, install the plugin staged from this checkout \(new1234\) and spend tokens\. Answer go\./);
+  assert.equal(kinds(io, 'github.').length, 0);
+  assert.equal(fs.readFileSync(path.join(fx.folder, 'marker.txt'), 'utf8'), 'the failed attempt');
+  assert.equal(fs.existsSync(`${fx.folder}-a1`), false);
+});
+
+test("resume refuses while the label's sessions are alive", async (t) => {
+  const fx = resumeFixture(t);
+  const io = resumeIo(t, { sessions: [sessionName('2026-11-08', 'desk')] });
+  const got = await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base });
+  assert.equal(got.stoppedAt, 'resume');
+  assert.match(got.why, /still running/);
+  assert.equal(io.timeline.some((e) => e.kind === 'ask'), false);
+});
+
+test('resume refuses a snapshot that is not there or is for another label', async (t) => {
+  const fx = resumeFixture(t);
+  const io = resumeIo(t);
+  assert.match((await resume({ folder: fx.folder, label: fx.label, snapshot: '09-nothing', io, env: ENV, base: fx.base })).why, /no snapshot 09-nothing/);
+  assert.match((await resume({ folder: fx.folder, label: '2026-11-09', snapshot: fx.name, io, env: ENV, base: fx.base })).why, /no snapshot/);
+  assert.equal(io.timeline.some((e) => e.kind === 'ask'), false);
+});
+
+test('resume moves the attempt aside, renames the repository, restores, rebuilds and goes on from the step after the point', async (t) => {
+  const fx = resumeFixture(t);
+  const io = resumeIo(t);
+  const got = await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base, until: 'w3-type' });
+  assert.equal(got.stoppedAt, undefined);
+  // The failed attempt is kept beside the run, and the snapshot is back at the old path.
+  assert.equal(fs.readFileSync(path.join(`${fx.folder}-a1`, 'marker.txt'), 'utf8'), 'the failed attempt');
+  assert.equal(fs.readFileSync(path.join(fx.folder, 'project', 'kept.txt'), 'utf8'), 'from the snapshot');
+  assert.equal(fs.existsSync(path.join(fx.folder, 'marker.txt')), false);
+  // GitHub: renamed first, then made again, pushed, numbered, and the settings last.
+  assert.deepEqual(io.timeline.find((e) => e.kind === 'github.rename').args[0], { slug: 'trial-owner/haiku-trial-2026-11-08', to: 'haiku-trial-2026-11-08-a1' });
+  assert.deepEqual(kinds(io, 'github.'), ['github.rename', 'github.create', 'github.pushMirror', 'github.placeholder', 'github.placeholder', 'github.placeholder', 'github.openPull', 'github.placeholder', 'github.applySettings']);
+  // The plugin is staged again from a clean folder, installed, a front desk started, then the next step runs.
+  assert.deepEqual(stepIds(io), ['stage', 'install', 'front-desk', 'w3-type']);
+  assert.equal(io.timeline.find((e) => e.kind === 'step' && e.args[0] === 'stage').args[1], false, 'the restored plugin folder is cleared before staging');
+  assert.equal(io.timeline.filter((e) => e.kind === 'ask').length, 1, 'install does not ask again');
+  const state = JSON.parse(fs.readFileSync(path.join(fx.folder, 'state.json'), 'utf8'));
+  assert.deepEqual(state.resumedFrom, { snapshot: fx.name, point: 'after-w2-audit', attempt: 2, pluginBefore: 'old', pluginNow: 'new1234', maxNumber: 5, quiet: true, running: [], reopened: [4], since: '2026-11-08T09:30:00.000Z' });
+  const attempts = fs.readFileSync(path.join(fx.base, 'haiku-2026-11-08.snapshots', 'attempts.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0].n, 1);
+});
+
+test('a second resume moves the next attempt aside as a2', async (t) => {
+  const fx = resumeFixture(t);
+  const io = resumeIo(t);
+  await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base, until: 'w3-type' });
+  const again = resumeIo(t);
+  await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io: again, configDir: fx.configDir, env: ENV, base: fx.base, until: 'w3-type' });
+  assert.ok(fs.existsSync(`${fx.folder}-a2`));
+  assert.equal(again.timeline.find((e) => e.kind === 'github.rename').args[0].to, 'haiku-trial-2026-11-08-a2');
+  assert.match(again.timeline.find((e) => e.kind === 'github.placeholder').args[0].title, /in attempt 2, resumed from/);
+});
+
+test('a number out of step stops the resume with the reason', async (t) => {
+  const fx = resumeFixture(t);
+  const io = resumeIo(t, { drift: 2 });
+  const got = await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base, until: 'w3-type' });
+  assert.equal(got.stoppedAt, 'resume');
+  assert.match(got.why, /number 2 came back as 3/);
+  assert.deepEqual(stepIds(io), []);
+});
+
+test('a before- point runs its own step again and does not take its own snapshot twice', async (t) => {
+  const fx = resumeFixture(t, { point: 'before-f1', step: 'f1' });
+  const io = resumeIo(t);
+  const taken = [];
+  io.snapshot = { take: async (x) => { taken.push(x.point); return { name: x.point }; } };
+  const got = await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base, until: 'f1' });
+  assert.equal(got.stoppedAt, undefined);
+  assert.deepEqual(stepIds(io), ['stage', 'install', 'front-desk', 'f1']);
+  assert.deepEqual(taken, []);
+});
+
+test('--keep-plugin skips stage', async (t) => {
+  const fx = resumeFixture(t);
+  const io = resumeIo(t);
+  await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, keepPlugin: true, configDir: fx.configDir, env: ENV, base: fx.base, until: 'w3-type' });
+  assert.deepEqual(stepIds(io), ['install', 'front-desk', 'w3-type']);
+  assert.match(io.timeline.find((e) => e.kind === 'ask').args[0], /install the plugin staged in the snapshot \(old\)/);
+  const state = JSON.parse(fs.readFileSync(path.join(fx.folder, 'state.json'), 'utf8'));
+  assert.equal(state.resumedFrom.pluginNow, 'old');
+  assert.equal(fs.existsSync(path.join(fx.folder, 'plugin', 'plugin.json')), true);
+});
+
+test('a smoke snapshot resumes in the smoke plan', async (t) => {
+  const fx = resumeFixture(t, { point: 'after-front-desk', step: 'front-desk', mode: 'smoke' });
+  const io = resumeIo(t);
+  await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base, until: 'w2-type' });
+  assert.deepEqual(stepIds(io), ['stage', 'install', 'front-desk', 'w2-type']);
+});
+
+test('main resume lists the snapshots when none is named', async (t) => {
+  const printed = [];
+  const code = await main(['resume', '--date', '2026-11-08', '--out', scratch(t)], { print: (x) => printed.push(x), buildIo: async () => fakeIo(), env: ENV });
+  assert.equal(code, 2);
+  assert.match(printed.join('\n'), /resume needs --snapshot/);
+});
+
+test('resume refuses a snapshot name that is not a plain name, before anything is asked or touched', async (t) => {
+  const fx = resumeFixture(t);
+  const io = resumeIo(t);
+  for (const bad of ['../trials/02-after-w2-audit', '..', '.', 'a/b', 'a\\b', '/etc', `${path.join(fx.base, 'haiku-2026-11-08.snapshots', fx.name)}`]) {
+    const got = await resume({ folder: fx.folder, label: fx.label, snapshot: bad, io, configDir: fx.configDir, env: ENV, base: fx.base });
+    assert.equal(got.stoppedAt, 'resume', bad);
+    assert.match(got.why, /not a plain snapshot name/, bad);
+  }
+  assert.equal(io.timeline.some((e) => e.kind === 'ask'), false);
+  assert.equal(fs.readFileSync(path.join(fx.folder, 'marker.txt'), 'utf8'), 'the failed attempt');
+});
+
+test('a resume that fails after the move leaves its attempt on record, so the next one is a2 and a1 is kept whole', async (t) => {
+  // An earlier test's main() leaves the process's home at its own folder; a resume that goes on needs it to match ENV.
+  const saved = process.env.WHEELHOUSE_HOME;
+  process.env.WHEELHOUSE_HOME = ENV.WHEELHOUSE_HOME;
+  t.after(() => { process.env.WHEELHOUSE_HOME = saved; });
+  const fx = resumeFixture(t);
+  const first = resumeIo(t, { drift: 2 });
+  const got = await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io: first, configDir: fx.configDir, env: ENV, base: fx.base, until: 'w3-type' });
+  assert.match(got.why, /could not be rebuilt/);
+  const file = path.join(fx.base, 'haiku-2026-11-08.snapshots', 'attempts.jsonl');
+  const entries = () => fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.deepEqual(entries().map((e) => [e.n, e.status]), [[1, 'started']]);
+  assert.equal(fs.readFileSync(path.join(`${fx.folder}-a1`, 'marker.txt'), 'utf8'), 'the failed attempt');
+  const second = resumeIo(t);
+  const again = await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io: second, configDir: fx.configDir, env: ENV, base: fx.base, until: 'w3-type' });
+  assert.equal(again.stoppedAt, undefined, JSON.stringify(again));
+  assert.equal(second.timeline.find((e) => e.kind === 'github.rename').args[0].to, 'haiku-trial-2026-11-08-a2');
+  assert.equal(fs.readFileSync(path.join(`${fx.folder}-a1`, 'marker.txt'), 'utf8'), 'the failed attempt');
+  assert.ok(fs.existsSync(`${fx.folder}-a2`));
+  assert.deepEqual(entries().map((e) => [e.n, e.status]), [[1, 'started'], [2, 'resumed']]);
+});
+
+test('resume refuses before touching anything when the folder for its attempt already exists', async (t) => {
+  const fx = resumeFixture(t);
+  fs.mkdirSync(`${fx.folder}-a1`);
+  fs.writeFileSync(path.join(`${fx.folder}-a1`, 'earlier.txt'), 'an earlier attempt');
+  const io = resumeIo(t);
+  const got = await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base });
+  assert.equal(got.stoppedAt, 'resume');
+  assert.match(got.why, /already exists/);
+  assert.equal(io.timeline.some((e) => e.kind === 'ask'), false);
+  assert.equal(kinds(io, 'github.').length, 0);
+  assert.equal(fs.readFileSync(path.join(fx.folder, 'marker.txt'), 'utf8'), 'the failed attempt');
+  assert.equal(fs.readFileSync(path.join(`${fx.folder}-a1`, 'earlier.txt'), 'utf8'), 'an earlier attempt');
+  assert.equal(fs.existsSync(path.join(fx.base, 'haiku-2026-11-08.snapshots', 'attempts.jsonl')), false);
+});
+
+test('restore signals a pid only while it still belongs to this run, and says what it skipped', async (t) => {
+  const folder = scratch(t);
+  fs.writeFileSync(path.join(folder, 'run-log.jsonl'), [
+    { step: 'tunnel', note: 'x', detail: { productPid: 11, tunnelPid: 22 } },
+    { step: 'again', note: 'x', detail: { productPid: 33 } },
+    { step: 'again', note: 'x', detail: { productPid: 44 } },
+  ].map((e) => JSON.stringify(e)).join('\n') + '\n');
+  const info = {
+    11: { command: 'npm start', cwd: path.join(folder, 'project') },
+    22: { command: `cloudflared tunnel --url http://127.0.0.1:4173 --logfile ${path.join(folder, 'tunnel.log')}`, cwd: '/' },
+    33: { command: '/usr/bin/vim notes.txt', cwd: '/Users/someone/other-project' },
+    44: null,
+  };
+  const logged = [];
+  const io = fakeIo({ processInfo: (pid) => info[pid] });
+  io.log = (line) => logged.push(line);
+  const got = await restore({ folder, io });
+  assert.deepEqual(io.timeline.filter((e) => e.kind === 'kill').map((e) => e.args[0]), [-11, -22]);
+  assert.deepEqual(got.stopped, ['pid 11', 'pid 22']);
+  assert.deepEqual(got.skipped, ['pid 33', 'pid 44']);
+  assert.equal(logged.length, 2);
+  assert.match(logged[0], /pid 33.*not this run/);
+});
+
+test('a resume does not signal a pid from the old run log that belongs to something else', async (t) => {
+  const fx = resumeFixture(t);
+  fs.writeFileSync(path.join(fx.folder, 'run-log.jsonl'), `${JSON.stringify({ step: 'tunnel', note: 'x', detail: { productPid: 777 } })}\n`);
+  const io = resumeIo(t, { processInfo: () => ({ command: 'vim', cwd: '/elsewhere' }) });
+  await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base, until: 'w3-type' });
+  assert.equal(io.timeline.some((e) => e.kind === 'kill'), false);
 });

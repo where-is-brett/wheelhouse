@@ -11,20 +11,22 @@ import { projectSlug } from '../../scripts/lib/paths.js';
 import { runFolder } from './results.js';
 import { openPicker, readyToSubmit, deskBusy, HIGHLIGHTED, PICKED } from './stand-in.js';
 import { PIECES, WAVES, P5_SPARE, F2_ANSWER, P6_FILE } from './requests.js';
-import { SESSION_PREFIX, sessionName, frontDeskCommand } from './tmux.js';
+import { SESSION_PREFIX, sessionName, sessionPrefix, frontDeskCommand } from './tmux.js';
 import { STEPS as LOG, SETUP_DONE, setupJournalDone, OWN_BRANCH } from './signals.js';
 import { STEPS as SETUP_STEPS } from '../../scripts/setup/steps.js';
 import { auditModels } from './audit.js';
 import { parseModel, DEFAULT_MODEL, MODELS } from './models.js';
 import { STARTS_UNAPPROVED } from '../../scripts/foreman/queue.js';
 import { installCommand, removeCommands } from './stage-plugin.js';
+import { pointsFor, snapshotsDir, listSnapshots, readMeta, restoreLocal } from './snapshot.js';
+import { WAVE_WAIT_MS, placeClicks, parseWindow, windowState, estimate, directorNote, minutesFor } from './sittings.js';
+import { snapshotGh, rebuildGithub } from './github-snapshot.js';
 import { reviewCard, stepsPage, writeTryMe, reviewAsDecision, answerLetter } from './review-card.js';
 
 const MINUTE = 60 * 1000;
 const DESK = 'desk';
 const SETUP = 'setup';
 const WHY_WAIT_MS = 100 * 1000 + 20 * 1000;
-const WAVE_WAIT_MS = { 2: 90 * MINUTE, 3: 150 * MINUTE, 4: 90 * MINUTE };
 const SPARE_BRANCH = 'trial/spare-bug';
 const SETUP_WAIT_MS = 45 * MINUTE;
 // `alerts ntfy` waits two minutes for the click, so the desk is given a little longer to say how it went.
@@ -40,6 +42,8 @@ const TRUST_YES = /❯\s*(?:\d+\.\s*)?Yes, I trust this folder/;
 const pieceOf = (id) => PIECES.find((p) => p.id === id);
 
 export class Stop extends Error {}
+// A stop that ends the run whichever step raised it (the owner check).
+class HardStop extends Stop {}
 
 // --- the trial's own Wheelhouse home ---
 
@@ -107,6 +111,11 @@ export async function waitFor(predicate, { io, timeoutMs, everyMs = 15000 }) {
 
 const iso = (ctx) => new Date(ctx.io.clock.now()).toISOString();
 const note = (ctx, step, text, extra = {}) => appendJsonl(ctx.logFile, { at: iso(ctx), step, note: text, ...extra });
+// A fault the run went past: kept in the state, so the summary lists it, and written to the log.
+async function addFinding(ctx, step, what, extra = {}) {
+  (ctx.state.findings ??= []).push({ step, what, at: iso(ctx), ...extra });
+  await note(ctx, step, `finding: ${what}`);
+}
 // The terminal's own furniture: spinners and their hints, boxes, the prompt line and the mode line.
 const CHROME = [/esc to interrupt/i, /\(\d+s\b.*(tokens|thinking)/i, /^\s*[✻✽✶✳✢·✦*]\s+\S.*…/, /^\s*[─━│╭╮╰╯┌┐└┘├┤]/, /\? for shortcuts/i,
   /shift\+tab|bypass permissions|auto-accept|accept edits/i, /^\s*>\s*$/, /^\s*[⏵⏸]/];
@@ -169,11 +178,21 @@ function endSession(ctx, name) {
   ctx.live?.delete(name);
   ctx.io.tmux.kill(name);
 }
-function mustBeAlive(ctx) {
+// The front desk that ends is opened again once in a wave, as a director would, and noted as a finding; a second loss in the
+// same wave stops the run, as does any other session. `restart: false` is for the desk's own start, which must not recurse.
+async function mustBeAlive(ctx, { restart = true } = {}) {
   if (!ctx.live?.size) return;
   const up = new Set(ctx.io.tmux.list());
-  for (const name of ctx.live) {
-    if (!up.has(tmuxName(ctx, name))) throw new Stop(`the ${name} session ended by itself (tmux ${tmuxName(ctx, name)} is gone)`);
+  for (const name of [...ctx.live]) {
+    if (up.has(tmuxName(ctx, name))) continue;
+    const gone = `the ${name} session ended by itself (tmux ${tmuxName(ctx, name)} is gone)`;
+    const wave = ctx.wave ?? 0;
+    const restarts = ((ctx.state.deskRestarts ??= {})[wave] ??= 0);
+    if (!restart || name !== DESK || restarts >= 1) throw new HardStop(gone);
+    ctx.state.deskRestarts[wave] = restarts + 1;
+    ctx.live.delete(name);
+    await addFinding(ctx, 'front-desk', `${gone}; started again`);
+    await desk(ctx, DESK);
   }
 }
 
@@ -183,7 +202,7 @@ const FEATURE_RUNNING = ['started', 'building'];
 // One look at the project: events become log entries, open cards get the director's stand-in answer, and F3b fires when armed.
 async function tick(ctx) {
   const { io, state } = ctx;
-  mustBeAlive(ctx);
+  await mustBeAlive(ctx);
   const events = await io.host.events({ project: ctx.projectName });
   for (const e of events) {
     if (e.id === undefined || state.seen.includes(e.id)) continue;
@@ -234,19 +253,58 @@ async function tick(ctx) {
   }
 }
 
-// Waits for `count` merged pull requests. A shortfall stops the run, or with `soft` is returned as the number merged, so a
-// wave that did not merge what it should still leaves the later waves to give their evidence.
-async function waitMerged(ctx, count, wave, { soft = false } = {}) {
+// The works whose sessions are running now, from the record, as `tick` reads it.
+function runningWorks(events) {
+  const open = new Map();
+  for (const e of events.filter((x) => x.kind === 'run')) {
+    const key = e.data?.runId ?? e.id;
+    if (e.data?.state === 'started') open.set(key, e.data.work ?? key); else open.delete(key);
+  }
+  const running = new Set();
+  for (const e of events.filter((x) => x.kind === 'feature' && typeof x.data?.work === 'string')) {
+    if (FEATURE_RUNNING.includes(e.data.step)) running.add(e.data.work); else running.delete(e.data.work);
+  }
+  return [...new Set([...open.values(), ...running])];
+}
+
+// A snapshot at a step boundary (spec section 3.2). An `after-` point first waits up to ten minutes for no session to be running;
+// a `before-` point is taken at once. A snapshot that fails is a finding and never a stop.
+const writeState = (ctx) => fs.writeFileSync(ctx.stateFile, `${JSON.stringify(ctx.state, null, 2)}\n`);
+async function snapshotAt(ctx, { point, step }) {
+  const { io } = ctx;
+  if (!io.snapshot?.take) return;
+  try {
+    let running = runningWorks(await io.host.events({ project: ctx.projectName }));
+    if (point.startsWith('after-') && running.length > 0) {
+      await waitFor(async () => { await tick(ctx); running = runningWorks(await io.host.events({ project: ctx.projectName })); return running.length === 0; }, { io, timeoutMs: 10 * MINUTE, everyMs: 30000 });
+    }
+    writeState(ctx);
+    const meta = { label: ctx.label, mode: ctx.mode, sittings: ctx.state.sittings, point, step, at: iso(ctx), attempt: ctx.state.resumedFrom?.attempt ?? 1, pluginSha: ctx.state.stage?.sha, quiet: running.length === 0, running };
+    const configDir = ctx.env.HAIKU_TRIAL_CONFIG_DIR;
+    const transcripts = io.host.findTranscripts({ project: ctx.projectName, dir: ctx.projectDir }).map((t) => t.file).filter((f) => typeof f === 'string');
+    const got = await io.snapshot.take({ label: ctx.label, point, folder: ctx.folder, configDir, transcripts, meta, seedSha: ctx.state.seedSha });
+    await note(ctx, `snapshot-${point}`, `snapshot ${got?.name ?? point}${meta.quiet ? '' : ` (not quiet: ${running.join(', ')} still running)`}`);
+  } catch (error) {
+    await addFinding(ctx, `snapshot-${point}`, `snapshot ${point} failed: ${error.message}`);
+  }
+}
+
+// Waits for `count` merged pull requests, less what an earlier wave fell short by. A shortfall is noted and kept in
+// `state.shortfall` (as the total still missing), so the wave's evidence still comes and later waits ask for that many fewer.
+async function waitMerged(ctx, count, wave) {
+  const target = mergesBy(ctx, count);
   const ok = await waitFor(async () => {
     await tick(ctx);
-    return (await mergedPulls(ctx)).length >= count;
+    return (await mergedPulls(ctx)).length >= target;
   }, { io: ctx.io, timeoutMs: WAVE_WAIT_MS[wave] ?? 60 * MINUTE });
-  if (ok) return count;
+  if (ok) return target;
   const merged = (await mergedPulls(ctx)).length;
-  if (!soft) throw new Stop(`fewer than ${count} pull requests merged in time for wave ${wave}`);
+  ctx.state.shortfall = Math.max(0, count - merged);
+  await note(ctx, `w${wave}-merge-wait`, `missed: ${merged} of ${count} pull requests merged in time for wave ${wave}; the run goes on and later waits ask for ${ctx.state.shortfall} fewer`);
+  if (wave > 2) await addFinding(ctx, `w${wave}-merge-wait`, `fewer than ${count} pull requests merged in time for wave ${wave} (${merged} did)`);
   return merged;
 }
-// What a later wave waits for: the count it would, less what wave 2 fell short by.
+// What a wait asks for: the count it would, less what an earlier wave fell short by.
 const mergesBy = (ctx, count) => Math.max(0, count - (ctx.state.shortfall ?? 0));
 
 // Whether a branch in the project's own folder that names the piece has a commit of its own. A build commits in its
@@ -369,8 +427,17 @@ async function spareBugCheck(ctx) {
     return;
   }
   await io.host.commitAndPush({ dir, branch: SPARE_BRANCH, message: 'Plant the spare bug for the trial' });
-  await ghDo(ctx, ['pr', 'create', '--head', SPARE_BRANCH, '--base', 'main', '--title', 'Plant the spare bug for the trial', '--body', 'The trial plants this bug for piece P5.']);
-  await ghDo(ctx, ['pr', 'merge', SPARE_BRANCH, '--squash', '--admin']);
+  // A pull request that cannot be made or merged leaves the planted bug in doubt, so P5 is not covered and the run goes on.
+  try {
+    await ghDo(ctx, ['pr', 'create', '--head', SPARE_BRANCH, '--base', 'main', '--title', 'Plant the spare bug for the trial', '--body', 'The trial plants this bug for piece P5.']);
+    await ghDo(ctx, ['pr', 'merge', SPARE_BRANCH, '--squash', '--admin']);
+  } catch (error) {
+    state.p5 = 'not-covered';
+    state.p5Why = `the spare bug's pull request failed: ${error.message}`;
+    await note(ctx, 'plant', `P5 not covered: ${state.p5Why}`);
+    await addFinding(ctx, 'w2-merge-wait', state.p5Why);
+    return;
+  }
   state.p5 = 'spare';
   await note(ctx, 'plant', 'spare bug merged; P5 will use the spare request');
 }
@@ -407,7 +474,7 @@ async function desk(ctx, name, extraEnv = {}) {
     await note(ctx, name === DESK ? 'front-desk' : name, 'answered the folder-trust prompt: Yes, I trust this folder');
     await ctx.io.clock.sleep(5000);
   }
-  mustBeAlive(ctx);
+  await mustBeAlive(ctx, { restart: false });
 }
 
 // The stand-in director's answer to the picker open in a session's pane: the recommended option, or the first when none
@@ -428,7 +495,15 @@ async function answerPicker(ctx, name) {
   }
   const chosen = look()?.options.findIndex((l) => HIGHLIGHTED.test(l));
   if (chosen !== target) {
-    throw new Stop(`the ${name} session's picker "${question}" never highlighted ${first.recommended === -1 ? 'its first option' : 'its recommended option'}`);
+    const why = `the ${name} session's picker "${question}" never highlighted ${first.recommended === -1 ? 'its first option' : 'its recommended option'}`;
+    // Setup has its own time limit and stops on this; elsewhere the picker is noted once and the run goes on.
+    if (ctx.inSetup) throw new Stop(why);
+    const missed = (ctx.state.pickersMissed ??= []);
+    if (!missed.includes(question)) {
+      missed.push(question);
+      await addFinding(ctx, name === DESK ? 'front-desk' : name, why);
+    }
+    return false;
   }
   const label = first.options[target].replace(HIGHLIGHTED, '').replace(/^\s*\d+\.\s*/, '').trim();
   io.tmux.keys(name, 'Enter');
@@ -497,9 +572,12 @@ async function staleDeskPicker(ctx) {
   await answerPicker(ctx, DESK);
 }
 
+// The saved environment of a piece's feature session, or null when none is found. Once none was found, later looks are one
+// look each, with no wait, so F1b, F1c and the later P4 steps do not wait another 40 minutes; a session that turns up is still found.
 async function pieceEnv(ctx, id) {
   const piece = ctx.state.pieces[id]?.change ?? id.toLowerCase();
   let got;
+  const noSession = (ctx.state.noSession ??= {});
   const found = await waitFor(async () => {
     try { got = await ctx.io.faults.featureEnvOf({ project: ctx.projectDir, name: ctx.projectName, piece }); return true; } catch (error) {
       // Only a session not found yet is worth waiting for; any other error is the runner's own and stops it at once.
@@ -507,10 +585,16 @@ async function pieceEnv(ctx, id) {
       await tick(ctx);
       return false;
     }
-  }, { io: ctx.io, timeoutMs: 40 * MINUTE });
-  if (!found) throw new Stop(`no running feature session names ${id}`);
+  }, { io: ctx.io, timeoutMs: noSession[id] ? 0 : 40 * MINUTE });
+  if (!found) {
+    noSession[id] = true;
+    await note(ctx, id, `no running feature session names ${id}`);
+    return null;
+  }
+  delete noSession[id];
   return got;
 }
+const noSessionWhy = (id) => `no running feature session names ${id}`;
 
 const directorAsk = async (ctx, text) => {
   const answer = await ctx.io.ask(text);
@@ -524,16 +608,190 @@ const auditStep = (wave, smoke = true) => ({
   async run(ctx, io) {
     const models = auditModels(io.host.findTranscripts({ project: ctx.projectName, dir: ctx.projectDir }), { model: ctx.model });
     await note(ctx, `w${wave}-audit`, models.clean ? `every assistant turn so far ran on ${modelName(ctx)}` : `offenders: ${JSON.stringify(models.offenders.map((o) => `${o.role} ${o.model} x${o.count}`))}`);
-    if (!models.clean) throw new Stop(`a session ran on another model: ${models.offenders.map((o) => `${o.role} (${o.model})`).join(', ')}`);
+    // The run can no longer pass, but it goes on finding faults.
+    if (!models.clean) await addFinding(ctx, `w${wave}-audit`, `a session ran on another model: ${models.offenders.map((o) => `${o.role} (${o.model})`).join(', ')}`, { claimLost: 'model audit' });
   },
 });
+
+// A fault step that could not run: the rows read this as not covered, with the reason.
+async function notExercised(ctx, id, why) {
+  ctx.state.faults[id] = { ...(ctx.state.faults[id] ?? {}), notExercised: why };
+  await note(ctx, LOG.fault(id), `not exercised: ${why}`);
+}
+
+// --- the director's sittings (spec 2026-11-13, section 5) ---
+
+const CLICK_WAIT_MS = 15 * MINUTE;
+const sittingId = (n) => `sitting-${n}`;
+const eventsOf = (ctx) => ctx.io.host.events({ project: ctx.projectName });
+const isAction = (e, ...actions) => e.kind === 'action' && actions.includes(e.data?.action);
+// The director's own click: signed, with the helper window's proof (as the helper's own undo check in local/undo.js). An
+// action typed into the screen, or made without a signature or the window's proof, is not a click.
+const isSigned = (e, ...actions) => isAction(e, ...actions) && Boolean(e.sig) && typeof e.sig === 'object' && e.data?.proof === 'window';
+// An event made at or after `since` (one with no readable time counts: a record without a time cannot be told from a later one).
+const notBefore = (e, since) => !(Date.parse(e.at) < since);
+
+// Whether All stop was typed in this run and no signed lift followed it.
+const stopIsOn = async (ctx) => {
+  const { stopAt } = ctx.state;
+  if (stopAt === undefined) return false;
+  return !(await eventsOf(ctx)).some((e) => isSigned(e, 'lift-stop') && notBefore(e, stopAt - 1000));
+};
+
+// Waits for the director's signed lift. If it does not come it is a finding, and the one terminal ask of the sitting follows: All
+// stop holds every merge and start until it is lifted, so nothing else goes on before that ask is answered.
+async function liftWatch(ctx, io, n) {
+  const lifted = async () => (await stopIsOn(ctx)) === false;
+  if (await waitFor(async () => { await tick(ctx); return lifted(); }, { io, timeoutMs: CLICK_WAIT_MS })) {
+    await note(ctx, 'f6-lift', 'All stop lifted');
+    return true;
+  }
+  await addFinding(ctx, sittingId(n), `the director's click did not come in sitting ${n}: lifting All stop`);
+  ctx.state.liftAskedIn = n;
+  await directorAsk(ctx, 'All stop is still on: lift it in the helper window when you can, then answer done.');
+  if (!(await lifted())) return false;
+  await note(ctx, 'f6-lift', 'All stop lifted');
+  return true;
+}
+
+// Before any click is waited for: a stop that is on (typed by an F6 that then failed, or by an earlier attempt) is lifted first.
+async function liftIfStopped(ctx, io, n) {
+  if (ctx.state.liftAskedIn === n || !(await stopIsOn(ctx))) return;
+  await deskFree(ctx);
+  await io.faults.liftTyped(io.tmux);
+  await liftWatch(ctx, io, n);
+}
+
+// What a later commit on main touched among P6's files: an undo of P6 that clashes is the kit's fault, not Wheelhouse's, so the
+// finding is made before the undo is typed.
+async function undoClash(ctx, sha, n) {
+  if (sha === 'unknown') return;
+  const git = (args) => ctx.io.host.git(args, { cwd: ctx.projectDir });
+  try { await git(['fetch', 'origin', 'main']); } catch { /* the local main is what there is */ }
+  let log;
+  try { log = String(await git(['log', `${sha}..origin/main`, '--name-only', '--format=commit %h %s'])); } catch {
+    try { log = String(await git(['log', `${sha}..main`, '--name-only', '--format=commit %h %s'])); } catch { return; }
+  }
+  let commit = '';
+  for (const line of log.split('\n').map((l) => l.trim()).filter(Boolean)) {
+    if (line.startsWith('commit ')) { commit = line.slice(7).split(' ')[0]; continue; }
+    if (line === P6_FILE) { await addFinding(ctx, sittingId(n), `F5a will clash: ${commit} touched ${line}`); return; }
+  }
+}
+
+// The director's signed answer to an undo card: an undo of that merge, or Keep it, made after the undo was typed.
+const sameSha = (a, b) => typeof a === 'string' && typeof b === 'string' && a.length >= 7 && b.length >= 7 && (a.startsWith(b) || b.startsWith(a));
+const undoAnswered = (ctx, sha, since) => async () => {
+  await tick(ctx);
+  return (await eventsOf(ctx)).some((e) => notBefore(e, since) && (
+    (isSigned(e, 'undo-merge') && (sha === 'unknown' || sameSha(e.data?.merge, sha))) || isSigned(e, 'keep-main')));
+};
+
+const clickSteps = {
+  // F6: All stop typed, an undo refused under it, five minutes, then the lift (the director's click).
+  async F6(ctx, io, { n }) {
+    await deskFree(ctx);
+    const at = io.clock.now();
+    await io.faults.f6AllStop(io.tmux);
+    ctx.state.stopAt = at;
+    await io.clock.sleep(10000);
+    await note(ctx, LOG.stopSet, 'All stop typed', { detail: { at } });
+    await note(ctx, LOG.fault('F6'), 'All stop set');
+    const sha = await p6Sha(ctx);
+    await deskFree(ctx);
+    await io.faults.undoTyped(io.tmux, sha);
+    await io.clock.sleep(20000);
+    await note(ctx, 'f6-undo', `undo typed under All stop: ${io.tmux.capture(DESK).split('\n').filter((l) => /All stop is on/.test(l)).join(' ') || 'no refusal text seen'}`);
+    const until = at + 5 * MINUTE;
+    await waitFor(async () => { await tick(ctx); return io.clock.now() >= until; }, { io, timeoutMs: 6 * MINUTE });
+    ctx.state.panes['front-desk'].push(io.tmux.capture(DESK));
+    await note(ctx, 'f6-wait-5m', 'five minutes with no new start allowed');
+    await deskFree(ctx);
+    await io.faults.liftTyped(io.tmux);
+    io.log?.('Click Lift All stop in the helper window.');
+    await liftWatch(ctx, io, n);
+  },
+  // F5a: the undo of P6, approved by the director's signed click.
+  async F5a(ctx, io, { n }) {
+    const sha = await p6Sha(ctx);
+    await undoClash(ctx, sha, n);
+    await deskFree(ctx);
+    const typedAt = io.clock.now();
+    await io.faults.undoTyped(io.tmux, sha);
+    io.log?.("Click Approve on the undo of piece P6's merge in the helper window (the first of two).");
+    if (!(await waitFor(undoAnswered(ctx, sha, typedAt), { io, timeoutMs: CLICK_WAIT_MS }))) {
+      await addFinding(ctx, sittingId(n), `the director's click did not come in sitting ${n}: the undo of P6`);
+      return;
+    }
+    await waitFor(async () => { await tick(ctx); return (await ghPulls(ctx)).some((p) => /^wheelhouse\/undo-/.test(p.head?.ref ?? '') && p.merged_at); }, { io, timeoutMs: 20 * MINUTE });
+    await note(ctx, LOG.fault('F5a'), 'undo of P6 approved; waited for the take-back merge');
+  },
+  // F5b: the undo of P2, which clashes with later work; the director's click is the answer to its card.
+  async F5b(ctx, io, { n }) {
+    const p2 = pullOf(await ghPulls(ctx), ctx.state.pieces.P2?.change ?? 'categor');
+    const sha = p2?.merge_commit_sha ?? 'unknown';
+    await deskFree(ctx);
+    const typedAt = io.clock.now();
+    await io.faults.undoTyped(io.tmux, sha);
+    io.log?.("Click Approve on the undo of piece P2's merge in the helper window (the second of two). It should clash.");
+    if (!(await waitFor(undoAnswered(ctx, sha, typedAt), { io, timeoutMs: CLICK_WAIT_MS }))) {
+      await addFinding(ctx, sittingId(n), `the director's click did not come in sitting ${n}: the undo of P2`);
+      return;
+    }
+    await note(ctx, LOG.fault('F5b'), `undo of P2 approved; reply: ${io.tmux.capture(DESK).split('\n').filter((l) => /clashes with later work/.test(l)).join(' ') || 'no clash text seen'}`);
+  },
+};
+
+// Minutes after midnight (of the day the run began) in local time, as `windowState` reads them.
+const localMinutes = (ctx) => (ctx.io.clock.now() - ctx.windowOrigin) / MINUTE;
+
+// The start of a sitting: asks once, or (with windows) waits for the director's window. False when the sitting is skipped.
+async function sittingStart(ctx, io, { n, clicks, windows }) {
+  if (windows.length === 0) {
+    const text = `Sitting ${n}: ${clicks.length} click${clicks.length === 1 ? '' : 's'} in the helper window, about ${minutesFor(clicks.length)} minutes. Answer ready when you are at the screen.`;
+    await directorAsk(ctx, text);
+    return true;
+  }
+  let state = windowState(windows, localMinutes(ctx));
+  if (state === 'before') {
+    await note(ctx, sittingId(n), 'waiting for the director\'s window; builds carry on meanwhile');
+    await waitFor(async () => { await tick(ctx); state = windowState(windows, localMinutes(ctx)); return state !== 'before'; }, { io, timeoutMs: 48 * 60 * MINUTE, everyMs: MINUTE });
+  }
+  if (state === 'past') {
+    await addFinding(ctx, sittingId(n), `skipped: every window had gone when sitting ${n} came, so its clicks (${clicks.join(', ')}) were not covered`);
+    return false;
+  }
+  return true;
+}
+
+// One step that does the typed parts of every click in a sitting and waits for the director's clicks together. A click that fails or
+// does not come is a finding and never a stop; the stop that a failed F6 may have left on is lifted before the next click.
+const WAVE_OF_POINT = { w3: 3, w4: 4, end: 5 };
+function sittingStep({ n, point, after, clicks }, windows) {
+  return {
+    id: sittingId(n), wave: WAVE_OF_POINT[point], smoke: false, director: true, after, n, clicks,
+    async run(ctx, io) {
+      if (!(await sittingStart(ctx, io, { n, clicks, windows }))) return;
+      await liftIfStopped(ctx, io, n);
+      for (const click of clicks) {
+        try {
+          await clickSteps[click](ctx, io, { n });
+        } catch (error) {
+          if (error instanceof HardStop) throw error;
+          await addFinding(ctx, sittingId(n), `${click}: ${error.message}`);
+        }
+        await liftIfStopped(ctx, io, n);
+      }
+    },
+  };
+}
 
 const s9 = (n, run) => ({ id: `s9-${n}`, wave: 4, smoke: [1, 2, 4].includes(n), run });
 
 export const STEPS = [
-  { id: 'stage', wave: 1, smoke: true, async run(ctx, io) { ctx.state.stage = await io.host.stage({ out: ctx.folder }); await note(ctx, 'stage', 'plugin staged without this kit or the tests'); } },
+  { id: 'stage', wave: 1, smoke: true, foundation: true, async run(ctx, io) { ctx.state.stage = await io.host.stage({ out: ctx.folder }); await note(ctx, 'stage', 'plugin staged without this kit or the tests'); } },
   {
-    id: 'create-repo', wave: 1, smoke: true, needsGo,
+    id: 'create-repo', wave: 1, smoke: true, foundation: true, needsGo,
     asks: (ctx) => `Create the public GitHub repository ${ctx.repoSlug}? Answer go.`,
     async run(ctx, io) { await ghDo(ctx, ['repo', 'create', ctx.repoSlug, '--public', '--description', 'A throwaway project for the Haiku trial']); await note(ctx, 'create-repo', `created ${ctx.repoSlug}`); },
   },
@@ -550,7 +808,7 @@ export const STEPS = [
     },
   },
   {
-    id: 'install', wave: 1, smoke: true, needsGo,
+    id: 'install', wave: 1, smoke: true, foundation: true, needsGo,
     asks: (ctx) => `Install the staged plugin into Claude Code and use ${modelName(ctx)} for the trial? Answer go.`,
     async run(ctx, io) {
       const configDir = ctx.env.HAIKU_TRIAL_CONFIG_DIR;
@@ -572,7 +830,7 @@ export const STEPS = [
     },
   },
   {
-    id: 'seed', wave: 1, smoke: true,
+    id: 'seed', wave: 1, smoke: true, foundation: true,
     async run(ctx, io) {
       const made = await io.host.makeProject({ dir: ctx.projectDir, model: ctx.model });
       ctx.state.seedSha = made.sha;
@@ -586,13 +844,14 @@ export const STEPS = [
     },
   },
   {
-    id: 'setup-s0', wave: 1, smoke: true,
+    id: 'setup-s0', wave: 1, smoke: true, foundation: true,
     async run(ctx, io) {
       let restarted = false;
       const start = async () => {
         await desk(ctx, SETUP, { WHEELHOUSE_SETUP_MODEL: ctx.model });
         io.tmux.type(SETUP, restarted ? 'carry on with setup' : '/wheelhouse:setup');
       };
+      ctx.inSetup = true;
       await start();
       ctx.session = SETUP;
       ctx.state.panes.setup = [];
@@ -621,6 +880,7 @@ export const STEPS = [
         return false;
       }, { io, timeoutMs: SETUP_WAIT_MS });
       ctx.session = undefined;
+      ctx.inSetup = false;
       ctx.state.panes.setup.push(io.tmux.capture(SETUP));
       await note(ctx, LOG.health, done ? 'pass' : 'fail: setup did not finish in time');
       if (done) await note(ctx, LOG.health, `setup ended on ${ctx.state.setupEndedBy}`);
@@ -630,7 +890,7 @@ export const STEPS = [
     },
   },
   {
-    id: 'front-desk', wave: 1, smoke: true,
+    id: 'front-desk', wave: 1, smoke: true, foundation: true,
     async run(ctx, io) {
       await desk(ctx, DESK);
       const on = await io.host.typedRepliesOn({ project: ctx.projectName });
@@ -679,11 +939,7 @@ export const STEPS = [
   {
     id: 'w2-merge-wait', wave: 2, smoke: true,
     async run(ctx) {
-      const merged = await waitMerged(ctx, 3, 2, { soft: true });
-      if (merged < 3) {
-        ctx.state.shortfall = 3 - merged;
-        await note(ctx, 'w2-merge-wait', `missed: ${merged} of 3 pull requests merged in time for wave 2; the run goes on and later waits ask for ${ctx.state.shortfall} fewer`);
-      }
+      await waitMerged(ctx, 3, 2);
       await spareBugCheck(ctx);
     },
   },
@@ -693,81 +949,32 @@ export const STEPS = [
     id: 'f1', wave: 3, smoke: false,
     async run(ctx, io) {
       const env = await pieceEnv(ctx, 'P3');
+      if (!env) { await notExercised(ctx, 'F1', noSessionWhy('P3')); return; }
       ctx.state.faults.F1 = await io.faults.f1WrongShape(env);
       await note(ctx, LOG.fault('F1'), `F1 exit ${ctx.state.faults.F1.code}, sentBack ${ctx.state.faults.F1.sentBack}`);
     },
   },
   {
-    id: 'f1b', wave: 3, smoke: false,
+    id: 'f1b', wave: 3, smoke: false, needs: ['f1'],
     async run(ctx, io) {
-      const got = await io.faults.f1bStuck(await pieceEnv(ctx, 'P3'));
+      const env = await pieceEnv(ctx, 'P3');
+      if (!env) { await notExercised(ctx, 'F1b', noSessionWhy('P3')); return; }
+      const got = await io.faults.f1bStuck(env);
       ctx.state.faults.F1b = { ...got };
       await note(ctx, LOG.fault('F1b'), `stuck at try ${got.stuckAt}`);
     },
   },
   {
-    id: 'f1c', wave: 3, smoke: false,
+    id: 'f1c', wave: 3, smoke: false, needs: ['f1'],
     async run(ctx, io) {
-      const got = await io.faults.f1cDirectorKind(await pieceEnv(ctx, 'P3'));
+      const env = await pieceEnv(ctx, 'P3');
+      if (!env) { await notExercised(ctx, 'F1c', noSessionWhy('P3')); return; }
+      const got = await io.faults.f1cDirectorKind(env);
       ctx.state.faults.F1c = got;
       await note(ctx, LOG.fault('F1c'), `refused with code ${got.code}`);
     },
   },
-  {
-    id: 'f6-stop', wave: 3, smoke: false,
-    async run(ctx, io) {
-      await deskFree(ctx);
-      ctx.state.stopAt = io.clock.now();
-      await io.faults.f6AllStop(io.tmux);
-      await io.clock.sleep(10000);
-      await note(ctx, LOG.stopSet, 'All stop typed', { detail: { at: ctx.state.stopAt } });
-      await note(ctx, LOG.fault('F6'), 'All stop set');
-    },
-  },
-  {
-    id: 'f6-undo', wave: 3, smoke: false,
-    async run(ctx, io) {
-      const sha = await p6Sha(ctx);
-      await deskFree(ctx);
-      await io.faults.undoTyped(io.tmux, sha);
-      await io.clock.sleep(20000);
-      await note(ctx, 'f6-undo', `undo typed under All stop: ${io.tmux.capture(DESK).split('\n').filter((l) => /All stop is on/.test(l)).join(' ') || 'no refusal text seen'}`);
-    },
-  },
-  {
-    id: 'f6-wait-5m', wave: 3, smoke: false,
-    async run(ctx, io) {
-      const until = (ctx.state.stopAt ?? io.clock.now()) + 5 * MINUTE;
-      await waitFor(async () => { await tick(ctx); return io.clock.now() >= until; }, { io, timeoutMs: 6 * MINUTE });
-      ctx.state.panes['front-desk'].push(io.tmux.capture(DESK));
-      await note(ctx, 'f6-wait-5m', 'five minutes with no new start allowed');
-    },
-  },
-  {
-    id: 'f6-lift', wave: 3, smoke: false, director: true,
-    async run(ctx, io) {
-      await deskFree(ctx);
-      await io.faults.liftTyped(io.tmux);
-      const lifted = await waitFor(async () => {
-        await tick(ctx);
-        return (await io.host.events({ project: ctx.projectName })).some((e) => e.kind === 'action' && e.data?.action === 'lift-stop');
-      }, { io, timeoutMs: 2 * MINUTE });
-      if (!lifted) await directorAsk(ctx, 'Lift All stop in the helper window, then answer done.');
-      await note(ctx, 'f6-lift', 'All stop lifted');
-    },
-  },
-  {
-    id: 'f5a-undo-p6', wave: 3, smoke: false, director: true,
-    async run(ctx, io) {
-      const sha = await p6Sha(ctx);
-      await deskFree(ctx);
-      await io.faults.undoTyped(io.tmux, sha);
-      await directorAsk(ctx, "Approve the undo of piece P6's merge in the helper window (the first of two), then answer done.");
-      await waitFor(async () => { await tick(ctx); return (await ghPulls(ctx)).some((p) => /^wheelhouse\/undo-/.test(p.head?.ref ?? '') && p.merged_at); }, { io, timeoutMs: 20 * MINUTE });
-      await note(ctx, LOG.fault('F5a'), 'undo of P6 approved; waited for the take-back merge');
-    },
-  },
-  { id: 'w3-merge-wait', wave: 3, smoke: false, async run(ctx) { await waitMerged(ctx, mergesBy(ctx, 3 + (ctx.state.p5 === 'not-covered' ? 3 : 4)), 3); } },
+  { id: 'w3-merge-wait', wave: 3, smoke: false, async run(ctx) { await waitMerged(ctx, 3 + (ctx.state.p5 === 'not-covered' ? 3 : 4), 3); } },
   auditStep(3, false),
   { id: 'w4-type', wave: 4, smoke: true, async run(ctx) { await typeWave(ctx, 4, ctx.smoke ? { only: ['P4'] } : {}); } },
   {
@@ -788,9 +995,11 @@ export const STEPS = [
     const raised = await waitFor(async () => { await tick(ctx); return (await io.host.events({ project: ctx.projectName })).some((e) => e.kind === 'question' && (change === undefined || e.data?.work === change)); }, { io, timeoutMs: 40 * MINUTE });
     if (!raised) {
       const env = await pieceEnv(ctx, 'P4');
-      const got = await io.faults.decisionFallback(env);
-      await note(ctx, 'fallback', `P4 raised no decision; the runner raised one: ${JSON.stringify(got)}`);
-      await io.clock.sleep(30000);
+      if (env) {
+        const got = await io.faults.decisionFallback(env);
+        await note(ctx, 'fallback', `P4 raised no decision; the runner raised one: ${JSON.stringify(got)}`);
+        await io.clock.sleep(30000);
+      } else await notExercised(ctx, 's9', 'P4 raised no decision and has no running session to raise one in');
     }
     try {
       const env = await io.faults.featureEnvOf({ project: ctx.projectDir, name: ctx.projectName, piece: ctx.state.pieces.P4?.change ?? 'p4' });
@@ -808,6 +1017,7 @@ export const STEPS = [
   }),
   s9(3, async (ctx, io) => {
     const env = await pieceEnv(ctx, 'P4');
+    if (!env) { await notExercised(ctx, 's9', noSessionWhy('P4')); return; }
     ctx.state.p4env = env;
     const got = await io.faults.secondDecision(env);
     await note(ctx, 's9-3', `second decision raised, code ${got.code}`);
@@ -817,17 +1027,6 @@ export const STEPS = [
   s9(4, async (ctx) => { await note(ctx, 's9-4', `1 B: ${(await say(ctx, '1 B')).slice(0, 300)}`); }),
   s9(5, async (ctx) => { await note(ctx, 's9-5', `2 B private: ${(await say(ctx, '2 B private')).slice(0, 300)}`); }),
   s9(6, async (ctx) => { await note(ctx, 's9-6', `1 A again: ${(await say(ctx, '1 A')).slice(0, 300)}`); }),
-  {
-    id: 'f5b-undo-p2', wave: 4, smoke: false, director: true,
-    async run(ctx, io) {
-      const pulls = await ghPulls(ctx);
-      const p2 = pullOf(pulls, ctx.state.pieces.P2?.change ?? 'categor');
-      await deskFree(ctx);
-      await io.faults.undoTyped(io.tmux, p2?.merge_commit_sha ?? 'unknown');
-      await directorAsk(ctx, "Approve the undo of piece P2's merge in the helper window (the second of two), then answer done. It should clash.");
-      await note(ctx, LOG.fault('F5b'), `undo of P2 approved; reply: ${io.tmux.capture(DESK).split('\n').filter((l) => /clashes with later work/.test(l)).join(' ') || 'no clash text seen'}`);
-    },
-  },
   {
     id: 'pull-back', wave: 4, smoke: false,
     async run(ctx, io) {
@@ -851,8 +1050,8 @@ export const STEPS = [
     },
   },
   // A smoke run starts only P4 in this wave, so only P4 has to merge before it is scored.
-  { id: 'w4-smoke-merge', wave: 4, smoke: true, smokeOnly: true, async run(ctx) { await waitMerged(ctx, mergesBy(ctx, 4), 4); } },
-  { id: 'w4-merge-wait', wave: 4, smoke: false, async run(ctx) { await waitMerged(ctx, mergesBy(ctx, 3 + (ctx.state.p5 === 'not-covered' ? 3 : 4) + 2), 4); } },
+  { id: 'w4-smoke-merge', wave: 4, smoke: true, smokeOnly: true, async run(ctx) { await waitMerged(ctx, 4, 4); } },
+  { id: 'w4-merge-wait', wave: 4, smoke: false, async run(ctx) { await waitMerged(ctx, 3 + (ctx.state.p5 === 'not-covered' ? 3 : 4) + 2, 4); } },
   auditStep(4),
   {
     id: 'w5-incident', wave: 5, smoke: false,
@@ -902,7 +1101,9 @@ export const STEPS = [
       const runLog = readLog(ctx.logFile);
       io.results.writeRaw({ folder: ctx.folder, transcripts, events: await io.host.events({ project: ctx.projectName }), panes: ctx.state.panes, runLog, usage });
       const file = path.join(ctx.folder, 'summary', `${ctx.date}-haiku-trial-results.md`);
-      io.results.writeSummary({ file, date: ctx.date, rows: ctx.state.rows ?? [], score: ctx.state.score, audit: ctx.state.audit, usage, model: ctx.model });
+      const findings = ctx.state.findings ?? [];
+      const claimLost = findings.find((f) => f.claimLost)?.claimLost;
+      io.results.writeSummary({ file, date: ctx.date, rows: ctx.state.rows ?? [], score: ctx.state.score, audit: ctx.state.audit, usage, model: ctx.model, findings, claimLost, resumedFrom: ctx.state.resumedFrom });
       await note(ctx, 'results', `raw results and summary under ${ctx.folder}`);
     },
   },
@@ -922,7 +1123,9 @@ export const STEPS = [
     id: 'review-card', wave: 6, smoke: false, director: true,
     async run(ctx, io) {
       const decisionN = ctx.state.decisionN;
-      if (!Number.isInteger(decisionN)) throw new Stop('decision 3 has no number, so the review steps cannot point at it');
+      // With no decision 3 the card is still shown, without the typed-answer step, and that row is not covered.
+      const typed = Number.isInteger(decisionN);
+      if (!typed) await note(ctx, 'review-card', 'typed answer not covered: decision 3 has no number, so the card is shown without the typed-answer step');
       const stepsFile = path.join(ctx.folder, 'steps.md');
       fs.writeFileSync(stepsFile, stepsPage({ decisionN }));
       const tryMe = writeTryMe(ctx.folder);
@@ -931,7 +1134,7 @@ export const STEPS = [
       // The card goes through the front desk as a decision, so it reads as it will on a phone; the terminal is the fallback.
       let answer = null;
       const env = ctx.state.p4env;
-      const raised = env && fs.existsSync(env.cwd ?? '') ? await io.faults.reviewDecision({ ...env, card: reviewAsDecision(card, { stepsUrl: stepsFile }) }) : { code: null, stdout: 'no environment' };
+      const raised = typed && env && fs.existsSync(env.cwd ?? '') ? await io.faults.reviewDecision({ ...env, card: reviewAsDecision(card, { stepsUrl: stepsFile }) }) : { code: null, stdout: 'no environment' };
       if (raised.code === 0) {
         const askedAt = io.clock.now();
         io.log?.(`The review card is in the chat as a decision. Try the tracker (statement: ${tryMe}), then answer there with its number and A, B or C.`);
@@ -941,7 +1144,7 @@ export const STEPS = [
           answer = found ? answerLetter(found.data.label) : null;
           return answer !== null;
         }, { io, timeoutMs: 120 * MINUTE, everyMs: 30000 });
-      } else {
+      } else if (typed) {
         await note(ctx, 'review-card', `the card could not be raised as a decision (${String(raised.stdout).trim().slice(0, 200)}); asking in the terminal`);
       }
       while (answer === null) {
@@ -970,7 +1173,7 @@ async function gatherAndCheck(ctx, io) {
   const { state } = ctx;
   const transcripts = io.host.findTranscripts({ project: ctx.projectName, dir: ctx.projectDir });
   const pieces = state.pieces;
-  if (pieces.P8) pieces.P8.gate = await io.host.readGate({ change: pieces.P8.change, project: ctx.projectName });
+  if (pieces.P8) pieces.P8.gate = await io.host.readGate({ change: pieces.P8.change, project: ctx.projectName, gh: io.gh });
   // A file that is absent and a read that failed both come back null, so package.json is read too: it is always on main.
   const mainFiles = {};
   for (const file of ['package.json', P6_FILE]) mainFiles[file] = await io.host.readMain({ dir: ctx.projectDir, file });
@@ -989,6 +1192,7 @@ async function gatherAndCheck(ctx, io) {
     }
   }
   state.audit = full.audit;
+  full.findings = state.findings ?? [];
   const rows = io.signals.checkAll(full, { smoke: ctx.smoke });
   return state.p5 === 'not-covered'
     ? rows.map((r) => (r.id === 6 ? { ...r, pass: null, evidence: `not covered: ${state.p5Why}` } : r))
@@ -997,11 +1201,32 @@ async function gatherAndCheck(ctx, io) {
 
 // --- planning and running ---
 
-export function planRun({ mode = 'full' } = {}) {
-  return mode === 'smoke' ? STEPS.filter((s) => s.smoke) : STEPS.filter((s) => s.smokeOnly !== true);
+// The steps of a run. A full run gets a sitting step after each `SITTING_POINTS` step its sittings name (`--sitting`, `w4` by default);
+// a smoke run has none.
+export function planRun({ mode = 'full', sittings = ['w4'], windows = [] } = {}) {
+  if (mode === 'smoke') return STEPS.filter((s) => s.smoke);
+  const after = new Map(placeClicks(sittings).map((p) => [p.after, sittingStep(p, windows)]));
+  return STEPS.filter((s) => s.smokeOnly !== true).flatMap((s) => (after.has(s.id) ? [s, after.get(s.id)] : [s]));
 }
 
-const lastDone = (file) => readLog(file).filter((e) => e.done === true).map((e) => e.step).filter((id) => STEPS.some((s) => s.id === id)).pop();
+const lastDone = (file, plan) => readLog(file).filter((e) => e.done === true).map((e) => e.step).filter((id) => plan.some((s) => s.id === id)).pop();
+const sittingsIn = (plan) => plan.filter((s) => s.clicks !== undefined);
+
+// director.md (spec section 5.3): the sittings still to come, when each is likely and how long it takes. It is written at the start
+// of a run, at the end of each wave and on a resume, and its first line goes to the log.
+async function writeDirectorNote(ctx, plan, at) {
+  try {
+    const ahead = plan.slice(at);
+    const sittings = sittingsIn(ahead);
+    const now = ctx.io.clock.now();
+    const estimates = sittings.map((s) => estimate({ remaining: ahead.slice(0, ahead.indexOf(s)).filter((x) => x.clicks === undefined).map((x) => x.id), now }));
+    const text = directorNote({ sittings, estimates, windows: ctx.state.windows ?? [], now });
+    fs.writeFileSync(path.join(ctx.folder, 'director.md'), text);
+    ctx.io.log?.(`director.md: ${text.split('\n').find((l) => l.startsWith('- '))?.replace(/\*\*/g, '') ?? 'no sitting still to come'}`);
+  } catch (error) {
+    await note(ctx, 'director-note', `could not write director.md: ${error.message}`);
+  }
+}
 
 function contextFor({ mode, io, folder, date, label, env }) {
   const owner = env.HAIKU_TRIAL_GH_OWNER;
@@ -1021,15 +1246,24 @@ function contextFor({ mode, io, folder, date, label, env }) {
   };
 }
 
-export async function run({ mode = 'full', io: given, from, until, folder, date, model, env = process.env } = {}) {
+export async function run({ mode = 'full', io: given, from, until, folder, date, model, env = process.env, goGiven = false, sittings, windows } = {}) {
   const label = date;
   const problem = homeProblem(env);
   if (problem) return { done: [], stoppedAt: 'wheelhouse-home', why: problem };
-  const io = { ...given, host: { ...NOTHING, ...(given.host ?? {}) } };
+  let io = { ...given, host: { ...NOTHING, ...(given.host ?? {}) } };
   const day = date ?? new Date(io.clock.now()).toISOString().slice(0, 10);
   const where = folder ?? io.results.runFolder(day);
   fs.mkdirSync(where, { recursive: true });
   const ctx = contextFor({ mode, io, folder: where, date: day, label, env });
+  // A run resumed from a snapshot reads GitHub as it was at the snapshot, plus what is new (spec section 3.5).
+  const resumed = ctx.state.resumedFrom;
+  if (resumed) {
+    const capture = await io.snapshot?.readCapture?.({ label, snapshot: resumed.snapshot });
+    if (capture) {
+      io = { ...io, gh: snapshotGh(io.gh, { capture, maxNumber: resumed.maxNumber, reopened: resumed.reopened, since: resumed.since }) };
+      ctx.io = io;
+    }
+  }
   // The project and every session it starts are pinned to one model, so a resume keeps the model the run began on.
   const asked = model === undefined ? undefined : parseModel(model);
   const began = ctx.state.model;
@@ -1039,10 +1273,15 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
   ctx.model = began ?? asked ?? DEFAULT_MODEL;
   ctx.state.model = ctx.model;
   io.host.useRepo(ctx.repoSlug);
-  const plan = planRun({ mode });
+  // The sittings and windows a run began with are kept in its state, so a later `--from auto` or a resume goes on with the same plan.
+  ctx.state.sittings = sittings ?? ctx.state.sittings ?? ['w4'];
+  ctx.state.windows = windows ?? ctx.state.windows ?? [];
+  const now = new Date(io.clock.now());
+  ctx.windowOrigin = now.setHours(0, 0, 0, 0);
+  const plan = planRun({ mode, sittings: ctx.state.sittings, windows: ctx.state.windows });
   let start = 0;
   if (from === 'auto') {
-    const at = plan.findIndex((s) => s.id === lastDone(ctx.logFile));
+    const at = plan.findIndex((s) => s.id === lastDone(ctx.logFile, plan));
     start = at < 0 ? 0 : at + 1;
   } else if (from) {
     start = plan.findIndex((s) => s.id === from);
@@ -1052,38 +1291,181 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
   if (ctx.preview === 'tunnel' && plan.slice(start).some((s) => s.id === 'create-preview') && !(await io.host.hasCommand('cloudflared'))) {
     return { done: [], stoppedAt: 'create-preview', why: 'HAIKU_TRIAL_PREVIEW is tunnel but cloudflared is not installed. Install it (brew install cloudflared) or use vercel or none. Nothing was created.' };
   }
+  const points = pointsFor(mode, sittingsIn(plan).map((s) => s.n));
   const done = [];
-  for (const step of plan.slice(start)) {
+  const failed = [];
+  const skipped = [];
+  const result = (extra = {}) => ({ done, findings: ctx.state.findings ?? [], failed, skipped, ...extra });
+  await writeDirectorNote(ctx, plan, start);
+  for (const [index, step] of plan.entries()) {
+    if (index < start) continue;
+    const unmet = (step.needs ?? []).find((id) => failed.includes(id) || skipped.includes(id));
+    if (unmet !== undefined) {
+      const what = `skipped: needs ${unmet}, which failed`;
+      ctx.state.findings = (ctx.state.findings ?? []).filter((f) => f.step !== step.id);
+      await addFinding(ctx, step.id, what);
+      await appendJsonl(ctx.logFile, { at: iso(ctx), step: step.id, note: what, done: true, outcome: 'skipped' });
+      fs.writeFileSync(ctx.stateFile, `${JSON.stringify(ctx.state, null, 2)}\n`);
+      skipped.push(step.id);
+      if (until === step.id) break;
+      continue;
+    }
     try {
-      if (step.needsGo) {
-        if (!ctx.owner) throw new Stop('HAIKU_TRIAL_GH_OWNER is not set');
+      if (step.needsGo && !goGiven) {
+        if (!ctx.owner) throw new HardStop('HAIKU_TRIAL_GH_OWNER is not set');
         const answer = await io.ask(step.asks?.(ctx) ?? `Go ahead with ${step.id}? Answer go.`);
         if (String(answer).trim().toLowerCase() !== 'go') {
           await note(ctx, step.id, `stopped: the answer was "${answer}", not go`);
-          return { done, stoppedAt: step.id, why: 'waiting for the director\'s go' };
+          return result({ stoppedAt: step.id, why: 'waiting for the director\'s go' });
         }
       }
       io.log?.(`step ${step.id}`);
       ctx.directorStep = step.director === true;
+      ctx.wave = step.wave;
+      // A step run again replaces what it found before.
+      ctx.state.findings = (ctx.state.findings ?? []).filter((f) => f.step !== step.id);
+      for (const p of points.filter((x) => x.before === step.id && x.point !== ctx.state.resumedFrom?.point)) await snapshotAt(ctx, { point: p.point, step: step.id });
       await step.run(ctx, io);
     } catch (error) {
-      await note(ctx, step.id, `stopped: ${error.message}`);
+      if (step.foundation === true || error instanceof HardStop) {
+        await note(ctx, step.id, `stopped: ${error.message}`);
+        fs.writeFileSync(ctx.stateFile, `${JSON.stringify(ctx.state, null, 2)}\n`);
+        return result({ stoppedAt: step.id, why: error.message });
+      }
+      await addFinding(ctx, step.id, error.message);
+      await appendJsonl(ctx.logFile, { at: iso(ctx), step: step.id, note: `failed: ${error.message}`, done: true, outcome: 'failed' });
       fs.writeFileSync(ctx.stateFile, `${JSON.stringify(ctx.state, null, 2)}\n`);
-      return { done, stoppedAt: step.id, why: error.message };
+      failed.push(step.id);
+      if (until === step.id) break;
+      continue;
     }
     await appendJsonl(ctx.logFile, { at: iso(ctx), step: step.id, note: 'done', done: true });
     fs.writeFileSync(ctx.stateFile, `${JSON.stringify(ctx.state, null, 2)}\n`);
     done.push(step.id);
+    for (const p of points.filter((x) => x.after === step.id)) await snapshotAt(ctx, { point: p.point, step: step.id });
     if (until === step.id) break;
+    if (plan[index + 1] && plan[index + 1].wave > step.wave) await writeDirectorNote(ctx, plan, index + 1);
   }
-  return { done };
+  return result();
+}
+
+// --- resume ---
+
+// The step a resume goes on from: the step itself for a `before-` point, the one after it for an `after-` point.
+function stepAfterPoint(meta) {
+  const plan = planRun({ mode: meta.mode ?? 'full', sittings: meta.sittings }).map((s) => s.id);
+  if (meta.point?.startsWith('before-')) return plan.includes(meta.step) ? meta.step : undefined;
+  const at = plan.indexOf(meta.step);
+  return at < 0 ? undefined : plan[at + 1];
+}
+
+const readAttempts = (dir) => readLog(path.join(dir, 'attempts.jsonl'));
+// The next attempt number: after every one on record, started or finished, so a number is never used twice.
+const nextAttempt = (dir) => readAttempts(dir).reduce((most, e, i) => Math.max(most, Number.isInteger(e.n) ? e.n : i + 1), 0) + 1;
+// Rewrites the record of attempt `n` with `change`, keeping the others as they are.
+function updateAttempt(dir, n, change) {
+  const file = path.join(dir, 'attempts.jsonl');
+  const lines = readAttempts(dir).map((e) => (e.n === n ? { ...e, ...change } : e));
+  fs.writeFileSync(file, lines.map((e) => `${JSON.stringify(e)}\n`).join(''));
+}
+
+// Starts a run again from a snapshot, as a new attempt of the same label (spec 2026-11-13, section 3.4). The attempt that was
+// there is moved aside, nothing is deleted. `base` is where snapshots are kept (tests give a folder of their own).
+export async function resume({ folder, label, snapshot, io: given, keepPlugin = false, configDir, env = process.env, until, base }) {
+  const stop = (why) => ({ done: [], stoppedAt: 'resume', why });
+  const io = { ...given, host: { ...NOTHING, ...(given.host ?? {}) } };
+  const dir = snapshotsDir(label, base);
+  // A snapshot is named by its folder's own name: nothing else is read, and nothing outside the label's snapshot folder.
+  const dest = path.join(dir, String(snapshot));
+  const inside = path.relative(dir, dest);
+  if (typeof snapshot !== 'string' || snapshot === '' || snapshot === '.' || snapshot.includes('..') || /[\\/]/.test(snapshot) || inside !== snapshot) return stop(`"${snapshot}" is not a plain snapshot name`);
+  // Check: nothing is touched yet.
+  const meta = readMeta(dest);
+  if (!meta) return stop(`no snapshot ${snapshot} for ${label}. Snapshots: ${listSnapshots(dir).map((s) => s.name).join(', ') || 'none'}`);
+  if (meta.label !== label) return stop(`snapshot ${snapshot} is for ${meta.label}, not ${label}`);
+  const owner = env.HAIKU_TRIAL_GH_OWNER;
+  if (!owner) return stop('HAIKU_TRIAL_GH_OWNER is not set');
+  if (!(await io.gh(['api', 'user']))) return stop('gh is not signed in');
+  if (!io.github) return stop('this host cannot rebuild the repository');
+  const first = stepAfterPoint(meta);
+  if (first === undefined) return stop(`snapshot ${snapshot} has no step to go on from`);
+  // A run that is going on is never touched: its sessions must be stopped first (`restore`).
+  const alive = io.tmux.list({ all: true }).filter((name) => name.startsWith(sessionPrefix(label)));
+  if (alive.length > 0) return stop(`the sessions of ${label} are still running (${alive.join(', ')}). Stop them with restore, then resume`);
+
+  const repoName = `haiku-trial-${label}`;
+  const slug = `${owner}/${repoName}`;
+  const n = nextAttempt(dir);
+  const aside = `${folder}-a${n}`;
+  // Nothing already kept is ever written over: an attempt's folder that is there stops the resume before anything is touched.
+  if (fs.existsSync(aside)) return stop(`${aside} already exists; it is an earlier attempt and is kept as it is. Move it away, then resume`);
+  const plugin = keepPlugin ? `the plugin staged in the snapshot (${meta.pluginSha ?? 'unknown'})` : `the plugin staged from this checkout (${(await io.host.checkoutSha?.()) ?? 'unknown'})`;
+  // One go for everything outward; any other answer leaves everything as it was.
+  const answer = await io.ask(`Resume ${label} from ${snapshot}: rename the repository ${repoName} to ${repoName}-a${n}, create a fresh public ${repoName} from the snapshot, install ${plugin} and spend tokens. Answer go.`);
+  if (String(answer).trim().toLowerCase() !== 'go') return stop(`the answer was "${answer}", not go`);
+
+  // The number is reserved before anything is moved, so a resume that stops half way is never reused as the same attempt.
+  await appendJsonl(path.join(dir, 'attempts.jsonl'), { n, at: new Date(io.clock.now()).toISOString(), status: 'started', snapshot, aside, repository: `${repoName}-a${n}` });
+  io.host.useRepo(slug);
+  await restore({ folder, io, force: true, label });
+  // Move the attempt aside: its folder, its transcripts and its repository.
+  const projectName = projectSlug(owner, repoName);
+  const projects = path.join(configDir ?? path.join(os.homedir(), '.claude'), 'projects');
+  for (const t of io.host.findTranscripts({ project: projectName, dir: path.join(folder, 'project') })) {
+    const rel = path.relative(projects, t.file);
+    if (rel.startsWith('..') || path.isAbsolute(rel) || !fs.existsSync(t.file)) continue;
+    const to = path.join(aside, 'transcripts-moved', rel);
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.cpSync(t.file, to);
+    fs.rmSync(t.file);
+  }
+  if (fs.existsSync(folder)) fs.renameSync(folder, aside);
+  try { await io.github.rename({ slug, to: `${repoName}-a${n}` }); } catch (error) { return stop(`the repository could not be renamed: ${error.message}`); }
+  try {
+    restoreLocal({ dest, folder, configDir });
+  } catch (error) { return stop(`the snapshot could not be put back: ${error.message}`); }
+
+  let reopened;
+  try {
+    const open = (() => { try { return JSON.parse(fs.readFileSync(path.join(dest, 'github', 'open.json'), 'utf8')); } catch { return []; } })();
+    ({ reopened } = await rebuildGithub({ github: io.github, slug, src: path.join(dest, 'github'), maxNumber: meta.maxNumber ?? 0, open, attempt: n, snapshot, sleep: (ms) => io.clock.sleep(ms) }));
+  } catch (error) { return stop(`the fresh repository could not be rebuilt: ${error.message}`); }
+
+  const stateFile = path.join(folder, 'state.json');
+  const setState = (change) => {
+    let state = {};
+    try { state = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { /* none */ }
+    fs.writeFileSync(stateFile, `${JSON.stringify(change(state), null, 2)}\n`);
+  };
+  const resumedFrom = { snapshot, point: meta.point, attempt: n + 1, pluginBefore: meta.pluginSha, pluginNow: meta.pluginSha, maxNumber: meta.maxNumber ?? 0, quiet: meta.quiet, running: meta.running ?? [], reopened, since: meta.at };
+  setState((state) => ({ ...state, resumedFrom }));
+  updateAttempt(dir, n, { status: 'resumed' });
+
+  // Go on: the plugin again (unless it is kept), a fresh front desk, then the steps from the point.
+  const mode = meta.mode ?? 'full';
+  const segments = [...(keepPlugin ? [] : ['stage']), 'install', 'front-desk'];
+  if (!keepPlugin) fs.rmSync(path.join(folder, 'plugin'), { recursive: true, force: true });
+  const done = [];
+  for (const id of segments) {
+    const got = await run({ mode, io, from: id, until: id, folder, date: label, env, goGiven: true });
+    done.push(...got.done);
+    if (got.stoppedAt) return { ...got, done };
+    if (id === 'stage') {
+      let sha = meta.pluginSha;
+      try { sha = JSON.parse(fs.readFileSync(stateFile, 'utf8')).stage?.sha ?? sha; } catch { /* keep the old */ }
+      setState((state) => ({ ...state, resumedFrom: { ...state.resumedFrom, pluginNow: sha } }));
+    }
+  }
+  const got = await run({ mode, io, from: first, until, folder, date: label, env, goGiven: true });
+  return { ...got, done: [...done, ...got.done] };
 }
 
 // Stops what this run started, as its log records it, and nothing else. It deletes nothing.
 // Wheelhouse's own side (the helper, watchers and foremen) is kept while a feature session is still running, since stopping
 // it takes its records and its way to open a pull request with it; `force` stops it anyway.
-export async function restore({ folder, io, force = false }) {
+export async function restore({ folder, io, force = false, label }) {
   const stopped = [];
+  const skipped = [];
   let kept = [];
   const entries = readLog(path.join(folder, 'run-log.jsonl'));
   const names = new Set(entries.flatMap((e) => [].concat(e.detail?.tmux ?? [])).filter((n) => String(n).startsWith(SESSION_PREFIX)));
@@ -1094,7 +1476,17 @@ export async function restore({ folder, io, force = false }) {
     io.tmux.kill(name);
     stopped.push(name);
   }
+  // A pid in an old log may have been given to another process since: it is signalled only while its command line or its working
+  // folder still names this run's folder (or label). Anything that cannot be read is left alone.
+  const mine = (info) => [info?.command, info?.cwd].some((x) => typeof x === 'string' && (x.includes(path.resolve(folder)) || (label !== undefined && x.includes(label))));
   for (const pid of pids) {
+    let info = null;
+    try { info = (await io.processInfo?.(pid)) ?? null; } catch { /* unreadable: left alone */ }
+    if (!mine(info)) {
+      skipped.push(`pid ${pid}`);
+      io.log?.(`restore: left pid ${pid} alone, it is not this run's (${info ? `${info.command} in ${info.cwd}` : 'gone or unreadable'})`);
+      continue;
+    }
     // Each was started in its own process group, so the whole group goes; a pid that is no group's leader goes alone.
     try {
       io.kill(-pid, 'SIGTERM');
@@ -1112,7 +1504,7 @@ export async function restore({ folder, io, force = false }) {
     stopped.push(...(wheelhouse.stopped ?? []));
     kept = wheelhouse.kept ?? [];
   }
-  return { stopped, kept };
+  return skipped.length > 0 ? { stopped, kept, skipped } : { stopped, kept };
 }
 
 // --- the command line ---
@@ -1131,7 +1523,7 @@ export function runLabel({ arg, env = process.env } = {}) {
   return given;
 }
 
-const USAGE = 'usage: node probes/haiku-trial/runner.js full | smoke | restore | plan [--from <step>] [--out <folder>] [--until <step>] [--date <label>] [--model <haiku|sonnet>] [--force]\n  --model <haiku|sonnet> runs the whole trial on that model (haiku by default); one sonnet run tells kit faults from model faults\n  --force (restore) stops the helper, watchers and foremen even while a feature session is still running\n  --date <label> (or HAIKU_TRIAL_DATE) names the run: YYYY-MM-DD with an optional -suffix such as 2026-11-08-b';
+const USAGE = 'usage: node probes/haiku-trial/runner.js full | smoke | restore | resume | plan [--from <step>] [--out <folder>] [--until <step>] [--date <label>] [--model <haiku|sonnet>] [--force]\n  --model <haiku|sonnet> runs the whole trial on that model (haiku by default); one sonnet run tells kit faults from model faults\n  --force (restore) stops the helper, watchers and foremen even while a feature session is still running\n  resume --date <label> --snapshot <nn-point> [--keep-plugin] starts the run again from a snapshot, as a new attempt\n  --sitting <w3|w4|end> (repeatable) puts the clicks of the director in a sitting after that point; w4 alone by default\n  --window <HH:MM-HH:MM> (repeatable, local time) holds a sitting to a window of the director\n  --date <label> (or HAIKU_TRIAL_DATE) names the run: YYYY-MM-DD with an optional -suffix such as 2026-11-08-b';
 
 function parseArgs(argv) {
   const out = { command: argv[0], from: undefined, folder: undefined, until: undefined, date: undefined };
@@ -1142,6 +1534,10 @@ function parseArgs(argv) {
     else if (argv[i] === '--date') out.date = argv[(i += 1)] ?? '';
     else if (argv[i] === '--model') out.model = argv[(i += 1)] ?? '';
     else if (argv[i] === '--force') out.force = true;
+    else if (argv[i] === '--snapshot') out.snapshot = argv[(i += 1)] ?? '';
+    else if (argv[i] === '--keep-plugin') out.keepPlugin = true;
+    else if (argv[i] === '--sitting') (out.sittings ??= []).push(argv[(i += 1)] ?? '');
+    else if (argv[i] === '--window') (out.windows ??= []).push(argv[(i += 1)] ?? '');
   }
   return out;
 }
@@ -1157,15 +1553,30 @@ export async function main(argv, { print = console.log, buildIo, env = process.e
     print(USAGE);
     return 2;
   }
+  let windows;
+  try {
+    if (args.sittings) placeClicks(args.sittings);
+    if (args.windows) windows = args.windows.map(parseWindow);
+  } catch (error) {
+    print(error.message);
+    print(USAGE);
+    return 2;
+  }
   if (args.command === 'plan') {
     for (const mode of ['full', 'smoke']) {
-      print(`${mode}: ${planRun({ mode }).map((s) => `${s.id}${s.needsGo ? '*' : ''}${s.director ? '+' : ''}`).join(' ')}`);
+      const steps = planRun({ mode, sittings: args.sittings, windows });
+      const sittings = sittingsIn(steps);
+      const points = pointsFor(mode, sittings.map((x) => x.n));
+      const marked = (id) => points.some((p) => (p.before ?? p.after) === id);
+      print(`${mode}: ${steps.map((x) => `${x.id}${x.needsGo ? '*' : ''}${x.director ? '+' : ''}${marked(x.id) ? '#' : ''}`).join(' ')}`);
+      print(`snapshots: ${points.map((p) => p.point).join(' ')}`);
+      print(`sittings: ${sittings.length === 0 ? 'none' : sittings.map((x) => `${x.id} after ${x.after} (${x.clicks.join(', ')})`).join(', ')}`);
     }
-    print('* waits for the director\'s go, + needs the director');
+    print('* waits for the director\'s go, + needs the director, # snapshot point');
     if (label !== undefined) print(`run ${label}: repository ${env.HAIKU_TRIAL_GH_OWNER ?? '<owner>'}/haiku-trial-${label}, folder ${args.folder ?? runFolder(label)}`);
     return 0;
   }
-  if (!['full', 'smoke', 'restore'].includes(args.command)) {
+  if (!['full', 'smoke', 'restore', 'resume'].includes(args.command)) {
     print(USAGE);
     return 2;
   }
@@ -1179,12 +1590,24 @@ export async function main(argv, { print = console.log, buildIo, env = process.e
   if (problem) { print(JSON.stringify({ stoppedAt: 'wheelhouse-home', why: problem })); return 1; }
   fs.mkdirSync(home, { recursive: true });
   if (args.command === 'restore') {
-    print(JSON.stringify(await restore({ folder, io, force: args.force === true })));
+    print(JSON.stringify(await restore({ folder, io, force: args.force === true, label })));
     return 0;
   }
-  const result = await run({ mode: args.command, io, from: args.from ?? 'auto', until: args.until, folder, date: label, model: args.model, env: given });
+  if (args.command === 'resume') {
+    if (label === undefined) { print('resume needs --date <label>'); print(USAGE); return 2; }
+    if (!args.snapshot) {
+      const known = listSnapshots(snapshotsDir(label));
+      print(known.length === 0 ? `no snapshots for ${label}` : `snapshots for ${label}:\n${known.map((x) => `  ${x.name}  (${x.meta?.at ?? 'no time'}${x.meta?.quiet === false ? ', not quiet' : ''})`).join('\n')}`);
+      print('resume needs --snapshot <nn-point>');
+      return 2;
+    }
+    const result = await resume({ folder, label, snapshot: args.snapshot, io, keepPlugin: args.keepPlugin === true, configDir: env.HAIKU_TRIAL_CONFIG_DIR || undefined, env: given, until: args.until });
+    print(JSON.stringify(result));
+    return result.stoppedAt || (result.findings ?? []).length > 0 ? 1 : 0;
+  }
+  const result = await run({ mode: args.command, io, from: args.from ?? 'auto', until: args.until, folder, date: label, model: args.model, env: given, sittings: args.sittings, windows });
   print(JSON.stringify(result));
-  return result.stoppedAt ? 1 : 0;
+  return result.stoppedAt || (result.findings ?? []).length > 0 ? 1 : 0;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -45,7 +45,7 @@ export function reviewCard({ project, date, decisionN, stepsUrl, address, score,
   const text = [
     `What this is. You try ${project ?? 'the tracker'} for about 15 minutes, the trial's last step (run of ${said(date)}). ${result} ${String(floor ?? 'No known floor.').slice(0, 200)}`,
     'Why it comes to you. Whether this is good enough to tag v0.3.0 as "works on Haiku" is your call.',
-    `Try this${address ? ` at ${address}` : ''}: ${stepsUrl ? `Show the steps (${stepsUrl})` : 'Show the steps'}. Step 7 is your typed answer to decision ${decisionN} here in the chat.`,
+    `Try this${address ? ` at ${address}` : ''}: ${stepsUrl ? `Show the steps (${stepsUrl})` : 'Show the steps'}.${Number.isInteger(decisionN) ? ` Step 7 is your typed answer to decision ${decisionN} here in the chat.` : ' Step 7, the typed answer, is not covered in this run.'}`,
     'Options',
     ...options.map((o) => `${o.key}. ${o.label}. Cost: ${o.cost}. Undo: ${o.undo}.`),
     `I recommend ${key}, because ${REASON[key]}.`,
@@ -67,7 +67,9 @@ export function stepsPage({ decisionN, tryMe = 'try-me.csv' } = {}) {
     '4. Import it again. *Good:* "added 0, skipped 41".',
     '5. Find the $40 refund in that month. *Good:* it lowers Shopping, not raises it.',
     '6. Move one transaction to another category. *Good:* it moves, and the totals change to match.',
-    `7. In the chat, type your answer to decision ${decisionN} (a small question the trial kept for you). *Good:* the reply says it is recorded.`,
+    Number.isInteger(decisionN)
+      ? `7. In the chat, type your answer to decision ${decisionN} (a small question the trial kept for you). *Good:* the reply says it is recorded.`
+      : '7. Skip this step: the typed answer was not covered in this run, because the decision could not be raised.',
     '8. Open the tracker on your phone. *Good:* readable without zooming sideways.',
     '9. Open one merged pull request\'s description. *Good:* you can tell what changed and why without reading code.',
     '',

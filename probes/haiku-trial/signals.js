@@ -109,6 +109,11 @@ const no = (evidence) => ({ pass: false, evidence });
 const unknown = (evidence) => ({ pass: null, evidence });
 // A fault the run never reached tells nothing about Wheelhouse, so its row is not covered rather than failed.
 const NOT_REACHED = (what) => `not covered: the run stopped before ${what}`;
+// A step the run went past after it failed (or that was skipped) names itself in the findings, so its rows say which step and why.
+const FAILED = (step, what) => `not covered: ${step} failed (${what})`;
+const SITTING = /^sitting-\d+$/;
+const findingOf = (ctx, ...steps) => (ctx.findings ?? []).find((f) => steps.includes(f.step) || (steps.includes('sitting') && SITTING.test(f.step)));
+const failedFor = (ctx, ...steps) => { const f = findingOf(ctx, ...steps); return f ? unknown(FAILED(f.step, f.what)) : null; };
 const verdict = (problems, good) => (problems.length === 0 ? ok(good) : no(problems.join('; ')));
 
 const events = (ctx, kind) => (ctx.events ?? []).filter((e) => e.kind === kind);
@@ -353,7 +358,8 @@ const checks = {
   },
   14(ctx) {
     const f = ctx.faults?.F1;
-    if (!f) return unknown('F1 was not run');
+    if (typeof f?.notExercised === 'string') return unknown(`not covered: ${f.notExercised}`);
+    if (!f) return failedFor(ctx, 'f1') ?? unknown('F1 was not run');
     const problems = [];
     if (f.code !== 2) problems.push(`the exit code was ${f.code}, not 2`);
     if (f.sentBack !== true) problems.push('the decision was not sent back');
@@ -362,7 +368,8 @@ const checks = {
   },
   15(ctx) {
     const f = ctx.faults?.F1b;
-    if (!f) return unknown('F1b was not run');
+    if (typeof f?.notExercised === 'string') return unknown(`not covered: ${f.notExercised}`);
+    if (!f) return failedFor(ctx, 'f1b') ?? unknown('F1b was not run');
     if (typeof f.why !== 'string' || f.why === '') return no(`the third try was not followed by a stuck message${f.stuckAt === null ? ' (the command never asked for one)' : ''}`);
     return paneTexts(ctx, 'front-desk').some((t) => t.includes(f.why)) ? ok('the stuck message reached the front desk') : no('the stuck message is not in the front desk pane');
   },
@@ -461,7 +468,8 @@ const checks = {
   },
   23(ctx) {
     const text = ctx.faults?.F1c?.text;
-    if (typeof text !== 'string') return unknown('F1c was not run');
+    if (typeof ctx.faults?.F1c?.notExercised === 'string') return unknown(`not covered: ${ctx.faults.F1c.notExercised}`);
+    if (typeof text !== 'string') return failedFor(ctx, 'f1c') ?? unknown('F1c was not run');
     const full = asDirectorsCall('behaviour');
     return text.includes(full.split('. ')[0]) && text.includes('ask --about behaviour --level 3') ? ok('the refusal names ask --about behaviour --level 3') : no('the refusal text is not the pinned one');
   },
@@ -588,13 +596,13 @@ const checks = {
   },
   36(ctx) {
     const found = (ctx.prs ?? []).filter((p) => UNDO_BRANCH.test(p.head ?? '') && p.title.startsWith(undoTitle('x').slice(0, -1)) && p.mergedAt);
-    if (found.length === 0) return logOf(ctx, STEPS.fault('F5a')).length === 0 ? unknown(NOT_REACHED('the undo of P6 (F5a)')) : no('no merged "Take back:" pull request on a wheelhouse/undo branch');
+    if (found.length === 0) return logOf(ctx, STEPS.fault('F5a')).length === 0 ? (failedFor(ctx, 'f5a-undo-p6', 'sitting') ?? unknown(NOT_REACHED('the undo of P6 (F5a)'))) : no('no merged "Take back:" pull request on a wheelhouse/undo branch');
     const files = ctx.mainFiles ?? {};
     if (typeof files['package.json'] !== 'string') return unknown(`main could not be read, so ${P6_FILE} could not be checked`);
     return typeof files[P6_FILE] === 'string' ? no(`main still holds ${P6_FILE}`) : ok(`the undo merged and main no longer holds ${P6_FILE}`);
   },
   37(ctx) {
-    if (logOf(ctx, STEPS.fault('F5b')).length === 0) return unknown(NOT_REACHED('the undo of P2 (F5b)'));
+    if (logOf(ctx, STEPS.fault('F5b')).length === 0) return failedFor(ctx, 'f5b-undo-p2', 'sitting') ?? unknown(NOT_REACHED('the undo of P2 (F5b)'));
     const reply = 'The undo clashes with later work, so nothing was changed: it is now a decision for the director';
     const problems = [];
     if (!paneAll(ctx).includes(reply)) problems.push('the clash reply was not seen');
@@ -605,7 +613,7 @@ const checks = {
   },
   38(ctx) {
     const set = logOf(ctx, STEPS.stopSet)[0];
-    if (!set) return unknown(NOT_REACHED('All stop (F6)'));
+    if (!set) return failedFor(ctx, 'f6-stop', 'sitting') ?? unknown(NOT_REACHED('All stop (F6)'));
     const problems = [];
     const at = ms(set.at);
     if (logOf(ctx, STEPS.start).some((e) => ms(e.at) > at && ms(e.at) < at + 5 * MINUTE)) problems.push('a new start came within 5 minutes of All stop');
@@ -615,6 +623,7 @@ const checks = {
   39(ctx) {
     const set = logOf(ctx, STEPS.stopSet)[0];
     const lift = events(ctx, KINDS.action).find((e) => e.data?.action === KINDS.liftStop);
+    if (!set) { const failed = failedFor(ctx, 'f6-stop', 'f6-undo', 'sitting'); if (failed) return failed; }
     const problems = [];
     if (!paneAll(ctx).includes('All stop is on')) problems.push('the stop-guard hook refusal was not seen');
     if (set) {
@@ -626,7 +635,7 @@ const checks = {
   },
   40(ctx) {
     const lift = events(ctx, KINDS.action).find((e) => e.data?.action === KINDS.liftStop);
-    if (!lift) return logOf(ctx, 'f6-lift').length === 0 ? unknown(NOT_REACHED('lifting All stop (F6)')) : no('no signed lift-stop answer');
+    if (!lift) return logOf(ctx, 'f6-lift').length === 0 ? (failedFor(ctx, 'f6-lift', 'sitting') ?? unknown(NOT_REACHED('lifting All stop (F6)'))) : no('no signed lift-stop answer');
     const card = events(ctx, KINDS.card).some((c) => c.data?.kind === 'lift-stop');
     const resumed = logOf(ctx, STEPS.start).some((e) => ms(e.at) > ms(lift.at));
     const problems = [];

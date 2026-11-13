@@ -48,16 +48,39 @@ const NEXT = {
   'Haiku floor': 'Record it as a known floor, with the role it affects, and suggest a larger model for that role.',
 };
 
-export function writeSummary({ file, date, rows, score, audit, usage, labels = {}, verdict, model = 'haiku' }) {
+// What a run resumed from a snapshot cannot claim (section 3.6 of the method design), filled from what the resume recorded.
+function resumedLines(r) {
+  const out = [`Resumed from ${plain(r.snapshot)} (attempt ${r.attempt}). Not a run for the record: a passing claim needs one whole run.`, ''];
+  out.push(`- Two builds of Wheelhouse. Steps before the snapshot ran on the plugin staged then (${plain(r.pluginBefore ?? 'not recorded')}); steps after it on ${plain(r.pluginNow ?? 'not recorded')}.`);
+  const running = [].concat(r.running ?? []);
+  out.push(`- A restart in the middle. ${r.quiet === true ? 'The snapshot was quiet, so no work came back through recovery.' : `The snapshot was not quiet${running.length > 0 ? ` (${running.map(plain).join(', ')} mid-build)` : ''}, so those works came back through Wheelhouse's recovery. Rows 33 and 34 and the reliability log may show restarts a whole run would not have had.`}`);
+  out.push('- A new front desk. Its conversation starts again at the resume; rows read from the desk pane cover only what it said after.');
+  out.push(`- GitHub history from the capture. Merged pull requests before the snapshot exist only in the capture and the renamed repository; a placeholder issue stands at each of their numbers (up to #${r.maxNumber ?? '?'}). Any finding about an old pull request is checked again in a whole run.`);
+  out.push('- CI history starts again. The pushes start the repository\'s workflows afresh; earlier runs are in the capture only.');
+  out.push('- Cost and time. Usage and the clock are for the resumed part, never summed with the snapshot\'s figures.');
+  out.push('- The score. It is measured as usual on main, and reported as "would pass" or "would not pass", never "passed".', '');
+  return out;
+}
+
+export function writeSummary({ file, date, rows, score, audit, usage, labels = {}, verdict, model = 'haiku', findings = [], claimLost, resumedFrom }) {
   const modelName = model[0].toUpperCase() + model.slice(1);
   const out = [`<!-- docs/trials/${date}-haiku-trial-results.md -->`, `# The Haiku trial, ${said(date)}`, ''];
+  if (claimLost) out.push(`This run cannot pass: ${plain(claimLost)}.`, '');
+  if (resumedFrom) out.push(...resumedLines(resumedFrom));
 
   const failed = rows.filter((r) => r.pass === false);
   const sorted = failed.filter((r) => LABELS.includes(labels[r.id]));
   out.push('## Result', '');
   out.push(`- Paths: ${rows.filter((r) => r.pass === true).length} passed, ${failed.length} failed, ${rows.filter((r) => r.pass === null).length} not covered.`);
-  out.push(`- Pass bar: ${score?.pass === true ? 'passed' : score?.pass === false ? 'not passed' : 'not measured'}.`);
+  const [yes, nope] = resumedFrom ? ['would pass', 'would not pass'] : ['passed', 'not passed'];
+  out.push(`- Pass bar: ${score?.pass === true ? yes : score?.pass === false ? nope : 'not measured'}.`);
   out.push(`- The director's verdict: ${plain(verdict) || 'not given yet'}.`, '');
+
+  if (findings.length > 0) {
+    out.push('## Findings', '', 'Faults the run went past; the rows that needed them say "not covered" with the step.', '');
+    for (const f of findings) out.push(`- ${plain(f.step)}: ${plain(f.what)}`);
+    out.push('');
+  }
 
   out.push('## Score', '');
   if (score) {

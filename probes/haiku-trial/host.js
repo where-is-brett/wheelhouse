@@ -31,6 +31,8 @@ import { typedRepliesOn } from '../../scripts/decisions/answer.js';
 import { decisionNumber } from '../../scripts/decisions/pending.js';
 import { installDependencies } from './score/run.js';
 import { visibleFromChange } from '../../scripts/gate/visible.js';
+import { takeLocal, snapshotsDir, nextNumber, writeMeta } from './snapshot.js';
+import { captureGithub, protectionBody } from './github-snapshot.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const IDENTITY = ['-c', 'user.name=Wheelhouse probe', '-c', 'user.email=probe@wheelhouse.invalid', '-c', 'commit.gpgsign=false'];
@@ -102,9 +104,52 @@ export function buildRealIo(env = process.env, label) {
     return text(got);
   };
 
+  // The members that touch the repository itself, beyond what `gh api` reads.
+  const must = (got, what) => {
+    if (got.status !== 0) throw new Error(`${what} failed: ${String(got.stderr || got.error?.message || `exit ${got.status}`).trim()}`);
+    return text(got);
+  };
+  const api = (repo, route, args = [], input) => must(run('gh', ['api', `repos/${repo}${route}`, ...args], input === undefined ? {} : { input: JSON.stringify(input) }), `gh api ${route}`);
+  const github = {
+    // A mirror clone without the pull requests' refs, which GitHub refuses to take back in a push.
+    async mirror({ slug: repo, dir }) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      git(['clone', '--quiet', '--mirror', `https://github.com/${repo}.git`, dir], { cwd: os.tmpdir() });
+      const refs = run('git', ['for-each-ref', 'refs/pull', '--format=delete %(refname)'], { cwd: dir });
+      if (text(refs) !== '') run('git', ['update-ref', '--stdin'], { cwd: dir, input: `${text(refs)}\n` });
+    },
+    // Renaming keeps every pull request and issue readable under the new name.
+    async rename({ slug: repo, to }) { must(run('gh', ['repo', 'rename', to, '--repo', repo, '--yes']), 'gh repo rename'); },
+    async create({ slug: repo, public: visible = true, description }) {
+      must(run('gh', ['repo', 'create', repo, visible ? '--public' : '--private', ...(description ? ['--description', description] : [])]), 'gh repo create');
+    },
+    async pushMirror({ dir, remote }) { git(['push', '--quiet', '--mirror', remote], { cwd: dir }); },
+    async openPull({ slug: repo, head, base, title, body, draft }) {
+      const made = JSON.parse(api(repo, '/pulls', ['--method', 'POST', '--input', '-'], { head, base, title, body, draft: draft === true }));
+      return { number: made.number };
+    },
+    // A closed issue takes the number a pull request had, so numbering stays in step.
+    async placeholder({ slug: repo, title }) {
+      const made = JSON.parse(api(repo, '/issues', ['--method', 'POST', '--input', '-'], { title }));
+      api(repo, `/issues/${made.number}`, ['--method', 'PATCH', '--input', '-'], { state: 'closed' });
+      return { number: made.number };
+    },
+    // Merge settings first, then the protection of main and the rulesets.
+    async applySettings({ slug: repo, settings }) {
+      const { default_branch: _kept, ...merge } = settings.repo ?? {};
+      if (Object.keys(merge).length > 0) api(repo, '', ['--method', 'PATCH', '--input', '-'], merge);
+      const protection = protectionBody(settings.protection);
+      if (protection) api(repo, '/branches/main/protection', ['--method', 'PUT', '--input', '-'], protection);
+      for (const { id: _id, source: _s, source_type: _t, node_id: _n, _links, created_at: _c, updated_at: _u, current_user_can_bypass: _b, ...ruleset } of settings.rulesets ?? []) {
+        api(repo, '/rulesets', ['--method', 'POST', '--input', '-'], ruleset);
+      }
+    },
+  };
+
   const host = {
     useRepo(value) { slug = value; },
     stage: ({ out }) => stagePlugin({ repo: REPO_ROOT, out }),
+    checkoutSha: async () => text(run('git', ['-C', REPO_ROOT, 'rev-parse', '--short', 'HEAD'])),
     exec: (argv, { cwd } = {}) => run(argv[0], argv.slice(1), { cwd }),
     installedProblem: async ({ configDir, pluginDir }) => installedProblem({ configDir, pluginDir }),
     makeProject: async ({ dir, model }) => makeTestProject({ dir, allowAnywhere: true, model }),
@@ -146,7 +191,7 @@ export function buildRealIo(env = process.env, label) {
       return got.status === 0 ? got.stdout : null;
     },
     // Row 30: the gate's own reading of P8's change, from its pull request's files and diff.
-    readGate: async ({ change }) => readGateWith({ gh, change }),
+    readGate: async ({ change, gh: via }) => readGateWith({ gh: via ?? gh, change }),
     // { ok: true, amount } or { ok: false, why }: a read that failed is never taken for a bug still planted.
     async mainParseAmount({ dir: project }) {
       dirOf(project);
@@ -204,7 +249,7 @@ export function buildRealIo(env = process.env, label) {
         child.once('error', (error) => reject(new Error(`the tunnel preview's ${what} did not start: ${error.message}`)));
       });
       const app = await started(spawn('npm', ['start'], { cwd: dir, detached: true, stdio: 'ignore', env: { ...process.env, PORT: '4173', LEDGER_DB: ':memory:' } }), 'product');
-      const tunnel = await started(spawn('cloudflared', ['tunnel', '--url', 'http://127.0.0.1:4173'], { detached: true, stdio: 'ignore' }), 'tunnel');
+      const tunnel = await started(spawn('cloudflared', ['tunnel', '--url', 'http://127.0.0.1:4173', '--logfile', path.join(path.dirname(path.resolve(dir)), 'tunnel.log')], { detached: true, stdio: 'ignore' }), 'tunnel');
       app.unref();
       tunnel.unref();
       return { productPid: app.pid, tunnelPid: tunnel.pid };
@@ -243,11 +288,45 @@ export function buildRealIo(env = process.env, label) {
 
   return {
     tmux, gh, host, faults,
+    github,
+    // A snapshot of the run so far, kept beside it (spec 2026-11-13, section 3.3): the local copy and the GitHub capture. A
+    // snapshot that cannot be finished is taken away again, so the list never holds half of one.
+    snapshot: {
+      async take({ label, point, folder, configDir, transcripts, meta, seedSha }) {
+        const dir = snapshotsDir(label);
+        fs.mkdirSync(dir, { recursive: true });
+        const name = `${nextNumber(dir)}-${point}`;
+        const dest = path.join(dir, name);
+        try {
+          const { torn } = takeLocal({ folder, dest, configDir, transcripts });
+          const { maxNumber } = await captureGithub({ gh, github, slug, dest, seedSha });
+          writeMeta(dest, { ...meta, torn, maxNumber });
+          return { name, torn, maxNumber };
+        } catch (error) {
+          fs.rmSync(dest, { recursive: true, force: true });
+          throw error;
+        }
+      },
+      // The GitHub capture of the snapshot a run was resumed from, or null when it has none.
+      async readCapture({ label, snapshot }) {
+        try { return JSON.parse(fs.readFileSync(path.join(snapshotsDir(label), snapshot, 'github', 'capture.json'), 'utf8')); } catch { return null; }
+      },
+    },
     clock: { now: () => Date.now(), sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)) },
     signals: { checkAll, gatherContext },
     score: { scoreAll },
     results: { runFolder, writeRaw, writeSummary },
     kill: (pid, signal) => process.kill(pid, signal),
+    // What a pid is running and where, so a pid out of an old log is signalled only while it is still this run's. Null when it cannot be read.
+    processInfo: (pid) => {
+      if (process.platform === 'win32') return null;
+      const ps = run('ps', ['-o', 'command=', '-p', String(pid)]);
+      const command = String(ps.stdout ?? '').trim();
+      if (ps.error || ps.status !== 0 || command === '') return null;
+      const lsof = run('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn']);
+      const cwd = String(lsof.stdout ?? '').split('\n').find((l) => l.startsWith('n'))?.slice(1) ?? '';
+      return { command, cwd };
+    },
     log: (line) => console.error(line),
     async ask(question) {
       const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
