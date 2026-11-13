@@ -19,6 +19,7 @@ import { parseModel, DEFAULT_MODEL, MODELS } from './models.js';
 import { STARTS_UNAPPROVED } from '../../scripts/foreman/queue.js';
 import { installCommand, removeCommands } from './stage-plugin.js';
 import { pointsFor } from './snapshot.js';
+import { snapshotGh } from './github-snapshot.js';
 import { reviewCard, stepsPage, writeTryMe, reviewAsDecision, answerLetter } from './review-card.js';
 
 const MINUTE = 60 * 1000;
@@ -1070,7 +1071,7 @@ async function gatherAndCheck(ctx, io) {
   const { state } = ctx;
   const transcripts = io.host.findTranscripts({ project: ctx.projectName, dir: ctx.projectDir });
   const pieces = state.pieces;
-  if (pieces.P8) pieces.P8.gate = await io.host.readGate({ change: pieces.P8.change, project: ctx.projectName });
+  if (pieces.P8) pieces.P8.gate = await io.host.readGate({ change: pieces.P8.change, project: ctx.projectName, gh: io.gh });
   // A file that is absent and a read that failed both come back null, so package.json is read too: it is always on main.
   const mainFiles = {};
   for (const file of ['package.json', P6_FILE]) mainFiles[file] = await io.host.readMain({ dir: ctx.projectDir, file });
@@ -1126,11 +1127,20 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
   const label = date;
   const problem = homeProblem(env);
   if (problem) return { done: [], stoppedAt: 'wheelhouse-home', why: problem };
-  const io = { ...given, host: { ...NOTHING, ...(given.host ?? {}) } };
+  let io = { ...given, host: { ...NOTHING, ...(given.host ?? {}) } };
   const day = date ?? new Date(io.clock.now()).toISOString().slice(0, 10);
   const where = folder ?? io.results.runFolder(day);
   fs.mkdirSync(where, { recursive: true });
   const ctx = contextFor({ mode, io, folder: where, date: day, label, env });
+  // A run resumed from a snapshot reads GitHub as it was at the snapshot, plus what is new (spec section 3.5).
+  const resumed = ctx.state.resumedFrom;
+  if (resumed) {
+    const capture = await io.snapshot?.readCapture?.({ label, snapshot: resumed.snapshot });
+    if (capture) {
+      io = { ...io, gh: snapshotGh(io.gh, { capture, maxNumber: resumed.maxNumber, reopened: resumed.reopened, since: resumed.since }) };
+      ctx.io = io;
+    }
+  }
   // The project and every session it starts are pinned to one model, so a resume keeps the model the run began on.
   const asked = model === undefined ? undefined : parseModel(model);
   const began = ctx.state.model;

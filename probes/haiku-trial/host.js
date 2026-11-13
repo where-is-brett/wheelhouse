@@ -159,7 +159,7 @@ export function buildRealIo(env = process.env, label) {
       return got.status === 0 ? got.stdout : null;
     },
     // Row 30: the gate's own reading of P8's change, from its pull request's files and diff.
-    readGate: async ({ change }) => readGateWith({ gh, change }),
+    readGate: async ({ change, gh: via }) => readGateWith({ gh: via ?? gh, change }),
     // { ok: true, amount } or { ok: false, why }: a read that failed is never taken for a bug still planted.
     async mainParseAmount({ dir: project }) {
       dirOf(project);
@@ -274,6 +274,10 @@ export function buildRealIo(env = process.env, label) {
           fs.rmSync(dest, { recursive: true, force: true });
           throw error;
         }
+      },
+      // The GitHub capture of the snapshot a run was resumed from, or null when it has none.
+      async readCapture({ label, snapshot }) {
+        try { return JSON.parse(fs.readFileSync(path.join(snapshotsDir(label), snapshot, 'github', 'capture.json'), 'utf8')); } catch { return null; }
       },
     },
     clock: { now: () => Date.now(), sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)) },

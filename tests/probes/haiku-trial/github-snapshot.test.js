@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { captureGithub, CAPTURED } from '../../../probes/haiku-trial/github-snapshot.js';
+import { captureGithub, snapshotGh, CAPTURED } from '../../../probes/haiku-trial/github-snapshot.js';
 
 const R = 'repos/{owner}/{repo}';
 
@@ -108,4 +108,62 @@ test('a list longer than a page is followed to its end', async (t) => {
   const got = await captureGithub({ gh: repo.gh, github: repo.github, slug: 'o/r', dest, seedSha: 'seed' });
   assert.equal(readJson(dest, 'capture.json')[`${R}/pulls?state=all&per_page=100`].length, 101);
   assert.equal(got.maxNumber, 200);
+});
+
+// --- snapshotGh ---
+
+const PULLS = `${R}/pulls?state=all&per_page=100`;
+const merged = (number, extra = {}) => ({ number, state: 'closed', merged_at: '2026-11-08T10:00:00Z', head: { ref: `feature-p${number}` }, title: `Piece ${number}`, ...extra });
+
+// A live repository that holds only what was made after the snapshot, and records what it is asked.
+function liveRepo(answers) {
+  const asked = [];
+  return { asked, gh: async (args) => { asked.push(args); const got = answers[args[1]]; return typeof got === 'function' ? got(args) : got ?? null; } };
+}
+
+test('the pulls list joins captured and new pull requests', async () => {
+  const capture = { [PULLS]: [merged(3), merged(2), merged(1)] };
+  const live = liveRepo({ [PULLS]: [merged(7, { state: 'open', merged_at: null }), merged(5), merged(4)] });
+  const gh = snapshotGh(live.gh, { capture, maxNumber: 3, reopened: [] });
+  assert.deepEqual((await gh(['api', PULLS])).map((p) => p.number), [7, 5, 4, 3, 2, 1]);
+});
+
+test('a reopened pull request is read live', async () => {
+  const capture = { [PULLS]: [merged(3), merged(2), merged(1)], [`${R}/pulls/2/commits?per_page=100`]: [{ sha: 'old' }], [`${R}/pulls/1/commits?per_page=100`]: [{ sha: 'c1' }] };
+  const live = liveRepo({ [PULLS]: [merged(2, { state: 'open', merged_at: null, title: 'live two' })], [`${R}/pulls/2/commits?per_page=100`]: [{ sha: 'fresh' }] });
+  const gh = snapshotGh(live.gh, { capture, maxNumber: 3, reopened: [2] });
+  const list = await gh(['api', PULLS]);
+  assert.deepEqual(list.map((p) => p.number), [3, 2, 1]);
+  assert.equal(list.find((p) => p.number === 2).title, 'live two');
+  assert.deepEqual(await gh(['api', `${R}/pulls/2/commits?per_page=100`]), [{ sha: 'fresh' }]);
+  assert.deepEqual(await gh(['api', `${R}/pulls/1/commits?per_page=100`]), [{ sha: 'c1' }]);
+});
+
+test("a captured commit's statuses come from the capture", async () => {
+  const capture = { [`${R}/commits/c1/statuses`]: [{ context: 'ci', state: 'success' }] };
+  const live = liveRepo({});
+  const gh = snapshotGh(live.gh, { capture, maxNumber: 3 });
+  assert.deepEqual(await gh(['api', `${R}/commits/c1/statuses`]), [{ context: 'ci', state: 'success' }]);
+  assert.equal(live.asked.length, 0);
+  await gh(['api', `${R}/commits/new/statuses`]);
+  assert.equal(live.asked.length, 1, 'a commit the capture does not hold is asked live');
+});
+
+test('runs join the captured ones with those made after the snapshot', async () => {
+  const RUNS = `${R}/actions/runs?per_page=100`;
+  const capture = { [RUNS]: { workflow_runs: [{ id: 1, created_at: '2026-11-08T09:00:00Z' }] } };
+  const live = liveRepo({ [RUNS]: { workflow_runs: [{ id: 2, created_at: '2026-11-08T11:00:00Z' }, { id: 3, created_at: '2026-11-08T09:30:00Z' }] } });
+  const gh = snapshotGh(live.gh, { capture, maxNumber: 3, since: '2026-11-08T10:00:00Z' });
+  assert.deepEqual((await gh(['api', RUNS])).workflow_runs.map((r) => r.id), [2, 1]);
+});
+
+test('writes always go live', async () => {
+  const capture = { [`${R}/pulls/1`]: { number: 1 }, [PULLS]: [merged(1)] };
+  const live = liveRepo({});
+  const gh = snapshotGh(live.gh, { capture, maxNumber: 3 });
+  await gh(['api', `${R}/pulls/1`, '-X', 'PATCH', '-f', 'state=closed']);
+  await gh(['pr', 'merge', 'trial/spare-bug', '--squash']);
+  await gh(['api', `${R}/pulls/1`, '-H', 'Accept: application/vnd.github.v3.diff']);
+  await gh(['pr', 'create', '--head', 'x']);
+  assert.equal(live.asked.length, 4);
 });

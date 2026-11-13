@@ -1257,3 +1257,23 @@ test('a snapshot that fails is a finding and the run goes on', async (t) => {
   assert.ok(got.done.includes('w2-audit'));
   assert.match(got.findings.find((f) => f.step === 'snapshot-after-w2-audit').what, /disk full/);
 });
+
+test('after a resume, the wave-4 merge wait counts merges from before the snapshot', async (t) => {
+  const folder = scratch(t);
+  const R = 'repos/{owner}/{repo}';
+  const pull = (number) => ({ number, state: 'closed', merged_at: '2026-11-08T10:00:00Z', head: { ref: `feature-p${number}` }, title: `Piece ${number}` });
+  fs.writeFileSync(path.join(folder, 'state.json'), JSON.stringify({ resumedFrom: { snapshot: '02-after-w2-audit', attempt: 2, maxNumber: 3, reopened: [], since: '2026-11-08T09:00:00.000Z' } }));
+  const capture = { [`${R}/pulls?state=all&per_page=100`]: [pull(3), pull(2), pull(1)] };
+  const live = (args) => (args[1] === `${R}/pulls?state=all&per_page=100` ? [pull(4)] : null);
+  const io = fakeIo({ gh: live });
+  io.snapshot = { readCapture: async ({ label, snapshot }) => { assert.equal(label, '2026-11-08'); assert.equal(snapshot, '02-after-w2-audit'); return capture; } };
+  const got = await run({ mode: 'smoke', io, from: 'w4-smoke-merge', until: 'w4-smoke-merge', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['w4-smoke-merge']);
+  assert.equal(got.findings.length, 0);
+  assert.ok(io.clock.now() - T0 < 5 * 60 * 1000, 'the four merges were found at once');
+  // Without the capture the same live repository holds one merge, and the wait runs out.
+  const plain = fakeIo({ gh: live });
+  fs.writeFileSync(path.join(folder, 'state.json'), '{}');
+  await run({ mode: 'smoke', io: plain, from: 'w4-smoke-merge', until: 'w4-smoke-merge', folder, date: '2026-11-08', env: ENV });
+  assert.ok(plain.clock.now() - T0 >= 90 * 60 * 1000);
+});

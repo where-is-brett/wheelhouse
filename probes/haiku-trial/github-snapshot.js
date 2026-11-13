@@ -110,3 +110,33 @@ export async function captureGithub({ gh, github, slug, dest, seedSha }) {
   const maxNumber = Math.max(0, ...issues.map((i) => i.number ?? 0), ...pulls.map((p) => p.number ?? 0));
   return { maxNumber };
 }
+
+const PULL_NUMBER = /\/pulls\/(\d+)(?:[/?]|$)/;
+
+// `gh` as a resumed run sees it (spec section 3.5): what was captured at the snapshot answers for what the fresh repository cannot
+// hold (merged pull requests, their commits and statuses), joined with whatever is live and new. Lists give the captured items
+// plus live ones numbered above `maxNumber`, or in `reopened` (pull requests opened again at their old numbers, read live), and
+// runs made after `since`. A captured item answers its own path. Everything else, and every call that writes, goes live.
+export function snapshotGh(gh, { capture = {}, maxNumber = 0, reopened = [], since } = {}) {
+  const again = new Set(reopened);
+  const fresh = (p) => p.number > maxNumber || again.has(p.number);
+  return async (args) => {
+    // A read is exactly `api <path>`; a header, a method, a field or any other command is passed on as it is.
+    if (args[0] !== 'api' || args.length !== 2 || typeof args[1] !== 'string') return gh(args);
+    const key = args[1];
+    if (key === PULLS) {
+      const live = (await gh(args)) ?? [];
+      const old = (capture[PULLS] ?? []).filter((p) => !again.has(p.number));
+      return [...live.filter(fresh), ...old].sort((a, b) => b.number - a.number);
+    }
+    if (key === RUNS) {
+      const live = (await gh(args))?.workflow_runs ?? [];
+      const old = capture[RUNS]?.workflow_runs ?? [];
+      const after = since === undefined ? () => true : (r) => Date.parse(r.created_at) > Date.parse(since);
+      return { workflow_runs: [...live.filter(after), ...old] };
+    }
+    const n = PULL_NUMBER.exec(key)?.[1];
+    if (key in capture && !(n !== undefined && again.has(Number(n)))) return capture[key];
+    return gh(args);
+  };
+}
