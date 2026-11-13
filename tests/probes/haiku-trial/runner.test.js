@@ -1178,3 +1178,82 @@ test('decision 3 not raised is a finding and review-card shows the card without 
   assert.ok(readLog(folder).some((e) => /typed answer not covered/.test(e.note)));
   assert.doesNotMatch(fs.readFileSync(path.join(folder, 'steps.md'), 'utf8'), /type your answer to decision/);
 });
+
+// --- snapshots ---
+
+// A fake `io.snapshot` that records each point it is asked for, and the events the record shows at each look.
+function withSnapshots(io, taken, { fail } = {}) {
+  io.snapshot = {
+    take: async (x) => {
+      if (fail) throw new Error('disk full');
+      taken.push(x);
+      return { name: `${String(taken.length).padStart(2, '0')}-${x.point}`, torn: [] };
+    },
+  };
+  return io;
+}
+
+test('a full run takes after-ntfy, after-w2-audit, before-f1 and the rest in order', async (t) => {
+  const folder = scratch(t);
+  const taken = [];
+  const io = withSnapshots(fakeIo(), taken);
+  withLog(folder, []);
+  // Steps are stubbed to nothing, so only the points show.
+  const steps = ['ntfy', 'w2-audit', 'f1', 'w3-audit', 'f4-check', 's9-1', 'w4-audit'];
+  const originals = STEPS.filter((s) => steps.includes(s.id)).map((s) => [s, s.run]);
+  for (const [s] of originals) s.run = async () => {};
+  t.after(() => { for (const [s, r] of originals) s.run = r; });
+  const got = await run({ mode: 'full', io, from: 'ntfy', until: 'w4-audit', folder, date: '2026-11-08', env: ENV });
+  assert.ok(got.done.includes('w4-audit'));
+  const order = taken.map((x) => x.point);
+  assert.deepEqual(order.filter((p) => ['after-ntfy', 'after-w2-audit', 'before-f1', 'after-w3-audit', 'before-f4-check', 'before-s9-1', 'after-w4-audit'].includes(p)), ['after-ntfy', 'after-w2-audit', 'before-f1', 'after-w3-audit', 'before-f4-check', 'before-s9-1', 'after-w4-audit']);
+  assert.equal(taken[0].meta.label, '2026-11-08');
+  assert.equal(taken[0].meta.quiet, true);
+  assert.equal(taken[0].folder, folder);
+  assert.ok(readLog(folder).some((e) => e.note?.startsWith('snapshot 01-after-ntfy')));
+});
+
+test('after- points wait for quiet up to ten minutes and record quiet false', async (t) => {
+  const folder = scratch(t);
+  const taken = [];
+  const io = withSnapshots(fakeIo({ host: { events: async () => [{ id: 'e1', kind: 'run', at: '2026-11-08T09:00:00Z', data: { runId: 'r1', state: 'started', work: 'p3', lane: 'feature' } }] } }), taken);
+  const step = STEPS.find((s) => s.id === 'w2-audit');
+  const original = step.run;
+  step.run = async () => {};
+  t.after(() => { step.run = original; });
+  const before = io.clock.now();
+  await run({ mode: 'full', io, from: 'w2-audit', until: 'w2-audit', folder, date: '2026-11-08', env: ENV });
+  assert.equal(taken.length, 1);
+  assert.equal(taken[0].meta.quiet, false);
+  assert.deepEqual(taken[0].meta.running, ['p3']);
+  const waited = io.clock.now() - before;
+  assert.ok(waited >= 10 * 60 * 1000 && waited < 12 * 60 * 1000, `waited ${waited}`);
+});
+
+test('a before- point is taken at once even when sessions are running', async (t) => {
+  const folder = scratch(t);
+  const taken = [];
+  const io = withSnapshots(fakeIo({ host: { events: async () => [{ id: 'e1', kind: 'run', at: '2026-11-08T09:00:00Z', data: { runId: 'r1', state: 'started', work: 'p3', lane: 'feature' } }] } }), taken);
+  const step = STEPS.find((s) => s.id === 'f1');
+  const original = step.run;
+  step.run = async () => {};
+  t.after(() => { step.run = original; });
+  const before = io.clock.now();
+  await run({ mode: 'full', io, from: 'f1', until: 'f1', folder, date: '2026-11-08', env: ENV });
+  assert.equal(taken[0].point, 'before-f1');
+  assert.equal(taken[0].meta.quiet, false);
+  assert.ok(io.clock.now() - before < 60 * 1000);
+});
+
+test('a snapshot that fails is a finding and the run goes on', async (t) => {
+  const folder = scratch(t);
+  const io = withSnapshots(fakeIo(), [], { fail: true });
+  const step = STEPS.find((s) => s.id === 'w2-audit');
+  const original = step.run;
+  step.run = async () => {};
+  t.after(() => { step.run = original; });
+  const got = await run({ mode: 'full', io, from: 'w2-audit', until: 'w3-type', folder, date: '2026-11-08', env: ENV });
+  assert.equal(got.stoppedAt, undefined);
+  assert.ok(got.done.includes('w2-audit'));
+  assert.match(got.findings.find((f) => f.step === 'snapshot-after-w2-audit').what, /disk full/);
+});

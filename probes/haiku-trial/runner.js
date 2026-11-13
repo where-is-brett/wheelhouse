@@ -18,6 +18,7 @@ import { auditModels } from './audit.js';
 import { parseModel, DEFAULT_MODEL, MODELS } from './models.js';
 import { STARTS_UNAPPROVED } from '../../scripts/foreman/queue.js';
 import { installCommand, removeCommands } from './stage-plugin.js';
+import { pointsFor } from './snapshot.js';
 import { reviewCard, stepsPage, writeTryMe, reviewAsDecision, answerLetter } from './review-card.js';
 
 const MINUTE = 60 * 1000;
@@ -248,6 +249,42 @@ async function tick(ctx) {
       const killed = await io.faults.f3bKillForeman({}).catch((error) => ({ error: error.message }));
       await note(ctx, LOG.fault('F3b'), `foreman killed after P4 merged: ${JSON.stringify(killed)}`);
     }
+  }
+}
+
+// The works whose sessions are running now, from the record, as `tick` reads it.
+function runningWorks(events) {
+  const open = new Map();
+  for (const e of events.filter((x) => x.kind === 'run')) {
+    const key = e.data?.runId ?? e.id;
+    if (e.data?.state === 'started') open.set(key, e.data.work ?? key); else open.delete(key);
+  }
+  const running = new Set();
+  for (const e of events.filter((x) => x.kind === 'feature' && typeof x.data?.work === 'string')) {
+    if (FEATURE_RUNNING.includes(e.data.step)) running.add(e.data.work); else running.delete(e.data.work);
+  }
+  return [...new Set([...open.values(), ...running])];
+}
+
+// A snapshot at a step boundary (spec section 3.2). An `after-` point first waits up to ten minutes for no session to be running;
+// a `before-` point is taken at once. A snapshot that fails is a finding and never a stop.
+const writeState = (ctx) => fs.writeFileSync(ctx.stateFile, `${JSON.stringify(ctx.state, null, 2)}\n`);
+async function snapshotAt(ctx, { point, step }) {
+  const { io } = ctx;
+  if (!io.snapshot?.take) return;
+  try {
+    let running = runningWorks(await io.host.events({ project: ctx.projectName }));
+    if (point.startsWith('after-') && running.length > 0) {
+      await waitFor(async () => { await tick(ctx); running = runningWorks(await io.host.events({ project: ctx.projectName })); return running.length === 0; }, { io, timeoutMs: 10 * MINUTE, everyMs: 30000 });
+    }
+    writeState(ctx);
+    const meta = { label: ctx.label, point, step, at: iso(ctx), attempt: ctx.state.resumedFrom?.attempt ?? 1, pluginSha: ctx.state.stage?.sha, quiet: running.length === 0, running };
+    const configDir = ctx.env.HAIKU_TRIAL_CONFIG_DIR;
+    const transcripts = io.host.findTranscripts({ project: ctx.projectName, dir: ctx.projectDir }).map((t) => t.file).filter((f) => typeof f === 'string');
+    const got = await io.snapshot.take({ label: ctx.label, point, folder: ctx.folder, configDir, transcripts, meta });
+    await note(ctx, `snapshot-${point}`, `snapshot ${got?.name ?? point}${meta.quiet ? '' : ` (not quiet: ${running.join(', ')} still running)`}`);
+  } catch (error) {
+    await addFinding(ctx, `snapshot-${point}`, `snapshot ${point} failed: ${error.message}`);
   }
 }
 
@@ -1116,6 +1153,7 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
   if (ctx.preview === 'tunnel' && plan.slice(start).some((s) => s.id === 'create-preview') && !(await io.host.hasCommand('cloudflared'))) {
     return { done: [], stoppedAt: 'create-preview', why: 'HAIKU_TRIAL_PREVIEW is tunnel but cloudflared is not installed. Install it (brew install cloudflared) or use vercel or none. Nothing was created.' };
   }
+  const points = pointsFor(mode);
   const done = [];
   const failed = [];
   const skipped = [];
@@ -1146,6 +1184,7 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
       ctx.wave = step.wave;
       // A step run again replaces what it found before.
       ctx.state.findings = (ctx.state.findings ?? []).filter((f) => f.step !== step.id);
+      for (const p of points.filter((x) => x.before === step.id && x.point !== ctx.state.resumedFrom?.point)) await snapshotAt(ctx, { point: p.point, step: step.id });
       await step.run(ctx, io);
     } catch (error) {
       if (step.foundation === true || error instanceof HardStop) {
@@ -1163,6 +1202,7 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
     await appendJsonl(ctx.logFile, { at: iso(ctx), step: step.id, note: 'done', done: true });
     fs.writeFileSync(ctx.stateFile, `${JSON.stringify(ctx.state, null, 2)}\n`);
     done.push(step.id);
+    for (const p of points.filter((x) => x.after === step.id)) await snapshotAt(ctx, { point: p.point, step: step.id });
     if (until === step.id) break;
   }
   return result();

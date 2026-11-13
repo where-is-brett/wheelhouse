@@ -31,6 +31,7 @@ import { typedRepliesOn } from '../../scripts/decisions/answer.js';
 import { decisionNumber } from '../../scripts/decisions/pending.js';
 import { installDependencies } from './score/run.js';
 import { visibleFromChange } from '../../scripts/gate/visible.js';
+import { takeLocal, snapshotsDir, nextNumber, writeMeta } from './snapshot.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const IDENTITY = ['-c', 'user.name=Wheelhouse probe', '-c', 'user.email=probe@wheelhouse.invalid', '-c', 'commit.gpgsign=false'];
@@ -243,6 +244,18 @@ export function buildRealIo(env = process.env, label) {
 
   return {
     tmux, gh, host, faults,
+    // A snapshot of the run so far, kept beside it (spec 2026-11-13, section 3.3). Only the local side so far.
+    snapshot: {
+      async take({ label, point, folder, configDir, transcripts, meta }) {
+        const dir = snapshotsDir(label);
+        fs.mkdirSync(dir, { recursive: true });
+        const name = `${nextNumber(dir)}-${point}`;
+        const dest = path.join(dir, name);
+        const { torn } = takeLocal({ folder, dest, configDir, transcripts });
+        writeMeta(dest, { ...meta, torn });
+        return { name, torn };
+      },
+    },
     clock: { now: () => Date.now(), sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)) },
     signals: { checkAll, gatherContext },
     score: { scoreAll },
