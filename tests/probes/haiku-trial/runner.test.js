@@ -221,8 +221,8 @@ test('an audit step stops the run on a session that ran on another model, and pa
   fs.writeFileSync(path.join(dir, 'x.jsonl'), `${JSON.stringify({ type: 'assistant', message: { model: 'other-model', content: [] } })}\n`);
   bad.host.findTranscripts = () => [{ file: path.join(dir, 'x.jsonl'), role: 'feature', session: 's' }];
   const got = await run({ mode: 'full', io: bad, from: 'w3-audit', until: 'w3-audit', folder: scratch(t), date: '2026-11-08', env: ENV });
-  assert.equal(got.stoppedAt, 'w3-audit');
-  assert.match(got.why, /feature \(other-model\)/);
+  assert.deepEqual(got.failed, ['w3-audit']);
+  assert.match(got.findings[0].what, /feature \(other-model\)/);
   const clean = await run({ mode: 'full', io: fakeIo(), from: 'w3-audit', until: 'w3-audit', folder: scratch(t), date: '2026-11-08', env: ENV });
   assert.deepEqual(clean.done, ['w3-audit']);
 });
@@ -432,7 +432,7 @@ test('decision 3 is raised in P4\'s saved environment and its number comes from 
   assert.equal(raised[0].cwd, worktree);
   assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).decisionN, 3);
   const lost = await run({ mode: 'full', io: fakeIo(), from: 'raise-decision-3', until: 'raise-decision-3', folder: scratch(t), date: '2026-11-08', env: ENV });
-  assert.equal(lost.stoppedAt, 'raise-decision-3');
+  assert.deepEqual(lost.failed, ['raise-decision-3']);
 });
 
 test('the review card goes through the front desk as a decision and takes the letter from the typed answer', async (t) => {
@@ -489,8 +489,8 @@ test('a failed pr merge stops the run and P5 is not switched to the spare bug', 
   const folder = scratch(t);
   const io = fakeIo({ amount: -40, gh: (args) => (args[0] === 'pr' && args[1] === 'merge' ? { ok: false, why: 'checks failing' } : threeMerged(args)) });
   const got = await run({ mode: 'full', io, from: 'w2-merge-wait', until: 'w3-type', folder, date: '2026-11-08', env: ENV });
-  assert.equal(got.stoppedAt, 'w2-merge-wait');
-  assert.match(got.why, /checks failing/);
+  assert.deepEqual(got.failed, ['w2-merge-wait']);
+  assert.match(got.findings[0].what, /checks failing/);
   assert.equal(io.timeline.some((e) => e.kind === 'tmux.type' && e.args[1].includes(P5_SPARE)), false);
   assert.notEqual(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).p5, 'spare');
 });
@@ -828,7 +828,7 @@ test('a wave 2 merge shortfall is a note, the step is done, and later waits ask 
   const later = await run({ mode: 'full', io: fakeIo({ gh: merged(5) }), from: 'w3-merge-wait', until: 'w3-merge-wait', folder, date: '2026-11-08', env: ENV });
   assert.deepEqual(later.done, ['w3-merge-wait'], 'seven less the two that did not merge in wave 2');
   const fresh = await run({ mode: 'full', io: fakeIo({ gh: merged(5) }), from: 'w3-merge-wait', until: 'w3-merge-wait', folder: scratch(t), date: '2026-11-08', env: ENV });
-  assert.equal(fresh.stoppedAt, 'w3-merge-wait', 'without the shortfall five is not enough');
+  assert.deepEqual(fresh.failed, ['w3-merge-wait'], 'without the shortfall five is not enough');
 });
 
 // A desk that is working until `until` (by the fake clock), then idle.
@@ -1034,4 +1034,65 @@ test('setup ends from the setup journal when the pane never shows the engine\'s 
   assert.deepEqual(got.done, ['setup-s0'], got.why);
   assert.ok(readLog(folder).some((e) => e.step === 'health' && e.note === 'pass'));
   assert.ok(readLog(folder).some((e) => /setup journal/.test(e.note ?? '')), 'the log says the journal ended the wait');
+});
+
+test('a failing step that is not a foundation step is a finding and the run goes on', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo();
+  io.faults.f6AllStop = () => { throw new Error('boom'); };
+  const got = await run({ mode: 'full', io, from: 'f6-stop', until: 'f6-undo', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.failed, ['f6-stop']);
+  assert.ok(got.done.includes('f6-undo'));
+  assert.equal(got.stoppedAt, undefined);
+  assert.match(got.findings[0].what, /boom/);
+  assert.equal(readLog(folder).find((e) => e.step === 'f6-stop' && e.outcome).outcome, 'failed');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).findings.length, 1);
+});
+
+test('a foundation step that fails still stops the run', async (t) => {
+  const io = fakeIo({ exec: () => ({ status: 1 }) });
+  const got = await run({ mode: 'full', io, from: 'install', until: 'seed', folder: scratch(t), date: '2026-11-08', env: ENV });
+  assert.equal(got.stoppedAt, 'install');
+  assert.deepEqual(got.done, []);
+});
+
+test('a step whose need failed is skipped with the reason', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo();
+  io.faults.f1WrongShape = () => { throw new Error('boom'); };
+  const got = await run({ mode: 'full', io, from: 'f1', until: 'f1c', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.failed, ['f1']);
+  assert.deepEqual(got.skipped, ['f1b', 'f1c']);
+  assert.equal(got.stoppedAt, undefined);
+  const entry = readLog(folder).find((e) => e.step === 'f1b' && e.outcome === 'skipped');
+  assert.equal(entry.note, 'skipped: needs f1, which failed');
+  assert.equal(entry.done, true);
+  assert.ok(got.findings.some((f) => f.step === 'f1b'));
+});
+
+test('--from auto moves past a failed step; --from <step> runs it again', async (t) => {
+  const folder = scratch(t);
+  withLog(folder, ['w3-type']);
+  fs.appendFileSync(path.join(folder, 'run-log.jsonl'), `${JSON.stringify({ at: '2026-11-08T09:00:00.000Z', step: 'f1', note: 'failed: boom', done: true, outcome: 'failed' })}\n`);
+  const auto = await run({ mode: 'full', io: fakeIo(), from: 'auto', until: 'f1b', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(auto.done, ['f1b']);
+  const again = await run({ mode: 'full', io: fakeIo(), from: 'f1', until: 'f1', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(again.done, ['f1']);
+});
+
+test('the owner check still stops before anything is created, even in a step that is not foundation', async (t) => {
+  const io = fakeIo();
+  const got = await run({ mode: 'full', io, from: 'create-preview', until: 'create-preview', folder: scratch(t), date: '2026-11-08', env: { WHEELHOUSE_HOME: ENV.WHEELHOUSE_HOME } });
+  assert.equal(got.stoppedAt, 'create-preview');
+  assert.match(got.why, /HAIKU_TRIAL_GH_OWNER/);
+  assert.equal(io.timeline.some((e) => e.kind === 'ask'), false);
+});
+
+test('main exits 1 when the run has findings', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo();
+  io.faults.f6AllStop = () => { throw new Error('boom'); };
+  io.results.runFolder = () => folder;
+  const code = await main(['full', '--from', 'f6-stop', '--until', 'f6-stop', '--date', '2026-11-08'], { print: () => {}, buildIo: async () => io, env: ENV });
+  assert.equal(code, 1);
 });

@@ -40,6 +40,8 @@ const TRUST_YES = /❯\s*(?:\d+\.\s*)?Yes, I trust this folder/;
 const pieceOf = (id) => PIECES.find((p) => p.id === id);
 
 export class Stop extends Error {}
+// A stop that ends the run whichever step raised it (the owner check).
+class HardStop extends Stop {}
 
 // --- the trial's own Wheelhouse home ---
 
@@ -107,6 +109,11 @@ export async function waitFor(predicate, { io, timeoutMs, everyMs = 15000 }) {
 
 const iso = (ctx) => new Date(ctx.io.clock.now()).toISOString();
 const note = (ctx, step, text, extra = {}) => appendJsonl(ctx.logFile, { at: iso(ctx), step, note: text, ...extra });
+// A fault the run went past: kept in the state, so the summary lists it, and written to the log.
+async function addFinding(ctx, step, what, extra = {}) {
+  (ctx.state.findings ??= []).push({ step, what, at: iso(ctx), ...extra });
+  await note(ctx, step, `finding: ${what}`);
+}
 // The terminal's own furniture: spinners and their hints, boxes, the prompt line and the mode line.
 const CHROME = [/esc to interrupt/i, /\(\d+s\b.*(tokens|thinking)/i, /^\s*[✻✽✶✳✢·✦*]\s+\S.*…/, /^\s*[─━│╭╮╰╯┌┐└┘├┤]/, /\? for shortcuts/i,
   /shift\+tab|bypass permissions|auto-accept|accept edits/i, /^\s*>\s*$/, /^\s*[⏵⏸]/];
@@ -531,9 +538,9 @@ const auditStep = (wave, smoke = true) => ({
 const s9 = (n, run) => ({ id: `s9-${n}`, wave: 4, smoke: [1, 2, 4].includes(n), run });
 
 export const STEPS = [
-  { id: 'stage', wave: 1, smoke: true, async run(ctx, io) { ctx.state.stage = await io.host.stage({ out: ctx.folder }); await note(ctx, 'stage', 'plugin staged without this kit or the tests'); } },
+  { id: 'stage', wave: 1, smoke: true, foundation: true, async run(ctx, io) { ctx.state.stage = await io.host.stage({ out: ctx.folder }); await note(ctx, 'stage', 'plugin staged without this kit or the tests'); } },
   {
-    id: 'create-repo', wave: 1, smoke: true, needsGo,
+    id: 'create-repo', wave: 1, smoke: true, foundation: true, needsGo,
     asks: (ctx) => `Create the public GitHub repository ${ctx.repoSlug}? Answer go.`,
     async run(ctx, io) { await ghDo(ctx, ['repo', 'create', ctx.repoSlug, '--public', '--description', 'A throwaway project for the Haiku trial']); await note(ctx, 'create-repo', `created ${ctx.repoSlug}`); },
   },
@@ -550,7 +557,7 @@ export const STEPS = [
     },
   },
   {
-    id: 'install', wave: 1, smoke: true, needsGo,
+    id: 'install', wave: 1, smoke: true, foundation: true, needsGo,
     asks: (ctx) => `Install the staged plugin into Claude Code and use ${modelName(ctx)} for the trial? Answer go.`,
     async run(ctx, io) {
       const configDir = ctx.env.HAIKU_TRIAL_CONFIG_DIR;
@@ -572,7 +579,7 @@ export const STEPS = [
     },
   },
   {
-    id: 'seed', wave: 1, smoke: true,
+    id: 'seed', wave: 1, smoke: true, foundation: true,
     async run(ctx, io) {
       const made = await io.host.makeProject({ dir: ctx.projectDir, model: ctx.model });
       ctx.state.seedSha = made.sha;
@@ -586,7 +593,7 @@ export const STEPS = [
     },
   },
   {
-    id: 'setup-s0', wave: 1, smoke: true,
+    id: 'setup-s0', wave: 1, smoke: true, foundation: true,
     async run(ctx, io) {
       let restarted = false;
       const start = async () => {
@@ -630,7 +637,7 @@ export const STEPS = [
     },
   },
   {
-    id: 'front-desk', wave: 1, smoke: true,
+    id: 'front-desk', wave: 1, smoke: true, foundation: true,
     async run(ctx, io) {
       await desk(ctx, DESK);
       const on = await io.host.typedRepliesOn({ project: ctx.projectName });
@@ -698,7 +705,7 @@ export const STEPS = [
     },
   },
   {
-    id: 'f1b', wave: 3, smoke: false,
+    id: 'f1b', wave: 3, smoke: false, needs: ['f1'],
     async run(ctx, io) {
       const got = await io.faults.f1bStuck(await pieceEnv(ctx, 'P3'));
       ctx.state.faults.F1b = { ...got };
@@ -706,7 +713,7 @@ export const STEPS = [
     },
   },
   {
-    id: 'f1c', wave: 3, smoke: false,
+    id: 'f1c', wave: 3, smoke: false, needs: ['f1'],
     async run(ctx, io) {
       const got = await io.faults.f1cDirectorKind(await pieceEnv(ctx, 'P3'));
       ctx.state.faults.F1c = got;
@@ -1053,30 +1060,54 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
     return { done: [], stoppedAt: 'create-preview', why: 'HAIKU_TRIAL_PREVIEW is tunnel but cloudflared is not installed. Install it (brew install cloudflared) or use vercel or none. Nothing was created.' };
   }
   const done = [];
+  const failed = [];
+  const skipped = [];
+  const result = (extra = {}) => ({ done, findings: ctx.state.findings ?? [], failed, skipped, ...extra });
   for (const step of plan.slice(start)) {
+    const unmet = (step.needs ?? []).find((id) => failed.includes(id) || skipped.includes(id));
+    if (unmet !== undefined) {
+      const what = `skipped: needs ${unmet}, which failed`;
+      ctx.state.findings = (ctx.state.findings ?? []).filter((f) => f.step !== step.id);
+      await addFinding(ctx, step.id, what);
+      await appendJsonl(ctx.logFile, { at: iso(ctx), step: step.id, note: what, done: true, outcome: 'skipped' });
+      fs.writeFileSync(ctx.stateFile, `${JSON.stringify(ctx.state, null, 2)}\n`);
+      skipped.push(step.id);
+      if (until === step.id) break;
+      continue;
+    }
     try {
       if (step.needsGo) {
-        if (!ctx.owner) throw new Stop('HAIKU_TRIAL_GH_OWNER is not set');
+        if (!ctx.owner) throw new HardStop('HAIKU_TRIAL_GH_OWNER is not set');
         const answer = await io.ask(step.asks?.(ctx) ?? `Go ahead with ${step.id}? Answer go.`);
         if (String(answer).trim().toLowerCase() !== 'go') {
           await note(ctx, step.id, `stopped: the answer was "${answer}", not go`);
-          return { done, stoppedAt: step.id, why: 'waiting for the director\'s go' };
+          return result({ stoppedAt: step.id, why: 'waiting for the director\'s go' });
         }
       }
       io.log?.(`step ${step.id}`);
       ctx.directorStep = step.director === true;
+      // A step run again replaces what it found before.
+      ctx.state.findings = (ctx.state.findings ?? []).filter((f) => f.step !== step.id);
       await step.run(ctx, io);
     } catch (error) {
-      await note(ctx, step.id, `stopped: ${error.message}`);
+      if (step.foundation === true || error instanceof HardStop) {
+        await note(ctx, step.id, `stopped: ${error.message}`);
+        fs.writeFileSync(ctx.stateFile, `${JSON.stringify(ctx.state, null, 2)}\n`);
+        return result({ stoppedAt: step.id, why: error.message });
+      }
+      await addFinding(ctx, step.id, error.message);
+      await appendJsonl(ctx.logFile, { at: iso(ctx), step: step.id, note: `failed: ${error.message}`, done: true, outcome: 'failed' });
       fs.writeFileSync(ctx.stateFile, `${JSON.stringify(ctx.state, null, 2)}\n`);
-      return { done, stoppedAt: step.id, why: error.message };
+      failed.push(step.id);
+      if (until === step.id) break;
+      continue;
     }
     await appendJsonl(ctx.logFile, { at: iso(ctx), step: step.id, note: 'done', done: true });
     fs.writeFileSync(ctx.stateFile, `${JSON.stringify(ctx.state, null, 2)}\n`);
     done.push(step.id);
     if (until === step.id) break;
   }
-  return { done };
+  return result();
 }
 
 // Stops what this run started, as its log records it, and nothing else. It deletes nothing.
@@ -1184,7 +1215,7 @@ export async function main(argv, { print = console.log, buildIo, env = process.e
   }
   const result = await run({ mode: args.command, io, from: args.from ?? 'auto', until: args.until, folder, date: label, model: args.model, env: given });
   print(JSON.stringify(result));
-  return result.stoppedAt ? 1 : 0;
+  return result.stoppedAt || (result.findings ?? []).length > 0 ? 1 : 0;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
