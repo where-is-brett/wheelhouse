@@ -625,9 +625,9 @@ const CLICK_WAIT_MS = 15 * MINUTE;
 const sittingId = (n) => `sitting-${n}`;
 const eventsOf = (ctx) => ctx.io.host.events({ project: ctx.projectName });
 const isAction = (e, ...actions) => e.kind === 'action' && actions.includes(e.data?.action);
-// The director's own click: signed, and not proved by the helper window (the checks approve-work answers use in signals.js). An
-// action typed into the screen or made without a signature is not a click.
-const isSigned = (e, ...actions) => isAction(e, ...actions) && Boolean(e.sig) && typeof e.sig === 'object' && e.data?.proof !== 'window';
+// The director's own click: signed, with the helper window's proof (as the helper's own undo check in local/undo.js). An
+// action typed into the screen, or made without a signature or the window's proof, is not a click.
+const isSigned = (e, ...actions) => isAction(e, ...actions) && Boolean(e.sig) && typeof e.sig === 'object' && e.data?.proof === 'window';
 // An event made at or after `since` (one with no readable time counts: a record without a time cannot be told from a later one).
 const notBefore = (e, since) => !(Date.parse(e.at) < since);
 

@@ -203,8 +203,8 @@ function sittingIo(over = {}) {
     host: { events: async () => records, ...(over.host ?? {}) },
   });
   const at = () => new Date(io.clock.now()).toISOString();
-  // The helper window signs a click; `over.unsigned` and `over.proof` make the kinds of record that must not count.
-  const click = (data) => records.push({ id: `e${records.length}`, kind: 'action', at: at(), data: { ...data, ...(over.proof ? { proof: over.proof } : {}) }, ...(over.unsigned ? {} : { sig: { value: 'v' } }) });
+  // The helper window signs a click and names its proof; `over.unsigned` and `over.noProof` make the kinds of record that must not count.
+  const click = (data) => records.push({ id: `e${records.length}`, kind: 'action', at: at(), data: { ...data, ...(over.noProof ? {} : { proof: 'window' }) }, ...(over.unsigned ? {} : { sig: { value: 'v' } }) });
   io.records = records;
   io.faults.liftTyped = () => { io.timeline.push({ kind: 'f6.lift', args: [], at: io.clock.now() }); if (!over.noLift) click({ action: 'lift-stop' }); };
   io.faults.undoTyped = (tmux, sha) => { io.timeline.push({ kind: 'undo', args: [sha], at: io.clock.now() }); if (!over.noUndo) click({ action: 'undo-merge', merge: sha }); };
@@ -252,7 +252,7 @@ test('F5b is answered by the director keeping main as well as by an undo', async
   io.faults.undoTyped = (tmux, sha) => {
     if (sha !== SHA2) return undo(tmux, sha);
     io.timeline.push({ kind: 'undo', args: [sha], at: io.clock.now() });
-    io.records.push({ id: 'keep', kind: 'action', at: new Date(io.clock.now()).toISOString(), data: { action: 'keep-main', from: 'a', to: 'b' }, sig: { value: 'v' } });
+    io.records.push({ id: 'keep', kind: 'action', at: new Date(io.clock.now()).toISOString(), data: { action: 'keep-main', from: 'a', to: 'b', proof: 'window' }, sig: { value: 'v' } });
   };
   const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
   assert.deepEqual(got.findings, []);
@@ -291,8 +291,8 @@ test('a lift that does not come leads to one terminal ask, and the run waits for
   assert.equal(got.stoppedAt, undefined);
 });
 
-test('a lift or an undo that is not signed, or is proved by the window, is not the director\'s click', async (t) => {
-  for (const over of [{ unsigned: true }, { proof: 'window' }]) {
+test('a lift or an undo that is not signed, or has no window proof, is not the director\'s click', async (t) => {
+  for (const over of [{ unsigned: true }, { noProof: true }]) {
     const folder = scratch(t);
     const io = sittingIo(over);
     const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
@@ -1234,7 +1234,7 @@ test('the setup session and the front desk start on the run\'s model', async (t)
 test('--model is read from the command line and anything but haiku or sonnet is refused with the usage', async (t) => {
   const folder = scratch(t);
   const printed = [];
-  const code = await main(['smoke', '--model', 'opus', '--out', folder], { print: (l) => printed.push(l), buildIo: async () => fakeIo(), env: ENV });
+  const code = await main(['smoke', '--model', 'other', '--out', folder], { print: (l) => printed.push(l), buildIo: async () => fakeIo(), env: ENV });
   assert.equal(code, 2);
   assert.ok(printed.some((l) => /--model must be haiku or sonnet/.test(l)));
   assert.ok(printed.some((l) => /--model <haiku\|sonnet>/.test(l)));
