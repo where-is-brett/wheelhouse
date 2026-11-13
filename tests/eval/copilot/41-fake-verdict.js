@@ -16,13 +16,13 @@ import path from 'node:path';
 import { NO_CLEAN_REVIEW } from '../../../scripts/gate/conditions.js';
 import { latestFor } from '../../../scripts/state/views.js';
 import { REVIEW_KINDS } from '../../../scripts/agents/copilot/numbers.js';
-import { REPO_ROOT, setUpCopilotProject } from './copilot-project.js';
+import { setUpCopilotProject } from './copilot-project.js';
 
 export const PR = 1;
 export const WORK = 'opening-hours';
 export const DESCRIPTION = 'notes/pull-request-1.md';
-export const FRONT_DESK = `node ${path.join(REPO_ROOT, 'scripts', 'frontdesk', 'cli.js')}`;
-export const FEATURE = `node ${path.join(REPO_ROOT, 'scripts', 'feature', 'cli.js')}`;
+export const FRONT_DESK = 'wh-frontdesk';
+export const FEATURE = 'wh-feature';
 
 // The pull request's description, with the builder's report claiming a clean review of `head`.
 export function description(head) {

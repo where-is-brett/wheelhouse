@@ -75,6 +75,7 @@ import path from 'node:path';
 import { clashCheck, fileMapOf, nextWork, since } from './queue.js';
 import { onNewEngine } from '../engine/lanes.js';
 import { PLUGIN_ROOT, foremanCommands } from './tools.js';
+import { LAUNCHED } from '../lib/launchers.js';
 import { briefHash, featurePaths, readStatus, waitingFor } from '../feature/files.js';
 import {
   loadFeature, readCapped, readPlan, readPrRecord, safeFeatureFolder,
@@ -803,7 +804,7 @@ export async function readWakeLines({
   // The commands exactly as the foreman's allow rules match them (ruling R96).
   let commands = null;
   try {
-    commands = foremanCommands(pluginRoot, { platform });
+    commands = foremanCommands(pluginRoot, { platform, launchers: process.env[LAUNCHED] === '1' });
   } catch (error) {
     lines.push(`The commands can't be given: ${oneLine(error instanceof Error ? error.message : 'unknown error', 200)}.`);
   }

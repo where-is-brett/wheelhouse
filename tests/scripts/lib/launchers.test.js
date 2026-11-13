@@ -1,0 +1,50 @@
+// tests/scripts/lib/launchers.test.js
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import test from 'node:test';
+import { BIN_DIR, LAUNCHERS, launcherOf, pathWithLaunchers } from '../../../scripts/lib/launchers.js';
+import { scriptArguments } from '../../../scripts/hooks/stop-guard.js';
+
+const ROOT = path.resolve(BIN_DIR, '..');
+
+test('every launcher has an executable Node.js file and a .cmd beside it, and runs a script that exists', () => {
+  for (const [name, script] of Object.entries(LAUNCHERS)) {
+    const file = path.join(BIN_DIR, name);
+    assert.ok(fs.statSync(file).mode & 0o111, `${name} is executable`);
+    assert.match(fs.readFileSync(file, 'utf8'), new RegExp(`^#!/usr/bin/env node\\n// bin/${name}\\n`));
+    assert.match(fs.readFileSync(`${file}.cmd`, 'utf8'), new RegExp(`^@REM bin/${name}\\.cmd\\n@node "%~dp0${name}" %\\*\\n$`));
+    assert.ok(fs.statSync(path.join(ROOT, script)).isFile(), `${script} exists`);
+    assert.equal(launcherOf(script), name);
+  }
+  assert.deepEqual(fs.readdirSync(BIN_DIR).filter((f) => !f.endsWith('.cmd')).sort(), Object.keys(LAUNCHERS).sort(), 'no file in bin/ is without an entry');
+});
+
+test('a launcher runs its script with its arguments and gives its exit status and output', () => {
+  // The front desk's command prints its commands and exits 1 for a word it doesn't know, and the launcher gives both as they are.
+  const env = { ...process.env, PATH: pathWithLaunchers(process.env.PATH) };
+  const help = spawnSync(path.join(BIN_DIR, 'wh-frontdesk'), ['--help'], { encoding: 'utf8', env });
+  assert.match(`${help.stdout}${help.stderr}`, /Commands: cards,/);
+  assert.equal(help.status, spawnSync(process.execPath, [path.join(ROOT, 'scripts/frontdesk/cli.js'), '--help'], { encoding: 'utf8' }).status);
+  const bad = spawnSync(path.join(BIN_DIR, 'wh-frontdesk'), ['no-such-command'], { encoding: 'utf8' });
+  assert.notEqual(bad.status, 0);
+});
+
+test('the launchers\' folder goes first on a PATH, once', () => {
+  assert.equal(pathWithLaunchers('/bin:/usr/bin', { binDir: '/w/bin', delimiter: ':' }), '/w/bin:/bin:/usr/bin');
+  assert.equal(pathWithLaunchers('/w/bin:/bin', { binDir: '/w/bin', delimiter: ':' }), '/w/bin:/bin');
+  assert.equal(pathWithLaunchers(undefined, { binDir: '/w/bin', delimiter: ':' }), '/w/bin');
+});
+
+test('the stop guard reads a launcher by its bare name as its script, and no other command as one', () => {
+  const roots = ['/p'];
+  for (const platform of ['darwin', 'win32']) {
+    assert.deepEqual(scriptArguments('wh-frontdesk cards', roots, platform, 'scripts/frontdesk/cli.js'), ['cards']);
+    assert.deepEqual(scriptArguments('wh-feature answer q1', roots, platform, 'scripts/feature/cli.js'), ['answer', 'q1']);
+    assert.equal(scriptArguments('wh-feature report', roots, platform, 'scripts/frontdesk/cli.js'), null, 'a launcher is its own script only');
+    assert.equal(scriptArguments('wh-frontdesk cards; rm x', roots, platform, 'scripts/frontdesk/cli.js'), null);
+    assert.equal(scriptArguments('wh-frontdesk cards && wh-frontdesk cards', roots, platform, 'scripts/frontdesk/cli.js'), null);
+    assert.equal(scriptArguments('./wh-frontdesk cards', roots, platform, 'scripts/frontdesk/cli.js'), null);
+  }
+});

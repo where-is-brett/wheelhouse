@@ -1,0 +1,5 @@
+#!/usr/bin/env node
+// bin/wh-act
+import { launch } from "../scripts/lib/launch.js";
+
+launch("wh-act");

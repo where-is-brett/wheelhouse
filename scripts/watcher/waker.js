@@ -1673,7 +1673,12 @@ export function makeWaker({
       try {
         let pid;
         if (work === undefined) {
-          pid = await startForeman(cwd, PROMPTS.foreman(copy, wakeCommand), gathered);
+          // A Copilot foreman runs its wake script by launcher (scripts/lib/launchers.js).
+          let foremanWake = wakeCommand;
+          try {
+            if (agentOfConfig(config, { computerId: computerId() }) === 'copilot') foremanWake = foremanCommands(pluginRoot, { platform, launchers: true }).wake;
+          } catch { /* the agent can't be read here: the prompt names the command as Claude Code's */ }
+          pid = await startForeman(cwd, PROMPTS.foreman(copy, foremanWake), gathered);
         } else {
           const feature = await levelInputs(work, cwd);
           const column = columnNow();

@@ -21,6 +21,7 @@ import { startedAsScript } from '../lib/started-as-script.js';
 import tools from '../../adapters/claude-code/tools.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 import { CHOICE_KEY } from '../lib/setup-run.js';
+import { LAUNCHERS } from '../lib/launchers.js';
 
 // ToolSearch only loads tools' schemas, so the notification tool can be loaded under STOP; it runs
 // nothing, and every tool it loads still meets this guard and the lineage hold.
@@ -50,14 +51,17 @@ const QUIET_WINDOWS = /(?<!\\) +2>(?:\/dev\/null|[Nn][Uu][Ll]) *$/;
 // The one word allowed between `node` and the script (NO_SYSTEM_CA in scripts/protection/settings.js, which a hook can't load).
 const NO_SYSTEM_CA = '--no-use-system-ca';
 
-// The words after the script when `command` is `node [--no-use-system-ca] <pluginRoot>/<script> …` with no shell
-// syntax but one trailing QUIET, and the script in a real plugin root; null for anything else.
+// The words after the script when `command` is `node [--no-use-system-ca] <pluginRoot>/<script> …`, or the script's
+// launcher by its bare name, with no shell syntax but one trailing QUIET, and the script in a real plugin root; null
+// for anything else.
 export function scriptArguments(command, pluginRoots, platform, script) {
   if (typeof command !== 'string') return null;
   const windows = platform === 'win32';
   const bare = command.replace(windows ? QUIET_WINDOWS : QUIET, '');
   if (CONTROL.test(bare) || ODD_SPACE.test(bare)) return null;
   const parts = words(bare, windows);
+  // A launcher (scripts/lib/launchers.js) by its bare name, as a Copilot session runs the script, with no `node` and no path.
+  if (parts && parts.length >= 1 && LAUNCHERS[parts[0]] === script) return parts.slice(1);
   if (!parts || parts.length < 2 || parts[0] !== 'node') return null;
   if (parts[1] === NO_SYSTEM_CA) parts.splice(1, 1);
   if (parts.length < 2) return null;

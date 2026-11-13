@@ -62,27 +62,28 @@ const COPILOT_ON_PATH = () => {
 // ---- The foreman's one command ----
 
 test("the foreman's allow rule is the one command its record names, with the folder Wheelhouse is in", () => {
-  assert.deepEqual(foremanAllow({ pluginRoot: '/plugins/wheelhouse', platform: 'darwin' }), ["shell(node '/plugins/wheelhouse/scripts/foreman/wake.js':*)"]);
-  assert.deepEqual(foremanAllow({ pluginRoot: 'C:\\Wheelhouse', platform: 'win32' }), ["shell(node 'C:/Wheelhouse/scripts/foreman/wake.js':*)"]);
-  // The rule is the command the foreman's playbook is shown, with the pattern's own ending.
-  assert.deepEqual(foremanAllow(), [`shell(${foremanCommands().wake}:*)`]);
-  assert.throws(() => foremanAllow({ pluginRoot: "/plugins/it's" }), /can't be written into an allow rule/);
+  // The rule is the wake script's launcher by its bare name, wherever Wheelhouse is, on either system.
+  assert.deepEqual(foremanAllow({ pluginRoot: '/plugins/wheelhouse', platform: 'darwin' }), ['shell(wh-wake:*)']);
+  assert.deepEqual(foremanAllow({ pluginRoot: 'C:\\Wheelhouse', platform: 'win32' }), ['shell(wh-wake:*)']);
+  // The rule is the command the foreman's playbook is shown to a Copilot session, with the pattern's own ending.
+  assert.deepEqual(foremanAllow(), [`shell(${foremanCommands(undefined, { launchers: true }).wake}:*)`]);
 });
 
 test('a rule record that allows more, less or another command than the wake script refuses the start', () => {
   const dir = tempFolder('wh-copilot-rules-');
   const record = JSON.parse(fs.readFileSync(FOREMAN_RULES_FILE, 'utf8'));
-  assert.deepEqual(record.allow, ["node '<wheelhouse-root>/scripts/foreman/wake.js':*"], 'the committed record holds the wake script and nothing else');
+  assert.deepEqual(record.allow, ['wh-wake:*'], 'the committed record holds the wake script and nothing else');
   const write = (value) => {
     const file = path.join(dir, 'rules.json');
     fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value));
     return file;
   };
   for (const bad of [
-    { ...record, allow: [...record.allow, "node '<wheelhouse-root>/scripts/foreman/act.js':*"] },
+    { ...record, allow: [...record.allow, 'wh-act:*'] },
     { ...record, allow: [] },
     { ...record, allow: ['node:*'] },
-    { ...record, allow: ["node '<wheelhouse-root>/scripts/foreman/act.js':*"] },
+    { ...record, allow: ['wh-act:*'] },
+    { ...record, allow: ["node '<wheelhouse-root>/scripts/foreman/wake.js':*"] },
     { ...record, agent: 'wheelhouse-builder' },
     'not json',
   ]) {
@@ -100,7 +101,7 @@ test("the foreman's call carries that one rule and no write, a session id given 
     env: { PATH: '/bin', HOME: '/h', COPILOT_MODEL: 'model-z', COPILOT_ALLOW_ALL: '1', GH_TOKEN: 'secret', WHEELHOUSE_HOME: '/wh' },
   });
   assert.equal(call.file, '/bin/copilot');
-  assert.deepEqual(flagsOf(call.args, '--allow-tool'), ["shell(node '/plugins/wheelhouse/scripts/foreman/wake.js':*)"]);
+  assert.deepEqual(flagsOf(call.args, '--allow-tool'), ['shell(wh-wake:*)']);
   assert.deepEqual(flagsOf(call.args, '--deny-tool'), []);
   assert.equal(valueOf(call.args, '--session-id'), 'a1b2c3d4-0000-4000-8000-000000000001');
   assert.equal(valueOf(call.args, '--agent'), 'wheelhouse-foreman');
@@ -159,7 +160,9 @@ test('no argument starts a session trusted or with every permission, whatever a 
   }
   // The prompt is the one argument not read as a flag, and a call refuses one that starts with a dash anyway.
   assert.doesNotThrow(() => sessionArgs({ ...base, prompt: '--yolo' }));
-  assert.deepEqual(copilotSessionEnv({ PATH: '/bin', COPILOT_MODEL: 'm', GH_TOKEN: 't' }, { home: '/h' }), { PATH: '/bin', COPILOT_HOME: '/h' });
+  assert.deepEqual(copilotSessionEnv({ PATH: '/bin', COPILOT_MODEL: 'm', GH_TOKEN: 't' }, { home: '/h', binDir: '/wh/bin' }), { PATH: '/wh/bin:/bin', COPILOT_HOME: '/h' });
+  // On Windows the folder goes first under the PATH's own spelling, with that system's separator.
+  assert.deepEqual(copilotSessionEnv({ Path: 'C:\\npm' }, { home: 'C:\\h', binDir: 'C:\\wh\\bin', platform: 'win32' }), { Path: 'C:\\wh\\bin;C:\\npm', COPILOT_HOME: 'C:\\h' });
 });
 
 // ---- The level is checked before its rules ----

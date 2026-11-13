@@ -32,7 +32,9 @@ function rootOf(pluginRoot, platform) {
 
 // The exact command that runs each of the foreman's scripts, for its playbook
 // and for its rules: `{ wake, act }`.
-export function foremanCommands(pluginRoot = PLUGIN_ROOT, { platform = process.platform } = {}) {
+// With `launchers`, the commands a Copilot session runs, by their bare launcher names (scripts/lib/launchers.js).
+export function foremanCommands(pluginRoot = PLUGIN_ROOT, { platform = process.platform, launchers = false } = {}) {
+  if (launchers) return { wake: 'wh-wake', act: 'wh-act' };
   const root = rootOf(pluginRoot, platform);
   return {
     wake: `node '${root}/${SCRIPTS.wake}'`,

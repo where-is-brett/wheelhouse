@@ -84,6 +84,8 @@ import { usageOffer } from '../routing/offer.js';
 import { columnsReadyOf } from '../routing/in-force.js';
 import { TOOL_SHEETS } from '../agents/tool-sheets.js';
 import { frontDeskCommand, knowsNoSystemCa } from '../protection/settings.js';
+
+const LAUNCHER_COMMAND = 'wh-frontdesk';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { keepRunningModel, modelOfInput } from '../lib/front-desk-model.js';
@@ -147,7 +149,8 @@ export { TOOL_SHEETS };
 // lines don't fill the output. It is left out when the plugin's folder can't be typed as a command.
 export function toolSheetLines(agent, { pluginRoot, platform = process.platform, allowedFlags = process.allowedNodeEnvironmentFlags } = {}) {
   const lines = Object.hasOwn(TOOL_SHEETS, agent) && TOOL_SHEETS[agent] !== '' ? TOOL_SHEETS[agent].split('\n') : [];
-  const command = frontDeskCommand(pluginRoot, { platform, noSystemCa: knowsNoSystemCa(allowedFlags) });
+  // Copilot matches a shell rule on a command's stem, so its sessions run Wheelhouse's scripts by launcher (scripts/lib/launchers.js).
+  const command = agent === 'copilot' ? LAUNCHER_COMMAND : frontDeskCommand(pluginRoot, { platform, noSystemCa: knowsNoSystemCa(allowedFlags) });
   if (command !== null) lines.push(`The Wheelhouse command is ${command}`);
   return lines;
 }

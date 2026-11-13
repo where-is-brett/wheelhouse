@@ -22,6 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import tools from '../../../adapters/copilot/tools.js';
+import { launcherOf } from '../../lib/launchers.js';
 import { safeGit } from '../../lib/safe-git.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
 
@@ -114,6 +115,13 @@ function mapRulesFiles(text) {
   return out;
 }
 
+// The foreman's first step names its command by path and quotes; Copilot's names the launcher.
+const WAKE_STEP = ["`node '<path>' read <file>`, where `<path>` is the path in the Wheelhouse command the session start named, with `scripts/foreman/wake.js` in place of `scripts/frontdesk/cli.js`. Keep the single quotes.", '`wh-wake read <file>`.'];
+function launcherWords(text, rel) {
+  if (!text.includes(WAKE_STEP[0])) throw new Error(`${rel} no longer holds the wake step launcherWords rewrites`);
+  return text.replace(WAKE_STEP[0], WAKE_STEP[1]);
+}
+
 const q = (value) => JSON.stringify(value);
 const list = (values) => `[${values.map(q).join(', ')}]`;
 
@@ -158,15 +166,23 @@ function grantedTools(line, rel) {
 
 // The foreman's grant is Bash for one command, and nothing else. Its agent file holds no tool, so it can't run the shell
 // whole; the command goes in a record beside it (`rules/wheelhouse-foreman.json`) for the sessions part to turn into the
-// session's allow rule. `${CLAUDE_PLUGIN_ROOT}` is the folder Wheelhouse is in, which only the session knows.
-const ROOT_WORD = '${CLAUDE_PLUGIN_ROOT}';
+// session's allow rule.
+// A rule `node '${CLAUDE_PLUGIN_ROOT}/<script>':*` as the launcher's: Copilot matches a shell rule on the command's stem,
+// `node`, so a script is allowed by its launcher's bare name (scripts/lib/launchers.js).
+function launcherRule(pattern, rel) {
+  const found = /^node '\$\{CLAUDE_PLUGIN_ROOT\}\/([^']+)':\*$/.exec(pattern);
+  const launcher = found === null ? null : launcherOf(found[1]);
+  if (launcher === null) throw new Error(`${rel}'s allowed-tools names a command that has no launcher: ${pattern}`);
+  return `${launcher}:*`;
+}
+
 function foremanRule(line, rel) {
   const items = itemsOf(line);
   if (items.length === 0 || items.some((i) => i.name !== 'Bash' || i.pattern === null)) throw new Error(`${rel}'s allowed-tools must be Bash for a command pattern and nothing else`);
   return {
     agent: 'wheelhouse-foreman',
     shell: [...CLAUDE_TO_COPILOT.Bash],
-    allow: items.map((i) => i.pattern.replaceAll(ROOT_WORD, '<wheelhouse-root>')),
+    allow: items.map((i) => launcherRule(i.pattern, rel)),
   };
 }
 
@@ -196,7 +212,7 @@ function foremanFrom(root) {
   const file = 'agents/wheelhouse-foreman.agent.md';
   if (!front['allowed-tools']) throw new Error(`${FOREMAN_SOURCE} has no allowed-tools to give the foreman agent its rule`);
   const rule = foremanRule(front['allowed-tools'], FOREMAN_SOURCE);
-  const rest = renameSkills(mapToolWords(withoutPathComment(body, FOREMAN_SOURCE), FOREMAN_SOURCE));
+  const rest = renameSkills(mapToolWords(launcherWords(withoutPathComment(body, FOREMAN_SOURCE), FOREMAN_SOURCE), FOREMAN_SOURCE));
   return [
     [file, assemble({ file, source: FOREMAN_SOURCE, front: { name: 'wheelhouse-foreman', description: front.description, tools: [] }, rest })],
     [FOREMAN_RULES, `${JSON.stringify(rule, null, 2)}\n`],

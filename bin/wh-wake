@@ -1,0 +1,5 @@
+#!/usr/bin/env node
+// bin/wh-wake
+import { launch } from "../scripts/lib/launch.js";
+
+launch("wh-wake");
