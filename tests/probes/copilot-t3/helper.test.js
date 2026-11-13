@@ -69,3 +69,13 @@ test('a helper that never answers fails the start, in words', async (t) => {
   fs.writeFileSync(path.join(plugin, 'scripts', 'host', 'helper-main.js'), 'setTimeout(() => {}, 100);\n');
   await assert.rejects(startTrialHelper({ home: path.join(dir, 'home'), pluginRoot: plugin, waitMs: 300, pollMs: 50 }), /did not answer/);
 });
+
+test('a relative home is made absolute before the helper is started in the user\'s own folder', async (t) => {
+  const dir = shortDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const relative = path.relative(process.cwd(), path.join(dir, 'home'));
+  let given = null;
+  const spawn = (_file, _args, options) => { given = options.env.WHEELHOUSE_HOME; return { pid: undefined, on() {}, unref() {}, kill() {} }; };
+  await assert.rejects(startTrialHelper({ home: relative, spawn, waitMs: 100, pollMs: 50 }), /did not answer/);
+  assert.equal(given, path.join(dir, 'home'));
+});

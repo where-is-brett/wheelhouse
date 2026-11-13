@@ -23,6 +23,8 @@ const sameFolder = (a, b) => {
 // `startTrialHelper({ home })` -> { stop() }. Resolves once the helper answers in `home`; throws when it never does.
 export async function startTrialHelper({ home, spawn = nodeSpawn, pluginRoot = ROOT, waitMs = 15000, pollMs = 200, graceMs = 3000, env = process.env } = {}) {
   if (typeof home !== 'string' || home === '') throw new Error('The helper needs the trial\'s own Wheelhouse home');
+  // The helper runs in the user's own folder, so a relative home would land somewhere other than the one checked here.
+  home = path.resolve(home);
   if (sameFolder(home, path.join(os.homedir(), '.wheelhouse'))) throw new Error('The trial never starts a helper for the real Wheelhouse home');
   fs.mkdirSync(home, { recursive: true });
   const client = helperClient({ address: helperAddress({ home }), timeout: 2000 });
@@ -59,11 +61,20 @@ export async function startTrialHelper({ home, spawn = nodeSpawn, pluginRoot = R
       stopChild(child);
       const until = Date.now() + graceMs;
       while (Date.now() < until && await answers()) await sleep(pollMs);
-      if (await answers()) { try { child.kill('SIGKILL'); } catch { /* already gone */ } }
+      if (await answers()) signal(child, 'SIGKILL');
     },
   };
 }
 
 function stopChild(child) {
-  try { child.kill('SIGTERM'); } catch { /* already gone */ }
+  signal(child, 'SIGTERM');
+}
+
+// The helper was started detached as its own group, so off Windows the group is signalled and anything it started goes with it.
+function signal(child, name) {
+  const pid = child.pid;
+  if (process.platform !== 'win32' && Number.isInteger(pid) && pid > 1) {
+    try { process.kill(-pid, name); return; } catch { /* fall back to the helper alone */ }
+  }
+  try { child.kill(name); } catch { /* already gone */ }
 }
