@@ -176,11 +176,21 @@ function endSession(ctx, name) {
   ctx.live?.delete(name);
   ctx.io.tmux.kill(name);
 }
-function mustBeAlive(ctx) {
+// The front desk that ends is opened again once in a wave, as a director would, and noted as a finding; a second loss in the
+// same wave stops the run, as does any other session. `restart: false` is for the desk's own start, which must not recurse.
+async function mustBeAlive(ctx, { restart = true } = {}) {
   if (!ctx.live?.size) return;
   const up = new Set(ctx.io.tmux.list());
-  for (const name of ctx.live) {
-    if (!up.has(tmuxName(ctx, name))) throw new Stop(`the ${name} session ended by itself (tmux ${tmuxName(ctx, name)} is gone)`);
+  for (const name of [...ctx.live]) {
+    if (up.has(tmuxName(ctx, name))) continue;
+    const gone = `the ${name} session ended by itself (tmux ${tmuxName(ctx, name)} is gone)`;
+    const wave = ctx.wave ?? 0;
+    const restarts = ((ctx.state.deskRestarts ??= {})[wave] ??= 0);
+    if (!restart || name !== DESK || restarts >= 1) throw new HardStop(gone);
+    ctx.state.deskRestarts[wave] = restarts + 1;
+    ctx.live.delete(name);
+    await addFinding(ctx, 'front-desk', `${gone}; started again`);
+    await desk(ctx, DESK);
   }
 }
 
@@ -190,7 +200,7 @@ const FEATURE_RUNNING = ['started', 'building'];
 // One look at the project: events become log entries, open cards get the director's stand-in answer, and F3b fires when armed.
 async function tick(ctx) {
   const { io, state } = ctx;
-  mustBeAlive(ctx);
+  await mustBeAlive(ctx);
   const events = await io.host.events({ project: ctx.projectName });
   for (const e of events) {
     if (e.id === undefined || state.seen.includes(e.id)) continue;
@@ -241,19 +251,22 @@ async function tick(ctx) {
   }
 }
 
-// Waits for `count` merged pull requests. A shortfall stops the run, or with `soft` is returned as the number merged, so a
-// wave that did not merge what it should still leaves the later waves to give their evidence.
-async function waitMerged(ctx, count, wave, { soft = false } = {}) {
+// Waits for `count` merged pull requests, less what an earlier wave fell short by. A shortfall is noted and kept in
+// `state.shortfall` (as the total still missing), so the wave's evidence still comes and later waits ask for that many fewer.
+async function waitMerged(ctx, count, wave) {
+  const target = mergesBy(ctx, count);
   const ok = await waitFor(async () => {
     await tick(ctx);
-    return (await mergedPulls(ctx)).length >= count;
+    return (await mergedPulls(ctx)).length >= target;
   }, { io: ctx.io, timeoutMs: WAVE_WAIT_MS[wave] ?? 60 * MINUTE });
-  if (ok) return count;
+  if (ok) return target;
   const merged = (await mergedPulls(ctx)).length;
-  if (!soft) throw new Stop(`fewer than ${count} pull requests merged in time for wave ${wave}`);
+  ctx.state.shortfall = Math.max(0, count - merged);
+  await note(ctx, `w${wave}-merge-wait`, `missed: ${merged} of ${count} pull requests merged in time for wave ${wave}; the run goes on and later waits ask for ${ctx.state.shortfall} fewer`);
+  if (wave > 2) await addFinding(ctx, `w${wave}-merge-wait`, `fewer than ${count} pull requests merged in time for wave ${wave} (${merged} did)`);
   return merged;
 }
-// What a later wave waits for: the count it would, less what wave 2 fell short by.
+// What a wait asks for: the count it would, less what an earlier wave fell short by.
 const mergesBy = (ctx, count) => Math.max(0, count - (ctx.state.shortfall ?? 0));
 
 // Whether a branch in the project's own folder that names the piece has a commit of its own. A build commits in its
@@ -376,8 +389,17 @@ async function spareBugCheck(ctx) {
     return;
   }
   await io.host.commitAndPush({ dir, branch: SPARE_BRANCH, message: 'Plant the spare bug for the trial' });
-  await ghDo(ctx, ['pr', 'create', '--head', SPARE_BRANCH, '--base', 'main', '--title', 'Plant the spare bug for the trial', '--body', 'The trial plants this bug for piece P5.']);
-  await ghDo(ctx, ['pr', 'merge', SPARE_BRANCH, '--squash', '--admin']);
+  // A pull request that cannot be made or merged leaves the planted bug in doubt, so P5 is not covered and the run goes on.
+  try {
+    await ghDo(ctx, ['pr', 'create', '--head', SPARE_BRANCH, '--base', 'main', '--title', 'Plant the spare bug for the trial', '--body', 'The trial plants this bug for piece P5.']);
+    await ghDo(ctx, ['pr', 'merge', SPARE_BRANCH, '--squash', '--admin']);
+  } catch (error) {
+    state.p5 = 'not-covered';
+    state.p5Why = `the spare bug's pull request failed: ${error.message}`;
+    await note(ctx, 'plant', `P5 not covered: ${state.p5Why}`);
+    await addFinding(ctx, 'w2-merge-wait', state.p5Why);
+    return;
+  }
   state.p5 = 'spare';
   await note(ctx, 'plant', 'spare bug merged; P5 will use the spare request');
 }
@@ -414,7 +436,7 @@ async function desk(ctx, name, extraEnv = {}) {
     await note(ctx, name === DESK ? 'front-desk' : name, 'answered the folder-trust prompt: Yes, I trust this folder');
     await ctx.io.clock.sleep(5000);
   }
-  mustBeAlive(ctx);
+  await mustBeAlive(ctx, { restart: false });
 }
 
 // The stand-in director's answer to the picker open in a session's pane: the recommended option, or the first when none
@@ -435,7 +457,15 @@ async function answerPicker(ctx, name) {
   }
   const chosen = look()?.options.findIndex((l) => HIGHLIGHTED.test(l));
   if (chosen !== target) {
-    throw new Stop(`the ${name} session's picker "${question}" never highlighted ${first.recommended === -1 ? 'its first option' : 'its recommended option'}`);
+    const why = `the ${name} session's picker "${question}" never highlighted ${first.recommended === -1 ? 'its first option' : 'its recommended option'}`;
+    // Setup has its own time limit and stops on this; elsewhere the picker is noted once and the run goes on.
+    if (ctx.inSetup) throw new Stop(why);
+    const missed = (ctx.state.pickersMissed ??= []);
+    if (!missed.includes(question)) {
+      missed.push(question);
+      await addFinding(ctx, name === DESK ? 'front-desk' : name, why);
+    }
+    return false;
   }
   const label = first.options[target].replace(HIGHLIGHTED, '').replace(/^\s*\d+\.\s*/, '').trim();
   io.tmux.keys(name, 'Enter');
@@ -504,9 +534,12 @@ async function staleDeskPicker(ctx) {
   await answerPicker(ctx, DESK);
 }
 
+// The saved environment of a piece's feature session, or null when none is found. Once none was found, later looks are one
+// look each, with no wait, so F1b, F1c and the later P4 steps do not wait another 40 minutes; a session that turns up is still found.
 async function pieceEnv(ctx, id) {
   const piece = ctx.state.pieces[id]?.change ?? id.toLowerCase();
   let got;
+  const noSession = (ctx.state.noSession ??= {});
   const found = await waitFor(async () => {
     try { got = await ctx.io.faults.featureEnvOf({ project: ctx.projectDir, name: ctx.projectName, piece }); return true; } catch (error) {
       // Only a session not found yet is worth waiting for; any other error is the runner's own and stops it at once.
@@ -514,10 +547,16 @@ async function pieceEnv(ctx, id) {
       await tick(ctx);
       return false;
     }
-  }, { io: ctx.io, timeoutMs: 40 * MINUTE });
-  if (!found) throw new Stop(`no running feature session names ${id}`);
+  }, { io: ctx.io, timeoutMs: noSession[id] ? 0 : 40 * MINUTE });
+  if (!found) {
+    noSession[id] = true;
+    await note(ctx, id, `no running feature session names ${id}`);
+    return null;
+  }
+  delete noSession[id];
   return got;
 }
+const noSessionWhy = (id) => `no running feature session names ${id}`;
 
 const directorAsk = async (ctx, text) => {
   const answer = await ctx.io.ask(text);
@@ -531,9 +570,16 @@ const auditStep = (wave, smoke = true) => ({
   async run(ctx, io) {
     const models = auditModels(io.host.findTranscripts({ project: ctx.projectName, dir: ctx.projectDir }), { model: ctx.model });
     await note(ctx, `w${wave}-audit`, models.clean ? `every assistant turn so far ran on ${modelName(ctx)}` : `offenders: ${JSON.stringify(models.offenders.map((o) => `${o.role} ${o.model} x${o.count}`))}`);
-    if (!models.clean) throw new Stop(`a session ran on another model: ${models.offenders.map((o) => `${o.role} (${o.model})`).join(', ')}`);
+    // The run can no longer pass, but it goes on finding faults.
+    if (!models.clean) await addFinding(ctx, `w${wave}-audit`, `a session ran on another model: ${models.offenders.map((o) => `${o.role} (${o.model})`).join(', ')}`, { claimLost: 'model audit' });
   },
 });
+
+// A fault step that could not run: the rows read this as not covered, with the reason.
+async function notExercised(ctx, id, why) {
+  ctx.state.faults[id] = { ...(ctx.state.faults[id] ?? {}), notExercised: why };
+  await note(ctx, LOG.fault(id), `not exercised: ${why}`);
+}
 
 const s9 = (n, run) => ({ id: `s9-${n}`, wave: 4, smoke: [1, 2, 4].includes(n), run });
 
@@ -600,6 +646,7 @@ export const STEPS = [
         await desk(ctx, SETUP, { WHEELHOUSE_SETUP_MODEL: ctx.model });
         io.tmux.type(SETUP, restarted ? 'carry on with setup' : '/wheelhouse:setup');
       };
+      ctx.inSetup = true;
       await start();
       ctx.session = SETUP;
       ctx.state.panes.setup = [];
@@ -628,6 +675,7 @@ export const STEPS = [
         return false;
       }, { io, timeoutMs: SETUP_WAIT_MS });
       ctx.session = undefined;
+      ctx.inSetup = false;
       ctx.state.panes.setup.push(io.tmux.capture(SETUP));
       await note(ctx, LOG.health, done ? 'pass' : 'fail: setup did not finish in time');
       if (done) await note(ctx, LOG.health, `setup ended on ${ctx.state.setupEndedBy}`);
@@ -686,11 +734,7 @@ export const STEPS = [
   {
     id: 'w2-merge-wait', wave: 2, smoke: true,
     async run(ctx) {
-      const merged = await waitMerged(ctx, 3, 2, { soft: true });
-      if (merged < 3) {
-        ctx.state.shortfall = 3 - merged;
-        await note(ctx, 'w2-merge-wait', `missed: ${merged} of 3 pull requests merged in time for wave 2; the run goes on and later waits ask for ${ctx.state.shortfall} fewer`);
-      }
+      await waitMerged(ctx, 3, 2);
       await spareBugCheck(ctx);
     },
   },
@@ -700,6 +744,7 @@ export const STEPS = [
     id: 'f1', wave: 3, smoke: false,
     async run(ctx, io) {
       const env = await pieceEnv(ctx, 'P3');
+      if (!env) { await notExercised(ctx, 'F1', noSessionWhy('P3')); return; }
       ctx.state.faults.F1 = await io.faults.f1WrongShape(env);
       await note(ctx, LOG.fault('F1'), `F1 exit ${ctx.state.faults.F1.code}, sentBack ${ctx.state.faults.F1.sentBack}`);
     },
@@ -707,7 +752,9 @@ export const STEPS = [
   {
     id: 'f1b', wave: 3, smoke: false, needs: ['f1'],
     async run(ctx, io) {
-      const got = await io.faults.f1bStuck(await pieceEnv(ctx, 'P3'));
+      const env = await pieceEnv(ctx, 'P3');
+      if (!env) { await notExercised(ctx, 'F1b', noSessionWhy('P3')); return; }
+      const got = await io.faults.f1bStuck(env);
       ctx.state.faults.F1b = { ...got };
       await note(ctx, LOG.fault('F1b'), `stuck at try ${got.stuckAt}`);
     },
@@ -715,7 +762,9 @@ export const STEPS = [
   {
     id: 'f1c', wave: 3, smoke: false, needs: ['f1'],
     async run(ctx, io) {
-      const got = await io.faults.f1cDirectorKind(await pieceEnv(ctx, 'P3'));
+      const env = await pieceEnv(ctx, 'P3');
+      if (!env) { await notExercised(ctx, 'F1c', noSessionWhy('P3')); return; }
+      const got = await io.faults.f1cDirectorKind(env);
       ctx.state.faults.F1c = got;
       await note(ctx, LOG.fault('F1c'), `refused with code ${got.code}`);
     },
@@ -774,7 +823,7 @@ export const STEPS = [
       await note(ctx, LOG.fault('F5a'), 'undo of P6 approved; waited for the take-back merge');
     },
   },
-  { id: 'w3-merge-wait', wave: 3, smoke: false, async run(ctx) { await waitMerged(ctx, mergesBy(ctx, 3 + (ctx.state.p5 === 'not-covered' ? 3 : 4)), 3); } },
+  { id: 'w3-merge-wait', wave: 3, smoke: false, async run(ctx) { await waitMerged(ctx, 3 + (ctx.state.p5 === 'not-covered' ? 3 : 4), 3); } },
   auditStep(3, false),
   { id: 'w4-type', wave: 4, smoke: true, async run(ctx) { await typeWave(ctx, 4, ctx.smoke ? { only: ['P4'] } : {}); } },
   {
@@ -795,9 +844,11 @@ export const STEPS = [
     const raised = await waitFor(async () => { await tick(ctx); return (await io.host.events({ project: ctx.projectName })).some((e) => e.kind === 'question' && (change === undefined || e.data?.work === change)); }, { io, timeoutMs: 40 * MINUTE });
     if (!raised) {
       const env = await pieceEnv(ctx, 'P4');
-      const got = await io.faults.decisionFallback(env);
-      await note(ctx, 'fallback', `P4 raised no decision; the runner raised one: ${JSON.stringify(got)}`);
-      await io.clock.sleep(30000);
+      if (env) {
+        const got = await io.faults.decisionFallback(env);
+        await note(ctx, 'fallback', `P4 raised no decision; the runner raised one: ${JSON.stringify(got)}`);
+        await io.clock.sleep(30000);
+      } else await notExercised(ctx, 's9', 'P4 raised no decision and has no running session to raise one in');
     }
     try {
       const env = await io.faults.featureEnvOf({ project: ctx.projectDir, name: ctx.projectName, piece: ctx.state.pieces.P4?.change ?? 'p4' });
@@ -815,6 +866,7 @@ export const STEPS = [
   }),
   s9(3, async (ctx, io) => {
     const env = await pieceEnv(ctx, 'P4');
+    if (!env) { await notExercised(ctx, 's9', noSessionWhy('P4')); return; }
     ctx.state.p4env = env;
     const got = await io.faults.secondDecision(env);
     await note(ctx, 's9-3', `second decision raised, code ${got.code}`);
@@ -858,8 +910,8 @@ export const STEPS = [
     },
   },
   // A smoke run starts only P4 in this wave, so only P4 has to merge before it is scored.
-  { id: 'w4-smoke-merge', wave: 4, smoke: true, smokeOnly: true, async run(ctx) { await waitMerged(ctx, mergesBy(ctx, 4), 4); } },
-  { id: 'w4-merge-wait', wave: 4, smoke: false, async run(ctx) { await waitMerged(ctx, mergesBy(ctx, 3 + (ctx.state.p5 === 'not-covered' ? 3 : 4) + 2), 4); } },
+  { id: 'w4-smoke-merge', wave: 4, smoke: true, smokeOnly: true, async run(ctx) { await waitMerged(ctx, 4, 4); } },
+  { id: 'w4-merge-wait', wave: 4, smoke: false, async run(ctx) { await waitMerged(ctx, 3 + (ctx.state.p5 === 'not-covered' ? 3 : 4) + 2, 4); } },
   auditStep(4),
   {
     id: 'w5-incident', wave: 5, smoke: false,
@@ -929,7 +981,9 @@ export const STEPS = [
     id: 'review-card', wave: 6, smoke: false, director: true,
     async run(ctx, io) {
       const decisionN = ctx.state.decisionN;
-      if (!Number.isInteger(decisionN)) throw new Stop('decision 3 has no number, so the review steps cannot point at it');
+      // With no decision 3 the card is still shown, without the typed-answer step, and that row is not covered.
+      const typed = Number.isInteger(decisionN);
+      if (!typed) await note(ctx, 'review-card', 'typed answer not covered: decision 3 has no number, so the card is shown without the typed-answer step');
       const stepsFile = path.join(ctx.folder, 'steps.md');
       fs.writeFileSync(stepsFile, stepsPage({ decisionN }));
       const tryMe = writeTryMe(ctx.folder);
@@ -938,7 +992,7 @@ export const STEPS = [
       // The card goes through the front desk as a decision, so it reads as it will on a phone; the terminal is the fallback.
       let answer = null;
       const env = ctx.state.p4env;
-      const raised = env && fs.existsSync(env.cwd ?? '') ? await io.faults.reviewDecision({ ...env, card: reviewAsDecision(card, { stepsUrl: stepsFile }) }) : { code: null, stdout: 'no environment' };
+      const raised = typed && env && fs.existsSync(env.cwd ?? '') ? await io.faults.reviewDecision({ ...env, card: reviewAsDecision(card, { stepsUrl: stepsFile }) }) : { code: null, stdout: 'no environment' };
       if (raised.code === 0) {
         const askedAt = io.clock.now();
         io.log?.(`The review card is in the chat as a decision. Try the tracker (statement: ${tryMe}), then answer there with its number and A, B or C.`);
@@ -948,7 +1002,7 @@ export const STEPS = [
           answer = found ? answerLetter(found.data.label) : null;
           return answer !== null;
         }, { io, timeoutMs: 120 * MINUTE, everyMs: 30000 });
-      } else {
+      } else if (typed) {
         await note(ctx, 'review-card', `the card could not be raised as a decision (${String(raised.stdout).trim().slice(0, 200)}); asking in the terminal`);
       }
       while (answer === null) {
@@ -1086,6 +1140,7 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
       }
       io.log?.(`step ${step.id}`);
       ctx.directorStep = step.director === true;
+      ctx.wave = step.wave;
       // A step run again replaces what it found before.
       ctx.state.findings = (ctx.state.findings ?? []).filter((f) => f.step !== step.id);
       await step.run(ctx, io);

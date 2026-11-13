@@ -215,14 +215,15 @@ test('the smoke plan waits for P4 to merge and the full plan has no smoke-only s
   assert.ok(ids('full').indexOf('w2-merge-wait') < ids('full').indexOf('w2-audit'));
 });
 
-test('an audit step stops the run on a session that ran on another model, and passes otherwise', async (t) => {
+test('an audit step records a session that ran on another model, and passes otherwise', async (t) => {
   const bad = fakeIo({ host: { findTranscripts: () => [{ file: '/none.jsonl', role: 'feature', session: 's' }] } });
   const dir = scratch(t);
   fs.writeFileSync(path.join(dir, 'x.jsonl'), `${JSON.stringify({ type: 'assistant', message: { model: 'other-model', content: [] } })}\n`);
   bad.host.findTranscripts = () => [{ file: path.join(dir, 'x.jsonl'), role: 'feature', session: 's' }];
   const got = await run({ mode: 'full', io: bad, from: 'w3-audit', until: 'w3-audit', folder: scratch(t), date: '2026-11-08', env: ENV });
-  assert.deepEqual(got.failed, ['w3-audit']);
+  assert.deepEqual(got.done, ['w3-audit']);
   assert.match(got.findings[0].what, /feature \(other-model\)/);
+  assert.equal(got.findings[0].claimLost, 'model audit');
   const clean = await run({ mode: 'full', io: fakeIo(), from: 'w3-audit', until: 'w3-audit', folder: scratch(t), date: '2026-11-08', env: ENV });
   assert.deepEqual(clean.done, ['w3-audit']);
 });
@@ -485,12 +486,15 @@ test('a gh failure on repo create stops the run and logs no success', async (t) 
   assert.equal(readLog(folder).some((e) => /^created /.test(e.note ?? '')), false);
 });
 
-test('a failed pr merge stops the run and P5 is not switched to the spare bug', async (t) => {
+test('a failed pr merge makes P5 not covered and the run goes on, and P5 is not switched to the spare bug', async (t) => {
   const folder = scratch(t);
   const io = fakeIo({ amount: -40, gh: (args) => (args[0] === 'pr' && args[1] === 'merge' ? { ok: false, why: 'checks failing' } : threeMerged(args)) });
   const got = await run({ mode: 'full', io, from: 'w2-merge-wait', until: 'w3-type', folder, date: '2026-11-08', env: ENV });
-  assert.deepEqual(got.failed, ['w2-merge-wait']);
+  assert.deepEqual(got.failed, []);
   assert.match(got.findings[0].what, /checks failing/);
+  const state = JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8'));
+  assert.equal(state.p5, 'not-covered');
+  assert.match(state.p5Why, /checks failing/);
   assert.equal(io.timeline.some((e) => e.kind === 'tmux.type' && e.args[1].includes(P5_SPARE)), false);
   assert.notEqual(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).p5, 'spare');
 });
@@ -828,7 +832,8 @@ test('a wave 2 merge shortfall is a note, the step is done, and later waits ask 
   const later = await run({ mode: 'full', io: fakeIo({ gh: merged(5) }), from: 'w3-merge-wait', until: 'w3-merge-wait', folder, date: '2026-11-08', env: ENV });
   assert.deepEqual(later.done, ['w3-merge-wait'], 'seven less the two that did not merge in wave 2');
   const fresh = await run({ mode: 'full', io: fakeIo({ gh: merged(5) }), from: 'w3-merge-wait', until: 'w3-merge-wait', folder: scratch(t), date: '2026-11-08', env: ENV });
-  assert.deepEqual(fresh.failed, ['w3-merge-wait'], 'without the shortfall five is not enough');
+  assert.equal(fresh.stoppedAt, undefined);
+  assert.equal(fresh.findings.length, 1, 'without the shortfall five is not enough, and that is a finding, not a stop');
 });
 
 // A desk that is working until `until` (by the fake clock), then idle.
@@ -1093,6 +1098,83 @@ test('main exits 1 when the run has findings', async (t) => {
   const io = fakeIo();
   io.faults.f6AllStop = () => { throw new Error('boom'); };
   io.results.runFolder = () => folder;
-  const code = await main(['full', '--from', 'f6-stop', '--until', 'f6-stop', '--date', '2026-11-08'], { print: () => {}, buildIo: async () => io, env: ENV });
+  const code = await main(['full', '--from', 'f6-stop', '--until', 'f6-stop', '--date', '2026-11-08'], { print: () => {}, buildIo: async () => io, env: { ...ENV, HAIKU_TRIAL_WHEELHOUSE_HOME: ENV.WHEELHOUSE_HOME } });
   assert.equal(code, 1);
+});
+
+const MINUTE_MS = 60 * 1000;
+const mergedN = (n) => (args) => (args[1].startsWith('repos/{owner}/{repo}/pulls') ? Array.from({ length: n }, (_, i) => ({ number: i + 1, merged_at: '2026-11-08T10:00:00Z', head: { ref: `feature/w${i}` } })) : null);
+const noSession = () => { throw new Error('No running feature session names p3'); };
+
+test('a short wave 3 is a shortfall and wave 4 asks for that many fewer', async (t) => {
+  const folder = scratch(t);
+  const got = await run({ mode: 'full', io: fakeIo({ gh: mergedN(5) }), from: 'w3-merge-wait', until: 'w3-merge-wait', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['w3-merge-wait']);
+  assert.equal(got.stoppedAt, undefined);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).shortfall, 2);
+  const w4 = await run({ mode: 'full', io: fakeIo({ gh: mergedN(7) }), from: 'w4-merge-wait', until: 'w4-merge-wait', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(w4.done, ['w4-merge-wait'], 'nine less the two missing');
+  assert.equal(w4.findings.length, 1, 'only wave 3 fell short');
+});
+
+test('f1 with no feature session records notExercised and f1b does not wait another 40 minutes', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo();
+  io.faults.featureEnvOf = noSession;
+  const got = await run({ mode: 'full', io, from: 'f1', until: 'f1c', folder, date: '2026-11-08', env: ENV });
+  const state = JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8'));
+  assert.match(state.faults.F1.notExercised, /no running feature session names P3/);
+  assert.ok(got.done.includes('f1') && got.done.includes('f1b') && got.done.includes('f1c'));
+  assert.ok(state.faults.F1b.notExercised && state.faults.F1c.notExercised);
+  assert.ok(io.clock.now() - T0 < 45 * MINUTE_MS, `${(io.clock.now() - T0) / MINUTE_MS} minutes in all`);
+  assert.ok(readLog(folder).some((e) => e.step === 'fault-F1' || /not exercised: no running feature session names P3/.test(e.note)));
+});
+
+test('a front desk that ends is started again once in a wave, and a second loss stops', async (t) => {
+  const folder = scratch(t);
+  let gone = false;
+  const io = fakeIo();
+  const list = io.tmux.list;
+  io.tmux.list = () => (gone ? list().filter((n) => !n.endsWith('-desk')) : list());
+  const start = io.tmux.start;
+  io.tmux.start = (x) => { gone = false; start(x); };
+  const type = io.tmux.type;
+  io.tmux.type = (name, text) => { type(name, text); gone = true; };
+  const got = await run({ mode: 'full', io, from: 'front-desk', until: 'w3-type', folder, date: '2026-11-08', env: ENV });
+  assert.equal(got.stoppedAt, 'ntfy', 'the first loss in wave 1 is mended, the second stops');
+  assert.match(got.why, /ended by itself/);
+  assert.equal(io.timeline.filter((e) => e.kind === 'tmux.start').length, 2, 'the desk once, then once again');
+  assert.ok(got.findings.some((f) => /started again/.test(f.what)));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).deskRestarts[1], 1);
+});
+
+test('a picker that never highlights is recorded once and the run goes on', async (t) => {
+  const folder = scratch(t);
+  const io = fakeIo({ capture: () => picker('A question', ['Not now', 'Go ahead (Recommended)'], 0) });
+  const got = await run({ mode: 'full', io, from: 'w2-type', until: 'w2-type', folder, date: '2026-11-08', env: ENV });
+  assert.equal(got.stoppedAt, undefined);
+  const state = JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8'));
+  assert.equal(state.pickersMissed.length, 1);
+});
+
+test('a model offence is a finding with claimLost and the run goes on', async (t) => {
+  const dir = scratch(t);
+  fs.writeFileSync(path.join(dir, 'x.jsonl'), `${JSON.stringify({ type: 'assistant', message: { model: 'other-model', content: [] } })}\n`);
+  const io = fakeIo({ host: { findTranscripts: () => [{ file: path.join(dir, 'x.jsonl'), role: 'feature', session: 's' }] } });
+  const got = await run({ mode: 'full', io, from: 'w3-audit', until: 'w3-audit', folder: scratch(t), date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.done, ['w3-audit']);
+  assert.equal(got.findings[0].claimLost, 'model audit');
+});
+
+test('decision 3 not raised is a finding and review-card shows the card without the typed answer', async (t) => {
+  const folder = scratch(t);
+  const worktree = scratch(t);
+  fs.writeFileSync(path.join(folder, 'state.json'), JSON.stringify({ p4env: { env: {}, cwd: worktree } }));
+  const io = fakeIo({ answer: 'A', host: { nextDecisionNumber: async () => 3 } });
+  io.faults.thirdDecision = () => ({ code: 1, stdout: 'nope' });
+  const got = await run({ mode: 'full', io, from: 'raise-decision-3', until: 'review-card', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(got.failed, ['raise-decision-3']);
+  assert.deepEqual(got.done, ['review-card']);
+  assert.ok(readLog(folder).some((e) => /typed answer not covered/.test(e.note)));
+  assert.doesNotMatch(fs.readFileSync(path.join(folder, 'steps.md'), 'utf8'), /type your answer to decision/);
 });
