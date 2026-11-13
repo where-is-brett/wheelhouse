@@ -307,11 +307,11 @@ test('the host is read at most once an hour', async () => {
     const tick = (over = {}) => safekeepingTick({ project: PROJECT, record, mirror, now: () => at, refresh: async () => { reads += 1; return { ok: true }; }, ...over });
     await tick();
     assert.equal(reads, 1);
-    assert.equal(readStatus(PROJECT).line, 'On GitHub, up to date, synced just now');
+    assert.equal(readStatus(PROJECT, { now: () => at }).line, 'On GitHub, up to date, synced just now');
     at = new Date(NOW.getTime() + 30 * 60 * 1000);
     await tick();
     assert.equal(reads, 1);
-    assert.equal(readStatus(PROJECT).line, 'On GitHub, up to date, synced 30 minutes ago');
+    assert.equal(readStatus(PROJECT, { now: () => at }).line, 'On GitHub, up to date, synced 30 minutes ago');
     await tick({ force: true });
     assert.equal(reads, 2, 'Try again reads it now');
     at = new Date(at.getTime() + 61 * 60 * 1000);
@@ -329,12 +329,12 @@ test('a host that can\'t be reached keeps the last time it was', async () => {
     reached = false;
     at = new Date(NOW.getTime() + 2 * 24 * 60 * 60 * 1000);
     await tick();
-    assert.equal(readStatus(PROJECT).level, 'watch');
-    assert.match(readStatus(PROJECT).line, /^Couldn't reach GitHub since /);
+    assert.equal(readStatus(PROJECT, { now: () => at }).level, 'watch');
+    assert.match(readStatus(PROJECT, { now: () => at }).line, /^Couldn't reach GitHub since /);
     reached = true;
     at = new Date(at.getTime() + 2 * 60 * 60 * 1000);
     await tick();
-    assert.equal(readStatus(PROJECT).level, 'safe');
+    assert.equal(readStatus(PROJECT, { now: () => at }).level, 'safe');
   });
 });
 
