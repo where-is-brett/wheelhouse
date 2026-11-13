@@ -158,6 +158,63 @@ test('runs join the captured ones with those made after the snapshot', async () 
   assert.deepEqual((await gh(['api', RUNS])).workflow_runs.map((r) => r.id), [2, 1]);
 });
 
+// The own-tests count reads merged pull requests and the latest CI run through `gh pr list` and `gh run list`, not the API.
+const PR_LIST = ['pr', 'list', '--state', 'merged', '--base', 'main', '--limit', '200', '--json', 'number,mergeCommit,files'];
+const RUN_LIST = ['run', 'list', '--branch', 'main', '--status', 'completed', '--limit', '1', '--json', 'conclusion'];
+const liveAnswers = (answers) => {
+  const asked = [];
+  return { asked, gh: async (args) => { asked.push(args); const got = answers[args.slice(0, 2).join(' ')]; return got === undefined ? null : got; } };
+};
+
+test('a merged pull request list joins the captured merges with the new ones', async () => {
+  const capture = {
+    [PULLS]: [merged(3), merged(2, { base: { ref: 'main' }, merge_commit_sha: 'm2' }), merged(1, { base: { ref: 'main' }, merge_commit_sha: 'm1' }), merged(9, { merged_at: null, state: 'open' })],
+    [`${R}/pulls/1/files?per_page=100`]: [{ filename: 'src/a.js' }, { filename: 'tests/a.test.js' }],
+    [`${R}/pulls/2/files?per_page=100`]: [{ filename: 'src/b.js' }],
+  };
+  capture[PULLS][0] = merged(3, { base: { ref: 'main' }, merge_commit_sha: 'm3' });
+  const live = liveAnswers({ 'pr list': [{ number: 5, mergeCommit: { oid: 'm5' }, files: [{ path: 'src/c.js' }] }, { number: 4, mergeCommit: { oid: 'm4' }, files: [] }] });
+  const gh = snapshotGh(live.gh, { capture, maxNumber: 3, reopened: [] });
+  const got = await gh(PR_LIST);
+  assert.deepEqual(got.map((p) => p.number), [5, 4, 3, 2, 1], 'the open pull request is not a merge');
+  assert.deepEqual(got.find((p) => p.number === 1), { number: 1, mergeCommit: { oid: 'm1' }, files: [{ path: 'src/a.js' }, { path: 'tests/a.test.js' }] });
+  assert.deepEqual(got.find((p) => p.number === 3).files, [], 'a pull request with no captured files has none');
+  assert.deepEqual((await gh([...PR_LIST.slice(0, 7), '2', ...PR_LIST.slice(8)])).map((p) => p.number), [5, 4], 'the limit applies to the joined list');
+});
+
+test('a reopened pull request that merged is read live and not twice', async () => {
+  const capture = { [PULLS]: [merged(2, { base: { ref: 'main' }, merge_commit_sha: 'old' })] };
+  const live = liveAnswers({ 'pr list': [{ number: 2, mergeCommit: { oid: 'fresh' }, files: [] }] });
+  const gh = snapshotGh(live.gh, { capture, maxNumber: 3, reopened: [2] });
+  assert.deepEqual(await gh(PR_LIST), [{ number: 2, mergeCommit: { oid: 'fresh' }, files: [] }]);
+});
+
+test('a list the live repository could not read is passed on as it came', async () => {
+  const gh = snapshotGh(liveAnswers({}).gh, { capture: { [PULLS]: [merged(1, { base: { ref: 'main' }, merge_commit_sha: 'm1' })] }, maxNumber: 3 });
+  assert.equal(await gh(PR_LIST), null);
+});
+
+test('the latest completed run on main comes from the live repository, then from the capture', async () => {
+  const RUNS = `${R}/actions/runs?per_page=100`;
+  const capture = { [RUNS]: { workflow_runs: [
+    { id: 3, status: 'completed', conclusion: 'success', head_branch: 'main', created_at: '2026-11-08T09:30:00Z' },
+    { id: 2, status: 'completed', conclusion: 'failure', head_branch: 'feature', created_at: '2026-11-08T09:40:00Z' },
+    { id: 1, status: 'in_progress', conclusion: null, head_branch: 'main', created_at: '2026-11-08T09:50:00Z' },
+  ] } };
+  const fresh = snapshotGh(liveAnswers({ 'run list': [{ conclusion: 'failure' }] }).gh, { capture, maxNumber: 3 });
+  assert.deepEqual(await fresh(RUN_LIST), [{ conclusion: 'failure' }], 'a run made since is the latest');
+  const none = snapshotGh(liveAnswers({ 'run list': [] }).gh, { capture, maxNumber: 3 });
+  assert.deepEqual(await none(RUN_LIST), [{ conclusion: 'success' }], 'with none live, the last completed run on main in the capture');
+});
+
+test('a pr or run list with other fields or flags goes live as it is', async () => {
+  const live = liveAnswers({ 'pr list': [{ number: 8 }], 'run list': [] });
+  const gh = snapshotGh(live.gh, { capture: { [PULLS]: [merged(1, { base: { ref: 'main' } })] }, maxNumber: 3 });
+  assert.deepEqual(await gh(['pr', 'list', '--state', 'merged', '--json', 'number,title']), [{ number: 8 }]);
+  assert.deepEqual(await gh(['pr', 'list', '--state', 'open', '--json', 'number']), [{ number: 8 }]);
+  assert.equal(live.asked.length, 2);
+});
+
 test('writes always go live', async () => {
   const capture = { [`${R}/pulls/1`]: { number: 1 }, [PULLS]: [merged(1)] };
   const live = liveRepo({});

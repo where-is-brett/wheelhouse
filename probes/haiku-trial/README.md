@@ -82,7 +82,7 @@ With no `--snapshot` it lists the snapshots. It refuses while the label's tmux s
 
 The label is reused, so paths, repository name and the project's name in Wheelhouse's records stay the same, and the director's signed actions in the record stay as they were signed.
 
-After a resume the runner reads GitHub relative to the snapshot: lists (`pulls`, workflow runs) join the captured items with the live ones made after it, and reads of a captured pull request's commits, or a captured commit's detail, statuses and pull requests, come from the capture. Everything else, and every write, goes to the live repository.
+After a resume the runner reads GitHub relative to the snapshot: lists (`pulls`, workflow runs) join the captured items with the live ones made after it, and reads of a captured pull request's commits, or a captured commit's detail, statuses and pull requests, come from the capture. Everything else, and every write, goes to the live repository. The score's own-tests reads (`gh pr list --state merged` and `gh run list --status completed`, which are not API reads) are answered the same way: merges and the latest completed run on `main` from before the snapshot come from the capture, joined with what is live. A list of either kind that asks for other fields or flags goes live as it is.
 
 **What a resumed run cannot claim.** A resumed run is for finding and checking fixes. Its summary says, at the top, "Resumed from `<snapshot>` (attempt n). Not a run for the record: a passing claim needs one whole run." and lists:
 

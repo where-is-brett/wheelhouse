@@ -1522,6 +1522,27 @@ test('after a resume, the wave-4 merge wait counts merges from before the snapsh
   assert.ok(plain.clock.now() - T0 >= 90 * 60 * 1000);
 });
 
+test("after a resume, the score's own-tests reads see merges and CI runs from before the snapshot", async (t) => {
+  const folder = scratch(t);
+  const R = 'repos/{owner}/{repo}';
+  const pull = (number) => ({ number, state: 'closed', merged_at: '2026-11-08T10:00:00Z', base: { ref: 'main' }, merge_commit_sha: `m${number}`, head: { ref: `feature-p${number}` }, title: `Piece ${number}` });
+  fs.writeFileSync(path.join(folder, 'state.json'), JSON.stringify({ seedSha: 'seed', resumedFrom: { snapshot: '02-after-w2-audit', attempt: 2, maxNumber: 3, reopened: [], since: '2026-11-08T09:00:00.000Z' } }));
+  const capture = { [`${R}/pulls?state=all&per_page=100`]: [pull(3), pull(2), pull(1)], [`${R}/pulls/1/files?per_page=100`]: [{ filename: 'tests/a.test.js' }] };
+  const io = fakeIo({ gh: () => null });
+  const seen = [];
+  const reads = { 'pr list': [{ number: 4, mergeCommit: { oid: 'm4' }, files: [] }], 'run list': [] };
+  io.gh = async (args) => { seen.push(args); return reads[args.slice(0, 2).join(' ')] ?? null; };
+  io.snapshot = { readCapture: async () => capture };
+  let merges;
+  io.score.scoreAll = async ({ gh }) => {
+    merges = await gh(['pr', 'list', '--state', 'merged', '--base', 'main', '--limit', '200', '--json', 'number,mergeCommit,files']);
+    return { total: 0, parts: {} };
+  };
+  await run({ mode: 'smoke', io, from: 'score', until: 'score', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(merges.map((p) => p.number), [4, 3, 2, 1]);
+  assert.deepEqual(merges.find((p) => p.number === 1).files, [{ path: 'tests/a.test.js' }]);
+});
+
 // --- resume ---
 
 // A snapshot of a small run folder under `<root>/trials`, and a current attempt folder with a marker file in it.
