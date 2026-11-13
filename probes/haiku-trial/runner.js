@@ -11,15 +11,15 @@ import { projectSlug } from '../../scripts/lib/paths.js';
 import { runFolder } from './results.js';
 import { openPicker, readyToSubmit, deskBusy, HIGHLIGHTED, PICKED } from './stand-in.js';
 import { PIECES, WAVES, P5_SPARE, F2_ANSWER, P6_FILE } from './requests.js';
-import { SESSION_PREFIX, sessionName, frontDeskCommand } from './tmux.js';
+import { SESSION_PREFIX, sessionName, sessionPrefix, frontDeskCommand } from './tmux.js';
 import { STEPS as LOG, SETUP_DONE, setupJournalDone, OWN_BRANCH } from './signals.js';
 import { STEPS as SETUP_STEPS } from '../../scripts/setup/steps.js';
 import { auditModels } from './audit.js';
 import { parseModel, DEFAULT_MODEL, MODELS } from './models.js';
 import { STARTS_UNAPPROVED } from '../../scripts/foreman/queue.js';
 import { installCommand, removeCommands } from './stage-plugin.js';
-import { pointsFor } from './snapshot.js';
-import { snapshotGh } from './github-snapshot.js';
+import { pointsFor, snapshotsDir, listSnapshots, readMeta, restoreLocal } from './snapshot.js';
+import { snapshotGh, rebuildGithub } from './github-snapshot.js';
 import { reviewCard, stepsPage, writeTryMe, reviewAsDecision, answerLetter } from './review-card.js';
 
 const MINUTE = 60 * 1000;
@@ -279,7 +279,7 @@ async function snapshotAt(ctx, { point, step }) {
       await waitFor(async () => { await tick(ctx); running = runningWorks(await io.host.events({ project: ctx.projectName })); return running.length === 0; }, { io, timeoutMs: 10 * MINUTE, everyMs: 30000 });
     }
     writeState(ctx);
-    const meta = { label: ctx.label, point, step, at: iso(ctx), attempt: ctx.state.resumedFrom?.attempt ?? 1, pluginSha: ctx.state.stage?.sha, quiet: running.length === 0, running };
+    const meta = { label: ctx.label, mode: ctx.mode, point, step, at: iso(ctx), attempt: ctx.state.resumedFrom?.attempt ?? 1, pluginSha: ctx.state.stage?.sha, quiet: running.length === 0, running };
     const configDir = ctx.env.HAIKU_TRIAL_CONFIG_DIR;
     const transcripts = io.host.findTranscripts({ project: ctx.projectName, dir: ctx.projectDir }).map((t) => t.file).filter((f) => typeof f === 'string');
     const got = await io.snapshot.take({ label: ctx.label, point, folder: ctx.folder, configDir, transcripts, meta, seedSha: ctx.state.seedSha });
@@ -1123,7 +1123,7 @@ function contextFor({ mode, io, folder, date, label, env }) {
   };
 }
 
-export async function run({ mode = 'full', io: given, from, until, folder, date, model, env = process.env } = {}) {
+export async function run({ mode = 'full', io: given, from, until, folder, date, model, env = process.env, goGiven = false } = {}) {
   const label = date;
   const problem = homeProblem(env);
   if (problem) return { done: [], stoppedAt: 'wheelhouse-home', why: problem };
@@ -1181,7 +1181,7 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
       continue;
     }
     try {
-      if (step.needsGo) {
+      if (step.needsGo && !goGiven) {
         if (!ctx.owner) throw new HardStop('HAIKU_TRIAL_GH_OWNER is not set');
         const answer = await io.ask(step.asks?.(ctx) ?? `Go ahead with ${step.id}? Answer go.`);
         if (String(answer).trim().toLowerCase() !== 'go') {
@@ -1216,6 +1216,102 @@ export async function run({ mode = 'full', io: given, from, until, folder, date,
     if (until === step.id) break;
   }
   return result();
+}
+
+// --- resume ---
+
+// The step a resume goes on from: the step itself for a `before-` point, the one after it for an `after-` point.
+function stepAfterPoint(meta) {
+  const plan = planRun({ mode: meta.mode ?? 'full' }).map((s) => s.id);
+  if (meta.point?.startsWith('before-')) return plan.includes(meta.step) ? meta.step : undefined;
+  const at = plan.indexOf(meta.step);
+  return at < 0 ? undefined : plan[at + 1];
+}
+
+const readAttempts = (dir) => readLog(path.join(dir, 'attempts.jsonl'));
+
+// Starts a run again from a snapshot, as a new attempt of the same label (spec 2026-11-13, section 3.4). The attempt that was
+// there is moved aside, nothing is deleted. `base` is where snapshots are kept (tests give a folder of their own).
+export async function resume({ folder, label, snapshot, io: given, keepPlugin = false, configDir, env = process.env, until, base }) {
+  const stop = (why) => ({ done: [], stoppedAt: 'resume', why });
+  const io = { ...given, host: { ...NOTHING, ...(given.host ?? {}) } };
+  const dir = snapshotsDir(label, base);
+  const dest = path.join(dir, snapshot);
+  // Check: nothing is touched yet.
+  const meta = readMeta(dest);
+  if (!meta) return stop(`no snapshot ${snapshot} for ${label}. Snapshots: ${listSnapshots(dir).map((s) => s.name).join(', ') || 'none'}`);
+  if (meta.label !== label) return stop(`snapshot ${snapshot} is for ${meta.label}, not ${label}`);
+  const owner = env.HAIKU_TRIAL_GH_OWNER;
+  if (!owner) return stop('HAIKU_TRIAL_GH_OWNER is not set');
+  if (!(await io.gh(['api', 'user']))) return stop('gh is not signed in');
+  if (!io.github) return stop('this host cannot rebuild the repository');
+  const first = stepAfterPoint(meta);
+  if (first === undefined) return stop(`snapshot ${snapshot} has no step to go on from`);
+  // A run that is going on is never touched: its sessions must be stopped first (`restore`).
+  const alive = io.tmux.list({ all: true }).filter((name) => name.startsWith(sessionPrefix(label)));
+  if (alive.length > 0) return stop(`the sessions of ${label} are still running (${alive.join(', ')}). Stop them with restore, then resume`);
+
+  const repoName = `haiku-trial-${label}`;
+  const slug = `${owner}/${repoName}`;
+  const n = readAttempts(dir).length + 1;
+  const plugin = keepPlugin ? `the plugin staged in the snapshot (${meta.pluginSha ?? 'unknown'})` : `the plugin staged from this checkout (${(await io.host.checkoutSha?.()) ?? 'unknown'})`;
+  // One go for everything outward; any other answer leaves everything as it was.
+  const answer = await io.ask(`Resume ${label} from ${snapshot}: rename the repository ${repoName} to ${repoName}-a${n}, create a fresh public ${repoName} from the snapshot, install ${plugin} and spend tokens. Answer go.`);
+  if (String(answer).trim().toLowerCase() !== 'go') return stop(`the answer was "${answer}", not go`);
+
+  io.host.useRepo(slug);
+  await restore({ folder, io, force: true });
+  // Move the attempt aside: its folder, its transcripts and its repository.
+  const aside = `${folder}-a${n}`;
+  const projectName = projectSlug(owner, repoName);
+  const projects = path.join(configDir ?? path.join(os.homedir(), '.claude'), 'projects');
+  for (const t of io.host.findTranscripts({ project: projectName, dir: path.join(folder, 'project') })) {
+    const rel = path.relative(projects, t.file);
+    if (rel.startsWith('..') || path.isAbsolute(rel) || !fs.existsSync(t.file)) continue;
+    const to = path.join(aside, 'transcripts-moved', rel);
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.cpSync(t.file, to);
+    fs.rmSync(t.file);
+  }
+  if (fs.existsSync(folder)) fs.renameSync(folder, aside);
+  try { await io.github.rename({ slug, to: `${repoName}-a${n}` }); } catch (error) { return stop(`the repository could not be renamed: ${error.message}`); }
+  try {
+    restoreLocal({ dest, folder, configDir });
+  } catch (error) { return stop(`the snapshot could not be put back: ${error.message}`); }
+
+  let reopened;
+  try {
+    const open = (() => { try { return JSON.parse(fs.readFileSync(path.join(dest, 'github', 'open.json'), 'utf8')); } catch { return []; } })();
+    ({ reopened } = await rebuildGithub({ github: io.github, slug, src: path.join(dest, 'github'), maxNumber: meta.maxNumber ?? 0, open, attempt: n, snapshot, sleep: (ms) => io.clock.sleep(ms) }));
+  } catch (error) { return stop(`the fresh repository could not be rebuilt: ${error.message}`); }
+
+  const stateFile = path.join(folder, 'state.json');
+  const setState = (change) => {
+    let state = {};
+    try { state = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { /* none */ }
+    fs.writeFileSync(stateFile, `${JSON.stringify(change(state), null, 2)}\n`);
+  };
+  const resumedFrom = { snapshot, point: meta.point, attempt: n + 1, pluginBefore: meta.pluginSha, pluginNow: meta.pluginSha, maxNumber: meta.maxNumber ?? 0, quiet: meta.quiet, running: meta.running ?? [], reopened, since: meta.at };
+  setState((state) => ({ ...state, resumedFrom }));
+  await appendJsonl(path.join(dir, 'attempts.jsonl'), { n, at: new Date(io.clock.now()).toISOString(), snapshot, aside, repository: `${repoName}-a${n}` });
+
+  // Go on: the plugin again (unless it is kept), a fresh front desk, then the steps from the point.
+  const mode = meta.mode ?? 'full';
+  const segments = [...(keepPlugin ? [] : ['stage']), 'install', 'front-desk'];
+  if (!keepPlugin) fs.rmSync(path.join(folder, 'plugin'), { recursive: true, force: true });
+  const done = [];
+  for (const id of segments) {
+    const got = await run({ mode, io, from: id, until: id, folder, date: label, env, goGiven: true });
+    done.push(...got.done);
+    if (got.stoppedAt) return { ...got, done };
+    if (id === 'stage') {
+      let sha = meta.pluginSha;
+      try { sha = JSON.parse(fs.readFileSync(stateFile, 'utf8')).stage?.sha ?? sha; } catch { /* keep the old */ }
+      setState((state) => ({ ...state, resumedFrom: { ...state.resumedFrom, pluginNow: sha } }));
+    }
+  }
+  const got = await run({ mode, io, from: first, until, folder, date: label, env, goGiven: true });
+  return { ...got, done: [...done, ...got.done] };
 }
 
 // Stops what this run started, as its log records it, and nothing else. It deletes nothing.
@@ -1270,7 +1366,7 @@ export function runLabel({ arg, env = process.env } = {}) {
   return given;
 }
 
-const USAGE = 'usage: node probes/haiku-trial/runner.js full | smoke | restore | plan [--from <step>] [--out <folder>] [--until <step>] [--date <label>] [--model <haiku|sonnet>] [--force]\n  --model <haiku|sonnet> runs the whole trial on that model (haiku by default); one sonnet run tells kit faults from model faults\n  --force (restore) stops the helper, watchers and foremen even while a feature session is still running\n  --date <label> (or HAIKU_TRIAL_DATE) names the run: YYYY-MM-DD with an optional -suffix such as 2026-11-08-b';
+const USAGE = 'usage: node probes/haiku-trial/runner.js full | smoke | restore | resume | plan [--from <step>] [--out <folder>] [--until <step>] [--date <label>] [--model <haiku|sonnet>] [--force]\n  --model <haiku|sonnet> runs the whole trial on that model (haiku by default); one sonnet run tells kit faults from model faults\n  --force (restore) stops the helper, watchers and foremen even while a feature session is still running\n  resume --date <label> --snapshot <nn-point> [--keep-plugin] starts the run again from a snapshot, as a new attempt\n  --date <label> (or HAIKU_TRIAL_DATE) names the run: YYYY-MM-DD with an optional -suffix such as 2026-11-08-b';
 
 function parseArgs(argv) {
   const out = { command: argv[0], from: undefined, folder: undefined, until: undefined, date: undefined };
@@ -1281,6 +1377,8 @@ function parseArgs(argv) {
     else if (argv[i] === '--date') out.date = argv[(i += 1)] ?? '';
     else if (argv[i] === '--model') out.model = argv[(i += 1)] ?? '';
     else if (argv[i] === '--force') out.force = true;
+    else if (argv[i] === '--snapshot') out.snapshot = argv[(i += 1)] ?? '';
+    else if (argv[i] === '--keep-plugin') out.keepPlugin = true;
   }
   return out;
 }
@@ -1304,7 +1402,7 @@ export async function main(argv, { print = console.log, buildIo, env = process.e
     if (label !== undefined) print(`run ${label}: repository ${env.HAIKU_TRIAL_GH_OWNER ?? '<owner>'}/haiku-trial-${label}, folder ${args.folder ?? runFolder(label)}`);
     return 0;
   }
-  if (!['full', 'smoke', 'restore'].includes(args.command)) {
+  if (!['full', 'smoke', 'restore', 'resume'].includes(args.command)) {
     print(USAGE);
     return 2;
   }
@@ -1320,6 +1418,18 @@ export async function main(argv, { print = console.log, buildIo, env = process.e
   if (args.command === 'restore') {
     print(JSON.stringify(await restore({ folder, io, force: args.force === true })));
     return 0;
+  }
+  if (args.command === 'resume') {
+    if (label === undefined) { print('resume needs --date <label>'); print(USAGE); return 2; }
+    if (!args.snapshot) {
+      const known = listSnapshots(snapshotsDir(label));
+      print(known.length === 0 ? `no snapshots for ${label}` : `snapshots for ${label}:\n${known.map((x) => `  ${x.name}  (${x.meta?.at ?? 'no time'}${x.meta?.quiet === false ? ', not quiet' : ''})`).join('\n')}`);
+      print('resume needs --snapshot <nn-point>');
+      return 2;
+    }
+    const result = await resume({ folder, label, snapshot: args.snapshot, io, keepPlugin: args.keepPlugin === true, configDir: env.HAIKU_TRIAL_CONFIG_DIR || undefined, env: given, until: args.until });
+    print(JSON.stringify(result));
+    return result.stoppedAt || (result.findings ?? []).length > 0 ? 1 : 0;
   }
   const result = await run({ mode: args.command, io, from: args.from ?? 'auto', until: args.until, folder, date: label, model: args.model, env: given });
   print(JSON.stringify(result));

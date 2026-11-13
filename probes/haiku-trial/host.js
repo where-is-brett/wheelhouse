@@ -32,7 +32,7 @@ import { decisionNumber } from '../../scripts/decisions/pending.js';
 import { installDependencies } from './score/run.js';
 import { visibleFromChange } from '../../scripts/gate/visible.js';
 import { takeLocal, snapshotsDir, nextNumber, writeMeta } from './snapshot.js';
-import { captureGithub } from './github-snapshot.js';
+import { captureGithub, protectionBody } from './github-snapshot.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const IDENTITY = ['-c', 'user.name=Wheelhouse probe', '-c', 'user.email=probe@wheelhouse.invalid', '-c', 'commit.gpgsign=false'];
@@ -105,6 +105,11 @@ export function buildRealIo(env = process.env, label) {
   };
 
   // The members that touch the repository itself, beyond what `gh api` reads.
+  const must = (got, what) => {
+    if (got.status !== 0) throw new Error(`${what} failed: ${String(got.stderr || got.error?.message || `exit ${got.status}`).trim()}`);
+    return text(got);
+  };
+  const api = (repo, route, args = [], input) => must(run('gh', ['api', `repos/${repo}${route}`, ...args], input === undefined ? {} : { input: JSON.stringify(input) }), `gh api ${route}`);
   const github = {
     // A mirror clone without the pull requests' refs, which GitHub refuses to take back in a push.
     async mirror({ slug: repo, dir }) {
@@ -113,11 +118,38 @@ export function buildRealIo(env = process.env, label) {
       const refs = run('git', ['for-each-ref', 'refs/pull', '--format=delete %(refname)'], { cwd: dir });
       if (text(refs) !== '') run('git', ['update-ref', '--stdin'], { cwd: dir, input: `${text(refs)}\n` });
     },
+    // Renaming keeps every pull request and issue readable under the new name.
+    async rename({ slug: repo, to }) { must(run('gh', ['repo', 'rename', to, '--repo', repo, '--yes']), 'gh repo rename'); },
+    async create({ slug: repo, public: visible = true, description }) {
+      must(run('gh', ['repo', 'create', repo, visible ? '--public' : '--private', ...(description ? ['--description', description] : [])]), 'gh repo create');
+    },
+    async pushMirror({ dir, remote }) { git(['push', '--quiet', '--mirror', remote], { cwd: dir }); },
+    async openPull({ slug: repo, head, base, title, body, draft }) {
+      const made = JSON.parse(api(repo, '/pulls', ['--method', 'POST', '--input', '-'], { head, base, title, body, draft: draft === true }));
+      return { number: made.number };
+    },
+    // A closed issue takes the number a pull request had, so numbering stays in step.
+    async placeholder({ slug: repo, title }) {
+      const made = JSON.parse(api(repo, '/issues', ['--method', 'POST', '--input', '-'], { title }));
+      api(repo, `/issues/${made.number}`, ['--method', 'PATCH', '--input', '-'], { state: 'closed' });
+      return { number: made.number };
+    },
+    // Merge settings first, then the protection of main and the rulesets.
+    async applySettings({ slug: repo, settings }) {
+      const { default_branch: _kept, ...merge } = settings.repo ?? {};
+      if (Object.keys(merge).length > 0) api(repo, '', ['--method', 'PATCH', '--input', '-'], merge);
+      const protection = protectionBody(settings.protection);
+      if (protection) api(repo, '/branches/main/protection', ['--method', 'PUT', '--input', '-'], protection);
+      for (const { id: _id, source: _s, source_type: _t, node_id: _n, _links, created_at: _c, updated_at: _u, current_user_can_bypass: _b, ...ruleset } of settings.rulesets ?? []) {
+        api(repo, '/rulesets', ['--method', 'POST', '--input', '-'], ruleset);
+      }
+    },
   };
 
   const host = {
     useRepo(value) { slug = value; },
     stage: ({ out }) => stagePlugin({ repo: REPO_ROOT, out }),
+    checkoutSha: async () => text(run('git', ['-C', REPO_ROOT, 'rev-parse', '--short', 'HEAD'])),
     exec: (argv, { cwd } = {}) => run(argv[0], argv.slice(1), { cwd }),
     installedProblem: async ({ configDir, pluginDir }) => installedProblem({ configDir, pluginDir }),
     makeProject: async ({ dir, model }) => makeTestProject({ dir, allowAnywhere: true, model }),

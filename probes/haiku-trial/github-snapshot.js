@@ -44,6 +44,14 @@ async function paged(gh, base, pick = (x) => x) {
   return all;
 }
 
+// The list shows a ruleset only in summary, so each is read in full: that is what is made again on a fresh repository.
+async function rulesetsOf(gh) {
+  const list = (await gh(['api', `${REPO}/rulesets`])) ?? [];
+  const full = [];
+  for (const r of list) full.push((await gh(['api', `${REPO}/rulesets/${r.id}`])) ?? r);
+  return full;
+}
+
 const writeJson = (file, value) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
@@ -96,7 +104,7 @@ export async function captureGithub({ gh, github, slug, dest, seedSha }) {
   writeJson(path.join(out, 'settings.json'), {
     repo: Object.fromEntries(SETTINGS.filter((k) => k in repo).map((k) => [k, repo[k]])),
     protection: (await gh(['api', `${REPO}/branches/main/protection`])) ?? null,
-    rulesets: (await gh(['api', `${REPO}/rulesets`])) ?? [],
+    rulesets: await rulesetsOf(gh),
   });
 
   writeJson(path.join(out, 'open.json'), pulls.filter((p) => p.state === 'open').map((p) => ({
@@ -139,4 +147,50 @@ export function snapshotGh(gh, { capture = {}, maxNumber = 0, reopened = [], sin
     if (key in capture && !(n !== undefined && again.has(Number(n)))) return capture[key];
     return gh(args);
   };
+}
+
+// --- the fresh repository ---
+
+export class NumberDrift extends Error {}
+
+// What GitHub shows of a branch's protection, as the body that sets it: the read has extra fields and nested objects the write
+// does not take. Nothing is set when there was no protection.
+export function protectionBody(got) {
+  if (!got) return null;
+  const checks = got.required_status_checks;
+  const reviews = got.required_pull_request_reviews;
+  const who = (list) => (list ?? []).map((x) => x.login ?? x.slug);
+  return {
+    required_status_checks: checks ? { strict: checks.strict === true, contexts: checks.contexts ?? (checks.checks ?? []).map((c) => c.context) } : null,
+    enforce_admins: got.enforce_admins?.enabled === true,
+    required_pull_request_reviews: reviews ? {
+      required_approving_review_count: reviews.required_approving_review_count ?? 0,
+      dismiss_stale_reviews: reviews.dismiss_stale_reviews === true,
+      require_code_owner_reviews: reviews.require_code_owner_reviews === true,
+    } : null,
+    restrictions: got.restrictions ? { users: who(got.restrictions.users), teams: who(got.restrictions.teams), apps: who(got.restrictions.apps) } : null,
+  };
+}
+
+// Makes the repository again from a snapshot (spec section 3.4 step 6), in this order: create it, push every branch and tag from
+// the mirror, line the numbers up, then apply the settings, last so the pushes are not refused. Numbers 1 to `maxNumber` are
+// each an open pull request opened again from its pushed head, or an issue that stands for what was there and is closed at once,
+// paced at one a second. A number that comes back different stops the rebuild: counts from then on would be wrong.
+export async function rebuildGithub({ github, slug, src, maxNumber, open = [], attempt, snapshot, sleep = async () => {} }) {
+  await github.create({ slug, public: true, description: 'A throwaway project for the Haiku trial' });
+  await github.pushMirror({ dir: path.join(src, 'mirror.git'), remote: `https://github.com/${slug}.git` });
+  const reopened = [];
+  for (let n = 1; n <= maxNumber; n += 1) {
+    const pull = open.find((p) => p.number === n);
+    const made = pull
+      ? await github.openPull({ slug, head: pull.head, base: pull.base, title: pull.title, body: pull.body, draft: pull.draft })
+      : await github.placeholder({ slug, title: `Stands for #${n} in attempt ${attempt}, resumed from ${snapshot}` });
+    if (made?.number !== n) throw new NumberDrift(`number ${n} came back as ${made?.number}: the fresh repository is out of step with the snapshot`);
+    if (pull) reopened.push(n);
+    await sleep(1000);
+  }
+  let settings = { repo: {}, protection: null, rulesets: [] };
+  try { settings = JSON.parse(fs.readFileSync(path.join(src, 'settings.json'), 'utf8')); } catch { /* none was captured */ }
+  await github.applySettings({ slug, settings });
+  return { reopened };
 }

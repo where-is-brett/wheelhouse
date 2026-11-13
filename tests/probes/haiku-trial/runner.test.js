@@ -4,9 +4,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { STEPS, planRun, run, restore, waitFor, main, withoutChrome, runLabel, NEW_SESSION, FOLLOW_UP, CHECK_IN, waitingInRecord } from '../../../probes/haiku-trial/runner.js';
+import { STEPS, planRun, run, resume, restore, waitFor, main, withoutChrome, runLabel, NEW_SESSION, FOLLOW_UP, CHECK_IN, waitingInRecord } from '../../../probes/haiku-trial/runner.js';
 import { sessionName } from '../../../probes/haiku-trial/tmux.js';
 import { P5_SPARE } from '../../../probes/haiku-trial/requests.js';
+import { takeLocal, writeMeta, snapshotsDir } from '../../../probes/haiku-trial/snapshot.js';
 
 const ENV = { WHEELHOUSE_HOME: process.env.WHEELHOUSE_HOME, HAIKU_TRIAL_GH_OWNER: 'trial-owner', HAIKU_TRIAL_CLAUDE: '/bin/claude', HAIKU_TRIAL_PREVIEW: 'none' };
 const T0 = Date.parse('2026-11-08T09:00:00Z');
@@ -1276,4 +1277,166 @@ test('after a resume, the wave-4 merge wait counts merges from before the snapsh
   fs.writeFileSync(path.join(folder, 'state.json'), '{}');
   await run({ mode: 'smoke', io: plain, from: 'w4-smoke-merge', until: 'w4-smoke-merge', folder, date: '2026-11-08', env: ENV });
   assert.ok(plain.clock.now() - T0 >= 90 * 60 * 1000);
+});
+
+// --- resume ---
+
+// A snapshot of a small run folder under `<root>/trials`, and a current attempt folder with a marker file in it.
+function resumeFixture(t, { point = 'after-w2-audit', step = 'w2-audit', mode = 'full', maxNumber = 5 } = {}) {
+  const root = scratch(t);
+  const label = '2026-11-08';
+  const source = path.join(root, 'source');
+  fs.mkdirSync(path.join(source, 'project'), { recursive: true });
+  fs.mkdirSync(path.join(source, 'plugin'), { recursive: true });
+  fs.writeFileSync(path.join(source, 'plugin', 'plugin.json'), '{}');
+  fs.writeFileSync(path.join(source, 'project', 'kept.txt'), 'from the snapshot');
+  fs.writeFileSync(path.join(source, 'state.json'), JSON.stringify({ stage: { sha: 'old', pluginDir: '/p', marketplaceDir: '/m' }, seedSha: 'seed' }));
+  fs.writeFileSync(path.join(source, 'run-log.jsonl'), '');
+  const base = path.join(root, 'trials');
+  const name = `02-${point}`;
+  const dest = path.join(snapshotsDir(label, base), name);
+  takeLocal({ folder: source, dest, configDir: path.join(root, 'claude') });
+  fs.mkdirSync(path.join(dest, 'github', 'mirror.git'), { recursive: true });
+  fs.writeFileSync(path.join(dest, 'github', 'open.json'), JSON.stringify([{ number: 4, head: 'feature-p4', base: 'main', title: 'Piece 4', body: 'b', draft: false }]));
+  fs.writeFileSync(path.join(dest, 'github', 'settings.json'), JSON.stringify({ repo: { allow_squash_merge: true }, protection: null, rulesets: [] }));
+  writeMeta(dest, { label, mode, point, step, at: '2026-11-08T09:30:00.000Z', attempt: 1, pluginSha: 'old', quiet: true, running: [], maxNumber, torn: [] });
+  const folder = path.join(root, 'current');
+  fs.mkdirSync(folder, { recursive: true });
+  fs.writeFileSync(path.join(folder, 'marker.txt'), 'the failed attempt');
+  return { root, label, base, folder, name, configDir: path.join(root, 'claude') };
+}
+
+// An io whose github members record on the timeline and number what they make in order; the steps are stubbed to record their id.
+function resumeIo(t, over = {}) {
+  const io = fakeIo({ gh: () => ({ login: 'trial-owner' }), ...over });
+  let next = 0;
+  const number = () => { next += 1; return over.drift === next ? next + 1 : next; };
+  io.github = {
+    rename: async (x) => { io.timeline.push({ kind: 'github.rename', args: [x] }); },
+    create: async (x) => { io.timeline.push({ kind: 'github.create', args: [x] }); },
+    pushMirror: async (x) => { io.timeline.push({ kind: 'github.pushMirror', args: [x] }); },
+    openPull: async (x) => { io.timeline.push({ kind: 'github.openPull', args: [x] }); return { number: number() }; },
+    placeholder: async (x) => { io.timeline.push({ kind: 'github.placeholder', args: [x] }); return { number: number() }; },
+    applySettings: async (x) => { io.timeline.push({ kind: 'github.applySettings', args: [x] }); },
+  };
+  io.host.checkoutSha = async () => 'new1234';
+  const originals = STEPS.map((s) => [s, s.run]);
+  for (const [step] of originals) {
+    step.run = async (ctx, using) => {
+      using.timeline.push({ kind: 'step', args: [step.id, fs.existsSync(path.join(ctx.folder, 'plugin'))] });
+      if (step.id === 'stage') ctx.state.stage = { sha: 'new1234', pluginDir: '/p2', marketplaceDir: '/m2' };
+    };
+  }
+  t.after(() => { for (const [step, original] of originals) step.run = original; });
+  return io;
+}
+const kinds = (io, prefix) => io.timeline.filter((e) => e.kind.startsWith(prefix)).map((e) => e.kind);
+const stepIds = (io) => io.timeline.filter((e) => e.kind === 'step').map((e) => e.args[0]);
+
+test('resume asks once and does nothing on another answer', async (t) => {
+  const fx = resumeFixture(t);
+  const io = resumeIo(t, { answer: 'not yet' });
+  const got = await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base });
+  assert.equal(got.stoppedAt, 'resume');
+  assert.equal(io.timeline.filter((e) => e.kind === 'ask').length, 1);
+  assert.match(io.timeline.find((e) => e.kind === 'ask').args[0], /Resume 2026-11-08 from 02-after-w2-audit: rename the repository haiku-trial-2026-11-08 to haiku-trial-2026-11-08-a1, create a fresh public haiku-trial-2026-11-08 from the snapshot, install the plugin staged from this checkout \(new1234\) and spend tokens\. Answer go\./);
+  assert.equal(kinds(io, 'github.').length, 0);
+  assert.equal(fs.readFileSync(path.join(fx.folder, 'marker.txt'), 'utf8'), 'the failed attempt');
+  assert.equal(fs.existsSync(`${fx.folder}-a1`), false);
+});
+
+test("resume refuses while the label's sessions are alive", async (t) => {
+  const fx = resumeFixture(t);
+  const io = resumeIo(t, { sessions: [sessionName('2026-11-08', 'desk')] });
+  const got = await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base });
+  assert.equal(got.stoppedAt, 'resume');
+  assert.match(got.why, /still running/);
+  assert.equal(io.timeline.some((e) => e.kind === 'ask'), false);
+});
+
+test('resume refuses a snapshot that is not there or is for another label', async (t) => {
+  const fx = resumeFixture(t);
+  const io = resumeIo(t);
+  assert.match((await resume({ folder: fx.folder, label: fx.label, snapshot: '09-nothing', io, env: ENV, base: fx.base })).why, /no snapshot 09-nothing/);
+  assert.match((await resume({ folder: fx.folder, label: '2026-11-09', snapshot: fx.name, io, env: ENV, base: fx.base })).why, /no snapshot/);
+  assert.equal(io.timeline.some((e) => e.kind === 'ask'), false);
+});
+
+test('resume moves the attempt aside, renames the repository, restores, rebuilds and goes on from the step after the point', async (t) => {
+  const fx = resumeFixture(t);
+  const io = resumeIo(t);
+  const got = await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base, until: 'w3-type' });
+  assert.equal(got.stoppedAt, undefined);
+  // The failed attempt is kept beside the run, and the snapshot is back at the old path.
+  assert.equal(fs.readFileSync(path.join(`${fx.folder}-a1`, 'marker.txt'), 'utf8'), 'the failed attempt');
+  assert.equal(fs.readFileSync(path.join(fx.folder, 'project', 'kept.txt'), 'utf8'), 'from the snapshot');
+  assert.equal(fs.existsSync(path.join(fx.folder, 'marker.txt')), false);
+  // GitHub: renamed first, then made again, pushed, numbered, and the settings last.
+  assert.deepEqual(io.timeline.find((e) => e.kind === 'github.rename').args[0], { slug: 'trial-owner/haiku-trial-2026-11-08', to: 'haiku-trial-2026-11-08-a1' });
+  assert.deepEqual(kinds(io, 'github.'), ['github.rename', 'github.create', 'github.pushMirror', 'github.placeholder', 'github.placeholder', 'github.placeholder', 'github.openPull', 'github.placeholder', 'github.applySettings']);
+  // The plugin is staged again from a clean folder, installed, a front desk started, then the next step runs.
+  assert.deepEqual(stepIds(io), ['stage', 'install', 'front-desk', 'w3-type']);
+  assert.equal(io.timeline.find((e) => e.kind === 'step' && e.args[0] === 'stage').args[1], false, 'the restored plugin folder is cleared before staging');
+  assert.equal(io.timeline.filter((e) => e.kind === 'ask').length, 1, 'install does not ask again');
+  const state = JSON.parse(fs.readFileSync(path.join(fx.folder, 'state.json'), 'utf8'));
+  assert.deepEqual(state.resumedFrom, { snapshot: fx.name, point: 'after-w2-audit', attempt: 2, pluginBefore: 'old', pluginNow: 'new1234', maxNumber: 5, quiet: true, running: [], reopened: [4], since: '2026-11-08T09:30:00.000Z' });
+  const attempts = fs.readFileSync(path.join(fx.base, 'haiku-2026-11-08.snapshots', 'attempts.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0].n, 1);
+});
+
+test('a second resume moves the next attempt aside as a2', async (t) => {
+  const fx = resumeFixture(t);
+  const io = resumeIo(t);
+  await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base, until: 'w3-type' });
+  const again = resumeIo(t);
+  await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io: again, configDir: fx.configDir, env: ENV, base: fx.base, until: 'w3-type' });
+  assert.ok(fs.existsSync(`${fx.folder}-a2`));
+  assert.equal(again.timeline.find((e) => e.kind === 'github.rename').args[0].to, 'haiku-trial-2026-11-08-a2');
+  assert.match(again.timeline.find((e) => e.kind === 'github.placeholder').args[0].title, /in attempt 2, resumed from/);
+});
+
+test('a number out of step stops the resume with the reason', async (t) => {
+  const fx = resumeFixture(t);
+  const io = resumeIo(t, { drift: 2 });
+  const got = await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base, until: 'w3-type' });
+  assert.equal(got.stoppedAt, 'resume');
+  assert.match(got.why, /number 2 came back as 3/);
+  assert.deepEqual(stepIds(io), []);
+});
+
+test('a before- point runs its own step again and does not take its own snapshot twice', async (t) => {
+  const fx = resumeFixture(t, { point: 'before-f1', step: 'f1' });
+  const io = resumeIo(t);
+  const taken = [];
+  io.snapshot = { take: async (x) => { taken.push(x.point); return { name: x.point }; } };
+  const got = await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base, until: 'f1' });
+  assert.equal(got.stoppedAt, undefined);
+  assert.deepEqual(stepIds(io), ['stage', 'install', 'front-desk', 'f1']);
+  assert.deepEqual(taken, []);
+});
+
+test('--keep-plugin skips stage', async (t) => {
+  const fx = resumeFixture(t);
+  const io = resumeIo(t);
+  await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, keepPlugin: true, configDir: fx.configDir, env: ENV, base: fx.base, until: 'w3-type' });
+  assert.deepEqual(stepIds(io), ['install', 'front-desk', 'w3-type']);
+  assert.match(io.timeline.find((e) => e.kind === 'ask').args[0], /install the plugin staged in the snapshot \(old\)/);
+  const state = JSON.parse(fs.readFileSync(path.join(fx.folder, 'state.json'), 'utf8'));
+  assert.equal(state.resumedFrom.pluginNow, 'old');
+  assert.equal(fs.existsSync(path.join(fx.folder, 'plugin', 'plugin.json')), true);
+});
+
+test('a smoke snapshot resumes in the smoke plan', async (t) => {
+  const fx = resumeFixture(t, { point: 'after-front-desk', step: 'front-desk', mode: 'smoke' });
+  const io = resumeIo(t);
+  await resume({ folder: fx.folder, label: fx.label, snapshot: fx.name, io, configDir: fx.configDir, env: ENV, base: fx.base, until: 'w2-type' });
+  assert.deepEqual(stepIds(io), ['stage', 'install', 'front-desk', 'w2-type']);
+});
+
+test('main resume lists the snapshots when none is named', async (t) => {
+  const printed = [];
+  const code = await main(['resume', '--date', '2026-11-08', '--out', scratch(t)], { print: (x) => printed.push(x), buildIo: async () => fakeIo(), env: ENV });
+  assert.equal(code, 2);
+  assert.match(printed.join('\n'), /resume needs --snapshot/);
 });

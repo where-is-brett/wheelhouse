@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { captureGithub, snapshotGh, CAPTURED } from '../../../probes/haiku-trial/github-snapshot.js';
+import { captureGithub, snapshotGh, rebuildGithub, protectionBody, NumberDrift, CAPTURED } from '../../../probes/haiku-trial/github-snapshot.js';
 
 const R = 'repos/{owner}/{repo}';
 
@@ -24,7 +24,8 @@ function fakeRepo({ protection = { required_status_checks: {} } } = {}) {
     [`${R}/actions/runs?per_page=100`, { workflow_runs: [{ id: 9, head_sha: 'm1' }] }],
     [`${R}/branches?per_page=100`, [{ name: 'main' }, { name: 'feature-p4' }]],
     [R, { allow_squash_merge: true, allow_merge_commit: false, allow_rebase_merge: false, allow_auto_merge: true, delete_branch_on_merge: true, default_branch: 'main', stars: 3 }],
-    [`${R}/rulesets`, []],
+    [`${R}/rulesets`, [{ id: 11, name: 'main' }]],
+    [`${R}/rulesets/11`, { id: 11, name: 'main', target: 'branch', enforcement: 'active', rules: [{ type: 'deletion' }] }],
     [`${R}/issues?state=all&per_page=1&sort=created&direction=desc`, [{ number: 6 }]],
   ]);
   for (const p of pulls) {
@@ -89,7 +90,7 @@ test('a 404 for protection is stored as null', async (t) => {
   const settings = readJson(dest, 'settings.json');
   assert.equal(settings.protection, null);
   assert.deepEqual(settings.repo, { allow_squash_merge: true, allow_merge_commit: false, allow_rebase_merge: false, allow_auto_merge: true, delete_branch_on_merge: true, default_branch: 'main' });
-  assert.deepEqual(settings.rulesets, []);
+  assert.deepEqual(settings.rulesets, [{ id: 11, name: 'main', target: 'branch', enforcement: 'active', rules: [{ type: 'deletion' }] }]);
 });
 
 test('open.json holds only open pull requests with head, base, title, body and draft', async (t) => {
@@ -166,4 +167,59 @@ test('writes always go live', async () => {
   await gh(['api', `${R}/pulls/1`, '-H', 'Accept: application/vnd.github.v3.diff']);
   await gh(['pr', 'create', '--head', 'x']);
   assert.equal(live.asked.length, 4);
+});
+
+// --- rebuildGithub ---
+
+function fakeGithub({ drift } = {}) {
+  const calls = [];
+  let next = 0;
+  const number = () => { next += 1; return drift?.at === next ? next + 1 : next; };
+  return {
+    calls,
+    create: async (x) => { calls.push(['create', x]); },
+    pushMirror: async (x) => { calls.push(['pushMirror', x]); },
+    openPull: async (x) => { calls.push(['openPull', x]); return { number: number() }; },
+    placeholder: async (x) => { calls.push(['placeholder', x]); return { number: number() }; },
+    applySettings: async (x) => { calls.push(['applySettings', x]); },
+  };
+}
+const OPEN = [{ number: 4, head: 'feature-p4', base: 'main', title: 'Piece 4', body: 'body 4', draft: true }];
+
+test('rebuildGithub numbers placeholders and reopened pull requests in order', async (t) => {
+  const src = scratch(t);
+  fs.writeFileSync(path.join(src, 'settings.json'), JSON.stringify({ repo: { allow_squash_merge: true }, protection: null, rulesets: [] }));
+  const github = fakeGithub();
+  const slept = [];
+  const got = await rebuildGithub({ github, slug: 'o/r', src, maxNumber: 5, open: OPEN, attempt: 2, snapshot: '02-after-w2-audit', sleep: async (ms) => { slept.push(ms); } });
+  assert.deepEqual(got, { reopened: [4] });
+  assert.deepEqual(github.calls.map((c) => c[0]), ['create', 'pushMirror', 'placeholder', 'placeholder', 'placeholder', 'openPull', 'placeholder', 'applySettings']);
+  assert.equal(github.calls[0][1].public, true);
+  assert.deepEqual(github.calls[1][1], { dir: path.join(src, 'mirror.git'), remote: 'https://github.com/o/r.git' });
+  assert.equal(github.calls[2][1].title, 'Stands for #1 in attempt 2, resumed from 02-after-w2-audit');
+  assert.deepEqual(github.calls[5][1], { slug: 'o/r', head: 'feature-p4', base: 'main', title: 'Piece 4', body: 'body 4', draft: true });
+  assert.deepEqual(slept, [1000, 1000, 1000, 1000, 1000]);
+});
+
+test('a number out of step stops the rebuild', async (t) => {
+  const src = scratch(t);
+  const github = fakeGithub({ drift: { at: 3 } });
+  await assert.rejects(rebuildGithub({ github, slug: 'o/r', src, maxNumber: 5, open: [], attempt: 1, snapshot: '01-x' }), (error) => error instanceof NumberDrift && /number 3 came back as 4: the fresh repository is out of step/.test(error.message));
+  assert.equal(github.calls.some((c) => c[0] === 'applySettings'), false);
+});
+
+test('settings are applied after the pushes and the numbers', async (t) => {
+  const src = scratch(t);
+  const settings = { repo: { allow_squash_merge: true }, protection: { enforce_admins: { enabled: true } }, rulesets: [] };
+  fs.writeFileSync(path.join(src, 'settings.json'), JSON.stringify(settings));
+  const github = fakeGithub();
+  await rebuildGithub({ github, slug: 'o/r', src, maxNumber: 2, open: [], attempt: 1, snapshot: '01-x' });
+  assert.deepEqual(github.calls.map((c) => c[0]), ['create', 'pushMirror', 'placeholder', 'placeholder', 'applySettings']);
+  assert.deepEqual(github.calls.at(-1)[1], { slug: 'o/r', settings });
+});
+
+test('protectionBody turns a protection read into the body that sets it', () => {
+  assert.equal(protectionBody(null), null);
+  const got = protectionBody({ url: 'x', required_status_checks: { url: 'y', strict: true, contexts: ['ci'], checks: [{ context: 'ci' }] }, enforce_admins: { url: 'z', enabled: true }, required_pull_request_reviews: { url: 'q', required_approving_review_count: 0, dismiss_stale_reviews: false }, restrictions: null });
+  assert.deepEqual(got, { required_status_checks: { strict: true, contexts: ['ci'] }, enforce_admins: true, required_pull_request_reviews: { required_approving_review_count: 0, dismiss_stale_reviews: false, require_code_owner_reviews: false }, restrictions: null });
 });
