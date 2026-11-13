@@ -1704,3 +1704,15 @@ test('main resume lists the snapshots when none is named', async (t) => {
   assert.equal(code, 2);
   assert.match(printed.join('\n'), /resume needs --snapshot/);
 });
+
+test('resume refuses a snapshot name that is not a plain name, before anything is asked or touched', async (t) => {
+  const fx = resumeFixture(t);
+  const io = resumeIo(t);
+  for (const bad of ['../trials/02-after-w2-audit', '..', '.', 'a/b', 'a\\b', '/etc', `${path.join(fx.base, 'haiku-2026-11-08.snapshots', fx.name)}`]) {
+    const got = await resume({ folder: fx.folder, label: fx.label, snapshot: bad, io, configDir: fx.configDir, env: ENV, base: fx.base });
+    assert.equal(got.stoppedAt, 'resume', bad);
+    assert.match(got.why, /not a plain snapshot name/, bad);
+  }
+  assert.equal(io.timeline.some((e) => e.kind === 'ask'), false);
+  assert.equal(fs.readFileSync(path.join(fx.folder, 'marker.txt'), 'utf8'), 'the failed attempt');
+});

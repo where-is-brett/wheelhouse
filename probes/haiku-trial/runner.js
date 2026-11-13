@@ -1364,7 +1364,10 @@ export async function resume({ folder, label, snapshot, io: given, keepPlugin = 
   const stop = (why) => ({ done: [], stoppedAt: 'resume', why });
   const io = { ...given, host: { ...NOTHING, ...(given.host ?? {}) } };
   const dir = snapshotsDir(label, base);
-  const dest = path.join(dir, snapshot);
+  // A snapshot is named by its folder's own name: nothing else is read, and nothing outside the label's snapshot folder.
+  const dest = path.join(dir, String(snapshot));
+  const inside = path.relative(dir, dest);
+  if (typeof snapshot !== 'string' || snapshot === '' || snapshot === '.' || snapshot.includes('..') || /[\\/]/.test(snapshot) || inside !== snapshot) return stop(`"${snapshot}" is not a plain snapshot name`);
   // Check: nothing is touched yet.
   const meta = readMeta(dest);
   if (!meta) return stop(`no snapshot ${snapshot} for ${label}. Snapshots: ${listSnapshots(dir).map((s) => s.name).join(', ') || 'none'}`);
