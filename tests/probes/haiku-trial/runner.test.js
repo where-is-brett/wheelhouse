@@ -203,7 +203,8 @@ function sittingIo(over = {}) {
     host: { events: async () => records, ...(over.host ?? {}) },
   });
   const at = () => new Date(io.clock.now()).toISOString();
-  const click = (data) => records.push({ id: `e${records.length}`, kind: 'action', at: at(), data });
+  // The helper window signs a click; `over.unsigned` and `over.proof` make the kinds of record that must not count.
+  const click = (data) => records.push({ id: `e${records.length}`, kind: 'action', at: at(), data: { ...data, ...(over.proof ? { proof: over.proof } : {}) }, ...(over.unsigned ? {} : { sig: { value: 'v' } }) });
   io.records = records;
   io.faults.liftTyped = () => { io.timeline.push({ kind: 'f6.lift', args: [], at: io.clock.now() }); if (!over.noLift) click({ action: 'lift-stop' }); };
   io.faults.undoTyped = (tmux, sha) => { io.timeline.push({ kind: 'undo', args: [sha], at: io.clock.now() }); if (!over.noUndo) click({ action: 'undo-merge', merge: sha }); };
@@ -251,7 +252,7 @@ test('F5b is answered by the director keeping main as well as by an undo', async
   io.faults.undoTyped = (tmux, sha) => {
     if (sha !== SHA2) return undo(tmux, sha);
     io.timeline.push({ kind: 'undo', args: [sha], at: io.clock.now() });
-    io.records.push({ id: 'keep', kind: 'action', at: new Date(io.clock.now()).toISOString(), data: { action: 'keep-main', from: 'a', to: 'b' } });
+    io.records.push({ id: 'keep', kind: 'action', at: new Date(io.clock.now()).toISOString(), data: { action: 'keep-main', from: 'a', to: 'b' }, sig: { value: 'v' } });
   };
   const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
   assert.deepEqual(got.findings, []);
@@ -288,6 +289,32 @@ test('a lift that does not come leads to one terminal ask, and the run waits for
   assert.ok(got.findings.some((f) => /lifting All stop/.test(f.what)));
   assert.equal(readLog(folder).some((e) => e.step === 'f6-lift'), false, 'no lift is logged that did not happen');
   assert.equal(got.stoppedAt, undefined);
+});
+
+test('a lift or an undo that is not signed, or is proved by the window, is not the director\'s click', async (t) => {
+  for (const over of [{ unsigned: true }, { proof: 'window' }]) {
+    const folder = scratch(t);
+    const io = sittingIo(over);
+    const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+    assert.ok(got.findings.some((f) => /lifting All stop/.test(f.what)), JSON.stringify(over));
+    assert.ok(got.findings.some((f) => /the undo of P6/.test(f.what)), JSON.stringify(over));
+    const steps = readLog(folder).map((e) => e.step);
+    for (const step of ['f6-lift', LOG.fault('F5a'), LOG.fault('F5b')]) assert.equal(steps.includes(step), false, `${step} ${JSON.stringify(over)}`);
+  }
+});
+
+test('keeping main counts only when it is signed', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo();
+  const undo = io.faults.undoTyped;
+  io.faults.undoTyped = (tmux, sha) => {
+    if (sha !== SHA2) return undo(tmux, sha);
+    io.timeline.push({ kind: 'undo', args: [sha], at: io.clock.now() });
+    io.records.push({ id: 'keep', kind: 'action', at: new Date(io.clock.now()).toISOString(), data: { action: 'keep-main', from: 'a', to: 'b' } });
+  };
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.ok(got.findings.some((f) => /the director's click did not come in sitting 1/.test(f.what)));
+  assert.equal(readLog(folder).some((e) => e.step === LOG.fault('F5b')), false);
 });
 
 test('All stop already set by a failed f6 step is lifted first', async (t) => {

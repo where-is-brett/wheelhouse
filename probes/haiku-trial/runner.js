@@ -625,6 +625,9 @@ const CLICK_WAIT_MS = 15 * MINUTE;
 const sittingId = (n) => `sitting-${n}`;
 const eventsOf = (ctx) => ctx.io.host.events({ project: ctx.projectName });
 const isAction = (e, ...actions) => e.kind === 'action' && actions.includes(e.data?.action);
+// The director's own click: signed, and not proved by the helper window (the checks approve-work answers use in signals.js). An
+// action typed into the screen or made without a signature is not a click.
+const isSigned = (e, ...actions) => isAction(e, ...actions) && Boolean(e.sig) && typeof e.sig === 'object' && e.data?.proof !== 'window';
 // An event made at or after `since` (one with no readable time counts: a record without a time cannot be told from a later one).
 const notBefore = (e, since) => !(Date.parse(e.at) < since);
 
@@ -632,7 +635,7 @@ const notBefore = (e, since) => !(Date.parse(e.at) < since);
 const stopIsOn = async (ctx) => {
   const { stopAt } = ctx.state;
   if (stopAt === undefined) return false;
-  return !(await eventsOf(ctx)).some((e) => isAction(e, 'lift-stop') && notBefore(e, stopAt - 1000));
+  return !(await eventsOf(ctx)).some((e) => isSigned(e, 'lift-stop') && notBefore(e, stopAt - 1000));
 };
 
 // Waits for the director's signed lift. If it does not come it is a finding, and the one terminal ask of the sitting follows: All
@@ -681,7 +684,7 @@ const sameSha = (a, b) => typeof a === 'string' && typeof b === 'string' && a.le
 const undoAnswered = (ctx, sha, since) => async () => {
   await tick(ctx);
   return (await eventsOf(ctx)).some((e) => notBefore(e, since) && (
-    (isAction(e, 'undo-merge') && (sha === 'unknown' || sameSha(e.data?.merge, sha))) || isAction(e, 'keep-main')));
+    (isSigned(e, 'undo-merge') && (sha === 'unknown' || sameSha(e.data?.merge, sha))) || isSigned(e, 'keep-main')));
 };
 
 const clickSteps = {
