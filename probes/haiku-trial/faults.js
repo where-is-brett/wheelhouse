@@ -223,7 +223,8 @@ function thirdDecision({ env, cwd, run = spawnSync, plugin = PLUGIN }) {
 function reviewDecision({ env, cwd, card, run = spawnSync, plugin = PLUGIN }) {
   const got = feature(plugin, shaped({
     what: card.what, why: card.why,
-    options: card.options.map((o) => [o.label, o.says, o.cost, o.undo]),
+    // The feature command takes yes, no or partly for --undo, so a card's wording of how it is undone goes on the card, not here.
+    options: card.options.map((o) => [o.label, o.says, o.cost, ['yes', 'no', 'partly'].includes(o.canUndo) ? o.canUndo : ['yes', 'no', 'partly'].includes(o.undo) ? o.undo : 'yes']),
     recommend: card.recommend, because: card.because, meanwhile: card.meanwhile,
   }), { env, cwd, run });
   return { code: got.status, stdout: said(got) };

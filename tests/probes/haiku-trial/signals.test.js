@@ -487,3 +487,36 @@ test('a row whose step failed says the step failed and why, rather than that the
   assert.equal(f1.evidence, 'not covered: f1 failed (boom)');
   assert.match(row(36).check(ctxWith({ prs: [], runLog: [] })).evidence, /the run stopped before/);
 });
+
+test('rows read what the run went past as not covered, and what the product writes as it writes it', () => {
+  // Row 3 and 10 do not fail for P5 when the planted bug never took.
+  const pieces = Object.fromEntries(['P1', 'P2', 'P3', 'P4', 'P6', 'P7', 'P8'].map((id) => [id, { change: id.toLowerCase(), prs: [] }]));
+  const skipped = ctxWith({ pieces, runLog: [{ at: '2026-11-13T18:06:40.915Z', step: 'plant', note: 'P5 not covered: nothing in src/ uses monthOf' }] });
+  assert.doesNotMatch(row(3).check(skipped).evidence, /P5 did not run/);
+  // Row 1 takes the runner's journal ending.
+  const ended = ctxWith({ config: { routing: { frontDesk: 'claude-haiku-5-5' }, tiers: { pins: { mostCapable: 'claude-haiku-5-5', midSized: 'claude-haiku-5-5' } } }, runLog: [{ step: 'health', note: 'pass', at: 'x' }, { step: 'health', note: 'setup ended on the setup journal, every step done', at: 'x' }] });
+  assert.doesNotMatch(row(1).check(ended).evidence, /no line saying setup is done/);
+  // Rows 16 and 17 are not covered when the runner raised the decision itself.
+  const fallback = ctxWith({ pieces: { P4: { change: 'edit-category', prs: [] } }, runLog: [{ step: 'fallback', note: 'P4 raised no decision', at: 'x' }] });
+  assert.equal(row(16).check(fallback).pass, null);
+  assert.equal(row(17).check(fallback).pass, null);
+  // Row 34 is not covered when there was no foreman to kill.
+  const noForeman = ctxWith({ runLog: [{ step: 'F3b', note: 'foreman killed after P4 merged: {"error":"No running foreman session"}', at: '2026-11-14T08:31:26.248Z' }] });
+  assert.equal(row(34).check(noForeman).pass, null);
+  // The proof note's data heading is the one the product writes.
+  assert.ok(PROOF_HEADINGS.includes('The data, before and after'));
+  const body = PROOF_HEADINGS.map((h) => `## ${h}\n\ntext about route test`).join('\n\n');
+  const full = ctxWith({ prs: [pr(1, { mergedAt: '2026-11-13T10:00:00Z', body })] });
+  assert.equal(row(25).check(full).pass, true);
+});
+
+test('row 7 compares work-ready with the click that approved the work, not with a later card-answer', () => {
+  const change = 'statement-import';
+  const card = ev('card', { kind: KINDS.approveWork, question: `Approve ${change}`, work: change }, '2026-11-13T17:48:03.000Z', { id: 'c1' });
+  const action = ev('action', { action: KINDS.approveWork, work: change }, '2026-11-13T17:48:03.698Z');
+  const answer = ev('card-answer', { question: `Approve ${change}` }, '2026-11-13T17:48:03.968Z');
+  const base = { pieces: { P1: { change, prs: [] } }, events: [card, action, answer] };
+  const ready = (at) => [{ step: 'work-ready', work: change, note: `work-ready ${change}`, at }];
+  assert.doesNotMatch(row(7).check(ctxWith({ ...base, smoke: true, runLog: ready('2026-11-13T17:48:03.698Z') })).evidence, /no work-ready for P1/);
+  assert.match(row(7).check(ctxWith({ ...base, smoke: true, runLog: ready('2026-11-13T17:48:03.000Z') })).evidence, /no work-ready for P1/);
+});

@@ -12,6 +12,7 @@ import { WHY_LIMIT_MS } from '../../scripts/decisions/why.js';
 import { UNDO_BRANCH, undoTitle, CONFLICT_LINE } from '../../scripts/host/undo.js';
 import { PHONE_LIMIT, shapeProblems } from '../../scripts/cards/compose.js';
 import { FRONT_DESK_LINE } from '../../scripts/hooks/session-start.js';
+import { HEADINGS, DATA_HEADING } from '../../scripts/proof/note.js';
 import { PLAN_FILE } from '../../scripts/engine/plan-file.js';
 import { STUCK_AFTER } from '../../scripts/feature/cli.js';
 import { asDirectorsCall } from '../../scripts/decisions/log.js';
@@ -93,9 +94,8 @@ export const STEPS = Object.freeze({
   fault: (id) => id, // a fault was made: the step is the fault's own id (F1, F3, F3b, F6 ...)
 });
 
-export const PROOF_HEADINGS = Object.freeze([
-  'What changed', 'Why', 'Decided on its own', 'Decisions followed', 'How it was checked', 'What it looks like', 'The data before and after',
-]);
+// The headings the proof note writes (scripts/proof/note.js), so the trial reads what the product writes.
+export const PROOF_HEADINGS = HEADINGS;
 export const FULL_ONLY = Object.freeze([34, 41]);
 
 const SMOKE = new Set([1, 2, 3, 4, 5, 7, 8, 9, 13, 16, 17, 18, 21, 22, 25, 26, 27, 28, 29, 31, 33, 44, 45]);
@@ -122,6 +122,8 @@ const work = (ctx, id) => piece(ctx, id)?.change;
 const prsOf = (ctx, id) => (piece(ctx, id)?.prs ?? []).map((n) => (ctx.prs ?? []).find((p) => p.number === n)).filter(Boolean);
 const spec = (id) => PIECES.find((p) => p.id === id);
 const paneTexts = (ctx, name) => (name === undefined ? Object.values(ctx.panes ?? {}).flat() : ctx.panes?.[name] ?? []);
+// What the front desk's sessions said, from their transcripts: a pane capture holds only the moments the stand-in looked at.
+const deskTranscriptTexts = (ctx) => (ctx.transcripts ?? []).filter((t) => t.role === 'front-desk').flatMap((t) => entriesOf(t.file).map((e) => JSON.stringify(e)));
 const paneAll = (ctx) => paneTexts(ctx).join('\n');
 const logOf = (ctx, step) => (ctx.runLog ?? []).filter((e) => e.step === step);
 const filesOf = (pr) => (pr.commits ?? []).flatMap((c) => c.files ?? []);
@@ -134,7 +136,9 @@ const RECORDS_BRANCH = /^wheelhouse\/decisions-(\d{4}-\d{2}-\d{2})$/;
 // Which of a row's pieces ran. A full run needs them all; a smoke run leaves out those it did not start.
 function scope(ctx, ids) {
   const have = ids.filter((id) => piece(ctx, id) !== undefined);
-  const missing = ids.filter((id) => !have.includes(id));
+  // P5 needs a planted bug the builders' own code may never use; the runner says so, and that is not a fault of the piece.
+  const p5Skipped = logOf(ctx, 'plant').some((e) => /^P5 not covered/.test(e.note ?? ''));
+  const missing = ids.filter((id) => !have.includes(id) && !(id === 'P5' && p5Skipped));
   if (missing.length > 0 && ctx.smoke !== true) return { have, stop: no(`${missing.join(', ')} did not run`) };
   if (have.length === 0 && ids.length > 0) return { have, stop: unknown(`${ids.join(', ')} not run in this smoke run`) };
   return { have, stop: null };
@@ -166,6 +170,8 @@ const section = (body, heading) => {
 };
 const images = (text) => (String(text).match(/!\[[^\]]*\]\([^)]*\)|<img\b/gi) ?? []).length;
 
+// P4 raised no decision of its own, so the runner raised one after P4's pull request had merged: nothing was held and no slot was waiting.
+const FALLBACK_NOTE = 'not covered: P4 raised no decision of its own, so the one the runner raised could not hold a pull request';
 const roleOf = (ctx) => ({ ...(ctx.config?.routing ?? {}) });
 
 // --- the rows ---
@@ -174,7 +180,9 @@ const checks = {
   1(ctx) {
     const problems = [];
     const said = paneAll(ctx) + '\n' + (ctx.events ?? []).filter((e) => e.kind === 'note').map((e) => JSON.stringify(e.data)).join('\n');
-    if (!SETUP_DONE.test(said)) problems.push('no line saying setup is done');
+    // The runner also ends setup on the setup journal when the model never repeats the engine's closing words.
+    const journalDone = logOf(ctx, STEPS.health).some((e) => /^setup ended on /.test(e.note ?? ''));
+    if (!SETUP_DONE.test(said) && !journalDone) problems.push('no line saying setup is done');
     const roles = Object.entries(roleOf(ctx)).filter(([, v]) => typeof v === 'string');
     if (roles.length === 0) problems.push('the configuration names no role');
     const want = modelPattern(ctx.model);
@@ -260,7 +268,11 @@ const checks = {
       if (!card) { problems.push(`${id} has no plan card`); continue; }
       const at = answeredAt(ctx, card);
       if (at === null) { problems.push(`${id}'s plan card was never answered`); continue; }
-      const ready = logOf(ctx, STEPS.workReady).filter((e) => e.work === change && ms(e.at) >= at);
+      // The runner's work-ready for a card-approved work is the signed approve-work action's own time, and the click writes that action
+      // just before its card-answer (run 2026-11-13-s: 17:48:03.698 then 17:48:03.968), so the answer is the earlier of the two records.
+      const approved = events(ctx, KINDS.action).filter((e) => e.data?.action === KINDS.approveWork && e.data.work === change).map((e) => ms(e.at));
+      const from = Math.min(at, ...approved);
+      const ready = logOf(ctx, STEPS.workReady).filter((e) => e.work === change && ms(e.at) >= from);
       if (ready.length === 0) problems.push(`no work-ready for ${id} after its plan card was answered`);
     }
     return verdict(problems, 'plan card shown, answered, then work-ready');
@@ -338,8 +350,8 @@ const checks = {
     const s = scope(ctx, ['P4', 'P7']);
     if (s.stop) return s.stop;
     const problems = [];
-    const wait = /waits: its plan touches src\/pages\/month\.js, which .* is changing/;
-    const texts = [...paneTexts(ctx), ...(ctx.runLog ?? []).map((e) => e.note ?? '')];
+    const wait = /waits: its plan touches \S+, which .* is changing/;
+    const texts = [...paneTexts(ctx), ...(ctx.runLog ?? []).map((e) => e.note ?? ''), ...deskTranscriptTexts(ctx)];
     if (!texts.some((t) => wait.test(t))) problems.push('the wait text was not seen');
     const p4 = prsOf(ctx, 'P4').find((p) => p.mergedAt);
     const p7 = prsOf(ctx, 'P7')[0];
@@ -371,11 +383,12 @@ const checks = {
     if (typeof f?.notExercised === 'string') return unknown(`not covered: ${f.notExercised}`);
     if (!f) return failedFor(ctx, 'f1b') ?? unknown('F1b was not run');
     if (typeof f.why !== 'string' || f.why === '') return no(`the third try was not followed by a stuck message${f.stuckAt === null ? ' (the command never asked for one)' : ''}`);
-    return paneTexts(ctx, 'front-desk').some((t) => t.includes(f.why)) ? ok('the stuck message reached the front desk') : no('the stuck message is not in the front desk pane');
+    return [...paneTexts(ctx, 'front-desk'), ...deskTranscriptTexts(ctx)].some((t) => t.includes(f.why)) ? ok('the stuck message reached the front desk') : no('the stuck message is not in the front desk pane');
   },
   16(ctx) {
     const s = scope(ctx, ['P4']);
     if (s.stop) return s.stop;
+    if (logOf(ctx, 'fallback').length > 0) return unknown(FALLBACK_NOTE);
     const problems = [];
     const prs = prsOf(ctx, 'P4');
     const waiting = prs.flatMap((p) => p.statuses ?? []).some((st) => st.context === DECISION_CONTEXT && /^Waiting on decision 1$/.test(st.description ?? ''));
@@ -391,6 +404,7 @@ const checks = {
   17(ctx) {
     const s = scope(ctx, ['P4']);
     if (s.stop) return s.stop;
+    if (logOf(ctx, 'fallback').length > 0) return unknown(FALLBACK_NOTE);
     const change = work(ctx, 'P4');
     const asked = events(ctx, KINDS.question).filter((e) => e.data?.work === change).map((e) => ms(e.at));
     if (asked.length === 0) return no('P4 raised no decision');
@@ -445,7 +459,8 @@ const checks = {
     const answers = events(ctx, KINDS.decisionAnswer);
     const hidden = answers.filter((a) => a.data?.private === true);
     if (hidden.length === 0) return no('no decision-answer with private: true');
-    const files = prsOf(ctx, 'P4').flatMap(filesOf).filter((f) => f.startsWith('docs/decisions/'));
+    const batches = (ctx.prs ?? []).filter(isBranch(RECORDS_BRANCH));
+    const files = [...prsOf(ctx, 'P4'), ...batches].flatMap(filesOf).filter((f) => f.startsWith('docs/decisions/'));
     const open = answers.filter((a) => a.data?.private !== true).length;
     return new Set(files).size > open ? no('a file under docs/decisions/ exists for the private answer') : ok('a private answer, with no file of its own under docs/decisions/');
   },
@@ -503,8 +518,8 @@ const checks = {
   27(ctx) {
     const s = scope(ctx, ['P1']);
     if (s.stop) return s.stop;
-    const texts = prsOf(ctx, 'P1').map((p) => section(p.body, 'The data before and after')).filter((t) => t !== null);
-    if (texts.length === 0) return no('P1 has no "The data before and after" section');
+    const texts = prsOf(ctx, 'P1').map((p) => section(p.body, DATA_HEADING)).filter((t) => t !== null);
+    if (texts.length === 0) return no('P1 has no "The data, before and after" section');
     return texts.some((t) => /\btest\b/i.test(t)) ? ok('the data section names route test') : no('the data section does not name route test');
   },
   28(ctx) {
@@ -573,6 +588,7 @@ const checks = {
   34(ctx) {
     const fault = logOf(ctx, STEPS.fault('F3b'))[0];
     if (!fault) return unknown('F3b was not run');
+    if (/No running foreman session/.test(fault.note ?? '')) return unknown('not covered: F3b found no foreman session to kill');
     // The recovery raise leaves no record of its own; its sign is a run of P7 starting after the foreman was killed.
     const p7 = work(ctx, 'P7');
     const from = ms(fault.at);

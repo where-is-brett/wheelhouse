@@ -38,9 +38,9 @@ export function reviewCard({ project, date, decisionN, stepsUrl, address, score,
   const result = score && Number.isFinite(score.total) ? `Score: ${score.total}/100 (pass bar 80), ${passed}/${inScope} paths passed.` : 'Score: not measured.';
   const key = recommendation({ score, rows });
   const options = [
-    { key: 'A', label: OPTION_LABELS.A, says: 'Tag v0.3.0 as "works on Haiku".', cost: 'none', undo: 'the tag can be moved before release notes go out' },
-    { key: 'B', label: OPTION_LABELS.B, says: 'Tag v0.3.0 without the Haiku claim.', cost: 'the claim waits for a later run', undo: 'a later run can add it' },
-    { key: 'C', label: OPTION_LABELS.C, says: 'Say what is wrong and it goes to intake as bugs.', cost: 'the tag waits', undo: 'answer again after the changes' },
+    { key: 'A', label: OPTION_LABELS.A, says: 'Tag v0.3.0 as "works on Haiku".', cost: 'none', undo: 'the tag can be moved before release notes go out', canUndo: 'yes' },
+    { key: 'B', label: OPTION_LABELS.B, says: 'Tag v0.3.0 without the Haiku claim.', cost: 'the claim waits for a later run', undo: 'a later run can add it', canUndo: 'yes' },
+    { key: 'C', label: OPTION_LABELS.C, says: 'Say what is wrong and it goes to intake as bugs.', cost: 'the tag waits', undo: 'answer again after the changes', canUndo: 'yes' },
   ];
   const text = [
     `What this is. You try ${project ?? 'the tracker'} for about 15 minutes, the trial's last step (run of ${said(date)}). ${result} ${String(floor ?? 'No known floor.').slice(0, 200)}`,

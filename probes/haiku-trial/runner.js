@@ -228,8 +228,11 @@ async function tick(ctx) {
   for (const e of events.filter((x) => x.kind === 'feature' && typeof x.data?.work === 'string')) {
     if (FEATURE_RUNNING.includes(e.data.step)) running.add(e.data.work); else running.delete(e.data.work);
   }
+  // Every lane keeps a record of that kind while its session runs, so the feature lane is the works the intake put there.
+  const laneOf = new Map(events.filter((x) => x.kind === 'work').map((x) => [x.data?.id, x.data?.lane]));
+  const featureRunning = [...running].filter((w) => laneOf.get(w) === 'feature');
   const building = open.size + running.size;
-  const lanes = features + running.size;
+  const lanes = features + featureRunning.length;
   if (building > 0 && state.pace !== `${building},${lanes}`) {
     state.pace = `${building},${lanes}`;
     await note(ctx, LOG.pace, `building ${building}, feature ${lanes}`);
@@ -1129,6 +1132,13 @@ export const STEPS = [
       midnight.setHours(24, 5, 0, 0);
       await waitFor(async () => io.clock.now() >= midnight.getTime(), { io, timeoutMs: 26 * 60 * MINUTE, everyMs: 5 * MINUTE });
       ctx.state.branches = ((await io.gh(['api', 'repos/{owner}/{repo}/branches?per_page=100'])) ?? []).map((b) => b.name);
+      // The daily records are a watcher's tick after midnight, not an instant: look for their branch for a while before reading it as missing.
+      const records = (names) => names.some((n) => /^wheelhouse\/decisions-\d{4}-\d{2}-\d{2}$/.test(n));
+      await waitFor(async () => {
+        await tick(ctx);
+        ctx.state.branches = ((await io.gh(['api', 'repos/{owner}/{repo}/branches?per_page=100'])) ?? []).map((b) => b.name);
+        return records(ctx.state.branches);
+      }, { io, timeoutMs: 30 * MINUTE, everyMs: MINUTE });
       await note(ctx, 'w5-midnight', `after midnight; ${ctx.state.branches.length} branches`);
     },
   },
