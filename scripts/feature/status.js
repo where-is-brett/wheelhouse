@@ -408,7 +408,8 @@ export function buildStatus({ worktree, now = () => new Date(), tokens = null, a
 
   // The phase, in this order (ruling R88): a pull request not yet merged is
   // open; a report ends the feature when it is `blocked` or `partial` (it ended without a
-  // pull request) or the last slice's pull request has merged; a plan that
+  // pull request) or the last slice's pull request has merged (a last slice whose plan is recorded but not yet merged is not
+  // the end: the slice before it has merged and been reported, and this one is still to build); a plan that
   // isn't the one already merged is being built, or is ready to build.
   // A `partial` report with no pull request yet ends it only once the session's
   // turn has ended (`turnEnded`): the brief has the session run `report` and then
@@ -421,7 +422,7 @@ export function buildStatus({ worktree, now = () => new Date(), tokens = null, a
   let phase;
   if (waiting) phase = 'waiting';
   else if (kept !== null && !kept.merged) phase = 'pr-open';
-  else if (report !== null && ((report === 'blocked' || (report === 'partial' && turnEnded)) || (kept?.merged === true && !slicesLeft))) phase = 'done';
+  else if (report !== null && ((report === 'blocked' || (report === 'partial' && turnEnded)) || (kept?.merged === true && !slicesLeft && !current))) phase = 'done';
   else if (building && current) phase = 'building';
   else if (current) phase = 'ready-to-build';
   else phase = 'planning';
