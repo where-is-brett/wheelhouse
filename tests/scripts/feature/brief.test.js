@@ -33,6 +33,15 @@ const render = (lane, extra = {}) => renderBrief({ fields: { ...fields(lane), ..
 const template = (...parts) => fs.readFileSync(path.join(root, 'templates', 'brief', ...parts), 'utf8').replace(/^<!--[^\n]*-->\r?\n(\r?\n)?/, '');
 const overrideText = () => template('override.md').trim();
 
+test('the small and feature lanes say where the plan goes: in the tree and committed, so the pull request carries it', () => {
+  const small = render('small');
+  assert.match(small, /docs\/plans\/[^\n`]*\.md/);
+  assert.match(small, /commit(ted)? (it|the plan)[^\n]*pull request/i);
+  const feature = render('feature');
+  assert.match(feature, /docs\/plans\/[^\n`]*slice[^\n`]*\.md/);
+  assert.match(feature, /commit(ted)? (it|the plan)[^\n]*pull request/i);
+});
+
 // Everything after the override: the brief's own text.
 const afterOverride = (text) => text.slice(text.indexOf(overrideText()) + overrideText().length);
 
