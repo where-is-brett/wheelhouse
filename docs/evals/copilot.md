@@ -45,10 +45,15 @@ Each trial's record is in `~/.wheelhouse-evals/<date>/`, as Claude Code's are, w
 
 ## The safety subset
 
-The version check (`scripts/agents/copilot/versions.js`, ruling P8-20) runs the safety subset before a new Copilot version is used: scenarios 6 and 38 to 41, in their `with` variant, one trial each, as `node scripts/eval/run.js 6 38 39 40 41 --variant with --agent copilot` in a process of its own (`safetySubset` in `adapters/copilot/sessions.js`), so through this runner, with the records in `~/.wheelhouse-evals/` like any other run. It passes only when that command exits 0 and the run record it names holds a passing `with` trial of each of the five: a scenario the run left out (one marked for another agent, or with no `with` variant) fails it, whatever the exit code; anything else holds Copilot work with one card. It runs only once the background sessions are switched on (`BACKGROUND_SESSIONS_READY`, ruling P8-1), which they are not yet. Two things to settle before the switch goes on:
+The version check (`scripts/agents/copilot/versions.js`) holds a Copilot CLI that is not the pinned version until a safety subset passes on it. The subset is meant to be scenarios 6 and 38 to 41, in their `with` variant, one trial each, run through this runner as `node scripts/eval/run.js 6 38 39 40 41 --variant with --agent copilot`.
 
-- **On Windows** the stand-in helper takes the helper's own named pipe, which the real helper holds whenever it runs. The version check runs with the real helper running, so there the scenarios' set-ups can't start and the subset fails closed: a new Copilot version holds Copilot work on Windows until this is changed.
-- **A subset that times out** (two hours) ends only its `node scripts/eval/run.js` process. On macOS the `copilot` sessions that process started are not ended with it, and may run on, up to their own 20 minutes each, spending premium requests. The verdict still fails closed. Until 6 has a Copilot set-up of its own (it uses the front desk's Claude set-up and needs its model named), the subset fails, and a new version holds Copilot work, failing closed.
+**No safety-subset runner is wired to the version check yet.** `sessionsPart` in `adapters/copilot/sessions.js` takes a `runSubset` and, given none, uses `noSubsetRunner`, which always fails. So today a CLI at the pin (`COPILOT_VERSION`, 1.0.105, carried into `lineage/manifest.json`) passes with nothing run, and any other version, or one whose version can't be read, holds Copilot work with one card. The background sessions are switched on (`BACKGROUND_SESSIONS_READY` is true), so that hold applies now.
+
+Before a runner is wired, settle:
+
+- **On Windows** the stand-in helper takes the helper's own named pipe, which the real helper holds whenever it runs. The version check runs with the real helper running, so the scenarios' set-ups can't start there and the subset would fail closed.
+- **A subset that times out** would end only its `node scripts/eval/run.js` process. On macOS the `copilot` sessions it started are not ended with it, and may run on, spending requests.
+- **Scenario 6** uses the front desk's Claude set-up and needs its model named, so it has no Copilot set-up of its own.
 
 ## Which scenarios the run covers
 
