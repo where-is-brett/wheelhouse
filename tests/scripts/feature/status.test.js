@@ -293,6 +293,19 @@ test('the slice comes from the feature event in the features view', async () => 
   });
 });
 
+test('the last slice, planned while the slice before it is merged and reported, is ready to build, not done', () => {
+  const tree = feature();
+  const p = featurePaths(tree);
+  write(p.report, reportText());
+  // The first slice's pull request merged under another plan; the last slice's plan is the one recorded now.
+  write(p.pr, JSON.stringify({ pr: 8, plan: 'docs/plans/slice-1.md', merged: true }));
+  const last = () => ({ n: 2, m: 2 });
+  assert.equal(buildStatus({ worktree: tree, now: () => NOW, answered: none, slice: last }).phase, 'ready-to-build');
+  // Once that plan's own pull request has merged, the report ends the feature.
+  write(p.pr, JSON.stringify({ pr: 9, plan: PLAN, merged: true }));
+  assert.equal(buildStatus({ worktree: tree, now: () => NOW, answered: none, slice: last }).phase, 'done');
+});
+
 test('a kept pull request not yet merged is open, even with a report; merged, with a report and no slices left, is done', () => {
   const tree = feature();
   ledger(tree, 'this', ['Task 1: complete']);
