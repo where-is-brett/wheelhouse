@@ -14,7 +14,6 @@ const ALLOWED_FOLDERS = ['adapters/', 'scripts/agents/', 'scripts/engine/archon/
 const TOOLING_FOLDERS = ['node_modules/', '.git/', '.superpowers/', '.claude/'];
 // Core files that name Copilot, each with why.
 const ALLOWED_CORE_FILES = {
-  'scripts/update/parked.js': 'the update tells a project that named a parked agent that it is parked, and offers to carry on with Claude Code (design section 6, item 5)',
   'scripts/settings/catalogue.js': 'the retired-keys list names the piece that retired each key, so an old record still loads (design section 4.1)',
   'lineage/manifest.json': 'the manifest records the Copilot CLI version Wheelhouse is pinned to (its `agents`, ruling P8-18), written by buildManifest from scripts/agents/pins.js',
   'package.json': 'the copilot-home script, which builds the agents of a Copilot session\'s clean home',

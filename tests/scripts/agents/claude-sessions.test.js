@@ -262,9 +262,9 @@ test('a project that names Claude Code for this computer starts it too', () => w
   assert.equal(named.calls[0].file, 'claude');
 }));
 
-test('a project that names another agent for this computer still starts Claude Code, the only agent', () => withHome(async () => {
+test('a project that names an agent Wheelhouse does not know for this computer still starts Claude Code', () => withHome(async () => {
   await project();
-  const named = waker({ config: configOf2({ agents: { [computerId()]: 'copilot', 'other-computer': 'claude-code' } }) });
+  const named = waker({ config: configOf2({ agents: { [computerId()]: 'model-x', 'other-computer': 'claude-code' } }) });
   await named.w.wakeForeman(foremanWake());
   assert.equal(named.calls.length, 1, 'a session starts');
   assert.equal(named.calls[0].file, 'claude');
@@ -291,19 +291,18 @@ test('agentOfConfig gives Claude Code, whatever the configuration\'s agents map 
   assert.equal(agentOfConfig(null, { computerId: 'c1' }), 'claude-code');
 });
 
-test('a configuration with an agents map gives Claude Code\'s sessions even when this computer\'s id can\'t be read', () => withHome(async (home) => {
+test('a configuration with an agents map gives no sessions when this computer\'s id can\'t be read', () => withHome(async (home) => {
   const blocker = path.join(home, 'a-file');
   fs.mkdirSync(home, { recursive: true });
   fs.writeFileSync(blocker, 'x');
   const before = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = path.join(blocker, 'inside'); // a home that can't be made, with no computer.json in it
-  let named;
   try {
-    named = sessionsOfProject({ agents: { c1: 'claude-code' } });
+    assert.throws(() => sessionsOfProject({ agents: { c1: 'claude-code' } }), /can't be read/);
+    assert.equal(sessionsOfProject({}), sessions, 'with no map, Claude Code');
   } finally {
     process.env.WHEELHOUSE_HOME = before;
   }
-  assert.equal(named, sessions);
 }));
 
 test('the foreman\'s long session is Claude Code\'s', () => withHome(async () => {

@@ -3,9 +3,9 @@
 // 96): its command line, its own home and environment, and how its output is read afterwards. The waker
 // (scripts/watcher/waker.js) and the foreman's start ask the project's adapter for these calls.
 //
-// Built here, but switched off: while BACKGROUND_SESSIONS_READY (scripts/agents/copilot/numbers.js) is false,
-// checkForeman, checkFeature and every call refuse, so neither the waker nor the foreman's start starts a Copilot session.
-// sessionsPart({ ready: true }) builds the part switched on, for tests to drive the waker with; nothing else passes it.
+// While BACKGROUND_SESSIONS_READY (scripts/agents/copilot/numbers.js) is false, checkForeman, checkFeature and every
+// call refuse, so neither the waker nor the foreman's start starts a Copilot session. It is true, so the part as shipped
+// starts them; sessionsPart({ ready: false }) builds the part switched off, for tests of the switch.
 //
 // Beside the contract's six members the part has three the waker asks for when they are there: `prepare` runs before
 // every start (the version check, the kits, the session's own home), `afterRun` reads a run's whole output once it ends,
@@ -99,7 +99,7 @@ function modelOf(config, role, plan) {
 }
 
 // The words the switch refuses with, while BACKGROUND_SESSIONS_READY is false.
-export const NOT_SWITCHED_ON = "Copilot's background sessions aren't switched on yet: their first real run hasn't been seen";
+export const NOT_SWITCHED_ON = "Copilot's background sessions aren't switched on";
 
 function switchedOn(ready) {
   if (ready !== true) throw new Error(NOT_SWITCHED_ON);

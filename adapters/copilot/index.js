@@ -1,5 +1,5 @@
 // adapters/copilot/index.js
-// The Copilot adapter (design section 8, parts 1, 7 and 10). Every part is built. The sessions part is switched off
+// The Copilot adapter (design section 8, parts 1, 7 and 10). Every part is built, and the sessions part is switched on
 // (BACKGROUND_SESSIONS_READY). It imports nothing that reaches the hook kit, so the kit can import it without a cycle.
 import hooks from './hooks.js';
 import identity from './identity.js';
