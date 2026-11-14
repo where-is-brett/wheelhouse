@@ -1709,6 +1709,7 @@ export async function startHelper({
     const adapter = await ctx.adapter();
     const defaultBranch = await defaultBranchOf(project, adapter);
     if (typeof defaultBranch !== 'string' || defaultBranch === '' || branch === defaultBranch) return { ok: false, refused: PUSH_REFUSALS.defaultBranch };
+    if (from === 'default' && !plainBranch(defaultBranch)) return { ok: false, refused: PUSH_REFUSALS.unknownDefault };
     if (!FEATURE_BRANCH.test(branch)) return { ok: false, refused: PULL_REFUSALS.feature };
     if (branchOf(dir) !== branch) return { ok: false, refused: PULL_REFUSALS.notOwn };
     try {
