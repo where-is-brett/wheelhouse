@@ -37,3 +37,7 @@ Copilot design C6: can Wheelhouse prove that a chat click on an `ask_user` card 
 - **`C6_PASSED` stays false.** A click can't be proven in chat: an agent with computer use makes the same click, and an agent can post the same answer straight to the helper.
 - **A chat answer stays an unsigned `chat-click`.** Answers that must be the person's stay on the pane or the phone, as the design has them.
 - **Autopilot's answer text should never count as a click.** If C6 ever passes, the translation must treat the "not available" sentence as no answer, as check 59 says.
+
+## Needs the director
+
+Nothing. A company managed hook and Windows are left for the director's own Copilot sittings.
