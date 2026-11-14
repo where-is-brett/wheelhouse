@@ -44,6 +44,7 @@ if (!process.env.WHEELHOUSE_HOME) {
   process.on('exit', () => fs.rmSync(home, { recursive: true, force: true }));
 }
 
-// A person's own Copilot home (COPILOT_HOME, else ~/.copilot) holds their sign-in and the hook file setup registers, so a
-// test process that wasn't given one gets a scratch folder inside its Wheelhouse home: nothing a test runs can reach the real one.
-if (!process.env.COPILOT_HOME) process.env.COPILOT_HOME = path.join(process.env.WHEELHOUSE_HOME, 'copilot-home');
+// A person's own Copilot home (COPILOT_HOME, else ~/.copilot) holds their sign-in and the hook file setup registers. A test
+// process always gets a scratch one of its own inside its Wheelhouse home, whatever it inherited, so nothing a test runs
+// can reach the real one.
+process.env.COPILOT_HOME = path.join(process.env.WHEELHOUSE_HOME, 'copilot-home');

@@ -241,11 +241,12 @@ test('through /setup/plan, step 6 asks which agent, then waits for the sign-in, 
   const bin = tempFolder('wh-bin-');
   fs.writeFileSync(path.join(bin, 'copilot'), '#!/bin/sh\n');
   const before = process.env.PATH;
+  const beforeHome = process.env.COPILOT_HOME;
+  const copilotHome = tempFolder('wh-copilot-');
   process.env.PATH = `${bin}${path.delimiter}${before}`;
+  process.env.COPILOT_HOME = copilotHome;
   try {
     await withProject(async ({ folder, plan, answer, home, tools }) => {
-      const copilotHome = process.env.COPILOT_HOME;
-      fs.rmSync(copilotHome, { recursive: true, force: true });
       const asked = await plan(6);
       assert.equal(asked.ask.id, 'agent');
       assert.deepEqual(asked.ask.card.options.map((o) => o.label), ['Claude Code', 'Copilot']);
@@ -268,5 +269,6 @@ test('through /setup/plan, step 6 asks which agent, then waits for the sign-in, 
     });
   } finally {
     process.env.PATH = before;
+    if (beforeHome === undefined) delete process.env.COPILOT_HOME; else process.env.COPILOT_HOME = beforeHome;
   }
 });
