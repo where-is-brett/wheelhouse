@@ -403,7 +403,12 @@ function featureEvents(prev, next, settled, out) {
 }
 
 // What the session reads when the pull request it waits on has merged or closed.
-const prSettledText = (pr, state) => `Pull request #${pr} you were waiting on has ${state}. Run \`wait-for --pr ${pr} --end\`, fetch origin and bring ${state === 'merged' ? 'its merged work in from' : 'your branch up to date with'} origin/HEAD, then carry on from where you left off.`;
+const prSettledText = (pr, state) => `Pull request #${pr} you were waiting on has ${state}. Run \`wait-for --pr ${pr} --end\`, run \`pull --default\` to bring ${state === 'merged' ? 'its merged work' : 'the default branch'} in (you can't fetch it yourself), then carry on from where you left off.`;
+
+// What the session reads when its pull request no longer merges cleanly with the default branch. It can fetch nothing, so the
+// helper brings the default branch in (`pull --default`), and the session resolves what clashes, tests, pushes and has the new head reviewed.
+const conflictText = (pr) => `Pull request #${pr} no longer merges cleanly with the default branch. You can't fetch it yourself: run \`pull --default\` to bring the default branch in through the helper. `
+  + 'If files clash, open each one, keep both sides\' intent, `git add` them and run `git commit --no-edit`. Then run the tests, push, and dispatch wheelhouse:reviewer on the new head.';
 
 // What a pull request's state says, each to whom section 11 sends it.
 const PR_CONDITIONS = [
@@ -443,7 +448,8 @@ function prEvents(prev, next, out) {
     for (const [type, holds] of PR_CONDITIONS) {
       if (holds(p) && !(sameHead && holds(before))) {
         let detail = { head: p.head };
-        if (type === 'review-needed') detail = { head: p.head, next: reviewNeededText(pr, p.head) };
+        if (type === 'conflict') detail = { head: p.head, next: conflictText(pr) };
+        else if (type === 'review-needed') detail = { head: p.head, next: reviewNeededText(pr, p.head) };
         else if (type === 'findings') detail = { head: p.head, next: findingsText(p.head, p), ...(Number.isInteger(p.findings) ? { findings: p.findings } : {}), blocking: Number.isInteger(p.blocking) ? p.blocking : null };
         else if (type === 'review-passed' && Number.isInteger(p.findings) && p.findings > 0) detail = { head: p.head, next: minorsText(p.head), minors: p.findings };
         out.push({ type, work: p.work, pr, id: `${type}:${p.work}:${p.head}`, detail });

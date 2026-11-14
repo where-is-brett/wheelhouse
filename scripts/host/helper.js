@@ -679,6 +679,7 @@ export const PULL_REFUSALS = {
   shallow: 'a shallow repository cannot be checked, so nothing is brought in',
   tooLarge: 'what the host\'s branch adds is too large to hand back through the helper',
   unread: 'the host\'s branch could not be read',
+  from: 'a pull brings in the worktree\'s own branch, or with from: default the default branch, and nothing else',
 };
 
 // A plain branch name: [A-Za-z0-9._/-], not refs/..., not HEAD, and nothing git
@@ -1691,8 +1692,12 @@ export async function startHelper({
   // worktree and resolves it there. The answer carries only the commits the worktree lacks (the
   // bundle, base64), never a key or the mirror's settings; the session's own git brings them in,
   // inside the sandbox. The host is only read. Refused under STOP.
-  async function doPull({ project, dir, branch }, ctx) {
+  //
+  // With `from: 'default'` the host's default branch is what is brought in, in place of the branch's own host copy: a session
+  // whose pull request has fallen behind it or clashes with it can fetch nothing itself, and the rest is the same.
+  async function doPull({ project, dir, branch, from }, ctx) {
     if (stopped()) return STOP_REFUSAL;
+    if (from !== undefined && from !== 'default') return { ok: false, refused: PULL_REFUSALS.from };
     if (typeof dir !== 'string' || !path.isAbsolute(dir)) refuse('the folder to bring the branch into must be a full path');
     let isDir = false;
     try { isDir = fs.statSync(dir).isDirectory(); } catch { /* missing */ }
@@ -1712,7 +1717,7 @@ export async function startHelper({
       return { ok: false, refused: PUSH_REFUSALS.unchecked };
     }
     try {
-      return await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, ({ mirror, keyed }) => pullIn({ project, mirror, keyed, dir, branch, ctx })));
+      return await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, ({ mirror, keyed }) => pullIn({ project, mirror, keyed, dir, branch, ctx, defaultBranch, fromDefault: from === 'default' })));
     } finally {
       await oneAtATime(`mirror:${project}`, () => dropRequestRefs(project, ctx));
       tidyAfterAnswer(project, ctx);
@@ -1746,7 +1751,7 @@ export async function startHelper({
   }
 
   // The body of a pull, in the project's mirror queue.
-  async function pullIn({ project, mirror, keyed, dir, branch, ctx }) {
+  async function pullIn({ project, mirror, keyed, dir, branch, ctx, defaultBranch, fromDefault }) {
     const git = local(mirror);
     const refusal = await mirrorRefusal(mirror, keyed);
     if (refusal) return { ok: false, refused: refusal };
@@ -1759,11 +1764,12 @@ export async function startHelper({
       fs.rmSync(mirror, { recursive: true, force: true });
       return { ok: false, refused: PULL_REFUSALS.shallow };
     }
-    const listed = await keyed('git', [...NO_HOOKS, 'ls-remote', '--heads', REMOTE, `refs/heads/${branch}`], { cwd: mirror, input: '' });
+    const source = fromDefault ? defaultBranch : branch;
+    const listed = await keyed('git', [...NO_HOOKS, 'ls-remote', '--heads', REMOTE, `refs/heads/${source}`], { cwd: mirror, input: '' });
     if (listed.code !== 0) return { ok: false, refused: PULL_REFUSALS.unread };
-    if (listed.stdout.trim() === '') return { ok: false, refused: `the host has no branch ${branch} yet: push it first` };
+    if (listed.stdout.trim() === '') return { ok: false, refused: `the host has no branch ${source} yet: push it first` };
     const fetched = await keyed('git', [
-      ...NO_HOOKS, 'fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', REMOTE, `+refs/heads/${branch}:${PULL_HOST}`,
+      ...NO_HOOKS, 'fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', REMOTE, `+refs/heads/${source}:${PULL_HOST}`,
     ], { cwd: mirror, input: '' });
     if (fetched.code !== 0) return { ok: false, refused: PULL_REFUSALS.unread };
     const shaOf = async (ref) => {
@@ -1786,7 +1792,7 @@ export async function startHelper({
       const made = await git([...MERGE_ONLY, 'merge-tree', '--write-tree', '--name-only', '-z', '--no-messages', ours, theirs]);
       if (made.code === 1) conflicts = made.stdout.split('\0').slice(1).filter((name) => name !== '');
       else if (made.code !== 0) throw new Error('git could not merge the host\'s branch in');
-      else sha = await mergeCommit(git, made.stdout.split('\0')[0].trim(), ours, theirs, `Merge the host's ${branch} into this worktree's`);
+      else sha = await mergeCommit(git, made.stdout.split('\0')[0].trim(), ours, theirs, fromDefault ? `Merge ${defaultBranch} into ${branch}` : `Merge the host's ${branch} into this worktree's`);
     }
     if ((await git([...NO_HOOKS, 'update-ref', PULLED, sha])).code !== 0) throw new Error('keeping what is handed back failed');
     const file = path.join(stateDir(project), '..', `pull-${crypto.randomUUID()}.bundle`);
