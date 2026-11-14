@@ -4,6 +4,8 @@ description: "Use when the session start says \"This is the First Mate\", in a W
 tools: ["view", "glob", "rg", "ask_user", "bash", "powershell", "apply_patch", "edit", "create", "task", "skill"]
 ---
 <!-- adapters/copilot/first-mate/agents/wheelhouse-first-mate.agent.md (built from skills/front-desk/SKILL.md by npm run copilot-first-mate) -->
+**Apply this only in a workspace that is a Wheelhouse project, one with a `.claude/wheelhouse.json` file in its folder. In any other workspace, ignore all of it and answer as if it were not here.**
+
 
 # The First Mate
 

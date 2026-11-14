@@ -418,3 +418,38 @@ test('a file of the person\'s own at the same name is journalled before it is re
     assert.equal(fs.readFileSync(agentFile, 'utf8'), theirs);
   });
 });
+
+test('the First Mate files say to apply only in a Wheelhouse project, and the plan says they sit there for every project', async () => {
+  for (const file of FIRST_MATE_FILES) {
+    const text = committedMate(file);
+    const body = text.slice(text.indexOf('-->'));
+    assert.match(body, /Apply this only in a workspace that is a Wheelhouse project, one with a `\.claude\/wheelhouse\.json` file/, file);
+    assert.ok(body.indexOf('Apply this only') < 200 || file.includes('agent'), 'the instructions open with it');
+  }
+  assert.match(FIRST_MATE_LINE, /for every project on this computer/);
+  await withProject(async ({ folder, user, config }) => {
+    const { env } = copilotEnv(config);
+    const planned = await stepFor(env, accountRun().run).plan(ctxFor(folder, user, { '6.agent': COPILOT }));
+    assert.match(planned.card.why, /Copilot's hook file and First Mate files/);
+  });
+});
+
+test('an update that cannot write one First Mate file names that file and keeps the other lines', { skip: process.platform === 'win32' }, async () => {
+  await withProject(async (world) => {
+    const { env, home } = await setUpCopilot(world);
+    const [agentFile, instructionsFile] = mateAt(home);
+    const root = releaseWith({ [FIRST_MATE_FILES[0]]: 'one\n', [FIRST_MATE_FILES[1]]: 'two\n' });
+    fs.chmodSync(path.dirname(agentFile), 0o500);
+    try {
+      const said = refreshAgentComputer({ env, root, platform: 'darwin' }).join('\n');
+      assert.match(said, /Copilot's hook file now points at the new release/);
+      assert.match(said, /The First Mate's file wheelhouse-first-mate\.agent\.md in .* could not be updated/);
+      assert.doesNotMatch(said, /hook file could not be updated/);
+      assert.match(said, /wheelhouse-first-mate\.instructions\.md now matches the new release/);
+      assert.equal(fs.readFileSync(instructionsFile, 'utf8'), 'two\n');
+      assert.deepEqual(fs.readdirSync(path.dirname(agentFile)).filter((f) => f.endsWith('.tmp')), [], 'no temporary file is left');
+    } finally {
+      fs.chmodSync(path.dirname(agentFile), 0o700);
+    }
+  });
+});

@@ -24,7 +24,7 @@ export const ACCOUNT_TIMEOUT_MS = 20 * 1000;
 export const SIGN_IN_WAIT_MS = 30 * 1000;
 export const SIGN_IN_WHY = "Copilot isn't signed in on this computer. Sign in with `copilot login` (GitHub's device sign-in, which only you can finish), and setup goes on once it has.";
 export const HOOKS_LINE = "Copilot's checks before each of its actions, as one hook file in your Copilot folder";
-export const FIRST_MATE_LINE = "Wheelhouse's First Mate for Copilot's chat, as an agent file and an instructions file in your Copilot folder";
+export const FIRST_MATE_LINE = "Wheelhouse's First Mate for Copilot's chat, as an agent file and an instructions file in your Copilot folder, which is there for every project on this computer (they say to apply only in a Wheelhouse project)";
 
 const isRecord = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
@@ -119,8 +119,12 @@ export function computerChanges({ env = process.env, userHome, platform = proces
 function writeWhole(target, content) {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const temp = `${target}.${process.pid}.tmp`;
-  fs.writeFileSync(temp, content);
-  fs.renameSync(temp, target);
+  try {
+    fs.writeFileSync(temp, content);
+    fs.renameSync(temp, target);
+  } finally {
+    fs.rmSync(temp, { force: true });
+  }
 }
 
 // Makes the changes: each file is written (a whole file, by a temporary file and a rename), recorded in the journal
@@ -163,9 +167,13 @@ export function refresh({
       said.push(`${what} in ${home} isn't the one setup wrote, so it was left as it is; run setup again to write it.`);
       return;
     }
-    add(held.run.id, [{ id: newId('chg'), step: held.change.step, kind: 'file', target, before: there, after: content }]);
-    write();
-    said.push(done);
+    try {
+      add(held.run.id, [{ id: newId('chg'), step: held.change.step, kind: 'file', target, before: there, after: content }]);
+      write();
+      said.push(done);
+    } catch (error) {
+      said.push(`${what} in ${home} could not be updated (${String(error?.message ?? error).replace(/\s+/g, ' ')}); run setup again to write it.`);
+    }
   };
   const hookTarget = hooks.file({ home });
   const hookText = hooks.registrationText({ node, root, platform });

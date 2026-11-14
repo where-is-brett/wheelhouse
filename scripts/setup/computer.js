@@ -232,7 +232,7 @@ export function computerCard({ changes, userSettings = {}, kept = [], route = TE
   const signing = key ? ' This computer\'s key for signing your clicks is already made.' : '';
   const variables = route === 'launch-env' && changes.some((c) => c.kind === 'env' || c.kind === 'file');
   const agents = [...new Set(changes.filter((c) => c.what === 'agent').map((c) => c.label))];
-  const alongside = agents.length > 0 ? `, and ${agents.join(' and ')}'s hook file` : '';
+  const alongside = agents.length > 0 ? `, and ${agents.join(' and ')}'s hook file${changes.some((c) => c.what === 'agent' && c.part === 'first-mate') ? ' and First Mate files' : ''}` : '';
   const why = variables
     ? `These are Claude Code's own settings, and variables for your account${platform === 'darwin' ? ' and a login item' : ''}${alongside}, on this computer.`
     : `These are Claude Code's own settings${alongside} on this computer.`;
