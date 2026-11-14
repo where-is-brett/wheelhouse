@@ -174,14 +174,24 @@ The file moves from `scripts/lib/copilot-numbers.js` to `scripts/agents/copilot/
 
 ### 5.2 What a piece of work might cost
 
-An estimate, to be replaced by measurement at trial stage T3. Counting one request per `copilot -p` prompt at 1x:
+Measured at trial stage T3 on 14 November 2026, on an Auto-only plan with no model passed. One quick-lane change on a throwaway project, from the First Mate's order to the helper's local merge, killed once mid-task and resumed:
 
-- a quick change: one feature session and one or two resumes, about **3 to 5 requests**;
-- a small feature: a plan, a build in a few wakes, a review, about **8 to 15 requests**;
+| Step | Requests |
+|---|---|
+| Feature session (killed mid-task) | 1 |
+| Resume by session id, finishing the change | 1 |
+| **The quick change** | **2** |
+
+The estimate before T3 was 3 to 5. An earlier T3 attempt the same day, which stopped at the merge because the trial's helper wasn't running, also used 2. No subagent ran in either attempt, so T3 adds nothing to check 96's finding that a subagent's turn is not its own request.
+
+From that measure, counting one request per `copilot -p` prompt at 1x:
+
+- a quick change: one feature session and a resume if it is interrupted, **1 to 2 requests**, plus one for each further resume;
+- a small feature: a plan, a build in a few wakes, a review, about **8 to 15 requests** (an estimate; not yet measured);
 - each foreman wake that needs a Copilot session: **1 request**;
 - each message the director sends the First Mate in Copilot's chat: **1 request**.
 
-If subagents count separately, a piece costs more; T3 finds out. At these figures, 200 requests is roughly 10 to 20 small pieces a month alongside the director's own chat.
+At these figures, 200 requests is roughly 10 to 20 small features, or many more quick changes, a month alongside the director's own chat.
 
 ### 5.3 Using fewer requests, since the model can't be chosen
 
