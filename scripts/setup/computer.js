@@ -200,7 +200,7 @@ function lines({ changes, userSettings, kept, route, platform, floor }) {
   if (has('push')) out.push('phone notifications on');
   const plugin = changes.find((c) => c.what === 'plugin');
   if (plugin) out.push(plugin.update ? pluginUpdateLine(plugin.update.from, plugin.update.to) : PLUGIN_SCOPE_LINE);
-  for (const c of changes.filter((x) => x.what === 'agent')) out.push(c.line);
+  for (const c of changes.filter((x) => x.what === 'agent' && x.line)) out.push(c.line);
   if (has('login')) out.push(`Start Wheelhouse's helper when you sign in${platform === 'darwin' ? ', and again within a minute if it stops' : ''}, so the build carries on with no session open`);
   return out;
 }
@@ -231,8 +231,8 @@ export function computerCard({ changes, userSettings = {}, kept = [], route = TE
   // Named without its id, which a card would read as a commit.
   const signing = key ? ' This computer\'s key for signing your clicks is already made.' : '';
   const variables = route === 'launch-env' && changes.some((c) => c.kind === 'env' || c.kind === 'file');
-  const agents = changes.filter((c) => c.what === 'agent').map((c) => c.label);
-  const alongside = agents.length > 0 ? `, and ${agents.join(' and ')}'s hook file` : '';
+  const agents = [...new Set(changes.filter((c) => c.what === 'agent').map((c) => c.label))];
+  const alongside = agents.length > 0 ? `, and ${agents.join(' and ')}'s hook file${changes.some((c) => c.what === 'agent' && c.part === 'first-mate') ? ' and First Mate files' : ''}` : '';
   const why = variables
     ? `These are Claude Code's own settings, and variables for your account${platform === 'darwin' ? ' and a login item' : ''}${alongside}, on this computer.`
     : `These are Claude Code's own settings${alongside} on this computer.`;

@@ -4,6 +4,8 @@ applyTo: "**"
 <!-- adapters/copilot/first-mate/instructions/wheelhouse-first-mate.instructions.md (built from adapters/copilot/tool-sheet.md by npm run copilot-first-mate) -->
 # Wheelhouse's First Mate in Copilot
 
+**Apply this only in a workspace that is a Wheelhouse project, one with a `.claude/wheelhouse.json` file in its folder. In any other workspace, ignore all of it and answer as if it were not here.**
+
 The Wheelhouse playbooks name your tools in general words. In Copilot:
 - Your clickable-question tool is ask_user (askQuestions in VS Code).
 - Your notification tool: none. Tell the director in the chat.

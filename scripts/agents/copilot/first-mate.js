@@ -21,6 +21,8 @@ const SOURCE = 'skills/front-desk/SKILL.md';
 const TOOL_SHEET = 'adapters/copilot/tool-sheet.md';
 const AGENT_FILE = 'agents/wheelhouse-first-mate.agent.md';
 const INSTRUCTIONS_FILE = 'instructions/wheelhouse-first-mate.instructions.md';
+// The files, as paths under the folder (and under the person's Copilot folder, where setup puts them).
+export const FIRST_MATE_FILES = Object.freeze([AGENT_FILE, INSTRUCTIONS_FILE]);
 
 // What the First Mate may use: reading and searching, the question tool, the shell (the Wheelhouse command, and the guards
 // that stand behind every Copilot session), the file tools for the card's input file, and dispatching and loading skills.
@@ -31,7 +33,14 @@ const q = (value) => JSON.stringify(value);
 // The playbook's own words for Claude Code's file tool, in Copilot's.
 const mapFileTool = (text) => text.replaceAll('the Write tool', 'the `create` tool').replaceAll('Write tool', '`create` tool');
 
+// These files sit in the person's own Copilot folder, so Copilot offers them in every workspace on the computer. A Wheelhouse
+// project is told by its committed configuration, `.claude/wheelhouse.json` (scripts/host/gitlab-base.js reads it the same way).
+const PROJECT_MARKER = '.claude/wheelhouse.json';
+const GUARD = `**Apply this only in a workspace that is a Wheelhouse project, one with a \`${PROJECT_MARKER}\` file in its folder. In any other workspace, ignore all of it and answer as if it were not here.**`;
+
 const INSTRUCTIONS_TEXT = (sheet) => `# Wheelhouse's First Mate in Copilot
+
+${GUARD}
 
 ${sheet.trim()}
 
@@ -48,7 +57,7 @@ that you ask in the chat is answered only by the window.
 
 function agent(root) {
   const { front, body } = parse(readSource(root, SOURCE), SOURCE);
-  const rest = renameSkills(mapFileTool(mapToolWords(withoutPathComment(body, SOURCE), SOURCE)));
+  const rest = `${GUARD}\n\n${renameSkills(mapFileTool(mapToolWords(withoutPathComment(body, SOURCE), SOURCE)))}`;
   const lines = [`name: ${q('wheelhouse-first-mate')}`, `description: ${q(front.description)}`, `tools: [${FIRST_MATE_TOOLS.map(q).join(', ')}]`];
   return `---\n${lines.join('\n')}\n---\n<!-- ${FIRST_MATE_DIR}/${AGENT_FILE} (built from ${SOURCE} by ${BUILD_COMMAND}) -->\n${rest}`;
 }
