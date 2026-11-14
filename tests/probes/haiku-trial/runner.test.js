@@ -204,7 +204,7 @@ function sittingIo(over = {}) {
   });
   const at = () => new Date(io.clock.now()).toISOString();
   // The helper window signs a click and names its proof; `over.unsigned` and `over.noProof` make the kinds of record that must not count.
-  const click = (data) => records.push({ id: `e${records.length}`, kind: 'action', at: at(), data: { ...data, ...(over.noProof ? {} : { proof: 'window' }) }, ...(over.unsigned ? {} : { sig: { value: 'v' } }) });
+  const click = (data) => records.push({ id: `e${records.length}`, kind: 'action', at: at(), data: { ...data, ...(over.noProof ? {} : { proof: 'window' }), }, ...(over.unsigned ? {} : { sig: { value: 'v' } }) });
   io.records = records;
   io.faults.liftTyped = () => { io.timeline.push({ kind: 'f6.lift', args: [], at: io.clock.now() }); if (!over.noLift) click({ action: 'lift-stop' }); };
   io.faults.undoTyped = (tmux, sha) => { io.timeline.push({ kind: 'undo', args: [sha], at: io.clock.now() }); if (!over.noUndo) click({ action: 'undo-merge', merge: sha }); };
@@ -291,16 +291,47 @@ test('a lift that does not come leads to one terminal ask, and the run waits for
   assert.equal(got.stoppedAt, undefined);
 });
 
-test('a lift or an undo that is not signed, or has no window proof, is not the director\'s click', async (t) => {
+test('a lift that is not signed, or an undo that is not signed or has no window proof, is not the director\'s click', async (t) => {
   for (const over of [{ unsigned: true }, { noProof: true }]) {
     const folder = scratch(t);
     const io = sittingIo(over);
     const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
-    assert.ok(got.findings.some((f) => /lifting All stop/.test(f.what)), JSON.stringify(over));
+    assert.equal(got.findings.some((f) => /lifting All stop/.test(f.what)), Boolean(over.unsigned), JSON.stringify(over));
     assert.ok(got.findings.some((f) => /the undo of money-edge/.test(f.what)), JSON.stringify(over));
     const steps = readLog(folder).map((e) => e.step);
-    for (const step of ['f6-lift', LOG.fault('F5a'), LOG.fault('F5b')]) assert.equal(steps.includes(step), false, `${step} ${JSON.stringify(over)}`);
+    for (const step of [...(over.unsigned ? ['f6-lift'] : []), LOG.fault('F5a'), LOG.fault('F5b')]) assert.equal(steps.includes(step), false, `${step} ${JSON.stringify(over)}`);
   }
+});
+
+test('a signed lift with no proof, as the chat picker writes it, lifts All stop but is a finding, not the director\'s click', async (t) => {
+  const folder = scratch(t);
+  const io = sittingIo({ noProof: true });
+  const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.equal(got.findings.some((f) => /lifting All stop/.test(f.what)), false);
+  assert.ok(readLog(folder).some((e) => e.step === 'f6-lift'));
+  assert.ok(got.findings.some((f) => /lifted from the chat picker; can't tell the director from the stand-in/.test(f.what)), JSON.stringify(got.findings));
+});
+
+test('the stand-in never presses keys on a picker that only the director decides', async (t) => {
+  const folder = scratch(t);
+  const picker = ['│ Lift All stop?', '  1. Not now', '❯ 2. Lift All stop', 'Enter to select · ↑/↓ to navigate'].join('\n');
+  const pressed = [];
+  const io = fakeIo({ capture: () => picker, keys: (name, key) => pressed.push(key) });
+  const got = await run({ mode: 'smoke', io, from: 'w2-type', until: 'w2-type', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(pressed, []);
+  assert.ok(got.findings.some((f) => /Lift All stop\?.*director's alone/.test(f.what)), JSON.stringify(got.findings));
+});
+
+test('a "Ready to submit" page left open for ten minutes is a finding and nothing is typed', async (t) => {
+  const folder = scratch(t);
+  const page = ['Ready to submit your answers?', '❯ 1. Submit answers', '  2. Cancel'].join('\n');
+  const io = fakeIo({ capture: () => page });
+  const typed = [];
+  const wrapped = io.tmux.type;
+  io.tmux.type = (name, text) => { typed.push(text); return wrapped(name, text); };
+  const got = await run({ mode: 'smoke', io, from: 'w2-type', until: 'w2-type', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(typed, []);
+  assert.ok(got.findings.some((f) => f.step === 'desk-picker' && /Ready to submit/.test(f.what)), JSON.stringify(got.findings));
 });
 
 test('keeping main counts only when it is signed', async (t) => {
@@ -850,6 +881,19 @@ test('a picker in the front desk that no card stands for is answered once it has
   await run({ mode: 'smoke', io, from: 'w2-type', until: 'w2-type', folder, date: '2026-11-08', env: ENV });
   assert.equal(order[0], 'picked 2', order.join(', '));
   assert.equal(order[1], 'typed', order.join(', '));
+  assert.equal(readLog(folder).some((e) => /typing anyway/.test(e.note)), false);
+});
+
+test('a picker that stays open is never typed into: it is a finding and the typing step is skipped', async (t) => {
+  const folder = scratch(t);
+  const picker = ['│ Lift All stop?', '  1. Not now', '❯ 2. Lift All stop', 'Enter to select · ↑/↓ to navigate'].join('\n');
+  const io = fakeIo({ capture: () => picker });
+  const typed = [];
+  const wrapped = io.tmux.type;
+  io.tmux.type = (name, text) => { typed.push(text); return wrapped(name, text); };
+  const got = await run({ mode: 'smoke', io, from: 'w2-type', until: 'w2-type', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(typed, []);
+  assert.ok(got.findings.some((f) => f.step === 'desk-picker' && /Lift All stop\?/.test(f.what)), JSON.stringify(got.findings));
   assert.equal(readLog(folder).some((e) => /typing anyway/.test(e.note)), false);
 });
 

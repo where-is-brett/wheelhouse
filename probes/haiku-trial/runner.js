@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appendJsonl } from '../lib/log.js';
 import { projectSlug } from '../../scripts/lib/paths.js';
+import { CONFIRMED_STEPS } from '../../scripts/agents/chat-clicks.js';
 import { runFolder } from './results.js';
 import { openPicker, readyToSubmit, deskBusy, HIGHLIGHTED, PICKED } from './stand-in.js';
 import { PIECES, WAVES, P5_SPARE, F2_ANSWER, P6_FILE } from './requests.js';
@@ -129,7 +130,7 @@ const newLines = (before, after) => {
 // With `ready`, it keeps waiting (up to `maxMs`) until `ready(reply)` is true, as for an answer that comes from a fork.
 async function say(ctx, text, { ready, maxMs = 90000 } = {}) {
   const { io, state } = ctx;
-  await deskFree(ctx);
+  if (!(await deskFree(ctx))) return '';
   const before = io.tmux.capture(DESK);
   io.tmux.type(DESK, text);
   let last = before;
@@ -322,7 +323,9 @@ async function localCommit(ctx, piece) {
 
 // Text typed while a picker is open goes into the picker, and text typed while the desk is working lands in a reply being
 // written or is lost. So before anything is typed to the front desk it waits for no picker, no submit page and no
-// spinner, seen twice a few seconds apart. After ten minutes it types anyway, and the wait is noted.
+// spinner, seen twice a few seconds apart. After ten minutes of a busy desk with no picker it types anyway, and the wait is
+// noted. If a picker is still open then it never types: that is a finding and the typing step is skipped, since keystrokes
+// into a picker answer a card that is the director's alone. Returns whether the desk may be typed to.
 const DESK_CALM_MS = 3000;
 async function deskFree(ctx) {
   const { io } = ctx;
@@ -332,15 +335,28 @@ async function deskFree(ctx) {
     await io.clock.sleep(DESK_CALM_MS);
     return !taken();
   };
-  if (await calm()) return;
+  if (await calm()) return true;
   const free = await waitFor(async () => { await tick(ctx); return calm(); }, { io, timeoutMs: 10 * MINUTE, everyMs: 10000 });
-  if (!free) await note(ctx, LOG.health, 'the front desk stayed busy or had a picker open for 10 minutes; typing anyway');
+  if (free) return true;
+  const pane = io.tmux.capture(DESK);
+  const picker = openPicker(pane);
+  if (picker !== null) {
+    await addFinding(ctx, 'desk-picker', `the front desk still had a picker open ("${picker.question}") after 10 minutes, so nothing was typed to it`);
+    return false;
+  }
+  if (readyToSubmit(pane)) {
+    await addFinding(ctx, 'desk-picker', 'the front desk still showed "Ready to submit your answers" after 10 minutes, so nothing was typed to it');
+    return false;
+  }
+  await note(ctx, LOG.health, 'the front desk stayed busy for 10 minutes; typing anyway');
+  return true;
 }
 
 // Types to the front desk once it is free.
 async function typeToDesk(ctx, text) {
-  await deskFree(ctx);
+  if (!(await deskFree(ctx))) return false;
   ctx.io.tmux.type(DESK, text);
+  return true;
 }
 
 // The stand-in director's reply when a request is met with questions in the chat and no card: what a director who takes
@@ -350,7 +366,7 @@ export const FOLLOW_UP = 'Go with what you recommend on each question, and take 
 // Types a piece's request, answers intake's visibility question for P8, and notes which work event it became.
 async function typeRequest(ctx, id, text = pieceOf(id).text) {
   const { io, state } = ctx;
-  await deskFree(ctx);
+  if (!(await deskFree(ctx))) return;
   const known = new Set((await io.host.events({ project: ctx.projectName })).filter((e) => e.kind === 'work').map((e) => e.data?.id));
   let answered = false;
   let followed = false;
@@ -371,8 +387,7 @@ async function typeRequest(ctx, id, text = pieceOf(id).text) {
     // The desk has finished its reply, made no work, opened no picker, and asked something: the stand-in answers once.
     if (!followed && id !== 'P8' && still >= 2 && io.clock.now() - started >= 2 * MINUTE && openPicker(pane) === null && /\?/.test(newLines(before, pane))) {
       followed = true;
-      await typeToDesk(ctx, FOLLOW_UP);
-      await note(ctx, id, `the desk asked questions and made no work; the stand-in answered: ${FOLLOW_UP}`);
+      if (await typeToDesk(ctx, FOLLOW_UP)) await note(ctx, id, `the desk asked questions and made no work; the stand-in answered: ${FOLLOW_UP}`);
     }
     await tick(ctx);
     return false;
@@ -477,6 +492,11 @@ async function desk(ctx, name, extraEnv = {}) {
   await mustBeAlive(ctx, { restart: false });
 }
 
+// The cards that confirmed steps ask (scripts/agents/chat-clicks.js's CONFIRMED_STEPS, as the cards word them): the director's alone.
+const DIRECTOR_ONLY = [...CONFIRMED_STEPS.map((step) => new RegExp(step.replace(/-/g, '[-\\s]'), 'i')), /lift\s+(all\s+)?stop/i,
+  /push this change to the checks/i, /confirm this\?/i, /keep these files as they are/i, /end the incident/i, /emergency/i];
+const isDirectorOnly = (question) => DIRECTOR_ONLY.some((re) => re.test(String(question)));
+
 // The stand-in director's answer to the picker open in a session's pane: the recommended option, or the first when none
 // is marked. The cursor is moved to it and seen there before Enter. Returns whether a picker was answered.
 async function answerPicker(ctx, name) {
@@ -486,6 +506,15 @@ async function answerPicker(ctx, name) {
   if (first === null) return false;
   const target = first.recommended === -1 ? 0 : first.recommended;
   const question = (first.question.split('\n').find((l) => l.replace(/[│\s]/g, '') !== '') ?? '').replace(/[☐│]/g, '').trim().slice(0, 160);
+  // A card only the director decides (Lift All stop and the other confirmed steps) is never answered by the stand-in.
+  if (isDirectorOnly(first.question)) {
+    const missed = (ctx.state.pickersMissed ??= []);
+    if (!missed.includes(question)) {
+      missed.push(question);
+      await addFinding(ctx, name === DESK ? 'front-desk' : name, `the picker "${question}" is the director's alone, so the stand-in left it`);
+    }
+    return false;
+  }
   for (let moves = 0; moves < first.options.length; moves += 1) {
     const now = look();
     const index = now?.options.findIndex((l) => HIGHLIGHTED.test(l)) ?? -1;
@@ -628,6 +657,12 @@ const isAction = (e, ...actions) => e.kind === 'action' && actions.includes(e.da
 // The director's own click: signed, with the helper window's proof (as the helper's own undo check in local/undo.js). An
 // action typed into the screen, or made without a signature or the window's proof, is not a click.
 const isSigned = (e, ...actions) => isAction(e, ...actions) && Boolean(e.sig) && typeof e.sig === 'object' && e.data?.proof === 'window';
+// A lift of All stop the director made: signed, with the helper window's proof or the pane's ('add-on').
+const isSignedLift = (e) => isAction(e, 'lift-stop') && Boolean(e.sig) && typeof e.sig === 'object'
+  && (e.data?.proof === 'window' || e.data?.proof === 'add-on');
+// A signed lift with no proof is what an answer to the Lift All stop picker in the chat writes: the hook signs it, so it cannot tell
+// the director's click from keys typed into the pane. It does lift All stop, but it is not counted as the director's click.
+const isChatLift = (e) => isAction(e, 'lift-stop') && Boolean(e.sig) && typeof e.sig === 'object' && e.data?.proof === undefined;
 // An event made at or after `since` (one with no readable time counts: a record without a time cannot be told from a later one).
 const notBefore = (e, since) => !(Date.parse(e.at) < since);
 
@@ -635,14 +670,25 @@ const notBefore = (e, since) => !(Date.parse(e.at) < since);
 const stopIsOn = async (ctx) => {
   const { stopAt } = ctx.state;
   if (stopAt === undefined) return false;
-  return !(await eventsOf(ctx)).some((e) => isSigned(e, 'lift-stop') && notBefore(e, stopAt - 1000));
+  return !(await eventsOf(ctx)).some((e) => (isSignedLift(e) || isChatLift(e)) && notBefore(e, stopAt - 1000));
 };
+
+// A lift made from the chat picker is a finding: the run cannot tell the director from the stand-in.
+async function flagChatLift(ctx, n) {
+  const { stopAt } = ctx.state;
+  const events = await eventsOf(ctx);
+  if (events.some((e) => isSignedLift(e) && notBefore(e, stopAt - 1000))) return;
+  if (events.some((e) => isChatLift(e) && notBefore(e, stopAt - 1000))) {
+    await addFinding(ctx, sittingId(n), "All stop lifted from the chat picker; can't tell the director from the stand-in");
+  }
+}
 
 // Waits for the director's signed lift. If it does not come it is a finding, and the one terminal ask of the sitting follows: All
 // stop holds every merge and start until it is lifted, so nothing else goes on before that ask is answered.
 async function liftWatch(ctx, io, n) {
   const lifted = async () => (await stopIsOn(ctx)) === false;
   if (await waitFor(async () => { await tick(ctx); return lifted(); }, { io, timeoutMs: CLICK_WAIT_MS })) {
+    await flagChatLift(ctx, n);
     await note(ctx, 'f6-lift', 'All stop lifted');
     return true;
   }
@@ -650,6 +696,7 @@ async function liftWatch(ctx, io, n) {
   ctx.state.liftAskedIn = n;
   await directorAsk(ctx, 'All stop is still on: lift it in the helper window when you can, then answer done.');
   if (!(await lifted())) return false;
+  await flagChatLift(ctx, n);
   await note(ctx, 'f6-lift', 'All stop lifted');
   return true;
 }
@@ -657,8 +704,7 @@ async function liftWatch(ctx, io, n) {
 // Before any click is waited for: a stop that is on (typed by an F6 that then failed, or by an earlier attempt) is lifted first.
 async function liftIfStopped(ctx, io, n) {
   if (ctx.state.liftAskedIn === n || !(await stopIsOn(ctx))) return;
-  await deskFree(ctx);
-  await io.faults.liftTyped(io.tmux);
+  if (await deskFree(ctx)) await io.faults.liftTyped(io.tmux);
   await liftWatch(ctx, io, n);
 }
 
@@ -698,7 +744,7 @@ const clickSteps = {
   // also have to be switched on under Notifications. It is a click in the sitting so the run waits for the director's window, not
   // the director's window for the run: typed at once, it blocked the desk's turn with no one watching.
   async NTFY(ctx, io) {
-    await deskFree(ctx);
+    if (!(await deskFree(ctx))) return;
     ctx.state.ntfyTopic = `haiku-trial-${ctx.date}-${Math.floor(io.clock.now() / 1000) % 100000}`;
     io.log?.('Click Yes in the "Wheelhouse: phone alerts" window, then switch ntfy on under Notifications in the front desk.');
     const reply = await say(ctx, `alerts ntfy ${ctx.state.ntfyTopic}`, { maxMs: NTFY_WAIT_MS });
@@ -708,7 +754,7 @@ const clickSteps = {
   },
   // F6: All stop typed, an undo refused under it, five minutes, then the lift (the director's click).
   async F6(ctx, io, { n }) {
-    await deskFree(ctx);
+    if (!(await deskFree(ctx))) return;
     const at = io.clock.now();
     await io.faults.f6AllStop(io.tmux);
     ctx.state.stopAt = at;
@@ -716,16 +762,16 @@ const clickSteps = {
     await note(ctx, LOG.stopSet, 'All stop typed', { detail: { at } });
     await note(ctx, LOG.fault('F6'), 'All stop set');
     const sha = await p6Sha(ctx);
-    await deskFree(ctx);
-    await io.faults.undoTyped(io.tmux, sha);
-    await io.clock.sleep(20000);
-    await note(ctx, 'f6-undo', `undo typed under All stop: ${io.tmux.capture(DESK).split('\n').filter((l) => /All stop is on/.test(l)).join(' ') || 'no refusal text seen'}`);
+    if (await deskFree(ctx)) {
+      await io.faults.undoTyped(io.tmux, sha);
+      await io.clock.sleep(20000);
+      await note(ctx, 'f6-undo', `undo typed under All stop: ${io.tmux.capture(DESK).split('\n').filter((l) => /All stop is on/.test(l)).join(' ') || 'no refusal text seen'}`);
+    }
     const until = at + 5 * MINUTE;
     await waitFor(async () => { await tick(ctx); return io.clock.now() >= until; }, { io, timeoutMs: 6 * MINUTE });
     ctx.state.panes['front-desk'].push(io.tmux.capture(DESK));
     await note(ctx, 'f6-wait-5m', 'five minutes with no new start allowed');
-    await deskFree(ctx);
-    await io.faults.liftTyped(io.tmux);
+    if (await deskFree(ctx)) await io.faults.liftTyped(io.tmux);
     io.log?.('Click Lift All stop in the helper window.');
     await liftWatch(ctx, io, n);
   },
@@ -738,7 +784,7 @@ const clickSteps = {
     }
     const sha = target.sha;
     ctx.state.undoTarget = { number: target.number, files: target.files };
-    await deskFree(ctx);
+    if (!(await deskFree(ctx))) return;
     const typedAt = io.clock.now();
     await io.faults.undoTyped(io.tmux, sha);
     io.log?.(`Click Approve on the undo of pull request #${target.number}'s merge in the helper window (the first of two).`);
@@ -753,7 +799,7 @@ const clickSteps = {
   async F5b(ctx, io, { n }) {
     const p2 = pullOf(await ghPulls(ctx), ctx.state.pieces.P2?.change ?? 'categor');
     const sha = p2?.merge_commit_sha ?? 'unknown';
-    await deskFree(ctx);
+    if (!(await deskFree(ctx))) return;
     const typedAt = io.clock.now();
     await io.faults.undoTyped(io.tmux, sha);
     io.log?.("Click Approve on the undo of piece P2's merge in the helper window (the second of two). It should clash.");

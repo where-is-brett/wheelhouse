@@ -44,6 +44,16 @@ export function openPicker(pane) {
   for (let i = lines.length - 1; i >= 0 && i >= lines.length - SCREEN_LINES; i -= 1) {
     if (PICKER.test(lines[i])) { foot = i; break; }
   }
+  // A picker whose hint line is not drawn still shows its cursor ("❯ 2. ...") on an option at the foot of the pane.
+  if (foot === -1) {
+    for (let i = lines.length - 1; i >= 0 && i >= lines.length - SCREEN_LINES; i -= 1) {
+      if (!HIGHLIGHTED.test(lines[i])) continue;
+      foot = i + 1;
+      while (foot < lines.length && (OPTION.test(lines[foot]) || /^\s+\S/.test(lines[foot]))) foot += 1;
+      if (lines.slice(foot).some((l) => l.trim() !== '')) foot = -1;
+      break;
+    }
+  }
   if (foot === -1) return null;
   let barEnd = foot - 1;
   while (barEnd >= 0 && !BAR.test(lines[barEnd])) barEnd -= 1;

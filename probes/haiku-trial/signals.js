@@ -639,7 +639,7 @@ const checks = {
     return verdict(problems, 'the undo was refused while stopped, and no undo branch was made');
   },
   40(ctx) {
-    const lift = events(ctx, KINDS.action).find((e) => e.data?.action === KINDS.liftStop);
+    const lift = events(ctx, KINDS.action).find((e) => e.data?.action === KINDS.liftStop && Boolean(e.sig) && (e.data?.proof === 'window' || e.data?.proof === 'add-on'));
     if (!lift) return logOf(ctx, 'f6-lift').length === 0 ? (failedFor(ctx, 'f6-lift', 'sitting') ?? unknown(NOT_REACHED('lifting All stop (F6)'))) : no('no signed lift-stop answer');
     const card = events(ctx, KINDS.card).some((c) => c.data?.kind === 'lift-stop');
     const resumed = logOf(ctx, STEPS.start).some((e) => ms(e.at) > ms(lift.at));
