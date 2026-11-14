@@ -1671,6 +1671,17 @@ test('a setting made by a usage card\'s pick carries the time of the card\'s off
   });
 });
 
+test('the daily digest time is a setting the front desk records: a clock time is kept, anything else is refused', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    assert.equal((await run(helper, ['record', 'setting'], JSON.stringify({ key: 'digestAt', value: '20:31' }))).code, 0);
+    // Recorded with a confirm card, as every setting is.
+    assert.ok(helper.writes().some((w) => w.kind === 'card' && w.data.question.includes('Daily digest time: 20:31 each day')));
+    const odd = await run(helper, ['record', 'setting'], JSON.stringify({ key: 'digestAt', value: '8.30pm' }));
+    assert.notEqual(odd.code, 0);
+  });
+});
+
 test('a compaction window at or below the point to prepare at is refused, and a larger one is recorded', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
