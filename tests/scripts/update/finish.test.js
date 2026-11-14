@@ -110,6 +110,7 @@ function deps(h, extra = {}) {
       heldNow: () => true,
       move: async () => null,
       addon: async () => null,
+      agentHooks: () => [],
       watcher: {
         stopWatcher: async (project) => { watcherCalls.push(['stop', project]); return { stopped: false, why: 'not running' }; },
         startWatcher: (project, o) => { watcherCalls.push(['start', project, o.pluginRoot]); return { started: true }; },

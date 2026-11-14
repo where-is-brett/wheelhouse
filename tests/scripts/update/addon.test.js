@@ -106,8 +106,9 @@ test('finish: the last line carries what the add-on step says, and it runs after
     ...finishOptions(),
     journal,
     addon: async () => { seen.push('addon'); return { done: true, lines: ['The VS Code add-on was removed.'] }; },
+    agentHooks: () => { seen.push('hooks'); return []; },
   });
   assert.equal(got.ok, true, got.line);
-  assert.deepEqual(seen, ['addon']);
+  assert.deepEqual(seen, ['addon', 'hooks']);
   assert.match(got.line, /add-on was removed/);
 }));

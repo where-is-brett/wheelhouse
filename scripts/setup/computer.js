@@ -51,6 +51,7 @@ import { projectForFolder, writeProject, registeredProjects } from '../lib/proje
 import { effectiveSettings } from '../settings/effective.js';
 import { loginEntry, installLoginStart, loginStartRecord, needsLoginStart } from '../lib/login-start.js';
 import { HELPER_START_SCRIPT } from '../agents/index.js';
+import { otherAgentsFound, agentAsk, agentChosen, signInWait, agentComputerChanges, applyAgentComputer } from '../agents/setup-parts.js';
 import { localViews } from '../hooks/session-start.js';
 import { computerId, stateDir } from '../lib/paths.js';
 import { joinedRepo } from '../lib/setup-run.js';
@@ -199,6 +200,7 @@ function lines({ changes, userSettings, kept, route, platform, floor }) {
   if (has('push')) out.push('phone notifications on');
   const plugin = changes.find((c) => c.what === 'plugin');
   if (plugin) out.push(plugin.update ? pluginUpdateLine(plugin.update.from, plugin.update.to) : PLUGIN_SCOPE_LINE);
+  for (const c of changes.filter((x) => x.what === 'agent')) out.push(c.line);
   if (has('login')) out.push(`Start Wheelhouse's helper when you sign in${platform === 'darwin' ? ', and again within a minute if it stops' : ''}, so the build carries on with no session open`);
   return out;
 }
@@ -229,9 +231,11 @@ export function computerCard({ changes, userSettings = {}, kept = [], route = TE
   // Named without its id, which a card would read as a commit.
   const signing = key ? ' This computer\'s key for signing your clicks is already made.' : '';
   const variables = route === 'launch-env' && changes.some((c) => c.kind === 'env' || c.kind === 'file');
+  const agents = changes.filter((c) => c.what === 'agent').map((c) => c.label);
+  const alongside = agents.length > 0 ? `, and ${agents.join(' and ')}'s hook file` : '';
   const why = variables
-    ? `These are Claude Code's own settings, and variables for your account${platform === 'darwin' ? ' and a login item' : ''}, on this computer.`
-    : 'These are Claude Code\'s own settings on this computer.';
+    ? `These are Claude Code's own settings, and variables for your account${platform === 'darwin' ? ' and a login item' : ''}${alongside}, on this computer.`
+    : `These are Claude Code's own settings${alongside} on this computer.`;
   const card = (what) => ({
     kind: 'setup',
     level: 3,
@@ -275,13 +279,21 @@ export function computerStep({
     const changes = computerChanges({ userSettings, manifest: { claudeCode: { floor } }, file, telemetry: telemetry.changes });
     const engineHere = engine?.wanted({ platform, hosts: projectHosts({ folder: ctx.folder, answers: ctx.answers }) }) === true;
     const plugin = engineHere ? engine.pluginScope({ claudeHome: env.CLAUDE_CONFIG_DIR || path.join(userHome, '.claude'), platform }) : [];
-    return { platform, userSettings, floor, kept: telemetry.kept, changes: [...changes, ...plugin, ...loginChanges({ platform, userHome, now: ctx.now ?? (() => new Date()), engineHere })] };
+    const agent = agentChosen(ctx.answers);
+    const forAgent = agent === null ? [] : agentComputerChanges(agent, { env, userHome, platform, root: ROOT });
+    return { platform, userHome, userSettings, floor, kept: telemetry.kept, agent, changes: [...changes, ...plugin, ...forAgent, ...loginChanges({ platform, userHome, now: ctx.now ?? (() => new Date()), engineHere })] };
   };
   return {
     n: 6,
     title: SETUP_TITLES[6],
     async plan(ctx) {
-      const { platform, userSettings, floor, kept, changes } = await world(ctx);
+      // Where another agent's command line is installed, which agent builds here is asked first, once per computer
+      // (scripts/agents/setup-parts.js); a computer with none asks nothing. A chosen agent that is not signed in waits.
+      const found = otherAgentsFound({ platform: ctx.platform ?? process.platform, env });
+      if (found.length > 0 && agentChosen(ctx.answers) === null) return { ask: agentAsk({ found, project: path.basename(ctx.folder ?? '') || undefined }) };
+      const { platform, userHome, userSettings, floor, kept, agent, changes } = await world(ctx);
+      const signIn = agent === null ? null : signInWait(agent, { env, userHome });
+      if (signIn !== null) return signIn;
       // Every setting already as Wheelhouse needs settles the step, with no Go ahead (ruling R75).
       // The director's own settings that weaken Standard are still named, as a line status shows
       // (ruling R101); the signing key, no change, is not.
@@ -300,7 +312,14 @@ export function computerStep({
       // The sign-in start keeps its own record in Wheelhouse's home, which uninstall reads (scripts/lib/login-start.js).
       for (const c of changes.filter((x) => x.what === 'login')) await installLoginStart({ entry: c.entry, run, now: ctx.now });
       for (const c of changes.filter((x) => x.what === 'plugin')) await engine.applyPlugin(c, { run, record: ctx.record });
-      for (const c of changes.filter((x) => x.what !== 'telemetry' && x.what !== 'login' && x.what !== 'plugin')) ctx.applyJsonKey({ file: c.target, key: c.key, value: c.after });
+      // The agent's own changes to this computer, then what its account shows, said as a line beside the step.
+      const chosen = agentChosen(ctx.answers);
+      const agentChanges = changes.filter((x) => x.what === 'agent');
+      if (chosen !== null && agentChanges.length > 0) {
+        const said = await applyAgentComputer(chosen, agentChanges, { record: ctx.record, newId, run, at: (ctx.now ?? (() => new Date()))(), env });
+        if (typeof said === 'string' && said.length <= SAY_CHARS) ctx.say?.(said);
+      }
+      for (const c of changes.filter((x) => !['telemetry', 'login', 'plugin', 'agent'].includes(x.what))) ctx.applyJsonKey({ file: c.target, key: c.key, value: c.after });
       // The director's own settings that weaken Standard, said in one line as the step finishes,
       // since a Go ahead on the one card shows no step 6 card (design section 15.1).
       const weak = weakeningSentence(weakening((await world(ctx)).userSettings), (line) => line.length <= SAY_CHARS);

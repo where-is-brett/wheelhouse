@@ -93,11 +93,17 @@ export function registration({ node = process.execPath, root, platform = process
   return { version: 1, hooks: Object.fromEntries(EVENTS.map((event) => [event, [entryFor(event, { node, script, platform })]])) };
 }
 
+// The hook file's text for `registration`'s arguments: what writeRegistration writes, and what setup compares a file
+// against to see whether it is already as Wheelhouse needs.
+export function registrationText({ node, root, platform } = {}) {
+  return `${JSON.stringify(registration({ node, root, platform }), null, 2)}\n`;
+}
+
 // Writes the registration to the hook file of `home`, replacing any file of that name (Lean's shell guard writes
 // the same name, so only one is ever registered). Returns the file's path. Setup's step only.
 export function writeRegistration({ home = copilotHome(), node, root, platform } = {}) {
   const target = file({ home });
-  const text = `${JSON.stringify(registration({ node, root, platform }), null, 2)}\n`;
+  const text = registrationText({ node, root, platform });
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const temp = `${target}.${process.pid}.tmp`;
   try {
@@ -109,4 +115,4 @@ export function writeRegistration({ home = copilotHome(), node, root, platform }
   return target;
 }
 
-export default Object.freeze({ registration, file, writeRegistration });
+export default Object.freeze({ registration, file, writeRegistration, registrationText });
