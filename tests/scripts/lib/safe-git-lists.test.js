@@ -591,6 +591,7 @@ function ghCallsIn(root) {
 // gh calls that are about the signed-in account, not a repository, so there is none to name. Each row is one call: its
 // file and its api path.
 const ACCOUNT_CALLS = Object.freeze([
+  { file: 'scripts/agents/copilot/setup.js', path: '/copilot_internal/user', reason: 'setup reads the Copilot plan and allowance of the signed-in account' },
 ]);
 const accountCall = (c) => ACCOUNT_CALLS.some((a) => a.file === c.file && c.call.includes(`'api', '${a.path}'`));
 

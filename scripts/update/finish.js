@@ -12,6 +12,7 @@ import { caEnv } from '../host/company-ca.js';
 import { helperClient } from '../host/helper-client.js';
 import { readHelperRecord } from '../host/helper-record.js';
 import { MARKETPLACE, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
+import { refreshAgentComputer } from '../agents/setup-parts.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { compareVersions } from '../lib/versions.js';
 import { computerId, helperAddress, jobFolder, stateDir, wheelhouseHome } from '../lib/paths.js';
@@ -22,9 +23,7 @@ import {
   RESTART_LINE, defaultCacheRoot, findByAddress, pidAlive, proveRecorded, reprove, stopProved, waitForQuiet,
 } from './old-helper.js';
 import { planNamedAddon, removeAddon } from './addon.js';
-import { parkedAgentOfProject } from '../agents/names.js';
 import { openJournal, updateLockHeld } from './journal.js';
-import { raiseParked } from './parked.js';
 import { statusLineStep } from './status-line.js';
 import { verify, readEnrolled } from '../state/signing.js';
 import { listEvents } from '../state/events.js';
@@ -240,7 +239,7 @@ export async function finish({
   project, journal, answer = null, events, enrolled, newRoot = PLUGIN_ROOT, folder, claudeHome = defaultClaudeHome(), platform = process.platform,
   to, from, client = helperClient(), refresh, old, say = () => {}, now = Date.now, sleep = pause, startHelper, hash = fileHash, record = recordUpdate,
   readRecord = readHelperRecord, startTimeOf = processStartTime, alive = pidAlive, address = helperAddress({ platform }), run = defaultRun,
-  user, cacheRoot = defaultCacheRoot(), kill, watcher, heldNow = updateLockHeld, move = realMove, addon = realAddon, parked = realParked, statusLine = statusLineStep,
+  user, cacheRoot = defaultCacheRoot(), kill, watcher, heldNow = updateLockHeld, move = realMove, addon = realAddon, agentHooks = refreshAgentComputer, statusLine = statusLineStep,
 }) {
   // Only the job's own step runs this: the update lock is held and the journal has the finish step running. It never takes
   // the lock itself, and it runs only from the plugin cache folder of the tag the journal names.
@@ -320,12 +319,14 @@ export async function finish({
     }
 
     // 3c. The pieces parked in the core cut, once the new helper is up: the VS Code add-on, removed only where the card the
-    // director clicked named it, the card about a parked agent, and Wheelhouse's own status line taken out of the local settings. They inform: a line each, never a stop for the update.
+    // director clicked named it, and Wheelhouse's own status line taken out of the local settings. They inform: a line each, never a stop for the update.
     const said = [];
     if (handing.done) {
-      for (const step of [addon, parked, statusLine]) {
+      for (const step of [addon, statusLine]) {
         try { said.push(...((await step({ project, folder: dir, journal, progress, save, client, run, platform }))?.lines ?? [])); } catch { /* it informs */ }
       }
+      // Another agent's hook file on this computer, made to name the new release's folder.
+      try { said.push(...agentHooks({ root: newRoot, platform })); } catch { /* it informs */ }
     }
 
     // 4. The watcher, restarted from the new folder, only through stopWatcher and startWatcher.
@@ -356,11 +357,6 @@ export async function finish({
 async function realAddon({ journal, progress, save, run, platform }) {
   if (!planNamedAddon(journal)) return null;
   return removeAddon({ run, platform, progress, save });
-}
-
-// The card about a parked agent, for the project's folder, with the real state.
-function realParked({ project, folder, client, progress, save }) {
-  return raiseParked({ project, folder, client, progress, save, parked: (where) => parkedAgentOfProject(where, { computerId: computerId() }) });
 }
 
 // The move off Archon with the real helper, settings and connector. Archon's connector is built only for a project that

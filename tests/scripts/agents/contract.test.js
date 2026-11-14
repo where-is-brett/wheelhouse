@@ -74,8 +74,11 @@ test('agentOfProject defaults to claude-code and reads the computer\'s entry', (
     fs.writeFileSync(file, '{ not json');
     assert.equal(agentOfProject(dir, { computerId: 'c1' }), 'claude-code');
     fs.writeFileSync(file, JSON.stringify({ agents: { c1: 'copilot' } }));
-    assert.equal(agentOfProject(dir, { computerId: 'c1' }), 'claude-code', 'a record that names a parked agent still runs on Claude Code');
+    assert.equal(agentOfProject(dir, { computerId: 'c1' }), 'copilot');
     assert.equal(agentOfProject(dir, { computerId: 'c2' }), 'claude-code');
+    fs.writeFileSync(file, JSON.stringify({ agents: { c1: 'model-x' } }));
+    assert.equal(agentOfProject(dir, { computerId: 'c1' }), 'claude-code', 'a record that names a parked agent still runs on Claude Code');
+    fs.writeFileSync(file, JSON.stringify({ agents: { c1: 'copilot' } }));
     assert.equal(agentOfProject(dir), 'claude-code');
     fs.writeFileSync(file, JSON.stringify({ agents: ['copilot'] }));
     assert.equal(agentOfProject(dir, { computerId: '0' }), 'claude-code');

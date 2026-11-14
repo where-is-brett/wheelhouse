@@ -235,14 +235,17 @@ test('through a .cmd shim the whole line is quoted, and one cmd.exe would change
 
 // ---- Switched off ----
 
-test('the part as shipped is switched off: every check, call and prepare refuses while BACKGROUND_SESSIONS_READY is off', async () => {
+test('the part as shipped is switched on, and one built switched off refuses every check, call and prepare', async () => {
   assert.equal(copilot.sessions, sessions);
-  assert.throws(() => sessions.checkForeman(CONFIG), /aren't switched on/);
-  assert.throws(() => sessions.checkFeature(CONFIG), /aren't switched on/);
-  assert.throws(() => sessions.foremanCall({ config: CONFIG, project: P, prompt: 'x' }), /aren't switched on/);
-  assert.throws(() => sessions.featureStartCall({}), /aren't switched on/);
-  assert.throws(() => sessions.featureResumeCall({}), /aren't switched on/);
-  await assert.rejects(sessions.prepare({ project: P, target: 'foreman' }), /aren't switched on/);
+  assert.doesNotThrow(() => sessions.checkForeman(CONFIG));
+  assert.doesNotThrow(() => sessions.checkFeature(CONFIG));
+  const off = sessionsPart({ ready: false });
+  assert.throws(() => off.checkForeman(CONFIG), /aren't switched on/);
+  assert.throws(() => off.checkFeature(CONFIG), /aren't switched on/);
+  assert.throws(() => off.foremanCall({ config: CONFIG, project: P, prompt: 'x' }), /aren't switched on/);
+  assert.throws(() => off.featureStartCall({}), /aren't switched on/);
+  assert.throws(() => off.featureResumeCall({}), /aren't switched on/);
+  await assert.rejects(off.prepare({ project: P, target: 'foreman' }), /aren't switched on/);
 });
 
 // ---- The version check before every start ----

@@ -57,8 +57,8 @@ export const SETTINGS = {
   usageMark: { label: 'Usage nudge', group: 'everyday', levels: ['off', 50, 65, 75, 90], default: 75, home: 'profile' },
   // Copilot's plan, the month's allowance in the plan's own unit and the most Copilot may cost a month in US dollars
   // (Copilot return design, section 4). The ceiling applies only on a plan that can charge.
-  // Group `agent`: kept for the agent a computer runs on, and not in the settings text a Claude Code director reads (part 11
-  // shows them where a computer runs Copilot).
+  // Group `agent`: kept for the agent a computer runs on, and not in the settings text, which lists only the everyday and
+  // advanced groups.
   // `say` is a setting's value in plain words, where the value alone doesn't read (scripts/settings/effective.js).
   copilotPlan: {
     label: 'Copilot plan', group: 'agent', levels: ['auto-only', 'credits', 'requests'], default: 'auto-only', home: 'profile',

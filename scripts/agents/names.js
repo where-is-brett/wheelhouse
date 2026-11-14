@@ -7,10 +7,8 @@ import path from 'node:path';
 import { withoutBom } from '../gate/guardrails.js';
 
 export const AGENTS = Object.freeze(['claude-code', 'copilot']);
-// The agents a project can run today. Copilot has an adapter but is switched on for a project only by the last part of its
-// build (docs/specs/2026-11-10-copilot-return-design.md, section 8, part 11), so a project that names it is still told
-// it is parked.
-const SWITCHED_ON = Object.freeze(['claude-code']);
+// The agents a project can run today. A name outside this list is parked: the project runs on Claude Code.
+const SWITCHED_ON = Object.freeze(['claude-code', 'copilot']);
 // The agents whose steps read Wheelhouse's own skill copies rather than the kits, so a project's hold goes by those
 // copies.
 const READ_OWN_COPIES = Object.freeze(['copilot']);
@@ -18,14 +16,19 @@ export const readsOwnCopies = (agent) => READ_OWN_COPIES.includes(agent);
 
 const isMap = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-// The agent a project runs: Claude Code, whatever the `agents` map of its configuration holds. A project that was
-// set to run on a parked agent keeps its map, which is read only by parkedAgentOf and is otherwise ignored.
-export function agentOfConfig() {
+// The agent this computer runs, from the `agents` map of a project's configuration ({ "<computer id>": "copilot" }).
+// No map, no entry for the computer, or an entry naming a parked agent gives 'claude-code'.
+export function agentOfConfig(config, { computerId: id } = {}) {
+  const agents = config?.agents;
+  if (isMap(agents) && typeof id === 'string' && Object.hasOwn(agents, id)) {
+    const name = agents[id];
+    if (typeof name === 'string' && SWITCHED_ON.includes(name)) return name;
+  }
   return 'claude-code';
 }
 
-// The name of a parked agent the configuration's `agents` map gives this computer (for example 'copilot'), or null.
-// Only the update reads it, to tell the director that agent is parked.
+// The name of a parked agent the configuration's `agents` map gives this computer, or null: an entry naming an agent
+// Wheelhouse does not run, which the project ignores.
 export function parkedAgentOf(config, { computerId: id } = {}) {
   const agents = config?.agents;
   if (isMap(agents) && typeof id === 'string' && Object.hasOwn(agents, id)) {
@@ -61,13 +64,8 @@ export function agentsNamedAbove(folder) {
 // For a caller that holds no configuration from the default branch (setup). A missing or unreadable file gives
 // 'claude-code'. The waker and the foreman's start never use this: they take the agent from the default
 // branch's configuration, as they take the mode and the models, never from the working copy.
-export function agentOfProject() {
-  return 'claude-code';
-}
-
-// The same for a folder's own configuration: the parked agent's name, or null.
-export function parkedAgentOfProject(project, options = {}) {
-  return parkedAgentOf(folderConfig(project), options);
+export function agentOfProject(project, options = {}) {
+  return agentOfConfig(folderConfig(project), options);
 }
 
 // The agent the project in `folder` runs on this computer, as its working copy's configuration names it, or null

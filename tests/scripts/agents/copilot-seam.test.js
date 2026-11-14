@@ -37,11 +37,12 @@ test("each registry holds the adapter's own part", () => {
   assert.equal(readsOwnCopies('claude-code'), false);
 });
 
-test("Copilot's input is told apart, and a project that names it still runs on Claude Code", () => {
+test("Copilot's input is told apart, and a project that names it for this computer runs on it", () => {
   assert.equal(agentOfInput({ toolName: 'bash', sessionId: 's' }), 'copilot');
   assert.equal(agentOfInput({ hook_event_name: 'PreToolUse', toolName: 'bash' }), 'claude-code');
   const config = { agents: { c1: 'copilot' } };
-  assert.equal(agentOfConfig(config, { computerId: 'c1' }), 'claude-code');
-  assert.equal(parkedAgentOf(config, { computerId: 'c1' }), 'copilot');
-  assert.equal(sessionsOfProject(config), claudeCode.sessions);
+  assert.equal(agentOfConfig(config, { computerId: 'c1' }), 'copilot');
+  assert.equal(agentOfConfig(config, { computerId: 'c2' }), 'claude-code');
+  assert.equal(parkedAgentOf(config, { computerId: 'c1' }), null);
+  assert.equal(sessionsFor('copilot'), copilot.sessions);
 });

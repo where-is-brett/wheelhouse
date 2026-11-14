@@ -146,3 +146,13 @@ test('an older project record holding capRequests loads, and the setting is not 
   assert.deepEqual(e.briefing, { value: 'short', from: 'project' });
   assert.equal(/credits/i.test(settingsText(e)), false);
 });
+
+test('the settings kept for another agent follow the others only where the computer runs that agent', () => {
+  const effective = effectiveSettings({ project: {}, profile: {}, now: NOON });
+  assert.equal(/Copilot/.test(settingsText(effective)), false);
+  assert.equal(/Copilot/.test(settingsText(effective, undefined, { agent: 'claude-code' })), false);
+  const text = settingsText(effective, undefined, { agent: 'copilot' });
+  assert.match(text, /^Copilot plan: Auto only, counted in requests \(the default\)$/m);
+  assert.match(text, /^Copilot allowance a month: 200 requests \(the default\)$/m);
+  assert.match(text, /^Copilot ceiling a month \(US dollars\): US\$20 \(the default\)$/m);
+});

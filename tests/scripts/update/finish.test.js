@@ -8,6 +8,7 @@ import {
   finish, helperCard, main, realRefreshes, STOP_IT, LEAVE_IT, WAIT_LONGER, ASK_AGAIN_MS,
 } from '../../../scripts/update/finish.js';
 import { openJournal } from '../../../scripts/update/journal.js';
+import { refreshAgentComputer } from '../../../scripts/agents/setup-parts.js';
 import { moveOffArchon } from '../../../scripts/update/engine-move.js';
 import { RESTART_LINE } from '../../../scripts/update/old-helper.js';
 import { readOwnFilesState } from '../../../scripts/health/own-files.js';
@@ -110,7 +111,7 @@ function deps(h, extra = {}) {
       heldNow: () => true,
       move: async () => null,
       addon: async () => null,
-      parked: async () => null,
+      agentHooks: () => [],
       watcher: {
         stopWatcher: async (project) => { watcherCalls.push(['stop', project]); return { stopped: false, why: 'not running' }; },
         startWatcher: (project, o) => { watcherCalls.push(['start', project, o.pluginRoot]); return { started: true }; },
@@ -500,4 +501,14 @@ test('finish: a move Archon does not answer holds the update until it runs again
   const got = await finish({ ...options, journal });
   assert.equal(got.ok, false);
   assert.match(got.line, /did not answer/);
+}));
+
+test('finish says what the hook refresh did, on a scratch Copilot home', () => as(shortHome(), async () => {
+  const journal = setUp();
+  const h = helper({ version: '0.2.7' });
+  const scratch = temp('wh-copilot-');
+  const { options } = deps(h, { agentHooks: (o) => refreshAgentComputer({ ...o, env: { COPILOT_HOME: scratch } }) });
+  const got = await finish({ ...options, journal });
+  assert.equal(got.ok, true, got.line);
+  assert.equal(fs.existsSync(path.join(scratch, 'hooks')), false, 'a computer with no hook file is left alone');
 }));

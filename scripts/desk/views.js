@@ -19,6 +19,9 @@ import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { crewNow } from '../crew/runs.js';
 import { paneLive } from '../lib/session-files.js';
+import { registeredProjects } from '../lib/projects.js';
+import { computerId } from '../lib/paths.js';
+import { agentInFolder } from '../agents/names.js';
 import { listHolds } from '../crew/hold.js';
 import { contextText } from './context.js';
 import { readStatus } from '../safekeeping/readings.js';
@@ -308,6 +311,14 @@ export function deskWords(views, own, now, names = []) {
 }
 
 // The record's views as the helper gives them ({ views, names, stop, cards, answers }), or a refusal.
+// The agent the source's project runs on this computer; Claude Code where that can't be told.
+function agentOfSource(source) {
+  try {
+    const folder = registeredProjects().find((p) => p.project === source.project)?.record?.folder;
+    return agentInFolder(folder, { computerId: computerId() }) ?? 'claude-code';
+  } catch { return 'claude-code'; }
+}
+
 async function recordOf(source, args) {
   const got = await source.views(args);
   if (got?.ok !== true || !isPlain(got.views)) return { refused: got?.refused ?? NO_RECORD };
@@ -504,7 +515,7 @@ const VIEWS = {
     if (got.refused) return { ok: false, refused: got.refused };
     const own = await ownSettings(source);
     const effective = effectiveSettings({ project: isPlain(got.views.settings) ? got.views.settings : {}, profile: own, now });
-    return { ok: true, data: { effective, project: got.views.settings ?? {}, profile: own, stop: got.stop === true }, lines: lined(settingsText(effective)) };
+    return { ok: true, data: { effective, project: got.views.settings ?? {}, profile: own, stop: got.stop === true }, lines: lined(settingsText(effective, undefined, { agent: agentOfSource(source) })) };
   },
 
   async usage(args, source) {

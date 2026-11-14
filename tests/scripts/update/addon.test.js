@@ -1,13 +1,11 @@
-// tests/scripts/update/parked-and-addon.test.js
-// The two things the update says about pieces parked in the core cut: a VS Code add-on left on this computer (a line on the
-// Update card, removed only after the director's click on it) and a project whose configuration still names a parked agent
-// (one card, asked once per project).
+// tests/scripts/update/addon.test.js
+// What the update says about the VS Code add-on parked in the core cut: one left on this computer is a line on the
+// Update card, and is removed only after the director's click on it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { addonInstalled, removeAddon, planNamedAddon, ADDON_ID, ADDON_ON_CARD } from '../../../scripts/update/addon.js';
-import { raiseParked, parkedAsked, parkedCard, PARKED_AGENT_CARD } from '../../../scripts/update/parked.js';
 import { updateCard } from '../../../scripts/update/cards.js';
 import { finish } from '../../../scripts/update/finish.js';
 import { openJournal } from '../../../scripts/update/journal.js';
@@ -89,44 +87,6 @@ test('a refused removal says how to do it by hand and is not tried again', async
   assert.deepEqual(calls, ['--list-extensions', '--uninstall-extension']);
 });
 
-test('the parked agent card names the agent, offers Claude Code and changes no configuration', () => {
-  const card = parkedCard({ agent: 'copilot', name: 'tide-tables' });
-  assert.equal(card.card.kind, 'question');
-  assert.match(card.question.question, /tide-tables/);
-  assert.match(card.question.question, /Copilot/);
-  assert.equal(card.question.options[0].label, PARKED_AGENT_CARD.carryOn);
-  assert.equal(card.question.options.length, 2);
-});
-
-test('a project naming a parked agent gets one card, and a second run of the update asks nothing', () => withHome(async () => {
-  const writes = [];
-  const client = { state: { write: async (body) => { writes.push(body); return { ok: true }; } } };
-  const folder = tempFolder('wh-parked-');
-  const config = path.join(folder, '.claude', 'wheelhouse.json');
-  fs.mkdirSync(path.dirname(config), { recursive: true });
-  const text = JSON.stringify({ agents: { c1: 'copilot' } });
-  fs.writeFileSync(config, text);
-  const given = { project: 'o__p', folder, client, parked: () => 'copilot', now: () => new Date('2026-11-07T09:00:00Z') };
-  const first = await raiseParked({ ...given, progress: {}, save: () => {} });
-  assert.equal(first.done, true);
-  assert.equal(writes.filter((w) => w.kind === 'card').length, 1);
-  assert.deepEqual(parkedAsked('o__p'), { copilot: '2026-11-07T09:00:00.000Z' });
-  const second = await raiseParked({ ...given, progress: {}, save: () => {} });
-  assert.equal(second.done, true);
-  assert.equal(writes.length, 1, 'not asked again on a later update');
-  assert.equal(fs.readFileSync(config, 'utf8'), text, 'the configuration is as it was');
-}));
-
-test('a project with no parked agent, or a card the state would not take, leaves nothing recorded', () => withHome(async () => {
-  const folder = tempFolder('wh-parked-');
-  const none = await raiseParked({ project: 'o__p', folder, client: { state: { write: async () => { throw new Error('no'); } } }, parked: () => null, progress: {}, save: () => {} });
-  assert.equal(none.done, true);
-  const refusing = { state: { write: async () => ({ ok: false, refused: 'busy' }) } };
-  const got = await raiseParked({ project: 'o__p', folder, client: refusing, parked: () => 'copilot', progress: {}, save: () => {} });
-  assert.equal(got.done, false);
-  assert.deepEqual(parkedAsked('o__p'), {}, 'asked again at the next update');
-}));
-
 test('the plan names the add-on only when the card the director clicked did', () => withHome(async () => {
   const journal = openJournal('proj');
   assert.equal(planNamedAddon(journal), false, 'no plan, no removal');
@@ -137,7 +97,7 @@ test('the plan names the add-on only when the card the director clicked did', ()
   assert.equal(planNamedAddon(journal), true);
 }));
 
-test('finish: the last line carries what the add-on and the parked agent steps say, and both run after the hand-over', () => withHome(async () => {
+test('finish: the last line carries what the add-on step says, and it runs after the hand-over', () => withHome(async () => {
   const journal = openJournal('proj');
   journal.mark('checks', 'done', { tag: 'v0.3.1' });
   journal.mark('finish', 'running');
@@ -146,9 +106,9 @@ test('finish: the last line carries what the add-on and the parked agent steps s
     ...finishOptions(),
     journal,
     addon: async () => { seen.push('addon'); return { done: true, lines: ['The VS Code add-on was removed.'] }; },
-    parked: async () => { seen.push('parked'); return { done: true, lines: ['copilot is parked.'] }; },
+    agentHooks: () => { seen.push('hooks'); return []; },
   });
   assert.equal(got.ok, true, got.line);
-  assert.deepEqual(seen, ['addon', 'parked']);
+  assert.deepEqual(seen, ['addon', 'hooks']);
   assert.match(got.line, /add-on was removed/);
 }));

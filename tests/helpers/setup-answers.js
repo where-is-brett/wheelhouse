@@ -85,7 +85,7 @@ export async function withProject(fn, { files = {}, connected = true } = {}) {
         }, { client, now: () => at });
         return sent.slice(from);
       };
-      const result = await fn({ home, user, config, folder, plan, answer, sent, connect });
+      const result = await fn({ home, user, config, folder, plan, answer, sent, connect, tools });
       assert.deepEqual(tools.calls(), [], 'no host tool ran');
       return result;
     });

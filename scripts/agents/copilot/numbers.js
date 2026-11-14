@@ -40,13 +40,14 @@ export const C6_PASSED = false;
 // (ruling P7-20); until then the gate counts no review on Copilot, and refuses with NO_CLEAN_REVIEW. Read only by
 // adapters/copilot/review.js.
 export const REVIEW_SESSION_READY = false;
-// Whether the watcher's background Copilot sessions (the foreman's wakes and the builders) are switched on. It is
-// false until their held first real runs pass and are recorded in checks 61 and 63: a guard seen firing in a session
-// started this way, a resume in the same home, the foreman's quoted shell rule, and the loop's tools under the rules
-// (ruling P8-1). Until then Copilot's checkForeman and checkFeature refuse, so no watcher starts one and the helper's
-// sign-in start makes no watcher for a Copilot project. It moves only by a commit of its own. Read only by
-// adapters/copilot/sessions.js.
-export const BACKGROUND_SESSIONS_READY = false;
+// Whether the watcher's background Copilot sessions (the foreman's wakes and the builders) are switched on. Part 11
+// of the Copilot return turned it on, with setup, so a project set to Copilot on a computer starts its sessions
+// there. When it is false, Copilot's checkForeman and checkFeature refuse, so no watcher starts one and the helper's
+// sign-in start makes no watcher for a Copilot project. Read only by adapters/copilot/sessions.js.
+// Still to be seen on a real run: a guard firing in a session the watcher started, a resume in the same home, and the
+// foreman's quoted shell rule. They are checked in trial stages T5 and T6 and recorded in docs/checks/61-sessions.md; until
+// then only the stand-in tests show them.
+export const BACKGROUND_SESSIONS_READY = true;
 // Whether check 57 (the sandbox test, sitting S3) has shown Copilot's sandbox refuses every try on this computer, so
 // a Copilot step runs in it (adapters/copilot/sandbox.js). It stays false until its own pull request after S3.
 export const COPILOT_SANDBOX_CHECKED = false;

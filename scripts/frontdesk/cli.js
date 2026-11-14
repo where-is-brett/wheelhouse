@@ -132,6 +132,8 @@ export { surveyLines, workLines };
 import { SUGGEST, WHY, suggestedAt } from '../lib/calm-words.js';
 import { keep, taken } from '../hooks/pending.js';
 import { projectOf } from '../hooks/kit.js';
+import { agentInFolder } from '../agents/names.js';
+import { computerId } from '../lib/paths.js';
 import { noteProblem } from '../lib/session-note.js';
 import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
 
@@ -238,6 +240,11 @@ async function viewsOf(client, cwd, { cards = false, answers = false, since, ses
 }
 
 // The director's own settings view, as the desk's settings view gives it; none when it can't be read.
+// The agent the project in `cwd` runs on this computer; Claude Code where that can't be told.
+function agentHere(cwd) {
+  try { return agentInFolder(cwd, { computerId: computerId() }) ?? 'claude-code'; } catch { return 'claude-code'; }
+}
+
 async function ownSettings(client, cwd) {
   try {
     const got = await deskOf(client, cwd).read('settings');
@@ -1430,7 +1437,7 @@ export async function view({ client, cwd, name, now, since: from }) {
   }
   // settings: the project's over the director's own, over the defaults
   const own = await ownSettings(client, cwd);
-  return settingsText(effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now })).split('\n');
+  return settingsText(effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now }), undefined, { agent: agentHere(cwd) }).split('\n');
 }
 
 // The decision topics on earlier cards, for a card to reuse one, sorted by topic. Levels an earlier version confirmed for a
