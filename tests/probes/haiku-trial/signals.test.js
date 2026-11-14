@@ -509,3 +509,14 @@ test('rows read what the run went past as not covered, and what the product writ
   const full = ctxWith({ prs: [pr(1, { mergedAt: '2026-11-13T10:00:00Z', body })] });
   assert.equal(row(25).check(full).pass, true);
 });
+
+test('row 7 compares work-ready with the click that approved the work, not with a later card-answer', () => {
+  const change = 'statement-import';
+  const card = ev('card', { kind: KINDS.approveWork, question: `Approve ${change}`, work: change }, '2026-11-13T17:48:03.000Z', { id: 'c1' });
+  const action = ev('action', { action: KINDS.approveWork, work: change }, '2026-11-13T17:48:03.698Z');
+  const answer = ev('card-answer', { question: `Approve ${change}` }, '2026-11-13T17:48:03.968Z');
+  const base = { pieces: { P1: { change, prs: [] } }, events: [card, action, answer] };
+  const ready = (at) => [{ step: 'work-ready', work: change, note: `work-ready ${change}`, at }];
+  assert.doesNotMatch(row(7).check(ctxWith({ ...base, smoke: true, runLog: ready('2026-11-13T17:48:03.698Z') })).evidence, /no work-ready for P1/);
+  assert.match(row(7).check(ctxWith({ ...base, smoke: true, runLog: ready('2026-11-13T17:48:03.000Z') })).evidence, /no work-ready for P1/);
+});

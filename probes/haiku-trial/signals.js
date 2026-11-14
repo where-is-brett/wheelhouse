@@ -268,7 +268,11 @@ const checks = {
       if (!card) { problems.push(`${id} has no plan card`); continue; }
       const at = answeredAt(ctx, card);
       if (at === null) { problems.push(`${id}'s plan card was never answered`); continue; }
-      const ready = logOf(ctx, STEPS.workReady).filter((e) => e.work === change && ms(e.at) >= at - 2000);
+      // The runner's work-ready for a card-approved work is the signed approve-work action's own time, and the click writes that action
+      // just before its card-answer (run 2026-11-13-s: 17:48:03.698 then 17:48:03.968), so the answer is the earlier of the two records.
+      const approved = events(ctx, KINDS.action).filter((e) => e.data?.action === KINDS.approveWork && e.data.work === change).map((e) => ms(e.at));
+      const from = Math.min(at, ...approved);
+      const ready = logOf(ctx, STEPS.workReady).filter((e) => e.work === change && ms(e.at) >= from);
       if (ready.length === 0) problems.push(`no work-ready for ${id} after its plan card was answered`);
     }
     return verdict(problems, 'plan card shown, answered, then work-ready');
