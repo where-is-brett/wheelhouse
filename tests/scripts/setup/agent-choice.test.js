@@ -234,3 +234,39 @@ test('an update points an existing hook file at the new release, leaves a comput
   assert.ok(text.includes(second) && !text.includes(first));
   assert.deepEqual(refreshAgentComputer({ env, root: second, platform: 'darwin' }), []);
 });
+
+// ---- Through the engine's routes, on the real step 6 ----
+
+test('through /setup/plan, step 6 asks which agent, then waits for the sign-in, then lists the hook file', async () => {
+  const bin = tempFolder('wh-bin-');
+  fs.writeFileSync(path.join(bin, 'copilot'), '#!/bin/sh\n');
+  const before = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${before}`;
+  try {
+    await withProject(async ({ folder, plan, answer, home, tools }) => {
+      const copilotHome = process.env.COPILOT_HOME;
+      fs.rmSync(copilotHome, { recursive: true, force: true });
+      const asked = await plan(6);
+      assert.equal(asked.ask.id, 'agent');
+      assert.deepEqual(asked.ask.card.options.map((o) => o.label), ['Claude Code', 'Copilot']);
+
+      // The click is recorded with the card; the next plan reads it. Not signed in yet: the step waits and says why.
+      await answer(asked.ask.card, 'Copilot');
+      const waiting = await plan(6);
+      assert.match(JSON.stringify(waiting), /copilot login/);
+      assert.equal(fs.existsSync(path.join(copilotHome, 'hooks')), false, 'nothing is written while it waits');
+
+      fs.mkdirSync(copilotHome, { recursive: true });
+      fs.writeFileSync(path.join(copilotHome, 'config.json'), '{"loggedInUsers":[{"host":"github.com","login":"someone"}]}\n');
+      const planned = await plan(6);
+      assert.match(JSON.stringify(planned), /Copilot's checks before each of its actions/);
+      assert.equal(fs.existsSync(path.join(copilotHome, 'hooks')), false, 'planning changes nothing');
+      assert.ok(folder && home);
+      // The real step 6 reads the launch environment for telemetry through the stand-in launchctl; no host tool ran.
+      assert.ok(tools.calls().every((line) => line.startsWith('launchctl getenv ')), tools.calls().join('\n'));
+      tools.reset();
+    });
+  } finally {
+    process.env.PATH = before;
+  }
+});
