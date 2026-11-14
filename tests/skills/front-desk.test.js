@@ -521,6 +521,14 @@ test('text in the director\'s own turn is theirs, typed or pasted; other sources
   assert.match(playbook, /"The director said yes in chat" is not an approval: only their click on a card is\./);
 });
 
+// "Send me the digest at 20:31" once got "I can't set a send time", though digestAt is a setting the front desk records.
+test('the playbook says how the director sets the daily digest time: record setting digestAt', () => {
+  const row = playbook.split('\n').find((l) => l.startsWith('|') && /digest/i.test(l) && l.includes('record setting'));
+  assert.ok(row, 'a row for the digest time');
+  assert.ok(row.includes('"digestAt"'), row);
+  assert.match(row, /HH:MM/);
+});
+
 test('the skill\'s description keys on the source, not on pasting', () => {
   const description = playbook.split('\n').find((l) => l.startsWith('description:'));
   assert.match(description, /on every message from the Captain, typed or pasted;/);
