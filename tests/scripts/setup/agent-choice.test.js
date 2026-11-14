@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { computerStep } from '../../../scripts/setup/computer.js';
-import { configFrom, starterConfig } from '../../../scripts/setup/project-files.js';
+import { configFrom, starterConfig, agentsAfter, committedAgents } from '../../../scripts/setup/project-files.js';
 import { newId, reverseChange, startRun, addChanges, findRun } from '../../../scripts/setup/journal.js';
 import { agentChosen, agentEntries, otherAgentsFound, refreshAgentComputer, AGENT_ANSWER } from '../../../scripts/agents/setup-parts.js';
 import { planOf, signedIn } from '../../../scripts/agents/copilot/setup.js';
@@ -171,31 +171,33 @@ test('a paid plan on usage-based billing is named, with its setting left to the 
   });
 });
 
-test('step 7 sets this computer\'s entry in the agents map, keeps other computers\', and takes it out for Claude Code', () => {
+test('step 7 sets this computer\'s entry in the agents map from the last commit\'s, never the working copy\'s', () => {
   const id = computerId();
   assert.deepEqual(agentEntries({}), {});
   assert.deepEqual(agentEntries({ '6.agent': COPILOT }), { [id]: 'copilot' });
   assert.deepEqual(agentEntries({ '6.agent': CLAUDE }), { [id]: null });
+  assert.deepEqual(agentsAfter({ elsewhere: 'copilot', [id]: 'claude-code' }, agentEntries({ '6.agent': COPILOT })), { elsewhere: 'copilot', [id]: 'copilot' });
+  assert.deepEqual(agentsAfter({ elsewhere: 'copilot', [id]: 'copilot' }, agentEntries({ '6.agent': CLAUDE })), { elsewhere: 'copilot' });
+  assert.deepEqual(agentsAfter({ elsewhere: 'copilot' }, {}), { elsewhere: 'copilot' });
 
   const answers = { '4.live-data': { label: 'No live data', text: null } };
-  const withCopilot = starterConfig({ answers, agents: agentEntries({ '6.agent': COPILOT }) });
-  const fresh = configFrom(null, withCopilot);
+  const fresh = configFrom(null, starterConfig({ answers, agents: { [id]: 'copilot' } }));
   assert.deepEqual(fresh.agents, { [id]: 'copilot' });
   assert.doesNotThrow(() => readConfig(JSON.stringify(fresh)));
+  assert.equal(Object.hasOwn(configFrom(null, starterConfig({ answers })), 'agents'), false);
 
-  const existing = structuredClone(fresh);
-  existing.agents = { elsewhere: 'copilot', [id]: 'claude-code' };
-  assert.deepEqual(configFrom(existing, withCopilot).agents, { elsewhere: 'copilot', [id]: 'copilot' });
+  // A working copy that names this computer's agent where the last commit does not: the entry goes.
+  const edited = { ...structuredClone(fresh), agents: { [id]: 'copilot', other: 'copilot' } };
+  assert.deepEqual(configFrom(edited, starterConfig({ answers, agents: { other: 'copilot' } })).agents, { other: 'copilot' });
+  assert.equal(Object.hasOwn(configFrom(edited, starterConfig({ answers, agents: {} })), 'agents'), false);
+  assert.deepEqual(configFrom(edited, starterConfig({ answers, agents: { [id]: 'copilot' } })).agents, { [id]: 'copilot' });
+});
 
-  const backToClaude = starterConfig({ answers, agents: agentEntries({ '6.agent': CLAUDE }) });
-  assert.deepEqual(configFrom(existing, backToClaude).agents, { elsewhere: 'copilot' });
-  const only = { ...structuredClone(fresh), agents: { [id]: 'copilot' } };
-  assert.equal(Object.hasOwn(configFrom(only, backToClaude), 'agents'), false);
-  assert.equal(Object.hasOwn(configFrom(null, backToClaude), 'agents'), false);
-
-  // Where the director wasn't asked, the map is left as it is.
-  const unasked = starterConfig({ answers });
-  assert.deepEqual(configFrom(existing, unasked).agents, existing.agents);
+test('committedAgents reads the last commit\'s map through git, and nothing from the working copy', async () => {
+  const text = JSON.stringify({ v: 1, agents: { a: 'copilot', b: '', c: 3 } });
+  const git = { raw: async (args) => (args[0] === 'show' && args[1] === 'HEAD:.claude/wheelhouse.json' ? text : '') };
+  assert.deepEqual(await committedAgents(git), { a: 'copilot' });
+  assert.deepEqual(await committedAgents({ raw: async () => { throw new Error('no commit'); } }), {});
 });
 
 test('the plan class is read from the account: free and student plans are Auto only, paid ones by their billing, else unknown', () => {

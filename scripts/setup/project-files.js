@@ -299,16 +299,16 @@ function sameContent(rel, a, b) {
 // `everyRole` is one model for the whole routing table (see best-model.js's SOLE_MODEL_VARIABLE).
 // `listens` is true only when the last commit's configuration holds `localListening: true` (see committedListening):
 // no question asks for it, and a true that is only in the working copy is not honoured.
-export function starterConfig({ answers = {}, frontDesk = null, midSized = null, found = null, everyRole = null, listens = false, agents = {} } = {}) {
+export function starterConfig({ answers = {}, frontDesk = null, midSized = null, found = null, everyRole = null, listens = false, agents = null } = {}) {
   const live = answers['4.live-data'];
   if (live?.label !== LIVE_DATA.yes && live?.label !== LIVE_DATA.no) throw new Error('Step 4 has not been told whether the product holds live data yet');
   const starter = { ...readConfig(null), pages: [], liveData: live.label === LIVE_DATA.yes };
   // Only the director's Yes on step 4's question opens the keychain (check 73), never the working copy.
   if (answers['4.apple-apps']?.label === SIGNS_APPS.yes) starter.signsApps = true;
   if (listens === true) starter.localListening = true;
-  // This computer's agent where step 6 asked (scripts/agents/setup-parts.js): `{ "<computer id>": name }`, a null taking
-  // the entry out. configFrom merges it into the map and never writes a null.
-  if (Object.keys(agents).length > 0) starter.agents = { ...agents };
+  // The `agents` map the configuration ends with, when the caller gives one (agentsAfter): the last commit's map with this
+  // computer's answer applied, never the working copy's, as `localListening` follows the last commit alone.
+  if (agents !== null) starter.agents = { ...agents };
   // What the finder found in the project as committed (spec 4.5).
   if (found) {
     starter.testCommand = found.testCommand;
@@ -340,6 +340,27 @@ export async function committedListening(git) {
   }
 }
 
+// The `agents` map in the project's last commit: only entries that name an agent, { "<computer id>": name }; empty when the
+// commit holds none or can't be read.
+export async function committedAgents(git) {
+  try {
+    const map = JSON.parse(((await headText(git, CONFIG)) ?? '').replace(/^\uFEFF/, '')).agents;
+    return map !== null && typeof map === 'object' && !Array.isArray(map) ? Object.fromEntries(Object.entries(map).filter(([, name]) => typeof name === 'string' && name !== '')) : {};
+  } catch {
+    return {};
+  }
+}
+
+// The map the configuration ends with: the last commit's, with this run's entries applied (a null takes the entry out).
+export function agentsAfter(committed, entries) {
+  const map = { ...committed };
+  for (const [id, name] of Object.entries(entries)) {
+    if (name === null) delete map[id];
+    else map[id] = name;
+  }
+  return map;
+}
+
 // What setup says when a project lets its agents' commands listen on local ports; null when it does not.
 export const listeningNotice = (config) => (config?.localListening === true
   ? 'This project lets agents\' commands listen on local ports (`localListening` in .claude/wheelhouse.json). While it is on, those commands may also connect to anything else listening on this computer\'s local ports, such as the engine room on port 3090. To turn it off, remove the line in a reviewed pull request.'
@@ -361,8 +382,7 @@ export const midSizedPin = (config) => classPin(config, 'midSized');
 export function configFrom(existing, starter) {
   if (existing === null) {
     const fresh = structuredClone(starter);
-    if (isObject(fresh.agents)) fresh.agents = Object.fromEntries(Object.entries(fresh.agents).filter(([, name]) => name !== null));
-    if (isObject(fresh.agents) && Object.keys(fresh.agents).length === 0) delete fresh.agents;
+    if (Object.hasOwn(fresh, 'agents') && Object.keys(fresh.agents).length === 0) delete fresh.agents;
     return fresh;
   }
   try {
@@ -377,15 +397,11 @@ export function configFrom(existing, starter) {
   // give is set back to false (a key edit can't remove a key), so an agent's write can't open the keychain.
   if (starter.signsApps === true) out.signsApps = true;
   else if (Object.hasOwn(out, 'signsApps')) out.signsApps = false;
-  // This computer's agent, where step 6 asked: its entry set, or taken out for Claude Code, and every other computer's kept.
-  if (isObject(starter.agents)) {
-    const map = { ...(isObject(out.agents) ? out.agents : {}) };
-    for (const [id, name] of Object.entries(starter.agents)) {
-      if (name === null) delete map[id];
-      else map[id] = name;
-    }
-    if (Object.keys(map).length === 0) delete out.agents;
-    else out.agents = map;
+  // `agents` follows the starter's map alone, when it has one: an entry that is only in the working copy, which an agent
+  // could have written to change what this computer runs, is taken out.
+  if (Object.hasOwn(starter, 'agents')) {
+    if (Object.keys(starter.agents).length === 0) delete out.agents;
+    else out.agents = structuredClone(starter.agents);
   }
   // `localListening` is the same: a true that the last commit doesn't hold is set back to false.
   if (starter.localListening === true) out.localListening = true;
@@ -1298,7 +1314,7 @@ export function projectFilesStep({
       // The lighter model for Lean and Lightest the same way: the pin held, else what its alias stands for, asked once.
       const held = midSizedPin(objectIn(CONFIG, readText(at(CONFIG))));
       const mid = held ?? await bestOnce(found.project, ctx.runId, sole ?? MID_SIZED_ALIAS, best);
-      const config = starterConfig({ answers: ctx.answers, frontDesk: pin, midSized: mid, found: await foundAtHead(git), everyRole: sole === null ? null : pin, listens: await committedListening(git), agents: agentEntries(ctx.answers) });
+      const config = starterConfig({ answers: ctx.answers, frontDesk: pin, midSized: mid, found: await foundAtHead(git), everyRole: sole === null ? null : pin, listens: await committedListening(git), agents: agentsAfter(await committedAgents(git), agentEntries(ctx.answers)) });
       const home = claudeHome();
       const release = wheelhouseRelease({ folder, claudeHome: home });
       const targets = targetsFor({ folder, config, release, claudeHome: home });
