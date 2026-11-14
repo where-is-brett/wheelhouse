@@ -84,6 +84,18 @@ test('a note with data work says which data it ran on, last', () => {
   assert.ok(refused.includes('The real-data route was not used: no signed approval'));
 });
 
+test('what it looks like never says nothing changed for work the director is shown first, and names the tester\'s screenshots', () => {
+  const shown = proofNote(base({ visible: true }));
+  assert.ok(!shown.includes('Nothing on a page changed'));
+  assert.ok(shown.includes('changes what people see'));
+  assert.ok(shown.includes('no page could be read from its files'));
+  const shots = proofNote(base({ visible: true, screens: ['done-1-month.png', 'done-2-phone.png'] }));
+  assert.ok(shots.includes("The tester's screenshots: `done-1-month.png`, `done-2-phone.png`."));
+  // Work nobody sees keeps its plain line, and pages read from files are listed as before.
+  assert.ok(proofNote(base({ visible: false })).includes('Nothing on a page changed.'));
+  assert.ok(proofNote(base({ visible: true, previews: [{ page: '/month' }] })).includes('The change touches `/month`.'));
+});
+
 test('the note says what it decided, what it followed, how it was checked and what it looks like', () => {
   const none = proofNote(base({ calls: [], followed: [] }));
   assert.ok(none.includes('Nothing was decided on its own.'));
