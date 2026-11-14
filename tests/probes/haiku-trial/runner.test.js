@@ -720,11 +720,24 @@ test('setup that never finishes stops the run', async (t) => {
 test('the digest is due at the start of a minute', async (t) => {
   const folder = scratch(t);
   const io = fakeIo({ host: { setDigest: async () => ({ ok: true }) }, capture: () => 'Daily digest, 8 November' });
-  io.clock.sleep = async (ms) => { io.timeline.push({ kind: 'sleep', args: [ms], at: 0 }); };
   await run({ mode: 'full', io, from: 'digest', until: 'digest', folder, date: '2026-11-08', env: ENV });
   const state = JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8'));
   assert.equal(new Date(state.digestAt).getUTCSeconds(), 0);
   assert.equal(new Date(state.digestAt).getUTCMilliseconds(), 0);
+});
+
+test('the digest step sends a stand-in director message after the set time, then checks the digest appeared', async (t) => {
+  const folder = scratch(t);
+  let digestAt;
+  let sent = null;
+  let pane = '';
+  const io = fakeIo({ host: { setDigest: async ({ at }) => { digestAt = at.getTime(); return { ok: true }; } }, capture: () => pane });
+  const type = io.tmux.type;
+  io.tmux.type = (name, text) => { type(name, text); if (digestAt !== undefined && /^Anything waiting for me/.test(text)) { sent = io.clock.now(); pane = 'Daily digest, 8 November'; } };
+  await run({ mode: 'full', io, from: 'digest', until: 'digest', folder, date: '2026-11-08', env: ENV });
+  assert.ok(sent !== null, 'a stand-in message was sent');
+  assert.ok(sent >= digestAt, 'it was sent only after the digest time');
+  assert.ok(readLog(folder).some((e) => e.step === 'digest' && /the digest reached the chat/.test(e.note)));
 });
 
 test('the score step installs what the builders added, and says when it cannot', async (t) => {

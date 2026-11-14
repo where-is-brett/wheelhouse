@@ -1107,7 +1107,15 @@ export const STEPS = [
       await deskFree(ctx);
       const set = await io.host.setDigest({ project: ctx.projectName, at });
       await note(ctx, 'digest-set', `digest due ${ctx.state.digestAt}: ${JSON.stringify(set)}`);
-      const arrived = await waitFor(async () => { await tick(ctx); return /Daily digest,/.test(io.tmux.capture(DESK)); }, { io, timeoutMs: 20 * MINUTE });
+      // The digest is shown at the director's next message after the set time, so the stand-in director writes once the time has passed.
+      const shown = () => /Daily digest,/.test(io.tmux.capture(DESK));
+      await waitFor(async () => { await tick(ctx); return io.clock.now() >= at.getTime(); }, { io, timeoutMs: 20 * MINUTE });
+      let arrived = false;
+      for (let tries = 0; tries < 2 && !arrived; tries += 1) {
+        await say(ctx, CHECK_IN);
+        await note(ctx, 'digest-prompt', `the digest time had passed; the stand-in director wrote: ${CHECK_IN}`);
+        arrived = await waitFor(async () => { await tick(ctx); return shown(); }, { io, timeoutMs: 5 * MINUTE });
+      }
       if (arrived) await note(ctx, LOG.digest, 'the digest reached the chat');
     },
   },
