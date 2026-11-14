@@ -492,13 +492,13 @@ async function desk(ctx, name, extraEnv = {}) {
 }
 
 // Whether the picker is a card only the director decides (Lift All stop and the other confirmed steps). The card is found in the
-// trial's record by its question, and its kind decides; the words on screen decide only when no card in the record is found.
+// trial's record by its question, and its kind can add a refusal to the words on screen, never take one away.
 async function isDirectorOnly(ctx, picker) {
   let cards = [];
   try { cards = (await eventsOf(ctx)).filter((e) => e.kind === 'card'); } catch { cards = []; }
   const shown = cards.filter((c) => showsCard(picker, c.data));
-  if (shown.length > 0) return shown.some((c) => directorOnlyCard(c.data));
-  return directorOnlyWords(picker.question);
+  // The record can only add refusals: its cards are written by the desk agent and unsigned, so a card never makes a picker answerable.
+  return directorOnlyWords(picker.question) || shown.some((c) => directorOnlyCard(c.data));
 }
 
 // The stand-in director's answer to the picker open in a session's pane: the recommended option, or the first when none

@@ -140,7 +140,7 @@ test('a typed decision reply waits for a busy desk and for another picker', () =
 });
 
 test('the stand-in leaves the cards only the director decides, by their kind or their allowance options', () => {
-  for (const kind of ['ci-push', 'confirm', 'lift-stop', 'runbook']) {
+  for (const kind of ['ci-push', 'confirm', 'lift-stop', 'runbook', 'premium', 'usage']) {
     const card = { id: 'c1', kind: 'card', data: { kind, question: 'Go on?', options: ['Do it', 'Not now'] } };
     assert.equal(directorOnlyCard(card.data), true, kind);
     assert.deepEqual(standInAnswers({ events: [card], pane: picker(card.data.question, card.data.options, 0) }), [], kind);

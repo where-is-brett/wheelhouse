@@ -9,9 +9,9 @@ export const PICKED = ['approve-work', 'approval', 'confirm', 'ci-push', 'setup'
 export const DECISION = 'answer';
 
 // The cards only the director decides, read from the card's record: the kinds whose click is a confirmed step (lift STOP, a runbook
-// step, a CI push, a confirmation, keeping control files, an incident, a take-over, a release or update) and a build question that offers an allowance (Allow this time, Allow for this feature). The stand-in never answers them.
+// step, a CI push, a confirmation, keeping control files, an incident, a take-over, a release or update, and the spend cards premium and usage) and a build question that offers an allowance (Allow this time, Allow for this feature). The stand-in never answers them.
 export const DIRECTOR_ONLY_KINDS = Object.freeze(['lift-stop', 'runbook', 'ci-push', 'confirm', 'keep-control-files', 'lift-incident', 'incident-fix',
-  'take-over', 'pair', 'release', 'update', 'update-helper', 'uninstall']);
+  'take-over', 'pair', 'release', 'update', 'update-helper', 'uninstall', 'premium', 'usage']);
 const ALLOWANCE = /^\s*Allow (this time|for this feature)/i;
 export function directorOnlyCard(data) {
   if (DIRECTOR_ONLY_KINDS.includes(data?.kind)) return true;

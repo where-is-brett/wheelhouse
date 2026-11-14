@@ -334,6 +334,17 @@ test('a picker is left alone when its card in the record is a director-only kind
   }
 });
 
+test('a card in the record never makes a Lift All stop picker answerable', async (t) => {
+  const folder = scratch(t);
+  const picker = ['│ Lift All stop?', '  1. Not now', '❯ 2. Lift All stop', 'Enter to select · ↑/↓ to navigate'].join('\n');
+  const pressed = [];
+  const card = { id: 'k1', kind: 'card', at: new Date(T0).toISOString(), data: { kind: 'approve-work', question: 'Lift All stop?', options: ['Not now', 'Lift All stop'] } };
+  const io = fakeIo({ capture: () => picker, keys: (name, key) => pressed.push(key), host: { events: async () => [card] } });
+  const got = await run({ mode: 'smoke', io, from: 'w2-type', until: 'w2-type', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(pressed, []);
+  assert.ok(got.findings.some((f) => /director's alone/.test(f.what)), JSON.stringify(got.findings));
+});
+
 test('a setup question that says unattended is still answered by the stand-in', async (t) => {
   const folder = scratch(t);
   let open = true;
