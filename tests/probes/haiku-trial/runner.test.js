@@ -322,6 +322,28 @@ test('the stand-in never presses keys on a picker that only the director decides
   assert.ok(got.findings.some((f) => /Lift All stop\?.*director's alone/.test(f.what)), JSON.stringify(got.findings));
 });
 
+test('a picker is left alone when its card in the record is a director-only kind, whatever words it shows', async (t) => {
+  for (const [kind, question, options] of [['runbook', 'Turn it on?', ['Do it', 'Not now']], ['answer', 'May it run this?', ['Allow this time', 'No']]]) {
+    const folder = scratch(t);
+    const picker = [`│ ${question}`, `❯ 1. ${options[0]}`, `  2. ${options[1]}`, 'Enter to select · ↑/↓ to navigate'].join('\n');
+    const pressed = [];
+    const io = fakeIo({ capture: () => picker, keys: (name, key) => pressed.push(key), host: { events: async () => [{ id: 'k1', kind: 'card', at: new Date(T0).toISOString(), data: { kind, question, options } }] } });
+    const got = await run({ mode: 'smoke', io, from: 'w2-type', until: 'w2-type', folder, date: '2026-11-08', env: ENV });
+    assert.deepEqual(pressed, [], kind);
+    assert.ok(got.findings.some((f) => /director's alone/.test(f.what)), kind + JSON.stringify(got.findings));
+  }
+});
+
+test('a setup question that says unattended is still answered by the stand-in', async (t) => {
+  const folder = scratch(t);
+  let open = true;
+  const picker = ['│ Should the project run unattended overnight?', '❯ 1. Yes (Recommended)', '  2. No', 'Enter to select · ↑/↓ to navigate'].join('\n');
+  const pressed = [];
+  const io = fakeIo({ capture: () => (open ? picker : 'idle'), keys: (name, key) => { pressed.push(key); if (key === 'Enter') open = false; } });
+  await run({ mode: 'smoke', io, from: 'w2-type', until: 'w2-type', folder, date: '2026-11-08', env: ENV });
+  assert.ok(pressed.includes('Enter'), JSON.stringify(pressed));
+});
+
 test('a "Ready to submit" page left open for ten minutes is a finding and nothing is typed', async (t) => {
   const folder = scratch(t);
   const page = ['Ready to submit your answers?', '❯ 1. Submit answers', '  2. Cancel'].join('\n');

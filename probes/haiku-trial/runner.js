@@ -8,9 +8,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appendJsonl } from '../lib/log.js';
 import { projectSlug } from '../../scripts/lib/paths.js';
-import { CONFIRMED_STEPS } from '../../scripts/agents/chat-clicks.js';
 import { runFolder } from './results.js';
-import { openPicker, readyToSubmit, deskBusy, HIGHLIGHTED, PICKED } from './stand-in.js';
+import { openPicker, readyToSubmit, deskBusy, HIGHLIGHTED, PICKED, showsCard, directorOnlyCard, directorOnlyWords } from './stand-in.js';
 import { PIECES, WAVES, P5_SPARE, F2_ANSWER, P6_FILE } from './requests.js';
 import { SESSION_PREFIX, sessionName, sessionPrefix, frontDeskCommand } from './tmux.js';
 import { STEPS as LOG, SETUP_DONE, setupJournalDone, OWN_BRANCH } from './signals.js';
@@ -492,10 +491,15 @@ async function desk(ctx, name, extraEnv = {}) {
   await mustBeAlive(ctx, { restart: false });
 }
 
-// The cards that confirmed steps ask (scripts/agents/chat-clicks.js's CONFIRMED_STEPS, as the cards word them): the director's alone.
-const DIRECTOR_ONLY = [...CONFIRMED_STEPS.map((step) => new RegExp(step.replace(/-/g, '[-\\s]'), 'i')), /lift\s+(all\s+)?stop/i,
-  /push this change to the checks/i, /confirm this\?/i, /keep these files as they are/i, /end the incident/i, /emergency/i];
-const isDirectorOnly = (question) => DIRECTOR_ONLY.some((re) => re.test(String(question)));
+// Whether the picker is a card only the director decides (Lift All stop and the other confirmed steps). The card is found in the
+// trial's record by its question, and its kind decides; the words on screen decide only when no card in the record is found.
+async function isDirectorOnly(ctx, picker) {
+  let cards = [];
+  try { cards = (await eventsOf(ctx)).filter((e) => e.kind === 'card'); } catch { cards = []; }
+  const shown = cards.filter((c) => showsCard(picker, c.data));
+  if (shown.length > 0) return shown.some((c) => directorOnlyCard(c.data));
+  return directorOnlyWords(picker.question);
+}
 
 // The stand-in director's answer to the picker open in a session's pane: the recommended option, or the first when none
 // is marked. The cursor is moved to it and seen there before Enter. Returns whether a picker was answered.
@@ -507,7 +511,7 @@ async function answerPicker(ctx, name) {
   const target = first.recommended === -1 ? 0 : first.recommended;
   const question = (first.question.split('\n').find((l) => l.replace(/[│\s]/g, '') !== '') ?? '').replace(/[☐│]/g, '').trim().slice(0, 160);
   // A card only the director decides (Lift All stop and the other confirmed steps) is never answered by the stand-in.
-  if (isDirectorOnly(first.question)) {
+  if (await isDirectorOnly(ctx, first)) {
     const missed = (ctx.state.pickersMissed ??= []);
     if (!missed.includes(question)) {
       missed.push(question);

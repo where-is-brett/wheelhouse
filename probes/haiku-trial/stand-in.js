@@ -8,6 +8,22 @@ export const PICKED = ['approve-work', 'approval', 'confirm', 'ci-push', 'setup'
 // A decision a build raised.
 export const DECISION = 'answer';
 
+// The cards only the director decides, read from the card's record: the kinds whose click is a confirmed step (lift STOP, a runbook
+// step, a CI push, a confirmation, keeping control files, an incident, a take-over, a release or update) and a build question that offers an allowance (Allow this time, Allow for this feature). The stand-in never answers them.
+export const DIRECTOR_ONLY_KINDS = Object.freeze(['lift-stop', 'runbook', 'ci-push', 'confirm', 'keep-control-files', 'lift-incident', 'incident-fix',
+  'take-over', 'pair', 'release', 'update', 'update-helper', 'uninstall']);
+const ALLOWANCE = /^\s*Allow (this time|for this feature)/i;
+export function directorOnlyCard(data) {
+  if (DIRECTOR_ONLY_KINDS.includes(data?.kind)) return true;
+  return (data?.options ?? []).some((o) => ALLOWANCE.test(String(typeof o === 'string' ? o : o?.label ?? '')));
+}
+// The words of those cards on screen, for a picker no card in the record is found for. Only the cards' own questions and options: a bare
+// step name such as "unattended" is not here, since a setup question can use it.
+export const DIRECTOR_ONLY_WORDS = Object.freeze([/lift\s+(all\s+)?stop/i, /turn stop on\?/i, /contain live harm\?/i, /cut the agents' access/i,
+  /put the product back to an earlier release\?/i, /put the project's records back/i, /push this change to the checks/i, /confirm this\?/i,
+  /keep these files as they are/i, /end the incident/i, /allow this time/i, /allow for this feature/i, /emergency/i]);
+export const directorOnlyWords = (text) => DIRECTOR_ONLY_WORDS.some((re) => re.test(String(text)));
+
 const PICKER = /Enter to select/;
 const OPTION = /^\s*(?:❯\s*)?(\d+)\.\s+(.*)$/;
 export const HIGHLIGHTED = /^\s*❯\s*\d+\.\s/;
@@ -77,7 +93,7 @@ export function openPicker(pane) {
 
 // Whether the open picker is this card: the card's first two question lines are its question (approval cards all
 // start "Approve this work as written?", so one line is not enough).
-function showsCard(picker, data) {
+export function showsCard(picker, data) {
   if (picker === null) return false;
   const lines = String(data?.question ?? '').split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 2);
   return lines.length > 0 && lines.every((l) => picker.question.includes(l.slice(0, 60)));
@@ -132,6 +148,7 @@ export function standInAnswers({ events, pane, done = new Set(), skipWork = new 
     const data = card.data ?? {};
     const isDecision = data.kind === DECISION;
     if (!PICKED.includes(data.kind) && !isDecision) continue;
+    if (directorOnlyCard(data)) continue;
     if (answered.has(card.id) || done.has(card.id)) continue;
     if (isDecision && (skipWork.has(decisionWork(data)) || decided.has(questionId(data)))) continue;
     const index = recommendedIndex(data);

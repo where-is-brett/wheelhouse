@@ -1,7 +1,7 @@
 // tests/probes/haiku-trial/stand-in.test.js
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { standInAnswers, recommendedIndex, decisionWork, PICKED, openPicker, readyToSubmit, deskBusy } from '../../../probes/haiku-trial/stand-in.js';
+import { directorOnlyCard, directorOnlyWords, standInAnswers, recommendedIndex, decisionWork, PICKED, openPicker, readyToSubmit, deskBusy } from '../../../probes/haiku-trial/stand-in.js';
 
 const approval = (id, work) => ({
   id, kind: 'card',
@@ -137,4 +137,20 @@ test('a typed decision reply waits for a busy desk and for another picker', () =
   const open = picker(other.data.question, other.data.options, 0);
   assert.deepEqual(standInAnswers({ events: [one], pane: `${chat}\n${open}` }), [], 'a picker is open: the text would go into it');
   assert.equal(standInAnswers({ events: [one], pane: chat }).length, 1);
+});
+
+test('the stand-in leaves the cards only the director decides, by their kind or their allowance options', () => {
+  for (const kind of ['ci-push', 'confirm', 'lift-stop', 'runbook']) {
+    const card = { id: 'c1', kind: 'card', data: { kind, question: 'Go on?', options: ['Do it', 'Not now'] } };
+    assert.equal(directorOnlyCard(card.data), true, kind);
+    assert.deepEqual(standInAnswers({ events: [card], pane: picker(card.data.question, card.data.options, 0) }), [], kind);
+  }
+  const allowance = { id: 'c2', kind: 'card', data: { kind: 'answer', question: 'May it run the tool?', options: ['Allow this time', 'Allow for this feature', 'No'] } };
+  assert.deepEqual(standInAnswers({ events: [allowance], pane: picker(allowance.data.question, allowance.data.options, 0) }), []);
+  assert.equal(directorOnlyCard({ kind: 'approve-work', options: ['Approve'] }), false);
+});
+
+test('the words fallback names the confirmed cards, and not a setup question about unattended work', () => {
+  for (const text of ['Turn STOP on?', 'Contain live harm?', 'Allow this time', 'Lift All stop?']) assert.equal(directorOnlyWords(text), true, text);
+  assert.equal(directorOnlyWords('Should the project run unattended overnight? (setup)'), false);
 });
