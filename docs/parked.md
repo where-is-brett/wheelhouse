@@ -19,14 +19,24 @@ Each lift-out part adds its piece's keys to those lists as it removes the piece,
 - **Bringing it back:** a short design against the core of that day (cards, watcher keep-alive and notifications have moved into the chat, the session-start hook and the helper's tick), then a build from the tag.
 - **Settings retired:** `watcherShape` (Shape 1 only; the value is accepted and ignored) and the pane's own view settings.
 
-## Copilot, with its Lean tier
+## Copilot (brought back)
 
-- **What it was:** GitHub Copilot as a second coding agent, with the agent seam's Copilot adapter, the Lean tier and the Copilot pin.
+- **What it was:** GitHub Copilot as a second coding agent, with the agent seam's Copilot adapter and the Copilot pin. Its Lean tier is listed on its own below and stays parked.
 - **Tag:** `parked/copilot`
-- **Designs and plans:** `docs/specs/2026-10-20-other-agents-design.md`; `docs/superpowers/plans/2026-10-21-wheelhouse-copilot.md`, `docs/superpowers/plans/2026-10-30-archon-copilot.md`, `docs/superpowers/plans/2026-11-02-copilot-remaining-parts.md`
-- **Why parked:** the agents have converged, so a second agent is upkeep with no gain in what gets built (design section 2.2); no one upstream owns Archon's Copilot connection (section 2.4); real use hasn't reached it. Sittings S1 to S7 are cancelled and no Copilot spend is asked for.
-- **Bringing it back:** a short design against the core of that day, written for the agent seam (`scripts/agents/contract.js`), then a build from the tag.
-- **Settings retired:** `capRequests`.
+- **Brought back on:** the director's request of 10 November 2026, by `docs/specs/2026-11-10-copilot-return-design.md` (a short design against the core of that day, written for the agent seam in `scripts/agents/contract.js`), built from the tag in its parts 1 to 11 and merged to `main`. It is a second crew on Wheelhouse's own engine, not Archon's. The work stands in `scripts/agents/copilot/`, `adapters/copilot/` and one line for Copilot in each of the seam's files.
+- **Still to do:** trial stages T5 (the click, check C6) and T6 (a Windows work computer) are the director's two sittings (design section 7).
+- **Designs and plans:** the return design above, with the earlier `docs/specs/2026-10-20-other-agents-design.md`, whose safety analysis still holds where the return design doesn't change it; `docs/superpowers/plans/2026-10-21-wheelhouse-copilot.md`, `docs/superpowers/plans/2026-10-30-archon-copilot.md`, `docs/superpowers/plans/2026-11-02-copilot-remaining-parts.md` (history).
+- **Settings:** `capRequests` stays retired (`RETIRED` in `scripts/settings/catalogue.js`): only Archon's spend meter read it. `copilotPlan`, `copilotAllowance` and `copilotCeiling` replace it, and the per-computer `agents` map is read again.
+- **Left parked from the old work:** Lean, the VS Code add-on, Archon's Copilot parts and the signed review in a clean Copilot session (not brought back; `REVIEW_SESSION_READY` is false, and Copilot's required reviews run as a reviewer subagent recorded as "review, not proven", return design section 3.4).
+
+## Lean (Copilot with no Node.js)
+
+- **What it was:** the tier of Copilot that ran Wheelhouse with no Node.js, for work computers that block it: a project record of its own, the helper run inside VS Code, and guards that read only. About 3,400 lines in `scripts/lean/` and `adapters/copilot/lean-*`, touching 14 core files.
+- **Tag:** `parked/copilot`
+- **Designs and plans:** `docs/specs/2026-10-20-other-agents-design.md` (section 6.4); `docs/superpowers/plans/2026-10-21-wheelhouse-copilot.md`
+- **Why parked:** the director decided on 10 November 2026 (return design, Decision 3) to keep it parked. Copilot needs Node.js, as Claude Code does. If a work computer blocks Node.js, that is found at its sitting and comes to the director as a card then.
+- **Bringing it back:** a short design against the core of that day, then a build from the tag.
+- **Settings retired:** none of its own.
 
 ## Archon
 
@@ -58,7 +68,7 @@ Each lift-out part adds its piece's keys to those lists as it removes the piece,
 - **What it was:** an editor panel for Claude Code in VS Code, packaged as a `.vsix`, with the helper's `add-on` proof.
 - **Tag:** `parked/vscode-addon`
 - **Designs and plans:** `docs/specs/2026-11-04-vscode-panel-design.md`; `docs/superpowers/plans/2026-11-04-vscode-panel.md`
-- **Why parked:** the front ends are cut back to the chat (design sections 1 and 4.2). The helper stops answering the add-on's proof, so an add-on still installed is inert, and the update offers to remove it.
+- **Why parked:** the front ends are cut back to the chat (design sections 1 and 4.2). The helper stops answering the add-on's proof, so an add-on still installed is inert, and the update offers to remove it. It stayed parked when Copilot came back (return design, Decision 3): the director talks to Copilot's First Mate in VS Code's Copilot chat, without the add-on.
 - **Bringing it back:** a short design against the core of that day, then a build from the tag, with CI's add-on steps and the release's `vsix` job.
 - **Settings retired:** none.
 

@@ -6,7 +6,7 @@ What Wheelhouse keeps, where, and for how long, and what uninstall removes and w
 
 ## From v0.3.0, the core cut
 
-From v0.3.0 Wheelhouse builds everything with its own engine. Archon, GitHub Copilot with Lean, the VS Code add-on, the pane and the mod, delegation, unattended goals and screenshot approvals are parked (`docs/parked.md`). Nothing new is kept for them, and what they kept before stays in the project's private record, unread. The sections below that describe them say what an earlier release kept.
+From v0.3.0 Wheelhouse builds everything with its own engine. Archon, Lean (Copilot with no Node.js), the VS Code add-on, the pane and the mod, delegation, unattended goals and screenshot approvals are parked (`docs/parked.md`). Nothing new is kept for them, and what they kept before stays in the project's private record, unread. The sections below that describe them say what an earlier release kept. GitHub Copilot itself came back on 10 November 2026, without Lean or the add-on; what it keeps is under "GitHub Copilot" below.
 
 The update to v0.3.0 moves a project off Archon (`/wheelhouse:update`):
 
@@ -45,7 +45,7 @@ When the helper finds your computer has been asleep for more than three minutes,
 
 Until v0.3.0, a goal you signed stayed in the same private record; from v0.3.0 nothing new is added for goals, rules, blind cards or a second reading, and what is there stays, unread. A goal you sign stays in the same private record: its sheet, and later how it ended. Your Start signs the sheet's hash, so a sheet changed after you saw it starts nothing. When you end a goal or narrow it, that is noted there too. The report on a goal is worked out from that private record when it is asked for, kept nowhere else, and never put in a pull request. The record of how a goal ended holds what it spent, when the allowance was read, and how often the main line went red. A note records each slice added, each run that lost its process, and the merge queue's spend after the end.
 
-When a build run fails, the record of its ending says what kind of failure it was, in one word: connection, provider, host, limit or other. When a failed run resumes, the record gets a numbered start of its own and a numbered ending, so its running time and its spend add up once across the whole run. The record of its ending also names the step that failed, and a fresh run on the same work is given those steps and kinds in its order, so it doesn't repeat what failed. A Copilot run's record of its start also says the level it ran at: sandbox, or none when it started outside the sandbox. A Claude run's record carries no level.
+When a build run fails, the record of its ending says what kind of failure it was, in one word: connection, provider, host, limit or other. When a failed run resumes, the record gets a numbered start of its own and a numbered ending, so its running time and its spend add up once across the whole run. The record of its ending also names the step that failed, and a fresh run on the same work is given those steps and kinds in its order, so it doesn't repeat what failed.
 
 Each card the build engine raises also gets a seal in that record: a signed line of what Wheelhouse's own checks could tell from the change when the card was written. It stays in the private record. No agent, board or review reads what a seal says, and only a count of them is shown. It changes nothing about a card. Once a card is answered, a further signed line scores what would have been decided against the answer. The scores stay sealed too.
 
@@ -100,19 +100,33 @@ A product on GitLab, and a computer other than a Mac, gets none of this, and kee
 
 ## GitHub Copilot
 
-*Parked from v0.3.0; what an earlier release kept. The files below stay where they are until you delete them.*
+A computer set to build with Copilot keeps the same private record as any other, plus what is below. Nothing in it is sent anywhere by Wheelhouse. Copilot itself sends your prompts to GitHub, as any use of Copilot does, under your own plan.
 
-A product that builds with Copilot keeps the same private record as any other, plus these. Nothing in them is sent anywhere by Wheelhouse.
+**What setup changes on the computer.** One file, the hook file `~/.copilot/hooks/wheelhouse.json` (under `COPILOT_HOME` if you set it), which runs Wheelhouse's checks before each of Copilot's actions. Setup records the file in its journal with the text it held before. The update points it at the new release and records that too. Uninstall takes it out, or puts back what it held, only while the file still holds what setup wrote; one you changed since is left and named. Setup reads Copilot's config only to see that you are signed in (the names of its sign-in keys, never their values) and never changes the rest of your Copilot folder. The First Mate's agent and instructions for Copilot's chat are built in Wheelhouse's own folder (`adapters/copilot/first-mate/`); no setup step copies them into your Copilot folder yet.
 
-- `~/.wheelhouse/agents/copilot-sandbox.json`, the result of the sandbox test: kept for this computer rather than for a project, with the Copilot version and a digest of the sandbox settings it was run for. A result for another version or other settings counts as no test.
-- `~/.wheelhouse/own-files.json`, the hashes of Wheelhouse's own files and of Copilot's files that guard them (hook and agent folders, settings, the add-on's folder, the clean home's hook file and settings). A weekly look compares against it and names what changed. Copilot's sign-in file is never opened.
-- In the project's private state, the level a Copilot run ran at (the sandbox, or none) is recorded on its run record, with each Ask allowance, and the audit report reads it.
-- Each approval and action names how it was made: `chat-click` (a click in Copilot's chat, not proven), `hook-click` or `policy-hook` (seen by a Copilot hook), `add-on` (a button in the add-on's pane), `window` (the helper's window) or `host` (the person's approval on GitHub). The proof sits under the record's signature.
-- If you use the VS Code add-on: `~/.wheelhouse/projects/<project>/record/terminal-commands.jsonl` lists each command the VS Code window ran (not only Copilot's; the window does not say who typed it). It sits beside the `events/` folder and is not part of the signed record; it is private to you, a command that looks like a secret is replaced by a note, and it is cut to its newest half when it grows large. Where a company switches Copilot's tools off, the chat can leave a note as a `.json` file in a registered project's own `.wheelhouse/inbox/` folder; the add-on reads each file once and removes it, and records it only as a chat click, which approves nothing. It never follows a link there and leaves anything else in the folder alone.
-- If you use the VS Code add-on: small marks in `~/.wheelhouse/panes/`. `vscode-<project>.json` says the panel is open beside a project (the time of its last beat, when it was last visible, and a random id for the VS Code window), and is rewritten every 15 seconds while the panel is open. A mark older than 45 seconds counts for nothing, so a closed panel stops holding cards back within a minute. `vscode-<project>.here.json` is written when you ask for the cards in the chat instead: the ids of those cards and a two-minute limit. They hold no card text and are not sent anywhere. Uninstall removes them with the rest of `~/.wheelhouse`.
-- A new signing key, made on your click after a risky period, is kept beside the old one; records signed before it still verify.
+**What each Copilot session keeps.**
 
-Uninstall removes the baseline for the weekly look and Locked's Copilot files, along with the other files in `~/.wheelhouse`. It does not remove the sandbox result (`~/.wheelhouse/agents/copilot-sandbox.json`) or the terminal record; they stay until you delete the folder by hand. The add-on is removed from VS Code by you; Wheelhouse does not reach into it.
+- **Its own Copilot home**, `~/.wheelhouse/projects/<project>/copilot-home/foreman` or `feature-<piece>`, rebuilt before every start: Wheelhouse's hook registration, its agents, the pinned skills, and a copy of the sign-in keys from your Copilot config, with nothing else of your Copilot settings. Copilot's own record of the session (`session-state/<id>/events.jsonl`, which holds the prompts and what came back, with token counts), its logs and lock files stay in that home so the session can be resumed.
+- **Its activity folder**, `~/.wheelhouse/projects/<project>/activity/`: each run's output, usage file and log folder. Anything older than 30 days is removed.
+- **The session's record.** Each run adds an activity record to the project's private record: the role, the piece, the run's use and **the model Auto chose** for it (read from the run's output; Wheelhouse passes none on an Auto-only plan). The pull request's provenance block names the agent, its version and that model, as it does for Claude Code.
+
+**Copilot's use for the month**, in the usage folder `~/.wheelhouse/usage/`:
+
+- `copilot-requests.jsonl`: one line for each run, with the time, the session id, the session's request count at the time and the model Auto chose, or a line saying GitHub refused a session because the month's allowance was gone. Lines before the start of last month are removed.
+- `copilot-account.json`: the last reading of the account, through `gh api /copilot_internal/user` with your existing sign-in: when it was read, the requests remaining, the allowance and the date it resets. Setup takes the first reading, and a later one replaces it.
+- Each background run's use also goes in the day's usage records, with the session, role, request count and tokens, and never the words.
+
+**Settings.** Three settings are kept in your own settings, one set for each computer: `copilotPlan` (what your Copilot plan allows), `copilotAllowance` (the month's allowance, 200 requests on Copilot Student) and `copilotCeiling` (the most you want Copilot to cost a month, in US dollars). The `agents` map in the project's configuration says which agent each computer builds with. `capRequests` stays retired.
+
+**Checks and holds.**
+
+- If the installed Copilot isn't the version Wheelhouse is pinned to, the project's lineage folder holds `hold-copilot-version.json`, which names the versions and stops that project's Copilot work until it lifts. `~/.wheelhouse/agents/copilot-versions-seen.json` records the versions last checked, and `~/.wheelhouse/agents/copilot-sandbox.json` the result of the sandbox test, if one has been run (the test hasn't been passed yet, so Copilot's sandbox isn't used).
+- `~/.wheelhouse/own-files.json` holds hashes of Wheelhouse's own files and of Copilot's files that guard them (its hook and agent folders), and a weekly look names what changed. Copilot's sign-in file is never opened.
+- Each approval and action names how it was made. A click in Copilot's chat is recorded as `chat-click`, **not proven**, until trial stage T5 shows a hook sees your own click. The steps no chat click decides (lifting STOP, changing a guardrail, a CI push, an allowance) go to the helper's window and are recorded as `window`.
+
+Uninstall removes the hook file as above, and the usage files with the rest of Wheelhouse's folder. Each session's Copilot home and activity folder sit in the project's own folder in `~/.wheelhouse/projects/`, which stays with the project's private record unless you choose to delete that record. Uninstall does not touch Copilot's own folder beyond the hook file.
+
+**Parked, from an earlier release.** If you used Lean or the VS Code add-on, what they kept stays where it is, unread: the terminal-commands record in the project's private record (`terminal-commands.jsonl`), the small marks in `~/.wheelhouse/panes/`, and the inbox notes in a project's `.wheelhouse/inbox/`. Uninstall removes the marks with `~/.wheelhouse`. The add-on is removed from VS Code by you.
 
 ## Updating Wheelhouse
 
