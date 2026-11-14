@@ -13,7 +13,8 @@
 //   report   checks report.md and that it holds every ruling kept, then stamps it with what built it
 //   push     pushes the worktree's branch to the host, through the helper (after a fix)
 //   pull     brings the host's copy of the worktree's branch into it, through the helper (when
-//            the host's has moved on, as when the gate brought it up to date)
+//            the host's has moved on, as when the gate brought it up to date); `pull --default` brings in the
+//            default branch instead, which the session can fetch no other way
 //   open-pr  pushes the branch, opens the feature's pull request, whose body is the proof note (scripts/proof/note.js), and
 //            keeps its number with its plan
 // Each command's core is an exported function that takes the helper's client and
@@ -671,10 +672,13 @@ const UNREADABLE = 'The host helper gave an answer this could not read, so nothi
 // files that clash, and the merge is made here, in the worktree, and left for the session to
 // resolve. Returns `{ branch, already, merged?, sha? }`, or with `conflict: true` and `conflicts`
 // when the worktree is left mid-merge.
-export async function pull({ client, worktree }) {
+//
+// With `from: 'default'` it is the host's default branch that is brought in (`pull --default`): the session can fetch nothing,
+// so this is how a branch that has fallen behind the default branch, or clashes with it, takes it in.
+export async function pull({ client, worktree, from }) {
   const branch = branchOf(worktree);
   if (branch === null) throw new CliError("This worktree isn't on a branch, so there is nothing to bring the host's branch into");
-  const got = await client.pull({ cwd: worktree, dir: worktree, branch });
+  const got = await client.pull({ cwd: worktree, dir: worktree, branch, ...(from === 'default' ? { from } : {}) });
   if (got?.ok !== true) {
     const files = Array.isArray(got?.conflicts) && got.conflicts.every((f) => typeof f === 'string') && got.conflicts.length > 0
       ? ` (${got.conflicts.join(', ')})` : '';
@@ -996,12 +1000,14 @@ export async function main(argv, {
       if (rest.length > 0) throw new CliError('push takes no arguments');
       out(`Pushed ${(await push({ client: helper(), worktree })).branch}\n`);
     } else if (command === 'pull') {
-      if (rest.length > 0) throw new CliError('pull takes no arguments');
-      const pulled = await pull({ client: helper(), worktree });
+      if (rest.length > 1 || (rest.length === 1 && rest[0] !== '--default')) throw new CliError('pull takes no arguments, or --default to bring in the default branch');
+      const fromDefault = rest[0] === '--default';
+      const pulled = await pull({ client: helper(), worktree, ...(fromDefault ? { from: 'default' } : {}) });
       if (pulled.conflict) {
-        out(`The host's ${pulled.branch} is merged into this worktree, but these files clash:\n${pulled.conflicts.map((f) => `  ${plainName(f)}\n`).join('')}`
+        out(`${fromDefault ? 'The default branch' : `The host's ${pulled.branch}`} is merged into this worktree, but these files clash:\n${pulled.conflicts.map((f) => `  ${plainName(f)}\n`).join('')}`
           + 'Open each one, keep both sides\' intent, and remove the conflict markers. Then `git add` each file, run `git commit --no-edit`, run the tests, and push.\n');
-      } else if (pulled.already) out(`Already up to date with the host's ${pulled.branch}\n`);
+      } else if (pulled.already) out(fromDefault ? 'Already up to date with the default branch\n' : `Already up to date with the host's ${pulled.branch}\n`);
+      else if (pulled.merged && fromDefault) out(`Brought in the default branch: merged with this branch at ${pulled.sha.slice(0, 12)}. Run the tests, push, then have the new head reviewed.\n`);
       else if (pulled.merged) out(`Brought in the host's ${pulled.branch}: merged with this branch at ${pulled.sha.slice(0, 12)}\n`);
       else out(`Brought in the host's ${pulled.branch}: this branch is now at ${pulled.sha.slice(0, 12)}\n`);
     } else {

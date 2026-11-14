@@ -363,6 +363,45 @@ test('a feature session\'s pull brings the host\'s branch into its own, by fast-
   } finally { p.remote.cleanup(); }
 });
 
+test('a feature session whose branch has fallen behind or clashes with main brings the default branch in through the helper, as it can fetch nothing itself', async () => {
+  const p = await project();
+  try {
+    const worktree = path.join(p.checkout, '.claude', 'worktrees', 'export');
+    await g(p.checkout, 'worktree', 'add', '-q', '-b', 'feature/export', worktree, 'origin/main');
+    await g(worktree, 'config', 'user.name', 'T');
+    await g(worktree, 'config', 'user.email', 't@example.com');
+    fs.mkdirSync(featurePaths(worktree).dir, { recursive: true });
+    await commitIn(worktree, 'month.js', 'export const page = 0;\n', 'The page');
+    await commitIn(worktree, 'month.js', 'export const page = 1;\n', 'The export');
+    const main = await elsewhereOn(p, 'main');
+    await withHelper(p.home, async (client) => {
+      // Nothing new on main: nothing to bring in.
+      assert.deepEqual(await client.pull({ cwd: worktree, dir: worktree, branch: 'feature/export', from: 'default' }), { ok: true, already: true });
+      // Main moves on without touching the same lines: a plain merge, the session's commit first.
+      await commitIn(main, 'other.js', 'other\n', 'Other work');
+      await g(main, 'push', '-q', 'origin', 'main');
+      const clean = await cliPull({ client, worktree, from: 'default' });
+      assert.equal(clean.merged, true, JSON.stringify(clean));
+      assert.equal(await g(worktree, 'show', 'HEAD:other.js'), 'other');
+      assert.equal(await g(worktree, 'status', '--porcelain'), '');
+      // Main changes the same line: the worktree is left mid-merge for the session to resolve.
+      const theirs = await commitIn(main, 'month.js', 'export const page = 2;\n', 'Main moves the page');
+      await g(main, 'push', '-q', 'origin', 'main');
+      const clash = await cliPull({ client, worktree, from: 'default' });
+      assert.deepEqual(clash, { branch: 'feature/export', already: false, conflict: true, conflicts: ['month.js'], sha: theirs });
+      assert.equal(await g(worktree, 'rev-parse', 'MERGE_HEAD'), theirs);
+      // Under All stop it is refused, as any pull is.
+      await g(worktree, 'merge', '--abort');
+      setStop({ by: 'prompt' });
+      try {
+        assert.deepEqual(await client.pull({ cwd: worktree, dir: worktree, branch: 'feature/export', from: 'default' }), { ok: false, refused: 'All stop is on' });
+      } finally { liftStop(); }
+      // Only the default branch may be named.
+      assert.match((await client.pull({ cwd: worktree, dir: worktree, branch: 'feature/export', from: 'refs/heads/other' })).refused, /default branch/);
+    });
+  } finally { p.remote.cleanup(); }
+});
+
 test('the foreman\'s child keeps Claude Code\'s sign-in, as started sessions get it, and drops host keys and other secrets (R159)', () => {
   const signIn = Object.fromEntries(SIGN_IN_NAMES.map((name) => [name, `value-of-${name}`]));
   const env = {

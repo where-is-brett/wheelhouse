@@ -132,6 +132,10 @@ test('each kind of change goes to the foreman, the feature or the digest as sect
   assert.equal(byType['ci-red'], 'ci-red:search-box:ccc333');
   assert.equal(byType.findings, 'findings:search-box:ccc333');
   assert.equal(byType.conflict, 'conflict:search-box:ccc333');
+  // The session can fetch nothing, so its wake says how the default branch comes in: through the helper.
+  const conflict = routed.features['search-box'].find((e) => e.type === 'conflict');
+  assert.match(conflict.detail.next, /pull --default/);
+  assert.doesNotMatch(conflict.detail.next, /fetch origin/);
   assert.equal(byType.pushed, 'pushed:cart:fff666');
   assert.equal(byType.question, 'q-login-page-1');
   assert.equal(byType['extra-plan'], 'q-login-page-2');
