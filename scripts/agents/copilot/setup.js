@@ -17,7 +17,6 @@ import { readJournal, addChanges, newId } from '../../setup/journal.js';
 import { accountOf, recordAccount, DEFAULT_ALLOWANCE } from './usage.js';
 
 export const LABEL = 'Copilot';
-export const ACCOUNT_URL = '/copilot_internal/user';
 export const ACCOUNT_TIMEOUT_MS = 20 * 1000;
 // How long the sign-in step waits before it looks again.
 export const SIGN_IN_WAIT_MS = 30 * 1000;
@@ -58,14 +57,15 @@ export function planOf(reply) {
   return null;
 }
 
-// The account's reading, from `run('gh', ['api', ACCOUNT_URL])`: { plan, allowance, account } where `account` is the usage
+// The account's reading, from `run('gh', ['api', '/copilot_internal/user'])`: { plan, allowance, account } where `account` is the usage
 // store's reading (accountOf) or null, and `plan` and `allowance` are null where the reply doesn't show them. Never
 // throws: a computer with no gh, no sign-in or no answer gives nulls, and the defaults stand.
 export async function readAccount({ run, at = new Date(), env = process.env } = {}) {
   const none = { plan: null, allowance: null, account: null };
   let reply;
   try {
-    const got = await run('gh', ['api', ACCOUNT_URL], { timeoutMs: ACCOUNT_TIMEOUT_MS, baseEnv: env });
+    // The path is written out here so the gh-call scan in tests/scripts/lib/safe-git-lists.test.js can match its row.
+    const got = await run('gh', ['api', '/copilot_internal/user'], { timeoutMs: ACCOUNT_TIMEOUT_MS, baseEnv: env });
     if (got?.code !== 0) return none;
     reply = JSON.parse(String(got.stdout ?? ''));
   } catch {
