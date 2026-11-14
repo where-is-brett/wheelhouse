@@ -303,12 +303,35 @@ test('a lift that is not signed, or an undo that is not signed or has no window 
   }
 });
 
-test('a signed lift with no proof, as a card click records it, lifts All stop', async (t) => {
+test('a signed lift with no proof, as the chat picker writes it, lifts All stop but is a finding, not the director\'s click', async (t) => {
   const folder = scratch(t);
   const io = sittingIo({ noProof: true });
   const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
   assert.equal(got.findings.some((f) => /lifting All stop/.test(f.what)), false);
   assert.ok(readLog(folder).some((e) => e.step === 'f6-lift'));
+  assert.ok(got.findings.some((f) => /lifted from the chat picker; can't tell the director from the stand-in/.test(f.what)), JSON.stringify(got.findings));
+});
+
+test('the stand-in never presses keys on a picker that only the director decides', async (t) => {
+  const folder = scratch(t);
+  const picker = ['│ Lift All stop?', '  1. Not now', '❯ 2. Lift All stop', 'Enter to select · ↑/↓ to navigate'].join('\n');
+  const pressed = [];
+  const io = fakeIo({ capture: () => picker, keys: (name, key) => pressed.push(key) });
+  const got = await run({ mode: 'smoke', io, from: 'w2-type', until: 'w2-type', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(pressed, []);
+  assert.ok(got.findings.some((f) => /Lift All stop\?.*director's alone/.test(f.what)), JSON.stringify(got.findings));
+});
+
+test('a "Ready to submit" page left open for ten minutes is a finding and nothing is typed', async (t) => {
+  const folder = scratch(t);
+  const page = ['Ready to submit your answers?', '❯ 1. Submit answers', '  2. Cancel'].join('\n');
+  const io = fakeIo({ capture: () => page });
+  const typed = [];
+  const wrapped = io.tmux.type;
+  io.tmux.type = (name, text) => { typed.push(text); return wrapped(name, text); };
+  const got = await run({ mode: 'smoke', io, from: 'w2-type', until: 'w2-type', folder, date: '2026-11-08', env: ENV });
+  assert.deepEqual(typed, []);
+  assert.ok(got.findings.some((f) => f.step === 'desk-picker' && /Ready to submit/.test(f.what)), JSON.stringify(got.findings));
 });
 
 test('keeping main counts only when it is signed', async (t) => {

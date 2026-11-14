@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appendJsonl } from '../lib/log.js';
 import { projectSlug } from '../../scripts/lib/paths.js';
+import { CONFIRMED_STEPS } from '../../scripts/agents/chat-clicks.js';
 import { runFolder } from './results.js';
 import { openPicker, readyToSubmit, deskBusy, HIGHLIGHTED, PICKED } from './stand-in.js';
 import { PIECES, WAVES, P5_SPARE, F2_ANSWER, P6_FILE } from './requests.js';
@@ -337,9 +338,14 @@ async function deskFree(ctx) {
   if (await calm()) return true;
   const free = await waitFor(async () => { await tick(ctx); return calm(); }, { io, timeoutMs: 10 * MINUTE, everyMs: 10000 });
   if (free) return true;
-  const picker = openPicker(io.tmux.capture(DESK));
+  const pane = io.tmux.capture(DESK);
+  const picker = openPicker(pane);
   if (picker !== null) {
     await addFinding(ctx, 'desk-picker', `the front desk still had a picker open ("${picker.question}") after 10 minutes, so nothing was typed to it`);
+    return false;
+  }
+  if (readyToSubmit(pane)) {
+    await addFinding(ctx, 'desk-picker', 'the front desk still showed "Ready to submit your answers" after 10 minutes, so nothing was typed to it');
     return false;
   }
   await note(ctx, LOG.health, 'the front desk stayed busy for 10 minutes; typing anyway');
@@ -486,6 +492,11 @@ async function desk(ctx, name, extraEnv = {}) {
   await mustBeAlive(ctx, { restart: false });
 }
 
+// The cards that confirmed steps ask (scripts/agents/chat-clicks.js's CONFIRMED_STEPS, as the cards word them): the director's alone.
+const DIRECTOR_ONLY = [...CONFIRMED_STEPS.map((step) => new RegExp(step.replace(/-/g, '[-\\s]'), 'i')), /lift\s+(all\s+)?stop/i,
+  /push this change to the checks/i, /confirm this\?/i, /keep these files as they are/i, /end the incident/i, /emergency/i];
+const isDirectorOnly = (question) => DIRECTOR_ONLY.some((re) => re.test(String(question)));
+
 // The stand-in director's answer to the picker open in a session's pane: the recommended option, or the first when none
 // is marked. The cursor is moved to it and seen there before Enter. Returns whether a picker was answered.
 async function answerPicker(ctx, name) {
@@ -495,6 +506,15 @@ async function answerPicker(ctx, name) {
   if (first === null) return false;
   const target = first.recommended === -1 ? 0 : first.recommended;
   const question = (first.question.split('\n').find((l) => l.replace(/[│\s]/g, '') !== '') ?? '').replace(/[☐│]/g, '').trim().slice(0, 160);
+  // A card only the director decides (Lift All stop and the other confirmed steps) is never answered by the stand-in.
+  if (isDirectorOnly(first.question)) {
+    const missed = (ctx.state.pickersMissed ??= []);
+    if (!missed.includes(question)) {
+      missed.push(question);
+      await addFinding(ctx, name === DESK ? 'front-desk' : name, `the picker "${question}" is the director's alone, so the stand-in left it`);
+    }
+    return false;
+  }
   for (let moves = 0; moves < first.options.length; moves += 1) {
     const now = look();
     const index = now?.options.findIndex((l) => HIGHLIGHTED.test(l)) ?? -1;
@@ -637,11 +657,12 @@ const isAction = (e, ...actions) => e.kind === 'action' && actions.includes(e.da
 // The director's own click: signed, with the helper window's proof (as the helper's own undo check in local/undo.js). An
 // action typed into the screen, or made without a signature or the window's proof, is not a click.
 const isSigned = (e, ...actions) => isAction(e, ...actions) && Boolean(e.sig) && typeof e.sig === 'object' && e.data?.proof === 'window';
-// A lift of All stop: the director may lift it by a card click, the pane's Lift STOP or /wheelhouse-go (design, section 12.7), and
-// those routes record a signed lift with no proof, or one the pane names. Each still needs the signature, which an action typed into
-// the screen never has; only a proof that is not the window's, the pane's or absent is refused.
+// A lift of All stop the director made: signed, with the helper window's proof or the pane's ('add-on').
 const isSignedLift = (e) => isAction(e, 'lift-stop') && Boolean(e.sig) && typeof e.sig === 'object'
-  && (e.data?.proof === undefined || e.data.proof === 'window' || e.data.proof === 'add-on');
+  && (e.data?.proof === 'window' || e.data?.proof === 'add-on');
+// A signed lift with no proof is what an answer to the Lift All stop picker in the chat writes: the hook signs it, so it cannot tell
+// the director's click from keys typed into the pane. It does lift All stop, but it is not counted as the director's click.
+const isChatLift = (e) => isAction(e, 'lift-stop') && Boolean(e.sig) && typeof e.sig === 'object' && e.data?.proof === undefined;
 // An event made at or after `since` (one with no readable time counts: a record without a time cannot be told from a later one).
 const notBefore = (e, since) => !(Date.parse(e.at) < since);
 
@@ -649,14 +670,25 @@ const notBefore = (e, since) => !(Date.parse(e.at) < since);
 const stopIsOn = async (ctx) => {
   const { stopAt } = ctx.state;
   if (stopAt === undefined) return false;
-  return !(await eventsOf(ctx)).some((e) => isSignedLift(e) && notBefore(e, stopAt - 1000));
+  return !(await eventsOf(ctx)).some((e) => (isSignedLift(e) || isChatLift(e)) && notBefore(e, stopAt - 1000));
 };
+
+// A lift made from the chat picker is a finding: the run cannot tell the director from the stand-in.
+async function flagChatLift(ctx, n) {
+  const { stopAt } = ctx.state;
+  const events = await eventsOf(ctx);
+  if (events.some((e) => isSignedLift(e) && notBefore(e, stopAt - 1000))) return;
+  if (events.some((e) => isChatLift(e) && notBefore(e, stopAt - 1000))) {
+    await addFinding(ctx, sittingId(n), "All stop lifted from the chat picker; can't tell the director from the stand-in");
+  }
+}
 
 // Waits for the director's signed lift. If it does not come it is a finding, and the one terminal ask of the sitting follows: All
 // stop holds every merge and start until it is lifted, so nothing else goes on before that ask is answered.
 async function liftWatch(ctx, io, n) {
   const lifted = async () => (await stopIsOn(ctx)) === false;
   if (await waitFor(async () => { await tick(ctx); return lifted(); }, { io, timeoutMs: CLICK_WAIT_MS })) {
+    await flagChatLift(ctx, n);
     await note(ctx, 'f6-lift', 'All stop lifted');
     return true;
   }
@@ -664,6 +696,7 @@ async function liftWatch(ctx, io, n) {
   ctx.state.liftAskedIn = n;
   await directorAsk(ctx, 'All stop is still on: lift it in the helper window when you can, then answer done.');
   if (!(await lifted())) return false;
+  await flagChatLift(ctx, n);
   await note(ctx, 'f6-lift', 'All stop lifted');
   return true;
 }
