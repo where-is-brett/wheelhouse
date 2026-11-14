@@ -804,6 +804,19 @@ async function dataFacts({ client, worktree, branch, declared, dataMs, localChan
   return { made: false, why: local === null ? `${why}, and the changed files could not be read here either` : why, ...(local === null ? {} : local) };
 }
 
+// The names of the tester's screenshots (png or jpeg files directly in the feature folder's screens folder), at most five, or none.
+function screenshotsOf(worktree) {
+  try {
+    const dir = path.join(featurePaths(worktree).dir, 'screens');
+    if (!fs.lstatSync(dir).isDirectory()) return [];
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isFile() && /^[\w.-]{1,80}\.(png|jpe?g)$/i.test(e.name))
+      .map((e) => e.name).sort().slice(0, 5);
+  } catch {
+    return [];
+  }
+}
+
 // The proof note for the piece: the report's words, the calls it logged, the decisions it followed, the pages it touches and,
 // for data work, the data before and after. Throws a CliError when the change is data work (the helper says so, or the session's
 // own reading of the files does, or the report says its change moves data) and there is neither a comparison nor a reason in
@@ -838,6 +851,8 @@ function proofFor({ worktree, checked, facts }) {
     followed: fields.followed ?? [],
     review: null,
     previews: pages.map((page) => ({ page })),
+    visible: readBrief(worktree).shownFirst === true,
+    screens: screenshotsOf(worktree),
     data: note,
     notes: !isData && unavailable !== undefined ? [`The data check could not be made: ${unavailable}.`] : [],
   });

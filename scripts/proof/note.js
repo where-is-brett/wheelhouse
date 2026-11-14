@@ -63,11 +63,21 @@ function checked({ report, review, notes }, k) {
   return out.join('\n');
 }
 
-// What it looks like: the pages the change touches.
-function looks(previews, k) {
-  if (previews.length === 0) return 'Nothing on a page changed.';
-  const pages = previews.slice(0, Math.max(1, Math.floor(5 * k))).map((p) => code(p.page));
-  return `The change touches ${list(pages)}.`;
+// What it looks like: the pages the change touches, read from its files, and the tester's screenshots where there are some. Work
+// the director is shown first (`visible`) does change what people see, so when no page can be read from its files the note
+// says that, in place of "Nothing on a page changed".
+function looks(previews, k, { visible, screens }) {
+  const out = [];
+  if (previews.length > 0) {
+    const pages = previews.slice(0, Math.max(1, Math.floor(5 * k))).map((p) => code(p.page));
+    out.push(`The change touches ${list(pages)}.`);
+  } else if (visible) {
+    out.push('This change changes what people see, but no page could be read from its files, so no pictures of it are in this note.');
+  } else {
+    out.push('Nothing on a page changed.');
+  }
+  if (screens.length > 0) out.push(`The tester's screenshots: ${list(screens.slice(0, Math.max(1, Math.floor(5 * k))).map(code))}.`);
+  return out.join('\n');
 }
 
 // The data section: the comparison in the director's terms, then which data it ran on, last. With nothing compared it says why
@@ -98,14 +108,14 @@ function dataSection(data, k) {
   return out.join('\n');
 }
 
-function build({ report, calls, followed, review, previews, data, notes }, k) {
+function build({ report, calls, followed, review, previews, data, notes, visible, screens }, k) {
   const parts = [
     ['What changed', cut(report.body ?? '', Math.max(6, Math.round(110 * k)))],
     ['Why', line(report.goal ?? '', Math.max(4, Math.round(30 * k)))],
     ['Decided on its own', decided(calls, k)],
     ['Decisions followed', followedBy(followed, k)],
     ['How it was checked', checked({ report, review, notes }, k)],
-    ['What it looks like', looks(previews, k)],
+    ['What it looks like', looks(previews, k, { visible, screens })],
   ];
   if (data !== null && data !== undefined) parts.push([DATA_HEADING, dataSection(data, k)]);
   return `${parts.map(([heading, text]) => `## ${heading}\n\n${text}`).join('\n\n')}\n`;
@@ -119,10 +129,12 @@ function build({ report, calls, followed, review, previews, data, notes }, k) {
 // - `previews`: the pages whose pictures are kept, each { page };
 // - `data`: null with no data work; else { route: 'test' | 'real', comparison?, none?, failure?, failureTail?, unavailable?, realRefused? }:
 //   `failure` is why the helper's data command failed, `unavailable` why the check could not be made, `none` the session's reason;
-// - `notes`: lines for "How it was checked" about a check that couldn't be made.
+// - `notes`: lines for "How it was checked" about a check that couldn't be made;
+// - `visible`: true for work the director is shown first, which changes what people see whether or not a page can be read from its files;
+// - `screens`: the names of the tester's screenshots, if it took any.
 // Within REPORT_WORDS words: when the parts run over, each is cut shorter until the note fits.
-export function proofNote({ report, calls = [], followed = [], review = null, previews = [], data = null, notes = [] }) {
-  const input = { report, calls, followed, review, previews, data, notes };
+export function proofNote({ report, calls = [], followed = [], review = null, previews = [], data = null, notes = [], visible = false, screens = [] }) {
+  const input = { report, calls, followed, review, previews, data, notes, visible: visible === true, screens };
   for (const k of [1, 0.75, 0.5, 0.35, 0.25, 0.15, 0.08]) {
     const note = build(input, k);
     if (countWords(note) <= REPORT_WORDS) return note;
