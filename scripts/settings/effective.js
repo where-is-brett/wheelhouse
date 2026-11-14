@@ -115,10 +115,11 @@ export function levelWords(topic, level) {
   return `"${topic}": ${LEVEL_WORDS[level]} (level ${level})`;
 }
 
-// One line per setting, everyday then advanced: "Availability: away, until 18 October 2026, 18:00 UTC (yours)".
-export function settingsText(effective, retired) {
+// One line per setting, everyday then advanced: "Availability: away, until 18 October 2026, 18:00 UTC (yours)". Where
+// `agent` names an agent other than Claude Code, the settings kept for that agent (group `agent`) follow.
+export function settingsText(effective, retired, { agent = 'claude-code' } = {}) {
   const lines = [];
-  for (const group of ['everyday', 'advanced']) {
+  for (const group of agent === 'claude-code' || agent === null ? ['everyday', 'advanced'] : ['everyday', 'advanced', 'agent']) {
     for (const [key, held_] of Object.entries(effective ?? {})) {
       const def = definitionOf(key, retired);
       if (!def || def.retired || def.group !== group) continue;
