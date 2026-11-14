@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { computerStep } from '../../../scripts/setup/computer.js';
 import { configFrom, starterConfig } from '../../../scripts/setup/project-files.js';
-import { newId, reverseChange } from '../../../scripts/setup/journal.js';
+import { newId, reverseChange, startRun, addChanges, findRun } from '../../../scripts/setup/journal.js';
 import { agentChosen, agentEntries, otherAgentsFound, refreshAgentComputer, AGENT_ANSWER } from '../../../scripts/agents/setup-parts.js';
 import { planOf, signedIn } from '../../../scripts/agents/copilot/setup.js';
 import hooks from '../../../adapters/copilot/hooks.js';
@@ -218,21 +218,58 @@ test('signed in means a sign-in key in the Copilot home, and only key names are 
   assert.equal(signedIn({ home }), false);
 });
 
-test('an update points an existing hook file at the new release, leaves a computer with none alone, and writes nothing twice', () => {
-  const env = { COPILOT_HOME: tempFolder('wh-copilot-') };
-  const root = (version) => path.join(tempFolder('wh-root-'), version);
-  assert.deepEqual(refreshAgentComputer({ env, root: root('0.3.2'), platform: 'darwin' }), []);
-  assert.equal(fs.existsSync(path.join(env.COPILOT_HOME, 'hooks')), false);
+test('an update points the hook file setup made at the new release and journals it, so uninstall still puts the computer back', async () => {
+  await withProject(async ({ folder, user, config }) => {
+    const { env, home } = copilotEnv(config);
+    const step = stepFor(env, accountRun().run);
+    const ctx = ctxFor(folder, user, { '6.agent': COPILOT });
+    const planned = await step.plan(ctx);
+    const run = startRun({ folder, project: 'o__p', now: () => T0 });
+    const recorded = [];
+    await step.apply({ ...ctx, applyJsonKey: () => {}, record: (c) => { recorded.push(c); addChanges(run.id, [{ ...c, step: 6 }]); }, say: () => {} }, planned.changes);
+    const target = hooks.file({ home });
+    const first = fs.readFileSync(target, 'utf8');
 
-  const first = root('0.3.1');
-  hooks.writeRegistration({ home: env.COPILOT_HOME, root: first, platform: 'darwin' });
-  const second = root('0.3.2');
-  const lines = refreshAgentComputer({ env, root: second, platform: 'darwin' });
-  assert.equal(lines.length, 1);
-  assert.match(lines[0], /points at the new release/);
-  const text = fs.readFileSync(hooks.file({ home: env.COPILOT_HOME }), 'utf8');
-  assert.ok(text.includes(second) && !text.includes(first));
-  assert.deepEqual(refreshAgentComputer({ env, root: second, platform: 'darwin' }), []);
+    const next = path.join(tempFolder('wh-root-'), '0.3.2');
+    const lines = refreshAgentComputer({ env, root: next, platform: 'darwin' });
+    assert.match(lines[0], /points at the new release/);
+    const text = fs.readFileSync(target, 'utf8');
+    assert.ok(text.includes(next));
+    const changes = findRun(folder).changes.filter((c) => c.target === target);
+    assert.equal(changes.length, 2);
+    assert.deepEqual([changes[1].before, changes[1].after], [first, text]);
+    assert.deepEqual(refreshAgentComputer({ env, root: next, platform: 'darwin' }), [], 'nothing twice');
+
+    // Uninstall's chain: the earliest before, the latest after. Putting the last link back restores setup's text, then the first removes the file.
+    assert.deepEqual(reverseChange({ ...changes[1] }), { put: true });
+    assert.equal(fs.readFileSync(target, 'utf8'), first);
+    assert.deepEqual(reverseChange({ ...changes[0] }), { put: true });
+    assert.equal(fs.existsSync(target), false);
+  });
+});
+
+test('an update leaves a hook file setup did not make, or one changed since, and a computer with none', async () => {
+  await withProject(async ({ folder, user, config }) => {
+    const { env, home } = copilotEnv(config);
+    const next = path.join(tempFolder('wh-root-'), '0.3.2');
+    assert.deepEqual(refreshAgentComputer({ env, root: next, platform: 'darwin' }), []);
+    assert.equal(fs.existsSync(path.join(home, 'hooks')), false);
+
+    hooks.writeRegistration({ home, root: path.join(tempFolder('wh-root-'), '0.3.1'), platform: 'darwin' });
+    const theirs = fs.readFileSync(hooks.file({ home }), 'utf8');
+    const lines = refreshAgentComputer({ env, root: next, platform: 'darwin' });
+    assert.match(lines[0], /isn't the one setup wrote/);
+    assert.equal(fs.readFileSync(hooks.file({ home }), 'utf8'), theirs);
+
+    const step = stepFor(env, accountRun().run);
+    const ctx = ctxFor(folder, user, { '6.agent': COPILOT });
+    fs.rmSync(hooks.file({ home }));
+    const planned = await step.plan(ctx);
+    const run = startRun({ folder, project: 'o__p', now: () => T0 });
+    await step.apply({ ...ctx, applyJsonKey: () => {}, record: (c) => addChanges(run.id, [{ ...c, step: 6 }]), say: () => {} }, planned.changes);
+    fs.appendFileSync(hooks.file({ home }), ' ');
+    assert.match(refreshAgentComputer({ env, root: next, platform: 'darwin' })[0], /isn't the one setup wrote/);
+  });
 });
 
 // ---- Through the engine's routes, on the real step 6 ----

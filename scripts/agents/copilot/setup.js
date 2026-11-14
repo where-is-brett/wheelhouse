@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import hooks, { copilotHome } from '../../../adapters/copilot/hooks.js';
 import { SIGN_IN_KEYS, readCopilotConfig } from '../../../adapters/copilot/session-home.js';
+import { readJournal, addChanges, newId } from '../../setup/journal.js';
 import { accountOf, recordAccount, DEFAULT_ALLOWANCE } from './usage.js';
 
 export const LABEL = 'Copilot';
@@ -102,16 +103,32 @@ export function applyComputer(changes, { record, newId }) {
   }
 }
 
-// After an update: where the hook file is there and names another Wheelhouse folder (or Node.js) than the new release's,
-// it is written again for `root`. A computer with no hook file (Copilot never set up) is left alone. Resolves the line
-// to say, or null when nothing changed.
-export function refresh({ env = process.env, userHome, platform = process.platform, node = process.execPath, root, read = textOf } = {}) {
+// The setup run whose journal holds the hook file's last change, with that change, or null when none does.
+function runHolding(target, journal) {
+  const runs = Array.isArray(journal?.runs) ? journal.runs : [];
+  for (const run of [...runs].reverse()) {
+    const change = [...(run.changes ?? [])].reverse().find((c) => c?.kind === 'file' && c.target === target);
+    if (change !== undefined) return { run, change };
+  }
+  return null;
+}
+
+// After an update: where the hook file setup made names another Wheelhouse folder (or Node.js) than the new release's, it
+// is written again for `root`, and the rewrite is recorded in the same setup run's journal, so uninstall still takes the
+// file out (or puts back what it held before setup). A file setup did not make, or one changed since setup, is left as it
+// is and said so. A computer with no hook file is left alone. Resolves the line to say, or null when nothing changed.
+export function refresh({
+  env = process.env, userHome, platform = process.platform, node = process.execPath, root, read = textOf, journal = readJournal, add = addChanges,
+} = {}) {
   const home = copilotHome({ env, homedir: userHome });
   const target = hooks.file({ home });
   const there = read(target);
   if (there === null) return null;
   const content = hooks.registrationText({ node, root, platform });
   if (there === content) return null;
+  const held = runHolding(target, journal());
+  if (held === null || held.change.after !== there) return `Copilot's hook file in ${home} isn't the one setup wrote, so it was left as it is; run setup again to write it.`;
+  add(held.run.id, [{ id: newId('chg'), step: held.change.step, kind: 'file', target, before: there, after: content }]);
   hooks.writeRegistration({ home, node, root, platform });
   return "Copilot's hook file now points at the new release.";
 }
