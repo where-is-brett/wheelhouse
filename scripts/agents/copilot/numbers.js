@@ -44,6 +44,9 @@ export const REVIEW_SESSION_READY = false;
 // of the Copilot return turned it on, with setup, so a project set to Copilot on a computer starts its sessions
 // there. When it is false, Copilot's checkForeman and checkFeature refuse, so no watcher starts one and the helper's
 // sign-in start makes no watcher for a Copilot project. Read only by adapters/copilot/sessions.js.
+// Still to be seen on a real run: a guard firing in a session the watcher started, a resume in the same home, and the
+// foreman's quoted shell rule. They are checked in trial stages T5 and T6 and recorded in docs/checks/61-sessions.md; until
+// then only the stand-in tests show them.
 export const BACKGROUND_SESSIONS_READY = true;
 // Whether check 57 (the sandbox test, sitting S3) has shown Copilot's sandbox refuses every try on this computer, so
 // a Copilot step runs in it (adapters/copilot/sandbox.js). It stays false until its own pull request after S3.
