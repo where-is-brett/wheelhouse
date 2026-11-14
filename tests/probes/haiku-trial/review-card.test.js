@@ -76,3 +76,13 @@ test('a long floor line cannot push the card past the phone limit', () => {
   const { text } = reviewCard({ ...given, floor: 'x'.repeat(5000) });
   assert.ok(text.length <= PHONE_LIMIT.chars, `${text.length} characters`);
 });
+
+test('the card as a decision gives the feature command yes, no or partly for each option\'s undo', async () => {
+  const { faults } = await import('../../../probes/haiku-trial/faults.js');
+  const card = reviewCard({ project: 'p', date: '2026-11-13', decisionN: 3, score: { total: 34, pass: false }, rows: [] });
+  const calls = [];
+  faults.reviewDecision({ env: {}, cwd: '/x', card: reviewAsDecision(card), run: (cmd, args) => { calls.push(args); return { status: 0, stdout: '', stderr: '' }; } });
+  const flat = calls.flat().join(' ');
+  assert.match(flat, /--undo Tag it as working on Haiku=yes/);
+  assert.doesNotMatch(flat, /can be moved before release notes/);
+});

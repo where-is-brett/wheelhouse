@@ -1236,7 +1236,7 @@ test("a request is typed in one go: one tmux type call per request, however long
   assert.equal(new Set(typed.map((e) => e.args[1])).size, typed.length, 'no request is typed twice');
 });
 
-test("a feature session's own records (the front desk's layout) give the start and pace notes, as run records do", async (t) => {
+test("a feature session's own records (the front desk's layout) give the start and pace notes, and only a feature-lane work counts as a feature lane", async (t) => {
   const folder = scratch(t);
   const feature = (id, at, work, step) => ({ id, at, kind: 'feature', data: { work, step } });
   const events = [
@@ -1244,6 +1244,8 @@ test("a feature session's own records (the front desk's layout) give the start a
     feature('f2', '2026-11-08T09:02:00Z', 'export-year', 'started'),
     feature('f3', '2026-11-08T09:03:00Z', 'import-csv', 'planned'),
     feature('f4', '2026-11-08T09:04:00Z', 'import-csv', 'building'),
+    { id: 'w1', at: '2026-11-08T09:00:00Z', kind: 'work', data: { id: 'import-csv', lane: 'feature' } },
+    { id: 'w2', at: '2026-11-08T09:00:01Z', kind: 'work', data: { id: 'export-year', lane: 'small' } },
   ];
   const io = fakeIo({ gh: threeMerged, host: { events: async () => events } });
   await run({ mode: 'full', io, from: 'w2-merge-wait', until: 'w2-merge-wait', folder, date: '2026-11-08', env: ENV });
@@ -1251,7 +1253,7 @@ test("a feature session's own records (the front desk's layout) give the start a
   assert.deepEqual(log.filter((e) => e.step === 'start').map((e) => [e.work, e.at]), [
     ['import-csv', '2026-11-08T09:01:00Z'], ['export-year', '2026-11-08T09:02:00Z'], ['import-csv', '2026-11-08T09:04:00Z'],
   ]);
-  assert.ok(log.some((e) => e.step === 'pace' && /building 2, feature 2/.test(e.note)), log.filter((e) => e.step === 'pace').map((e) => e.note).join('; '));
+  assert.ok(log.some((e) => e.step === 'pace' && /building 2, feature 1/.test(e.note)), log.filter((e) => e.step === 'pace').map((e) => e.note).join('; '));
 });
 
 test('restore passes the force flag to the Wheelhouse teardown and reports what it kept as well as what it stopped', async (t) => {
