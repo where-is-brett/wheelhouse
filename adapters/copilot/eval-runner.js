@@ -2,12 +2,12 @@
 // The Copilot adapter's evaluation runner (Part 8 Task 3; rulings P8-25 to P8-27): one evaluation session through
 // `copilot -p`, from a clean home of its own, with what it did turned into the stream-json events the evaluation's
 // scenarios read (scripts/eval/harness.js), so a scenario judges a Copilot run as it judges a Claude Code one. The
-// version check's safety subset (sessions.js safetySubset, ruling P8-20) runs its sessions through `npm run eval`'s own
-// command, and so through this runner.
+// version check's safety subset, once a runner for it is wired in (sessions.js takes `runSubset`; none is yet, so a CLI other
+// than the pin holds Copilot work), is to run its sessions through `npm run eval`'s own command, and so through this runner.
 //
 // Who runs it. The director, by hand, through `npm run eval -- --agent copilot` (scripts/eval/run.js, which reaches it
-// through the registry's adapterFor and never names the agent), and the version check (sessions.js), which starts
-// that same command as a program of its own, only once the background sessions are switched on (ruling P8-1). No
+// through the registry's adapterFor and never names the agent), and, once wired, the version check
+// (sessions.js), which would start that same command as a program of its own. No
 // watcher, foreman or setup path imports it.
 //
 // The session (ruling P8-25):
