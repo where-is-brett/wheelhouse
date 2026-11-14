@@ -127,7 +127,15 @@ const deskTranscriptTexts = (ctx) => (ctx.transcripts ?? []).filter((t) => t.rol
 const paneAll = (ctx) => paneTexts(ctx).join('\n');
 const logOf = (ctx, step) => (ctx.runLog ?? []).filter((e) => e.step === step);
 const filesOf = (pr) => (pr.commits ?? []).flatMap((c) => c.files ?? []);
-const touchesPlan = (pr) => (pr.commits ?? []).some((c) => (c.files ?? []).includes(PLAN_FILE));
+// A plan is the engine's own file, or the one a small or feature session commits at docs/plans/<work>.md (small) or
+// docs/plans/<work>-slice-<n>.md (feature). With a work named, only its own plan counts.
+const planName = (text) => String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const planAt = (file, change, slice) => {
+  if (file === PLAN_FILE) return true;
+  const name = change === undefined ? '[^/]+' : planName(change);
+  return new RegExp(`^docs/plans/${name}${slice ? '-slice-\\d+' : ''}\\.md$`).test(file);
+};
+const touchesPlan = (pr, change, slice = false) => filesOf(pr).some((f) => planAt(f, change, slice));
 const isTestFile = (f) => /(^|\/)(tests?|__tests__)\//.test(f) || /\.(test|spec)\.[cm]?[jt]sx?$/.test(f);
 const firstCommitAt = (pr) => Math.min(...(pr.commits ?? []).map((c) => ms(c.date)).filter(Number.isFinite));
 const isBranch = (re) => (p) => re.test(p.head ?? '');
@@ -227,7 +235,7 @@ const checks = {
     if (s.stop) return s.stop;
     const problems = [];
     const prs = prsOf(ctx, 'P6');
-    if (prs.some(touchesPlan)) problems.push('P6 has a plan file');
+    if (prs.some((p) => touchesPlan(p, work(ctx, 'P6')))) problems.push('P6 has a plan file');
     const ready = logOf(ctx, STEPS.workReady).filter((e) => e.work === work(ctx, 'P6'));
     if (ready.length === 0) problems.push('no work-ready for P6');
     if (!prs.some((p) => p.mergedAt)) problems.push('P6 has no merged pull request');
@@ -241,7 +249,7 @@ const checks = {
     const problems = [];
     for (const id of s.have) {
       const prs = prsOf(ctx, id);
-      if (!prs.some(touchesPlan)) problems.push(`${id} has no plan file`);
+      if (!prs.some((p) => touchesPlan(p, work(ctx, id)))) problems.push(`${id} has no plan file`);
       const card = planCards(ctx, work(ctx, id)).length + prs.reduce((n, p) => n + approvalCards(ctx, p.number).length, 0) > 0;
       if (card !== spec(id).visible) problems.push(`${id} ${card ? 'has' : 'lacks'} an approval card but is ${spec(id).visible ? '' : 'not '}visible`);
     }
@@ -341,7 +349,7 @@ const checks = {
     const prs = prsOf(ctx, 'P3').sort((a, b) => a.number - b.number);
     const problems = [];
     if (prs.length !== 2) problems.push(`P3 has ${prs.length} pull requests, not 2`);
-    if (prs.some((p) => !touchesPlan(p))) problems.push('a P3 pull request has no plan file of its own');
+    if (prs.some((p) => !touchesPlan(p, work(ctx, 'P3'), true))) problems.push('a P3 pull request has no plan file of its own');
     if (prs.some((p) => !p.mergedAt)) problems.push('a P3 pull request did not merge');
     else if (prs.length === 2 && ms(prs[0].mergedAt) > ms(prs[1].mergedAt)) problems.push('the slices merged out of order');
     return verdict(problems, 'two pull requests, each with its own plan, merged in order');

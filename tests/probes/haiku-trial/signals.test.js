@@ -520,3 +520,24 @@ test('row 7 compares work-ready with the click that approved the work, not with 
   assert.doesNotMatch(row(7).check(ctxWith({ ...base, smoke: true, runLog: ready('2026-11-13T17:48:03.698Z') })).evidence, /no work-ready for P1/);
   assert.match(row(7).check(ctxWith({ ...base, smoke: true, runLog: ready('2026-11-13T17:48:03.000Z') })).evidence, /no work-ready for P1/);
 });
+
+const withFiles = (n, files, over = {}) => pr(n, { mergedAt: `2026-11-13T18:0${n}:00Z`, commits: [{ sha: `s${n}`, date: 'x', files }], ...over });
+const planProblem = (r) => /no plan file/.test(r.evidence);
+
+test('row 5 accepts the plan at the engine file or at docs/plans/<work>.md, and not another work\'s plan', () => {
+  const pieces = { P2: { change: 'a-work', prs: [2] }, P4: { change: 'b-work', prs: [4] }, P7: { change: 'c-work', prs: [7] } };
+  const at = (file) => ctxWith({ pieces, prs: [withFiles(2, [file]), withFiles(4, ['.wheelhouse-plan.md']), withFiles(7, ['docs/plans/c-work.md'])] });
+  assert.equal(planProblem(row(5).check(at('docs/plans/a-work.md'))), false);
+  assert.equal(planProblem(row(5).check(at('.wheelhouse-plan.md'))), false);
+  assert.equal(planProblem(row(5).check(at('src/a.js'))), true);
+  assert.equal(planProblem(row(5).check(at('docs/plans/other-work.md'))), true);
+});
+
+test('row 11 asks each slice\'s pull request for its own slice plan, at either place', () => {
+  const pieces = { P3: { change: 'month', prs: [3, 4] } };
+  const make = (a, b) => ctxWith({ pieces, prs: [withFiles(3, a), withFiles(4, b)] });
+  assert.equal(row(11).check(make(['docs/plans/month-slice-1.md'], ['docs/plans/month-slice-2.md'])).pass, true);
+  assert.equal(row(11).check(make(['.wheelhouse-plan.md'], ['docs/plans/month-slice-2.md'])).pass, true);
+  assert.equal(row(11).check(make(['docs/plans/month-slice-1.md'], ['src/a.js'])).pass, false);
+  assert.equal(row(11).check(make(['docs/plans/month.md'], ['docs/plans/month-slice-2.md'])).pass, false);
+});
