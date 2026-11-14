@@ -1,6 +1,7 @@
 // scripts/agents/copilot/setup.js
-// What setup does on a computer that runs Copilot (design section 8, part 11): the hook file in the person's Copilot
-// home, the check that Copilot is signed in, and the plan and allowance read from the GitHub account.
+// What setup does on a computer that runs Copilot (design section 8, part 11): the hook file and the First Mate's agent and
+// instructions in the person's Copilot home, the check that Copilot is signed in, and the plan and allowance read from the
+// GitHub account.
 //
 // The hook file is registered once per computer (adapters/copilot/hooks.js). Setup records it in the journal as a file
 // change, with the text it held before, so uninstall puts the computer back as it was, and only while the file still
@@ -15,6 +16,7 @@ import hooks, { copilotHome } from '../../../adapters/copilot/hooks.js';
 import { SIGN_IN_KEYS, readCopilotConfig } from '../../../adapters/copilot/session-home.js';
 import { readJournal, addChanges, newId } from '../../setup/journal.js';
 import { accountOf, recordAccount, DEFAULT_ALLOWANCE } from './usage.js';
+import { FIRST_MATE_DIR, FIRST_MATE_FILES } from './first-mate.js';
 
 export const LABEL = 'Copilot';
 export const ACCOUNT_TIMEOUT_MS = 20 * 1000;
@@ -22,6 +24,7 @@ export const ACCOUNT_TIMEOUT_MS = 20 * 1000;
 export const SIGN_IN_WAIT_MS = 30 * 1000;
 export const SIGN_IN_WHY = "Copilot isn't signed in on this computer. Sign in with `copilot login` (GitHub's device sign-in, which only you can finish), and setup goes on once it has.";
 export const HOOKS_LINE = "Copilot's checks before each of its actions, as one hook file in your Copilot folder";
+export const FIRST_MATE_LINE = "Wheelhouse's First Mate for Copilot's chat, as an agent file and an instructions file in your Copilot folder";
 
 const isRecord = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
@@ -84,22 +87,49 @@ export function accountLine({ plan, allowance }) {
   return `Your GitHub account shows a Copilot plan with ${parts.join(', ')}.${set}`;
 }
 
-// The changes setup makes on this computer for Copilot: the hook file, unless it already holds what Wheelhouse writes.
-// `node` is the Node.js that runs setup and `root` the Wheelhouse folder.
-export function computerChanges({ env = process.env, userHome, platform = process.platform, node = process.execPath, root, read = textOf } = {}) {
-  const home = copilotHome({ env, homedir: userHome });
-  const target = hooks.file({ home });
-  const content = hooks.registrationText({ node, root, platform });
-  if (read(target) === content) return [];
-  return [{ kind: 'file', target, what: 'agent', label: LABEL, line: HOOKS_LINE, home, content, node, root, platform }];
+// The First Mate's files as the Wheelhouse folder `root` holds them (adapters/copilot/first-mate/, kept equal to the build by
+// a test), each with where it goes in the Copilot home `home`: [{ target, content }]. A file the folder lacks is left out.
+// The home's agents/ and instructions/ folders are where Copilot's CLI and VS Code's chat read a person's agents and
+// instructions (checks 55, 61 and 70).
+function firstMateFiles({ home, root, read }) {
+  const out = [];
+  for (const file of FIRST_MATE_FILES) {
+    const text = root === undefined ? null : read(path.join(root, ...FIRST_MATE_DIR.split('/'), ...file.split('/')));
+    if (text !== null) out.push({ target: path.join(home, ...file.split('/')), content: text.replaceAll('\r\n', '\n') });
+  }
+  return out;
 }
 
-// Makes the changes: each hook file is written (a whole file, by a temporary file and a rename), recorded in the journal
+// The changes setup makes on this computer for Copilot: the hook file and the First Mate's files, each unless it already
+// holds what Wheelhouse writes. `node` is the Node.js that runs setup and `root` the Wheelhouse folder. The First Mate's
+// files share one line on the plan; a file of the person's own at one of their paths is replaced, and the journal holds
+// it first (applyComputer).
+export function computerChanges({ env = process.env, userHome, platform = process.platform, node = process.execPath, root, read = textOf } = {}) {
+  const home = copilotHome({ env, homedir: userHome });
+  const out = [];
+  const target = hooks.file({ home });
+  const content = hooks.registrationText({ node, root, platform });
+  if (read(target) !== content) out.push({ kind: 'file', part: 'hooks', target, what: 'agent', label: LABEL, line: HOOKS_LINE, home, content, node, root, platform });
+  const mate = firstMateFiles({ home, root, read }).filter((f) => read(f.target) !== f.content);
+  mate.forEach((f, i) => out.push({ kind: 'file', part: 'first-mate', target: f.target, what: 'agent', label: LABEL, line: i === 0 ? FIRST_MATE_LINE : null, home, content: f.content }));
+  return out;
+}
+
+// A whole file written by a temporary file and a rename, its folders made first.
+function writeWhole(target, content) {
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const temp = `${target}.${process.pid}.tmp`;
+  fs.writeFileSync(temp, content);
+  fs.renameSync(temp, target);
+}
+
+// Makes the changes: each file is written (a whole file, by a temporary file and a rename), recorded in the journal
 // first with the text it held before. `record` takes a journal change; `newId` makes its id.
 export function applyComputer(changes, { record, newId }) {
   for (const c of changes) {
     record({ id: newId('chg'), kind: 'file', target: c.target, before: textOf(c.target), after: c.content });
-    hooks.writeRegistration({ home: c.home, node: c.node, root: c.root, platform: c.platform });
+    if (c.part === 'first-mate') writeWhole(c.target, c.content);
+    else hooks.writeRegistration({ home: c.home, node: c.node, root: c.root, platform: c.platform });
   }
 }
 
@@ -114,23 +144,34 @@ function runHolding(target, journal) {
 }
 
 // After an update: where the hook file setup made names another Wheelhouse folder (or Node.js) than the new release's, it
-// is written again for `root`, and the rewrite is recorded in the same setup run's journal, so uninstall still takes the
-// file out (or puts back what it held before setup). A file setup did not make, or one changed since setup, is left as it
-// is and said so. A computer with no hook file is left alone. Resolves the line to say, or null when nothing changed.
+// is written again for `root`, and so is each First Mate file whose text the new release changed; each rewrite is recorded
+// in the same setup run's journal, so uninstall still takes the file out (or puts back what it held before setup). A file
+// setup did not make, or one changed since setup, is left as it is and said so. A computer with none of the files is left
+// alone. Resolves the lines to say as one text, or null when nothing changed.
 export function refresh({
   env = process.env, userHome, platform = process.platform, node = process.execPath, root, read = textOf, journal = readJournal, add = addChanges,
 } = {}) {
   const home = copilotHome({ env, homedir: userHome });
-  const target = hooks.file({ home });
-  const there = read(target);
-  if (there === null) return null;
-  const content = hooks.registrationText({ node, root, platform });
-  if (there === content) return null;
-  const held = runHolding(target, journal());
-  if (held === null || held.change.after !== there) return `Copilot's hook file in ${home} isn't the one setup wrote, so it was left as it is; run setup again to write it.`;
-  add(held.run.id, [{ id: newId('chg'), step: held.change.step, kind: 'file', target, before: there, after: content }]);
-  hooks.writeRegistration({ home, node, root, platform });
-  return "Copilot's hook file now points at the new release.";
+  const said = [];
+  // `write` puts the new text in place once the journal holds the change; `what` names the file in the line for a file left
+  // as it is, and `done` is the line for one rewritten.
+  const redo = (target, content, what, done, write) => {
+    const there = read(target);
+    if (there === null || there === content) return;
+    const held = runHolding(target, journal());
+    if (held === null || held.change.after !== there) {
+      said.push(`${what} in ${home} isn't the one setup wrote, so it was left as it is; run setup again to write it.`);
+      return;
+    }
+    add(held.run.id, [{ id: newId('chg'), step: held.change.step, kind: 'file', target, before: there, after: content }]);
+    write();
+    said.push(done);
+  };
+  const hookTarget = hooks.file({ home });
+  const hookText = hooks.registrationText({ node, root, platform });
+  redo(hookTarget, hookText, "Copilot's hook file", "Copilot's hook file now points at the new release.", () => hooks.writeRegistration({ home, node, root, platform }));
+  for (const f of firstMateFiles({ home, root, read })) redo(f.target, f.content, `The First Mate's file ${path.basename(f.target)}`, `The First Mate's file ${path.basename(f.target)} now matches the new release.`, () => writeWhole(f.target, f.content));
+  return said.length === 0 ? null : said.join(' ');
 }
 
 // After the hook file: reads the account and keeps the reading. Resolves the line to say. Keeping the reading is the one

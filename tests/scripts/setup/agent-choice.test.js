@@ -10,13 +10,15 @@ import { computerStep } from '../../../scripts/setup/computer.js';
 import { configFrom, starterConfig, agentsAfter, committedAgents } from '../../../scripts/setup/project-files.js';
 import { newId, reverseChange, startRun, addChanges, findRun } from '../../../scripts/setup/journal.js';
 import { agentChosen, agentEntries, otherAgentsFound, refreshAgentComputer, AGENT_ANSWER } from '../../../scripts/agents/setup-parts.js';
-import { planOf, signedIn } from '../../../scripts/agents/copilot/setup.js';
+import { planOf, signedIn, computerChanges, FIRST_MATE_LINE } from '../../../scripts/agents/copilot/setup.js';
+import { FIRST_MATE_DIR, FIRST_MATE_FILES } from '../../../scripts/agents/copilot/first-mate.js';
 import hooks from '../../../adapters/copilot/hooks.js';
 import { readAccount as readUsageAccount } from '../../../scripts/agents/copilot/usage.js';
 import { computerId } from '../../../scripts/lib/paths.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { withProject, T0 } from '../../helpers/setup-answers.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { fileURLToPath } from 'node:url';
 
 const MANIFEST = { claudeCode: { floor: '2.1.100' } };
 const COPILOT = { label: 'Copilot', text: null, at: T0.toISOString() };
@@ -310,4 +312,109 @@ test('through /setup/plan, step 6 asks which agent, then waits for the sign-in, 
     process.env.PATH = before;
     if (beforeHome === undefined) delete process.env.COPILOT_HOME; else process.env.COPILOT_HOME = beforeHome;
   }
+});
+
+// ---- The First Mate's files in the Copilot folder ----
+
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const mateAt = (home) => FIRST_MATE_FILES.map((file) => path.join(home, ...file.split('/')));
+const committedMate = (file) => fs.readFileSync(path.join(REPO, ...FIRST_MATE_DIR.split('/'), ...file.split('/')), 'utf8').replaceAll('\r\n', '\n');
+
+// A copy of the First Mate's folder in a scratch Wheelhouse folder, so a test can change a built file.
+function releaseWith(changed = {}) {
+  const root = tempFolder('wh-root-');
+  for (const file of FIRST_MATE_FILES) {
+    const target = path.join(root, ...FIRST_MATE_DIR.split('/'), ...file.split('/'));
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, changed[file] ?? committedMate(file));
+  }
+  return root;
+}
+
+// A fresh setup on Copilot, the changes journalled as step 6's apply does. Resolves what the tests look at.
+async function setUpCopilot({ folder, user, config }, prior) {
+  const { env, home } = copilotEnv(config);
+  prior?.(home);
+  const step = stepFor(env, accountRun().run);
+  const ctx = ctxFor(folder, user, { '6.agent': COPILOT });
+  const planned = await step.plan(ctx);
+  const run = startRun({ folder, project: 'o__p', now: () => T0 });
+  await step.apply({ ...ctx, applyJsonKey: () => {}, record: (c) => addChanges(run.id, [{ ...c, step: 6 }]), say: () => {} }, planned.changes);
+  return { env, home, planned, run };
+}
+
+test('a fresh setup on Copilot writes the First Mate\'s agent and instructions beside the hook file, under one line on the plan', async () => {
+  await withProject(async (world) => {
+    const { home, planned } = await setUpCopilot(world);
+    for (const [i, file] of FIRST_MATE_FILES.entries()) assert.equal(fs.readFileSync(mateAt(home)[i], 'utf8'), committedMate(file));
+    assert.ok(fs.existsSync(hooks.file({ home })));
+    assert.match(planned.card.what, new RegExp(FIRST_MATE_LINE.slice(0, 40)));
+    assert.equal(planned.card.what.split(FIRST_MATE_LINE).length, 2, 'one line for both files');
+    assert.deepEqual(fs.readdirSync(home).sort(), ['agents', 'config.json', 'hooks', 'instructions']);
+    // Already in place: nothing more to plan.
+    assert.deepEqual(computerChanges({ env: { COPILOT_HOME: home }, root: REPO }).filter((c) => c.part === 'first-mate'), []);
+  });
+});
+
+test('an update rewrites a First Mate file the new release changed, and journals it', async () => {
+  await withProject(async (world) => {
+    const { env, home, run } = await setUpCopilot(world);
+    const [agentFile] = mateAt(home);
+    const first = fs.readFileSync(agentFile, 'utf8');
+    const root = releaseWith({ [FIRST_MATE_FILES[0]]: `${first}A new line.\n` });
+    const lines = refreshAgentComputer({ env, root, platform: 'darwin' });
+    assert.match(lines.join(' '), /First Mate's file wheelhouse-first-mate\.agent\.md now matches the new release/);
+    assert.equal(fs.readFileSync(agentFile, 'utf8'), `${first}A new line.\n`);
+    const changes = findRun(world.folder).changes.filter((c) => c.target === agentFile);
+    assert.equal(changes.length, 2);
+    assert.deepEqual([changes[1].before, changes[1].after], [first, `${first}A new line.\n`]);
+    assert.deepEqual(refreshAgentComputer({ env, root, platform: 'darwin' }).filter((l) => /First Mate/.test(l)), [], 'nothing twice');
+    assert.ok(run.id);
+  });
+});
+
+test('an update leaves a First Mate file changed since setup, and a computer with none', async () => {
+  await withProject(async (world) => {
+    const bare = copilotEnv(world.config);
+    assert.deepEqual(refreshAgentComputer({ env: bare.env, root: releaseWith(), platform: 'darwin' }), []);
+    assert.equal(fs.existsSync(path.join(bare.home, 'agents')), false);
+
+    const { env, home } = await setUpCopilot(world);
+    const [agentFile] = mateAt(home);
+    fs.appendFileSync(agentFile, 'Their own words.\n');
+    const root = releaseWith({ [FIRST_MATE_FILES[0]]: 'changed\n' });
+    assert.match(refreshAgentComputer({ env, root, platform: 'darwin' }).join(' '), /wheelhouse-first-mate\.agent\.md in .* isn't the one setup wrote/);
+    assert.match(fs.readFileSync(agentFile, 'utf8'), /Their own words/);
+  });
+});
+
+test('uninstall removes exactly the First Mate files setup wrote, and nothing else in the Copilot folder', async () => {
+  await withProject(async (world) => {
+    const { home } = await setUpCopilot(world, (h) => {
+      fs.mkdirSync(path.join(h, 'agents'), { recursive: true });
+      fs.writeFileSync(path.join(h, 'agents', 'mine.agent.md'), 'mine\n');
+    });
+    const ours = findRun(world.folder).changes.filter((c) => mateAt(home).includes(c.target));
+    assert.equal(ours.length, 2);
+    for (const c of ours) assert.deepEqual(reverseChange({ ...c }), { put: true });
+    assert.deepEqual(mateAt(home).map((f) => fs.existsSync(f)), [false, false]);
+    assert.equal(fs.readFileSync(path.join(home, 'agents', 'mine.agent.md'), 'utf8'), 'mine\n');
+    assert.ok(fs.existsSync(path.join(home, 'config.json')));
+  });
+});
+
+test('a file of the person\'s own at the same name is journalled before it is replaced, and uninstall puts it back', async () => {
+  await withProject(async (world) => {
+    const theirs = 'their own First Mate\n';
+    const { home } = await setUpCopilot(world, (h) => {
+      fs.mkdirSync(path.join(h, 'agents'), { recursive: true });
+      fs.writeFileSync(path.join(h, 'agents', 'wheelhouse-first-mate.agent.md'), theirs);
+    });
+    const [agentFile] = mateAt(home);
+    const change = findRun(world.folder).changes.find((c) => c.target === agentFile);
+    assert.equal(change.before, theirs);
+    assert.equal(fs.readFileSync(agentFile, 'utf8'), committedMate(FIRST_MATE_FILES[0]));
+    assert.deepEqual(reverseChange({ ...change }), { put: true });
+    assert.equal(fs.readFileSync(agentFile, 'utf8'), theirs);
+  });
 });

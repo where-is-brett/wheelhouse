@@ -21,6 +21,8 @@ const SOURCE = 'skills/front-desk/SKILL.md';
 const TOOL_SHEET = 'adapters/copilot/tool-sheet.md';
 const AGENT_FILE = 'agents/wheelhouse-first-mate.agent.md';
 const INSTRUCTIONS_FILE = 'instructions/wheelhouse-first-mate.instructions.md';
+// The files, as paths under the folder (and under the person's Copilot folder, where setup puts them).
+export const FIRST_MATE_FILES = Object.freeze([AGENT_FILE, INSTRUCTIONS_FILE]);
 
 // What the First Mate may use: reading and searching, the question tool, the shell (the Wheelhouse command, and the guards
 // that stand behind every Copilot session), the file tools for the card's input file, and dispatching and loading skills.
