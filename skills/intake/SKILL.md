@@ -81,8 +81,8 @@ Does it add a page or route, store or change data, parse input, or touch more th
 
 | The lane | Lane | What you record and ask |
 |---|---|---|
-| all false, "do it" | Quick | Never do it yourself. A short brief; a `work` event, as for a bug but in the `quick` lane. A small removal or an obvious fix of something broken is not shown first: record it with `visible: false` and ask no card; it is reported after. Work you would show the director first is the small lane: `record` refuses the quick lane with `visible: true`. |
-| all false, "a small change" | Small | The brief; a `work` event naming it as `doc`; then ask the `card` that `record work` printed |
+| all false, "do it" | Quick | Never do it yourself. A short brief; a `work` event, as for a bug but in the `quick` lane. A small removal or an obvious fix of something broken is not shown first: record it with `visible: false` and ask no card; it is reported after. Work you would show the director first is the small lane: `record` refuses the quick lane with `visible: true`. Work no person sees (tests only, internals) is quick, however many files or lines it is: `record` refuses a new small piece with `visible: false`. |
+| all false, "a small change" that people would see | Small | The brief; a `work` event naming it as `doc`; then ask the `card` that `record work` printed |
 | any true, "a written design" | Feature | The design, ending with its slices (below); a `work` event naming it as `doc`; then ask the `card` that `record work` printed |
 
 `record work` refuses a `small` or `quick` brief that has no facts block, or whose block has a `true`. Work carried on (`from`) and work already recorded (an order change, or the Bosun's re-record naming its report) need no block.
