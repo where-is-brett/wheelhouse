@@ -1153,6 +1153,22 @@ test('record work refuses a facts block that is broken', async () => {
   });
 });
 
+test('record work refuses new small work that nobody would see, and says to record it in the quick lane', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithBrief('money-edge-tests', factsBlock({}));
+    const out = await run(helper, ['record', 'work'], JSON.stringify(briefWork('money-edge-tests', 'small', { visible: false })), { cwd: dir });
+    assert.notEqual(out.code, 0);
+    assert.match(out.err, /small lane is for work shown to the director first/);
+    assert.match(out.err, /quick lane/);
+    nothingWritten(helper);
+    // The same piece in the quick lane, not shown first, is recorded with no card.
+    const quick = await run(helper, ['record', 'work'], JSON.stringify(briefWork('money-edge-tests', 'quick')), { cwd: dir });
+    assert.equal(quick.code, 0, quick.err);
+    assert.equal(cardsOf(helper).length, 0);
+  });
+});
+
 test('record work records feature work whatever the facts say, and with no block', async () => {
   await inHome(async () => {
     for (const text of [`${designWithSlices('Export')}${factsBlock({ addsPage: true, storesData: true })}`, designWithSlices('Export')]) {

@@ -1172,6 +1172,11 @@ async function refuseLaneFromFacts(client, cwd, data) {
   if (views.work?.[data.id]?.work !== undefined) return;
   const problem = laneFactsProblem(fs.readFileSync(path.resolve(cwd, data.doc.path), 'utf8'), data.lane);
   if (problem !== null) throw new CliError(problem);
+  // The small lane starts only once the director approves, which is for work they would see. Work nobody sees (tests, internals),
+  // with every fact false, is quick whatever its size: it starts unapproved and is reported after.
+  if (data.lane === 'small' && data.visible === false) {
+    throw new CliError('The small lane is for work shown to the director first (visible true). This work is not seen by any person and every fact in its brief is false, so record it in the quick lane with visible false: it starts with no card and is reported after.');
+  }
 }
 
 // A work event's document, or an amendment of the one file open work names, with its hash worked out.
