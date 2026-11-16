@@ -112,6 +112,26 @@ test('a settled step\'s said line comes with its plan and with resume, and none 
   assert.deepEqual(JSON.parse((await run(['plan', '2'], { client: quiet })).out), { step: 2, title: 'Tools', done: true });
 });
 
+// The phone's step settles with no card where none can be shown; the verdict and first briefing
+// step 10's plan then gives are in the same resume, from a status taken after it settled.
+test('resume carries on past a step that settled with nothing said, to the said line after it', async () => {
+  const statuses = [
+    { ok: true, lines: ['Step 9, Phone notifications: not started'], next: 9, ask: 9 },
+    { ok: true, lines: ['Setup is finished.'], next: null, ask: 10 },
+  ];
+  const c = fakeClient({
+    status: () => statuses.shift() ?? { ok: true, lines: ['Setup is finished.'], next: null, ask: null },
+    plan: (body) => (body.step === 9 ? { ok: true, done: true } : { ok: true, done: true, said: 'All 12 checks passed. Wheelhouse is ready.' }),
+  });
+  const resumed = JSON.parse((await run(['resume'], { client: c })).out);
+  assert.deepEqual(resumed, { lines: ['Setup is finished.'], next: null, plan: { step: 10, title: 'Health check', done: true, said: 'All 12 checks passed. Wheelhouse is ready.' } });
+  assert.deepEqual(c.calls.map(([name, body]) => [name, body.step]), [['status', undefined], ['plan', 9], ['status', undefined], ['plan', 10]]);
+  // Nothing after it: one more status, and the settled step's plan as it was.
+  const alone = fakeClient({ status: () => ({ ok: true, lines: ['Setup is finished.'], next: null, ask: 9 }), plan: { ok: true, done: true } });
+  assert.deepEqual(JSON.parse((await run(['resume'], { client: alone })).out).plan, { step: 9, title: 'Phone notifications', done: true });
+  assert.deepEqual(alone.calls.map(([name]) => name), ['status', 'plan', 'status']);
+});
+
 // Step 10 (ruling R41): the session hands in the lines its sandboxed trials printed, as they are,
 // and gets back the joined board; with none, it learns which pull request and project to try.
 test('health hands the trial lines to the helper, as they are, and gives back the board', async () => {
