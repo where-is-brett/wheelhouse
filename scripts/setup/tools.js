@@ -933,7 +933,7 @@ function cardFor(changes, status, platform, leftOut = [], hostTools = []) {
     what: [`Setup step 2, ${SETUP_TITLES[2]}:`, ...(installs ? [] : ['- Nothing to install.']), ...lines.map((l) => `- ${l}.`), ...(ready === null ? [] : [`- ${ready}`])].join('\n'),
     why: hostWhy(hostTools, leftOut),
     options: installs ? [
-      { label: SETUP_LABEL, says: 'Setup starts what is listed and moves on to its questions while it runs.' },
+      { label: SETUP_LABEL, says: 'Setup starts the fetch and carries on with the next steps while it runs.' },
       { label: 'Not now', says: 'Setup waits at this step; nothing is installed.' },
     ] : [
       { label: SETUP_LABEL, says: 'Setup makes the changes listed and moves on.' },

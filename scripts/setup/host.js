@@ -422,7 +422,7 @@ function realUsersAsk(name, platform) {
       what: `Does ${name} have real users yet: people who rely on it, beyond you and anyone testing it?`,
       why: 'A product with real users gets the narrowest connection its host allows, so a leak reaches as little as it can.',
       options: [
-        { label: REAL_USERS.yes, says: `Setup treats it as launched: agents get a narrow connection, a key to this one project wherever one can be made, and agents never use your own sign-in. On GitLab, where a project key can't be made, a ${PERSONAL_DAYS}-day token that can act as you stands in.` },
+        { label: REAL_USERS.yes, says: `Setup treats it as launched: agents get a narrow connection, a key to this one project wherever one can be made, and agents don't use your own sign-in. Only on GitLab, where a project key can't be made, does a ${PERSONAL_DAYS}-day token that can act as you stand in.` },
         { label: REAL_USERS.no, says: 'Setup treats it as before launch, like a throwaway or test project. You can change this when it has users.' },
       ],
       recommend: REAL_USERS.no,
@@ -860,7 +860,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
     options.push({ label: WAYS.own, says: 'Narrow, through a GitHub App of your own, filled in from Wheelhouse\'s: you tick Enable Device Flow and click Create.' });
     recommend = app ? WAYS.wheelhouse : WAYS.own;
   } else {
-    options.push({ label: WAYS.narrow, says: toolOut ? 'A key to this one project, made with a one-day token you paste into your computer\'s own box, which setup revokes after.' : 'A key to this one project, which setup makes with GitLab\'s own tool.' });
+    options.push({ label: WAYS.narrow, says: toolOut ? 'A key to this one project, made with a one-day token pasted into your computer\'s own box; setup revokes the token afterwards.' : 'A key to this one project, which setup makes with GitLab\'s own tool.' });
     recommend = WAYS.narrow;
   }
   const quick = !locked && !launched && !asIs;
@@ -1150,7 +1150,7 @@ const SETUP_TOKEN_LONG = 'The GitLab token lasts longer than a day, so setup mad
 // The latest end a setup token may have: the day after tomorrow, in case the director's tomorrow is a day ahead.
 const SETUP_TOKEN_DAYS = 2;
 // What step 3's card says of protection with the setup token.
-export const SETUP_TOKEN_PROTECTION = 'Setup protects the main line now, while it holds that token: changes go in only through merge requests, and where the project has a pipeline, it must pass first.';
+export const SETUP_TOKEN_PROTECTION = 'Setup protects the main line now, while it holds that token: changes go in only through merge requests, and any automatic checks it has must pass first.';
 // What step 3's card says of merging a project with real users through a key for that project only.
 export const REAL_USERS_MERGE_LINE = 'With real users, only you can merge on GitLab: when a change is ready, you press Merge there.';
 // Step 3's wait where the setup token can't do what the product needs, in plain words for the director.
@@ -1936,8 +1936,8 @@ async function checkPersonalToken(own, now) {
 // What the card says of protection.
 export function protectionPlanLine(host) {
   return host === 'gitlab'
-    ? 'At step 7, setup acts as you on GitLab to protect the main line: changes go in only through merge requests, and where the project has a pipeline, it must pass first.'
-    : 'At step 7, setup acts as you on GitHub to protect the main line, where your GitHub plan allows.';
+    ? 'At step 7, setup acts as you on GitLab to protect the main line: changes go in only through merge requests, and any automatic checks it has must pass first.'
+    : 'At step 7, setup acts as you on GitHub to protect the main line, if your GitHub plan allows it (the free plan doesn\'t for a private repository).';
 }
 
 // Switches the host's protection on with the director's own sign-in, never the narrow key (`run`
@@ -2059,7 +2059,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
   // A joining computer's project already has its protection, from the first computer's step 7. With the setup token,
   // protection goes on in this step, while setup holds the token.
   if (signing?.via === 'setup-token') parts.push(tight ? 'Setup protects the main line now, while it holds that token.' : SETUP_TOKEN_PROTECTION);
-  else if (!product.joining) parts.push(tight ? `At step 7, setup protects the main line with your sign-in${host === 'github' ? ', where your GitHub plan allows' : ''}.` : protectionPlanLine(host));
+  else if (!product.joining) parts.push(tight ? `At step 7, setup protects the main line with your sign-in${host === 'github' ? ', if your GitHub plan allows it (the free plan doesn\'t for a private repository)' : ''}.` : protectionPlanLine(host));
   return {
     kind: 'setup',
     level: 3,
@@ -2347,7 +2347,9 @@ export function hostStep({
       }
       const reach = !locked && !launched ? await reachOf({ ctx, host, base, product, platform }) : null;
       if (reach?.noRoad && ctx.choicesOnly !== true) return { wait: OWN_APP_WAIT_MS, why: noRoadLine(host) };
-      const toolOut = host === 'gitlab' && (hostToolLeftOut(ctx, host) || reach?.tool === 'missing');
+      // A Locked or launched project reads no reach, so the tool's own state says whether its key needs the pasted token.
+      const toolOut = host === 'gitlab' && (hostToolLeftOut(ctx, host)
+        || (reach === null ? await toolState(TOOL.gitlab, { run, platform }) === 'missing' : reach.tool === 'missing'));
       const asked = { host, locked, launched, realUsers: realUsers || launched || product.joining === true, platform, where };
       const held = reach === null || reach.found.key !== 'none' || reach.cliSigned === true;
       let card = connectionCard({ ...asked, appFile, asIs: reach?.offered === true, held, toolOut });

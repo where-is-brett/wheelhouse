@@ -278,7 +278,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
   // A free GitHub plan can't protect a private repository, so on GitHub the line says protection is where the plan allows.
   if (toRun.includes(7)) {
     lines.push(keptHere ? 'Wheelhouse\'s settings saved to the project.'
-      : hostOf(product, list) === 'GitHub' ? 'Wheelhouse\'s settings saved to the project, and its main line protected where your GitHub plan allows.'
+      : hostOf(product, list) === 'GitHub' ? 'Wheelhouse\'s settings saved to the project, and its main line protected if your GitHub plan allows it (the free plan doesn\'t for a private repository).'
         : 'Wheelhouse\'s settings saved to the project, and its main line protected.');
   }
   if (toRun.includes(7) && keptHere) lines.push(FIRST_CHECK_LINE);

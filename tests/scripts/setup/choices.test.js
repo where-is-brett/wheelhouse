@@ -51,7 +51,7 @@ test('the one card for a new product on a Mac says the director\'s approved word
     '- Agents use your ordinary GitHub sign-in, which reaches your whole account; they can\'t read it on this Mac.',
     '- Before launch: no real users and no live data yet.',
     '- On this computer: usage counted here only; 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted); Claude Code takes only its well-tried updates; and phone notifications on.',
-    '- Wheelhouse\'s settings saved to the project, and its main line protected where your GitHub plan allows.',
+    '- Wheelhouse\'s settings saved to the project, and its main line protected if your GitHub plan allows it (the free plan doesn\'t for a private repository).',
     'Nothing runs until you choose.',
     'To know more, just ask.',
   ].join('\n'));
