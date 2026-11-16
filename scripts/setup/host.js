@@ -881,8 +881,11 @@ export function connectionCard({ host, locked = false, launched = false, realUse
     recommend = app ? WAYS.wheelhouse : WAYS.own;
   } else {
     // On the public GitLab's free plan the project key is refused, so the option says what a free account gets first.
-    const narrowKey = publicGitLab ? `On a free account, a ${PERSONAL_DAYS}-day token that can act as you across GitLab; on a paid plan, a key to this one project` : 'A key to this one project';
-    options.push({ label: WAYS.narrow, says: toolOut ? `${narrowKey}, made with a one-day token pasted into your computer's own box; setup revokes the token afterwards.` : `${narrowKey}, which setup makes with GitLab's own tool.` });
+    const made = toolOut ? 'from a one-day token you paste into your computer\'s own box, revoking the token afterwards' : 'with GitLab\'s own tool';
+    const says = publicGitLab
+      ? `On a free account, a ${PERSONAL_DAYS}-day token you paste, which can act as you across GitLab; on a paid plan, a key to this one project, which setup makes ${made}.`
+      : `A key to this one project, which setup makes ${made}.`;
+    options.push({ label: WAYS.narrow, says });
     recommend = WAYS.narrow;
   }
   const quick = !locked && !launched && !asIs;
@@ -898,7 +901,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
   // the token in its place opens every project.
   // On the public GitLab's free plan there is no project key, so the card leads with what a free account gets.
   const reach = host === 'gitlab' && publicGitLab
-    ? `a free GitLab account gets a ${PERSONAL_DAYS}-day token you paste, which can act as you in every GitLab project and group you can reach; a paid plan gets the narrow key instead, and if that leaked, only this project would be open`
+    ? `if a paid plan's key leaked, only this project would be open; a free account's token would open every GitLab project and group you can reach`
     : host === 'gitlab'
     ? `if it leaked, only this project would be open, unless GitLab won't make a project key (the public GitLab's free plan won't, and some companies switch them off): then a ${PERSONAL_DAYS}-day token you paste stands in, and it can act as you in every GitLab project and group you can reach`
     : 'if it leaked, the rest of your account would stay out of reach';
