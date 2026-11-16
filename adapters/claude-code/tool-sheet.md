@@ -5,3 +5,4 @@ The Wheelhouse playbooks name your tools in general words. In Claude Code:
 - Your notification tool is PushNotification.
 - Your tool-search tool is ToolSearch.
 - Your message tool is SendMessage.
+- To run a command outside the sandbox, run it with Bash and `dangerouslyDisableSandbox: true`; Claude Code asks the person first.

@@ -6,6 +6,15 @@
 import http from 'node:http';
 import { helperAddress } from '../lib/paths.js';
 
+// Why the helper could not be reached. A sandbox that keeps a command from the helper's socket refuses the
+// connection outright (EPERM or EACCES), which is not a helper that has stopped: the same command run outside
+// the sandbox reaches it. Each answer keeps "could not be reached", which callers match on.
+export const SANDBOXED = 'the host helper could not be reached: this command\'s sandbox kept it from the helper; run the same command again outside the sandbox';
+
+function unreached(error) {
+  return error?.code === 'EPERM' || error?.code === 'EACCES' ? SANDBOXED : 'the host helper could not be reached: is it running?';
+}
+
 function ask(address, method, path, body, timeout) {
   return new Promise((resolve) => {
     const payload = body === undefined ? '' : JSON.stringify(body);
@@ -28,7 +37,7 @@ function ask(address, method, path, body, timeout) {
       });
       res.on('error', () => resolve({ ok: false, refused: 'the host helper\'s answer was cut off' }));
     });
-    req.on('error', () => resolve({ ok: false, refused: 'the host helper could not be reached: is it running?' }));
+    req.on('error', (error) => resolve({ ok: false, refused: unreached(error) }));
     if (timeout !== undefined) {
       // A helper that does not answer in time is an answer too.
       req.setTimeout(timeout, () => {
