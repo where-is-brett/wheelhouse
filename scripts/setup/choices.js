@@ -221,7 +221,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
   if (keptHere && toRun.includes(3) && !fs.existsSync(path.join(folder, '.git'))) lines.push(STARTED_LINE('main'));
   // The plugin's update is step 6's, so the line names it only while step 6 is still to run.
   if (toRun.includes(2) && engineWanted({ platform, hosts })) lines.push(engineLine(undefined, { claudeHome: toRun.includes(6) ? claudeHome : null }));
-  if (toRun.includes(6)) lines.push('On this computer: usage counted here only, and 30 days of chat history kept (older history is deleted).');
+  if (toRun.includes(6)) lines.push('On this computer: usage counted here only, and 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted).');
   if (toRun.includes(7)) {
     const kept = compactionLine(compactionRules({ claudeHome, projectDir: folder }));
     if (kept !== null) lines.push(kept);

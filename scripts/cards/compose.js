@@ -177,7 +177,9 @@ const buildOptions = (list) => list.length === BUILD_QUESTION_OPTIONS.length
   && list.every((o, i) => o.label === BUILD_QUESTION_OPTIONS[i].label);
 const bare = (text) => text.replace(/[.!?]+$/, '');
 // A reason read as a clause after "because": no closing full stop, and its first word in lower case unless it is a name or acronym.
-const clause = (text) => bare(text).replace(/^([A-Z])(?=[a-z])/, (c) => c.toLowerCase());
+// A name stays capitalised (Windows is the system, not a word that began the sentence).
+const NAMES = /^(Windows|Mac|macOS|GitHub|GitLab|Wheelhouse|Claude|Git)\b/;
+const clause = (text) => (NAMES.test(bare(text)) ? bare(text) : bare(text).replace(/^([A-Z])(?=[a-z])/, (c) => c.toLowerCase()));
 
 // Whether an error from composeCard is its length refusal (and not another fault in the card).
 export const isTooLong = (error) => /^An? [\w-]+ card('s)? text would pass \d+ characters/.test(String(error?.message));

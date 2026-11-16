@@ -50,7 +50,7 @@ test('the one card for a new product on a Mac says the director\'s approved word
     '- A new product, in a private repository on your GitHub account.',
     '- Agents use your ordinary GitHub sign-in, which they can\'t read on this Mac.',
     '- Before launch: no real users and no live data yet.',
-    '- On this computer: usage counted here only, and 30 days of chat history kept (older history is deleted).',
+    '- On this computer: usage counted here only, and 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted).',
     '- Wheelhouse\'s settings saved to the project, then its main line protected.',
     'Nothing runs until you choose.',
     'To know more, just ask.',
