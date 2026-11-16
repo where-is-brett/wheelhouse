@@ -837,7 +837,7 @@ export function againCard(earlier, now, label) {
 // The advanced choice on the Mac's card, which leads to the narrow ways (the director's ruling of 24 October 2026).
 export const STRICTER = 'Make it stricter';
 const STRICTER_SAYS = (host) => `A key to this one project only, instead of your whole account; recommended for teams and products with real users.${host === 'gitlab' ? ` Where GitLab won't make project keys, a ${PERSONAL_DAYS}-day token you paste stands in, and it can act as you across GitLab.` : ''}`;
-const quickOnMac = (host) => `Your ordinary ${NAME[host]} sign-in, through ${NAME[host]}'s own tool, reaching your whole account. Agents use it only through Wheelhouse's helper, and on this Mac they can't read it.`;
+const quickOnMac = (host) => `Your ordinary ${NAME[host]} sign-in, through ${NAME[host]}'s own tool, reaching your whole account. Agents use it only through Wheelhouse's helper, and on this Mac Claude Code's sandbox keeps them from reading it.`;
 
 // The connection's question (Card 1's answer, design section 11), the composer's input without its
 // kind. On a Mac, for a project that is neither Locked nor launched, Quick is the default and the

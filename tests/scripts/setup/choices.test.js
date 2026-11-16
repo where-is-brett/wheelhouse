@@ -48,7 +48,7 @@ test('the one card for a new product on a Mac says the director\'s approved word
     'Set up Wheelhouse for tide-tables?',
     'Here\'s what I recommend. It takes about 5 minutes.',
     '- A new product, in a private repository on your GitHub account.',
-    '- Agents use your ordinary GitHub sign-in, which reaches your whole account; they can\'t read it on this Mac.',
+    '- Agents use your ordinary GitHub sign-in, which reaches your whole account; on this Mac Claude Code\'s sandbox keeps them from reading it.',
     '- Before launch: no real users and no live data yet.',
     '- On this computer: usage counted here only; 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted); Claude Code takes only its well-tried updates; and phone notifications on.',
     '- Wheelhouse\'s settings saved to the project, and its main line protected if your GitHub plan allows it (the free plan doesn\'t for a private repository).',

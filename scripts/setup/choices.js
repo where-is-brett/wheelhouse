@@ -183,7 +183,7 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     const stays = platform !== 'win32' ? ''
       : host === 'GitLab' && toolOut ? ' On Windows it is kept here, where any agent\'s command could read it.'
         : ` ${host}'s own sign-in also stays here, where any agent's command could read it.`;
-    if (label === WAYS.quick) return platform === 'darwin' ? `Agents use your ordinary ${host} sign-in, which reaches your whole account; they can't read it on this Mac.` : `Agents use your ordinary ${host} sign-in, which reaches your whole account${platform === 'win32' ? '; on Windows any agent\'s command could read it' : ''}.`;
+    if (label === WAYS.quick) return platform === 'darwin' ? `Agents use your ordinary ${host} sign-in, which reaches your whole account; on this Mac Claude Code's sandbox keeps them from reading it.` : `Agents use your ordinary ${host} sign-in, which reaches your whole account${platform === 'win32' ? '; on Windows any agent\'s command could read it' : ''}.`;
     if (label === STRICTER) return `A key for this project only, made on ${host} (you'll click Authorise and Install).`;
     if (label === WAYS.wheelhouse) return `A key for this project only, through the Wheelhouse app (you\'ll type a code and click Install).${stays}`;
     if (label === WAYS.own) return `A key for this project only, from an app you create on GitHub (you\'ll tick Enable Device Flow, click Create, then Authorise and Install).${stays}`;

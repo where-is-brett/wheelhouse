@@ -241,7 +241,7 @@ export function computerCard({ changes, userSettings = {}, kept = [], route = TE
   // Windows has no sandbox, so an agent's command could read the key file there; the line claims no more than holds.
   const signing = !key ? ''
     : platform === 'win32' ? '\n- Your clicks carry a signature made with a key on this computer. On Windows an agent\'s command could read that key, so it shows a click came from here, not that you made it.'
-    : '\n- Your clicks carry a signature only this computer can make, so no agent can pass itself off as you.';
+    : '\n- Your clicks carry a signature made with a key on this computer, which Claude Code\'s sandbox keeps agents from reading.';
   const variables = route === 'launch-env' && changes.some((c) => c.kind === 'env' || c.kind === 'file');
   const agents = [...new Set(changes.filter((c) => c.what === 'agent').map((c) => c.label))];
   const alongside = agents.length > 0 ? `, and ${agents.join(' and ')}'s hook file${changes.some((c) => c.what === 'agent' && c.part === 'first-mate') ? ' and First Mate files' : ''}` : '';
