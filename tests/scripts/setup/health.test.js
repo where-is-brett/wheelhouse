@@ -18,6 +18,7 @@ import {
   HELPER_CHECKS, SESSION_CHECKS, HEALTH_BRANCH,
 } from '../../../scripts/setup/health.js';
 import { healthGreen, firstUnfinished } from '../../../scripts/lib/setup-run.js';
+import { acceptOwnFiles, checkOwnFiles, ownFilesFile } from '../../../scripts/health/own-files.js';
 import { STEPS } from '../../../scripts/setup/steps.js';
 import { setupRoutes } from '../../../scripts/setup/engine.js';
 import { startRun, markStep, addChanges, newId, readJournal } from '../../../scripts/setup/journal.js';
@@ -233,6 +234,26 @@ test('step 10 reads the host\'s protection knowing whether the project has real 
       assert.deepEqual(seen.map(({ host, repo, realUsers }) => ({ host, repo, realUsers })), [{ host: 'github', repo: REPO, realUsers: launched }]);
     });
   }
+});
+
+test('step 10 makes the baseline of Wheelhouse\'s own files afresh, so the look names nothing setup wrote', async () => {
+  await withProject(async ({ folder }) => {
+    const { remote } = await productOnRemote(folder);
+    const { adapter } = standIn(remote);
+    // An older baseline that knows a file which is no longer as it was: the look names it until the baseline is made afresh.
+    acceptOwnFiles({ now: () => T0 });
+    const kept = JSON.parse(fs.readFileSync(ownFilesFile(), 'utf8'));
+    kept.others.files[path.join(folder, 'older-sign-in-start.plist')] = 'a-hash-from-before';
+    fs.writeFileSync(ownFilesFile(), JSON.stringify(kept));
+    const later = () => new Date(T0.getTime() + 3 * 24 * 60 * 60 * 1000);
+    assert.equal((await checkOwnFiles({ now: later, treeFor: async () => null })).changed.length, 1, 'the older baseline names a change');
+    fs.writeFileSync(ownFilesFile(), JSON.stringify(kept));
+    const step = stepWith(adapter, merges(REFUSED).client);
+    const { changes } = await step.plan({ folder });
+    const { ctx } = ctxFor(folder, remote);
+    await step.apply(ctx, changes);
+    assert.deepEqual((await checkOwnFiles({ now: later, treeFor: async () => null })).changed, []);
+  });
 });
 
 test('step 10 on a company GitLab uses the company address for the adapter, git\'s certificate pair and the protection read', async () => {
