@@ -4,8 +4,8 @@
 // that question in the same run, folder and step, recording the same), and nowhere else.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { askedFor, claimAnswer } from '../../../scripts/lib/setup-clicks.js';
-import { noteAsked } from '../../../scripts/setup/clicks.js';
+import path from 'node:path';
+import { askedFor, claimAnswer, askedDir, shownCard, writeWhole } from '../../../scripts/lib/setup-clicks.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
 
 const RUN = 'run-0123456789';
@@ -23,7 +23,12 @@ function withFolder(fn) {
   return as(home, () => fn(folder));
 }
 
-const ask = (folder, step, id, c, minute, runId = RUN, more = {}) => noteAsked({ runId, folder, step, id, card: c, now: T(minute), ...more });
+// The asked records as a run started before the same words were refused on a second card left them: noteAsked now
+// refuses a question in another card's words (tests/scripts/lib/setup-clicks.test.js), so they are written as they were.
+const ask = (folder, step, id, c, minute, runId = RUN, { typed = false, writes } = {}) => writeWhole(
+  path.join(askedDir(), `${runId}-${step}-${id}.json`),
+  `${JSON.stringify({ runId, folder, step, id, card: shownCard(c), typed, ...(writes === undefined ? {} : { writes }), at: T(minute)().toISOString() })}\n`,
+);
 
 test('a description card is only ever its own card', () => withFolder((folder) => {
   const labels = ['Choose the README\'s words', 'Not yet'];

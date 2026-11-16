@@ -221,7 +221,7 @@ function liveDataAsk(name, { isNew = false } = {}) {
       why: 'Agents never work on live data: with it, they get test data only.',
       options: [
         { label: LIVE_DATA.yes, says: 'Agents get test data only, never the live data.' },
-        { label: LIVE_DATA.no, says: 'Agents work with the product\'s data as it is. A throwaway or test project, with made-up data only, is a No.' },
+        { label: LIVE_DATA.no, says: 'Agents work with the product\'s data as it is, as they do in a throwaway or test project with made-up data.' },
       ],
       recommend: isNew ? LIVE_DATA.no : LIVE_DATA.yes,
       because: isNew ? 'a new product has no live data yet' : 'that is the safe side if you are not sure',

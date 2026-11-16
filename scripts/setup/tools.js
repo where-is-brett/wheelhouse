@@ -253,7 +253,8 @@ function readToolFrom(folder, tool) {
 //     folder an agent can write to: the value can only remove a download, never add or redirect one;
 //   - the director's answer to setup's choice (`2.host-tool-glab`, `2.host-tool-gh`);
 //   - otherwise the tool is fetched. The card recommends leaving it out when it is missing and the web route is ready
-//     (curl is here and git holds a key that passes `GET /user`), else fetching; a recommendation is taken only by
+//     (curl is here and git holds a key that passes `GET /user`), else fetching, except that `glab` is always
+//     recommended left out; a recommendation is taken only by
 //     Go ahead on the one card or by the director's own answer, never silently.
 // A tool already on this computer that starts is not asked about: the choice is only ever about a download.
 export const HOST_TOOL_NAME = Object.freeze({ gh: 'GitHub', glab: 'GitLab' });
@@ -275,20 +276,25 @@ export function hostToolChoice({ tool, folder, answers = {} }) {
 // The host tools among `tools` that the settings and the answers say to leave out.
 export const toolsLeftOut = ({ tools, folder, answers }) => tools.filter((tool) => hostToolChoice({ tool, folder, answers }) === 'none');
 
-// The question of step 2 for a missing host tool. Plain words: never "REST", "curl" or "API".
-export function hostToolCard(tool, { recommend }) {
+// The question of step 2 for a missing host tool. Plain words: never "REST", "curl" or "API". GitLab's tool is never
+// recommended for fetching: a company's GitLab often may not have it, and Wheelhouse reaches GitLab without it.
+export function hostToolCard(tool, { recommend: given }) {
   const name = HOST_TOOL_NAME[tool];
   const labels = hostToolLabels(tool);
+  const recommend = tool === 'glab' ? 'none' : given;
+  const because = given === 'none' ? `your git already holds a key that ${name} accepts, so the tool isn't needed`
+    : tool === 'glab' ? `Wheelhouse does all it needs on ${name} without it`
+      : 'it is the usual route, and it is checked against the published checksums';
   return {
     level: 2,
     what: `${name}'s own tool isn't on this computer. Should Wheelhouse fetch it, or reach ${name} without it?`,
-    why: `If your company's rules don't allow ${name}'s tool, Wheelhouse can work without it, through ${name}'s web pages, with the key your git already uses or one you make.`,
+    why: `If your company's rules don't allow ${name}'s tool, Wheelhouse can work without it, talking to ${name} directly with the key your git already uses or one you make.`,
     options: [
       { label: labels.fetch, says: `Wheelhouse fetches ${name}'s tool from its official release into its own tools folder, and checks it.` },
-      { label: labels.none, says: `Nothing is fetched. Wheelhouse reaches ${name} without its tool, and never runs it.` },
+      { label: labels.none, says: `Nothing is fetched, and Wheelhouse never runs ${name}'s tool.` },
     ],
     recommend: recommend === 'none' ? labels.none : labels.fetch,
-    because: recommend === 'none' ? `your git already holds a key that ${name} accepts, so the tool isn't needed` : 'it is the usual route, and it is checked against the published checksums',
+    because,
     meanwhile: 'Nothing runs until you choose.',
   };
 }
@@ -854,6 +860,15 @@ function installLine(platform) {
   return 'git: Git for Windows\' official installer, checked against its published checksum; Windows asks you to allow it (Yes, or an administrator\'s password); 2 to 5 minutes, while you answer the next questions';
 }
 
+// Why step 2's list matters, naming only the hosts this project uses, and their own tools only where they are used.
+function hostWhy(hostTools, leftOut) {
+  if (hostTools.length === 0) return 'Wheelhouse works on the project through these tools.';
+  const names = hostTools.map((tool) => HOST_TOOL_NAME[tool]).join(' and ');
+  const used = hostTools.filter((tool) => !leftOut.includes(tool));
+  const tools = used.length === 0 ? '' : used.length === 1 ? ` and ${HOST_TOOL_NAME[used[0]]}'s own tool` : ' and their own tools';
+  return `Wheelhouse keeps the project on ${names} through git${tools}.`;
+}
+
 // What the director does for the list, in plain words.
 function directorFor(changes, platform) {
   if (changes.some((c) => c.kind === 'process' && c.action === 'install')) {
@@ -867,7 +882,7 @@ function directorFor(changes, platform) {
 // permission rules at once, so the full wording is tried first and, when it does not compose, a terse one:
 // one short clause for each, the source of a company's list shortened (all of it stays in the change,
 // and so under the plan hash). The warning that a company's copy has no checksum is in both.
-function cardFor(changes, status, platform, leftOut = []) {
+function cardFor(changes, status, platform, leftOut = [], hostTools = []) {
   const processes = changes.filter((x) => x.kind === 'process');
   const fetches = changes.filter((c) => c.action === 'fetch');
   const official = fetches.filter((c) => c.from !== 'company').map((c) => c.tool);
@@ -880,7 +895,7 @@ function cardFor(changes, status, platform, leftOut = []) {
   const full = [];
   for (const c of processes) full.push(c.action === 'wait' ? 'git: waiting for the git installer already open, which setup leaves to finish' : installLine(platform));
   if (official.length > 0) {
-    full.push(`${official.join(' and ')}, the host's command-line ${official.length === 1 ? 'tool' : 'tools'}: fetched from ${official.length === 1 ? 'its' : 'their'} official release into Wheelhouse's tools folder, checked against the published checksums; a few seconds, nothing for you to do`);
+    full.push(`${official.join(' and ')}, the host's command-line ${official.length === 1 ? 'tool' : 'tools'}: to be fetched from ${official.length === 1 ? 'its' : 'their'} official release into Wheelhouse's tools folder and checked against the published checksums; a few seconds, nothing for you to do`);
   }
   for (const c of company) {
     full.push(`${c.tool}, from your company's list at ${c.source} (version ${c.version}); ${c.checksum === 'listed'
@@ -911,14 +926,14 @@ function cardFor(changes, status, platform, leftOut = []) {
     kind: 'setup',
     level: 3,
     what,
-    why: 'Wheelhouse keeps the project on GitHub or GitLab through git and the host\'s own tool.',
+    why: hostWhy(hostTools, leftOut),
     options: [
       { label: SETUP_LABEL, says: 'Setup starts what is listed and moves on to its questions while it runs.' },
       { label: 'Not now', says: 'Setup waits at this step; nothing is installed.' },
     ],
     recommend: SETUP_LABEL,
     because: company.length > 0 ? 'setup needs them for the next steps' : 'each comes from its official source, and setup needs them for the next steps',
-    meanwhile: 'Setup waits at this step; nothing is installed.',
+    meanwhile: 'Nothing is installed yet.',
   });
   const long = card(`Setup step 2, ${SETUP_TITLES[2]}: ${full.join('; ')}.${here.length > 0 ? ` Already here: ${here.join(', ')}.` : ''}`);
   try {
@@ -1026,7 +1041,7 @@ export function toolsStep({
       if (engine?.wanted({ platform, hosts: projectHosts({ folder: ctx.folder, answers: ctx.answers }) })) changes.push(...engine.changes());
       // Nothing to do settles the step, with no Go ahead (ruling R75).
       if (changes.length === 0) return { settled: { record: { nothing: true, ...(blocked.length > 0 ? { blocked } : {}), ...(leftOut.length > 0 ? { leftOut } : {}) } } };
-      return { changes, card: cardFor(changes, status, platform, leftOut), director: directorFor(changes, platform) };
+      return { changes, card: cardFor(changes, status, platform, leftOut, hostTools), director: directorFor(changes, platform) };
     },
     // Starts every installer at once, first, and fetches the host tools meanwhile; writes the rule
     // once each installer's start is recorded; then waits, looking every pollMs, until git is in

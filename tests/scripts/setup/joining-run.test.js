@@ -187,7 +187,7 @@ test('a second computer runs steps 1, 2, 3, 6, 7 (this computer\'s files only), 
     let three = await plan(3);
     const asked = [];
     while (three.ask) {
-      asked.push(three.ask.id.replace(/-[0-9a-f]{10}$/, ''));
+      asked.push(three.ask.id.replace(/-[0-9a-f]{10,}$/, ''));
       assert.ok(asked.length < 6, 'step 3 asks each question once');
       say(three.ask, answers[asked.at(-1)]);
       three = await plan(3);

@@ -516,6 +516,7 @@ export function setupRoutes({
   // A step's plan with a look at the choices only: its questions, taken as answered by `answers`.
   const choicePlan = (run, folder) => (step, answers) => step.plan({
     ...ctxFor(run?.folder ?? folder, step.n, run?.id, run?.startedAt ?? now().toISOString()), answers, choicesOnly: true, say: () => {},
+    recorded: run ? answersWithConsent(run.id).answers : {},
   });
 
   // The choices still open in the run, read from the answers as the steps read them.

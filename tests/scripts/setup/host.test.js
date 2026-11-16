@@ -329,7 +329,7 @@ test('the plan asks about real users, then Locked on a Mac only, then the host, 
     const mac = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.locked, way: WAYS.own }));
     // Locked takes Quick away, and with no Wheelhouse app their own app is the one way left, so
     // the connection is not asked.
-    assert.deepEqual(mac.asked.map((a) => a.id.replace(/-[0-9a-f]{10}$/, '')), ['real-users', 'locked', 'host']);
+    assert.deepEqual(mac.asked.map((a) => a.id.replace(/-[0-9a-f]{10,}$/, '')), ['real-users', 'locked', 'host']);
     assert.match(mac.asked[0].card.what, /Does Zoe-app have real users/);
     assert.deepEqual(mac.changes.find((c) => c.action === 'connection'), { kind: 'host', target: 'github', action: 'connection', mode: 'narrow', locked: true, backend: 'cli', app: { account: USER, name: `Wheelhouse ${USER}`, own: true } });
     assert.equal(mac.answers['3.real-users'].label, REAL_USERS.yes, 'step 4 reads this answer');
@@ -341,7 +341,7 @@ test('the plan asks about real users, then Locked on a Mac only, then the host, 
     }
     // On Windows, Locked is not offered: the connection comes after the host.
     const win = await answerAll(step, ctxFor(folder, { platform: 'win32' }), choose({ realUsers: REAL_USERS.yes }));
-    assert.deepEqual(win.asked.map((a) => a.id.replace(/-[0-9a-f]{10}$/, '')), ['real-users', 'host', 'connection']);
+    assert.deepEqual(win.asked.map((a) => a.id.replace(/-[0-9a-f]{10,}$/, '')), ['real-users', 'host', 'connection']);
     assert.ok(win.asked[2].card.options.some((o) => o.label === WAYS.quick));
     // Standard is what Windows gets even from an old Locked answer: the connection is never made for Locked there.
     const stale = await answerAll(step, ctxFor(folder, { platform: 'win32' }), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.locked, way: WAYS.own }));
@@ -401,7 +401,7 @@ test('on Windows a narrow way is recommended, with one plain line on why, and Qu
     assert.match(card.because, /Windows has no sandbox/);
     const quick = card.options.find((o) => o.label === WAYS.quick).says;
     assert.ok(quick.startsWith(quickLineFor(host)));
-    assert.match(quick, /For trying Wheelhouse out/);
+    assert.match(quick, new RegExp(`only through ${host === 'github' ? 'GitHub' : 'GitLab'}'s own tool, and if that sign-in leaked, it would open all of them; on Windows any agent's command could read it\\.$`));
     composeCard({ ...card, kind: 'question' });
   }
   assert.doesNotMatch(connectionCard({ host: 'github', where, platform: 'win32', locked: true }).because, /Quick/);
@@ -1458,7 +1458,7 @@ test('on a company\'s GitLab the typed token is the way offered, and the card na
     const [main, admin] = planned.card.what.split('; for your company\'s GitLab admin');
     assert.ok(admin, planned.card.what);
     assert.doesNotMatch(main, /read_user|client_id|openid|permissions/);
-    assert.match(admin, /register an application and give its id to glab here for the browser/);
+    assert.match(admin, /register an application and give its id to GitLab's tool here for the browser/);
     assert.match(admin, /company's job, not setup's/);
     // It composes as a card, and says nothing the glossary would have to put into plain words.
     const { question } = composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } });
@@ -2355,7 +2355,7 @@ test('step 3 asks whether this computer is joining only in a folder holding noth
     fs.rmSync(profileJson);
     // A new product on GitHub: the usual questions follow, and a repository is made.
     const fresh = await answerJoin(step, ctxFor(folder), (id) => (id === 'join' ? HOST_LABELS.github : choose()(id)));
-    assert.deepEqual(fresh.asked.map((a) => a.id.replace(/-[0-9a-f]{10}$/, '')), ['join', 'real-users', 'connection']);
+    assert.deepEqual(fresh.asked.map((a) => a.id.replace(/-[0-9a-f]{10,}$/, '')), ['join', 'real-users', 'connection']);
     assert.ok(fresh.changes.some((c) => c.action === 'repository'));
     assert.ok(!fresh.changes.some((c) => c.action === 'join'));
     // A folder with any other file in it, or with an origin, is an existing product: not asked.
@@ -2383,7 +2383,7 @@ test('a second computer joins from an empty folder: the project found on an orga
     const folder = emptyFolder();
     const planned = await answerJoin(step, ctxFor(folder), joining());
     // Neither the real-users nor the Locked question (a Mac here): the first computer's.
-    assert.deepEqual(planned.asked.map((a) => a.id.replace(/-[0-9a-f]{10}$/, '')), ['join', 'host', 'connection']);
+    assert.deepEqual(planned.asked.map((a) => a.id.replace(/-[0-9a-f]{10,}$/, '')), ['join', 'host', 'connection']);
     assert.deepEqual(planned.changes.slice(0, 2), [
       { kind: 'host', target: 'github', action: 'join', name: 'Cafe-Menu' },
       { kind: 'folder', target: folder, action: 'checkout' },
@@ -2437,7 +2437,7 @@ test('a second computer joins from an empty folder: the project found on an orga
     // found (ruling R102). Applied, nothing is checked out or recorded twice. The old list, naming
     // the bare name, is refused.
     const again = await answerJoin(step, ctxFor(folder, { runId: run.id }), joining());
-    assert.deepEqual(again.asked.map((a) => a.id.replace(/-[0-9a-f]{10}$/, '')), ['host', 'connection']);
+    assert.deepEqual(again.asked.map((a) => a.id.replace(/-[0-9a-f]{10,}$/, '')), ['host', 'connection']);
     assert.deepEqual(again.changes.find((c) => c.action === 'join'), { kind: 'host', target: 'github', action: 'join', name: 'cafe-co/Cafe-Menu' });
     await assert.rejects(applyIn(step, folder, run.id, planned.changes, { answers: planned.answers }), /checked out to cafe-co\/Cafe-Menu from your other computer/);
     const count = findRun(folder).changes.filter((c) => c.kind === 'folder' && c.target.endsWith('.git')).length;
@@ -3100,7 +3100,9 @@ test('a Locked or launched project is never offered the director\'s own git, onl
   const windows = connectionCard({ host: 'gitlab', platform: 'win32', asIs: true });
   assert.equal(windows.options[0].label, WAYS.asIs);
   assert.equal(windows.recommend, WAYS.asIs);
-  assert.match(windows.options[0].says, /Any agent's command could ask git for that key/);
+  // Recommended, its cost on Windows is said once, in the reason.
+  assert.match(windows.because, /on Windows any agent's command could ask git for that key/);
+  assert.match(connectionCard({ host: 'gitlab', platform: 'win32', asIs: true, realUsers: true }).options[0].says, /On Windows any agent's command could ask git for that key/);
   assert.equal(connectionCard({ host: 'gitlab', platform: 'win32', asIs: true, realUsers: true }).recommend, WAYS.narrow, 'real users keep the narrow key recommended');
 });
 

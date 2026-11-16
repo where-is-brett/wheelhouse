@@ -107,7 +107,7 @@ const customiseOnce = (answers) => {
   return (id, plan, ask) => (id.startsWith('plan-') ? (cards++ === 0 ? 'Customise' : 'Go ahead') : byId(answers)(id, plan, ask));
 };
 // A log as [step, what] pairs: a question by its id without its digest, else what happened.
-const shape = (log) => log.map((e) => [e.step, e.ask?.replace(/-[0-9a-f]{10,12}$/, '') ?? (e.covered ? 'covered' : e.goAhead ? 'go ahead' : e.settled ? 'settled' : e.health ? 'health' : 'wait')]);
+const shape = (log) => log.map((e) => [e.step, e.ask?.replace(/-[0-9a-f]{10,}$/, '') ?? (e.covered ? 'covered' : e.goAhead ? 'go ahead' : e.settled ? 'settled' : e.health ? 'health' : 'wait')]);
 const byId = (answers) => (id) => answers[Object.keys(answers).find((k) => id === k || id.startsWith(`${k}-`))];
 
 // The signed setup clicks kept on a computer, each with whether the helper used it.
@@ -164,7 +164,7 @@ test('a new product: one card, its Go ahead, every step with no more cards, a gr
     // ahead covers is applied as it comes, and the steps with nothing to click settle on their own.
     // The phone comes last, once the board is green (design section 15.1).
     const log = whole.slice(whole.findLastIndex((e) => e.ask?.startsWith('plan-')));
-    assert.deepEqual(log.map((e) => [e.step, e.ask?.replace(/-[0-9a-f]{10,12}$/, '') ?? (e.covered ? 'covered' : e.goAhead ? 'go ahead' : e.settled ? 'settled' : e.health ? 'health' : 'wait')]), [
+    assert.deepEqual(log.map((e) => [e.step, e.ask?.replace(/-[0-9a-f]{10,}$/, '') ?? (e.covered ? 'covered' : e.goAhead ? 'go ahead' : e.settled ? 'settled' : e.health ? 'health' : 'wait')]), [
       [0, 'plan'],
       [1, 'settled'],
       [2, 'covered'],
@@ -364,7 +364,7 @@ test('setup stopped after Customise\'s cards resumes at the one card in the next
     assert.equal(one.plan.step, 0);
     await a.click(one.plan.ask.card, 'Customise');
     const { plan } = await a.cli('resume');
-    assert.deepEqual(plan.asks.map((x) => x.id.replace(/-[0-9a-f]{10}$/, '')), ['join', 'real-users', 'product-before-launch', 'live-data'], 'how agents reach the project waits for where it is kept');
+    assert.deepEqual(plan.asks.map((x) => x.id.replace(/-[0-9a-f]{10,}$/, '')), ['join', 'real-users', 'product-before-launch', 'live-data'], 'how agents reach the project waits for where it is kept');
     await a.clickAll(plan.asks.map((x) => x.card), plan.asks.map((x) => byId(NEW_ANSWERS)(x.id)));
     const stopped = await a.setupRun();
     await a.stop();
@@ -374,7 +374,7 @@ test('setup stopped after Customise\'s cards resumes at the one card in the next
     await a.sessionStart();
     // The rest of the choices (step 4's), then the one card with the director's choices on it.
     const next = (await a.cli('resume')).plan;
-    assert.deepEqual(next.asks.map((x) => x.id.replace(/-[0-9a-f]{10}$/, '')), ['connection', 'host-tool-gh'], 'the questions already answered are not asked again');
+    assert.deepEqual(next.asks.map((x) => x.id.replace(/-[0-9a-f]{10,}$/, '')), ['connection', 'host-tool-gh'], 'the questions already answered are not asked again');
     await a.clickAll(next.asks.map((x) => x.card), next.asks.map((x) => byId(NEW_ANSWERS)(x.id)));
     const card = (await a.cli('resume')).plan;
     assert.equal(card.step, 0);

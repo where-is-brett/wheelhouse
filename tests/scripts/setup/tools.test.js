@@ -812,10 +812,10 @@ test('glabFrom "none" is a source that fetches nothing, and the line for a bad s
   assert.throws(() => glabSource({ setting: 'nothing' }), (error) => error.message === GLAB_FROM_LINE && /"none"/.test(error.message));
 });
 
-test('a look at the choices asks about a missing tool, recommending to leave it out only when the web route is ready', async () => {
+test('a look at the choices asks about a missing GitLab tool, always recommending to leave it out', async () => {
   await withHome(async () => {
     const folder = gitlabFolder();
-    for (const [ready, recommended] of [[false, "Fetch GitLab's tool"], [true, NONE_GLAB]]) {
+    for (const [ready, recommended] of [[false, NONE_GLAB], [true, NONE_GLAB]]) {
       const step = toolsStep({ engine: null, run: noGlab().run, fetch: noFetch, pluginRoot: PLUGIN, env: {}, webReady: async () => ready });
       const got = await step.plan(ctxFor(folder, { choicesOnly: true }));
       assert.equal(got.ask.id, 'host-tool-glab');

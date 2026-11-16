@@ -50,7 +50,7 @@ import { PUT_OFF } from '../lib/front-desk.js';
 import { taken } from '../hooks/pending.js';
 import {
   HASH, RUN_ID, EVENT_ID, SETUP_QUESTION_ID, clicksDir, usedDir, shownDir, askedDir, answersDir, recordsDir, writeWhole, shownCard, readShown,
-  readAsked, uninstallShownFile, readUninstallShown, keptIn, ownSigned, keptAnswers, typedVerdict,
+  readAsked, uninstallShownFile, readUninstallShown, keptIn, ownSigned, keptAnswers, typedVerdict, sameWords, cardKey,
 } from '../lib/setup-clicks.js';
 import { isLineName } from '../state/card-lines.js';
 
@@ -85,6 +85,15 @@ export function noteAsked({ runId, folder, step, id, card, typed = false, rules,
   if (!RUN_ID.test(String(runId)) || !Number.isInteger(step) || !SETUP_QUESTION_ID.test(String(id)) || typeof folder !== 'string' || asked === null) {
     throw new Error('An asked question needs its run, folder, step, id and card');
   }
+  // The Desktop app shows a card whose question text an earlier card had as that earlier card, with its answer, so no
+  // question goes out in words the run has already asked on another card. The same card asked again under its own id
+  // is the one exception: what comes back is that card's own answer.
+  const words = sameWords(asked.question);
+  const same = cardKey(asked);
+  const earlier = askedInRun(runId).find((r) => sameWords(r.card.question) === words && !(r.step === step && r.id === id && cardKey(r.card) === same));
+  if (earlier !== undefined) {
+    throw new Error(`Setup step ${step} asked ${id} in the words of ${earlier.step}.${earlier.id}, which the Desktop app would show as that card: a card asked again needs its own words`);
+  }
   const record = {
     runId, folder, step, id, card: asked, typed: typed === true, ...(rules === undefined ? {} : { rules }), ...(writes === undefined ? {} : { writes }),
     ...(found === undefined ? {} : { found }), ...(choices === undefined ? {} : { choices }), ...(facts === undefined ? {} : { facts }), at: now().toISOString(),
@@ -97,6 +106,17 @@ export function askedRecord(runId, step, id) {
   if (!RUN_ID.test(String(runId)) || !Number.isInteger(step) || !SETUP_QUESTION_ID.test(String(id))) return null;
   const r = readAsked(path.join(askedDir(), `${runId}-${step}-${id}.json`));
   return r && r.runId === runId && r.step === step && r.id === id ? r : null;
+}
+
+// Every question a run has asked, at any step, read afresh from the records.
+function askedInRun(runId) {
+  let names;
+  try {
+    names = fs.readdirSync(askedDir()).filter((n) => n.startsWith(`${runId}-`) && n.endsWith('.json'));
+  } catch {
+    return [];
+  }
+  return names.map((n) => readAsked(path.join(askedDir(), n))).filter((r) => r !== null && r.runId === runId);
 }
 
 // Every question a run's step has asked, oldest first.

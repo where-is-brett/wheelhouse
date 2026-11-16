@@ -96,6 +96,10 @@ export async function openChoices({ steps, run, answers, planOf }) {
     .sort((a, b) => Number(a.n === 2) - Number(b.n === 2));
   // The open steps' questions are asked afresh in the dry run; a done step's answers stand as they are.
   const taken = Object.fromEntries(Object.entries(answers).filter(([key]) => !open.some((s) => key.startsWith(`${s.n}.`))));
+  // Step 2 is looked at last, as its list follows step 3's host. The director's own answers on step 2's cards, never a
+  // recommendation taken in their place, are still facts step 3's cards rest on (Quick needs the host's own tool), so the
+  // other steps read them.
+  const toolsChosen = Object.fromEntries(Object.entries(answers).filter(([key]) => key.startsWith('2.')));
   const list = [];
   for (const step of open) {
     // A computer joining a product from another runs no step 4 (ruling R74): its questions don't arise.
@@ -103,7 +107,7 @@ export async function openChoices({ steps, run, answers, planOf }) {
     for (let i = 0; i < MOST_ASKS; i += 1) {
       let got;
       try {
-        got = await planOf(step, taken);
+        got = await planOf(step, step.n === 2 ? taken : { ...toolsChosen, ...taken });
       } catch {
         break;
       }
@@ -111,7 +115,11 @@ export async function openChoices({ steps, run, answers, planOf }) {
       const { id, card, typed, writes } = got.ask;
       const key = `${step.n}.${id}`;
       if (Object.hasOwn(taken, key)) break;
-      const chosen = answers[key] ?? null;
+      // An answer the step says still stands on this card (the same question, its way still offered): the director's own,
+      // read from the run under its own key, and taken only where its label is one of this card's options.
+      const kept = typeof got.ask.carried === 'string' && got.ask.carried.startsWith(`${step.n}.`) ? answers[got.ask.carried] ?? null : null;
+      const carried = kept !== null && card.options.some((o) => o.label === kept.label) ? kept : null;
+      const chosen = answers[key] ?? carried;
       const answer = chosen ?? { label: card.recommend, text: null, at: null };
       list.push({ step: step.n, id, key, card, typed: typed === true, writes, chosen, label: answer.label, text: answer.text, ...(got.ask.line ? { line: got.ask.line } : {}) });
       taken[key] = answer;
@@ -143,7 +151,7 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
   if (id.startsWith('branch-')) return `Finished work goes on ${label}, the main version.`;
   if (label === KEEP_HERE && (id === 'host' || id === 'join' || id.startsWith('join-'))) return KEPT_LINE;
   if (label === HOST_LABELS.github || label === HOST_LABELS.gitlab) {
-    if (id === 'join' || id.startsWith('join-')) return `A new product, in a private repository on your ${host} account.`;
+    if (id === 'join' || id.startsWith('join-')) return `A new product, in a private ${host === 'GitLab' ? 'project' : 'repository'} on your ${host} account.`;
   }
   if ((id === 'join' || id.startsWith('join-')) && backupNamed(text) !== null) return `${name}, brought back from your backup into this folder.`;
   if (id === 'join' || id.startsWith('join-')) return label === NEW_PRODUCT ? null : `${name}, from your other computer, brought into this folder.`;
@@ -155,13 +163,14 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
   if (id === 'locked') return label === LEVELS.locked ? 'Locked: you type your computer password once, at its step.' : null;
   if (id === 'host') {
     const join = choices.find((c) => c.id === 'join' || c.id.startsWith('join-'));
-    return join && join.label !== NEW_PRODUCT ? `Looked for on your ${host} account.` : `A new product, in a private repository on your ${host} account.`;
+    return join && join.label !== NEW_PRODUCT ? `Looked for on your ${host} account.` : `A new product, in a private ${host === 'GitLab' ? 'project' : 'repository'} on your ${host} account.`;
   }
   if (id.startsWith('connection')) {
     if (label === WAYS.quick) return platform === 'darwin' ? `Agents use your ordinary ${host} sign-in, which they can't read on this Mac.` : `Agents use your ordinary ${host} sign-in.`;
     if (label === STRICTER) return `A key for this project only, made on ${host} (you'll click Authorise and Install).`;
     if (label === WAYS.wheelhouse) return 'A key for this project only, through the Wheelhouse app (you\'ll type a code and click Install).';
     if (label === WAYS.own) return 'A key for this project only, made on GitHub (you\'ll click Authorise and Install).';
+    if (label === WAYS.asIs) return `Agents use your own git as it is, with its key, which reaches everything your account can on ${host}.`;
     return `A ${host} key for this project only.`;
   }
   if (id.startsWith('product-')) {
@@ -176,7 +185,7 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
   if (id.startsWith('host-tool-')) {
     const tool = id === 'host-tool-gh' ? 'gh' : 'glab';
     const name = HOST_TOOL_NAME[tool];
-    return label === hostToolLabels(tool).none ? `${name}'s own tool left out: Wheelhouse reaches ${name} without it.` : `${name}'s own tool fetched from its official release and checked.`;
+    return label === hostToolLabels(tool).none ? `${name}'s own tool left out: Wheelhouse reaches ${name} without it.` : `Wheelhouse fetches ${name}'s own tool from its official release and checks it.`;
   }
   if (id === 'apple-apps') return label === SIGNS_APPS.yes ? 'Builds may use your saved passwords to sign the app.' : 'Builds can\'t reach your saved passwords.';
   return null;
