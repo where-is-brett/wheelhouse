@@ -534,3 +534,9 @@ test('the skill\'s description keys on the source, not on pasting', () => {
   assert.match(description, /on every message from the Captain, typed or pasted;/);
   assert.doesNotMatch(description, /text pasted in from/);
 });
+
+test('the playbooks call the free-text choice "Type something", as Claude Code\'s picker shows it, never "Other"', () => {
+  assert.match(playbook, /call that choice "Type something"[^.]*; never "Other"/);
+  assert.doesNotMatch(read('skills/setup/SKILL.md'), /under Other/);
+  assert.doesNotMatch(read('scripts/setup/local.js'), /under Other/);
+});

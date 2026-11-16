@@ -158,7 +158,7 @@ export function backupAsk(name, { id = 'backup', machine = false, refused = null
       what: `${refused === null ? '' : `${refused}. `}${what} To name a folder yourself, type its full path.`,
       why: 'A backup in a folder off this disk is what brings the project back. It holds the project and its history, not your cards and clicks, which stay on this computer.',
       options: [
-        { label: CHOOSE_BACKUP, says: desktop ? 'You pick an external drive, or a folder a cloud service keeps, in a window that opens on this computer. A backup goes there after each merge.' : 'Type the full path of an external drive, or a folder a cloud service keeps, under Other. A backup goes there after each merge.' },
+        { label: CHOOSE_BACKUP, says: desktop ? 'You pick an external drive, or a folder a cloud service keeps, in a window that opens on this computer. A backup goes there after each merge.' : 'Type the full path of an external drive, or a folder a cloud service keeps, under Type something. A backup goes there after each merge.' },
         { label: NO_BACKUP, says: 'Building goes on, and you won\'t be asked again. The Safekeeping row in the pane shows how it stands.' },
       ],
       recommend: CHOOSE_BACKUP,
