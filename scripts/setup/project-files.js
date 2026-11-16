@@ -139,7 +139,7 @@ import { FOLDER_REMOTE } from '../host/local/folder.js';
 import { identityOf, keepSeenMain } from '../host/local/merge.js';
 import { startedBySetup } from './local.js';
 import { askSecret as realAskSecret } from '../secrets/secret-box.js';
-import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED, launchedIn, REAL_USERS, askAdministrationKey, openPage, madeWithSetupToken, keyGitlabApi, keyGitEnv } from './host.js';
+import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED, launchedIn, REAL_USERS, askAdministrationKey, openPage, madeWithSetupToken, keyGitlabApi, keyGitEnv, projectKeyKind } from './host.js';
 import { isolated, refuseUnlistedSettings, reaching } from './git.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
 import { agentEntries } from '../agents/setup-parts.js';
@@ -1101,8 +1101,8 @@ async function switchFolder(ctx, c, { git, project, author }) {
 }
 
 // `keyed`: step 3 connected with the setup token, so the commit goes through a merge request with the project's own
-// key, and protection is already on.
-export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [], negated = [], frontDesk = null, midSized = null, listens = false, keyed = false }) {
+// key, and protection is already on. `pasted`: that key is the director's own token GitLab made them use instead.
+export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [], negated = [], frontDesk = null, midSized = null, listens = false, keyed = false, pasted = false }) {
   const local = host === 'local';
   const files = changes.filter((c) => (c.kind === 'json-key' || c.kind === 'file') && c.line === undefined && c.engine !== true && c.what !== 'mirror');
   // The lines that keep .env files out of git: in the project's .gitignore, or, on a joining
@@ -1166,7 +1166,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
     meanwhile: 'Setup waits here; nothing changes.',
   });
   // One thing to a line, as step 3's card lists its own, under a title that says whose sign-in does it.
-  const by = local || joining ? '' : keyed ? ', with the project\'s own key, not your account' : `, acting as you on ${NAME[host]}`;
+  const by = local || joining ? '' : pasted ? ', with the token you pasted at step 3, which reaches all your projects' : keyed ? ', with the project\'s own key, not your account' : `, acting as you on ${NAME[host]}`;
   const full = card([`Setup step 7, ${SETUP_TITLES[7]}${joining ? ', for this computer' : by}:`, ...[...parts, pinned].map(asLine)].join('\n'));
   const fits = (c) => composeCard({ ...c, target: { step: 7, hash: '0'.repeat(64) } }).question.question.length <= CARD.chars;
   try {
@@ -1339,6 +1339,7 @@ export function projectFilesStep({
       const remoteUrl = local ? homeDir(found.project) : record.remoteUrl;
 
       const keyed = madeWithSetupToken(record);
+      const pasted = keyed && (await projectKeyKind(record)) === 'pasted-token';
       const branch = await defaultBranchOf({ host, repo, run, gitlab: apiFor(record), base: record.connection?.baseUrl, project: found.project });
       if (WHEELHOUSE_BRANCHES.includes(branch)) {
         throw new Error(`${NAME[host]}'s default branch for ${repo} is ${branch}, which is Wheelhouse's own branch, so setup can't put the project's files there: make the product's own branch the default in the repository's settings on ${NAME[host]}, then ask again`);
@@ -1492,7 +1493,7 @@ export function projectFilesStep({
       if (commit) changes.push({ kind: 'host', target, action: 'commit', branch, base: tip, message: COMMIT_MESSAGE, files: commitFiles, ...(yours.length > 0 ? { yours } : {}), ...(own.length > 0 ? { own } : {}), ...(left ? { ownLeft: true } : {}), ...merge });
       else if (unpushed) changes.push({ kind: 'host', target, action: 'push', branch, base: tip, commit: head, files: ((await git.out(['diff-tree', '--no-commit-id', '--name-only', '-r', head])) ?? '').split('\n').filter(Boolean), ...merge });
       if (!local && !keyed) changes.push({ kind: 'host', target: `${repo} protection`, action: 'protect', branch });
-      return { changes, card: projectFilesCard({ changes, host, branch, release, frontDesk: pin === null ? NO_PIN : frontDeskOf(changes, pin), midSized: held !== null ? null : mid === null ? NO_PIN : mid, listens: config.localListening === true, keyed }), director: 'One click' };
+      return { changes, card: projectFilesCard({ changes, host, branch, release, frontDesk: pin === null ? NO_PIN : frontDeskOf(changes, pin), midSized: held !== null ? null : mid === null ? NO_PIN : mid, listens: config.localListening === true, keyed, pasted }), director: 'One click' };
     },
 
     async apply(ctx, changes) {

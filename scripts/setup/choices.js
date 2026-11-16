@@ -225,9 +225,12 @@ function goAheadAsks({ keptHere, list, host }) {
     return `You'll be asked for a one-day GitLab token, and, if GitLab won't make a key for one project, a second token that reaches all your projects for ${PERSONAL_DAYS} days, each pasted into your computer's own box, and your password if needed.`;
   }
   if (way === WAYS.asIs) return `You'll be asked for a ${host} key only if your git holds none that works, pasted into your computer's own box, and your password if needed.`;
+  // A narrow way on GitLab with its tool still meets GitLab's refusal of a project key the same way.
+  const fallback = host === 'GitLab' && way !== null && way !== WAYS.quick
+    ? ` If GitLab won't make a key for one project, you'll also paste a token reaching all your projects for ${PERSONAL_DAYS} days into your computer's own box.` : '';
   // A company's GitLab without a browser sign-in set up takes a token instead, which only setup's step 3 can tell.
-  if (onCompanyGitLab(list, host)) return 'You\'ll sign in to your company\'s GitLab in your browser, or with a token you make on a page that opens and paste into your computer\'s own box, and give your password if needed.';
-  return `You'll sign in on ${host} pages that open and click through them, and give your password if needed.`;
+  if (onCompanyGitLab(list, host)) return `You'll sign in to your company's GitLab in your browser, or with a token you make on a page that opens and paste into your computer's own box, and give your password if needed.${fallback}`;
+  return `You'll sign in on ${host} pages that open and click through them, and give your password if needed.${fallback}`;
 }
 
 // The one card for a run: { id, card, choices, writes }. `list` is openChoices'; `product` is

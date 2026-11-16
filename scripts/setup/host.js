@@ -871,7 +871,10 @@ export function connectionCard({ host, locked = false, launched = false, realUse
   let noQuick = '';
   if (locked) noQuick = ' Locked needs a narrow connection, so Quick is not offered.';
   else if (launched) noQuick = ' It is launched, and a launched product needs a narrow connection, so Quick is not offered.';
-  const reach = 'if it leaked, the rest of your account would stay out of reach';
+  // On GitLab the project key can be refused (always on its free plan), and the token in its place opens every project.
+  const reach = host === 'gitlab'
+    ? `if it leaked, only this project would be open, unless GitLab won't make a project key (its free plan won't): then the ${PERSONAL_DAYS}-day token opens all your projects`
+    : 'if it leaked, the rest of your account would stay out of reach';
   // A product with real users says so first, so this card reads differently from the one asked before that was known.
   const lead = realUsers && !locked && !launched ? 'The product has real users. ' : '';
   return {
@@ -1242,6 +1245,16 @@ async function projectKeyOf(projectId) {
   } catch { /* said below */ }
   if (typeof kept?.token !== 'string' || kept.token === '') throw new Error('The project\'s GitLab key is not in this computer\'s store: a fresh Go ahead on step 3 makes it again');
   return kept.token;
+}
+
+// Which kind of key step 3 kept for a connection made with the setup token: 'project-key', or 'pasted-token' where GitLab
+// would not make one and the director's own token reaching all their projects stands in. null where none is kept.
+export async function projectKeyKind(record) {
+  try {
+    return (await findKey(`gitlab-project-${record.connection.projectId}`))?.kind ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // GitLab's API with the project's own key, for a connection made with the setup token (`record`, the
@@ -1847,7 +1860,7 @@ async function connectGithubApp({ app, repos, fetch, say, open, sleep, now, reco
 // the keys file for every project still without a key: never the chat, an argument or a log. Any
 // other failure (GitLab not reached, the project not found, a server error) stops the step plainly.
 // A project already holding a key is left as it is.
-async function connectGitlabKeys({ api, projects, owner, platform, say, open, askSecret, now, record, halt = () => {} }) {
+async function connectGitlabKeys({ api, projects, owner, platform, say, open, askSecret, now, record, halt = () => {}, pastedGitlab }) {
   const keyName = (p) => `gitlab-project-${p.id}`;
   const keep = async (p, kind, value) => {
     record({ id: newId('chg'), kind: 'host', target: `key ${keyName(p)}`, before: (await keyKept(keyName(p))) ? { kept: true } : null, after: { key: keyName(p), project: p.repo, kind } });
@@ -1884,8 +1897,30 @@ async function connectGitlabKeys({ api, projects, owner, platform, say, open, as
     throw new Error('No GitLab token was given, so the narrow connection is not set up; a fresh Go ahead asks again');
   }
   if (typeof token !== 'string' || token.trim() === '') throw new Error('No GitLab token was given, so the narrow connection is not set up; a fresh Go ahead asks again');
+  const expiresAt = await checkPersonalToken(pastedGitlab({ baseUrl: api.baseUrl, token: token.trim() }), now);
   halt();
-  for (const p of waiting) await keep(p, 'pasted-token', { kind: 'pasted-token', token: token.trim(), expiresAt: keyExpiry(PERSONAL_DAYS, now) });
+  for (const p of waiting) await keep(p, 'pasted-token', { kind: 'pasted-token', token: token.trim(), expiresAt });
+}
+
+// The pasted personal token, asked what it is before it is kept, so agents never hold more than the cards said: one with a
+// right beyond api and write_repository, or ending more than PERSONAL_DAYS from now, is revoked where GitLab allows and
+// refused. A GitLab too old to say (no such path) is taken at the page's word. Gives the end date to record.
+async function checkPersonalToken(own, now) {
+  const self = await own.get('/personal_access_tokens/self');
+  if (self.status === 404) return keyExpiry(PERSONAL_DAYS, now);
+  if (self.status === 401 || self.status === 403) throw new Error('GitLab did not accept the pasted token, so the narrow connection is not set up: make a new one as the page asks, then a fresh Go ahead');
+  if (self.status !== 200) throw new Error(`GitLab did not say what the pasted token can do (HTTP ${self.status}), so it was not kept; a fresh Go ahead tries again`);
+  const scopes = self.body?.scopes;
+  const ends = self.body?.expires_at;
+  const wide = !Array.isArray(scopes) || scopes.length === 0 || scopes.some((s) => s !== 'api' && s !== 'write_repository');
+  const long = typeof ends !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(ends) || ends > keyExpiry(PERSONAL_DAYS + 1, now);
+  if (!wide && !long) return ends;
+  let revoked = false;
+  try {
+    revoked = (await own.delete('/personal_access_tokens/self'))?.status === 204;
+  } catch { /* said below */ }
+  const what = wide ? 'can do more than api and write_repository' : `ends later than ${PERSONAL_DAYS} days from now, or never`;
+  throw new Error(`The pasted GitLab token ${what}, so it was not kept${revoked ? ' and setup revoked it' : ': delete it on GitLab\'s Access tokens page'}; make a new one as the page asks, then a fresh Go ahead`);
 }
 
 // ---- Protection (planned here, switched on at step 7: Task 13) ----
@@ -2064,6 +2099,8 @@ export function hostStep({
   via = {},
   // Whether a file is there, for finding the system's curl (tools.js's curlStatus): a stand-in in tests.
   curlExists,
+  // GitLab's API with the personal token pasted where GitLab makes no project key: a stand-in in tests.
+  pastedGitlab = ({ baseUrl, token }) => gitlabApi({ baseUrl, token, ...via }),
 } = {}) {
   // A host tool the project's settings or the director said to leave out is never run, even where one is installed (see
   // "Leaving a host's tool out" in tools.js): it reads as not found. Set from the ctx at the start of plan and apply.
@@ -2118,7 +2155,7 @@ export function hostStep({
       }
     } else {
       await connectGitlabKeys({
-        api, projects: [project], owner: user, platform, say, open: opener, askSecret, now, record, halt,
+        api, projects: [project], owner: user, platform, say, open: opener, askSecret, now, record, halt, pastedGitlab,
       });
     }
     return installationId;

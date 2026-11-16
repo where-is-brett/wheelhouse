@@ -14,7 +14,7 @@ import {
   hostStep, cardFor, signIn, makeRepos, connectionCard, stricterCard, stricterWay, STRICTER, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
   directorGitlabApi, directorKey, signInStatus, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
   APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, ORGS_UNREAD, launchedIn,
-  checkOutJoined, findInstallation, CERTIFICATE_GIVEN, reachLine, askAdministrationKey, setupTokenApi,
+  checkOutJoined, findInstallation, CERTIFICATE_GIVEN, reachLine, askAdministrationKey, setupTokenApi, SETUP_TOKEN_KEPT,
   madeWithSetupToken, keyGitlabApi, keyGitEnv,
 } from '../../../scripts/setup/host.js';
 import { trialGitEnv, trialAdapter } from '../../../scripts/setup/health.js';
@@ -184,6 +184,16 @@ function standIn(state = {}) {
     async put() { return { status: 404, body: null }; },
     async delete() { return { status: 404, body: null }; },
   };
+  // GitLab's API with a pasted personal token: what it says the token is (`pastedSelf`, by default api and
+  // write_repository ending in 30 days), and whether its revoke works (`pastedRevoke`).
+  w.pasted = { revoked: 0 };
+  w.pastedApi = {
+    async get(p) {
+      if (p !== '/personal_access_tokens/self') return { status: 404, body: null };
+      return w.pastedSelf ?? { status: 200, body: { scopes: ['api', 'write_repository'], expires_at: new Date(NOW.getTime() + 30 * 86400000).toISOString().slice(0, 10) } };
+    },
+    async delete() { w.pasted.revoked += 1; return { status: w.pastedRevoke ?? 204, body: null }; },
+  };
   return w;
 }
 
@@ -303,7 +313,7 @@ const withOrigin = async (folder, url) => {
 
 const stepFor = (w, extra = {}) => hostStep({
   run: w.run, appFile: NO_APP, hostUrl: w.hostUrl, findGit: async () => ({ ok: true, path: 'git' }), gitlab: async () => w.api,
-  open: async () => {}, sleep: async () => {}, ...extra,
+  pastedGitlab: () => w.pastedApi, open: async () => {}, sleep: async () => {}, ...extra,
 });
 
 // ---- The tests ----
@@ -400,7 +410,7 @@ test('on Windows a narrow way is recommended, with one plain line on why, and Qu
   for (const host of ['github', 'gitlab']) {
     const card = connectionCard({ host, where, platform: 'win32' });
     assert.equal(card.recommend, host === 'github' ? WAYS.own : WAYS.narrow);
-    assert.match(card.because, /if it leaked, the rest of your account would stay out of reach/);
+    assert.match(card.because, host === 'github' ? /if it leaked, the rest of your account would stay out of reach/ : /if it leaked, only this project would be open, unless GitLab won't make a project key \(its free plan won't\): then the 30-day token opens all your projects/);
     assert.doesNotMatch(card.because, /Windows/);
     const quick = card.options.find((o) => o.label === WAYS.quick).says;
     assert.ok(quick.startsWith(quickLineFor(host)));
@@ -850,6 +860,30 @@ test('a GitLab that forbids a project key (a free plan on gitlab.com) falls back
     await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), /could not find the project/);
     assert.deepEqual(opened, []);
   });
+});
+
+test('a pasted personal token is asked what it is: one wider or longer than the cards said is revoked and refused', async () => {
+  const far = new Date(NOW.getTime() + 365 * 86400000).toISOString().slice(0, 10);
+  const cases = [
+    [{ status: 200, body: { scopes: ['api', 'write_repository', 'sudo'], expires_at: new Date(NOW.getTime() + 30 * 86400000).toISOString().slice(0, 10) } }, 204, /can do more than api and write_repository, so it was not kept and setup revoked it/],
+    [{ status: 200, body: { scopes: ['api', 'write_repository'], expires_at: null } }, 204, /ends later than 30 days from now, or never, so it was not kept and setup revoked it/],
+    [{ status: 200, body: { scopes: ['api'], expires_at: far } }, 500, /so it was not kept: delete it on GitLab's Access tokens page/],
+  ];
+  for (const [self, revoke, words] of cases) {
+    await withHome(async () => {
+      const w = standIn({ refuseKeys: true });
+      w.pastedSelf = self;
+      w.pastedRevoke = revoke;
+      await w.add(`${USER}/shop`);
+      const folder = productFolder('shop');
+      await withOrigin(folder, `https://gitlab.com/${USER}/shop.git`);
+      const step = stepFor(w, { askSecret: async () => `${PASTED}\n` });
+      const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
+      await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), words);
+      assert.equal(w.pasted.revoked, 1);
+      assert.equal(readKey(`gitlab-project-${w.repos[`${USER}/shop`].id}`), null);
+    });
+  }
 });
 
 test('a made project key says what it reaches, word for word', async () => {
@@ -3221,7 +3255,7 @@ const SETUP_TOKEN = 'glpat-one-day-setup-token-0001';
 // (`w.api`). The token itself is `self` (api alone, ending tomorrow), or not known where `self` is null; revoking it
 // is kept in `revoked`, and GitLab answers it with `revokeStatus`. Each call is recorded with its arguments, its config
 // and its environment, so a test can look for the token.
-function setupTokenCurl(w, { userStatus = 200, self = { scopes: ['api'], expires_at: '2026-10-21' }, revokeStatus = 204 } = {}) {
+function setupTokenCurl(w, { userStatus = 200, self = { scopes: ['api'], expires_at: '2026-10-21' }, selfStatus = 200, revokeStatus = 204 } = {}) {
   const calls = [];
   const revoked = [];
   const branches = {};
@@ -3236,6 +3270,7 @@ function setupTokenCurl(w, { userStatus = 200, self = { scopes: ['api'], expires
         revoked.push(token);
         return { status: 204, body: null };
       }
+      if (selfStatus !== 200) return { status: selfStatus, body: null };
       return self === null ? { status: 404, body: { message: '404 Not Found' } } : { status: 200, body: self };
     }
     if (p === '/user') return userStatus === 200 ? { status: 200, body: { id: 7, username: USER, name: 'A Director', commit_email: 'director@example.com' } } : { status: userStatus, body: { message: 'no' } };
@@ -3347,6 +3382,15 @@ test('a setup token that can do more than api, or lasts longer than a day, is re
   // An older GitLab with no such path: taken at the page's word.
   const old = await setupTokenApi({ base: 'https://gitlab.example.com', via: tokenVia(setupTokenCurl(standIn(), { self: null })), open: async () => {}, askSecret: async () => SETUP_TOKEN, now: at });
   assert.equal(old.user, USER);
+});
+
+test('a setup token GitLab took but could not describe or take back is named for the director to delete, the error left as it is', async () => {
+  const said = [];
+  const curl = setupTokenCurl(standIn(), { selfStatus: 500, revokeStatus: 500 });
+  const got = await setupTokenApi({ base: 'https://gitlab.example.com', via: tokenVia(curl), say: (line) => said.push(line), open: async () => {}, askSecret: async () => SETUP_TOKEN, now: () => NOW }).catch((e) => e);
+  assert.match(got.message, /^GitLab did not say what the token can do \(HTTP 500\), so nothing was made; a fresh Go ahead tries again$/);
+  assert.ok(said.includes(SETUP_TOKEN_KEPT));
+  assert.ok(!said.join('\n').includes(SETUP_TOKEN));
 });
 
 test('the setup token is refused for a base that is not https, before any page opens or box is shown', async () => {

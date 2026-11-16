@@ -65,6 +65,13 @@ test('the one card for a new product on a Mac says the director\'s approved word
   assert.match(id, /^plan-[0-9a-f]{12}$/);
 });
 
+test('Go ahead on a narrow GitLab way with GitLab\'s tool names the token that may stand in for a project key', () => {
+  const list = newProductChoices({ connection: WAYS.narrow }).map((c) => (c.id === 'host' ? { ...c, label: HOST_LABELS.gitlab } : c));
+  const { card } = oneCard({ folder: '/x/tide-tables', list, product: { isNew: true, host: null, repo: null, name: 'tide-tables' }, platform: 'win32', toRun: [3, 6, 7, 10], count: 0 });
+  assert.match(card.options[0].description, /You'll sign in on GitLab pages that open and click through them, and give your password if needed\. If GitLab won't make a key for one project, you'll also paste a token reaching all your projects for 30 days into your computer's own box\.$/);
+  assert.deepEqual(cardProblems(card), []);
+});
+
 test('a run with only the health check left gets a short one card naming it, with an honest time and no empty list', () => {
   // A run v0.1.1 parked at its phone card, carried on after the update (rehearsal of 27 October 2026):
   // every choice answered, steps 1 to 8 done.

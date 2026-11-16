@@ -288,14 +288,14 @@ export function hostToolCard(tool, { recommend: given }) {
   return {
     level: 2,
     what: `${name}'s own tool isn't on this computer. Should Wheelhouse fetch it, or reach ${name} without it?`,
-    why: `If you'd rather not install ${name}'s tool, or your company's rules don't allow it, Wheelhouse can work without it, talking to ${name} directly with the key your git already uses or one you make.`,
+    why: `If you'd rather not install ${name}'s tool, or your company's rules don't allow it, Wheelhouse can work without it, talking to ${name} directly with a key you make, or your git's own.`,
     options: [
       { label: labels.fetch, says: `Wheelhouse fetches ${name}'s tool from its official release into its own tools folder, and checks it.${tool === 'glab' ? ' Only with it can agents use your ordinary GitLab sign-in.' : ''}` },
       { label: labels.none, says: `Nothing is fetched, and Wheelhouse never runs ${name}'s tool.` },
     ],
     recommend: recommend === 'none' ? labels.none : labels.fetch,
     because,
-    meanwhile: 'Nothing runs until you choose.',
+    meanwhile: 'Nothing runs until your Go ahead on the plan.',
   };
 }
 

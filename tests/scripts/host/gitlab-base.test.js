@@ -213,6 +213,10 @@ test('the switched-off refusal carries a code, and no other refusal does', async
   assert.equal(isProjectKeyRefused(off), true);
   assert.equal(isProjectKeyRefused(await refused(403, {}).catch((e) => e)), true);
   for (const status of [401, 404, 500]) assert.equal(isProjectKeyRefused(await refused(status, {}).catch((e) => e)), false, String(status));
+  // A 403 for the sign-in's own scopes is the sign-in to change, not a reason for a wider token.
+  const scope = await refused(403, { error: 'insufficient_scope' }).catch((e) => e);
+  assert.equal(isProjectKeyRefused(scope), false);
+  assert.match(scope.message, /as it can only read/);
 });
 
 test('the project\'s gitlabHosts is read from its committed configuration, and setup\'s host tool follows it', () => {
