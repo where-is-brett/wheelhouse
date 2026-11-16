@@ -469,7 +469,6 @@ export function lockedAsk(name) {
 function hostAsk(name) {
   return {
     id: 'host',
-    endsBatch: true,
     card: {
       level: 2,
       what: `Where should ${name} be kept? No account on GitHub or GitLab yet? You can make one at the sign-in.`,
@@ -655,11 +654,9 @@ function joinAsk(id, name, { missed }) {
   else if (missed?.missed === 'no-backup') found = `"${missed.name}" can't be found. `;
   else if (Array.isArray(missed?.missed)) found = `More than one ${missed.name} is set up with Wheelhouse: ${missed.missed.slice(0, 5).join(', ')}. `;
   else if (missed) found = `Setup found no ${missed.name} set up with Wheelhouse on your account or organisations. `;
-  // Customise asks it apart from the cards after it, since the real-users card speaks of the host it chooses.
   return {
     id,
     typed: true,
-    endsBatch: true,
     card: {
       level: 2,
       what: `${found}Where should ${name} be kept?`,
@@ -2324,11 +2321,8 @@ export function hostStep({
       let locked = false;
       if (!product.joining) {
         if (answer('real-users') === null) {
-          // The host as chosen so far: the card 2 answer, or the folder's remote; 'local' while it may still move. The host
-          // cards end their batch, so this card is asked after the answer.
-          const asked = answer('kept') ?? answer('host');
-          const picked = asked === null ? null : asked.label === PUT_ON_GITLAB || asked.label === HOST_LABELS.gitlab ? 'gitlab' : asked.label === PUT_ON_GITHUB || asked.label === HOST_LABELS.github ? 'github' : 'local';
-          const chosen = join?.host ?? picked ?? product.host ?? null;
+          // The host as chosen so far: the first card's answer or the folder's remote; 'local' while it may still move.
+          const chosen = product.host ?? join?.host ?? null;
           return { ask: realUsersAsk(product.name, platform, chosen, chosen === 'gitlab' && hostToolLeftOut(ctx, 'gitlab')) };
         }
         realUsers = answer('real-users').label === REAL_USERS.yes;

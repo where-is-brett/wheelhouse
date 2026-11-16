@@ -128,7 +128,6 @@ export function keptAsk(name, others) {
   const line = othersLine(others);
   return {
     id: 'kept',
-    endsBatch: true,
     line: line === null ? KEPT_LINE : `${KEPT_LINE} ${line}`,
     card: {
       level: 2,
