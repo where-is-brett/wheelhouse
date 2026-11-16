@@ -185,8 +185,8 @@ function productAsk(name, { described, realUsers }) {
   const entry = (plain) => ({ kind: 'glossary', data: { term: name, plain } });
   const shaping = 'A new product, still taking shape.';
   const options = [
-    described === null ? { label: PRODUCT.shaping, says: `"${shaping}" You can describe it to the First Mate once it is clearer.` } : { label: PRODUCT.readme, says: `"${described}"` },
-    { label: PRODUCT.later, says: 'Setup records no description of it yet; you can give one to the First Mate later.' },
+    described === null ? { label: PRODUCT.shaping, says: `Setup records "${shaping}", so agents know it is new. You can describe it to the First Mate later.` } : { label: PRODUCT.readme, says: `"${described}"` },
+    { label: PRODUCT.later, says: 'Setup records no description yet. You can give one to the First Mate later.' },
   ];
   return {
     id: `product-${phase}`,
@@ -197,7 +197,7 @@ function productAsk(name, { described, realUsers }) {
       why: `Wheelhouse explains its work to you in terms of your product; it is recorded as ${realUsers ? 'launched' : 'before launch'}.`,
       options,
       recommend: options[0].label,
-      because: described === null ? 'it tells agents the product is new until you describe it' : 'it is how the project already describes itself',
+      because: described === null ? 'agents know it is new' : 'it is how the project already describes itself',
       meanwhile: MEANWHILE,
     },
     writes: {
@@ -221,7 +221,7 @@ function liveDataAsk(name, { isNew = false } = {}) {
       why: 'Agents never work on live data: with it, they get test data only.',
       options: [
         { label: LIVE_DATA.yes, says: 'Agents get test data only, never the live data.' },
-        { label: LIVE_DATA.no, says: 'Agents work with the product\'s data as it is, as they do in a throwaway or test project with made-up data.' },
+        { label: LIVE_DATA.no, says: 'Agents work with the product\'s data as it is, as in a throwaway or test project.' },
       ],
       recommend: isNew ? LIVE_DATA.no : LIVE_DATA.yes,
       because: isNew ? 'a new product has no live data yet' : 'that is the safe side if you are not sure',

@@ -181,6 +181,15 @@ const bare = (text) => text.replace(/[.!?]+$/, '');
 const NAMES = /^(Windows|Mac|macOS|GitHub|GitLab|Wheelhouse|Claude|Git)\b/;
 const clause = (text) => (NAMES.test(bare(text)) ? bare(text) : bare(text).replace(/^([A-Z])(?=[a-z])/, (c) => c.toLowerCase()));
 
+// The recommended option's words: what it does, then the reason as a sentence of its own, so neither is a clause glued to
+// the other. A reason the option's words already give is not said twice.
+const asSentence = (text) => `${bare(text).replace(/^([a-z])/, (c) => c.toUpperCase())}.`;
+const squash = (text) => bare(text).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+export function recommendedSays(says, because) {
+  const own = asSentence(says);
+  return squash(says).includes(squash(because)) ? `Recommended: ${own}` : `Recommended: ${own} ${asSentence(because)}`;
+}
+
 // Whether an error from composeCard is its length refusal (and not another fault in the card).
 export const isTooLong = (error) => /^An? [\w-]+ card('s)? text would pass \d+ characters/.test(String(error?.message));
 
@@ -196,6 +205,13 @@ function words(kind, part, value) {
   if (BREAK.test(text)) fail(kind, part, 'must be on one line');
   if (SET_FRAGMENTS.some((p) => p.test(text))) fail(kind, part, 'must not hold a line the prompt record reads as a set line');
   return text;
+}
+
+// What a card is. A setup card may list what it does on lines of their own ("Setup step 3, …:" then "- …" lines), each
+// held to the same rules as any one-line part, so no line of it reads as a set line; every other kind's is one line.
+function whatOf(kind, value) {
+  if (kind !== 'setup' || typeof value !== 'string' || !value.includes('\n')) return words(kind, 'what', value);
+  return value.trim().split('\n').map((l) => words(kind, 'what', l)).join('\n');
 }
 
 // The set line a target gives, or a refusal naming what is wrong with the target.
@@ -483,7 +499,7 @@ export function composeCard(input) {
     if (sideOf(input.decides) === 'director' && level < DIRECTOR_LEVEL) fail(kind, 'level', `must be 3 or 4: "${input.decides}" is a call the director decides`);
   }
   const said = input.said === undefined ? undefined : flat(words(kind, 'said', input.said));
-  const what = said === undefined ? words(kind, 'what', input.what) : `You said: ${said.replace(/[.\s]+$/, '')}. ${SAID_ASKS} ${words(kind, 'what', input.what)}`;
+  const what = said === undefined ? whatOf(kind, input.what) :`You said: ${said.replace(/[.\s]+$/, '')}. ${SAID_ASKS} ${words(kind, 'what', input.what)}`;
   const why = words(kind, 'why', input.why);
   if (input.parked !== undefined && (input.parked !== true || kind !== 'approval')) fail(kind, 'parked', 'belongs to an approval card only, as true');
   const because = words(kind, 'because', input.because);
@@ -548,7 +564,7 @@ export function composeCard(input) {
   const text = textOf(parts);
   if (text.length > CARD.chars) fail(kind, 'text', `would pass ${CARD.chars} characters (it is ${text.length})`);
   if (setLineOf(text) !== line) fail(kind, 'target', 'does not give a set line the prompt record reads');
-  const descriptions = buttons.map((b) => (b.label === recommend ? `Recommended: ${bare(b.says)}, because ${clause(because)}.` : b.says));
+  const descriptions = buttons.map((b) => (b.label === recommend ? recommendedSays(b.says, because) : b.says));
   // The baseline card's own words belong to it alone: on another card they would read as the
   // private note's figures, and the card check and the prompt record would treat it as one.
   if (kind !== 'baseline' && baselineWording([text, ...descriptions].join('\n'))) fail(kind, 'text', 'must not use the baseline card\'s words');

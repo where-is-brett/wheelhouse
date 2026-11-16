@@ -408,7 +408,7 @@ test('decision cards offer the deciding label, Suggest a change…, Show me and 
   const { question } = composeCard(input('approval', {
     recommend: 'Not now', options: [says('Approve'), { label: 'Not now', says: 'Wait for the next release.' }],
   }));
-  assert.equal(question.options[3].description, 'Recommended: Wait for the next release, because the checks passed and the change is small.');
+  assert.equal(question.options[3].description, 'Recommended: Wait for the next release. The checks passed and the change is small.');
   assert.ok(!question.options[0].description.startsWith('Recommended:'));
   // Only labels the card offers can be described or recommended, and the deciding one is needed.
   refused({ options: [says('Approve'), says('Delete everything')] }, /options.*Delete everything/);
@@ -428,11 +428,11 @@ test('decision cards offer the deciding label, Suggest a change…, Show me and 
 
 test("the recommended option's description starts \"Recommended:\" and carries the reason", () => {
   const { question, card } = composeCard(input('approval'));
-  assert.equal(question.options[0].description, 'Recommended: It approve and goes ahead, because the checks passed and the change is small.');
+  assert.equal(question.options[0].description, 'Recommended: It approve and goes ahead. The checks passed and the change is small.');
   assert.deepEqual(card.descriptions, question.options.map((o) => o.description));
   // The reason follows the says without its full stop, as a clause.
   const stop = composeCard(input('approval', { options: [{ label: 'Approve', says: 'It goes live within the hour.' }], because: 'The checks passed.' }));
-  assert.equal(stop.question.options[0].description, 'Recommended: It goes live within the hour, because the checks passed.');
+  assert.equal(stop.question.options[0].description, 'Recommended: It goes live within the hour. The checks passed.');
   // Exactly one option is led by "Recommended:" on every kind.
   for (const kind of CARD_KINDS) {
     const got = composeCard(input(kind)).question.options.filter((o) => o.description.startsWith('Recommended:'));
@@ -471,7 +471,7 @@ test('an answer card with three own options adds Suggest a change…; with four 
   const opt = (n) => ({ label: `Option ${n}`, says: `Means ${n}.` });
   const three = composeCard(input('answer', { options: [opt(1), opt(2), opt(3)], recommend: 'Option 2' }));
   assert.deepEqual(three.question.options.map((o) => o.label), ['Option 1', 'Option 2', 'Option 3', SUGGEST]);
-  assert.ok(three.question.options[1].description.startsWith('Recommended: Means 2, because'));
+  assert.ok(three.question.options[1].description.startsWith('Recommended: Means 2. '));
   assert.ok(three.question.options.every((o) => o.description));
   assert.ok(lines(three.question.question).includes(TO_KNOW_MORE));
   assert.ok(!three.question.question.includes(TO_CHANGE_IT));
@@ -741,10 +741,10 @@ test('questionProblem says why a question from the build could not be its answer
   const { card } = composeCard(answerInput(question, 'Export a report'));
   assert.equal(card.line, answerLine('q-export-csv-1'));
   const tab = card.descriptions[card.options.indexOf('Tab')];
-  assert.equal(tab, 'Recommended: Tabs between values; safe for text with commas, because the session building Export a report recommends it.');
+  assert.equal(tab, 'Recommended: Tabs between values; safe for text with commas. The session building Export a report recommends it.');
   // The card for changes made by hand gives its reason plainly, and names no session.
   const hand = composeCard(answerInput({ ...question, id: 'q-by-hand-1', work: 'by-hand', recommendation: 'Tab' }, 'by-hand')).card;
-  assert.equal(hand.descriptions[hand.options.indexOf('Tab')], 'Recommended: Tabs between values; safe for text with commas, because they get a review and checks before they join the main version, and your folder keeps your edits either way.');
+  assert.equal(hand.descriptions[hand.options.indexOf('Tab')], 'Recommended: Tabs between values; safe for text with commas. They get a review and checks before they join the main version, and your folder keeps your edits either way.');
   assert.ok(lines(card.question).includes(MEANWHILE));
   assert.ok(lines(composeCard(answerInput({ ...question, level: 4 }, 'x')).card.question).includes(CHECKS_UNSAID));
   assert.equal(CHECKS_UNSAID, "The build didn't say. Ask me why and I'll find out before you answer.");

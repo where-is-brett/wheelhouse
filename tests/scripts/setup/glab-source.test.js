@@ -447,9 +447,9 @@ test('step 2\'s card composes in the worst first run, and the no-checksum warnin
       const shown = `${long.slice(0, 40)}…${long.slice(-23)}`;
       assert.ok(planned.card.what.includes(shown), planned.card.what);
       if (checksums === 'none') {
-        assert.match(planned.card.what, /glab: from your company's list at .*, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure/);
+        assert.match(planned.card.what, /GitLab's own tool \(glab\): from your company's list at .*, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure/);
       } else {
-        assert.match(planned.card.what, /glab: from your company's list at .*, checked/);
+        assert.match(planned.card.what, /GitLab's own tool \(glab\): from your company's list at .*, checked/);
       }
       if (checksums === 'none') {
         assert.match(planned.card.what, /no checksum/);

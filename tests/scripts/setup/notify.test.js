@@ -149,7 +149,7 @@ test('with no answer, step 9 asks the card of plain steps, ending with the scree
   const composed = composeCard({ ...card, kind: 'question', suggest: false }).question;
   const count = (t) => t.split(/\s+/).filter(Boolean).length;
   assert.ok(count([composed.question, ...composed.options.flatMap((o) => [o.label, o.description])].join(' ')) <= 105, 'about 100 words');
-  assert.equal(composed.options[0].description, 'Recommended: Setup sends a test two minutes later and asks if it arrived, because it shows now whether your phone works.');
+  assert.equal(composed.options[0].description, 'Recommended: Setup sends a test two minutes later and asks if it arrived. It shows now whether your phone works.');
   // Nor is Skip for now a put-off button the composer would refuse on a question: it is a kept answer.
   assert.deepEqual(composed.options.map((o) => o.label), [READY.ready, READY.skip]);
 });

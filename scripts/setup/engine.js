@@ -88,7 +88,7 @@ import { jobFolder, wheelhouseHome, stateDir } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
 import { projectHosts } from './tools.js';
 import { CLICK_FRESH_MS, STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
-import { SETUP_TITLES } from '../state/card-lines.js';
+import { SETUP_TITLES, withoutListedLine } from '../state/card-lines.js';
 import { composeCard } from '../cards/compose.js';
 import { hide, cleanDeep } from '../lib/clean.js';
 import { pluginOnIn } from '../lib/plugin-on.js';
@@ -698,6 +698,8 @@ export function setupRoutes({
       card = composeCard({ ...cleanDeep(got.ask.card, []), kind: 'confirm-all', target: { count: rules.length, hash: planHash(rules) } }).question;
     } else if (got.ask) card = composeCard({ ...cleanDeep(got.ask.card, []), kind: 'question', suggest: false }).question;
     else if (got.changes) card = composeCard({ ...cleanDeep(got.card, []), kind: 'setup', target: { step: step.n, hash: got.hash } }).question;
+    // The director reads the card without its line of hash: the click is matched to the card recorded here, word for word.
+    if (card !== null) card = { ...card, question: withoutListedLine(card.question) };
     if (card !== null && JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error(`Step ${step.n}'s card could not be cleaned as it is sent`);
     // Read again: the step may have been started while its plan was worked out.
     if (run) showable(runById(run.id), step.n);

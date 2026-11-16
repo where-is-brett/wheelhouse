@@ -67,7 +67,7 @@ import {
   RELEASE_LABEL, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LABEL, UPDATE_LINE, TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, SEAT_TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE,
 } from '../state/card-lines.js';
 import {
-  keepClick, shownHash, keepAnswer, askedFor, claimAnswer, claimedAt, noteClaimed, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords, sameWords,
+  keepClick, shownHash, shownByCard, keepAnswer, askedFor, claimAnswer, claimedAt, noteClaimed, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords, sameWords,
   noteDropped, askedAnywhere, bareLabel, cardDifferences, shownNear, askedLike,
 } from '../lib/setup-clicks.js';
 import { setupRecordsOf } from '../lib/setup-writes.js';
@@ -587,8 +587,8 @@ function keepAfterClick(project, folder, made) {
   }
 }
 
-// The signed record a Go ahead on a setup card earns: the card carries one set line, setup's, and
-// is the very card the helper composed for the list its twelve characters name, for the folder
+// The signed record a Go ahead on a setup card earns: the card carries one set line, setup's, or none (as setup sends it
+// now, the hash kept in its shown record alone), and is the very card the helper composed for the list its twelve characters name, for the folder
 // this session is in, word for word (its text, header and options), so a card reworded around the
 // right set line earns nothing.
 // The record names the run the card was shown for and that list's full hash, which the helper
@@ -598,7 +598,12 @@ function keepAfterClick(project, folder, made) {
 function setupClickOf(cwd, { question, label, card }) {
   if (label !== SETUP_LABEL) return null;
   const m = only(SETUP, question);
-  if (!m) return null;
+  if (!m) {
+    // The card as setup sends it, without its line of hash: the click counts only for the very card recorded as shown.
+    if (setLinesOf(question).length > 0) return null;
+    const shown = shownByCard({ cwd, card });
+    return shown === null ? null : { made: { kind: 'action', data: { action: 'setup', runId: shown.runId, step: shown.step, hash: shown.hash, question, label } } };
+  }
   const step = Number(m[1]);
   if (!Object.hasOwn(SETUP_TITLES, step) || setLineOf(question) !== setupLine(step, m[2])) return null;
   const shown = shownHash({ cwd, step, h12: m[2], card });

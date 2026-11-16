@@ -7,7 +7,7 @@ exit 0
     "options": [
       {
         "label": "Plain",
-        "description": "Recommended: It plains and goes ahead, because it reads quickest."
+        "description": "Recommended: It plains and goes ahead. It reads quickest."
       },
       {
         "label": "Playful",

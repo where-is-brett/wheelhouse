@@ -29,7 +29,8 @@ export const STARTED_LINE = (branch) => `Git starts in this folder, with a first
 export const CHOOSE_BACKUP = 'Choose a backup folder';
 // "Not now" alone puts a setup card off, and this one closes for good.
 export const NO_BACKUP = 'Not now, keep building';
-export const ONLY_HERE_LINE = 'This project is only on this computer. If the computer is lost or breaks, the project goes with it.';
+export const ONLY_HERE_AFTER = 'If the computer is lost or breaks, the project goes with it.';
+export const ONLY_HERE_LINE = `This project is only on this computer. ${ONLY_HERE_AFTER}`;
 const FIRST_COMMIT = 'Start the project';
 const MOST_BRANCHES = 4;
 // Wheelhouse's own branches of a hosted project, never a project's main line.

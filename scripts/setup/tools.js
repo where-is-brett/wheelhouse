@@ -290,7 +290,7 @@ export function hostToolCard(tool, { recommend: given }) {
     what: `${name}'s own tool isn't on this computer. Should Wheelhouse fetch it, or reach ${name} without it?`,
     why: `If your company's rules don't allow ${name}'s tool, Wheelhouse can work without it, talking to ${name} directly with the key your git already uses or one you make.`,
     options: [
-      { label: labels.fetch, says: `Wheelhouse fetches ${name}'s tool from its official release into its own tools folder, and checks it.` },
+      { label: labels.fetch, says: `Wheelhouse fetches ${name}'s tool from its official release into its own tools folder, and checks it.${tool === 'glab' ? ' Only with it can agents use your ordinary GitLab sign-in.' : ''}` },
       { label: labels.none, says: `Nothing is fetched, and Wheelhouse never runs ${name}'s tool.` },
     ],
     recommend: recommend === 'none' ? labels.none : labels.fetch,
@@ -856,8 +856,8 @@ export async function openInstaller(tool, { platform = process.platform, run = r
 // ---- Step 2 ----
 
 function installLine(platform) {
-  if (platform === 'darwin') return 'git: Apple\'s command-line tools, in Apple\'s own window (click Install, then Agree); 5 to 15 minutes, while you answer the next questions';
-  return 'git: Git for Windows\' official installer, checked against its published checksum; Windows asks you to allow it (Yes, or an administrator\'s password); 2 to 5 minutes, while you answer the next questions';
+  if (platform === 'darwin') return 'Git: Apple\'s command-line tools, in Apple\'s own window (click Install, then Agree); 5 to 15 minutes, while you answer the next questions';
+  return 'Git: Git for Windows\' official installer, checked against its published checksum; Windows asks you to allow it (Yes, or an administrator\'s password); 2 to 5 minutes, while you answer the next questions';
 }
 
 // Why step 2's list matters, naming only the hosts this project uses, and their own tools only where they are used.
@@ -886,6 +886,8 @@ function cardFor(changes, status, platform, leftOut = [], hostTools = []) {
   const processes = changes.filter((x) => x.kind === 'process');
   const fetches = changes.filter((c) => c.action === 'fetch');
   const official = fetches.filter((c) => c.from !== 'company').map((c) => c.tool);
+  // A host tool by the host's name first, so no line starts with a lower-case command name.
+  const toolName = (tool) => `${HOST_TOOL_NAME[tool]}'s own tool (${tool})`;
   const company = fetches.filter((x) => x.from === 'company');
   // How many allow rules the change adds: one or both forms of setup's command.
   const rules = changes.find((c) => c.kind === 'json-key')?.added ?? 0;
@@ -893,49 +895,55 @@ function cardFor(changes, status, platform, leftOut = [], hostTools = []) {
   const ruleWords = rules === 1 ? 'one permission rule' : 'two permission rules';
   const here = Object.entries(status).filter(([, s]) => s.ok).map(([tool, s]) => `${tool === 'node' ? 'Node.js' : tool} ${s.version}`);
   const full = [];
-  for (const c of processes) full.push(c.action === 'wait' ? 'git: waiting for the git installer already open, which setup leaves to finish' : installLine(platform));
+  for (const c of processes) full.push(c.action === 'wait' ? 'Git: waiting for the git installer already open, which setup leaves to finish' : installLine(platform));
   if (official.length > 0) {
-    full.push(`${official.join(' and ')}, the host's command-line ${official.length === 1 ? 'tool' : 'tools'}: to be fetched from ${official.length === 1 ? 'its' : 'their'} official release into Wheelhouse's tools folder and checked against the published checksums; a few seconds, nothing for you to do`);
+    full.push(`${official.map(toolName).join(' and ')}: to be fetched from ${official.length === 1 ? 'its' : 'their'} official release into Wheelhouse's tools folder and checked against the published checksums; a few seconds, nothing for you to do`);
   }
   for (const c of company) {
-    full.push(`${c.tool}, from your company's list at ${c.source} (version ${c.version}); ${c.checksum === 'listed'
+    full.push(`${toolName(c.tool)}, from your company's list at ${c.source} (version ${c.version}); ${c.checksum === 'listed'
       ? 'checked against the checksum the list gives'
       : 'the list gives no checksum, so setup cannot check the file. Setup runs it once to read its version, and after that it is the glab Wheelhouse uses for your GitLab work, including your sign-in. Say Not now if unsure'}`);
   }
   if (changes.some((c) => c.action === 'engine')) {
-    full.push('the build engine, Archon: built from its pinned source with Wheelhouse\'s safety patch, with the pinned Bun, into Wheelhouse\'s engine folder, each checked against Wheelhouse\'s pins, with its usage reporting off; a few minutes, nothing for you to do');
+    full.push('The build engine, Archon: built from its pinned source with Wheelhouse\'s safety patch, with the pinned Bun, into Wheelhouse\'s engine folder, each checked against Wheelhouse\'s pins, with its usage reporting off; a few minutes, nothing for you to do');
   }
-  if (changes.some((c) => c.action === 'archon-settings')) full.push('the build engine set to run its steps with Claude');
-  if (changes.some((c) => c.action === 'broker')) full.push('the engine\'s broker, so the engine reaches GitHub only through Wheelhouse\'s helper and never holds a key');
+  if (changes.some((c) => c.action === 'archon-settings')) full.push('The build engine set to run its steps with Claude');
+  if (changes.some((c) => c.action === 'broker')) full.push('The engine\'s broker, so the engine reaches GitHub only through Wheelhouse\'s helper and never holds a key');
   for (const tool of leftOut) full.push(`${HOST_TOOL_NAME[tool]}'s own tool: not fetched, so Wheelhouse reaches ${HOST_TOOL_NAME[tool]} without it`);
-  if (rule) full.push(`${ruleWords} in this project's .claude/settings.local.json, so setup's own command is not asked about each time`);
+  if (rule) full.push(`${ruleWords[0].toUpperCase()}${ruleWords.slice(1)} in this project's .claude/settings.local.json, so setup's own command is not asked about each time`);
   const terse = [];
-  for (const c of processes) terse.push(c.action === 'wait' ? 'git: waiting for its installer' : 'git: its installer');
-  if (official.length > 0) terse.push(`${official.join(' and ')}: official ${official.length === 1 ? 'release' : 'releases'}, checked`);
+  for (const c of processes) terse.push(c.action === 'wait' ? 'Git: waiting for its installer' : 'Git: its installer');
+  if (official.length > 0) terse.push(`${official.map(toolName).join(' and ')}: official ${official.length === 1 ? 'release' : 'releases'}, checked`);
   for (const c of company) {
     terse.push(c.checksum === 'listed'
-      ? `${c.tool}: from your company's list at ${shownSource(c.source)}, checked`
-      : `${c.tool}: from your company's list at ${shownSource(c.source)}, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure`);
+      ? `${toolName(c.tool)}: from your company's list at ${shownSource(c.source)}, checked`
+      : `${toolName(c.tool)}: from your company's list at ${shownSource(c.source)}, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure`);
   }
-  if (changes.some((c) => c.action === 'engine')) terse.push('the build engine, Archon: pinned and checked, usage reporting off');
-  if (changes.some((c) => c.action === 'archon-settings')) terse.push('the engine set to use Claude');
-  if (changes.some((c) => c.action === 'broker')) terse.push('its broker to GitHub');
+  if (changes.some((c) => c.action === 'engine')) terse.push('The build engine, Archon: pinned and checked, usage reporting off');
+  if (changes.some((c) => c.action === 'archon-settings')) terse.push('The engine set to use Claude');
+  if (changes.some((c) => c.action === 'broker')) terse.push('Its broker to GitHub');
   for (const tool of leftOut) terse.push(`${HOST_TOOL_NAME[tool]}'s tool: not fetched`);
-  if (rule) terse.push(ruleWords);
-  const card = (what) => ({
+  if (rule) terse.push(`${ruleWords[0].toUpperCase()}${ruleWords.slice(1)}`);
+  // Nothing to install or fetch, only setup's own settings: the card says so plainly, and claims no source.
+  const installs = processes.length > 0 || fetches.length > 0 || changes.some((c) => c.action === 'engine');
+  const ready = here.length > 0 ? `Already here: ${here.join(', ')}.` : null;
+  const card = (lines) => ({
     kind: 'setup',
     level: 3,
-    what,
+    what: [`Setup step 2, ${SETUP_TITLES[2]}:`, ...(installs ? [] : ['- Nothing to install.']), ...lines.map((l) => `- ${l}.`), ...(ready === null ? [] : [`- ${ready}`])].join('\n'),
     why: hostWhy(hostTools, leftOut),
-    options: [
+    options: installs ? [
       { label: SETUP_LABEL, says: 'Setup starts what is listed and moves on to its questions while it runs.' },
       { label: 'Not now', says: 'Setup waits at this step; nothing is installed.' },
+    ] : [
+      { label: SETUP_LABEL, says: 'Setup makes the changes listed and moves on.' },
+      { label: 'Not now', says: 'Setup waits at this step; nothing is changed.' },
     ],
     recommend: SETUP_LABEL,
-    because: company.length > 0 ? 'setup needs them for the next steps' : 'each comes from its official source, and setup needs them for the next steps',
-    meanwhile: 'Nothing is installed yet.',
+    because: !installs ? 'setup\'s own command then runs without a question each time' : company.length > 0 ? 'setup needs them for the next steps' : 'each comes from its official source, and setup needs them for the next steps',
+    meanwhile: installs ? 'Nothing is installed yet.' : 'Nothing is changed yet.',
   });
-  const long = card(`Setup step 2, ${SETUP_TITLES[2]}: ${full.join('; ')}.${here.length > 0 ? ` Already here: ${here.join(', ')}.` : ''}`);
+  const long = card(full);
   try {
     composeCard({ ...long, target: { step: 2, hash: '0'.repeat(64) } });
     return long;
@@ -943,7 +951,7 @@ function cardFor(changes, status, platform, leftOut = [], hostTools = []) {
     if (!isTooLong(error)) throw error;
     // too long: the terse card below
   }
-  const short = card(`Setup step 2, ${SETUP_TITLES[2]}: ${terse.join('; ')}.`);
+  const short = card(terse);
   // The terse card is composed here too, so a card still too long is refused now, with the length refusal, not later.
   composeCard({ ...short, target: { step: 2, hash: '0'.repeat(64) } });
   return short;
@@ -1063,7 +1071,7 @@ export function toolsStep({
       // copy that will not run) settles the project on the host's web API with no second question: it is said, and the
       // step goes on. A copy from the company's own list the director chose is not settled quietly: its failure stops the step.
       const settle = (c) => (fetched) => (c.from === 'company' ? fetched : fetched.catch(() => {
-        if (typeof ctx.say === 'function') ctx.say(`${c.tool} could not be fetched on this computer, so Wheelhouse will reach the host without it`);
+        if (typeof ctx.say === 'function') ctx.say(`${HOST_TOOL_NAME[c.tool]}'s own tool could not be fetched on this computer, so Wheelhouse will reach the host without it`);
       }));
       const fetches = changes.filter((c) => c.action === 'fetch').map((c) => settle(c)(c.from === 'company'
         // What the card said: the list it named, the version it gave, and whether it gave a checksum.

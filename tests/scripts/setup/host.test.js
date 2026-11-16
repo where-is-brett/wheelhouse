@@ -398,10 +398,12 @@ test('on Windows a narrow way is recommended, with one plain line on why, and Qu
   for (const host of ['github', 'gitlab']) {
     const card = connectionCard({ host, where, platform: 'win32' });
     assert.equal(card.recommend, host === 'github' ? WAYS.own : WAYS.narrow);
-    assert.match(card.because, /Windows has no sandbox/);
+    assert.match(card.because, /if it leaked, the rest of your account would stay out of reach/);
+    assert.doesNotMatch(card.because, /Windows/);
     const quick = card.options.find((o) => o.label === WAYS.quick).says;
     assert.ok(quick.startsWith(quickLineFor(host)));
-    assert.match(quick, new RegExp(`only through ${host === 'github' ? 'GitHub' : 'GitLab'}'s own tool, and if that sign-in leaked, it would open all of them; on Windows any agent's command could read it\\.$`));
+    assert.match(quick, /If that sign-in leaked, it would open all of them\. On Windows any agent's command could read it\.$/);
+    assert.doesNotMatch(quick, /own tool/, 'Quick does not say it works only through the host\'s tool');
     composeCard({ ...card, kind: 'question' });
   }
   assert.doesNotMatch(connectionCard({ host: 'github', where, platform: 'win32', locked: true }).because, /Quick/);
@@ -447,7 +449,7 @@ test('a Locked project with only their own app on offer is not asked, and its Go
     assert.deepEqual(connectionCard({ host: 'github', where: `${USER}/shop on GitHub`, locked: true }).options.map((o) => o.label), [WAYS.own]);
     // Their own app is made at apply, from the Go ahead on the card that lists it, never unannounced.
     assert.deepEqual(planned.changes.find((c) => c.action === 'own-app'), { kind: 'host', target: 'github', action: 'own-app', account: USER, name: `Wheelhouse ${USER}` });
-    assert.match(planned.card.what, /your own GitHub App/);
+    assert.match(planned.card.what, /Your own GitHub App/);
     assert.match(planned.card.what, /click Create/);
     // A list naming no app is refused by apply too, before it makes anything.
     const list = [{ kind: 'host', target: 'github', action: 'connection', mode: 'narrow', locked: true }, { kind: 'file', target: 'x', action: 'project', repo: `${USER}/shop` }];
@@ -545,7 +547,7 @@ test('a new product gets a private repository; an existing one gets none', async
     const hash = planHash(planned.changes);
     const { question } = composeCard({ ...planned.card, target: { step: 3, hash } });
     assert.equal(setLineOf(question.question), setupLine(3, hash));
-    assert.match(question.question, /a private repository a-director\/Shop on GitHub with a README/);
+    assert.match(question.question, /A private repository a-director\/Shop on GitHub with a README/);
     assert.doesNotMatch(question.question, /:\/\/|\.git\b/, 'repositories named as owner/name on GitHub, never an address');
 
     const { run, lines } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
@@ -633,7 +635,7 @@ test('step 3 opens the record and pushes no state branch', async () => {
     const planned = await answerAll(step, ctxFor(folder), choose());
     const slug = slugFor(`${USER}/Shop`);
     assert.deepEqual(planned.changes.at(-1), { kind: 'folder', target: stateDir(slug), action: 'state', repo: `${USER}/Shop` });
-    assert.match(planned.card.what, /the project's record, kept on this computer/);
+    assert.match(planned.card.what, /The project's record, kept on this computer/);
     assert.doesNotMatch(planned.card.what, /state branch/);
     await applyStep(step, folder, planned.changes, { answers: planned.answers });
     assert.deepEqual(pushes, [], 'nothing pushed');
@@ -1350,7 +1352,7 @@ test('a company remote named in gitlabHosts, with its port, gives that address t
     assert.equal(connection.target, 'gitlab');
     assert.equal(connection.base, 'https://localhost:8929');
     // A company's GitLab with no OAuth application is signed in to with a typed token, not a sign-up page.
-    assert.match(planned.card.what, /sign in to GitLab with a token pasted into your computer's box/);
+    assert.match(planned.card.what, /You sign in to GitLab with a token: a page opens to make it, and you paste it into your computer's own box, never the chat/);
     const glab = w.calls.filter((c) => c.tool === 'glab');
     assert.ok(glab.length > 0);
     for (const c of glab) assert.equal(c.env?.GITLAB_HOST, 'localhost:8929');
@@ -1377,9 +1379,10 @@ test('step 3\'s card for a company\'s GitLab behind its own authority, with the 
     assert.ok(planned.changes.some((c) => c.action === 'certificate'));
     assert.equal(planned.changes.find((c) => c.action === 'sign-in').via, 'token');
     // The full wording fits the calm card's length, the shorter one only when the names are longer; both say the same things.
-    assert.match(planned.card.what, /your company's own certificate for https:\/\/git\.example\.org:8443, (?:copied from this computer's own certificate store and given to Node\.js, glab and git )?for that address only \(certificate checks stay on\)/);
-    assert.match(planned.card.what, /sign in (?:to GitLab )?with a token pasted into your computer's box, never the chat/);
-    assert.match(planned.card.what, /for your company's GitLab admin/);
+    assert.match(planned.card.what, /Your company's own certificate for https:\/\/git\.example\.org:8443, (?:copied from this computer's certificate store and given to Node\.js, glab and git )?for that address only\. Certificate checks stay on\./);
+    assert.match(planned.card.what, /sign in (?:to GitLab )?with a token(?::| you paste)/);
+    assert.match(planned.card.what, /into your computer's own box, never the chat/);
+    assert.doesNotMatch(planned.card.what, /admin/);
     const { question } = composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } });
     assert.ok(question.question.length <= 1200, String(question.question.length));
   });
@@ -1401,7 +1404,7 @@ test('step 3\'s card on a company\'s GitLab composes for ordinary and for very l
     [`${'h'.repeat(190)}.example.com:8443/${'s'.repeat(300)}`, `${'g'.repeat(100)}/${'p'.repeat(99)}`, 'u'.repeat(200), 'bare'],
     ['gitlab.internal.bigcompany.example.com:8443', `${'group-'.repeat(8)}/${'sub-'.repeat(20)}/shop`, 'a-well-known-user-with-a-long-name', 'full'],
   ];
-  const wording = (what) => (/copied from this computer's own certificate store/.test(what) ? 'full' : /certificate for your GitLab's address/.test(what) ? 'bare' : 'tight');
+  const wording = (what) => (/copied from this computer's certificate store/.test(what) ? 'full' : /certificate for your GitLab's address/.test(what) ? 'bare' : 'tight');
   for (const [hostName, repo, user, expected] of cases) {
     const base = `https://${hostName}`;
     const owner = repo.split('/').slice(0, -1).join('/');
@@ -1418,10 +1421,10 @@ test('step 3\'s card on a company\'s GitLab composes for ordinary and for very l
       assert.ok(question.question.length <= 1200, `${kind} ${hostName}: ${question.question.length}`);
       lengths.push(`${kind} ${hostName.length}/${repo.length}/${user.length}: ${question.question.length}`);
       assert.equal(wording(card.what), typeof expected === 'string' ? expected : expected[kind], `${kind} ${hostName.length}: ${card.what}`);
-      assert.match(card.what, /for that address only \(certificate checks stay on\)/, `${kind} ${hostName}`);
-      assert.match(card.what, /pasted into your computer's box, never the chat/, `${kind} ${hostName}`);
-      assert.match(card.what, /for your company's GitLab admin/);
-      assert.deepEqual(termsIn(card.what.split('; ').filter((part) => /token|admin|certificate/.test(part)).join('; '), glossaryOf({})), []);
+      assert.match(card.what, /for that address only\. Certificate checks stay on\./, `${kind} ${hostName}`);
+      assert.match(card.what, /paste (?:it )?into your computer's own box, never the chat/, `${kind} ${hostName}`);
+      assert.doesNotMatch(card.what, /admin/, 'the card asks nothing of an admin');
+      assert.deepEqual(termsIn(card.what.split('\n').filter((part) => /token|certificate/.test(part)).join('\n'), glossaryOf({})), []);
     }
   }
   // GitHub names too: a joining or first computer with very long account and app names still composes.
@@ -1441,7 +1444,7 @@ test('step 3\'s card on a company\'s GitLab composes for ordinary and for very l
   assert.throws(() => cardFor({ host: 'gitlab', changes: [], product: null }), TypeError);
 });
 
-test('on a company\'s GitLab the typed token is the way offered, and the card names the admin\'s part', async () => {
+test('on a company\'s GitLab the typed token is the way offered, and the card asks nothing of an admin', async () => {
   const TYPED = 'glpat-never-on-a-card-0001';
   await withHome(async () => {
     const w = standIn({ signedIn: { github: true, gitlab: false } });
@@ -1452,18 +1455,14 @@ test('on a company\'s GitLab the typed token is the way offered, and the card na
     const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
     const signing = planned.changes.find((c) => c.action === 'sign-in');
     assert.equal(signing.via, 'token');
-    assert.match(planned.card.what, /with a token pasted into your computer's box, never the chat/);
+    assert.match(planned.card.what, /with a token: a page opens to make it, and you paste it into your computer's own box, never the chat/);
     assert.match(planned.card.what, /never the chat/);
-    // The admin's part is its own sentence: it says what actually switches setup to the browser.
-    const [main, admin] = planned.card.what.split('; for your company\'s GitLab admin');
-    assert.ok(admin, planned.card.what);
-    assert.doesNotMatch(main, /read_user|client_id|openid|permissions/);
-    assert.match(admin, /register an application and give its id to GitLab's tool here for the browser/);
-    assert.match(admin, /company's job, not setup's/);
+    // The card says only what the director does: nothing about an application an admin might register.
+    assert.doesNotMatch(planned.card.what, /admin|read_user|client_id|openid|permissions/);
     // It composes as a card, and says nothing the glossary would have to put into plain words.
     const { question } = composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } });
     assert.ok(question.question.length > 0);
-    assert.deepEqual(termsIn(planned.card.what.split('; ').filter((part) => /token|admin/.test(part)).join('; '), glossaryOf({})), []);
+    assert.deepEqual(termsIn(planned.card.what.split('\n').filter((part) => /token/.test(part)).join('\n'), glossaryOf({})), []);
     assert.match(planned.director, /token/);
     assert.doesNotMatch(planned.card.what, new RegExp(TYPED));
     // Where the company has registered an application, the browser way stays.
@@ -1510,7 +1509,7 @@ test('a company GitLab whose certificate is not trusted gets a certificate step 
     const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.quick }));
     assert.deepEqual(probed, [[COMPANY_ORIGIN, wheelhouseHome()]]);
     assert.deepEqual(planned.changes[0], { kind: 'host', target: 'gitlab', action: 'certificate', base: COMPANY_ORIGIN });
-    assert.match(planned.card.what, /your company's own certificate for https:\/\/git\.example\.org:8443.*that address only.*certificate checks stay on/);
+    assert.match(planned.card.what, /Your company's own certificate for https:\/\/git\.example\.org:8443.*that address only\. Certificate checks stay on/);
     assert.ok(planned.changes.findIndex((c) => c.action === 'certificate') < planned.changes.findIndex((c) => c.action === 'sign-in'));
     assert.ok(!fs.existsSync(caFile(wheelhouseHome())), 'planning changes nothing');
 
@@ -1771,7 +1770,7 @@ test('narrow on GitHub is always offered, through their own app when Wheelhouse\
     assert.equal(planned.wait, undefined);
     assert.deepEqual(planned.changes.find((c) => c.action === 'own-app'), { kind: 'host', target: 'github', action: 'own-app', account: USER, name: `Wheelhouse ${USER}` });
     assert.deepEqual(planned.changes.find((c) => c.action === 'connection').app, { own: true, account: USER, name: `Wheelhouse ${USER}` });
-    assert.match(planned.card.what, /your own GitHub App Wheelhouse a-director on a-director, filled in from Wheelhouse's: tick Enable Device Flow, click Create/);
+    assert.match(planned.card.what, /Your own GitHub App Wheelhouse a-director on a-director, filled in from Wheelhouse's and kept in your settings on this computer: tick Enable Device Flow and click Create/);
     assert.match(planned.director, /Enable Device Flow ticked and Create clicked on GitHub, a code typed on GitHub/);
     const hash = planHash(planned.changes);
     composeCard({ ...planned.card, target: { step: 3, hash } });
@@ -2106,7 +2105,7 @@ test('a later project on GitHub opens the app\'s page and reads the tick back', 
     const codes = first.codes();
     const planned = await answerAll(first.step, ctxFor(next), first.pick);
     assert.equal(planned.changes.find((c) => c.action === 'connection').appKeys, 'installed');
-    assert.match(planned.card.what, /the Wheelhouse app, as signed in already: tick this project on its settings page if it is not ticked/);
+    assert.match(planned.card.what, /The Wheelhouse app, as signed in already: tick this project on its settings page if it is not ticked/);
     assert.match(planned.director, /a tick on the app's settings page/);
     // Said so it is true either way: a legacy or gone installation sends apply to the Install page.
     assert.match(planned.card.what, /or on its Install page if the app is not on a-director yet/);
@@ -2174,7 +2173,7 @@ test('a later project on an account the app is not installed on gets the Install
     };
     const planned = await answerAll(first.step, ctxFor(next), first.pick);
     assert.equal(planned.changes.find((c) => c.action === 'connection').appKeys, 'other-account');
-    assert.match(planned.card.what, /the Wheelhouse app, as signed in already: install it on acme and tick this project on its Install page, not All repositories, or on its settings page if it is there already/);
+    assert.match(planned.card.what, /The Wheelhouse app, as signed in already: install it on acme and tick this project on its Install page, not All repositories, or on its settings page if it is there already/);
     assert.match(planned.director, /a tick on the app's Install page for the project's account/);
     composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } });
     const { lines } = await applyStep(first.step, next, planned.changes, { answers: planned.answers });
@@ -2345,7 +2344,7 @@ test('step 3 asks whether this computer is joining only in a folder holding noth
     assert.equal(first.typed, true, 'an owner/name may be typed');
     assert.deepEqual(first.card.options.map((o) => o.label), [KEEP_HERE, HOST_LABELS.github, HOST_LABELS.gitlab, 'Cafe-Menu, from my other computer']);
     assert.equal(first.card.recommend, KEEP_HERE, 'an empty folder is most often a new product, and one kept here needs no account');
-    assert.match(first.card.what, /owner\/name/);
+    assert.match(`${first.card.what} ${first.card.why}`, /owner\/name/);
     composeCard({ ...first.card, kind: 'question' });
     // With profile.json on this computer, it is still asked, with the same recommendation.
     const profileJson = path.join(wheelhouseHome(), 'profile.json');
@@ -2392,7 +2391,7 @@ test('a second computer joins from an empty folder: the project found on an orga
     assert.deepEqual(planned.changes.find((c) => c.action === 'connection'), { kind: 'host', target: 'github', action: 'connection', mode: 'quick', locked: false, backend: 'cli' });
     assert.equal(planned.asked.at(-1).card.recommend, STRICTER, 'a narrow way until the phase is known, never Quick');
     const text = composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } }).question.question;
-    assert.match(text, /Cafe-Menu found on your GitHub account or organisations, the one set up with Wheelhouse, and checked out into this folder/);
+    assert.match(text, /Cafe-Menu, the one set up with Wheelhouse, found on your GitHub account or organisations and checked out into this folder/);
     assert.doesNotMatch(text, /protection/, 'the first computer\'s step 7 switched it on');
 
     const run = startRun({ folder, now: () => NOW });
@@ -2468,7 +2467,7 @@ test('none or several found are refused saying to type owner/name, the question 
     assert.match(again.ask.card.what, /^More than one Cafe-Menu is set up with Wheelhouse: a-director\/Cafe-Menu, cafe-co\/Cafe-Menu\./);
     const typed = await answerJoin(step, { ...ctx, answers: planned.answers }, joining({ typed: 'cafe-co/Cafe-Menu' }));
     assert.deepEqual(typed.changes.find((c) => c.action === 'join'), { kind: 'host', target: 'github', action: 'join', name: 'cafe-co/Cafe-Menu' });
-    assert.match(typed.card.what, /cafe-co\/Cafe-Menu found on your GitHub/);
+    assert.match(typed.card.what, /cafe-co\/Cafe-Menu, the one set up with Wheelhouse, found on your GitHub/);
     await applyIn(step, folder, run.id, typed.changes, { answers: typed.answers });
     assert.equal(joinedRepo(findRun(folder)), 'cafe-co/Cafe-Menu');
     assert.equal(await g(folder, 'config', '--get', 'remote.origin.url'), w.hostUrl({ repo: 'cafe-co/Cafe-Menu' }));
@@ -2535,7 +2534,7 @@ test('a launched project refuses Quick at apply, before anything is connected or
       const again = await step.plan({ ...ctx, answers: planned.answers });
       assert.equal(again.ask, undefined);
       assert.equal(again.changes.find((c) => c.action === 'connection').mode, 'narrow');
-      assert.match(again.card.what, /your own GitHub App/);
+      assert.match(again.card.what, /Your own GitHub App/);
     });
   }
   // A project not launched joins Quick, with a v0.1.x state branch too.
@@ -2693,7 +2692,7 @@ test('a joining computer\'s card says its own app is made, or found on GitHub by
   await withHome(async () => {
     const w = standIn();
     const planned = await answerJoin(stepFor(w), ctxFor(emptyFolder()), joining({ way: WAYS.own }));
-    assert.match(planned.card.what, /your own GitHub App, made, or found on GitHub by its name/);
+    assert.match(planned.card.what, /Your own GitHub App, made, or found on GitHub by its name/);
     assert.doesNotMatch(planned.card.what, /click Create/);
     assert.match(planned.director, /if your app is not on GitHub yet/);
   });
@@ -2817,7 +2816,7 @@ test('a typed GitLab address that is not one asks again under a new id, saying w
     const answers = { '3.real-users': said(REAL_USERS.no), '3.host': said(HOST_LABELS.gitlab), '3.gitlab-where': said(COMPANY_GITLAB) };
     const got = await stepFor(standIn()).plan(ctxFor(folder, { answers }));
     assert.equal(got.ask.id, 'gitlab-address-1');
-    assert.match(got.ask.card.what, /What is your company's GitLab address\? Choose Other below and type it/);
+    assert.match(got.ask.card.what, /What is your company's GitLab address, such as https:\/\/gitlab\.example\.org\? Type it as your answer/);
     composeCard({ ...got.ask.card, kind: 'question', suggest: false });
     // An address typed there is taken directly; a bad one asks again, saying why; Go back returns to the first card.
     const typed = (text) => ({ label: null, text, at: NOW.toISOString() });
@@ -2872,7 +2871,7 @@ test('connection cards name only their own host in Quick, and keep Windows capit
   const quick = win.options.find((o) => o.label === WAYS.quick).says;
   assert.ok(quick.includes('full GitLab access') && !quick.includes('GitHub'));
   assert.ok(connectionCard({ host: 'github', where: 'x on GitHub', platform: 'win32' }).options.find((o) => o.label === WAYS.quick).says.includes('full GitHub access'));
-  assert.ok(win.because.startsWith('Windows has no sandbox'));
+  assert.ok(!win.because.includes('Windows'), 'Narrow\'s reason is the same on every computer');
 });
 
 test('the kept card\'s Put it on GitLab also asks which GitLab', async () => {
@@ -3100,8 +3099,9 @@ test('a Locked or launched project is never offered the director\'s own git, onl
   const windows = connectionCard({ host: 'gitlab', platform: 'win32', asIs: true });
   assert.equal(windows.options[0].label, WAYS.asIs);
   assert.equal(windows.recommend, WAYS.asIs);
-  // Recommended, its cost on Windows is said once, in the reason.
-  assert.match(windows.because, /on Windows any agent's command could ask git for that key/);
+  // Recommended, its cost on Windows is said once, in the option, and the reason does not repeat it.
+  assert.match(windows.options[0].says, /On Windows any agent's command could ask git for that key/);
+  assert.doesNotMatch(windows.because, /Windows/);
   assert.match(connectionCard({ host: 'gitlab', platform: 'win32', asIs: true, realUsers: true }).options[0].says, /On Windows any agent's command could ask git for that key/);
   assert.equal(connectionCard({ host: 'gitlab', platform: 'win32', asIs: true, realUsers: true }).recommend, WAYS.narrow, 'real users keep the narrow key recommended');
 });

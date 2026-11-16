@@ -74,7 +74,8 @@ for (const name of Object.keys(PATHS)) {
         assert.doesNotMatch(String(recommendedOf(c.card)), /^Fetch/, `${where} recommends fetching GitLab's tool`);
       }
     });
-    if (p.glab === 'unavailable') assert.deepEqual(said, [], 'no fetch of GitLab\'s tool is planned');
+    // A path that asks for GitLab's tool where it can't be had hears that the fetch failed; any other plans no fetch.
+    if (p.glab === 'unavailable') assert.deepEqual(said, p.tool === 'fetch' ? ['GitLab\'s own tool could not be fetched on this computer, so Wheelhouse will reach the host without it'] : [], 'what step 2 said');
 
     // No two different cards share a question, and a card asked again opens with its own reason.
     const asked = cards.filter(question);
@@ -94,21 +95,30 @@ for (const name of Object.keys(PATHS)) {
   });
 }
 
-test('path a: Quick, with GitLab\'s tool left out, is asked again with its reason, and Use my git as it is is recommended', async () => {
+test('path a: with GitLab\'s tool left out, Quick is not offered, and where git holds no key Narrow is recommended', async () => {
   const { cards } = await rendered('a');
+  const connection = cards.filter((c) => c.step === 3 && /^connection-/.test(c.id));
+  assert.equal(connection.length, 1, 'the connection card is asked once');
+  assert.deepEqual(connection[0].card.options.map((o) => o.label), ['Use my git as it is', 'Narrow']);
+  assert.equal(recommendedOf(connection[0].card), 'Narrow');
+  const own = connection[0].card.options.find((o) => o.label === 'Use my git as it is');
+  assert.match(own.description, /a GitLab key you make on a page that opens/, 'the way says the key is still to be made');
+  const tool = cards.find((c) => c.step === 2 && c.kind === 'question');
+  assert.equal(recommendedOf(tool.card), 'Don\'t use GitLab\'s tool');
+  assert.ok(cards.findIndex((c) => c === tool) < cards.findIndex((c) => c === connection[0]), 'GitLab\'s tool is asked before the connection');
+  const one = cards.filter((c) => c.id === 'one-card' || /^plan-/.test(c.id)).at(-1);
+  assert.ok(one.card.question.includes('Agents use your own git as it is'), 'the one card lists the way chosen');
+});
+
+test('path b\': Quick, once GitLab\'s tool can\'t be fetched, is asked again with its reason, the same recommendation and order', async () => {
+  const { cards } = await rendered('b\'');
   const connection = cards.filter((c) => c.step === 3 && /^connection-/.test(c.id));
   assert.equal(connection.length, 2, 'the connection card is asked twice: once, and again once Quick can\'t be had');
   assert.equal(connection[0].answer.label, 'Quick');
-  assert.match(connection[1].card.question, /^Quick needs GitLab's own tool, which this computer can't use, so choose again\. /);
-  assert.deepEqual(connection[1].card.options.map((o) => o.label), ['Use my git as it is', 'Narrow']);
-  assert.equal(recommendedOf(connection[1].card), 'Use my git as it is');
-  const quick = connection[0].card.options.find((o) => o.label === 'Quick');
-  assert.match(quick.description, /GitLab's own tool/, 'Quick says it depends on GitLab\'s tool');
-  const tool = cards.find((c) => c.step === 2 && c.kind === 'question');
-  assert.equal(recommendedOf(tool.card), 'Don\'t use GitLab\'s tool');
-  const one = cards.filter((c) => c.id === 'one-card' || /^plan-/.test(c.id)).at(-1);
-  assert.ok(one.card.question.includes('Agents use your own git as it is'), 'the one card lists the way chosen');
-  assert.doesNotMatch(one.card.question, /Quick/);
+  assert.match(connection[1].card.question, /^Quick went from this card: it needs GitLab's own tool, which couldn't be fetched on this computer\. Choose again\. /);
+  assert.equal(connection[1].card.options[0].label, connection[0].card.options[0].label, 'the first option stays first');
+  assert.ok(!connection[1].card.options.some((o) => o.label === 'Quick'), 'Quick is gone');
+  assert.equal(recommendedOf(connection[1].card), recommendedOf(connection[0].card));
 });
 
 test('path b: Narrow stands, so the connection card is asked once', async () => {
@@ -119,11 +129,11 @@ test('path b: Narrow stands, so the connection card is asked once', async () => 
 });
 
 test('Quick names the host chosen, and only that one', async () => {
-  for (const [name, host, other] of [['a', 'GitLab', 'GitHub'], ['d', 'GitHub', 'GitLab']]) {
+  for (const [name, host, other] of [['e', 'GitLab', 'GitHub'], ['d', 'GitHub', 'GitLab']]) {
     const { cards } = await rendered(name);
     const quick = cards.find((c) => /^connection-/.test(c.id)).card.options.find((o) => o.label === 'Quick');
     assert.ok(quick, `path ${name} offers Quick`);
-    assert.match(quick.description, new RegExp(`your full ${host} access`));
+    assert.match(quick.description, new RegExp(`your (full ${host} access|ordinary ${host} sign-in)`, 'i'));
     assert.doesNotMatch(quick.description, new RegExp(other));
   }
 });

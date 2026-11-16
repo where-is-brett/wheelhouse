@@ -35,7 +35,7 @@ import { HEALTH_STEP, onRunList, stepDone } from '../lib/setup-run.js';
 import { askedRecord, answersFor } from './clicks.js';
 import { HOST_LABELS, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
 import { LIVE_DATA, PRODUCT, SIGNS_APPS, productName } from './questions.js';
-import { FIRST_CHECK_LINE, KEEP_HERE, KEPT_LINE, PUT_ON_GITLAB, STARTED_LINE } from './local.js';
+import { FIRST_CHECK_LINE, KEEP_HERE, KEPT_LINE, ONLY_HERE_AFTER, ONLY_HERE_LINE, PUT_ON_GITLAB, STARTED_LINE } from './local.js';
 import { backupNamed } from '../host/local/restore.js';
 import { compactionLine, compactionRules } from '../protection/settings.js';
 import { HOST_TOOL_NAME, hostToolLabels } from './tools.js';
@@ -44,6 +44,8 @@ import { HOST_TOOL_NAME, hostToolLabels } from './tools.js';
 export const ONE_CARD_STEP = 0;
 export const GO_AHEAD = 'Go ahead';
 export const CUSTOMISE = 'Customise';
+// The same click on a plan that already holds the director's own choices, so the card does not offer Customise twice.
+export const CHANGE_CHOICE = 'Change a choice';
 // The steps whose questions are setup's choices.
 // Step 2's is whether to fetch a missing host tool (scripts/setup/tools.js); it is found last, since which tool is
 // missing depends on the host that steps 3 and 4's answers name.
@@ -113,16 +115,20 @@ export async function openChoices({ steps, run, answers, planOf }) {
       }
       if (got?.ask === undefined) break;
       const { id, card, typed, writes } = got.ask;
-      const key = `${step.n}.${id}`;
+      // Step 3 asks step 2's question of the host's tool before its connection card, under step 2's key.
+      const at = step.n === 3 && got.ask.step === 2 ? 2 : step.n;
+      const key = `${at}.${id}`;
       if (Object.hasOwn(taken, key)) break;
       // An answer the step says still stands on this card (the same question, its way still offered): the director's own,
       // read from the run under its own key, and taken only where its label is one of this card's options.
-      const kept = typeof got.ask.carried === 'string' && got.ask.carried.startsWith(`${step.n}.`) ? answers[got.ask.carried] ?? null : null;
+      const kept = typeof got.ask.carried === 'string' && got.ask.carried.startsWith(`${at}.`) ? answers[got.ask.carried] ?? null : null;
       const carried = kept !== null && card.options.some((o) => o.label === kept.label) ? kept : null;
       const chosen = answers[key] ?? carried;
       const answer = chosen ?? { label: card.recommend, text: null, at: null };
-      list.push({ step: step.n, id, key, card, typed: typed === true, writes, chosen, label: answer.label, text: answer.text, ...(got.ask.line ? { line: got.ask.line } : {}) });
+      list.push({ step: at, id, key, card, typed: typed === true, writes, chosen, label: answer.label, text: answer.text, ...(got.ask.line ? { line: got.ask.line } : {}), ...(got.ask.endsBatch === true ? { endsBatch: true } : {}) });
       taken[key] = answer;
+      // A card that waits for the director's own answer (a company's GitLab address) ends the look at this step until it has one.
+      if (chosen === null && got.ask.waits === true) break;
     }
   }
   return list;
@@ -170,7 +176,7 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     if (label === STRICTER) return `A key for this project only, made on ${host} (you'll click Authorise and Install).`;
     if (label === WAYS.wheelhouse) return 'A key for this project only, through the Wheelhouse app (you\'ll type a code and click Install).';
     if (label === WAYS.own) return 'A key for this project only, made on GitHub (you\'ll click Authorise and Install).';
-    if (label === WAYS.asIs) return `Agents use your own git as it is, with its key, which reaches everything your account can on ${host}.`;
+    if (label === WAYS.asIs) return `Agents use your own git as it is, with a ${host} key that reaches everything your account can.`;
     return `A ${host} key for this project only.`;
   }
   if (id.startsWith('product-')) {
@@ -227,6 +233,11 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     const line = readme === null ? lineOf(c, { name, platform, choices: list, host: hostOf(product, list) }) : `Described as: ${readme}`;
     if (line !== null) lines.push(line);
   }
+  // Kept here with no backup: one line says both, since being only on this computer is what staying here means.
+  if (lines.includes(ONLY_HERE_LINE) && lines.includes(KEPT_LINE)) {
+    lines.splice(lines.indexOf(KEPT_LINE), 1);
+    lines.splice(lines.indexOf(ONLY_HERE_LINE), 1, `${KEPT_LINE} ${ONLY_HERE_AFTER}`);
+  }
   if (keptHere && toRun.includes(3) && !fs.existsSync(path.join(folder, '.git'))) lines.push(STARTED_LINE('main'));
   // The plugin's update is step 6's, so the line names it only while step 6 is still to run.
   if (toRun.includes(2) && engineWanted({ platform, hosts })) lines.push(engineLine(undefined, { claudeHome: toRun.includes(6) ? claudeHome : null }));
@@ -259,7 +270,9 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     header: 'Setup',
     options: [
       { label: GO_AHEAD, description: `Recommended: I do all of this now. You'll only be asked ${keptHere ? 'for your password, if at all' : 'to sign in, or for your password'}.` },
-      { label: CUSTOMISE, description: 'See every choice, and change any before anything runs.' },
+      yours
+        ? { label: CHANGE_CHOICE, description: 'See every choice again, and change any before anything runs.' }
+        : { label: CUSTOMISE, description: 'See every choice, and change any before anything runs.' },
     ],
     multiSelect: false,
   };
@@ -286,10 +299,10 @@ export function consentIn(runId, answers) {
   return consentsIn(runId, answers).at(-1) ?? null;
 }
 
-// When Customise was last clicked on a one card of the run, or null.
+// When Customise (or Change a choice) was last clicked on a one card of the run, or null.
 export function customisingSince(answers) {
   const last = stepZero(answers).filter((a) => ONE_CARD_ID.test(a.id)).at(-1);
-  return last?.label === CUSTOMISE ? last.at : null;
+  return last?.label === CUSTOMISE || last?.label === CHANGE_CHOICE ? last.at : null;
 }
 
 const newer = (a, b) => Date.parse(a) > Date.parse(b);
@@ -327,11 +340,14 @@ export function answersWithConsent(runId, { read = answersFor } = {}) {
 
 // The choices Customise asks now: those open and not answered since Customise was clicked, the first
 // PER_CARD of them; empty once every one has been. The dry run takes the recommended Keep it here until the director says where
-// the project is kept, and the backup question is only a local project's, so it waits for that answer.
+// the project is kept, and the backup question is only a local project's, so it waits for that answer. A card whose answer can
+// bring another card before the ones after it (which GitLab) ends its batch.
 export function customiseBatch(list, since) {
   const open = list.filter((c) => !(c.chosen && newer(c.chosen.at, since)));
   const unsaid = open.some((c) => KEPT_ID.test(c.id));
-  return open.filter((c) => !(unsaid && BACKUP_ID.test(c.id))).slice(0, PER_CARD);
+  const batch = open.filter((c) => !(unsaid && BACKUP_ID.test(c.id))).slice(0, PER_CARD);
+  const ends = batch.findIndex((c) => c.endsBatch === true);
+  return ends === -1 ? batch : batch.slice(0, ends + 1);
 }
 
 // Whether an id is one of step 0's redo cards.

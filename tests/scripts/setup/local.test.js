@@ -373,7 +373,7 @@ test('a backup path that can\'t be found asks again', async () => {
     fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
     const first = await stepFor().plan(ctxFor(folder));
     assert.equal(first.ask.id, 'join');
-    assert.match(first.ask.card.what, /backup file/);
+    assert.match(first.ask.card.why, /backup file/);
     assert.equal(first.ask.card.options.length, 4);
     assert.equal(first.ask.card.options[3].label, fromOtherComputer('Mill'));
     const got = await stepFor().plan(ctxFor(folder, { answers: { '3.join': { label: null, text: '/Volumes/Spare/Mill.wheelhouse-backup', at: NOW.toISOString() } } }));

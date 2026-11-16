@@ -5,7 +5,10 @@
 // letter or digit is handed back (ruling R143).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { typedVerdict, handedBack, notAnAnswer, cardKey, bareLabel, cardDifferences } from '../../../scripts/lib/setup-clicks.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { typedVerdict, handedBack, notAnAnswer, cardKey, bareLabel, cardDifferences, shownByCard } from '../../../scripts/lib/setup-clicks.js';
 import * as clicks from '../../../scripts/setup/clicks.js';
 import { as, shortHome } from '../../helpers/homes.js';
 
@@ -87,4 +90,34 @@ test('noteAsked refuses a question in the words of a different card asked earlie
     // Another run may ask in the same words.
     clicks.noteAsked({ runId: 'run-abcdefabcd', folder, step: 3, id: 'connection-c', card: card(asked) });
   });
+});
+
+// A setup card sent without its line of hash is matched to the shown card by its whole words, in a folder holding the
+// session's: the run, step and list come from that record, never from the click. Where the very card was shown for two
+// different lists or steps, the click names no one list, and nothing is taken.
+test('shownByCard finds the one shown card with the same words, and refuses where those words name two lists', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-shown-'));
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-elsewhere-'));
+  const card = (text) => ({ question: text, header: 'Setup', options: [{ label: 'Set it up', description: 'Setup does each thing listed.' }, { label: 'Not now', description: 'Nothing is made yet.' }] });
+  const a = 'a'.repeat(64);
+  const b = 'b'.repeat(64);
+  try {
+    await as(shortHome(), async () => {
+      clicks.noteShown({ runId: 'run-0123456789', folder, step: 3, hash: a, card: card('Setup step 3: the project.') });
+      // The card the director saw, labelled "(Recommended)" by the session, matches.
+      const seen = card('Setup step 3: the project.');
+      seen.options[0].label = 'Set it up (Recommended)';
+      assert.deepEqual(shownByCard({ cwd: folder, card: seen }), { runId: 'run-0123456789', step: 3, hash: a });
+      // Other words, or a folder that does not hold the session's, match nothing.
+      assert.equal(shownByCard({ cwd: folder, card: card('Setup step 3: another project.') }), null);
+      assert.equal(shownByCard({ cwd: elsewhere, card: seen }), null);
+      assert.equal(shownByCard({ cwd: folder, card: { question: '' } }), null);
+      // The same words shown for another list in this folder: the click could be on either, so it is refused.
+      clicks.noteShown({ runId: 'run-abcdefabcd', folder, step: 3, hash: b, card: card('Setup step 3: the project.') });
+      assert.equal(shownByCard({ cwd: folder, card: seen }), null);
+    });
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+    fs.rmSync(elsewhere, { recursive: true, force: true });
+  }
 });

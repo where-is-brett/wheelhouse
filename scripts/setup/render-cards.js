@@ -5,14 +5,15 @@
 // the network and nothing outside a scratch folder is read or written: the programs the steps run are
 // stand-ins (`fakeRun`), and the Wheelhouse home, the Claude Code folder and the user's home are made for the run.
 //
-//   node scripts/setup/render-cards.js [a|b|c|d|e|all] [--desktop]
+//   node scripts/setup/render-cards.js [a|b|b'|c|d|e|all] [--desktop]
 //
 // The paths:
-//   a  a company's GitLab, on Windows, no real users, Quick chosen, GitLab's tool can't be had here
-//   b  the same, with Narrow chosen
-//   c  the public GitLab, on Windows
-//   d  GitHub, on Windows
-//   e  a company's GitLab on a Mac, with GitLab's tool in
+//   a   a company's GitLab, on Windows, no real users, GitLab's tool left out, git holding no key, Use my git as it is chosen
+//   b   the same, with Narrow chosen
+//   b'  the same, with GitLab's tool to be fetched and Quick chosen; the fetch fails, so the connection is asked again
+//   c   the public GitLab, on Windows
+//   d   GitHub, on Windows
+//   e   a company's GitLab on a Mac, with GitLab's tool in
 // --desktop answers as the Desktop app can: a card whose question is the same as an earlier card's shows the
 // earlier one, so the answer that comes back is the one given there.
 //
@@ -30,8 +31,9 @@ export const COMPANY_ADDRESS = 'https://gitlab.example.com';
 
 // What each path is: the computer, the host and the way the director picks, and how the cards are answered.
 export const PATHS = Object.freeze({
-  a: { title: 'A company\'s GitLab on Windows, no real users, Quick chosen, GitLab\'s tool not to be had', platform: 'win32', host: 'GitLab', where: 'company', way: 'Quick', glab: 'unavailable' },
-  b: { title: 'A company\'s GitLab on Windows, no real users, Narrow chosen, GitLab\'s tool not to be had', platform: 'win32', host: 'GitLab', where: 'company', way: 'Narrow', glab: 'unavailable' },
+  a: { title: 'A company\'s GitLab on Windows, no real users, GitLab\'s tool left out, git holding no key, Use my git as it is chosen', platform: 'win32', host: 'GitLab', where: 'company', way: 'Use my git as it is', glab: 'unavailable' },
+  b: { title: 'A company\'s GitLab on Windows, no real users, GitLab\'s tool left out, Narrow chosen', platform: 'win32', host: 'GitLab', where: 'company', way: 'Narrow', glab: 'unavailable' },
+  'b\'': { title: 'A company\'s GitLab on Windows, no real users, GitLab\'s tool to be fetched but not to be had, Quick chosen', platform: 'win32', host: 'GitLab', where: 'company', tool: 'fetch', way: 'Quick', glab: 'unavailable' },
   c: { title: 'The public GitLab on Windows', platform: 'win32', host: 'GitLab', where: 'gitlab.com', glab: 'unavailable' },
   d: { title: 'GitHub on Windows', platform: 'win32', host: 'GitHub', gh: 'in' },
   e: { title: 'A company\'s GitLab on a Mac, GitLab\'s tool in', platform: 'darwin', host: 'GitLab', where: 'company', glab: 'in' },
@@ -113,7 +115,8 @@ function choose(p, { id, card }, { stepTwoDone }) {
   if (id === 'one-card' || /^plan-/.test(id)) return { label: stepTwoDone.customised ? 'Go ahead' : 'Customise' };
   if (id === 'real-users') return { label: pick('Not yet') };
   if (id === 'host' || /^join/.test(id)) return { label: pick(p.host) };
-  if (/^gitlab-where/.test(id)) return p.where === 'company' ? { text: COMPANY_ADDRESS } : { label: pick('gitlab.com') };
+  if (/^gitlab-where/.test(id)) return { label: pick(p.where === 'company' ? 'My company\'s GitLab' : 'gitlab.com') };
+  if (/^host-tool-/.test(id) && p.tool === 'fetch') return { label: labels.find((l) => l.startsWith('Fetch')) ?? recommended };
   if (/^gitlab-address/.test(id)) return { text: COMPANY_ADDRESS };
   if (/^connection/.test(id) && p.way) {
     const way = labels.find((l) => l.startsWith(p.way));
@@ -180,7 +183,7 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
           stale = true;
         }
       }
-      if (id.startsWith('plan-') && got.label === 'Customise') state.customised = true;
+      if (id.startsWith('plan-') && (got.label === 'Customise' || got.label === 'Change a choice')) state.customised = true;
       cards.push({ step, id, kind: 'question', card, answer: got, ...(stale ? { stale: true } : {}) });
       const value = got.text ?? card.options.find((o) => bareLabel(o.label) === got.label)?.label ?? got.label;
       clock += 1000;
@@ -216,7 +219,7 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
         cards.push({ step: n, id: `go-ahead-${n}`, kind: 'go-ahead', card: got.card, covered: got.covered === true });
         if (n === 2) {
           const w = world();
-          if (w.glab === 'unavailable' && got.changes.some((c) => c.action === 'fetch' && c.tool === 'glab')) said.push('glab could not be fetched on this computer, so Wheelhouse will reach the host without it');
+          if (w.glab === 'unavailable' && got.changes.some((c) => c.action === 'fetch' && c.tool === 'glab')) said.push('GitLab\'s own tool could not be fetched on this computer, so Wheelhouse will reach the host without it');
           markStep(runId(), 2, 'doneAt', { now });
           break;
         }
