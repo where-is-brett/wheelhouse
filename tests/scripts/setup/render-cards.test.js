@@ -115,7 +115,7 @@ test('path b\': Quick, once GitLab\'s tool can\'t be fetched, is asked again wit
   const connection = cards.filter((c) => c.step === 3 && /^connection-/.test(c.id));
   assert.equal(connection.length, 2, 'the connection card is asked twice: once, and again once Quick can\'t be had');
   assert.equal(connection[0].answer.label, 'Quick');
-  assert.match(connection[1].card.question, /^How should .*\? Quick is no longer offered: it needs GitLab's own tool, which couldn't be fetched on this computer\.\n/);
+  assert.match(connection[1].card.question, /^How should .*\? Quick is no longer offered: it needs GitLab's own tool, which couldn't be fetched on this computer\. This changes the plan you said Go ahead to, and each option says what it brings\.\n/);
   assert.match(connection[1].card.question, /\nSetup waits for your answer; nothing is made on GitLab until you choose\.\n/);
   assert.equal(connection[1].card.options[0].label, connection[0].card.options[0].label, 'the first option stays first');
   assert.ok(!connection[1].card.options.some((o) => o.label === 'Quick'), 'Quick is gone');

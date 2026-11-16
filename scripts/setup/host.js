@@ -770,9 +770,10 @@ const AS_IS_WINDOWS = 'On Windows any agent\'s command could ask git for that ke
 // The reason line on a connection card asked again because the way chosen can't be had now, said plainly. Quick works
 // through the host's own tool, so with that tool left out or not to be had it gives way to the director's own git.
 const gone = (label, host, { reach, left }) => {
-  if (label !== WAYS.quick || reach?.tool === 'works') return `${label} can't be used on this computer now, so choose again: this changes the plan you said Go ahead to, and each option says what it brings.`;
+  const plan = 'This changes the plan you said Go ahead to, and each option says what it brings.';
+  if (label !== WAYS.quick || reach?.tool === 'works') return `${label} can't be used on this computer now, so choose again. ${plan}`;
   const why = left ? 'which you chose not to use' : 'which couldn\'t be fetched on this computer';
-  return `Quick is no longer offered: it needs ${NAME[host]}'s own tool, ${why}.`;
+  return `Quick is no longer offered: it needs ${NAME[host]}'s own tool, ${why}. ${plan}`;
 };
 
 // The line under a connection card asked again: it may come after the plan's Go ahead, so it promises no plan card.
@@ -859,7 +860,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
     options.push({ label: WAYS.own, says: 'Narrow, through a GitHub App of your own, filled in from Wheelhouse\'s: you tick Enable Device Flow and click Create.' });
     recommend = app ? WAYS.wheelhouse : WAYS.own;
   } else {
-    options.push({ label: WAYS.narrow, says: `A key to this one project only. Setup makes it with your GitLab sign-in, or, without GitLab's own tool, with a one-day token you paste into your computer's own box, which setup then revokes. Where GitLab won't make project keys, a ${PERSONAL_DAYS}-day token reaching all your projects stands in.` });
+    options.push({ label: WAYS.narrow, says: `A key to this one project. Setup makes it with your GitLab sign-in, or, without GitLab's own tool, with a one-day token you paste into your computer's own box, which setup then revokes. Where GitLab won't make project keys, a ${PERSONAL_DAYS}-day token reaching all your projects stands in.` });
     recommend = WAYS.narrow;
   }
   const quick = !locked && !launched && !asIs;
