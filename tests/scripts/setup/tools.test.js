@@ -751,7 +751,7 @@ test('a refused download of the official release settles the project on the host
     const said = [];
     const done = await step.apply({ ...ctxFor(folder), record: () => {}, applyJsonKey: () => {}, stopped: () => false, say: (line) => said.push(line) }, planned.changes);
     assert.deepEqual(done, []);
-    assert.deepEqual(said, ['GitLab\'s own tool could not be fetched on this computer, so Wheelhouse will reach the host without it']);
+    assert.deepEqual(said, ['GitLab\'s own tool could not be fetched on this computer, so Wheelhouse will work with GitLab without it']);
     assert.equal(fs.existsSync(toolFolder('glab')), false);
     assert.ok(!said.join(' ').match(/REST|curl/));
   });

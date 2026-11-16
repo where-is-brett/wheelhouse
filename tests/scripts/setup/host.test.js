@@ -15,7 +15,7 @@ import {
   directorGitlabApi, directorKey, signInStatus, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
   APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, ORGS_UNREAD, launchedIn,
   checkOutJoined, findInstallation, CERTIFICATE_GIVEN, reachLine, askAdministrationKey, setupTokenApi, SETUP_TOKEN_KEPT,
-  madeWithSetupToken, keyGitlabApi, keyGitEnv,
+  madeWithSetupToken, keyGitlabApi, keyGitEnv, againCard,
 } from '../../../scripts/setup/host.js';
 import { trialGitEnv, trialAdapter } from '../../../scripts/setup/health.js';
 import { installationCovers } from '../../../scripts/host/connection.js';
@@ -3587,4 +3587,13 @@ test('step 3\'s card on a narrow way says the browser sign-in reaches the whole 
   const company = { isNew: false, host: 'gitlab', repo: `${USER}/shop`, name: 'shop', base: 'https://gitlab.example.com' };
   const card = cardFor({ host: 'gitlab', changes: pasted, product: company, owner: USER, user: USER, way: WAYS.narrow, app: null, signedIn: false, appKeys: null, base: company.base, platform: 'win32' });
   assert.match(composeCard({ ...card, target: { step: 3, hash: planHash(pasted) } }).question.question, /That sign-in reaches your whole account and stays here, where any agent's command/);
+});
+
+test('a card asked again drops an earlier own-git recommendation once git holds no key', () => {
+  const earlier = { options: [{ label: WAYS.asIs }, { label: WAYS.wheelhouse }, { label: WAYS.own }], recommend: WAYS.asIs, because: 'it uses what this computer already has' };
+  const now = { options: [{ label: WAYS.asIs }, { label: WAYS.own }], recommend: WAYS.own, because: 'if it leaked, the rest of your account would stay out of reach' };
+  Object.defineProperty(now, 'reasonFor', { value: (way) => (way === WAYS.asIs ? null : now.because) });
+  const again = againCard(earlier, now, WAYS.wheelhouse);
+  assert.equal(again.recommend, WAYS.own);
+  assert.equal(again.because, now.because);
 });

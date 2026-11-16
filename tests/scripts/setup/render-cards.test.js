@@ -75,7 +75,7 @@ for (const name of Object.keys(PATHS)) {
       }
     });
     // A path that asks for GitLab's tool where it can't be had hears that the fetch failed; any other plans no fetch.
-    if (p.glab === 'unavailable') assert.deepEqual(said, p.tool === 'fetch' ? ['GitLab\'s own tool could not be fetched on this computer, so Wheelhouse will reach the host without it'] : [], 'what step 2 said');
+    if (p.glab === 'unavailable') assert.deepEqual(said, p.tool === 'fetch' ? ['GitLab\'s own tool could not be fetched on this computer, so Wheelhouse will work with GitLab without it'] : [], 'what step 2 said');
 
     // No two different cards share a question, and a card asked again opens with its own reason.
     const asked = cards.filter(question);
@@ -102,7 +102,7 @@ test('path a: with GitLab\'s tool left out, Quick is not offered, and where git 
   assert.deepEqual(connection[0].card.options.map((o) => o.label), ['Narrow', 'Use my git as it is'], 'the recommended way comes first');
   assert.equal(recommendedOf(connection[0].card), 'Narrow');
   const own = connection[0].card.options.find((o) => o.label === 'Use my git as it is');
-  assert.match(own.description, /If git holds no GitLab key that works, you make one on a page that opens, which asks for 90 days\./, 'the way says the key may still be made');
+  assert.match(own.description, /If git holds no GitLab key that works, you make one on a page that opens, set to last 90 days\./, 'the way says the key may still be made');
   const tool = cards.find((c) => c.step === 2 && c.kind === 'question');
   assert.equal(recommendedOf(tool.card), 'Don\'t use GitLab\'s tool');
   assert.ok(cards.findIndex((c) => c === tool) < cards.findIndex((c) => c === connection[0]), 'GitLab\'s tool is asked before the connection');

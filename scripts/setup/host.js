@@ -422,7 +422,8 @@ function realUsersAsk(name, platform, host = null, toolOut = false) {
   // signs in. Where the host is not known yet (a product kept on this computer may still be put on either), or GitLab's
   // tool may yet be left out or fail, the line says where a tool is used.
   const signsIn = (host === 'github' || host === 'gitlab') && !toolOut;
-  const lasting = platform !== 'win32' || toolOut ? ''
+  const lasting = platform !== 'win32' ? ''
+    : toolOut ? ' On Windows the key or token is kept here, where any agent\'s command could read it.'
     : !signsIn ? ' If GitHub\'s or GitLab\'s own tool is used, it stays signed in as you here, where any agent\'s command could read it.'
     : host === 'github' ? ' GitHub\'s own tool still stays signed in as you here, where any agent\'s command could read it.'
       : ' Where GitLab\'s own tool is used, it stays signed in as you here, where any agent\'s command could read it.';
@@ -778,7 +779,7 @@ const quickSays = (host, platform) => `${quickLineFor(host)} If that sign-in lea
 // "Use my git as it is" in a few plain words, and what it reaches (design section 4.4). On Windows nothing keeps an agent's
 // command from asking git for the key, so the option's words say so.
 // Where git holds no key for the host yet (`held` false), the key is one the director makes on a page, and the words say so.
-const asIsSays = (host, held = true) => `${held ? 'Your own git and the key it already uses' : 'Your own git and its key'}, for pushes and ${host === 'github' ? 'pull' : 'merge'} requests, reaching everything your account can.${held ? '' : ` If git holds no ${NAME[host]} key that works, you make one on a page that opens, which asks for ${KEY_DAYS_ASKED} days.`}`;
+const asIsSays = (host, held = true) => `${held ? 'Your own git and the key it already uses' : 'Your own git and its key'}, for pushes and ${host === 'github' ? 'pull' : 'merge'} requests, reaching everything your account can.${held ? '' : ` If git holds no ${NAME[host]} key that works, you make one on a page that opens, set to last ${KEY_DAYS_ASKED} days.`}`;
 const AS_IS_WINDOWS = 'On Windows any agent\'s command could ask git for that key.';
 
 // The reason line on a connection card asked again because the way chosen can't be had now, said plainly. Quick works
@@ -816,7 +817,7 @@ function answeredCard(readings, host, named) {
 // The card asked again after `label` went: the earlier card's options in its order, the way that took the gone one's place
 // in its slot, and its recommendation and reason where that way is still offered, so nothing else on it moves. `earlier` is
 // the card the director answered, `now` the card as it reads today.
-function againCard(earlier, now, label) {
+export function againCard(earlier, now, label) {
   const added = now.options.filter((o) => !earlier.options.some((e) => e.label === o.label));
   const options = earlier.options.flatMap((o) => {
     if (o.label === label) return added;
@@ -825,9 +826,11 @@ function againCard(earlier, now, label) {
   });
   for (const o of added) if (!options.includes(o)) options.push(o);
   // An earlier recommendation stands only where today's facts still give it a reason.
-  const keeps = options.some((o) => o.label === earlier.recommend) && (now.recommend === earlier.recommend || (now.reasonFor?.(earlier.recommend) ?? earlier.because) !== null);
+  // A null reason from today's card means the earlier recommendation no longer holds.
+  const reason = now.reasonFor ? now.reasonFor(earlier.recommend) : earlier.because;
+  const keeps = options.some((o) => o.label === earlier.recommend) && (now.recommend === earlier.recommend || reason !== null);
   // The reason is today's for whichever recommendation stands, so a reason that no longer holds is not carried over.
-  const because = keeps && now.recommend !== earlier.recommend ? now.reasonFor?.(earlier.recommend) ?? earlier.because : now.because;
+  const because = keeps && now.recommend !== earlier.recommend ? reason : now.because;
   return { ...now, options, recommend: keeps ? earlier.recommend : now.recommend, because };
 }
 
@@ -903,7 +906,8 @@ export function connectionCard({ host, locked = false, launched = false, realUse
   // A product with real users says so first, so this card reads differently from the one asked before that was known.
   const lead = realUsers && !locked && !launched ? 'The product has real users. ' : '';
   // Null for the director's own git where it holds no key: off a Mac that is never recommended over a narrow way.
-  const reasonFor = (way) => (way !== WAYS.asIs ? `${reach}${lasting}` : held ? 'it uses what this computer already has' : null);
+  // Quick is never recommended off a Mac, so it has no reason here either.
+  const reasonFor = (way) => (way === WAYS.quick ? null : way !== WAYS.asIs ? `${reach}${lasting}` : held ? 'it uses what this computer already has' : null);
   const card = {
     level: 3,
     what: `${lead}How should Wheelhouse's agents reach ${place}?${noQuick}`,
@@ -2069,7 +2073,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     parts.push(rest || keyCard
       ? `Wheelhouse pushes with your own git as it is, and uses its key for merge requests${proxy}.`
       : `Wheelhouse pushes with your own git as it is, and uses ${name}'s own tool, signed in already, for merge requests.`);
-    parts.push(rest || keyCard ? `That key reaches everything your account can on ${name}.` : `Both reach everything your account can on ${name}.`);
+    parts.push(`${rest || keyCard ? 'That key reaches' : 'Both reach'} everything your account can on ${name}${platform === 'win32' ? '; on Windows any agent\'s command could ask for it' : ''}.`);
   } else if (way === WAYS.quick) parts.push(`Quick: your own ${name} sign-in, which reaches your whole account.`);
   else if (host === 'gitlab') {
     parts.push(tight ? `A key to this project only; if GitLab won't allow one, a ${PERSONAL_DAYS}-day token that can act as you across GitLab.` : `A key to this project only, with the rights agents need there. If GitLab won't allow one, a ${PERSONAL_DAYS}-day token that can act as you across GitLab, pasted into your computer's own box.`);
@@ -2090,7 +2094,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     parts.push(`${app.own ? 'Your own app' : 'The Wheelhouse app'}${appKeys === 'signed-in' ? ', as signed in already: ' : ': a code on GitHub, then '}${ticks}.`);
   }
   // On Windows the narrow key or token is kept where any agent's command could read it (store.js).
-  if (platform === 'win32' && way !== WAYS.asIs && way !== WAYS.quick) parts.push(`On Windows, any agent's command could read the ${host === 'gitlab' ? 'key or token' : 'key'} kept here.`);
+  if (platform === 'win32' && way !== WAYS.asIs && way !== WAYS.quick && signing?.via !== 'narrow-key') parts.push(`On Windows, any agent's command could read the ${host === 'gitlab' ? 'key or token' : 'key'} kept here.`);
   parts.push(tight ? 'The project\'s record.' : 'The project\'s record, kept on this computer.');
   // A joining computer's project already has its protection, from the first computer's step 7. With the setup token,
   // protection goes on in this step, while setup holds the token.
@@ -2310,7 +2314,7 @@ export function hostStep({
       if (!product.joining) {
         if (answer('real-users') === null) {
           // The host as chosen so far: the first card's answer or the folder's remote; 'local' while it may still move.
-          const chosen = join?.host ?? product.host ?? null;
+          const chosen = product.host ?? join?.host ?? null;
           return { ask: realUsersAsk(product.name, platform, chosen, chosen === 'gitlab' && hostToolLeftOut(ctx, 'gitlab')) };
         }
         realUsers = answer('real-users').label === REAL_USERS.yes;

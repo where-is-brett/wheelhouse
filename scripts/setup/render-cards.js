@@ -389,7 +389,7 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
         cards.push({ step: n, id: `go-ahead-${n}`, kind: 'go-ahead', card: got.card, covered: got.covered === true });
         if (n === 2) {
           const w = world();
-          if (w.glab === 'unavailable' && got.changes.some((c) => c.action === 'fetch' && c.tool === 'glab')) tell('GitLab\'s own tool could not be fetched on this computer, so Wheelhouse will reach the host without it');
+          if (w.glab === 'unavailable' && got.changes.some((c) => c.action === 'fetch' && c.tool === 'glab')) tell('GitLab\'s own tool could not be fetched on this computer, so Wheelhouse will work with GitLab without it');
         }
         if (n === 3) {
           const w = world();

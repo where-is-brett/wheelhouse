@@ -292,7 +292,7 @@ export function hostToolCard(tool, { recommend: given, platform = process.platfo
     what: `${name}'s own tool isn't on this computer. Should Wheelhouse fetch it, or reach ${name} without it?`,
     why: `If you'd rather not install ${name}'s tool, or your company's rules don't allow it, Wheelhouse can work without it, talking to ${name} directly with a key you make, or your git's own.`,
     options: [
-      { label: labels.fetch, says: `Wheelhouse fetches ${name}'s tool from its official release into its own tools folder, and checks it.${tool !== 'glab' ? '' : win ? ' Lets agents use your whole GitLab account through it (the Quick way); its sign-in could be read by any agent\'s command.' : ' Only with it can agents use your ordinary GitLab sign-in.'}` },
+      { label: labels.fetch, says: `Wheelhouse fetches ${name}'s tool from its official release into its own tools folder, and checks it.${tool !== 'glab' ? '' : win ? ' It is signed in as you, to your whole GitLab account, and any agent\'s command could read that sign-in, whichever way you choose next.' : ' Only with it can agents use your ordinary GitLab sign-in.'}` },
       { label: labels.none, says: `Nothing is fetched, and Wheelhouse never runs ${name}'s tool.${tool === 'glab' && win ? ' Nothing signs GitLab\'s tool in as you on this computer, where agents\' commands could read it.' : ''}` },
     ],
     recommend: recommend === 'none' ? labels.none : labels.fetch,
@@ -1073,7 +1073,7 @@ export function toolsStep({
       // copy that will not run) settles the project on the host's web API with no second question: it is said, and the
       // step goes on. A copy from the company's own list the director chose is not settled quietly: its failure stops the step.
       const settle = (c) => (fetched) => (c.from === 'company' ? fetched : fetched.catch(() => {
-        if (typeof ctx.say === 'function') ctx.say(`${HOST_TOOL_NAME[c.tool]}'s own tool could not be fetched on this computer, so Wheelhouse will reach the host without it`);
+        if (typeof ctx.say === 'function') ctx.say(`${HOST_TOOL_NAME[c.tool]}'s own tool could not be fetched on this computer, so Wheelhouse will work with ${HOST_TOOL_NAME[c.tool]} without it`);
       }));
       const fetches = changes.filter((c) => c.action === 'fetch').map((c) => settle(c)(c.from === 'company'
         // What the card said: the list it named, the version it gave, and whether it gave a checksum.
