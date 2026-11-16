@@ -837,7 +837,7 @@ export function againCard(earlier, now, label) {
 // The advanced choice on the Mac's card, which leads to the narrow ways (the director's ruling of 24 October 2026).
 export const STRICTER = 'Make it stricter';
 const STRICTER_SAYS = (host) => `A key to this one project only, instead of your whole account; recommended for teams and products with real users.${host === 'gitlab' ? ` Where GitLab won't make project keys, a ${PERSONAL_DAYS}-day token you paste stands in, and it can act as you across GitLab.` : ''}`;
-const quickOnMac = (host) => `Your ordinary ${NAME[host]} sign-in, through ${NAME[host]}'s own tool, reaching your whole account. Agents use it only through Wheelhouse's helper, and on this Mac the sandbox keeps agents' commands from where it is kept, unless the project signs apps, which opens the keychain to them.`;
+const quickOnMac = (host) => `Your ordinary ${NAME[host]} sign-in, through ${NAME[host]}'s own tool, reaching your whole account. Agents use it only through Wheelhouse's helper, and on this Mac the sandbox keeps agents' commands away from your Mac's saved passwords, where that sign-in is kept, unless the project signs apps for Apple, which opens those saved passwords to them.`;
 
 // The connection's question (Card 1's answer, design section 11), the composer's input without its
 // kind. On a Mac, for a project that is neither Locked nor launched, Quick is the default and the
@@ -876,8 +876,8 @@ export function connectionCard({ host, locked = false, launched = false, realUse
   if (asIs && !locked && !launched) options.push(own);
   if (host === 'github') {
     const app = wheelhouseAppOffered({ appFile });
-    if (app) options.push({ label: WAYS.wheelhouse, says: 'Narrow: you type a code on GitHub and tick this project on the app\'s Install page; agents reach only it.' });
-    options.push({ label: WAYS.own, says: 'Narrow, through a GitHub App of your own, filled in from Wheelhouse\'s: you tick Enable Device Flow and click Create.' });
+    if (app) options.push({ label: WAYS.wheelhouse, says: 'A key to this one project: you type a code on GitHub and tick this project on the app\'s Install page; agents reach only it.' });
+    options.push({ label: WAYS.own, says: 'A key to this one project, through a GitHub App of your own, filled in from Wheelhouse\'s: you tick Enable Device Flow and click Create.' });
     recommend = app ? WAYS.wheelhouse : WAYS.own;
   } else {
     options.push({ label: WAYS.narrow, says: toolOut ? 'A key to this one project, made with a one-day token pasted into your computer\'s own box; setup revokes the token afterwards.' : 'A key to this one project, which setup makes with GitLab\'s own tool.' });
@@ -2068,7 +2068,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     const rest = connection?.backend === 'rest';
     const proxy = rest && connection.proxied === true ? ', through your company\'s proxy' : '';
     // The key git holds is the sign-in. Where it has none, or one the host refuses, the key card makes the one git then holds.
-    if (keyCard?.state === 'none') parts.push(bare ? `A ${name} key for your git, pasted into your computer's own box.` : `Your git holds no ${name} key yet: a page opens to make one, and you paste it into your computer's own box, never the chat.`);
+    if (keyCard?.state === 'none') parts.push(bare ? `A ${name} key for your git, pasted into your computer's own box.` : `Your git holds no ${name} key yet: a page opens to make one, set to last ${KEY_DAYS_ASKED} days, and you paste it into your computer's own box, never the chat.`);
     else if (keyCard) parts.push(bare ? `A new ${name} key for your git, pasted into your computer's own box, replacing the one it holds.` : `Your git's ${name} key ${keyCard.state === 'push-only' ? 'can push but not open or merge requests' : 'was refused'}: a page opens to make a new one, which replaces the one your git holds, and you paste it into your computer's own box, never the chat.`);
     parts.push(rest || keyCard
       ? `Wheelhouse pushes with your own git as it is, and uses its key for merge requests${proxy}.`

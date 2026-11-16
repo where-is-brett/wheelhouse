@@ -192,7 +192,7 @@ function sourceLines(sources) {
 
 // Safekeeping's line for a project kept only here (scripts/safekeeping/status.js), and the next step for it, as step 3's card gives it.
 const NO_BACKUP_LINE = 'Only on this computer, no backup';
-const NO_BACKUP_NEXT = 'you choose its folder later, from the Safekeeping row in the pane';
+const NO_BACKUP_NEXT = 'you choose its folder later, by asking the First Mate';
 
 // The one sentence on safekeeping, or null: when the level turns, and for an unchanged watch once a month. `said` is what a
 // briefing last said ({ level, at }). The caller records `level` only when the text showed the sentence.

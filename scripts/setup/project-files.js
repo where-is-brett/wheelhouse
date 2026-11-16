@@ -936,6 +936,9 @@ function frontDeskOf(changes, pin) {
 const pinName = (target) => PIN_NAMES[target.split('@')[0]] ?? target.split('@')[0];
 const listed = (names) => (names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
 
+// Step 7's title: a project kept on this computer has no host, so its files are all there is to name.
+const titleOf7 = (local) => (local ? 'The project\'s files' : SETUP_TITLES[7]);
+
 // Step 7's card: each part of the list in plain words, the branch the commit and protection land on,
 // and the release. When that would pass the composer's limit (a long branch name or release), a
 // shorter card says the same in fewer words. On a joining computer (`joining`, ruling R78) it says
@@ -1167,7 +1170,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   });
   // One thing to a line, as step 3's card lists its own, under a title that says whose sign-in does it.
   const by = local || joining ? '' : pasted ? ', with the token you pasted at step 3, which can act as you across GitLab' : keyed ? (pasted === null ? ', with the project\'s own key where GitLab allows one, or else the token you pasted at step 3, which can act as you across GitLab' : ', with the project\'s own key, not your account') : `, acting as you on ${NAME[host]}`;
-  const full = card([`Setup step 7, ${SETUP_TITLES[7]}${joining ? ', for this computer' : by}:`, ...[...parts, pinned].map(asLine)].join('\n'));
+  const full = card([`Setup step 7, ${titleOf7(local)}${joining ? ', for this computer' : by}:`, ...[...parts, pinned].map(asLine)].join('\n'));
   const fits = (c) => composeCard({ ...c, target: { step: 7, hash: '0'.repeat(64) } }).question.question.length <= CARD.chars;
   try {
     if (fits(full)) return full;
@@ -1178,14 +1181,14 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
       ...(files.length > 0 || excluded || ours ? ['this computer\'s settings'] : []), ...(secrets ? [negated.length > 0 ? 'some .env files kept out of git' : '.env files kept out of git'] : []), ...(negated.length > 0 ? ['.gitignore lets some .env files in: raise it on the computer that set the project up'] : []), ...(pins.length > 0 ? ['the kits agents work with'] : []),
       ...(listens ? [LISTENING_CLAUSE] : []), 'nothing committed', ...(differ.length > 0 ? [`${listed(differ)} left as ${differ.length === 1 ? 'it is' : 'they are'}`] : []),
     ];
-    return card([`Setup step 7, ${SETUP_TITLES[7]}, for this computer:`, ...[...mine, 'Wheelhouse never updates itself'].map(asLine)].join('\n'));
+    return card([`Setup step 7, ${titleOf7(local)}, for this computer:`, ...[...mine, 'Wheelhouse never updates itself'].map(asLine)].join('\n'));
   }
   const short = [
     ...(shared.length > 0 ? ['the project\'s own files'] : []), ...(files.length > shared.length || excluded || ours ? ['this computer\'s settings'] : []),
     ...(secrets ? ['.env files kept out of git'] : []), ...(listens ? [LISTENING_CLAUSE] : []), ...(pins.length > 0 ? ['the kits agents work with'] : []), ...(up ? [`the setup commit ${local ? `onto ${cut(branch)}` : keyed ? `to ${cut(branch)} on ${NAME[host]} through a merge request` : `up to ${cut(branch)} on ${NAME[host]}`}${yours === '' ? '' : ', with your changes'}${ownPart === '' ? '' : ', with your product\'s own files'}`] : []),
     ...(local ? [] : keyed ? ['protection already on from step 3'] : [`${up ? 'then ' : ''}protection on ${up ? 'it' : cut(branch)}`]),
   ];
-  return card([`Setup step 7, ${SETUP_TITLES[7]}${by}:`, ...[...short, 'Wheelhouse never updates itself'].map(asLine)].join('\n'));
+  return card([`Setup step 7, ${titleOf7(local)}${by}:`, ...[...short, 'Wheelhouse never updates itself'].map(asLine)].join('\n'));
 }
 
 // ---- Step 7 ----

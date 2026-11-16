@@ -31,6 +31,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { canonicalJson } from '../lib/canonical.js';
 import { PERSONAL_DAYS } from '../host/gitlab-key.js';
+import { KEY_DAYS_ASKED } from './host-access.js';
 import { engineWanted, engineLine } from './engine-parts.js';
 import { HEALTH_STEP, onRunList, stepDone } from '../lib/setup-run.js';
 import { askedRecord, answersFor } from './clicks.js';
@@ -183,7 +184,7 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     const stays = platform !== 'win32' ? ''
       : host === 'GitLab' && toolOut ? ' On Windows it is kept here, where any agent\'s command could read it.'
         : ` ${host}'s own sign-in also stays here, where any agent's command could read it.`;
-    if (label === WAYS.quick) return platform === 'darwin' ? `Agents use your ordinary ${host} sign-in, which reaches your whole account; on this Mac the sandbox keeps agents' commands from where it is kept, unless the project signs apps, which opens the keychain to them.` : `Agents use your ordinary ${host} sign-in, which reaches your whole account${platform === 'win32' ? '; on Windows any agent\'s command could read it' : ''}.`;
+    if (label === WAYS.quick) return platform === 'darwin' ? `Agents use your ordinary ${host} sign-in, which reaches your whole account; on this Mac the sandbox keeps agents' commands away from your Mac's saved passwords, where that sign-in is kept, unless the project signs apps for Apple, which opens those saved passwords to them.` : `Agents use your ordinary ${host} sign-in, which reaches your whole account${platform === 'win32' ? '; on Windows any agent\'s command could read it' : ''}.`;
     if (label === STRICTER) return `A key for this project only, made on ${host} (you'll click Authorise and Install).`;
     if (label === WAYS.wheelhouse) return `A key for this project only, through the Wheelhouse app (you\'ll type a code and click Install).${stays}`;
     if (label === WAYS.own) return `A key for this project only, from an app you create on GitHub (you\'ll tick Enable Device Flow, click Create, then Authorise and Install).${stays}`;
@@ -223,18 +224,18 @@ function describedBy(choice) {
 // with their git as it is, a key only where git holds none that works; on a company's GitLab, a sign-in in the browser or
 // by token; else a sign-in.
 function goAheadAsks({ keptHere, list, host }) {
-  if (keptHere) return 'You\'ll only be asked for your password, if at all.';
+  if (keptHere) return 'Apart from Claude Code\'s own request to allow setup\'s command, you\'ll only be asked for your password, if at all.';
   const way = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.label ?? null;
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
   if (host === 'GitLab' && noTool && way !== null && way !== WAYS.quick && way !== WAYS.asIs) {
     return `You'll paste a one-day GitLab token into your computer's own box. If GitLab won't make a key for this one project, you'll also paste one lasting ${PERSONAL_DAYS} days that works as you in every GitLab project. Your password if needed.`;
   }
-  if (way === WAYS.asIs) return `You'll be asked for a ${host} key only if your git holds none that works, pasted into your computer's own box, and your password if needed.`;
+  if (way === WAYS.asIs) return `You'll be asked for a ${host} key only if your git holds none that works: you make it on a page that opens, set to last ${KEY_DAYS_ASKED} days, and paste it into your computer's own box, and give your password if needed.`;
   // A narrow way on GitLab with its tool still meets GitLab's refusal of a project key the same way.
   const fallback = host === 'GitLab' && way !== null && way !== WAYS.quick
     ? ` If GitLab won't make a key for one project, you'll also paste a ${PERSONAL_DAYS}-day token that can act as you across GitLab into your computer's own box.` : '';
   // A company's GitLab without a browser sign-in set up takes a token instead, which only setup's step 3 can tell.
-  if (onCompanyGitLab(list, host)) return `You'll sign in to your company's GitLab in your browser, or with a token you make on a page that opens and paste into your computer's own box, and give your password if needed.${fallback}`;
+  if (onCompanyGitLab(list, host)) return `You'll sign in to your company's GitLab in your browser if your company has set that up, or else with a token you make on a page that opens and paste into your computer's own box, and give your password if needed.${fallback}`;
   return `You'll sign in on ${host} pages that open and click through them, and give your password if needed.${fallback}`;
 }
 

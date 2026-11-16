@@ -339,7 +339,7 @@ const quote = (words) => `"${words.length > QUOTE_CHARS ? `${words.slice(0, QUOT
 
 // What step 5 says of the rules found: how many, followed as they are, but for any protection keeps off.
 export function rulesLine(rules) {
-  if (rules.length === 0) return 'This project has no written rules for its agents yet, so there are none to follow.';
+  if (rules.length === 0) return 'Wheelhouse\'s own rules apply; the project adds none of its own.';
   const head = `Found ${rules.length} rules in the project; they're followed as they are`;
   const off = rules.filter(overriddenByProtection);
   if (off.length === 0) return `${head}.`;
