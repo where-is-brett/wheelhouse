@@ -159,7 +159,7 @@ export function backupAsk(name, { id = 'backup', machine = false, refused = null
       why: 'A backup in a folder off this disk is what brings the project back. It holds the project and its history, not your cards and clicks, which stay on this computer.',
       options: [
         { label: CHOOSE_BACKUP, says: desktop ? 'You pick an external drive, or a folder a cloud service keeps, in a window that opens on this computer. A backup goes there after each merge.' : 'Type the full path of an external drive, or a folder a cloud service keeps, under Type something. A backup goes there after each merge.' },
-        { label: NO_BACKUP, says: 'Building goes on, and you won\'t be asked again. Ask the First Mate how it stands, any time.' },
+        { label: NO_BACKUP, says: 'Building goes on, and you won\'t be asked again. The Safekeeping line on the Logbook, Wheelhouse\'s record of its checks, shows how it stands.' },
       ],
       recommend: CHOOSE_BACKUP,
       because: 'it is the only second copy a project on this computer has',
@@ -250,7 +250,7 @@ export function localCard({ changes, branch, others, desktop = true }) {
     ...(changes.some((c) => c.action === 'home' && typeof c.restore === 'string') ? ['the project brought back from your backup, into this folder'] : []),
     'a private copy of the project\'s history on this computer, which only Wheelhouse\'s helper changes',
     'the project\'s record, kept on this computer',
-    ...(backup === undefined ? [] : [later ? 'no backup yet: you choose its folder later, by asking the First Mate' : 'a backup in the folder you choose, after each merge']),
+    ...(backup === undefined ? [] : [later ? 'no backup yet: you choose its folder later, from the Safekeeping line on the Logbook' : 'a backup in the folder you choose, after each merge']),
     FIRST_CHECK_LINE.replace(/\.$/, '').replace(/^W/, 'w'),
   ];
   const line = othersLine(others);
@@ -333,7 +333,7 @@ export async function applyLocal({ ctx, changes, run, gitPath, say, halt, pick =
       place = await pick({ run });
     }
     const chosen = place === null ? { ok: false, why: 'No backup folder was chosen, so there is no backup yet' } : chooseBackupFolder({ project, folder: place });
-    if (!chosen.ok) say(`${chosen.why}. You can choose one later by asking the First Mate.`);
+    if (!chosen.ok) say(`${chosen.why}. You can choose one later from the Safekeeping line on the Logbook, Wheelhouse's record of its checks.`);
   }
   say(KEPT_LINE);
   return [];

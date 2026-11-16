@@ -220,7 +220,7 @@ test('in a terminal, the card promises no backup folder it cannot pick, and says
   const changes = [{ action: 'backup-folder', folder: null }];
   const terminal = localCard({ changes, branch: 'main', others: [], desktop: false });
   assert.doesNotMatch(terminal.what, /a backup in the folder you choose/);
-  assert.match(terminal.what, /no backup yet: you choose its folder later, by asking the First Mate/);
+  assert.match(terminal.what, /no backup yet: you choose its folder later, from the Safekeeping line on the Logbook/);
   assert.match(localCard({ changes, branch: 'main', others: [], desktop: true }).what, /a backup in the folder you choose/);
   assert.match(localCard({ changes: [{ action: 'backup-folder', folder: '/b' }], branch: 'main', others: [], desktop: false }).what, /a backup in the folder you choose/);
 });
@@ -280,7 +280,7 @@ test('a folder that isn\'t chosen holds setup up in nothing, and the row offers 
     const folder = await committed(folderOf());
     const got = await planned(stepFor(), ctxFor(folder));
     const lines = await applied(stepFor(), folder, got);
-    assert.ok(lines.some((l) => /asking the First Mate/.test(l)));
+    assert.ok(lines.some((l) => /from the Safekeeping line on the Logbook/.test(l)));
     assert.equal(readBackup('Shop').folder, null);
     assert.equal(homeReadable('Shop'), true);
   });
@@ -318,7 +318,7 @@ test('a window left open or closed picks none, and setup carries on with a plain
     const folder = await committed(folderOf());
     const got = await planned(stepFor({ pick: async () => null }), ctxFor(folder));
     const lines = await applied(stepFor({ pick: async () => null }), folder, got, { desktop: true });
-    assert.ok(lines.some((l) => /No backup folder was chosen.*choose one later by asking the First Mate/.test(l)), lines.join('\n'));
+    assert.ok(lines.some((l) => /No backup folder was chosen.*choose one later from the Safekeeping line on the Logbook/.test(l)), lines.join('\n'));
     assert.equal(readBackup('Shop').folder, null);
     assert.equal(homeReadable('Shop'), true);
   });
