@@ -410,7 +410,7 @@ test('on Windows a narrow way is recommended, with one plain line on why, and Qu
   for (const host of ['github', 'gitlab']) {
     const card = connectionCard({ host, where, platform: 'win32' });
     assert.equal(card.recommend, host === 'github' ? WAYS.own : WAYS.narrow);
-    assert.match(card.because, host === 'github' ? /if it leaked, the rest of your account would stay out of reach/ : /if it leaked, only this project would be open, unless GitLab won't make a project key \(its free plan won't\): then the 30-day token opens all your projects/);
+    assert.match(card.because, host === 'github' ? /if it leaked, the rest of your account would stay out of reach/ : /if it leaked, only this project would be open, unless GitLab won't make a project key \(the public GitLab's free plan won't, and some companies switch them off\): then the 30-day token opens all your projects/);
     assert.doesNotMatch(card.because, /Windows/);
     const quick = card.options.find((o) => o.label === WAYS.quick).says;
     assert.ok(quick.startsWith(quickLineFor(host)));
@@ -881,6 +881,23 @@ test('a pasted personal token is asked what it is: one wider or longer than the 
       const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
       await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), words);
       assert.equal(w.pasted.revoked, 1);
+      assert.equal(readKey(`gitlab-project-${w.repos[`${USER}/shop`].id}`), null);
+    });
+  }
+});
+
+test('a pasted personal token GitLab won\'t describe is refused, with word to delete it', async () => {
+  for (const [self, words] of [[{ status: 404, body: null }, /HTTP 404\), so it was not kept: delete it on GitLab's Access tokens page/], [{ status: 403, body: null }, /would not let the pasted token say what it can do, so it was not kept: delete it/], [{ status: 500, body: null }, /HTTP 500\), so it was not kept: delete it/]]) {
+    await withHome(async () => {
+      const w = standIn({ refuseKeys: true });
+      w.pastedSelf = self;
+      await w.add(`${USER}/shop`);
+      const folder = productFolder('shop');
+      await withOrigin(folder, `https://gitlab.com/${USER}/shop.git`);
+      const step = stepFor(w, { askSecret: async () => `${PASTED}\n` });
+      const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
+      await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), words);
+      assert.equal(w.pasted.revoked, 0);
       assert.equal(readKey(`gitlab-project-${w.repos[`${USER}/shop`].id}`), null);
     });
   }
@@ -2417,7 +2434,7 @@ test('step 3 asks whether this computer is joining only in a folder holding noth
     assert.equal(first.typed, true, 'an owner/name may be typed');
     assert.deepEqual(first.card.options.map((o) => o.label), [KEEP_HERE, HOST_LABELS.github, HOST_LABELS.gitlab, 'Cafe-Menu, from my other computer']);
     assert.equal(first.card.recommend, KEEP_HERE, 'an empty folder is most often a new product, and one kept here needs no account');
-    assert.match(`${first.card.what} ${first.card.why}`, /owner\/name/);
+    assert.match(`${first.card.what} ${first.card.why}`, /account and name, like ann\/cafe-menu/);
     composeCard({ ...first.card, kind: 'question' });
     // With profile.json on this computer, it is still asked, with the same recommendation.
     const profileJson = path.join(wheelhouseHome(), 'profile.json');

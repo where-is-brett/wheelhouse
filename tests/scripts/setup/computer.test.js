@@ -106,7 +106,7 @@ test('the card lists each change in plain words, and nothing else changes', asyn
     assert.match(text, /Wheelhouse never updates itself/);
     assert.match(text, /phone notifications on/i);
     assert.ok(ownKey());
-    assert.match(text, /clicks are signed with a key already made on this computer/);
+    assert.match(text, /clicks carry a signature only this computer can make/);
     assert.doesNotMatch(text, /weaken/, 'none of the director\'s settings weakens Standard here');
     assert.equal(planned.director, 'One click');
 

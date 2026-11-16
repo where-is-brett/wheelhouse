@@ -230,7 +230,7 @@ export function computerCard({ changes, userSettings = {}, kept = [], route = TE
   // One change to a line, as step 3's card lists its own.
   const head = [`Setup step 6, ${SETUP_TITLES[6]}:`, ...listed.map(asLine), '- Wheelhouse never updates itself: you choose when.'].join('\n');
   // Named without its id, which a card would read as a commit.
-  const signing = key ? '\n- Your clicks are signed with a key already made on this computer, so no agent can pass itself off as you.' : '';
+  const signing = key ? '\n- Your clicks carry a signature only this computer can make, so no agent can pass itself off as you.' : '';
   const variables = route === 'launch-env' && changes.some((c) => c.kind === 'env' || c.kind === 'file');
   const agents = [...new Set(changes.filter((c) => c.what === 'agent').map((c) => c.label))];
   const alongside = agents.length > 0 ? `, and ${agents.join(' and ')}'s hook file${changes.some((c) => c.what === 'agent' && c.part === 'first-mate') ? ' and First Mate files' : ''}` : '';

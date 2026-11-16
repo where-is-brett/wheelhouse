@@ -420,13 +420,13 @@ function realUsersAsk(name, platform) {
     card: {
       level: 2,
       what: `Does ${name} have real users yet: people who rely on it, beyond you and anyone testing it?`,
-      why: platform === 'darwin' ? 'A product with real users gets a key to it alone, and the offer of stricter protection.' : 'A product with real users gets a key to it alone.',
+      why: platform === 'darwin' ? 'A product with real users gets a narrow connection, and the offer of stricter protection.' : 'A product with real users gets a narrow connection.',
       options: [
-        { label: REAL_USERS.yes, says: 'Setup treats it as launched, so agents get a key to this one project only.' },
+        { label: REAL_USERS.yes, says: 'Setup treats it as launched: agents get a narrow connection, a key to this one project wherever one can be made, and Quick is not offered.' },
         { label: REAL_USERS.no, says: 'Setup treats it as before launch, like a throwaway or test project. You can change this when it has users.' },
       ],
       recommend: REAL_USERS.no,
-      because: 'while no one relies on it, nothing is at risk',
+      because: 'while no one relies on it, a mistake costs little',
       meanwhile: MEANWHILE,
     },
   };
@@ -645,7 +645,7 @@ function joinAsk(id, name, { missed }) {
     card: {
       level: 2,
       what: `${found}Where should ${name} be kept?`,
-      why: 'Set up with Wheelhouse on another computer under another name? Type its owner/name. To bring it back from a backup, type where the backup file is.',
+      why: 'This decides where your work is kept and who can reach it. Set up on another computer under another name? Type its account and name, like ann/cafe-menu. Back from a backup? Type where the backup file is.',
       options: [
         { label: KEEP_HERE, says: 'A new product. Nothing goes online, and it can move to GitHub or GitLab later, in one click.' },
         { label: HOST_LABELS.github, says: 'A new product, in a private repository on your GitHub account.' },
@@ -770,7 +770,7 @@ const AS_IS_WINDOWS = 'On Windows any agent\'s command could ask git for that ke
 // The reason line on a connection card asked again because the way chosen can't be had now, said plainly. Quick works
 // through the host's own tool, so with that tool left out or not to be had it gives way to the director's own git.
 const gone = (label, host, { reach, left }) => {
-  if (label !== WAYS.quick || reach?.tool === 'works') return `${label} can't be used on this computer now, so choose again.`;
+  if (label !== WAYS.quick || reach?.tool === 'works') return `${label} can't be used on this computer now, so choose again: this changes the plan you said Go ahead to, and each option says what it brings.`;
   const why = left ? 'which you chose not to use' : 'which couldn\'t be fetched on this computer';
   return `Quick is no longer offered: it needs ${NAME[host]}'s own tool, ${why}.`;
 };
@@ -859,7 +859,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
     options.push({ label: WAYS.own, says: 'Narrow, through a GitHub App of your own, filled in from Wheelhouse\'s: you tick Enable Device Flow and click Create.' });
     recommend = app ? WAYS.wheelhouse : WAYS.own;
   } else {
-    options.push({ label: WAYS.narrow, says: `A GitLab key to this one project only; where GitLab won't allow one, a ${PERSONAL_DAYS}-day token reaching all your projects. Setup makes the key with your GitLab sign-in, or, without GitLab's own tool, with a one-day token over your account, pasted into your computer's own box and revoked after.` });
+    options.push({ label: WAYS.narrow, says: `A key to this one project only. Setup makes it with your GitLab sign-in, or, without GitLab's own tool, with a one-day token you paste into your computer's own box, which setup then revokes. Where GitLab won't make project keys, a ${PERSONAL_DAYS}-day token reaching all your projects stands in.` });
     recommend = WAYS.narrow;
   }
   const quick = !locked && !launched && !asIs;
@@ -871,9 +871,10 @@ export function connectionCard({ host, locked = false, launched = false, realUse
   let noQuick = '';
   if (locked) noQuick = ' Locked needs a narrow connection, so Quick is not offered.';
   else if (launched) noQuick = ' It is launched, and a launched product needs a narrow connection, so Quick is not offered.';
-  // On GitLab the project key can be refused (always on its free plan), and the token in its place opens every project.
+  // On GitLab the project key can be refused (always on the public GitLab's free plan, and where a company switches them off), and
+  // the token in its place opens every project.
   const reach = host === 'gitlab'
-    ? `if it leaked, only this project would be open, unless GitLab won't make a project key (its free plan won't): then the ${PERSONAL_DAYS}-day token opens all your projects`
+    ? `if it leaked, only this project would be open, unless GitLab won't make a project key (the public GitLab's free plan won't, and some companies switch them off): then the ${PERSONAL_DAYS}-day token opens all your projects`
     : 'if it leaked, the rest of your account would stay out of reach';
   // A product with real users says so first, so this card reads differently from the one asked before that was known.
   const lead = realUsers && !locked && !launched ? 'The product has real users. ' : '';
@@ -1904,12 +1905,18 @@ async function connectGitlabKeys({ api, projects, owner, platform, say, open, as
 
 // The pasted personal token, asked what it is before it is kept, so agents never hold more than the cards said: one with a
 // right beyond api and write_repository, or ending more than PERSONAL_DAYS from now, is revoked where GitLab allows and
-// refused. A GitLab too old to say (no such path) is taken at the page's word. Gives the end date to record.
+// refused. A token GitLab won't describe (refused, a GitLab too old for the path, or no answer) is refused too, with word
+// to delete it, since it is live on GitLab. Gives the end date to record.
 async function checkPersonalToken(own, now) {
-  const self = await own.get('/personal_access_tokens/self');
-  if (self.status === 404) return keyExpiry(PERSONAL_DAYS, now);
-  if (self.status === 401 || self.status === 403) throw new Error('GitLab did not accept the pasted token, so the narrow connection is not set up: make a new one as the page asks, then a fresh Go ahead');
-  if (self.status !== 200) throw new Error(`GitLab did not say what the pasted token can do (HTTP ${self.status}), so it was not kept; a fresh Go ahead tries again`);
+  const gone = 'delete it on GitLab\'s Access tokens page, make a new one as the page asks (api and write_repository only), then a fresh Go ahead';
+  let self;
+  try {
+    self = await own.get('/personal_access_tokens/self');
+  } catch {
+    throw new Error(`Could not reach GitLab to check the pasted token, so it was not kept: ${gone}`);
+  }
+  if (self.status === 401 || self.status === 403) throw new Error(`GitLab would not let the pasted token say what it can do, so it was not kept: ${gone}`);
+  if (self.status !== 200) throw new Error(`GitLab did not say what the pasted token can do (HTTP ${self.status}), so it was not kept: ${gone}`);
   const scopes = self.body?.scopes;
   const ends = self.body?.expires_at;
   const wide = !Array.isArray(scopes) || scopes.length === 0 || scopes.some((s) => s !== 'api' && s !== 'write_repository');
@@ -2056,7 +2063,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     kind: 'setup',
     level: 3,
     what: [`Setup step 3, ${SETUP_TITLES[3]}:`, ...parts.map((p) => `- ${p}`)].join('\n'),
-    why: 'Agents reach the host only through Wheelhouse\'s helper, as chosen.',
+    why: `Agents are meant to reach ${name} only through Wheelhouse's helper, in the way you chose.`,
     options: [
       { label: SETUP_LABEL, says: `Setup does each thing listed, and tells you when something needs you. Every later step needs the project on ${name}.` },
       { label: 'Not now', says: 'Nothing is made yet.' },
