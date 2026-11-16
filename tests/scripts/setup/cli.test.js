@@ -124,7 +124,8 @@ test('resume carries on past a step that settled with nothing said, to the said 
     plan: (body) => (body.step === 9 ? { ok: true, done: true } : { ok: true, done: true, said: 'All 12 checks passed. Wheelhouse is ready.' }),
   });
   const resumed = JSON.parse((await run(['resume'], { client: c })).out);
-  assert.deepEqual(resumed, { lines: ['Setup is finished.'], next: null, plan: { step: 10, title: 'Health check', done: true, said: 'All 12 checks passed. Wheelhouse is ready.' } });
+  assert.deepEqual(resumed, { lines: ['Setup is finished.'], next: null, plan: { step: 10, title: 'Health check', done: true, said: 'All 12 checks passed. Wheelhouse is ready.' }, show: resumed.show });
+  assert.match(resumed.show, /word for word, as your message, before any other tool call/);
   assert.deepEqual(c.calls.map(([name, body]) => [name, body.step]), [['status', undefined], ['plan', 9], ['status', undefined], ['plan', 10]]);
   // Nothing after it: one more status, and the settled step's plan as it was.
   const alone = fakeClient({ status: () => ({ ok: true, lines: ['Setup is finished.'], next: null, ask: 9 }), plan: { ok: true, done: true } });

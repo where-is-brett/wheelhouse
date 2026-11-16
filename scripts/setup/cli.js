@@ -132,6 +132,8 @@ function stepOf(text, { oneCard = false } = {}) {
 }
 
 // Said on resume while step 7 isn't applied: a session that ran setup outside the sandbox keeps doing so.
+// Step 10's verdict and first briefing reach the director only as a message: thinking is never shown.
+const SHOW_VERDICT = 'Write plan.said to the director now, word for word, as your message, before any other tool call or skill, and before the request they came with.';
 const OUTSIDE_UNTIL_FILES = 'Step 7 is not applied yet: try the sandbox first, and if a setup command (scripts/setup/cli.js) has been refused there, run it outside.';
 
 async function plan(client, folder, step) {
@@ -190,6 +192,7 @@ export async function main(argv, {
       json({
         lines: Array.isArray(got.lines) ? got.lines : [], next, plan: planned, ...(got.setUpAgain === true ? { setUpAgain: true } : {}),
         ...(got.filesDue === true ? { sandbox: OUTSIDE_UNTIL_FILES } : {}),
+        ...(planned?.step === 10 && planned.done === true && planned.said !== undefined ? { show: SHOW_VERDICT } : {}),
       });
     } else if (form === 'choices' && rest.length === 0) {
       const { ok, ...answer } = await ask((client ?? helperClient()).setup.choices, { folder }); // eslint-disable-line no-unused-vars
