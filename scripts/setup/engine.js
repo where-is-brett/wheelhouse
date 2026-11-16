@@ -100,7 +100,7 @@ import {
 } from './clicks.js';
 import { healthCheck, finishSetup, removeTrialLeftover, closeOpenTrial } from './health.js';
 import {
-  stepDone, healthGreen, stepsFor, onRunList, joinedRepo, runClosed, phoneRetakeable, askingOrder, HEALTH_STEP, PUSH_TEST_STEP,
+  stepDone, healthGreen, stepsFor, onRunList, joinedRepo, runClosed, phoneRetakeable, phonePushResult, askingOrder, HEALTH_STEP, PUSH_TEST_STEP,
 } from '../lib/setup-run.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 import {
@@ -561,7 +561,7 @@ export function setupRoutes({
     // Step 2 is there for the engine's line (scripts/setup/engine-parts.js), which names the plugin's scope as step 6 finds it.
     const toRun = [2, 3, 6, 7, HEALTH_STEP].filter((n) => onRunList(run, n) && !stepDone(run, n));
     const claudeHome = process.env.CLAUDE_CONFIG_DIR || path.join(userHome, '.claude');
-    const { id, card, choices, writes } = oneCard({ folder: run.folder, list, product, platform, toRun, count: keptAnswers(run.id).length, facts, claudeHome, desktop: sessionIsApp, hosts: projectHosts({ folder: run.folder, answers: own }) });
+    const { id, card, choices, writes } = oneCard({ folder: run.folder, list, product, platform, toRun, count: keptAnswers(run.id).length, facts, claudeHome, desktop: sessionIsApp, pushed: phonePushResult()?.arrived === true, hosts: projectHosts({ folder: run.folder, answers: own }) });
     if (JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error('The one card could not be cleaned as it is sent');
     noteAsked({ runId: run.id, folder: run.folder, step: ONE_CARD_STEP, id, card, writes, choices, facts, now });
     return { ok: true, ask: { step: ONE_CARD_STEP, id, card }, progress: [`Setup · ${setupTime(toRun, list)}`, 'One card: the plan for this project.'] };

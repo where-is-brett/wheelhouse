@@ -45,6 +45,9 @@ test('the one card names the phone setting as Claude Desktop\'s alone when the s
   assert.match(ask(true), /and phone notifications on\./);
   assert.match(ask(false), /and a question about phone notifications, where setup suggests skipping them since they need Claude Desktop\./);
   assert.doesNotMatch(ask(false), /and phone notifications on/);
+  const pushed = oneCard({ folder: '/x/t', list: newProductChoices(), product: { isNew: true, host: null, repo: null, name: 't' }, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0, desktop: false, pushed: true }).card.question;
+  assert.match(pushed, /and phone notifications on, as an earlier setup on this computer showed they reach your phone\./);
+  assert.doesNotMatch(pushed, /a question about phone notifications/);
 });
 
 test('the one card for a new product on a Mac says the director\'s approved words, a plain line each', () => {
@@ -55,7 +58,7 @@ test('the one card for a new product on a Mac says the director\'s approved word
     'Set up Wheelhouse for tide-tables?',
     'Here\'s what I recommend. It takes about 5 minutes.',
     '- A new product, in a private repository on your GitHub account.',
-    '- Agents use your ordinary GitHub sign-in, which reaches your whole account; on this Mac your sign-in folder is on the sandbox\'s deny list, so agents\' commands in the sandbox cannot read it.',
+    '- Agents use your ordinary GitHub sign-in, which reaches your whole account; on this Mac the sandbox keeps agents\' commands from where it is kept, unless the project signs apps, which opens the keychain to them.',
     '- Before launch: no real users and no live data yet.',
     '- On this computer: usage counted here only; 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted); Claude Code takes only its well-tried updates; and phone notifications on.',
     '- Wheelhouse\'s settings saved to the project, and its main line protected if your GitHub plan allows it (the free plan doesn\'t for a private repository).',

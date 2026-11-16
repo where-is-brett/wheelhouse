@@ -254,6 +254,9 @@ test('step 10 accepts the changes setup made to Wheelhouse\'s own files, and sti
     const guarded = path.join(wheelhouseHome(), 'engine', 'copilot', 'home', 'settings.json');
     fs.mkdirSync(path.dirname(guarded), { recursive: true });
     fs.writeFileSync(guarded, '{"a":1}\n');
+    const dated = path.join(wheelhouseHome(), 'engine', 'copilot', 'home', 'hooks', 'guard.json');
+    fs.mkdirSync(path.dirname(dated), { recursive: true });
+    fs.writeFileSync(dated, '{"b":0}\n');
     // The baseline knows a sign-in start setup has since replaced, and a guarded file as it was.
     acceptOwnFiles({ now: () => T0 });
     const kept = JSON.parse(fs.readFileSync(ownFilesFile(), 'utf8'));
@@ -264,12 +267,16 @@ test('step 10 accepts the changes setup made to Wheelhouse\'s own files, and sti
     fs.writeFileSync(guarded, '{"a":2}\n');
     const before = new Date(T0.getTime() - 24 * 60 * 60 * 1000);
     fs.utimesSync(guarded, before, before);
+    // Another, changed and dated after now by hand, isn't taken for setup's own write either.
+    fs.writeFileSync(dated, '{"b":1}\n');
+    const ahead = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+    fs.utimesSync(dated, ahead, ahead);
     const later = () => new Date(T0.getTime() + 3 * 24 * 60 * 60 * 1000);
     const step = stepWith(adapter, merges(REFUSED).client);
     const { changes } = await step.plan({ folder });
     const { ctx } = ctxFor(folder, remote);
     await step.apply(ctx, changes);
-    assert.deepEqual((await checkOwnFiles({ now: later, treeFor: async () => null })).changed, [guarded]);
+    assert.deepEqual((await checkOwnFiles({ now: later, treeFor: async () => null })).changed.sort(), [dated, guarded].sort());
   });
 });
 

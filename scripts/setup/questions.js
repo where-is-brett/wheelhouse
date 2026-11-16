@@ -221,7 +221,7 @@ function liveDataAsk(name, { isNew = false, platform = process.platform } = {}) 
       // Windows runs no sandbox, so there the rule binds only Claude Code's own tools and an agent's command can still read the files.
       why: platform === 'win32'
         ? 'Agents are told not to open the project\'s secret files, but on Windows their commands could still read them, as the product\'s own code can.'
-        : 'Claude Code\'s sandbox keeps agents from opening the project\'s secret files themselves, though the product\'s own code they run can still use them.',
+        : 'Agents are kept from opening the project\'s secret files themselves, though the product\'s own code they run can still use them.',
       options: [
         { label: LIVE_DATA.yes, says: 'Agents are told to use test data only, and to leave the live data alone.' },
         { label: LIVE_DATA.no, says: 'Agents work with the product\'s data as it is, as in a throwaway or test project.' },

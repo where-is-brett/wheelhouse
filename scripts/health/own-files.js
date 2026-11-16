@@ -212,15 +212,17 @@ export function acceptOwnFiles({ now = () => new Date(), claudeHome, projects, r
   }));
 }
 
-// When a file, or the folder a removed file was in, last changed (the nearest folder that is still there), or null.
+// When a file, or the folder a removed file was in, last changed, or null when that folder is gone too. A time after now is
+// a date set by hand, so acceptOwnWritesSince never takes it as setup's own write.
 function changedAt(file) {
-  for (let at = file; ; at = path.dirname(at)) {
+  for (const at of [file, path.dirname(file)]) {
     try {
       return fs.statSync(at).mtimeMs;
     } catch {
-      if (path.dirname(at) === at) return null;
+      // Gone: its own folder's time, never a parent's further up, whose changes say nothing of this file.
     }
   }
+  return null;
 }
 
 // Accepts the changes to the files outside the plugin folders made since `since` (an ISO time: setup's start), which are setup's
@@ -240,7 +242,7 @@ export function acceptOwnWritesSince({ since, now = () => new Date(), claudeHome
   const next = new Map(before);
   for (const file of ownFilesChanged(before, after)) {
     const at = changedAt(file);
-    if (at === null || at < from) continue;
+    if (at === null || at < from || at > Date.now()) continue;
     if (after.has(file)) next.set(file, after.get(file));
     else next.delete(file);
   }
