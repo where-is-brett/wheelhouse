@@ -361,6 +361,11 @@ function briefingOf(run) {
   const text = briefingKept(run).find((c) => typeof c.after?.briefing === 'string' && c.after.briefing !== '')?.after.briefing;
   return text ?? null;
 }
+// The health check's lines when the board went green, kept for Show the checks.
+const greenChecks = (run) => {
+  const checks = (run?.changes ?? []).find((c) => c?.step === HEALTH_STEP && c.kind === 'answer' && typeof c.after?.green === 'string')?.after.checks;
+  return Array.isArray(checks) && checks.every((l) => typeof l === 'string') ? checks : undefined;
+};
 const greenAt = (run) => (run?.changes ?? []).find((c) => c?.step === HEALTH_STEP && c.kind === 'answer' && typeof c.after?.green === 'string')?.after.green;
 const isReadyCard = (id) => id === READY_ID || id.startsWith(`${READY_ID}-`);
 // Whether the director answered the phone's first card since the board went green: the card that
@@ -905,7 +910,13 @@ export function setupRoutes({
       const read = (run) => health({ folder: run.folder, run, reported: lines, now, desktop: sessionIsApp });
       const answerOf = (got) => ({ ok: true, green: got.green, lines: got.lines, board: got.board, trials: got.trials });
       let run = runById(found.id);
-      if (healthGreen(run) || stopped()) return answerOf(await read(run));
+      if (healthGreen(run) || stopped()) {
+        const got = await read(run);
+        // Asked with no lines after green (step 10's card, Show the checks), it gives the checks the
+        // board went green on: the trials ran once, so a read now would list them as not reported.
+        const checks = greenChecks(run);
+        return lines.length === 0 && checks !== undefined ? { ...answerOf(got), green: true, lines: checks } : answerOf(got);
+      }
       removeTrialLeftover(run.folder);
       const before = stepsFor(run).find((s) => s.n !== HEALTH_STEP && s.n !== PUSH_TEST_STEP && !stepDone(run, s.n));
       if (before !== undefined) {
@@ -922,7 +933,7 @@ export function setupRoutes({
       }
       const got = await read(run);
       if (!got.green || got.project === null || stopped()) return answerOf(got);
-      addChanges(run.id, [{ id: newId('chg'), step: HEALTH_STEP, kind: 'answer', target: `step ${HEALTH_STEP}`, before: null, after: { green: now().toISOString() } }]);
+      addChanges(run.id, [{ id: newId('chg'), step: HEALTH_STEP, kind: 'answer', target: `step ${HEALTH_STEP}`, before: null, after: { green: now().toISOString(), checks: got.lines } }]);
       try {
         await copy(run.id, run.folder);
       } catch { /* the records stay in setup's own folder; the ending goes on */ }

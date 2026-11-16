@@ -767,6 +767,10 @@ test('the trial stays open until the session\'s lines are in; then it is closed,
     assert.equal(ready.ask.id, 'setup-ready');
     assert.ok(ready.ask.card.question.startsWith(`${green.lines.at(-1)}\nThe briefing.\n`), ready.ask.card.question);
     assert.deepEqual(ready.ask.card.options.map((o) => o.label), ['Carry on', 'Show the checks']);
+    // Show the checks: with no lines, it gives the checks the board went green on, word for word.
+    const shown = await route({ folder });
+    assert.equal(shown.green, true);
+    assert.deepEqual(shown.lines, green.lines);
     assert.equal((await routes['/setup/status']({ folder })).ask, 10, 'asked again until answered');
     const greenAt = new Date(Date.parse(runOf(folder).changes.find((c) => typeof c.after?.green === 'string').after.green) + 1000);
     keepAnswer(makeEvent({ kind: 'action', data: { action: 'setup-answer', runId: runOf(folder).id, step: 10, questionId: 'setup-ready', question: ready.ask.card.question, label: 'Carry on', text: null }, now: () => greenAt }));
