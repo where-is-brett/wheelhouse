@@ -43,7 +43,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
 import { RETENTION_DAYS, TELEMETRY_ROUTE } from '../lib/setup-numbers.js';
-import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
+import { SETUP_TITLES, SETUP_LABEL, asLine } from '../state/card-lines.js';
 import { composeCard } from '../cards/compose.js';
 import { CARD } from '../lib/front-desk.js';
 import { ownKey } from '../state/signing.js';
@@ -180,22 +180,22 @@ function lines({ changes, userSettings, kept, route, platform, floor }) {
   const out = [];
   const has = (what) => changes.some((c) => c.what === what);
   if (kept.length > 0) {
-    out.push(`telemetry left as you set it (${kept.map((k) => k.name).join(', ')} ${kept.length === 1 ? 'is' : 'are'} yours), so the Logbook counts no tokens here`);
+    out.push(`usage counting left as you set it (${kept.map((k) => k.name).join(', ')} ${kept.length === 1 ? 'is' : 'are'} yours), so the Logbook shows no token counts here`);
   } else if (has('telemetry')) {
     const where = route === 'launch-env'
       ? `4 variables for your account${platform === 'darwin' ? ', set again by a login item at log-in' : ''}; ${RESTART}`
-      : '4 keys in your Claude settings';
-    out.push(`usage counts to Wheelhouse on this computer only, never your prompts or tool content (${where})`);
+      : '4 settings in Claude Code';
+    out.push(`usage counts go to Wheelhouse on this computer only, never what you type or what tools return (${where})`);
   }
   // Ruling R64: the limit holds even over a longer one of the director's, and the card says what it costs.
   if (has('retention')) {
-    out.push(`transcripts kept ${RETENTION_DAYS} days${shown(userSettings.cleanupPeriodDays)}; older ones are removed, and uninstall can't bring them back`);
+    out.push(`chat history kept ${RETENTION_DAYS} days${shown(userSettings.cleanupPeriodDays)}: older chats are deleted, and uninstall can't bring them back`);
   }
   if (has('updates')) {
     const own = ownMinimum(userSettings, floor);
     const minimum = own !== null ? `${own} or later (your own minimum, kept)`
       : `${floor} or later${changes.some((c) => c.key?.[0] === 'minimumVersion') ? shown(userSettings.minimumVersion) : ''}`;
-    out.push(`Claude Code on its stable channel at version ${minimum}`);
+    out.push(`Claude Code takes only its well-tried updates, and stays at version ${minimum}`);
   }
   if (has('push')) out.push('phone notifications on');
   const plugin = changes.find((c) => c.what === 'plugin');
@@ -227,9 +227,10 @@ function weakeningSentence(found, fit) {
 // Only a list with something on it has a card: an empty one settles the step (ruling R75).
 export function computerCard({ changes, userSettings = {}, kept = [], route = TELEMETRY_ROUTE, platform = process.platform, floor, key = ownKey() }) {
   const listed = lines({ changes, userSettings, kept, route, platform, floor });
-  const head = `Setup step 6, ${SETUP_TITLES[6]}: ${listed.join('; ')}. Wheelhouse never updates itself.`;
+  // One change to a line, as step 3's card lists its own.
+  const head = [`Setup step 6, ${SETUP_TITLES[6]}:`, ...listed.map(asLine), '- Wheelhouse never updates itself: you choose when.'].join('\n');
   // Named without its id, which a card would read as a commit.
-  const signing = key ? ' This computer\'s key for signing your clicks is already made.' : '';
+  const signing = key ? '\n- This computer\'s key for signing your clicks is already made.' : '';
   const variables = route === 'launch-env' && changes.some((c) => c.kind === 'env' || c.kind === 'file');
   const agents = [...new Set(changes.filter((c) => c.what === 'agent').map((c) => c.label))];
   const alongside = agents.length > 0 ? `, and ${agents.join(' and ')}'s hook file${changes.some((c) => c.what === 'agent' && c.part === 'first-mate') ? ' and First Mate files' : ''}` : '';
@@ -246,7 +247,7 @@ export function computerCard({ changes, userSettings = {}, kept = [], route = TE
       { label: 'Not now', says: 'Nothing changes.' },
     ],
     recommend: SETUP_LABEL,
-    because: changes.some((c) => c.what === 'retention') ? 'uninstall puts each setting back, but not removed transcripts' : 'uninstall puts each back',
+    because: changes.some((c) => c.what === 'retention') ? 'uninstall puts each setting back, but not deleted chats' : 'uninstall puts each back',
     meanwhile: 'Setup waits; nothing changes.',
   });
   // Whether a card with this sentence fits the composer's limit (CARD.chars): the card without it,
@@ -254,7 +255,7 @@ export function computerCard({ changes, userSettings = {}, kept = [], route = TE
   const base = composeCard({ ...card(`${head}${signing}`), target: { step: 6, hash: '0'.repeat(64) } }).question.question.length;
   const fit = (sentence) => base + 1 + sentence.length <= CARD.chars;
   const weak = weakeningSentence(weakening(userSettings), fit);
-  return card(`${head}${signing}${weak === '' ? '' : ` ${weak}`}`);
+  return card(`${head}${signing}${weak === '' ? '' : `\n${weak}`}`);
 }
 
 // What step 6 says when it settles with nothing to change, before the settings that weaken Standard.
@@ -338,7 +339,12 @@ function lockedCard(target, folder) {
   return {
     kind: 'setup',
     level: 3,
-    what: `Setup step 8, ${SETUP_TITLES[8]}: Wheelhouse's checks go into this computer's administrator-only settings file, ${target}, with this project, ${folder}, on its Locked list. macOS asks for your password once, in its own window.`,
+    what: [
+      `Setup step 8, ${SETUP_TITLES[8]}:`,
+      asLine(`Wheelhouse's checks go into this computer's administrator-only settings file, ${target}`),
+      asLine(`This project, ${folder}, goes on its Locked list`),
+      asLine('macOS asks for your password once, in its own window'),
+    ].join('\n'),
     why: 'Only an administrator can change that file, so no agent can switch Wheelhouse\'s checks off.',
     options: [
       { label: SETUP_LABEL, says: 'macOS asks for your password, then Locked is on for this project.' },

@@ -111,7 +111,7 @@ test('step 10\'s plan waits for the project, then lists the trial branch and its
     assert.match(first.card.what, /^Setup step 10, Health check:/);
     assert.match(first.card.what, /without your approval/);
     assert.match(first.card.what, /All stop/);
-    assert.match(first.card.what, /closes the pull request and deletes the branch/);
+    assert.match(first.card.what, /closes the test pull request and deletes its branch/);
     assert.match(first.card.what, /session/);
     assert.equal(typeof first.director, 'string');
   }, { connected: true });
@@ -230,7 +230,7 @@ test('step 10 reads the host\'s protection knowing whether the project has real 
       const { changes } = await step.plan({ folder });
       const { ctx } = ctxFor(folder, remote);
       await step.apply(ctx, changes);
-      assert.deepEqual(seen, [{ host: 'github', repo: REPO, realUsers: launched }]);
+      assert.deepEqual(seen.map(({ host, repo, realUsers }) => ({ host, repo, realUsers })), [{ host: 'github', repo: REPO, realUsers: launched }]);
     });
   }
 });

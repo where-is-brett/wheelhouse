@@ -32,7 +32,7 @@ test('the ten steps are numbered 1 to 10 in the design\'s order, with its titles
   assert.deepEqual(STEPS.map((s) => s.n), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   assert.deepEqual(STEPS.map((s) => s.title), [
     'Install', 'Tools', 'The host and the connection', 'Three questions', 'Rules found',
-    'Changes to this computer', 'The project\'s files, pins and protection', 'Locked', 'Phone notifications', 'Health check',
+    'Changes to this computer', 'The project\'s files and protection', 'Locked', 'Phone notifications', 'Health check',
   ]);
   assert.deepEqual(STEPS.map((s) => s.title), Object.values(SETUP_TITLES));
   for (const step of STEPS) {

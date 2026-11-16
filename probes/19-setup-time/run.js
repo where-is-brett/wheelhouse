@@ -48,7 +48,7 @@ export const FOLDER_NAME = 'wh19-trial';
 // The steps' titles, as scripts/state/card-lines.js's SETUP_TITLES.
 export const TITLES = Object.freeze({
   1: 'Install', 2: 'Tools', 3: 'The host and the connection', 4: 'Three questions', 5: 'Rules found',
-  6: 'Changes to this computer', 7: 'The project\'s files, pins and protection', 8: 'Locked', 9: 'Phone notifications', 10: 'Health check',
+  6: 'Changes to this computer', 7: 'The project\'s files and protection', 8: 'Locked', 9: 'Phone notifications', 10: 'Health check',
 });
 const HEALTH_STEP = 10;
 const INSTALL_STEP = 1;

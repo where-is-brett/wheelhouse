@@ -118,7 +118,7 @@ import { projectForFolder } from '../lib/projects.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { keyEdits } from './local-refresh.js';
 import { resolveClaude, invocation, withoutHostVariables } from '../lib/claude.js';
-import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
+import { SETUP_TITLES, SETUP_LABEL, asLine } from '../state/card-lines.js';
 import { composeCard } from '../cards/compose.js';
 import { CARD } from '../lib/front-desk.js';
 import { STATE_BRANCH } from '../state/record.js';
@@ -243,6 +243,8 @@ const GIT_WAIT_MS = 5 * 60 * 1000;
 export const NO_CLAUDE = 'Setup could not run Claude Code\'s command line (claude) to install the pinned kits for this project. Install Claude Code\'s command line, then a fresh Go ahead carries on';
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+// The settings of .claude/wheelhouse.json that can be there before step 7 writes the rest (configFrom).
+const HOST_SETTINGS = Object.freeze(['gitlabHosts', 'glabFrom', 'ghFrom']);
 
 function readText(file) {
   try {
@@ -379,11 +381,23 @@ export const midSizedPin = (config) => classPin(config, 'midSized');
 
 // The configuration a project ends up with: the one it has, with each of the starter's keys it
 // lacks added, the starter's front desk pin where it has none, and `liveData` as step 4's answer says. A file that isn't a configuration is refused.
+// A file holding only the host settings that come before this step (step 3 names a company's GitLab in `gitlabHosts`;
+// `glabFrom` and `ghFrom` say where the host's tool comes from) is not yet a configuration: it is the starter with
+// those settings kept, and must then read as one.
 export function configFrom(existing, starter) {
   if (existing === null) {
     const fresh = structuredClone(starter);
     if (Object.hasOwn(fresh, 'agents') && Object.keys(fresh.agents).length === 0) delete fresh.agents;
     return fresh;
+  }
+  if (isObject(existing) && Object.keys(existing).length > 0 && Object.keys(existing).every((k) => HOST_SETTINGS.includes(k))) {
+    const out = { ...configFrom(null, starter), ...structuredClone(existing) };
+    try {
+      readConfig(JSON.stringify(out));
+    } catch {
+      throw new Error(`${CONFIG} is not a configuration Wheelhouse can read, so setup has left it as it was: correct it or remove it, then ask again`);
+    }
+    return out;
   }
   try {
     readConfig(JSON.stringify(existing));
@@ -1100,24 +1114,24 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   const ours = changes.some((c) => c.line === WHEELHOUSE_LINE);
   const parts = [];
   if (shared.length > 0) {
-    const section = shared.some((c) => c.section) ? ', and a "Compact instructions" section into CLAUDE.md' : '';
-    parts.push(`Wheelhouse's settings and configuration go into .claude${section}, keeping yours`);
+    parts.push('Wheelhouse\'s settings go into the project\'s .claude folder, keeping yours');
+    if (shared.some((c) => c.section)) parts.push('CLAUDE.md gets a "Compact instructions" section, keeping yours: what agents keep when a chat is summarised');
   }
-  if (files.length > shared.length) parts.push(`this computer's settings into .claude/settings.local.json, which stays here${excluded ? `${ours ? '; it and .wheelhouse/' : ','} kept out of git` : ''}`);
-  else if (excluded) parts.push(`.claude/settings.local.json${ours ? ' and .wheelhouse/' : ''} kept out of git`);
-  if (ours && !excluded) parts.push('.wheelhouse/ kept out of git');
+  if (files.length > shared.length) parts.push(`this computer's own settings go into .claude/settings.local.json${excluded ? `${ours ? '; it and .wheelhouse/, Wheelhouse\'s working folder, are' : ','} kept out of git` : ', which stays here'}`);
+  else if (excluded) parts.push(`.claude/settings.local.json${ours ? ' and .wheelhouse/, Wheelhouse\'s working folder,' : ''} kept out of git`);
+  if (ours && !excluded) parts.push('.wheelhouse/, Wheelhouse\'s working folder, kept out of git');
   if (frontDesk === NO_PIN) parts.push('the First Mate\'s model is left as it is: Claude Code didn\'t say which model to use');
   else if (frontDesk) parts.push(`the First Mate runs on ${frontDesk}`);
   if (midSized === NO_PIN) parts.push('Lean and Lightest wait for the lighter model: Claude Code didn\'t say which model to use');
-  else if (midSized) parts.push('Lean and Lightest move most building and routine checking to the lighter model');
+  else if (midSized) parts.push('at Lean and Lightest thoroughness, most building and checking use the cheaper model');
   if (secrets === 'shared') parts.push(`.env files, which hold secrets, kept out of git by .gitignore${envLines.some((c) => c.restate) ? ' (.env.example stays shared)' : ''}`);
   else if (secrets === 'here') parts.push(negated.length > 0 ? `some .env files, which hold secrets, kept out of git on this computer, but ${NEGATED_PART}` : '.env files, which hold secrets, kept out of git on this computer');
   if (negated.length > 0 && secrets !== 'here') parts.push(NEGATED_PART);
   if (changes.some((c) => c.engine === true)) parts.push(host === 'local' ? 'the build engine\'s settings into .archon/' : 'the build engine\'s merge policy and settings into .archon/, naming the GitHub account Wheelhouse signs reviews as');
   if (changes.some((c) => c.what === 'mirror')) parts.push('the build engine reads this project from Wheelhouse\'s own copy, so it never holds a key');
-  if (listens) parts.push(listeningNotice({ localListening: true }).replace(/ To turn it off.*$/, '').replace(/\.$/, ''));
+  if (listens) parts.push(LISTENING_CLAUSE);
   const pins = changes.filter((c) => c.kind === 'process').map((c) => pinName(c.target));
-  if (pins.length > 0) parts.push(`${listed(pins)} installed for this project at tested versions`);
+  if (pins.length > 0) parts.push(`${listed(pins)}, which agents work with, at a version Wheelhouse has tried`);
   const up = changes.find((c) => c.kind === 'host' && (c.action === 'commit' || c.action === 'push'));
   // The director's own changes setup's commit takes up, as they chose (ruling R95).
   const yours = up?.action === 'commit' && Array.isArray(up.yours) && up.yours.length > 0 ? `, with your own changes to ${listed(up.yours.map((y) => y.file))}` : '';
@@ -1132,10 +1146,10 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   if (up?.action === 'commit') parts.push(keyed ? `${sharedFiles} go in one commit, "${COMMIT_MESSAGE}", ${upTo}${yours}${ownPart}` : `${sharedFiles} go ${upTo} in one commit, "${COMMIT_MESSAGE}"${yours}${ownPart}`);
   if (up?.ownLeft === true) parts.push('your product\'s own files stay as they are, too many for setup\'s commit: commit them when you are ready');
   if (up?.action === 'push') parts.push(`setup's commit, "${COMMIT_MESSAGE}", goes ${upTo}`);
-  const where = host === 'gitlab' ? ' ("pipelines must succeed" once there is a pipeline)' : ', where your plan allows';
+  const where = host === 'gitlab' ? ': changes go in only through merge requests, which must pass the project\'s automatic checks once it has them' : ', where your plan allows: changes go in only through pull requests';
   if (joining) parts.push('the project\'s own files stay as your other computer committed them: nothing is committed and protection stays as it is');
-  else if (keyed) parts.push(`${branch}'s protection is already on, from step 3`);
-  else if (!local) parts.push(`${up ? 'then ' : ''}${branch}'s protection goes on${where}`);
+  else if (keyed) parts.push(`protection is already on ${branch}, from step 3`);
+  else if (!local) parts.push(`${up ? 'then ' : ''}protection goes on ${branch}${where}`);
   if (differ.length > 0) parts.push(`${listed(differ)} ${differ.length === 1 ? 'differs' : 'differ'} from what is committed, and setup leaves ${differ.length === 1 ? 'it as it is' : 'them as they are'}`);
   const pinned = release?.ref ? `Wheelhouse stays at ${release.ref} and never updates itself.` : 'Wheelhouse never updates itself.';
   const card = (what) => ({
@@ -1145,15 +1159,15 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
     why: local ? 'Agents start from these files; later changes go through Wheelhouse\'s checks.' : 'Agents start from these files; protection sends later changes through Wheelhouse\'s checks.',
     options: [
       { label: SETUP_LABEL, says: local || keyed ? 'Setup makes these changes.' : 'Setup makes these changes and says what protection reads back.' },
-      { label: 'Not now', says: 'Setup waits here; nothing changes.' },
+      { label: 'Not now', says: 'Nothing changes, and agents wait for these files.' },
     ],
     recommend: SETUP_LABEL,
     because: 'agents need these before they start',
     meanwhile: 'Setup waits here; nothing changes.',
   });
-  const full = card(joining
-    ? `Setup step 7, ${SETUP_TITLES[7]}, for this computer: ${parts.join('; ')}. ${pinned}`
-    : `Setup step 7, ${SETUP_TITLES[7]}: ${parts.join('; ')}.${local ? '' : keyed ? ' All with the project\'s own key.' : ` All with your ${NAME[host]} sign-in.`} ${pinned}`);
+  // One thing to a line, as step 3's card lists its own, under a title that says whose sign-in does it.
+  const by = local || joining ? '' : keyed ? ', with the project\'s own key, not your account' : `, with your ${NAME[host]} sign-in`;
+  const full = card([`Setup step 7, ${SETUP_TITLES[7]}${joining ? ', for this computer' : by}:`, ...[...parts, pinned].map(asLine)].join('\n'));
   const fits = (c) => composeCard({ ...c, target: { step: 7, hash: '0'.repeat(64) } }).question.question.length <= CARD.chars;
   try {
     if (fits(full)) return full;
@@ -1161,17 +1175,17 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   const cut = (text) => (text.length > 60 ? `${text.slice(0, 59)}…` : text);
   if (joining) {
     const mine = [
-      ...(files.length > 0 || excluded || ours ? ['this computer\'s settings'] : []), ...(secrets ? [negated.length > 0 ? 'some .env files kept out of git' : '.env files kept out of git'] : []), ...(negated.length > 0 ? ['.gitignore lets some .env files in: raise it on the computer that set the project up'] : []), ...(pins.length > 0 ? ['the pinned kits'] : []),
+      ...(files.length > 0 || excluded || ours ? ['this computer\'s settings'] : []), ...(secrets ? [negated.length > 0 ? 'some .env files kept out of git' : '.env files kept out of git'] : []), ...(negated.length > 0 ? ['.gitignore lets some .env files in: raise it on the computer that set the project up'] : []), ...(pins.length > 0 ? ['the kits agents work with'] : []),
       ...(listens ? [LISTENING_CLAUSE] : []), 'nothing committed', ...(differ.length > 0 ? [`${listed(differ)} left as ${differ.length === 1 ? 'it is' : 'they are'}`] : []),
     ];
-    return card(`Setup step 7, ${SETUP_TITLES[7]}, for this computer: ${mine.join(', ')}. Wheelhouse never updates itself.`);
+    return card([`Setup step 7, ${SETUP_TITLES[7]}, for this computer:`, ...[...mine, 'Wheelhouse never updates itself'].map(asLine)].join('\n'));
   }
   const short = [
     ...(shared.length > 0 ? ['the project\'s own files'] : []), ...(files.length > shared.length || excluded || ours ? ['this computer\'s settings'] : []),
-    ...(secrets ? ['.env files kept out of git'] : []), ...(listens ? [LISTENING_CLAUSE] : []), ...(pins.length > 0 ? ['the pinned kits'] : []), ...(up ? [`the setup commit ${local ? `onto ${cut(branch)}` : keyed ? `to ${cut(branch)} on ${NAME[host]} through a merge request` : `up to ${cut(branch)} on ${NAME[host]}`}${yours === '' ? '' : ', with your changes'}${ownPart === '' ? '' : ', with your product\'s own files'}`] : []),
+    ...(secrets ? ['.env files kept out of git'] : []), ...(listens ? [LISTENING_CLAUSE] : []), ...(pins.length > 0 ? ['the kits agents work with'] : []), ...(up ? [`the setup commit ${local ? `onto ${cut(branch)}` : keyed ? `to ${cut(branch)} on ${NAME[host]} through a merge request` : `up to ${cut(branch)} on ${NAME[host]}`}${yours === '' ? '' : ', with your changes'}${ownPart === '' ? '' : ', with your product\'s own files'}`] : []),
     ...(local ? [] : keyed ? ['protection already on from step 3'] : [`${up ? 'then ' : ''}protection on ${up ? 'it' : cut(branch)}`]),
   ];
-  return card(`Setup step 7, ${SETUP_TITLES[7]}: ${short.join(', ')}${local ? '' : keyed ? ', all with the project\'s own key' : ', all with your sign-in'}. Wheelhouse never updates itself.`);
+  return card([`Setup step 7, ${SETUP_TITLES[7]}${by}:`, ...[...short, 'Wheelhouse never updates itself'].map(asLine)].join('\n'));
 }
 
 // ---- Step 7 ----
@@ -1213,6 +1227,8 @@ export function projectFilesStep({
   best = (alias) => aliasModel(alias, { run, claude }), env = process.env,
   // The build engine in force for a project, and the login the helper posts as on GitHub.
   engineOf = engineInForce, loginOf = githubLogin, sleep = (ms) => new Promise((r) => { setTimeout(r, ms); }),
+  // How GitLab's API is reached with the project's own key (gitlabApi's run, curl, proxy and caFile), for tests.
+  keyVia = {},
 } = {}) {
   // Where step 3 connected with the setup token, git and GitLab's API go with the project's own key: setup kept no
   // sign-in of the director's.
@@ -1222,7 +1238,7 @@ export function projectFilesStep({
     const keyed = madeWithSetupToken(record) ? await keyGitEnv({ record, gitPath: located.path, platform }) : null;
     return gitIn({ run, gitPath: located.path, host, platform, folder, remoteUrl, base, keyed });
   };
-  const apiFor = (record) => (madeWithSetupToken(record) ? () => keyGitlabApi({ record }) : gitlab);
+  const apiFor = (record) => (madeWithSetupToken(record) ? () => keyGitlabApi({ record, via: keyVia }) : gitlab);
   const lineage = (folder) => checkInstalled({ manifest: manifest(), projectDir: folder, claudeHome: claudeHome(), locate });
   // This computer's part of the list, for either form: the line that keeps its settings out of git
   // (unless the product already ignores them), the line that keeps .wheelhouse/ out of git (unless
@@ -1649,7 +1665,7 @@ export function projectFilesStep({
           });
           if (up.merge === true) {
             if (!madeWithSetupToken(record)) throw new Error('Step 7\'s list sends setup\'s commit through a merge request, which only a connection made with the setup token does: ask for the plan again');
-            await mergeUp({ git, api: await keyGitlabApi({ record }), projectId: record.connection.projectId, remoteUrl, branch: up.branch, sha, sleep, halt });
+            await mergeUp({ git, api: await keyGitlabApi({ record, via: keyVia }), projectId: record.connection.projectId, remoteUrl, branch: up.branch, sha, sleep, halt });
             await takeMerged(git, { remoteUrl, branch: up.branch, head: sha, tip: await remoteTip(git, remoteUrl, up.branch) });
           } else {
             const pushed = await git.ok(['push', '-q', '--no-verify', remoteUrl, `${sha}:refs/heads/${up.branch}`]);

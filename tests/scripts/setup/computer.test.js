@@ -94,17 +94,17 @@ test('the card lists each change in plain words, and nothing else changes', asyn
     assert.match(text, /step 6/);
     assert.match(text, /usage counts/i);
     assert.match(text, /this computer only/);
-    assert.match(text, /never your prompts or tool content/);
-    assert.match(text, new RegExp(`transcripts kept ${RETENTION_DAYS} days \\(now 7\\)`));
+    assert.match(text, /never what you type or what tools return/);
+    assert.match(text, new RegExp(`Chat history kept ${RETENTION_DAYS} days \\(now 7\\)`));
     // Ruling R64: the card says what a shorter retention costs.
-    assert.match(text, new RegExp(`transcripts kept ${RETENTION_DAYS} days \\(now 7\\); older ones are removed, and uninstall can't bring them back`));
+    assert.match(text, new RegExp(`Chat history kept ${RETENTION_DAYS} days \\(now 7\\): older chats are deleted, and uninstall can't bring them back`));
     // The option that goes ahead says what uninstall puts back, and the card's options show it.
     const goesAhead = composeCard({ ...planned.card, kind: 'setup', target: { step: 6, hash: planHash(planned.changes) } }).question.options[0].description;
-    assert.match(goesAhead, /Uninstall puts each setting back, but not removed transcripts/);
+    assert.match(goesAhead, /Uninstall puts each setting back, but not deleted chats/);
     assert.match(text, /These are Claude Code's own settings on this computer/);
-    assert.match(text, /stable channel at version 2\.1\.100 or later/);
+    assert.match(text, /stays at version 2\.1\.100 or later/);
     assert.match(text, /Wheelhouse never updates itself/);
-    assert.match(text, /phone notifications on/);
+    assert.match(text, /phone notifications on/i);
     assert.ok(ownKey());
     assert.match(text, /key for signing your clicks is already made/);
     assert.doesNotMatch(text, /weaken/, 'none of the director\'s settings weakens Standard here');
@@ -273,7 +273,7 @@ test('a minimum version of the director\'s own at or above the floor is kept, an
       fs.writeFileSync(file, `${JSON.stringify({ minimumVersion: higher })}\n`);
       const planned = await step.plan(ctx);
       assert.deepEqual(keysOf(planned), ['autoUpdatesChannel'], higher);
-      assert.match(composed(planned, 6), new RegExp(`stable channel at version ${higher.replace(/\./g, '\\.')} or later \\(your own minimum, kept\\)`), higher);
+      assert.match(composed(planned, 6), new RegExp(`stays at version ${higher.replace(/\./g, '\\.')} or later \\(your own minimum, kept\\)`), higher);
     }
     for (const [lower, shown] of [['2.0.5', '2.0.5'], ['2.1.99', '2.1.99'], ['latest', '"latest"']]) {
       fs.writeFileSync(file, `${JSON.stringify({ minimumVersion: lower })}\n`);

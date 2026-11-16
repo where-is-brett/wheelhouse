@@ -79,7 +79,7 @@ import { takeSurvey, shapedSurvey, recordSurvey } from '../survey/take.js';
 import { ReadyRefusal, archiveCommit, carryOn, carryOnPiece, dropRef, fetchInto, folderGit, freeWork, pieceWork, restoreCommit } from '../survey/ready.js';
 import { readyRecordFile, writeReadyRecord } from '../survey/ready-record.js';
 import { reaching, subcommandOf } from '../setup/git.js';
-import { directorGitEnv, directorGitlabApi, hostStep, launchedIn, switchOnAsDirector } from '../setup/host.js';
+import { directorGitEnv, directorGitlabApi, hostStep, keyGitEnv, launchedIn, madeWithSetupToken, switchOnAsDirector } from '../setup/host.js';
 import { commitAuthor } from '../setup/project-files.js';
 import { readEnrolled, verify, sign, ownKey } from '../state/signing.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
@@ -1531,9 +1531,12 @@ export async function startHelper({
       }
 
       // A code push that changes a CI file goes only with the director's click
-      // for this commit, and then with the director's own sign-in.
+      // for this commit, and then with the director's own sign-in; where setup made the project with
+      // the one-day setup token the director has no sign-in on this computer, so the click's push goes
+      // with the project's own key, as step 7's did.
       // The director's own sign-in, with the company's certificate for this project's GitLab address.
-      const directorGit = () => gitIn(companyGit(directorSignIn(signInHost(project)), readProject(project)), HOST_MS, ctx.reach);
+      const tokenRoute = madeWithSetupToken(readProject(project));
+      const directorGit = () => (tokenRoute ? keyed : gitIn(companyGit(directorSignIn(signInHost(project)), readProject(project)), HOST_MS, ctx.reach));
       let pusher = asOwn ? directorGit() : keyed;
       if (ciGuard) {
         let changes;
@@ -2173,12 +2176,16 @@ export async function startHelper({
   // the work through the intake, and the foreman starts it only from a change this record names.
   // They write nothing else: no other ref, no index, no working copy, nothing in the state, and they
   // push nothing. git runs in the folder as step 7's does, with the director's own sign-in, and
-  // fetches only from the project's recorded address. One at a time per project; refused under STOP,
+  // fetches only from the project's recorded address (with the project's own key where setup made the
+  // project with the one-day setup token, as step 7's git does then). One at a time per project; refused under STOP,
   // read again once the state is in hand. The answer says the work id chosen, whose line
   // (feature/<work>) is no request's own and not on the host, and the `from` to record.
-  const readyGit = (project, record) => folderGit({
+  const readyGit = async (project, record) => folderGit({
     run, folder: record.folder,
-    env: reaching({ ...(record.host === 'local' ? {} : directorGitEnv({ host: hostOf(record.host), base: record.connection?.baseUrl })), GIT_NO_REPLACE_OBJECTS: '1' }, remoteOf(project)),
+    env: reaching({
+      ...(record.host === 'local' ? {} : madeWithSetupToken(record) ? await keyGitEnv({ record }) : directorGitEnv({ host: hostOf(record.host), base: record.connection?.baseUrl })),
+      GIT_NO_REPLACE_OBJECTS: '1',
+    }, remoteOf(project)),
   });
   const readyRoute = (fn) => (body, ctx) => oneAtATime(`ready:${body.project}`, async () => {
     if (stopped()) return STOP_REFUSAL;
@@ -2189,7 +2196,7 @@ export async function startHelper({
     if (stopped()) return STOP_REFUSAL;
     const record = recordOf(body.project);
     if (typeof record.folder !== 'string' || !path.isAbsolute(record.folder) || !fs.existsSync(record.folder)) refuse('the project\'s folder isn\'t on this computer');
-    const git = readyGit(body.project, record);
+    const git = await readyGit(body.project, record);
     // Work recorded already, under any id, or a ready record kept for it, is never chosen again.
     const used = (id) => (views.work !== null && typeof views.work === 'object' && Object.hasOwn(views.work, id)) || fs.existsSync(readyRecordFile(body.project, id));
     try {
@@ -5966,7 +5973,13 @@ export async function startHelper({
         return null;
       }
       const views = buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now });
-      const git = readyGit(project, record);
+      let git;
+      try {
+        git = await readyGit(project, record);
+      } catch {
+        await say('The changes made by hand could not be carried on yet: the project\'s key isn\'t in this computer\'s store.');
+        return null;
+      }
       const used = (id) => (views.work !== null && typeof views.work === 'object' && Object.hasOwn(views.work, id)) || fs.existsSync(readyRecordFile(project, id));
       const listed = await (await ctx.adapter()).openRequests();
       const adapter = { ...(await ctx.adapter()), openRequests: () => listed };

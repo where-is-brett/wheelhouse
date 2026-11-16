@@ -205,6 +205,20 @@ function describedBy(choice) {
   return typeof says === 'string' ? says : null;
 }
 
+// What Go ahead says will be asked of the director, as the plan's choices make it true: only a password for a
+// project kept here; on GitLab without its tool, with a key for this project only, the one-day setup token (host.js);
+// with their git as it is, a key only where git holds none that works; else a sign-in.
+function goAheadAsks({ keptHere, list, host }) {
+  if (keptHere) return 'You\'ll only be asked for your password, if at all.';
+  const way = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.label ?? null;
+  const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
+  if (host === 'GitLab' && noTool && way !== null && way !== WAYS.quick && way !== WAYS.asIs) {
+    return 'You\'ll be asked for a one-day GitLab token, pasted into your computer\'s own box, and your password if needed.';
+  }
+  if (way === WAYS.asIs) return `You'll be asked for a ${host} key only if your git holds none that works, pasted into your computer's own box, and your password if needed.`;
+  return 'You\'ll only be asked to sign in, or for your password.';
+}
+
 // The one card for a run: { id, card, choices, writes }. `list` is openChoices'; `product` is
 // productOf's for the folder (or null); `toRun` which of steps 2, 3, 6, 7 and the health check are still to run; `count`
 // how many answers the run holds; `hosts` the hosts of the projects on this computer, for the engine's line
@@ -272,7 +286,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     question,
     header: 'Setup',
     options: [
-      { label: GO_AHEAD, description: `Recommended: I do all of this now. You'll only be asked ${keptHere ? 'for your password, if at all' : 'to sign in, or for your password'}.` },
+      { label: GO_AHEAD, description: `Recommended: I do all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list) })}` },
       yours
         ? { label: CHANGE_CHOICE, description: 'See every choice again, and change any before anything runs.' }
         : { label: CUSTOMISE, description: 'See every choice, and change any before anything runs.' },

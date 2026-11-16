@@ -377,6 +377,28 @@ test('on a company GitLab the director\'s CI push carries the company\'s certifi
   } finally { s.cleanup(); }
 });
 
+test('where setup made the project with the one-day setup token, the click\'s CI push goes with the project\'s own key, never a sign-in of the director\'s', async () => {
+  const company = 'https://gitlab.example.org';
+  const gitlab = { host: 'gitlab', connection: { host: 'gitlab', mode: 'narrow', project: 'o/p', baseUrl: company, projectId: 41, directorSignIn: 'setup-token' } };
+  const basic = `AUTHORIZATION: basic ${Buffer.from('oauth2:glpat-FAKEKEY0123456789abcd').toString('base64')}`;
+  const withKey = { GITLAB_TOKEN: 'glpat-FAKEKEY0123456789abcd', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `http.${company}/.extraheader`, GIT_CONFIG_VALUE_0: basic };
+  const s = await scenario({ change: { '.gitlab-ci.yml': 'a: b\n' }, project: gitlab });
+  const calls = [];
+  const recording = async (file, args, options) => { calls.push({ file, args, env: options?.env }); return hostGuard(file, args, options); };
+  try {
+    await as(s.home, async () => click({ sha: s.sha }, 9));
+    await viaHelper(s, async (client) => {
+      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: 'feature' }), { ok: true });
+    }, { env: withKey, runWith: recording });
+    assert.match(await heads(s), /refs\/heads\/feature/);
+    const pushes = calls.filter((c) => c.args.includes('push'));
+    assert.equal(pushes.length, 1);
+    const values = Object.entries(pushes[0].env).filter(([k]) => /^GIT_CONFIG_VALUE_\d+$/.test(k)).map(([, v]) => v);
+    assert.ok(values.includes(basic), 'the project\'s key');
+    assert.ok(!values.some((v) => / auth git-credential$/.test(v)), 'no sign-in of the director\'s');
+  } finally { s.cleanup(); }
+});
+
 test('where the director is not signed in, the CI push says so', async () => {
   const s = await scenario({ change: { '.github/workflows/ci.yml': 'on: push\n' } });
   const env = { GH_TOKEN: FAKE_KEY };

@@ -1115,6 +1115,8 @@ export const SETUP_TOKEN_LINE = 'You make a one-day GitLab token on a page that 
 const NO_SETUP_TOKEN = 'No GitLab token was given, so nothing was made on GitLab; a fresh Go ahead asks again';
 // What step 3's card says of protection with the setup token.
 export const SETUP_TOKEN_PROTECTION = 'Setup protects the main line now, while it holds that token: changes go in only through merge requests, and where the project has a pipeline, it must pass first.';
+// What step 3's card says of merging a project with real users through a key for that project only.
+export const REAL_USERS_MERGE_LINE = 'With real users, only you can merge on GitLab: when a change is ready, you press Merge there.';
 // Step 3's wait where the setup token can't do what the product needs, in plain words for the director.
 export const SETUP_TOKEN_CANNOT = (what) => `${what === 'joining' ? 'Bringing this product from your other computer' : 'Sending this folder\'s own history to a new GitLab project'} needs git signed in to GitLab as you, and without GitLab's own tool setup only ever holds a key for the project. Tell the director so in one line, and offer the two ways: Use my git as it is (step 3's connection card), or GitLab's own tool, which step 2 fetches. Then ask step 3 again`;
 
@@ -1865,7 +1867,7 @@ export function cardFor(given) {
   throw last;
 }
 
-function cardParts({ host, changes, product, owner, user, way, app, signedIn, appKeys, base = DEFAULT_GITLAB }, mode) {
+function cardParts({ host, changes, product, owner, user, way, app, signedIn, appKeys, base = DEFAULT_GITLAB, realUsers = false }, mode) {
   const tight = mode !== 'full';
   const bare = mode === 'bare';
   const name = NAME[host];
@@ -1924,7 +1926,11 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
       : `Wheelhouse pushes with your own git as it is, and uses ${name}'s own tool, signed in already, for merge requests.`);
     parts.push(rest || keyCard ? `That key reaches everything your account can on ${name}.` : `Both reach everything your account can on ${name}.`);
   } else if (way === WAYS.quick) parts.push(`Quick: your own ${name} sign-in, which reaches your whole account.`);
-  else if (host === 'gitlab') parts.push(tight ? 'A Developer key to this project only, or a token typed into your computer\'s own box.' : 'A key to this project only, with Developer rights. Where GitLab refuses one, a token you type into your computer\'s own box.');
+  else if (host === 'gitlab') {
+    parts.push(tight ? 'A Developer key to this project only, or a token typed into your computer\'s own box.' : 'A key to this project only, with Developer rights. Where GitLab refuses one, a token you type into your computer\'s own box.');
+    // A project with real users is merged by Maintainers only, which a Developer key is not (GITLAB_MAINTAINERS_ONLY, helper.js).
+    if (realUsers) parts.push(REAL_USERS_MERGE_LINE);
+  }
   else if (app === null) parts.push('Your own GitHub App.');
   else if (app.own && typeof app.clientId !== 'string' && product.joining) {
     // A joining computer's settings don't hold the app the first computer made: it is found on
@@ -2388,7 +2394,7 @@ export function hostStep({
       changes.push({ kind: 'folder', target: slug === null ? path.join(wheelhouseHome(), 'projects') : stateDir(slug), action: 'state', repo });
       return {
         changes,
-        card: cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys, base }),
+        card: cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys, base, realUsers: launchedInFolder(ctx.folder) || ctx.answers?.['3.real-users']?.label === REAL_USERS.yes }),
         director: directorFor({ signedIn, way, host, app, appKeys, joining: product.joining === true, via: changes.find((c) => c.action === 'sign-in')?.via ?? null, keyCard: keyState !== null }),
       };
     },

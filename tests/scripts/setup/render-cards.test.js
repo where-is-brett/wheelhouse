@@ -1,7 +1,7 @@
 // tests/scripts/setup/render-cards.test.js
 // Setup's cards as the director reads them (scripts/setup/render-cards.js), on five pretend computers: a company's
 // GitLab on Windows with Quick and then with Narrow chosen and GitLab's tool not to be had, the public GitLab, GitHub,
-// and a company's GitLab on a Mac. Each run goes from the one card through Customise to the end of step 3, and every
+// and a company's GitLab on a Mac. Each run goes from the one card through Customise to setup's last card, and every
 // card is read for what a director would trip on: a clause said twice, a name in lower case, a host named that wasn't
 // chosen, the public GitLab offered after the company's, one question in the words of another, a card asked again
 // with no reason given, and a fetch claimed that never ran.
@@ -46,10 +46,10 @@ const question = (c) => c.kind === 'question';
 const bare = (id) => id.replace(/-?[0-9a-f]{10,}$/, '');
 
 for (const name of Object.keys(PATHS)) {
-  test(`path ${name} (${PATHS[name].title}) reads cleanly from the one card to the end of step 3`, async () => {
+  test(`path ${name} (${PATHS[name].title}) reads cleanly from the one card to setup's last card`, async () => {
     const { cards, end, said } = await rendered(name);
-    assert.equal(end?.how, 'finished', `the run ends at the end of step 3, not ${JSON.stringify(end)}`);
-    assert.equal(end.step, 3);
+    assert.equal(end?.how, 'finished', `the run ends with setup finished, not ${JSON.stringify(end)}`);
+    assert.equal(end.step, 10);
     const p = PATHS[name];
     const hostAt = cards.findIndex((c) => c.id === 'host' || /^join/.test(c.id));
     assert.ok(hostAt >= 0, 'the host is asked');
@@ -169,9 +169,44 @@ test('Quick names the host chosen, and only that one', async () => {
 });
 
 // On the Desktop app, a card whose question matches an earlier card's comes back with the earlier answer. No card in
-// path a shares its question with another, so every answer is the one given on that card, and step 3 ends unpaused.
-test('path a on the Desktop app reaches the end of step 3 with no pause and no loop', async () => {
+// path a shares its question with another, so every answer is the one given on that card, and setup ends unpaused.
+test('path a on the Desktop app reaches the end of setup with no pause and no loop', async () => {
   const { cards, end } = await rendered('a', { desktop: true });
-  assert.deepEqual(end, { step: 3, how: 'finished' });
+  assert.deepEqual(end, { step: 10, how: 'finished' });
   assert.deepEqual(cards.filter((c) => c.stale), [], 'no card came back as an earlier one');
+});
+
+// Every Go-ahead card lists what its step does one thing to a line, in words a product owner reads without help.
+const JARGON = /\bpins?\b|extraheader|tested versions|stable channel|\d+ keys in your|merge gate|sandbox's checks/i;
+test('every path\'s Go-ahead cards list one thing to a line, with no jargon', async () => {
+  for (const name of Object.keys(PATHS)) {
+    const { cards } = await rendered(name);
+    const goes = cards.filter((c) => c.kind === 'go-ahead');
+    assert.ok(goes.some((c) => c.step === 10), `path ${name} reaches step 10's card`);
+    for (const c of goes) {
+      const lines = c.card.question.split('\n');
+      assert.match(lines[0], /^Setup step \d+, [^:]+:$/, `path ${name} step ${c.step}'s card opens with its title alone`);
+      assert.match(lines[1], /^- /, `path ${name} step ${c.step}'s card lists its first thing on a line of its own`);
+      for (const l of lines.filter((x) => x.startsWith('- '))) assert.ok(l.length <= 260, `path ${name} step ${c.step}: a line runs on: ${l}`);
+      assert.doesNotMatch(c.card.question, JARGON, `path ${name} step ${c.step}`);
+    }
+  }
+});
+
+test('on GitLab, step 10\'s card names a merge request, never a pull request', async () => {
+  for (const name of ['a', 'b', 'c', 'e']) {
+    const { cards } = await rendered(name);
+    const health = cards.find((c) => c.kind === 'go-ahead' && c.step === 10);
+    assert.match(health.card.question, /merge request/, `path ${name}`);
+    assert.doesNotMatch(health.card.question, /pull request/, `path ${name}`);
+  }
+});
+
+test('each path\'s plan says what will be asked of the director', async () => {
+  const asks = { a: /a GitLab key only if your git holds none that works/, b: /one-day GitLab token, pasted into your computer's own box/, c: /one-day GitLab token, pasted into your computer's own box/, d: /only be asked to sign in/, e: /only be asked to sign in/ };
+  for (const [name, says] of Object.entries(asks)) {
+    const { cards } = await rendered(name);
+    const plan = cards.filter((c) => /^plan-/.test(c.id)).at(-1);
+    assert.match(plan.card.options.find((o) => o.label === 'Go ahead').description, says, `path ${name}`);
+  }
 });

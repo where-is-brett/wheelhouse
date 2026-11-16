@@ -76,6 +76,12 @@ export function runbookLine(step, sha) {
   return sha === undefined || sha === null ? base : `${base}, to commit ${sha12(sha)}`;
 }
 
+// A setup card's list line, as each Go-ahead card lists what its step does: a capital first letter and a full stop.
+export function asLine(text) {
+  const t = text.trim();
+  return `- ${t.charAt(0).toUpperCase()}${t.slice(1)}${/[.!?:]$/.test(t) ? '' : '.'}`;
+}
+
 // Setup's steps, numbered as setup runs them (design section 15), with the titles their cards use.
 export const SETUP_TITLES = Object.freeze({
   1: 'Install',
@@ -84,7 +90,7 @@ export const SETUP_TITLES = Object.freeze({
   4: 'Three questions',
   5: 'Rules found',
   6: 'Changes to this computer',
-  7: 'The project\'s files, pins and protection',
+  7: 'The project\'s files and protection',
   8: 'Locked',
   9: 'Phone notifications',
   10: 'Health check',

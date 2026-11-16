@@ -15,7 +15,9 @@ import {
   directorGitlabApi, directorKey, signInStatus, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
   APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, ORGS_UNREAD, launchedIn,
   checkOutJoined, findInstallation, CERTIFICATE_GIVEN, reachLine, askAdministrationKey, setupTokenApi,
+  madeWithSetupToken, keyGitlabApi, keyGitEnv,
 } from '../../../scripts/setup/host.js';
+import { trialGitEnv, trialAdapter } from '../../../scripts/setup/health.js';
 import { installationCovers } from '../../../scripts/host/connection.js';
 import { caFile, probeCertificate, CERTIFICATE_NOT_IN_STORE } from '../../../scripts/host/company-ca.js';
 import { applyCompanyCa } from '../../../scripts/setup/tools.js';
@@ -3370,4 +3372,46 @@ test('a stop part-way through the setup token route forgets the token: nothing a
     await applyStep(again, folder, planned.changes, { answers: planned.answers });
     assert.equal(boxes.length, 1);
   });
+});
+
+test('after step 3 on the setup token\'s route, what later steps reach GitLab with is the project\'s own key from this computer\'s store: no box, no sign-in, no setup token', async () => {
+  await withHome(async (home) => {
+    const w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
+    const curl = setupTokenCurl(w);
+    const boxes = [];
+    const { folder, step, planned } = await setupTokenRun(w, { curl, askSecret: async (box) => { boxes.push(box.title); return SETUP_TOKEN; } });
+    await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    const kept = readProject(slugFor(`${USER}/shop`));
+    assert.equal(madeWithSetupToken(kept), true);
+    const key = readKey(`gitlab-project-${kept.connection.projectId}`).token;
+    assert.ok(typeof key === 'string' && key !== '' && key !== SETUP_TOKEN);
+    const after3 = curl.calls.length;
+    // Step 7's API (keyGitlabApi) and git (keyGitEnv), and step 10's git and checks (trialGitEnv, trialAdapter).
+    const api = await keyGitlabApi({ record: kept, via: tokenVia(curl) });
+    assert.equal((await api.get(`/projects/${kept.connection.projectId}`)).status, 200);
+    const basic = `AUTHORIZATION: basic ${Buffer.from(`oauth2:${key}`, 'utf8').toString('base64')}`;
+    for (const env of [await keyGitEnv({ record: kept, platform: 'darwin' }), await trialGitEnv({ host: 'gitlab', gitPath: 'git', platform: 'darwin', base: kept.connection.baseUrl, record: kept })]) {
+      const values = Object.entries(env).filter(([k]) => /^GIT_CONFIG_VALUE_\d+$/.test(k)).map(([, v]) => v);
+      assert.ok(values.includes(basic), JSON.stringify(values));
+      assert.ok(!JSON.stringify(env).includes(SETUP_TOKEN));
+    }
+    const adapter = trialAdapter({ host: kept.host, repo: kept.repo, base: kept.connection.baseUrl, folder, connection: kept.connection }, { run: curl.run, via: tokenVia(curl) });
+    assert.equal(adapter.backend, 'rest', 'GitLab\'s web API, as the agents reach it without GitLab\'s tool');
+    await adapter.defaultBranch();
+    const later = curl.calls.slice(after3);
+    assert.ok(later.length >= 2 && later.every((c) => c.headers.includes(`PRIVATE-TOKEN: ${key}`)), JSON.stringify(later.map((c) => c.headers)));
+    assert.deepEqual(boxes, ['Wheelhouse: one-day GitLab token'], 'nothing new is asked for after step 3');
+    assert.deepEqual(tokenOutside(curl, home, folder), []);
+  });
+});
+
+test('step 3\'s Narrow card on GitLab says, for a project with real users, that the director presses Merge on GitLab, and only then', () => {
+  const changes = [{ kind: 'host', target: 'gitlab', action: 'sign-in', via: 'setup-token' }];
+  const product = { isNew: false, host: 'gitlab', repo: `${USER}/shop`, name: 'shop', base: 'https://gitlab.com' };
+  const text = (realUsers) => {
+    const card = cardFor({ host: 'gitlab', changes, product, owner: USER, user: USER, way: WAYS.narrow, app: null, signedIn: false, appKeys: null, base: 'https://gitlab.com', realUsers });
+    return composeCard({ ...card, target: { step: 3, hash: planHash(changes) } }).question.question;
+  };
+  assert.match(text(true), /only you can merge on GitLab: when a change is ready, you press Merge there/i, text(true));
+  assert.doesNotMatch(text(false), /press Merge/);
 });
