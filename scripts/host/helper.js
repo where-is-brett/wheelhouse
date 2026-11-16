@@ -140,7 +140,7 @@ import { SLUG, questionIdOf } from '../lib/build-loop.js';
 import { ROOT as OWN_ROOT } from '../lineage/check.js';
 import { checkProvenance, removeProvenance, sessionProvenance, engineProvenance } from '../lineage/provenance.js';
 import { brokerDecision } from '../engine/broker/rules.js';
-import { checkOwnFiles, ownFilesLine } from '../health/own-files.js';
+import { checkOwnFiles, ownFilesFile, ownFilesLine } from '../health/own-files.js';
 import { listReleases } from '../update/release.js';
 import { lookForLatest, readLatest } from '../update/board.js';
 import { openJournal, updateLockHeld } from '../update/journal.js';
@@ -6514,11 +6514,21 @@ export async function startHelper({
     lookForLatest({ now, list: releaseList }).catch(() => {}).finally(() => { looking = false; });
   }
   // The look at Wheelhouse's own files follows the plugin folders Claude Code has in use (not the helper's own), and may read
-  // the release tag's files; so it runs in the background, and the board reads its last answer. Kept ten minutes.
+  // the release tag's files; so it runs in the background, and the board reads its last answer. Kept ten minutes, or until
+  // the baseline is written by another hand (setup makes it afresh at its health check), when the answer kept is stale.
   let ownKept = null;
   let ownRunning = false;
+  const baselineTime = () => {
+    try {
+      return fs.statSync(ownFilesFile()).mtimeMs;
+    } catch {
+      return null;
+    }
+  };
   function ownFilesLines() {
     const at = now().getTime();
+    // An answer made before the baseline was written afresh names changes the baseline now holds, so it is not shown again.
+    if (ownKept !== null && baselineTime() !== ownKept.baseline) ownKept = null;
     if (!ownRunning && (ownKept === null || at - ownKept.at >= 10 * 60 * 1000)) {
       ownRunning = true;
       (async () => {
@@ -6536,7 +6546,7 @@ export async function startHelper({
           if (line !== null) lines.ownFilesLine = line;
           if (typeof result.calm === 'string') lines.ownFilesCalm = result.calm;
         } catch { /* the look is made again next time */ }
-        ownKept = { at: now().getTime(), lines };
+        ownKept = { at: now().getTime(), lines, baseline: baselineTime() };
       })().finally(() => { ownRunning = false; });
     }
     return ownKept?.lines ?? {};
