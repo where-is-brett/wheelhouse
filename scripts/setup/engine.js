@@ -340,8 +340,22 @@ export async function copyRunRecords(runId, folder) {
 // they went unshown in every rehearsal run of 27 October 2026, on Sonnet and on Opus: the phone
 // card or the front desk came straight after. A card is what a session passes on word for word, so
 // the phone's first card opens with them until it is answered (opensWithBriefing); with no phone
-// card left, step 10's plan gives them once as its `said` (pendingBriefing).
+// card left, step 10's plan asks a card of its own that opens with them (pendingBriefing,
+// READY_CARD). Given as a `said` instead, they went unshown again in the run of 17 November 2026.
 const BRIEFING_TARGET = 'step 10 briefing';
+const SETUP_READY_ID = 'setup-ready';
+const READY_CARD = {
+  level: 2,
+  what: 'Setup is finished.',
+  why: 'It is your project, so you say when the work starts.',
+  options: [
+    { label: 'Carry on', says: 'The First Mate takes it from here, starting with anything you asked for.' },
+    { label: 'Show the checks', says: 'You see each of the checks first, then the First Mate takes it from here.' },
+  ],
+  recommend: 'Carry on',
+  because: 'every check passed',
+  meanwhile: 'Nothing starts until you click.',
+};
 const briefingKept = (run) => (run?.changes ?? []).filter((c) => c?.step === HEALTH_STEP && c.kind === 'answer' && c.target === BRIEFING_TARGET);
 function briefingOf(run) {
   const text = briefingKept(run).find((c) => typeof c.after?.briefing === 'string' && c.after.briefing !== '')?.after.briefing;
@@ -351,9 +365,11 @@ const greenAt = (run) => (run?.changes ?? []).find((c) => c?.step === HEALTH_STE
 const isReadyCard = (id) => id === READY_ID || id.startsWith(`${READY_ID}-`);
 // Whether the director answered the phone's first card since the board went green: the card that
 // opened with the briefing, so they have seen it.
+// step 10's own card, asked with them when no phone card is left, counts the same.
 const readyAnsweredSinceGreen = (run, answers) => Object.entries(answers)
-  .some(([key, a]) => key.startsWith(`${PUSH_TEST_STEP}.`) && isReadyCard(key.slice(key.indexOf('.') + 1)) && Date.parse(a.at) >= Date.parse(greenAt(run)));
-// Not yet seen on a phone card, nor given once as step 10's `said`: the text, else null.
+  .some(([key, a]) => (key === `${HEALTH_STEP}.${SETUP_READY_ID}` || (key.startsWith(`${PUSH_TEST_STEP}.`) && isReadyCard(key.slice(key.indexOf('.') + 1))))
+    && Date.parse(a.at) >= Date.parse(greenAt(run)));
+// Not yet seen on a card (nor given as step 10's `said`, as runs before 17 November 2026 were): the text, else null.
 function pendingBriefing(run, answers) {
   return briefingKept(run).some((c) => c.after?.said === true) || readyAnsweredSinceGreen(run, answers) ? null : briefingOf(run);
 }
@@ -668,11 +684,14 @@ export function setupRoutes({
     const folder = admitFolder(body.folder, { userHome });
     const step = await stepOf(body.step);
     let run = runFor(folder, userHome);
-    // Step 10 done on a green board: its plan gives the verdict and the first briefing, once.
+    // Step 10 done on a green board: its plan asks its own card, opening with the verdict and the
+    // first briefing, until the director answers it.
     const briefing = step.n === HEALTH_STEP && run !== null && healthGreen(run) ? pendingBriefing(run, answersFor(run.id)) : null;
     if (briefing !== null) {
-      addChanges(run.id, [{ id: newId('chg'), step: HEALTH_STEP, kind: 'answer', target: BRIEFING_TARGET, before: null, after: { said: true } }]);
-      return { ok: true, done: true, said: hide(briefing, []) };
+      const ready = composeCard({ ...READY_CARD, kind: 'question', suggest: false }).question;
+      const card = cleanDeep({ ...ready, question: [...briefing.split('\n').filter((l) => l.trim() !== ''), withoutListedLine(ready.question)].join('\n') }, []);
+      noteAsked({ runId: run.id, folder: run.folder, step: HEALTH_STEP, id: SETUP_READY_ID, card, now });
+      return { ok: true, ask: { step: HEALTH_STEP, id: SETUP_READY_ID, card }, progress: progressOf(run, HEALTH_STEP, folder) };
     }
     showable(run, step.n);
     // A run started by this plan starts when the plan does, so the step reads the time its run has.
@@ -843,8 +862,8 @@ export function setupRoutes({
     if (run === null) return { ok: true, lines: ['Setup has not started in this folder.'], next: firstUnfinished(null, all), ask: toAsk(null, all, running), oneCard: true, filesDue: true };
     const again = setUpAgainAsked(answersFor(run.id)) && stepDone(run, 3);
     const listed = statusLines(run, all, running);
-    // A green board's briefing not yet given, and no card left to open with it (the phone's, see
-    // plan): step 10 is planned once more, to give it as its `said`.
+    // A green board's briefing not yet seen, and no card left to open with it (the phone's, see
+    // plan): step 10 is planned once more, to ask its own card with it.
     const briefing = listed.ask === null && healthGreen(run) && pendingBriefing(run, answersFor(run.id)) !== null;
     // The steps running now, for `cli.js wait`: a running step's plan is refused, so the wait reads them here.
     const runningNow = all.map((s) => s.n).filter((n) => running(n) !== null);

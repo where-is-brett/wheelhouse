@@ -27,6 +27,8 @@ import { setStop, liftStop, stopState } from '../../../scripts/lib/stop.js';
 import { TRIAL_MARKER } from '../../../scripts/health/trials.js';
 import { STOPPED } from '../../../scripts/setup/host.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
+import { keepAnswer } from '../../../scripts/lib/setup-clicks.js';
+import { makeEvent } from '../../../scripts/state/events.js';
 import { readSurveyAt, readSeen } from '../../../scripts/briefing/seen.js';
 import { LOCKED_WOULD_LINE } from '../../../scripts/lib/platform-lines.js';
 import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
@@ -758,11 +760,17 @@ test('the trial stays open until the session\'s lines are in; then it is closed,
     assert.deepEqual(finished, [{ project: SLUG }]);
     assert.equal(green.started, 'The Bosun\'s watcher is started.');
     assert.equal(green.briefing, 'The briefing.');
-    // The verdict and the first briefing come next, from step 10's plan, once, before the phone card.
+    // The verdict and the first briefing come next, on step 10's own card, until it is answered.
     const routes = routesFor(user);
     assert.equal((await routes['/setup/status']({ folder })).ask, 10);
-    assert.deepEqual(await routes['/setup/plan']({ folder, step: 10 }), { ok: true, done: true, said: `${green.lines.at(-1)}\n\nThe briefing.` });
-    assert.notEqual((await routes['/setup/status']({ folder })).ask, 10, 'given once');
+    const ready = await routes['/setup/plan']({ folder, step: 10 });
+    assert.equal(ready.ask.id, 'setup-ready');
+    assert.ok(ready.ask.card.question.startsWith(`${green.lines.at(-1)}\nThe briefing.\n`), ready.ask.card.question);
+    assert.deepEqual(ready.ask.card.options.map((o) => o.label), ['Carry on', 'Show the checks']);
+    assert.equal((await routes['/setup/status']({ folder })).ask, 10, 'asked again until answered');
+    const greenAt = new Date(Date.parse(runOf(folder).changes.find((c) => typeof c.after?.green === 'string').after.green) + 1000);
+    keepAnswer(makeEvent({ kind: 'action', data: { action: 'setup-answer', runId: runOf(folder).id, step: 10, questionId: 'setup-ready', question: ready.ask.card.question, label: 'Carry on', text: null }, now: () => greenAt }));
+    assert.notEqual((await routes['/setup/status']({ folder })).ask, 10, 'answered');
     await assert.rejects(routes['/setup/plan']({ folder, step: 10 }), /already done/);
     assert.equal(healthGreen(runOf(folder)), true);
     assert.equal(firstUnfinished(runOf(folder)), null, 'setup is finished once the board is green');

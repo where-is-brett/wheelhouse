@@ -288,8 +288,9 @@ test('step 10\'s green board: the playbook runs resume at once and asks its card
   const section = playbook.split(`## Step ${HEALTH_STEP}, `)[1]?.split('\n## ')[0] ?? '';
   assert.ok(section, `a section for step ${HEALTH_STEP}`);
   const green = section.split('**Green:**')[1]?.split('**Not green:**')[0] ?? '';
-  assert.match(green, /Run `resume` at once\. The card it gives \(the phone's, Step 9 above\) opens with the verdict and the first briefing: ask it exactly as given/);
-  assert.match(green, /With no card left, its plan gives step 10 settled, with them as `said`: your next message to the director is that `said`, word for word, before anything else/);
+  assert.match(green, /Run `resume` at once\. The card it gives opens with the verdict and the first briefing: the phone's \(Step 9 above\), or, with no phone card left, step 10's own card\. Ask it exactly as given, as every card, before anything else, even the request they came with/);
+  assert.match(green, /On \*\*Show the checks\*\*, show `lines` as they are, then go on/);
+  assert.doesNotMatch(green, /`said`/);
   assert.ok(section.indexOf('**Green:**') < section.indexOf('When `health` gave a `card`'), 'the briefing\'s card before the carry-on card');
   assert.ok(playbook.includes('| "The Logbook is green; I\'ll sum it up and move on" | `resume` at once'), 'a red flag for it');
   assert.match(playbook.split(`## Step ${PUSH_TEST_STEP}, `)[1], /opens with the verdict and the first briefing/);
