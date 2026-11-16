@@ -273,7 +273,7 @@ test('the project settings keep the director\'s own keys and add Wheelhouse\'s',
     assert.match(question.question, /step 7/);
     assert.match(question.question, new RegExp(REF.replaceAll('.', '\\.')));
     assert.match(question.question, /main/);
-    assert.match(question.question, /never updates itself/);
+    assert.match(question.question, /Wheelhouse stays at/);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
 
@@ -1292,12 +1292,11 @@ test('the card lists every part on GitLab with a long branch and release, and st
   ];
   const text = (branch, ref) => composeCard({ ...projectFilesCard({ changes, host: 'gitlab', branch, release: { ref } }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
   const usual = text('main', 'v1.4.0');
-  for (const words of ['Compact instructions', 'settings.local.json', 'Superpowers', 'Set up Wheelhouse', 'must pass the project\'s automatic checks', 'acting as you on GitLab', 'v1.4.0', 'never updates itself']) {
+  for (const words of ['Compact instructions', 'settings.local.json', 'Superpowers', 'Set up Wheelhouse', 'must pass the project\'s automatic checks', 'acting as you on GitLab', 'v1.4.0', 'Wheelhouse stays at']) {
     assert.ok(usual.includes(words), words);
   }
   const long = text(`release/${'x'.repeat(200)}`, `v${'9'.repeat(150)}`);
   assert.ok(long.length <= 1200);
-  assert.match(long, /never updates itself/);
   // Made with the setup token: the project's key, or the director's own token GitLab made them paste in its place.
   const keyedText = (pasted) => composeCard({ ...projectFilesCard({ changes: changes.filter((c) => c.action !== 'protect'), host: 'gitlab', branch: 'main', release: null, keyed: true, pasted }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
   assert.match(keyedText(false), /with the project's own key, not your account/);
@@ -1800,7 +1799,6 @@ test('the card with every part, a long branch and a long release, stays within t
   const long = text(`release/${'x'.repeat(200)}`, `v${'9'.repeat(150)}`);
   assert.ok(long.length <= 1200);
   assert.match(long, /\.env files/);
-  assert.match(long, /never updates itself/);
   // The joining form.
   const mine = [
     { kind: 'json-key', target: '/p/.claude/settings.local.json', key: ['b'], after: 2 },

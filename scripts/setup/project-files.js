@@ -1154,7 +1154,8 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   else if (keyed) parts.push(`protection is already on ${branch}, from step 3`);
   else if (!local) parts.push(`${up ? 'then ' : ''}protection goes on ${branch}${where}`);
   if (differ.length > 0) parts.push(`${listed(differ)} ${differ.length === 1 ? 'differs' : 'differ'} from what is committed, and setup leaves ${differ.length === 1 ? 'it as it is' : 'them as they are'}`);
-  const pinned = release?.ref ? `Wheelhouse stays at ${release.ref} and never updates itself.` : 'Wheelhouse never updates itself.';
+  // Step 6's card says Wheelhouse never updates itself, so this one names only the release it stays at.
+  const pinned = release?.ref ? [`Wheelhouse stays at ${release.ref}`] : [];
   const card = (what) => ({
     kind: 'setup',
     level: 3,
@@ -1170,7 +1171,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   });
   // One thing to a line, as step 3's card lists its own, under a title that says whose sign-in does it.
   const by = local || joining ? '' : pasted ? ', with the token you pasted at step 3, which can act as you across GitLab' : keyed ? (pasted === null ? ', with the project\'s own key where GitLab allows one, or else the token you pasted at step 3, which can act as you across GitLab' : ', with the project\'s own key, not your account') : `, acting as you on ${NAME[host]}`;
-  const full = card([`Setup step 7, ${titleOf7(local)}${joining ? ', for this computer' : by}:`, ...[...parts, pinned].map(asLine)].join('\n'));
+  const full = card([`Setup step 7, ${titleOf7(local)}${joining ? ', for this computer' : by}:`, ...[...parts, ...pinned].map(asLine)].join('\n'));
   const fits = (c) => composeCard({ ...c, target: { step: 7, hash: '0'.repeat(64) } }).question.question.length <= CARD.chars;
   try {
     if (fits(full)) return full;
@@ -1181,14 +1182,14 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
       ...(files.length > 0 || excluded || ours ? ['this computer\'s settings'] : []), ...(secrets ? [negated.length > 0 ? 'some .env files kept out of git' : '.env files kept out of git'] : []), ...(negated.length > 0 ? ['.gitignore lets some .env files in: raise it on the computer that set the project up'] : []), ...(pins.length > 0 ? ['the kits agents work with'] : []),
       ...(listens ? [LISTENING_CLAUSE] : []), 'nothing committed', ...(differ.length > 0 ? [`${listed(differ)} left as ${differ.length === 1 ? 'it is' : 'they are'}`] : []),
     ];
-    return card([`Setup step 7, ${titleOf7(local)}, for this computer:`, ...[...mine, 'Wheelhouse never updates itself'].map(asLine)].join('\n'));
+    return card([`Setup step 7, ${titleOf7(local)}, for this computer:`, ...mine.map(asLine)].join('\n'));
   }
   const short = [
     ...(shared.length > 0 ? ['the project\'s own files'] : []), ...(files.length > shared.length || excluded || ours ? ['this computer\'s settings'] : []),
     ...(secrets ? ['.env files kept out of git'] : []), ...(listens ? [LISTENING_CLAUSE] : []), ...(pins.length > 0 ? ['the kits agents work with'] : []), ...(up ? [`the setup commit ${local ? `onto ${cut(branch)}` : keyed ? `to ${cut(branch)} on ${NAME[host]} through a merge request` : `up to ${cut(branch)} on ${NAME[host]}`}${yours === '' ? '' : ', with your changes'}${ownPart === '' ? '' : ', with your product\'s own files'}`] : []),
     ...(local ? [] : keyed ? ['protection already on from step 3'] : [`${up ? 'then ' : ''}protection on ${up ? 'it' : cut(branch)}`]),
   ];
-  return card([`Setup step 7, ${titleOf7(local)}${by}:`, ...[...short, 'Wheelhouse never updates itself'].map(asLine)].join('\n'));
+  return card([`Setup step 7, ${titleOf7(local)}${by}:`, ...short.map(asLine)].join('\n'));
 }
 
 // ---- Step 7 ----

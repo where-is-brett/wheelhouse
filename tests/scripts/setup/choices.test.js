@@ -78,8 +78,16 @@ test('the one card for a new product on a Mac says the director\'s approved word
 test('Go ahead on a narrow GitLab way with GitLab\'s tool names the token that may stand in for a project key', () => {
   const list = newProductChoices({ connection: WAYS.narrow }).map((c) => (c.id === 'host' ? { ...c, label: HOST_LABELS.gitlab } : c));
   const { card } = oneCard({ folder: '/x/tide-tables', list, product: { isNew: true, host: null, repo: null, name: 'tide-tables' }, platform: 'win32', toRun: [3, 6, 7, 10], count: 0 });
-  assert.match(card.options[0].description, /You'll sign in on GitLab pages that open and click through them, and give your password if needed\. If GitLab won't make a key for one project, you'll also paste a 30-day token that can act as you across GitLab into your computer's own box\.$/);
+  assert.match(card.options[0].description, /You'll sign in on GitLab pages that open and click through them, and give your password if needed\. If GitLab won't make a key for one project, you'll also paste a 30-day token that can act as you across GitLab into your computer's own box\. Near the end you'll also be asked to try a notification on your phone \(you can skip it\)\.$/);
   assert.deepEqual(cardProblems(card), []);
+});
+
+test('Go ahead names the phone test only where step 9 will ask', () => {
+  const base = { folder: '/x/Tides', list: [], product: { isNew: false, host: 'github', repo: 'a/Tides', name: 'Tides' }, platform: 'darwin', count: 0 };
+  const says = (over) => oneCard({ ...base, ...over }).card.options[0].description;
+  assert.match(says({ toRun: [3, 6, 7] }), /phone/);
+  assert.doesNotMatch(says({ toRun: [3, 6, 7], pushed: true }), /phone notification|try a notification/);
+  assert.doesNotMatch(says({ toRun: [3, 7] }), /try a notification/);
 });
 
 test('a run with only the health check left gets a short one card naming it, with an honest time and no empty list', () => {
@@ -108,7 +116,7 @@ test('the one card\'s lines follow what setup finds: Windows, the README\'s word
   const list = newProductChoices({ connection: WAYS.own });
   list[4] = { ...list[4], label: PRODUCT.readme, card: { options: [{ label: PRODUCT.readme, says: '"Tide tables for skippers."' }] }, chosen: { label: PRODUCT.readme, text: null, at: '2026-10-26T10:00:00Z' } };
   const win = oneCard({ folder: '/x/t', list, product: { isNew: true, name: 't' }, platform: 'win32', toRun: [3], count: 1 }).card.question;
-  assert.match(win, /- A key for this project only, from an app you create on GitHub \(you'll tick Enable Device Flow, click Create, then Authorise and Install\)\./);
+  assert.match(win, /- A key for this project only, from an app you create on GitHub \(you'll tick Enable Device Flow, click Create, then Authorize and install\)\./);
   assert.match(win, /- Described as: "Tide tables for skippers\."/);
   assert.match(win, /Here's the plan, with your choices\./);
   assert.doesNotMatch(win, /On this computer/);
@@ -123,7 +131,7 @@ test('the one card\'s lines follow what setup finds: Windows, the README\'s word
   assert.match(kept, /- Agents are told to use test data only, to be safe\./);
   // Make it stricter on the Mac.
   assert.match(oneCard({ folder: '/x/t', list: newProductChoices({ connection: STRICTER }), product: { isNew: true, name: 't' }, platform: 'darwin', toRun: [], count: 0 }).card.question,
-    /- A key for this project only, made on GitHub \(you'll click Authorise and Install\)\./);
+    /- A key for this project only, made on GitHub \(you'll click Authorize and install\)\./);
 });
 
 test('the one card is never the same card twice: its id names the choices and how many answers the run holds', () => {

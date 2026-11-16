@@ -185,9 +185,9 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
       : host === 'GitLab' && toolOut ? ' On Windows it is kept here, where any agent\'s command could read it.'
         : ` ${host}'s own sign-in also stays here, where any agent's command could read it.`;
     if (label === WAYS.quick) return platform === 'darwin' ? `Agents use your ordinary ${host} sign-in, which reaches your whole account; on this Mac the sandbox keeps agents' commands away from your Mac's saved passwords, where that sign-in is kept, unless the project signs apps for Apple, which opens those saved passwords to them.` : `Agents use your ordinary ${host} sign-in, which reaches your whole account${platform === 'win32' ? '; on Windows any agent\'s command could read it' : ''}.`;
-    if (label === STRICTER) return `A key for this project only, made on ${host} (you'll click Authorise and Install).`;
+    if (label === STRICTER) return `A key for this project only, made on ${host} (you'll click Authorize and install).`;
     if (label === WAYS.wheelhouse) return `A key for this project only, through the Wheelhouse app (you\'ll type a code and click Install).${stays}`;
-    if (label === WAYS.own) return `A key for this project only, from an app you create on GitHub (you\'ll tick Enable Device Flow, click Create, then Authorise and Install).${stays}`;
+    if (label === WAYS.own) return `A key for this project only, from an app you create on GitHub (you\'ll tick Enable Device Flow, click Create, then Authorize and install).${stays}`;
     if (label === WAYS.asIs) return `Agents use your own git as it is, with a ${host} key that reaches everything your account can${platform === 'win32' ? '; on Windows any agent\'s command could ask git for it' : ''}.`;
     // On GitLab the key may not be allowed (keys switched off, or a free plan on the public service), so the plan names the token that stands in.
     return host === 'GitLab'
@@ -223,7 +223,14 @@ function describedBy(choice) {
 // project kept here; on GitLab without its tool, with a key for this project only, the one-day setup token (host.js);
 // with their git as it is, a key only where git holds none that works; on a company's GitLab, a sign-in in the browser or
 // by token; else a sign-in.
-function goAheadAsks({ keptHere, list, host }) {
+function goAheadAsks({ keptHere, list, host, phone = false }) {
+  const text = goAheadAsksHost({ keptHere, list, host });
+  // Step 9 asks the director to try a notification on their phone, unless an earlier setup's test already reached it.
+  if (!phone) return text;
+  return keptHere ? text.replace(/, if at all\.$/, ', if at all, and near the end, to try a notification on your phone (you can skip it).') : `${text} Near the end you'll also be asked to try a notification on your phone (you can skip it).`;
+}
+
+function goAheadAsksHost({ keptHere, list, host }) {
   if (keptHere) return 'Apart from Claude Code\'s own request to allow setup\'s command, you\'ll only be asked for your password, if at all.';
   const way = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.label ?? null;
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
@@ -312,7 +319,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     question,
     header: 'Setup',
     options: [
-      { label: GO_AHEAD, description: `Recommended: setup does all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list) })}` },
+      { label: GO_AHEAD, description: `Recommended: setup does all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list), phone: toRun.includes(6) && !pushed })}` },
       yours
         ? { label: CHANGE_CHOICE, description: 'See every choice again, and change any before anything runs.' }
         : { label: CUSTOMISE, description: 'See every choice, and change any before anything runs.' },

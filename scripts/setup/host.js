@@ -854,7 +854,7 @@ const quickOnMac = (host) => `Your ordinary ${NAME[host]} sign-in, through ${NAM
 // The options with the recommended one first, the others in their own order.
 const recommendedFirst = (options, recommend) => [...options.filter((o) => o.label === recommend), ...options.filter((o) => o.label !== recommend)];
 
-export function connectionCard({ host, locked = false, launched = false, realUsers = false, platform = null, where, appFile, asIs = false, held = true, toolOut = false } = {}) {
+export function connectionCard({ host, locked = false, launched = false, realUsers = false, platform = null, where, appFile, asIs = false, held = true, toolOut = false, publicGitLab = false } = {}) {
   if (!narrowOffered(host)) throw new Error('The connection is to GitHub or GitLab');
   const place = where ?? `the project on ${NAME[host]}`;
   // Where the director's own git already reaches the host (`asIs`), it is the way offered in Quick's place: pushes run with
@@ -894,7 +894,10 @@ export function connectionCard({ host, locked = false, launched = false, realUse
   else if (launched) noQuick = ' It is launched, and a launched product needs a narrow connection, so Quick is not offered.';
   // On GitLab the project key can be refused (always on the public GitLab's free plan, and where a company switches them off), and
   // the token in its place opens every project.
-  const reach = host === 'gitlab'
+  // On the public GitLab's free plan there is no project key, so the card leads with what a free account gets.
+  const reach = host === 'gitlab' && publicGitLab
+    ? `a free GitLab account gets a ${PERSONAL_DAYS}-day token you paste, which can act as you in every GitLab project and group you can reach; a paid plan gets the narrow key instead, and if that leaked, only this project would be open`
+    : host === 'gitlab'
     ? `if it leaked, only this project would be open, unless GitLab won't make a project key (the public GitLab's free plan won't, and some companies switch them off): then a ${PERSONAL_DAYS}-day token you paste stands in, and it can act as you in every GitLab project and group you can reach`
     : 'if it leaked, the rest of your account would stay out of reach';
   // A narrow way still leaves the host's own tool signed in as the director (only the one-day token is revoked), and on Windows
@@ -2401,7 +2404,7 @@ export function hostStep({
       const toolOut = host === 'gitlab' && (hostToolLeftOut(ctx, host) || glabState !== 'works');
       const asked = { host, locked, launched, realUsers: realUsers || launched || product.joining === true, platform, where };
       const held = reach === null || reach.found.key !== 'none' || reach.cliSigned === true;
-      let card = connectionCard({ ...asked, appFile, asIs: reach?.offered === true, held, toolOut });
+      let card = connectionCard({ ...asked, appFile, asIs: reach?.offered === true, held, toolOut, publicGitLab: base === DEFAULT_GITLAB });
       let way = card.options[0].label;
       if (card.options.length > 1) {
         // The id is the question's own (what it asks about) followed by the card's, so an answer to this question on a card
@@ -2417,7 +2420,7 @@ export function hostStep({
             .filter(([key, a]) => key.startsWith(`3.${own}`) && /^[0-9a-f]{10}$/.test(key.slice(`3.${own}`.length)) && Number.isFinite(Date.parse(a?.at)))
             .sort(([, a], [, b]) => Date.parse(a.at) - Date.parse(b.at)).at(-1) ?? [null, null];
           // The card the director answered, whose words the answer's key names.
-          const readings = [false, true].flatMap((a) => [true, false].flatMap((h) => [false, true].map((t) => connectionCard({ ...asked, appFile, asIs: a, held: h, toolOut: t }))));
+          const readings = [false, true].flatMap((a) => [true, false].flatMap((h) => [false, true].map((t) => connectionCard({ ...asked, appFile, asIs: a, held: h, toolOut: t, publicGitLab: base === DEFAULT_GITLAB }))));
           const was = earlier === null ? null : answeredCard(readings, host, (c) => `3.${own}${digest(c)}` === earlierKey);
           const says = (c, label) => c?.options.find((o) => o.label === label)?.says;
           // The way chosen stands while it is still one of the card's and says what it said when chosen; it is never taken as

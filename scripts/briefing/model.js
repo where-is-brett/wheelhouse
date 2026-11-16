@@ -190,9 +190,7 @@ function sourceLines(sources) {
   return out;
 }
 
-// Safekeeping's line for a project kept only here (scripts/safekeeping/status.js), and the next step for it, as step 3's card gives it.
-const NO_BACKUP_LINE = 'Only on this computer, no backup';
-const NO_BACKUP_NEXT = 'you choose its folder later, from the Safekeeping line on the Logbook';
+// Safekeeping's line for a project kept only here (scripts/safekeeping/status.js).
 
 // The one sentence on safekeeping, or null: when the level turns, and for an unchanged watch once a month. `said` is what a
 // briefing last said ({ level, at }). The caller records `level` only when the text showed the sentence.
@@ -200,8 +198,7 @@ function safekeepingNews(health, said, nowMs) {
   const line = records(health).find((l) => l.safekeeping === true);
   if (line === undefined) return null;
   const named = oneLine(line.text).replace(SAFEKEEPING_LEAD, '');
-  // No backup yet says what to do next, in step 3's words.
-  const words = named === NO_BACKUP_LINE ? `${named}; ${NO_BACKUP_NEXT}` : named;
+  const words = named;
   const level = line.level === 'watch' ? 'watch' : 'safe';
   if (level === 'safe') return said?.level === 'watch' ? { level, line: `Safekeeping has cleared: ${words}` } : null;
   if (said?.level !== 'watch') return { level, line: `Safekeeping has turned to watch: ${words}` };

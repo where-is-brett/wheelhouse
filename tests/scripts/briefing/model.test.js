@@ -468,7 +468,7 @@ const told = (health, safekeepingSaid, now = at(20)) => briefingModel({ model: b
 
 test('a watch on a project with no backup gives the next step, in step 3\'s words', () => {
   const b = told([{ ...watchLine, text: 'Safekeeping: Only on this computer, no backup' }], null);
-  assert.deepEqual(b.watch, ['Safekeeping has turned to watch: Only on this computer, no backup; you choose its folder later, from the Safekeeping line on the Logbook']);
+  assert.deepEqual(b.watch, ['Safekeeping has turned to watch: Only on this computer, no backup']);
 });
 
 test('a watch shows in To watch and the verdict still says nothing is needed', () => {

@@ -65,7 +65,7 @@ const inWords = (ms) => {
   return `${NUMBERS[m] ?? m} minute${m === 1 ? '' : 's'}`;
 };
 const MINUTES = inWords(PUSH_TEST_WAIT_MS);
-const LOCK = `lock your computer until your phone buzzes, or for ${inWords(PUSH_TEST_LOCK_MS)}.`;
+const LOCK = `lock your computer for ${inWords(PUSH_TEST_LOCK_MS)}; the test arrives after ${MINUTES.replace(' minutes', '')}.`;
 // How old a Ready may be before card B is asked rather than card A again (ruling R66).
 const READY_STALE_MS = PUSH_TEST_WAIT_MS + CLICK_FRESH_MS;
 

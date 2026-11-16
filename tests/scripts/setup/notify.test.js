@@ -141,7 +141,7 @@ test('with no answer, step 9 asks the card of plain steps, ending with the scree
   // wait before the push is sent, so it goes out while the screen is still locked.
   assert.ok(PUSH_TEST_LOCK_MS > PUSH_TEST_WAIT_MS);
   assert.equal(PUSH_TEST_LOCK_MS, 3 * 60 * 1000);
-  assert.match(card.what, /click Ready and lock your computer until your phone buzzes, or for three minutes\.$/);
+  assert.match(card.what, /click Ready and lock your computer for three minutes; the test arrives after two\.$/);
   assert.doesNotMatch(card.what, /for two minutes/);
   assert.match(card.options[0].says, /two minutes/);
   // Short, since it opens with the verdict and the first briefing, and its recommended option reads
@@ -162,7 +162,7 @@ test('through the helper, the card is a question with no set line, and Ready wai
     assert.equal(asked.ask.step, 9);
     assert.equal(asked.ask.id, READY_ID);
     assert.equal(setLineOf(asked.ask.card.question), null);
-    assert.ok(asked.ask.card.question.includes('lock your computer until your phone buzzes, or for three minutes'));
+    assert.ok(asked.ask.card.question.includes('lock your computer for three minutes; the test arrives after two.'));
 
     // Ready, kept signed; a minute later, a minute is left.
     await answer(asked.ask.card, READY.ready);
