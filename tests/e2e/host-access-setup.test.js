@@ -161,8 +161,8 @@ test('a computer with no glab and a key that can only push: step 2 settles with 
       assert.deepEqual(connectionCard.options.map((o) => o.label), [WAYS.asIs, STRICTER]);
       assert.equal(connectionCard.recommend, WAYS.asIs);
       assert.deepEqual(planned.changes.find((c) => c.action === 'key-card'), { kind: 'host', target: 'gitlab', action: 'key-card', state: 'push-only' });
-      assert.match(planned.card.what, /Wheelhouse will push with your own git as it is, and reach GitLab's web API, with the same key/);
-      assert.match(planned.card.what, /replacing the one your git holds/);
+      assert.match(planned.card.what, /Wheelhouse pushes with your own git as it is, and uses its key for merge requests\./);
+      assert.match(planned.card.what, /a new one, which replaces the one your git holds/);
       for (const text of [JSON.stringify(connectionCard), JSON.stringify(planned.card), planned.director]) assert.doesNotMatch(text, /\bREST\b|\bcurl\b/i);
 
       const { lines, run } = await applyStep(step, folder, planned.changes, planned.answers);

@@ -24,7 +24,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { SETUP_TITLES } from '../state/card-lines.js';
+import { DEFAULT_GITLAB } from '../host/gitlab-base.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
+// The public GitLab's name as its card offers it.
+const PUBLIC_GITLAB = new URL(DEFAULT_GITLAB).hostname;
 const HERE = fileURLToPath(import.meta.url);
 const T0 = new Date('2026-11-16T03:00:00.000Z');
 export const COMPANY_ADDRESS = 'https://gitlab.example.com';
@@ -34,7 +38,7 @@ export const PATHS = Object.freeze({
   a: { title: 'A company\'s GitLab on Windows, no real users, GitLab\'s tool left out, git holding no key, Use my git as it is chosen', platform: 'win32', host: 'GitLab', where: 'company', way: 'Use my git as it is', glab: 'unavailable' },
   b: { title: 'A company\'s GitLab on Windows, no real users, GitLab\'s tool left out, Narrow chosen', platform: 'win32', host: 'GitLab', where: 'company', way: 'Narrow', glab: 'unavailable' },
   'b\'': { title: 'A company\'s GitLab on Windows, no real users, GitLab\'s tool to be fetched but not to be had, Quick chosen', platform: 'win32', host: 'GitLab', where: 'company', tool: 'fetch', way: 'Quick', glab: 'unavailable' },
-  c: { title: 'The public GitLab on Windows', platform: 'win32', host: 'GitLab', where: 'gitlab.com', glab: 'unavailable' },
+  c: { title: 'The public GitLab on Windows', platform: 'win32', host: 'GitLab', where: 'public', glab: 'unavailable' },
   d: { title: 'GitHub on Windows', platform: 'win32', host: 'GitHub', gh: 'in' },
   e: { title: 'A company\'s GitLab on a Mac, GitLab\'s tool in', platform: 'darwin', host: 'GitLab', where: 'company', glab: 'in' },
 });
@@ -115,7 +119,7 @@ function choose(p, { id, card }, { stepTwoDone }) {
   if (id === 'one-card' || /^plan-/.test(id)) return { label: stepTwoDone.customised ? 'Go ahead' : 'Customise' };
   if (id === 'real-users') return { label: pick('Not yet') };
   if (id === 'host' || /^join/.test(id)) return { label: pick(p.host) };
-  if (/^gitlab-where/.test(id)) return { label: pick(p.where === 'company' ? 'My company\'s GitLab' : 'gitlab.com') };
+  if (/^gitlab-where/.test(id)) return { label: pick(p.where === 'company' ? 'My company\'s GitLab' : PUBLIC_GITLAB) };
   if (/^host-tool-/.test(id) && p.tool === 'fetch') return { label: labels.find((l) => l.startsWith('Fetch')) ?? recommended };
   if (/^gitlab-address/.test(id)) return { text: COMPANY_ADDRESS };
   if (/^connection/.test(id) && p.way) {
@@ -255,7 +259,7 @@ export function printCards(name, { cards, end, said }) {
   return lines.join('\n');
 }
 
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === HERE && process.env.WHEELHOUSE_RENDER_STEPS !== '1') {
+if (startedAsScript(import.meta.url) && process.env.WHEELHOUSE_RENDER_STEPS !== '1') {
   const which = process.argv[2] && process.argv[2] !== '--desktop' ? process.argv[2] : 'all';
   const desktop = process.argv.includes('--desktop');
   for (const name of which === 'all' ? Object.keys(PATHS) : [which]) {

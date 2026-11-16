@@ -152,6 +152,27 @@ export function setupGitEnv({ host = null, gitPath = 'git', env = process.env, p
   return isolated({ ...signIn, ...(dir === null ? {} : { [pathKey]: `${dir}${paths.delimiter}${env[pathKey] ?? ''}` }) });
 }
 
+// The environment setup's git runs with where the director has no host tool to sign in with (GitLab
+// narrow, made with the one-day setup token): no credential helper, and the project's own key as an
+// http.extraHeader for the project's GitLab address only (`root`, https), as the helper gives it to
+// the agents' git. Carried in the environment, never an argument; the setup token is never here.
+export function keyedGitEnv({ root, key, gitPath = 'git', env = process.env, platform = process.platform } = {}) {
+  if (typeof key !== 'string' || key === '' || /[\s\0]/.test(key)) throw new Error('The project\'s key is missing');
+  if (typeof root !== 'string' || !/^https:\/\/[^\s/?#]+(?:\/[^\s?#]*)?$/.test(root) || root.endsWith('/')) throw new Error('The project\'s key is given to an https address only');
+  const plain = setupGitEnv({ gitPath, env, platform });
+  const pairs = [
+    ...pairsOf(plain),
+    ['credential.helper', ''],
+    [`http.${root}/.extraheader`, `AUTHORIZATION: basic ${Buffer.from(`oauth2:${key}`, 'utf8').toString('base64')}`],
+  ];
+  const out = { ...plain, GIT_CONFIG_COUNT: String(pairs.length) };
+  pairs.forEach(([k, v], i) => {
+    out[`GIT_CONFIG_KEY_${i}`] = k;
+    out[`GIT_CONFIG_VALUE_${i}`] = v;
+  });
+  return out;
+}
+
 // Said when the repository's own config holds a setting that isn't on the allowed list, or can't be read.
 export const unlistedSettingsLine = (keys) => {
   const one = keys.length === 1;

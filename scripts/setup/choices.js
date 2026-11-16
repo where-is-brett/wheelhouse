@@ -127,8 +127,9 @@ export async function openChoices({ steps, run, answers, planOf }) {
       const answer = chosen ?? { label: card.recommend, text: null, at: null };
       list.push({ step: at, id, key, card, typed: typed === true, writes, chosen, label: answer.label, text: answer.text, ...(got.ask.line ? { line: got.ask.line } : {}), ...(got.ask.endsBatch === true ? { endsBatch: true } : {}) });
       taken[key] = answer;
-      // A card that waits for the director's own answer (a company's GitLab address) ends the look at this step until it has one.
-      if (chosen === null && got.ask.waits === true) break;
+      // A card that waits for the director's own answer (a company's GitLab address), or that recommends nothing for a
+      // look to take in its place (which GitLab), ends the look at this step until it has one.
+      if (chosen === null && (got.ask.waits === true || card.recommend === null)) break;
     }
   }
   return list;
@@ -259,7 +260,9 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     'Nothing runs until you choose.',
     'To know more, just ask.',
   ].join('\n');
-  const choices = list.map((c) => ({ key: c.key, label: c.label ?? null, text: c.text ?? null }));
+  // Go ahead stands only for a choice with an answer: the director's own or a card's recommendation. A card that
+  // recommends nothing, unanswered, is asked at its step.
+  const choices = list.filter((c) => c.label !== null && c.label !== undefined).map((c) => ({ key: c.key, label: c.label, text: c.text ?? null }));
   const records = list.filter((c) => c.chosen === null).flatMap((c) => {
     const labels = c.writes?.labels;
     return labels && Object.hasOwn(labels, c.label) ? labels[c.label] : [];

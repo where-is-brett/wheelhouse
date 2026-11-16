@@ -6,6 +6,8 @@
 //   GitLab  (docs.gitlab.com, "Personal access tokens"): name, description and scopes. No expiry parameter is
 //           documented, so the card tells the director the days to choose.
 //   GitLab's project key page is documented without any query parameters, so it is opened as it is.
+//   GitLab's setup token (kind 'setup'): api alone, for setup to make the project and its key while it holds
+//   the token in memory; the card tells the director to set its expiry to one day.
 // The GitLab pages are on the project's own GitLab (`base`, from gitlabBase).
 import { DEFAULT_GITLAB } from './gitlab-base.js';
 import { KEY_SCOPES } from './gitlab-key.js';
@@ -42,6 +44,12 @@ export function tokenUrl({ host, kind, owner, repos = [], name, days, base = DEF
       return `${root}/${project.split('/').map(encodeURIComponent).join('/')}/-/settings/access_tokens`;
     }
     const url = new URL(`${root}/-/user_settings/personal_access_tokens`);
+    if (kind === 'setup') {
+      url.searchParams.set('name', 'Wheelhouse setup (one day)');
+      url.searchParams.set('description', 'Used once by Wheelhouse setup to make the project, its key and its protection, and never kept. It can be revoked afterwards.');
+      url.searchParams.set('scopes', 'api');
+      return url.toString();
+    }
     url.searchParams.set('name', name);
     url.searchParams.set('description', `Wheelhouse agents: code and merge requests${where ? ` in ${where}` : ''}.`);
     url.searchParams.set('scopes', KEY_SCOPES.join(','));

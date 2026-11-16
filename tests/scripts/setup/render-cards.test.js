@@ -99,7 +99,7 @@ test('path a: with GitLab\'s tool left out, Quick is not offered, and where git 
   const { cards } = await rendered('a');
   const connection = cards.filter((c) => c.step === 3 && /^connection-/.test(c.id));
   assert.equal(connection.length, 1, 'the connection card is asked once');
-  assert.deepEqual(connection[0].card.options.map((o) => o.label), ['Use my git as it is', 'Narrow']);
+  assert.deepEqual(connection[0].card.options.map((o) => o.label), ['Narrow', 'Use my git as it is'], 'the recommended way comes first');
   assert.equal(recommendedOf(connection[0].card), 'Narrow');
   const own = connection[0].card.options.find((o) => o.label === 'Use my git as it is');
   assert.match(own.description, /a GitLab key you make on a page that opens/, 'the way says the key is still to be made');
@@ -119,6 +119,36 @@ test('path b\': Quick, once GitLab\'s tool can\'t be fetched, is asked again wit
   assert.equal(connection[1].card.options[0].label, connection[0].card.options[0].label, 'the first option stays first');
   assert.ok(!connection[1].card.options.some((o) => o.label === 'Quick'), 'Quick is gone');
   assert.equal(recommendedOf(connection[1].card), recommendedOf(connection[0].card));
+});
+
+test('path b: which GitLab and its address recommend no option, and say so on a line of their own', async () => {
+  const { cards } = await rendered('b');
+  for (const id of ['gitlab-where', 'gitlab-address']) {
+    const c = cards.find((x) => x.step === 3 && (x.id === id || x.id.startsWith(`${id}-`)));
+    assert.ok(c, `${id} is asked`);
+    assert.equal(recommendedOf(c.card), null, `${id} recommends no option`);
+    assert.ok(c.card.question.split('\n').some((l) => /^No recommendation: /.test(l)), `${id} says it recommends none`);
+    assert.ok(!c.card.options.some((o) => /^Recommended:/.test(o.description ?? '')), `${id} marks no option as recommended`);
+  }
+});
+
+test('path b: the connection card puts Narrow, the recommended way, first', async () => {
+  const { cards } = await rendered('b');
+  const connection = cards.find((c) => c.step === 3 && /^connection-/.test(c.id));
+  assert.equal(connection.card.options[0].label, 'Narrow');
+  assert.equal(recommendedOf(connection.card), 'Narrow');
+});
+
+test('paths b, b\' and c: step 3\'s Go-ahead card says the one-day token is used, never kept, and protects the main line now', async () => {
+  for (const name of ['b', 'b\'', 'c']) {
+    const { cards } = await rendered(name);
+    const go = cards.find((c) => c.kind === 'go-ahead' && c.step === 3);
+    assert.ok(go, `path ${name} shows step 3's Go-ahead card`);
+    assert.match(go.card.question, /one-day GitLab token on a page that opens and paste it into your computer's own box/, `path ${name}`);
+    assert.match(go.card.question, /then forgets it/, `path ${name}`);
+    assert.match(go.card.question, /Setup protects the main line now, while it holds that token/, `path ${name}`);
+    assert.doesNotMatch(go.card.question, /sign in in your browser/i, `path ${name} asks for no browser sign-in`);
+  }
 });
 
 test('path b: Narrow stands, so the connection card is asked once', async () => {

@@ -108,7 +108,7 @@ test('the switch card is level 3, its one option recommended, and says what swit
   assert.equal(card.level, 3);
   assert.equal(card.recommend, 'Confirm');
   assert.deepEqual(card.options.slice(0, 1), ['Confirm']);
-  assert.match(card.descriptions[0], /^Recommended: .*new quick changes are then built by the new engine, Archon, once you approve the pull request that adds its files/);
+  assert.match(card.descriptions[0], /^Recommended: .*New quick changes are then built by the new engine, Archon, once you approve the pull request that adds its files/);
   assert.match(card.question, /Build engine: Archon/);
 });
 

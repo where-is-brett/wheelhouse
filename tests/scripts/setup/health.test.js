@@ -131,8 +131,11 @@ test('through the helper, step 10\'s card waits for steps 7 to 9, then composes 
     for (const n of [7, 8, 9]) markStep(run.id, n, 'doneAt', { now: () => T0 });
     const got = await plan(10);
     assert.equal(got.ok, true, got.refused);
-    assert.equal(setLineOf(got.card.question), setupLine(10, got.hash));
-    assert.ok(composeCard({ ...(await healthStep().plan({ folder })).card, target: { step: 10, hash: got.hash } }));
+    // The director reads the card without its line of hash; composed with the line, it gives step 10's.
+    assert.equal(setLineOf(got.card.question), null);
+    assert.match(got.card.question, /^Setup step 10, Health check:/);
+    const composed = composeCard({ ...(await healthStep().plan({ folder })).card, kind: 'setup', target: { step: 10, hash: got.hash } });
+    assert.equal(setLineOf(composed.question.question), setupLine(10, got.hash));
   });
 });
 
@@ -796,7 +799,8 @@ test('a red board closes the trial, leaves step 10 unfinished, and a fresh card 
     // Not "already done": a fresh Go-ahead card for step 10.
     const card = await plan(10);
     assert.equal(card.ok, true, card.refused);
-    assert.equal(setLineOf(card.card.question), setupLine(10, card.hash));
+    assert.match(card.card.question, /^Setup step 10, Health check:/);
+    assert.equal(setLineOf(card.card.question), null, 'sent without its line of hash');
     // A new click is a new attempt: the old finish no longer counts.
     const run = runOf(folder);
     markStep(run.id, 10, 'clickedAt', { now: () => T0 });

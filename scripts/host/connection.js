@@ -17,7 +17,12 @@
 //     installationId?: number,  GitHub narrow: the app's installation on the project's
 //                           account, kept when step 3 connected it
 //     directorSignIn?: 'narrow-key',  GitHub: the director's own tool sign-in was made with a key for this
-//                           project only, which has no Administration, so step 7 asks for the one-off key
+//                           project only, which has no Administration, so step 7 asks for the one-off key;
+//                           'setup-token', GitLab narrow without glab: setup made the project, its key and
+//                           its protection with a one-day token held in memory only, so the later steps use
+//                           the project's own key
+//     setupAuthor?: { name, email },  with 'setup-token': the director's name and commit address, read
+//                           with that token, for setup's own commit at step 7
 //   }
 //
 // It is kept in the project's settings and holds no secret. Quick uses the
@@ -53,6 +58,10 @@ export const BACKENDS = Object.freeze(['cli', 'rest']);
 export const backendOf = (connection) => (connection?.backend === 'rest' ? 'rest' : 'cli');
 
 const validId = (id) => Number.isInteger(id) && id > 0;
+// How the director's sign-in for setup was made, where it was not their host tool's own.
+const DIRECTOR_SIGN_INS = ['narrow-key', 'setup-token'];
+const validAuthor = (a) => a !== null && typeof a === 'object' && Object.keys(a).length === 2
+  && typeof a.name === 'string' && a.name !== '' && !/[\r\n\0]/.test(a.name) && typeof a.email === 'string' && /^[^\s@<>]+@[^\s@<>]+$/.test(a.email);
 const timeOf = (now) => (typeof now === 'function' ? now() : now ?? new Date()).getTime();
 
 function check(connection) {
@@ -67,7 +76,9 @@ function check(connection) {
   }
   if (connection.backend !== undefined && !BACKENDS.includes(connection.backend)) throw new Error('The connection\'s backend must be cli or rest');
   if (connection.switched !== undefined && connection.switched !== 'cli') throw new Error('The connection\'s switched must name the backend it left');
-  if (connection.directorSignIn !== undefined && connection.directorSignIn !== 'narrow-key') throw new Error('The connection\'s directorSignIn must be narrow-key');
+  if (connection.directorSignIn !== undefined && !DIRECTOR_SIGN_INS.includes(connection.directorSignIn)) throw new Error('The connection\'s directorSignIn must be narrow-key or setup-token');
+  if (connection.directorSignIn === 'setup-token' && !(host === 'gitlab' && mode === 'narrow')) throw new Error('A setup token is for a narrow GitLab connection only');
+  if (connection.setupAuthor !== undefined && !(connection.directorSignIn === 'setup-token' && validAuthor(connection.setupAuthor))) throw new Error('The connection\'s setupAuthor must be a name and an address, on a setup-token connection');
   if (connection.installationId !== undefined && !validId(connection.installationId)) {
     throw new Error('The connection\'s installation must be a number');
   }

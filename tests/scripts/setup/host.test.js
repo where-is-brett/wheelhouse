@@ -14,7 +14,7 @@ import {
   hostStep, cardFor, signIn, makeRepos, connectionCard, stricterCard, stricterWay, STRICTER, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
   directorGitlabApi, directorKey, signInStatus, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
   APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, ORGS_UNREAD, launchedIn,
-  checkOutJoined, findInstallation, CERTIFICATE_GIVEN, reachLine, askAdministrationKey,
+  checkOutJoined, findInstallation, CERTIFICATE_GIVEN, reachLine, askAdministrationKey, setupTokenApi,
 } from '../../../scripts/setup/host.js';
 import { installationCovers } from '../../../scripts/host/connection.js';
 import { caFile, probeCertificate, CERTIFICATE_NOT_IN_STORE } from '../../../scripts/host/company-ca.js';
@@ -32,7 +32,7 @@ import { readProject } from '../../../scripts/lib/projects.js';
 import { stateDir, profileDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
-import { makeFakeCurl, makeRoutedCurl } from '../../helpers/fake-curl.js';
+import { makeFakeCurl, makeRoutedCurl, parseConfig } from '../../helpers/fake-curl.js';
 
 // Setup's own runs: git and what the test fakes; any other host tool is refused and noted here.
 const hostLog = [];
@@ -731,7 +731,7 @@ test('the longest Go-ahead card composes within the card\'s length, for each hos
       const hash = planHash(planned.changes);
       const { question } = composeCard({ ...planned.card, target: { step: 3, hash } });
       assert.equal(setLineOf(question.question), setupLine(3, hash), `${host} ${way}`);
-      for (const a of planned.asked) composeCard({ ...a.card, kind: 'question' });
+      for (const a of planned.asked) composeCard({ ...a.card, kind: 'question', suggest: false });
     }
   });
 });
@@ -1764,7 +1764,7 @@ test('narrow on GitHub is always offered, through their own app when Wheelhouse\
     const step = stepFor(w);
     const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.own }));
     // On the Mac, Make it stricter leads straight to their own app while Wheelhouse's isn't registered.
-    assert.deepEqual(planned.asked.at(-1).card.options.map((o) => o.label), [WAYS.quick, STRICTER]);
+    assert.deepEqual(planned.asked.at(-1).card.options.map((o) => o.label), [STRICTER, WAYS.quick], 'the recommended option comes first');
     assert.equal(planned.asked.at(-1).card.recommend, STRICTER, 'stricter is recommended for a product with real users');
     // A Go ahead, not a wait: their own app is made on the director's account at apply.
     assert.equal(planned.wait, undefined);
@@ -2971,8 +2971,8 @@ test('where the key the director\'s store holds passes GET /user, "Use my git as
       assert.ok(!planned.changes.some((c) => c.action === 'sign-in' || c.action === 'key-card'), 'nothing is asked');
       assert.deepEqual(planned.changes.find((c) => c.action === 'connection'), { kind: 'host', target: 'gitlab', action: 'connection', mode: 'as-is', locked: false, backend: 'rest' });
       assert.match(planned.card.what, /your own git as it is/);
-      assert.match(planned.card.what, /GitLab's web API, with the same key/);
-      assert.match(planned.card.what, /same key your git already uses\. It can reach everything your account can on GitLab\./);
+      assert.match(planned.card.what, /Wheelhouse pushes with your own git as it is, and uses its key for merge requests\./);
+      assert.match(planned.card.what, /That key reaches everything your account can on GitLab\./);
       assert.doesNotMatch(JSON.stringify(planned.card), /\bREST\b|\bcurl\b/i);
       assert.equal(planned.director, 'One click');
       const { lines } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
@@ -2999,7 +2999,7 @@ test('a key that can only push brings the key card: the new key is stored with a
       const step = stepFor(w, { via: asIsVia(curl), open: async (url) => { opened.push(url); }, askSecret: async (ask) => { box.push(ask); return `${FRESH_KEY}\n`; } });
       const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.asIs }));
       assert.deepEqual(planned.changes.find((c) => c.action === 'key-card'), { kind: 'host', target: 'gitlab', action: 'key-card', state: 'push-only' });
-      assert.match(planned.card.what, /replacing the one your git holds/);
+      assert.match(planned.card.what, /a new one, which replaces the one your git holds/);
       assert.match(planned.director, /pasted into your computer's box/);
       assert.doesNotMatch(JSON.stringify(planned.card), /\bREST\b|\bcurl\b/i);
       const { lines, run } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
@@ -3102,8 +3102,10 @@ test('a Locked or launched project is never offered the director\'s own git, onl
   // Recommended, its cost on Windows is said once, in the option, and the reason does not repeat it.
   assert.match(windows.options[0].says, /On Windows any agent's command could ask git for that key/);
   assert.doesNotMatch(windows.because, /Windows/);
-  assert.match(connectionCard({ host: 'gitlab', platform: 'win32', asIs: true, realUsers: true }).options[0].says, /On Windows any agent's command could ask git for that key/);
-  assert.equal(connectionCard({ host: 'gitlab', platform: 'win32', asIs: true, realUsers: true }).recommend, WAYS.narrow, 'real users keep the narrow key recommended');
+  const launched = connectionCard({ host: 'gitlab', platform: 'win32', asIs: true, realUsers: true });
+  assert.match(launched.options.find((o) => o.label === WAYS.asIs).says, /On Windows any agent's command could ask git for that key/);
+  assert.equal(launched.recommend, WAYS.narrow, 'real users keep the narrow key recommended');
+  assert.equal(launched.options[0].label, WAYS.narrow, 'the recommended way comes first');
 });
 
 test('a computer with no tool that starts and no curl is told so, as a wait; a proxy password in git\'s settings is told too, and never repeated', async () => {
@@ -3168,5 +3170,204 @@ test('a narrow GitHub connection for a new product, or one signed in already, ke
     const empty = productFolder('Fresh');
     const newPlan = await answerAll(stepFor(fresh, { appFile: appFile(tempFolder('wh-app-')), fetch: gh.fetch }), ctxFor(empty), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.wheelhouse }));
     assert.equal(newPlan.changes.find((c) => c.action === 'sign-in')?.via, undefined, 'a repository still to be made needs the account, so the browser');
+  });
+});
+
+// ---- Narrow on GitLab without its tool: the one-day setup token (paths b, b' and c) ----
+
+const SETUP_TOKEN = 'glpat-one-day-setup-token-0001';
+
+// The system's curl in front of a stand-in GitLab with the setup token's account: GET /user answers for SETUP_TOKEN
+// only, and the project's protected branches and settings are kept here; projects and project keys are the stand-in's
+// (`w.api`). Each call is recorded with its arguments, its config and its environment, so a test can look for the token.
+function setupTokenCurl(w, { userStatus = 200 } = {}) {
+  const calls = [];
+  const branches = {};
+  const answerFor = async (call) => {
+    const token = call.headers.find((h) => /^private-token:/i.test(h))?.replace(/^[^:]+:\s*/, '') ?? '';
+    if (token !== SETUP_TOKEN && !/^glpat-project-key-/.test(token) && token !== PASTED) return { status: 401, body: { message: '401 Unauthorized' } };
+    const p = call.url.replace(/^https:\/\/[^/]+\/api\/v4/, '');
+    const body = call.body === undefined ? undefined : JSON.parse(call.body);
+    if (p === '/user') return userStatus === 200 ? { status: 200, body: { id: 7, username: USER, name: 'A Director', commit_email: 'director@example.com' } } : { status: userStatus, body: { message: 'no' } };
+    const branch = /^\/projects\/([^/]+)\/protected_branches(?:\/(.+))?$/.exec(p);
+    if (branch && call.method === 'GET') return branches[`${branch[1]}/${branch[2]}`] ? { status: 200, body: branches[`${branch[1]}/${branch[2]}`] } : { status: 404, body: null };
+    if (branch && call.method === 'POST') {
+      branches[`${branch[1]}/${body.name}`] = { name: body.name, push_access_levels: [{ access_level: body.push_access_level }], merge_access_levels: [{ access_level: body.merge_access_level }], allow_force_push: body.allow_force_push };
+      return { status: 201, body: branches[`${branch[1]}/${body.name}`] };
+    }
+    if (/\/approval_rules$/.test(p)) return { status: 403, body: null };
+    if (/\/(variables|pipelines)\?/.test(p)) return { status: 200, body: [] };
+    if (call.method === 'PUT' && /^\/projects\/[^/]+$/.test(p)) return { status: 200, body: {} };
+    if (call.method === 'GET') return w.api.get(p);
+    if (call.method === 'POST') return w.api.post(p, body);
+    return { status: 404, body: null };
+  };
+  const others = [];
+  const run = async (file, args = [], options = {}) => {
+    // Any other program (git, reading the director's settings) goes to the stand-in, recorded for the leak check.
+    if (path.basename(file).replace(/\.exe$/, '') !== 'curl') {
+      others.push({ file, args: [...args], env: options.env ?? null, input: options.input ?? null });
+      return w.run(file, args, options);
+    }
+    const config = String(options.input ?? '');
+    const pairs = parseConfig(config);
+    const field = (name) => pairs.find(([key]) => key === name)?.[1];
+    const call = {
+      file, args: [...args], config, baseEnv: options.baseEnv ?? null, env: options.env ?? null,
+      url: field('url'), method: field('request') ?? 'GET', headers: pairs.filter(([key]) => key === 'header').map(([, value]) => value), body: field('data-binary'),
+    };
+    calls.push(call);
+    const answer = await answerFor(call);
+    const format = args[args.indexOf('--write-out') + 1] ?? '';
+    const tail = format.replace('%{http_code}', String(answer.status)).replace('%{http_connect}', '0').replace(/\\n/g, '\n');
+    return { code: 0, stdout: `${answer.body === null || answer.body === undefined ? '' : JSON.stringify(answer.body)}${tail}`, stderr: '' };
+  };
+  return { run, calls, others };
+}
+const tokenVia = (curl) => ({ run: curl.run, curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'darwin' });
+
+// Every place the token could leak to: a call's arguments or environment, and any file under the given folders.
+function tokenOutside(curl, ...folders) {
+  const where = [];
+  for (const c of curl.calls) {
+    if (c.args.some((a) => a.includes(SETUP_TOKEN))) where.push(`the arguments of ${c.url}`);
+    if (JSON.stringify(c.baseEnv ?? {}).includes(SETUP_TOKEN) || JSON.stringify(c.env ?? {}).includes(SETUP_TOKEN)) where.push(`the environment of ${c.url}`);
+  }
+  for (const o of curl.others ?? []) if (JSON.stringify(o).includes(SETUP_TOKEN)) where.push(`${path.basename(o.file)} ${o.args.join(' ')}`);
+  for (const c of hostLog) if (JSON.stringify(c).includes(SETUP_TOKEN)) where.push('a program setup ran');
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.isFile() && fs.readFileSync(full).includes(SETUP_TOKEN)) where.push(full);
+    }
+  };
+  for (const f of folders) if (typeof f === 'string' && fs.existsSync(f)) walk(f);
+  return where;
+}
+
+test('the setup token goes to curl only in the request header on standard input, never its arguments or environment, and is forgotten on request', async () => {
+  const w = standIn();
+  const curl = setupTokenCurl(w);
+  const opened = [];
+  const held = await setupTokenApi({ base: 'https://gitlab.example.com', via: tokenVia(curl), open: async (url) => { opened.push(url); }, askSecret: async () => `${SETUP_TOKEN}\n`, platform: 'darwin' });
+  assert.equal(held.user, USER);
+  assert.deepEqual(held.author, { name: 'A Director', email: 'director@example.com' });
+  assert.equal(opened.length, 1);
+  const page = new URL(opened[0]);
+  assert.equal(page.origin, 'https://gitlab.example.com');
+  assert.equal(page.searchParams.get('scopes'), 'api', 'the token page asks for api alone');
+  assert.equal(curl.calls.length, 1);
+  const [call] = curl.calls;
+  assert.equal(call.url, 'https://gitlab.example.com/api/v4/user');
+  assert.ok(call.headers.includes(`PRIVATE-TOKEN: ${SETUP_TOKEN}`), 'the token is in the header');
+  assert.deepEqual(tokenOutside(curl), []);
+  assert.ok(!JSON.stringify(held).includes(SETUP_TOKEN), 'what the call gives back holds no token');
+  held.forget();
+  await assert.rejects(held.api.get('/user'), /forgotten the one-day GitLab token/);
+  assert.equal(curl.calls.length, 1, 'nothing more reaches GitLab once forgotten');
+});
+
+test('the setup token is refused for a base that is not https, before any page opens or box is shown', async () => {
+  for (const base of ['http://gitlab.example.com', 'ftp://gitlab.example.com', 'gitlab.example.com']) {
+    let asked = false;
+    await assert.rejects(setupTokenApi({ base, via: tokenVia(setupTokenCurl(standIn())), open: async () => { asked = true; }, askSecret: async () => { asked = true; return SETUP_TOKEN; } }));
+    assert.equal(asked, false, base);
+  }
+});
+
+test('a setup token GitLab refuses, an empty box, a closed box and a stop each make nothing, and no message carries the token', async () => {
+  for (const status of [401, 403]) {
+    const curl = setupTokenCurl(standIn(), { userStatus: status });
+    const got = await setupTokenApi({ base: 'https://gitlab.example.com', via: tokenVia(curl), open: async () => {}, askSecret: async () => SETUP_TOKEN }).catch((e) => e);
+    assert.match(got.message, /GitLab did not accept the token, so nothing was made/);
+    assert.ok(!got.message.includes(SETUP_TOKEN) && !String(got.stack).includes(SETUP_TOKEN));
+    assert.equal(curl.calls.length, 1);
+  }
+  for (const askSecret of [async () => '', async () => '  \n', async () => 'two words', async () => { throw new Error('closed'); }]) {
+    const curl = setupTokenCurl(standIn());
+    await assert.rejects(setupTokenApi({ base: 'https://gitlab.example.com', via: tokenVia(curl), open: async () => {}, askSecret }), /No GitLab token was given, so nothing was made on GitLab/);
+    assert.equal(curl.calls.length, 0);
+  }
+  // A stop as the token comes back: nothing reaches GitLab.
+  const curl = setupTokenCurl(standIn());
+  await assert.rejects(setupTokenApi({ base: 'https://gitlab.example.com', via: tokenVia(curl), open: async () => {}, askSecret: async () => SETUP_TOKEN, halt: () => { throw new Error(STOPPED); } }), (e) => e.message === STOPPED);
+  assert.equal(curl.calls.length, 0);
+  // curl failing with the token in its own words: the line thrown is curl.js's plain one.
+  const loud = { run: async () => ({ code: 7, stdout: '', stderr: `curl: (7) Failed with PRIVATE-TOKEN: ${SETUP_TOKEN}` }), curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'darwin' };
+  const failed = await setupTokenApi({ base: 'https://gitlab.example.com', via: loud, open: async () => {}, askSecret: async () => SETUP_TOKEN }).catch((e) => e);
+  assert.ok(failed instanceof Error);
+  assert.ok(!failed.message.includes(SETUP_TOKEN) && !String(failed.stack).includes(SETUP_TOKEN), failed.message);
+});
+
+// Step 3 on a GitLab project, Narrow chosen, GitLab's tool blocked and not signed in: the setup token route.
+async function setupTokenRun(w, { curl, askSecret } = {}) {
+  const folder = await gitlabProject(w);
+  const step = stepFor(w, { via: tokenVia(curl), open: async () => {}, askSecret });
+  const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
+  return { folder, step, planned };
+}
+
+test('Narrow on GitLab without its tool makes the project key and protects the main line with the setup token, then forgets it; the token is kept nowhere', async () => {
+  await withHome(async (home) => {
+    const w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
+    const curl = setupTokenCurl(w);
+    const boxes = [];
+    const { folder, step, planned } = await setupTokenRun(w, { curl, askSecret: async (box) => { boxes.push(box.title); return SETUP_TOKEN; } });
+    assert.equal(planned.changes.find((c) => c.action === 'sign-in')?.via, 'setup-token');
+    const { lines, run } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    assert.deepEqual(boxes, ['Wheelhouse: one-day GitLab token'], 'one box, for the setup token');
+    const id = w.repos[`${USER}/shop`].id;
+    assert.equal(readKey(`gitlab-project-${id}`).kind, 'project-key', 'the project key is in the store');
+    assert.ok(curl.calls.some((c) => c.method === 'POST' && /\/protected_branches$/.test(c.url)), 'the main line is protected');
+    assert.ok(lines.some((l) => /Setup has forgotten the one-day token/.test(l)), lines.join('\n'));
+    const kept = readProject(slugFor(`${USER}/shop`));
+    assert.equal(kept.connection.directorSignIn, 'setup-token');
+    assert.ok(!JSON.stringify(kept).includes(SETUP_TOKEN));
+    assert.ok(!JSON.stringify(run).includes(SETUP_TOKEN), 'the journal holds no token');
+    assert.ok(!lines.join('\n').includes(SETUP_TOKEN));
+    // Every call with the token is built from the recorded base, https only.
+    const withToken = curl.calls.filter((c) => c.headers.includes(`PRIVATE-TOKEN: ${SETUP_TOKEN}`));
+    assert.ok(withToken.length > 0 && withToken.every((c) => c.url.startsWith('https://gitlab.com/api/v4/')));
+    assert.deepEqual(tokenOutside(curl, home, folder), []);
+  });
+});
+
+test('where GitLab refuses a project key, the setup token route falls back to a token typed into the box; the setup token is still kept nowhere', async () => {
+  await withHome(async (home) => {
+    const w = standIn({ signedIn: { gitlab: false }, blockedTool: true, keyAnswer: 400, keyBody: { message: '400 Bad request - User does not have permission to create project access token' } });
+    const curl = setupTokenCurl(w);
+    const boxes = [];
+    const { folder, step, planned } = await setupTokenRun(w, { curl, askSecret: async (box) => { boxes.push(box.title); return boxes.length === 1 ? SETUP_TOKEN : PASTED; } });
+    await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    assert.deepEqual(boxes, ['Wheelhouse: one-day GitLab token', 'Wheelhouse: GitLab token']);
+    const kept = readKey(`gitlab-project-${w.repos[`${USER}/shop`].id}`);
+    assert.equal(kept.kind, 'pasted-token');
+    assert.equal(kept.token, PASTED, 'the typed token is kept, never the setup token');
+    assert.deepEqual(tokenOutside(curl, home, folder), []);
+  });
+});
+
+test('a stop part-way through the setup token route forgets the token: nothing after the stop reaches GitLab with it, and it is kept nowhere', async () => {
+  await withHome(async (home) => {
+    const w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
+    const curl = setupTokenCurl(w);
+    const { folder, step, planned } = await setupTokenRun(w, { curl, askSecret: async () => SETUP_TOKEN });
+    let looks = 0;
+    let stoppedAt = null;
+    const stopped = () => {
+      looks += 1;
+      if (looks > 3 && stoppedAt === null) stoppedAt = curl.calls.length;
+      return looks > 3;
+    };
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers, stopped }), /All stop came on/);
+    assert.ok(stoppedAt !== null, 'the stop came on during the step');
+    assert.ok(curl.calls.slice(stoppedAt).every((c) => !c.headers.includes(`PRIVATE-TOKEN: ${SETUP_TOKEN}`)), 'no call with the token after the stop');
+    assert.deepEqual(tokenOutside(curl, home, folder), []);
+    // A fresh Go ahead asks for a new token: the one held was dropped.
+    const boxes = [];
+    const again = stepFor(w, { via: tokenVia(curl), open: async () => {}, askSecret: async () => { boxes.push(1); return SETUP_TOKEN; } });
+    await applyStep(again, folder, planned.changes, { answers: planned.answers });
+    assert.equal(boxes.length, 1);
   });
 });

@@ -16,6 +16,9 @@ export const NOT_NOW = 'Not now';
 export const SEND_BACK = 'Send it back';
 // The line that tells the director more is there for the asking.
 export const TO_KNOW_MORE = 'To know more, just ask.';
+// How a setup question the director answers from fact (which GitLab, its address) says it recommends no option, at the
+// start of its own line of the card.
+export const NO_RECOMMENDATION = 'No recommendation:';
 // The line that stands in for it on a question that has four options of its own, where there is no
 // room for Suggest a change… and a change goes in the typed answer.
 export const TO_CHANGE_IT = 'To change it, type what you\'d change.';

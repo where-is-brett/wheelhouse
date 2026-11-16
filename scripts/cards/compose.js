@@ -16,7 +16,7 @@ import {
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { questionIdOf } from '../lib/build-loop.js';
-import { SUGGEST, SHOW_ME, NOT_NOW, TO_KNOW_MORE, TO_CHANGE_IT, WHAT_CHANGED, SUGGEST_SAYS, SEND_BACK } from '../lib/calm-words.js';
+import { SUGGEST, SHOW_ME, NOT_NOW, TO_KNOW_MORE, TO_CHANGE_IT, WHAT_CHANGED, SUGGEST_SAYS, SEND_BACK, NO_RECOMMENDATION } from '../lib/calm-words.js';
 import { CONFIRMABLE_KINDS } from '../state/events.js';
 import { glossaryOf, termsIn } from '../frontdesk/glossary.js';
 import { normaliseWords } from '../lib/words.js';
@@ -456,6 +456,7 @@ export function textOf(parts) {
     ...(parts.what === parts.ask ? [] : [parts.what]),
     parts.why,
     parts.meanwhile,
+    ...(parts.recommend === null ? [parts.recommendation] : []),
     ...(parts.checks === undefined ? [] : [parts.checks]),
     ...(parts.changed === undefined ? [] : [`${WHAT_CHANGED} ${parts.changed}`]),
     typesChange(parts) ? TO_CHANGE_IT : TO_KNOW_MORE,
@@ -499,7 +500,7 @@ export function composeCard(input) {
     if (sideOf(input.decides) === 'director' && level < DIRECTOR_LEVEL) fail(kind, 'level', `must be 3 or 4: "${input.decides}" is a call the director decides`);
   }
   const said = input.said === undefined ? undefined : flat(words(kind, 'said', input.said));
-  const what = said === undefined ? whatOf(kind, input.what) :`You said: ${said.replace(/[.\s]+$/, '')}. ${SAID_ASKS} ${words(kind, 'what', input.what)}`;
+  const what = said === undefined ? whatOf(kind, input.what) : `You said: ${said.replace(/[.\s]+$/, '')}. ${SAID_ASKS} ${words(kind, 'what', input.what)}`;
   const why = words(kind, 'why', input.why);
   if (input.parked !== undefined && (input.parked !== true || kind !== 'approval')) fail(kind, 'parked', 'belongs to an approval card only, as true');
   const because = words(kind, 'because', input.because);
@@ -514,7 +515,11 @@ export function composeCard(input) {
   if (input.revises !== undefined && !(typeof input.revises === 'string' && /^\S+$/.test(input.revises))) fail(kind, 'revises', 'must be the id of the card it replaces');
   if (input.revises === undefined && input.changed !== undefined) fail(kind, 'changed', 'belongs to a revised card only');
   const changed = input.revises === undefined ? undefined : words(kind, 'changed', input.changed);
-  const recommend = words(kind, 'recommend', input.recommend);
+  // A setup question the director answers from fact (which GitLab, its address) recommends no option: `recommend: null`,
+  // and the card says so on a line of its own, with `because` as its reason.
+  const none = input.recommend === null;
+  if (none && !(kind === 'question' && input.suggest === false)) fail(kind, 'recommend', 'can be null on a setup question only');
+  const recommend = none ? null : words(kind, 'recommend', input.recommend);
   let checks;
   if (level === 4) checks = words(kind, 'checks', input.checks);
   else if (input.checks !== undefined) fail(kind, 'checks', 'belongs to a level 4 card only');
@@ -530,7 +535,7 @@ export function composeCard(input) {
   sameThing(kind, what, input.target);
   const build = Array.isArray(input.commands) && input.commands.length > 0;
   const buttons = offered(kind, input.options, { build, target: input.target, suggest: input.suggest !== false, parked: input.parked === true });
-  if (!buttons.some((b) => b.label === recommend)) fail(kind, 'recommend', `must be one of the card's options: ${buttons.map((b) => b.label).join(', ')}`);
+  if (!none && !buttons.some((b) => b.label === recommend)) fail(kind, 'recommend', `must be one of the card's options: ${buttons.map((b) => b.label).join(', ')}`);
 
   const code = line === null || NO_REPLY_CODE.includes(kind) ? null : replyCode(line);
   const target = isPlain(input.target) ? input.target : {};
@@ -541,7 +546,8 @@ export function composeCard(input) {
     ask: asked,
     what,
     small: [size, why].filter(Boolean).join(' · '),
-    recommendation: `${recommend}, because ${clause(because)}.`,
+    recommendation: none ? `${NO_RECOMMENDATION} ${clause(because)}.` : `${recommend}, because ${clause(because)}.`,
+    ...(none ? { recommend: null } : {}),
     options: buttons.map((b) => ({ label: b.label, says: b.says, ...(b.cost === undefined ? {} : { cost: b.cost }), ...(b.undo === undefined ? {} : { undo: b.undo }), recommended: b.label === recommend })),
     because: clause(because),
     why,

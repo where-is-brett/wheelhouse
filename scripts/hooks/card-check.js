@@ -39,7 +39,7 @@ import { runAndExit, answer, projectOf, beingSetUp, readTailEntries } from './ki
 import { setupCardsFor, bareLabel } from '../lib/setup-clicks.js';
 import { looksLikeBaseline, holdsFigures, cardHash, readShown, cardText, sweepStale } from '../lib/measures-clicks.js';
 import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
-import { TO_KNOW_MORE, TO_CHANGE_IT, SUGGEST, SHOW_ME, NOT_NOW, SEND_BACK } from '../lib/calm-words.js';
+import { TO_KNOW_MORE, TO_CHANGE_IT, SUGGEST, SHOW_ME, NOT_NOW, SEND_BACK, NO_RECOMMENDATION } from '../lib/calm-words.js';
 import { CARD } from '../lib/front-desk.js';
 import {
   chatCopy, setLinesOf, setLineOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, LIFT_STOP, LIFT_LABELS, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, SEAT_TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LINE,
@@ -127,7 +127,10 @@ export function cardProblems(question) {
   if (object !== null && Array.isArray(object.options)) {
     const labels = object.options.map((o) => (typeof o === 'string' ? o : o?.label));
     const recommended = object.options.filter((o) => typeof o?.description === 'string' && o.description.startsWith(RECOMMENDED)).length;
-    if (recommended === 0) problems.push('names no recommended option');
+    // A setup question answered from fact says on a line of its own that it recommends none.
+    const saysNone = lines.some((l) => l.startsWith(`${NO_RECOMMENDATION} `));
+    if (recommended === 0 && !saysNone) problems.push('names no recommended option');
+    else if (recommended > 0 && saysNone) problems.push('names a recommended option and says it recommends none');
     else if (recommended > 1) problems.push(recommended === 2 ? 'names two recommended options' : `names ${recommended} recommended options`);
     if (labels.includes(EXPLAIN_MORE)) problems.push(`offers ${EXPLAIN_MORE}, which is not one of a card's options`);
     // AskUserQuestion shows a question with two to four options only; any other count never reaches the director.

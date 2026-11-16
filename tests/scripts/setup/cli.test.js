@@ -180,7 +180,8 @@ test('against the helper, a card is planned, refused without its click, applied 
       assert.equal(planned.code, 0, planned.err);
       const plan = JSON.parse(planned.out);
       assert.equal(plan.step, 1);
-      assert.ok(plan.card.question.includes(setupLine(1, plan.hash)));
+      assert.match(plan.card.question, /^Setup step 1, Install:/);
+      assert.ok(!plan.card.question.includes(setupLine(1, plan.hash)), 'sent without its line of hash');
       const refused = await run(['apply', '1', plan.hash], { client, cwd: folder });
       assert.equal(refused.code, 1);
       assert.match(refused.err, /click/);
