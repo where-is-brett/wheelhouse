@@ -940,7 +940,7 @@ function cardFor(changes, status, platform, leftOut = [], hostTools = []) {
       { label: 'Not now', says: 'Setup waits at this step; nothing is changed.' },
     ],
     recommend: SETUP_LABEL,
-    because: !installs ? 'setup\'s own command then runs without a question each time' : company.length > 0 ? 'setup needs them for the next steps' : 'each comes from its official source, and setup needs them for the next steps',
+    because: !installs ? 'setup\'s own command then runs without a question each time' : company.length > 0 ? 'setup needs them for the next steps' : 'each comes from its official source',
     meanwhile: installs ? 'Nothing is installed yet.' : 'Nothing is changed yet.',
   });
   const long = card(full);

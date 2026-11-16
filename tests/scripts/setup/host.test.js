@@ -3571,3 +3571,15 @@ test('step 3\'s Narrow card on GitLab says, for a project with real users, that 
   assert.match(text(true), /only you can merge on GitLab: when a change is ready, you press Merge there/i, text(true));
   assert.doesNotMatch(text(false), /press Merge/);
 });
+
+test('step 3\'s card on a narrow way says the browser sign-in reaches the whole account and stays, and on Windows that agents could read it', () => {
+  const changes = [{ kind: 'host', target: 'github', action: 'sign-in' }];
+  const product = { isNew: true, host: 'github', repo: null, name: 'shop' };
+  const text = (way, platform) => {
+    const card = cardFor({ host: 'github', changes, product, owner: USER, user: USER, way, app: null, signedIn: false, appKeys: null, platform });
+    return composeCard({ ...card, target: { step: 3, hash: planHash(changes) } }).question.question;
+  };
+  assert.match(text(WAYS.own, 'win32'), /That sign-in reaches your whole account and stays on this computer; on Windows any agent's command could read it\./);
+  assert.match(text(WAYS.wheelhouse, 'darwin'), /That sign-in reaches your whole account and stays on this computer, where agents can't read it\./);
+  assert.doesNotMatch(text(WAYS.quick, 'win32'), /That sign-in reaches/);
+});

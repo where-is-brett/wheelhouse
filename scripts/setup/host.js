@@ -422,7 +422,7 @@ function realUsersAsk(name, platform) {
       what: `Does ${name} have real users yet: people who rely on it, beyond you and anyone testing it?`,
       why: 'A product with real users gets the narrowest connection its host allows, so a leak reaches as little as it can.',
       options: [
-        { label: REAL_USERS.yes, says: `Setup treats it as launched: agents get a narrow connection, a key to this one project wherever one can be made, and agents don't use your own sign-in. Only on GitLab, where a project key can't be made, does a ${PERSONAL_DAYS}-day token that can act as you stand in.` },
+        { label: REAL_USERS.yes, says: `Setup treats it as launched: agents get a narrow connection, a key to this one project wherever one can be made, and agents don't use your own sign-in. Only where GitLab won't make a project key does a ${PERSONAL_DAYS}-day token that can act as you stand in.` },
         { label: REAL_USERS.no, says: 'Setup treats it as before launch, like a throwaway or test project. You can change this when it has users.' },
       ],
       recommend: REAL_USERS.no,
@@ -844,7 +844,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
     return {
       level: 3,
       what: `${realUsers ? 'The product has real users. ' : ''}How should Wheelhouse's agents reach ${place}?`,
-      why: `Agents push and open ${host === 'gitlab' ? 'merge requests' : 'pull requests'} only through Wheelhouse's helper; this chooses whose key it holds.`,
+      why: `Agents are meant to push and open ${host === 'gitlab' ? 'merge requests' : 'pull requests'} only through Wheelhouse's helper; this chooses whose key it holds.`,
       options: recommendedFirst([asIs ? own : { label: WAYS.quick, says: quickOnMac(host) }, { label: STRICTER, says: STRICTER_SAYS(host) }], realUsers ? STRICTER : (asIs ? WAYS.asIs : WAYS.quick)),
       recommend: realUsers ? STRICTER : (asIs ? WAYS.asIs : WAYS.quick),
       because: realUsers ? 'the product has real users' : asIs ? `${held ? 'it uses what your computer already has' : 'it works with your own git'}, and you can make it stricter later` : 'it is the simplest start, and you can make it stricter later',
@@ -882,7 +882,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
   return {
     level: 3,
     what: `${lead}How should Wheelhouse's agents reach ${place}?${noQuick}`,
-    why: `Agents push and open ${host === 'gitlab' ? 'merge requests' : 'pull requests'} only through Wheelhouse's helper; this chooses whose key it holds.`,
+    why: `Agents are meant to push and open ${host === 'gitlab' ? 'merge requests' : 'pull requests'} only through Wheelhouse's helper; this chooses whose key it holds.`,
     options: recommendedFirst(options, recommend),
     recommend,
     because: recommend !== WAYS.asIs ? reach : 'it uses what this computer already has',
@@ -1978,7 +1978,7 @@ export function cardFor(given) {
   throw last;
 }
 
-function cardParts({ host, changes, product, owner, user, way, app, signedIn, appKeys, base = DEFAULT_GITLAB, realUsers = false }, mode) {
+function cardParts({ host, changes, product, owner, user, way, app, signedIn, appKeys, base = DEFAULT_GITLAB, realUsers = false, platform = process.platform }, mode) {
   const tight = mode !== 'full';
   const bare = mode === 'bare';
   const name = NAME[host];
@@ -2011,6 +2011,11 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
   } else if (signing) {
     // A company's GitLab gives its own accounts: no sign-up page is offered for it.
     parts.push(bare || company ? `You sign in to ${company ? 'your company\'s GitLab' : name} in your browser.` : `You sign in to ${name} in your browser (no account? sign up at ${signUpUrl(host, base)}).`);
+    // A narrow way still signs the host's own tool in as the director, to make the project and its key, and that sign-in
+    // stays on the computer: the card says what it reaches and who can read it.
+    if (!bare && way !== WAYS.quick && way !== WAYS.asIs) {
+      parts.push(`That sign-in reaches your whole account and stays on this computer${platform === 'win32' ? '; on Windows any agent\'s command could read it' : ', where agents can\'t read it'}.`);
+    }
   }
   if (product.isNew) {
     const where = owner ? `${owner}/${product.name} on ${name}` : `${product.name} on your ${name} account`;
@@ -2347,9 +2352,14 @@ export function hostStep({
       }
       const reach = !locked && !launched ? await reachOf({ ctx, host, base, product, platform }) : null;
       if (reach?.noRoad && ctx.choicesOnly !== true) return { wait: OWN_APP_WAIT_MS, why: noRoadLine(host) };
-      // A Locked or launched project reads no reach, so the tool's own state says whether its key needs the pasted token.
-      const toolOut = host === 'gitlab' && (hostToolLeftOut(ctx, host)
-        || (reach === null ? await toolState(TOOL.gitlab, { run, platform }) === 'missing' : reach.tool === 'missing'));
+      // Narrow on GitLab needs the pasted token wherever the tool won't work (as at apply time below). A Locked or launched
+      // project reads no reach, so the tool's own state is read here, and one step 2 is still to fetch counts as working.
+      let glabState = reach?.tool ?? null;
+      if (host === 'gitlab' && reach === null && !hostToolLeftOut(ctx, host)) {
+        glabState = await toolState(TOOL.gitlab, { run, platform });
+        if (glabState === 'missing' && !toolsStepDone(ctx)) glabState = 'works';
+      }
+      const toolOut = host === 'gitlab' && (hostToolLeftOut(ctx, host) || glabState !== 'works');
       const asked = { host, locked, launched, realUsers: realUsers || launched || product.joining === true, platform, where };
       const held = reach === null || reach.found.key !== 'none' || reach.cliSigned === true;
       let card = connectionCard({ ...asked, appFile, asIs: reach?.offered === true, held, toolOut });
@@ -2512,7 +2522,7 @@ export function hostStep({
       changes.push({ kind: 'folder', target: slug === null ? path.join(wheelhouseHome(), 'projects') : stateDir(slug), action: 'state', repo });
       return {
         changes,
-        card: cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys, base, realUsers: launchedInFolder(ctx.folder) || ctx.answers?.['3.real-users']?.label === REAL_USERS.yes }),
+        card: cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys, base, platform, realUsers: launchedInFolder(ctx.folder) || ctx.answers?.['3.real-users']?.label === REAL_USERS.yes }),
         director: directorFor({ signedIn, way, host, app, appKeys, joining: product.joining === true, via: changes.find((c) => c.action === 'sign-in')?.via ?? null, keyCard: keyState !== null }),
       };
     },
