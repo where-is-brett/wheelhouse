@@ -71,3 +71,17 @@ test('another computer\'s live lock keeps the seat untaken', async () => {
     assert.equal(readSeat('p'), null);
   });
 });
+
+test('a lock read that is refused, throws or never answers keeps the seat untaken on the guard\'s path', async () => {
+  const reads = {
+    refused: async () => ({ ok: false, refused: 'the helper would not say' }),
+    throws: async () => { throw new Error('EPERM'); },
+    timeout: async () => { throw new Error('timed out'); },
+  };
+  for (const [name, read] of Object.entries(reads)) {
+    await inHome(async () => {
+      await takeSeatIfFree({ project: 'p', input: input('s1'), env: {}, now: () => new Date(), client: { lock: { read } } });
+      assert.equal(readSeat('p'), null, name);
+    });
+  }
+});
