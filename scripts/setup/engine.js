@@ -346,15 +346,15 @@ const BRIEFING_TARGET = 'step 10 briefing';
 const SETUP_READY_ID = 'setup-ready';
 const READY_CARD = {
   level: 2,
-  what: 'Setup is finished.',
-  why: 'It is your project, so you say when the work starts.',
+  what: 'Next, the First Mate takes over, starting with what you came here for.',
+  why: 'You can look at the checks first, or ask anything, before the work starts.',
   options: [
-    { label: 'Carry on', says: 'The First Mate takes it from here, starting with anything you asked for.' },
-    { label: 'Show the checks', says: 'You see each of the checks first, then the First Mate takes it from here.' },
+    { label: 'Carry on', says: 'The First Mate starts now, on your request first if you made one.' },
+    { label: 'Show the checks', says: 'You see each check first, then the First Mate starts.' },
   ],
   recommend: 'Carry on',
   because: 'every check passed',
-  meanwhile: 'Nothing starts until you click.',
+  meanwhile: 'The First Mate waits for your click.',
 };
 const briefingKept = (run) => (run?.changes ?? []).filter((c) => c?.step === HEALTH_STEP && c.kind === 'answer' && c.target === BRIEFING_TARGET);
 function briefingOf(run) {
@@ -364,8 +364,8 @@ function briefingOf(run) {
 const greenAt = (run) => (run?.changes ?? []).find((c) => c?.step === HEALTH_STEP && c.kind === 'answer' && typeof c.after?.green === 'string')?.after.green;
 const isReadyCard = (id) => id === READY_ID || id.startsWith(`${READY_ID}-`);
 // Whether the director answered the phone's first card since the board went green: the card that
-// opened with the briefing, so they have seen it.
-// step 10's own card, asked with them when no phone card is left, counts the same.
+// opened with the briefing, so they have seen it. Step 10's own card, asked with them when no phone
+// card is left, counts the same.
 const readyAnsweredSinceGreen = (run, answers) => Object.entries(answers)
   .some(([key, a]) => (key === `${HEALTH_STEP}.${SETUP_READY_ID}` || (key.startsWith(`${PUSH_TEST_STEP}.`) && isReadyCard(key.slice(key.indexOf('.') + 1))))
     && Date.parse(a.at) >= Date.parse(greenAt(run)));
@@ -690,8 +690,9 @@ export function setupRoutes({
     if (briefing !== null) {
       const ready = composeCard({ ...READY_CARD, kind: 'question', suggest: false }).question;
       const card = cleanDeep({ ...ready, question: [...briefing.split('\n').filter((l) => l.trim() !== ''), withoutListedLine(ready.question)].join('\n') }, []);
+      const refused = typedRefused(run.id, HEALTH_STEP, SETUP_READY_ID);
       noteAsked({ runId: run.id, folder: run.folder, step: HEALTH_STEP, id: SETUP_READY_ID, card, now });
-      return { ok: true, ask: { step: HEALTH_STEP, id: SETUP_READY_ID, card }, progress: progressOf(run, HEALTH_STEP, folder) };
+      return { ok: true, ask: { step: HEALTH_STEP, id: SETUP_READY_ID, card }, progress: progressOf(run, HEALTH_STEP, folder), ...(refused === null ? {} : { unanswered: NOT_AN_ANSWER[refused] }) };
     }
     showable(run, step.n);
     // A run started by this plan starts when the plan does, so the step reads the time its run has.
