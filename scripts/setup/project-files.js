@@ -1101,7 +1101,7 @@ async function switchFolder(ctx, c, { git, project, author }) {
 }
 
 // `keyed`: step 3 connected with the setup token, so the commit goes through a merge request with the project's own
-// key, and protection is already on. `pasted`: that key is the director's own token GitLab made them use instead.
+// key, and protection is already on. `pasted`: that key is the director's own token GitLab made them use instead; null where the card is built before step 3 has kept either.
 export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [], negated = [], frontDesk = null, midSized = null, listens = false, keyed = false, pasted = false }) {
   const local = host === 'local';
   const files = changes.filter((c) => (c.kind === 'json-key' || c.kind === 'file') && c.line === undefined && c.engine !== true && c.what !== 'mirror');
@@ -1166,7 +1166,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
     meanwhile: 'Setup waits here; nothing changes.',
   });
   // One thing to a line, as step 3's card lists its own, under a title that says whose sign-in does it.
-  const by = local || joining ? '' : pasted ? ', with the token you pasted at step 3, which can act as you across GitLab' : keyed ? ', with the project\'s own key, not your account' : `, acting as you on ${NAME[host]}`;
+  const by = local || joining ? '' : pasted ? ', with the token you pasted at step 3, which can act as you across GitLab' : keyed ? (pasted === null ? ', with the project\'s own key where GitLab allows one, or else the token you pasted at step 3, which can act as you across GitLab' : ', with the project\'s own key, not your account') : `, acting as you on ${NAME[host]}`;
   const full = card([`Setup step 7, ${SETUP_TITLES[7]}${joining ? ', for this computer' : by}:`, ...[...parts, pinned].map(asLine)].join('\n'));
   const fits = (c) => composeCard({ ...c, target: { step: 7, hash: '0'.repeat(64) } }).question.question.length <= CARD.chars;
   try {
@@ -1339,7 +1339,8 @@ export function projectFilesStep({
       const remoteUrl = local ? homeDir(found.project) : record.remoteUrl;
 
       const keyed = madeWithSetupToken(record);
-      const pasted = keyed && (await projectKeyKind(record)) === 'pasted-token';
+      const keyKind = keyed ? await projectKeyKind(record) : null;
+      const pasted = keyed && keyKind === null ? null : keyed && keyKind === 'pasted-token';
       const branch = await defaultBranchOf({ host, repo, run, gitlab: apiFor(record), base: record.connection?.baseUrl, project: found.project });
       if (WHEELHOUSE_BRANCHES.includes(branch)) {
         throw new Error(`${NAME[host]}'s default branch for ${repo} is ${branch}, which is Wheelhouse's own branch, so setup can't put the project's files there: make the product's own branch the default in the repository's settings on ${NAME[host]}, then ask again`);

@@ -392,7 +392,7 @@ function sameThing(kind, what, target) {
 // 23.4). `build` says the card answers a build-command question (one that names its `commands`). A
 // confirm card for a proposal (its `target`) offers Keep as is in place of Show me. A question's
 // own options come first, then Suggest a change… unless it has four of its own. `parked` is a parked pull request's card.
-function offered(kind, given, { build = false, target, suggest = true, parked = false } = {}) {
+function offered(kind, given, { build = false, target, suggest = true, proposes = false, parked = false } = {}) {
   if (!Array.isArray(given) || given.length === 0) fail(kind, 'options');
   const seen = new Set();
   const list = given.map((o) => {
@@ -423,7 +423,10 @@ function offered(kind, given, { build = false, target, suggest = true, parked = 
     if (list.length > CARD.options) fail(kind, 'options', `must be at most ${CARD.options}: a question's own options are never dropped`);
     const own = (kind === 'answer' && build && buildOptions(list)) || kind === 'premium';
     for (const o of list) if (PUT_OFF.includes(o.label) && !own) fail(kind, 'options', `must not use ${o.label}, a button that puts a card off`);
-    const buttons = [...list, ...(list.length < CARD.options && suggest ? [{ label: SUGGEST, says: PUT_OFF_SAYS[SUGGEST] }] : [])];
+    // A plain question with two or more options of its own offers no Suggest a change…: the picker's own Type something takes
+    // the director's words. A question that puts a proposal forward, or that has one option, offers it.
+    const asks = kind !== 'question' || proposes || list.length < CARD.fewestOptions;
+    const buttons = [...list, ...(list.length < CARD.options && suggest && asks ? [{ label: SUGGEST, says: PUT_OFF_SAYS[SUGGEST] }] : [])];
     // AskUserQuestion shows no card with fewer than two options, and the question would stall.
     if (buttons.length < CARD.fewestOptions) fail(kind, 'options', `must offer at least ${CARD.fewestOptions}: a card with one option is never shown`);
     return buttons;
@@ -474,7 +477,8 @@ export function textOf(parts) {
 // the words ASKS gives, or its `what`. `size` (optional) is a few words such as "Small feature";
 // `optional` (optional) is the whole minutes an optional card takes. `revises` (optional) is the id
 // of the card a revised proposal replaces, and then `changed` says in one line what changed.
-// `suggest` (optional) is false for a question or an answer that offers no Suggest a change….
+// `suggest` (optional) is false for a question or an answer that offers no Suggest a change…. A plain question offers it
+// only when it puts a proposal forward (`proposal`, optional, true) or has one option of its own; an answer always does.
 // `said` (optional) is what the director has already said they want, in their own words: the card carries it and asks for
 // one click. Typed words steer, so the click is still what decides.
 // `parked` (optional) is true on the approval card of a pull request the merge queue left to the director, which offers Send it back.
@@ -510,6 +514,7 @@ export function composeCard(input) {
   const ask = input.ask === undefined ? undefined : words(kind, 'ask', input.ask);
   const size = input.size === undefined ? undefined : words(kind, 'size', input.size);
   if (input.suggest !== undefined && typeof input.suggest !== 'boolean') fail(kind, 'suggest', 'must be true or false');
+  if (input.proposal !== undefined && (input.proposal !== true || kind !== 'question')) fail(kind, 'proposal', 'belongs to a question card only, as true: it puts a proposal forward, which the director can ask to have changed');
   if (input.suggest === false && kind !== 'answer' && kind !== 'question') fail(kind, 'suggest', 'can be left off a question or an answer card only: the others decide what they offer');
   if (input.optional !== undefined && !isCount(input.optional)) fail(kind, 'optional', 'must be whole minutes, from 1');
   if (input.revises !== undefined && !(typeof input.revises === 'string' && /^\S+$/.test(input.revises))) fail(kind, 'revises', 'must be the id of the card it replaces');
@@ -534,7 +539,7 @@ export function composeCard(input) {
   const line = kind === 'question' ? null : lineFor(kind, input.target);
   sameThing(kind, what, input.target);
   const build = Array.isArray(input.commands) && input.commands.length > 0;
-  const buttons = offered(kind, input.options, { build, target: input.target, suggest: input.suggest !== false, parked: input.parked === true });
+  const buttons = offered(kind, input.options, { build, target: input.target, suggest: input.suggest !== false, proposes: input.proposal === true, parked: input.parked === true });
   if (!none && !buttons.some((b) => b.label === recommend)) fail(kind, 'recommend', `must be one of the card's options: ${buttons.map((b) => b.label).join(', ')}`);
 
   const code = line === null || NO_REPLY_CODE.includes(kind) ? null : replyCode(line);
@@ -557,7 +562,8 @@ export function composeCard(input) {
     ...(changed === undefined ? {} : { changed }),
     line,
     code,
-    ...(input.suggest === false ? { suggest: false } : {}),
+    ...(input.suggest === false || (kind === 'question' && input.proposal !== true && input.options.length >= CARD.fewestOptions) ? { suggest: false } : {}),
+    ...(input.proposal === true ? { proposal: true } : {}),
     ...(input.optional === undefined ? {} : { optional: input.optional }),
     ...(input.revises === undefined ? {} : { revises: input.revises }),
   };

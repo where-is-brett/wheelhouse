@@ -493,9 +493,16 @@ test('an answer card with three own options adds Suggest a change…; with four 
   refused({ options: [opt(1), opt(1)], recommend: 'Option 1' }, /options/, 'answer');
   refused({ options: [{ label: 'Comma', says: '' }, opt(2)] }, /options/, 'answer');
   // The same holds for a product question, which has no set line.
-  const asked = composeCard(input('question', { options: [opt(1), opt(2), opt(3)], recommend: 'Option 1' }));
+  const asked = composeCard(input('question', { options: [opt(1), opt(2), opt(3)], recommend: 'Option 1', proposal: true }));
   assert.deepEqual(asked.question.options.map((o) => o.label), ['Option 1', 'Option 2', 'Option 3', SUGGEST]);
-  const typed = composeCard(input('question', { options: [opt(1), opt(2), opt(3), opt(4)], recommend: 'Option 1' }));
+  // A plain question, one that puts no proposal forward, offers only its own options.
+  const plain = composeCard(input('question', { options: [opt(1), opt(2), opt(3)], recommend: 'Option 1' }));
+  assert.deepEqual(plain.question.options.map((o) => o.label), ['Option 1', 'Option 2', 'Option 3']);
+  assert.equal(plain.card.parts.suggest, false);
+  assert.equal(textOf(plain.card.parts), plain.question.question);
+  refused({ proposal: false }, /proposal/, 'question');
+  refused({ proposal: true }, /proposal/, 'answer');
+  const typed = composeCard(input('question', { options: [opt(1), opt(2), opt(3), opt(4)], recommend: 'Option 1', proposal: true }));
   assert.equal(typed.question.options.length, 4);
   assert.equal(lines(typed.question.question).at(-1), TO_CHANGE_IT);
   refused({ options: [opt(1), opt(2), opt(3), opt(4), opt(5)], recommend: 'Option 1' }, /options/, 'question');
@@ -520,9 +527,10 @@ test('suggest: false leaves Suggest a change… off a question card, and the car
     }
   }
   // Without it (or with suggest: true) a card keeps Suggest a change….
-  assert.ok(composeCard(input('question')).question.options.some((o) => o.label === SUGGEST));
-  assert.ok(composeCard(input('question', { suggest: true })).question.options.some((o) => o.label === SUGGEST));
-  assert.ok(!Object.hasOwn(composeCard(input('question')).card.parts, 'suggest'));
+  assert.ok(composeCard(input('answer')).question.options.some((o) => o.label === SUGGEST));
+  assert.ok(composeCard(input('question', { proposal: true })).question.options.some((o) => o.label === SUGGEST));
+  assert.ok(composeCard(input('question', { suggest: true, proposal: true })).question.options.some((o) => o.label === SUGGEST));
+  assert.ok(!Object.hasOwn(composeCard(input('answer')).card.parts, 'suggest'));
   // It is a boolean, and only a question or an answer can leave Suggest a change… off.
   for (const bad of ['no', 0, null]) refused({ suggest: bad }, /suggest/, 'question');
   refused({ suggest: false }, /suggest/, 'approval');

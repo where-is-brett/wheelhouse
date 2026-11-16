@@ -12,10 +12,6 @@ exit 0
       {
         "label": "Playful",
         "description": "It playfuls and goes ahead."
-      },
-      {
-        "label": "Suggest a change…",
-        "description": "Tell me what you'd change; I'll come back with a new proposal."
       }
     ],
     "multiSelect": false

@@ -620,6 +620,7 @@ const FOUR = [
   { label: 'Approve', says: 'It goes ahead.' },
   { label: 'Not yet', says: 'It waits.' },
   { label: 'Drop it', says: 'It is dropped.' },
+  { label: 'Park it', says: 'It is parked.' },
 ];
 const four = composeCard({ ...INPUTS.question, what: 'The report needs a footer.', recommend: 'Approve', options: FOUR });
 const FOUR_WAITING = outcome('c-4', four);

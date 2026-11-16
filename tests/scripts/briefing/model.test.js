@@ -466,6 +466,11 @@ const watchLine = { level: 'watch', text: 'Safekeeping: 3 changes only on this c
 const safeLine = { level: 'ok', text: 'Safekeeping: Everything is on GitHub', detail: 'd', safekeeping: true };
 const told = (health, safekeepingSaid, now = at(20)) => briefingModel({ model: board({ health }), usage: null, sources: null, since: at(19), now, wasRaised: never, safekeepingSaid });
 
+test('a watch on a project with no backup gives the next step, in step 3\'s words', () => {
+  const b = told([{ ...watchLine, text: 'Safekeeping: Only on this computer, no backup' }], null);
+  assert.deepEqual(b.watch, ['Safekeeping has turned to watch: Only on this computer, no backup; you choose its folder later, from the Safekeeping row in the pane']);
+});
+
 test('a watch shows in To watch and the verdict still says nothing is needed', () => {
   const b = told([watchLine], null);
   assert.equal(b.verdict, 'Nothing needs you. Nothing is broken.');

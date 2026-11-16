@@ -68,6 +68,8 @@ test('the setup playbook names the unsandboxed run for setup\'s own command only
   assert.match(body, /`dangerouslyDisableSandbox: true`, and only for `scripts\/setup\/cli\.js <form>`/);
   assert.match(body, /outside Claude Code's safety box \(the sandbox\) until step 7/);
   assert.match(body, /Claude Code may ask you to allow it/);
+  // After step 7 the command moves back inside the sandbox, and the director hears nothing of it.
+  assert.match(body, /then run them as usual and say nothing about it: not that the command is back inside the sandbox/);
   assert.doesNotMatch(body, /Claude Code asks the (person|director) first/);
 });
 

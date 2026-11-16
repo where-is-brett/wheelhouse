@@ -1303,6 +1303,9 @@ test('the card lists every part on GitLab with a long branch and release, and st
   assert.match(keyedText(false), /with the project's own key, not your account/);
   assert.match(keyedText(true), /with the token you pasted at step 3, which can act as you across GitLab/);
   assert.doesNotMatch(keyedText(true), /not your account/);
+  // Before step 3 has kept either, the card says which applies where GitLab decides.
+  assert.match(keyedText(null), /with the project's own key where GitLab allows one, or else the token you pasted at step 3, which can act as you across GitLab/);
+  assert.doesNotMatch(keyedText(null), /not your account/);
 });
 
 test('the card says nothing of the keychain: its denial is a quiet default', () => {
