@@ -1,7 +1,7 @@
 // tests/scripts/lib/setup-clicks-variants.test.js
-// A question tool that hands back an earlier card, when a new card has the same question and labels,
-// still has its answer kept under the card the director was shown last (the newest variant of that
-// question in the same run, folder and step), and nowhere else.
+// A question tool that hands back an earlier connection card, when a new one has the same question and
+// labels, still has its answer kept under the card the director was shown last (the newest variant of
+// that question in the same run, folder and step, recording the same), and nowhere else.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { askedFor, claimAnswer } from '../../../scripts/lib/setup-clicks.js';
@@ -23,16 +23,34 @@ function withFolder(fn) {
   return as(home, () => fn(folder));
 }
 
-const ask = (folder, step, id, c, minute, runId = RUN) => noteAsked({ runId, folder, step, id, card: c, now: T(minute) });
+const ask = (folder, step, id, c, minute, runId = RUN, more = {}) => noteAsked({ runId, folder, step, id, card: c, now: T(minute), ...more });
 
-test('an echo of the older description card is kept under the newer one', () => withFolder((folder) => {
+test('a description card is only ever its own card', () => withFolder((folder) => {
   const labels = ['Choose the README\'s words', 'Not yet'];
   ask(folder, 4, 'product-before-launch', card('Describe it', labels, 'before'), 1);
   ask(folder, 4, 'product-launched', card('Describe it', labels, 'after'), 2);
-  const got = askedFor({ cwd: folder, card: card('Describe it', labels, 'before') });
-  assert.equal(got.id, 'product-launched');
-  assert.equal(got.card.options[0].description, 'after Choose the README\'s words');
-  assert.ok(got.card.options.some((o) => o.label === 'Not yet'));
+  assert.equal(askedFor({ cwd: folder, card: card('Describe it', labels, 'before') }).id, 'product-before-launch');
+}));
+
+test('cards of other questions sharing a stem are only ever their own card', () => withFolder((folder) => {
+  ask(folder, 9, 'uninstall-delete-0123456789', card('Delete it?', ['Keep', 'Delete'], 'one'), 1);
+  ask(folder, 9, 'uninstall-delete-0123456780', card('Delete it?', ['Keep', 'Delete'], 'two'), 2);
+  assert.equal(askedFor({ cwd: folder, card: card('Delete it?', ['Keep', 'Delete'], 'one') }).id, 'uninstall-delete-0123456789');
+}));
+
+test('a newer connection card recording anything else is not a variant', () => withFolder((folder) => {
+  const labels = ['A', 'B'];
+  ask(folder, 3, 'connection-051b7e9ee1', card('How?', labels, 'x'), 1);
+  ask(folder, 3, 'connection-59275b953b', card('How?', labels, 'y'), 2, RUN, { typed: true });
+  ask(folder, 3, 'connection-59275b953c', card('How?', labels, 'z'), 3, RUN, { writes: [{ kind: 'setting' }] });
+  assert.equal(askedFor({ cwd: folder, card: card('How?', labels, 'x') }).id, 'connection-051b7e9ee1');
+}));
+
+test('the newest card itself is never moved to an older one', () => withFolder((folder) => {
+  const labels = ['A', 'B'];
+  ask(folder, 3, 'connection-051b7e9ee1', card('How?', labels, 'x'), 1);
+  ask(folder, 3, 'connection-59275b953b', card('How?', labels, 'y'), 2);
+  assert.equal(askedFor({ cwd: folder, card: card('How?', labels, 'y') }).id, 'connection-59275b953b');
 }));
 
 test('an echo of an older connection card is kept under the newer one', () => withFolder((folder) => {
@@ -46,9 +64,7 @@ test('an echo of an older connection card is kept under the newer one', () => wi
 test('a label that is not among the newest card\'s options is not on it', () => withFolder((folder) => {
   ask(folder, 3, 'connection-051b7e9ee1', card('How?', ['A', 'B', 'Old only'], 'x'), 1);
   ask(folder, 3, 'connection-59275b953b', card('How?', ['A', 'B', 'Old only'], 'y'), 2);
-  const got = askedFor({ cwd: folder, card: card('How?', ['A', 'B', 'Old only'], 'x') });
-  assert.equal(got.id, 'connection-59275b953b');
-  assert.ok(!got.card.options.some((o) => o.label === 'Missing'));
+  assert.equal(askedFor({ cwd: folder, card: card('How?', ['A', 'B', 'Old only'], 'x') }).id, 'connection-59275b953b');
   // A newer card with other labels is not a variant: the answer stays with the card it read as.
   ask(folder, 3, 'connection-aaaaaaaaaa', card('How?', ['A', 'B'], 'z'), 3);
   assert.equal(askedFor({ cwd: folder, card: card('How?', ['A', 'B', 'Old only'], 'x') }).id, 'connection-59275b953b');
@@ -56,6 +72,8 @@ test('a label that is not among the newest card\'s options is not on it', () => 
 
 test('a newer card of another run, step, folder or question is never taken', () => withFolder((folder) => {
   const labels = ['A', 'B'];
+  const other = tempFolder('wh-variants-other ');
+  ask(other, 3, 'connection-59275b953e', card('How?', labels, 'y'), 6);
   ask(folder, 3, 'connection-051b7e9ee1', card('How?', labels, 'x'), 1);
   ask(folder, 4, 'connection-59275b953b', card('How?', labels, 'y'), 2);
   ask(folder, 3, 'connection-59275b953c', card('How else?', labels, 'y'), 3);
@@ -64,12 +82,13 @@ test('a newer card of another run, step, folder or question is never taken', () 
   assert.equal(askedFor({ cwd: folder, card: card('How?', labels, 'x') }).id, 'connection-051b7e9ee1');
 }));
 
-test('the other variant\'s claim does not refuse an answer to the newer one', () => withFolder((folder) => {
-  const labels = ['Choose the README\'s words', 'Not yet'];
-  ask(folder, 4, 'product-before-launch', card('Describe it', labels, 'before'), 1);
-  ask(folder, 4, 'product-launched', card('Describe it', labels, 'after'), 2);
-  const data = (id) => ({ runId: RUN, step: 4, questionId: id, question: 'Describe it' });
-  assert.ok(claimAnswer(data('product-before-launch'), T(3), { askedAt: '2026-11-16T01:01:00.000Z' }));
-  const got = askedFor({ cwd: folder, card: card('Describe it', labels, 'before') });
+test('the other variant\'s claim does not refuse an answer to the newer one, and a second one is refused', () => withFolder((folder) => {
+  const labels = ['A', 'B'];
+  ask(folder, 3, 'connection-051b7e9ee1', card('How?', labels, 'x'), 1);
+  ask(folder, 3, 'connection-59275b953b', card('How?', labels, 'y'), 2);
+  const data = (id) => ({ runId: RUN, step: 3, questionId: id, question: 'How?' });
+  assert.ok(claimAnswer(data('connection-051b7e9ee1'), T(3), { askedAt: '2026-11-16T01:01:00.000Z' }));
+  const got = askedFor({ cwd: folder, card: card('How?', labels, 'x') });
   assert.ok(claimAnswer(data(got.id), T(4), { askedAt: got.at }));
+  assert.ok(!claimAnswer(data(got.id), T(5), { askedAt: got.at }));
 }));
