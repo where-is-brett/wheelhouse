@@ -450,7 +450,7 @@ export function askedFor({ cwd, card }) {
 const VARIANT_STEM = /^connection(-stricter)?$/;
 const idStem = (id) => id.replace(/-[0-9a-f]{8,}$/, '');
 const labelsOf = (card) => shownCard(card).options.map((o) => sameWords(bareLabel(o.label)));
-const effectsOf = (r) => JSON.stringify([r.typed, r.writes ?? null, r.rules ?? null, r.choices ?? null, r.facts ?? null]);
+const effectsOf = (r) => JSON.stringify([r.typed, r.writes ?? null, r.rules ?? null, r.choices ?? null, r.facts ?? null, r.found ?? null]);
 
 // The session's question tool can hand back an earlier card when a new one has the same question
 // and labels: the descriptions in what comes back are the older variant's. So an answer that reads
