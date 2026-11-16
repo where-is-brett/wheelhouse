@@ -108,6 +108,7 @@ import { readProfileViews, PROFILE_BRANCH } from '../profile/store.js';
 import { toolsStatus, originUrl, applyCompanyCa, curlStatus, toolsLeftOut, hostToolChoice, hostToolId, hostToolCard } from './tools.js';
 import {
   findAccess, backendFor, runKeyCard, asIsReachLine, keyCardPlanLine, noRoadLine, checkApiKey, hostAddress,
+  KEY_DAYS_ASKED,
 } from './host-access.js';
 import {
   KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, applyLocal, backupAnswered, backupChoice, branchAsk, branchesOf, chooseBranch, headBranch, keptAsk, localCard, localName, localSteps, remotesOf,
@@ -422,7 +423,7 @@ function realUsersAsk(name, platform) {
       what: `Does ${name} have real users yet: people who rely on it, beyond you and anyone testing it?`,
       why: 'A product with real users gets the narrowest connection its host allows, so a leak reaches as little as it can.',
       options: [
-        { label: REAL_USERS.yes, says: `Setup treats it as launched: agents get a narrow connection, a key to this one project wherever one can be made, and agents don't use your own sign-in. Only where GitLab won't make a project key does a ${PERSONAL_DAYS}-day token that can act as you stand in.` },
+        { label: REAL_USERS.yes, says: `Setup treats it as launched: agents get a narrow connection, never your own sign-in, with a key to this one project wherever one can be made. Where GitLab won't make one, a ${PERSONAL_DAYS}-day token you paste stands in, and it can act as you.` },
         { label: REAL_USERS.no, says: 'Setup treats it as before launch, like a throwaway or test project. You can change this when it has users.' },
       ],
       recommend: REAL_USERS.no,
@@ -764,7 +765,7 @@ const quickSays = (host, platform) => `${quickLineFor(host)} If that sign-in lea
 // "Use my git as it is" in a few plain words, and what it reaches (design section 4.4). On Windows nothing keeps an agent's
 // command from asking git for the key, so the option's words say so.
 // Where git holds no key for the host yet (`held` false), the key is one the director makes on a page, and the words say so.
-const asIsSays = (host, held = true) => `${held ? 'Your own git and the key it already uses' : 'Your own git and its key'}, for pushes and ${host === 'github' ? 'pull' : 'merge'} requests, reaching everything your account can.${held ? '' : ` If git holds no ${NAME[host]} key that works, you make one on a page that opens.`}`;
+const asIsSays = (host, held = true) => `${held ? 'Your own git and the key it already uses' : 'Your own git and its key'}, for pushes and ${host === 'github' ? 'pull' : 'merge'} requests, reaching everything your account can.${held ? '' : ` If git holds no ${NAME[host]} key that works, you make one on a page that opens; it lasts ${KEY_DAYS_ASKED} days.`}`;
 const AS_IS_WINDOWS = 'On Windows any agent\'s command could ask git for that key.';
 
 // The reason line on a connection card asked again because the way chosen can't be had now, said plainly. Quick works
@@ -877,6 +878,11 @@ export function connectionCard({ host, locked = false, launched = false, realUse
   const reach = host === 'gitlab'
     ? `if it leaked, only this project would be open, unless GitLab won't make a project key (the public GitLab's free plan won't, and some companies switch them off): then a ${PERSONAL_DAYS}-day token you paste stands in, and it can act as you in every GitLab project and group you can reach`
     : 'if it leaked, the rest of your account would stay out of reach';
+  // A narrow way still leaves the host's own tool signed in as the director (only the one-day token is revoked), and on Windows
+  // that sign-in is a file any agent's command can read, so the reason says so rather than overclaim.
+  const lasting = win && !(host === 'gitlab' && toolOut)
+    ? `. ${NAME[host]}'s own tool stays signed in as you on this computer, though, where any agent's command could read it`
+    : '';
   // A product with real users says so first, so this card reads differently from the one asked before that was known.
   const lead = realUsers && !locked && !launched ? 'The product has real users. ' : '';
   return {
@@ -885,7 +891,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
     why: `Agents are meant to push and open ${host === 'gitlab' ? 'merge requests' : 'pull requests'} only through Wheelhouse's helper; this chooses whose key it holds.`,
     options: recommendedFirst(options, recommend),
     recommend,
-    because: recommend !== WAYS.asIs ? reach : 'it uses what this computer already has',
+    because: recommend !== WAYS.asIs ? `${reach}${lasting}` : 'it uses what this computer already has',
     meanwhile: MEANWHILE,
   };
 }
@@ -2011,11 +2017,11 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
   } else if (signing) {
     // A company's GitLab gives its own accounts: no sign-up page is offered for it.
     parts.push(bare || company ? `You sign in to ${company ? 'your company\'s GitLab' : name} in your browser.` : `You sign in to ${name} in your browser (no account? sign up at ${signUpUrl(host, base)}).`);
-    // A narrow way still signs the host's own tool in as the director, to make the project and its key, and that sign-in
-    // stays on the computer: the card says what it reaches and who can read it.
-    if (!bare && way !== WAYS.quick && way !== WAYS.asIs) {
-      parts.push(`That sign-in reaches your whole account and stays on this computer${platform === 'win32' ? '; on Windows any agent\'s command could read it' : ', where agents can\'t read it'}.`);
-    }
+  }
+  // A narrow way still signs the host's own tool in as the director, by browser or pasted token, to make the project and
+  // its key, and that sign-in stays on the computer: the card says what it reaches and, where it is known, who can read it.
+  if (!bare && signing && !['setup-token', 'narrow-key'].includes(signing.via) && way !== WAYS.quick && way !== WAYS.asIs) {
+    parts.push(`That sign-in reaches your whole account and stays here${platform === 'win32' ? ', where any agent\'s command could read it' : platform === 'darwin' ? ', out of agents\' reach' : ''}.`);
   }
   if (product.isNew) {
     const where = owner ? `${owner}/${product.name} on ${name}` : `${product.name} on your ${name} account`;

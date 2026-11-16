@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { computerStep, computerChanges, lockedStep, weakening, SETTLED_LEAD } from '../../../scripts/setup/computer.js';
+import { computerStep, computerCard, computerChanges, lockedStep, weakening, SETTLED_LEAD } from '../../../scripts/setup/computer.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { runApply, setupRoutes, AFTER_WAIT_MS, CHANGED } from '../../../scripts/setup/engine.js';
 import { findRun, markStep, reverseChange, startRun, addChanges, newId } from '../../../scripts/setup/journal.js';
@@ -107,6 +107,7 @@ test('the card lists each change in plain words, and nothing else changes', asyn
     assert.match(text, /phone notifications on/i);
     assert.ok(ownKey());
     assert.match(text, /clicks carry a signature only this computer can make/);
+    assert.match(JSON.stringify(computerCard({ changes: planned.changes, platform: 'win32' })), /On Windows an agent's command could read that key/);
     assert.doesNotMatch(text, /weaken/, 'none of the director\'s settings weakens Standard here');
     assert.equal(planned.director, 'One click');
 

@@ -102,7 +102,7 @@ test('path a: with GitLab\'s tool left out, Quick is not offered, and where git 
   assert.deepEqual(connection[0].card.options.map((o) => o.label), ['Narrow', 'Use my git as it is'], 'the recommended way comes first');
   assert.equal(recommendedOf(connection[0].card), 'Narrow');
   const own = connection[0].card.options.find((o) => o.label === 'Use my git as it is');
-  assert.match(own.description, /If git holds no GitLab key that works, you make one on a page that opens\./, 'the way says the key may still be made');
+  assert.match(own.description, /If git holds no GitLab key that works, you make one on a page that opens; it lasts 90 days\./, 'the way says the key may still be made');
   const tool = cards.find((c) => c.step === 2 && c.kind === 'question');
   assert.equal(recommendedOf(tool.card), 'Don\'t use GitLab\'s tool');
   assert.ok(cards.findIndex((c) => c === tool) < cards.findIndex((c) => c === connection[0]), 'GitLab\'s tool is asked before the connection');

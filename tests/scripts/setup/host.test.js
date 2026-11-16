@@ -1493,7 +1493,7 @@ test('step 3\'s card on a company\'s GitLab composes for ordinary and for very l
     [`${'h'.repeat(190)}.example.com:8443`, `${'g'.repeat(100)}/${'p'.repeat(99)}`, 'u'.repeat(200), 'tight'],
     // A host name is at most 253 characters, so the bare wording takes an address with a long path after the host.
     [`${'h'.repeat(190)}.example.com:8443/${'s'.repeat(300)}`, `${'g'.repeat(100)}/${'p'.repeat(99)}`, 'u'.repeat(200), 'bare'],
-    ['gitlab.internal.bigcompany.example.com:8443', `${'group-'.repeat(8)}/${'sub-'.repeat(20)}/shop`, 'a-well-known-user-with-a-long-name', 'full'],
+    ['gitlab.internal.bigcompany.example.com:8443', `${'group-'.repeat(8)}/${'sub-'.repeat(20)}/shop`, 'a-well-known-user-with-a-long-name', { joining: 'full', new: 'tight', existing: 'full' }],
   ];
   const wording = (what) => (/copied from this computer's certificate store/.test(what) ? 'full' : /certificate for your GitLab's address/.test(what) ? 'bare' : 'tight');
   for (const [hostName, repo, user, expected] of cases) {
@@ -3579,7 +3579,12 @@ test('step 3\'s card on a narrow way says the browser sign-in reaches the whole 
     const card = cardFor({ host: 'github', changes, product, owner: USER, user: USER, way, app: null, signedIn: false, appKeys: null, platform });
     return composeCard({ ...card, target: { step: 3, hash: planHash(changes) } }).question.question;
   };
-  assert.match(text(WAYS.own, 'win32'), /That sign-in reaches your whole account and stays on this computer; on Windows any agent's command could read it\./);
-  assert.match(text(WAYS.wheelhouse, 'darwin'), /That sign-in reaches your whole account and stays on this computer, where agents can't read it\./);
+  assert.match(text(WAYS.own, 'win32'), /That sign-in reaches your whole account and stays here, where any agent's command could read it\./);
+  assert.match(text(WAYS.wheelhouse, 'darwin'), /That sign-in reaches your whole account and stays here, out of agents' reach\./);
   assert.doesNotMatch(text(WAYS.quick, 'win32'), /That sign-in reaches/);
+  assert.match(text(WAYS.own, 'linux'), /That sign-in reaches your whole account and stays here\./);
+  const pasted = [{ kind: 'host', target: 'gitlab', action: 'sign-in', via: 'token' }];
+  const company = { isNew: false, host: 'gitlab', repo: `${USER}/shop`, name: 'shop', base: 'https://gitlab.example.com' };
+  const card = cardFor({ host: 'gitlab', changes: pasted, product: company, owner: USER, user: USER, way: WAYS.narrow, app: null, signedIn: false, appKeys: null, base: company.base, platform: 'win32' });
+  assert.match(composeCard({ ...card, target: { step: 3, hash: planHash(pasted) } }).question.question, /That sign-in reaches your whole account and stays here, where any agent's command/);
 });
