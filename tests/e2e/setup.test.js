@@ -266,7 +266,7 @@ test('a project kept on this computer: the Go ahead alone reaches a green board,
     assert.equal(health.green, true, health.lines.join('\n'));
     assert.match(health.lines.join('\n'), /Passed: .*private copy/i);
     assert.doesNotMatch(health.lines.join('\n'), /pull request|on the host/);
-    assert.match(health.lines.join('\n'), /Passed: The trial change was closed/, 'step 10\'s trial uses a local change');
+    assert.match(health.lines.join('\n'), /Done: The trial change was closed/, 'step 10\'s trial uses a local change');
     const project = 'Cafe-Menu';
     const record = await a.act(() => readProject(project));
     assert.equal(record.host, 'local');

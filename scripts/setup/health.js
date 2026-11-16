@@ -261,7 +261,9 @@ const needsNewSession = (check, result, host) => !passes(check, result, host) &&
 
 function checkLine(check, result, { session = false, host, desktop = false } = {}) {
   const by = session ? ' (reported by the session)' : '';
-  if (passes(check, result, host)) return `Passed: ${check.passed}.${by}`;
+  // A watched step is not one of the checks the verdict counts, so it is Done, not Passed, and the
+  // Passed lines add up to the verdict's figure.
+  if (passes(check, result, host)) return `${check.watch ? 'Done' : 'Passed'}: ${check.passed}.${by}`;
   if (needsNewSession(check, result, host)) {
     return `Not yet: the sandbox's limit on ${check.what} starts only in a new session, so this check passes there, as setup expects. ${NEW_SESSION}.${by}`;
   }
