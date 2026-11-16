@@ -331,10 +331,10 @@ test('a level 4 question becomes a card too, with what it does to the checks or 
     assert.ok(fourCard.question.split('\n').includes(CHECKS_UNSAID));
     assert.ok(fourCard.question.split('\n').includes('To change it, type what you\'d change.'));
     // The work is named by its title; a question for work with no title, by the work's id.
-    assert.match(cards[0].descriptions[1], /because the session building Export a report as a spreadsheet recommends it\.$/);
+    assert.match(cards[0].descriptions[1], /\. The session building Export a report as a spreadsheet recommends it\.$/);
     const untitled = fakeHelper({ events: [questionEvent()] });
     await run(untitled, ['cards']);
-    assert.match(untitled.writes().find((w) => w.kind === 'card').data.descriptions[1], /because the session building export-csv recommends it\.$/);
+    assert.match(untitled.writes().find((w) => w.kind === 'card').data.descriptions[1], /\. The session building export-csv recommends it\.$/);
   });
 });
 

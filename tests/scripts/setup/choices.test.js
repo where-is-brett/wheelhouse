@@ -43,7 +43,7 @@ test('the one card says a compaction rule found is kept, and nothing is said whe
 test('the one card names the phone setting as Claude Desktop\'s alone when the session is a terminal', () => {
   const ask = (desktop) => oneCard({ folder: '/x/t', list: newProductChoices(), product: { isNew: true, host: null, repo: null, name: 't' }, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0, desktop }).card.question;
   assert.match(ask(true), /and phone notifications on\./);
-  assert.match(ask(false), /and the phone notifications setting on \(they reach your phone only through Claude Desktop, which this session is not\)\./);
+  assert.match(ask(false), /and a question about phone notifications, where setup suggests skipping them since they need Claude Desktop\./);
   assert.doesNotMatch(ask(false), /and phone notifications on/);
 });
 
