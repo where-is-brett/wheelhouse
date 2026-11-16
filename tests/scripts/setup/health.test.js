@@ -123,6 +123,17 @@ test('step 10\'s plan waits for the project, then lists the trial branch and its
   }, { connected: false });
 });
 
+test('step 10\'s card says the main line is not protected when the plan offered no protection, and is silent otherwise', async () => {
+  await withProject(async ({ folder }) => {
+    const run = runWith(folder, { upTo: 9, checks: GREEN_CHECKS });
+    const plain = await healthStep().plan({ folder });
+    assert.match(plain.card.why, /green for real\.$/);
+    addChanges(run.id, [{ id: newId('chg'), kind: 'host', step: 7, target: `${REPO} protection`, before: { on: false, available: false }, after: { action: 'protect', branch: 'main', on: true } }]);
+    const said = await healthStep().plan({ folder });
+    assert.match(said.card.why, /green for real, except that your plan can't protect the main line\.$/);
+  }, { connected: true });
+});
+
 test('through the helper, step 10\'s card waits for steps 7 to 9, then composes with its set line', async () => {
   await withProject(async ({ folder, plan }) => {
     const run = runWith(folder, { upTo: 6 });
