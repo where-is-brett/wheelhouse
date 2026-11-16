@@ -531,7 +531,7 @@ test('an answer changed before its step runs comes back on the one card; one cha
     // The Go ahead's choice no longer holds, so the one card comes back, with the change on it.
     const again = (await a.cli('resume')).plan;
     assert.equal(again.step, 0);
-    assert.match(again.ask.card.question, /Agents use test data only, to be safe\./);
+    assert.match(again.ask.card.question, /Agents are told to use test data only, to be safe\./);
     await a.click(again.ask.card, 'Go ahead');
     const redone = await follow(a, { answer: byId(NEW_ANSWERS), through: 7 });
     assert.deepEqual(shape(redone), [[4, 'settled'], [5, 'settled'], [6, 'covered'], [7, 'covered']]);

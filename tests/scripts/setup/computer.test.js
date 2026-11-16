@@ -279,7 +279,7 @@ test('a minimum version of the director\'s own at or above the floor is kept, an
       fs.writeFileSync(file, `${JSON.stringify({ minimumVersion: higher })}\n`);
       const planned = await step.plan(ctx);
       assert.deepEqual(keysOf(planned), ['autoUpdatesChannel'], higher);
-      assert.match(composed(planned, 6), new RegExp(`stays at version ${higher.replace(/\./g, '\\.')} or later \\(your own minimum, kept\\)`), higher);
+      assert.ok(composed(planned, 6).includes(`stays at version ${higher} or later (your own minimum, kept)`), higher);
     }
     for (const [lower, shown] of [['2.0.5', '2.0.5'], ['2.1.99', '2.1.99'], ['latest', '"latest"']]) {
       fs.writeFileSync(file, `${JSON.stringify({ minimumVersion: lower })}\n`);

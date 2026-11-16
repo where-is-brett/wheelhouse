@@ -84,7 +84,7 @@ test('noteAsked refuses a question in the words of a different card asked earlie
     assert.throws(() => clicks.noteAsked({ runId, folder, step: 3, id: 'connection-b', card: card(asked, ['Narrow', 'Use my git as it is']) }), /in the words of 3\.connection-a/);
     assert.throws(() => clicks.noteAsked({ runId, folder, step: 3, id: 'connection-b', card: card(asked) }), /a card asked again needs its own words/);
     assert.throws(() => clicks.noteAsked({ runId, folder, step: 2, id: 'connection-a', card: card(asked) }));
-    assert.throws(() => clicks.noteAsked({ runId, folder, step: 3, id: 'connection-a', card: card(asked.replace('\'', '’'), ['Narrow']) }));
+    assert.throws(() => clicks.noteAsked({ runId, folder, step: 3, id: 'connection-a', card: card(asked.replaceAll('\'', '’'), ['Narrow']) }));
     // A card asked again with a reason line opening its question is a question of its own, and goes out.
     clicks.noteAsked({ runId, folder, step: 3, id: 'connection-b', card: card(`Quick can't be had here, so choose again. ${asked}`, ['Narrow', 'Use my git as it is']) });
     // Another run may ask in the same words.
