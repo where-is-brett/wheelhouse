@@ -771,7 +771,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
   if (platform === 'darwin' && !locked && !launched) {
     return {
       level: 3,
-      what: `How should Wheelhouse's agents reach ${place}?`,
+      what: `${realUsers ? 'The product has real users. ' : ''}How should Wheelhouse's agents reach ${place}?`,
       why: 'Agents push and open pull requests only through Wheelhouse\'s helper; this chooses whose key it holds.',
       options: [asIs ? own : { label: WAYS.quick, says: quickOnMac(host) }, { label: STRICTER, says: STRICTER_SAYS }],
       recommend: realUsers ? STRICTER : (asIs ? WAYS.asIs : WAYS.quick),
@@ -800,9 +800,11 @@ export function connectionCard({ host, locked = false, launched = false, realUse
   const reach = platform === 'win32'
     ? 'Windows has no sandbox to keep agents from your sign-in, so a key to this one project keeps the rest of your account out of reach'
     : 'agents then reach only this project, not your whole account';
+  // A product with real users says so first, so this card reads differently from the one asked before that was known.
+  const lead = realUsers && !locked && !launched ? 'The product has real users. ' : '';
   return {
     level: 3,
-    what: `How should Wheelhouse's agents reach ${place}?${noQuick}`,
+    what: `${lead}How should Wheelhouse's agents reach ${place}?${noQuick}`,
     why: 'Agents push and open pull requests only through Wheelhouse\'s helper; this chooses whose key it holds.',
     options,
     recommend,
