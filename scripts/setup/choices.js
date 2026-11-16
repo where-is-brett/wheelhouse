@@ -178,15 +178,18 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     return join && join.label !== NEW_PRODUCT ? `Looked for on your ${host} account.` : `A new product, in a private ${host === 'GitLab' ? 'project' : 'repository'} on your ${host} account.`;
   }
   if (id.startsWith('connection')) {
+    // On Windows a narrow way still leaves the host's own tool signed in as the director, readable by any agent's command.
+    const toolOut = choices.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
+    const stays = platform === 'win32' && !(host === 'GitLab' && toolOut) ? ` ${host}'s own sign-in also stays here, where any agent's command could read it.` : '';
     if (label === WAYS.quick) return platform === 'darwin' ? `Agents use your ordinary ${host} sign-in, which reaches your whole account; they can't read it on this Mac.` : `Agents use your ordinary ${host} sign-in, which reaches your whole account${platform === 'win32' ? '; on Windows any agent\'s command could read it' : ''}.`;
     if (label === STRICTER) return `A key for this project only, made on ${host} (you'll click Authorise and Install).`;
-    if (label === WAYS.wheelhouse) return 'A key for this project only, through the Wheelhouse app (you\'ll type a code and click Install).';
-    if (label === WAYS.own) return 'A key for this project only, from an app you create on GitHub (you\'ll tick Enable Device Flow, click Create, then Authorise and Install).';
+    if (label === WAYS.wheelhouse) return `A key for this project only, through the Wheelhouse app (you\'ll type a code and click Install).${stays}`;
+    if (label === WAYS.own) return `A key for this project only, from an app you create on GitHub (you\'ll tick Enable Device Flow, click Create, then Authorise and Install).${stays}`;
     if (label === WAYS.asIs) return `Agents use your own git as it is, with a ${host} key that reaches everything your account can.`;
     // On GitLab the key may not be allowed (keys switched off, or a free plan on the public service), so the plan names the token that stands in.
     return host === 'GitLab'
-      ? `A GitLab key for this project only, or, where GitLab won't allow one, a ${PERSONAL_DAYS}-day token that can act as you across GitLab.`
-      : `A ${host} key for this project only.`;
+      ? `A GitLab key for this project only, or, where GitLab won't allow one, a ${PERSONAL_DAYS}-day token that can act as you across GitLab.${stays}`
+      : `A ${host} key for this project only.${stays}`;
   }
   if (id.startsWith('product-')) {
     if (typeof text === 'string' && text.trim() !== '') return `Described as: "${text.trim()}"`;
@@ -222,7 +225,7 @@ function goAheadAsks({ keptHere, list, host }) {
   const way = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.label ?? null;
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
   if (host === 'GitLab' && noTool && way !== null && way !== WAYS.quick && way !== WAYS.asIs) {
-    return `You'll paste a one-day GitLab token into your computer's own box; if GitLab won't make a key for one project, a second token, lasting ${PERSONAL_DAYS} days and working as you in every GitLab project. Your password if needed.`;
+    return `You'll paste a one-day GitLab token into your computer's own box. If GitLab won't make a key for this one project, you'll also paste one lasting ${PERSONAL_DAYS} days that works as you in every GitLab project. Your password if needed.`;
   }
   if (way === WAYS.asIs) return `You'll be asked for a ${host} key only if your git holds none that works, pasted into your computer's own box, and your password if needed.`;
   // A narrow way on GitLab with its tool still meets GitLab's refusal of a project key the same way.
@@ -305,7 +308,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     question,
     header: 'Setup',
     options: [
-      { label: GO_AHEAD, description: `Recommended: I do all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list) })}` },
+      { label: GO_AHEAD, description: `Recommended: setup does all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list) })}` },
       yours
         ? { label: CHANGE_CHOICE, description: 'See every choice again, and change any before anything runs.' }
         : { label: CUSTOMISE, description: 'See every choice, and change any before anything runs.' },

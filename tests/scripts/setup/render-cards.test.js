@@ -204,7 +204,7 @@ test('on GitLab, step 10\'s card names a merge request, never a pull request', a
 });
 
 test('each path\'s plan says what will be asked of the director', async () => {
-  const asks = { a: /a GitLab key only if your git holds none that works/, b: /paste a one-day GitLab token into your computer's own box; if GitLab won't make a key for one project, a second token, lasting 30 days and working as you in every GitLab project/, c: /paste a one-day GitLab token into your computer's own box; if GitLab won't make a key for one project, a second token, lasting 30 days and working as you in every GitLab project/, d: /sign in on GitHub pages that open/, e: /sign in to your company's GitLab in your browser, or with a token you make on a page that opens/ };
+  const asks = { a: /a GitLab key only if your git holds none that works/, b: /paste a one-day GitLab token into your computer's own box. If GitLab won't make a key for this one project, you'll also paste one lasting 30 days that works as you in every GitLab project/, c: /paste a one-day GitLab token into your computer's own box. If GitLab won't make a key for this one project, you'll also paste one lasting 30 days that works as you in every GitLab project/, d: /sign in on GitHub pages that open/, e: /sign in to your company's GitLab in your browser, or with a token you make on a page that opens/ };
   for (const [name, says] of Object.entries(asks)) {
     const { cards } = await rendered(name);
     const plan = cards.filter((c) => /^plan-/.test(c.id)).at(-1);

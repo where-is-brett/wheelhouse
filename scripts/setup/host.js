@@ -415,14 +415,20 @@ const projectFile = (slug) => path.join(stateDir(slug), '..', 'project.json');
 const MEANWHILE = 'Nothing runs until your Go ahead on the plan.';
 
 // `platform` is the computer's: only a Mac offers Locked, so only a Mac's card names it.
-function realUsersAsk(name, platform, host = null) {
+// `toolOut` says the host's own tool is left out, so it never signs in.
+function realUsersAsk(name, platform, host = null, toolOut = false) {
   // The host's own tool stays signed in as the director after a narrow setup, and on Windows that sign-in is a file any
-  // agent's command can read, so the Yes says so there rather than promise agents never hold it.
-  const tool = host === 'github' || host === 'gitlab' ? `${NAME[host]}'s own tool` : 'The host\'s own tool';
-  const lasting = platform === 'win32' ? ` ${tool} still stays signed in as you here, where any agent's command could read it.` : '';
+  // agent's command can read, so the Yes says so there rather than promise agents never hold it. A tool left out never
+  // signs in. Where the host is not known yet (a product kept on this computer may still be put on either), or GitLab's
+  // tool may yet be left out or fail, the line says where a tool is used.
+  const signsIn = (host === 'github' || host === 'gitlab') && !toolOut;
+  const lasting = platform !== 'win32' || toolOut ? ''
+    : !signsIn ? ' If GitHub\'s or GitLab\'s own tool is used, it stays signed in as you here, where any agent\'s command could read it.'
+    : host === 'github' ? ' GitHub\'s own tool still stays signed in as you here, where any agent\'s command could read it.'
+      : ' Where GitLab\'s own tool is used, it stays signed in as you here, where any agent\'s command could read it.';
   const yes = host === 'github'
     ? `Setup treats it as launched: agents get a narrow connection, a key to this one project, not your own sign-in.${lasting}`
-    : `Setup treats it as launched: agents get a narrow connection, a key to this one project${host === 'gitlab' ? ' wherever GitLab makes one, not your own sign-in. Where it won\'t' : ' wherever one can be made, not your own sign-in. Where GitLab won\'t make one'}, a ${PERSONAL_DAYS}-day token you paste stands in, and it can act as you.${lasting}`;
+    : `Setup treats it as launched: agents get a narrow connection, a key to this one project${host === 'gitlab' ? ' wherever GitLab makes one, not your own sign-in. Where it won\'t' : ', not your own sign-in. If the product is on GitLab and GitLab won\'t make one'}, a ${PERSONAL_DAYS}-day token you paste stands in, and it can act as you.${lasting}`;
   return {
     id: 'real-users',
     card: {
@@ -819,8 +825,9 @@ function againCard(earlier, now, label) {
   });
   for (const o of added) if (!options.includes(o)) options.push(o);
   const keeps = options.some((o) => o.label === earlier.recommend);
-  // Today's reason where it backs the same recommendation, so a reason that no longer holds is not carried over.
-  return { ...now, options, recommend: keeps ? earlier.recommend : now.recommend, because: keeps && now.recommend !== earlier.recommend ? earlier.because : now.because };
+  // The reason is today's for whichever recommendation stands, so a reason that no longer holds is not carried over.
+  const because = keeps && now.recommend !== earlier.recommend ? (now.reasonFor?.(earlier.recommend) ?? earlier.because) : now.because;
+  return { ...now, options, recommend: keeps ? earlier.recommend : now.recommend, because };
 }
 
 // The advanced choice on the Mac's card, which leads to the narrow ways (the director's ruling of 24 October 2026).
@@ -889,19 +896,24 @@ export function connectionCard({ host, locked = false, launched = false, realUse
   // A narrow way still leaves the host's own tool signed in as the director (only the one-day token is revoked), and on Windows
   // that sign-in is a file any agent's command can read, so the reason says so rather than overclaim.
   const lasting = win && !(host === 'gitlab' && toolOut)
-    ? `. ${NAME[host]}'s own tool stays signed in as you on this computer, though, where any agent's command could read it`
+    ? `. That guards against slips, not against an agent set on more: ${NAME[host]}'s own tool stays signed in as you on this computer, where any agent's command could read it`
     : '';
   // A product with real users says so first, so this card reads differently from the one asked before that was known.
   const lead = realUsers && !locked && !launched ? 'The product has real users. ' : '';
-  return {
+  const reasonFor = (way) => (way !== WAYS.asIs ? `${reach}${lasting}` : 'it uses what this computer already has');
+  const card = {
     level: 3,
     what: `${lead}How should Wheelhouse's agents reach ${place}?${noQuick}`,
     why: `Agents are meant to push and open ${host === 'gitlab' ? 'merge requests' : 'pull requests'} only through Wheelhouse's helper; this chooses whose key it holds.`,
     options: recommendedFirst(options, recommend),
     recommend,
-    because: recommend !== WAYS.asIs ? `${reach}${lasting}` : 'it uses what this computer already has',
+    because: reasonFor(recommend),
     meanwhile: MEANWHILE,
   };
+  // Today's reason for any way, for a card asked again that keeps an earlier recommendation (againCard); not enumerable, so
+  // it stays out of the card's digest and words.
+  Object.defineProperty(card, 'reasonFor', { value: reasonFor });
+  return card;
 }
 
 // The narrow way STRICTER leads to: on GitLab its project key, on GitHub their own app while the
@@ -2291,7 +2303,12 @@ export function hostStep({
       let realUsers = false;
       let locked = false;
       if (!product.joining) {
-        if (answer('real-users') === null) return { ask: realUsersAsk(product.name, platform, product.host) };
+        if (answer('real-users') === null) {
+          // The host as chosen so far: the folder's remote, the first card's answer, or the host question's, if answered.
+          const picked = answer('host')?.label;
+          const chosen = join?.host ?? product.host ?? (picked === HOST_LABELS.gitlab ? 'gitlab' : picked === HOST_LABELS.github ? 'github' : null);
+          return { ask: realUsersAsk(product.name, platform, chosen, chosen === 'gitlab' && hostToolLeftOut(ctx, 'gitlab')) };
+        }
         realUsers = answer('real-users').label === REAL_USERS.yes;
         const lockable = realUsers && platform === 'darwin';
         if (lockable && answer('locked') === null) return { ask: lockedAsk(product.name) };
