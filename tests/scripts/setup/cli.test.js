@@ -93,7 +93,7 @@ test('resume gives where setup stands and the card of the first step neither don
   assert.deepEqual(JSON.parse((await run(['resume'], { client: done })).out), { lines: ['Every step is done.'], next: null, plan: null });
   // Until step 7 is applied, resume reminds a session that ran setup outside the sandbox to keep doing so.
   const due = fakeClient({ status: { ok: true, lines: ['Every step is done.'], next: null, ask: null, filesDue: true } });
-  assert.match(JSON.parse((await run(['resume'], { client: due })).out).sandbox, /^Step 7 is not applied yet: .*outside the sandbox/);
+  assert.match(JSON.parse((await run(['resume'], { client: due })).out).sandbox, /^Step 7 is not applied yet: try the sandbox first.*run it outside/);
   assert.deepEqual(done.calls.map(([name]) => name), ['status']);
 });
 

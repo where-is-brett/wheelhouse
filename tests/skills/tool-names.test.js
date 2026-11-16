@@ -66,7 +66,7 @@ test('the tool sheet, given to every session, does not tell it to run commands o
 test('the setup playbook names the unsandboxed run for setup\'s own command only, and tells the director what it lifts', () => {
   const body = playbookOf('setup');
   assert.match(body, /`dangerouslyDisableSandbox: true`, and only for `scripts\/setup\/cli\.js <form>`/);
-  assert.match(body, /outside Claude Code's safety box \(the sandbox\), so it can reach Wheelhouse/);
+  assert.match(body, /outside Claude Code's safety box \(the sandbox\) for the first part of setup, so it can reach Wheelhouse/);
   assert.match(body, /Claude Code may ask you to allow it/);
   // After step 7 the command moves back inside the sandbox, and the director hears nothing of it.
   assert.match(body, /then run them as usual and say nothing about it: not that the command is back inside the sandbox/);

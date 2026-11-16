@@ -1105,7 +1105,7 @@ async function switchFolder(ctx, c, { git, project, author }) {
 
 // `keyed`: step 3 connected with the setup token, so the commit goes through a merge request with the project's own
 // key, and protection is already on. `pasted`: that key is the director's own token GitLab made them use instead; null where the card is built before step 3 has kept either.
-export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [], negated = [], frontDesk = null, midSized = null, listens = false, keyed = false, pasted = false }) {
+export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [], negated = [], frontDesk = null, midSized = null, listens = false, keyed = false, pasted = false, company = false }) {
   const local = host === 'local';
   const files = changes.filter((c) => (c.kind === 'json-key' || c.kind === 'file') && c.line === undefined && c.engine !== true && c.what !== 'mirror');
   // The lines that keep .env files out of git: in the project's .gitignore, or, on a joining
@@ -1126,7 +1126,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   if (frontDesk === NO_PIN) parts.push('the First Mate\'s model is left as it is: Claude Code didn\'t say which model to use');
   else if (frontDesk) parts.push(`the First Mate uses ${frontDesk}, Claude Code's most capable everyday model`);
   if (midSized === NO_PIN) parts.push('the settings that spend less wait for a cheaper model: Claude Code didn\'t say which to use');
-  else if (midSized) parts.push('a cheaper model for most building and checking, if you choose to spend less');
+  else if (midSized) parts.push('a cheaper model for most building and checking, off until Thoroughness is set to Lean');
   if (secrets === 'shared') parts.push(`.env files, which hold secrets, kept out of git by .gitignore${envLines.some((c) => c.restate) ? ' (.env.example stays shared)' : ''}`);
   else if (secrets === 'here') parts.push(negated.length > 0 ? `some .env files, which hold secrets, kept out of git on this computer, but ${NEGATED_PART}` : '.env files, which hold secrets, kept out of git on this computer');
   if (negated.length > 0 && secrets !== 'here') parts.push(NEGATED_PART);
@@ -1170,7 +1170,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
     meanwhile: 'Setup waits here; nothing changes.',
   });
   // One thing to a line, as step 3's card lists its own, under a title that says whose sign-in does it.
-  const by = local || joining ? '' : pasted ? ', with the token you pasted at step 3, which can act as you across GitLab' : keyed ? (pasted === null ? ', with the project\'s own key where GitLab allows one, or else the token you pasted at step 3, which can act as you across GitLab' : ', with the project\'s own key, not your account') : `, acting as you on ${NAME[host]}`;
+  const by = local || joining ? '' : pasted ? ', with the token you pasted at step 3, which can act as you across GitLab' : keyed ? (pasted === null ? ', with the project\'s own key where GitLab allows one, or else the token you pasted at step 3, which can act as you across GitLab' : ', with the project\'s own key, not your account') : `, acting as you on ${company ? 'your company\'s GitLab' : NAME[host]}`;
   const full = card([`Setup step 7, ${titleOf7(local)}${joining ? ', for this computer' : by}:`, ...[...parts, ...pinned].map(asLine)].join('\n'));
   const fits = (c) => composeCard({ ...c, target: { step: 7, hash: '0'.repeat(64) } }).question.question.length <= CARD.chars;
   try {
@@ -1498,7 +1498,7 @@ export function projectFilesStep({
       if (commit) changes.push({ kind: 'host', target, action: 'commit', branch, base: tip, message: COMMIT_MESSAGE, files: commitFiles, ...(yours.length > 0 ? { yours } : {}), ...(own.length > 0 ? { own } : {}), ...(left ? { ownLeft: true } : {}), ...merge });
       else if (unpushed) changes.push({ kind: 'host', target, action: 'push', branch, base: tip, commit: head, files: ((await git.out(['diff-tree', '--no-commit-id', '--name-only', '-r', head])) ?? '').split('\n').filter(Boolean), ...merge });
       if (!local && !keyed) changes.push({ kind: 'host', target: `${repo} protection`, action: 'protect', branch });
-      return { changes, card: projectFilesCard({ changes, host, branch, release, frontDesk: pin === null ? NO_PIN : frontDeskOf(changes, pin), midSized: held !== null ? null : mid === null ? NO_PIN : mid, listens: config.localListening === true, keyed, pasted }), director: 'One click' };
+      return { changes, card: projectFilesCard({ changes, host, branch, release, frontDesk: pin === null ? NO_PIN : frontDeskOf(changes, pin), midSized: held !== null ? null : mid === null ? NO_PIN : mid, listens: config.localListening === true, keyed, pasted, company: host === 'gitlab' && typeof record.connection?.baseUrl === 'string' && record.connection.baseUrl !== DEFAULT_GITLAB }), director: 'One click' };
     },
 
     async apply(ctx, changes) {

@@ -84,7 +84,7 @@ import { wheelhouseHome, stateDir, projectSlug } from '../lib/paths.js';
 import { toolPath, toolState } from '../lib/host-tools.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
-import { quickLineFor } from '../lib/host-lines.js';
+import { macKeepsAway, quickLineFor } from '../lib/host-lines.js';
 import { detectHost } from '../host/adapter.js';
 import { startDeviceSignIn, waitForSignIn, installUrl } from '../host/github-app.js';
 import { installationCovers } from '../host/connection.js';
@@ -660,7 +660,7 @@ function joinAsk(id, name, { missed }) {
     card: {
       level: 2,
       what: `${found}Where should ${name} be kept?`,
-      why: 'This decides where your work is kept and who can reach it. Set up on another computer under another name? Type its account and name, like ann/cafe-menu. Back from a backup? Type where the backup file is.',
+      why: 'This decides where your work is kept and who can reach it. Already set up elsewhere under a different name? Type its owner/name, like ann/cafe-menu. Back from a backup? Type where the backup file is.',
       options: [
         { label: KEEP_HERE, says: 'A new product. Nothing goes online, and it can move to GitHub or GitLab later, in one click.' },
         { label: HOST_LABELS.github, says: 'A new product, in a private repository on your GitHub account.' },
@@ -779,7 +779,7 @@ const quickSays = (host, platform) => `${quickLineFor(host)} If that sign-in lea
 // "Use my git as it is" in a few plain words, and what it reaches (design section 4.4). On Windows nothing keeps an agent's
 // command from asking git for the key, so the option's words say so.
 // Where git holds no key for the host yet (`held` false), the key is one the director makes on a page, and the words say so.
-const asIsSays = (host, held = true) => `${held ? 'Your own git and the key it already uses' : 'Your own git and its key'}, for pushes and ${host === 'github' ? 'pull' : 'merge'} requests, reaching everything your account can.${held ? '' : ` If git holds no ${NAME[host]} key that works, you make one on a page that opens, set to last ${KEY_DAYS_ASKED} days.`}`;
+const asIsSays = (host, held = true) => `${held ? 'Your own git and the key it already uses' : 'Your own git and its key'}, for pushes and ${host === 'github' ? 'pull' : 'merge'} requests, reaching everything your account can.${held ? '' : ` If git holds no ${NAME[host]} key that works, you make one on a page that opens${host === 'gitlab' ? `, with its expiry date set ${KEY_DAYS_ASKED} days ahead` : `, set to last ${KEY_DAYS_ASKED} days`}.`}`;
 const AS_IS_WINDOWS = 'On Windows any agent\'s command could ask git for that key.';
 
 // The reason line on a connection card asked again because the way chosen can't be had now, said plainly. Quick works
@@ -837,7 +837,7 @@ export function againCard(earlier, now, label) {
 // The advanced choice on the Mac's card, which leads to the narrow ways (the director's ruling of 24 October 2026).
 export const STRICTER = 'Make it stricter';
 const STRICTER_SAYS = (host) => `A key to this one project only, instead of your whole account; recommended for teams and products with real users.${host === 'gitlab' ? ` Where GitLab won't make project keys, a ${PERSONAL_DAYS}-day token you paste stands in, and it can act as you across GitLab.` : ''}`;
-const quickOnMac = (host) => `Your ordinary ${NAME[host]} sign-in, through ${NAME[host]}'s own tool, reaching your whole account. Agents use it only through Wheelhouse's helper, and on this Mac the sandbox keeps agents' commands away from your Mac's saved passwords, where that sign-in is kept, unless the project signs apps for Apple, which opens those saved passwords to them.`;
+const quickOnMac = (host) => `Your ordinary ${NAME[host]} sign-in, through ${NAME[host]}'s own tool, reaching your whole account. Agents use it only through Wheelhouse's helper, and ${macKeepsAway(host)}.`;
 
 // The connection's question (Card 1's answer, design section 11), the composer's input without its
 // kind. On a Mac, for a project that is neither Locked nor launched, Quick is the default and the
@@ -881,7 +881,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
     recommend = app ? WAYS.wheelhouse : WAYS.own;
   } else {
     // On the public GitLab's free plan the project key is refused, so the option says what a free account gets first.
-    const made = toolOut ? 'from a one-day token you paste into your computer\'s own box, revoking the token afterwards' : 'with GitLab\'s own tool';
+    const made = toolOut ? 'from a one-day token you paste into a box on your screen, revoking the token afterwards' : 'with GitLab\'s own tool';
     const says = publicGitLab
       ? `On a free account, a ${PERSONAL_DAYS}-day token you paste, which can act as you across GitLab; on a paid plan, a key to this one project, which setup makes ${made}.`
       : `A key to this one project, which setup makes ${made}.`;
@@ -903,7 +903,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
   const reach = host === 'gitlab' && publicGitLab
     ? `if a paid plan's key leaked, only this project would be open; a free account's token would open every GitLab project and group you can reach`
     : host === 'gitlab'
-    ? `if it leaked, only this project would be open, unless GitLab won't make a project key (the public GitLab's free plan won't, and some companies switch them off): then a ${PERSONAL_DAYS}-day token you paste stands in, and it can act as you in every GitLab project and group you can reach`
+    ? `if it leaked, only this project would be open. If GitLab can't make a project key (some companies switch them off), a ${PERSONAL_DAYS}-day token stands in instead, and it can act as you in every GitLab project and group you can reach`
     : 'if it leaked, the rest of your account would stay out of reach';
   // A narrow way still leaves the host's own tool signed in as the director (only the one-day token is revoked), and on Windows
   // that sign-in is a file any agent's command can read, so the reason says so rather than overclaim.
@@ -1183,7 +1183,7 @@ export function directorGitEnv({ host, gitPath = 'git', env = process.env, platf
 export const SETUP_TOKEN_KEPT = 'Setup could not revoke the one-day GitLab token: delete it on GitLab\'s Access tokens page';
 
 // What step 3's card says of it.
-export const SETUP_TOKEN_LINE = 'You make a one-day GitLab token on a page that opens and paste it into your computer\'s own box. Setup uses it only to make the project, its key and the main line\'s protection, then revokes it.';
+export const SETUP_TOKEN_LINE = 'You make a one-day GitLab token on a page that opens and paste it into a box on your screen. Setup uses it only to make the project, its key and the main line\'s protection, then revokes it.';
 const NO_SETUP_TOKEN = 'No GitLab token was given, so nothing was made on GitLab; a fresh Go ahead asks again';
 // A setup token GitLab says can do more than api, or lasts longer than about a day: setup makes nothing with it.
 const SETUP_TOKEN_WIDE = 'The GitLab token can do more than api, so setup made nothing with it and revoked it: make a new one with api alone, then a fresh Go ahead';
@@ -1975,9 +1975,9 @@ async function checkPersonalToken(own, now) {
 // ---- Protection (planned here, switched on at step 7: Task 13) ----
 
 // What the card says of protection.
-export function protectionPlanLine(host) {
+export function protectionPlanLine(host, company = false) {
   return host === 'gitlab'
-    ? 'At step 7, setup acts as you on GitLab to protect the main line: changes go in only through merge requests, and any automatic checks it has must pass first.'
+    ? `At step 7, setup acts as you on ${company ? 'your company\'s GitLab' : 'GitLab'} to protect the main line: changes go in only through merge requests, and any automatic checks it has must pass first.`
     : 'At step 7, setup acts as you on GitHub to protect the main line, if your GitHub plan allows it (the free plan doesn\'t for a private repository).';
 }
 
@@ -2044,11 +2044,11 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
   // its key, or the key card's, is the sign-in).
   const signing = changes.find((c) => c.action === 'sign-in');
   if (signing?.via === 'setup-token') {
-    parts.push(bare ? 'You paste a one-day GitLab token into your computer\'s own box. Setup uses it for this step only, then revokes it.' : SETUP_TOKEN_LINE);
+    parts.push(bare ? 'You paste a one-day GitLab token into a box on your screen. Setup uses it for this step only, then revokes it.' : SETUP_TOKEN_LINE);
   } else if (signing?.via === 'token') {
-    parts.push(tight ? 'You sign in with a token you paste into your computer\'s own box, never the chat.' : `You sign in to ${name} with a token: a page opens to make it, and you paste it into your computer's own box, never the chat.`);
+    parts.push(tight ? 'You sign in with a token you paste into a box on your screen, never the chat.' : `You sign in to ${name} with a token: a page opens to make it, and you paste it into a box on your screen, never the chat.`);
   } else if (signing?.via === 'narrow-key') {
-    parts.push(`${bare ? `You sign in to ${name} with a key for this project only.` : `You sign in to ${name} with a key for this project only: a page opens to make it, and you paste it into your computer's own box, never the chat.`}${platform === 'win32' ? ' It stays here, where any agent\'s command could read it.' : ''}`);
+    parts.push(`${bare ? `You sign in to ${name} with a key for this project only.` : `You sign in to ${name} with a key for this project only: a page opens to make it, and you paste it into a box on your screen, never the chat.`}${platform === 'win32' ? ' It stays here, where any agent\'s command could read it.' : ''}`);
   } else if (signing) {
     // A company's GitLab gives its own accounts: no sign-up page is offered for it.
     parts.push(bare || company ? `You sign in to ${company ? 'your company\'s GitLab' : name} in your browser.` : `You sign in to ${name} in your browser (no account? sign up at ${signUpUrl(host, base)}).`);
@@ -2059,7 +2059,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     parts.push(`That sign-in reaches your whole account and stays here${platform === 'win32' ? ', where any agent\'s command could read it' : platform === 'darwin' ? ', out of agents\' reach' : ''}.`);
   }
   if (product.isNew) {
-    const where = owner ? `${owner}/${product.name} on ${name}` : `${product.name} on your ${name} account`;
+    const where = owner ? `${owner}/${product.name} on ${name}` : `${product.name} on ${company ? 'your company\'s GitLab' : `your ${name} account`}`;
     // GitLab calls a repository a project.
     const repo = host === 'gitlab' ? 'project' : 'repository';
     parts.push(bare ? `A private ${repo} on ${name}, connected to this folder.` : tight ? `A private ${repo} ${where}, connected to this folder.`
@@ -2076,15 +2076,15 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     const rest = connection?.backend === 'rest';
     const proxy = rest && connection.proxied === true ? ', through your company\'s proxy' : '';
     // The key git holds is the sign-in. Where it has none, or one the host refuses, the key card makes the one git then holds.
-    if (keyCard?.state === 'none') parts.push(bare ? `A ${name} key for your git, pasted into your computer's own box.` : `Your git holds no ${name} key yet: a page opens to make one, set to last ${KEY_DAYS_ASKED} days, and you paste it into your computer's own box, never the chat.`);
-    else if (keyCard) parts.push(bare ? `A new ${name} key for your git, pasted into your computer's own box, replacing the one it holds.` : `Your git's ${name} key ${keyCard.state === 'push-only' ? 'can push but not open or merge requests' : 'was refused'}: a page opens to make a new one, which replaces the one your git holds, and you paste it into your computer's own box, never the chat.`);
+    if (keyCard?.state === 'none') parts.push(bare ? `A ${name} key for your git, pasted into a box on your screen.` : `Your git holds no ${name} key yet: a page opens to make one, ${name === 'GitLab' ? `with its expiry date set ${KEY_DAYS_ASKED} days ahead` : `set to last ${KEY_DAYS_ASKED} days`}, and you paste it into a box on your screen, never the chat.`);
+    else if (keyCard) parts.push(bare ? `A new ${name} key for your git, pasted into a box on your screen, replacing the one it holds.` : `Your git's ${name} key ${keyCard.state === 'push-only' ? 'can push but not open or merge requests' : 'was refused'}: a page opens to make a new one, which replaces the one your git holds, and you paste it into a box on your screen, never the chat.`);
     parts.push(rest || keyCard
       ? `Wheelhouse pushes with your own git as it is, and uses its key for merge requests${proxy}.`
       : `Wheelhouse pushes with your own git as it is, and uses ${name}'s own tool, signed in already, for merge requests.`);
     parts.push(`${rest || keyCard ? 'That key reaches' : 'Both reach'} everything your account can on ${name}${platform === 'win32' ? '; on Windows any agent\'s command could ask for it' : ''}.`);
   } else if (way === WAYS.quick) parts.push(`Quick: your own ${name} sign-in, which reaches your whole account${platform === 'win32' ? '; on Windows any agent\'s command could read it' : ''}.`);
   else if (host === 'gitlab') {
-    parts.push(tight ? `A key to this project only; if GitLab won't allow one, a ${PERSONAL_DAYS}-day token that can act as you across GitLab.` : `A key to this project only, with the rights agents need there. If GitLab won't allow one, a ${PERSONAL_DAYS}-day token that can act as you across GitLab, pasted into your computer's own box.`);
+    parts.push(tight ? `A key to this project only; if GitLab won't allow one, a ${PERSONAL_DAYS}-day token that can act as you across GitLab.` : `A key to this project only, with the rights agents need there. If GitLab won't allow one, a ${PERSONAL_DAYS}-day token that can act as you across GitLab, pasted into ${['setup-token', 'token', 'narrow-key'].includes(signing?.via) ? 'that box' : 'a box on your screen'}.`);
     // A project with real users is merged by Maintainers only, which a Developer key is not (GITLAB_MAINTAINERS_ONLY, helper.js).
     if (realUsers) parts.push(REAL_USERS_MERGE_LINE);
   }
@@ -2107,7 +2107,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
   // A joining computer's project already has its protection, from the first computer's step 7. With the setup token,
   // protection goes on in this step, while setup holds the token.
   if (signing?.via === 'setup-token') parts.push(tight ? 'Setup protects the main line now, while it holds that token.' : SETUP_TOKEN_PROTECTION);
-  else if (!product.joining) parts.push(tight ? `At step 7, setup protects the main line with your sign-in${host === 'github' ? ', if your GitHub plan allows it (the free plan doesn\'t for a private repository)' : ''}.` : protectionPlanLine(host));
+  else if (!product.joining) parts.push(tight ? `At step 7, setup protects the main line with your sign-in${host === 'github' ? ', if your GitHub plan allows it (the free plan doesn\'t for a private repository)' : ''}.` : protectionPlanLine(host, company));
   return {
     kind: 'setup',
     level: 3,

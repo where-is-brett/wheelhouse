@@ -411,7 +411,7 @@ test('on Windows a narrow way is recommended, with one plain line on why, and Qu
   for (const host of ['github', 'gitlab']) {
     const card = connectionCard({ host, where, platform: 'win32' });
     assert.equal(card.recommend, host === 'github' ? WAYS.own : WAYS.narrow);
-    assert.match(card.because, host === 'github' ? /if it leaked, the rest of your account would stay out of reach/ : /if it leaked, only this project would be open, unless GitLab won't make a project key \(the public GitLab's free plan won't, and some companies switch them off\): then a 30-day token you paste stands in, and it can act as you in every GitLab project and group you can reach/);
+    assert.match(card.because, host === 'github' ? /if it leaked, the rest of your account would stay out of reach/ : /if it leaked, only this project would be open\. If GitLab can't make a project key \(some companies switch them off\), a 30-day token stands in instead, and it can act as you in every GitLab project and group you can reach/);
     assert.doesNotMatch(card.because, /Windows/);
     const quick = card.options.find((o) => o.label === WAYS.quick).says;
     assert.ok(quick.startsWith(quickLineFor(host)));
@@ -1443,7 +1443,7 @@ test('a company remote named in gitlabHosts, with its port, gives that address t
     assert.equal(connection.target, 'gitlab');
     assert.equal(connection.base, 'https://localhost:8929');
     // A company's GitLab with no OAuth application is signed in to with a typed token, not a sign-up page.
-    assert.match(planned.card.what, /You sign in to GitLab with a token: a page opens to make it, and you paste it into your computer's own box, never the chat/);
+    assert.match(planned.card.what, /You sign in to GitLab with a token: a page opens to make it, and you paste it into a box on your screen, never the chat/);
     const glab = w.calls.filter((c) => c.tool === 'glab');
     assert.ok(glab.length > 0);
     for (const c of glab) assert.equal(c.env?.GITLAB_HOST, 'localhost:8929');
@@ -1472,7 +1472,7 @@ test('step 3\'s card for a company\'s GitLab behind its own authority, with the 
     // The full wording fits the calm card's length, the shorter one only when the names are longer; both say the same things.
     assert.match(planned.card.what, /Your company's own certificate for https:\/\/git\.example\.org:8443, (?:copied from this computer's certificate store and given to Node\.js, glab and git )?for that address only\. Certificate checks stay on\./);
     assert.match(planned.card.what, /sign in (?:to GitLab )?with a token(?::| you paste)/);
-    assert.match(planned.card.what, /into your computer's own box, never the chat/);
+    assert.match(planned.card.what, /into a box on your screen, never the chat/);
     assert.doesNotMatch(planned.card.what, /admin/);
     const { question } = composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } });
     assert.ok(question.question.length <= 1200, String(question.question.length));
@@ -1513,7 +1513,7 @@ test('step 3\'s card on a company\'s GitLab composes for ordinary and for very l
       lengths.push(`${kind} ${hostName.length}/${repo.length}/${user.length}: ${question.question.length}`);
       assert.equal(wording(card.what), typeof expected === 'string' ? expected : expected[kind], `${kind} ${hostName.length}: ${card.what}`);
       assert.match(card.what, /for that address only\. Certificate checks stay on\./, `${kind} ${hostName}`);
-      assert.match(card.what, /paste (?:it )?into your computer's own box, never the chat/, `${kind} ${hostName}`);
+      assert.match(card.what, /paste (?:it )?into a box (?:that opens )?on your screen, never the chat/, `${kind} ${hostName}`);
       assert.doesNotMatch(card.what, /admin/, 'the card asks nothing of an admin');
       assert.deepEqual(termsIn(card.what.split('\n').filter((part) => /token|certificate/.test(part)).join('\n'), glossaryOf({})), []);
     }
@@ -1546,7 +1546,7 @@ test('on a company\'s GitLab the typed token is the way offered, and the card as
     const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
     const signing = planned.changes.find((c) => c.action === 'sign-in');
     assert.equal(signing.via, 'token');
-    assert.match(planned.card.what, /with a token: a page opens to make it, and you paste it into your computer's own box, never the chat/);
+    assert.match(planned.card.what, /with a token: a page opens to make it, and you paste it into a box on your screen, never the chat/);
     assert.match(planned.card.what, /never the chat/);
     // The card says only what the director does: nothing about an application an admin might register.
     assert.doesNotMatch(planned.card.what, /admin|read_user|client_id|openid|permissions/);
@@ -2435,7 +2435,7 @@ test('step 3 asks whether this computer is joining only in a folder holding noth
     assert.equal(first.typed, true, 'an owner/name may be typed');
     assert.deepEqual(first.card.options.map((o) => o.label), [KEEP_HERE, HOST_LABELS.github, HOST_LABELS.gitlab, 'Cafe-Menu, from my other computer']);
     assert.equal(first.card.recommend, KEEP_HERE, 'an empty folder is most often a new product, and one kept here needs no account');
-    assert.match(`${first.card.what} ${first.card.why}`, /account and name, like ann\/cafe-menu/);
+    assert.match(`${first.card.what} ${first.card.why}`, /owner\/name, like ann\/cafe-menu/);
     composeCard({ ...first.card, kind: 'question' });
     // With profile.json on this computer, it is still asked, with the same recommendation.
     const profileJson = path.join(wheelhouseHome(), 'profile.json');

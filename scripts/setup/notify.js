@@ -119,7 +119,7 @@ function arrivedAsk(id, round = 0) {
       // The composer needs a recommendation among the card's options; on a question of fact it
       // only asks the director to answer what they saw.
       recommend: ARRIVED.yes,
-      because: 'it is right only if the notification came: answer what you saw',
+      because: 'a test that was sent usually arrives',
       meanwhile: 'Setup waits for your answer; anything already running carries on.',
     },
   };

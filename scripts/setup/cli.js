@@ -132,7 +132,7 @@ function stepOf(text, { oneCard = false } = {}) {
 }
 
 // Said on resume while step 7 isn't applied: a session that ran setup outside the sandbox keeps doing so.
-const OUTSIDE_UNTIL_FILES = 'Step 7 is not applied yet: if setup\'s commands have had to run outside the sandbox, run the next one outside it too.';
+const OUTSIDE_UNTIL_FILES = 'Step 7 is not applied yet: try the sandbox first, and if a setup command (scripts/setup/cli.js) has been refused there, run it outside.';
 
 async function plan(client, folder, step) {
   const got = await ask(client.setup.plan, { folder, step });

@@ -102,12 +102,12 @@ test('the card lists each change in plain words, and nothing else changes', asyn
     const goesAhead = composeCard({ ...planned.card, kind: 'setup', target: { step: 6, hash: planHash(planned.changes) } }).question.options[0].description;
     assert.match(goesAhead, /Uninstall puts each setting back, but not deleted chats/);
     assert.match(text, /These are Claude Code's own settings on this computer/);
-    assert.match(text, /stays at version 2\.1\.100 or later/);
+    assert.match(text, /never an older version than 2\.1\.100, the oldest Wheelhouse works with/);
     assert.match(text, /Wheelhouse never updates itself/);
     assert.match(text, /phone notifications on/i);
     assert.ok(ownKey());
-    assert.match(text, /clicks carry a signature made with a key on this computer, which Claude Code's sandbox keeps agents from reading/);
-    assert.match(JSON.stringify(computerCard({ changes: planned.changes, platform: 'win32' })), /On Windows an agent's command could read that key/);
+    assert.match(text, /clicks are marked as coming from this computer, with a key that Claude Code's sandbox keeps agents from reading/);
+    assert.match(JSON.stringify(computerCard({ changes: planned.changes, platform: 'win32' })), /On Windows an agent's command could read the key behind that mark/);
     assert.doesNotMatch(text, /weaken/, 'none of the director\'s settings weakens Standard here');
     assert.equal(planned.director, 'One click');
 
@@ -279,13 +279,13 @@ test('a minimum version of the director\'s own at or above the floor is kept, an
       fs.writeFileSync(file, `${JSON.stringify({ minimumVersion: higher })}\n`);
       const planned = await step.plan(ctx);
       assert.deepEqual(keysOf(planned), ['autoUpdatesChannel'], higher);
-      assert.ok(composed(planned, 6).includes(`stays at version ${higher} or later (your own minimum, kept)`), higher);
+      assert.ok(composed(planned, 6).includes(`never an older version than ${higher} (your own minimum, kept)`), higher);
     }
     for (const [lower, shown] of [['2.0.5', '2.0.5'], ['2.1.99', '2.1.99'], ['latest', '"latest"']]) {
       fs.writeFileSync(file, `${JSON.stringify({ minimumVersion: lower })}\n`);
       const planned = await step.plan(ctx);
       assert.deepEqual(keysOf(planned), ['autoUpdatesChannel', 'minimumVersion'], lower);
-      assert.ok(composed(planned, 6).includes(`at version 2.1.100 or later (now ${shown})`), lower);
+      assert.ok(composed(planned, 6).includes(`an older version than 2.1.100, the oldest Wheelhouse works with (now ${shown})`), lower);
     }
   });
 });
