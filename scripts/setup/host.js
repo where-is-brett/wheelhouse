@@ -824,9 +824,10 @@ function againCard(earlier, now, label) {
     return same === undefined ? [] : [same];
   });
   for (const o of added) if (!options.includes(o)) options.push(o);
-  const keeps = options.some((o) => o.label === earlier.recommend);
+  // An earlier recommendation stands only where today's facts still give it a reason.
+  const keeps = options.some((o) => o.label === earlier.recommend) && (now.recommend === earlier.recommend || (now.reasonFor?.(earlier.recommend) ?? earlier.because) !== null);
   // The reason is today's for whichever recommendation stands, so a reason that no longer holds is not carried over.
-  const because = keeps && now.recommend !== earlier.recommend ? (now.reasonFor?.(earlier.recommend) ?? earlier.because) : now.because;
+  const because = keeps && now.recommend !== earlier.recommend ? now.reasonFor?.(earlier.recommend) ?? earlier.because : now.because;
   return { ...now, options, recommend: keeps ? earlier.recommend : now.recommend, because };
 }
 
@@ -895,12 +896,14 @@ export function connectionCard({ host, locked = false, launched = false, realUse
     : 'if it leaked, the rest of your account would stay out of reach';
   // A narrow way still leaves the host's own tool signed in as the director (only the one-day token is revoked), and on Windows
   // that sign-in is a file any agent's command can read, so the reason says so rather than overclaim.
-  const lasting = win && !(host === 'gitlab' && toolOut)
-    ? `. That guards against slips, not against an agent set on more: ${NAME[host]}'s own tool stays signed in as you on this computer, where any agent's command could read it`
-    : '';
+  // With GitLab's tool left out, the narrow key or token itself is what is kept here.
+  const lasting = !win ? ''
+    : host === 'gitlab' && toolOut ? '. On Windows the key or token is kept on this computer, where any agent\'s command could read it'
+      : `. That guards against slips, not against an agent set on more: ${NAME[host]}'s own tool stays signed in as you on this computer, where any agent's command could read it`;
   // A product with real users says so first, so this card reads differently from the one asked before that was known.
   const lead = realUsers && !locked && !launched ? 'The product has real users. ' : '';
-  const reasonFor = (way) => (way !== WAYS.asIs ? `${reach}${lasting}` : 'it uses what this computer already has');
+  // Null for the director's own git where it holds no key: off a Mac that is never recommended over a narrow way.
+  const reasonFor = (way) => (way !== WAYS.asIs ? `${reach}${lasting}` : held ? 'it uses what this computer already has' : null);
   const card = {
     level: 3,
     what: `${lead}How should Wheelhouse's agents reach ${place}?${noQuick}`,
@@ -2086,6 +2089,8 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     const ticks = 'tick the project on its Install page, not All repositories';
     parts.push(`${app.own ? 'Your own app' : 'The Wheelhouse app'}${appKeys === 'signed-in' ? ', as signed in already: ' : ': a code on GitHub, then '}${ticks}.`);
   }
+  // On Windows the narrow key or token is kept where any agent's command could read it (store.js).
+  if (platform === 'win32' && way !== WAYS.asIs && way !== WAYS.quick) parts.push(`On Windows, any agent's command could read the ${host === 'gitlab' ? 'key or token' : 'key'} kept here.`);
   parts.push(tight ? 'The project\'s record.' : 'The project\'s record, kept on this computer.');
   // A joining computer's project already has its protection, from the first computer's step 7. With the setup token,
   // protection goes on in this step, while setup holds the token.
@@ -2304,9 +2309,8 @@ export function hostStep({
       let locked = false;
       if (!product.joining) {
         if (answer('real-users') === null) {
-          // The host as chosen so far: the folder's remote, the first card's answer, or the host question's, if answered.
-          const picked = answer('host')?.label;
-          const chosen = join?.host ?? product.host ?? (picked === HOST_LABELS.gitlab ? 'gitlab' : picked === HOST_LABELS.github ? 'github' : null);
+          // The host as chosen so far: the first card's answer or the folder's remote; 'local' while it may still move.
+          const chosen = join?.host ?? product.host ?? null;
           return { ask: realUsersAsk(product.name, platform, chosen, chosen === 'gitlab' && hostToolLeftOut(ctx, 'gitlab')) };
         }
         realUsers = answer('real-users').label === REAL_USERS.yes;
@@ -2379,7 +2383,7 @@ export function hostStep({
       if (ctx.choicesOnly === true && host === 'gitlab' && !locked && !launched && !toolsStepDone(ctx)
         && hostToolChoice({ tool: TOOL.gitlab, folder: ctx.folder, answers: ctx.answers ?? {} }) === null
         && await toolState(TOOL.gitlab, { run, platform }) === 'missing') {
-        return { ask: { id: hostToolId(TOOL.gitlab), card: hostToolCard(TOOL.gitlab, { recommend: 'fetch' }), step: 2 } };
+        return { ask: { id: hostToolId(TOOL.gitlab), card: hostToolCard(TOOL.gitlab, { recommend: 'fetch', platform }), step: 2 } };
       }
       const reach = !locked && !launched ? await reachOf({ ctx, host, base, product, platform }) : null;
       if (reach?.noRoad && ctx.choicesOnly !== true) return { wait: OWN_APP_WAIT_MS, why: noRoadLine(host) };

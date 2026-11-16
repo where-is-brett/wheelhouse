@@ -1156,7 +1156,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
     kind: 'setup',
     level: 3,
     what,
-    why: local ? 'Agents start from these files; later changes go through Wheelhouse\'s checks.' : 'Agents start from these files; once protected, later changes go through Wheelhouse\'s checks.',
+    why: local ? 'Agents start from these files; later changes go through Wheelhouse\'s checks.' : keyed ? `Agents start from these files; ${branch} is already protected, so later changes go through Wheelhouse's checks.` : 'Agents start from these files; once protected, later changes go through Wheelhouse\'s checks.',
     options: [
       { label: SETUP_LABEL, says: local || keyed ? 'Setup makes these changes.' : 'Setup makes these changes and tells you whether the protection took.' },
       { label: 'Not now', says: 'Nothing changes, and agents wait for these files.' },

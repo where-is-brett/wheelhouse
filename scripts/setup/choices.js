@@ -180,12 +180,14 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
   if (id.startsWith('connection')) {
     // On Windows a narrow way still leaves the host's own tool signed in as the director, readable by any agent's command.
     const toolOut = choices.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
-    const stays = platform === 'win32' && !(host === 'GitLab' && toolOut) ? ` ${host}'s own sign-in also stays here, where any agent's command could read it.` : '';
+    const stays = platform !== 'win32' ? ''
+      : host === 'GitLab' && toolOut ? ' On Windows it is kept here, where any agent\'s command could read it.'
+        : ` ${host}'s own sign-in also stays here, where any agent's command could read it.`;
     if (label === WAYS.quick) return platform === 'darwin' ? `Agents use your ordinary ${host} sign-in, which reaches your whole account; they can't read it on this Mac.` : `Agents use your ordinary ${host} sign-in, which reaches your whole account${platform === 'win32' ? '; on Windows any agent\'s command could read it' : ''}.`;
     if (label === STRICTER) return `A key for this project only, made on ${host} (you'll click Authorise and Install).`;
     if (label === WAYS.wheelhouse) return `A key for this project only, through the Wheelhouse app (you\'ll type a code and click Install).${stays}`;
     if (label === WAYS.own) return `A key for this project only, from an app you create on GitHub (you\'ll tick Enable Device Flow, click Create, then Authorise and Install).${stays}`;
-    if (label === WAYS.asIs) return `Agents use your own git as it is, with a ${host} key that reaches everything your account can.`;
+    if (label === WAYS.asIs) return `Agents use your own git as it is, with a ${host} key that reaches everything your account can${platform === 'win32' ? '; on Windows any agent\'s command could ask git for it' : ''}.`;
     // On GitLab the key may not be allowed (keys switched off, or a free plan on the public service), so the plan names the token that stands in.
     return host === 'GitLab'
       ? `A GitLab key for this project only, or, where GitLab won't allow one, a ${PERSONAL_DAYS}-day token that can act as you across GitLab.${stays}`

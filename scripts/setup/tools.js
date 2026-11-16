@@ -278,9 +278,11 @@ export const toolsLeftOut = ({ tools, folder, answers }) => tools.filter((tool) 
 
 // The question of step 2 for a missing host tool. Plain words: never "REST", "curl" or "API". GitLab's tool is never
 // recommended for fetching: a company's GitLab often may not have it, and Wheelhouse reaches GitLab without it.
-export function hostToolCard(tool, { recommend: given }) {
+export function hostToolCard(tool, { recommend: given, platform = process.platform }) {
   const name = HOST_TOOL_NAME[tool];
   const labels = hostToolLabels(tool);
+  // On Windows nothing keeps agents' commands from the tool's sign-in.
+  const win = platform === 'win32';
   const recommend = tool === 'glab' ? 'none' : given;
   const because = given === 'none' ? `your git already holds a key that ${name} accepts, so the tool isn't needed`
     : tool === 'glab' ? `Wheelhouse does all it needs on ${name} without it`
@@ -290,8 +292,8 @@ export function hostToolCard(tool, { recommend: given }) {
     what: `${name}'s own tool isn't on this computer. Should Wheelhouse fetch it, or reach ${name} without it?`,
     why: `If you'd rather not install ${name}'s tool, or your company's rules don't allow it, Wheelhouse can work without it, talking to ${name} directly with a key you make, or your git's own.`,
     options: [
-      { label: labels.fetch, says: `Wheelhouse fetches ${name}'s tool from its official release into its own tools folder, and checks it.${tool === 'glab' ? ' Only with it can agents use your ordinary GitLab sign-in.' : ''}` },
-      { label: labels.none, says: `Nothing is fetched, and Wheelhouse never runs ${name}'s tool.` },
+      { label: labels.fetch, says: `Wheelhouse fetches ${name}'s tool from its official release into its own tools folder, and checks it.${tool !== 'glab' ? '' : win ? ' Lets agents use your whole GitLab account through it (the Quick way); its sign-in could be read by any agent\'s command.' : ' Only with it can agents use your ordinary GitLab sign-in.'}` },
+      { label: labels.none, says: `Nothing is fetched, and Wheelhouse never runs ${name}'s tool.${tool === 'glab' && win ? ' Nothing signs GitLab\'s tool in as you on this computer, where agents\' commands could read it.' : ''}` },
     ],
     recommend: recommend === 'none' ? labels.none : labels.fetch,
     because,
@@ -1021,7 +1023,7 @@ export function toolsStep({
         // recommendation is only ever a recommendation: a tool no one has said to leave out is fetched.
         if (said === null && ctx.choicesOnly === true) {
           const ready = await webReady({ tool, folder: ctx.folder, platform, gitPath });
-          return { ask: { id: hostToolId(tool), card: hostToolCard(tool, { recommend: ready ? 'none' : 'fetch' }) } };
+          return { ask: { id: hostToolId(tool), card: hostToolCard(tool, { recommend: ready ? 'none' : 'fetch', platform }) } };
         }
       }
       if (ctx.choicesOnly === true) return { wait: 0, why: 'every choice of step 2 is made' };
