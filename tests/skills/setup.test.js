@@ -289,7 +289,7 @@ test('step 10\'s green board: the playbook runs resume at once and asks its card
   assert.ok(section, `a section for step ${HEALTH_STEP}`);
   const green = section.split('**Green:**')[1]?.split('**Not green:**')[0] ?? '';
   assert.match(green, /Run `resume` at once\. The card it gives \(the phone's, Step 9 above\) opens with the verdict and the first briefing: ask it exactly as given/);
-  assert.match(green, /With no card left, its plan gives step 10 settled, with them as `said`: show that as it is, in a message of its own/);
+  assert.match(green, /With no card left, its plan gives step 10 settled, with them as `said`: your next message to the director is that `said`, word for word, before anything else/);
   assert.ok(section.indexOf('**Green:**') < section.indexOf('When `health` gave a `card`'), 'the briefing\'s card before the carry-on card');
   assert.ok(playbook.includes('| "The Logbook is green; I\'ll sum it up and move on" | `resume` at once'), 'a red flag for it');
   assert.match(playbook.split(`## Step ${PUSH_TEST_STEP}, `)[1], /opens with the verdict and the first briefing/);
