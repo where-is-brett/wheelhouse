@@ -41,7 +41,7 @@ after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 import { composeCard, isTooLong } from '../../../scripts/cards/compose.js';
 import { termsIn, glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
-import { QUICK_LINE } from '../../../scripts/lib/host-lines.js';
+import { QUICK_LINE, quickLineFor } from '../../../scripts/lib/host-lines.js';
 import { QUICK_LINE as BOARD_QUICK_LINE } from '../../../scripts/board/health.js';
 import { FREE_PLAN_LINE } from '../../../scripts/host/protection.js';
 import { g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
@@ -400,7 +400,7 @@ test('on Windows a narrow way is recommended, with one plain line on why, and Qu
     assert.equal(card.recommend, host === 'github' ? WAYS.own : WAYS.narrow);
     assert.match(card.because, /Windows has no sandbox/);
     const quick = card.options.find((o) => o.label === WAYS.quick).says;
-    assert.ok(quick.startsWith(QUICK_LINE));
+    assert.ok(quick.startsWith(quickLineFor(host)));
     assert.match(quick, /For trying Wheelhouse out/);
     composeCard({ ...card, kind: 'question' });
   }
@@ -415,7 +415,7 @@ test('on GitHub the card offers the Wheelhouse app, their own app and Quick, and
   assert.deepEqual(labels(open), [WAYS.wheelhouse, WAYS.own, WAYS.quick]);
   assert.equal(open.recommend, WAYS.wheelhouse);
   assert.match(open.what, /a-director\/shop on GitHub/);
-  assert.ok(open.options.find((o) => o.label === WAYS.quick).says.startsWith(QUICK_LINE), 'Quick carries its cost');
+  assert.ok(open.options.find((o) => o.label === WAYS.quick).says.startsWith(quickLineFor('github')), 'Quick carries its cost');
   assert.equal(BOARD_QUICK_LINE, QUICK_LINE, 'the board says the same line');
   assert.deepEqual(labels(connectionCard({ host: 'github', where, appFile: registered, locked: true })), [WAYS.wheelhouse, WAYS.own]);
   assert.deepEqual(labels(connectionCard({ host: 'gitlab', where })), [WAYS.narrow, WAYS.quick]);
@@ -2799,7 +2799,7 @@ test('a typed GitLab address that is not one asks again under a new id, saying w
   await withHome(async () => {
     const w = standIn();
     const folder = productFolder('shop');
-    const texts = ['gitlab', 'http://git.example.org', 'https://git.example.org/group'];
+    const texts = ['gitlab', 'http://git.example.org', 'https://git.example.org/gr$oup/x'];
     const planned = await answerAll(stepFor(w), ctxFor(folder), (id, card) => {
       if (id.startsWith('gitlab-where')) return { text: texts.length > 0 ? texts.shift() : 'git.example.org' };
       return choose({ host: HOST_LABELS.gitlab })(id, card);
@@ -2821,7 +2821,7 @@ test('a typed GitLab address that is not one asks again under a new id, saying w
     composeCard({ ...got.ask.card, kind: 'question', suggest: false });
     // An address typed there is taken directly; a bad one asks again, saying why; Go back returns to the first card.
     const typed = (text) => ({ label: null, text, at: NOW.toISOString() });
-    const next = await stepFor(standIn()).plan(ctxFor(folder, { answers: { ...answers, '3.gitlab-address-1': typed('git.example.org/x') } }));
+    const next = await stepFor(standIn()).plan(ctxFor(folder, { answers: { ...answers, '3.gitlab-address-1': typed('git.example.org/x$') } }));
     assert.equal(next.ask.id, 'gitlab-address-2');
     assert.match(next.ask.card.what, /no path/);
     const back = await stepFor(standIn()).plan(ctxFor(folder, { answers: { ...answers, '3.gitlab-address-1': said('Go back') } }));
@@ -2855,9 +2855,24 @@ test('companyAddress takes https and a host with an optional port, and nothing e
   assert.deepEqual(companyAddress('git.example.org:8443'), { base: 'https://git.example.org:8443', host: 'git.example.org:8443' });
   assert.deepEqual(companyAddress('localhost:8929'), { base: 'https://localhost:8929', host: 'localhost:8929' });
   assert.deepEqual(companyAddress('gitlab.com'), { base: 'https://gitlab.com' });
-  for (const bad of ['', 'gitlab', 'http://git.example.org', 'https://git.example.org/a', 'git.example.org:99999', 'git example.org', 'user@git.example.org']) {
+  for (const bad of ['', 'gitlab', 'http://git.example.org', 'https://git.example.org/a$b', 'git.example.org:99999', 'git example.org', 'user@git.example.org']) {
     assert.equal(typeof companyAddress(bad).why, 'string', bad);
   }
+});
+
+test('a group page address is trimmed to its host, and words that are not an address are not quoted back', () => {
+  assert.deepEqual(companyAddress('https://git.example.org/group'), { base: 'https://git.example.org', host: 'git.example.org' });
+  assert.deepEqual(companyAddress('git.example.org:8443/group'), { base: 'https://git.example.org:8443', host: 'git.example.org:8443' });
+  assert.equal(companyAddress('Type something.').why.includes('Type something'), false);
+  assert.ok(companyAddress('nothere').why.includes('"nothere"'));
+});
+
+test('connection cards name only their own host in Quick, and keep Windows capitalised', () => {
+  const win = connectionCard({ host: 'gitlab', where: 'x on GitLab', platform: 'win32' });
+  const quick = win.options.find((o) => o.label === WAYS.quick).says;
+  assert.ok(quick.includes('full GitLab access') && !quick.includes('GitHub'));
+  assert.ok(connectionCard({ host: 'github', where: 'x on GitHub', platform: 'win32' }).options.find((o) => o.label === WAYS.quick).says.includes('full GitHub access'));
+  assert.ok(win.because.startsWith('Windows has no sandbox'));
 });
 
 test('the kept card\'s Put it on GitLab also asks which GitLab', async () => {
@@ -2879,7 +2894,7 @@ test('the kept card\'s Put it on GitLab also asks which GitLab', async () => {
 
 test('a project\'s full address typed as the company address is that host and that existing project, never a new one', async () => {
   assert.deepEqual(companyAddress('https://git.example.org/group/sub/shop.git'), { base: 'https://git.example.org', host: 'git.example.org', repo: 'group/sub/shop' });
-  assert.equal(typeof companyAddress('https://git.example.org/group').why, 'string');
+  assert.equal(typeof companyAddress('https://git.example.org/group/').why, 'undefined');
   await withHome(async () => {
     const w = standIn({ signedIn: { github: true, gitlab: false } });
     const folder = productFolder('shop');

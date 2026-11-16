@@ -138,7 +138,7 @@ export function keptAsk(name, others) {
         { label: PUT_ON_GITLAB, says: 'Setup makes a private project on your GitLab account, and sends your project there.' },
       ],
       recommend: KEEP_HERE,
-      because: 'it needs no account, and it can move later in one click',
+      because: 'it needs no account',
       meanwhile: 'Nothing runs until your Go ahead on the plan.',
     },
   };

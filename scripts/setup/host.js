@@ -84,7 +84,7 @@ import { wheelhouseHome, stateDir, projectSlug } from '../lib/paths.js';
 import { toolPath, toolState } from '../lib/host-tools.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
-import { QUICK_LINE } from '../lib/host-lines.js';
+import { quickLineFor } from '../lib/host-lines.js';
 import { detectHost } from '../host/adapter.js';
 import { startDeviceSignIn, waitForSignIn, installUrl } from '../host/github-app.js';
 import { installationCovers } from '../host/connection.js';
@@ -422,7 +422,7 @@ function realUsersAsk(name) {
       why: 'A product with real users gets the narrow connection, and on a Mac the offer of Locked.',
       options: [
         { label: REAL_USERS.yes, says: 'Setup treats it as launched: the narrow connection, and on a Mac the offer of Locked.' },
-        { label: REAL_USERS.no, says: 'Setup treats it as before launch; you can say so later, when it has users.' },
+        { label: REAL_USERS.no, says: 'Setup treats it as before launch; you can say so later, when it has users. A throwaway or test project is a No.' },
       ],
       recommend: REAL_USERS.no,
       because: 'most products start before launch; say yes only if people use it now',
@@ -463,7 +463,7 @@ function hostAsk(name) {
         { label: HOST_LABELS.gitlab, says: 'A private project on your GitLab account.' },
       ],
       recommend: KEEP_HERE,
-      because: 'it needs no account, and it can move later in one click',
+      because: 'it needs no account',
       meanwhile: MEANWHILE,
     },
   };
@@ -480,23 +480,27 @@ export const COMPANY_GITLAB = 'My company\'s GitLab';
 export function companyAddress(text) {
   const typed = String(text ?? '').trim();
   const shown = typed.length > 50 ? `${typed.slice(0, 50)}...` : typed;
-  if (/^http:\/\//i.test(typed)) return { why: `"${shown}" is not https, and a company's GitLab is reached over https only` };
+  // Only one run of characters can be an address someone typed: words with spaces in them are a placeholder or a
+  // sentence, and the card never quotes them back as the director's address.
+  const called = /^\S+$/.test(typed) ? `"${shown}"` : 'What came back';
+  if (/^http:\/\//i.test(typed)) return { why: `${called} is not https, and a company's GitLab is reached over https only` };
   // A project's full address is taken too: its host is the GitLab, and its path names the project.
   const [hostPart, ...rest] = typed.replace(/^https:\/\//i, '').split('/');
   const bare = hostPart;
   let repo;
   const segments = rest.join('/').replace(/[?#].*$/, '').split('/-/')[0].replace(/\.git$/i, '').split('/').filter(Boolean);
+  // A group's page (the host and one group) is trimmed to the host; a path of two or more names a project.
   if (segments.length > 0) {
-    if (segments.length < 2 || !segments.every((part) => /^[A-Za-z0-9_.][A-Za-z0-9_.-]*$/.test(part) && !/^\.+$/.test(part))) {
-      return { why: `"${shown}" is not a GitLab address: it is a host name and a port if it has one, with no path; or a project's whole address, the host then group/project` };
+    if (!segments.every((part) => /^[A-Za-z0-9_.][A-Za-z0-9_.-]*$/.test(part) && !/^\.+$/.test(part))) {
+      return { why: `${called} is not a GitLab address: it is a host name and a port if it has one, with no path; or a project's whole address, the host then group/project` };
     }
-    repo = segments.join('/');
+    if (segments.length > 1) repo = segments.join('/');
   }
   const match = /^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*)(?::(\d{1,5}))?$/i.exec(bare);
-  if (match === null) return { why: `"${shown}" is not a GitLab address: it is a host name and a port if it has one, with no path` };
+  if (match === null) return { why: `${called} is not a GitLab address: it is a host name and a port if it has one, with no path` };
   const [, name, port] = match;
-  if (!name.includes('.') && name.toLowerCase() !== 'localhost') return { why: `"${shown}" is not a GitLab address: it needs the whole host name, such as gitlab.example.org` };
-  if (port !== undefined && (Number(port) < 1 || Number(port) > 65535)) return { why: `"${shown}" has a port that is not a port` };
+  if (!name.includes('.') && name.toLowerCase() !== 'localhost') return { why: `${called} is not a GitLab address: it needs the whole host name, such as gitlab.example.org` };
+  if (port !== undefined && (Number(port) < 1 || Number(port) > 65535)) return { why: `${called} has a port that is not a port` };
   const url = new URL(`https://${name.toLowerCase()}${port === undefined ? '' : `:${port}`}`);
   if (url.origin === DEFAULT_GITLAB) return { base: DEFAULT_GITLAB, ...(repo === undefined ? {} : { repo }) };
   return { base: url.origin, host: url.host, ...(repo === undefined ? {} : { repo }) };
@@ -550,11 +554,11 @@ function gitlabAddressAsk(name, { id, refused }) {
       what: `${refused === null ? '' : `${refused}. `}What is your company's GitLab address? Choose Other below and type it, such as https://gitlab.example.org.`,
       why: `Setup needs it to sign in and make ${name} there, and names it in the project settings.`,
       options: [
-        { label: GITLAB_COM, says: 'Use the public GitLab instead.' },
+        { label: GITLAB_COM, says: 'The public GitLab, for a company that has none of its own.' },
         { label: GO_BACK, says: 'Back to the question of which GitLab.' },
       ],
-      recommend: GITLAB_COM,
-      because: 'pick it only if your company has no GitLab of its own',
+      recommend: GO_BACK,
+      because: 'you can then choose again; otherwise choose Other and type your company\'s address',
       meanwhile: MEANWHILE,
     },
   };
@@ -638,7 +642,7 @@ function joinAsk(id, name, { missed }) {
       // An empty folder is far more often a new product, whether or not this computer knows
       // Wheelhouse yet (the director's first setup, design section 15.1), and one kept here needs no account.
       recommend: KEEP_HERE,
-      because: 'it needs no account, and it can move later in one click',
+      because: 'it needs no account',
       meanwhile: MEANWHILE,
     },
   };
@@ -742,7 +746,7 @@ function hostToolLeftOut(ctx, host) {
 }
 
 // Quick's words where narrow is the recommendation (Windows, a Locked or launched project): its cost said plainly.
-const QUICK_SAYS = `${QUICK_LINE} For trying Wheelhouse out: if that sign-in leaked, it would open every project you have, and on Windows any agent's command could read it.`;
+const quickSays = (host) => `${quickLineFor(host)} For trying Wheelhouse out: if that sign-in leaked, it would open every project you have, and on Windows any agent's command could read it.`;
 // "Use my git as it is" in a few plain words, and what it reaches (design section 4.4). On Windows nothing keeps an agent's
 // command from asking git for the key, so the card says so.
 const asIsSays = (host, platform) => `Pushes run with your own git setup untouched; the same key your git uses opens and merges ${NAME[host]}'s requests. It reaches everything your account can.${platform === 'win32' ? ' Any agent\'s command could ask git for that key, as any of your programs could.' : ''}`;
@@ -792,7 +796,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
     recommend = WAYS.narrow;
   }
   const quick = !locked && !launched && !asIs;
-  if (quick) options.push({ label: WAYS.quick, says: QUICK_SAYS });
+  if (quick) options.push({ label: WAYS.quick, says: quickSays(host) });
   if (asIs && !locked && !launched && !realUsers) recommend = WAYS.asIs;
   let noQuick = '';
   if (locked) noQuick = ' Locked needs a narrow connection, so Quick is not offered.';

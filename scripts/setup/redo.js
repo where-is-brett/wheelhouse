@@ -77,7 +77,7 @@ export function redoCard({ key, answers, name, record, described, count, stepRan
         why: 'It sets how carefully agents treat it. Locked is then offered from Settings, under Protection.',
         options: [
           { label: REAL_USERS.yes, says: 'It is recorded as launched.' },
-          { label: REAL_USERS.no, says: 'It is recorded as before launch.' },
+          { label: REAL_USERS.no, says: 'It is recorded as before launch. A throwaway or test project is a No.' },
         ],
         recommend: answers['3.real-users']?.label === REAL_USERS.yes ? REAL_USERS.no : REAL_USERS.yes,
         because: 'you asked to change it',
