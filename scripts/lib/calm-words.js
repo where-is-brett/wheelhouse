@@ -216,7 +216,7 @@ export const SETUP_GOING = Object.freeze({
 });
 export const toolsInstalling = (tools) => `${tools.join(' and ')} ${tools.length === 1 ? 'is' : 'are'} still installing`;
 // What reaches the director's phone, said on the phone step's card.
-export const PHONE_REACHES = 'Only things that need you, finished features and breakages reach your phone.';
+export const PHONE_REACHES = 'Only three things reach your phone: what needs you, finished features and breakages.';
 // How the director carries setup on in a new session: the sandbox's network limit takes effect
 // only in a session started after setup wrote it (step 7).
 export const NEW_SESSION = 'Start a new session on this folder, then say "carry on with setup"';

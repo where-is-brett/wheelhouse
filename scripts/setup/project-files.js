@@ -1121,9 +1121,9 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   else if (excluded) parts.push(`.claude/settings.local.json${ours ? ' and .wheelhouse/, Wheelhouse\'s working folder,' : ''} kept out of git`);
   if (ours && !excluded) parts.push('.wheelhouse/, Wheelhouse\'s working folder, kept out of git');
   if (frontDesk === NO_PIN) parts.push('the First Mate\'s model is left as it is: Claude Code didn\'t say which model to use');
-  else if (frontDesk) parts.push(`the First Mate runs on ${frontDesk}`);
-  if (midSized === NO_PIN) parts.push('Lean and Lightest wait for the lighter model: Claude Code didn\'t say which model to use');
-  else if (midSized) parts.push('at Lean and Lightest thoroughness, most building and checking use the cheaper model');
+  else if (frontDesk) parts.push(`the First Mate uses ${frontDesk}, Claude Code's most capable everyday model`);
+  if (midSized === NO_PIN) parts.push('the settings that spend less wait for a cheaper model: Claude Code didn\'t say which to use');
+  else if (midSized) parts.push('a cheaper model for most building and checking, if you choose to spend less');
   if (secrets === 'shared') parts.push(`.env files, which hold secrets, kept out of git by .gitignore${envLines.some((c) => c.restate) ? ' (.env.example stays shared)' : ''}`);
   else if (secrets === 'here') parts.push(negated.length > 0 ? `some .env files, which hold secrets, kept out of git on this computer, but ${NEGATED_PART}` : '.env files, which hold secrets, kept out of git on this computer');
   if (negated.length > 0 && secrets !== 'here') parts.push(NEGATED_PART);

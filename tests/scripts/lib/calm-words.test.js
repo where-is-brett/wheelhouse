@@ -202,7 +202,7 @@ test('setup\'s step line, meanwhile line, phone words and verdict say what the d
   assert.equal(words.setupMeanwhile('Node.js is still installing'), 'Meanwhile, Node.js is still installing. Nothing for you to do there.');
   assert.equal(words.toolsInstalling(['git']), 'git is still installing');
   assert.equal(words.toolsInstalling(['git', 'gh']), 'git and gh are still installing');
-  assert.equal(words.PHONE_REACHES, 'Only things that need you, finished features and breakages reach your phone.');
+  assert.equal(words.PHONE_REACHES, 'Only three things reach your phone: what needs you, finished features and breakages.');
   assert.equal(words.healthVerdict(4, 4), 'All 4 checks passed. Wheelhouse is ready.');
   assert.equal(words.healthVerdict(3, 4), '3 of 4 checks passed. Here is what to do.');
   assert.equal(words.healthVerdict(3, 4, 1), '3 of 4 checks passed; the rest need one new session, as setup expects. Start a new session on this folder, then say "carry on with setup": the last checks run there.');

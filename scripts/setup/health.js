@@ -306,7 +306,7 @@ function card(repo, local, host = 'github') {
       { label: 'Not now', says: 'Nothing is tried, and the Logbook stays unchecked.' },
     ],
     recommend: SETUP_LABEL,
-    because: 'it is the last step, and it takes about a minute',
+    because: 'it takes about a minute',
     meanwhile: 'Setup waits at this step; nothing changes.',
   };
 }

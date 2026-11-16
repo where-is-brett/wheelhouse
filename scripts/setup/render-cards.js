@@ -353,7 +353,7 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
         tool_input: { questions: [card] }, tool_response: { answers: { [card.question]: value } },
       }, { client, now: () => new Date(clock - 500) });
     };
-    const plan = (step) => routes['/setup/plan']({ folder, step });
+    const plan = (step) => routes['/setup/plan']({ folder, step, ...(desktop ? { desktop: true } : {}) });
     const runId = () => readJournal().runs.find((r) => r.folder === folder)?.id;
     // The one card and Customise, until a Go ahead holds.
     for (let turn = 0; ; turn += 1) {
@@ -371,6 +371,8 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
       for (let turn = 0; ; turn += 1) {
         const got = await plan(n);
         if (got.done) break;
+        // Step 9 on the Desktop app waits while the director's screen is locked, then sends the test and asks if it arrived.
+        if (got.wait !== undefined && n === 9 && turn < 4) { said.push(`setup waited ${Math.round(got.wait / 60000)} minutes for the phone test`); clock += got.wait; continue; }
         if (got.wait !== undefined) { end = { step: n, how: 'pause', why: got.why }; return { cards, end, said }; }
         if (got.ok === false || got.error !== undefined) { end = { step: n, how: 'failed', why: got.error ?? got.why ?? JSON.stringify(got) }; return { cards, end, said }; }
         if (got.ask) {

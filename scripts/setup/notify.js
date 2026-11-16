@@ -98,7 +98,7 @@ function readyAsk(id, { terminal = false, round = 0 } = {}) {
       ],
       // Remote Control and the push options are Claude Desktop's settings, so a terminal session recommends the way it can finish.
       recommend: terminal ? READY.skip : READY.ready,
-      because: terminal ? 'phone notifications need Claude Desktop and your phone, and this terminal session has neither; the First Mate can set them up later' : 'it shows now whether your phone works',
+      because: terminal ? 'phone notifications need Claude Desktop, and this session runs in a terminal' : 'it shows now whether your phone works',
       meanwhile: 'Setup waits for your click.',
     },
   };

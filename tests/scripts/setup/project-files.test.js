@@ -403,7 +403,7 @@ test('step 7 pins the front desk to what Claude Code\'s opus alias stands for, i
     assert.equal(w.bestAsked, 2);
     assert.deepEqual(w.aliases, [FRONT_DESK_ALIAS, MID_SIZED_ALIAS], 'never the strongest: setup asks nothing about it');
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
-    assert.match(text, new RegExp(`the First Mate runs on ${BEST_MODEL}\\b`, 'i'));
+    assert.match(text, new RegExp(`First Mate uses ${BEST_MODEL}, Claude Code.s most capable everyday model`, 'i'));
     assert.doesNotMatch(text, /strongest/);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
@@ -451,7 +451,7 @@ test('step 7 writes both class pins, the card says once what the lighter model d
     const w = await world();
     const planned = await w.plan();
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
-    assert.equal(text.split('most building and checking use the cheaper model').length, 2);
+    assert.equal(text.split(/a cheaper model for most building and checking/i).length, 2);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
     assert.deepEqual(w.json('.claude/wheelhouse.json').tiers, { pins: { mostCapable: BEST_MODEL, midSized: MID_MODEL } });
@@ -513,13 +513,13 @@ test('a compaction percentage already in the project\'s settings is kept and set
   }
 });
 
-test('a mid-sized alias that can\'t be resolved leaves the pin out and the card says Lean and Lightest wait', async () => {
+test('a mid-sized alias that can\'t be resolved leaves the pin out and the card says the settings that spend less wait', async () => {
   await withHome(async () => {
     const w = await world();
     w.mid = null;
     const planned = await w.plan();
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
-    assert.match(text, /Lean and Lightest wait for the lighter model/);
+    assert.match(text, /settings that spend less wait for a cheaper model/);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
     assert.deepEqual(w.json('.claude/wheelhouse.json').tiers, { pins: { mostCapable: BEST_MODEL } });

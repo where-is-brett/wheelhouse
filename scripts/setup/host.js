@@ -420,7 +420,7 @@ function realUsersAsk(name, platform) {
     card: {
       level: 2,
       what: `Does ${name} have real users yet: people who rely on it, beyond you and anyone testing it?`,
-      why: platform === 'darwin' ? 'A product with real users gets the narrow connection, and the offer of Locked.' : 'A product with real users gets the narrow connection.',
+      why: platform === 'darwin' ? 'A product with real users gets a key to it alone, and the offer of Locked.' : 'A product with real users gets a key to it alone.',
       options: [
         { label: REAL_USERS.yes, says: 'Setup treats it as launched, so agents get a key to this one project only.' },
         { label: REAL_USERS.no, says: 'Setup treats it as before launch, like a throwaway or test project. You can change this when it has users.' },
@@ -772,7 +772,9 @@ const AS_IS_WINDOWS = 'On Windows any agent\'s command could ask git for that ke
 const gone = (label, host, { reach, left }) => {
   if (label !== WAYS.quick || reach?.tool === 'works') return `${label} can't be used on this computer now, so choose again.`;
   const why = left ? 'which you chose not to use' : 'which couldn\'t be fetched on this computer';
-  return `Quick went from this card: it needs ${NAME[host]}'s own tool, ${why}. Choose again.`;
+  // Without the tool, GitLab's narrow way starts from a one-day token, which no plan card says once this card is asked again.
+  const token = host === 'gitlab' ? ' Narrow asks you for a one-day GitLab token, pasted into your computer\'s own box.' : '';
+  return `Quick went from this card: it needs ${NAME[host]}'s own tool, ${why}. Choose again.${token}`;
 };
 
 // The card asked again after `label` went: the earlier card's options in its order, the way that took the gone one's place
