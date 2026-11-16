@@ -767,13 +767,17 @@ test('the trial stays open until the session\'s lines are in; then it is closed,
     assert.equal(ready.ask.id, 'setup-ready');
     assert.ok(ready.ask.card.question.startsWith(`${green.lines.at(-1)}\nThe briefing.\n`), ready.ask.card.question);
     assert.deepEqual(ready.ask.card.options.map((o) => o.label), ['Carry on', 'Show the checks']);
-    // Show the checks: with no lines, it gives the checks the board went green on, word for word.
-    const shown = await route({ folder });
-    assert.equal(shown.green, true);
-    assert.deepEqual(shown.lines, green.lines);
     assert.equal((await routes['/setup/status']({ folder })).ask, 10, 'asked again until answered');
     const greenAt = new Date(Date.parse(runOf(folder).changes.find((c) => typeof c.after?.green === 'string').after.green) + 1000);
-    keepAnswer(makeEvent({ kind: 'action', data: { action: 'setup-answer', runId: runOf(folder).id, step: 10, questionId: 'setup-ready', question: ready.ask.card.question, label: 'Carry on', text: null }, now: () => greenAt }));
+    // Show the checks: the next card opens with the checks the board went green on, word for word.
+    const answer = (questionId, question, label, at) => keepAnswer(makeEvent({ kind: 'action', data: { action: 'setup-answer', runId: runOf(folder).id, step: 10, questionId, question, label, text: null }, now: () => at }));
+    answer('setup-ready', ready.ask.card.question, 'Show the checks', greenAt);
+    assert.equal((await routes['/setup/status']({ folder })).ask, 10, 'the checks card comes next');
+    const checks = await routes['/setup/plan']({ folder, step: 10 });
+    assert.equal(checks.ask.id, 'setup-checks');
+    assert.ok(checks.ask.card.question.startsWith(`${green.lines.join('\n')}\n`), checks.ask.card.question);
+    assert.deepEqual(checks.ask.card.options.map((o) => o.label), ['Carry on', 'Later']);
+    answer('setup-checks', checks.ask.card.question, 'Carry on', new Date(greenAt.getTime() + 1000));
     assert.notEqual((await routes['/setup/status']({ folder })).ask, 10, 'answered');
     await assert.rejects(routes['/setup/plan']({ folder, step: 10 }), /already done/);
     assert.equal(healthGreen(runOf(folder)), true);

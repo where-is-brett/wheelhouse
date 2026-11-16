@@ -289,8 +289,9 @@ test('step 10\'s green board: the playbook runs resume at once and asks its card
   assert.ok(section, `a section for step ${HEALTH_STEP}`);
   const green = section.split('**Green:**')[1]?.split('**Not green:**')[0] ?? '';
   assert.match(green, /Run `resume` at once\. The card it gives opens with the verdict and the first briefing: the phone's \(Step 9 above\), or, with no phone card left, step 10's own card\. Ask it exactly as given, as every card, before anything else, even the request they came with/);
-  assert.match(green, /On \*\*Show the checks\*\*, run `health` with no lines \(after green it gives the checks the board went green on\) and show its `lines` word for word, each on its own line, none summed up or left out/);
-  assert.match(green, /Words typed on this card instead of a click are the director's question or request/);
+  assert.match(green, /On \*\*Show the checks\*\*, run `resume`: the card it gives opens with the checks; ask it exactly as given/);
+  assert.match(green, /On its \*\*Later\*\*, say in one line that nothing starts until they say "carry on"/);
+  assert.match(green, /Words typed on either card instead of a click are the director's question or request/);
   assert.doesNotMatch(green, /`said`/);
   assert.ok(section.indexOf('**Green:**') < section.indexOf('When `health` gave a `card`'), 'the briefing\'s card before the carry-on card');
   assert.ok(playbook.includes('| "The Logbook is green; I\'ll sum it up and move on" | `resume` at once'), 'a red flag for it');
