@@ -76,7 +76,8 @@ import { switchLabelOf } from '../routing/nudge.js';
 import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
 import { offeredFrom, premiumValueOf, PREMIUM_CARD_MS } from '../routing/premium.js';
 import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures, cardText, sweepStale, cardHash } from '../lib/measures-clicks.js';
-import { localViews, lockFreeNow, FRONT_DESK_LINE } from './session-start.js';
+import { localViews, FRONT_DESK_LINE } from './session-start.js';
+import { takeFreeSeat } from '../lib/free-seat.js';
 import { buildViews, cardOutcomes } from '../state/views.js';
 import { clearOpen } from '../lib/session-files.js';
 import { cardProblems } from './card-check.js';
@@ -87,9 +88,9 @@ import { PUT_OFF } from '../lib/front-desk.js';
 import { whenSaid, askOf, countedOf } from '../cards/answered.js';
 import { settingKey, UNATTENDED_CARD, USE_GUARDED } from '../protection/windows-builds.js';
 import { startedAsScript } from '../lib/started-as-script.js';
-import { recordAnswer, startedByScript } from '../decisions/answer.js';
+import { recordAnswer } from '../decisions/answer.js';
 import { sessionRole } from '../lib/role.js';
-import { readSeat, takeSeat, refreshSeat, handOverSeat } from '../lib/first-mate-seat.js';
+import { readSeat, handOverSeat } from '../lib/first-mate-seat.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const SHA12 = '([0-9a-f]{12})(?![0-9a-fA-F])';
@@ -1000,20 +1001,6 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
     out.push({ kind: 'shown', data: { code, question: q.question, options: q.options.map((o) => o?.label) } });
   }
   return out;
-}
-
-// A front-desk session that doesn't hold the First Mate's seat takes it here when it is free (a session that began before
-// the seat existed, or whose holder has since ended). A seat another live session holds is never taken: takeSeat leaves it,
-// and moving it is the take-over card's click, not this. It informs, so a failure leaves the seat as it was.
-async function takeFreeSeat({ project, input, env, now, client, left }) {
-  try {
-    const session = input.session_id;
-    if (typeof session !== 'string' || session === '' || startedByScript(env)) return;
-    if (sessionRole({ sessionId: session, env, prompt: input.prompt, cwd: input.cwd, seat: null }) !== 'front-desk') return;
-    if (!(await lockFreeNow({ client, project, left, now }))) return; // another computer's lock: no seat (design 6.8, case 8)
-    if (readSeat(project)?.session === session) refreshSeat(project, session, { now });
-    else await takeSeat(project, { session, folder: input.cwd }, { now });
-  } catch { /* the seat is taken at a later hook */ }
 }
 
 // Whether `session` is a window that doesn't hold the First Mate's seat: another session holds it, or this window chose to be an
