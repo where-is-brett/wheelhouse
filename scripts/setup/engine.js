@@ -347,9 +347,9 @@ const SETUP_READY_ID = 'setup-ready';
 const READY_CARD = {
   level: 2,
   what: 'Next, the First Mate takes over, starting with what you came here for.',
-  why: 'You can look at the checks first, or ask anything, before the work starts.',
+  why: 'You can see each check first. Questions and requests go to the First Mate after your click.',
   options: [
-    { label: 'Carry on', says: 'The First Mate starts now, on your request first if you made one.' },
+    { label: 'Carry on', says: 'The First Mate starts now, on what you asked for.' },
     { label: 'Show the checks', says: 'You see each check first, then the First Mate starts.' },
   ],
   recommend: 'Carry on',
