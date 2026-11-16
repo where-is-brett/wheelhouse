@@ -160,7 +160,7 @@ The connection card offers **Use my git as it is** (the default where git works)
 - **Preferred: a project access token, which setup makes for the director** with their own key (`makeProjectKey` in `gitlab-key.js`). It has the scopes `api` and `write_repository`, at Developer level: the lowest role that can merge when merge access is "Developers + Maintainers", which step 7's protection sets. With no page and no pasting, it is stored in the computer's store.
   - The card says: "This key reaches only <group>/<name>: its code, merge requests and settings API. It can't change the project's protection."
 - **Where the company forbids project keys** (`KEYS_SWITCHED_OFF`), the fallback is a personal access token with `api` and `write_repository` only, and an expiry of 30 days, made on the prefilled page.
-  - The card says it plainly: "GitLab won't make a key for one project here, so this is a personal key. It reaches every project your account can, until it expires in 30 days."
+  - The card says it plainly: "GitLab won't make a key for one project here, so this is a personal key. It can act as you in every GitLab project and group you can reach, until it expires in 30 days."
 
 ### 7.3 Sign-ins through `gh` and `glab`
 

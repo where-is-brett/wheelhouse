@@ -185,19 +185,19 @@ function productAsk(name, { described, realUsers }) {
   const entry = (plain) => ({ kind: 'glossary', data: { term: name, plain } });
   const shaping = 'A new product, still taking shape.';
   const options = [
-    described === null ? { label: PRODUCT.shaping, says: `"${shaping}" You can describe it to the First Mate once it is clearer.` } : { label: PRODUCT.readme, says: `"${described}"` },
-    { label: PRODUCT.later, says: 'Setup records no description of it yet; you can give one to the First Mate later.' },
+    described === null ? { label: PRODUCT.shaping, says: `Setup records "${shaping}", so agents know it is new. You can describe it to the First Mate later.` } : { label: PRODUCT.readme, says: `"${described}"` },
+    { label: PRODUCT.later, says: 'Setup records no description yet. You can give one to the First Mate later.' },
   ];
   return {
     id: `product-${phase}`,
     typed: true,
     card: {
       level: 2,
-      what: `${realUsers ? 'It has real users.' : 'It has no real users yet.'} In a sentence, what is ${name}, and who uses it? ${described === null ? 'Type it' : 'Choose the README\'s words, or type your own'} as your answer.`,
-      why: `Wheelhouse explains its work to you in terms of your product; it is recorded as ${realUsers ? 'launched' : 'before launch'}.`,
+      what: `${realUsers ? 'It has real users.' : 'It has no real users yet.'} In a sentence, what is ${name}, and who is it for? ${described === null ? 'Type it' : 'Choose the README\'s words, or type your own'} as your answer.`,
+      why: 'Wheelhouse explains its work to you in terms of your product.',
       options,
       recommend: options[0].label,
-      because: described === null ? 'it tells agents the product is new until you describe it' : 'it is how the project already describes itself',
+      because: described === null ? 'agents know it is new' : 'it is how the project already describes itself',
       meanwhile: MEANWHILE,
     },
     writes: {
@@ -212,16 +212,19 @@ function productAsk(name, { described, realUsers }) {
 
 // The second question: whether the product has live data. A new product has none yet, so no is
 // recommended for it; for a project already under way, yes, which is the safe side (design section 15.1).
-function liveDataAsk(name, { isNew = false } = {}) {
+function liveDataAsk(name, { isNew = false, platform = process.platform } = {}) {
   return {
     id: 'live-data',
     card: {
       level: 3,
       what: `Does ${name} hold live data, such as real people's accounts, orders or messages?`,
-      why: 'Agents never work on live data: with it, they get test data only.',
+      // Windows runs no sandbox, so there the rule binds only Claude Code's own tools and an agent's command can still read the files.
+      why: platform === 'win32'
+        ? 'Agents are told not to open the project\'s secret files, but on Windows their commands could still read them, as the product\'s own code can.'
+        : 'Agents are kept from opening the project\'s secret files themselves, though the product\'s own code they run can still use them.',
       options: [
-        { label: LIVE_DATA.yes, says: 'Agents get test data only, never the live data.' },
-        { label: LIVE_DATA.no, says: 'Agents work with the product\'s data as it is. A throwaway or test project, with made-up data only, is a No.' },
+        { label: LIVE_DATA.yes, says: 'Agents are told to use test data only, and to leave the live data alone.' },
+        { label: LIVE_DATA.no, says: 'Agents work with the product\'s data as it is, as in a throwaway or test project.' },
       ],
       recommend: isNew ? LIVE_DATA.no : LIVE_DATA.yes,
       because: isNew ? 'a new product has no live data yet' : 'that is the safe side if you are not sure',
@@ -272,7 +275,7 @@ export function questionsStep() {
       const product = answers[`4.${asked.id}`] ?? answers[`4.${other}`];
       if (!product) return { ask: asked };
       const live = answers['4.live-data'];
-      if (!live) return { ask: liveDataAsk(name, { isNew: newProduct(ctx, project) }) };
+      if (!live) return { ask: liveDataAsk(name, { isNew: newProduct(ctx, project), platform: ctx.platform ?? process.platform }) };
       const apple = signsAppleApps(ctx.folder) ? answers['4.apple-apps'] : null;
       if (apple === undefined) return { ask: appleAppsAsk(name) };
       if (project === null) return ctx.choicesOnly === true ? { wait: 0, why: 'every choice of step 4 is made' } : waitForProject(4);

@@ -114,7 +114,7 @@ test('step 9 does not settle before step 6, even with the answer to whether the 
 test('in a terminal session step 9 recommends Skip for now and says plainly what Ready needs', async () => {
   const terminal = await notifyStep().plan({ answers: {}, now: () => T0, desktop: false });
   assert.equal(terminal.ask.card.recommend, READY.skip);
-  assert.match(terminal.ask.card.because, /need Claude Desktop and your phone/);
+  assert.match(terminal.ask.card.because, /need Claude Desktop, and this session runs in a terminal/);
   assert.deepEqual(terminal.ask.card.options.map((o) => o.label), [READY.skip, READY.ready]);
   const app = await notifyStep().plan({ answers: {}, now: () => T0, desktop: true });
   assert.equal(app.ask.card.recommend, READY.ready);
@@ -141,7 +141,7 @@ test('with no answer, step 9 asks the card of plain steps, ending with the scree
   // wait before the push is sent, so it goes out while the screen is still locked.
   assert.ok(PUSH_TEST_LOCK_MS > PUSH_TEST_WAIT_MS);
   assert.equal(PUSH_TEST_LOCK_MS, 3 * 60 * 1000);
-  assert.match(card.what, /click Ready and lock your screen until your phone buzzes, or for three minutes\.$/);
+  assert.match(card.what, /click Ready and lock your computer until your phone buzzes, or for three minutes\.$/);
   assert.doesNotMatch(card.what, /for two minutes/);
   assert.match(card.options[0].says, /two minutes/);
   // Short, since it opens with the verdict and the first briefing, and its recommended option reads
@@ -149,7 +149,7 @@ test('with no answer, step 9 asks the card of plain steps, ending with the scree
   const composed = composeCard({ ...card, kind: 'question', suggest: false }).question;
   const count = (t) => t.split(/\s+/).filter(Boolean).length;
   assert.ok(count([composed.question, ...composed.options.flatMap((o) => [o.label, o.description])].join(' ')) <= 105, 'about 100 words');
-  assert.equal(composed.options[0].description, 'Recommended: Setup sends a test two minutes later and asks if it arrived, because it shows now whether your phone works.');
+  assert.equal(composed.options[0].description, 'Recommended: Setup sends a test two minutes later and asks if it arrived. It shows now whether your phone works.');
   // Nor is Skip for now a put-off button the composer would refuse on a question: it is a kept answer.
   assert.deepEqual(composed.options.map((o) => o.label), [READY.ready, READY.skip]);
 });
@@ -162,7 +162,7 @@ test('through the helper, the card is a question with no set line, and Ready wai
     assert.equal(asked.ask.step, 9);
     assert.equal(asked.ask.id, READY_ID);
     assert.equal(setLineOf(asked.ask.card.question), null);
-    assert.ok(asked.ask.card.question.includes('lock your screen until your phone buzzes, or for three minutes'));
+    assert.ok(asked.ask.card.question.includes('lock your computer until your phone buzzes, or for three minutes'));
 
     // Ready, kept signed; a minute later, a minute is left.
     await answer(asked.ask.card, READY.ready);

@@ -629,4 +629,5 @@ export const RAW_GIT_EXCEPTIONS = Object.freeze([
   ['scripts/eval/run.js', later(11)],
   ['scripts/setup/project-files.js', "setup's own fenced route (rulings R109 to R113)"],
   ['scripts/host/director-git.js', "reads http.proxy from the director's own git settings"],
+  ['scripts/setup/render-cards.js', "the card renders' own scratch repository, with the computer's git settings shut out"],
 ].map(([file, reason]) => Object.freeze({ file, reason })));

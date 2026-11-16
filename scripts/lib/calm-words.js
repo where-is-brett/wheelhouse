@@ -16,6 +16,9 @@ export const NOT_NOW = 'Not now';
 export const SEND_BACK = 'Send it back';
 // The line that tells the director more is there for the asking.
 export const TO_KNOW_MORE = 'To know more, just ask.';
+// How a setup question the director answers from fact (which GitLab, its address) says it recommends no option, at the
+// start of its own line of the card.
+export const NO_RECOMMENDATION = 'No recommendation:';
 // The line that stands in for it on a question that has four options of its own, where there is no
 // room for Suggest a change… and a change goes in the typed answer.
 export const TO_CHANGE_IT = 'To change it, type what you\'d change.';
@@ -213,7 +216,7 @@ export const SETUP_GOING = Object.freeze({
 });
 export const toolsInstalling = (tools) => `${tools.join(' and ')} ${tools.length === 1 ? 'is' : 'are'} still installing`;
 // What reaches the director's phone, said on the phone step's card.
-export const PHONE_REACHES = 'Only things that need you, finished features and breakages reach your phone.';
+export const PHONE_REACHES = 'Only three things reach your phone: what needs you, finished features and breakages.';
 // How the director carries setup on in a new session: the sandbox's network limit takes effect
 // only in a session started after setup wrote it (step 7).
 export const NEW_SESSION = 'Start a new session on this folder, then say "carry on with setup"';

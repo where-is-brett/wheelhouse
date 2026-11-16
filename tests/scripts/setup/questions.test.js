@@ -66,8 +66,8 @@ test('each answer writes its setting or configuration key, checked by the catalo
       assert.equal(productAsk.id, `product-${phase}`);
       assert.equal(productAsk.typed, true);
       assert.deepEqual(productAsk.card.options.map((o) => o.label), [PRODUCT.readme, PRODUCT.later]);
-      assert.match(productAsk.card.what, /what is Cafe-Menu, and who uses it\?/);
-      assert.match(productAsk.card.why, phase === 'launched' ? /recorded as launched/ : /recorded as before launch/);
+      assert.match(productAsk.card.what, /what is Cafe-Menu, and who is it for\?/);
+      assert.match(productAsk.card.what, phase === 'launched' ? /It has real users\./ : /It has no real users yet\./);
       const described = readmeDescription(folder);
       assert.equal(described, 'Café Menu lets a small café put its menu online, for its regulars to read on their phones.');
       // Every setting an answer writes is one the catalogue takes.

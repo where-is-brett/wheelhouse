@@ -10,6 +10,8 @@
 // worktree it stands in. Files outside the project, and folders that are not set-up projects, are left alone, as is
 // anything that only reads. The shell check is narrow: a redirect, tee, an in-place edit, cp, mv, touch, a project
 // starter, or a one-line program that writes, aimed at the project. When the hook can't tell, it allows.
+//
+// Before it answers, a front-desk session that holds no First Mate's seat takes it while it is free (decideWithSeat).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,6 +19,9 @@ import { answer, runAndExit, projectOf, beingSetUp, worktreeRoot, sameFolder } f
 import { segmentsWithOperators } from './shell-words.js';
 import { sessionRole, asideKind } from '../lib/role.js';
 import { refreshSeat } from '../lib/first-mate-seat.js';
+import { takeSeatIfFree } from '../lib/free-seat.js';
+import { helperClient } from '../host/helper-client.js';
+import { withinBudget } from './pending.js';
 import { ownRun } from '../protection/archon.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { buildViews } from '../state/views.js';
@@ -320,4 +325,19 @@ export function decide(input, { env = process.env, find = projectOf, setUp = bei
   return first === undefined ? undefined : answer.deny(noWrites(named(first)));
 }
 
-if (startedAsScript(import.meta.url)) await runAndExit(decide, { failClosed: false, event: 'PreToolUse' });
+const SEAT_BUDGET_MS = 3000;
+
+// Before the guard: a front-desk session in a set-up project that holds no seat takes it while it is free. The session that ran
+// setup began before the project existed, so neither the session start nor a prompt has taken it, and its first card after
+// setup would otherwise be refused. The seat is taken here, in Claude Code's own hook, where the window's process can be found.
+export async function decideWithSeat(input, { env = process.env, find = projectOf, role = sessionRole, take = takeSeatIfFree, client, now = () => new Date() } = {}) {
+  try {
+    const found = typeof input?.cwd === 'string' && path.isAbsolute(input.cwd) && ownRun(env) === null ? find(input.cwd) : null;
+    if (found?.record?.folder && role({ sessionId: input.session_id, env, cwd: input.cwd, seat: null }) === 'front-desk') {
+      await take({ project: found.project, input, env, now, client: client ?? helperClient({ timeout: SEAT_BUDGET_MS }), left: withinBudget(Date.now() + SEAT_BUDGET_MS) });
+    }
+  } catch { /* the seat is taken at a later hook */ }
+  return decide(input, { env, find, role });
+}
+
+if (startedAsScript(import.meta.url)) await runAndExit(decideWithSeat, { failClosed: false, event: 'PreToolUse' });

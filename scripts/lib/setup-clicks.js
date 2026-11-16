@@ -370,6 +370,26 @@ export function shownHash({ cwd, step, h12, card }) {
   return { runId: chosen.runId, hash: chosen.hash };
 }
 
+// The card shown for a step in a folder holding `cwd` that is the card the director saw, read as sameWords reads it, for a
+// card sent without its line of hash (withoutListedLine, scripts/state/card-lines.js): { runId, step, hash }. The card
+// names its step in its header and its list in its words, so the match is on the whole card and nothing else. Null when
+// there is none, or when matching cards name two different steps or lists; of several runs that showed the very card, the
+// nearest folder's, newest, is taken, as shownHash takes it.
+export function shownByCard({ cwd, card }) {
+  if (typeof cwd !== 'string' || shownCard(card) === null) return null;
+  const same = cardKey(card);
+  let names;
+  try {
+    names = fs.readdirSync(shownDir()).filter((n) => n.endsWith('.json'));
+  } catch {
+    return null;
+  }
+  const found = names.map((n) => readShown(path.join(shownDir(), n))).filter((r) => r !== null && cardKey(r.card) === same && holds(r.folder, cwd));
+  if (new Set(found.map((r) => `${r.step} ${r.hash}`)).size !== 1) return null;
+  const chosen = nearestNewest(found, cwd);
+  return { runId: chosen.runId, step: chosen.step, hash: chosen.hash };
+}
+
 // The newest of the records of the nearest folder holding `cwd`, or null when there are none.
 function nearestNewest(found, cwd) {
   const here = found.filter((r) => holds(r.folder, cwd));

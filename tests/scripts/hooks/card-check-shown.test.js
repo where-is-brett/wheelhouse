@@ -5,7 +5,7 @@ import path from 'node:path';
 import { sessionRole } from '../../../scripts/lib/role.js';
 import { seatFile, readSeat } from '../../../scripts/lib/first-mate-seat.js';
 import assert from 'node:assert/strict';
-import { decide, checkShown, DECISION_IN_CHAT } from '../../../scripts/hooks/card-check.js';
+import { decide, checkShown, plainQuestion, DECISION_IN_CHAT } from '../../../scripts/hooks/card-check.js';
 import { pendingDecisions } from '../../../scripts/decisions/pending.js';
 import { decisionText } from '../../../scripts/decisions/message.js';
 import { asQuestion } from '../../../scripts/cards/visit.js';
@@ -81,6 +81,27 @@ test('an error inside the Stop check lets the message go', async () => {
     assert.equal(await decide(stop(paraphrase), broken), undefined);
     assert.equal(await decide(stop(paraphrase), { ...deps, projectOf: () => { throw new Error('no project'); } }), undefined);
   });
+});
+
+test('a question asked in plain text is sent back to be a card, once', async () => {
+  await inHome(async () => {
+    const asked = "I've treated this as a feature. Before I design anything: what do you want to do with it that you can't now?\n\nOr if you'd rather I just dive in, say so.";
+    assert.equal(plainQuestion(asked), "I've treated this as a feature. Before I design anything: what do you want to do with it that you can't now?");
+    const out = await decide(stop(asked), deps);
+    assert.equal(out.decision, 'block');
+    assert.match(out.reason, /Every question is a card/);
+    assert.match(out.reason, /`card`/);
+    assert.equal(await decide(stop(asked, { stop_hook_active: true }), deps), undefined);
+    assert.equal(await decide(stop(asked), { ...deps, role: () => 'feature' }), undefined);
+  });
+});
+
+test('a quoted, fenced or printed-card question is not a plain question', () => {
+  assert.equal(plainQuestion('You asked:\n> Can it make shopping lists?\nIt can, and that is on the plan.'), null);
+  assert.equal(plainQuestion('```\nwhy?\n```\nDone.'), null);
+  assert.equal(plainQuestion('Which colour should the button be?\nRed\nBlue\nReply code: 4f2a'), null);
+  assert.equal(plainQuestion('Shaping the design with you first.'), null);
+  assert.equal(plainQuestion('Is it **ready?**'), 'Is it **ready?**');
 });
 
 test('the last message is read from the transcript when the hook gives none', async () => {

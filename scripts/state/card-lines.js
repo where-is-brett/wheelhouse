@@ -76,6 +76,12 @@ export function runbookLine(step, sha) {
   return sha === undefined || sha === null ? base : `${base}, to commit ${sha12(sha)}`;
 }
 
+// A setup card's list line, as each Go-ahead card lists what its step does: a capital first letter and a full stop.
+export function asLine(text) {
+  const t = text.trim();
+  return `- ${t.charAt(0).toUpperCase()}${t.slice(1)}${/[.!?:]$/.test(t) ? '' : '.'}`;
+}
+
 // Setup's steps, numbered as setup runs them (design section 15), with the titles their cards use.
 export const SETUP_TITLES = Object.freeze({
   1: 'Install',
@@ -84,7 +90,7 @@ export const SETUP_TITLES = Object.freeze({
   4: 'Three questions',
   5: 'Rules found',
   6: 'Changes to this computer',
-  7: 'The project\'s files, pins and protection',
+  7: 'The project\'s files and protection',
   8: 'Locked',
   9: 'Phone notifications',
   10: 'Health check',
@@ -359,6 +365,17 @@ export function setLineOf(question) {
 // premium model's card.
 const SETUP_STEP_LINE = /^Set up step [0-9]{1,2} as listed, [0-9a-f]{12}$/;
 const CONFIRM_ALL_LINE = /^Confirm all [1-9][0-9]* rules? as listed, [0-9a-f]{12}$/;
+
+// A setup card's question as the director reads it: without its last line when that is setup's line for a step or for the
+// rules found, whose twelve characters of hash mean nothing to them. The helper composes the card with the line, so the
+// composer's checks run as for any card, then sends and records it without: the click is matched to the card the helper
+// recorded as shown or asked, word for word (scripts/lib/setup-clicks.js), and that record keeps the list's full hash.
+export function withoutListedLine(text) {
+  if (typeof text !== 'string') return text;
+  const lines = text.split('\n');
+  const last = lines.at(-1);
+  return lines.length > 1 && (SETUP_STEP_LINE.test(last) || CONFIRM_ALL_LINE.test(last)) ? lines.slice(0, -1).join('\n') : text;
+}
 const WITHOUT_REPLY_CODE = [SETUP_STEP_LINE, CONFIRM_ALL_LINE, TRUST_LINE, TAKEOVER_LINE, SEAT_TAKEOVER_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE];
 
 // The set line and reply code of a question that the picker's hook gives a `shown` record, or null: the question carries

@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  decide, shellChanges, FRONT_DESK_NO_WRITES, ASIDE_NO_WRITES, lockedDocuments, APPROVED_LOCKED, NO_STATUS_LINE, statusLineIn,
+  decide, decideWithSeat, shellChanges, FRONT_DESK_NO_WRITES, ASIDE_NO_WRITES, lockedDocuments, APPROVED_LOCKED, NO_STATUS_LINE, statusLineIn,
 } from '../../../scripts/hooks/front-desk-writes.js';
 import { sessionRole } from '../../../scripts/lib/role.js';
 import { readSeat } from '../../../scripts/lib/first-mate-seat.js';
@@ -361,4 +361,31 @@ test('a BSD sed edit of a file outside the product passes, and one of a product 
   assert.equal(decide(bash(folder, "sed -i '' s/a/b/ /tmp/x.js"), options(folder)), undefined);
   assert.ok(denied(decide(bash(folder, "sed -i '' s/a/b/ src/a.js"), options(folder))));
   assert.ok(denied(decide(bash(folder, "sed -i '' 's/a/b/' src/a.js"), options(folder))));
+});
+
+test('a front-desk session in a set-up project takes a free seat before the guard answers', async () => {
+  const { folder } = project();
+  const taken = [];
+  const take = async (given) => { taken.push(given.project); };
+  const out = await decideWithSeat(write(folder, path.join(folder, 'src', 'a.js')), { ...options(folder), take, client: {} });
+  assert.deepEqual(taken, ['p']);
+  assert.ok(denied(out), 'the guard still answers');
+  assert.equal(await decideWithSeat(write(folder, path.join(folder, '.wheelhouse', 'x.json')), { ...options(folder), take, client: {} }), undefined);
+});
+
+test('no seat is taken for an aside, a folder that is not set up, or an engine step', async () => {
+  const { folder } = project();
+  const taken = [];
+  const take = async (given) => { taken.push(given.project); };
+  await decideWithSeat(write(folder, path.join(folder, 'a.js')), { ...options(folder, { role: () => 'aside' }), take, client: {} });
+  await decideWithSeat(write(folder, path.join(folder, 'a.js')), { ...options(folder, { find: () => null }), take, client: {} });
+  await decideWithSeat(write(folder, path.join(folder, 'a.js')), { ...options(folder, { env: { WHEELHOUSE_ENGINE_RUN: '1', ARCHON_NODE_EXECUTION: JSON.stringify({ runId: 'r1' }), WORKFLOW_ID: 'r1' } }), take, client: {} });
+  assert.deepEqual(taken, []);
+});
+
+test('a seat that cannot be taken leaves the guard\'s answer as it was', async () => {
+  const { folder } = project();
+  const take = async () => { throw new Error('no'); };
+  const out = await decideWithSeat(write(folder, path.join(folder, 'a.js')), { ...options(folder), take, client: {} });
+  assert.ok(denied(out));
 });

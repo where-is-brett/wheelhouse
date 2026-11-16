@@ -77,7 +77,7 @@ export function redoCard({ key, answers, name, record, described, count, stepRan
         why: 'It sets how carefully agents treat it. Locked is then offered from Settings, under Protection.',
         options: [
           { label: REAL_USERS.yes, says: 'It is recorded as launched.' },
-          { label: REAL_USERS.no, says: 'It is recorded as before launch. A throwaway or test project is a No.' },
+          { label: REAL_USERS.no, says: 'It is recorded as before launch, as a throwaway or test project is.' },
         ],
         recommend: answers['3.real-users']?.label === REAL_USERS.yes ? REAL_USERS.no : REAL_USERS.yes,
         because: 'you asked to change it',
@@ -97,7 +97,7 @@ export function redoCard({ key, answers, name, record, described, count, stepRan
       typed: true,
       card: {
         level: 2,
-        what: `In a sentence, what is ${name}, and who uses it? Type it as your answer.`,
+        what: `In a sentence, what is ${name}, and who is it for? Type it as your answer.`,
         why: 'Wheelhouse explains its work to you in terms of your product.',
         options,
         recommend: options[0].label,

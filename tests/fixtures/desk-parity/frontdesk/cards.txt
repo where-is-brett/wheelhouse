@@ -8,7 +8,7 @@ exit 0
       "options": [
         {
           "label": "Approve",
-          "description": "Recommended: It approves and goes ahead, because the checks passed."
+          "description": "Recommended: It approves and goes ahead. The checks passed."
         },
         {
           "label": "Suggest a change…",
@@ -31,15 +31,11 @@ exit 0
       "options": [
         {
           "label": "Plain",
-          "description": "Recommended: It plains and goes ahead, because it reads quickest."
+          "description": "Recommended: It plains and goes ahead. It reads quickest."
         },
         {
           "label": "Playful",
           "description": "It playfuls and goes ahead."
-        },
-        {
-          "label": "Suggest a change…",
-          "description": "Tell me what you'd change; I'll come back with a new proposal."
         }
       ],
       "multiSelect": false

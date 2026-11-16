@@ -137,7 +137,7 @@ test('the carry-on card holds the design\'s words, with the project\'s name and 
     'To know more, just ask.',
   ]);
   assert.deepEqual(question.options, [
-    { label: 'Carry on with it', description: 'Recommended: Each piece gets its own brief and joins the queue, and you see each brief as usual, because the original work stays as it is and nothing is merged without a review.' },
+    { label: 'Carry on with it', description: 'Recommended: Each piece gets its own brief and joins the queue, and you see each brief as usual. The original work stays as it is and nothing is merged without a review.' },
     { label: 'Leave it for now', description: 'It stays exactly as it is. I\'ll offer it once more in a briefing a week from now, or whenever you ask.' },
   ]);
   assert.equal(card.line, null, 'a product question: its click is a plain card-answer');

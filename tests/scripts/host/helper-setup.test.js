@@ -96,7 +96,9 @@ test('apply is refused without a fresh click naming this step and this list', as
     assert.equal(plan.ok, true, plan.refused);
     assert.match(plan.hash, /^[0-9a-f]{64}$/);
     assert.equal(plan.hash, planHash(plan.changes));
-    assert.ok(plan.card.question.includes(setupLine(1, plan.hash)), plan.card.question);
+    // The director reads the card without its line of hash; the click is matched to the card recorded as sent.
+    assert.match(plan.card.question, /^Setup step 1, Install:/);
+    assert.ok(!plan.card.question.includes(setupLine(1, plan.hash)), plan.card.question);
     assert.deepEqual(plan.card.options.map((o) => o.label).slice(0, 2), ['Go ahead', 'Show me']);
     assert.equal(plan.changes.length, 1);
 
@@ -549,7 +551,9 @@ test('a card is cleaned before it is composed, so the card sent is within the co
   await withSetup(async ({ client, home, folder }) => {
     const what = (pad) => `Setup step 1, Install: the remote ssh://git@github.com/o/r.git is written.${' x'.repeat(pad)}`;
     setWorld(home, { what: { 1: what(0) } });
-    const base = (await client.setup.plan({ folder, step: 1 })).card.question.length;
+    // The composer judges the card with its line of hash, which is then left off the card sent.
+    const listed = '\n'.length + setupLine(1, '0'.repeat(64)).length;
+    const base = (await client.setup.plan({ folder, step: 1 })).card.question.length + listed;
     // Padding that brings the uncleaned card to the limit, and the cleaned one past it.
     const pad = Math.floor((CARD.chars - (base - '[hidden]'.length + 'git'.length)) / 2);
     setWorld(home, { what: { 1: what(pad) } });

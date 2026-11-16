@@ -48,8 +48,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
-import { projectForFolder, readProject } from '../lib/projects.js';
-import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
+import { projectForFolder, readProject, registeredProjects } from '../lib/projects.js';
+import { SETUP_TITLES, SETUP_LABEL, asLine } from '../state/card-lines.js';
 import { healthVerdict, NEW_SESSION } from '../lib/calm-words.js';
 import { parseTrialLine } from '../lib/trial-lines.js';
 import { adapterOf } from '../host/adapter-for.js';
@@ -67,7 +67,7 @@ import { startWatcher } from '../foreman/start.js';
 import { projectConfig } from '../watcher/main.js';
 import { readJournal, newId } from './journal.js';
 import { HEALTH_STEP } from '../lib/setup-run.js';
-import { directorGitEnv, directorGitlabApi, STOPPED, launchedIn } from './host.js';
+import { directorGitEnv, directorGitlabApi, keyGitEnv, keyGitlabApi, madeWithSetupToken, STOPPED, launchedIn } from './host.js';
 import { setupGit, reaching } from './git.js';
 import { toolsStatus } from './tools.js';
 import { takeSurvey, recordSurvey } from '../survey/take.js';
@@ -78,6 +78,8 @@ import { localViews } from '../hooks/session-start.js';
 import { readProfileViews } from '../profile/store.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { engineDir } from '../lib/paths.js';
+import { acceptOwnWritesSince } from '../health/own-files.js';
+import { ROOT as OWN_ROOT } from '../lineage/check.js';
 import { engineCheck, helloTrial } from '../engine/hello.js';
 import { homeDir, lookAtHome } from '../host/local/home.js';
 import { seenMain } from '../host/local/merge.js';
@@ -278,39 +280,36 @@ function projectHere(folder) {
   return found === null ? null : { project: found.project, record: found.record };
 }
 
-function card(repo, local) {
-  if (local) {
-    return {
-      kind: 'setup',
-      level: 3,
-      what: `Setup step ${HEALTH_STEP}, ${SETUP_TITLES[HEALTH_STEP]}: setup tries Wheelhouse's safety checks for real on this computer. `
-        + `It opens a change holding nothing, and asks the merge gate to merge it without your approval, which the gate must refuse. `
-        + 'It checks All stop halts an agent, the installed skills and the project\'s private copy. '
-        + 'The session then tries the sandbox\'s checks and shows the Logbook; setup then closes the change.',
-      why: 'A check never tried can\'t be trusted: these show the Logbook is green for real.',
-      options: [
-        { label: SETUP_LABEL, says: 'Setup runs the checks, then shows the Logbook, with what to do about any that didn\'t pass.' },
-        { label: 'Not now', says: 'Setup waits at this step; nothing changes.' },
-      ],
-      recommend: SETUP_LABEL,
-      because: 'it is the last step, and it takes about a minute',
-      meanwhile: 'Setup waits at this step; nothing changes.',
-    };
-  }
+// Step 10's card, one thing to a line. On GitLab the test change is a merge request.
+// `unprotected` is whether the host's plan could not protect the main line when step 3 or 7 looked, which the why says.
+function card(repo, local, host = 'github', unprotected = false) {
+  const request = host === 'gitlab' ? 'merge request' : 'pull request';
+  const lines = local
+    ? [
+      'Setup tries Wheelhouse\'s safety checks for real on this computer, with a test change that holds nothing.',
+      'Wheelhouse\'s merge check is asked to merge it without your approval, and must refuse.',
+      'It checks that All stop (the switch that halts every agent) works, that the agents\' skills are installed, and the project\'s private copy.',
+      'This Claude Code session checks that agents are stopped where they should be, then shows the Logbook, Wheelhouse\'s record of its own checks.',
+      'Setup then closes the test change.',
+    ]
+    : [
+      `Setup tries Wheelhouse's safety checks for real on ${repo}, with a test ${request} that holds nothing, on a branch named ${HEALTH_BRANCH}.`,
+      'Wheelhouse\'s merge check is asked to merge it without your approval, and must refuse.',
+      `It checks that All stop (the switch that halts every agent) works, that the agents' skills are installed, and that the main line is protected${request === 'pull request' ? ' where your plan allows' : ''}.`,
+      'This Claude Code session checks that agents are stopped where they should be, then shows the Logbook, Wheelhouse\'s record of its own checks.',
+      `Setup then closes the test ${request} and deletes its branch.`,
+    ];
   return {
     kind: 'setup',
     level: 3,
-    what: `Setup step ${HEALTH_STEP}, ${SETUP_TITLES[HEALTH_STEP]}: setup tries Wheelhouse's safety checks for real on ${repo}. `
-      + `It pushes a branch, ${HEALTH_BRANCH}, holding one empty commit, opens a pull request from it, and asks the merge gate to merge it without your approval, which the gate must refuse. `
-      + 'It checks All stop halts an agent, the installed skills and the host\'s protection. '
-      + 'The session then tries the sandbox\'s checks, the merge among them, and shows the Logbook; setup then closes the pull request and deletes the branch.',
-    why: 'A check never tried can\'t be trusted: these show the Logbook is green for real.',
+    what: [`Setup step ${HEALTH_STEP}, ${SETUP_TITLES[HEALTH_STEP]}:`, ...lines.map(asLine)].join('\n'),
+    why: `A check never tried can't be trusted: these show the Logbook is green for real${unprotected ? ", except that your plan can't protect the main line" : ''}.`,
     options: [
       { label: SETUP_LABEL, says: 'Setup runs the checks, then shows the Logbook, with what to do about any that didn\'t pass.' },
-      { label: 'Not now', says: 'Setup waits at this step; nothing changes.' },
+      { label: 'Not now', says: 'Nothing is tried, and the Logbook stays unchecked.' },
     ],
     recommend: SETUP_LABEL,
-    because: 'it is the last step, and it takes about a minute',
+    because: 'it takes about a minute',
     meanwhile: 'Setup waits at this step; nothing changes.',
   };
 }
@@ -334,16 +333,32 @@ async function gitIn(run, { gitPath, env, dir }, args) {
   return got.stdout.trim();
 }
 
-// git for the trial, with the director's own sign-in, in a new scratch repository, to `use`; the
-// scratch is removed afterwards. Never the director's own folder.
-async function withTrialGit({ run, findGit, gitEnvFor, host, platform, remoteUrl, base }, use) {
+// git's environment for the trial: the project's own key in this computer's store where setup made the
+// project with the one-day setup token (the director has no GitLab sign-in on this computer then, and is
+// asked for nothing new), else the director's own sign-in.
+export function trialGitEnv({ host, gitPath, platform, base, record }) {
+  if (madeWithSetupToken(record)) return keyGitEnv({ record, gitPath, platform });
+  return directorGitEnv({ host, gitPath, platform, base });
+}
+
+// The adapter for step 10's checks: the project's own key on the setup token's route, through GitLab's web
+// API as the agents reach it without GitLab's tool (the director has no sign-in of GitLab's tool on this
+// computer then), else the director's own sign-in.
+export function trialAdapter({ host, repo, base, folder, connection }, { run, via } = {}) {
+  if (madeWithSetupToken({ host, connection })) return adapterOf({ host, repo, folder, connection: { ...connection, backend: 'rest' } }, { run, ...(via ? { via } : {}) });
+  return adapterOf({ host, repo, folder, connection: { baseUrl: base } }, { run });
+}
+
+// git for the trial, with the director's own sign-in (or the project's key, as trialGitEnv), in a new
+// scratch repository, to `use`; the scratch is removed afterwards. Never the director's own folder.
+async function withTrialGit({ run, findGit, gitEnvFor, host, platform, remoteUrl, base, record }, use) {
   const located = await findGit({ platform });
   if (!located?.ok || typeof located.path !== 'string') throw new Error('git is not on this computer; step 2 installs it');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-health-'));
   try {
     // https only, with a local path too only when the project's address as setup recorded it is one
     // (ruling R111).
-    const git = { gitPath: located.path, env: reaching(gitEnvFor({ host, gitPath: located.path, platform, base }), remoteUrl), dir };
+    const git = { gitPath: located.path, env: reaching(await gitEnvFor({ host, gitPath: located.path, platform, base, record }), remoteUrl), dir };
     await gitIn(run, git, ['init', '-q', '--bare', '.']);
     return await use(git);
   } finally {
@@ -400,15 +415,15 @@ export function openTrial(run) {
 // are in, and step 10's apply before it opens another. `run`, `adapterFor`, `findGit`,
 // `gitEnvFor` and `platform` are as healthStep's.
 export async function closeOpenTrial({
-  setupRun, record, run = realRun, adapterFor, findGit, gitEnvFor = directorGitEnv, platform = process.platform,
+  setupRun, record, run = realRun, adapterFor, findGit, gitEnvFor = trialGitEnv, platform = process.platform,
 } = {}) {
   const trial = openTrial(setupRun);
   if (trial === null) return null;
   const projectRecord = readProject(trial.project);
   if (projectRecord === null) return null;
-  const adapter = (adapterFor ?? (({ host, repo, base, folder }) => adapterOf({ host, repo, folder, connection: { baseUrl: base } }, { run })))({ host: projectRecord.host, repo: projectRecord.repo, base: projectRecord.connection?.baseUrl, folder: projectRecord.folder });
+  const adapter = (adapterFor ?? ((args) => trialAdapter(args, { run })))({ host: projectRecord.host, repo: projectRecord.repo, base: projectRecord.connection?.baseUrl, folder: projectRecord.folder, connection: projectRecord.connection });
   const finder = findGit ?? (async ({ platform: p }) => (await toolsStatus({ platform: p, run, tools: ['git'] })).git);
-  const gitFor = (use) => withTrialGit({ run, findGit: finder, gitEnvFor, host: projectRecord.host, platform, remoteUrl: trialPlace(trial.project, projectRecord), base: projectRecord.connection?.baseUrl }, (git) => use({ ...git, run }));
+  const gitFor = (use) => withTrialGit({ run, findGit: finder, gitEnvFor, host: projectRecord.host, platform, remoteUrl: trialPlace(trial.project, projectRecord), base: projectRecord.connection?.baseUrl, record: projectRecord }, (git) => use({ ...git, run }));
   return closeTrial({ project: trial.project, projectRecord, pr: trial.pr, sha: trial.sha, adapter, gitFor, record });
 }
 
@@ -494,11 +509,13 @@ function checkPinsNow({ folder }) {
   return checkInstalled({ manifest: readManifest(), projectDir: folder, claudeHome: claudeHome() }).ok ? 'match' : 'differ';
 }
 
-// The host's protection, read back with the director's own sign-in: 'on', 'off', or 'not offered'
-// on a plan without it.
-async function readProtectionNow({ host, repo, run, realUsers = false, base, via = {} }) {
-  const api = host === 'gitlab' ? await directorGitlabApi({ run, baseUrl: base, via }) : undefined;
-  const read = await protectionStatus({ host, repo, run, api, env: {}, realUsers, director: true });
+// The host's protection, read back with the director's own sign-in (or, where setup made the project with
+// the setup token, with the project's own key, which reads it as the helper's board does): 'on', 'off', or
+// 'not offered' on a plan without it.
+async function readProtectionNow({ host, repo, run, realUsers = false, base, via = {}, record }) {
+  const keyed = madeWithSetupToken(record);
+  const api = host !== 'gitlab' ? undefined : keyed ? await keyGitlabApi({ record, via }) : await directorGitlabApi({ run, baseUrl: base, via });
+  const read = await protectionStatus({ host, repo, run, api, env: {}, realUsers, director: !keyed });
   if (read.on === true) return 'on';
   return read.available === false ? 'not offered' : 'off';
 }
@@ -526,20 +543,22 @@ export function trialWhy(pr, here) {
 // Whether step 10's apply, the helper's half, has finished: done or not, the board decides that.
 const applied = (run) => typeof run?.steps?.[HEALTH_STEP]?.doneAt === 'string';
 
-// Step 10. `run` runs git and the host's tools; `adapterFor({ host, repo, base })` the adapter, with the
-// director's own sign-in; `client` the helper's client the merge is asked through; `findGit` the
-// git step 2 found; `gitEnvFor({ host, gitPath, platform, base })` git's environment; `trySTOP`,
-// `checkPins({ folder })` and `readProtection({ host, repo, realUsers, base })` the other checks; `via` is how the protection read's GitLab calls are made (gitlabApi's run, curl, proxy and caFile). All for tests.
+// Step 10. `run` runs git and the host's tools; `adapterFor({ host, repo, base, folder, connection })` the
+// adapter, with the director's own sign-in (the project's key on the setup token's route); `client` the
+// helper's client the merge is asked through; `findGit` the git step 2 found;
+// `gitEnvFor({ host, gitPath, platform, base, record })` git's environment; `trySTOP`, `checkPins({ folder })`
+// and `readProtection({ host, repo, realUsers, base, record })` the other checks; `acceptOwn` accepts the changes setup made to Wheelhouse's own files; `via` is how the protection read's GitLab calls are made (gitlabApi's run, curl, proxy and caFile). All for tests.
 export function healthStep({
   run = realRun,
-  adapterFor = ({ host, repo, base, folder }) => adapterOf({ host, repo, folder, connection: { baseUrl: base } }, { run }),
+  adapterFor = (args) => trialAdapter(args, { run }),
   client,
   findGit = async ({ platform }) => (await toolsStatus({ platform, run, tools: ['git'] })).git,
-  gitEnvFor = directorGitEnv,
+  gitEnvFor = trialGitEnv,
   trySTOP = () => stopTrial({ run }),
   checkPins = checkPinsNow,
-  readProtection = ({ host, repo, realUsers, base }) => readProtectionNow({ host, repo, run, realUsers, base, via }),
+  readProtection = ({ host, repo, realUsers, base, record }) => readProtectionNow({ host, repo, run, realUsers, base, via, record }),
   engineChecks = engineChecksNow,
+  acceptOwn = acceptOwnWritesSince,
   lookHome = lookAtHome,
   via = {},
 } = {}) {
@@ -547,7 +566,7 @@ export function healthStep({
     n: HEALTH_STEP,
     title: SETUP_TITLES[HEALTH_STEP],
     long: true,
-    // The project's files, pins and protection, and Locked, first: the checks try them. The phone is
+    // The project's files and protection, and Locked, first: the checks try them. The phone is
     // optional and comes after (design section 15.1), so it is not waited for.
     after: [7, 8],
     async plan(ctx) {
@@ -566,7 +585,9 @@ export function healthStep({
         kind: 'host', what: 'health-check', target: `${record.repo}: branch ${HEALTH_BRANCH} and a ${local ? 'change' : 'pull request'} from it, closed once the session's trials are done`,
         project, host: record.host, repo: record.repo, branch: HEALTH_BRANCH,
       }];
-      return { changes, card: card(record.repo, local), director: 'One click, then read the Logbook' };
+      // The protection change step 3 or 7 recorded, which names a plan that offered none.
+      const unprotected = !local && readJournal().runs.some((r) => r?.folder === ctx.folder && (r.changes ?? []).some((c) => c?.kind === 'host' && c.after?.action === 'protect' && c.before?.available === false));
+      return { changes, card: card(record.repo, local, record.host, unprotected), director: 'One click, then read the Logbook' };
     },
     async apply(ctx, changes) {
       const platform = ctx.platform ?? process.platform;
@@ -579,10 +600,16 @@ export function healthStep({
         if (ctx.stopped?.() === true) throw new Error(STOPPED);
       };
       halt();
-      const adapter = adapterFor({ host: record.host, repo: record.repo, base: record.connection?.baseUrl, folder: record.folder });
+      // Setup has written files the look at Wheelhouse's own files guards (the sign-in start among them), so the changes made
+      // since this setup began are accepted before the checks look; a change from before then is still named.
+      try {
+        const since = readJournal().runs.find((r) => r?.id === ctx.runId)?.startedAt;
+        acceptOwn({ since, now: ctx.now, root: OWN_ROOT, projects: registeredProjects().map(({ record: r }) => r?.folder).filter(Boolean) });
+      } catch { /* the look is made against the old baseline, and says so */ }
+      const adapter = adapterFor({ host: record.host, repo: record.repo, base: record.connection?.baseUrl, folder: record.folder, connection: record.connection });
       const place = trialPlace(project, record);
       const asker = client ?? helperClient({ timeout: HEALTH_MERGE_WAIT_MS });
-      const gitFor = (use) => withTrialGit({ run, findGit, gitEnvFor, host: record.host, platform, remoteUrl: place, base: record.connection?.baseUrl }, (git) => use({ ...git, run }));
+      const gitFor = (use) => withTrialGit({ run, findGit, gitEnvFor, host: record.host, platform, remoteUrl: place, base: record.connection?.baseUrl, record }, (git) => use({ ...git, run }));
       // A trial an earlier attempt left open is closed first: a pull request from the same branch
       // can't be opened twice (ruling R68).
       await closeOpenTrial({ setupRun: readJournal().runs.find((r) => r?.id === ctx.runId) ?? null, record: ctx.record, run, adapterFor, findGit, gitEnvFor, platform });
@@ -648,7 +675,7 @@ export function healthStep({
         } else {
           let protection = 'could not run';
           try {
-            protection = await readProtection({ host: record.host, repo: record.repo, realUsers: launchedIn(project), ...(record.connection?.baseUrl ? { base: record.connection.baseUrl } : {}) });
+            protection = await readProtection({ host: record.host, repo: record.repo, realUsers: launchedIn(project), record, ...(record.connection?.baseUrl ? { base: record.connection.baseUrl } : {}) });
           } catch { /* could not run */ }
           add('host protection', protection);
         }

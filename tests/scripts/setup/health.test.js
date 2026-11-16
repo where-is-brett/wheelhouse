@@ -18,6 +18,7 @@ import {
   HELPER_CHECKS, SESSION_CHECKS, HEALTH_BRANCH,
 } from '../../../scripts/setup/health.js';
 import { healthGreen, firstUnfinished } from '../../../scripts/lib/setup-run.js';
+import { acceptOwnFiles, checkOwnFiles, ownFilesFile } from '../../../scripts/health/own-files.js';
 import { STEPS } from '../../../scripts/setup/steps.js';
 import { setupRoutes } from '../../../scripts/setup/engine.js';
 import { startRun, markStep, addChanges, newId, readJournal } from '../../../scripts/setup/journal.js';
@@ -111,7 +112,7 @@ test('step 10\'s plan waits for the project, then lists the trial branch and its
     assert.match(first.card.what, /^Setup step 10, Health check:/);
     assert.match(first.card.what, /without your approval/);
     assert.match(first.card.what, /All stop/);
-    assert.match(first.card.what, /closes the pull request and deletes the branch/);
+    assert.match(first.card.what, /closes the test pull request and deletes its branch/);
     assert.match(first.card.what, /session/);
     assert.equal(typeof first.director, 'string');
   }, { connected: true });
@@ -120,6 +121,17 @@ test('step 10\'s plan waits for the project, then lists the trial branch and its
     assert.ok(waiting.wait > 0);
     assert.match(waiting.why, /step 3/);
   }, { connected: false });
+});
+
+test('step 10\'s card says the main line is not protected when the plan offered no protection, and is silent otherwise', async () => {
+  await withProject(async ({ folder }) => {
+    const run = runWith(folder, { upTo: 9, checks: GREEN_CHECKS });
+    const plain = await healthStep().plan({ folder });
+    assert.match(plain.card.why, /green for real\.$/);
+    addChanges(run.id, [{ id: newId('chg'), kind: 'host', step: 7, target: `${REPO} protection`, before: { on: false, available: false }, after: { action: 'protect', branch: 'main', on: true } }]);
+    const said = await healthStep().plan({ folder });
+    assert.match(said.card.why, /green for real, except that your plan can't protect the main line\.$/);
+  }, { connected: true });
 });
 
 test('through the helper, step 10\'s card waits for steps 7 to 9, then composes with its set line', async () => {
@@ -131,8 +143,11 @@ test('through the helper, step 10\'s card waits for steps 7 to 9, then composes 
     for (const n of [7, 8, 9]) markStep(run.id, n, 'doneAt', { now: () => T0 });
     const got = await plan(10);
     assert.equal(got.ok, true, got.refused);
-    assert.equal(setLineOf(got.card.question), setupLine(10, got.hash));
-    assert.ok(composeCard({ ...(await healthStep().plan({ folder })).card, target: { step: 10, hash: got.hash } }));
+    // The director reads the card without its line of hash; composed with the line, it gives step 10's.
+    assert.equal(setLineOf(got.card.question), null);
+    assert.match(got.card.question, /^Setup step 10, Health check:/);
+    const composed = composeCard({ ...(await healthStep().plan({ folder })).card, kind: 'setup', target: { step: 10, hash: got.hash } });
+    assert.equal(setLineOf(composed.question.question), setupLine(10, got.hash));
   });
 });
 
@@ -227,9 +242,42 @@ test('step 10 reads the host\'s protection knowing whether the project has real 
       const { changes } = await step.plan({ folder });
       const { ctx } = ctxFor(folder, remote);
       await step.apply(ctx, changes);
-      assert.deepEqual(seen, [{ host: 'github', repo: REPO, realUsers: launched }]);
+      assert.deepEqual(seen.map(({ host, repo, realUsers }) => ({ host, repo, realUsers })), [{ host: 'github', repo: REPO, realUsers: launched }]);
     });
   }
+});
+
+test('step 10 accepts the changes setup made to Wheelhouse\'s own files, and still names one from before setup began', async () => {
+  await withProject(async ({ folder }) => {
+    const { remote } = await productOnRemote(folder);
+    const { adapter } = standIn(remote);
+    const guarded = path.join(wheelhouseHome(), 'engine', 'copilot', 'home', 'settings.json');
+    fs.mkdirSync(path.dirname(guarded), { recursive: true });
+    fs.writeFileSync(guarded, '{"a":1}\n');
+    const dated = path.join(wheelhouseHome(), 'engine', 'copilot', 'home', 'hooks', 'guard.json');
+    fs.mkdirSync(path.dirname(dated), { recursive: true });
+    fs.writeFileSync(dated, '{"b":0}\n');
+    // The baseline knows a sign-in start setup has since replaced, and a guarded file as it was.
+    acceptOwnFiles({ now: () => T0 });
+    const kept = JSON.parse(fs.readFileSync(ownFilesFile(), 'utf8'));
+    const replaced = path.join(folder, 'older-sign-in-start.plist');
+    kept.others.files[replaced] = 'a-hash-from-before';
+    fs.writeFileSync(ownFilesFile(), JSON.stringify(kept));
+    // The guarded file was changed before this setup began (T0).
+    fs.writeFileSync(guarded, '{"a":2}\n');
+    const before = new Date(T0.getTime() - 24 * 60 * 60 * 1000);
+    fs.utimesSync(guarded, before, before);
+    // Another, changed and dated after now by hand, isn't taken for setup's own write either.
+    fs.writeFileSync(dated, '{"b":1}\n');
+    const ahead = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+    fs.utimesSync(dated, ahead, ahead);
+    const later = () => new Date(T0.getTime() + 3 * 24 * 60 * 60 * 1000);
+    const step = stepWith(adapter, merges(REFUSED).client);
+    const { changes } = await step.plan({ folder });
+    const { ctx } = ctxFor(folder, remote);
+    await step.apply(ctx, changes);
+    assert.deepEqual((await checkOwnFiles({ now: later, treeFor: async () => null })).changed.sort(), [dated, guarded].sort());
+  });
 });
 
 test('step 10 on a company GitLab uses the company address for the adapter, git\'s certificate pair and the protection read', async () => {
@@ -796,7 +844,8 @@ test('a red board closes the trial, leaves step 10 unfinished, and a fresh card 
     // Not "already done": a fresh Go-ahead card for step 10.
     const card = await plan(10);
     assert.equal(card.ok, true, card.refused);
-    assert.equal(setLineOf(card.card.question), setupLine(10, card.hash));
+    assert.match(card.card.question, /^Setup step 10, Health check:/);
+    assert.equal(setLineOf(card.card.question), null, 'sent without its line of hash');
     // A new click is a new attempt: the old finish no longer counts.
     const run = runOf(folder);
     markStep(run.id, 10, 'clickedAt', { now: () => T0 });

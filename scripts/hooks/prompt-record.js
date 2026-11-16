@@ -67,7 +67,7 @@ import {
   RELEASE_LABEL, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LABEL, UPDATE_LINE, TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, SEAT_TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE,
 } from '../state/card-lines.js';
 import {
-  keepClick, shownHash, keepAnswer, askedFor, claimAnswer, claimedAt, noteClaimed, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords, sameWords,
+  keepClick, shownHash, shownByCard, keepAnswer, askedFor, claimAnswer, claimedAt, noteClaimed, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords, sameWords,
   noteDropped, askedAnywhere, bareLabel, cardDifferences, shownNear, askedLike,
 } from '../lib/setup-clicks.js';
 import { setupRecordsOf } from '../lib/setup-writes.js';
@@ -76,7 +76,8 @@ import { switchLabelOf } from '../routing/nudge.js';
 import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
 import { offeredFrom, premiumValueOf, PREMIUM_CARD_MS } from '../routing/premium.js';
 import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures, cardText, sweepStale, cardHash } from '../lib/measures-clicks.js';
-import { localViews, lockFreeNow, FRONT_DESK_LINE } from './session-start.js';
+import { localViews, FRONT_DESK_LINE } from './session-start.js';
+import { takeFreeSeat } from '../lib/free-seat.js';
 import { buildViews, cardOutcomes } from '../state/views.js';
 import { clearOpen } from '../lib/session-files.js';
 import { cardProblems } from './card-check.js';
@@ -87,9 +88,9 @@ import { PUT_OFF } from '../lib/front-desk.js';
 import { whenSaid, askOf, countedOf } from '../cards/answered.js';
 import { settingKey, UNATTENDED_CARD, USE_GUARDED } from '../protection/windows-builds.js';
 import { startedAsScript } from '../lib/started-as-script.js';
-import { recordAnswer, startedByScript } from '../decisions/answer.js';
+import { recordAnswer } from '../decisions/answer.js';
 import { sessionRole } from '../lib/role.js';
-import { readSeat, takeSeat, refreshSeat, handOverSeat } from '../lib/first-mate-seat.js';
+import { readSeat, handOverSeat } from '../lib/first-mate-seat.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const SHA12 = '([0-9a-f]{12})(?![0-9a-fA-F])';
@@ -587,8 +588,8 @@ function keepAfterClick(project, folder, made) {
   }
 }
 
-// The signed record a Go ahead on a setup card earns: the card carries one set line, setup's, and
-// is the very card the helper composed for the list its twelve characters name, for the folder
+// The signed record a Go ahead on a setup card earns: the card carries one set line, setup's, or none (as setup sends it
+// now, the hash kept in its shown record alone), and is the very card the helper composed for the list its twelve characters name, for the folder
 // this session is in, word for word (its text, header and options), so a card reworded around the
 // right set line earns nothing.
 // The record names the run the card was shown for and that list's full hash, which the helper
@@ -598,7 +599,12 @@ function keepAfterClick(project, folder, made) {
 function setupClickOf(cwd, { question, label, card }) {
   if (label !== SETUP_LABEL) return null;
   const m = only(SETUP, question);
-  if (!m) return null;
+  if (!m) {
+    // The card as setup sends it, without its line of hash: the click counts only for the very card recorded as shown.
+    if (setLinesOf(question).length > 0) return null;
+    const shown = shownByCard({ cwd, card });
+    return shown === null ? null : { made: { kind: 'action', data: { action: 'setup', runId: shown.runId, step: shown.step, hash: shown.hash, question, label } } };
+  }
   const step = Number(m[1]);
   if (!Object.hasOwn(SETUP_TITLES, step) || setLineOf(question) !== setupLine(step, m[2])) return null;
   const shown = shownHash({ cwd, step, h12: m[2], card });
@@ -995,20 +1001,6 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
     out.push({ kind: 'shown', data: { code, question: q.question, options: q.options.map((o) => o?.label) } });
   }
   return out;
-}
-
-// A front-desk session that doesn't hold the First Mate's seat takes it here when it is free (a session that began before
-// the seat existed, or whose holder has since ended). A seat another live session holds is never taken: takeSeat leaves it,
-// and moving it is the take-over card's click, not this. It informs, so a failure leaves the seat as it was.
-async function takeFreeSeat({ project, input, env, now, client, left }) {
-  try {
-    const session = input.session_id;
-    if (typeof session !== 'string' || session === '' || startedByScript(env)) return;
-    if (sessionRole({ sessionId: session, env, prompt: input.prompt, cwd: input.cwd, seat: null }) !== 'front-desk') return;
-    if (!(await lockFreeNow({ client, project, left, now }))) return; // another computer's lock: no seat (design 6.8, case 8)
-    if (readSeat(project)?.session === session) refreshSeat(project, session, { now });
-    else await takeSeat(project, { session, folder: input.cwd }, { now });
-  } catch { /* the seat is taken at a later hook */ }
 }
 
 // Whether `session` is a window that doesn't hold the First Mate's seat: another session holds it, or this window chose to be an

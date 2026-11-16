@@ -24,12 +24,13 @@ export const KEEP_HERE = 'Keep it on this computer';
 export const PUT_ON_GITHUB = 'Put it on GitHub';
 export const PUT_ON_GITLAB = 'Put it on GitLab';
 export const KEPT_LINE = 'Your project stays on this computer. Nothing goes online.';
-export const FIRST_CHECK_LINE = 'Wheelhouse finds your tests and runs them here for the first time.';
+export const FIRST_CHECK_LINE = 'Wheelhouse looks for your tests and runs any it finds.';
 export const STARTED_LINE = (branch) => `Git starts in this folder, with a first commit on ${branch}.`;
 export const CHOOSE_BACKUP = 'Choose a backup folder';
 // "Not now" alone puts a setup card off, and this one closes for good.
 export const NO_BACKUP = 'Not now, keep building';
-export const ONLY_HERE_LINE = 'This project is only on this computer. If the computer is lost or breaks, the project goes with it.';
+export const ONLY_HERE_AFTER = 'If the computer is lost or breaks, the project goes with it.';
+export const ONLY_HERE_LINE = `This project is only on this computer. ${ONLY_HERE_AFTER}`;
 const FIRST_COMMIT = 'Start the project';
 const MOST_BRANCHES = 4;
 // Wheelhouse's own branches of a hosted project, never a project's main line.
@@ -157,7 +158,7 @@ export function backupAsk(name, { id = 'backup', machine = false, refused = null
       what: `${refused === null ? '' : `${refused}. `}${what} To name a folder yourself, type its full path.`,
       why: 'A backup in a folder off this disk is what brings the project back. It holds the project and its history, not your cards and clicks, which stay on this computer.',
       options: [
-        { label: CHOOSE_BACKUP, says: desktop ? 'You pick an external drive, or a folder a cloud service keeps, in a window that opens on this computer. A backup goes there after each merge.' : 'Type the full path of an external drive, or a folder a cloud service keeps, under Other. A backup goes there after each merge.' },
+        { label: CHOOSE_BACKUP, says: desktop ? 'You pick an external drive, or a folder a cloud service keeps, in a window that opens on this computer. A backup goes there after each merge.' : 'Type the full path of an external drive, or a folder a cloud service keeps, under Type something. A backup goes there after each merge.' },
         { label: NO_BACKUP, says: 'Building goes on, and you won\'t be asked again. The Safekeeping row in the pane shows how it stands.' },
       ],
       recommend: CHOOSE_BACKUP,
@@ -239,14 +240,17 @@ export function localSteps({ folder, project, branch, noGit, noCommit, locked, r
   ];
 }
 
-export function localCard({ changes, branch, others }) {
+export function localCard({ changes, branch, others, desktop = true }) {
+  // A terminal session opens no window to pick in, so a backup with no typed folder is left for the pane's Safekeeping row.
+  const backup = changes.find((c) => c.action === 'backup-folder');
+  const later = backup !== undefined && backup.folder === null && !desktop;
   const parts = [
     ...(changes.some((c) => c.action === 'git-init') ? [`git starts in this folder, on ${branch}`] : []),
     ...(changes.some((c) => c.action === 'first-commit') ? [`a first commit on ${branch}`] : []),
     ...(changes.some((c) => c.action === 'home' && typeof c.restore === 'string') ? ['the project brought back from your backup, into this folder'] : []),
     'a private copy of the project\'s history on this computer, which only Wheelhouse\'s helper changes',
     'the project\'s record, kept on this computer',
-    ...(changes.some((c) => c.action === 'backup-folder') ? ['a backup in the folder you choose, after each merge'] : []),
+    ...(backup === undefined ? [] : [later ? 'no backup yet: you choose its folder later, from the Safekeeping row in the pane' : 'a backup in the folder you choose, after each merge']),
     FIRST_CHECK_LINE.replace(/\.$/, '').replace(/^W/, 'w'),
   ];
   const line = othersLine(others);

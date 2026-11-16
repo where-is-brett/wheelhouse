@@ -118,7 +118,7 @@ import { projectForFolder } from '../lib/projects.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { keyEdits } from './local-refresh.js';
 import { resolveClaude, invocation, withoutHostVariables } from '../lib/claude.js';
-import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
+import { SETUP_TITLES, SETUP_LABEL, asLine } from '../state/card-lines.js';
 import { composeCard } from '../cards/compose.js';
 import { CARD } from '../lib/front-desk.js';
 import { STATE_BRANCH } from '../state/record.js';
@@ -139,7 +139,7 @@ import { FOLDER_REMOTE } from '../host/local/folder.js';
 import { identityOf, keepSeenMain } from '../host/local/merge.js';
 import { startedBySetup } from './local.js';
 import { askSecret as realAskSecret } from '../secrets/secret-box.js';
-import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED, launchedIn, REAL_USERS, askAdministrationKey, openPage } from './host.js';
+import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED, launchedIn, REAL_USERS, askAdministrationKey, openPage, madeWithSetupToken, keyGitlabApi, keyGitEnv, projectKeyKind } from './host.js';
 import { isolated, refuseUnlistedSettings, reaching } from './git.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
 import { agentEntries } from '../agents/setup-parts.js';
@@ -243,6 +243,8 @@ const GIT_WAIT_MS = 5 * 60 * 1000;
 export const NO_CLAUDE = 'Setup could not run Claude Code\'s command line (claude) to install the pinned kits for this project. Install Claude Code\'s command line, then a fresh Go ahead carries on';
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+// The settings of .claude/wheelhouse.json that can be there before step 7 writes the rest (configFrom).
+const HOST_SETTINGS = Object.freeze(['gitlabHosts', 'glabFrom', 'ghFrom']);
 
 function readText(file) {
   try {
@@ -379,11 +381,23 @@ export const midSizedPin = (config) => classPin(config, 'midSized');
 
 // The configuration a project ends up with: the one it has, with each of the starter's keys it
 // lacks added, the starter's front desk pin where it has none, and `liveData` as step 4's answer says. A file that isn't a configuration is refused.
+// A file holding only the host settings that come before this step (step 3 names a company's GitLab in `gitlabHosts`;
+// `glabFrom` and `ghFrom` say where the host's tool comes from) is not yet a configuration: it is the starter with
+// those settings kept, and must then read as one.
 export function configFrom(existing, starter) {
   if (existing === null) {
     const fresh = structuredClone(starter);
     if (Object.hasOwn(fresh, 'agents') && Object.keys(fresh.agents).length === 0) delete fresh.agents;
     return fresh;
+  }
+  if (isObject(existing) && Object.keys(existing).length > 0 && Object.keys(existing).every((k) => HOST_SETTINGS.includes(k))) {
+    const out = { ...configFrom(null, starter), ...structuredClone(existing) };
+    try {
+      readConfig(JSON.stringify(out));
+    } catch {
+      throw new Error(`${CONFIG} is not a configuration Wheelhouse can read, so setup has left it as it was: correct it or remove it, then ask again`);
+    }
+    return out;
   }
   try {
     readConfig(JSON.stringify(existing));
@@ -618,8 +632,9 @@ async function localAuthor({ folder, run }) {
 // that config says.
 // https is its only transport, with a local path too only when `remoteUrl`, the project's address
 // as setup recorded it, is one (ruling R111).
-function gitIn({ run, gitPath, host, platform, folder, remoteUrl, base }) {
-  const env = reaching(directorGitEnv({ host, gitPath, platform, base }), remoteUrl);
+// `keyed`, where step 3 connected with the setup token, is git's environment with the project's own key instead.
+function gitIn({ run, gitPath, host, platform, folder, remoteUrl, base, keyed = null }) {
+  const env = reaching(keyed ?? directorGitEnv({ host, gitPath, platform, base }), remoteUrl);
   const call = async (args) => {
     await refuseUnlistedSettings({ run, gitPath, cwd: folder });
     return quietly(run, gitPath, args, { cwd: folder, env: { ...isolated(env), GIT_WORK_TREE: folder }, baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
@@ -657,6 +672,57 @@ async function remoteTip(git, remoteUrl, branch) {
   if (listed === null) throw new Error(`Setup could not reach the repository with your sign-in to read ${branch}: check you are still signed in (step 3), then ask again`);
   const sha = listed.split(/\s/)[0];
   return /^[0-9a-f]{40,64}$/.test(sha ?? '') ? sha : null;
+}
+
+// Where step 3 connected with the setup token, setup's commit goes up through a merge request from this branch, with
+// the project's own key: main is protected from step 3 on, and the key never pushes to it.
+export const SETUP_SIDE_BRANCH = 'wheelhouse/setup';
+const MERGE_TRIES = 15;
+const MERGE_WAIT_MS = 2000;
+const MERGE_PENDING = new Set(['checking', 'unchecked', 'preparing', 'approvals_syncing', 'cannot_be_merged_recheck']);
+
+// Sends `sha` to main on GitLab through a merge request: pushed to the side branch, a merge request opened (or the open
+// one used), then merged at exactly that commit once GitLab says it can be. Throws a plain line when the key may not
+// merge (a project with real users is merged by Maintainers only), leaving the merge request for the director.
+async function mergeUp({ git, api, projectId, remoteUrl, branch, sha, sleep, halt }) {
+  if (!(await git.ok(['push', '-q', '--no-verify', remoteUrl, `+${sha}:refs/heads/${SETUP_SIDE_BRANCH}`]))) {
+    throw new Error('the setup commit could not be sent to GitLab with the project\'s key; it is kept in this folder, and a fresh Go ahead sends it');
+  }
+  const at = projectPath(projectId);
+  const open = await api.get(`${at}/merge_requests?state=opened&source_branch=${encodeURIComponent(SETUP_SIDE_BRANCH)}&target_branch=${encodeURIComponent(branch)}`);
+  let request = open.status === 200 && Array.isArray(open.body) ? open.body[0] ?? null : null;
+  if (request === null) {
+    const made = await api.post(`${at}/merge_requests`, { source_branch: SETUP_SIDE_BRANCH, target_branch: branch, title: COMMIT_MESSAGE, remove_source_branch: true });
+    if (made.status !== 201) throw new Error(`GitLab did not open the merge request for setup's commit (HTTP ${made.status}); the commit is kept in this folder, and a fresh Go ahead tries again`);
+    request = made.body;
+  }
+  const iid = request?.iid;
+  if (!Number.isInteger(iid) || iid <= 0) throw new Error('GitLab did not say which merge request holds setup\'s commit; a fresh Go ahead tries again');
+  const left = (why) => new Error(`Setup's commit waits in a merge request on GitLab that the project's key ${why}: open the project's merge requests on GitLab and press Merge, then a fresh Go ahead carries on`);
+  for (let i = 0; i < MERGE_TRIES; i += 1) {
+    halt();
+    const read = await api.get(`${at}/merge_requests/${iid}`);
+    if (read.body?.state === 'merged') return;
+    const status = read.body?.detailed_merge_status ?? read.body?.merge_status;
+    if (!MERGE_PENDING.has(status)) break;
+    await sleep(MERGE_WAIT_MS);
+  }
+  halt();
+  const merged = await api.put(`${at}/merge_requests/${iid}/merge`, { sha });
+  if (merged.status === 401 || merged.status === 403) throw left('may not merge');
+  if (merged.status !== 200) throw left(`could not merge (HTTP ${merged.status})`);
+}
+
+// Where setup's commit reached main through a merge request, this folder's branch is taken on to main's tip on the
+// host: only when the folder's commit is in it and the two hold the same files, so nothing in the folder changes.
+// Gives the folder's commit afterwards.
+async function takeMerged(git, { remoteUrl, branch, head, tip }) {
+  if (head === null || tip === null || head === tip) return head;
+  if (!(await git.ok(['fetch', '-q', remoteUrl, `+refs/heads/${branch}:refs/remotes/origin/${branch}`]))) return head;
+  if (!(await git.ok(['merge-base', '--is-ancestor', head, tip]))) return head;
+  if ((await git.out(['rev-parse', `${head}^{tree}`])) !== (await git.out(['rev-parse', `${tip}^{tree}`]))) return head;
+  if ((await git.out(['symbolic-ref', '--short', '-q', 'HEAD'])) !== branch) return head;
+  return (await git.ok(['merge', '-q', '--ff-only', tip])) ? tip : head;
 }
 
 // What a file held at HEAD, exactly, or null when it wasn't there.
@@ -1034,7 +1100,9 @@ async function switchFolder(ctx, c, { git, project, author }) {
   return { again: true, changes: [] };
 }
 
-export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [], negated = [], frontDesk = null, midSized = null, listens = false }) {
+// `keyed`: step 3 connected with the setup token, so the commit goes through a merge request with the project's own
+// key, and protection is already on. `pasted`: that key is the director's own token GitLab made them use instead; null where the card is built before step 3 has kept either.
+export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [], negated = [], frontDesk = null, midSized = null, listens = false, keyed = false, pasted = false }) {
   const local = host === 'local';
   const files = changes.filter((c) => (c.kind === 'json-key' || c.kind === 'file') && c.line === undefined && c.engine !== true && c.what !== 'mirror');
   // The lines that keep .env files out of git: in the project's .gitignore, or, on a joining
@@ -1046,24 +1114,24 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   const ours = changes.some((c) => c.line === WHEELHOUSE_LINE);
   const parts = [];
   if (shared.length > 0) {
-    const section = shared.some((c) => c.section) ? ', and a "Compact instructions" section into CLAUDE.md' : '';
-    parts.push(`Wheelhouse's settings and configuration go into .claude${section}, keeping yours`);
+    parts.push('Wheelhouse\'s settings go into the project\'s .claude folder, keeping yours');
+    if (shared.some((c) => c.section)) parts.push('CLAUDE.md gets a "Compact instructions" section, keeping yours: what agents keep when a chat is summarised');
   }
-  if (files.length > shared.length) parts.push(`this computer's settings into .claude/settings.local.json, which stays here${excluded ? `${ours ? '; it and .wheelhouse/' : ','} kept out of git` : ''}`);
-  else if (excluded) parts.push(`.claude/settings.local.json${ours ? ' and .wheelhouse/' : ''} kept out of git`);
-  if (ours && !excluded) parts.push('.wheelhouse/ kept out of git');
+  if (files.length > shared.length) parts.push(`this computer's own settings go into .claude/settings.local.json${excluded ? `${ours ? '; it and .wheelhouse/, Wheelhouse\'s working folder, are' : ','} kept out of git` : ', which stays here'}`);
+  else if (excluded) parts.push(`.claude/settings.local.json${ours ? ' and .wheelhouse/, Wheelhouse\'s working folder,' : ''} kept out of git`);
+  if (ours && !excluded) parts.push('.wheelhouse/, Wheelhouse\'s working folder, kept out of git');
   if (frontDesk === NO_PIN) parts.push('the First Mate\'s model is left as it is: Claude Code didn\'t say which model to use');
-  else if (frontDesk) parts.push(`the First Mate runs on ${frontDesk}`);
-  if (midSized === NO_PIN) parts.push('Lean and Lightest wait for the lighter model: Claude Code didn\'t say which model to use');
-  else if (midSized) parts.push('Lean and Lightest move most building and routine checking to the lighter model');
+  else if (frontDesk) parts.push(`the First Mate uses ${frontDesk}, Claude Code's most capable everyday model`);
+  if (midSized === NO_PIN) parts.push('the settings that spend less wait for a cheaper model: Claude Code didn\'t say which to use');
+  else if (midSized) parts.push('a cheaper model for most building and checking, if you choose to spend less');
   if (secrets === 'shared') parts.push(`.env files, which hold secrets, kept out of git by .gitignore${envLines.some((c) => c.restate) ? ' (.env.example stays shared)' : ''}`);
   else if (secrets === 'here') parts.push(negated.length > 0 ? `some .env files, which hold secrets, kept out of git on this computer, but ${NEGATED_PART}` : '.env files, which hold secrets, kept out of git on this computer');
   if (negated.length > 0 && secrets !== 'here') parts.push(NEGATED_PART);
   if (changes.some((c) => c.engine === true)) parts.push(host === 'local' ? 'the build engine\'s settings into .archon/' : 'the build engine\'s merge policy and settings into .archon/, naming the GitHub account Wheelhouse signs reviews as');
   if (changes.some((c) => c.what === 'mirror')) parts.push('the build engine reads this project from Wheelhouse\'s own copy, so it never holds a key');
-  if (listens) parts.push(listeningNotice({ localListening: true }).replace(/ To turn it off.*$/, '').replace(/\.$/, ''));
+  if (listens) parts.push(LISTENING_CLAUSE);
   const pins = changes.filter((c) => c.kind === 'process').map((c) => pinName(c.target));
-  if (pins.length > 0) parts.push(`${listed(pins)} installed for this project at tested versions`);
+  if (pins.length > 0) parts.push(`${listed(pins)}, which agents work with, at a version Wheelhouse has tried`);
   const up = changes.find((c) => c.kind === 'host' && (c.action === 'commit' || c.action === 'push'));
   // The director's own changes setup's commit takes up, as they chose (ruling R95).
   const yours = up?.action === 'commit' && Array.isArray(up.yours) && up.yours.length > 0 ? `, with your own changes to ${listed(up.yours.map((y) => y.file))}` : '';
@@ -1073,30 +1141,33 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   const ownPart = ownFiles.length > 0 ? `, with your product's own ${ownFiles.length === 1 ? 'file' : 'files'}, ${listed(ownNamed)}` : '';
   const ignored = up?.action === 'commit' && Array.isArray(up.files) && up.files.includes(GITIGNORE);
   const archon = up?.action === 'commit' && Array.isArray(up.files) && up.files.some((f) => ENGINE_FILES.includes(f));
-  if (up?.action === 'commit') parts.push(`the three shared files${ignored ? ' and .gitignore' : ''}${archon ? ' and .archon/' : ''} ${local ? `go onto ${branch}` : `go up to ${branch} on ${NAME[host]}`} in one commit, "${COMMIT_MESSAGE}"${yours}${ownPart}`);
+  const upTo = local ? `onto ${branch}` : keyed ? `to ${branch} on ${NAME[host]} through a merge request` : `up to ${branch} on ${NAME[host]}`;
+  const sharedFiles = ['the settings', 'CLAUDE.md', ...(ignored ? ['.gitignore'] : []), ...(archon ? ['.archon/'] : [])].join(', ').replace(/, ([^,]*)$/, ' and $1');
+  if (up?.action === 'commit') parts.push(keyed ? `${sharedFiles} go in one commit, "${COMMIT_MESSAGE}", ${upTo}${yours}${ownPart}` : `${sharedFiles} go ${upTo} in one commit, "${COMMIT_MESSAGE}"${yours}${ownPart}`);
   if (up?.ownLeft === true) parts.push('your product\'s own files stay as they are, too many for setup\'s commit: commit them when you are ready');
-  if (up?.action === 'push') parts.push(`setup's commit, "${COMMIT_MESSAGE}", ${local ? `goes onto ${branch}` : `goes up to ${branch} on ${NAME[host]}`}`);
-  const where = host === 'gitlab' ? ' ("pipelines must succeed" once there is a pipeline)' : ', where your plan allows';
+  if (up?.action === 'push') parts.push(`setup's commit, "${COMMIT_MESSAGE}", goes ${upTo}`);
+  const where = host === 'gitlab' ? ': changes go in only through merge requests, which must pass the project\'s automatic checks once it has them' : ', where your plan allows: changes go in only through pull requests';
   if (joining) parts.push('the project\'s own files stay as your other computer committed them: nothing is committed and protection stays as it is');
-  else if (!local) parts.push(`${up ? 'then ' : ''}${branch}'s protection goes on${where}`);
+  else if (keyed) parts.push(`protection is already on ${branch}, from step 3`);
+  else if (!local) parts.push(`${up ? 'then ' : ''}protection goes on ${branch}${where}`);
   if (differ.length > 0) parts.push(`${listed(differ)} ${differ.length === 1 ? 'differs' : 'differ'} from what is committed, and setup leaves ${differ.length === 1 ? 'it as it is' : 'them as they are'}`);
   const pinned = release?.ref ? `Wheelhouse stays at ${release.ref} and never updates itself.` : 'Wheelhouse never updates itself.';
   const card = (what) => ({
     kind: 'setup',
     level: 3,
     what,
-    why: local ? 'Agents start from these files; later changes go through Wheelhouse\'s checks.' : 'Agents start from these files; protection sends later changes through Wheelhouse\'s checks.',
+    why: local ? 'Agents start from these files; later changes go through Wheelhouse\'s checks.' : keyed ? `Agents start from these files; ${branch} is already protected, so later changes go through Wheelhouse's checks.` : 'Agents start from these files; once protected, later changes go through Wheelhouse\'s checks.',
     options: [
-      { label: SETUP_LABEL, says: local ? 'Setup makes these changes.' : 'Setup makes these changes and says what protection reads back.' },
-      { label: 'Not now', says: 'Setup waits here; nothing changes.' },
+      { label: SETUP_LABEL, says: local || keyed ? 'Setup makes these changes.' : 'Setup makes these changes and tells you whether the protection took.' },
+      { label: 'Not now', says: 'Nothing changes, and agents wait for these files.' },
     ],
     recommend: SETUP_LABEL,
     because: 'agents need these before they start',
     meanwhile: 'Setup waits here; nothing changes.',
   });
-  const full = card(joining
-    ? `Setup step 7, ${SETUP_TITLES[7]}, for this computer: ${parts.join('; ')}. ${pinned}`
-    : `Setup step 7, ${SETUP_TITLES[7]}: ${parts.join('; ')}.${local ? '' : ` All with your ${NAME[host]} sign-in.`} ${pinned}`);
+  // One thing to a line, as step 3's card lists its own, under a title that says whose sign-in does it.
+  const by = local || joining ? '' : pasted ? ', with the token you pasted at step 3, which can act as you across GitLab' : keyed ? (pasted === null ? ', with the project\'s own key where GitLab allows one, or else the token you pasted at step 3, which can act as you across GitLab' : ', with the project\'s own key, not your account') : `, acting as you on ${NAME[host]}`;
+  const full = card([`Setup step 7, ${SETUP_TITLES[7]}${joining ? ', for this computer' : by}:`, ...[...parts, pinned].map(asLine)].join('\n'));
   const fits = (c) => composeCard({ ...c, target: { step: 7, hash: '0'.repeat(64) } }).question.question.length <= CARD.chars;
   try {
     if (fits(full)) return full;
@@ -1104,17 +1175,17 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   const cut = (text) => (text.length > 60 ? `${text.slice(0, 59)}…` : text);
   if (joining) {
     const mine = [
-      ...(files.length > 0 || excluded || ours ? ['this computer\'s settings'] : []), ...(secrets ? [negated.length > 0 ? 'some .env files kept out of git' : '.env files kept out of git'] : []), ...(negated.length > 0 ? ['.gitignore lets some .env files in: raise it on the computer that set the project up'] : []), ...(pins.length > 0 ? ['the pinned kits'] : []),
+      ...(files.length > 0 || excluded || ours ? ['this computer\'s settings'] : []), ...(secrets ? [negated.length > 0 ? 'some .env files kept out of git' : '.env files kept out of git'] : []), ...(negated.length > 0 ? ['.gitignore lets some .env files in: raise it on the computer that set the project up'] : []), ...(pins.length > 0 ? ['the kits agents work with'] : []),
       ...(listens ? [LISTENING_CLAUSE] : []), 'nothing committed', ...(differ.length > 0 ? [`${listed(differ)} left as ${differ.length === 1 ? 'it is' : 'they are'}`] : []),
     ];
-    return card(`Setup step 7, ${SETUP_TITLES[7]}, for this computer: ${mine.join(', ')}. Wheelhouse never updates itself.`);
+    return card([`Setup step 7, ${SETUP_TITLES[7]}, for this computer:`, ...[...mine, 'Wheelhouse never updates itself'].map(asLine)].join('\n'));
   }
   const short = [
     ...(shared.length > 0 ? ['the project\'s own files'] : []), ...(files.length > shared.length || excluded || ours ? ['this computer\'s settings'] : []),
-    ...(secrets ? ['.env files kept out of git'] : []), ...(listens ? [LISTENING_CLAUSE] : []), ...(pins.length > 0 ? ['the pinned kits'] : []), ...(up ? [`the setup commit ${local ? `onto ${cut(branch)}` : `up to ${cut(branch)} on ${NAME[host]}`}${yours === '' ? '' : ', with your changes'}${ownPart === '' ? '' : ', with your product\'s own files'}`] : []),
-    ...(local ? [] : [`${up ? 'then ' : ''}protection on ${up ? 'it' : cut(branch)}`]),
+    ...(secrets ? ['.env files kept out of git'] : []), ...(listens ? [LISTENING_CLAUSE] : []), ...(pins.length > 0 ? ['the kits agents work with'] : []), ...(up ? [`the setup commit ${local ? `onto ${cut(branch)}` : keyed ? `to ${cut(branch)} on ${NAME[host]} through a merge request` : `up to ${cut(branch)} on ${NAME[host]}`}${yours === '' ? '' : ', with your changes'}${ownPart === '' ? '' : ', with your product\'s own files'}`] : []),
+    ...(local ? [] : keyed ? ['protection already on from step 3'] : [`${up ? 'then ' : ''}protection on ${up ? 'it' : cut(branch)}`]),
   ];
-  return card(`Setup step 7, ${SETUP_TITLES[7]}: ${short.join(', ')}${local ? '' : ', all with your sign-in'}. Wheelhouse never updates itself.`);
+  return card([`Setup step 7, ${SETUP_TITLES[7]}${by}:`, ...[...short, 'Wheelhouse never updates itself'].map(asLine)].join('\n'));
 }
 
 // ---- Step 7 ----
@@ -1155,13 +1226,19 @@ export function projectFilesStep({
   address = () => helperAddress(), node = process.execPath, pluginRoot = PLUGIN_ROOT,
   best = (alias) => aliasModel(alias, { run, claude }), env = process.env,
   // The build engine in force for a project, and the login the helper posts as on GitHub.
-  engineOf = engineInForce, loginOf = githubLogin,
+  engineOf = engineInForce, loginOf = githubLogin, sleep = (ms) => new Promise((r) => { setTimeout(r, ms); }),
+  // How GitLab's API is reached with the project's own key (gitlabApi's run, curl, proxy and caFile), for tests.
+  keyVia = {},
 } = {}) {
-  const gitFor = async ({ host, platform, folder, remoteUrl, base }) => {
+  // Where step 3 connected with the setup token, git and GitLab's API go with the project's own key: setup kept no
+  // sign-in of the director's.
+  const gitFor = async ({ host, platform, folder, remoteUrl, base, record = null }) => {
     const located = await findGit({ platform, run });
     if (!located?.ok || typeof located.path !== 'string') throw new Error('git is not on this computer; step 2 installs it');
-    return gitIn({ run, gitPath: located.path, host, platform, folder, remoteUrl, base });
+    const keyed = madeWithSetupToken(record) ? await keyGitEnv({ record, gitPath: located.path, platform }) : null;
+    return gitIn({ run, gitPath: located.path, host, platform, folder, remoteUrl, base, keyed });
   };
+  const apiFor = (record) => (madeWithSetupToken(record) ? () => keyGitlabApi({ record, via: keyVia }) : gitlab);
   const lineage = (folder) => checkInstalled({ manifest: manifest(), projectDir: folder, claudeHome: claudeHome(), locate });
   // This computer's part of the list, for either form: the line that keeps its settings out of git
   // (unless the product already ignores them), the line that keeps .wheelhouse/ out of git (unless
@@ -1207,7 +1284,7 @@ export function projectFilesStep({
     const { host, repo } = found.record;
     const folder = ctx.folder;
     const at = (rel) => path.join(folder, ...rel.split('/'));
-    const git = await gitFor({ host, platform, folder, remoteUrl: found.record.remoteUrl, base: found.record.connection?.baseUrl });
+    const git = await gitFor({ host, platform, folder, remoteUrl: found.record.remoteUrl, base: found.record.connection?.baseUrl, record: found.record });
     const committed = await headText(git, CONFIG);
     if (committed === null) {
       throw new Error(`${CONFIG} is not in this folder's last commit of ${repo}, so setup can't read the project's configuration: finish setup on your other computer, bring its commit in here (git pull), then ask again`);
@@ -1261,11 +1338,14 @@ export function projectFilesStep({
       // Where setup's commit goes: the host, or for a project kept on this computer its home, by its path.
       const remoteUrl = local ? homeDir(found.project) : record.remoteUrl;
 
-      const branch = await defaultBranchOf({ host, repo, run, gitlab, base: record.connection?.baseUrl, project: found.project });
+      const keyed = madeWithSetupToken(record);
+      const keyKind = keyed ? await projectKeyKind(record) : null;
+      const pasted = keyed && keyKind === null ? null : keyed && keyKind === 'pasted-token';
+      const branch = await defaultBranchOf({ host, repo, run, gitlab: apiFor(record), base: record.connection?.baseUrl, project: found.project });
       if (WHEELHOUSE_BRANCHES.includes(branch)) {
         throw new Error(`${NAME[host]}'s default branch for ${repo} is ${branch}, which is Wheelhouse's own branch, so setup can't put the project's files there: make the product's own branch the default in the repository's settings on ${NAME[host]}, then ask again`);
       }
-      const git = await gitFor({ host, platform, folder, remoteUrl, base: record.connection?.baseUrl });
+      const git = await gitFor({ host, platform, folder, remoteUrl, base: record.connection?.baseUrl, record });
       const current = await git.out(['symbolic-ref', '--short', '-q', 'HEAD']);
       if (current !== branch) {
         // Setup never suggests changing the host's default branch. A folder on a line named as a
@@ -1287,7 +1367,9 @@ export function projectFilesStep({
       }
       let tip = await remoteTip(git, remoteUrl, branch);
       if (tip === null) throw new Error(`${branch} is not on ${NAME[host]} yet, so setup's commit has nothing to go on: run step 3 again, then ask again`);
-      const head = await git.out(['rev-parse', '-q', '--verify', 'HEAD^{commit}']);
+      let head = await git.out(['rev-parse', '-q', '--verify', 'HEAD^{commit}']);
+      // Setup's commit merged on GitLab since (by the director, where the key may not merge): the folder is taken on to it.
+      if (keyed) head = await takeMerged(git, { remoteUrl, branch, head, tip });
       let unpushed = false;
       let catchUp = null;
       if (head !== tip) {
@@ -1406,10 +1488,13 @@ export function projectFilesStep({
       if (catchUp !== null) changes.push(catchUp);
       // The commit goes on the tip the plan read, and the push sends that exact commit (I1). The
       // director's own changes it takes up, as they chose, are named by their text's hash (R95).
-      if (commit) changes.push({ kind: 'host', target, action: 'commit', branch, base: tip, message: COMMIT_MESSAGE, files: commitFiles, ...(yours.length > 0 ? { yours } : {}), ...(own.length > 0 ? { own } : {}), ...(left ? { ownLeft: true } : {}) });
-      else if (unpushed) changes.push({ kind: 'host', target, action: 'push', branch, base: tip, commit: head, files: ((await git.out(['diff-tree', '--no-commit-id', '--name-only', '-r', head])) ?? '').split('\n').filter(Boolean) });
-      if (!local) changes.push({ kind: 'host', target: `${repo} protection`, action: 'protect', branch });
-      return { changes, card: projectFilesCard({ changes, host, branch, release, frontDesk: pin === null ? NO_PIN : frontDeskOf(changes, pin), midSized: held !== null ? null : mid === null ? NO_PIN : mid, listens: config.localListening === true }), director: 'One click' };
+      // With the setup token, the commit reaches the protected main through a merge request, and step 3 has already
+      // switched protection on.
+      const merge = keyed ? { merge: true } : {};
+      if (commit) changes.push({ kind: 'host', target, action: 'commit', branch, base: tip, message: COMMIT_MESSAGE, files: commitFiles, ...(yours.length > 0 ? { yours } : {}), ...(own.length > 0 ? { own } : {}), ...(left ? { ownLeft: true } : {}), ...merge });
+      else if (unpushed) changes.push({ kind: 'host', target, action: 'push', branch, base: tip, commit: head, files: ((await git.out(['diff-tree', '--no-commit-id', '--name-only', '-r', head])) ?? '').split('\n').filter(Boolean), ...merge });
+      if (!local && !keyed) changes.push({ kind: 'host', target: `${repo} protection`, action: 'protect', branch });
+      return { changes, card: projectFilesCard({ changes, host, branch, release, frontDesk: pin === null ? NO_PIN : frontDeskOf(changes, pin), midSized: held !== null ? null : mid === null ? NO_PIN : mid, listens: config.localListening === true, keyed, pasted }), director: 'One click' };
     },
 
     async apply(ctx, changes) {
@@ -1428,13 +1513,14 @@ export function projectFilesStep({
       const folder = ctx.folder;
       const at = (rel) => path.join(folder, ...rel.split('/'));
       const remoteUrl = local ? homeDir(project) : record.remoteUrl;
-      const authorOf = () => (local ? localAuthor({ folder, run }) : commitAuthor({ host, run, base: record.connection?.baseUrl, gitlab }));
+      // With the setup token, the author step 3 read while setup held it.
+      const authorOf = async () => (local ? localAuthor({ folder, run }) : madeWithSetupToken(record) ? record.connection.setupAuthor : commitAuthor({ host, run, base: record.connection?.baseUrl, gitlab }));
 
       // 0. A folder on a line of work: the switch alone, then the step is planned again on main.
       const switching = changes.find((c) => c.kind === 'host' && c.action === 'switch');
       if (switching) {
         halt();
-        const git = await gitFor({ host, platform, folder, remoteUrl, base: record.connection?.baseUrl });
+        const git = await gitFor({ host, platform, folder, remoteUrl, base: record.connection?.baseUrl, record });
         const author = switching.keep ? await authorOf() : null;
         return switchFolder(ctx, switching, { git, project, author });
       }
@@ -1490,7 +1576,7 @@ export function projectFilesStep({
           // (ruling R103): rewritten by the installs into a layout of their own but holding the
           // same, it gets the committed text back, recorded first; holding something else, it is
           // left as it is and named.
-          const git = await gitFor({ host, platform, folder, remoteUrl, base: record.connection?.baseUrl });
+          const git = await gitFor({ host, platform, folder, remoteUrl, base: record.connection?.baseUrl, record });
           const committed = await headText(git, SETTINGS);
           const text = readText(settingsFile);
           if (committed !== null && text !== committed) {
@@ -1499,7 +1585,7 @@ export function projectFilesStep({
           }
         } else {
           const now = objectIn(SETTINGS, readText(settingsFile)) ?? {};
-          const listens = await committedListening(await gitFor({ host, platform, folder, remoteUrl, base: record.connection?.baseUrl }));
+          const listens = await committedListening(await gitFor({ host, platform, folder, remoteUrl, base: record.connection?.baseUrl, record }));
           const wanted = targetsFor({ folder, config: starterConfig({ answers: ctx.answers, listens }), release: wheelhouseRelease({ folder, claudeHome: claudeHome() }), claudeHome: claudeHome() })[SETTINGS](readText(settingsFile));
           for (const { key, value } of keyEdits(now, wanted)) ctx.applyJsonKey({ file: settingsFile, key, value, project });
         }
@@ -1520,7 +1606,7 @@ export function projectFilesStep({
       // the step with nothing committed or pushed.
       const up = changes.find((c) => c.kind === 'host' && (c.action === 'commit' || c.action === 'push'));
       if (up) {
-        const git = await gitFor({ host, platform, folder, remoteUrl, base: record.connection?.baseUrl });
+        const git = await gitFor({ host, platform, folder, remoteUrl, base: record.connection?.baseUrl, record });
         const moved = (what) => new Error(`${what} changed while the pinned kits were installed, so nothing went up: ask for the plan again`);
         const catchUp = changes.find((c) => c.action === 'catch-up');
         if (catchUp !== undefined) {
@@ -1579,8 +1665,14 @@ export function projectFilesStep({
             id: newId('chg'), kind: 'host', target: up.target, before: { branch: up.branch, sha: tipNow },
             after: { action: 'push', branch: up.branch, sha, message: COMMIT_MESSAGE, files: heldBy }, project,
           });
-          const pushed = await git.ok(['push', '-q', '--no-verify', remoteUrl, `${sha}:refs/heads/${up.branch}`]);
-          if (!pushed) throw new Error(`the setup commit could not be pushed to ${up.branch} on ${NAME[host]}; it is kept in this folder, and a fresh Go ahead pushes it`);
+          if (up.merge === true) {
+            if (!madeWithSetupToken(record)) throw new Error('Step 7\'s list sends setup\'s commit through a merge request, which only a connection made with the setup token does: ask for the plan again');
+            await mergeUp({ git, api: await keyGitlabApi({ record, via: keyVia }), projectId: record.connection.projectId, remoteUrl, branch: up.branch, sha, sleep, halt });
+            await takeMerged(git, { remoteUrl, branch: up.branch, head: sha, tip: await remoteTip(git, remoteUrl, up.branch) });
+          } else {
+            const pushed = await git.ok(['push', '-q', '--no-verify', remoteUrl, `${sha}:refs/heads/${up.branch}`]);
+            if (!pushed) throw new Error(`the setup commit could not be pushed to ${up.branch} on ${NAME[host]}; it is kept in this folder, and a fresh Go ahead pushes it`);
+          }
           // The folder's copy of the branch on the host, told what the host now holds, when its
           // origin is the repository pushed to: fetched by the address setup recorded, never by the
           // one origin names (ruling R111).
@@ -1595,6 +1687,7 @@ export function projectFilesStep({
 
       // 4. Protection, with the same sign-in, then read back and said as it is.
       const protect = changes.find((c) => c.kind === 'host' && c.action === 'protect');
+      if (protect && madeWithSetupToken(record)) throw new Error('Step 7\'s list asks for protection, which step 3 already switched on for this connection: ask for the plan again');
       if (protect) {
         // Real users: the project's phase says launched (step 4), or step 3 was told so.
         const realUsers = launchedIn(project) || ctx.answers?.['3.real-users']?.label === REAL_USERS.yes;

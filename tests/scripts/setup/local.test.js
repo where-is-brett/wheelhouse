@@ -216,6 +216,15 @@ test('changing where a project is kept, once it is set up here, says so without 
   assert.doesNotMatch(`${card.what} ${card.why}`, /\bhost\b|repository|connection/i);
 });
 
+test('in a terminal, the card promises no backup folder it cannot pick, and says where to choose one later', () => {
+  const changes = [{ action: 'backup-folder', folder: null }];
+  const terminal = localCard({ changes, branch: 'main', others: [], desktop: false });
+  assert.doesNotMatch(terminal.what, /a backup in the folder you choose/);
+  assert.match(terminal.what, /no backup yet: you choose its folder later, from the Safekeeping row in the pane/);
+  assert.match(localCard({ changes, branch: 'main', others: [], desktop: true }).what, /a backup in the folder you choose/);
+  assert.match(localCard({ changes: [{ action: 'backup-folder', folder: '/b' }], branch: 'main', others: [], desktop: false }).what, /a backup in the folder you choose/);
+});
+
 test('the card says nothing goes online and never says host', async () => {
   const card = localCard({ changes: [{ action: 'git-init' }, { action: 'first-commit' }], branch: 'main', others: [] });
   assert.ok(card.what.includes(KEPT_LINE));
@@ -373,7 +382,7 @@ test('a backup path that can\'t be found asks again', async () => {
     fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
     const first = await stepFor().plan(ctxFor(folder));
     assert.equal(first.ask.id, 'join');
-    assert.match(first.ask.card.what, /backup file/);
+    assert.match(first.ask.card.why, /backup file/);
     assert.equal(first.ask.card.options.length, 4);
     assert.equal(first.ask.card.options[3].label, fromOtherComputer('Mill'));
     const got = await stepFor().plan(ctxFor(folder, { answers: { '3.join': { label: null, text: '/Volumes/Spare/Mill.wheelhouse-backup', at: NOW.toISOString() } } }));

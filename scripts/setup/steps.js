@@ -1,6 +1,6 @@
 // scripts/setup/steps.js
 // Setup's steps (design section 15), in the order setup runs them, numbered 1 to 10. The
-// project's files, pins and protection are step 7: they go up before protection is switched on,
+// project's files and protection are step 7: they go up before protection is switched on,
 // and before Locked, whose hook refuses commands in a Locked project until its settings switch
 // the sandbox on, which would refuse the playbook's own command too.
 //
@@ -60,7 +60,7 @@
 // Step 2, the tools, is scripts/setup/tools.js; step 3, the host and the connection, is
 // scripts/setup/host.js; step 4, the three questions, is scripts/setup/questions.js; step 5, the
 // rules found, is scripts/setup/rules.js; step 6, the changes to this computer, and step 8, Locked,
-// are scripts/setup/computer.js; step 7, the project's files, pins and protection, is
+// are scripts/setup/computer.js; step 7, the project's files and protection, is
 // scripts/setup/project-files.js; step 9, phone notifications, is scripts/setup/notify.js; step 10,
 // the health check, is scripts/setup/health.js.
 import { listHash } from '../lib/setup-writes.js';

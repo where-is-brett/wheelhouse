@@ -105,11 +105,18 @@ const KEYS_OFF = /does not have permission to create project access token/i;
 // The code on the error makeProjectKey throws for it, so a caller can offer another way without reading words.
 export const KEYS_OFF_CODE = 'keys-switched-off';
 export const isKeysSwitchedOff = (error) => error?.code === KEYS_OFF_CODE;
+// A 403 for the sign-in's own scopes (a read-only token, say): the sign-in is the thing to change, so no fallback.
+export const SIGN_IN_TOO_NARROW = 'GitLab says the sign-in setup used may not make a project key, as it can only read: sign GitLab\'s tool in again with full api rights, then a fresh Go ahead';
+// The code for any other 403: the sign-in's role, or on the public hosted service its plan (a free one), allows no project key.
+export const KEYS_FORBIDDEN_CODE = 'keys-forbidden';
+// Either refusal: GitLab makes no project key here, though the sign-in itself works.
+export const isProjectKeyRefused = (error) => error?.code === KEYS_OFF_CODE || error?.code === KEYS_FORBIDDEN_CODE;
 export const KEYS_SWITCHED_OFF = 'GitLab refused a project key because the company\'s group has switched project keys off: ask the company\'s GitLab admin (an owner of the top-level group) to tick "Allow group and project access tokens" in the group\'s settings, or use a pasted token';
 
 function refusal(status, body) {
   if (status === 400 && KEYS_OFF.test(String(body?.message ?? body?.error ?? ''))) return KEYS_SWITCHED_OFF;
   if (status === 401) return 'GitLab did not accept the sign-in used to make the project key';
+  if (status === 403 && body?.error === 'insufficient_scope') return SIGN_IN_TOO_NARROW;
   if (status === 403) {
     return 'GitLab says this sign-in may not make a project key: it needs the Maintainer or Owner role on the project, and, on the public hosted service, a Premium or Ultimate plan';
   }
@@ -136,7 +143,8 @@ export async function makeProjectKey({ api, projectId, name, days, accessLevel =
   });
   if (answer.status < 200 || answer.status >= 300) {
     const line = refusal(answer.status, answer.body);
-    throw Object.assign(new Error(line), line === KEYS_SWITCHED_OFF ? { code: KEYS_OFF_CODE } : {});
+    const code = line === KEYS_SWITCHED_OFF ? KEYS_OFF_CODE : answer.status === 403 && line !== SIGN_IN_TOO_NARROW ? KEYS_FORBIDDEN_CODE : null;
+    throw Object.assign(new Error(line), code ? { code } : {});
   }
   const { token, expires_at: expiresAt, id } = answer.body ?? {};
   if (typeof token !== 'string' || typeof id !== 'number') {

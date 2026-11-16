@@ -1302,7 +1302,7 @@ The step order is the build's: the setup commit goes up before protection is swi
 > - Agents use your ordinary GitHub sign-in, which they can't read on this Mac.
 > - Before launch: no real users and no live data yet.
 > - On this computer: usage counted here only, and 30 days of chat history kept (older history is deleted).
-> - Wheelhouse's settings saved to the project, then its main line protected.
+> - Wheelhouse's settings saved to the project, and its main line protected.
 >
 > Nothing runs until you choose.
 >

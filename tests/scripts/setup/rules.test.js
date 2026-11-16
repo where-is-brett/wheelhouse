@@ -211,7 +211,7 @@ test('step 5 names a rule Wheelhouse\'s protection keeps off: pushing straight t
 
 test('step 5 asks nothing: it settles at once with how many rules it found, and says so', async () => {
   await withProject(async ({ plan, folder }) => {
-    assert.deepEqual(await plan(5), { ok: true, done: true, said: 'No rules found to follow.' });
+    assert.deepEqual(await plan(5), { ok: true, done: true, said: 'This project has no written rules for its agents yet, so there are none to follow.' });
     const run = readJournal().runs.find((r) => r.id === findRun(folder).id);
     assert.deepEqual(run.changes.filter((c) => c.step === 5).map((c) => c.after), [{ rules: 0 }]);
   });

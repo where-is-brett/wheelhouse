@@ -65,7 +65,7 @@ const inWords = (ms) => {
   return `${NUMBERS[m] ?? m} minute${m === 1 ? '' : 's'}`;
 };
 const MINUTES = inWords(PUSH_TEST_WAIT_MS);
-const LOCK = `lock your screen until your phone buzzes, or for ${inWords(PUSH_TEST_LOCK_MS)}.`;
+const LOCK = `lock your computer until your phone buzzes, or for ${inWords(PUSH_TEST_LOCK_MS)}.`;
 // How old a Ready may be before card B is asked rather than card A again (ruling R66).
 const READY_STALE_MS = PUSH_TEST_WAIT_MS + CLICK_FRESH_MS;
 
@@ -74,7 +74,9 @@ const READY_STALE_MS = PUSH_TEST_WAIT_MS + CLICK_FRESH_MS;
 const idsFor = (round) => (round === 0 ? { ready: READY_ID, arrived: ARRIVED_ID } : { ready: `${READY_ID}-${round + 1}`, arrived: `${ARRIVED_ID}-${round + 1}` });
 
 // The card of plain steps, asked until the director clicks Ready or Skip for now.
-function readyAsk(id, { terminal = false } = {}) {
+// A later round names its try, so its cards never share a question with an earlier round's.
+const tryOf = (round) => (round > 0 ? ` (try ${round + 1})` : '');
+function readyAsk(id, { terminal = false, round = 0 } = {}) {
   return {
     id,
     card: {
@@ -82,7 +84,7 @@ function readyAsk(id, { terminal = false } = {}) {
       // Kept short (about 100 words with its options), since it opens with the health check's
       // verdict and the first briefing. A push isn't sent while the director is at the computer,
       // hence the locked screen.
-      what: `Setup step ${PUSH_TEST_STEP}, your phone. ${PHONE_REACHES} `
+      what: `Setup step ${PUSH_TEST_STEP}, your phone${tryOf(round)}. ${PHONE_REACHES} `
         + 'In Claude Desktop\'s settings, switch on Remote Control and both push options, '
         + 'and allow Claude\'s notifications on your phone. '
         + `Then click Ready and ${LOCK}`,
@@ -96,19 +98,19 @@ function readyAsk(id, { terminal = false } = {}) {
       ],
       // Remote Control and the push options are Claude Desktop's settings, so a terminal session recommends the way it can finish.
       recommend: terminal ? READY.skip : READY.ready,
-      because: terminal ? 'phone notifications need Claude Desktop and your phone, and this terminal session has neither; the First Mate can set them up later' : 'it shows now whether your phone works',
+      because: terminal ? 'phone notifications need Claude Desktop, and this session runs in a terminal' : 'it shows now whether your phone works',
       meanwhile: 'Setup waits for your click.',
     },
   };
 }
 
 // The card asking whether the test arrived, once the wait is over and the push is sent.
-function arrivedAsk(id) {
+function arrivedAsk(id, round = 0) {
   return {
     id,
     card: {
       level: 2,
-      what: `Setup step ${PUSH_TEST_STEP}: did the test notification reach your phone while your screen was locked?`,
+      what: `Setup step ${PUSH_TEST_STEP}${tryOf(round)}: did the test notification reach your phone while your screen was locked?`,
       why: 'Agents use it to tell you when they need you; if it didn\'t come, the Logbook says what to check.',
       options: [
         { label: ARRIVED.yes, says: 'Setup records that notifications reach your phone, and moves on.' },
@@ -141,7 +143,8 @@ export function notifyStep({ pushResult = () => phonePushResult(), settledBefore
     after: [6, 8, 10],
     async plan(ctx) {
       const answers = ctx.answers ?? {};
-      const ids = idsFor(typeof ctx.runId === 'string' ? settledBefore(ctx.runId) : 0);
+      const round = typeof ctx.runId === 'string' ? settledBefore(ctx.runId) : 0;
+      const ids = idsFor(round);
       // An answer to card B settles, however old the Ready before it (ruling R66).
       const arrived = answers[`${PUSH_TEST_STEP}.${ids.arrived}`];
       if (arrived) return { settled: { record: pushTestResult(arrived.label) } };
@@ -150,11 +153,11 @@ export function notifyStep({ pushResult = () => phonePushResult(), settledBefore
       if (earlier?.arrived === true && earlier.run !== ctx.runId) return { settled: { record: { pushArrived: true, from: earlier.run } } };
       const ready = answers[`${PUSH_TEST_STEP}.${ids.ready}`];
       if (ready?.label === READY.skip) return { settled: { record: { ...SKIPPED } } };
-      if (ready?.label !== READY.ready) return { ask: readyAsk(ids.ready, { terminal: ctx.desktop === false }) };
+      if (ready?.label !== READY.ready) return { ask: readyAsk(ids.ready, { terminal: ctx.desktop === false, round }) };
       // From the Ready answer's own time; one that reads as later than now waits the whole time.
       const readyAt = Date.parse(ready.at);
       const since = Number.isFinite(readyAt) ? ctx.now().getTime() - readyAt : 0;
-      if (since > READY_STALE_MS) return { ask: readyAsk(ids.ready, { terminal: ctx.desktop === false }) };
+      if (since > READY_STALE_MS) return { ask: readyAsk(ids.ready, { terminal: ctx.desktop === false, round }) };
       const left = Math.min(PUSH_TEST_WAIT_MS, PUSH_TEST_WAIT_MS - since);
       if (left > 0) {
         return {
@@ -162,7 +165,7 @@ export function notifyStep({ pushResult = () => phonePushResult(), settledBefore
           why: `the director's screen is locked until their phone buzzes; once this wait is over, send one test notification with the session's push tool ("${PUSH_TEST_TEXT}"), then ask for step ${PUSH_TEST_STEP}'s plan again`,
         };
       }
-      return { ask: arrivedAsk(ids.arrived) };
+      return { ask: arrivedAsk(ids.arrived, round) };
     },
     async apply() {
       return [];

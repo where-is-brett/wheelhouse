@@ -376,7 +376,7 @@ test('with everything here, the list is only the allow rule, written by key besi
     const step = toolsStep({ engine: null, run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
     const planned = await step.plan(ctxFor(folder));
     assert.deepEqual(planned.changes, [{ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: ['Bash(ls:*)', ...SETUP_RULES], added: SETUP_RULES.length }]);
-    assert.match(planned.card.what, /two permission rules/);
+    assert.match(planned.card.what, /two permission rules/i);
     assert.equal(planned.director, 'One click');
     // The same world gives the same list, so the hash a card names stays good.
     assert.equal(planHash((await step.plan(ctxFor(folder))).changes), planHash(planned.changes));
@@ -404,7 +404,7 @@ test('a plain rule already in leaves only the flagged rule to add, and the plain
     const step = toolsStep({ engine: null, run: machine(everythingHere).run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
     const planned = await step.plan(ctxFor(folder));
     assert.deepEqual(planned.changes, [{ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: [SETUP_PLAIN_RULE, SETUP_FLAGGED_RULE], added: 1 }]);
-    assert.match(planned.card.what, /one permission rule/);
+    assert.match(planned.card.what, /one permission rule/i);
   });
 });
 
@@ -532,7 +532,7 @@ test('the longest list\'s card composes within the card\'s length, on a Mac and 
       const planned = await toolsStep({ engine: null, run: m.run, fetch: noFetch, pluginRoot, env: {} }).plan(ctxFor(folder, { platform }));
       assert.deepEqual(planned.changes.map((c) => c.action ?? c.kind), ['install', 'fetch', 'fetch', 'json-key'], platform);
       const { question } = composeCard({ ...planned.card, target: { step: 2, hash: planHash(planned.changes) } });
-      assert.ok(question.question.includes('gh and glab'), question.question);
+      assert.ok(question.question.includes("GitHub's own tool (gh) and GitLab's own tool (glab)"), question.question);
       assert.match(question.question, platform === 'darwin' ? /Apple's own window/ : /Windows asks you to allow it/);
     }
   });
@@ -751,7 +751,7 @@ test('a refused download of the official release settles the project on the host
     const said = [];
     const done = await step.apply({ ...ctxFor(folder), record: () => {}, applyJsonKey: () => {}, stopped: () => false, say: (line) => said.push(line) }, planned.changes);
     assert.deepEqual(done, []);
-    assert.deepEqual(said, ['glab could not be fetched on this computer, so Wheelhouse will reach the host without it']);
+    assert.deepEqual(said, ['GitLab\'s own tool could not be fetched on this computer, so Wheelhouse will work with GitLab without it']);
     assert.equal(fs.existsSync(toolFolder('glab')), false);
     assert.ok(!said.join(' ').match(/REST|curl/));
   });
@@ -812,10 +812,10 @@ test('glabFrom "none" is a source that fetches nothing, and the line for a bad s
   assert.throws(() => glabSource({ setting: 'nothing' }), (error) => error.message === GLAB_FROM_LINE && /"none"/.test(error.message));
 });
 
-test('a look at the choices asks about a missing tool, recommending to leave it out only when the web route is ready', async () => {
+test('a look at the choices asks about a missing GitLab tool, always recommending to leave it out', async () => {
   await withHome(async () => {
     const folder = gitlabFolder();
-    for (const [ready, recommended] of [[false, "Fetch GitLab's tool"], [true, NONE_GLAB]]) {
+    for (const [ready, recommended] of [[false, NONE_GLAB], [true, NONE_GLAB]]) {
       const step = toolsStep({ engine: null, run: noGlab().run, fetch: noFetch, pluginRoot: PLUGIN, env: {}, webReady: async () => ready });
       const got = await step.plan(ctxFor(folder, { choicesOnly: true }));
       assert.equal(got.ask.id, 'host-tool-glab');

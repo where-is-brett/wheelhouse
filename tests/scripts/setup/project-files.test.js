@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   projectFilesStep, yoursAsk, NEGATED_LINE, starterConfig, foundAtHead, projectFilesChange, projectFilesCard, commitAuthor, COMMIT_MESSAGE, SETUP_FILES, COMPACT_HEADING, COMPACT_SECTION, EARLIER_COMPACT_HASHES, sectionHash, withCurrentSection,
-  EXCLUDE_LINE, WHEELHOUSE_LINE, putYoursIn, LEAVE_YOURS, leftYoursLine, listeningNotice,
+  EXCLUDE_LINE, WHEELHOUSE_LINE, putYoursIn, LEAVE_YOURS, leftYoursLine, listeningNotice, configFrom,
 } from '../../../scripts/setup/project-files.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { runApply, setupRoutes } from '../../../scripts/setup/engine.js';
@@ -41,7 +41,8 @@ import { directorGitlabApi, directorKey, REAL_USERS } from '../../../scripts/set
 // No test asks the computer's own store for a key.
 directorKey.borrow = async () => null;
 import { run as realRun } from '../../../scripts/lib/run.js';
-import { makeFakeCurl, parseConfig } from '../../helpers/fake-curl.js';
+import { makeFakeCurl, makeRoutedCurl, parseConfig } from '../../helpers/fake-curl.js';
+import { writeKey } from '../../../scripts/host/keys.js';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
 
 // Setup's own runs: git and what the test fakes; any other host tool is refused and noted here.
@@ -233,6 +234,9 @@ async function world({
     return makeFakeCurl([{ status: body ? 200 : 404, body: JSON.stringify(body) }]).run(file, args, options);
   };
   w.via = { run: (...args) => w.curl(...args), curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' };
+  // GitLab's API with the project's own key, where step 3 connected with the setup token: a test sets w.keyCurl.
+  w.keyCurl = async () => { throw new Error('the project\'s key should not be used here'); };
+  w.keyVia = { run: (...args) => w.keyCurl(...args), curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' };
   w.status = async () => ({ available: true, on: w.protection.length > 0, line: 'read' });
   w.adminKey = async () => { throw new Error('no one-off key should be asked for'); };
   w.step = projectFilesStep({
@@ -242,7 +246,7 @@ async function world({
     gitlab: ({ run, baseUrl: asked }) => { w.asked.push(asked); return directorGitlabApi({ run, via: w.via, baseUrl: asked }); },
     address: () => ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT, env: w.env,
     best: async (alias) => { w.bestAsked += 1; w.aliases.push(alias); return alias === MID_SIZED_ALIAS ? w.mid : w.best; },
-    engineOf: () => engine, loginOf: async () => 'ann-oneil',
+    engineOf: () => engine, loginOf: async () => 'ann-oneil', keyVia: w.keyVia, sleep: async () => {},
   });
   w.answers = { '4.live-data': { label: LIVE_DATA.yes, text: null, at: T0.toISOString() } };
   w.ctx = (extra = {}) => ({ folder: w.folder, step: 7, now: () => T0, platform: 'darwin', userHome: w.user, answers: w.answers, ...extra });
@@ -351,6 +355,15 @@ test('the configuration has every plan\'s keys with their defaults', () => {
   assert.throws(() => starterConfig({ answers: {}, host: 'github' }), /live data/);
 });
 
+test('a configuration file holding only step 3\'s company GitLab address is taken up into the starter, the address kept', () => {
+  const answers = { '4.live-data': { label: LIVE_DATA.no, text: null } };
+  const starter = starterConfig({ answers });
+  const out = configFrom({ gitlabHosts: ['git.example.org:8443'] }, starter);
+  assert.deepEqual(out.gitlabHosts, ['git.example.org:8443']);
+  assert.equal(out.liveData, false);
+  assert.deepEqual(readConfig(JSON.stringify(out)), out);
+});
+
 test('the starter configuration pins the front desk\'s model when setup was given one, and reads back as written (design section 8)', () => {
   const answers = { '4.live-data': { label: LIVE_DATA.no, text: null } };
   const config = starterConfig({ answers, frontDesk: BEST_MODEL });
@@ -390,7 +403,7 @@ test('step 7 pins the front desk to what Claude Code\'s opus alias stands for, i
     assert.equal(w.bestAsked, 2);
     assert.deepEqual(w.aliases, [FRONT_DESK_ALIAS, MID_SIZED_ALIAS], 'never the strongest: setup asks nothing about it');
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
-    assert.match(text, new RegExp(`the First Mate runs on ${BEST_MODEL}\\b`));
+    assert.match(text, new RegExp(`First Mate uses ${BEST_MODEL}, Claude Code.s most capable everyday model`, 'i'));
     assert.doesNotMatch(text, /strongest/);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
@@ -438,7 +451,7 @@ test('step 7 writes both class pins, the card says once what the lighter model d
     const w = await world();
     const planned = await w.plan();
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
-    assert.equal(text.split('Lean and Lightest move most building and routine checking to the lighter model').length, 2);
+    assert.equal(text.split(/a cheaper model for most building and checking/i).length, 2);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
     assert.deepEqual(w.json('.claude/wheelhouse.json').tiers, { pins: { mostCapable: BEST_MODEL, midSized: MID_MODEL } });
@@ -500,13 +513,13 @@ test('a compaction percentage already in the project\'s settings is kept and set
   }
 });
 
-test('a mid-sized alias that can\'t be resolved leaves the pin out and the card says Lean and Lightest wait', async () => {
+test('a mid-sized alias that can\'t be resolved leaves the pin out and the card says the settings that spend less wait', async () => {
   await withHome(async () => {
     const w = await world();
     w.mid = null;
     const planned = await w.plan();
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
-    assert.match(text, /Lean and Lightest wait for the lighter model/);
+    assert.match(text, /settings that spend less wait for a cheaper model/);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
     assert.deepEqual(w.json('.claude/wheelhouse.json').tiers, { pins: { mostCapable: BEST_MODEL } });
@@ -557,7 +570,7 @@ test('when Claude Code can\'t say what its most capable model is, step 7 goes on
     w.best = null;
     const planned = await w.plan();
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
-    assert.match(text, /the First Mate's model is left as it is: Claude Code didn't say which model to use/);
+    assert.match(text, /the First Mate's model is left as it is: Claude Code didn't say which model to use/i);
     assert.ok(!planned.changes.some((c) => c.key?.[0] === 'model'));
   });
 });
@@ -1025,7 +1038,7 @@ test('.wheelhouse/ is kept out of git by step 7, listed on its card and recorded
     const planned = await w.plan();
     assert.deepEqual(planned.changes.filter((c) => c.line !== undefined).map((c) => [c.target, c.line]), [[exclude, EXCLUDE_LINE], [exclude, WHEELHOUSE_LINE]]);
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
-    assert.match(text, /\.wheelhouse\/ kept out of git/);
+    assert.match(text, /\.wheelhouse\/, Wheelhouse's working folder, (are )?kept out of git/);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
     const lines = fs.readFileSync(exclude, 'utf8').split('\n');
@@ -1061,7 +1074,7 @@ test('on GitLab: the default branch and protection through glab\'s sign-in, the 
   await withHome(async () => {
     const w = await world({ host: 'gitlab' });
     const planned = await w.plan();
-    assert.match(composeCard({ ...planned.card, target: { step: 7, hash: '0'.repeat(64) } }).question.question, /pipelines must succeed/);
+    assert.match(composeCard({ ...planned.card, target: { step: 7, hash: '0'.repeat(64) } }).question.question, /must pass the project's automatic checks/);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
     assert.equal(await g(w.bare, 'log', '-1', '--format=%an <%ae>', 'main'), `${GITLAB_USER.name} <${GITLAB_USER.id}-${GITLAB_USER.username}@users.noreply.gitlab.com>`);
@@ -1279,12 +1292,20 @@ test('the card lists every part on GitLab with a long branch and release, and st
   ];
   const text = (branch, ref) => composeCard({ ...projectFilesCard({ changes, host: 'gitlab', branch, release: { ref } }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
   const usual = text('main', 'v1.4.0');
-  for (const words of ['Compact instructions', 'settings.local.json', 'Superpowers', 'Set up Wheelhouse', 'pipelines must succeed', 'GitLab sign-in', 'v1.4.0', 'never updates itself']) {
+  for (const words of ['Compact instructions', 'settings.local.json', 'Superpowers', 'Set up Wheelhouse', 'must pass the project\'s automatic checks', 'acting as you on GitLab', 'v1.4.0', 'never updates itself']) {
     assert.ok(usual.includes(words), words);
   }
   const long = text(`release/${'x'.repeat(200)}`, `v${'9'.repeat(150)}`);
   assert.ok(long.length <= 1200);
   assert.match(long, /never updates itself/);
+  // Made with the setup token: the project's key, or the director's own token GitLab made them paste in its place.
+  const keyedText = (pasted) => composeCard({ ...projectFilesCard({ changes: changes.filter((c) => c.action !== 'protect'), host: 'gitlab', branch: 'main', release: null, keyed: true, pasted }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
+  assert.match(keyedText(false), /with the project's own key, not your account/);
+  assert.match(keyedText(true), /with the token you pasted at step 3, which can act as you across GitLab/);
+  assert.doesNotMatch(keyedText(true), /not your account/);
+  // Before step 3 has kept either, the card says which applies where GitLab decides.
+  assert.match(keyedText(null), /with the project's own key where GitLab allows one, or else the token you pasted at step 3, which can act as you across GitLab/);
+  assert.doesNotMatch(keyedText(null), /not your account/);
 });
 
 test('the card says nothing of the keychain: its denial is a quiet default', () => {
@@ -1598,7 +1619,7 @@ test('only the missing lines are added to .gitignore, in setup\'s commit, the di
     const commit = planned.changes.find((c) => c.action === 'commit');
     assert.deepEqual(commit.files, [...SETUP_FILES, '.gitignore']);
     assert.match(cardText(planned), /\.env files, which hold secrets, kept out of git by \.gitignore/);
-    assert.match(cardText(planned), /the three shared files and \.gitignore go up/);
+    assert.match(cardText(planned), /the settings, CLAUDE\.md and \.gitignore go up/i);
     const tipBefore = await lsRemote(w.bare, 'main');
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
@@ -2009,7 +2030,7 @@ test('the joining card with a negation, in both sizes, stays within the composer
   ];
   const text = (release, differ) => composeCard({ ...projectFilesCard({ changes: mine, host: 'gitlab', branch: null, release, joining: true, differ, negated: ['.env.*'] }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
   const plain = text({ ref: 'v1.4.0' }, []);
-  assert.match(plain, /some \.env files, which hold secrets, kept out of git on this computer, but \.gitignore lets some/);
+  assert.match(plain, /some \.env files, which hold secrets, kept out of git on this computer, but \.gitignore lets some/i);
   const long = text({ ref: `v${'9'.repeat(150)}` }, ['.claude/settings.json', '.claude/wheelhouse.json', 'CLAUDE.md', `${'y'.repeat(300)}.md`]);
   assert.ok(long.length <= 1200);
   assert.match(long, /\.gitignore lets some \.env files in/);
@@ -2094,7 +2115,7 @@ test("a new setup's own commit holds the policy file", async () => {
     assert.ok(Array.isArray(planned.changes), planned.ask?.card.what);
     const commit = planned.changes.find((c) => c.kind === 'host' && c.action === 'commit');
     assert.deepEqual(commit.files.slice(-2), [POLICY_FILE, ARCHON_CONFIG_FILE]);
-    assert.match(questionOf(planned.card), /merge policy and settings into \.archon\//);
+    assert.match(questionOf(planned.card), /merge policy and settings into \.archon\//i);
     assert.match(questionOf(planned.card), /and \.archon\/ go up/);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
@@ -2229,32 +2250,32 @@ const LISTENING_CHANGES = [
 test('the plan card says what local listening allows when it is on, in the full card and in both short ones', () => {
   const base = { changes: LISTENING_CHANGES, host: 'gitlab', branch: 'main', release: { ref: 'v1.4.0' } };
   const full = CARD_TEXT({ ...base, listens: true });
-  assert.ok(full.includes(listeningNotice({ localListening: true }).replace(/ To turn it off.*$/, '').replace(/\.$/, '')), full);
-  assert.match(full, /engine room on port 3090/);
+  assert.match(full, /local listening is on: sandboxed agents' commands may reach other local ports/i);
+  assert.match(full, /the engine room's 3090 among them/);
   assert.doesNotMatch(CARD_TEXT(base), /local ports/);
   assert.doesNotMatch(CARD_TEXT({ ...base, listens: false }), /local ports/);
   // Too long for the full card: the short one keeps the clause.
   const long = CARD_TEXT({ ...base, release: { ref: `v${'9'.repeat(900)}` }, listens: true });
   assert.ok(long.length <= 1200);
-  assert.match(long, /local listening is on: sandboxed agents' commands may reach other local ports, the engine room's 3090 among them/);
+  assert.match(long, /local listening is on: sandboxed agents' commands may reach other local ports, the engine room's 3090 among them/i);
   // The joining form, full and short.
   const mine = [
     { kind: 'json-key', target: '/p/.claude/settings.local.json', key: ['b'], after: 2 },
     { kind: 'process', target: `superpowers@${MARKETPLACE}` },
   ];
   const joinBase = { changes: mine, host: 'gitlab', branch: null, release: { ref: 'v1.4.0' }, joining: true };
-  assert.match(CARD_TEXT({ ...joinBase, listens: true }), /engine room on port 3090/);
+  assert.match(CARD_TEXT({ ...joinBase, listens: true }), /the engine room's 3090 among them/);
   assert.doesNotMatch(CARD_TEXT(joinBase), /local ports/);
   const joinLong = CARD_TEXT({ ...joinBase, release: { ref: `v${'9'.repeat(900)}` }, listens: true });
   assert.ok(joinLong.length <= 1200);
-  assert.match(joinLong, /local listening is on: sandboxed agents' commands may reach other local ports, the engine room's 3090 among them/);
+  assert.match(joinLong, /local listening is on: sandboxed agents' commands may reach other local ports, the engine room's 3090 among them/i);
 });
 
 test('a plan with a committed localListening: true puts the statement on its card, and apply leaves it as the last thing the director is told', async () => {
   await withHome(async () => {
     const w = await world({ config: { ...starterConfig({ answers: { '4.live-data': { label: LIVE_DATA.yes, text: null } }, host: 'github' }), localListening: true } });
     const planned = await w.plan();
-    assert.match(planned.card.what, /engine room on port 3090/);
+    assert.match(planned.card.what, /the engine room's 3090 among them/);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
     assert.equal(w.json('.claude/settings.json').sandbox.network.allowLocalBinding, true);
@@ -2277,7 +2298,7 @@ test('a joining computer is told about local listening on its card and on its se
     fs.rmSync(excludeFile(w));
     const planned = await plan();
     assert.equal(planned.ok, true, JSON.stringify(planned));
-    assert.match(planned.card.question, /engine room on port 3090/);
+    assert.match(planned.card.question, /the engine room's 3090 among them/);
   });
   await withHome(async () => {
     const { w, plan } = await negatedWorld();
@@ -2291,5 +2312,58 @@ test('a joining computer is told about local listening on its card and on its se
     const settled = await plan();
     assert.equal(settled.done, true, JSON.stringify(settled));
     assert.match(settled.said, /engine room on port 3090/, settled.said);
+  });
+});
+
+// ---- Step 7 where step 3 connected with the one-day setup token ----
+
+test('on the setup token\'s route, step 7 reads, commits and merges with the project\'s own key: no sign-in of the director\'s is used or asked for', async () => {
+  await withHome(async () => {
+    const w = await world({ host: 'gitlab' });
+    const KEY = 'glpat-project-key-41';
+    const author = { name: 'A Director', email: 'director@example.com' };
+    writeProject(SLUG, { folder: w.folder, remoteUrl: w.bare, host: 'gitlab', repo: REPO, connection: { host: 'gitlab', mode: 'narrow', project: REPO, directorSignIn: 'setup-token', setupAuthor: author, baseUrl: 'https://gitlab.com', projectId: 41 } });
+    writeKey('gitlab-project-41', { kind: 'project-key', token: KEY });
+    // GitLab's API as the project's key reaches it: the project, then the merge request for setup's commit, merged at
+    // the commit asked for (which moves main on the stand-in's repository, as GitLab would).
+    const routed = makeRoutedCurl((call) => {
+      const p = call.url.replace(/^https:\/\/gitlab\.com\/api\/v4/, '');
+      if (call.method === 'GET' && /^\/projects\/[^/]+$/.test(p)) return { status: 200, body: { id: 41, path_with_namespace: REPO, default_branch: 'main', visibility: 'private' } };
+      if (call.method === 'GET' && /\/merge_requests\?/.test(p)) return { status: 200, body: [] };
+      if (call.method === 'POST' && /\/merge_requests$/.test(p)) return { status: 201, body: { iid: 3 } };
+      if (call.method === 'GET' && /\/merge_requests\/3$/.test(p)) return { status: 200, body: { state: 'opened', detailed_merge_status: 'mergeable' } };
+      if (call.method === 'PUT' && /\/merge_requests\/3\/merge$/.test(p)) return { status: 200, body: { state: 'merged' } };
+      return { status: 404, body: null };
+    });
+    w.keyCurl = async (file, args, options = {}) => {
+      const pairs = parseConfig(options.input);
+      const field = (name) => pairs.find(([key]) => key === name)?.[1];
+      if (field('request') === 'PUT' && /\/merge$/.test(field('url'))) {
+        const { sha } = JSON.parse(field('data-binary'));
+        await realRun('git', ['--git-dir', w.bare, 'update-ref', 'refs/heads/main', sha]);
+      }
+      return routed.run(file, args, options);
+    };
+    const planned = await w.plan();
+    assert.ok(Array.isArray(planned.changes), planned.why);
+    assert.ok(planned.changes.some((c) => c.kind === 'host' && c.action === 'commit' && c.merge === true), 'the commit goes through a merge request');
+    assert.ok(!planned.changes.some((c) => c.action === 'protect'), 'protection was switched on at step 3');
+    const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
+    assert.match(text, /with the project's own key, not your account/);
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    // Every API call carried the project's key, in the header on standard input, and the director's sign-in was never asked.
+    assert.ok(routed.calls.length >= 4, JSON.stringify(routed.calls.map((c) => c.url)));
+    assert.ok(routed.calls.every((c) => c.headers.includes(`PRIVATE-TOKEN: ${KEY}`) && !c.args.join(' ').includes(KEY)));
+    assert.deepEqual(w.asked, [], 'the director\'s GitLab sign-in is never asked for');
+    assert.deepEqual(w.api, [], 'nothing went to GitLab with the director\'s sign-in');
+    assert.ok(!w.calls.some((c) => c.tool === 'glab'), 'GitLab\'s tool is never run');
+    assert.deepEqual(w.protection, [], 'protection is not switched on again');
+    // setup's commit reached main, by the author step 3 read while it held the setup token; git carried the key, not a credential helper.
+    assert.equal(await g(w.bare, 'log', '-1', '--format=%an <%ae> %s', 'main'), `${author.name} <${author.email}> ${COMMIT_MESSAGE}`);
+    const pushed = w.gitCalls.find((c) => c.args.includes('push'));
+    const values = Object.entries(pushed.env).filter(([k]) => /^GIT_CONFIG_VALUE_\d+$/.test(k)).map(([, v]) => v);
+    assert.ok(values.includes(`AUTHORIZATION: basic ${Buffer.from(`oauth2:${KEY}`, 'utf8').toString('base64')}`), JSON.stringify(values));
+    assert.ok(!values.some((v) => /glab|git-credential/.test(v)));
   });
 });

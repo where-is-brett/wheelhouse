@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { computerStep, computerChanges, lockedStep, weakening, SETTLED_LEAD } from '../../../scripts/setup/computer.js';
+import { computerStep, computerCard, computerChanges, lockedStep, weakening, SETTLED_LEAD } from '../../../scripts/setup/computer.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { runApply, setupRoutes, AFTER_WAIT_MS, CHANGED } from '../../../scripts/setup/engine.js';
 import { findRun, markStep, reverseChange, startRun, addChanges, newId } from '../../../scripts/setup/journal.js';
@@ -94,19 +94,20 @@ test('the card lists each change in plain words, and nothing else changes', asyn
     assert.match(text, /step 6/);
     assert.match(text, /usage counts/i);
     assert.match(text, /this computer only/);
-    assert.match(text, /never your prompts or tool content/);
-    assert.match(text, new RegExp(`transcripts kept ${RETENTION_DAYS} days \\(now 7\\)`));
+    assert.match(text, /never what you type or what tools return/);
+    assert.match(text, new RegExp(`Chat history kept ${RETENTION_DAYS} days \\(now 7\\)`));
     // Ruling R64: the card says what a shorter retention costs.
-    assert.match(text, new RegExp(`transcripts kept ${RETENTION_DAYS} days \\(now 7\\); older ones are removed, and uninstall can't bring them back`));
+    assert.match(text, new RegExp(`Chat history kept ${RETENTION_DAYS} days \\(now 7\\): older chats are deleted, and uninstall can't bring them back`));
     // The option that goes ahead says what uninstall puts back, and the card's options show it.
     const goesAhead = composeCard({ ...planned.card, kind: 'setup', target: { step: 6, hash: planHash(planned.changes) } }).question.options[0].description;
-    assert.match(goesAhead, /uninstall puts each setting back, but not removed transcripts/);
+    assert.match(goesAhead, /Uninstall puts each setting back, but not deleted chats/);
     assert.match(text, /These are Claude Code's own settings on this computer/);
-    assert.match(text, /stable channel at version 2\.1\.100 or later/);
+    assert.match(text, /stays at version 2\.1\.100 or later/);
     assert.match(text, /Wheelhouse never updates itself/);
-    assert.match(text, /phone notifications on/);
+    assert.match(text, /phone notifications on/i);
     assert.ok(ownKey());
-    assert.match(text, /key for signing your clicks is already made/);
+    assert.match(text, /clicks carry a signature made with a key on this computer, which Claude Code's sandbox keeps agents from reading/);
+    assert.match(JSON.stringify(computerCard({ changes: planned.changes, platform: 'win32' })), /On Windows an agent's command could read that key/);
     assert.doesNotMatch(text, /weaken/, 'none of the director\'s settings weakens Standard here');
     assert.equal(planned.director, 'One click');
 
@@ -253,13 +254,18 @@ test('each weakening setting is named with what it does, and left as it is', asy
     const written = JSON.parse(fs.readFileSync(file, 'utf8'));
     for (const key of ['sandbox', 'enabledPlugins', 'extraKnownMarketplaces']) assert.deepEqual(written[key], theirs[key]);
 
-    // Many of them still fit the card: each is named, at least by its name.
+    // Too many to say each: the commands are named, and the plugins counted, never by their ids.
+    const plugins = Object.fromEntries(Array.from({ length: 18 }, (_, i) => [`plugin-number-${i}@their-market`, true]));
+    fs.writeFileSync(file, `${JSON.stringify({ sandbox: { excludedCommands: ['gh'] }, enabledPlugins: plugins })}\n`);
+    const grouped = composed(await step.plan(ctx), 6);
+    assert.match(grouped, /gh runs outside the sandbox; 18 plugins of yours are on and run their own code\./);
+    assert.doesNotMatch(grouped, /@their-market/);
+    // Too many commands to name: counted too.
     const many = { sandbox: { excludedCommands: Array.from({ length: 40 }, (_, i) => `command-number-${i}`) } };
     fs.writeFileSync(file, `${JSON.stringify(many)}\n`);
-    const crowded = await step.plan(ctx);
-    const crowdedText = composed(crowded, 6);
-    assert.match(crowdedText, /command-number-0/);
-    assert.match(crowdedText, /more/);
+    const crowdedText = composed(await step.plan(ctx), 6);
+    assert.match(crowdedText, /40 commands run outside the sandbox\./);
+    assert.doesNotMatch(crowdedText, /command-number-0/);
   });
 });
 
@@ -273,7 +279,7 @@ test('a minimum version of the director\'s own at or above the floor is kept, an
       fs.writeFileSync(file, `${JSON.stringify({ minimumVersion: higher })}\n`);
       const planned = await step.plan(ctx);
       assert.deepEqual(keysOf(planned), ['autoUpdatesChannel'], higher);
-      assert.match(composed(planned, 6), new RegExp(`stable channel at version ${higher.replace(/\./g, '\\.')} or later \\(your own minimum, kept\\)`), higher);
+      assert.ok(composed(planned, 6).includes(`stays at version ${higher} or later (your own minimum, kept)`), higher);
     }
     for (const [lower, shown] of [['2.0.5', '2.0.5'], ['2.1.99', '2.1.99'], ['latest', '"latest"']]) {
       fs.writeFileSync(file, `${JSON.stringify({ minimumVersion: lower })}\n`);
