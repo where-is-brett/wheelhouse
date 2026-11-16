@@ -880,7 +880,9 @@ export function connectionCard({ host, locked = false, launched = false, realUse
     options.push({ label: WAYS.own, says: 'A key to this one project, through a GitHub App of your own, filled in from Wheelhouse\'s: you tick Enable Device Flow and click Create.' });
     recommend = app ? WAYS.wheelhouse : WAYS.own;
   } else {
-    options.push({ label: WAYS.narrow, says: toolOut ? 'A key to this one project, made with a one-day token pasted into your computer\'s own box; setup revokes the token afterwards.' : 'A key to this one project, which setup makes with GitLab\'s own tool.' });
+    // On the public GitLab's free plan the project key is refused, so the option says what a free account gets first.
+    const narrowKey = publicGitLab ? `On a free account, a ${PERSONAL_DAYS}-day token that can act as you across GitLab; on a paid plan, a key to this one project` : 'A key to this one project';
+    options.push({ label: WAYS.narrow, says: toolOut ? `${narrowKey}, made with a one-day token pasted into your computer's own box; setup revokes the token afterwards.` : `${narrowKey}, which setup makes with GitLab's own tool.` });
     recommend = WAYS.narrow;
   }
   const quick = !locked && !launched && !asIs;
