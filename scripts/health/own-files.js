@@ -212,6 +212,42 @@ export function acceptOwnFiles({ now = () => new Date(), claudeHome, projects, r
   }));
 }
 
+// When a file, or the folder a removed file was in, last changed (the nearest folder that is still there), or null.
+function changedAt(file) {
+  for (let at = file; ; at = path.dirname(at)) {
+    try {
+      return fs.statSync(at).mtimeMs;
+    } catch {
+      if (path.dirname(at) === at) return null;
+    }
+  }
+}
+
+// Accepts the changes to the files outside the plugin folders made since `since` (an ISO time: setup's start), which are setup's
+// own writes, at their hashes now; a change made before then stays in the baseline as it was, so the look still names it. The
+// plugin folders are left to the look's own check against the tag's tree. With no baseline it is made afresh, as the look would.
+// The next look walks the files again.
+export function acceptOwnWritesSince({ since, now = () => new Date(), claudeHome, projects, root, ...where } = {}) {
+  const state = readOwnFilesState();
+  const from = Date.parse(since);
+  if (state === null || typeof state.folders !== 'object' || state.folders === null) {
+    acceptOwnFiles({ now, claudeHome, projects, root, ...where });
+    return;
+  }
+  if (Number.isNaN(from)) return;
+  const before = new Map(Object.entries(state.others?.files ?? {}));
+  const after = othersBaseline(where);
+  const next = new Map(before);
+  for (const file of ownFilesChanged(before, after)) {
+    const at = changedAt(file);
+    if (at === null || at < from) continue;
+    if (after.has(file)) next.set(file, after.get(file));
+    else next.delete(file);
+  }
+  const { checkedAt: _looked, changed: _named, calm: _calm, ...kept } = state;
+  writeState({ ...kept, schema: 2, others: { files: Object.fromEntries(next) } });
+}
+
 // Records an update for the look: { from, to, at, answer, wrote: [{ file, hash }] }, the files the update itself wrote with
 // their hashes (see fileHash). Written by the second half of the update. The look then accepts a move to `to` that matches its
 // tag's tree with a calm line, and accepts those files only at those hashes.

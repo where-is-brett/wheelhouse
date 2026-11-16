@@ -78,7 +78,7 @@ import { localViews } from '../hooks/session-start.js';
 import { readProfileViews } from '../profile/store.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { engineDir } from '../lib/paths.js';
-import { acceptOwnFiles } from '../health/own-files.js';
+import { acceptOwnWritesSince } from '../health/own-files.js';
 import { ROOT as OWN_ROOT } from '../lineage/check.js';
 import { engineCheck, helloTrial } from '../engine/hello.js';
 import { homeDir, lookAtHome } from '../host/local/home.js';
@@ -547,7 +547,7 @@ const applied = (run) => typeof run?.steps?.[HEALTH_STEP]?.doneAt === 'string';
 // adapter, with the director's own sign-in (the project's key on the setup token's route); `client` the
 // helper's client the merge is asked through; `findGit` the git step 2 found;
 // `gitEnvFor({ host, gitPath, platform, base, record })` git's environment; `trySTOP`, `checkPins({ folder })`
-// and `readProtection({ host, repo, realUsers, base, record })` the other checks; `acceptOwn` makes the baseline of Wheelhouse's own files afresh; `via` is how the protection read's GitLab calls are made (gitlabApi's run, curl, proxy and caFile). All for tests.
+// and `readProtection({ host, repo, realUsers, base, record })` the other checks; `acceptOwn` accepts the changes setup made to Wheelhouse's own files; `via` is how the protection read's GitLab calls are made (gitlabApi's run, curl, proxy and caFile). All for tests.
 export function healthStep({
   run = realRun,
   adapterFor = (args) => trialAdapter(args, { run }),
@@ -558,7 +558,7 @@ export function healthStep({
   checkPins = checkPinsNow,
   readProtection = ({ host, repo, realUsers, base, record }) => readProtectionNow({ host, repo, run, realUsers, base, via, record }),
   engineChecks = engineChecksNow,
-  acceptOwn = acceptOwnFiles,
+  acceptOwn = acceptOwnWritesSince,
   lookHome = lookAtHome,
   via = {},
 } = {}) {
@@ -600,10 +600,11 @@ export function healthStep({
         if (ctx.stopped?.() === true) throw new Error(STOPPED);
       };
       halt();
-      // Setup has just written the files the look at Wheelhouse's own files guards (the sign-in start among them), so the
-      // baseline is made afresh before the checks look; the helper's look takes the same folders.
+      // Setup has written files the look at Wheelhouse's own files guards (the sign-in start among them), so the changes made
+      // since this setup began are accepted before the checks look; a change from before then is still named.
       try {
-        acceptOwn({ now: ctx.now, root: OWN_ROOT, projects: registeredProjects().map(({ record: r }) => r?.folder).filter(Boolean) });
+        const since = readJournal().runs.find((r) => r?.id === ctx.runId)?.startedAt;
+        acceptOwn({ since, now: ctx.now, root: OWN_ROOT, projects: registeredProjects().map(({ record: r }) => r?.folder).filter(Boolean) });
       } catch { /* the look is made against the old baseline, and says so */ }
       const adapter = adapterFor({ host: record.host, repo: record.repo, base: record.connection?.baseUrl, folder: record.folder, connection: record.connection });
       const place = trialPlace(project, record);

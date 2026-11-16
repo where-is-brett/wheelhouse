@@ -247,23 +247,29 @@ test('step 10 reads the host\'s protection knowing whether the project has real 
   }
 });
 
-test('step 10 makes the baseline of Wheelhouse\'s own files afresh, so the look names nothing setup wrote', async () => {
+test('step 10 accepts the changes setup made to Wheelhouse\'s own files, and still names one from before setup began', async () => {
   await withProject(async ({ folder }) => {
     const { remote } = await productOnRemote(folder);
     const { adapter } = standIn(remote);
-    // An older baseline that knows a file which is no longer as it was: the look names it until the baseline is made afresh.
+    const guarded = path.join(wheelhouseHome(), 'engine', 'copilot', 'home', 'settings.json');
+    fs.mkdirSync(path.dirname(guarded), { recursive: true });
+    fs.writeFileSync(guarded, '{"a":1}\n');
+    // The baseline knows a sign-in start setup has since replaced, and a guarded file as it was.
     acceptOwnFiles({ now: () => T0 });
     const kept = JSON.parse(fs.readFileSync(ownFilesFile(), 'utf8'));
-    kept.others.files[path.join(folder, 'older-sign-in-start.plist')] = 'a-hash-from-before';
+    const replaced = path.join(folder, 'older-sign-in-start.plist');
+    kept.others.files[replaced] = 'a-hash-from-before';
     fs.writeFileSync(ownFilesFile(), JSON.stringify(kept));
+    // The guarded file was changed before this setup began (T0).
+    fs.writeFileSync(guarded, '{"a":2}\n');
+    const before = new Date(T0.getTime() - 24 * 60 * 60 * 1000);
+    fs.utimesSync(guarded, before, before);
     const later = () => new Date(T0.getTime() + 3 * 24 * 60 * 60 * 1000);
-    assert.equal((await checkOwnFiles({ now: later, treeFor: async () => null })).changed.length, 1, 'the older baseline names a change');
-    fs.writeFileSync(ownFilesFile(), JSON.stringify(kept));
     const step = stepWith(adapter, merges(REFUSED).client);
     const { changes } = await step.plan({ folder });
     const { ctx } = ctxFor(folder, remote);
     await step.apply(ctx, changes);
-    assert.deepEqual((await checkOwnFiles({ now: later, treeFor: async () => null })).changed, []);
+    assert.deepEqual((await checkOwnFiles({ now: later, treeFor: async () => null })).changed, [guarded]);
   });
 });
 
