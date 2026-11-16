@@ -441,7 +441,31 @@ export function askedFor({ cwd, card }) {
   if (found.length === 0) return null;
   const depth = (r) => keyOf(realPath(r.folder) ?? '').length;
   const nearest = Math.max(...found.map(depth));
-  return found.filter((r) => depth(r) === nearest).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
+  const hit = found.filter((r) => depth(r) === nearest).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
+  return newestVariant(hit, names.map((n) => readAsked(path.join(askedDir(), n))));
+}
+
+// The questions whose variants differ only in words: the connection card (its digest follows its
+// descriptions) and its stricter card. Every other question matches its own card exactly.
+const VARIANT_STEM = /^connection(-stricter)?$/;
+const idStem = (id) => id.replace(/-[0-9a-f]{8,}$/, '');
+const labelsOf = (card) => shownCard(card).options.map((o) => sameWords(bareLabel(o.label)));
+const effectsOf = (r) => JSON.stringify([r.typed, r.writes ?? null, r.rules ?? null, r.choices ?? null, r.facts ?? null, r.found ?? null]);
+
+// The session's question tool can hand back an earlier card when a new one has the same question
+// and labels: the descriptions in what comes back are the older variant's. So an answer that reads
+// as an older asked connection card is taken as an answer to the newest variant of it: the same run,
+// folder, step, id stem, question, labels and recorded effects, asked later. Never another run or
+// step, nor a card that reads differently in its question or labels or records anything else; the
+// label chosen is checked against the card it lands on.
+function newestVariant(hit, all) {
+  if (!VARIANT_STEM.test(idStem(hit.id))) return hit;
+  const later = all.filter((r) => r !== null && r.id !== hit.id && r.runId === hit.runId && r.step === hit.step && r.folder === hit.folder
+    && idStem(r.id) === idStem(hit.id) && Date.parse(r.at) > Date.parse(hit.at)
+    && sameWords(r.card.question) === sameWords(hit.card.question)
+    && JSON.stringify(labelsOf(r.card)) === JSON.stringify(labelsOf(hit.card))
+    && effectsOf(r) === effectsOf(hit));
+  return later.sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1) ?? hit;
 }
 
 // The cards setup showed (the plan card, with its set line) and asked (its own questions) for the folder holding `cwd`, in the
