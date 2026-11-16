@@ -222,7 +222,7 @@ function goAheadAsks({ keptHere, list, host }) {
   const way = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.label ?? null;
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
   if (host === 'GitLab' && noTool && way !== null && way !== WAYS.quick && way !== WAYS.asIs) {
-    return `You'll be asked for a one-day GitLab token, and, if GitLab won't make a key for one project, a second token, good for ${PERSONAL_DAYS} days, that works as you in every GitLab project, each pasted into your computer's own box, and your password if needed.`;
+    return `You'll paste a one-day GitLab token into your computer's own box; if GitLab won't make a key for one project, a second token, lasting ${PERSONAL_DAYS} days and working as you in every GitLab project. Your password if needed.`;
   }
   if (way === WAYS.asIs) return `You'll be asked for a ${host} key only if your git holds none that works, pasted into your computer's own box, and your password if needed.`;
   // A narrow way on GitLab with its tool still meets GitLab's refusal of a project key the same way.

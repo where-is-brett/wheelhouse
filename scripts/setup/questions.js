@@ -212,13 +212,16 @@ function productAsk(name, { described, realUsers }) {
 
 // The second question: whether the product has live data. A new product has none yet, so no is
 // recommended for it; for a project already under way, yes, which is the safe side (design section 15.1).
-function liveDataAsk(name, { isNew = false } = {}) {
+function liveDataAsk(name, { isNew = false, platform = process.platform } = {}) {
   return {
     id: 'live-data',
     card: {
       level: 3,
       what: `Does ${name} hold live data, such as real people's accounts, orders or messages?`,
-      why: 'Agents are kept from opening the project\'s secret files themselves, though the product\'s own code they run can still use them.',
+      // Windows runs no sandbox, so there the rule binds only Claude Code's own tools and an agent's command can still read the files.
+      why: platform === 'win32'
+        ? 'Agents are told not to open the project\'s secret files, but on Windows their commands could still read them, as the product\'s own code can.'
+        : 'Agents are kept from opening the project\'s secret files themselves, though the product\'s own code they run can still use them.',
       options: [
         { label: LIVE_DATA.yes, says: 'Agents are told to use test data only, and to leave the live data alone.' },
         { label: LIVE_DATA.no, says: 'Agents work with the product\'s data as it is, as in a throwaway or test project.' },
@@ -272,7 +275,7 @@ export function questionsStep() {
       const product = answers[`4.${asked.id}`] ?? answers[`4.${other}`];
       if (!product) return { ask: asked };
       const live = answers['4.live-data'];
-      if (!live) return { ask: liveDataAsk(name, { isNew: newProduct(ctx, project) }) };
+      if (!live) return { ask: liveDataAsk(name, { isNew: newProduct(ctx, project), platform: ctx.platform ?? process.platform }) };
       const apple = signsAppleApps(ctx.folder) ? answers['4.apple-apps'] : null;
       if (apple === undefined) return { ask: appleAppsAsk(name) };
       if (project === null) return ctx.choicesOnly === true ? { wait: 0, why: 'every choice of step 4 is made' } : waitForProject(4);

@@ -415,7 +415,14 @@ const projectFile = (slug) => path.join(stateDir(slug), '..', 'project.json');
 const MEANWHILE = 'Nothing runs until your Go ahead on the plan.';
 
 // `platform` is the computer's: only a Mac offers Locked, so only a Mac's card names it.
-function realUsersAsk(name, platform) {
+function realUsersAsk(name, platform, host = null) {
+  // The host's own tool stays signed in as the director after a narrow setup, and on Windows that sign-in is a file any
+  // agent's command can read, so the Yes says so there rather than promise agents never hold it.
+  const tool = host === 'github' || host === 'gitlab' ? `${NAME[host]}'s own tool` : 'The host\'s own tool';
+  const lasting = platform === 'win32' ? ` ${tool} still stays signed in as you here, where any agent's command could read it.` : '';
+  const yes = host === 'github'
+    ? `Setup treats it as launched: agents get a narrow connection, a key to this one project, not your own sign-in.${lasting}`
+    : `Setup treats it as launched: agents get a narrow connection, a key to this one project${host === 'gitlab' ? ' wherever GitLab makes one, not your own sign-in. Where it won\'t' : ' wherever one can be made, not your own sign-in. Where GitLab won\'t make one'}, a ${PERSONAL_DAYS}-day token you paste stands in, and it can act as you.${lasting}`;
   return {
     id: 'real-users',
     card: {
@@ -423,7 +430,7 @@ function realUsersAsk(name, platform) {
       what: `Does ${name} have real users yet: people who rely on it, beyond you and anyone testing it?`,
       why: 'A product with real users gets the narrowest connection its host allows, so a leak reaches as little as it can.',
       options: [
-        { label: REAL_USERS.yes, says: `Setup treats it as launched: agents get a narrow connection, never your own sign-in, with a key to this one project wherever one can be made. Where GitLab won't make one, a ${PERSONAL_DAYS}-day token you paste stands in, and it can act as you.` },
+        { label: REAL_USERS.yes, says: yes },
         { label: REAL_USERS.no, says: 'Setup treats it as before launch, like a throwaway or test project. You can change this when it has users.' },
       ],
       recommend: REAL_USERS.no,
@@ -765,7 +772,7 @@ const quickSays = (host, platform) => `${quickLineFor(host)} If that sign-in lea
 // "Use my git as it is" in a few plain words, and what it reaches (design section 4.4). On Windows nothing keeps an agent's
 // command from asking git for the key, so the option's words say so.
 // Where git holds no key for the host yet (`held` false), the key is one the director makes on a page, and the words say so.
-const asIsSays = (host, held = true) => `${held ? 'Your own git and the key it already uses' : 'Your own git and its key'}, for pushes and ${host === 'github' ? 'pull' : 'merge'} requests, reaching everything your account can.${held ? '' : ` If git holds no ${NAME[host]} key that works, you make one on a page that opens; it lasts ${KEY_DAYS_ASKED} days.`}`;
+const asIsSays = (host, held = true) => `${held ? 'Your own git and the key it already uses' : 'Your own git and its key'}, for pushes and ${host === 'github' ? 'pull' : 'merge'} requests, reaching everything your account can.${held ? '' : ` If git holds no ${NAME[host]} key that works, you make one on a page that opens, which asks for ${KEY_DAYS_ASKED} days.`}`;
 const AS_IS_WINDOWS = 'On Windows any agent\'s command could ask git for that key.';
 
 // The reason line on a connection card asked again because the way chosen can't be had now, said plainly. Quick works
@@ -812,7 +819,8 @@ function againCard(earlier, now, label) {
   });
   for (const o of added) if (!options.includes(o)) options.push(o);
   const keeps = options.some((o) => o.label === earlier.recommend);
-  return { ...now, options, recommend: keeps ? earlier.recommend : now.recommend, because: keeps ? earlier.because : now.because };
+  // Today's reason where it backs the same recommendation, so a reason that no longer holds is not carried over.
+  return { ...now, options, recommend: keeps ? earlier.recommend : now.recommend, because: keeps && now.recommend !== earlier.recommend ? earlier.because : now.because };
 }
 
 // The advanced choice on the Mac's card, which leads to the narrow ways (the director's ruling of 24 October 2026).
@@ -2013,7 +2021,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
   } else if (signing?.via === 'token') {
     parts.push(tight ? 'You sign in with a token you paste into your computer\'s own box, never the chat.' : `You sign in to ${name} with a token: a page opens to make it, and you paste it into your computer's own box, never the chat.`);
   } else if (signing?.via === 'narrow-key') {
-    parts.push(bare ? `You sign in to ${name} with a key for this project only.` : `You sign in to ${name} with a key for this project only: a page opens to make it, and you paste it into your computer's own box, never the chat.`);
+    parts.push(`${bare ? `You sign in to ${name} with a key for this project only.` : `You sign in to ${name} with a key for this project only: a page opens to make it, and you paste it into your computer's own box, never the chat.`}${platform === 'win32' ? ' It stays here, where any agent\'s command could read it.' : ''}`);
   } else if (signing) {
     // A company's GitLab gives its own accounts: no sign-up page is offered for it.
     parts.push(bare || company ? `You sign in to ${company ? 'your company\'s GitLab' : name} in your browser.` : `You sign in to ${name} in your browser (no account? sign up at ${signUpUrl(host, base)}).`);
@@ -2283,7 +2291,7 @@ export function hostStep({
       let realUsers = false;
       let locked = false;
       if (!product.joining) {
-        if (answer('real-users') === null) return { ask: realUsersAsk(product.name, platform) };
+        if (answer('real-users') === null) return { ask: realUsersAsk(product.name, platform, product.host) };
         realUsers = answer('real-users').label === REAL_USERS.yes;
         const lockable = realUsers && platform === 'darwin';
         if (lockable && answer('locked') === null) return { ask: lockedAsk(product.name) };
