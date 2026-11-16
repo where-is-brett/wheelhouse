@@ -31,7 +31,7 @@ const PLAN = composeCard({
   options: [{ label: 'Go ahead', says: 'It go ahead and goes ahead.' }], target: { step: 6, hash: DOC },
 }).question;
 const ASKED = {
-  question: 'In a sentence, what is example_tool, and who uses it? Choose the README\'s words, or type your own as your answer.\n'
+  question: 'In a sentence, what is example_tool, and who is it for? Choose the README\'s words, or type your own as your answer.\n'
     + 'Wheelhouse explains its work to you in terms of your product; it is recorded as launched.\nNothing runs until your Go ahead on the plan.\nTo know more, just ask.',
   header: 'Question',
   options: [

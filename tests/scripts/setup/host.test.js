@@ -1085,6 +1085,28 @@ test('the connection question names the repository, so an answer for one remote 
   });
 });
 
+test('an answer to a connection card whose words have since changed is not carried: the card is asked again, saying why', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://github.com/${USER}/shop.git`);
+    const step = stepFor(w);
+    const first = await answerAll(step, ctxFor(folder), choose());
+    const key = `3.${first.asked.at(-1).id}`;
+    // The same words: the answer stands.
+    assert.equal((await step.plan(ctxFor(folder, { answers: first.answers }))).ask, undefined);
+    // An answer given on a card that read otherwise, its words named by another digest.
+    const { [key]: given, ...rest } = first.answers;
+    const older = { ...rest, [key.replace(/[0-9a-f]{10}$/, '0123456789')]: given };
+    const again = await step.plan(ctxFor(folder, { answers: older }));
+    assert.ok(again.ask, 'asked again');
+    assert.match(again.ask.card.what, /\? Quick works differently now, as its words say, so choose again\.$/);
+    // An answer with no time it was given is not taken as the earlier one: the card is asked as it reads.
+    const timeless = await step.plan(ctxFor(folder, { answers: { ...older, [key.replace(/[0-9a-f]{10}$/, '0123456789')]: { ...given, at: 'later' } } }));
+    assert.equal(timeless.ask.id, first.asked.at(-1).id);
+  });
+});
+
 // ---- The Install page's wait, retries and their own app ----
 
 // A clock the step reads, which its waits move on.
@@ -3181,15 +3203,25 @@ const SETUP_TOKEN = 'glpat-one-day-setup-token-0001';
 
 // The system's curl in front of a stand-in GitLab with the setup token's account: GET /user answers for SETUP_TOKEN
 // only, and the project's protected branches and settings are kept here; projects and project keys are the stand-in's
-// (`w.api`). Each call is recorded with its arguments, its config and its environment, so a test can look for the token.
-function setupTokenCurl(w, { userStatus = 200 } = {}) {
+// (`w.api`). The token itself is `self` (api alone, ending tomorrow), or not known where `self` is null; revoking it
+// is kept in `revoked`. Each call is recorded with its arguments, its config and its environment, so a test can look for
+// the token.
+function setupTokenCurl(w, { userStatus = 200, self = { scopes: ['api'], expires_at: '2026-10-21' } } = {}) {
   const calls = [];
+  const revoked = [];
   const branches = {};
   const answerFor = async (call) => {
     const token = call.headers.find((h) => /^private-token:/i.test(h))?.replace(/^[^:]+:\s*/, '') ?? '';
     if (token !== SETUP_TOKEN && !/^glpat-project-key-/.test(token) && token !== PASTED) return { status: 401, body: { message: '401 Unauthorized' } };
     const p = call.url.replace(/^https:\/\/[^/]+\/api\/v4/, '');
     const body = call.body === undefined ? undefined : JSON.parse(call.body);
+    if (p === '/personal_access_tokens/self' && token === SETUP_TOKEN) {
+      if (call.method === 'DELETE') {
+        revoked.push(token);
+        return { status: 204, body: null };
+      }
+      return self === null ? { status: 404, body: { message: '404 Not Found' } } : { status: 200, body: self };
+    }
     if (p === '/user') return userStatus === 200 ? { status: 200, body: { id: 7, username: USER, name: 'A Director', commit_email: 'director@example.com' } } : { status: userStatus, body: { message: 'no' } };
     const branch = /^\/projects\/([^/]+)\/protected_branches(?:\/(.+))?$/.exec(p);
     if (branch && call.method === 'GET') return branches[`${branch[1]}/${branch[2]}`] ? { status: 200, body: branches[`${branch[1]}/${branch[2]}`] } : { status: 404, body: null };
@@ -3224,7 +3256,7 @@ function setupTokenCurl(w, { userStatus = 200 } = {}) {
     const tail = format.replace('%{http_code}', String(answer.status)).replace('%{http_connect}', '0').replace(/\\n/g, '\n');
     return { code: 0, stdout: `${answer.body === null || answer.body === undefined ? '' : JSON.stringify(answer.body)}${tail}`, stderr: '' };
   };
-  return { run, calls, others };
+  return { run, calls, others, revoked };
 }
 const tokenVia = (curl) => ({ run: curl.run, curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'darwin' });
 
@@ -3259,15 +3291,40 @@ test('the setup token goes to curl only in the request header on standard input,
   const page = new URL(opened[0]);
   assert.equal(page.origin, 'https://gitlab.example.com');
   assert.equal(page.searchParams.get('scopes'), 'api', 'the token page asks for api alone');
-  assert.equal(curl.calls.length, 1);
+  assert.deepEqual(curl.calls.map((c) => [c.method, c.url]), [['GET', 'https://gitlab.example.com/api/v4/user'], ['GET', 'https://gitlab.example.com/api/v4/personal_access_tokens/self']]);
   const [call] = curl.calls;
-  assert.equal(call.url, 'https://gitlab.example.com/api/v4/user');
   assert.ok(call.headers.includes(`PRIVATE-TOKEN: ${SETUP_TOKEN}`), 'the token is in the header');
   assert.deepEqual(tokenOutside(curl), []);
   assert.ok(!JSON.stringify(held).includes(SETUP_TOKEN), 'what the call gives back holds no token');
   held.forget();
   await assert.rejects(held.api.get('/user'), /forgotten the one-day GitLab token/);
-  assert.equal(curl.calls.length, 1, 'nothing more reaches GitLab once forgotten');
+  assert.equal(curl.calls.length, 2, 'nothing more reaches GitLab once forgotten');
+  assert.equal(await held.end(), false, 'a forgotten token is not revoked again');
+});
+
+test('a setup token that can do more than api, or lasts longer than a day, is revoked and refused before anything is made; one GitLab can\'t describe is taken', async () => {
+  const at = () => NOW;
+  for (const [self, words] of [
+    [{ scopes: ['api', 'sudo'], expires_at: '2026-10-21' }, /can do more than api, so setup made nothing with it and revoked it/],
+    [{ scopes: ['read_api'], expires_at: '2026-10-21' }, /can do more than api/],
+    [{ scopes: ['api'], expires_at: '2026-11-19' }, /lasts longer than a day, so setup made nothing with it and revoked it/],
+    [{ scopes: ['api'], expires_at: null }, /lasts longer than a day/],
+  ]) {
+    const curl = setupTokenCurl(standIn(), { self });
+    const got = await setupTokenApi({ base: 'https://gitlab.example.com', via: tokenVia(curl), open: async () => {}, askSecret: async () => SETUP_TOKEN, now: at }).catch((e) => e);
+    assert.match(got.message, words, JSON.stringify(self));
+    assert.deepEqual(curl.revoked, [SETUP_TOKEN], 'revoked');
+    assert.ok(!curl.calls.some((c) => c.method !== 'GET' && !/personal_access_tokens\/self$/.test(c.url)), 'nothing made');
+  }
+  // Ending the day after tomorrow at the latest, for a director a day ahead: taken, and revoked at the end.
+  const curl = setupTokenCurl(standIn(), { self: { scopes: ['api'], expires_at: '2026-10-22' } });
+  const held = await setupTokenApi({ base: 'https://gitlab.example.com', via: tokenVia(curl), open: async () => {}, askSecret: async () => SETUP_TOKEN, now: at });
+  assert.equal(await held.end(), true);
+  assert.deepEqual(curl.revoked, [SETUP_TOKEN]);
+  await assert.rejects(held.api.get('/user'), /forgotten the one-day GitLab token/);
+  // An older GitLab with no such path: taken at the page's word.
+  const old = await setupTokenApi({ base: 'https://gitlab.example.com', via: tokenVia(setupTokenCurl(standIn(), { self: null })), open: async () => {}, askSecret: async () => SETUP_TOKEN, now: at });
+  assert.equal(old.user, USER);
 });
 
 test('the setup token is refused for a base that is not https, before any page opens or box is shown', async () => {
@@ -3310,7 +3367,7 @@ async function setupTokenRun(w, { curl, askSecret } = {}) {
   return { folder, step, planned };
 }
 
-test('Narrow on GitLab without its tool makes the project key and protects the main line with the setup token, then forgets it; the token is kept nowhere', async () => {
+test('Narrow on GitLab without its tool makes the project key and protects the main line with the setup token, then revokes it; the token is kept nowhere', async () => {
   await withHome(async (home) => {
     const w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
     const curl = setupTokenCurl(w);
@@ -3322,7 +3379,8 @@ test('Narrow on GitLab without its tool makes the project key and protects the m
     const id = w.repos[`${USER}/shop`].id;
     assert.equal(readKey(`gitlab-project-${id}`).kind, 'project-key', 'the project key is in the store');
     assert.ok(curl.calls.some((c) => c.method === 'POST' && /\/protected_branches$/.test(c.url)), 'the main line is protected');
-    assert.ok(lines.some((l) => /Setup has forgotten the one-day token/.test(l)), lines.join('\n'));
+    assert.ok(lines.some((l) => /Setup has revoked the one-day token/.test(l)), lines.join('\n'));
+    assert.deepEqual(curl.revoked, [SETUP_TOKEN], 'revoked on GitLab once, at the end');
     const kept = readProject(slugFor(`${USER}/shop`));
     assert.equal(kept.connection.directorSignIn, 'setup-token');
     assert.ok(!JSON.stringify(kept).includes(SETUP_TOKEN));
@@ -3350,7 +3408,7 @@ test('where GitLab refuses a project key, the setup token route falls back to a 
   });
 });
 
-test('a stop part-way through the setup token route forgets the token: nothing after the stop reaches GitLab with it, and it is kept nowhere', async () => {
+test('a stop part-way through the setup token route revokes and forgets the token: nothing after the stop reaches GitLab with it but its revoking, and it is kept nowhere', async () => {
   await withHome(async (home) => {
     const w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
     const curl = setupTokenCurl(w);
@@ -3364,7 +3422,8 @@ test('a stop part-way through the setup token route forgets the token: nothing a
     };
     await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers, stopped }), /All stop came on/);
     assert.ok(stoppedAt !== null, 'the stop came on during the step');
-    assert.ok(curl.calls.slice(stoppedAt).every((c) => !c.headers.includes(`PRIVATE-TOKEN: ${SETUP_TOKEN}`)), 'no call with the token after the stop');
+    const after = curl.calls.slice(stoppedAt).filter((c) => c.headers.includes(`PRIVATE-TOKEN: ${SETUP_TOKEN}`));
+    assert.deepEqual(after.map((c) => [c.method, c.url]), [['DELETE', 'https://gitlab.com/api/v4/personal_access_tokens/self']], 'after the stop, the token only revokes itself');
     assert.deepEqual(tokenOutside(curl, home, folder), []);
     // A fresh Go ahead asks for a new token: the one held was dropped.
     const boxes = [];

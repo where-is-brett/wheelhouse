@@ -20,7 +20,7 @@ const NOW = new Date('2026-11-03T00:00:00.000Z');
 const PLAIN = 'A stock tool for shift leads (SLs) in example distribution centres.';
 const README = 'The README\'s words';
 const CARD = {
-  question: 'In a sentence, what is example_tool, and who uses it? Choose the README\'s words, or type your own as your answer.\n'
+  question: 'In a sentence, what is example_tool, and who is it for? Choose the README\'s words, or type your own as your answer.\n'
     + 'Wheelhouse explains its work to you in terms of your product; it is recorded as launched.\nNothing runs until your Go ahead on the plan.\nTo know more, just ask.',
   header: 'Question',
   options: [

@@ -115,7 +115,7 @@ test('path b\': Quick, once GitLab\'s tool can\'t be fetched, is asked again wit
   const connection = cards.filter((c) => c.step === 3 && /^connection-/.test(c.id));
   assert.equal(connection.length, 2, 'the connection card is asked twice: once, and again once Quick can\'t be had');
   assert.equal(connection[0].answer.label, 'Quick');
-  assert.match(connection[1].card.question, /^Quick went from this card: it needs GitLab's own tool, which couldn't be fetched on this computer\. Choose again\. /);
+  assert.match(connection[1].card.question, /^How should .*\? Quick is no longer offered: it needs GitLab's own tool, which couldn't be fetched on this computer\. Narrow asks you for a one-day GitLab token/);
   assert.equal(connection[1].card.options[0].label, connection[0].card.options[0].label, 'the first option stays first');
   assert.ok(!connection[1].card.options.some((o) => o.label === 'Quick'), 'Quick is gone');
   assert.equal(recommendedOf(connection[1].card), recommendedOf(connection[0].card));
@@ -145,7 +145,7 @@ test('paths b, b\' and c: step 3\'s Go-ahead card says the one-day token is used
     const go = cards.find((c) => c.kind === 'go-ahead' && c.step === 3);
     assert.ok(go, `path ${name} shows step 3's Go-ahead card`);
     assert.match(go.card.question, /one-day GitLab token on a page that opens and paste it into your computer's own box/, `path ${name}`);
-    assert.match(go.card.question, /then forgets it/, `path ${name}`);
+    assert.match(go.card.question, /then revokes it/, `path ${name}`);
     assert.match(go.card.question, /Setup protects the main line now, while it holds that token/, `path ${name}`);
     assert.doesNotMatch(go.card.question, /sign in in your browser/i, `path ${name} asks for no browser sign-in`);
   }
@@ -203,7 +203,7 @@ test('on GitLab, step 10\'s card names a merge request, never a pull request', a
 });
 
 test('each path\'s plan says what will be asked of the director', async () => {
-  const asks = { a: /a GitLab key only if your git holds none that works/, b: /one-day GitLab token, pasted into your computer's own box/, c: /one-day GitLab token, pasted into your computer's own box/, d: /only be asked to sign in/, e: /only be asked to sign in/ };
+  const asks = { a: /a GitLab key only if your git holds none that works/, b: /one-day GitLab token, pasted into your computer's own box/, c: /one-day GitLab token, pasted into your computer's own box/, d: /sign in on GitHub pages that open/, e: /sign in on (GitHub|GitLab) pages that open/ };
   for (const [name, says] of Object.entries(asks)) {
     const { cards } = await rendered(name);
     const plan = cards.filter((c) => /^plan-/.test(c.id)).at(-1);

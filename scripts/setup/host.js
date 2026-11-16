@@ -420,7 +420,7 @@ function realUsersAsk(name, platform) {
     card: {
       level: 2,
       what: `Does ${name} have real users yet: people who rely on it, beyond you and anyone testing it?`,
-      why: platform === 'darwin' ? 'A product with real users gets a key to it alone, and the offer of Locked.' : 'A product with real users gets a key to it alone.',
+      why: platform === 'darwin' ? 'A product with real users gets a key to it alone, and the offer of stricter protection.' : 'A product with real users gets a key to it alone.',
       options: [
         { label: REAL_USERS.yes, says: 'Setup treats it as launched, so agents get a key to this one project only.' },
         { label: REAL_USERS.no, says: 'Setup treats it as before launch, like a throwaway or test project. You can change this when it has users.' },
@@ -774,8 +774,28 @@ const gone = (label, host, { reach, left }) => {
   const why = left ? 'which you chose not to use' : 'which couldn\'t be fetched on this computer';
   // Without the tool, GitLab's narrow way starts from a one-day token, which no plan card says once this card is asked again.
   const token = host === 'gitlab' ? ' Narrow asks you for a one-day GitLab token, pasted into your computer\'s own box.' : '';
-  return `Quick went from this card: it needs ${NAME[host]}'s own tool, ${why}. Choose again.${token}`;
+  return `Quick is no longer offered: it needs ${NAME[host]}'s own tool, ${why}.${token}`;
 };
+
+// The reason line on a connection card asked again because the way chosen now does something else, as its words say.
+const changed = (label) => `${label} works differently now, as its words say, so choose again.`;
+
+// The connection card an answer was given on, among the ways it reads today: as asked, asked again because the way chosen
+// went (with gone's reason, on againCard or on the card as it was), or asked again because its words changed. `readings`
+// are today's cards with and without the director's own git; null when none is the one `named`.
+function answeredCard(readings, host, named) {
+  const labels = [...new Set(readings.flatMap((r) => r.options.map((o) => o.label)))];
+  const reasons = (label) => [{ tool: 'works' }, {}].flatMap((reach) => [true, false].map((left) => gone(label, host, { reach, left })));
+  const said = (c, why) => ({ ...c, what: `${c.what} ${why}` });
+  return readings.flatMap((now) => [
+    now,
+    ...now.options.map((o) => said(now, changed(o.label))),
+    ...labels.filter((l) => !now.options.some((o) => o.label === l)).flatMap((l) => reasons(l).flatMap((why) => [
+      said(now, why),
+      ...readings.filter((was) => was.options.some((o) => o.label === l)).map((was) => said(againCard(was, now, l), why)),
+    ])),
+  ]).find(named) ?? null;
+}
 
 // The card asked again after `label` went: the earlier card's options in its order, the way that took the gone one's place
 // in its slot, and its recommendation and reason where that way is still offered, so nothing else on it moves. `earlier` is
@@ -1113,8 +1133,13 @@ export function directorGitEnv({ host, gitPath = 'git', env = process.env, platf
 // ---- GitLab without its tool: the one-day setup token ----
 
 // What step 3's card says of it.
-export const SETUP_TOKEN_LINE = 'You make a one-day GitLab token on a page that opens and paste it into your computer\'s own box. Setup uses it only to make the project, its key and the main line\'s protection, then forgets it.';
+export const SETUP_TOKEN_LINE = 'You make a one-day GitLab token on a page that opens and paste it into your computer\'s own box. Setup uses it only to make the project, its key and the main line\'s protection, then revokes it.';
 const NO_SETUP_TOKEN = 'No GitLab token was given, so nothing was made on GitLab; a fresh Go ahead asks again';
+// A setup token GitLab says can do more than api, or lasts longer than about a day: setup makes nothing with it.
+const SETUP_TOKEN_WIDE = 'The GitLab token can do more than api, so setup made nothing with it and revoked it: make a new one with api alone, then a fresh Go ahead';
+const SETUP_TOKEN_LONG = 'The GitLab token lasts longer than a day, so setup made nothing with it and revoked it: make a new one that ends tomorrow, then a fresh Go ahead';
+// The latest end a setup token may have: the day after tomorrow, in case the director's tomorrow is a day ahead.
+const SETUP_TOKEN_DAYS = 2;
 // What step 3's card says of protection with the setup token.
 export const SETUP_TOKEN_PROTECTION = 'Setup protects the main line now, while it holds that token: changes go in only through merge requests, and where the project has a pipeline, it must pass first.';
 // What step 3's card says of merging a project with real users through a key for that project only.
@@ -1126,15 +1151,17 @@ export const SETUP_TOKEN_CANNOT = (what) => `${what === 'joining' ? 'Bringing th
 // one-day expiry on a page that opens, and pastes it into the computer's own box. It is held in memory
 // only, in the API client's request header, which goes to curl on its standard input (gitlabApi,
 // curl.js), never an argument, the environment, a file, a log or the record. `forget()` drops it, and
-// every call after that throws. Gives { api, user, author, forget }: the account's username, and its
-// name and commit address for setup's own commit at step 7.
-export async function setupTokenApi({ base, via = {}, say = () => {}, open, askSecret = realAskSecret, platform = process.platform, halt = () => {} }) {
+// every call after that throws; `end()` revokes it on GitLab first, and gives whether GitLab did. Before anything is made
+// with it, GitLab is asked what the token is: one with more than api, or ending later than SETUP_TOKEN_DAYS from now, is
+// revoked and refused. A GitLab too old to say (no such path) is taken at the page's word. Gives { api, user, author,
+// forget, end }: the account's username, and its name and commit address for setup's own commit at step 7.
+export async function setupTokenApi({ base, via = {}, say = () => {}, open, askSecret = realAskSecret, platform = process.platform, halt = () => {}, now = () => new Date() }) {
   const root = checkBaseUrl(base);
-  say('Make the token on the page that opens: it asks for api only; set its expiry to tomorrow. Then paste it into the box your computer shows, never into the chat. Setup uses it only to make the project, its key and the main line\'s protection, then forgets it');
+  say('Make the token on the page that opens: it asks for api only; set its expiry to tomorrow. Then paste it into the box your computer shows, never into the chat. Setup uses it only to make the project, its key and the main line\'s protection, then revokes it');
   await open(tokenUrl({ host: 'gitlab', kind: 'setup', base: root }));
   let pasted;
   try {
-    pasted = await askSecret({ title: 'Wheelhouse: one-day GitLab token', prompt: 'Paste the one-day GitLab token you just made. Setup uses it to make the project and its key, then forgets it. It is never kept.' }, platform);
+    pasted = await askSecret({ title: 'Wheelhouse: one-day GitLab token', prompt: 'Paste the one-day GitLab token you just made. Setup uses it to make the project and its key, then revokes it. It is never kept.' }, platform);
   } catch {
     throw new Error(NO_SETUP_TOKEN);
   }
@@ -1148,6 +1175,15 @@ export async function setupTokenApi({ base, via = {}, say = () => {}, open, askS
   const forget = () => {
     inner = null;
   };
+  const end = async () => {
+    if (inner === null) return false;
+    let revoked = false;
+    try {
+      revoked = (await inner.delete('/personal_access_tokens/self'))?.status === 204;
+    } catch { /* forgotten all the same; it ends by itself */ }
+    forget();
+    return revoked;
+  };
   const api = {
     baseUrl: root,
     get: async (p) => live().get(p),
@@ -1155,16 +1191,31 @@ export async function setupTokenApi({ base, via = {}, say = () => {}, open, askS
     put: async (p, body) => live().put(p, body),
     delete: async (p) => live().delete(p),
   };
+  // A token GitLab hasn't taken (refused, or never sent) is only forgotten: there is nothing to revoke.
+  let taken = false;
   try {
     halt();
     const me = await api.get('/user');
+    taken = me.status === 200;
     if (me.status === 401 || me.status === 403) throw new Error('GitLab did not accept the token, so nothing was made: make a new one with api ticked, then a fresh Go ahead');
     const user = me.body;
     if (me.status !== 200 || typeof user?.username !== 'string' || user.username === '' || !Number.isInteger(user.id)) throw new Error(`GitLab did not say who the token belongs to (HTTP ${me.status}), so nothing was made; a fresh Go ahead tries again`);
+    const self = await api.get('/personal_access_tokens/self');
+    if (self.status === 200) {
+      const scopes = self.body?.scopes;
+      const ends = self.body?.expires_at;
+      const latest = new Date(now().getTime() + SETUP_TOKEN_DAYS * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      if (!Array.isArray(scopes) || scopes.length !== 1 || scopes[0] !== 'api') throw new Error(SETUP_TOKEN_WIDE);
+      if (typeof ends !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(ends) || ends > latest) throw new Error(SETUP_TOKEN_LONG);
+    } else if (self.status !== 404) {
+      throw new Error(`GitLab did not say what the token can do (HTTP ${self.status}), so nothing was made; a fresh Go ahead tries again`);
+    }
+    halt();
     const name = typeof user.name === 'string' && user.name.trim() !== '' && !/[\r\n\0]/.test(user.name) ? user.name : user.username;
-    return { api, user: user.username, author: { name, email: commitEmailOf(user, root) }, forget };
+    return { api, user: user.username, author: { name, email: commitEmailOf(user, root) }, forget, end };
   } catch (error) {
-    forget();
+    if (taken) await end();
+    else forget();
     throw error;
   }
 }
@@ -1894,7 +1945,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
   // its key, or the key card's, is the sign-in).
   const signing = changes.find((c) => c.action === 'sign-in');
   if (signing?.via === 'setup-token') {
-    parts.push(bare ? 'You paste a one-day GitLab token into your computer\'s own box. Setup uses it for this step only, then forgets it.' : SETUP_TOKEN_LINE);
+    parts.push(bare ? 'You paste a one-day GitLab token into your computer\'s own box. Setup uses it for this step only, then revokes it.' : SETUP_TOKEN_LINE);
   } else if (signing?.via === 'token') {
     parts.push(tight ? 'You sign in with a token you paste into your computer\'s own box, never the chat.' : `You sign in to ${name} with a token: a page opens to make it, and you paste it into your computer's own box, never the chat.`);
   } else if (signing?.via === 'narrow-key') {
@@ -2251,22 +2302,24 @@ export function hostStep({
           // A look at the choices asks its questions afresh, so the director's own earlier answers are read from the run
           // (`recorded`); the real plan's answers are the run's already.
           const [earlierKey, earlier] = Object.entries(ctx.recorded ?? answers)
-            .filter(([key]) => key.startsWith(`3.${own}`) && /^[0-9a-f]{10}$/.test(key.slice(`3.${own}`.length)))
+            .filter(([key, a]) => key.startsWith(`3.${own}`) && /^[0-9a-f]{10}$/.test(key.slice(`3.${own}`.length)) && Number.isFinite(Date.parse(a?.at)))
             .sort(([, a], [, b]) => Date.parse(a.at) - Date.parse(b.at)).at(-1) ?? [null, null];
-          // The way chosen stands while it is still one of the card's; it is never taken as another way. One that can't be
-          // had any more is asked again, with the reason first, so the card reads differently from the one answered.
-          if (on(card, earlier)) {
+          // The card the director answered, whose words the answer's key names.
+          const readings = [false, true].flatMap((a) => [true, false].map((h) => connectionCard({ ...asked, appFile, asIs: a, held: h })));
+          const was = earlier === null ? null : answeredCard(readings, host, (c) => `3.${own}${digest(c)}` === earlierKey);
+          const says = (c, label) => c?.options.find((o) => o.label === label)?.says;
+          // The way chosen stands while it is still one of the card's and says what it said when chosen; it is never taken as
+          // another way, nor as the same name for something else. One that can't be had any more, or whose words changed, is
+          // asked again, with the reason after the question, so the card reads differently from the one answered.
+          if (on(card, earlier) && was !== null && says(was, earlier.label) === says(card, earlier.label)) {
             // A look at the choices still lists the card, with the director's answer standing on it.
             if (ctx.choicesOnly === true) return { ask: { id, card, carried: earlierKey } };
             got = earlier;
           } else if (earlier !== null) {
-            // The card the director answered: the one of today's two readings (with or without their own git) whose words
-            // the answer's key names.
-            const was = [false, true].flatMap((a) => [true, false].map((h) => connectionCard({ ...asked, appFile, asIs: a, held: h })))
-              .find((c) => `3.${own}${digest(c)}` === earlierKey) ?? null;
             const left = hostToolLeftOut(ctx, host);
-            card = was === null ? card : againCard(was, card, earlier.label);
-            card = { ...card, what: `${gone(earlier.label, host, { reach, left })} ${card.what}` };
+            const why = on(card, earlier) ? changed(earlier.label) : gone(earlier.label, host, { reach, left });
+            if (!on(card, earlier) && was !== null) card = againCard(was, card, earlier.label);
+            card = { ...card, what: `${card.what} ${why}` };
             id = `${own}${digest(card)}`;
             got = answer(id);
           }
@@ -2489,7 +2542,7 @@ export function hostStep({
       // the director's sign-in, which this route never has.
       const viaSetupToken = host === 'gitlab' && connection.mode === 'narrow' && changes.find((c) => c.action === 'sign-in')?.via === 'setup-token';
       if (viaSetupToken && (join !== null || typeof made?.publish === 'string')) throw new Error(SETUP_TOKEN_CANNOT(join !== null ? 'joining' : 'publish'));
-      const held = viaSetupToken ? await setupTokenApi({ base, via, say, open: opener, askSecret, platform, halt }) : null;
+      const held = viaSetupToken ? await setupTokenApi({ base, via, say, open: opener, askSecret, platform, halt, now }) : null;
       try {
         // A tool already signed in is used as it is, so the narrow sign-in is recorded only when it actually runs.
         const narrowPlanned = connection.mode !== 'as-is' && changes.find((c) => c.action === 'sign-in')?.via === 'narrow-key';
@@ -2601,11 +2654,11 @@ export function hostStep({
           } catch { /* recorded as not known */ }
           record({ id: newId('chg'), kind: 'host', target: `${project.repo} protection`, before: { on: before?.on ?? null, available: before?.available ?? null }, after: { action: 'protect', branch, on: true } });
           const got = await switchOnAsDirector({ host, repo: project.id, api, realUsers });
-          held.forget();
+          const revoked = await held.end();
           const lines = [got.line];
           if (realUsers) lines.push('A project with real users is merged by Maintainers only on GitLab, so Wheelhouse\'s key is refused and a person presses Merge');
           if (got.askPipelines) lines.push(`"Pipelines must succeed" is left off on ${branch}, since the project has no pipeline yet; once it has one, Wheelhouse asks you to switch it on`);
-          lines.push(...(got.gaps ?? []), 'Setup has forgotten the one-day token');
+          lines.push(...(got.gaps ?? []), revoked ? 'Setup has revoked the one-day token' : 'Setup has forgotten the one-day token; it ends by itself tomorrow');
           say(lines.map((l) => String(l).replace(/\.$/, '')).join('. '));
           halt();
         }
@@ -2619,8 +2672,8 @@ export function hostStep({
         say(`Connected: ${project.repo} on ${NAME[host]}, ${connection.mode === 'quick' ? 'Quick' : connection.mode === 'as-is' ? 'your own git as it is' : 'narrow'}`);
         return [];
       } finally {
-        // The setup token is dropped however the step ends: done, refused or stopped.
-        held?.forget();
+        // The setup token is revoked and dropped however the step ends: done, refused or stopped.
+        if (held !== null) await held.end();
       }
     },
   };

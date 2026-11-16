@@ -218,7 +218,7 @@ function goAheadAsks({ keptHere, list, host }) {
     return 'You\'ll be asked for a one-day GitLab token, pasted into your computer\'s own box, and your password if needed.';
   }
   if (way === WAYS.asIs) return `You'll be asked for a ${host} key only if your git holds none that works, pasted into your computer's own box, and your password if needed.`;
-  return 'You\'ll only be asked to sign in, or for your password.';
+  return `You'll sign in on ${host} pages that open and click through them, and give your password if needed.`;
 }
 
 // The one card for a run: { id, card, choices, writes }. `list` is openChoices'; `product` is
@@ -270,7 +270,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
   const yours = list.some((c) => c.chosen !== null);
   const time = setupTime(toRun, list);
   const question = [
-    nearlyDone ? `Finish setting up Wheelhouse for ${name}?` : `Set up Wheelhouse for ${name}?`,
+    nearlyDone ? `Finish setting up Wheelhouse for ${name}?` : `Set up Wheelhouse for ${name}${yours ? ' with your choices' : ''}?`,
     nearlyDone ? `Setup is nearly done. What's left takes ${time}:` : `${yours ? 'Here\'s the plan, with your choices.' : 'Here\'s what I recommend.'} It takes ${time}.`,
     ...lines.map((l) => `- ${l}`),
     'Nothing runs until you choose.',
