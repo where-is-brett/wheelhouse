@@ -178,14 +178,14 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     return join && join.label !== NEW_PRODUCT ? `Looked for on your ${host} account.` : `A new product, in a private ${host === 'GitLab' ? 'project' : 'repository'} on your ${host} account.`;
   }
   if (id.startsWith('connection')) {
-    if (label === WAYS.quick) return platform === 'darwin' ? `Agents use your ordinary ${host} sign-in, which they can't read on this Mac.` : `Agents use your ordinary ${host} sign-in.`;
+    if (label === WAYS.quick) return platform === 'darwin' ? `Agents use your ordinary ${host} sign-in, which reaches your whole account; they can't read it on this Mac.` : `Agents use your ordinary ${host} sign-in.`;
     if (label === STRICTER) return `A key for this project only, made on ${host} (you'll click Authorise and Install).`;
     if (label === WAYS.wheelhouse) return 'A key for this project only, through the Wheelhouse app (you\'ll type a code and click Install).';
     if (label === WAYS.own) return 'A key for this project only, from an app you create on GitHub (you\'ll tick Enable Device Flow, click Create, then Authorise and Install).';
     if (label === WAYS.asIs) return `Agents use your own git as it is, with a ${host} key that reaches everything your account can.`;
     // On GitLab the key may not be allowed (keys switched off, or a free plan on the public service), so the plan names the token that stands in.
     return host === 'GitLab'
-      ? `A GitLab key for this project only, or, where GitLab won't allow one, a ${PERSONAL_DAYS}-day token reaching all your projects.`
+      ? `A GitLab key for this project only, or, where GitLab won't allow one, a ${PERSONAL_DAYS}-day token that can act as you across GitLab.`
       : `A ${host} key for this project only.`;
   }
   if (id.startsWith('product-')) {
@@ -227,7 +227,7 @@ function goAheadAsks({ keptHere, list, host }) {
   if (way === WAYS.asIs) return `You'll be asked for a ${host} key only if your git holds none that works, pasted into your computer's own box, and your password if needed.`;
   // A narrow way on GitLab with its tool still meets GitLab's refusal of a project key the same way.
   const fallback = host === 'GitLab' && way !== null && way !== WAYS.quick
-    ? ` If GitLab won't make a key for one project, you'll also paste a token reaching all your projects for ${PERSONAL_DAYS} days into your computer's own box.` : '';
+    ? ` If GitLab won't make a key for one project, you'll also paste a ${PERSONAL_DAYS}-day token that can act as you across GitLab into your computer's own box.` : '';
   // A company's GitLab without a browser sign-in set up takes a token instead, which only setup's step 3 can tell.
   if (onCompanyGitLab(list, host)) return `You'll sign in to your company's GitLab in your browser, or with a token you make on a page that opens and paste into your computer's own box, and give your password if needed.${fallback}`;
   return `You'll sign in on ${host} pages that open and click through them, and give your password if needed.${fallback}`;

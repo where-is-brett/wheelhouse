@@ -293,7 +293,7 @@ function card(repo, local, host = 'github') {
       `Setup tries Wheelhouse's safety checks for real on ${repo}, with a test ${request} that holds nothing, on a branch named ${HEALTH_BRANCH}.`,
       'Wheelhouse\'s merge check is asked to merge it without your approval, and must refuse.',
       'It checks that All stop halts an agent, that the agents\' skills are installed, and that the main line is protected.',
-      'This Claude Code session tries the limits agents work within, the merge among them, then shows the Logbook.',
+      'This Claude Code session checks that agents are stopped where they should be, such as before a merge, then shows the Logbook.',
       `Setup then closes the test ${request} and deletes its branch.`,
     ];
   return {

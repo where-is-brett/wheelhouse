@@ -388,7 +388,8 @@ test('on a Mac Quick is the default and the narrow ways sit behind Make it stric
     assert.equal(card.recommend, WAYS.quick);
     assert.match(card.options[0].says, /ordinary .* sign-in/);
     assert.doesNotMatch(card.options[0].says, /full .* access|leaked/, 'no alarm on the default');
-    assert.equal(card.options[1].says, 'A key to this one project only, instead of your whole account; recommended for teams and products with real users.');
+    assert.match(card.options[1].says, /^A key to this one project only, instead of your whole account; recommended for teams and products with real users\./);
+    assert.equal(/30-day token you paste stands in, and it can act as you across GitLab\.$/.test(card.options[1].says), host === 'gitlab');
     assert.equal(connectionCard({ host, where, platform: 'darwin', realUsers: true }).recommend, STRICTER);
     composeCard({ ...card, kind: 'question' });
   }
@@ -410,7 +411,7 @@ test('on Windows a narrow way is recommended, with one plain line on why, and Qu
   for (const host of ['github', 'gitlab']) {
     const card = connectionCard({ host, where, platform: 'win32' });
     assert.equal(card.recommend, host === 'github' ? WAYS.own : WAYS.narrow);
-    assert.match(card.because, host === 'github' ? /if it leaked, the rest of your account would stay out of reach/ : /if it leaked, only this project would be open, unless GitLab won't make a project key \(the public GitLab's free plan won't, and some companies switch them off\): then the 30-day token opens all your projects/);
+    assert.match(card.because, host === 'github' ? /if it leaked, the rest of your account would stay out of reach/ : /if it leaked, only this project would be open, unless GitLab won't make a project key \(the public GitLab's free plan won't, and some companies switch them off\): then a 30-day token you paste stands in, and it can act as you in every GitLab project and group you can reach/);
     assert.doesNotMatch(card.because, /Windows/);
     const quick = card.options.find((o) => o.label === WAYS.quick).says;
     assert.ok(quick.startsWith(quickLineFor(host)));
@@ -887,7 +888,7 @@ test('a pasted personal token is asked what it is: one wider or longer than the 
 });
 
 test('a pasted personal token GitLab won\'t describe is refused, with word to delete it', async () => {
-  for (const [self, words] of [[{ status: 404, body: null }, /HTTP 404\), so it was not kept: delete it on GitLab's Access tokens page/], [{ status: 403, body: null }, /would not let the pasted token say what it can do, so it was not kept: delete it/], [{ status: 500, body: null }, /HTTP 500\), so it was not kept: delete it/]]) {
+  for (const [self, words] of [[{ status: 404, body: null }, /HTTP 404\), so it was not kept: delete it on GitLab's Access tokens page/], [{ status: 403, body: null }, /would not let the pasted token say what it can do \(it needs api\), so it was not kept: delete it/], [{ status: 500, body: null }, /HTTP 500\), so it was not kept: delete it/]]) {
     await withHome(async () => {
       const w = standIn({ refuseKeys: true });
       w.pastedSelf = self;

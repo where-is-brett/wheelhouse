@@ -1301,7 +1301,7 @@ test('the card lists every part on GitLab with a long branch and release, and st
   // Made with the setup token: the project's key, or the director's own token GitLab made them paste in its place.
   const keyedText = (pasted) => composeCard({ ...projectFilesCard({ changes: changes.filter((c) => c.action !== 'protect'), host: 'gitlab', branch: 'main', release: null, keyed: true, pasted }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
   assert.match(keyedText(false), /with the project's own key, not your account/);
-  assert.match(keyedText(true), /with the token you pasted at step 3, which reaches all your projects/);
+  assert.match(keyedText(true), /with the token you pasted at step 3, which can act as you across GitLab/);
   assert.doesNotMatch(keyedText(true), /not your account/);
 });
 

@@ -420,9 +420,9 @@ function realUsersAsk(name, platform) {
     card: {
       level: 2,
       what: `Does ${name} have real users yet: people who rely on it, beyond you and anyone testing it?`,
-      why: platform === 'darwin' ? 'A product with real users gets a narrow connection, and the offer of stricter protection.' : 'A product with real users gets a narrow connection.',
+      why: 'A product with real users gets a narrow connection.',
       options: [
-        { label: REAL_USERS.yes, says: 'Setup treats it as launched: agents get a narrow connection, a key to this one project wherever one can be made, and Quick is not offered.' },
+        { label: REAL_USERS.yes, says: 'Setup treats it as launched: agents get a narrow connection, a key to this one project wherever one can be made, and agents never use your whole-account sign-in.' },
         { label: REAL_USERS.no, says: 'Setup treats it as before launch, like a throwaway or test project. You can change this when it has users.' },
       ],
       recommend: REAL_USERS.no,
@@ -816,8 +816,8 @@ function againCard(earlier, now, label) {
 
 // The advanced choice on the Mac's card, which leads to the narrow ways (the director's ruling of 24 October 2026).
 export const STRICTER = 'Make it stricter';
-const STRICTER_SAYS = 'A key to this one project only, instead of your whole account; recommended for teams and products with real users.';
-const quickOnMac = (host) => `Your ordinary ${NAME[host]} sign-in, through ${NAME[host]}'s own tool. Agents work through Wheelhouse's helper, and on this Mac they can't read it.`;
+const STRICTER_SAYS = (host) => `A key to this one project only, instead of your whole account; recommended for teams and products with real users.${host === 'gitlab' ? ` Where GitLab won't make project keys, a ${PERSONAL_DAYS}-day token you paste stands in, and it can act as you across GitLab.` : ''}`;
+const quickOnMac = (host) => `Your ordinary ${NAME[host]} sign-in, through ${NAME[host]}'s own tool, reaching your whole account. Agents use it only through Wheelhouse's helper, and on this Mac they can't read it.`;
 
 // The connection's question (Card 1's answer, design section 11), the composer's input without its
 // kind. On a Mac, for a project that is neither Locked nor launched, Quick is the default and the
@@ -845,9 +845,9 @@ export function connectionCard({ host, locked = false, launched = false, realUse
       level: 3,
       what: `${realUsers ? 'The product has real users. ' : ''}How should Wheelhouse's agents reach ${place}?`,
       why: `Agents push and open ${host === 'gitlab' ? 'merge requests' : 'pull requests'} only through Wheelhouse's helper; this chooses whose key it holds.`,
-      options: recommendedFirst([asIs ? own : { label: WAYS.quick, says: quickOnMac(host) }, { label: STRICTER, says: STRICTER_SAYS }], realUsers ? STRICTER : (asIs ? WAYS.asIs : WAYS.quick)),
+      options: recommendedFirst([asIs ? own : { label: WAYS.quick, says: quickOnMac(host) }, { label: STRICTER, says: STRICTER_SAYS(host) }], realUsers ? STRICTER : (asIs ? WAYS.asIs : WAYS.quick)),
       recommend: realUsers ? STRICTER : (asIs ? WAYS.asIs : WAYS.quick),
-      because: realUsers ? 'the product has real users' : asIs ? `${held ? 'it uses what your computer already has' : 'it works with your own git'}, and you can make it stricter later` : 'it uses your own sign-in, and you can make it stricter later',
+      because: realUsers ? 'the product has real users' : asIs ? `${held ? 'it uses what your computer already has' : 'it works with your own git'}, and you can make it stricter later` : 'it is the simplest start, and you can make it stricter later',
       meanwhile: MEANWHILE,
     };
   }
@@ -860,7 +860,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
     options.push({ label: WAYS.own, says: 'Narrow, through a GitHub App of your own, filled in from Wheelhouse\'s: you tick Enable Device Flow and click Create.' });
     recommend = app ? WAYS.wheelhouse : WAYS.own;
   } else {
-    options.push({ label: WAYS.narrow, says: `A key to this one project. Setup makes it with your GitLab sign-in, or, without GitLab's own tool, with a one-day token you paste into your computer's own box, which setup then revokes. Where GitLab won't make project keys, a ${PERSONAL_DAYS}-day token reaching all your projects stands in.` });
+    options.push({ label: WAYS.narrow, says: 'A key to this one project, which setup makes with GitLab\'s own tool where you have it, or else with a one-day token you paste into your computer\'s own box and setup revokes after.' });
     recommend = WAYS.narrow;
   }
   const quick = !locked && !launched && !asIs;
@@ -875,7 +875,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
   // On GitLab the project key can be refused (always on the public GitLab's free plan, and where a company switches them off), and
   // the token in its place opens every project.
   const reach = host === 'gitlab'
-    ? `if it leaked, only this project would be open, unless GitLab won't make a project key (the public GitLab's free plan won't, and some companies switch them off): then the ${PERSONAL_DAYS}-day token opens all your projects`
+    ? `if it leaked, only this project would be open, unless GitLab won't make a project key (the public GitLab's free plan won't, and some companies switch them off): then a ${PERSONAL_DAYS}-day token you paste stands in, and it can act as you in every GitLab project and group you can reach`
     : 'if it leaked, the rest of your account would stay out of reach';
   // A product with real users says so first, so this card reads differently from the one asked before that was known.
   const lead = realUsers && !locked && !launched ? 'The product has real users. ' : '';
@@ -1916,7 +1916,7 @@ async function checkPersonalToken(own, now) {
   } catch {
     throw new Error(`Could not reach GitLab to check the pasted token, so it was not kept: ${gone}`);
   }
-  if (self.status === 401 || self.status === 403) throw new Error(`GitLab would not let the pasted token say what it can do, so it was not kept: ${gone}`);
+  if (self.status === 401 || self.status === 403) throw new Error(`GitLab would not let the pasted token say what it can do (it needs api), so it was not kept: ${gone}`);
   if (self.status !== 200) throw new Error(`GitLab did not say what the pasted token can do (HTTP ${self.status}), so it was not kept: ${gone}`);
   const scopes = self.body?.scopes;
   const ends = self.body?.expires_at;
@@ -2038,7 +2038,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     parts.push(rest || keyCard ? `That key reaches everything your account can on ${name}.` : `Both reach everything your account can on ${name}.`);
   } else if (way === WAYS.quick) parts.push(`Quick: your own ${name} sign-in, which reaches your whole account.`);
   else if (host === 'gitlab') {
-    parts.push(tight ? `A key to this project only; if GitLab won't allow one, a ${PERSONAL_DAYS}-day token reaching all your projects.` : `A key to this project only, with the rights agents need there. If GitLab won't allow one, a ${PERSONAL_DAYS}-day token reaching all your projects, pasted into your computer's own box.`);
+    parts.push(tight ? `A key to this project only; if GitLab won't allow one, a ${PERSONAL_DAYS}-day token that can act as you across GitLab.` : `A key to this project only, with the rights agents need there. If GitLab won't allow one, a ${PERSONAL_DAYS}-day token that can act as you across GitLab, pasted into your computer's own box.`);
     // A project with real users is merged by Maintainers only, which a Developer key is not (GITLAB_MAINTAINERS_ONLY, helper.js).
     if (realUsers) parts.push(REAL_USERS_MERGE_LINE);
   }
