@@ -102,7 +102,7 @@ test('path a: with GitLab\'s tool left out, Quick is not offered, and where git 
   assert.deepEqual(connection[0].card.options.map((o) => o.label), ['Narrow', 'Use my git as it is'], 'the recommended way comes first');
   assert.equal(recommendedOf(connection[0].card), 'Narrow');
   const own = connection[0].card.options.find((o) => o.label === 'Use my git as it is');
-  assert.match(own.description, /a GitLab key you make on a page that opens/, 'the way says the key is still to be made');
+  assert.match(own.description, /If git holds no GitLab key that works, you make one on a page that opens\./, 'the way says the key may still be made');
   const tool = cards.find((c) => c.step === 2 && c.kind === 'question');
   assert.equal(recommendedOf(tool.card), 'Don\'t use GitLab\'s tool');
   assert.ok(cards.findIndex((c) => c === tool) < cards.findIndex((c) => c === connection[0]), 'GitLab\'s tool is asked before the connection');
@@ -115,7 +115,8 @@ test('path b\': Quick, once GitLab\'s tool can\'t be fetched, is asked again wit
   const connection = cards.filter((c) => c.step === 3 && /^connection-/.test(c.id));
   assert.equal(connection.length, 2, 'the connection card is asked twice: once, and again once Quick can\'t be had');
   assert.equal(connection[0].answer.label, 'Quick');
-  assert.match(connection[1].card.question, /^How should .*\? Quick is no longer offered: it needs GitLab's own tool, which couldn't be fetched on this computer\. Narrow asks you for a one-day GitLab token/);
+  assert.match(connection[1].card.question, /^How should .*\? Quick is no longer offered: it needs GitLab's own tool, which couldn't be fetched on this computer\.\n/);
+  assert.match(connection[1].card.question, /\nSetup waits for your answer; nothing is made on GitLab until you choose\.\n/);
   assert.equal(connection[1].card.options[0].label, connection[0].card.options[0].label, 'the first option stays first');
   assert.ok(!connection[1].card.options.some((o) => o.label === 'Quick'), 'Quick is gone');
   assert.equal(recommendedOf(connection[1].card), recommendedOf(connection[0].card));
@@ -203,7 +204,7 @@ test('on GitLab, step 10\'s card names a merge request, never a pull request', a
 });
 
 test('each path\'s plan says what will be asked of the director', async () => {
-  const asks = { a: /a GitLab key only if your git holds none that works/, b: /one-day GitLab token, pasted into your computer's own box/, c: /one-day GitLab token, pasted into your computer's own box/, d: /sign in on GitHub pages that open/, e: /sign in to your company's GitLab in your browser, or with a token you make on a page that opens/ };
+  const asks = { a: /a GitLab key only if your git holds none that works/, b: /one-day GitLab token, and perhaps a second token for the project, each pasted into your computer's own box/, c: /one-day GitLab token, and perhaps a second token for the project, each pasted into your computer's own box/, d: /sign in on GitHub pages that open/, e: /sign in to your company's GitLab in your browser, or with a token you make on a page that opens/ };
   for (const [name, says] of Object.entries(asks)) {
     const { cards } = await rendered(name);
     const plan = cards.filter((c) => /^plan-/.test(c.id)).at(-1);

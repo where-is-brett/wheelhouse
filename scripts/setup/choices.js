@@ -218,7 +218,7 @@ function goAheadAsks({ keptHere, list, host }) {
   const way = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.label ?? null;
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
   if (host === 'GitLab' && noTool && way !== null && way !== WAYS.quick && way !== WAYS.asIs) {
-    return 'You\'ll be asked for a one-day GitLab token, pasted into your computer\'s own box, and your password if needed.';
+    return 'You\'ll be asked for a one-day GitLab token, and perhaps a second token for the project, each pasted into your computer\'s own box, and your password if needed.';
   }
   if (way === WAYS.asIs) return `You'll be asked for a ${host} key only if your git holds none that works, pasted into your computer's own box, and your password if needed.`;
   // A company's GitLab without a browser sign-in set up takes a token instead, which only setup's step 3 can tell.

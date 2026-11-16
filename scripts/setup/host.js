@@ -764,7 +764,7 @@ const quickSays = (host, platform) => `${quickLineFor(host)} If that sign-in lea
 // "Use my git as it is" in a few plain words, and what it reaches (design section 4.4). On Windows nothing keeps an agent's
 // command from asking git for the key, so the option's words say so.
 // Where git holds no key for the host yet (`held` false), the key is one the director makes on a page, and the words say so.
-const asIsSays = (host, held = true) => `Your own git and ${held ? 'the key it already uses' : `a ${NAME[host]} key you make on a page that opens`}, for pushes and ${host === 'github' ? 'pull' : 'merge'} requests, reaching everything your account can.`;
+const asIsSays = (host, held = true) => `${held ? 'Your own git and the key it already uses' : 'Your own git and its key'}, for pushes and ${host === 'github' ? 'pull' : 'merge'} requests, reaching everything your account can.${held ? '' : ` If git holds no ${NAME[host]} key that works, you make one on a page that opens.`}`;
 const AS_IS_WINDOWS = 'On Windows any agent\'s command could ask git for that key.';
 
 // The reason line on a connection card asked again because the way chosen can't be had now, said plainly. Quick works
@@ -772,10 +772,11 @@ const AS_IS_WINDOWS = 'On Windows any agent\'s command could ask git for that ke
 const gone = (label, host, { reach, left }) => {
   if (label !== WAYS.quick || reach?.tool === 'works') return `${label} can't be used on this computer now, so choose again.`;
   const why = left ? 'which you chose not to use' : 'which couldn\'t be fetched on this computer';
-  // Without the tool, GitLab's narrow way starts from a one-day token, which no plan card says once this card is asked again.
-  const token = host === 'gitlab' ? ' Narrow asks you for a one-day GitLab token, pasted into your computer\'s own box.' : '';
-  return `Quick is no longer offered: it needs ${NAME[host]}'s own tool, ${why}.${token}`;
+  return `Quick is no longer offered: it needs ${NAME[host]}'s own tool, ${why}.`;
 };
+
+// The line under a connection card asked again: it may come after the plan's Go ahead, so it promises no plan card.
+const againMeanwhile = (host) => `Setup waits for your answer; nothing is made on ${NAME[host]} until you choose.`;
 
 // The reason line on a connection card asked again because the way chosen now does something else, as its words say.
 const changed = (label) => `${label} works differently now, as its words say, so choose again.`;
@@ -786,7 +787,7 @@ const changed = (label) => `${label} works differently now, as its words say, so
 function answeredCard(readings, host, named) {
   const labels = [...new Set(readings.flatMap((r) => r.options.map((o) => o.label)))];
   const reasons = (label) => [{ tool: 'works' }, {}].flatMap((reach) => [true, false].map((left) => gone(label, host, { reach, left })));
-  const said = (c, why) => ({ ...c, what: `${c.what} ${why}` });
+  const said = (c, why) => ({ ...c, what: `${c.what} ${why}`, meanwhile: againMeanwhile(host) });
   return readings.flatMap((now) => [
     now,
     ...now.options.map((o) => said(now, changed(o.label))),
@@ -845,7 +846,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
       why: `Agents push and open ${host === 'gitlab' ? 'merge requests' : 'pull requests'} only through Wheelhouse's helper; this chooses whose key it holds.`,
       options: recommendedFirst([asIs ? own : { label: WAYS.quick, says: quickOnMac(host) }, { label: STRICTER, says: STRICTER_SAYS }], realUsers ? STRICTER : (asIs ? WAYS.asIs : WAYS.quick)),
       recommend: realUsers ? STRICTER : (asIs ? WAYS.asIs : WAYS.quick),
-      because: realUsers ? 'the product has real users' : asIs ? `${held ? 'it uses what your computer already has' : 'it works with your own git'}, and you can make it stricter later` : 'it needs nothing more, and you can make it stricter later',
+      because: realUsers ? 'the product has real users' : asIs ? `${held ? 'it uses what your computer already has' : 'it works with your own git'}, and you can make it stricter later` : 'it uses your own sign-in, and you can make it stricter later',
       meanwhile: MEANWHILE,
     };
   }
@@ -858,7 +859,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
     options.push({ label: WAYS.own, says: 'Narrow, through a GitHub App of your own, filled in from Wheelhouse\'s: you tick Enable Device Flow and click Create.' });
     recommend = app ? WAYS.wheelhouse : WAYS.own;
   } else {
-    options.push({ label: WAYS.narrow, says: 'A GitLab key to this one project only.' });
+    options.push({ label: WAYS.narrow, says: 'A GitLab key to this one project only. Without GitLab\'s own tool, setup first asks you for a one-day GitLab token, pasted into your computer\'s own box.' });
     recommend = WAYS.narrow;
   }
   const quick = !locked && !launched && !asIs;
@@ -1217,8 +1218,12 @@ export async function setupTokenApi({ base, via = {}, say = () => {}, open, askS
     const name = typeof user.name === 'string' && user.name.trim() !== '' && !/[\r\n\0]/.test(user.name) ? user.name : user.username;
     return { api, user: user.username, author: { name, email: commitEmailOf(user, root) }, forget, end, checked };
   } catch (error) {
-    if (taken) await end();
-    else forget();
+    if (!taken) {
+      forget();
+      throw error;
+    }
+    // A refused token is said to be revoked only where GitLab took it back.
+    if (!(await end()) && (error.message === SETUP_TOKEN_WIDE || error.message === SETUP_TOKEN_LONG)) throw new Error(error.message.replace(' and revoked it:', ', but could not revoke it, so delete it on GitLab\'s Access tokens page and'));
     throw error;
   }
 }
@@ -1881,8 +1886,8 @@ async function connectGitlabKeys({ api, projects, owner, platform, say, open, as
 // What the card says of protection.
 export function protectionPlanLine(host) {
   return host === 'gitlab'
-    ? 'At step 7, setup uses your sign-in to protect the main line: changes go in only through merge requests, and where the project has a pipeline, it must pass first.'
-    : 'At step 7, setup uses your sign-in to protect the main line, where your GitHub plan allows.';
+    ? 'At step 7, setup acts as you on GitLab to protect the main line: changes go in only through merge requests, and where the project has a pipeline, it must pass first.'
+    : 'At step 7, setup acts as you on GitHub to protect the main line, where your GitHub plan allows.';
 }
 
 // Switches the host's protection on with the director's own sign-in, never the narrow key (`run`
@@ -1983,7 +1988,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     parts.push(rest || keyCard ? `That key reaches everything your account can on ${name}.` : `Both reach everything your account can on ${name}.`);
   } else if (way === WAYS.quick) parts.push(`Quick: your own ${name} sign-in, which reaches your whole account.`);
   else if (host === 'gitlab') {
-    parts.push(tight ? 'A Developer key to this project only, or a token typed into your computer\'s own box.' : 'A key to this project only, with Developer rights. If GitLab won\'t allow such a key, a token you make on GitLab and paste into your computer\'s own box.');
+    parts.push(tight ? 'A key to this project only, with the rights agents need there; you may paste one or two tokens.' : 'A key to this project only, with the rights agents need there and no more. If GitLab won\'t allow such a key, a second token you make on GitLab and paste into your computer\'s own box.');
     // A project with real users is merged by Maintainers only, which a Developer key is not (GITLAB_MAINTAINERS_ONLY, helper.js).
     if (realUsers) parts.push(REAL_USERS_MERGE_LINE);
   }
@@ -2322,7 +2327,7 @@ export function hostStep({
             const left = hostToolLeftOut(ctx, host);
             const why = on(card, earlier) ? changed(earlier.label) : gone(earlier.label, host, { reach, left });
             if (!on(card, earlier) && was !== null) card = againCard(was, card, earlier.label);
-            card = { ...card, what: `${card.what} ${why}` };
+            card = { ...card, what: `${card.what} ${why}`, meanwhile: againMeanwhile(host) };
             id = `${own}${digest(card)}`;
             got = answer(id);
           }
@@ -2661,7 +2666,7 @@ export function hostStep({
           const lines = [got.line];
           if (realUsers) lines.push('A project with real users is merged by Maintainers only on GitLab, so Wheelhouse\'s key is refused and a person presses Merge');
           if (got.askPipelines) lines.push(`"Pipelines must succeed" is left off on ${branch}, since the project has no pipeline yet; once it has one, Wheelhouse asks you to switch it on`);
-          lines.push(...(got.gaps ?? []), revoked ? 'Setup has revoked the one-day token' : held.checked ? 'Setup has forgotten the one-day token; it ends by itself tomorrow' : 'Setup has forgotten the one-day token but could not revoke it: delete it on GitLab\'s Access tokens page');
+          lines.push(...(got.gaps ?? []), revoked ? 'Setup has revoked the one-day token' : held.checked ? 'Setup has forgotten the one-day token; it ends by itself within two days' : 'Setup has forgotten the one-day token but could not revoke it: delete it on GitLab\'s Access tokens page');
           say(lines.map((l) => String(l).replace(/\.$/, '')).join('. '));
           halt();
         }

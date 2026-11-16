@@ -3317,6 +3317,12 @@ test('a setup token that can do more than api, or lasts longer than a day, is re
     assert.deepEqual(curl.revoked, [SETUP_TOKEN], 'revoked');
     assert.ok(!curl.calls.some((c) => c.method !== 'GET' && !/personal_access_tokens\/self$/.test(c.url)), 'nothing made');
   }
+  // Where GitLab does not take a refused token back, setup says to delete it, never that it was revoked.
+  for (const self of [{ scopes: ['api', 'sudo'], expires_at: '2026-10-21' }, { scopes: ['api'], expires_at: '2026-11-19' }]) {
+    const got = await setupTokenApi({ base: 'https://gitlab.example.com', via: tokenVia(setupTokenCurl(standIn(), { self, revokeStatus: 500 })), open: async () => {}, askSecret: async () => SETUP_TOKEN, now: at }).catch((e) => e);
+    assert.match(got.message, /so setup made nothing with it, but could not revoke it, so delete it on GitLab's Access tokens page and make a new one/, JSON.stringify(self));
+    assert.doesNotMatch(got.message, /and revoked it/);
+  }
   // Ending the day after tomorrow at the latest, for a director a day ahead: taken, and revoked at the end.
   const curl = setupTokenCurl(standIn(), { self: { scopes: ['api'], expires_at: '2026-10-22' } });
   const held = await setupTokenApi({ base: 'https://gitlab.example.com', via: tokenVia(curl), open: async () => {}, askSecret: async () => SETUP_TOKEN, now: at });
@@ -3395,7 +3401,7 @@ test('Narrow on GitLab without its tool makes the project key and protects the m
 });
 
 test('where GitLab does not revoke the setup token, setup says it ends tomorrow only when GitLab said so, and otherwise to delete it', async () => {
-  for (const [self, said] of [[undefined, /Setup has forgotten the one-day token; it ends by itself tomorrow/], [null, /Setup has forgotten the one-day token but could not revoke it: delete it on GitLab's Access tokens page/]]) {
+  for (const [self, said] of [[undefined, /Setup has forgotten the one-day token; it ends by itself within two days/], [null, /Setup has forgotten the one-day token but could not revoke it: delete it on GitLab's Access tokens page/]]) {
     await withHome(async () => {
       const w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
       const curl = setupTokenCurl(w, { self, revokeStatus: 500 });

@@ -1292,7 +1292,7 @@ test('the card lists every part on GitLab with a long branch and release, and st
   ];
   const text = (branch, ref) => composeCard({ ...projectFilesCard({ changes, host: 'gitlab', branch, release: { ref } }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
   const usual = text('main', 'v1.4.0');
-  for (const words of ['Compact instructions', 'settings.local.json', 'Superpowers', 'Set up Wheelhouse', 'must pass the project\'s automatic checks', 'GitLab sign-in', 'v1.4.0', 'never updates itself']) {
+  for (const words of ['Compact instructions', 'settings.local.json', 'Superpowers', 'Set up Wheelhouse', 'must pass the project\'s automatic checks', 'acting as you on GitLab', 'v1.4.0', 'never updates itself']) {
     assert.ok(usual.includes(words), words);
   }
   const long = text(`release/${'x'.repeat(200)}`, `v${'9'.repeat(150)}`);
