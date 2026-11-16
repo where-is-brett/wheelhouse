@@ -6,11 +6,11 @@ export const QUICK_LINE = 'Agents act with your full GitHub or GitLab access, ac
 export const quickLineFor = (host) => (host === 'github'
   ? 'Agents act with your full GitHub access, across all your repositories.'
   : 'Agents act with your full GitLab access, across all your projects.');
-// What keeps an agent's commands from the director's sign-in on a Mac: GitHub's sits in the saved passwords, which an app-signing
-// project opens; GitLab's tool keeps its own in a settings folder, which signing doesn't open.
+// What keeps an agent's commands from the director's sign-in on a Mac: the sandbox denies the saved passwords and GitLab's
+// tool's settings folder, but a project that signs Apple apps opens the saved passwords, where either sign-in may be kept.
 export const macKeepsAway = (host) => (host === 'github'
-  ? 'on this Mac the sandbox keeps agents\' commands away from your Mac\'s saved passwords, where that sign-in is kept, unless the project builds Apple apps'
-  : 'on this Mac the sandbox keeps agents\' commands away from that sign-in, which GitLab\'s tool keeps in its own settings folder');
+  ? 'on this Mac the sandbox keeps agents\' commands away from your Mac\'s saved passwords, where that sign-in is kept, unless the project signs Apple apps, which opens those passwords to agents\' commands'
+  : 'on this Mac the sandbox keeps agents\' commands away from that sign-in, unless the project signs Apple apps, which opens your Mac\'s saved passwords to agents\' commands');
 // The calm line when the host's tool stopped starting on this computer and the helper moved to the host's web API.
 export const switchedLine = (host) => `${host === 'github' ? 'GitHub' : 'GitLab'}'s tool stopped working on this computer, so Wheelhouse is using ${host === 'github' ? 'GitHub' : 'GitLab'}'s web API instead.`;
 // The lines for a host key GitLab or GitHub refused (401) and for one that is not there. Both send the director to

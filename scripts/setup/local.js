@@ -128,6 +128,7 @@ export function keptAsk(name, others) {
   const line = othersLine(others);
   return {
     id: 'kept',
+    endsBatch: true,
     line: line === null ? KEPT_LINE : `${KEPT_LINE} ${line}`,
     card: {
       level: 2,
@@ -248,7 +249,7 @@ export function localCard({ changes, branch, others, desktop = true }) {
     ...(changes.some((c) => c.action === 'git-init') ? [`git starts in this folder, on ${branch}`] : []),
     ...(changes.some((c) => c.action === 'first-commit') ? [`a first commit on ${branch}`] : []),
     ...(changes.some((c) => c.action === 'home' && typeof c.restore === 'string') ? ['the project brought back from your backup, into this folder'] : []),
-    'a private copy of the project\'s history on this computer, which only Wheelhouse\'s helper changes',
+    'a private copy of the project\'s history on this computer',
     'the project\'s record, kept on this computer',
     ...(backup === undefined ? [] : [later ? 'no backup: the project stays only on this computer' : 'a backup in the folder you choose, after each merge']),
     FIRST_CHECK_LINE.replace(/\.$/, '').replace(/^W/, 'w'),

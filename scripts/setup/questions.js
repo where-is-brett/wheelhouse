@@ -185,8 +185,8 @@ function productAsk(name, { described, realUsers }) {
   const entry = (plain) => ({ kind: 'glossary', data: { term: name, plain } });
   const shaping = 'A new product, still taking shape.';
   const options = [
-    described === null ? { label: PRODUCT.shaping, says: `Setup records "${shaping}", so agents know it is new. You can describe it to the First Mate later.` } : { label: PRODUCT.readme, says: `"${described}"` },
-    { label: PRODUCT.later, says: 'Setup records no description yet. You can give one to the First Mate later.' },
+    described === null ? { label: PRODUCT.shaping, says: `Setup records "${shaping}" as its description, so agents know it is new. You can replace it by telling the First Mate, any time.` } : { label: PRODUCT.readme, says: `"${described}"` },
+    { label: PRODUCT.later, says: 'Setup records no description at all, not even that it is new. You can give one to the First Mate any time.' },
   ];
   return {
     id: `product-${phase}`,
@@ -220,7 +220,7 @@ function liveDataAsk(name, { isNew = false, platform = process.platform } = {}) 
       what: `Does ${name} hold live data, such as real people's accounts, orders or messages?`,
       // Windows runs no sandbox, so there the rule binds only Claude Code's own tools and an agent's command can still read the files.
       why: platform === 'win32'
-        ? 'Agents are told not to open the project\'s secret files, but on Windows their commands could still read them, as the product\'s own code can.'
+        ? 'Agents are told not to open the project\'s secret files, but on Windows nothing stops their commands reading them.'
         : 'Agents are kept from opening the project\'s secret files themselves, though the product\'s own code they run can still use them.',
       options: [
         { label: LIVE_DATA.yes, says: 'Agents are told to use test data only, and to leave the live data alone.' },

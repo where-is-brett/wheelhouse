@@ -469,6 +469,7 @@ export function lockedAsk(name) {
 function hostAsk(name) {
   return {
     id: 'host',
+    endsBatch: true,
     card: {
       level: 2,
       what: `Where should ${name} be kept? No account on GitHub or GitLab yet? You can make one at the sign-in.`,
@@ -654,9 +655,11 @@ function joinAsk(id, name, { missed }) {
   else if (missed?.missed === 'no-backup') found = `"${missed.name}" can't be found. `;
   else if (Array.isArray(missed?.missed)) found = `More than one ${missed.name} is set up with Wheelhouse: ${missed.missed.slice(0, 5).join(', ')}. `;
   else if (missed) found = `Setup found no ${missed.name} set up with Wheelhouse on your account or organisations. `;
+  // Customise asks it apart from the cards after it, since the real-users card speaks of the host it chooses.
   return {
     id,
     typed: true,
+    endsBatch: true,
     card: {
       level: 2,
       what: `${found}Where should ${name} be kept?`,
@@ -779,7 +782,7 @@ const quickSays = (host, platform) => `${quickLineFor(host)} If that sign-in lea
 // "Use my git as it is" in a few plain words, and what it reaches (design section 4.4). On Windows nothing keeps an agent's
 // command from asking git for the key, so the option's words say so.
 // Where git holds no key for the host yet (`held` false), the key is one the director makes on a page, and the words say so.
-const asIsSays = (host, held = true) => `${held ? 'Your own git and the key it already uses' : 'Your own git and its key'}, for pushes and ${host === 'github' ? 'pull' : 'merge'} requests, reaching everything your account can.${held ? '' : ` If git holds no ${NAME[host]} key that works, you make one on a page that opens${host === 'gitlab' ? `, with its expiry date set ${KEY_DAYS_ASKED} days ahead` : `, set to last ${KEY_DAYS_ASKED} days`}.`}`;
+const asIsSays = (host, held = true) => `${held ? 'Your own git and the key it already uses' : 'Your own git and its key'}, for pushes and ${host === 'github' ? 'pull' : 'merge'} requests, reaching everything your account can.${held ? '' : ` If git holds no ${NAME[host]} key that works, you make one on a page that opens${host === 'gitlab' ? ` and set its expiry date ${KEY_DAYS_ASKED} days ahead` : `, set to last ${KEY_DAYS_ASKED} days`}.`}`;
 const AS_IS_WINDOWS = 'On Windows any agent\'s command could ask git for that key.';
 
 // The reason line on a connection card asked again because the way chosen can't be had now, said plainly. Quick works
@@ -881,7 +884,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
     recommend = app ? WAYS.wheelhouse : WAYS.own;
   } else {
     // On the public GitLab's free plan the project key is refused, so the option says what a free account gets first.
-    const made = toolOut ? 'from a one-day token you paste into a box on your screen, revoking the token afterwards' : 'with GitLab\'s own tool';
+    const made = toolOut ? 'from a one-day token (a password you make on GitLab for setup to use) that you paste into a box on your screen, and cancels it afterwards' : 'with GitLab\'s own tool';
     const says = publicGitLab
       ? `On a free account, a ${PERSONAL_DAYS}-day token you paste, which can act as you across GitLab; on a paid plan, a key to this one project, which setup makes ${made}.`
       : `A key to this one project, which setup makes ${made}.`;
@@ -1191,7 +1194,7 @@ const SETUP_TOKEN_LONG = 'The GitLab token lasts longer than a day, so setup mad
 // The latest end a setup token may have: the day after tomorrow, in case the director's tomorrow is a day ahead.
 const SETUP_TOKEN_DAYS = 2;
 // What step 3's card says of protection with the setup token.
-export const SETUP_TOKEN_PROTECTION = 'Setup protects the main line now, while it holds that token: changes go in only through merge requests, and any automatic checks it has must pass first.';
+export const SETUP_TOKEN_PROTECTION = 'Setup protects the main line now, while it holds that token: changes go in only through merge requests; once it has automatic checks, Wheelhouse asks you to make them required.';
 // What step 3's card says of merging a project with real users through a key for that project only.
 export const REAL_USERS_MERGE_LINE = 'With real users, only you can merge on GitLab: when a change is ready, you press Merge there.';
 // Step 3's wait where the setup token can't do what the product needs, in plain words for the director.
@@ -1977,7 +1980,7 @@ async function checkPersonalToken(own, now) {
 // What the card says of protection.
 export function protectionPlanLine(host, company = false) {
   return host === 'gitlab'
-    ? `At step 7, setup acts as you on ${company ? 'your company\'s GitLab' : 'GitLab'} to protect the main line: changes go in only through merge requests, and any automatic checks it has must pass first.`
+    ? `At step 7, setup acts as you on ${company ? 'your company\'s GitLab' : 'GitLab'} to protect the main line: changes go in only through merge requests; Wheelhouse asks later to require automatic checks.`
     : 'At step 7, setup acts as you on GitHub to protect the main line, if your GitHub plan allows it (the free plan doesn\'t for a private repository).';
 }
 
@@ -2076,7 +2079,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     const rest = connection?.backend === 'rest';
     const proxy = rest && connection.proxied === true ? ', through your company\'s proxy' : '';
     // The key git holds is the sign-in. Where it has none, or one the host refuses, the key card makes the one git then holds.
-    if (keyCard?.state === 'none') parts.push(bare ? `A ${name} key for your git, pasted into a box on your screen.` : `Your git holds no ${name} key yet: a page opens to make one, ${name === 'GitLab' ? `with its expiry date set ${KEY_DAYS_ASKED} days ahead` : `set to last ${KEY_DAYS_ASKED} days`}, and you paste it into a box on your screen, never the chat.`);
+    if (keyCard?.state === 'none') parts.push(bare ? `A ${name} key for your git, pasted into a box on your screen.` : `Your git holds no ${name} key yet: a page opens to make one${name === 'GitLab' ? ` and you set its expiry date ${KEY_DAYS_ASKED} days ahead` : `, set to last ${KEY_DAYS_ASKED} days`}, and you paste it into a box on your screen, never the chat.`);
     else if (keyCard) parts.push(bare ? `A new ${name} key for your git, pasted into a box on your screen, replacing the one it holds.` : `Your git's ${name} key ${keyCard.state === 'push-only' ? 'can push but not open or merge requests' : 'was refused'}: a page opens to make a new one, which replaces the one your git holds, and you paste it into a box on your screen, never the chat.`);
     parts.push(rest || keyCard
       ? `Wheelhouse pushes with your own git as it is, and uses its key for merge requests${proxy}.`
@@ -2321,8 +2324,11 @@ export function hostStep({
       let locked = false;
       if (!product.joining) {
         if (answer('real-users') === null) {
-          // The host as chosen so far: the first card's answer or the folder's remote; 'local' while it may still move.
-          const chosen = product.host ?? join?.host ?? null;
+          // The host as chosen so far: the card 2 answer, or the folder's remote; 'local' while it may still move. The host
+          // cards end their batch, so this card is asked after the answer.
+          const asked = answer('kept') ?? answer('host');
+          const picked = asked === null ? null : asked.label === PUT_ON_GITLAB || asked.label === HOST_LABELS.gitlab ? 'gitlab' : asked.label === PUT_ON_GITHUB || asked.label === HOST_LABELS.github ? 'github' : 'local';
+          const chosen = join?.host ?? picked ?? product.host ?? null;
           return { ask: realUsersAsk(product.name, platform, chosen, chosen === 'gitlab' && hostToolLeftOut(ctx, 'gitlab')) };
         }
         realUsers = answer('real-users').label === REAL_USERS.yes;

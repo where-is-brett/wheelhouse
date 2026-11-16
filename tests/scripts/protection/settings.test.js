@@ -34,7 +34,7 @@ test('the project settings deny .env, the keys folder, credentials, the host too
     assert.ok(deny.includes(`Read(~/${c})`), c);
     assert.ok(deny.includes(`Read(~/${c}/**)`), `${c}/**`);
   }
-  for (const rule of ['Read(~/.git-credentials)', 'Read(~/.git-credentials/**)', 'Read(~/.ssh)', 'Read(~/.ssh/**)', 'Read(~/AppData/Roaming/GitHub CLI/**)',
+  for (const rule of ['Read(~/.git-credentials)', 'Read(~/.git-credentials/**)', 'Read(~/.ssh)', 'Read(~/.ssh/**)', 'Read(~/AppData/Roaming/GitHub CLI/**)', 'Read(~/Library/Application Support/glab-cli/**)',
     'Read(~/.vercel/**)', 'Read(~/.config/stripe)', 'Read(~/.fly/**)']) assert.ok(deny.includes(rule), rule);
   assert.equal(new Set(deny).size, deny.length);
 });

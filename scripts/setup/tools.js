@@ -290,7 +290,7 @@ export function hostToolCard(tool, { recommend: given, platform = process.platfo
   return {
     level: 2,
     what: `${name}'s own tool isn't on this computer. Should Wheelhouse fetch it, or reach ${name} without it?`,
-    why: `If you'd rather not install ${name}'s tool, or your company's rules don't allow it, Wheelhouse can work without it, talking to ${name} directly with a key you make, or your git's own.`,
+    why: `If you'd rather not install ${name}'s tool, or your company's rules don't allow it, Wheelhouse can work without it, using a key you make on ${name}, or the one your git already uses.`,
     options: [
       { label: labels.fetch, says: `Wheelhouse fetches ${name}'s tool from its official release into its own tools folder, and checks it.${win ? ` It is signed in as you, to your whole ${name} account, and on Windows any agent's command could read that sign-in, whichever way you choose next.` : tool !== 'glab' ? '' : ' Only with it can agents use your ordinary GitLab sign-in.'}` },
       { label: labels.none, says: `Nothing is fetched, and Wheelhouse never runs ${name}'s tool.${tool === 'glab' && win ? ' Nothing signs GitLab\'s tool in as you on this computer, where agents\' commands could read it.' : ''}` },
@@ -899,7 +899,8 @@ function cardFor(changes, status, platform, leftOut = [], hostTools = []) {
   const full = [];
   for (const c of processes) full.push(c.action === 'wait' ? 'Git: waiting for the git installer already open, which setup leaves to finish' : installLine(platform));
   if (official.length > 0) {
-    full.push(`${official.map(toolName).join(' and ')}: to be fetched from ${official.length === 1 ? 'its' : 'their'} official release into Wheelhouse's tools folder and checked against the published checksums; a few seconds, nothing for you to do`);
+    const one = official.length === 1;
+    full.push(`${one ? `${HOST_TOOL_NAME[official[0]]}'s own tool` : official.map(toolName).join(' and ')}: fetched from ${one ? `${HOST_TOOL_NAME[official[0]]}'s official release` : 'their official releases'} into Wheelhouse's tools folder, and checked that ${one ? 'it is' : 'each is'} the genuine file; a few seconds, nothing for you to do`);
   }
   for (const c of company) {
     full.push(`${toolName(c.tool)}, from your company's list at ${c.source} (version ${c.version}); ${c.checksum === 'listed'
@@ -942,7 +943,7 @@ function cardFor(changes, status, platform, leftOut = [], hostTools = []) {
       { label: 'Not now', says: 'Setup waits at this step; nothing is changed.' },
     ],
     recommend: SETUP_LABEL,
-    because: !installs ? 'setup\'s own command then runs without a question each time' : company.length > 0 ? 'setup needs them for the next steps' : 'each comes from its official source',
+    because: !installs ? 'setup\'s own command then runs without a question each time' : company.length > 0 ? 'setup needs them for the next steps' : official.length === 1 ? `it comes from ${HOST_TOOL_NAME[official[0]]}'s official release` : 'each comes from its official source',
     meanwhile: installs ? 'Nothing is installed yet.' : 'Nothing is changed yet.',
   });
   const long = card(full);

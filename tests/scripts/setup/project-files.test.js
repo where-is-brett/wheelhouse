@@ -451,7 +451,7 @@ test('step 7 writes both class pins, the card says once what the lighter model d
     const w = await world();
     const planned = await w.plan();
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
-    assert.equal(text.split(/a cheaper model for most building and checking/i).length, 2);
+    assert.equal(text.split(/a cheaper model, used only if you later ask/i).length, 2);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
     assert.deepEqual(w.json('.claude/wheelhouse.json').tiers, { pins: { mostCapable: BEST_MODEL, midSized: MID_MODEL } });
@@ -1074,7 +1074,7 @@ test('on GitLab: the default branch and protection through glab\'s sign-in, the 
   await withHome(async () => {
     const w = await world({ host: 'gitlab' });
     const planned = await w.plan();
-    assert.match(composeCard({ ...planned.card, target: { step: 7, hash: '0'.repeat(64) } }).question.question, /must pass the project's automatic checks/);
+    assert.match(composeCard({ ...planned.card, target: { step: 7, hash: '0'.repeat(64) } }).question.question, /once it has automatic checks, Wheelhouse asks you to make them required/);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
     assert.equal(await g(w.bare, 'log', '-1', '--format=%an <%ae>', 'main'), `${GITLAB_USER.name} <${GITLAB_USER.id}-${GITLAB_USER.username}@users.noreply.gitlab.com>`);
@@ -1292,7 +1292,7 @@ test('the card lists every part on GitLab with a long branch and release, and st
   ];
   const text = (branch, ref) => composeCard({ ...projectFilesCard({ changes, host: 'gitlab', branch, release: { ref } }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
   const usual = text('main', 'v1.4.0');
-  for (const words of ['Compact instructions', 'settings.local.json', 'Superpowers', 'Set up Wheelhouse', 'must pass the project\'s automatic checks', 'acting as you on GitLab', 'v1.4.0', 'Wheelhouse stays at']) {
+  for (const words of ['Compact instructions', 'settings.local.json', 'Superpowers', 'Set up Wheelhouse', 'once it has automatic checks, Wheelhouse asks you to make them required', 'acting as you on GitLab', 'v1.4.0', 'Wheelhouse stays at']) {
     assert.ok(usual.includes(words), words);
   }
   const long = text(`release/${'x'.repeat(200)}`, `v${'9'.repeat(150)}`);

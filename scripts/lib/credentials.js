@@ -11,6 +11,10 @@ export const CREDENTIALS = [
 
 const WINDOWS_ONLY = ['AppData/Roaming/GitHub CLI', 'AppData/Roaming/glab-cli', 'AppData/Local/glab-cli'];
 
+// glab keeps its settings, and its token when the keyring is off, here on a Mac. gh keeps to ~/.config/gh there.
+const MAC_ONLY = ['Library/Application Support/glab-cli'];
+
 export function credentialPaths(platform = process.platform) {
-  return platform === 'win32' ? [...CREDENTIALS, ...WINDOWS_ONLY] : [...CREDENTIALS];
+  if (platform === 'win32') return [...CREDENTIALS, ...WINDOWS_ONLY];
+  return platform === 'darwin' ? [...CREDENTIALS, ...MAC_ONLY] : [...CREDENTIALS];
 }
