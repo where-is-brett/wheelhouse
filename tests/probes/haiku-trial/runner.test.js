@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { STEPS, planRun, run, resume, restore, waitFor, main, withoutChrome, runLabel, NEW_SESSION, FOLLOW_UP, CHECK_IN, waitingInRecord } from '../../../probes/haiku-trial/runner.js';
+import { STEPS, planRun, run, resume, restore, waitFor, main, withoutChrome, afterPrompt, runLabel, NEW_SESSION, FOLLOW_UP, CHECK_IN, waitingInRecord } from '../../../probes/haiku-trial/runner.js';
 import { sessionName } from '../../../probes/haiku-trial/tmux.js';
 import { P5_SPARE } from '../../../probes/haiku-trial/requests.js';
 import { takeLocal, writeMeta, snapshotsDir } from '../../../probes/haiku-trial/snapshot.js';
@@ -1373,6 +1373,34 @@ test('ntfy is recorded as set up only when the status afterwards names it, and r
     await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
     assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).ntfySetUp, want, `${saidFirst} / ${saidStatus}`);
   }
+});
+
+test('F5b reads the helper\'s clash card from the record, after the click, and finds none when it is not made', async (t) => {
+  for (const [made, want] of [[true, 'made by the helper'], [false, 'not made']]) {
+    const folder = scratch(t);
+    const io = sittingIo();
+    const undo = io.faults.undoTyped;
+    io.faults.undoTyped = (tmux, sha) => {
+      undo(tmux, sha);
+      if (made && sha === SHA2) io.records.push({ id: 'clash', kind: 'card', at: new Date(io.clock.now() + 1000).toISOString(), data: { question: 'Taking this merge back out can\'t be done in one step.\nUndo of the merge x clashes with later work', line: 'Undo of the merge x clashes with later work' } });
+    };
+    const got = await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+    const row = readLog(folder).find((e) => e.step === LOG.fault('F5b'));
+    assert.match(row.note, new RegExp(`clash card ${want}`));
+    assert.equal((got.findings ?? []).some((f) => /no clash card/.test(f.what)), !made);
+  }
+});
+
+test('the ntfy status is read after its own prompt, and "no channel is switched on" does not mean nothing is set up', async (t) => {
+  assert.equal(afterPrompt('old turn text\n> alerts status\nPhone alerts set up: ntfy.', 'alerts status'), 'Phone alerts set up: ntfy.');
+  assert.equal(afterPrompt('old turn text only', 'alerts status'), null);
+  const folder = scratch(t);
+  let typed = '';
+  const io = sittingIo({ capture: () => (typed.startsWith('alerts status') ? 'You chose A on decision 1: merged.\n> alerts status\nntfy is set up, but no channel is switched on yet.' : typed.startsWith('alerts ntfy') ? 'stale reply from an earlier turn\n> alerts ntfy topic\nAlerts will go to ntfy.' : 'idle') });
+  const wrapped = io.tmux.type;
+  io.tmux.type = (name, text) => { typed = text; return wrapped(name, text); };
+  await run({ mode: 'full', io, from: 'sitting-1', until: 'sitting-1', folder, date: '2026-11-08', env: ENV });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'state.json'), 'utf8')).ntfySetUp, true);
 });
 
 test("the front desk step no longer types the ntfy command: it would block a turn and nobody would be watching for the window", async (t) => {

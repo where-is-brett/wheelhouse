@@ -31,8 +31,11 @@ const SPARE_BRANCH = 'trial/spare-bug';
 const SETUP_WAIT_MS = 45 * MINUTE;
 // `alerts ntfy` waits two minutes for the click, so the desk is given a little longer to say how it went.
 const NTFY_WAIT_MS = 150 * 1000;
+// What an undo that clashes with later work says, in the helper's card or the desk's own words.
+const CLASH = /clash(?:es)? with later work|would clash|undo would clash/i;
 const NOT_CLICKED = /did not click|nothing was changed|refused/i;
-const NO_CHANNEL = /no channels?|nothing (?:is )?(?:set up|kept)|none (?:is |are )?set up/i;
+// "None set up", never "none switched on": the topic can be kept while the channel is still off under Notifications.
+const NO_CHANNEL = /no channels?(?: is| are)? (?:set up|kept)|nothing (?:is )?(?:set up|kept)|none (?:is |are )?set up|set up: none/i;
 // Setup's skill gives this line in prose, so the session words it its own way: "setup needs one new session on this
 // folder", "the last safety checks need one new session in this folder: close this session, start a new one here".
 export const NEW_SESSION = /needs? one new session|new session (?:on|in) this folder|start a new (?:one|session) (?:here|in this folder|on this folder)/i;
@@ -127,7 +130,15 @@ const newLines = (before, after) => {
 
 // Types into the front desk, waits for the pane to settle, and keeps what appeared as a reply.
 // With `ready`, it keeps waiting (up to `maxMs`) until `ready(reply)` is true, as for an answer that comes from a fork.
-async function say(ctx, text, { ready, maxMs = 90000 } = {}) {
+// With `own`, the reply is only what the desk wrote after the line that shows this prompt, so a turn still finishing from an earlier
+// prompt is never read as the answer; with the prompt not yet on the pane there is no reply yet.
+export const afterPrompt = (pane, text) => {
+  const lines = String(pane).split('\n');
+  const at = lines.map((l) => l.includes(text)).lastIndexOf(true);
+  return at === -1 ? null : withoutChrome(lines.slice(at + 1).join('\n')).trim();
+};
+
+async function say(ctx, text, { ready, maxMs = 90000, own = false } = {}) {
   const { io, state } = ctx;
   if (!(await deskFree(ctx))) return '';
   const before = io.tmux.capture(DESK);
@@ -136,6 +147,11 @@ async function say(ctx, text, { ready, maxMs = 90000 } = {}) {
   let still = 0;
   const end = io.clock.now() + maxMs;
   ctx.readyAt = undefined;
+  const replyOf = (pane) => {
+    if (!own) return newLines(before, pane);
+    const got = afterPrompt(pane, text);
+    return got === null ? newLines(before, pane) : got;
+  };
   while (io.clock.now() < end) {
     await io.clock.sleep(5000);
     const now = io.tmux.capture(DESK);
@@ -143,10 +159,10 @@ async function say(ctx, text, { ready, maxMs = 90000 } = {}) {
     last = now;
     await tick(ctx);
     // The moment a reply first qualified, not the moment the pane settled.
-    if (ready !== undefined && ctx.readyAt === undefined && ready(newLines(before, last))) ctx.readyAt = io.clock.now();
-    if (still >= 2 && (ready === undefined || ready(newLines(before, last)))) break;
+    if (ready !== undefined && ctx.readyAt === undefined && ready(replyOf(last))) ctx.readyAt = io.clock.now();
+    if (still >= 2 && (ready === undefined || ready(replyOf(last)))) break;
   }
-  const reply = newLines(before, last);
+  const reply = replyOf(last);
   if (reply !== '') state.panes.replies.push(reply);
   state.panes['front-desk'].push(last);
   return reply;
@@ -754,8 +770,8 @@ const clickSteps = {
     if (!(await deskFree(ctx))) return;
     ctx.state.ntfyTopic = `haiku-trial-${ctx.date}-${Math.floor(io.clock.now() / 1000) % 100000}`;
     io.log?.('Click Yes in the "Wheelhouse: phone alerts" window, then switch ntfy on under Notifications in the front desk.');
-    const reply = await say(ctx, `alerts ntfy ${ctx.state.ntfyTopic}`, { maxMs: NTFY_WAIT_MS });
-    const status = await say(ctx, 'alerts status');
+    const reply = await say(ctx, `alerts ntfy ${ctx.state.ntfyTopic}`, { maxMs: NTFY_WAIT_MS, own: true });
+    const status = await say(ctx, 'alerts status', { own: true });
     ctx.state.ntfySetUp = !NOT_CLICKED.test(reply) && /ntfy/i.test(status) && !NO_CHANNEL.test(status);
     await note(ctx, 'ntfy', ctx.state.ntfySetUp ? 'ntfy is set up (switch it on under Notifications for alerts to go)' : 'ntfy was not set up: row 43 is not covered', { reply: reply.slice(0, 300), status: status.slice(0, 300) });
   },
@@ -814,7 +830,20 @@ const clickSteps = {
       await addFinding(ctx, sittingId(n), `the director's click did not come in sitting ${n}: the undo of P2`);
       return;
     }
-    await note(ctx, LOG.fault('F5b'), `undo of P2 approved; reply: ${io.tmux.capture(DESK).split('\n').filter((l) => /clashes with later work/.test(l)).join(' ') || 'no clash text seen'}`);
+    // The clash is the helper's card, made a moment after the click, so it is read from the record, not from the pane at the instant
+    // of the click (the desk has not relayed it by then, and shows the card as a picker, not as the card's own line).
+    const clash = async () => { await tick(ctx); return (await eventsOf(ctx)).find((e) => e.kind === 'card' && notBefore(e, typedAt) && CLASH.test(`${e.data?.line ?? ''} ${e.data?.question ?? ''}`)); };
+    // Keep it is the other answer: no undo is made, so no clash is expected.
+    const undone = (await eventsOf(ctx)).some((e) => notBefore(e, typedAt) && isSigned(e, 'undo-merge'));
+    if (!undone) {
+      await note(ctx, LOG.fault('F5b'), 'P2 undo card answered without an undo: no clash expected');
+      return;
+    }
+    const card = (await waitFor(async () => Boolean(await clash()), { io, timeoutMs: 3 * MINUTE, everyMs: 5000 })) ? await clash() : undefined;
+    const shown = (pane) => pane.split('\n').filter((l) => CLASH.test(l)).join(' ').trim();
+    await waitFor(async () => { await tick(ctx); return shown(io.tmux.capture(DESK)) !== ''; }, { io, timeoutMs: card ? 2 * MINUTE : 0, everyMs: 10000 });
+    await note(ctx, LOG.fault('F5b'), `undo of P2 approved; clash card ${card ? 'made by the helper' : 'not made'}; desk showed: ${shown(io.tmux.capture(DESK)) || 'no clash text yet'}`);
+    if (!card) await addFinding(ctx, sittingId(n), 'F5b: the undo of P2 was approved but the helper made no clash card within three minutes');
   },
 };
 

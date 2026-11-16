@@ -172,6 +172,8 @@ test('under STOP, the front desk\'s reading commands run by their exact words, a
         `node "${cli}" similar "Could we export the orders, as a spreadsheet?"`,
         `node "${cli}" similar "can't sign in on the phone"`,
         `node "${cli}" preview 7`,
+        // Only the window on the Lift All stop card: the director's click there lifts it.
+        `node "${cli}" confirm lift-stop`,
       ]) assert.equal(await guard(bash(main, ok), deps(base)), undefined, ok);
       for (const bad of [
         `node ${cli}`,
@@ -202,6 +204,10 @@ test('under STOP, the front desk\'s reading commands run by their exact words, a
         `node "${cli}" similar ~/notes`,
         `node "${cli}" similar fix #12 now`,
         `node "${cli}" similar "a [b]"`,
+        `node "${cli}" confirm`,
+        `node "${cli}" confirm 3f2a1c9e-1111-4222-8333-444455556666`,
+        `node "${cli}" confirm lift-stop extra`,
+        `node "${cli}" confirm lift-stop; ls`,
         `node "${cli}" preview`,
         `node "${cli}" preview x`,
         `node "${cli}" preview 7 8`,
