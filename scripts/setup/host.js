@@ -2368,7 +2368,7 @@ export function hostStep({
         const noGit = restoring === null && !fs.existsSync(path.join(ctx.folder, '.git'));
         const noCommit = restoring === null && (noGit || !hasHistory(ctx.folder));
         const changes = localSteps({ folder: ctx.folder, project, branch, noGit, noCommit, locked, restore: restoring, backup: backup.folder });
-        return { changes, card: localCard({ changes, branch, others: product.others ?? [] }), director: 'One click' };
+        return { changes, card: localCard({ changes, branch, others: product.others ?? [], desktop: ctx.desktop === true }), director: 'One click' };
       }
       // A folder with its own history, sent to a new private repository on the director's account.
       if (product.host === 'local') product = { isNew: true, publish: branch, host, repo: null, name: product.name };

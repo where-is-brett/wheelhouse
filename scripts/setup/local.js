@@ -240,14 +240,17 @@ export function localSteps({ folder, project, branch, noGit, noCommit, locked, r
   ];
 }
 
-export function localCard({ changes, branch, others }) {
+export function localCard({ changes, branch, others, desktop = true }) {
+  // A terminal session opens no window to pick in, so a backup with no typed folder is left for the pane's Safekeeping row.
+  const backup = changes.find((c) => c.action === 'backup-folder');
+  const later = backup !== undefined && backup.folder === null && !desktop;
   const parts = [
     ...(changes.some((c) => c.action === 'git-init') ? [`git starts in this folder, on ${branch}`] : []),
     ...(changes.some((c) => c.action === 'first-commit') ? [`a first commit on ${branch}`] : []),
     ...(changes.some((c) => c.action === 'home' && typeof c.restore === 'string') ? ['the project brought back from your backup, into this folder'] : []),
     'a private copy of the project\'s history on this computer, which only Wheelhouse\'s helper changes',
     'the project\'s record, kept on this computer',
-    ...(changes.some((c) => c.action === 'backup-folder') ? ['a backup in the folder you choose, after each merge'] : []),
+    ...(backup === undefined ? [] : [later ? 'no backup yet: you choose its folder later, from the Safekeeping row in the pane' : 'a backup in the folder you choose, after each merge']),
     FIRST_CHECK_LINE.replace(/\.$/, '').replace(/^W/, 'w'),
   ];
   const line = othersLine(others);
