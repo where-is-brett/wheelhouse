@@ -823,16 +823,31 @@ test('narrow on GitHub: the code and the Install page are said, the installation
   });
 });
 
-test('a GitLab that refuses the sign-in for a project key stops the step plainly; the personal key is not offered', async () => {
+test('a GitLab that forbids a project key (a free plan on gitlab.com) falls back to the system\'s box; a 404 stops plainly', async () => {
   await withHome(async () => {
     const w = standIn({ refuseKeys: true });
     await w.add(`${USER}/shop`);
     const folder = productFolder('shop');
     await withOrigin(folder, `https://gitlab.com/${USER}/shop.git`);
     const opened = [];
+    const boxes = [];
+    const step = stepFor(w, { open: async (url) => { opened.push(url); }, askSecret: async (box) => { boxes.push(box); return `${PASTED}\n`; } });
+    const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
+    const { lines } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    assert.equal(boxes.length, 1);
+    assert.ok(opened[0].startsWith('https://gitlab.com/-/user_settings/personal_access_tokens'), opened[0]);
+    assert.ok(lines.includes(reachLine({ kind: 'gitlab-personal' })), lines.join('\n'));
+    assert.equal(readKey(`gitlab-project-${w.repos[`${USER}/shop`].id}`).kind, 'pasted-token');
+  });
+  await withHome(async () => {
+    const w = standIn({ keyAnswer: 404 });
+    await w.add(`${USER}/shop`);
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://gitlab.com/${USER}/shop.git`);
+    const opened = [];
     const step = stepFor(w, { open: async (url) => { opened.push(url); }, askSecret: async () => { throw new Error('no box should open'); } });
     const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
-    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), /may not make a project key/);
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), /could not find the project/);
     assert.deepEqual(opened, []);
   });
 });

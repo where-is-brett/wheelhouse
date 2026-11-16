@@ -88,7 +88,7 @@ import { quickLineFor } from '../lib/host-lines.js';
 import { detectHost } from '../host/adapter.js';
 import { startDeviceSignIn, waitForSignIn, installUrl } from '../host/github-app.js';
 import { installationCovers } from '../host/connection.js';
-import { gitlabApi, makeProjectKey, isKeysSwitchedOff, checkBaseUrl, projectPath, PERSONAL_DAYS, keyExpiry } from '../host/gitlab-key.js';
+import { gitlabApi, makeProjectKey, isProjectKeyRefused, checkBaseUrl, projectPath, PERSONAL_DAYS, keyExpiry } from '../host/gitlab-key.js';
 import { tokenUrl } from '../host/token-url.js';
 import { composeCard, isTooLong } from '../cards/compose.js';
 import { DEFAULT_GITLAB, gitlabBase, readGitlabHosts, parseRemote, hostWords, isDefaultHost, commitEmailOf } from '../host/gitlab-base.js';
@@ -859,7 +859,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
     options.push({ label: WAYS.own, says: 'Narrow, through a GitHub App of your own, filled in from Wheelhouse\'s: you tick Enable Device Flow and click Create.' });
     recommend = app ? WAYS.wheelhouse : WAYS.own;
   } else {
-    options.push({ label: WAYS.narrow, says: 'A GitLab key to this one project only. Without GitLab\'s own tool, setup first asks you for a one-day GitLab token, pasted into your computer\'s own box.' });
+    options.push({ label: WAYS.narrow, says: `A GitLab key to this one project only; where GitLab won't allow one, a ${PERSONAL_DAYS}-day token reaching all your projects. Setup makes the key with your GitLab sign-in, or, without GitLab's own tool, with a one-day token over your account, pasted into your computer's own box and revoked after.` });
     recommend = WAYS.narrow;
   }
   const quick = !locked && !launched && !asIs;
@@ -1133,6 +1133,9 @@ export function directorGitEnv({ host, gitPath = 'git', env = process.env, platf
 
 // ---- GitLab without its tool: the one-day setup token ----
 
+// Said where setup stopped with the setup token and GitLab did not take it back.
+export const SETUP_TOKEN_KEPT = 'Setup could not revoke the one-day GitLab token: delete it on GitLab\'s Access tokens page';
+
 // What step 3's card says of it.
 export const SETUP_TOKEN_LINE = 'You make a one-day GitLab token on a page that opens and paste it into your computer\'s own box. Setup uses it only to make the project, its key and the main line\'s protection, then revokes it.';
 const NO_SETUP_TOKEN = 'No GitLab token was given, so nothing was made on GitLab; a fresh Go ahead asks again';
@@ -1222,8 +1225,11 @@ export async function setupTokenApi({ base, via = {}, say = () => {}, open, askS
       forget();
       throw error;
     }
-    // A refused token is said to be revoked only where GitLab took it back.
-    if (!(await end()) && (error.message === SETUP_TOKEN_WIDE || error.message === SETUP_TOKEN_LONG)) throw new Error(error.message.replace(' and revoked it:', ', but could not revoke it, so delete it on GitLab\'s Access tokens page and'));
+    // A refused token is said to be revoked only where GitLab took it back; any other token GitLab took and kept is named
+    // for the director to delete, with the error itself left as it is (a stop is known by its words).
+    if (await end()) throw error;
+    if (error.message === SETUP_TOKEN_WIDE || error.message === SETUP_TOKEN_LONG) throw new Error(error.message.replace(' and revoked it:', ', but could not revoke it, so delete it on GitLab\'s Access tokens page and'));
+    say(SETUP_TOKEN_KEPT);
     throw error;
   }
 }
@@ -1837,7 +1843,7 @@ async function connectGithubApp({ app, repos, fetch, say, open, sleep, now, reco
 }
 
 // Narrow on GitLab: a project key at Developer level for each project, made with the director's own
-// sign-in. Where the company's group has switched project keys off (makeProjectKey's code), a personal key's token page is opened and the token typed into the system's own box, straight to
+// sign-in. Where GitLab makes no project key (a group that switched them off, or a plan without them: makeProjectKey's code), a personal key's token page is opened and the token typed into the system's own box, straight to
 // the keys file for every project still without a key: never the chat, an argument or a log. Any
 // other failure (GitLab not reached, the project not found, a server error) stops the step plainly.
 // A project already holding a key is left as it is.
@@ -1857,8 +1863,9 @@ async function connectGitlabKeys({ api, projects, owner, platform, say, open, as
     try {
       key = await makeProjectKey({ api: watched, projectId: p.id, name: KEY_NAME, days: KEY_DAYS, now });
     } catch (error) {
-      // The personal key is only for a company that has switched project keys off; any other refusal stops here.
-      if (!isKeysSwitchedOff(error)) throw error;
+      // The personal key is only for a GitLab that makes no project key here (keys switched off, or a free plan on
+      // the public service); any other failure stops here.
+      if (!isProjectKeyRefused(error)) throw error;
       refused = true;
       break;
     }
@@ -1988,7 +1995,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     parts.push(rest || keyCard ? `That key reaches everything your account can on ${name}.` : `Both reach everything your account can on ${name}.`);
   } else if (way === WAYS.quick) parts.push(`Quick: your own ${name} sign-in, which reaches your whole account.`);
   else if (host === 'gitlab') {
-    parts.push(tight ? 'A key to this project only, with the rights agents need there; you may paste one or two tokens.' : 'A key to this project only, with the rights agents need there and no more. If GitLab won\'t allow such a key, a second token you make on GitLab and paste into your computer\'s own box.');
+    parts.push(tight ? `A key to this project only; if GitLab won't allow one, a ${PERSONAL_DAYS}-day token reaching all your projects.` : `A key to this project only, with the rights agents need there. If GitLab won't allow one, a ${PERSONAL_DAYS}-day token reaching all your projects, pasted into your computer's own box.`);
     // A project with real users is merged by Maintainers only, which a Developer key is not (GITLAB_MAINTAINERS_ONLY, helper.js).
     if (realUsers) parts.push(REAL_USERS_MERGE_LINE);
   }
@@ -1998,7 +2005,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     // GitHub by its name (design section 24.3, item 3).
     parts.push('Your own GitHub App, made, or found on GitHub by its name. Then a code, and a tick on its Install page (not All repositories).');
   } else if (app.own && typeof app.clientId !== 'string') {
-    parts.push(`Your own GitHub App${app.name ? ` ${app.name} on ${app.account}` : ''}, filled in from Wheelhouse's and kept in your settings on this computer: tick Enable Device Flow and click Create, then a code, and a tick on its Install page (not All repositories).`);
+    parts.push(`Your own GitHub App${app.name ? ` ${app.name} on ${app.account}` : ''}, filled in from Wheelhouse's and kept in your settings on this computer: tick Enable Device Flow and click Create, then type the code setup shows on GitHub's page, and tick this repository on its Install page (not All repositories).`);
   } else if (appKeys === 'installed') parts.push(`${app.own ? 'Your own app' : 'The Wheelhouse app'}, as signed in already: tick this project on its settings page if it is not ticked, or on its Install page if the app is not on ${owner ?? 'its account'} yet.`);
   else if (appKeys === 'other-account') parts.push(`${app.own ? 'Your own app' : 'The Wheelhouse app'}, as signed in already: install it on ${owner} and tick this project on its Install page, not All repositories, or on its settings page if it is there already.`);
   else {

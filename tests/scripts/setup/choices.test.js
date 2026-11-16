@@ -50,8 +50,8 @@ test('the one card for a new product on a Mac says the director\'s approved word
     '- A new product, in a private repository on your GitHub account.',
     '- Agents use your ordinary GitHub sign-in, which they can\'t read on this Mac.',
     '- Before launch: no real users and no live data yet.',
-    '- On this computer: usage counted here only, and 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted).',
-    '- Wheelhouse\'s settings saved to the project, and its main line protected.',
+    '- On this computer: usage counted here only; 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted); Claude Code takes only its well-tried updates; and phone notifications on.',
+    '- Wheelhouse\'s settings saved to the project, and its main line protected where your GitHub plan allows.',
     'Nothing runs until you choose.',
     'To know more, just ask.',
   ].join('\n'));
@@ -121,13 +121,13 @@ test('the plan names GitLab for a folder whose own remote is on GitLab, and for 
   const ask = (product, list) => oneCard({ folder: '/x/h', list, product, platform: 'win32', toRun: [3], count: 0 }).card.question;
   const gitlab = ask({ isNew: false, host: 'gitlab', repo: 'team/harbour', name: 'harbour' }, [c('connection-0123456789', WAYS.narrow)]);
   assert.match(gitlab, /- harbour on GitLab, as it is\./);
-  assert.match(gitlab, /- A GitLab key for this project only\./);
+  assert.match(gitlab, /- A GitLab key for this project only, or, where GitLab won't allow one, a 30-day token reaching all your projects\./);
   assert.doesNotMatch(gitlab, /GitHub/);
   const github = ask({ isNew: false, host: 'github', repo: 'a/harbour', name: 'harbour' }, [c('connection-0123456789', WAYS.own)]);
   assert.match(github, /- A key for this project only, from an app you create on GitHub/);
   const put = ask({ isNew: false, host: 'local', repo: null, name: 'harbour' }, [c('kept', PUT_ON_GITLAB), c('connection-0123456789', WAYS.narrow)]);
   assert.match(put, /- Put on GitLab: a private project on your account/);
-  assert.match(put, /- A GitLab key for this project only\./);
+  assert.match(put, /- A GitLab key for this project only, or, where GitLab won't allow one, a 30-day token reaching all your projects\./);
 });
 
 test('a Go ahead holds until one of its choices gets a newer, different answer of the director\'s', () => {

@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULT_GITLAB, gitlabBase, commitEmail, readGitlabHosts } from '../../../scripts/host/gitlab-base.js';
 import { tokenUrl } from '../../../scripts/host/token-url.js';
 import { gitlabKeyPage, cutAccess, revokeGitlabKey } from '../../../scripts/host/cut-access.js';
-import { gitlabApi, makeProjectKey, isKeysSwitchedOff } from '../../../scripts/host/gitlab-key.js';
+import { gitlabApi, makeProjectKey, isKeysSwitchedOff, isProjectKeyRefused } from '../../../scripts/host/gitlab-key.js';
 import { detectHost } from '../../../scripts/host/adapter.js';
 import { signIn, signInStatus, signUpUrl, SIGN_UP, httpsRemote } from '../../../scripts/setup/host.js';
 import { makeFakeCurl } from '../../helpers/fake-curl.js';
@@ -209,6 +209,10 @@ test('the switched-off refusal carries a code, and no other refusal does', async
   for (const [status, body] of [[400, { message: 'other' }], [403, {}], [401, {}], [404, {}]]) {
     assert.equal(isKeysSwitchedOff(await refused(status, body).catch((e) => e)), false, String(status));
   }
+  // A 403 (the role, or a free plan on the public service) is a refusal too; a 401 or 404 is not.
+  assert.equal(isProjectKeyRefused(off), true);
+  assert.equal(isProjectKeyRefused(await refused(403, {}).catch((e) => e)), true);
+  for (const status of [401, 404, 500]) assert.equal(isProjectKeyRefused(await refused(status, {}).catch((e) => e)), false, String(status));
 });
 
 test('the project\'s gitlabHosts is read from its committed configuration, and setup\'s host tool follows it', () => {

@@ -30,6 +30,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { canonicalJson } from '../lib/canonical.js';
+import { PERSONAL_DAYS } from '../host/gitlab-key.js';
 import { engineWanted, engineLine } from './engine-parts.js';
 import { HEALTH_STEP, onRunList, stepDone } from '../lib/setup-run.js';
 import { askedRecord, answersFor } from './clicks.js';
@@ -182,7 +183,10 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     if (label === WAYS.wheelhouse) return 'A key for this project only, through the Wheelhouse app (you\'ll type a code and click Install).';
     if (label === WAYS.own) return 'A key for this project only, from an app you create on GitHub (you\'ll tick Enable Device Flow, click Create, then Authorise and Install).';
     if (label === WAYS.asIs) return `Agents use your own git as it is, with a ${host} key that reaches everything your account can.`;
-    return `A ${host} key for this project only.`;
+    // On GitLab the key may not be allowed (keys switched off, or a free plan on the public service), so the plan names the token that stands in.
+    return host === 'GitLab'
+      ? `A GitLab key for this project only, or, where GitLab won't allow one, a ${PERSONAL_DAYS}-day token reaching all your projects.`
+      : `A ${host} key for this project only.`;
   }
   if (id.startsWith('product-')) {
     if (typeof text === 'string' && text.trim() !== '') return `Described as: "${text.trim()}"`;
@@ -218,7 +222,7 @@ function goAheadAsks({ keptHere, list, host }) {
   const way = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.label ?? null;
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
   if (host === 'GitLab' && noTool && way !== null && way !== WAYS.quick && way !== WAYS.asIs) {
-    return 'You\'ll be asked for a one-day GitLab token, and perhaps a second token for the project, each pasted into your computer\'s own box, and your password if needed.';
+    return `You'll be asked for a one-day GitLab token, and, if GitLab won't make a key for one project, a second token that reaches all your projects for ${PERSONAL_DAYS} days, each pasted into your computer's own box, and your password if needed.`;
   }
   if (way === WAYS.asIs) return `You'll be asked for a ${host} key only if your git holds none that works, pasted into your computer's own box, and your password if needed.`;
   // A company's GitLab without a browser sign-in set up takes a token instead, which only setup's step 3 can tell.
@@ -263,12 +267,17 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
   if (keptHere && toRun.includes(3) && !fs.existsSync(path.join(folder, '.git'))) lines.push(STARTED_LINE('main'));
   // The plugin's update is step 6's, so the line names it only while step 6 is still to run.
   if (toRun.includes(2) && engineWanted({ platform, hosts })) lines.push(engineLine(undefined, { claudeHome: toRun.includes(6) ? claudeHome : null }));
-  if (toRun.includes(6)) lines.push('On this computer: usage counted here only, and 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted).');
+  if (toRun.includes(6)) lines.push('On this computer: usage counted here only; 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted); Claude Code takes only its well-tried updates; and phone notifications on.');
   if (toRun.includes(7)) {
     const kept = compactionLine(compactionRules({ claudeHome, projectDir: folder }));
     if (kept !== null) lines.push(kept);
   }
-  if (toRun.includes(7)) lines.push(keptHere ? 'Wheelhouse\'s settings saved to the project.' : 'Wheelhouse\'s settings saved to the project, and its main line protected.');
+  // A free GitHub plan can't protect a private repository, so on GitHub the line says protection is where the plan allows.
+  if (toRun.includes(7)) {
+    lines.push(keptHere ? 'Wheelhouse\'s settings saved to the project.'
+      : hostOf(product, list) === 'GitHub' ? 'Wheelhouse\'s settings saved to the project, and its main line protected where your GitHub plan allows.'
+        : 'Wheelhouse\'s settings saved to the project, and its main line protected.');
+  }
   if (toRun.includes(7) && keptHere) lines.push(FIRST_CHECK_LINE);
   // Never a plan with no lines: the health check is named when nothing else is.
   if (lines.length === 0 && toRun.includes(HEALTH_STEP)) lines.push('A last check that everything is safe.');
