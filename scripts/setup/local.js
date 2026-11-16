@@ -24,7 +24,7 @@ export const KEEP_HERE = 'Keep it on this computer';
 export const PUT_ON_GITHUB = 'Put it on GitHub';
 export const PUT_ON_GITLAB = 'Put it on GitLab';
 export const KEPT_LINE = 'Your project stays on this computer. Nothing goes online.';
-export const FIRST_CHECK_LINE = 'Wheelhouse finds your tests and runs them here for the first time.';
+export const FIRST_CHECK_LINE = 'Wheelhouse looks for your tests and runs any it finds.';
 export const STARTED_LINE = (branch) => `Git starts in this folder, with a first commit on ${branch}.`;
 export const CHOOSE_BACKUP = 'Choose a backup folder';
 // "Not now" alone puts a setup card off, and this one closes for good.

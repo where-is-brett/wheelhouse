@@ -920,7 +920,7 @@ test('a made project key says what it reaches, word for word', async () => {
 test('reach lines match the design word for word', () => {
   assert.equal(reachLine({ kind: 'github', repo: 'jo/shop' }), "This key reaches only jo/shop: its code, pull requests and issues. Not your other repositories, and not the repository's settings.");
   assert.equal(reachLine({ kind: 'gitlab-project', repo: 'grp/shop' }), "This key reaches only grp/shop: its code, merge requests and settings API. It can't change the project's protection.");
-  assert.equal(reachLine({ kind: 'gitlab-personal' }), "GitLab won't make a key for one project here, so this is a personal key. It reaches every project your account can, until it expires in 30 days.");
+  assert.equal(reachLine({ kind: 'gitlab-personal' }), "GitLab won't make a key for one project here, so this is a personal key. It can act as you in every GitLab project and group you can reach, until it expires in 30 days.");
   assert.throws(() => reachLine({ kind: 'other' }));
 });
 

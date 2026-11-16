@@ -1616,7 +1616,7 @@ test('only the missing lines are added to .gitignore, in setup\'s commit, the di
     const commit = planned.changes.find((c) => c.action === 'commit');
     assert.deepEqual(commit.files, [...SETUP_FILES, '.gitignore']);
     assert.match(cardText(planned), /\.env files, which hold secrets, kept out of git by \.gitignore/);
-    assert.match(cardText(planned), /the three shared files and \.gitignore go up/i);
+    assert.match(cardText(planned), /the settings, CLAUDE\.md and \.gitignore go up/i);
     const tipBefore = await lsRemote(w.bare, 'main');
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);

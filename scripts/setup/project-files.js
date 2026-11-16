@@ -1142,7 +1142,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   const ignored = up?.action === 'commit' && Array.isArray(up.files) && up.files.includes(GITIGNORE);
   const archon = up?.action === 'commit' && Array.isArray(up.files) && up.files.some((f) => ENGINE_FILES.includes(f));
   const upTo = local ? `onto ${branch}` : keyed ? `to ${branch} on ${NAME[host]} through a merge request` : `up to ${branch} on ${NAME[host]}`;
-  const sharedFiles = `the three shared files${ignored ? ' and .gitignore' : ''}${archon ? ' and .archon/' : ''}`;
+  const sharedFiles = ['the settings', 'CLAUDE.md', ...(ignored ? ['.gitignore'] : []), ...(archon ? ['.archon/'] : [])].join(', ').replace(/, ([^,]*)$/, ' and $1');
   if (up?.action === 'commit') parts.push(keyed ? `${sharedFiles} go in one commit, "${COMMIT_MESSAGE}", ${upTo}${yours}${ownPart}` : `${sharedFiles} go ${upTo} in one commit, "${COMMIT_MESSAGE}"${yours}${ownPart}`);
   if (up?.ownLeft === true) parts.push('your product\'s own files stay as they are, too many for setup\'s commit: commit them when you are ready');
   if (up?.action === 'push') parts.push(`setup's commit, "${COMMIT_MESSAGE}", goes ${upTo}`);

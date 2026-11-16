@@ -218,9 +218,9 @@ function liveDataAsk(name, { isNew = false } = {}) {
     card: {
       level: 3,
       what: `Does ${name} hold live data, such as real people's accounts, orders or messages?`,
-      why: 'Agents never work on live data: with it, they get test data only.',
+      why: 'Agents can\'t read the project\'s secret files, where the passwords to live data are kept.',
       options: [
-        { label: LIVE_DATA.yes, says: 'Agents get test data only, never the live data.' },
+        { label: LIVE_DATA.yes, says: 'Agents are told to use test data only, and to leave the live data alone.' },
         { label: LIVE_DATA.no, says: 'Agents work with the product\'s data as it is, as in a throwaway or test project.' },
       ],
       recommend: isNew ? LIVE_DATA.no : LIVE_DATA.yes,

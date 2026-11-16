@@ -195,7 +195,7 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
   if (id === 'live-data') {
     const before = choices.find((c) => c.id === 'real-users')?.label === REAL_USERS.no;
     if (label === LIVE_DATA.no) return before && choices.some((c) => c.id === 'real-users') ? null : 'No live data yet.';
-    return 'Agents use test data only, to be safe.';
+    return 'Agents are told to use test data only, to be safe.';
   }
   if (id.startsWith('host-tool-')) {
     const tool = id === 'host-tool-gh' ? 'gh' : 'glab';
@@ -222,7 +222,7 @@ function goAheadAsks({ keptHere, list, host }) {
   const way = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.label ?? null;
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
   if (host === 'GitLab' && noTool && way !== null && way !== WAYS.quick && way !== WAYS.asIs) {
-    return `You'll be asked for a one-day GitLab token, and, if GitLab won't make a key for one project, a second token that reaches all your projects for ${PERSONAL_DAYS} days, each pasted into your computer's own box, and your password if needed.`;
+    return `You'll be asked for a one-day GitLab token, and, if GitLab won't make a key for one project, a second token, good for ${PERSONAL_DAYS} days, that works as you in every GitLab project, each pasted into your computer's own box, and your password if needed.`;
   }
   if (way === WAYS.asIs) return `You'll be asked for a ${host} key only if your git holds none that works, pasted into your computer's own box, and your password if needed.`;
   // A narrow way on GitLab with its tool still meets GitLab's refusal of a project key the same way.

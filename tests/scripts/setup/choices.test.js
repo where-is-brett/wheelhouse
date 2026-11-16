@@ -110,7 +110,7 @@ test('the one card\'s lines follow what setup finds: Windows, the README\'s word
   const kept = oneCard({ folder: '/x/h', list: under, product: { isNew: false, host: 'github', repo: 'a/harbour', name: 'harbour' }, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0 }).card.question;
   assert.match(kept, /- harbour on GitHub, as it is\./);
   assert.match(kept, /- Before launch: no real users yet\./);
-  assert.match(kept, /- Agents use test data only, to be safe\./);
+  assert.match(kept, /- Agents are told to use test data only, to be safe\./);
   // Make it stricter on the Mac.
   assert.match(oneCard({ folder: '/x/t', list: newProductChoices({ connection: STRICTER }), product: { isNew: true, name: 't' }, platform: 'darwin', toRun: [], count: 0 }).card.question,
     /- A key for this project only, made on GitHub \(you'll click Authorise and Install\)\./);

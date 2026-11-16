@@ -420,9 +420,9 @@ function realUsersAsk(name, platform) {
     card: {
       level: 2,
       what: `Does ${name} have real users yet: people who rely on it, beyond you and anyone testing it?`,
-      why: 'A product with real users gets a narrow connection.',
+      why: 'A product with real users gets the narrowest connection its host allows, so a leak reaches as little as it can.',
       options: [
-        { label: REAL_USERS.yes, says: 'Setup treats it as launched: agents get a narrow connection, a key to this one project wherever one can be made, and agents never use your whole-account sign-in.' },
+        { label: REAL_USERS.yes, says: `Setup treats it as launched: agents get a narrow connection, a key to this one project wherever one can be made, and agents never use your own sign-in. On GitLab, where a project key can't be made, a ${PERSONAL_DAYS}-day token that can act as you stands in.` },
         { label: REAL_USERS.no, says: 'Setup treats it as before launch, like a throwaway or test project. You can change this when it has users.' },
       ],
       recommend: REAL_USERS.no,
@@ -834,7 +834,7 @@ const quickOnMac = (host) => `Your ordinary ${NAME[host]} sign-in, through ${NAM
 // The options with the recommended one first, the others in their own order.
 const recommendedFirst = (options, recommend) => [...options.filter((o) => o.label === recommend), ...options.filter((o) => o.label !== recommend)];
 
-export function connectionCard({ host, locked = false, launched = false, realUsers = false, platform = null, where, appFile, asIs = false, held = true } = {}) {
+export function connectionCard({ host, locked = false, launched = false, realUsers = false, platform = null, where, appFile, asIs = false, held = true, toolOut = false } = {}) {
   if (!narrowOffered(host)) throw new Error('The connection is to GitHub or GitLab');
   const place = where ?? `the project on ${NAME[host]}`;
   // Where the director's own git already reaches the host (`asIs`), it is the way offered in Quick's place: pushes run with
@@ -860,7 +860,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
     options.push({ label: WAYS.own, says: 'Narrow, through a GitHub App of your own, filled in from Wheelhouse\'s: you tick Enable Device Flow and click Create.' });
     recommend = app ? WAYS.wheelhouse : WAYS.own;
   } else {
-    options.push({ label: WAYS.narrow, says: 'A key to this one project, which setup makes with GitLab\'s own tool where you have it, or else with a one-day token you paste into your computer\'s own box and setup revokes after.' });
+    options.push({ label: WAYS.narrow, says: toolOut ? 'A key to this one project, made with a one-day token you paste into your computer\'s own box, which setup revokes after.' : 'A key to this one project, which setup makes with GitLab\'s own tool.' });
     recommend = WAYS.narrow;
   }
   const quick = !locked && !launched && !asIs;
@@ -909,7 +909,7 @@ export function stricterCard({ where, appFile } = {}) {
 export function reachLine({ kind, repo }) {
   if (kind === 'github') return `This key reaches only ${repo}: its code, pull requests and issues. Not your other repositories, and not the repository's settings.`;
   if (kind === 'gitlab-project') return `This key reaches only ${repo}: its code, merge requests and settings API. It can't change the project's protection.`;
-  if (kind === 'gitlab-personal') return `GitLab won't make a key for one project here, so this is a personal key. It reaches every project your account can, until it expires in ${PERSONAL_DAYS} days.`;
+  if (kind === 'gitlab-personal') return `GitLab won't make a key for one project here, so this is a personal key. It can act as you in every GitLab project and group you can reach, until it expires in ${PERSONAL_DAYS} days.`;
   throw new Error('No reach line for that kind of key');
 }
 
@@ -994,7 +994,7 @@ const NO_TOKEN = 'No GitLab token was given, so setup could not sign in; a fresh
 async function signInWithToken({ run, base, say, stopped, open, askSecret, platform }) {
   const address = addressOf('gitlab', base);
   say(`Your company's GitLab, ${address}, has no sign-in through the browser set up, so make a token on the page that opens, then paste it into the box your computer shows: never into the chat`);
-  say(`The key is a personal one: it reaches every project your account can, and the page asks for api and write_repository only. Set its expiry to ${PERSONAL_DAYS} days`);
+  say(`The key is a personal one: it can act as you in every GitLab project and group you can reach, and the page asks for api and write_repository only. Set its expiry to ${PERSONAL_DAYS} days`);
   await open(tokenUrl({ host: 'gitlab', owner: '', repos: [], name: SIGN_IN_TOKEN_NAME, base }));
   let token;
   try {
@@ -1250,7 +1250,7 @@ async function projectKeyOf(projectId) {
 }
 
 // Which kind of key step 3 kept for a connection made with the setup token: 'project-key', or 'pasted-token' where GitLab
-// would not make one and the director's own token reaching all their projects stands in. null where none is kept.
+// would not make one and the director's own token, able to act as them across GitLab, stands in. null where none is kept.
 export async function projectKeyKind(record) {
   try {
     return (await findKey(`gitlab-project-${record.connection.projectId}`))?.kind ?? null;
@@ -2347,9 +2347,10 @@ export function hostStep({
       }
       const reach = !locked && !launched ? await reachOf({ ctx, host, base, product, platform }) : null;
       if (reach?.noRoad && ctx.choicesOnly !== true) return { wait: OWN_APP_WAIT_MS, why: noRoadLine(host) };
+      const toolOut = host === 'gitlab' && (hostToolLeftOut(ctx, host) || reach?.tool === 'missing');
       const asked = { host, locked, launched, realUsers: realUsers || launched || product.joining === true, platform, where };
       const held = reach === null || reach.found.key !== 'none' || reach.cliSigned === true;
-      let card = connectionCard({ ...asked, appFile, asIs: reach?.offered === true, held });
+      let card = connectionCard({ ...asked, appFile, asIs: reach?.offered === true, held, toolOut });
       let way = card.options[0].label;
       if (card.options.length > 1) {
         // The id is the question's own (what it asks about) followed by the card's, so an answer to this question on a card
@@ -2365,7 +2366,7 @@ export function hostStep({
             .filter(([key, a]) => key.startsWith(`3.${own}`) && /^[0-9a-f]{10}$/.test(key.slice(`3.${own}`.length)) && Number.isFinite(Date.parse(a?.at)))
             .sort(([, a], [, b]) => Date.parse(a.at) - Date.parse(b.at)).at(-1) ?? [null, null];
           // The card the director answered, whose words the answer's key names.
-          const readings = [false, true].flatMap((a) => [true, false].map((h) => connectionCard({ ...asked, appFile, asIs: a, held: h })));
+          const readings = [false, true].flatMap((a) => [true, false].flatMap((h) => [false, true].map((t) => connectionCard({ ...asked, appFile, asIs: a, held: h, toolOut: t }))));
           const was = earlier === null ? null : answeredCard(readings, host, (c) => `3.${own}${digest(c)}` === earlierKey);
           const says = (c, label) => c?.options.find((o) => o.label === label)?.says;
           // The way chosen stands while it is still one of the card's and says what it said when chosen; it is never taken as
