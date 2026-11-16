@@ -3204,9 +3204,9 @@ const SETUP_TOKEN = 'glpat-one-day-setup-token-0001';
 // The system's curl in front of a stand-in GitLab with the setup token's account: GET /user answers for SETUP_TOKEN
 // only, and the project's protected branches and settings are kept here; projects and project keys are the stand-in's
 // (`w.api`). The token itself is `self` (api alone, ending tomorrow), or not known where `self` is null; revoking it
-// is kept in `revoked`. Each call is recorded with its arguments, its config and its environment, so a test can look for
-// the token.
-function setupTokenCurl(w, { userStatus = 200, self = { scopes: ['api'], expires_at: '2026-10-21' } } = {}) {
+// is kept in `revoked`, and GitLab answers it with `revokeStatus`. Each call is recorded with its arguments, its config
+// and its environment, so a test can look for the token.
+function setupTokenCurl(w, { userStatus = 200, self = { scopes: ['api'], expires_at: '2026-10-21' }, revokeStatus = 204 } = {}) {
   const calls = [];
   const revoked = [];
   const branches = {};
@@ -3217,6 +3217,7 @@ function setupTokenCurl(w, { userStatus = 200, self = { scopes: ['api'], expires
     const body = call.body === undefined ? undefined : JSON.parse(call.body);
     if (p === '/personal_access_tokens/self' && token === SETUP_TOKEN) {
       if (call.method === 'DELETE') {
+        if (revokeStatus !== 204) return { status: revokeStatus, body: null };
         revoked.push(token);
         return { status: 204, body: null };
       }
@@ -3391,6 +3392,19 @@ test('Narrow on GitLab without its tool makes the project key and protects the m
     assert.ok(withToken.length > 0 && withToken.every((c) => c.url.startsWith('https://gitlab.com/api/v4/')));
     assert.deepEqual(tokenOutside(curl, home, folder), []);
   });
+});
+
+test('where GitLab does not revoke the setup token, setup says it ends tomorrow only when GitLab said so, and otherwise to delete it', async () => {
+  for (const [self, said] of [[undefined, /Setup has forgotten the one-day token; it ends by itself tomorrow/], [null, /Setup has forgotten the one-day token but could not revoke it: delete it on GitLab's Access tokens page/]]) {
+    await withHome(async () => {
+      const w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
+      const curl = setupTokenCurl(w, { self, revokeStatus: 500 });
+      const { folder, step, planned } = await setupTokenRun(w, { curl, askSecret: async () => SETUP_TOKEN });
+      const { lines } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
+      assert.ok(lines.some((l) => said.test(l)), lines.join('\n'));
+      assert.deepEqual(curl.revoked, []);
+    });
+  }
 });
 
 test('where GitLab refuses a project key, the setup token route falls back to a token typed into the box; the setup token is still kept nowhere', async () => {

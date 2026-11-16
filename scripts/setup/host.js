@@ -1200,6 +1200,8 @@ export async function setupTokenApi({ base, via = {}, say = () => {}, open, askS
     if (me.status === 401 || me.status === 403) throw new Error('GitLab did not accept the token, so nothing was made: make a new one with api ticked, then a fresh Go ahead');
     const user = me.body;
     if (me.status !== 200 || typeof user?.username !== 'string' || user.username === '' || !Number.isInteger(user.id)) throw new Error(`GitLab did not say who the token belongs to (HTTP ${me.status}), so nothing was made; a fresh Go ahead tries again`);
+    // Whether GitLab said the token ends within a day or two; an older GitLab that cannot say leaves it unchecked.
+    let checked = false;
     const self = await api.get('/personal_access_tokens/self');
     if (self.status === 200) {
       const scopes = self.body?.scopes;
@@ -1207,12 +1209,13 @@ export async function setupTokenApi({ base, via = {}, say = () => {}, open, askS
       const latest = new Date(now().getTime() + SETUP_TOKEN_DAYS * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
       if (!Array.isArray(scopes) || scopes.length !== 1 || scopes[0] !== 'api') throw new Error(SETUP_TOKEN_WIDE);
       if (typeof ends !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(ends) || ends > latest) throw new Error(SETUP_TOKEN_LONG);
+      checked = true;
     } else if (self.status !== 404) {
       throw new Error(`GitLab did not say what the token can do (HTTP ${self.status}), so nothing was made; a fresh Go ahead tries again`);
     }
     halt();
     const name = typeof user.name === 'string' && user.name.trim() !== '' && !/[\r\n\0]/.test(user.name) ? user.name : user.username;
-    return { api, user: user.username, author: { name, email: commitEmailOf(user, root) }, forget, end };
+    return { api, user: user.username, author: { name, email: commitEmailOf(user, root) }, forget, end, checked };
   } catch (error) {
     if (taken) await end();
     else forget();
@@ -1980,7 +1983,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     parts.push(rest || keyCard ? `That key reaches everything your account can on ${name}.` : `Both reach everything your account can on ${name}.`);
   } else if (way === WAYS.quick) parts.push(`Quick: your own ${name} sign-in, which reaches your whole account.`);
   else if (host === 'gitlab') {
-    parts.push(tight ? 'A Developer key to this project only, or a token typed into your computer\'s own box.' : 'A key to this project only, with Developer rights. Where GitLab refuses one, a token you type into your computer\'s own box.');
+    parts.push(tight ? 'A Developer key to this project only, or a token typed into your computer\'s own box.' : 'A key to this project only, with Developer rights. If GitLab won\'t allow such a key, a token you make on GitLab and paste into your computer\'s own box.');
     // A project with real users is merged by Maintainers only, which a Developer key is not (GITLAB_MAINTAINERS_ONLY, helper.js).
     if (realUsers) parts.push(REAL_USERS_MERGE_LINE);
   }
@@ -2658,7 +2661,7 @@ export function hostStep({
           const lines = [got.line];
           if (realUsers) lines.push('A project with real users is merged by Maintainers only on GitLab, so Wheelhouse\'s key is refused and a person presses Merge');
           if (got.askPipelines) lines.push(`"Pipelines must succeed" is left off on ${branch}, since the project has no pipeline yet; once it has one, Wheelhouse asks you to switch it on`);
-          lines.push(...(got.gaps ?? []), revoked ? 'Setup has revoked the one-day token' : 'Setup has forgotten the one-day token; it ends by itself tomorrow');
+          lines.push(...(got.gaps ?? []), revoked ? 'Setup has revoked the one-day token' : held.checked ? 'Setup has forgotten the one-day token; it ends by itself tomorrow' : 'Setup has forgotten the one-day token but could not revoke it: delete it on GitLab\'s Access tokens page');
           say(lines.map((l) => String(l).replace(/\.$/, '')).join('. '));
           halt();
         }

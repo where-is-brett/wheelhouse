@@ -20,8 +20,9 @@
 // --desktop answers as the Desktop app can: a card whose question is the same as an earlier card's shows the
 // earlier one, so the answer that comes back is the one given there.
 //
-// renderPath(name, { desktop }) gives { cards, end, said }: each card as { step, id, kind, card, answer }, how the
-// run ended ({ step, how, why? }), and what step 2 said as it finished. printCards gives the cards as text.
+// renderPath(name, { desktop }) gives { cards, end, said, heard }: each card as { step, id, kind, card, answer }, how
+// the run ended ({ step, how, why? }), what setup said along the way, and after how many cards each line was said.
+// printCards gives the cards as text, each line said in its place among them.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -311,6 +312,9 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
   fs.writeFileSync(path.join(home, 'render-world.json'), JSON.stringify({ ...p, pluginRoot: path.dirname(path.dirname(path.dirname(HERE))) }));
   const cards = [];
   const said = [];
+  // Where each line was said: after how many cards.
+  const heard = [];
+  const tell = (line) => { said.push(line); heard.push(cards.length); };
   let end = null;
   try {
     const { setupRoutes } = await import('./engine.js');
@@ -357,7 +361,7 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
     const runId = () => readJournal().runs.find((r) => r.folder === folder)?.id;
     // The one card and Customise, until a Go ahead holds.
     for (let turn = 0; ; turn += 1) {
-      if (turn > 20) { end = { step: 0, how: 'loop', why: 'the one card kept coming back' }; return { cards, end, said }; }
+      if (turn > 20) { end = { step: 0, how: 'loop', why: 'the one card kept coming back' }; return { cards, end, said, heard }; }
       const got = await plan(0);
       if (got.done) break;
       if (got.ask) await answer(0, got.ask);
@@ -372,20 +376,20 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
         const got = await plan(n);
         if (got.done) break;
         // Step 9 on the Desktop app waits while the director's screen is locked, then sends the test and asks if it arrived.
-        if (got.wait !== undefined && n === 9 && turn < 4) { said.push(`setup waited ${Math.round(got.wait / 60000)} minutes for the phone test`); clock += got.wait; continue; }
-        if (got.wait !== undefined) { end = { step: n, how: 'pause', why: got.why }; return { cards, end, said }; }
-        if (got.ok === false || got.error !== undefined) { end = { step: n, how: 'failed', why: got.error ?? got.why ?? JSON.stringify(got) }; return { cards, end, said }; }
+        if (got.wait !== undefined && n === 9 && turn < 4) { tell(`setup waited ${Math.round(got.wait / 60000)} minutes for the phone test`); clock += got.wait; continue; }
+        if (got.wait !== undefined) { end = { step: n, how: 'pause', why: got.why }; return { cards, end, said, heard }; }
+        if (got.ok === false || got.error !== undefined) { end = { step: n, how: 'failed', why: got.error ?? got.why ?? JSON.stringify(got) }; return { cards, end, said, heard }; }
         if (got.ask) {
           const key = `${n}.${got.ask.id}`;
           seen.set(key, (seen.get(key) ?? 0) + 1);
-          if (seen.get(key) > 2 || turn > 12) { end = { step: n, how: 'loop', why: `${key} was asked again with its answer given` }; return { cards, end, said }; }
+          if (seen.get(key) > 2 || turn > 12) { end = { step: n, how: 'loop', why: `${key} was asked again with its answer given` }; return { cards, end, said, heard }; }
           await answer(n, got.ask);
           continue;
         }
         cards.push({ step: n, id: `go-ahead-${n}`, kind: 'go-ahead', card: got.card, covered: got.covered === true });
         if (n === 2) {
           const w = world();
-          if (w.glab === 'unavailable' && got.changes.some((c) => c.action === 'fetch' && c.tool === 'glab')) said.push('GitLab\'s own tool could not be fetched on this computer, so Wheelhouse will reach the host without it');
+          if (w.glab === 'unavailable' && got.changes.some((c) => c.action === 'fetch' && c.tool === 'glab')) tell('GitLab\'s own tool could not be fetched on this computer, so Wheelhouse will reach the host without it');
         }
         if (n === 3) {
           const w = world();
@@ -400,10 +404,10 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
       }
     }
     end = { step: 10, how: 'finished' };
-    return { cards, end, said };
+    return { cards, end, said, heard };
   } catch (error) {
     // A card refused as it went out (the same words as another card, say) ends the run with the cards so far.
-    return { cards, end: { step: null, how: 'refused', why: error instanceof Error ? error.message : String(error) }, said };
+    return { cards, end: { step: null, how: 'refused', why: error instanceof Error ? error.message : String(error) }, said, heard };
   } finally {
     for (const [k, v] of Object.entries(env)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
     if (!keep) fs.rmSync(scratch, { recursive: true, force: true });
@@ -411,8 +415,11 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
 }
 
 // The cards as text, in order: each card's step, question, header, options with their descriptions, and the recommendation.
-export function printCards(name, { cards, end, said }) {
+export function printCards(name, { cards, end, said, heard = [] }) {
+  // Each line said goes after the card it followed, as the director reads them in turn.
+  const sayAfter = (n) => said.forEach((line, i) => { if ((heard[i] ?? cards.length) === n) lines.push(`Said: ${line}`, ''); });
   const lines = [`## Path ${name}: ${PATHS[name].title}`, ''];
+  sayAfter(0);
   cards.forEach((c, i) => {
     const recommended = recommendedOf(c.card);
     lines.push(`### Card ${i + 1} (step ${c.step}${c.kind === 'go-ahead' ? ', Go-ahead card' : ''}${c.covered ? ', covered by the Go ahead' : ''})`);
@@ -422,8 +429,8 @@ export function printCards(name, { cards, end, said }) {
     lines.push(`Recommended: ${recommended ?? 'none'}`);
     if (c.answer) lines.push(`Answer: ${c.answer.text ?? c.answer.label}${c.stale ? ' (the earlier card\'s, as the Desktop app shows it)' : ''}`);
     lines.push('');
+    sayAfter(i + 1);
   });
-  for (const line of said) lines.push(`Said: ${line}`);
   lines.push(`End: step ${end?.step}, ${end?.how}${end?.why ? `: ${end.why}` : ''}`, '');
   return lines.join('\n');
 }

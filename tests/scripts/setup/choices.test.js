@@ -51,7 +51,7 @@ test('the one card for a new product on a Mac says the director\'s approved word
     '- Agents use your ordinary GitHub sign-in, which they can\'t read on this Mac.',
     '- Before launch: no real users and no live data yet.',
     '- On this computer: usage counted here only, and 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted).',
-    '- Wheelhouse\'s settings saved to the project, then its main line protected.',
+    '- Wheelhouse\'s settings saved to the project, and its main line protected.',
     'Nothing runs until you choose.',
     'To know more, just ask.',
   ].join('\n'));
@@ -91,7 +91,7 @@ test('the one card\'s lines follow what setup finds: Windows, the README\'s word
   const list = newProductChoices({ connection: WAYS.own });
   list[4] = { ...list[4], label: PRODUCT.readme, card: { options: [{ label: PRODUCT.readme, says: '"Tide tables for skippers."' }] }, chosen: { label: PRODUCT.readme, text: null, at: '2026-10-26T10:00:00Z' } };
   const win = oneCard({ folder: '/x/t', list, product: { isNew: true, name: 't' }, platform: 'win32', toRun: [3], count: 1 }).card.question;
-  assert.match(win, /- A key for this project only, made on GitHub \(you'll click Authorise and Install\)\./);
+  assert.match(win, /- A key for this project only, from an app you create on GitHub \(you'll tick Enable Device Flow, click Create, then Authorise and Install\)\./);
   assert.match(win, /- Described as: "Tide tables for skippers\."/);
   assert.match(win, /Here's the plan, with your choices\./);
   assert.doesNotMatch(win, /On this computer/);
@@ -124,7 +124,7 @@ test('the plan names GitLab for a folder whose own remote is on GitLab, and for 
   assert.match(gitlab, /- A GitLab key for this project only\./);
   assert.doesNotMatch(gitlab, /GitHub/);
   const github = ask({ isNew: false, host: 'github', repo: 'a/harbour', name: 'harbour' }, [c('connection-0123456789', WAYS.own)]);
-  assert.match(github, /- A key for this project only, made on GitHub/);
+  assert.match(github, /- A key for this project only, from an app you create on GitHub/);
   const put = ask({ isNew: false, host: 'local', repo: null, name: 'harbour' }, [c('kept', PUT_ON_GITLAB), c('connection-0123456789', WAYS.narrow)]);
   assert.match(put, /- Put on GitLab: a private project on your account/);
   assert.match(put, /- A GitLab key for this project only\./);

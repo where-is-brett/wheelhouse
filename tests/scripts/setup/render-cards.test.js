@@ -203,7 +203,7 @@ test('on GitLab, step 10\'s card names a merge request, never a pull request', a
 });
 
 test('each path\'s plan says what will be asked of the director', async () => {
-  const asks = { a: /a GitLab key only if your git holds none that works/, b: /one-day GitLab token, pasted into your computer's own box/, c: /one-day GitLab token, pasted into your computer's own box/, d: /sign in on GitHub pages that open/, e: /sign in on (GitHub|GitLab) pages that open/ };
+  const asks = { a: /a GitLab key only if your git holds none that works/, b: /one-day GitLab token, pasted into your computer's own box/, c: /one-day GitLab token, pasted into your computer's own box/, d: /sign in on GitHub pages that open/, e: /sign in to your company's GitLab in your browser, or with a token you make on a page that opens/ };
   for (const [name, says] of Object.entries(asks)) {
     const { cards } = await rendered(name);
     const plan = cards.filter((c) => /^plan-/.test(c.id)).at(-1);

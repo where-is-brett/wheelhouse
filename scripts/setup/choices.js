@@ -150,6 +150,9 @@ function hostOf(product, choices) {
   return chose ? 'GitLab' : 'GitHub';
 }
 
+// A company's own GitLab, chosen on the which-GitLab card and not taken back on the address card.
+const onCompanyGitLab = (choices, host) => host === 'GitLab' && choices.some((c) => c.id.startsWith('gitlab-where') && c.label === COMPANY_GITLAB) && !choices.some((c) => c.id.startsWith('gitlab-address') && c.label === GITLAB_COM);
+
 // The plain line a choice adds to the one card, or null when it adds none. `name` is the product's,
 // `platform` the computer's, `host` the host the plan names.
 function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
@@ -158,8 +161,7 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
   if (id.startsWith('branch-')) return `Finished work goes on ${label}, the main version.`;
   if (label === KEEP_HERE && (id === 'host' || id === 'join' || id.startsWith('join-'))) return KEPT_LINE;
   if (label === HOST_LABELS.github || label === HOST_LABELS.gitlab) {
-    // A company's own GitLab, chosen on the which-GitLab card and not taken back on the address card.
-    const company = host === 'GitLab' && choices.some((c) => c.id.startsWith('gitlab-where') && c.label === COMPANY_GITLAB) && !choices.some((c) => c.id.startsWith('gitlab-address') && c.label === GITLAB_COM);
+    const company = onCompanyGitLab(choices, host);
     if (id === 'join' || id.startsWith('join-')) return company ? 'A new product, in a private project on your company\'s GitLab.' : `A new product, in a private ${host === 'GitLab' ? 'project' : 'repository'} on your ${host} account.`;
   }
   if ((id === 'join' || id.startsWith('join-')) && backupNamed(text) !== null) return `${name}, brought back from your backup into this folder.`;
@@ -178,7 +180,7 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     if (label === WAYS.quick) return platform === 'darwin' ? `Agents use your ordinary ${host} sign-in, which they can't read on this Mac.` : `Agents use your ordinary ${host} sign-in.`;
     if (label === STRICTER) return `A key for this project only, made on ${host} (you'll click Authorise and Install).`;
     if (label === WAYS.wheelhouse) return 'A key for this project only, through the Wheelhouse app (you\'ll type a code and click Install).';
-    if (label === WAYS.own) return 'A key for this project only, made on GitHub (you\'ll click Authorise and Install).';
+    if (label === WAYS.own) return 'A key for this project only, from an app you create on GitHub (you\'ll tick Enable Device Flow, click Create, then Authorise and Install).';
     if (label === WAYS.asIs) return `Agents use your own git as it is, with a ${host} key that reaches everything your account can.`;
     return `A ${host} key for this project only.`;
   }
@@ -209,7 +211,8 @@ function describedBy(choice) {
 
 // What Go ahead says will be asked of the director, as the plan's choices make it true: only a password for a
 // project kept here; on GitLab without its tool, with a key for this project only, the one-day setup token (host.js);
-// with their git as it is, a key only where git holds none that works; else a sign-in.
+// with their git as it is, a key only where git holds none that works; on a company's GitLab, a sign-in in the browser or
+// by token; else a sign-in.
 function goAheadAsks({ keptHere, list, host }) {
   if (keptHere) return 'You\'ll only be asked for your password, if at all.';
   const way = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.label ?? null;
@@ -218,6 +221,8 @@ function goAheadAsks({ keptHere, list, host }) {
     return 'You\'ll be asked for a one-day GitLab token, pasted into your computer\'s own box, and your password if needed.';
   }
   if (way === WAYS.asIs) return `You'll be asked for a ${host} key only if your git holds none that works, pasted into your computer's own box, and your password if needed.`;
+  // A company's GitLab without a browser sign-in set up takes a token instead, which only setup's step 3 can tell.
+  if (onCompanyGitLab(list, host)) return 'You\'ll sign in to your company\'s GitLab in your browser, or with a token you make on a page that opens and paste into your computer\'s own box, and give your password if needed.';
   return `You'll sign in on ${host} pages that open and click through them, and give your password if needed.`;
 }
 
@@ -263,7 +268,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     const kept = compactionLine(compactionRules({ claudeHome, projectDir: folder }));
     if (kept !== null) lines.push(kept);
   }
-  if (toRun.includes(7)) lines.push(keptHere ? 'Wheelhouse\'s settings saved to the project.' : 'Wheelhouse\'s settings saved to the project, then its main line protected.');
+  if (toRun.includes(7)) lines.push(keptHere ? 'Wheelhouse\'s settings saved to the project.' : 'Wheelhouse\'s settings saved to the project, and its main line protected.');
   if (toRun.includes(7) && keptHere) lines.push(FIRST_CHECK_LINE);
   // Never a plan with no lines: the health check is named when nothing else is.
   if (lines.length === 0 && toRun.includes(HEALTH_STEP)) lines.push('A last check that everything is safe.');
