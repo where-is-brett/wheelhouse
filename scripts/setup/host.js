@@ -2074,7 +2074,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
       ? `Wheelhouse pushes with your own git as it is, and uses its key for merge requests${proxy}.`
       : `Wheelhouse pushes with your own git as it is, and uses ${name}'s own tool, signed in already, for merge requests.`);
     parts.push(`${rest || keyCard ? 'That key reaches' : 'Both reach'} everything your account can on ${name}${platform === 'win32' ? '; on Windows any agent\'s command could ask for it' : ''}.`);
-  } else if (way === WAYS.quick) parts.push(`Quick: your own ${name} sign-in, which reaches your whole account.`);
+  } else if (way === WAYS.quick) parts.push(`Quick: your own ${name} sign-in, which reaches your whole account${platform === 'win32' ? '; on Windows any agent\'s command could read it' : ''}.`);
   else if (host === 'gitlab') {
     parts.push(tight ? `A key to this project only; if GitLab won't allow one, a ${PERSONAL_DAYS}-day token that can act as you across GitLab.` : `A key to this project only, with the rights agents need there. If GitLab won't allow one, a ${PERSONAL_DAYS}-day token that can act as you across GitLab, pasted into your computer's own box.`);
     // A project with real users is merged by Maintainers only, which a Developer key is not (GITLAB_MAINTAINERS_ONLY, helper.js).
