@@ -840,7 +840,7 @@ export function setupRoutes({
     // Only the steps the run has (ruling R74).
     const all = runSteps(run, await steps());
     const running = (n) => runningIn(run, n);
-    if (run === null) return { ok: true, lines: ['Setup has not started in this folder.'], next: firstUnfinished(null, all), ask: toAsk(null, all, running), oneCard: true };
+    if (run === null) return { ok: true, lines: ['Setup has not started in this folder.'], next: firstUnfinished(null, all), ask: toAsk(null, all, running), oneCard: true, filesDue: true };
     const again = setUpAgainAsked(answersFor(run.id)) && stepDone(run, 3);
     const listed = statusLines(run, all, running);
     // A green board's briefing not yet given, and no card left to open with it (the phone's, see
@@ -848,7 +848,9 @@ export function setupRoutes({
     const briefing = listed.ask === null && healthGreen(run) && pendingBriefing(run, answersFor(run.id)) !== null;
     // The steps running now, for `cli.js wait`: a running step's plan is refused, so the wait reads them here.
     const runningNow = all.map((s) => s.n).filter((n) => running(n) !== null);
-    return { ok: true, ...listed, ...(runningNow.length > 0 ? { running: runningNow } : {}), ...(briefing ? { ask: HEALTH_STEP } : {}), ...(oneCardNext(run) ? { oneCard: true } : {}), ...(again ? { setUpAgain: true } : {}) };
+    // Until step 7 puts the project's files in place, a sandboxed session can't reach the helper.
+    const filesDue = onRunList(run, 7) && !stepDone(run, 7);
+    return { ok: true, ...listed, ...(runningNow.length > 0 ? { running: runningNow } : {}), ...(briefing ? { ask: HEALTH_STEP } : {}), ...(oneCardNext(run) ? { oneCard: true } : {}), ...(again ? { setUpAgain: true } : {}), ...(filesDue ? { filesDue: true } : {}) };
   }
 
   // Step 10's board (rulings R41, R44, R67, R68): the helper's checks, recorded by step 10's apply,

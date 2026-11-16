@@ -131,6 +131,9 @@ function stepOf(text, { oneCard = false } = {}) {
   return Number(text);
 }
 
+// Said on resume while step 7 isn't applied: a session that ran setup outside the sandbox keeps doing so.
+const OUTSIDE_UNTIL_FILES = 'Step 7 is not applied yet: if setup\'s commands have had to run outside the sandbox, run the next one outside it too.';
+
 async function plan(client, folder, step) {
   const got = await ask(client.setup.plan, { folder, step });
   const named = { step, title: SETUP_TITLES[step] ?? 'The plan', ...(Array.isArray(got.progress) ? { progress: got.progress } : {}) };
@@ -176,6 +179,7 @@ export async function main(argv, {
       if ((planned === null || planned.done === true) && Number.isInteger(got.ask)) planned = await plan(helper, folder, got.ask);
       json({
         lines: Array.isArray(got.lines) ? got.lines : [], next, plan: planned, ...(got.setUpAgain === true ? { setUpAgain: true } : {}),
+        ...(got.filesDue === true ? { sandbox: OUTSIDE_UNTIL_FILES } : {}),
       });
     } else if (form === 'choices' && rest.length === 0) {
       const { ok, ...answer } = await ask((client ?? helperClient()).setup.choices, { folder }); // eslint-disable-line no-unused-vars
