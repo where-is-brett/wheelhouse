@@ -254,13 +254,18 @@ test('each weakening setting is named with what it does, and left as it is', asy
     const written = JSON.parse(fs.readFileSync(file, 'utf8'));
     for (const key of ['sandbox', 'enabledPlugins', 'extraKnownMarketplaces']) assert.deepEqual(written[key], theirs[key]);
 
-    // Many of them still fit the card: each is named, at least by its name.
+    // Too many to say each: the commands are named, and the plugins counted, never by their ids.
+    const plugins = Object.fromEntries(Array.from({ length: 18 }, (_, i) => [`plugin-number-${i}@their-market`, true]));
+    fs.writeFileSync(file, `${JSON.stringify({ sandbox: { excludedCommands: ['gh'] }, enabledPlugins: plugins })}\n`);
+    const grouped = composed(await step.plan(ctx), 6);
+    assert.match(grouped, /gh runs outside the sandbox; 18 plugins of yours are on and run their own code\./);
+    assert.doesNotMatch(grouped, /@their-market/);
+    // Too many commands to name: counted too.
     const many = { sandbox: { excludedCommands: Array.from({ length: 40 }, (_, i) => `command-number-${i}`) } };
     fs.writeFileSync(file, `${JSON.stringify(many)}\n`);
-    const crowded = await step.plan(ctx);
-    const crowdedText = composed(crowded, 6);
-    assert.match(crowdedText, /command-number-0/);
-    assert.match(crowdedText, /more/);
+    const crowdedText = composed(await step.plan(ctx), 6);
+    assert.match(crowdedText, /40 commands run outside the sandbox\./);
+    assert.doesNotMatch(crowdedText, /command-number-0/);
   });
 });
 

@@ -206,7 +206,7 @@ function lines({ changes, userSettings, kept, route, platform, floor }) {
 }
 
 // The card's sentence for the director's settings that weaken Standard, as long as `fit` allows:
-// each with what it does; else each by name; else as many names as fit, and how many more.
+// each with what it does; else the commands by name and the plugins and marketplaces counted; else all counted.
 function weakeningSentence(found, fit) {
   if (found.length === 0) return '';
   // One plain line, not a card (design section 15's shorter cards): what it means, and that nothing
@@ -214,12 +214,20 @@ function weakeningSentence(found, fit) {
   const lead = 'Some of your own settings sit outside Wheelhouse\'s Standard safeguards; Wheelhouse leaves them as they are, and nothing needs doing:';
   const full = `${lead} ${found.map((w) => w.says).join('; ')}.`;
   if (fit(full)) return full;
-  const names = `${lead} ${found.map((w) => w.value).join(', ')}.`;
-  if (fit(names)) return names;
-  for (let n = found.length - 1; n >= 1; n -= 1) {
-    const some = `${lead} ${found.slice(0, n).map((w) => w.value).join(', ')}, and ${found.length - n} more.`;
-    if (fit(some)) return some;
-  }
+  // Too long to say each: the commands by name, and the plugins and marketplaces counted (their ids read as code).
+  const of = (key) => found.filter((w) => w.key === key);
+  const commands = of('sandbox.excludedCommands').map((w) => w.value);
+  const plugins = of('enabledPlugins').length;
+  const places = of('extraKnownMarketplaces').length;
+  const parts = (named) => [
+    ...(commands.length === 0 ? [] : [named ? `${commands.join(', ')} ${commands.length === 1 ? 'runs' : 'run'} outside the sandbox` : `${commands.length} ${commands.length === 1 ? 'command runs' : 'commands run'} outside the sandbox`]),
+    ...(plugins === 0 ? [] : [`${plugins} ${plugins === 1 ? 'plugin of yours is on and runs its' : 'plugins of yours are on and run their'} own code`]),
+    ...(places === 0 ? [] : [`${places} ${places === 1 ? 'marketplace is' : 'marketplaces are'} added`]),
+  ];
+  const grouped = `${lead} ${parts(true).join('; ')}.`;
+  if (fit(grouped)) return grouped;
+  const counted = `${lead} ${parts(false).join('; ')}.`;
+  if (fit(counted)) return counted;
   return `${lead} ${found.length} of them.`;
 }
 
