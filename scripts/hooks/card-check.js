@@ -15,7 +15,7 @@
 // A decision (an answer card or a product question, scripts/decisions/pending.js) is shown as a chat message, never through the
 // question picker: the picker is refused for one, saying to print `decision show <n>`. On Stop, in a front-desk session, every
 // "Decision needed" block in the First Mate's last message must be exactly one waiting decision's text (checkShown), or the
-// turn is sent back with the reason. A decision's shape (`shapeProblems` in scripts/cards/compose.js) is judged before it is recorded, by
+// turn is sent back with the reason; a question to the director in plain text (plainQuestion) is sent back once, to be a card. A decision's shape (`shapeProblems` in scripts/cards/compose.js) is judged before it is recorded, by
 // `cli.js ask` and `act question`, so one on the record has passed. That check blocks by design and fails open: a record that can't be read lets the message go.
 // Before the form check, in a project's folder, two more refusals (one card, one answer): a question whose card the
 // director has already decided is refused with what counted and where, and, for the front desk with a live pane beside
@@ -399,8 +399,25 @@ export function checkShown(lastMessage, pending) {
   return { ok: true };
 }
 
-// The Stop check: a front-desk session's last message with a decision block that is not a waiting decision's exact text is sent
-// back. A turn already sent back once is let go, and any failure lets the message through.
+// plainQuestion(lastMessage) -> the first line that asks the director something in plain text, or null. A line asks when it
+// ends with a question mark; lines in a code fence, quoted with ">", or in a message that holds a decision or a card copied
+// word for word (its reply code line) are not counted, as those are the forms a question may take in the chat.
+export function plainQuestion(lastMessage) {
+  const text = String(lastMessage ?? '');
+  if (blocksIn(text).length > 0 || /^\s*Reply code:/mu.test(text)) return null;
+  let fenced = false;
+  for (const raw of text.split(/\r\n|[\n\r]/)) {
+    const line = raw.trim();
+    if (/^(```|~~~)/u.test(line)) { fenced = !fenced; continue; }
+    if (fenced || line.startsWith('>')) continue;
+    if (/\?["'”’)*_]*$/u.test(line)) return line;
+  }
+  return null;
+}
+
+// The Stop check, in a front-desk session: a last message with a decision block that is not a waiting decision's exact text is
+// sent back, and so is one that asks the director a question in plain text, since every question is a card. A turn already sent
+// back once is let go, and any failure lets the message through.
 export async function decideStop(input, { projectOf: find = projectOf, dir, role = sessionRole, env = process.env, decisions } = {}) {
   try {
     if (input.stop_hook_active === true || startedByScript(env)) return undefined;
@@ -408,7 +425,10 @@ export async function decideStop(input, { projectOf: find = projectOf, dir, role
     const found = find(input.cwd, { dir });
     const holder = found && role({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk';
     if (holder) refreshSeat(found.project, input.session_id);
-    if (blocksIn(message).length === 0 || !holder) return undefined;
+    if (!holder) return undefined;
+    const asked = plainQuestion(message);
+    if (asked !== null) return answer.block(`Your message asks the director a question in plain text ("${asked.length > 120 ? `${asked.slice(0, 119)}…` : asked}"). Every question is a card: write it as a card's JSON and ask it with \`card\`, as the front-desk skill says, whatever another skill says about asking in the chat. Don't repeat the question in the message.`);
+    if (blocksIn(message).length === 0) return undefined;
     const checked = checkShown(message, (decisions ?? readDecisions(found.project)).pending);
     return checked.ok ? undefined : answer.block(checked.reason);
   } catch {
