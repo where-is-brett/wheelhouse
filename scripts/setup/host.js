@@ -650,7 +650,10 @@ export function nameGitlabHost({ folder, entry, record }) {
 function joinAsk(id, name, { missed }) {
   const other = fromOtherComputer(name);
   let found = '';
-  if (missed?.missed === 'not-a-name') found = `"${missed.name}" is not a repository's name. An address alone is not a project: type owner/name, like ann/cafe-menu, or click a button. `;
+  if (missed?.missed === 'not-a-name') {
+    const address = /:\/\/|@/.test(missed.name) ? 'An address alone is not a project: ' : '';
+    found = `"${missed.name}" is not a repository's name. ${address}${address ? 't' : 'T'}ype owner/name, like ann/cafe-menu, or click a button. `;
+  }
   else if (missed?.missed === 'no-backup') found = `"${missed.name}" can't be found. `;
   else if (Array.isArray(missed?.missed)) found = `More than one ${missed.name} is set up with Wheelhouse: ${missed.missed.slice(0, 5).join(', ')}. `;
   else if (missed) found = `Setup found no ${missed.name} set up with Wheelhouse on your account or organisations. `;

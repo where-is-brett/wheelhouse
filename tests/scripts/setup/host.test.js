@@ -2588,7 +2588,11 @@ test('none or several found are refused saying to type owner/name, the question 
     const answers = { ...planned.answers, [`3.${first.id}`]: { label: null, text: 'the cafe one', at: NOW.toISOString() } };
     const next = (await step.plan({ ...ctx, answers })).ask;
     assert.notEqual(next.id, first.id);
-    assert.match(next.card.what, /^"the cafe one" is not a repository's name\. An address alone is not a project: type owner\/name, like ann\/cafe-menu, or click a button\./);
+    assert.match(next.card.what, /^"the cafe one" is not a repository's name\. Type owner\/name, like ann\/cafe-menu, or click a button\./);
+    // A pasted address with no project in it says an address alone is not a project.
+    const bare = { ...answers, [`3.${next.id}`]: { label: null, text: 'https://git.example.org/', at: NOW.toISOString() } };
+    assert.match((await step.plan({ ...ctx, answers: bare })).ask.card.what,
+      /^"https:\/\/git\.example\.org\/" is not a repository's name\. An address alone is not a project: type owner\/name, like ann\/cafe-menu, or click a button\./);
     // A new product, chosen now: the run is not a joining one any more once its apply starts.
     const fresh = await answerJoin(step, { ...ctx, answers }, (id) => (id.startsWith('join') ? HOST_LABELS.github : choose()(id)));
     assert.ok(fresh.changes.some((c) => c.action === 'repository'));
