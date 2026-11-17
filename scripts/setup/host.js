@@ -91,7 +91,7 @@ import { installationCovers } from '../host/connection.js';
 import { gitlabApi, makeProjectKey, isProjectKeyRefused, checkBaseUrl, projectPath, PERSONAL_DAYS, keyExpiry } from '../host/gitlab-key.js';
 import { tokenUrl } from '../host/token-url.js';
 import { composeCard, isTooLong } from '../cards/compose.js';
-import { TOKEN_VARIABLES } from '../install/survey.js';
+import { withoutTokens } from '../lib/token-names.js';
 import { DEFAULT_GITLAB, gitlabBase, readGitlabHosts, parseRemote, hostWords, isDefaultHost, commitEmailOf } from '../host/gitlab-base.js';
 import { findKey, saveKey } from '../host/keys.js';
 import { borrowKey, storeDirectorKey } from '../host/store.js';
@@ -648,18 +648,19 @@ export function nameGitlabHost({ folder, entry, record }) {
 // The join question (ruling R77), asked first in a folder holding only step 1's install. `missed`
 // is why it is asked again: { name, missed }, where `missed` is 'none', the repositories found
 // when there were several, 'not-a-name' for typed text that names no repository, 'bad-address' for a pasted address setup can't read, or 'other-forge' for one on another place to keep code.
+const PASTE_WITH_SCHEME = 'If that is an address, paste it with https:// at the front.';
 function joinAsk(id, name, { missed }) {
   const other = fromOtherComputer(name);
   let found = '';
+  const dotted = typeof missed?.name === 'string' && missed.name.split('/')[0].includes('.') ? ` ${PASTE_WITH_SCHEME}` : '';
   if (missed?.missed === 'not-a-name') {
-    const address = /:\/\/|@/.test(missed.name) ? 'An address alone is not a project: ' : '';
-    found = `"${missed.name}" is not a repository's name. ${address}${address ? 't' : 'T'}ype owner/name, like ann/cafe-menu, or click a button. `;
+    found = `"${missed.name}" is not a repository's name. ${missed.address === true ? 'That address names no project. ' : ''}Type owner/name, like ann/cafe-menu, or click a button. `;
   }
-  else if (missed?.missed === 'bad-address') found = `"${missed.name}" looks like an address but can't be read: check it was copied whole, or type owner/name, like ann/cafe-menu, or click a button. `;
-  else if (missed?.missed === 'other-forge') found = `"${missed.name}" is not on GitHub or GitLab, the two places Wheelhouse works with. Type owner/name, like ann/cafe-menu, or click a button. `;
+  else if (missed?.missed === 'bad-address') found = `"${missed.name}" can't be read as an address: setup reads only addresses that start with https:// or git@ and have a full host name. Or type owner/name, like ann/cafe-menu, or click a button. `;
+  else if (missed?.missed === 'other-forge') found = `"${missed.name}" is not on github.com or GitLab, the places Wheelhouse works with. Type owner/name, like ann/cafe-menu, or click a button. `;
   else if (missed?.missed === 'no-backup') found = `"${missed.name}" can't be found. `;
-  else if (Array.isArray(missed?.missed)) found = `More than one ${missed.name} is set up with Wheelhouse: ${missed.missed.slice(0, 5).join(', ')}. `;
-  else if (missed) found = `Setup found no ${missed.name} set up with Wheelhouse on your account or ${missed.host === 'gitlab' ? 'groups' : 'organisations'}. `;
+  else if (Array.isArray(missed?.missed)) found = `More than one ${missed.name} is set up with Wheelhouse: ${missed.missed.slice(0, 5).join(', ')}.${dotted} `;
+  else if (missed) found = `Setup found no ${missed.name} set up with Wheelhouse on your account or ${missed.host === 'gitlab' ? 'groups' : 'organisations'}.${dotted} `;
   return {
     id,
     typed: true,
@@ -671,7 +672,7 @@ function joinAsk(id, name, { missed }) {
         { label: KEEP_HERE, says: 'A new product. Nothing goes online, and it can move to GitHub or GitLab later, in one click.' },
         { label: HOST_LABELS.github, says: 'A new product, in a private repository on your GitHub account.' },
         { label: HOST_LABELS.gitlab, says: 'A new product, in a private project on your GitLab account.' },
-        { label: other, says: `Setup finds ${name} on your account or organisations, set up with Wheelhouse, and checks it out into this folder.` },
+        { label: other, says: `Setup finds ${name} on your account or ${missed?.host === 'gitlab' ? 'groups' : 'organisations'}, set up with Wheelhouse, and checks it out into this folder.` },
       ],
       // An empty folder is far more often a new product, whether or not this computer knows
       // Wheelhouse yet (the director's first setup, design section 15.1), and one kept here needs no account.
@@ -717,7 +718,7 @@ const shown = (text) => String(text ?? '').trim()
 // { unreadable: true } for one setup can't read; { forge: true } for one on another place to keep code; { host: 'github' }
 // for github.com; else { host: 'gitlab', company } with the GitLab as the which-GitLab cards give it ({ base } for the
 // public service, { base, host } for a company's).
-function pinOf(text) {
+export function pinOf(text) {
   const there = pastedAddress(text);
   if (there === null || there.unreadable || there.forge) return there;
   if (hostOfAddress(there) === 'github') return { host: 'github' };
@@ -789,7 +790,7 @@ function joinChoice(ctx) {
     if (typeof got.text === 'string') {
       const wanted = repoNamed(got.text);
       if (wanted === null) {
-        tried.push({ name: shown(got.text), missed: 'not-a-name' });
+        tried.push({ name: shown(got.text), missed: 'not-a-name', ...(pastedAddress(got.text) === null ? {} : { address: true }) });
         continue;
       }
       // A pasted address decides the host: it is looked up there and nowhere else, and no host card is asked.
@@ -1027,9 +1028,8 @@ export async function askAdministrationKey({ owner, name, say, open, askSecret, 
 
 // `glab` is told a company's GitLab through GITLAB_HOST, which takes a port; `--hostname` refuses one
 // on `glab api` (check 71). The public service needs no telling.
-// The director's own token variables are never passed to glab (survey.js's list, but for the host variables, which are set
-// here): glab would send such a token to whichever GitLab it is told to reach, a company's or a pasted address's.
-export const WITHOUT_TOKENS = Object.fromEntries(TOKEN_VARIABLES.filter((n) => !/_HOST$/.test(n)).map((n) => [n, undefined]));
+// The director's own token variables (scripts/lib/token-names.js) are never passed to glab or git's helper: glab would send such a token to whichever GitLab it is told to reach, a company's or a pasted address's.
+export const WITHOUT_TOKENS = withoutTokens();
 const glabEnv = (host, base) => (host === 'gitlab' ? { ...WITHOUT_TOKENS, ...(base !== DEFAULT_GITLAB ? { GITLAB_HOST: addressOf(host, base) } : {}) } : {});
 const ask = (run, host, args, base = DEFAULT_GITLAB) => quietly(run, toolPath(TOOL[host]), args, host === 'gitlab' ? { env: glabEnv(host, base) } : {});
 
@@ -1612,8 +1612,9 @@ async function stateBranchLaunched({ remoteUrl, gitPath, env, run }) {
 // Why a joining computer's answer found no repository, or several: said with what to type.
 export function joinMissLine({ host, wanted, found }) {
   const where = host === 'gitlab' ? 'your GitLab account or your groups' : 'your GitHub account or your organisations';
-  if (found.length === 0) return `Setup found no repository ${wanted} set up with Wheelhouse on ${where}, so nothing was checked out: type the project's owner/name on step 3's question, which asks again`;
-  return `More than one repository named ${wanted} is set up with Wheelhouse (${found.map((f) => f.repo).join(', ')}), so nothing was checked out: type the one you mean as owner/name on step 3's question, which asks again`;
+  const dotted = wanted.split('/')[0].includes('.') ? `. ${PASTE_WITH_SCHEME}` : '';
+  if (found.length === 0) return `Setup found no repository ${wanted} set up with Wheelhouse on ${where}, so nothing was checked out: type the project's owner/name on step 3's question, which asks again${dotted}`;
+  return `More than one repository named ${wanted} is set up with Wheelhouse (${found.map((f) => f.repo).join(', ')}), so nothing was checked out: type the one you mean as owner/name on step 3's question, which asks again${dotted}`;
 }
 
 // Checks the project out into this folder in place (ruling R77, as R34 connects a new product's):
@@ -2299,8 +2300,9 @@ export function hostStep({
     let found;
     if (ctx.choicesOnly === true) {
       let held = null;
+      // A pasted or company host is not asked what key the computer holds for it: the store may contact it.
       try {
-        held = await directorKey.borrow({ host: new URL(hostAddress(host, base)).host, base: hostAddress(host, base), repoPath: repo ?? undefined });
+        if (!quiet) held = await directorKey.borrow({ host: new URL(hostAddress(host, base)).host, base: hostAddress(host, base), repoPath: repo ?? undefined });
       } catch { /* none to lend */ }
       found = { transport: null, helper: null, gitReaches: null, key: typeof held?.key === 'string' && held.key !== '' ? 'unchecked' : 'none', user: null, username: null };
     } else {

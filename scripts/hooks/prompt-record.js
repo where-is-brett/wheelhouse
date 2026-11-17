@@ -58,6 +58,7 @@ import { insideCheckout } from '../feature/approved.js';
 import { keepApprovedText, installText } from '../state/approved-text.js';
 import { asQuestion } from '../cards/visit.js';
 import { scanContent } from '../state/secret-scan.js';
+import { pastedAddress, withoutSecrets } from '../lib/pasted-address.js';
 import {
   approvalLine, confirmLine, LIFT_STOP_LINES, isLiftStopLine, runbookLine, RUNBOOK_TITLES, ciPushLine,
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, ID, LANES, QUESTION_ID,
@@ -640,7 +641,9 @@ function setupAnswerOf(cwd, { question, label, card, signable, typed, why }) {
   }
   if (label.trim() === '') return { why: 'the text typed was empty' };
   if (scanContent(label).length > 0) return { why: 'the text typed holds what looks like a secret' };
-  return { asked, made: { kind: 'action', data: { ...data, label: null, text: label } } };
+  // A pasted project address on step 3's join question is kept without the user, token or query written in it; it reads as the same address.
+  const kept = asked.step === 3 && /^join(?:-|$)/.test(String(asked.id)) && pastedAddress(label) !== null ? withoutSecrets(label) : label;
+  return { asked, made: { kind: 'action', data: { ...data, label: null, text: kept } } };
 }
 
 // Signs each setup click and answer and keeps it in setup/clicks/ or setup/answers/. One failing

@@ -260,3 +260,19 @@ test('the plan line for an address join names the product the address gave, and 
     assert.match(plan, line, plan);
   }
 });
+
+test('the plan line names a host only as step 3 reads it: www.gitlab.com is the public GitLab, and a host step 3 refuses is named nowhere', async () => {
+  const step = {
+    n: 3,
+    plan: async (ctx) => (ctx.answers['3.join'] ? { wait: 0, why: 'asked' } : { ask: { id: 'join', typed: true, card: { what: 'Where?', options: [{ label: NEW_PRODUCT }], recommend: NEW_PRODUCT } } }),
+  };
+  const planOf = (s, answers) => s.plan({ answers });
+  const lineFor = async (text) => {
+    const list = await openChoices({ steps: [step], run: null, answers: { '3.join': { label: null, text, at: '2026-10-26T10:05:00.000Z' } }, planOf });
+    return oneCard({ folder: os.tmpdir(), list, product: null, platform: 'darwin', toRun: [3], count: 1 }).card.question;
+  };
+  assert.match(await lineFor('https://www.gitlab.com/ann/cafe-menu'), /^- cafe-menu, from your other computer, on GitLab, brought into this folder\.$/m);
+  for (const refused of ['https://git_lab.example.com/ann/cafe-menu', 'https://gitlab.example.com./ann/cafe-menu', 'https://bitbucket.org/ann/cafe-menu']) {
+    assert.doesNotMatch(await lineFor(refused), /, on /, refused);
+  }
+});

@@ -13,7 +13,7 @@ import path from 'node:path';
 import {
   hostStep, cardFor, signIn, makeRepos, connectionCard, stricterCard, stricterWay, STRICTER, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
   directorGitlabApi, directorKey, signInStatus, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
-  APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, ORGS_UNREAD, launchedIn,
+  APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, pinOf, joinMissLine, ORGS_UNREAD, launchedIn,
   checkOutJoined, findInstallation, CERTIFICATE_GIVEN, reachLine, askAdministrationKey, setupTokenApi, SETUP_TOKEN_KEPT,
   madeWithSetupToken, keyGitlabApi, keyGitEnv, againCard,
 } from '../../../scripts/setup/host.js';
@@ -2526,7 +2526,7 @@ test('an address setup cannot read is refused as such, never looked up on the ru
     for (const bad of ['https://gitlab.example.org:99999/ann/cafe-menu', 'https://git lab.example.org/ann/cafe-menu', 'https://[::1/ann/cafe-menu', 'https://git^lab.example.org/ann/cafe-menu']) {
       const ask = (await step.plan({ ...ctx, answers: { '3.join': { label: null, text: bad, at: NOW.toISOString() } } })).ask;
       assert.notEqual(ask.id, 'join', bad);
-      assert.equal(ask.card.what.startsWith(`"${bad.replace('deploy@', '')}" looks like an address but can't be read: check it was copied whole, or type owner/name, like ann/cafe-menu, or click a button. `), true, ask.card.what);
+      assert.equal(ask.card.what.startsWith(`"${bad.replace('deploy@', '')}" can't be read as an address: setup reads only addresses that start with https:// or git@ and have a full host name. Or type owner/name, like ann/cafe-menu, or click a button. `), true, ask.card.what);
     }
   });
 });
@@ -2566,14 +2566,14 @@ test('other places to keep code are refused, and only https, ssh and git@ addres
     for (const other of ['https://github.example.com/ann/x', 'https://bitbucket.org/ann/x', 'https://www.bitbucket.org/ann/x', 'https://dev.azure.com/o/p', 'git@codeberg.org:ann/x.git']) {
       const ask = await whatFor(other);
       assert.notEqual(ask.id, 'join', other);
-      assert.equal(ask.card.what.startsWith(`"${other}" is not on GitHub or GitLab, the two places Wheelhouse works with. Type owner/name, like ann/cafe-menu, or click a button. `), true, ask.card.what);
+      assert.equal(ask.card.what.startsWith(`"${other}" is not on github.com or GitLab, the places Wheelhouse works with. Type owner/name, like ann/cafe-menu, or click a button. `), true, ask.card.what);
     }
     // Item 5: http, other schemes, other ssh users, loopback, link-local and bare-IP hosts are unreadable.
     for (const bad of ['http://gitlab.example.org/ann/x', 'ftp://gitlab.example.org/ann/x', 'deploy@gitlab.example.org:ann/x', 'https://localhost/ann/x',
       'https://127.0.0.1/ann/x', 'https://0x7f.1/ann/x', 'https://169.254.169.254/ann/x', 'git@localhost:ann/x', 'https://[::1]/ann/x', 'https://2130706433/ann/x']) {
       const ask = await whatFor(bad);
       assert.notEqual(ask.id, 'join', bad);
-      assert.equal(ask.card.what.startsWith(`"${bad.replace('deploy@', '')}" looks like an address but can't be read: check it was copied whole, or type owner/name, like ann/cafe-menu, or click a button. `), true, ask.card.what);
+      assert.equal(ask.card.what.startsWith(`"${bad.replace('deploy@', '')}" can't be read as an address: setup reads only addresses that start with https:// or git@ and have a full host name. Or type owner/name, like ann/cafe-menu, or click a button. `), true, ask.card.what);
       // Item 6: what step 3 refuses is no host for the tools or the plan either.
       assert.equal(chosenHost({ '3.join': { label: null, text: bad, at: NOW.toISOString() } }), null, bad);
     }
@@ -2787,10 +2787,10 @@ test('none or several found are refused saying to type owner/name, the question 
     const next = (await step.plan({ ...ctx, answers })).ask;
     assert.notEqual(next.id, first.id);
     assert.match(next.card.what, /^"the cafe one" is not a repository's name\. Type owner\/name, like ann\/cafe-menu, or click a button\./);
-    // A pasted address with no project in it says an address alone is not a project.
+    // A pasted address with no project in it says it names no project.
     const bare = { ...answers, [`3.${next.id}`]: { label: null, text: 'https://git.example.org/', at: NOW.toISOString() } };
     assert.match((await step.plan({ ...ctx, answers: bare })).ask.card.what,
-      /^"https:\/\/git\.example\.org\/" is not a repository's name\. An address alone is not a project: type owner\/name, like ann\/cafe-menu, or click a button\./);
+      /^"https:\/\/git\.example\.org\/" is not a repository's name\. That address names no project\. Type owner\/name, like ann\/cafe-menu, or click a button\./);
     // A new product, chosen now: the run is not a joining one any more once its apply starts.
     const fresh = await answerJoin(step, { ...ctx, answers }, (id) => (id.startsWith('join') ? HOST_LABELS.github : choose()(id)));
     assert.ok(fresh.changes.some((c) => c.action === 'repository'));
@@ -3806,4 +3806,47 @@ test('a card asked again drops an earlier own-git recommendation once git holds 
   const again = againCard(earlier, now, WAYS.wheelhouse);
   assert.equal(again.recommend, WAYS.own);
   assert.equal(again.because, now.because);
+});
+
+test('a pasted address that names no project says so even when its user and token are hidden; a dotted miss says to paste the address with https://', async () => {
+  await withHome(async () => {
+    const step = stepFor(standIn());
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    // Item 5: the hint rests on the text as pasted, not on what is shown of it.
+    const ask = (await step.plan({ ...ctx, answers: { '3.join': { label: null, text: 'https://oauth2:tok@gitlab.company.example/', at: NOW.toISOString() } } })).ask;
+    assert.equal(ask.card.what.startsWith('"gitlab.company.example/" is not a repository\'s name. That address names no project. Type owner/name, like ann/cafe-menu, or click a button. '), true, ask.card.what);
+    assert.equal(/tok@|oauth2/.test(ask.card.what), false);
+    // Items 2 and 6: after a miss on a dotted first part, on GitLab, the card says groups and how to paste an address.
+    const other = startRun({ folder: emptyFolder(), now: () => NOW });
+    addChanges(other.id, [{ id: 'chg-1', kind: 'answer', target: 'step 3', before: null, after: { joined: 'gitlab.mycorp.internal/team/app', missed: 'none', host: 'gitlab' }, step: 3 }]);
+    const again = (await step.plan(ctxFor(folder, { runId: other.id }))).ask;
+    assert.match(again.card.what, /on your account or groups\. If that is an address, paste it with https:\/\/ at the front\. /);
+    assert.match(again.card.options.at(-1).says, /on your account or groups, set up/);
+    assert.match(joinMissLine({ host: 'gitlab', wanted: 'gitlab.mycorp.internal/team/app', found: [] }), /which asks again\. If that is an address, paste it with https:\/\/ at the front\.$/);
+    assert.doesNotMatch(joinMissLine({ host: 'gitlab', wanted: 'team/app', found: [] }), /paste it with https/);
+  });
+});
+
+test('a look at the choices asks the computer for no key for a pasted company host, and a pasted host the reader refuses is no host', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const step = stepFor(w);
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    const borrowed = [];
+    const original = directorKey.borrow;
+    directorKey.borrow = async (args) => { borrowed.push(args); return null; };
+    try {
+      await answerJoin(step, { ...ctx, choicesOnly: true }, (id, card) => (id === 'join' ? 'https://gitlab.company.example/ann/Cafe-Menu' : choose()(id, card))).catch(() => {});
+      assert.deepEqual(borrowed.filter((b) => String(b.host).includes('gitlab.company.example')), []);
+    } finally {
+      directorKey.borrow = original;
+    }
+    // One reader: what pinOf refuses, the plan never names (underscore and trailing-dot hosts, www.gitlab.com is public).
+    for (const bad of ['https://git_lab.example.com/ann/x', 'https://gitlab.example.com./ann/x']) assert.equal(pinOf(bad)?.host, undefined, bad);
+    assert.deepEqual(pinOf('https://www.gitlab.com/ann/x'), { host: 'gitlab', company: { base: 'https://gitlab.com' } });
+  });
 });

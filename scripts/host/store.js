@@ -13,6 +13,7 @@
 // { code, stdout }, rejecting when the program is not there.
 import { spawn } from 'node:child_process';
 import { readSecret, storeSecret, deleteSecret } from '../secrets/secret-box.js';
+import { withoutTokens } from '../lib/token-names.js';
 
 export const SERVICE = 'wheelhouse';
 const NAME = /^(?:github-app|gitlab-project-\d+|alerts-ntfy|alerts-telegram)$/;
@@ -32,9 +33,10 @@ export function defaultRun({ file, args, input, env }) {
 }
 
 // The director's own settings stay in force; git is told never to ask, and
-// Git Credential Manager is told never to open a window.
+// Git Credential Manager is told never to open a window. The director's token variables are taken out: the host asked may be
+// one the director pasted, and a helper that read such a variable would send it there.
 function quietEnv() {
-  return { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' };
+  return { ...process.env, ...withoutTokens(), GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' };
 }
 
 function oneLine(value, what) {

@@ -36,11 +36,10 @@ import { engineWanted, engineLine } from './engine-parts.js';
 import { HEALTH_STEP, onRunList, stepDone } from '../lib/setup-run.js';
 import { askedRecord, answersFor } from './clicks.js';
 import { macKeepsAway } from '../lib/host-lines.js';
-import { COMPANY_GITLAB, GITLAB_COM, HOST_LABELS, repoNamed, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
+import { COMPANY_GITLAB, GITLAB_COM, HOST_LABELS, pinOf, repoNamed, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
 import { LIVE_DATA, PRODUCT, SIGNS_APPS, productName } from './questions.js';
-import { hostOfAddress, pastedAddress, FIRST_CHECK_LINE, KEEP_HERE, KEPT_LINE, ONLY_HERE_AFTER, ONLY_HERE_LINE, PUT_ON_GITLAB, STARTED_LINE } from './local.js';
+import { FIRST_CHECK_LINE, KEEP_HERE, KEPT_LINE, ONLY_HERE_AFTER, ONLY_HERE_LINE, PUT_ON_GITLAB, STARTED_LINE } from './local.js';
 import { backupNamed } from '../host/local/restore.js';
-import { hostWords, isDefaultHost } from '../host/gitlab-base.js';
 import { compactionLine, compactionRules } from '../protection/settings.js';
 import { HOST_TOOL_NAME, hostToolLabels } from './tools.js';
 
@@ -158,19 +157,27 @@ const joining = (taken) => {
 // The text typed as the newest join answer, or null.
 const joinedText = (choices) => choices.filter((c) => c.id === 'join' || c.id.startsWith('join-')).at(-1)?.text ?? null;
 
-// How the plan names the host a pasted address gave: GitHub, GitLab, or the company's GitLab with its address; null for no address.
+// What step 3 reads a pasted address as (its own reader, pinOf): { host: 'github' }, or { host: 'gitlab', company }; null for
+// anything it refuses or reads as no address, so the plan never names a host step 3 will not use.
+const pinnedBy = (choices) => {
+  const pin = pinOf(joinedText(choices));
+  return pin?.host === undefined ? null : pin;
+};
+
+// How the plan names the host a pasted address gave, or null.
 function addressHostName(choices) {
-  const parts = pastedAddress(joinedText(choices));
-  if (hostOfAddress(parts) === null) return null;
-  return hostOfAddress(parts) === 'github' ? 'GitHub' : isDefaultHost(parts) ? 'GitLab' : `your company's GitLab at ${hostWords(parts)}`;
+  const pin = pinnedBy(choices);
+  if (pin === null) return null;
+  if (pin.host === 'github') return 'GitHub';
+  return pin.company.host === undefined ? 'GitLab' : `your company's GitLab at ${pin.company.host}`;
 }
 
 // The host the plan names, as step 3 will use it: the one the folder's own remote names, else
 // the one the kept card or the host or join card chose; GitHub when none says GitLab.
 function hostOf(product, choices) {
   // A pasted address in the join answer names its own host.
-  const pinned = hostOfAddress(pastedAddress(joinedText(choices)));
-  if (pinned !== null) return pinned === 'gitlab' ? 'GitLab' : 'GitHub';
+  const pinned = pinnedBy(choices);
+  if (pinned !== null) return pinned.host === 'gitlab' ? 'GitLab' : 'GitHub';
   if (product && product.isNew === false && (product.host === 'gitlab' || product.host === 'github')) return product.host === 'gitlab' ? 'GitLab' : 'GitHub';
   const chose = choices.some((c) => (c.id === 'kept' && c.label === PUT_ON_GITLAB) || ((c.id === 'host' || c.id === 'join' || c.id.startsWith('join-')) && c.label === HOST_LABELS.gitlab));
   return chose ? 'GitLab' : 'GitHub';
