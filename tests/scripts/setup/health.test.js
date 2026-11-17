@@ -21,12 +21,14 @@ import { healthGreen, firstUnfinished } from '../../../scripts/lib/setup-run.js'
 import { acceptOwnFiles, checkOwnFiles, ownFilesFile } from '../../../scripts/health/own-files.js';
 import { STEPS } from '../../../scripts/setup/steps.js';
 import { setupRoutes } from '../../../scripts/setup/engine.js';
-import { startRun, markStep, addChanges, newId, readJournal } from '../../../scripts/setup/journal.js';
+import { startRun, markStep, addChanges, newId, readJournal, journalFile } from '../../../scripts/setup/journal.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { setStop, liftStop, stopState } from '../../../scripts/lib/stop.js';
 import { TRIAL_MARKER } from '../../../scripts/health/trials.js';
 import { STOPPED } from '../../../scripts/setup/host.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
+import { keepAnswer } from '../../../scripts/lib/setup-clicks.js';
+import { makeEvent } from '../../../scripts/state/events.js';
 import { readSurveyAt, readSeen } from '../../../scripts/briefing/seen.js';
 import { LOCKED_WOULD_LINE } from '../../../scripts/lib/platform-lines.js';
 import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
@@ -559,7 +561,8 @@ test('a green run gives a green board', async () => {
     assert.deepEqual(got.trials, { pr: 12, project: SLUG });
     const helper = got.lines.filter((l) => l.startsWith('Passed:') && !l.endsWith('(reported by the session)'));
     const session = got.lines.filter((l) => l.endsWith('(reported by the session)'));
-    assert.equal(helper.length, Object.keys(HELPER_CHECKS).length + 1, 'and the clean-up');
+    assert.equal(helper.length, Object.keys(HELPER_CHECKS).length);
+    assert.ok(got.lines.some((l) => l.startsWith('Done: The trial pull request was closed')), 'the clean-up, not counted');
     assert.equal(session.length, Object.keys(SESSION_CHECKS).length);
     assert.ok(session.every((l) => l.startsWith('Passed:')));
     assert.ok(got.lines.includes('Logbook: Protection: Standard'));
@@ -568,6 +571,7 @@ test('a green run gives a green board', async () => {
     assert.equal(got.verdict, `All ${checks} checks passed. Wheelhouse is ready.`);
     assert.equal(got.lines.at(-1), got.verdict, 'one verdict ends the lines');
     assert.equal(got.lines.filter((l) => /checks passed\./.test(l)).length, 1);
+    assert.equal(got.lines.filter((l) => l.startsWith('Passed:')).length, checks, 'the Passed lines add up to the verdict');
     const watched = await healthCheck({ folder, run, reported: GREEN_LINES, load: boardWith([{ level: 'watch', text: 'Your profile isn\'t backed up off this computer yet' }]) });
     assert.equal(watched.green, true);
   });
@@ -598,7 +602,7 @@ test('a failed trial is named with what to do, and what to do can be done', asyn
     assert.ok(got.lines.includes('Failed: With All stop on, an agent\'s change was not refused (refused was expected, allowed came back). Reload this project in Claude Desktop so Wheelhouse\'s checks run in it, then run step 10 again.'), got.lines.join('\n'));
     assert.ok(got.lines.includes('Failed: An agent could read a .env.local file (refused was expected, allowed came back). The sandbox isn\'t on in this session: reload this project in Claude Desktop, then run step 10 again. (reported by the session)'), got.lines.join('\n'));
     assert.ok(got.lines.some((l) => /^Failed: setup couldn't try reaching the helper\. Run step 10 again.*\(reported by the session\)$/.test(l)), got.lines.join('\n'));
-    assert.equal(got.lines.filter((l) => /^(Passed|Failed|Watch):/.test(l)).length, Object.keys(HELPER_CHECKS).length + 1 + Object.keys(SESSION_CHECKS).length);
+    assert.equal(got.lines.filter((l) => /^(Passed|Failed|Watch|Done):/.test(l)).length, Object.keys(HELPER_CHECKS).length + 1 + Object.keys(SESSION_CHECKS).length);
     const every = Object.keys(HELPER_CHECKS).length + Object.keys(SESSION_CHECKS).length;
     assert.equal(got.verdict, `${every - 3} of ${every} checks passed. Here is what to do.`);
     assert.equal(got.lines.at(-1), got.verdict);
@@ -758,11 +762,34 @@ test('the trial stays open until the session\'s lines are in; then it is closed,
     assert.deepEqual(finished, [{ project: SLUG }]);
     assert.equal(green.started, 'The Bosun\'s watcher is started.');
     assert.equal(green.briefing, 'The briefing.');
-    // The verdict and the first briefing come next, from step 10's plan, once, before the phone card.
+    // The verdict and the first briefing come next, on step 10's own card, until it is answered.
     const routes = routesFor(user);
     assert.equal((await routes['/setup/status']({ folder })).ask, 10);
-    assert.deepEqual(await routes['/setup/plan']({ folder, step: 10 }), { ok: true, done: true, said: `${green.lines.at(-1)}\n\nThe briefing.` });
-    assert.notEqual((await routes['/setup/status']({ folder })).ask, 10, 'given once');
+    const ready = await routes['/setup/plan']({ folder, step: 10 });
+    assert.equal(ready.ask.id, 'setup-ready');
+    assert.ok(ready.ask.card.question.startsWith(`${green.lines.at(-1)}\nThe briefing.\n`), ready.ask.card.question);
+    assert.deepEqual(ready.ask.card.options.map((o) => o.label), ['Carry on', 'Show the checks']);
+    assert.equal((await routes['/setup/status']({ folder })).ask, 10, 'asked again until answered');
+    const greenAt = new Date(Date.parse(runOf(folder).changes.find((c) => typeof c.after?.green === 'string').after.green) + 1000);
+    // Show the checks: the next card opens with the checks the board went green on, word for word.
+    const answer = (questionId, question, label, at) => keepAnswer(makeEvent({ kind: 'action', data: { action: 'setup-answer', runId: runOf(folder).id, step: 10, questionId, question, label, text: null }, now: () => at }));
+    answer('setup-ready', ready.ask.card.question, 'Show the checks', greenAt);
+    assert.equal((await routes['/setup/status']({ folder })).ask, 10, 'the checks card comes next');
+    const checks = await routes['/setup/plan']({ folder, step: 10 });
+    assert.equal(checks.ask.id, 'setup-checks');
+    assert.ok(checks.ask.card.question.startsWith(`These are the checks setup ran on this computer:\n${green.lines.join('\n')}\n`), checks.ask.card.question);
+    assert.deepEqual(checks.ask.card.options.map((o) => o.label), ['Carry on', 'Later']);
+    // A run that went green before the checks were kept still gets the card, which says so.
+    const whole = fs.readFileSync(journalFile(), 'utf8');
+    const unkept = JSON.parse(whole);
+    for (const c of unkept.runs.find((r) => r.id === runOf(folder).id).changes) delete c.after?.checks;
+    fs.writeFileSync(journalFile(), JSON.stringify(unkept));
+    const none = await routes['/setup/plan']({ folder, step: 10 });
+    assert.ok(none.ask.card.question.startsWith('Every check passed. This setup went green before Wheelhouse kept the list of checks'), none.ask.card.question);
+    fs.writeFileSync(journalFile(), whole);
+    await routes['/setup/plan']({ folder, step: 10 });
+    answer('setup-checks', checks.ask.card.question, 'Carry on', new Date(greenAt.getTime() + 1000));
+    assert.notEqual((await routes['/setup/status']({ folder })).ask, 10, 'answered');
     await assert.rejects(routes['/setup/plan']({ folder, step: 10 }), /already done/);
     assert.equal(healthGreen(runOf(folder)), true);
     assert.equal(firstUnfinished(runOf(folder)), null, 'setup is finished once the board is green');

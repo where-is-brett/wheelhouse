@@ -131,6 +131,9 @@ function stepOf(text, { oneCard = false } = {}) {
   return Number(text);
 }
 
+// Said on resume while step 7 isn't applied: a session that ran setup outside the sandbox keeps doing so.
+const OUTSIDE_UNTIL_FILES = 'Step 7 is not applied yet: try the sandbox first, and if a setup command (scripts/setup/cli.js) has been refused there, run it outside.';
+
 async function plan(client, folder, step) {
   const got = await ask(client.setup.plan, { folder, step });
   const named = { step, title: SETUP_TITLES[step] ?? 'The plan', ...(Array.isArray(got.progress) ? { progress: got.progress } : {}) };
@@ -168,14 +171,25 @@ export async function main(argv, {
       out(`${(Array.isArray(got.lines) ? got.lines : []).map((l) => String(l).replace(BREAKS, ' ')).join('\n')}\n`);
     } else if (form === 'resume' && rest.length === 0) {
       const helper = client ?? helperClient();
-      const got = await ask(helper.setup.status, { folder });
-      const next = Number.isInteger(got.next) ? got.next : null;
+      let got = await ask(helper.setup.status, { folder });
       // The one card first, while no Go ahead on it holds (design section 15.1); then the steps.
       let planned = null;
       if (got.oneCard === true) planned = await plan(helper, folder, 0);
       if ((planned === null || planned.done === true) && Number.isInteger(got.ask)) planned = await plan(helper, folder, got.ask);
+      // The last step settling with no card and nothing to say (the phone's, where no phone card can
+      // be shown) finishes setup, and leaves step 10's card, which opens with the verdict and first
+      // briefing, to the status taken now: a session told setup is finished doesn't ask again.
+      if (planned?.done === true && planned.said === undefined) {
+        const after = await ask(helper.setup.status, { folder });
+        if (after.next === null && Number.isInteger(after.ask) && after.ask !== planned.step) {
+          got = after;
+          planned = await plan(helper, folder, got.ask);
+        }
+      }
+      const next = Number.isInteger(got.next) ? got.next : null;
       json({
         lines: Array.isArray(got.lines) ? got.lines : [], next, plan: planned, ...(got.setUpAgain === true ? { setUpAgain: true } : {}),
+        ...(got.filesDue === true ? { sandbox: OUTSIDE_UNTIL_FILES } : {}),
       });
     } else if (form === 'choices' && rest.length === 0) {
       const { ok, ...answer } = await ask((client ?? helperClient()).setup.choices, { folder }); // eslint-disable-line no-unused-vars

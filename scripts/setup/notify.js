@@ -65,7 +65,7 @@ const inWords = (ms) => {
   return `${NUMBERS[m] ?? m} minute${m === 1 ? '' : 's'}`;
 };
 const MINUTES = inWords(PUSH_TEST_WAIT_MS);
-const LOCK = `lock your computer until your phone buzzes, or for ${inWords(PUSH_TEST_LOCK_MS)}.`;
+const LOCK = `lock your computer for ${inWords(PUSH_TEST_LOCK_MS)}; the test arrives after ${MINUTES.replace(' minutes', '')}.`;
 // How old a Ready may be before card B is asked rather than card A again (ruling R66).
 const READY_STALE_MS = PUSH_TEST_WAIT_MS + CLICK_FRESH_MS;
 
@@ -119,7 +119,7 @@ function arrivedAsk(id, round = 0) {
       // The composer needs a recommendation among the card's options; on a question of fact it
       // only asks the director to answer what they saw.
       recommend: ARRIVED.yes,
-      because: 'it is right only if the notification came: answer what you saw',
+      because: 'answer with what you saw; if you\'re unsure, choose It didn\'t and the Logbook says what to check',
       meanwhile: 'Setup waits for your answer; anything already running carries on.',
     },
   };

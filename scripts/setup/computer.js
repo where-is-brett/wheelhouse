@@ -193,9 +193,9 @@ function lines({ changes, userSettings, kept, route, platform, floor }) {
   }
   if (has('updates')) {
     const own = ownMinimum(userSettings, floor);
-    const minimum = own !== null ? `${own} or later (your own minimum, kept)`
-      : `${floor} or later${changes.some((c) => c.key?.[0] === 'minimumVersion') ? shown(userSettings.minimumVersion) : ''}`;
-    out.push(`Claude Code takes only its well-tried updates, and stays at version ${minimum}`);
+    const minimum = own !== null ? `${own} (your own minimum, kept)`
+      : `${floor}, the oldest Wheelhouse works with${changes.some((c) => c.key?.[0] === 'minimumVersion') ? shown(userSettings.minimumVersion) : ''}`;
+    out.push(`Claude Code takes only its well-tried updates, and never an older version than ${minimum}`);
   }
   if (has('push')) out.push('phone notifications on');
   const plugin = changes.find((c) => c.what === 'plugin');
@@ -240,8 +240,8 @@ export function computerCard({ changes, userSettings = {}, kept = [], route = TE
   // Named without its id, which a card would read as a commit.
   // Windows has no sandbox, so an agent's command could read the key file there; the line claims no more than holds.
   const signing = !key ? ''
-    : platform === 'win32' ? '\n- Your clicks carry a signature made with a key on this computer. On Windows an agent\'s command could read that key, so it shows a click came from here, not that you made it.'
-    : '\n- Your clicks carry a signature made with a key on this computer, which Claude Code\'s sandbox keeps agents from reading in projects Wheelhouse has set up.';
+    : platform === 'win32' ? '\n- Your clicks are marked as coming from this computer. On Windows an agent\'s command could read the key behind that mark, so it shows a click came from here, not that you made it.'
+    : '\n- Your clicks are marked as coming from this computer, with a key that Claude Code\'s sandbox keeps agents from reading in projects Wheelhouse has set up.';
   const variables = route === 'launch-env' && changes.some((c) => c.kind === 'env' || c.kind === 'file');
   const agents = [...new Set(changes.filter((c) => c.what === 'agent').map((c) => c.label))];
   const alongside = agents.length > 0 ? `, and ${agents.join(' and ')}'s hook file${changes.some((c) => c.what === 'agent' && c.part === 'first-mate') ? ' and First Mate files' : ''}` : '';

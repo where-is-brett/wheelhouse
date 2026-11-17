@@ -31,9 +31,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { canonicalJson } from '../lib/canonical.js';
 import { PERSONAL_DAYS } from '../host/gitlab-key.js';
+import { KEY_DAYS_ASKED } from './host-access.js';
 import { engineWanted, engineLine } from './engine-parts.js';
 import { HEALTH_STEP, onRunList, stepDone } from '../lib/setup-run.js';
 import { askedRecord, answersFor } from './clicks.js';
+import { macKeepsAway } from '../lib/host-lines.js';
 import { COMPANY_GITLAB, GITLAB_COM, HOST_LABELS, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
 import { LIVE_DATA, PRODUCT, SIGNS_APPS, productName } from './questions.js';
 import { FIRST_CHECK_LINE, KEEP_HERE, KEPT_LINE, ONLY_HERE_AFTER, ONLY_HERE_LINE, PUT_ON_GITLAB, STARTED_LINE } from './local.js';
@@ -183,10 +185,10 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     const stays = platform !== 'win32' ? ''
       : host === 'GitLab' && toolOut ? ' On Windows it is kept here, where any agent\'s command could read it.'
         : ` ${host}'s own sign-in also stays here, where any agent's command could read it.`;
-    if (label === WAYS.quick) return platform === 'darwin' ? `Agents use your ordinary ${host} sign-in, which reaches your whole account; on this Mac the sandbox keeps agents' commands from where it is kept, unless the project signs apps, which opens the keychain to them.` : `Agents use your ordinary ${host} sign-in, which reaches your whole account${platform === 'win32' ? '; on Windows any agent\'s command could read it' : ''}.`;
-    if (label === STRICTER) return `A key for this project only, made on ${host} (you'll click Authorise and Install).`;
+    if (label === WAYS.quick) return platform === 'darwin' ? `Agents use your ordinary ${host} sign-in, which reaches your whole account; ${macKeepsAway(host.toLowerCase())}.` : `Agents use your ordinary ${host} sign-in, which reaches your whole account${platform === 'win32' ? '; on Windows any agent\'s command could read it' : ''}.`;
+    if (label === STRICTER) return `A key for this project only, made on ${host} (you'll click Authorize and install).`;
     if (label === WAYS.wheelhouse) return `A key for this project only, through the Wheelhouse app (you\'ll type a code and click Install).${stays}`;
-    if (label === WAYS.own) return `A key for this project only, from an app you create on GitHub (you\'ll tick Enable Device Flow, click Create, then Authorise and Install).${stays}`;
+    if (label === WAYS.own) return `A key for this project only, from an app you create on GitHub (you\'ll tick Enable Device Flow, click Create, type the code shown, then Authorize and install).${stays}`;
     if (label === WAYS.asIs) return `Agents use your own git as it is, with a ${host} key that reaches everything your account can${platform === 'win32' ? '; on Windows any agent\'s command could ask git for it' : ''}.`;
     // On GitLab the key may not be allowed (keys switched off, or a free plan on the public service), so the plan names the token that stands in.
     return host === 'GitLab'
@@ -222,20 +224,27 @@ function describedBy(choice) {
 // project kept here; on GitLab without its tool, with a key for this project only, the one-day setup token (host.js);
 // with their git as it is, a key only where git holds none that works; on a company's GitLab, a sign-in in the browser or
 // by token; else a sign-in.
-function goAheadAsks({ keptHere, list, host }) {
-  if (keptHere) return 'You\'ll only be asked for your password, if at all.';
+function goAheadAsks({ keptHere, list, host, phone = false }) {
+  const text = goAheadAsksHost({ keptHere, list, host });
+  // Step 9 asks the director to try a notification on their phone, unless an earlier setup's test already reached it.
+  if (!phone) return text;
+  return `${text} Near the end, setup offers a test notification on your phone, which you can skip.`;
+}
+
+function goAheadAsksHost({ keptHere, list, host }) {
+  if (keptHere) return 'Apart from Claude Code\'s own request to allow setup\'s command, you may be asked for your computer\'s password.';
   const way = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.label ?? null;
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
   if (host === 'GitLab' && noTool && way !== null && way !== WAYS.quick && way !== WAYS.asIs) {
-    return `You'll paste a one-day GitLab token into your computer's own box. If GitLab won't make a key for this one project, you'll also paste one lasting ${PERSONAL_DAYS} days that works as you in every GitLab project. Your password if needed.`;
+    return `You'll paste a one-day GitLab token into a box on your screen, not the chat. If GitLab won't make a key for this one project, you'll also paste a token lasting ${PERSONAL_DAYS} days that can act as you in every GitLab project and group you can reach. You may be asked for your computer's password.`;
   }
-  if (way === WAYS.asIs) return `You'll be asked for a ${host} key only if your git holds none that works, pasted into your computer's own box, and your password if needed.`;
+  if (way === WAYS.asIs) return `You'll be asked for a ${host} key only if your git holds none that works: you make it on a page that opens${host === 'GitLab' ? ` and set its expiry date ${KEY_DAYS_ASKED} days ahead` : `, set to last ${KEY_DAYS_ASKED} days`}, and paste it into a box on your screen, not the chat. You may be asked for your computer's password.`;
   // A narrow way on GitLab with its tool still meets GitLab's refusal of a project key the same way.
-  const fallback = host === 'GitLab' && way !== null && way !== WAYS.quick
-    ? ` If GitLab won't make a key for one project, you'll also paste a ${PERSONAL_DAYS}-day token that can act as you across GitLab into your computer's own box.` : '';
+  const fallbackBox = (known) => (host === 'GitLab' && way !== null && way !== WAYS.quick
+    ? ` If GitLab won't make a key for one project, you'll also paste a ${PERSONAL_DAYS}-day token that can act as you across GitLab into ${known ? 'that box' : 'a box on your screen, not the chat'}.` : '');
   // A company's GitLab without a browser sign-in set up takes a token instead, which only setup's step 3 can tell.
-  if (onCompanyGitLab(list, host)) return `You'll sign in to your company's GitLab in your browser, or with a token you make on a page that opens and paste into your computer's own box, and give your password if needed.${fallback}`;
-  return `You'll sign in on ${host} pages that open and click through them, and give your password if needed.${fallback}`;
+  if (onCompanyGitLab(list, host)) return `You'll sign in to your company's GitLab in your browser if your company has set that up, or else with a token you make on a page that opens and paste into a box on your screen, not the chat. You may be asked for your computer's password.${fallbackBox(true)}`;
+  return `You'll sign in on ${host} pages that open and click through them. You may be asked for your computer's password.${fallbackBox(false)}`;
 }
 
 // The one card for a run: { id, card, choices, writes }. `list` is openChoices'; `product` is
@@ -311,7 +320,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     question,
     header: 'Setup',
     options: [
-      { label: GO_AHEAD, description: `Recommended: setup does all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list) })}` },
+      { label: GO_AHEAD, description: `Recommended: setup does all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list), phone: toRun.includes(6) && !pushed })}` },
       yours
         ? { label: CHANGE_CHOICE, description: 'See every choice again, and change any before anything runs.' }
         : { label: CUSTOMISE, description: 'See every choice, and change any before anything runs.' },

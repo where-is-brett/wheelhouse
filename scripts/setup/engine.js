@@ -340,22 +340,70 @@ export async function copyRunRecords(runId, folder) {
 // they went unshown in every rehearsal run of 27 October 2026, on Sonnet and on Opus: the phone
 // card or the front desk came straight after. A card is what a session passes on word for word, so
 // the phone's first card opens with them until it is answered (opensWithBriefing); with no phone
-// card left, step 10's plan gives them once as its `said` (pendingBriefing).
+// card left, step 10's plan asks a card of its own that opens with them (pendingBriefing,
+// READY_CARD). Given as a `said` instead, they went unshown again in the run of 17 November 2026.
 const BRIEFING_TARGET = 'step 10 briefing';
+const SETUP_READY_ID = 'setup-ready';
+const READY_CARD = {
+  level: 2,
+  what: 'Next, the First Mate takes over, starting with what you came here for.',
+  why: 'You can see each check first. Questions and requests go to the First Mate after your click.',
+  options: [
+    { label: 'Carry on', says: 'The First Mate starts now, on what you asked for.' },
+    { label: 'Show the checks', says: 'You see each check first, then the First Mate starts.' },
+  ],
+  recommend: 'Carry on',
+  because: 'every check passed',
+  meanwhile: 'The First Mate waits for your click.',
+};
+// On Show the checks, the next card opens with the checks the board went green on (pendingChecks):
+// lines a session was to show from the health check's answer went unshown in the run of
+// 17 November 2026, as the briefing had.
+const SETUP_CHECKS_ID = 'setup-checks';
+const CHECKS_CARD = {
+  level: 2,
+  what: 'Next, the First Mate takes over, starting with what you came here for.',
+  why: 'Questions and requests go to the First Mate after your click.',
+  options: [
+    { label: 'Carry on', says: 'The First Mate starts now, on what you asked for.' },
+    { label: 'Later', says: 'Nothing starts. Say "carry on" when you are ready, and the First Mate starts on what you asked for.' },
+  ],
+  recommend: 'Carry on',
+  because: 'every check passed',
+  meanwhile: 'The First Mate waits for your click.',
+};
 const briefingKept = (run) => (run?.changes ?? []).filter((c) => c?.step === HEALTH_STEP && c.kind === 'answer' && c.target === BRIEFING_TARGET);
 function briefingOf(run) {
   const text = briefingKept(run).find((c) => typeof c.after?.briefing === 'string' && c.after.briefing !== '')?.after.briefing;
   return text ?? null;
 }
+// The health check's lines when the board went green, kept for the card Show the checks brings.
+const greenChecks = (run) => {
+  const checks = (run?.changes ?? []).find((c) => c?.step === HEALTH_STEP && c.kind === 'answer' && typeof c.after?.green === 'string')?.after.checks;
+  return Array.isArray(checks) && checks.every((l) => typeof l === 'string') ? checks : undefined;
+};
 const greenAt = (run) => (run?.changes ?? []).find((c) => c?.step === HEALTH_STEP && c.kind === 'answer' && typeof c.after?.green === 'string')?.after.green;
 const isReadyCard = (id) => id === READY_ID || id.startsWith(`${READY_ID}-`);
 // Whether the director answered the phone's first card since the board went green: the card that
-// opened with the briefing, so they have seen it.
+// opened with the briefing, so they have seen it. Step 10's own card, asked with them when no phone
+// card is left, counts the same.
 const readyAnsweredSinceGreen = (run, answers) => Object.entries(answers)
-  .some(([key, a]) => key.startsWith(`${PUSH_TEST_STEP}.`) && isReadyCard(key.slice(key.indexOf('.') + 1)) && Date.parse(a.at) >= Date.parse(greenAt(run)));
-// Not yet seen on a phone card, nor given once as step 10's `said`: the text, else null.
+  .some(([key, a]) => (key === `${HEALTH_STEP}.${SETUP_READY_ID}` || (key.startsWith(`${PUSH_TEST_STEP}.`) && isReadyCard(key.slice(key.indexOf('.') + 1))))
+    && Date.parse(a.at) >= Date.parse(greenAt(run)));
+// Not yet seen on a card (nor given as step 10's `said`, as runs before 17 November 2026 were): the text, else null.
 function pendingBriefing(run, answers) {
   return briefingKept(run).some((c) => c.after?.said === true) || readyAnsweredSinceGreen(run, answers) ? null : briefingOf(run);
+}
+// The checks a card opens with after Show the checks on step 10's own card, while that card's
+// answer since green is Show the checks and the checks card is unanswered since; else null. A run
+// that went green before the checks were kept says so, so the card still comes.
+function pendingChecks(run, answers) {
+  const since = (key) => answers[key] !== undefined && Date.parse(answers[key].at) >= Date.parse(greenAt(run)) ? answers[key] : null;
+  if (since(`${HEALTH_STEP}.${SETUP_READY_ID}`)?.label !== 'Show the checks' || since(`${HEALTH_STEP}.${SETUP_CHECKS_ID}`) !== null) return null;
+  const checks = greenChecks(run);
+  return checks === undefined
+    ? 'Every check passed. This setup went green before Wheelhouse kept the list of checks, so it has none to show.'
+    : ['These are the checks setup ran on this computer:', ...checks].join('\n');
 }
 // The briefing a phone card opens with: the phone's first card ('phone-ready'), on a green board,
 // while the director hasn't answered it since the board went green; else null.
@@ -668,11 +716,19 @@ export function setupRoutes({
     const folder = admitFolder(body.folder, { userHome });
     const step = await stepOf(body.step);
     let run = runFor(folder, userHome);
-    // Step 10 done on a green board: its plan gives the verdict and the first briefing, once.
-    const briefing = step.n === HEALTH_STEP && run !== null && healthGreen(run) ? pendingBriefing(run, answersFor(run.id)) : null;
-    if (briefing !== null) {
-      addChanges(run.id, [{ id: newId('chg'), step: HEALTH_STEP, kind: 'answer', target: BRIEFING_TARGET, before: null, after: { said: true } }]);
-      return { ok: true, done: true, said: hide(briefing, []) };
+    // Step 10 done on a green board: its plan asks its own card, opening with the verdict and the
+    // first briefing, until the director answers it.
+    // On Show the checks, a card that opens with the checks the board went green on comes next.
+    const green = step.n === HEALTH_STEP && run !== null && healthGreen(run);
+    const briefing = green ? pendingBriefing(run, answersFor(run.id)) : null;
+    const checks = green && briefing === null ? pendingChecks(run, answersFor(run.id)) : null;
+    if (briefing !== null || checks !== null) {
+      const [id, opening, form] = briefing !== null ? [SETUP_READY_ID, briefing, READY_CARD] : [SETUP_CHECKS_ID, checks, CHECKS_CARD];
+      const composed = composeCard({ ...form, kind: 'question', suggest: false }).question;
+      const card = cleanDeep({ ...composed, question: [...opening.split('\n').filter((l) => l.trim() !== ''), withoutListedLine(composed.question)].join('\n') }, []);
+      const refused = typedRefused(run.id, HEALTH_STEP, id);
+      noteAsked({ runId: run.id, folder: run.folder, step: HEALTH_STEP, id, card, now });
+      return { ok: true, ask: { step: HEALTH_STEP, id, card }, progress: progressOf(run, HEALTH_STEP, folder), ...(refused === null ? {} : { unanswered: NOT_AN_ANSWER[refused] }) };
     }
     showable(run, step.n);
     // A run started by this plan starts when the plan does, so the step reads the time its run has.
@@ -840,15 +896,17 @@ export function setupRoutes({
     // Only the steps the run has (ruling R74).
     const all = runSteps(run, await steps());
     const running = (n) => runningIn(run, n);
-    if (run === null) return { ok: true, lines: ['Setup has not started in this folder.'], next: firstUnfinished(null, all), ask: toAsk(null, all, running), oneCard: true };
+    if (run === null) return { ok: true, lines: ['Setup has not started in this folder.'], next: firstUnfinished(null, all), ask: toAsk(null, all, running), oneCard: true, filesDue: true };
     const again = setUpAgainAsked(answersFor(run.id)) && stepDone(run, 3);
     const listed = statusLines(run, all, running);
-    // A green board's briefing not yet given, and no card left to open with it (the phone's, see
-    // plan): step 10 is planned once more, to give it as its `said`.
-    const briefing = listed.ask === null && healthGreen(run) && pendingBriefing(run, answersFor(run.id)) !== null;
+    // A green board's briefing not yet seen, and no card left to open with it (the phone's, see
+    // plan), or the checks asked for on that card: step 10 is planned once more, to ask its card.
+    const briefing = listed.ask === null && healthGreen(run) && (pendingBriefing(run, answersFor(run.id)) !== null || pendingChecks(run, answersFor(run.id)) !== null);
     // The steps running now, for `cli.js wait`: a running step's plan is refused, so the wait reads them here.
     const runningNow = all.map((s) => s.n).filter((n) => running(n) !== null);
-    return { ok: true, ...listed, ...(runningNow.length > 0 ? { running: runningNow } : {}), ...(briefing ? { ask: HEALTH_STEP } : {}), ...(oneCardNext(run) ? { oneCard: true } : {}), ...(again ? { setUpAgain: true } : {}) };
+    // Until step 7 puts the project's files in place, a sandboxed session can't reach the helper.
+    const filesDue = onRunList(run, 7) && !stepDone(run, 7);
+    return { ok: true, ...listed, ...(runningNow.length > 0 ? { running: runningNow } : {}), ...(briefing ? { ask: HEALTH_STEP } : {}), ...(oneCardNext(run) ? { oneCard: true } : {}), ...(again ? { setUpAgain: true } : {}), ...(filesDue ? { filesDue: true } : {}) };
   }
 
   // Step 10's board (rulings R41, R44, R67, R68): the helper's checks, recorded by step 10's apply,
@@ -900,7 +958,7 @@ export function setupRoutes({
       }
       const got = await read(run);
       if (!got.green || got.project === null || stopped()) return answerOf(got);
-      addChanges(run.id, [{ id: newId('chg'), step: HEALTH_STEP, kind: 'answer', target: `step ${HEALTH_STEP}`, before: null, after: { green: now().toISOString() } }]);
+      addChanges(run.id, [{ id: newId('chg'), step: HEALTH_STEP, kind: 'answer', target: `step ${HEALTH_STEP}`, before: null, after: { green: now().toISOString(), checks: got.lines } }]);
       try {
         await copy(run.id, run.folder);
       } catch { /* the records stay in setup's own folder; the ending goes on */ }

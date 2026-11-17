@@ -606,7 +606,13 @@ test('more credential files are refused, ~/.claude/.credentials.json even to Rea
         assert.ok(CREDENTIALS.includes(rel), rel);
         assert.ok(denied(await run(base, home, call(main, 'Read', { file_path: path.join(home, ...rel.split('/')) }))), rel);
       }
-      assert.deepEqual(credentialPaths('darwin'), CREDENTIALS);
+      assert.deepEqual(credentialPaths('linux'), CREDENTIALS);
+      assert.deepEqual(credentialPaths('darwin'), [...CREDENTIALS, 'Library/Application Support/glab-cli']);
+      for (const rel of ['Library/Application Support/glab-cli']) {
+        assert.ok(!CREDENTIALS.includes(rel) && !credentialPaths('win32').includes(rel));
+        assert.ok(denied(await run(base, home, call(main, 'Read', { file_path: path.join(home, ...rel.split('/'), 'config.yml') }), 'darwin')), rel);
+        assert.equal(await run(base, home, call(main, 'Read', { file_path: path.join(home, ...rel.split('/'), 'config.yml') }), 'linux'), undefined);
+      }
       for (const rel of ['AppData/Roaming/GitHub CLI', 'AppData/Roaming/glab-cli', 'AppData/Local/glab-cli']) {
         assert.ok(credentialPaths('win32').includes(rel));
         assert.ok(!CREDENTIALS.includes(rel));

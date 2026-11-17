@@ -936,6 +936,10 @@ function frontDeskOf(changes, pin) {
 const pinName = (target) => PIN_NAMES[target.split('@')[0]] ?? target.split('@')[0];
 const listed = (names) => (names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
 
+// Step 7's title: a project kept on this computer has no host, so its files are all there is to name.
+// Where step 3 already protected the main line (`keyed`), the card has files only.
+const titleOf7 = (local, keyed = false) => (local || keyed ? 'The project\'s files' : SETUP_TITLES[7]);
+
 // Step 7's card: each part of the list in plain words, the branch the commit and protection land on,
 // and the release. When that would pass the composer's limit (a long branch name or release), a
 // shorter card says the same in fewer words. On a joining computer (`joining`, ruling R78) it says
@@ -1102,7 +1106,7 @@ async function switchFolder(ctx, c, { git, project, author }) {
 
 // `keyed`: step 3 connected with the setup token, so the commit goes through a merge request with the project's own
 // key, and protection is already on. `pasted`: that key is the director's own token GitLab made them use instead; null where the card is built before step 3 has kept either.
-export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [], negated = [], frontDesk = null, midSized = null, listens = false, keyed = false, pasted = false }) {
+export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [], negated = [], frontDesk = null, midSized = null, listens = false, keyed = false, pasted = false, company = false }) {
   const local = host === 'local';
   const files = changes.filter((c) => (c.kind === 'json-key' || c.kind === 'file') && c.line === undefined && c.engine !== true && c.what !== 'mirror');
   // The lines that keep .env files out of git: in the project's .gitignore, or, on a joining
@@ -1123,7 +1127,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   if (frontDesk === NO_PIN) parts.push('the First Mate\'s model is left as it is: Claude Code didn\'t say which model to use');
   else if (frontDesk) parts.push(`the First Mate uses ${frontDesk}, Claude Code's most capable everyday model`);
   if (midSized === NO_PIN) parts.push('the settings that spend less wait for a cheaper model: Claude Code didn\'t say which to use');
-  else if (midSized) parts.push('a cheaper model for most building and checking, if you choose to spend less');
+  else if (midSized) parts.push('a cheaper model, used only if you later ask Wheelhouse to save money (the Lean setting)');
   if (secrets === 'shared') parts.push(`.env files, which hold secrets, kept out of git by .gitignore${envLines.some((c) => c.restate) ? ' (.env.example stays shared)' : ''}`);
   else if (secrets === 'here') parts.push(negated.length > 0 ? `some .env files, which hold secrets, kept out of git on this computer, but ${NEGATED_PART}` : '.env files, which hold secrets, kept out of git on this computer');
   if (negated.length > 0 && secrets !== 'here') parts.push(NEGATED_PART);
@@ -1146,12 +1150,12 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   if (up?.action === 'commit') parts.push(keyed ? `${sharedFiles} go in one commit, "${COMMIT_MESSAGE}", ${upTo}${yours}${ownPart}` : `${sharedFiles} go ${upTo} in one commit, "${COMMIT_MESSAGE}"${yours}${ownPart}`);
   if (up?.ownLeft === true) parts.push('your product\'s own files stay as they are, too many for setup\'s commit: commit them when you are ready');
   if (up?.action === 'push') parts.push(`setup's commit, "${COMMIT_MESSAGE}", goes ${upTo}`);
-  const where = host === 'gitlab' ? ': changes go in only through merge requests, which must pass the project\'s automatic checks once it has them' : ', where your plan allows: changes go in only through pull requests';
+  const where = host === 'gitlab' ? ': changes go in only through merge requests; once it has automatic checks, Wheelhouse asks you to make them required' : ', where your plan allows: changes go in only through pull requests';
   if (joining) parts.push('the project\'s own files stay as your other computer committed them: nothing is committed and protection stays as it is');
-  else if (keyed) parts.push(`protection is already on ${branch}, from step 3`);
   else if (!local) parts.push(`${up ? 'then ' : ''}protection goes on ${branch}${where}`);
   if (differ.length > 0) parts.push(`${listed(differ)} ${differ.length === 1 ? 'differs' : 'differ'} from what is committed, and setup leaves ${differ.length === 1 ? 'it as it is' : 'them as they are'}`);
-  const pinned = release?.ref ? `Wheelhouse stays at ${release.ref} and never updates itself.` : 'Wheelhouse never updates itself.';
+  // Step 6's card says Wheelhouse never updates itself, so this one names only the release it stays at.
+  const pinned = release?.ref ? [`Wheelhouse stays at ${release.ref}`] : [];
   const card = (what) => ({
     kind: 'setup',
     level: 3,
@@ -1166,8 +1170,8 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
     meanwhile: 'Setup waits here; nothing changes.',
   });
   // One thing to a line, as step 3's card lists its own, under a title that says whose sign-in does it.
-  const by = local || joining ? '' : pasted ? ', with the token you pasted at step 3, which can act as you across GitLab' : keyed ? (pasted === null ? ', with the project\'s own key where GitLab allows one, or else the token you pasted at step 3, which can act as you across GitLab' : ', with the project\'s own key, not your account') : `, acting as you on ${NAME[host]}`;
-  const full = card([`Setup step 7, ${SETUP_TITLES[7]}${joining ? ', for this computer' : by}:`, ...[...parts, pinned].map(asLine)].join('\n'));
+  const by = local || joining ? '' : pasted ? ', sent with the token you pasted at step 3, which can act as you across GitLab' : keyed ? (pasted === null ? ', sent with the project\'s own key where GitLab allows one, or else the token you pasted at step 3, which can act as you across GitLab' : ', sent with the project\'s own key, not your account') : `, acting as you on ${company ? 'your company\'s GitLab' : NAME[host]}`;
+  const full = card([`Setup step 7, ${titleOf7(local, keyed)}${joining ? ', for this computer' : by}:`, ...[...parts, ...pinned].map(asLine)].join('\n'));
   const fits = (c) => composeCard({ ...c, target: { step: 7, hash: '0'.repeat(64) } }).question.question.length <= CARD.chars;
   try {
     if (fits(full)) return full;
@@ -1178,14 +1182,14 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
       ...(files.length > 0 || excluded || ours ? ['this computer\'s settings'] : []), ...(secrets ? [negated.length > 0 ? 'some .env files kept out of git' : '.env files kept out of git'] : []), ...(negated.length > 0 ? ['.gitignore lets some .env files in: raise it on the computer that set the project up'] : []), ...(pins.length > 0 ? ['the kits agents work with'] : []),
       ...(listens ? [LISTENING_CLAUSE] : []), 'nothing committed', ...(differ.length > 0 ? [`${listed(differ)} left as ${differ.length === 1 ? 'it is' : 'they are'}`] : []),
     ];
-    return card([`Setup step 7, ${SETUP_TITLES[7]}, for this computer:`, ...[...mine, 'Wheelhouse never updates itself'].map(asLine)].join('\n'));
+    return card([`Setup step 7, ${titleOf7(local)}, for this computer:`, ...mine.map(asLine)].join('\n'));
   }
   const short = [
     ...(shared.length > 0 ? ['the project\'s own files'] : []), ...(files.length > shared.length || excluded || ours ? ['this computer\'s settings'] : []),
     ...(secrets ? ['.env files kept out of git'] : []), ...(listens ? [LISTENING_CLAUSE] : []), ...(pins.length > 0 ? ['the kits agents work with'] : []), ...(up ? [`the setup commit ${local ? `onto ${cut(branch)}` : keyed ? `to ${cut(branch)} on ${NAME[host]} through a merge request` : `up to ${cut(branch)} on ${NAME[host]}`}${yours === '' ? '' : ', with your changes'}${ownPart === '' ? '' : ', with your product\'s own files'}`] : []),
-    ...(local ? [] : keyed ? ['protection already on from step 3'] : [`${up ? 'then ' : ''}protection on ${up ? 'it' : cut(branch)}`]),
+    ...(local || keyed ? [] : [`${up ? 'then ' : ''}protection on ${up ? 'it' : cut(branch)}`]),
   ];
-  return card([`Setup step 7, ${SETUP_TITLES[7]}${by}:`, ...[...short, 'Wheelhouse never updates itself'].map(asLine)].join('\n'));
+  return card([`Setup step 7, ${titleOf7(local, keyed)}${by}:`, ...short.map(asLine)].join('\n'));
 }
 
 // ---- Step 7 ----
@@ -1494,7 +1498,7 @@ export function projectFilesStep({
       if (commit) changes.push({ kind: 'host', target, action: 'commit', branch, base: tip, message: COMMIT_MESSAGE, files: commitFiles, ...(yours.length > 0 ? { yours } : {}), ...(own.length > 0 ? { own } : {}), ...(left ? { ownLeft: true } : {}), ...merge });
       else if (unpushed) changes.push({ kind: 'host', target, action: 'push', branch, base: tip, commit: head, files: ((await git.out(['diff-tree', '--no-commit-id', '--name-only', '-r', head])) ?? '').split('\n').filter(Boolean), ...merge });
       if (!local && !keyed) changes.push({ kind: 'host', target: `${repo} protection`, action: 'protect', branch });
-      return { changes, card: projectFilesCard({ changes, host, branch, release, frontDesk: pin === null ? NO_PIN : frontDeskOf(changes, pin), midSized: held !== null ? null : mid === null ? NO_PIN : mid, listens: config.localListening === true, keyed, pasted }), director: 'One click' };
+      return { changes, card: projectFilesCard({ changes, host, branch, release, frontDesk: pin === null ? NO_PIN : frontDeskOf(changes, pin), midSized: held !== null ? null : mid === null ? NO_PIN : mid, listens: config.localListening === true, keyed, pasted, company: host === 'gitlab' && typeof record.connection?.baseUrl === 'string' && record.connection.baseUrl !== DEFAULT_GITLAB }), director: 'One click' };
     },
 
     async apply(ctx, changes) {

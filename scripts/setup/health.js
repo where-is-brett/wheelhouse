@@ -261,7 +261,9 @@ const needsNewSession = (check, result, host) => !passes(check, result, host) &&
 
 function checkLine(check, result, { session = false, host, desktop = false } = {}) {
   const by = session ? ' (reported by the session)' : '';
-  if (passes(check, result, host)) return `Passed: ${check.passed}.${by}`;
+  // A watched step is not one of the checks the verdict counts, so it is Done, not Passed, and the
+  // Passed lines add up to the verdict's figure.
+  if (passes(check, result, host)) return `${check.watch ? 'Done' : 'Passed'}: ${check.passed}.${by}`;
   if (needsNewSession(check, result, host)) {
     return `Not yet: the sandbox's limit on ${check.what} starts only in a new session, so this check passes there, as setup expects. ${NEW_SESSION}.${by}`;
   }
@@ -289,14 +291,14 @@ function card(repo, local, host = 'github', unprotected = false) {
       'Setup tries Wheelhouse\'s safety checks for real on this computer, with a test change that holds nothing.',
       'Wheelhouse\'s merge check is asked to merge it without your approval, and must refuse.',
       'It checks that All stop (the switch that halts every agent) works, that the agents\' skills are installed, and the project\'s private copy.',
-      'This Claude Code session checks that agents are stopped where they should be, then shows the Logbook, Wheelhouse\'s record of its own checks.',
+      'This Claude Code session checks that agents are blocked where Wheelhouse blocks them, then shows the Logbook, Wheelhouse\'s record of its own checks.',
       'Setup then closes the test change.',
     ]
     : [
       `Setup tries Wheelhouse's safety checks for real on ${repo}, with a test ${request} that holds nothing, on a branch named ${HEALTH_BRANCH}.`,
       'Wheelhouse\'s merge check is asked to merge it without your approval, and must refuse.',
       `It checks that All stop (the switch that halts every agent) works, that the agents' skills are installed, and that the main line is protected${request === 'pull request' ? ' where your plan allows' : ''}.`,
-      'This Claude Code session checks that agents are stopped where they should be, then shows the Logbook, Wheelhouse\'s record of its own checks.',
+      'This Claude Code session checks that agents are blocked where Wheelhouse blocks them, then shows the Logbook, Wheelhouse\'s record of its own checks.',
       `Setup then closes the test ${request} and deletes its branch.`,
     ];
   return {

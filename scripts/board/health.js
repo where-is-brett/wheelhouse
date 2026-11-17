@@ -226,8 +226,8 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
   add('ok', locked ? 'Protection: Locked' : 'Protection: Standard');
   for (const line of updateLines(update)) add(line.level, line.text);
   if (!locked && realUsers && platform === 'darwin') add('watch', LOCKED_WOULD_LINE);
-  // Quick is the Mac's default, since the sandbox denies its sign-in files and the keychain (check 73),
-  // so it brings no line there; on Windows, where nothing does, it is a calm note (design section 22).
+  // Quick is the Mac's default, since the sandbox denies its sign-in files and the keychain (check 73), the keychain
+  // unless the project signs Apple apps, so it brings no line there; on Windows, where nothing does, it is a calm note (design section 22).
   // The project's own host is named where the record holds it.
   if (record?.connection?.mode === 'quick' && platform !== 'darwin') add('ok', record.host === 'github' || record.host === 'gitlab' ? quickLineFor(record.host) : QUICK_LINE);
   // The host's tool stopped starting and the helper moved the project to the host's web API by itself (adapter-for.js).

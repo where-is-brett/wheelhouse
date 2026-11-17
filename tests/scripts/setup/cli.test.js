@@ -91,6 +91,9 @@ test('resume gives where setup stands and the card of the first step neither don
   // Every step done, or every one left running: where setup stands, and no card.
   const done = fakeClient({ status: { ok: true, lines: ['Every step is done.'], next: null, ask: null } });
   assert.deepEqual(JSON.parse((await run(['resume'], { client: done })).out), { lines: ['Every step is done.'], next: null, plan: null });
+  // Until step 7 is applied, resume reminds a session that ran setup outside the sandbox to keep doing so.
+  const due = fakeClient({ status: { ok: true, lines: ['Every step is done.'], next: null, ask: null, filesDue: true } });
+  assert.match(JSON.parse((await run(['resume'], { client: due })).out).sandbox, /^Step 7 is not applied yet: try the sandbox first.*run it outside/);
   assert.deepEqual(done.calls.map(([name]) => name), ['status']);
 });
 
@@ -107,6 +110,28 @@ test('a settled step\'s said line comes with its plan and with resume, and none 
   assert.deepEqual(JSON.parse((await run(['resume'], { client: c })).out).plan, { step: 6, title: 'Changes to this computer', done: true, said: one });
   const quiet = fakeClient({ plan: { ok: true, done: true } });
   assert.deepEqual(JSON.parse((await run(['plan', '2'], { client: quiet })).out), { step: 2, title: 'Tools', done: true });
+});
+
+// The phone's step settles with no card where none can be shown; step 10's card, which opens with
+// the verdict and first briefing, is in the same resume, from a status taken after it settled.
+test('resume carries on past a step that settled with nothing said, to the card after it', async () => {
+  const statuses = [
+    { ok: true, lines: ['Step 9, Phone notifications: not started'], next: 9, ask: 9 },
+    { ok: true, lines: ['Setup is finished.'], next: null, ask: 10 },
+  ];
+  const ready = { step: 10, id: 'setup-ready', card: { question: 'All 12 checks passed. Wheelhouse is ready.\nSetup is finished.' } };
+  const c = fakeClient({
+    status: () => statuses.shift() ?? { ok: true, lines: ['Setup is finished.'], next: null, ask: null },
+    plan: (body) => (body.step === 9 ? { ok: true, done: true } : { ok: true, ask: ready }),
+  });
+  const resumed = JSON.parse((await run(['resume'], { client: c })).out);
+  assert.equal(resumed.next, null);
+  assert.deepEqual(resumed.plan.ask, ready);
+  assert.deepEqual(c.calls.map(([name, body]) => [name, body.step]), [['status', undefined], ['plan', 9], ['status', undefined], ['plan', 10]]);
+  // Nothing after it: one more status, and the settled step's plan as it was.
+  const alone = fakeClient({ status: () => ({ ok: true, lines: ['Setup is finished.'], next: null, ask: 9 }), plan: { ok: true, done: true } });
+  assert.deepEqual(JSON.parse((await run(['resume'], { client: alone })).out).plan, { step: 9, title: 'Phone notifications', done: true });
+  assert.deepEqual(alone.calls.map(([name]) => name), ['status', 'plan', 'status']);
 });
 
 // Step 10 (ruling R41): the session hands in the lines its sandboxed trials printed, as they are,
