@@ -2862,10 +2862,18 @@ export function hostStep({
         if (joined === null) await openRecords();
         // The computer's git settings a push trusts, recorded now that the director has seen the card that names them.
         // Recorded for the folder the push runs in, the project's mirror, since an include can make the settings differ by folder.
-        // Before the mirror exists there is nothing to read there: the first push records it.
+        // The mirror is made here if it is not yet, the way the helper makes it (an empty bare repository; the helper then only sets
+        // its origin and fetches into it, and leaves one that has a HEAD as it is), so the settings the director has just seen are
+        // recorded now and not trusted at whatever they are by the first push.
         if (connection.mode === 'as-is') {
           const mirror = path.join(stateDir(slug), '..', 'mirror.git');
-          if (fs.existsSync(mirror)) await confirmComputerSettings({ file: path.join(wheelhouseHome(), 'host', 'git-settings.json'), run, gitPath: git.path, cwd: mirror });
+          if (!fs.existsSync(path.join(mirror, 'HEAD'))) {
+            fs.rmSync(mirror, { recursive: true, force: true });
+            fs.mkdirSync(mirror, { recursive: true });
+            const made = await setupGit({ run, gitPath: git.path, cwd: mirror })(['init', '-q', '--bare']);
+            if (made.code !== 0) throw new Error('git could not make the project\'s mirror for the push, so the settings a push trusts were not recorded: a fresh Go ahead tries again');
+          }
+          await confirmComputerSettings({ file: path.join(wheelhouseHome(), 'host', 'git-settings.json'), run, gitPath: git.path, cwd: mirror });
         }
         say(`Connected: ${project.repo} on ${NAME[host]}, ${connection.mode === 'quick' ? 'Quick' : connection.mode === 'as-is' ? 'your own git as it is' : 'narrow'}`);
         return [];

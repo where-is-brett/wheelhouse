@@ -3320,8 +3320,12 @@ test('where the key the director\'s store holds passes GET /user, "Use my git as
       assert.deepEqual(readProject(slugFor(`${USER}/shop`)).connection, { host: 'gitlab', mode: 'as-is', project: `${USER}/shop`, baseUrl: 'https://gitlab.com', backend: 'rest' });
       assert.deepEqual(held.stored, [], 'the director\'s key is not stored again');
       assert.ok(lines.some((l) => /your own git as it is/.test(l)), lines.join('\n'));
-      // The project's mirror, the folder a push runs in, does not exist yet, so nothing is recorded: the first push records its settings.
-      assert.equal(fs.existsSync(path.join(wheelhouseHome(), 'host', 'git-settings.json')), false);
+      // The settings a push trusts were recorded once the director had seen the card that names them, for the project's mirror, the
+      // folder a push runs in, which setup made for it.
+      const mirror = path.join(stateDir(slugFor(`${USER}/shop`)), '..', 'mirror.git');
+      assert.ok(fs.existsSync(path.join(mirror, 'HEAD')), 'the mirror is there');
+      const kept = JSON.parse(fs.readFileSync(path.join(wheelhouseHome(), 'host', 'git-settings.json'), 'utf8'));
+      assert.deepEqual(Object.keys(kept.folders), [fs.realpathSync(mirror)]);
     } finally {
       held.restore();
     }

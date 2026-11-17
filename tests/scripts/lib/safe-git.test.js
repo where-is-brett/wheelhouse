@@ -273,3 +273,8 @@ test('a record from before the settings were kept per folder says nothing of any
   const old = await includedPush({ before: '/a/helper', after: '/a/helper', confirmed: false, record: { fingerprint: 'a'.repeat(64) } });
   assert.equal(old.code, 'git-settings-changed');
 });
+
+test('a folder setup never confirmed is refused where a record exists, even one that names other folders', async () => {
+  const other = await includedPush({ before: '/a/helper', after: '/a/helper', confirmed: false, record: { folders: { '/somewhere/else': 'a'.repeat(64) } } });
+  assert.equal(other.code, 'git-settings-changed');
+});

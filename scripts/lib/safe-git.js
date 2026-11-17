@@ -522,18 +522,19 @@ function writeRecord(file, folders) {
   fs.writeFileSync(file, `${JSON.stringify({ folders }, null, 2)}\n`, { mode: 0o600 });
 }
 
-// Records the folder's fingerprint the first time it is seen; after that, throws SettingsChanged when it differs. A record that is
-// unreadable, or from before the folder was part of it, is refused.
+// Setup records a folder's fingerprint when the director has seen the card that names the settings (confirmComputerSettings), so a
+// folder with no entry was never confirmed: where a record exists at all (an older one, or one that names other folders), that
+// folder is refused until the director confirms it, so a change made after setup is never taken as what was seen. Only where no
+// record exists yet, a first push (a stand-in with no setup before it) records what it finds, as the first use.
 function checkTrusted(file, folder, now) {
   const record = readRecord(file);
   if (record === 'refused') throw new SettingsChanged(SETTINGS_CHANGED_LINE);
   const key = folderKey(folder);
-  const kept = record?.folders[key];
-  if (kept === undefined) {
-    writeRecord(file, { ...(record?.folders ?? {}), [key]: now });
+  if (record === null) {
+    writeRecord(file, { [key]: now });
     return;
   }
-  if (kept !== now) throw new SettingsChanged(SETTINGS_CHANGED_LINE);
+  if (record.folders[key] !== now) throw new SettingsChanged(SETTINGS_CHANGED_LINE);
 }
 
 // The director's confirmation of the computer's settings as they are now in `cwd`, the folder the push runs in (a later part's
