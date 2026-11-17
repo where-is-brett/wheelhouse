@@ -53,7 +53,7 @@ import { fileURLToPath } from 'node:url';
 import { projectForFolder, isInsideFolder } from '../lib/projects.js';
 import { lockedProjects, managedDir } from '../protection/managed.js';
 import { wheelhouseHome } from '../lib/paths.js';
-import { readJournal, firstUnfinished, runClosed } from '../lib/setup-run.js';
+import { readJournal, firstUnfinished, runClosed, stepDone, PUSH_TEST_STEP } from '../lib/setup-run.js';
 import { readSmallText, SMALL_FILE_BYTES } from '../lib/small-file.js';
 import { pluginOnIn } from '../lib/plugin-on.js';
 import { answer } from '../../adapters/claude-code/answers.js';
@@ -171,7 +171,9 @@ export function registeredByPath(cwd) {
 // no open one is one Wheelhouse was removed from (removedFrom), not one being set up, even while its
 // settings still switch the plugin on, until the director removes it; a newer run there, setting it
 // up again, counts as any run does.
-export function beingSetUp(cwd, { home = os.homedir() } = {}) {
+// `phone` also counts a registered folder whose run is finished but for the phone step, offered last: the card
+// check swaps a reworded phone card back while it is asked.
+export function beingSetUp(cwd, { home = os.homedir(), phone = false } = {}) {
   if (typeof cwd !== 'string' || cwd === '' || !path.isAbsolute(cwd)) return null;
   let real;
   let registered;
@@ -191,7 +193,8 @@ export function beingSetUp(cwd, { home = os.homedir() } = {}) {
   const open = named.filter((r) => !runClosed(r));
   if (registered) {
     const run = open.filter((r) => sameFolder(r.folder, registered.record.folder)).at(-1);
-    return run && firstUnfinished(run) !== null ? { folder: run.folder, run, journal: true } : null;
+    const unfinished = run && (firstUnfinished(run) !== null || (phone && !stepDone(run, PUSH_TEST_STEP)));
+    return unfinished ? { folder: run.folder, run, journal: true } : null;
   }
   const holding = holdingRuns(open, real, home);
   if (holding.length > 0) {

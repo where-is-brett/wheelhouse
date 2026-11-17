@@ -519,7 +519,7 @@ export function setupCardsFor(cwd, runId) {
       card: { id, data: { question: c.question, header: c.header, options: c.options.map((o) => o.label), descriptions: c.options.map((o) => o.description) } },
       decided: null,
       setup: true,
-      at: Date.parse(r.at),
+      at: Number.isFinite(Date.parse(r.at)) ? Date.parse(r.at) : 0,
       step: r.step,
       plan,
     });

@@ -15,7 +15,8 @@ import { markPane, readOpen } from '../../../scripts/lib/session-files.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { setupCardsFor } from '../../../scripts/lib/setup-clicks.js';
 import { setLineOf } from '../../../scripts/state/card-lines.js';
-import { startRun } from '../../../scripts/setup/journal.js';
+import { startRun, markStep, addChanges } from '../../../scripts/setup/journal.js';
+import { SETUP_STEPS, PUSH_TEST_STEP } from '../../../scripts/lib/setup-run.js';
 import { noteShown, noteAsked } from '../../../scripts/setup/clicks.js';
 
 const NOW = new Date('2026-11-03T00:00:00.000Z');
@@ -219,4 +220,41 @@ test('the first plan card asked again word for word after a newer plan comes bac
   askPlan(folder, first, one, 'plan-aaaaaaaaaaaa', 1);
   askPlan(folder, first, two, 'plan-bbbbbbbbbbbb', 2);
   assert.deepEqual(swappedOf(await run(call(folder, printedOf(one)))), [printedOf(two)]);
+}));
+
+// Setup's phone step is offered last, after the health check: by then every other step is done, and the folder is a
+// project. A reworded phone card is still setup's, and only the phone cards are, until the phone step is done.
+const PHONE = {
+  question: 'Setup step 9, your phone. Switch on Remote Control, then click Ready and lock your computer for three minutes.',
+  header: 'Question',
+  options: [
+    { label: 'Ready', description: 'Recommended: Setup sends a test two minutes later and asks if it arrived.' },
+    { label: 'Skip for now', description: 'Setup carries on without your phone.' },
+  ],
+};
+const finishAllBut = (run, but) => {
+  for (const s of SETUP_STEPS) if (s.n !== but) markStep(run.id, s.n, 'doneAt', { now: () => NOW });
+  addChanges(run.id, [{ id: 'green-10', step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: NOW.toISOString() } }]);
+};
+const cutPhone = () => ({ ...PHONE, question: PHONE.question.replace(' three minutes.', ' three.'), options: [{ label: 'Ready', description: 'x' }, { label: 'Skip for now', description: 'y' }] });
+
+test('in a project whose setup waits only on the phone step, a reworded phone card is swapped back', () => inProject(async ({ folder, first }) => {
+  noteAsked({ runId: first.id, folder, step: PUSH_TEST_STEP, id: 'phone-ready', card: PHONE, now: () => NOW });
+  finishAllBut(first, PUSH_TEST_STEP);
+  const out = await inProjectRun({ ...call(folder, cutPhone()), session_id: SID }, { outcomes: () => [] });
+  assert.deepEqual(swappedOf(out), [printedOf(PHONE)]);
+}));
+
+test('once only the phone step is left, an earlier setup card is no longer swapped in', () => inProject(async ({ folder, first }) => {
+  finishAllBut(first, PUSH_TEST_STEP);
+  const cut = { ...ASKED, question: ASKED.question.split('\n')[0], options: [{ label: 'The README\'s words', description: 'x' }, { label: 'Describe it later', description: 'y' }] };
+  const out = await inProjectRun({ ...call(folder, cut), session_id: SID }, { outcomes: () => [] });
+  assert.equal(out?.hookSpecificOutput?.updatedInput?.questions?.[0]?.question === ASKED.question, false);
+}));
+
+test('once the phone step is done too, a reworded phone card is no longer setup\'s', () => inProject(async ({ folder, first }) => {
+  noteAsked({ runId: first.id, folder, step: PUSH_TEST_STEP, id: 'phone-ready', card: PHONE, now: () => NOW });
+  finishAllBut(first, null);
+  const out = await inProjectRun({ ...call(folder, cutPhone()), session_id: SID }, { outcomes: () => [] });
+  assert.equal(out?.hookSpecificOutput?.updatedInput?.questions?.[0]?.question === PHONE.question, false);
 }));

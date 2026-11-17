@@ -37,6 +37,7 @@ import tools from '../../adapters/claude-code/tools.js';
 import { asQuestion } from '../cards/visit.js';
 import { runAndExit, answer, projectOf, beingSetUp, readTailEntries } from './kit.js';
 import { setupCardsFor, bareLabel } from '../lib/setup-clicks.js';
+import { PUSH_TEST_STEP } from '../lib/setup-run.js';
 import { looksLikeBaseline, holdsFigures, cardHash, readShown, cardText, sweepStale } from '../lib/measures-clicks.js';
 import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT, SUGGEST, SHOW_ME, NOT_NOW, SEND_BACK, NO_RECOMMENDATION } from '../lib/calm-words.js';
@@ -322,14 +323,16 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
   const decided = decidedDeny(found, at);
   if (decided !== undefined) return { deny: decided };
   // A folder that is being set up as well adds setup's cards after the state's, so a state card wins.
-  const setup = beingSetUp(input.cwd);
+  // Once only the phone step is left (it is offered last), only its cards are setup's.
+  const setup = beingSetUp(input.cwd, { phone: true });
+  const phoneOnly = setup !== null && beingSetUp(input.cwd) === null;
   const open = allOutcomes(project, outcomes).filter((o) => o.decided === null && typeof o.card?.data?.question === 'string');
-  const setupOpen = setup === null ? [] : setupCardsFor(input.cwd, setup.run?.id);
+  const setupOpen = setup === null ? [] : setupCardsFor(input.cwd, setup.run?.id).filter((o) => !phoneOnly || o.step === PUSH_TEST_STEP);
   // Each question's card: the one it names exactly, else the waiting card it is a reworded copy of; null for neither.
   const matched = questions.map((q, i) => {
     if (typeof q?.question !== 'string') return null;
     const swap = swapFor(q, found[i], open)
-      ?? (setupOpen.length === 0 || sharesLine(q, open) ? null : swapFor(q, null, setupOpen));
+      ?? (setupOpen.length === 0 || sharesLine(q, open) ? null : setupSwapFor(q, setupOpen));
     return swap === null ? null : { card: swap.card, setup: swap.setup === true };
   });
   // The picker is for a decision only while typed replies are off, so on it a decision is answered by typing instead.
@@ -449,6 +452,15 @@ function newestOf(cards) {
 // asks several questions (each its own id), so only plan cards (shown, or asked as `plan-*`) supersede plan cards.
 const supersededPlan = (o, open) => o.plan === true && open.some((p) => p.plan === true && p.step === o.step && p !== o && (p.at ?? 0) > (o.at ?? 0));
 
+// Setup's stored card a question stands for, among the cards no newer plan replaced: a question worded exactly as one is that card,
+// whatever else shares its first line or labels (the newest if setup stored the same question twice); only a question that is no
+// card's own is read as a reworded one. Null for none.
+function setupSwapFor(q, open) {
+  const live = open.filter((o) => !supersededPlan(o, open));
+  const own = live.filter((o) => q.question === o.card.data.question || q.question === chatCopy(o.card.data.question));
+  return own.length > 0 ? newestOf(own) : swapFor(q, null, live);
+}
+
 // In a folder being set up (no project yet), a reworded setup card is swapped for the card setup showed or asked, found by
 // the same rules as a waiting card's. No form check, pane hold or open-noting here. A failure lets the call through.
 function swapSetupCards(input, questions) {
@@ -457,13 +469,9 @@ function swapSetupCards(input, questions) {
     if (setup === null) return undefined;
     const open = setupCardsFor(input.cwd, setup.run?.id);
     if (open.length === 0) return undefined;
-    const live = open.filter((o) => !supersededPlan(o, open));
     const matched = questions.map((q) => {
       if (typeof q?.question !== 'string') return null;
-      // A question worded exactly as a live stored card is that card, whatever else shares its first line or labels; the newest if
-      // setup stored the same question twice. Only a question that is no card's own is read as a reworded one.
-      const own = live.filter((o) => q.question === o.card.data.question || q.question === chatCopy(o.card.data.question));
-      const swap = own.length > 0 ? newestOf(own) : swapFor(q, null, live);
+      const swap = setupSwapFor(q, open);
       return swap === null ? null : { card: swap.card };
     });
     const swapped = swapQuestions(questions, matched);
