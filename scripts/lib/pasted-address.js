@@ -12,12 +12,15 @@ export const withScheme = (text) => (/^(?:www\.)?(?:github|gitlab)\.com\/[^\s]/i
 const OTHER_FORGES = /^(?:www\.)?(?:bitbucket\.org|dev\.azure\.com|codeberg\.org)$/;
 const isOtherForge = (hostname) => OTHER_FORGES.test(hostname) || (/^github\./.test(hostname) && hostname !== 'github.com');
 
-// A host name without the root dot a URL allows after it (gitlab.com. is gitlab.com).
+// A host name without the root dot a URL allows after it (a public host written with its root dot is the same host).
 const unrooted = (hostname) => hostname.replace(/\.$/, '');
 
-// A host that is no company's GitLab: loopback, link-local and bare addresses, in any form a URL reads (127.x, 0x7f.1, [::1]).
+// The public GitLab's own host name, from its address.
+const PUBLIC_HOST = new URL(DEFAULT_GITLAB).hostname;
+
+// A host that is no company's GitLab: loopback, link-local, internal and bare addresses, in any form a URL reads (127.x, 0x7f.1, [::1]).
 const isBareHost = (hostname) => !hostname.includes('.') || hostname.startsWith('[') || /^[\d.]+$/.test(hostname) || /^0x/i.test(hostname)
-  || hostname === 'localhost' || hostname.endsWith('.localhost');
+  || hostname === 'localhost' || /\.(?:localhost|local|internal)$/.test(hostname);
 
 // The host a pasted project address names, as parseRemote reads it, or null for text that is no address. Only https://,
 // ssh:// and git@host: forms are read. { unreadable: true } is an address-looking text that cannot be read (another scheme,
@@ -26,7 +29,11 @@ export function pastedAddress(text) {
   const named = withScheme(String(text ?? '').trim());
   const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):\/\//.exec(named)?.[1]?.toLowerCase() ?? null;
   const scp = scheme === null ? /^([^@/\s]+)@[A-Za-z0-9.-]+:(?!\/\/)/.exec(named) : null;
-  if (scheme === null && scp === null) return null;
+  // More than one @ before the host (git@token@host:path) is no address setup reads.
+  const many = scheme === null && scp === null && /^[^/\s]+@[^/\s]*@[A-Za-z0-9.-]+:(?!\/\/)/.test(named);
+  if (scheme === null && scp === null && !many) return null;
+  // Whitespace inside an address means more was pasted than an address, and none of it is read.
+  if (many || /\s/.test(named)) return { unreadable: true };
   if (scheme !== null ? scheme !== 'https' && scheme !== 'ssh' : scp[1] !== 'git') return { unreadable: true };
   let parts;
   try {
@@ -58,7 +65,7 @@ export function repoNamed(text) {
     // A GitLab page's address goes on after '/-/' (ann/cafe-menu/-/tree/main); GitHub's has no such mark, and its
     // repositories are always owner/name, so only the first two parts count (ann/cafe-menu/pulls).
     named = named.replace(/\/-(?:\/.*)?$/, '').replace(/\/+$/, '');
-    if (host === 'github.com' || host === 'www.github.com') named = named.split('/').slice(0, 2).join('/');
+    if (['github.com', 'www.github.com'].includes(unrooted(host))) named = named.split('/').slice(0, 2).join('/');
   }
   named = named.replace(/\.git$/i, '');
   if (!/^[A-Za-z0-9_.][A-Za-z0-9_.-]*(\/[A-Za-z0-9_.][A-Za-z0-9_.-]*)*$/.test(named)) return null;
@@ -109,8 +116,9 @@ export function pinOf(text) {
   const there = pastedAddress(text);
   if (there === null || there.unreadable || there.forge) return there;
   if (hostOfAddress(there) === 'github') return { host: 'github' };
-  if (unrooted(there.hostname) === 'gitlab.com' || unrooted(there.hostname) === 'www.gitlab.com') return { host: 'gitlab', company: { base: DEFAULT_GITLAB } };
-  const company = companyAddress(hostWords(there));
+  const hostname = unrooted(there.hostname);
+  if (hostname === PUBLIC_HOST || hostname === `www.${PUBLIC_HOST}`) return { host: 'gitlab', company: { base: DEFAULT_GITLAB } };
+  const company = companyAddress(hostWords({ ...there, hostname }));
   return company.why === undefined ? { host: 'gitlab', company } : { unreadable: true };
 }
 
@@ -119,10 +127,13 @@ export function pinOf(text) {
 // address a URL reader makes of it (so a backslash cannot turn one host into another); ssh:// and user@host:path are cut.
 // It reads as the same address as the text it came from.
 export function withoutSecrets(text) {
-  const named = String(text ?? '').trim();
+  // Only the first run of characters is an address: whatever follows whitespace is dropped before anything is parsed, since
+  // a URL reader would glue it to the path.
+  const named = String(text ?? '').trim().split(/\s/)[0];
   if (/^https?:\/\//i.test(named)) {
     try {
       const url = new URL(named);
+      url.hostname = unrooted(url.hostname);
       url.username = '';
       url.password = '';
       url.search = '';
@@ -132,6 +143,8 @@ export function withoutSecrets(text) {
     } catch { /* kept as the cut below */ }
   }
   return named.replace(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^/?#\s]*@/, '$1')
-    .replace(/^(?!git@)[^@/\s:][^@/\s]*@(?=[A-Za-z0-9.-]+:(?!\/\/))/, '')
+    // user@host:path keeps git@ alone, and drops everything before the last @ otherwise.
+    .replace(/^([^/\s]*)@([A-Za-z0-9.-]+:(?!\/\/))/, (all, user, rest) => (user === 'git' ? all : rest))
+    .replace(/^((?:ssh:\/\/)?(?:git@)?[A-Za-z0-9.-]*[A-Za-z0-9])\.(?=[:/])/, '$1')
     .replace(/[;?#].*$/, '');
 }

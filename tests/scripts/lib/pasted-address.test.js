@@ -38,9 +38,40 @@ test('a host written with its root dot is read as the host', () => {
   assert.deepEqual(pinOf('https://gitlab.com./a/b'), { host: 'gitlab', company: { base: 'https://gitlab.com' } });
   assert.deepEqual(pinOf('https://github.com./a/b'), { host: 'github' });
   assert.equal(hostOfAddress(pastedAddress('https://www.github.com./a/b')), 'github');
-  // Any other host with a root dot stays refused.
-  assert.deepEqual(pinOf('https://gitlab.example.org./a/b'), { unreadable: true });
+  // A company host reads the same with its root dot and in any case.
+  assert.deepEqual(pinOf('https://GitLab.Example.ORG./g/p'), pinOf('https://gitlab.example.org/g/p'));
+  assert.equal(pinOf('https://GitLab.Example.ORG./g/p').company.host, 'gitlab.example.org');
   assert.deepEqual(pastedAddress('https://bitbucket.org./a/b'), { forge: true });
+  // What is kept drops the root dot too.
+  assert.equal(withoutSecrets('https://github.com./a/b'), 'https://github.com/a/b');
+  assert.equal(withoutSecrets('git@gitlab.example.org.:a/b'), 'git@gitlab.example.org:a/b');
+});
+
+test('internal, local and localhost host names are no company host, with or without the root dot', () => {
+  for (const host of ['db.internal', 'printer.local', 'x.localhost', 'db.internal.', 'printer.local.', 'x.localhost.']) {
+    assert.deepEqual(pastedAddress(`https://${host}/a/b`), { unreadable: true }, host);
+    assert.deepEqual(pinOf(`https://${host}/a/b`), { unreadable: true }, host);
+  }
+});
+
+test('text with whitespace inside an address is unreadable, and nothing after the whitespace is kept', () => {
+  const tokens = [`ghp_${'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'}`, `glpat-${'a1B2c3D4e5F6g7H8i9J0'}`, `${['https://x', 'y'].join(':')}@a.example.org/c`];
+  for (const gap of [' ', '\t', '\n', '  \n ']) {
+    for (const token of tokens) {
+      const text = `https://gitlab.example.org/g/p${gap}${token}`;
+      assert.deepEqual(pastedAddress(text), { unreadable: true }, JSON.stringify(text));
+      const kept = withoutSecrets(text);
+      assert.equal(kept, 'https://gitlab.example.org/g/p', JSON.stringify(text));
+    }
+  }
+  // Text with no address in it is still no address.
+  assert.equal(pastedAddress('the cafe one'), null);
+});
+
+test('more than one @ before the host is unreadable, and only what follows the last @ is kept', () => {
+  const text = ['git', 'tok'].join('@') + '@gitlab.example.org:g/p';
+  assert.deepEqual(pastedAddress(text), { unreadable: true });
+  assert.equal(withoutSecrets(text), 'gitlab.example.org:g/p');
 });
 
 test('one list of token variables serves the survey, the foreman, glab, git and the store', () => {

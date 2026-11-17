@@ -120,6 +120,19 @@ test('a password written into an address typed on the join card is cleaned out a
     await run(answer(secret));
     assert.deepEqual(texts(), [HELD_SECRET]);
     assert.equal(texts().some((t) => t.includes('glpat')), false);
+    // A token after a space, a tab or a line break, or a second address with a password, is kept nowhere: not in the answer, not on disk.
+    const later = [`ghp_${'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'}`, `glpat-${'a1B2c3D4e5F6g7H8i9J0'}`, `${['https://x', 'y'].join(':')}@a.example.org/c`];
+    for (const gap of [' ', '\t', '\n']) {
+      for (const token of later) {
+        fs.rmSync(path.join(home, 'setup', 'answers'), { recursive: true, force: true });
+        fs.rmSync(path.join(home, 'setup', 'answered'), { recursive: true, force: true });
+        await run(answer(`https://gitlab.example.org/g/p${gap}${token}`));
+        assert.deepEqual(texts(), [HELD_SECRET], JSON.stringify(gap + token));
+        for (const dir of ['answers', 'records', 'answered']) {
+          for (const n of listOf(home, dir)) assert.equal(fs.readFileSync(path.join(home, 'setup', dir, n), 'utf8').includes(token.slice(0, 12)), false, `${dir}/${n}`);
+        }
+      }
+    }
   });
 });
 

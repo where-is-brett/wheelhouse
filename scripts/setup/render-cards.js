@@ -8,7 +8,7 @@
 // written: the programs the steps run are stand-ins (`fakeRun`), git alone real and kept to the scratch folder, and
 // the Wheelhouse home, the Claude Code folder and the user's home are made for the run.
 //
-//   node scripts/setup/render-cards.js [a|b|b'|c|d|e|all] [--desktop]
+//   node scripts/setup/render-cards.js [a|b|b'|c|d|e|f|g|all] [--desktop]
 //
 // The paths:
 //   a   a company's GitLab, on Windows, no real users, GitLab's tool left out, git holding no key, Use my git as it is chosen
@@ -17,6 +17,8 @@
 //   c   the public GitLab, on Windows
 //   d   GitHub, on Windows
 //   e   a company's GitLab on a Mac, with GitLab's tool in
+//   f   a project on a company's GitLab, pasted by its address on the join question, on a Mac: the address names the host, so no GitLab card is asked
+//   g   the same address, for a project with no Wheelhouse settings in it: the question is asked again saying so and what to do, and a new product on the company's GitLab is chosen
 // --desktop answers as the Desktop app can: a card whose question is the same as an earlier card's shows the
 // earlier one, so the answer that comes back is the one given there. It also asks each card with its first line reworded, as a
 // model that doesn't copy a card word for word may, through the card check hook's swap (scripts/hooks/card-check.js): the
@@ -39,6 +41,8 @@ const PUBLIC_GITLAB = new URL(DEFAULT_GITLAB).hostname;
 const HERE = fileURLToPath(import.meta.url);
 const T0 = new Date('2026-11-16T03:00:00.000Z');
 export const COMPANY_ADDRESS = 'https://gitlab.example.com';
+// A project's page on that GitLab, as the director pastes it on the join question.
+export const PASTED_ADDRESS = `${COMPANY_ADDRESS}/a-director/cafe-menu`;
 // The director's account on the pretend host, and the project step 3 makes there.
 const USER = 'a-director';
 const PROJECT_ID = 41;
@@ -51,6 +55,8 @@ export const PATHS = Object.freeze({
   c: { title: 'The public GitLab on Windows', platform: 'win32', host: 'GitLab', where: 'public', glab: 'unavailable' },
   d: { title: 'GitHub on Windows', platform: 'win32', host: 'GitHub', gh: 'in' },
   e: { title: 'A company\'s GitLab on a Mac, GitLab\'s tool in', platform: 'darwin', host: 'GitLab', where: 'company', glab: 'in' },
+  f: { title: 'A project on a company\'s GitLab pasted by its address on the join question, on a Mac', platform: 'darwin', host: 'GitLab', where: 'pasted', glab: 'in', join: PASTED_ADDRESS },
+  g: { title: 'The same address for a project with no Wheelhouse settings: asked again saying so, then a new product on the company\'s GitLab', platform: 'darwin', host: 'GitLab', where: 'company', glab: 'in', join: PASTED_ADDRESS, miss: true },
 });
 
 // ---- The pretend computer ----
@@ -175,6 +181,12 @@ async function connectAsStepThree({ folder, scratch, changes }) {
   await git(scratch, 'init', '-q', '--bare', bare);
   await git(seed, 'init', '-q', '-b', 'main');
   fs.writeFileSync(path.join(seed, 'README.md'), '# Cafe Menu\n');
+  // A project joined was set up with Wheelhouse on another computer, so its last commit holds the settings file.
+  if (world().join && !world().miss) {
+    fs.mkdirSync(path.join(seed, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(seed, '.claude', 'wheelhouse.json'), '{"v":1,"criticalAreas":[],"ciFiles":[],"mcpServers":[],"webDomains":[]}\n');
+    await git(seed, 'add', '.claude/wheelhouse.json');
+  }
   await git(seed, 'add', 'README.md');
   await git(seed, 'commit', '-q', '-m', 'Initial commit');
   await git(seed, 'push', '-q', bare, 'main');
@@ -279,6 +291,8 @@ function choose(p, { id, card }, { stepTwoDone }) {
   const pick = (want) => labels.find((l) => l === want) ?? null;
   if (id === 'one-card' || /^plan-/.test(id)) return { label: stepTwoDone.customised ? 'Go ahead' : 'Customise' };
   if (id === 'real-users') return { label: pick('Not yet') };
+  // A pasted address on the join question; once it missed, the question asked again is answered as any join question is, with the path's host.
+  if (id === 'join' && p.join) return { text: p.join };
   if (id === 'host' || /^join/.test(id)) return { label: pick(p.host) };
   if (/^gitlab-where/.test(id)) return { label: pick(p.where === 'company' ? 'My company\'s GitLab' : PUBLIC_GITLAB) };
   if (/^host-tool-/.test(id) && p.tool === 'fetch') return { label: labels.find((l) => l.startsWith('Fetch')) ?? recommended };
@@ -369,6 +383,10 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
         cwd: folder, hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
         tool_input: { questions: [card] }, tool_response: { answers: { [card.question]: value } },
       }, { client, now: () => new Date(clock - 500) });
+      // The attempt to bring the pasted project in found no Wheelhouse settings in it, as step 3's apply records it.
+      if (id === 'join' && p.miss) {
+        addChanges(runId(), [{ id: `chg-render-miss-${clock}`, step: 3, kind: 'answer', target: 'step 3', before: null, after: { joined: `${USER}/cafe-menu`, missed: 'none', host: 'gitlab', address: true } }]);
+      }
     };
     const plan = (step) => routes['/setup/plan']({ folder, step, ...(desktop ? { desktop: true } : {}) });
     const runId = () => readJournal().runs.find((r) => r.folder === folder)?.id;
@@ -385,6 +403,8 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
     // leaves the computer; every later one is taken as done.
     const seen = new Map();
     for (const n of [1, 2, 3, 4, 5, 6, 7, 8, 10, 9]) {
+      // A computer joining a project runs steps 1, 2, 3, 6, 7, 8 and 9 only.
+      if (p.join && !p.miss && [4, 5, 10].includes(n)) continue;
       for (let turn = 0; ; turn += 1) {
         const got = await plan(n);
         if (got.done) break;
@@ -408,6 +428,8 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
           const w = world();
           w.connected = await connectAsStepThree({ folder, scratch, changes: got.changes });
           fs.writeFileSync(path.join(home, 'render-world.json'), JSON.stringify(w));
+          // A project joined, not made: the run records the repository it checked out, so it reads as a joining run.
+          if (p.join) addChanges(runId(), [{ id: `chg-render-joined-${clock}`, step: 3, kind: 'answer', target: 'step 3', before: null, after: p.miss ? { joined: null } : { joined: `${USER}/cafe-menu`, found: true } }]);
         }
         clock += 1000;
         markStep(runId(), n, 'doneAt', { now });

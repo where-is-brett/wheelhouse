@@ -51,7 +51,7 @@ for (const name of Object.keys(PATHS)) {
     assert.equal(end?.how, 'finished', `the run ends with setup finished, not ${JSON.stringify(end)}`);
     assert.equal(end.step, 10);
     const p = PATHS[name];
-    const hostAt = cards.findIndex((c) => c.id === 'host' || /^join/.test(c.id));
+    const hostAt = cards.findLastIndex((c) => c.id === 'host' || /^join/.test(c.id));
     assert.ok(hostAt >= 0, 'the host is asked');
     const companyAt = cards.findIndex((c) => /^gitlab-(where|address)/.test(c.id) && c.answer?.text === COMPANY_ADDRESS);
     assert.equal(companyAt >= 0, p.where === 'company', 'the company address is typed where the path has one');
@@ -183,7 +183,7 @@ test('every path\'s Go-ahead cards list one thing to a line, with no jargon', as
   for (const name of Object.keys(PATHS)) {
     const { cards } = await rendered(name);
     const goes = cards.filter((c) => c.kind === 'go-ahead');
-    assert.ok(goes.some((c) => c.step === 10), `path ${name} reaches step 10's card`);
+    assert.ok(goes.some((c) => c.step === (PATHS[name].join && !PATHS[name].miss ? 7 : 10)), `path ${name} reaches its last step's card (a joining computer has no health check, so step 7 is its last Go-ahead card)`);
     for (const c of goes) {
       const lines = c.card.question.split('\n');
       assert.match(lines[0], /^Setup step \d+, [^:]+:$/, `path ${name} step ${c.step}'s card opens with its title alone`);

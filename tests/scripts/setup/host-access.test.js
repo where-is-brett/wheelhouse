@@ -99,6 +99,14 @@ test('on GitLab, git runs without the director\'s token variables, and on GitHub
   seen.length = 0;
   await findAccess({ ...base, host: 'github', remoteUrl: 'https://github.com/ann/cafe.git' });
   for (const e of seen) assert.equal(e.GH_TOKEN, 'tok2');
+  // What decides is the host git is asked to reach, not the host named: a remote on another host loses them either way.
+  seen.length = 0;
+  await findAccess({ ...base, host: 'github', remoteUrl: 'https://git.example.org/ann/cafe.git' });
+  assert.ok(seen.length > 0);
+  for (const e of seen) assert.equal(e.GH_TOKEN, undefined);
+  seen.length = 0;
+  await findAccess({ ...base, host: 'gitlab', base: GITLAB, remoteUrl: 'https://github.com/ann/cafe.git' });
+  for (const e of seen) assert.equal(e.GH_TOKEN, 'tok2');
 });
 
 test('no key held by git reads as none; a key that only pushes as push-only; a refused one as refused', async () => {

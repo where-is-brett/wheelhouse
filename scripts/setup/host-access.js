@@ -19,7 +19,7 @@
 import { askDirectorGit, directorProxy } from '../host/director-git.js';
 import { curlPath, request, NO_CURL } from '../host/curl.js';
 import { gitlabApi } from '../host/gitlab-key.js';
-import { DEFAULT_GITLAB } from '../host/gitlab-base.js';
+import { DEFAULT_GITLAB, parseRemote } from '../host/gitlab-base.js';
 import { tokenUrl } from '../host/token-url.js';
 import { withoutTokens } from '../lib/token-names.js';
 
@@ -100,9 +100,17 @@ export async function checkApiKey({ host, base = DEFAULT_GITLAB, key, via = {} }
 // 'unreachable' (the host could not be asked) or 'error'. `repo` is owner/name (null for a product with no repository
 // yet, so there is no remote to try); `remoteUrl` is its address.
 export async function findAccess({ host, base = DEFAULT_GITLAB, repo = null, remoteUrl = null, run, gitPath = 'git', borrow, via = {}, env = process.env }) {
-  // git's credential helper may read the director's GitLab token variables and send them to any GitLab git reaches.
-  const ask = (args) => askDirectorGit(args, { run, gitPath, env: host === 'gitlab' ? { ...env, ...withoutTokens() } : env });
   const address = hostAddress(host, base);
+  // git's credential helper may read the director's token variables and send them to any host git reaches, so they are kept
+  // only where git is to reach github.com: the host of the remote asked, else the host's own address.
+  const reached = (() => {
+    try {
+      return remoteUrl === null ? new URL(address).hostname : parseRemote(remoteUrl).hostname;
+    } catch {
+      return null;
+    }
+  })();
+  const ask = (args) => askDirectorGit(args, { run, gitPath, env: reached !== null && /^(?:www\.)?github\.com\.?$/.test(reached) ? env : { ...env, ...withoutTokens() } });
   const found = {
     transport: transportOf(remoteUrl), helper: await credentialHelperOf({ address, ask }),
     gitReaches: remoteUrl === null ? null : await lsRemoteWorks({ remoteUrl, ask }),
