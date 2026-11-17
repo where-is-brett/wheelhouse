@@ -1,12 +1,13 @@
 // scripts/setup/run-step.js
 // A long setup step's own process (ruling R15), started by the helper, detached, once the
 // director's click on the step's card has been checked:
-//   node run-step.js <steps module> <folder> <step> <hash> <run id> <clicked at> <deadline> <user home>
+//   node run-step.js <steps module> <folder> <step> <hash> <run id> <clicked at> <deadline> <user home> <session kind> <session started at>
 // It acts only for the attempt it was started for: the step's journal entry must still hold that
 // click (<clicked at>, as the helper recorded it) and no finish. It works the step's list out
 // again, with the helper's user home and every answer of the run (ruling R31) so the two work out
 // the same list, and goes ahead only when the list still has the hash the click named, so nothing
-// but that list is ever applied. Its
+// but that list is ever applied. When it has not, the step's failure names what differs, from the
+// sketch the helper kept of the list the click named (scripts/setup/plan-sketch.js). Its
 // progress goes to the journal: each change as the step makes it, then the step done, or failed
 // with why, each mark only while the entry is still its attempt's, so a process that outlived its
 // time never writes over a newer attempt. It runs on when the helper or Desktop goes.
@@ -22,14 +23,16 @@ import path from 'node:path';
 import { readJournal, markStep } from './journal.js';
 import { loadSteps, runApply } from './engine.js';
 import { planHash } from './steps.js';
+import { readSketch, sketchOf, sayDifference, sayNoList } from './plan-sketch.js';
 import { answersWithConsent } from './choices.js';
 import { stopState } from '../lib/stop.js';
 import { STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
 export const TICK_MS = 5 * 1000;
+const CHANGED = 'the list changed before the step began, so nothing was changed';
 
-export async function runStep([modulePath, folder, stepText, hash, runId, clickedAt, deadlineText, userHome, sessionKind], {
+export async function runStep([modulePath, folder, stepText, hash, runId, clickedAt, deadlineText, userHome, sessionKind, sessionStartedAt], {
   now = () => new Date(), exit = (code) => process.exit(code), tickMs = TICK_MS,
 } = {}) {
   const n = Number(stepText);
@@ -63,9 +66,14 @@ export async function runStep([modulePath, folder, stepText, hash, runId, clicke
     const step = (await loadSteps(modulePath)).find((s) => s.n === n);
     if (!step) return fail(`there is no setup step ${n}`);
     if (stopState().on) return fail('All stop is on');
-    const ctx = { folder, step: n, runId, startedAt: run.startedAt, now, userHome, platform: process.platform, desktop: sessionKind === 'desktop', answers: answersWithConsent(runId).answers, stopped: () => stopState().on };
+    const ctx = { folder, step: n, runId, startedAt: run.startedAt, now, userHome, platform: process.platform, desktop: sessionKind === 'desktop', sessionStartedAt: Number.isFinite(Date.parse(sessionStartedAt)) ? sessionStartedAt : undefined, answers: answersWithConsent(runId).answers, stopped: () => stopState().on };
     const got = await step.plan(ctx);
-    if (!Array.isArray(got?.changes) || planHash(got.changes) !== hash) return fail('the list changed before the step began, so nothing was changed');
+    if (!Array.isArray(got?.changes)) return fail(`${CHANGED}: ${sayNoList(got)}`);
+    if (planHash(got.changes) !== hash) {
+      const before = readSketch(runId, n, hash);
+      const said = before === null ? '' : sayDifference(before, sketchOf(got.changes));
+      return fail(said === '' ? CHANGED : `${CHANGED}: ${said}`);
+    }
     if (expired) return 1;
     const done = await runApply({ step, runId, changes: got.changes, ctx, current: mine });
     return done.ok && !expired ? 0 : 1;

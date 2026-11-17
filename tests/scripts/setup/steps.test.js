@@ -15,6 +15,7 @@ import { makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey } from '../../../scripts/state/signing.js';
 import { startRun, markStep, findRun, applyJsonKey, reverseChange, newId } from '../../../scripts/setup/journal.js';
 import { runStep } from '../../../scripts/setup/run-step.js';
+import { writeSketch } from '../../../scripts/setup/plan-sketch.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 import * as setupRun from '../../../scripts/lib/setup-run.js';
@@ -254,6 +255,55 @@ test('a long step\'s process plans in the session kind it was started for, so it
     markStep(run.id, 1, 'clickedAt', { now: () => NOW });
     assert.equal(await runStep([...childArgs({ folder, hash, runId: run.id }), 'desktop'], { now: () => NOW }), 0);
     assert.equal(fs.existsSync(path.join(folder, 'x.json')), true);
+  });
+});
+
+test('a long step\'s process that plans a different list names the entry and the fields that differ, never their values', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(tempFolder('wh-differ '));
+    fs.mkdirSync(home, { recursive: true });
+    const target = path.join(folder, 'x.json');
+    const named = [{ kind: 'json-key', target, key: ['a'], after: 'token-one-9f3' }];
+    const hash = planHash(named);
+    const run = startRun({ folder, now: () => NOW });
+    writeSketch(run.id, 1, hash, named);
+    const failedWith = async (world) => {
+      fs.writeFileSync(path.join(home, 'test-world.json'), JSON.stringify(world));
+      markStep(run.id, 1, 'clickedAt', { now: () => NOW });
+      assert.equal(await runStep(childArgs({ folder, hash, runId: run.id }), { now: () => NOW }), 1);
+      return findRun(folder).steps[1].failed;
+    };
+    // A value that differs: the entry is named by its kind and target, and the field by its name.
+    const changed = await failedWith({ 1: [{ file: 'x.json', key: ['a'], value: 'token-two-b71' }] });
+    assert.match(changed, /^the list changed before the step began, so nothing was changed: /);
+    assert.match(changed, /changed json-key .*x\.json \(fields: after\)/);
+    // An entry added, and one removed.
+    const added = await failedWith({ 1: [{ file: 'x.json', key: ['a'], value: 'token-one-9f3' }, { file: 'y.json', key: ['b'], value: 'token-three-c04' }] });
+    assert.match(added, /now it has added json-key .*y\.json/);
+    const removed = await failedWith({ 1: [{ file: 'z.json', key: ['a'], value: 'token-one-9f3' }] });
+    assert.match(removed, /added json-key .*z\.json; removed json-key .*x\.json/);
+    for (const said of [changed, added, removed]) assert.doesNotMatch(said, /token-/);
+    // The same words are what the journal keeps against the step.
+    assert.equal(findRun(folder).steps[1].failed, removed);
+    // A step that now asks a question names its id.
+    const asked = await failedWith({ ask: { 1: [{ id: 'which-host', options: ['one', 'two'] }] } });
+    assert.equal(asked, 'the list changed before the step began, so nothing was changed: the step asked a question again (id which-host)');
+    // A wait, or a list with no kept sketch to compare, says what it can.
+    assert.match(await failedWith({ wait: { 1: { ms: 5, why: 'later' } } }), /asked to wait again$/);
+    fs.rmSync(path.join(home, 'step-plans'), { recursive: true, force: true });
+    assert.equal(await failedWith({ 1: [{ file: 'x.json', key: ['a'], value: 'token-two-b71' }] }), 'the list changed before the step began, so nothing was changed');
+  });
+});
+
+test('a long step\'s process is given the session\'s start time its helper has, so it plans with the same context', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(tempFolder('wh-started '));
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(path.join(home, 'test-world.json'), JSON.stringify({ 1: [{ file: 'x.json', key: ['a'], value: 1 }] }));
+    const hash = planHash([{ kind: 'json-key', target: path.join(folder, 'x.json'), key: ['a'], after: 1 }]);
+    const run = startRun({ folder, now: () => NOW });
+    markStep(run.id, 1, 'clickedAt', { now: () => NOW });
+    assert.equal(await runStep([...childArgs({ folder, hash, runId: run.id }), 'terminal', NOW.toISOString()], { now: () => NOW }), 0);
   });
 });
 

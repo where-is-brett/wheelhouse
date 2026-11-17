@@ -94,6 +94,7 @@ import { hide, cleanDeep } from '../lib/clean.js';
 import { pluginOnIn } from '../lib/plugin-on.js';
 import { SETUP_QUESTION_ID, keptAnswers } from '../lib/setup-clicks.js';
 import { readJournal, startRun, markStep, addChanges, newId, applyJsonKey as journalKey, SAY_CHARS } from './journal.js';
+import { writeSketch } from './plan-sketch.js';
 import { planHash, firstUnfinished, stepProgress } from './steps.js';
 import {
   noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor, copySetupRecords, typedRefused,
@@ -847,7 +848,7 @@ export function setupRoutes({
     const current = (entry) => entry?.clickedAt === clickedAt && !entry.doneAt && !entry.failed;
     if (step.long) {
       // It may run until the helper stops counting it as running: STEP_TIMEOUT_MS from the click.
-      startChild({ step, run, hash: fresh.hash, clickedAt, deadline: new Date(Date.parse(clickedAt) + STEP_TIMEOUT_MS).toISOString() });
+      startChild({ step, run, hash: fresh.hash, changes: fresh.changes, clickedAt, deadline: new Date(Date.parse(clickedAt) + STEP_TIMEOUT_MS).toISOString() });
       return { ok: true, started: true };
     }
     // Counted running in this helper from its click until it finishes, however long that takes.
@@ -869,14 +870,16 @@ export function setupRoutes({
   // on when the helper or Desktop goes. It works the list out again, with this helper's user home,
   // and checks it has this hash; it acts for this click only, and stops at the deadline by the wall
   // clock, which is when this helper stops counting it as running.
-  function startChild({ step, run, hash, clickedAt, deadline }) {
+  function startChild({ step, run, hash, changes, clickedAt, deadline }) {
     const failed = () => {
       try {
         mark(run.id, step.n, 'failed', { now, reason: 'its process could not be started', when: (e) => e?.clickedAt === clickedAt && !e.doneAt });
       } catch { /* status then says it is stuck once its time is up */ }
     };
+    // The list in names and digests, for the process to say what changed if its own list differs.
+    writeSketch(run.id, step.n, hash, changes);
     try {
-      const child = spawn(process.execPath, [RUN_STEP, stepsModule, run.folder, String(step.n), hash, run.id, clickedAt, deadline, userHome, sessionIsApp ? 'desktop' : 'terminal'], {
+      const child = spawn(process.execPath, [RUN_STEP, stepsModule, run.folder, String(step.n), hash, run.id, clickedAt, deadline, userHome, sessionIsApp ? 'desktop' : 'terminal', ...(sessionStartedAt === undefined ? [] : [sessionStartedAt])], {
         cwd: jobFolder(), detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, ...caEnv(wheelhouseHome()) },
       });
       child?.on?.('error', failed);
