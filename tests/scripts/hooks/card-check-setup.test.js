@@ -167,3 +167,49 @@ test('two state cards sharing a first line are ambiguous: no setup card is swapp
   assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
   assert.equal(out.hookSpecificOutput.updatedInput, undefined);
 }));
+
+// A one card plan is asked again after each Customise or Change a choice, at the same step. A reworded copy of the newest plan must
+// come back as the newest, never as an earlier plan the director already answered.
+const planCard = (n, yours) => ({
+  question: `Set up Wheelhouse for X${yours ? ' with your choices' : ''}?\nHere's what I recommend (${n}).\nNothing runs until your Go ahead.`,
+  header: 'Setup',
+  options: [
+    { label: 'Go ahead', description: 'Setup goes ahead with these choices.' },
+    { label: yours ? 'Change a choice' : 'Customise', description: 'Setup asks again before it goes ahead.' },
+  ],
+});
+const askPlan = (folder, run, card, id, minute) => noteAsked({
+  runId: run.id, folder, step: 0, id, card, typed: false, now: () => new Date(NOW.getTime() + minute * 60000),
+});
+const rewordedAsFirst = (card, first) => ({ ...card, question: `${first}\nA little different.` });
+
+test('a reworded second plan card is the second card, never the first the director answered', () => inSetup(async ({ folder, first }) => {
+  const [one, two] = [planCard(1, false), planCard(2, true)];
+  askPlan(folder, first, one, 'plan-aaaaaaaaaaaa', 1);
+  askPlan(folder, first, two, 'plan-bbbbbbbbbbbb', 2);
+  const q = rewordedAsFirst(two, one.question.split('\n')[0]);
+  assert.deepEqual(swappedOf(await run(call(folder, q))), [printedOf(two)]);
+  const cut = { ...q, question: two.question.split('\n')[0].replace(' with your choices', ''), options: [{ label: 'Go ahead', description: 'x' }, { label: 'Change a choice', description: 'y' }] };
+  assert.deepEqual(swappedOf(await run(call(folder, cut))), [printedOf(two)]);
+}));
+
+test('the second plan card asked exactly as printed goes through unchanged', () => inSetup(async ({ folder, first }) => {
+  const [one, two] = [planCard(1, false), planCard(2, true)];
+  askPlan(folder, first, one, 'plan-aaaaaaaaaaaa', 1);
+  askPlan(folder, first, two, 'plan-bbbbbbbbbbbb', 2);
+  assert.equal(await run(call(folder, printedOf(two))), undefined);
+  // Even when its first line is the first card's: the exact question is that card.
+  const same = { ...two, question: `${one.question.split('\n')[0]}\nHere's what I recommend (2).` };
+  askPlan(folder, first, same, 'plan-cccccccccccc', 3);
+  assert.equal(await run(call(folder, printedOf(same))), undefined);
+}));
+
+test('a reworded third plan card after a second Change a choice is the third', () => inSetup(async ({ folder, first }) => {
+  const [one, two, three] = [planCard(1, false), planCard(2, true), planCard(3, true)];
+  askPlan(folder, first, one, 'plan-aaaaaaaaaaaa', 1);
+  askPlan(folder, first, two, 'plan-bbbbbbbbbbbb', 2);
+  askPlan(folder, first, three, 'plan-cccccccccccc', 3);
+  for (const line of [one.question.split('\n')[0], two.question.split('\n')[0]]) {
+    assert.deepEqual(swappedOf(await run(call(folder, rewordedAsFirst(three, line)))), [printedOf(three)]);
+  }
+}));

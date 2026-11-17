@@ -18,7 +18,9 @@
 //   d   GitHub, on Windows
 //   e   a company's GitLab on a Mac, with GitLab's tool in
 // --desktop answers as the Desktop app can: a card whose question is the same as an earlier card's shows the
-// earlier one, so the answer that comes back is the one given there.
+// earlier one, so the answer that comes back is the one given there. It also asks each card with its first line reworded, as a
+// model that doesn't copy a card word for word may, through the card check hook's swap (scripts/hooks/card-check.js): the
+// director is shown what comes out, and a card that comes out as another card ends the run as a loop.
 //
 // renderPath(name, { desktop }) gives { cards, end, said, heard }: each card as { step, id, kind, card, answer }, how
 // the run ended ({ step, how, why? }), what setup said along the way, and after how many cards each line was said.
@@ -339,6 +341,15 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
     // card, so the answer is the one given there.
     const answer = async (step, ask) => {
       const { id, card } = ask;
+      if (desktop) {
+        const { decide: swap } = await import('../hooks/card-check.js');
+        const words = card.question.split('\n');
+        const shortened = words[0].replace(/ \S+(\??)$/, '$1');
+        const asked = { ...card, question: [shortened === words[0] ? `${words[0]} (reworded)` : shortened, ...words.slice(1)].join('\n') };
+        const out = await swap({ cwd: folder, hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [asked] } }, { now });
+        const shown = out?.hookSpecificOutput?.updatedInput?.questions?.[0];
+        if (shown && shown.question !== card.question) throw new Error(`card ${id} came out of the card check as another card ("${shown.question.split('\n')[0]}")`);
+      }
       let got = choose(p, { id, card }, { stepTwoDone: state });
       let stale = false;
       if (desktop) {
