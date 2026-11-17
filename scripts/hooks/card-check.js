@@ -460,9 +460,9 @@ function swapSetupCards(input, questions) {
     const live = open.filter((o) => !supersededPlan(o, open));
     const matched = questions.map((q) => {
       if (typeof q?.question !== 'string') return null;
-      // A question worded exactly as a stored card is that card, whatever else shares its first line or labels; the newest if
+      // A question worded exactly as a live stored card is that card, whatever else shares its first line or labels; the newest if
       // setup stored the same question twice. Only a question that is no card's own is read as a reworded one.
-      const own = open.filter((o) => q.question === o.card.data.question || q.question === chatCopy(o.card.data.question));
+      const own = live.filter((o) => q.question === o.card.data.question || q.question === chatCopy(o.card.data.question));
       const swap = own.length > 0 ? newestOf(own) : swapFor(q, null, live);
       return swap === null ? null : { card: swap.card };
     });

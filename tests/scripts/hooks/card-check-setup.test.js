@@ -213,3 +213,10 @@ test('a reworded third plan card after a second Change a choice is the third', (
     assert.deepEqual(swappedOf(await run(call(folder, rewordedAsFirst(three, line)))), [printedOf(three)]);
   }
 }));
+
+test('the first plan card asked again word for word after a newer plan comes back as the newer plan', () => inSetup(async ({ folder, first }) => {
+  const [one, two] = [planCard(1, false), planCard(2, true)];
+  askPlan(folder, first, one, 'plan-aaaaaaaaaaaa', 1);
+  askPlan(folder, first, two, 'plan-bbbbbbbbbbbb', 2);
+  assert.deepEqual(swappedOf(await run(call(folder, printedOf(one)))), [printedOf(two)]);
+}));
