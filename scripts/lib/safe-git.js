@@ -21,7 +21,7 @@ import { revocationFallback } from '../host/company-ca.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { wheelhouseHome } from './paths.js';
+import { wheelhouseHome, stateDir } from './paths.js';
 import { registeredProjects } from './projects.js';
 import {
   isolated, refuseUnlistedSettings, setupGitEnv, subcommandOf, allowedSetting, unlistedSettingsLine, CONFIG_UNREAD, FENCE, NULL_FILE,
@@ -549,11 +549,22 @@ function writeRecord(file, { folders, legacy = null }) {
 // Whether any project on this computer is connected as-is: its settings were confirmed at setup, so a missing record is a loss.
 const anyAsIs = () => registeredProjects().some(({ record }) => record.connection?.mode === 'as-is');
 
+// Whether `key` is the mirror of a project connected as-is: the one folder the old single fingerprint was made for.
+const isAsIsMirror = (key) => registeredProjects().some(({ project, record }) => {
+  if (record.connection?.mode !== 'as-is') return false;
+  try {
+    return folderKey(path.join(stateDir(project), '..', 'mirror.git')) === key;
+  } catch {
+    return false;
+  }
+});
+
 // Setup records a folder's fingerprint when the director has seen the card that names the settings (confirmComputerSettings).
 //   - A folder with an entry must match it.
-//   - A folder with none, in a record from before folders were kept, takes the settings as they are now if they equal that old
-//     fingerprint (nothing changed since setup), and the entry is added, the old one kept for the projects not yet moved over; if
-//     they differ it is refused until the director confirms.
+//   - A folder with none, in a record from before folders were kept, takes the settings as they are now if the folder is the mirror
+//     of a project connected as-is and they equal that old fingerprint (nothing changed since setup), and the entry is added, the
+//     old one kept for the projects not yet moved over; any other folder, or settings that differ, is refused until the director
+//     confirms.
 //   - A folder with none in any other record was never confirmed: refused.
 //   - Where there is no record at all, a push records what it finds as the first use only while no project is connected as-is: with
 //     one, setup would have recorded, so the loss is refused until the director confirms again.
@@ -568,7 +579,7 @@ function checkTrusted(file, folder, { now, old }) {
   }
   const kept = record.folders[key];
   if (kept === undefined) {
-    if (record.legacy !== null && record.legacy === old) {
+    if (record.legacy !== null && record.legacy === old && isAsIsMirror(key)) {
       writeRecord(file, { folders: { ...record.folders, [key]: now }, legacy: record.legacy });
       return;
     }

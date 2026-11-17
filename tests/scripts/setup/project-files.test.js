@@ -1293,7 +1293,7 @@ test('the card lists every part on GitLab with a long branch and release, and st
   ];
   const text = (branch, ref) => composeCard({ ...projectFilesCard({ changes, host: 'gitlab', branch, release: { ref } }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
   const usual = text('main', 'v1.4.0');
-  for (const words of ['Compact instructions', 'settings.local.json', 'Superpowers', 'Set up Wheelhouse', 'once it has automatic checks, Wheelhouse asks you to make them required', 'acting as you on GitLab', 'v1.4.0', 'Wheelhouse stays at']) {
+  for (const words of ['Compact instructions', 'omputer\'s own settings', 'Superpowers', 'Set up Wheelhouse', 'once it has automatic checks, Wheelhouse asks you to make them required', 'acting as you on GitLab', 'v1.4.0', 'Wheelhouse stays at']) {
     assert.ok(usual.includes(words), words);
   }
   const long = text(`release/${'x'.repeat(200)}`, `v${'9'.repeat(150)}`);
@@ -1386,7 +1386,7 @@ test('only a localListening: true that is committed lets commands listen on a lo
 
 test('setup says what local listening allows when the project has it on, and says nothing when it is off', () => {
   const on = listeningNotice({ localListening: true });
-  assert.equal(on, 'This project lets agents\' commands listen on local ports (`localListening` in .claude/wheelhouse.json). While it is on, those commands may also connect to anything else listening on this computer\'s local ports, such as the engine room on port 3090. To turn it off, remove the line in a reviewed pull request.');
+  assert.equal(on, 'This project lets agents\' commands listen on local ports (`localListening` in the project\'s settings). While it is on, those commands may also connect to anything else listening on this computer\'s local ports, such as the engine room on port 3090. To turn it off, remove the line in a reviewed pull request.');
   for (const config of [{}, { localListening: false }, { localListening: 'true' }, null]) assert.equal(listeningNotice(config), null, JSON.stringify(config));
 });
 

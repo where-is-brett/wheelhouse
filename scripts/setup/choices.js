@@ -128,7 +128,7 @@ export async function openChoices({ steps, run, answers, planOf }) {
       const carried = kept !== null && card.options.some((o) => o.label === kept.label) ? kept : null;
       const chosen = answers[key] ?? carried;
       const answer = chosen ?? { label: card.recommend, text: null, at: null };
-      list.push({ step: at, id, key, card, typed: typed === true, writes, chosen, label: answer.label, text: answer.text, ...(got.ask.line ? { line: got.ask.line } : {}), ...(got.ask.endsBatch === true ? { endsBatch: true } : {}) });
+      list.push({ step: at, id, key, card, typed: typed === true, writes, chosen, label: answer.label, text: answer.text, ...(got.ask.line ? { line: got.ask.line } : {}), ...(got.ask.unheld === true ? { unheld: true } : {}), ...(got.ask.publicGitLab === true ? { publicGitLab: true } : {}), ...(got.ask.endsBatch === true ? { endsBatch: true } : {}) });
       taken[key] = answer;
       // A card that waits for the director's own answer (a company's GitLab address), or that recommends nothing for a
       // look to take in its place (which GitLab), ends the look at this step until it has one.
@@ -291,9 +291,11 @@ function goAheadAsksHost({ keptHere, list, host, done, phone }) {
   const way = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.label ?? null;
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
   if (host === 'GitLab' && noTool && way !== null && way !== WAYS.quick && way !== WAYS.asIs) {
-    return `You'll paste a one-day GitLab token into a box on your screen, not the chat. If GitLab won't make a key for this one project, you'll also paste a token set to end ${PERSONAL_DAYS} days ahead that can act as you in every GitLab project and group you can reach. You may be asked for your computer's password.`;
+    const free = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.publicGitLab === true;
+    return `You'll paste a one-day GitLab token into a box on your screen, not the chat. ${free ? 'On a free account, or wherever' : 'If'} GitLab won't make a key for this one project, you'll also paste a token set to end ${PERSONAL_DAYS} days ahead that can act as you in every GitLab project and group you can reach. You may be asked for your computer's password.`;
   }
-  if (way === WAYS.asIs) return `You'll be asked for a ${host} key only if your git holds none that works: you make it on a page that opens${host === 'GitLab' ? ` and set its expiry date ${KEY_DAYS_ASKED} days ahead` : `, set to last ${KEY_DAYS_ASKED} days`}, and paste it into a box on your screen, not the chat. You may be asked for your computer's password.`;
+  const unheld = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.unheld === true;
+  if (way === WAYS.asIs) return `You'll be asked for a ${host} key${unheld ? '' : ' only if your git holds none that works'}: you make it on a page that opens${host === 'GitLab' ? ` and set its expiry date ${KEY_DAYS_ASKED} days ahead` : `, set to last ${KEY_DAYS_ASKED} days`}, and paste it into a box on your screen, not the chat. You may be asked for your computer's password.`;
   // A narrow way on GitLab with its tool still meets GitLab's refusal of a project key the same way.
   const fallbackBox = (known) => (host === 'GitLab' && way !== null && way !== WAYS.quick
     ? ` If GitLab won't make a key for one project, you'll also paste a ${PERSONAL_DAYS}-day token that can act as you across GitLab into ${known ? 'that box' : 'a box on your screen, not the chat'}.` : '');
@@ -354,7 +356,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
   // The plugin's update is step 6's, so the line names it only while step 6 is still to run.
   if (toRun.includes(2) && engineWanted({ platform, hosts })) lines.push(engineLine(undefined, { claudeHome: toRun.includes(6) ? claudeHome : null }));
   // Step 9 asks nothing where an earlier setup's test push reached the phone (`pushed`), so the line doesn't promise a question.
-  if (toRun.includes(6)) lines.push(`On this computer: usage counted here only; 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted); Claude Code takes only its well-tried updates; and ${pushed ? 'phone notifications on, as an earlier setup on this computer showed they reach your phone' : desktop === false ? 'a question about phone notifications, where setup suggests skipping them since they need Claude Desktop' : 'Claude Code allowed to send phone notifications, which you finish at step 9'}.`);
+  if (toRun.includes(6)) lines.push(`On this computer: usage counted here only; 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted); Claude Code takes only its well-tried updates; and ${pushed ? 'phone notifications on, as an earlier setup on this computer showed they reach your phone' : desktop === false ? 'a question about phone notifications, where setup suggests skipping them since they need Claude Desktop' : 'Claude Code allowed to send phone notifications, which you finish near the end'}.`);
   if (toRun.includes(7)) {
     const kept = compactionLine(compactionRules({ claudeHome, projectDir: folder }));
     if (kept !== null) lines.push(kept);

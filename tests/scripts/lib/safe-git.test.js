@@ -231,11 +231,15 @@ test('an argument may not lift the fence with -c, bar the named exception', asyn
 });
 
 // A push in a folder, with the director's own settings (a HOME of its own) including a file for that folder alone (includeIf gitdir:).
-async function includedPush({ before, after, confirmed = true, record, asOld = false, when = (folder) => `gitdir:${folder}/`, remote, seen = {}, second = false }) {
+async function includedPush({ before, after, confirmed = true, record, asOld = false, when = (folder) => `gitdir:${folder}/`, remote, seen = {}, second = false, mirror = true }) {
   const { confirmComputerSettings, safeGit } = await import('../../../scripts/lib/safe-git.js');
   const { as, shortHome } = await import('../../helpers/homes.js');
   const { spawnSync } = await import('node:child_process');
-  const folder = fs.realpathSync(tempFolder('wh-inc-repo-'));
+  // The trust record's home; with `mirror` the folder is the mirror of a registered as-is project, the one folder an old record serves.
+  const wh = shortHome();
+  const made = mirror && asOld === true ? path.join(wh, 'projects', 'p', 'mirror.git') : tempFolder('wh-inc-repo-');
+  fs.mkdirSync(made, { recursive: true });
+  const folder = fs.realpathSync(made);
   spawnSync('git', ['init', '-q'], { cwd: folder });
   if (remote !== undefined) spawnSync('git', ['config', 'remote.origin.url', remote], { cwd: folder });
   const home = fs.realpathSync(tempFolder('wh-inc-home-'));
@@ -247,9 +251,13 @@ async function includedPush({ before, after, confirmed = true, record, asOld = f
   Object.assign(process.env, { HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'), GIT_CONFIG_NOSYSTEM: '1' });
   const url = 'https://github.com/o/p.git';
   const fake = (file, args, options) => (args[0] === 'config' ? run(file, args, options) : (args[0] === 'push' && (seen.copy = fs.readFileSync(options.env.GIT_CONFIG_GLOBAL, 'utf8')), Promise.resolve({ code: 0, stdout: args[0] === 'remote' ? `${url}\n` : '', stderr: '' })));
-  const trustFile = path.join(shortHome(), 'host', 'git-settings.json');
+  const trustFile = path.join(wh, 'host', 'git-settings.json');
   try {
     return await as(path.dirname(path.dirname(trustFile)), async () => {
+      if (asOld === true && mirror) {
+        const { writeProject } = await import('../../../scripts/lib/projects.js');
+        writeProject('p', { folder: path.join(wh, 'work'), remoteUrl: 'https://github.com/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'as-is', project: 'o/p' } });
+      }
       if (record !== undefined) {
         fs.mkdirSync(path.dirname(trustFile), { recursive: true });
         fs.writeFileSync(trustFile, JSON.stringify(record));
@@ -289,6 +297,11 @@ test('a record from before the settings were kept per folder migrates when the s
   assert.match(got.record.legacy, /^[0-9a-f]{64}$/);
   assert.equal(Object.keys(got.record.folders).length, 1);
   assert.match(Object.values(got.record.folders)[0], /^v2:[0-9a-f]{64}$/, 'the entry is in the present form');
+});
+
+test('a folder that is no registered project\'s mirror is not accepted on the old fingerprint alone', async () => {
+  const got = await includedPush({ before: '/a/helper', after: '/a/helper', confirmed: true, asOld: true, mirror: false });
+  assert.equal(got.code, 'git-settings-changed');
 });
 
 test('a folder entry made with the earlier fingerprint is kept when the settings are as they were, and rewritten in the present form', async () => {

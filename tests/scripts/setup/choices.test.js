@@ -42,7 +42,7 @@ test('the one card says a compaction rule found is kept, and nothing is said whe
 
 test('the one card names the phone setting as Claude Desktop\'s alone when the session is a terminal', () => {
   const ask = (desktop) => oneCard({ folder: '/x/t', list: newProductChoices(), product: { isNew: true, host: null, repo: null, name: 't' }, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0, desktop }).card.question;
-  assert.match(ask(true), /and Claude Code allowed to send phone notifications, which you finish at step 9\./);
+  assert.match(ask(true), /and Claude Code allowed to send phone notifications, which you finish near the end\./);
   assert.match(ask(false), /and a question about phone notifications, where setup suggests skipping them since they need Claude Desktop\./);
   assert.doesNotMatch(ask(false), /allowed to send phone notifications/);
   const pushed = oneCard({ folder: '/x/t', list: newProductChoices(), product: { isNew: true, host: null, repo: null, name: 't' }, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0, desktop: false, pushed: true }).card.question;
@@ -58,9 +58,9 @@ test('the one card for a new product on a Mac says the director\'s approved word
     'Set up Wheelhouse for tide-tables?',
     'Here\'s what I recommend. It takes about 5 minutes.',
     '- A new product, in a private repository on your GitHub account.',
-    '- Agents use your ordinary GitHub sign-in, which reaches your whole account; on this Mac the sandbox keeps agents\' commands away from your Mac\'s saved passwords, where that sign-in is kept, unless this project is an iPhone or Mac app that is signed on this Mac, which opens those passwords to agents\' commands.',
+    '- Agents use your ordinary GitHub sign-in, which reaches your whole account; on this Mac the sandbox keeps agents\' commands away from your Mac\'s saved passwords, where that sign-in is kept, unless this project is an iPhone or Mac app (making those needs your saved passwords, so agents\' commands can reach them).',
     '- Before launch: no real users and no live data yet.',
-    '- On this computer: usage counted here only; 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted); Claude Code takes only its well-tried updates; and Claude Code allowed to send phone notifications, which you finish at step 9.',
+    '- On this computer: usage counted here only; 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted); Claude Code takes only its well-tried updates; and Claude Code allowed to send phone notifications, which you finish near the end.',
     '- Wheelhouse\'s settings saved to the project, and its main line protected if your GitHub plan allows it (the free plan doesn\'t for a private repository).',
     'Nothing runs until you choose.',
     'To know more, just ask.',

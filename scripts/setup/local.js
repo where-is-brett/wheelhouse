@@ -156,7 +156,7 @@ export function backupAsk(name, { id = 'backup', machine = false, refused = null
     line: machine ? `Time Machine backs ${name} up on this computer's drive.` : ONLY_HERE_LINE,
     card: {
       level: 2,
-      what: `${refused === null ? '' : `${refused}. `}${what} To name a folder yourself, type its full path.`,
+      what: `${refused === null ? '' : `${refused}. `}${what} To name a folder yourself, type where the folder is.`,
       why: 'A backup in a folder off this disk is what brings the project back. It holds the project and its history, not your cards and clicks, which stay on this computer.',
       options: [
         { label: CHOOSE_BACKUP, says: desktop ? 'You pick an external drive, or a folder a cloud service keeps, in a window that opens on this computer. A fresh backup goes there each time a finished change is added to the project.' : 'Type the full path of an external drive, or a folder a cloud service keeps, under Type something. A fresh backup goes there each time a finished change is added to the project.' },
@@ -182,7 +182,7 @@ export function backupChoice({ answer, name, root, machine, desktop = true }) {
       // No window is opened in a terminal session: the card asks again for a typed path, or No backup. An answer taken from the
       // one card's Go ahead (or its dry run, which has no time) is no click on this card to ask again for: the folder is left for later.
       if (desktop || got.at === null || got.consent === true) return { folder: null };
-      refused = 'A terminal session has no window to pick a folder in. Type the folder\'s full path, or choose to go without';
+      refused = 'A terminal session has no window to pick a folder in. Type where the folder is, or choose to go without';
       continue;
     }
     const folder = got.text.trim();

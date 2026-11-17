@@ -54,7 +54,7 @@ export function remoteKey(url) {
     const port = scheme[3] && DEFAULT_PORT[kind] !== scheme[3] ? `:${scheme[3]}` : '';
     return `host:${scheme[2].toLowerCase()}${port}/${bare((scheme[4] ?? '').replace(/^\/+/, '')).toLowerCase()}`;
   }
-  const scp = /^(?:[^/@\s]+@)?([^/:\s]{2,}):(?!\/)(.*)$/.exec(text);
+  const scp = /^(?:[^/@:\s]+@)?([^/:\s]{2,}):(?!\/)(.*)$/.exec(text);
   if (scp) return `host:${scp[1].toLowerCase()}/${bare(scp[2].replace(/^\/+/, '')).toLowerCase()}`;
   return local(text);
 }

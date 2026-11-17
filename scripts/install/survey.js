@@ -402,7 +402,7 @@ export function originRepository(originUrl, host) {
   let rest = text;
   const url = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/(?:[^/@]*@)?([^/:]+)(?::\d+)?(\/.*)?$/.exec(text);
   if (text.includes('://') && url === null) return null;
-  const scp = /^(?:[^/@\s]+@)?([^/:\s]{2,}):(?!\/)(.*)$/.exec(text);
+  const scp = /^(?:[^/@:\s]+@)?([^/:\s]{2,}):(?!\/)(.*)$/.exec(text);
   if (url && !/^file:/i.test(text)) { hostname = url[1].toLowerCase(); rest = url[2] ?? ''; } else if (scp) { hostname = scp[1].toLowerCase(); rest = scp[2]; }
   const parts = rest.replace(/\.git\/?$/i, '').split('/').filter(Boolean);
   const named = host === 'gitlab' && hostname !== null ? parts : parts.slice(-2);

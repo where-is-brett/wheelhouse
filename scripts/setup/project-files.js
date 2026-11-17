@@ -365,7 +365,7 @@ export function agentsAfter(committed, entries) {
 
 // What setup says when a project lets its agents' commands listen on local ports; null when it does not.
 export const listeningNotice = (config) => (config?.localListening === true
-  ? 'This project lets agents\' commands listen on local ports (`localListening` in .claude/wheelhouse.json). While it is on, those commands may also connect to anything else listening on this computer\'s local ports, such as the engine room on port 3090. To turn it off, remove the line in a reviewed pull request.'
+  ? 'This project lets agents\' commands listen on local ports (`localListening` in the project\'s settings). While it is on, those commands may also connect to anything else listening on this computer\'s local ports, such as the engine room on port 3090. To turn it off, remove the line in a reviewed pull request.'
   : null);
 
 // The short form of the same statement, for a line or a short card that has no room for the whole of it.
@@ -1121,8 +1121,8 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
     parts.push('Wheelhouse\'s settings go into the project\'s .claude folder, keeping yours');
     if (shared.some((c) => c.section)) parts.push('CLAUDE.md gets a "Compact instructions" section, keeping yours: what agents keep when a chat is summarised');
   }
-  if (files.length > shared.length) parts.push(`this computer's own settings go into .claude/settings.local.json${excluded ? `${ours ? '; it and .wheelhouse/, Wheelhouse\'s working folder, are' : ','} kept out of git` : ', which stays here'}`);
-  else if (excluded) parts.push(`.claude/settings.local.json${ours ? ' and .wheelhouse/, Wheelhouse\'s working folder,' : ''} kept out of git`);
+  if (files.length > shared.length) parts.push(`this computer's own settings${excluded ? `${ours ? ' and .wheelhouse/, Wheelhouse\'s working folder, are' : ' are'} kept out of git` : ' stay here'}`);
+  else if (excluded) parts.push(`this computer's settings${ours ? ' and .wheelhouse/, Wheelhouse\'s working folder,' : ''} kept out of git`);
   if (ours && !excluded) parts.push('.wheelhouse/, Wheelhouse\'s working folder, kept out of git');
   if (frontDesk === NO_PIN) parts.push('the First Mate\'s model is left as it is: Claude Code didn\'t say which model to use');
   else if (frontDesk) parts.push("the First Mate uses today's most capable everyday Claude Code model until you change it");
@@ -1145,7 +1145,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   const ownPart = ownFiles.length > 0 ? `, with your product's own ${ownFiles.length === 1 ? 'file' : 'files'}, ${listed(ownNamed)}` : '';
   const ignored = up?.action === 'commit' && Array.isArray(up.files) && up.files.includes(GITIGNORE);
   const archon = up?.action === 'commit' && Array.isArray(up.files) && up.files.some((f) => ENGINE_FILES.includes(f));
-  const upTo = local ? `onto ${branch}` : keyed ? `to ${branch} on ${NAME[host]} through a merge request that setup merges itself` : `up to ${branch} on ${NAME[host]}`;
+  const upTo = local ? `onto ${branch}` : keyed ? `to ${branch} on ${NAME[host]} through a merge request that setup merges itself, the one change it makes without asking${yours === '' && ownPart === '' ? ', as it holds only setup\'s own files' : ''}` : `up to ${branch} on ${NAME[host]}`;
   const sharedFiles = ['the settings', 'CLAUDE.md', ...(ignored ? ['.gitignore'] : []), ...(archon ? ['.archon/'] : [])].join(', ').replace(/, ([^,]*)$/, ' and $1');
   if (up?.action === 'commit') parts.push(keyed ? `${sharedFiles} go in one commit, "${COMMIT_MESSAGE}", ${upTo}${yours}${ownPart}` : `${sharedFiles} go ${upTo} in one commit, "${COMMIT_MESSAGE}"${yours}${ownPart}`);
   if (up?.ownLeft === true) parts.push('your product\'s own files stay as they are, too many for setup\'s commit: commit them when you are ready');
@@ -1185,8 +1185,8 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
     return card([`Setup step 7, ${titleOf7(true)}, for this computer:`, ...mine.map(asLine)].join('\n'));
   }
   const short = [
-    ...(shared.length > 0 ? ['Wheelhouse\'s settings in .claude', ...(shared.some((c) => c.section) ? ['a Wheelhouse section in CLAUDE.md'] : [])] : []), ...(files.length > shared.length || excluded || ours ? ['this computer\'s settings'] : []),
-    ...(secrets ? ['.env files kept out of git'] : []), ...(listens ? [LISTENING_CLAUSE] : []), ...(pins.length > 0 ? [`${listed(pins)}, which agents work with`] : []), ...(up ? [`the setup commit ${local ? `onto ${cut(branch)}` : keyed ? `to ${cut(branch)} on ${NAME[host]} through a merge request setup merges itself` : `up to ${cut(branch)} on ${NAME[host]}`}${yours === '' ? '' : ', with your changes'}${ownPart === '' ? '' : ', with your product\'s own files'}`] : []),
+    ...(shared.length > 0 ? ['Wheelhouse\'s settings in .claude', ...(shared.some((c) => c.section) ? ['a "Compact instructions" section in CLAUDE.md'] : [])] : []), ...(files.length > shared.length || excluded || ours ? ['this computer\'s settings'] : []),
+    ...(secrets ? ['.env files kept out of git'] : []), ...(listens ? [LISTENING_CLAUSE] : []), ...(pins.length > 0 ? [`${listed(pins)}, which agents work with`] : []), ...(up ? [`the setup commit ${local ? `onto ${cut(branch)}` : keyed ? `to ${cut(branch)} on ${NAME[host]} through a merge request setup merges itself, the one change it makes without asking${yours === '' && ownPart === '' ? ', as it holds only setup\'s own files' : ''}` : `up to ${cut(branch)} on ${NAME[host]}`}${yours === '' ? '' : ', with your changes'}${ownPart === '' ? '' : ', with your product\'s own files'}`] : []),
     ...(local || keyed ? [] : [`${up ? 'then ' : ''}protection on ${up ? 'it' : cut(branch)}`]),
   ];
   return card([`Setup step 7, ${titleOf7(local, keyed)}${by}:`, ...short.map(asLine)].join('\n'));

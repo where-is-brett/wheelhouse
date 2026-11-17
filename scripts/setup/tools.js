@@ -52,7 +52,7 @@ import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { setupCommand, allowRule } from '../protection/settings.js';
 import { detectHost } from '../host/adapter.js';
 import { curlPath } from '../host/curl.js';
-import { branchesOf, chosenHost, remotesOf } from './local.js';
+import { branchesOf, chosenHost, remotesOf, KEEP_HERE } from './local.js';
 import { readGitlabHosts, gitlabBase, DEFAULT_GITLAB } from '../host/gitlab-base.js';
 import { borrowKey } from '../host/store.js';
 import { checkApiKey, hostAddress } from './host-access.js';
@@ -276,16 +276,24 @@ export function hostToolChoice({ tool, folder, answers = {} }) {
 // The host tools among `tools` that the settings and the answers say to leave out.
 export const toolsLeftOut = ({ tools, folder, answers }) => tools.filter((tool) => hostToolChoice({ tool, folder, answers }) === 'none');
 
+// The join question's answer for a product that is not on another computer (step 3's; host.js gives it on).
+export const NEW_PRODUCT = 'A new product';
+
+// Whether the answers say this product is a new one, so nothing is joined: step 3's join question is answered with one of its
+// own options (a new product, kept here, or put on GitHub or GitLab), not with an existing project's name or a backup.
+const NOT_JOINING = [NEW_PRODUCT, KEEP_HERE, 'GitHub', 'GitLab'];
+const saidNew = (answers) => Object.entries(answers ?? {}).some(([key, got]) => /^3\.(?:join|host)(?:-|$)/.test(key) && NOT_JOINING.includes(got?.label));
+
 // The question of step 2 for a missing host tool. Plain words: never "REST", "curl" or "API". GitLab's tool is never
 // recommended for fetching: a company's GitLab often may not have it, and Wheelhouse reaches GitLab without it.
-export function hostToolCard(tool, { recommend: given, platform = process.platform }) {
+export function hostToolCard(tool, { recommend: given, platform = process.platform, isNew = false }) {
   const name = HOST_TOOL_NAME[tool];
   const labels = hostToolLabels(tool);
   // On Windows nothing keeps agents' commands from the tool's sign-in.
   const win = platform === 'win32';
   const recommend = tool === 'glab' ? 'none' : given;
   const because = given === 'none' ? `your git already holds a key that ${name} accepts, so the tool isn't needed`
-    : tool === 'glab' ? `Wheelhouse does almost all it needs on ${name} without it; joining an existing project then uses your git's own sign-in`
+    : tool === 'glab' ? `Wheelhouse does almost all it needs on ${name} without it${isNew ? '' : '; joining an existing project then uses your git\'s own sign-in'}`
       : 'it is the usual route, and it is checked against the published checksums';
   return {
     level: 2,
@@ -916,7 +924,7 @@ function cardFor(changes, status, platform, leftOut = [], hostTools = []) {
   if (changes.some((c) => c.action === 'archon-settings')) full.push('The build engine set to run its steps with Claude');
   if (changes.some((c) => c.action === 'broker')) full.push('The engine\'s broker, so the engine reaches GitHub only through Wheelhouse\'s helper and never holds a key');
   for (const tool of leftOut) full.push(`${HOST_TOOL_NAME[tool]}'s own tool: not fetched, so Wheelhouse reaches ${HOST_TOOL_NAME[tool]} without it`);
-  if (rule) full.push(`${ruleWords[0].toUpperCase()}${ruleWords.slice(1)} in this project's .claude/settings.local.json, so setup's own command is not asked about each time`);
+  if (rule) full.push(`${ruleWords[0].toUpperCase()}${ruleWords.slice(1)} in this computer's settings for the project, so setup's own command is not asked about each time`);
   const terse = [];
   for (const c of processes) terse.push(c.action === 'wait' ? 'Git: waiting for its installer' : 'Git: its installer');
   if (official.length > 0) terse.push(`${official.map(toolName).join(' and ')}: official ${official.length === 1 ? 'release' : 'releases'}, checked`);
@@ -1027,7 +1035,7 @@ export function toolsStep({
         // recommendation is only ever a recommendation: a tool no one has said to leave out is fetched.
         if (said === null && ctx.choicesOnly === true) {
           const ready = await webReady({ tool, folder: ctx.folder, platform, gitPath });
-          return { ask: { id: hostToolId(tool), card: hostToolCard(tool, { recommend: ready ? 'none' : 'fetch', platform }) } };
+          return { ask: { id: hostToolId(tool), card: hostToolCard(tool, { recommend: ready ? 'none' : 'fetch', platform, isNew: saidNew(ctx.answers) }) } };
         }
       }
       if (ctx.choicesOnly === true) return { wait: 0, why: 'every choice of step 2 is made' };

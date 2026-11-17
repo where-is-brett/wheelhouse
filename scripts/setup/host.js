@@ -106,7 +106,7 @@ import { joinedRepo, runClosed, stepDone, JOIN_STEP } from '../lib/setup-run.js'
 import { PROXY_HAS_PASSWORD } from '../host/proxy.js';
 import { askDirectorGit, directorProxy } from '../host/director-git.js';
 import { readProfileViews, PROFILE_BRANCH } from '../profile/store.js';
-import { toolsStatus, originUrl, applyCompanyCa, curlStatus, toolsLeftOut, hostToolChoice, hostToolId, hostToolCard } from './tools.js';
+import { toolsStatus, originUrl, applyCompanyCa, curlStatus, toolsLeftOut, hostToolChoice, hostToolId, hostToolCard, NEW_PRODUCT } from './tools.js';
 import {
   findAccess, backendFor, runKeyCard, asIsReachLine, keyCardPlanLine, noRoadLine, checkApiKey, hostAddress,
   KEY_DAYS_ASKED, directorGitEnv as directorAskEnv, ceilingOf,
@@ -201,7 +201,7 @@ export const STOPPED = 'All stop came on, so setup stopped here; once All stop i
 // How often the browser sign-in looks at STOP while it waits.
 export const STOP_LOOK_MS = 1000;
 // The join question's first option; the second names the folder (ruling R77).
-export const NEW_PRODUCT = 'A new product';
+export { NEW_PRODUCT };
 export const fromOtherComputer = (name) => `${name}, already set up on another computer`;
 // What a folder may hold beside step 1's .claude/ and still be empty: the system's own files.
 const SYSTEM_FILES = ['.DS_Store', 'Thumbs.db', 'desktop.ini'];
@@ -432,7 +432,11 @@ function realUsersAsk(name, platform, host = null, toolOut = false) {
     : !signsIn ? ' If GitHub\'s or GitLab\'s own tool is used, it stays signed in as you here, where any agent\'s command could read it.'
     : host === 'github' ? ' GitHub\'s own tool still stays signed in as you here, where any agent\'s command could read it.'
       : ' Where GitLab\'s own tool is used, it stays signed in as you here, where any agent\'s command could read it.';
-  const yes = host === 'github'
+  // A product kept on this computer has no host to reach yet, so its question says nothing of keys or hosts.
+  const kept = host === 'local';
+  const yes = kept
+    ? 'Setup treats it as launched, and takes more care with it.'
+    : host === 'github'
     ? `Setup treats it as launched: agents get a narrow connection, a key to this one project, not your own sign-in.${lasting}`
     : `Setup treats it as launched: agents get a narrow connection, a key to this one project${host === 'gitlab' ? ' wherever GitLab makes one, not your own sign-in. Where it won\'t' : ', not your own sign-in. If the product is on GitLab and GitLab won\'t make one'}, a ${PERSONAL_DAYS}-day token you paste stands in, and it can act as you.${lasting}`;
   return {
@@ -440,7 +444,7 @@ function realUsersAsk(name, platform, host = null, toolOut = false) {
     card: {
       level: 2,
       what: `Does ${name} have real users yet: people who rely on it, beyond you and anyone testing it?`,
-      why: 'A product with real users gets the narrowest connection its host allows, so a leak reaches as little as it can.',
+      why: kept ? 'A product with real users gets more care, so a mistake reaches as little as it can.' : 'A product with real users gets the narrowest connection its host allows, so a leak reaches as little as it can.',
       options: [
         { label: REAL_USERS.yes, says: yes },
         { label: REAL_USERS.no, says: 'Setup treats it as before launch, like a throwaway or test project. You can change this when it has users.' },
@@ -942,7 +946,9 @@ export function connectionCard({ host, locked = false, launched = false, realUse
     // On the public GitLab's free plan the project key is refused, so the option says what a free account gets first.
     const made = toolOut ? 'from a one-day token (a password you make on GitLab for setup to use) that you paste into a box on your screen, and cancels it afterwards' : 'with GitLab\'s own tool';
     const says = publicGitLab
-      ? `On a free account, a ${PERSONAL_DAYS}-day token you paste, which can act as you across GitLab; on a paid plan, a key to this one project, which setup makes ${made}.`
+      ? (toolOut
+        ? `On a free account, you paste two tokens: a one-day one that setup uses to try for a project key and then cancels, and a ${PERSONAL_DAYS}-day one that can act as you across GitLab; on a paid plan, a key to this one project, which setup makes ${made}.`
+        : `On a free account, a ${PERSONAL_DAYS}-day token you paste, which can act as you across GitLab; on a paid plan, a key to this one project, which setup makes ${made}.`)
       : `A key to this one project, which setup makes ${made}.`;
     options.push({ label: WAYS.narrow, says });
     recommend = WAYS.narrow;
@@ -1238,7 +1244,7 @@ export function directorGitEnv({ host, gitPath = 'git', env = process.env, platf
   const given = companyGitEnv(setupGitEnv({ host, gitPath, env, platform }), { host, base }, { platform });
   // glab's credential helper takes the director's token variables over its own sign-in, and would send one to any GitLab git
   // reaches: they are taken out of what git runs with.
-  return host === 'gitlab' ? { ...given, ...withoutTokens() } : given;
+  return host === 'gitlab' ? { ...given, ...withoutTokens({ env: given }) } : given;
 }
 
 // ---- GitLab without its tool: the one-day setup token ----
@@ -2105,7 +2111,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
       : `Your company's own certificate for ${base}, copied from this computer's certificate store and given to Node.js, glab and git for that address only. Certificate checks stay on.`);
   }
   const naming = changes.find((c) => c.action === 'gitlab-hosts');
-  if (naming) parts.push(bare ? 'Your company\'s GitLab recorded in the project\'s settings.' : tight ? `${naming.host} recorded as your company's GitLab in the project's settings.` : `${naming.host} recorded as your company's GitLab in the project's settings (.claude/wheelhouse.json), so every step uses it.`);
+  if (naming) parts.push(bare ? 'Your company\'s GitLab recorded in the project\'s settings.' : tight ? `${naming.host} recorded as your company's GitLab in the project's settings.` : `${naming.host} recorded as your company's GitLab in the project's settings, so every step uses it.`);
   // One way to sign in, said as what happens: the sign-in change is the only one apply makes (Use my git as it is has none:
   // its key, or the key card's, is the sign-in).
   const signing = changes.find((c) => c.action === 'sign-in');
@@ -2124,7 +2130,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
   // A narrow way still signs the host's own tool in as the director, by browser or pasted token, to make the project and
   // its key, and that sign-in stays on the computer: the card says what it reaches and, where it is known, who can read it.
   if (!bare && signing && !['setup-token', 'narrow-key'].includes(signing.via) && way !== WAYS.quick && way !== WAYS.asIs) {
-    parts.push(`That sign-in reaches your whole account and stays here${platform === 'win32' ? ', where any agent\'s command could read it' : platform === 'darwin' ? ', out of agents\' reach' : ''}.`);
+    parts.push(`That sign-in reaches your whole account and stays here${platform === 'win32' ? ', where any agent\'s command could read it' : platform === 'darwin' ? ', out of agents\' reach unless this is an iPhone or Mac app' : ''}.`);
   }
   if (product.isNew) {
     const where = owner ? `${owner}/${product.name} on ${name}` : `${product.name} on ${company ? 'your company\'s GitLab' : `your ${name} account`}`;
@@ -2467,7 +2473,7 @@ export function hostStep({
       if (ctx.choicesOnly === true && host === 'gitlab' && !locked && !launched && !toolsStepDone(ctx)
         && hostToolChoice({ tool: TOOL.gitlab, folder: ctx.folder, answers: ctx.answers ?? {} }) === null
         && await toolState(TOOL.gitlab, { run, platform }) === 'missing') {
-        return { ask: { id: hostToolId(TOOL.gitlab), card: hostToolCard(TOOL.gitlab, { recommend: 'fetch', platform }), step: 2 } };
+        return { ask: { id: hostToolId(TOOL.gitlab), card: hostToolCard(TOOL.gitlab, { recommend: 'fetch', platform, isNew: product.isNew === true }), step: 2 } };
       }
       const reach = !locked && !launched ? await reachOf({ ctx, host, base, product, platform, quiet: ctx.choicesOnly === true && company?.host !== undefined }) : null;
       if (reach?.noRoad && ctx.choicesOnly !== true) return { wait: OWN_APP_WAIT_MS, why: noRoadLine(host) };
@@ -2481,6 +2487,8 @@ export function hostStep({
       const toolOut = host === 'gitlab' && (hostToolLeftOut(ctx, host) || glabState !== 'works');
       const asked = { host, locked, launched, realUsers: realUsers || launched || product.joining === true, unsureOf: product.joining === true && !launched ? product.name : null, platform, where };
       const held = reach === null || reach.found.key !== 'none' || reach.cliSigned === true;
+      // What the plan card needs of this one: that git holds no key, and that the host is the public GitLab.
+      const askFlags = { ...(held ? {} : { unheld: true }), ...(host === 'gitlab' && base === DEFAULT_GITLAB ? { publicGitLab: true } : {}) };
       let card = connectionCard({ ...asked, appFile, asIs: reach?.offered === true, held, toolOut, publicGitLab: base === DEFAULT_GITLAB });
       let way = card.options[0].label;
       if (card.options.length > 1) {
@@ -2505,7 +2513,7 @@ export function hostStep({
           // asked again, with the reason after the question, so the card reads differently from the one answered.
           if (on(card, earlier) && was !== null && says(was, earlier.label) === says(card, earlier.label)) {
             // A look at the choices still lists the card, with the director's answer standing on it.
-            if (ctx.choicesOnly === true) return { ask: { id, card, carried: earlierKey } };
+            if (ctx.choicesOnly === true) return { ask: { id, card, carried: earlierKey, ...askFlags } };
             got = earlier;
           } else if (earlier !== null) {
             const left = hostToolLeftOut(ctx, host);
@@ -2516,7 +2524,7 @@ export function hostStep({
             got = answer(id);
           }
         }
-        if (!on(card, got)) return { ask: { id, card } };
+        if (!on(card, got)) return { ask: { id, card, ...askFlags } };
         way = got.label;
         if (way === STRICTER) {
           way = stricterWay({ host, appFile });

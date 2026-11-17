@@ -89,3 +89,8 @@ test('a Windows path names one repository however git writes it: file://C:/, fil
   // A scheme of two letters or more is still an address.
   assert.equal(remoteKey('ssh://git@github.com/o/p.git'), 'host:github.com/o/p');
 });
+
+test('an scp-style address whose user part holds a colon reads its host as the first word, not the later one', () => {
+  assert.equal(sameRemote('evil.com:x@git.co.org:o/r.git', 'git@git.co.org:o/r.git'), false);
+  assert.equal(remoteKey('evil.com:x@git.co.org:o/r.git').startsWith('host:evil.com/'), true);
+});

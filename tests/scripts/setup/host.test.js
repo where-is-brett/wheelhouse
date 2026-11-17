@@ -1490,8 +1490,9 @@ test('step 3\'s card on a company\'s GitLab composes for ordinary and for very l
   // one (the address and the names left out), so a fallback that stops being reached shows here.
   const cases = [
     ['gitlab.acme.com:8443', 'engineering/shop', 'sam', 'full'],
-    ['gitlab.example.com', 'platform/customer-portal', 'a-director', 'full'],
-    ['git.example.org:8443', `${USER}/a-product-with-a-long-name-to-fill-the-card`, USER, 'full'],
+    // The sign-in line's exception for an Apple app takes the cards that name a project over the limit, so they come in the tight wording.
+    ['gitlab.example.com', 'platform/customer-portal', 'a-director', { joining: 'full', new: 'tight', existing: 'full' }],
+    ['git.example.org:8443', `${USER}/a-product-with-a-long-name-to-fill-the-card`, USER, { joining: 'full', new: 'tight', existing: 'full' }],
     [`${'h'.repeat(190)}.example.com:8443`, `${'g'.repeat(100)}/${'p'.repeat(99)}`, 'u'.repeat(200), 'tight'],
     // A host name is at most 253 characters, so the bare wording takes an address with a long path after the host.
     [`${'h'.repeat(190)}.example.com:8443/${'s'.repeat(300)}`, `${'g'.repeat(100)}/${'p'.repeat(99)}`, 'u'.repeat(200), 'bare'],
@@ -3834,7 +3835,7 @@ test('step 3\'s card on a narrow way says the browser sign-in reaches the whole 
     return composeCard({ ...card, target: { step: 3, hash: planHash(changes) } }).question.question;
   };
   assert.match(text(WAYS.own, 'win32'), /That sign-in reaches your whole account and stays here, where any agent's command could read it\./);
-  assert.match(text(WAYS.wheelhouse, 'darwin'), /That sign-in reaches your whole account and stays here, out of agents' reach\./);
+  assert.match(text(WAYS.wheelhouse, 'darwin'), /That sign-in reaches your whole account and stays here, out of agents' reach unless this is an iPhone or Mac app\./);
   assert.doesNotMatch(text(WAYS.quick, 'win32'), /That sign-in reaches/);
   assert.match(text(WAYS.own, 'linux'), /That sign-in reaches your whole account and stays here\./);
   const pasted = [{ kind: 'host', target: 'gitlab', action: 'sign-in', via: 'token' }];

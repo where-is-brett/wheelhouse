@@ -774,6 +774,9 @@ test('survey: the open-request list names its repository with --repo= and runs o
   assert.equal(repositoryOf('git@github.com:o/p.git', 'github'), 'o/p');
   assert.equal(repositoryOf('https://gitlab.com/g/s/p.git', 'gitlab'), 'g/s/p');
   assert.equal(repositoryOf('git@git.corp.example:g/s/p.git', 'gitlab'), 'git.corp.example/g/s/p');
+  // A colon in the user part makes the first word the host, so it never reads as the later host's repository.
+  assert.notEqual(repositoryOf('evil.com:x@git.corp.example:g/p.git', 'gitlab'), 'g/p');
+  assert.equal(repositoryOf('evil.com:x@git.corp.example:g/p.git', 'gitlab')?.startsWith('git.corp.example') ?? false, false);
   assert.equal(repositoryOf('https://ghe.corp.example/o/p', 'github'), 'ghe.corp.example/o/p');
   assert.equal(repositoryOf('/srv/x/p.git', 'github'), 'x/p');
   assert.equal(repositoryOf('p', 'github'), null);

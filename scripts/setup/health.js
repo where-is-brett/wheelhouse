@@ -290,7 +290,7 @@ function card(repo, local, host = 'github', unprotected = false) {
     ? [
       'Setup tries Wheelhouse\'s safety checks for real on this computer, with a test change that holds nothing.',
       'Wheelhouse\'s merge check is asked to merge it without your approval, and must refuse.',
-      'It checks that All stop (the switch that halts every agent) works, that the agents\' skills are installed, and the project\'s private copy.',
+      'It checks that All stop (the switch that halts every agent) works, that the agents\' skills are installed, and that the project\'s private copy is in place.',
       'This Claude Code session checks that agents are blocked where Wheelhouse blocks them, then shows the Logbook, Wheelhouse\'s record of its own checks.',
       'Setup then closes the test change.',
     ]
