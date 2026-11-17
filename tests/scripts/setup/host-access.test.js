@@ -435,7 +435,7 @@ test('an address git would rewrite to another scheme, or to a transport helper, 
 });
 
 test('a bracketed (IPv6) host is no address setup reads, in any form, and is never split on its colons', () => {
-  for (const url of ['https://[::1]/a/b', 'https://[2001:db8:0:0:0:0:0:1]:8443/a/b', 'ssh://git@[fe80::1]/a/b', 'git@[1:2:3:4:5:6:7:8]:a/b', '[::1]:a/b']) {
+  for (const url of ['https://[::1]/a/b', 'https://[2001:db8:0:0:0:0:0:1]:8443/a/b', 'ssh://git@[fe80::1]/a/b', 'git@[1:2:3:4:5:6:7:8]:a/b', '[::1]:a/b', 'ssh://u@v@[::1]/x', 'u@v@[::1]:x', 'ssh://u@v@gitlab.example.org/x', 'u@v@gitlab.example.org:x']) {
     assert.equal(transportOf(url), null, url);
   }
   assert.equal(transportOf('https://gitlab.example.org/a/b'), 'https');

@@ -58,7 +58,7 @@ test('the one card for a new product on a Mac says the director\'s approved word
     'Set up Wheelhouse for tide-tables?',
     'Here\'s what I recommend. It takes about 5 minutes.',
     '- A new product, in a private repository on your GitHub account.',
-    '- Agents use your ordinary GitHub sign-in, which reaches your whole account; on this Mac the sandbox keeps agents\' commands away from your Mac\'s saved passwords, where that sign-in is kept, unless this is an iPhone or Mac app whose builds are signed on this computer, which opens those passwords to agents\' commands.',
+    '- Agents use your ordinary GitHub sign-in, which reaches your whole account; on this Mac the sandbox keeps agents\' commands away from your Mac\'s saved passwords, where that sign-in is kept, unless this is an iPhone or Mac app built and signed on this Mac, which lets agents\' commands reach those passwords.',
     '- Before launch: no real users and no live data yet.',
     '- On this computer: usage counted here only; 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted); Claude Code takes only its well-tried updates; and phone notifications on.',
     '- Wheelhouse\'s settings saved to the project, and its main line protected if your GitHub plan allows it (the free plan doesn\'t for a private repository).',
@@ -179,7 +179,7 @@ test('Customise asks the choices not yet answered since it was clicked, four at 
 });
 
 test('each choice says what it is about and which step acts on it', () => {
-  assert.equal(aboutOf('3.join-0123456789'), 'new, or set up on another computer');
+  assert.equal(aboutOf('3.join-0123456789'), 'new, or already set up on another computer');
   assert.equal(aboutOf('3.connection-stricter-0123456789'), 'how agents reach the project');
   assert.equal(aboutOf('4.product-launched'), 'the description');
   assert.equal(actedBy('3.host'), 3);

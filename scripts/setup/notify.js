@@ -110,7 +110,7 @@ function arrivedAsk(id, round = 0) {
     id,
     card: {
       level: 2,
-      what: `Setup step ${PUSH_TEST_STEP}${tryOf(round)}: did the test notification reach your phone while your screen was locked?`,
+      what: `Setup step ${PUSH_TEST_STEP}${tryOf(round)}: did the test notification reach your phone while your screen was locked? Choose what you saw. If nothing came while your screen was locked, or you're unsure, choose It didn't, and the Logbook says what to check.`,
       why: 'Agents use it to tell you when they need you; if it didn\'t come, the Logbook says what to check.',
       options: [
         { label: ARRIVED.yes, says: 'Setup records that notifications reach your phone, and moves on.' },
@@ -119,7 +119,7 @@ function arrivedAsk(id, round = 0) {
       // The composer needs a recommendation among the card's options; on a question of fact it
       // only asks the director to answer what they saw.
       recommend: ARRIVED.yes,
-      because: 'choose what you saw happen; if the notification did not come while your screen was locked, or you are unsure, choose It didn\'t and the Logbook says what to check',
+      because: 'the test is sent while your screen is locked, so it should have reached you',
       meanwhile: 'Setup waits for your answer; anything already running carries on.',
     },
   };

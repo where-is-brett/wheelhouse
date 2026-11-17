@@ -230,31 +230,46 @@ test('an argument may not lift the fence with -c, bar the named exception', asyn
   assert.equal((await git(['-c', 'core.quotepath=off', 'status', '--porcelain'])).code, 0);
 });
 
-test('the computer\'s settings are fingerprinted one way for the record and the check: from Wheelhouse\'s own folder, so an includeIf that depends on the folder reads the same', async () => {
-  const { computerSettingsFingerprint, confirmComputerSettings, settingsFingerprint } = await import('../../../scripts/lib/safe-git.js');
-  const { wheelhouseHome } = await import('../../../scripts/lib/paths.js');
+// A push in a folder, with the director's own settings (a HOME of its own) including a file for that folder alone (includeIf gitdir:).
+async function includedPush({ before, after, confirmed = true, record }) {
+  const { confirmComputerSettings, safeGit } = await import('../../../scripts/lib/safe-git.js');
   const { as, shortHome } = await import('../../helpers/homes.js');
-  const asked = [];
-  // The settings an includeIf gitdir: brings in apply only inside the folder it names; Wheelhouse's own folder is not it.
-  const run = async (file, args, options) => {
-    asked.push(options);
-    const inside = String(options.cwd).includes('a-project');
-    const entries = [['global', 'includeif.gitdir:/a-project/.path', '/x/inc'], ...(inside ? [['global', 'credential.helper', '!other']] : [])];
-    return { code: 0, stdout: entries.map(([scope, key, value]) => `${scope}\0${key}\n${value}\0`).join(''), stderr: '' };
-  };
-  const home = shortHome();
-  await as(home, async () => {
-    const path = await import('node:path');
-    const fs = await import('node:fs');
-    const file = path.join(home, 'host', 'git-settings.json');
-    await confirmComputerSettings({ file, run });
-    const kept = JSON.parse(fs.readFileSync(file, 'utf8')).fingerprint;
-    assert.equal(await computerSettingsFingerprint({ run }), kept, 'the check reads what the record read');
-    for (const options of asked) {
-      assert.equal(options.cwd, wheelhouseHome());
-      assert.equal(options.env.GIT_CEILING_DIRECTORIES, path.dirname(path.resolve(wheelhouseHome())));
-    }
-    assert.equal(kept, settingsFingerprint([{ key: 'includeIf.gitdir:/a-project/.path', value: '/x/inc' }]));
-    assert.equal(await computerSettingsFingerprint({ run: async () => ({ code: 1, stdout: '' }) }), null);
-  });
+  const { spawnSync } = await import('node:child_process');
+  const folder = fs.realpathSync(tempFolder('wh-inc-repo-'));
+  spawnSync('git', ['init', '-q'], { cwd: folder });
+  const home = fs.realpathSync(tempFolder('wh-inc-home-'));
+  const work = path.join(home, 'work.cfg');
+  fs.writeFileSync(path.join(home, '.gitconfig'), `[includeIf "gitdir:${folder}/"]\n\tpath = ${work}\n`);
+  fs.writeFileSync(work, `[credential]\n\thelper = !${before}\n`);
+  const names = ['HOME', 'USERPROFILE', 'XDG_CONFIG_HOME', 'GIT_CONFIG_NOSYSTEM'];
+  const kept = Object.fromEntries(names.map((n) => [n, process.env[n]]));
+  Object.assign(process.env, { HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'), GIT_CONFIG_NOSYSTEM: '1' });
+  const url = 'https://github.com/o/p.git';
+  const fake = (file, args, options) => (args[0] === 'config' ? run(file, args, options) : Promise.resolve({ code: 0, stdout: args[0] === 'remote' ? `${url}\n` : '', stderr: '' }));
+  const trustFile = path.join(shortHome(), 'host', 'git-settings.json');
+  try {
+    return await as(path.dirname(path.dirname(trustFile)), async () => {
+      if (record !== undefined) {
+        fs.mkdirSync(path.dirname(trustFile), { recursive: true });
+        fs.writeFileSync(trustFile, JSON.stringify(record));
+      }
+      if (confirmed) await confirmComputerSettings({ file: trustFile, run: fake, cwd: folder });
+      fs.writeFileSync(work, `[credential]\n\thelper = !${after}\n`);
+      const push = safeGit({ cwd: folder, reach: 'push', run: fake, pushTo: { remote: 'origin', url }, trust: { file: trustFile } });
+      return await push(['push', '--no-verify', 'origin', 'main']).then((got) => ({ ok: got.code === 0 }), (error) => ({ code: error.code, message: error.message }));
+    });
+  } finally {
+    for (const n of names) if (kept[n] === undefined) delete process.env[n]; else process.env[n] = kept[n];
+  }
+}
+
+test('a setting a push folder alone includes (includeIf gitdir) is part of what is checked: changing its credential helper after the confirmation refuses the push', async () => {
+  assert.deepEqual(await includedPush({ before: '/a/helper', after: '/a/helper' }), { ok: true }, 'unchanged, it passes');
+  const changed = await includedPush({ before: '/a/helper', after: '/b/other-helper' });
+  assert.equal(changed.code, 'git-settings-changed');
+});
+
+test('a record from before the settings were kept per folder says nothing of any folder: the push is refused until it is confirmed again', async () => {
+  const old = await includedPush({ before: '/a/helper', after: '/a/helper', confirmed: false, record: { fingerprint: 'a'.repeat(64) } });
+  assert.equal(old.code, 'git-settings-changed');
 });

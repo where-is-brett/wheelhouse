@@ -403,7 +403,7 @@ test('step 7 pins the front desk to what Claude Code\'s opus alias stands for, i
     assert.equal(w.bestAsked, 2);
     assert.deepEqual(w.aliases, [FRONT_DESK_ALIAS, MID_SIZED_ALIAS], 'never the strongest: setup asks nothing about it');
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
-    assert.match(text, /First Mate uses Claude Code.s most capable everyday model, the one Claude Code names for it/i);
+    assert.match(text, /First Mate stays on Claude Code.s most capable everyday model until you change it/i);
     assert.ok(!text.includes(BEST_MODEL), 'the card names no model');
     assert.doesNotMatch(text, /strongest/);
     const done = await w.apply(planned.changes);

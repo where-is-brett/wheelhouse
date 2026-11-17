@@ -244,7 +244,7 @@ test('after the wait, step 9 asks whether the test arrived, and either answer se
       assert.deepEqual(b.ask.card.options.map((o) => o.label), [ARRIVED.yes, ARRIVED.no]);
       assert.match(b.ask.card.question, /locked/);
       // A question of fact: the card recommends answering what was seen, not either answer as such.
-      assert.match(b.ask.card.options.map((o) => o.description).join(' '), /what you saw/);
+      assert.match(b.ask.card.question, /Choose what you saw/);
       assert.equal(setLineOf(b.ask.card.question), null);
 
       // Suggest a change… is no answer: the card is asked again.

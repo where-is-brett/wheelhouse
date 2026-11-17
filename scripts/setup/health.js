@@ -389,7 +389,7 @@ async function closeTrial({ project, projectRecord, pr, sha, adapter, gitFor, re
   if (sha !== null) {
     record({ id: newId('chg'), kind: 'host', target: `${projectRecord.repo} branch ${HEALTH_BRANCH}`, before: { branch: HEALTH_BRANCH, sha }, after: null, project });
     try {
-      await gitFor((git) => gitIn(git.run, git, ['push', '-q', trialPlace(project, projectRecord), `:refs/heads/${HEALTH_BRANCH}`]));
+      await gitFor((git) => gitIn(git.run, git, ['push', '-q', '--end-of-options', trialPlace(project, projectRecord), `:refs/heads/${HEALTH_BRANCH}`]));
       deleted = true;
     } catch { /* left there: recorded so below */ }
   }
@@ -626,13 +626,13 @@ export function healthStep({
         // the director's own folder.
         const base = await adapter.defaultBranch();
         await gitFor(async (git) => {
-          await gitIn(run, git, ['fetch', '-q', '--depth=1', place, `refs/heads/${base}`]);
+          await gitIn(run, git, ['fetch', '-q', '--depth=1', '--end-of-options', place, `refs/heads/${base}`]);
           const parent = await gitIn(run, git, ['rev-parse', 'FETCH_HEAD']);
           const tree = await gitIn(run, git, ['rev-parse', 'FETCH_HEAD^{tree}']);
           const sha = await gitIn(run, git, [...TRIAL_AUTHOR, 'commit-tree', '--no-gpg-sign', tree, '-p', parent, '-m', TRIAL_MESSAGE]);
           halt();
           ctx.record({ id: newId('chg'), kind: 'host', target: `${record.repo} branch ${HEALTH_BRANCH}`, before: null, after: { branch: HEALTH_BRANCH, sha }, project });
-          await gitIn(run, git, ['push', '-q', '--force', place, `${sha}:refs/heads/${HEALTH_BRANCH}`]);
+          await gitIn(run, git, ['push', '-q', '--force', '--end-of-options', place, `${sha}:refs/heads/${HEALTH_BRANCH}`]);
           pushed = sha;
         });
         // Recorded just before it is opened, as pending, since its number comes only with it;

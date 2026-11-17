@@ -55,7 +55,7 @@
 //
 // A second computer joins a project from an empty folder (design sections 15 and 24.3, ruling R77).
 // In a folder holding nothing but step 1's .claude/ and with no `origin`, the plan first asks
-// `join`: A new product, or `<folder name>, set up on another computer`, or a typed owner/name;
+// `join`: A new product, or `<folder name>, already set up on another computer`, or a typed owner/name;
 // recommended A new product. Joining asks neither the real-users nor the Locked question (the first
 // computer's; a joining Mac's step 8 asks Locked when the project is launched), but the host and
 // the connection as usual, since each computer signs in for itself. Its Go-ahead list is: the
@@ -202,7 +202,7 @@ export const STOPPED = 'All stop came on, so setup stopped here; once All stop i
 export const STOP_LOOK_MS = 1000;
 // The join question's first option; the second names the folder (ruling R77).
 export const NEW_PRODUCT = 'A new product';
-export const fromOtherComputer = (name) => `${name}, set up on another computer`;
+export const fromOtherComputer = (name) => `${name}, already set up on another computer`;
 // What a folder may hold beside step 1's .claude/ and still be empty: the system's own files.
 const SYSTEM_FILES = ['.DS_Store', 'Thumbs.db', 'desktop.ini'];
 // Said when Quick is chosen for a launched project a computer joins (design section 11).
@@ -2692,7 +2692,7 @@ export function hostStep({
       const thisRun = readJournal().runs.find((r) => r?.id === ctx.runId) ?? null;
       const fixed = joinedFolder(ctx.folder, thisRun);
       if (fixed !== null && (join === null || join.name.toLowerCase() !== fixed.toLowerCase())) {
-        throw new Error(`This folder is checked out to ${fixed}, set up on another computer, so setup goes on joining it and nothing else: ask for step 3's card again`);
+        throw new Error(`This folder is checked out to ${fixed}, already set up on another computer, so setup goes on joining it and nothing else: ask for step 3's card again`);
       }
       if (join !== null) answerRecord({ joined: join.name });
       // A new product after a join attempt that missed closes the attempt's state, as one after a joined run does.
@@ -2861,7 +2861,12 @@ export function hostStep({
         writeProject(slug, kept);
         if (joined === null) await openRecords();
         // The computer's git settings a push trusts, recorded now that the director has seen the card that names them.
-        if (connection.mode === 'as-is') await confirmComputerSettings({ file: path.join(wheelhouseHome(), 'host', 'git-settings.json'), run, gitPath: git.path });
+        // Recorded for the folder the push runs in, the project's mirror, since an include can make the settings differ by folder.
+        // Before the mirror exists there is nothing to read there: the first push records it.
+        if (connection.mode === 'as-is') {
+          const mirror = path.join(stateDir(slug), '..', 'mirror.git');
+          if (fs.existsSync(mirror)) await confirmComputerSettings({ file: path.join(wheelhouseHome(), 'host', 'git-settings.json'), run, gitPath: git.path, cwd: mirror });
+        }
         say(`Connected: ${project.repo} on ${NAME[host]}, ${connection.mode === 'quick' ? 'Quick' : connection.mode === 'as-is' ? 'your own git as it is' : 'narrow'}`);
         return [];
       } finally {

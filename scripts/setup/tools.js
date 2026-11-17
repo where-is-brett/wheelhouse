@@ -870,7 +870,7 @@ function hostWhy(hostTools, leftOut) {
   const names = hostTools.map((tool) => HOST_TOOL_NAME[tool]).join(' and ');
   const used = hostTools.filter((tool) => !leftOut.includes(tool));
   const tools = used.length === 0 ? '' : used.length === 1 ? ` and ${HOST_TOOL_NAME[used[0]]}'s own tool` : ' and their own tools';
-  return `Wheelhouse keeps the project on ${names} through git${tools}.`;
+  return `Wheelhouse keeps the project on ${names} through Git${tools}.`;
 }
 
 // What the director does for the list, in plain words.
@@ -908,7 +908,7 @@ function cardFor(changes, status, platform, leftOut = [], hostTools = []) {
   for (const c of company) {
     full.push(`${toolName(c.tool)}, from your company's list at ${c.source} (version ${c.version}); ${c.checksum === 'listed'
       ? 'checked against the checksum the list gives'
-      : 'the list gives no checksum, so setup cannot check the file. Setup runs it once to read its version, and after that it is the GitLab tool Wheelhouse uses for your GitLab work, including your sign-in. Say Not now if unsure'}`);
+      : 'the list gives no checksum, so setup cannot check the file. Setup runs it once to read its version, and after that it becomes the GitLab tool Wheelhouse uses, including for your sign-in. Say Not now if unsure'}`);
   }
   if (changes.some((c) => c.action === 'engine')) {
     full.push('The build engine, Archon: built from its pinned source with Wheelhouse\'s safety patch, with the pinned Bun, into Wheelhouse\'s engine folder, each checked against Wheelhouse\'s pins, with its usage reporting off; a few minutes, nothing for you to do');
@@ -923,7 +923,7 @@ function cardFor(changes, status, platform, leftOut = [], hostTools = []) {
   for (const c of company) {
     terse.push(c.checksum === 'listed'
       ? `${toolName(c.tool)}: from your company's list at ${shownSource(c.source)}, checked`
-      : `${toolName(c.tool)}: from your company's list at ${shownSource(c.source)}, no checksum; it becomes your GitLab tool for GitLab and sign-in; Not now if unsure`);
+      : `${toolName(c.tool)}: from your company's list at ${shownSource(c.source)}, no checksum; it becomes the GitLab tool Wheelhouse uses, including for your sign-in; Not now if unsure`);
   }
   if (changes.some((c) => c.action === 'engine')) terse.push('The build engine, Archon: pinned and checked, usage reporting off');
   if (changes.some((c) => c.action === 'archon-settings')) terse.push('The engine set to use Claude');

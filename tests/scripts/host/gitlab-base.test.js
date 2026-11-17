@@ -245,5 +245,6 @@ test('an address with a bracketed (IPv6) host in the scp form is refused, not re
   const { parseRemote } = await import('../../../scripts/host/gitlab-base.js');
   assert.throws(() => parseRemote('git@[1:2:3:4:5:6:7:8]:a/b'), /not a repository address/);
   assert.throws(() => parseRemote('[::1]:a/b'), /not a repository address/);
+  for (const bad of ['ssh://u@v@[::1]/x', 'u@v@[::1]:x', 'ssh://u@v@gitlab.example.org/x', 'u@v@gitlab.example.org:x']) assert.throws(() => parseRemote(bad), /not a repository address/, bad);
   assert.equal(parseRemote('git@gitlab.example.org:a/b').hostname, 'gitlab.example.org');
 });

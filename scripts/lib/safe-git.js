@@ -492,38 +492,57 @@ export function trustedSettings(entries) {
 }
 export const settingsFingerprint = (entries) => crypto.createHash('sha256').update(JSON.stringify(trustedSettings(entries))).digest('hex');
 
-// Records the fingerprint the first time; after that, throws SettingsChanged when it differs.
-function checkTrusted(file, now) {
-  let kept = null;
+// What the record holds: { folders: { <folder>: <fingerprint> } }. Includes (includeIf gitdir:, onbranch:, hasconfig:) make the settings
+// depend on the folder git runs in, so each folder has its own fingerprint, of the very settings read there. A record from before
+// that (one `fingerprint` for all) says nothing of any folder: it is refused until the director confirms again.
+const folderKey = (folder) => {
   try {
-    kept = JSON.parse(fs.readFileSync(file, 'utf8')).fingerprint;
-  } catch (error) {
-    if (error?.code !== 'ENOENT') throw new SettingsChanged(SETTINGS_CHANGED_LINE);
+    return fs.realpathSync(folder);
+  } catch {
+    return path.resolve(folder);
   }
-  if (kept === null) {
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(file, `${JSON.stringify({ fingerprint: now }, null, 2)}\n`, { mode: 0o600 });
+};
+
+// The settings as a push in `cwd` reads them, with git's search held below Wheelhouse's folder. The same read serves the check and
+// the push, so what is checked is what is used.
+export const readSettingsFor = ({ run = realRun, gitPath = 'git', cwd }) => readComputerSettings({ run, gitPath, cwd, ceiling: path.dirname(path.resolve(wheelhouseHome())) });
+
+function readRecord(file) {
+  try {
+    const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (record !== null && typeof record === 'object' && record.folders !== null && typeof record.folders === 'object' && !Array.isArray(record.folders)) return { folders: record.folders };
+    return 'refused';
+  } catch (error) {
+    return error?.code === 'ENOENT' ? null : 'refused';
+  }
+}
+
+function writeRecord(file, folders) {
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(file, `${JSON.stringify({ folders }, null, 2)}\n`, { mode: 0o600 });
+}
+
+// Records the folder's fingerprint the first time it is seen; after that, throws SettingsChanged when it differs. A record that is
+// unreadable, or from before the folder was part of it, is refused.
+function checkTrusted(file, folder, now) {
+  const record = readRecord(file);
+  if (record === 'refused') throw new SettingsChanged(SETTINGS_CHANGED_LINE);
+  const key = folderKey(folder);
+  const kept = record?.folders[key];
+  if (kept === undefined) {
+    writeRecord(file, { ...(record?.folders ?? {}), [key]: now });
     return;
   }
   if (kept !== now) throw new SettingsChanged(SETTINGS_CHANGED_LINE);
 }
 
-// The one way the computer's settings are fingerprinted, for the record kept and for the check against it. They are read from a
-// folder of Wheelhouse's own with git's search held below it, never from a project's folder, so a setting that applies only
-// inside some folder (includeIf gitdir) reads the same every time. Null when git could not say.
-export async function computerSettingsFingerprint({ run = realRun, gitPath = 'git', cwd, ceiling } = {}) {
-  const home = wheelhouseHome();
-  if (cwd === undefined) fs.mkdirSync(home, { recursive: true });
-  const entries = await readComputerSettings({ run, gitPath, cwd: cwd ?? home, ceiling: ceiling ?? path.dirname(path.resolve(home)) });
-  return entries === null ? null : settingsFingerprint(entries);
-}
-
-// The director's confirmation of the computer's settings as they are now (a later part's card calls this).
-export async function confirmComputerSettings({ file, run = realRun, gitPath = 'git', cwd, ceiling } = {}) {
-  const fingerprint = await computerSettingsFingerprint({ run, gitPath, cwd, ceiling });
-  if (fingerprint === null) throw new Error("Git's settings on this computer could not be read");
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(file, `${JSON.stringify({ fingerprint }, null, 2)}\n`, { mode: 0o600 });
+// The director's confirmation of the computer's settings as they are now in `cwd`, the folder the push runs in (a later part's
+// card calls this). The other folders' records stand; an older record that named no folder is replaced by this one.
+export async function confirmComputerSettings({ file, run = realRun, gitPath = 'git', cwd }) {
+  const entries = await readSettingsFor({ run, gitPath, cwd });
+  if (entries === null) throw new Error("Git's settings on this computer could not be read");
+  const record = readRecord(file);
+  writeRecord(file, { ...(record === null || record === 'refused' ? {} : record.folders), [folderKey(cwd)]: settingsFingerprint(entries) });
 }
 
 // git in `cwd`: `git(args, options)` gives run's answer. `list` says which allowed list the look uses:
@@ -601,16 +620,12 @@ export function safeGit({
     // The computer's own settings are read once, checked, and copied to a private file the push reads in their place, so
     // what was checked is what git uses. Config-defined hooks in them are switched off one by one, and the certificate
     // check is set on for the recorded address, the most specific match, which beats a setting for a shorter address.
-    const entries = await readComputerSettings({ run, gitPath, cwd });
+    const entries = await readSettingsFor({ run, gitPath, cwd });
     if (entries === null) throw new LookRefusal(`Git's settings on this computer could not be read. ${caller === null ? 'Try the push again.' : UNREAD_NEXT[caller]}`);
     const why = settingsRefusal(entries);
     if (why !== null) throw new LookRefusal(`Git's settings on this computer ${why}, which Wheelhouse does not allow for a push. Remove that setting, then try again.`);
     // What the computer's settings were when as-is pushing was first used: a change since is the director's to confirm.
-    if (trust !== null && subcommandOf(args) === 'push') {
-      const fingerprint = await computerSettingsFingerprint({ run, gitPath });
-      if (fingerprint === null) throw new LookRefusal(`Git's settings on this computer could not be read. ${caller === null ? 'Try the push again.' : UNREAD_NEXT[caller]}`);
-      checkTrusted(trust.file, fingerprint);
-    }
+    if (trust !== null && subcommandOf(args) === 'push') checkTrusted(trust.file, cwd, settingsFingerprint(entries));
     const extras = hookNames(entries).map((name) => [`hook.${name}.enabled`, 'false']);
     if (pushTo !== null && /^https?:\/\//i.test(pushTo.url)) extras.push([`http.${pushTo.url}.sslVerify`, 'true']);
     const count = Number.parseInt(given.GIT_CONFIG_COUNT ?? '0', 10) || 0;

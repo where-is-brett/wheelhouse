@@ -182,7 +182,7 @@ test('a computer with no glab and a key that can only push: step 2 settles with 
 
       const record = readProject(REPO.replace('/', '__'));
       assert.deepEqual(record.connection, { host: 'gitlab', mode: 'as-is', project: REPO, baseUrl: COMPANY, backend: 'rest' });
-      assert.ok(fs.existsSync(path.join(wheelhouseHome(), 'host', 'git-settings.json')), 'the settings a push trusts were recorded');
+      assert.equal(fs.existsSync(path.join(wheelhouseHome(), 'host', 'git-settings.json')), false, 'no mirror yet, so the first push records the settings');
     } finally {
       restore();
     }

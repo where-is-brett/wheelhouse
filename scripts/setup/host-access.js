@@ -21,7 +21,7 @@ import path from 'node:path';
 import { askDirectorGit, directorProxy, outsideRepo, ceilingOf, directorGitEnv } from '../host/director-git.js';
 import { curlPath, request, NO_CURL } from '../host/curl.js';
 import { gitlabApi } from '../host/gitlab-key.js';
-import { DEFAULT_GITLAB } from '../host/gitlab-base.js';
+import { DEFAULT_GITLAB, unreadableAuthority } from '../host/gitlab-base.js';
 import { tokenUrl } from '../host/token-url.js';
 import { withoutTokens } from '../lib/token-names.js';
 
@@ -41,8 +41,8 @@ export function transportOf(remoteUrl) {
   const url = String(remoteUrl ?? '').trim();
   // An address that starts with a dash would read as an option to git, and `::` names a transport helper: neither is an address.
   if (url.startsWith('-') || url.includes('::') || /\s/.test(url)) return null;
-  // A host written as an IP address in brackets (an IPv6 one) is not read: its colons would be taken for a port or a path's start.
-  if (/^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/)?(?:[^/@\s]*@)?\[/.test(url)) return null;
+  // A bracketed (IPv6) host, or a second @ before the host, is not read.
+  if (unreadableAuthority(url)) return null;
   // A Windows drive path (C:/Users/ann/repo, C:\Users\ann\repo, C:repo) is a place on this computer, not host:path.
   if (/^[A-Za-z]:/.test(url)) return null;
   if (/^https:\/\/[^/\s-]/i.test(url)) return 'https';
@@ -110,8 +110,7 @@ export async function checkApiKey({ host, base = DEFAULT_GITLAB, key, via = {} }
 function gitHostOf(remoteUrl) {
   const text = String(remoteUrl).trim();
   if (text.includes('::') || text.startsWith('-')) return null;
-  // A bracketed (IPv6) host is not read: split on its colons it would name no host.
-  if (/^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/)?(?:[^/@\s]*@)?\[/.test(text)) return null;
+  if (unreadableAuthority(text)) return null;
   const web = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([^/]*)/.exec(text);
   if (web) {
     if (!['https', 'ssh', 'git+ssh'].includes(web[1].toLowerCase())) return null;
