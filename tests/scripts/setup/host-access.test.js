@@ -42,7 +42,7 @@ test('the transport of a remote: https, ssh in both forms, or neither for a path
   assert.equal(transportOf('/Users/a-director/remotes/product.git'), null);
   assert.equal(transportOf(null), null);
   // A Windows drive path is a place on this computer, not host:path.
-  for (const drive of ['C:/Users/ann/repo', 'C:\\Users\\ann\\repo', 'd:/work/product.git', 'D:\\work\\product.git']) assert.equal(transportOf(drive), null, drive);
+  for (const drive of ['C:/Users/ann/repo', 'C:\\Users\\ann\\repo', 'd:/work/product.git', 'D:\\work\\product.git', 'C:repo', 'c:repo.git']) assert.equal(transportOf(drive), null, drive);
   assert.equal(transportOf('git@gitlab.example.org:team/product.git'), 'ssh');
 });
 
@@ -387,6 +387,7 @@ test('an origin address that reads as an option or a transport helper never reac
     }
     for (const { opts } of seen) {
       assert.equal(opts.baseEnv.GIT_DIR, undefined);
+      assert.equal(opts.baseEnv.GIT_CEILING_DIRECTORIES, path.dirname(wheelhouseHome()), 'git looks no higher than the parent of Wheelhouse\'s own folder');
       assert.equal(opts.baseEnv.GIT_CONFIG_COUNT, undefined);
       assert.equal(opts.baseEnv.GIT_ALLOW_PROTOCOL, 'https:ssh');
     }

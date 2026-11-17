@@ -40,6 +40,12 @@ test('a run has every step, and a joining computer\'s run steps 1, 2, 3, 6, 7, 8
   for (const other of [{ ...JOINED, step: 4 }, { ...JOINED, kind: 'host' }, { ...JOINED, after: { joined: '' } }, { ...JOINED, after: { pushArrived: true } }]) {
     assert.equal(stepsFor({ steps: {}, changes: [other] }), SETUP_STEPS, JSON.stringify(other));
   }
+  // An attempt that found nothing joined nothing: its miss, as the latest record, gives the run every step again (step 4's
+  // questions among them); the next attempt's first record makes it a joining one again.
+  const missed = { ...JOINED, id: 'chg-miss', after: { joined: 'o/Cafe-Menu', missed: 'none', host: 'gitlab' } };
+  assert.equal(joinedRepo({ steps: {}, changes: [JOINED, missed] }), null);
+  assert.equal(stepsFor({ steps: {}, changes: [JOINED, missed] }), SETUP_STEPS);
+  assert.equal(stepsFor({ steps: {}, changes: [JOINED, missed, { ...JOINED, id: 'chg-again' }] }), JOINING_STEPS);
 });
 
 test('a joining run is finished once its own steps are done, with no green mark; its first unfinished step skips 4, 5 and 10, and never waits for the phone', () => {

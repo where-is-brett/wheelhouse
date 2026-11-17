@@ -109,7 +109,7 @@ import { readProfileViews, PROFILE_BRANCH } from '../profile/store.js';
 import { toolsStatus, originUrl, applyCompanyCa, curlStatus, toolsLeftOut, hostToolChoice, hostToolId, hostToolCard } from './tools.js';
 import {
   findAccess, backendFor, runKeyCard, asIsReachLine, keyCardPlanLine, noRoadLine, checkApiKey, hostAddress,
-  KEY_DAYS_ASKED, directorGitEnv as directorAskEnv,
+  KEY_DAYS_ASKED, directorGitEnv as directorAskEnv, ceilingOf,
 } from './host-access.js';
 import {
   KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, applyLocal, backupAnswered, backupChoice, hostOfAddress, pastedAddress, withScheme, branchAsk, branchesOf, chooseBranch, headBranch, keptAsk, localCard, localName, localSteps, remotesOf,
@@ -628,21 +628,29 @@ const notFoundNamed = ({ host, wanted, at, user }) => {
   const other = host === 'github' ? 'GitLab' : 'GitHub';
   // Only the director's own account is one a new product would be made in, so only then does the name matter.
   const own = typeof user === 'string' && wanted.split('/')[0].toLowerCase() === user.toLowerCase();
-  return [
-    `Setup couldn't find Wheelhouse's settings in ${wanted} on ${where}, or your sign-in can't reach it. Setup can only bring in a project that was set up with Wheelhouse on another computer, so it can't bring this one in here.`,
-    ...(own ? [`If ${wanted.split('/').at(-1)} is already there, a new product can't use that name on ${where}: to make it there, rename this folder and start setup again from it. On this computer or on ${other} it needs no new name.`] : []),
-    'Paste another address, or start a new product with a button below.',
-  ].join('\n');
+  return {
+    before: [
+      `Setup couldn't find Wheelhouse's settings in ${wanted} on ${where}, or your sign-in can't reach it.`,
+      'Setup only brings in a project that was set up with Wheelhouse on another computer.',
+    ],
+    after: [
+      'Choose a button for a new product, or paste another address.',
+      ...(own ? [`If ${wanted.split('/').at(-1)} is already on ${where}, a new product can't use that name there. Rename this folder and start setup again from it.`] : []),
+    ],
+    other,
+  };
 };
 // The host a pasted address names, as the join miss says it: the company's own host name, or GitHub or GitLab.
 const pinHostName = (pin) => (pin === undefined ? undefined : pin.host === 'github' ? 'GitHub' : pin.company?.host === undefined ? 'GitLab' : pin.company.host);
 function joinAsk(id, name, { missed }) {
   const other = fromOtherComputer(name);
   let found = '';
+  // Whether the question's own words are already in `found`, on a line of their own.
+  let asked = false;
   // The hint to paste with https:// is for a name that looks like a host; never for text that was already an address.
   const dotted = missed?.address !== true && typeof missed?.name === 'string' && missed.name.split('/')[0].includes('.') ? ` ${PASTE_WITH_SCHEME}` : '';
-  if (missed?.name === HELD_SECRET) found = 'What you pasted had a sign-in name, password or token written into it, so setup didn\'t keep it. If it held a real password or token, change it on GitLab or GitHub: it was typed into this chat. Paste the address as your browser shows it on the project\'s page, with nothing before an @, or type owner/name, like ann/cafe-menu. ';
-  else if (missed?.missed === 'taken') found = `${missed.name.split('/').at(-1)} may already be on ${missed.at} without Wheelhouse's settings, so setup won't make a new product there under that name. Choose Keep it on this computer or GitHub, or rename this folder and start setup again from it. `;
+  if (missed?.name === HELD_SECRET) found = 'What you pasted had a sign-in name, password or token in it, so setup didn\'t keep it.\nIf it was a real password or token, change it on GitLab or GitHub: it is now in this chat.\nPaste the address as your browser shows it on the project\'s page, or type owner/name, like ann/cafe-menu.\n';
+  else if (missed?.missed === 'taken') found = `${missed.name.split('/').at(-1)} may already be on ${missed.at} without Wheelhouse's settings, so setup won't make a new product there under that name.\nChoose ${KEEP_HERE}, GitHub or ${new URL(DEFAULT_GITLAB).hostname}, or rename this folder and start setup again from it.\n`;
   else if (missed?.missed === 'not-a-name') {
     found = `"${missed.name}" is not a repository's name. ${missed.address === true ? 'That is the address of the host itself, not of a project: paste the address of the project\'s page, or t' : 'T'}ype owner/name, like ann/cafe-menu, or click a button. `;
   }
@@ -650,7 +658,11 @@ function joinAsk(id, name, { missed }) {
   else if (missed?.missed === 'other-forge') found = `"${missed.name}" is not on github.com or GitLab, the places Wheelhouse works with. Type owner/name, like ann/cafe-menu, or click a button. `;
   else if (missed?.missed === 'no-backup') found = `"${missed.name}" can't be found. `;
   else if (Array.isArray(missed?.missed)) found = `More than one ${missed.name} is set up with Wheelhouse: ${missed.missed.slice(0, 5).join(', ')}.${dotted} `;
-  else if (missed && missed.name.includes('/')) found = `${notFoundNamed({ host: missed.host, wanted: missed.name, at: missed.at, user: missed.user })}\n`;
+  else if (missed && missed.name.includes('/')) {
+    const said = notFoundNamed({ host: missed.host, wanted: missed.name, at: missed.at, user: missed.user });
+    found = `${said.before.join('\n')}\nWhere should ${name} be kept instead?\n${said.after.join('\n')}`;
+    asked = true;
+  }
   else if (missed) found = `Setup found no ${missed.name} set up with Wheelhouse on your account or ${missed.host === 'gitlab' ? 'groups' : 'organisations'}.${dotted} `;
   return {
     id,
@@ -660,7 +672,7 @@ function joinAsk(id, name, { missed }) {
     endsBatch: true,
     card: {
       level: 2,
-      what: `${found}Where should ${name} be kept?`,
+      what: asked ? found : `${found}Where should ${name} be kept?`,
       why: 'This decides where your work is kept and who can reach it. Back from a backup? Type where the backup file is. Already set up elsewhere under a different name? Type its owner/name, like ann/cafe-menu, or paste its address.',
       options: [
         { label: KEEP_HERE, says: 'A new product. Nothing goes online, and it can move to GitHub or GitLab later, in one click.' },
@@ -673,7 +685,7 @@ function joinAsk(id, name, { missed }) {
       recommend: KEEP_HERE,
       because: 'it is the simplest start, with nothing to sign in to',
       // A miss found at apply comes after the Go ahead and any sign-in, so the card says what already happened, not that nothing has run.
-      meanwhile: missed?.missed === 'none' || Array.isArray(missed?.missed) ? 'Setup has stopped here. What it has done so far, such as its tools and your sign-in, stays; nothing more runs until you answer and say Go ahead.' : MEANWHILE,
+      meanwhile: missed?.missed === 'none' || Array.isArray(missed?.missed) ? 'Setup has stopped here. Its tools and your sign-in stay; nothing more runs until you answer and say Go ahead.' : MEANWHILE,
     },
   };
 }
@@ -730,9 +742,10 @@ function joinChoice(ctx) {
   const fixed = joinedFolder(ctx.folder, run);
   if (fixed !== null) return { join: fixed, known: fixed };
   const joined = joinedRepo(run);
-  if (joined === null && !onlyInstall(ctx.folder)) return null;
-  const name = repoName(ctx.folder);
   const records = joinRecords(run);
+  // A run whose latest attempt missed is no longer joining, but its question is still asked again, whatever step 2 has since put in the folder.
+  if (joined === null && records.at(-1)?.after.missed === undefined && !onlyInstall(ctx.folder)) return null;
+  const name = repoName(ctx.folder);
   const tried = records.filter((c) => c.after.missed !== undefined).map((c) => ({ name: c.after.joined, missed: c.after.missed, ...(c.after.host === undefined ? {} : { host: c.after.host }), ...(c.after.address === true ? { address: true } : {}), ...(typeof c.after.at === 'string' ? { at: c.after.at } : {}), ...(typeof c.after.user === 'string' ? { user: c.after.user } : {}) }));
   // The repository an attempt since the last miss found.
   const known = records.slice(records.findLastIndex((c) => c.after.missed !== undefined) + 1).filter((c) => c.after.found === true).at(-1)?.after.joined ?? null;
@@ -1540,7 +1553,7 @@ async function holdsConfig({ host, info, run, api }) {
 
 // Whether a repository holds Wheelhouse v0.1.x's state branch, read with the director's own sign-in.
 async function holdsState({ remoteUrl, gitPath, env, run }) {
-  const listed = await setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: outsideAny() })(['ls-remote', '--heads', remoteUrl, `refs/heads/${STATE_BRANCH}`]);
+  const listed = await setupGit({ run, gitPath, env: { ...reaching(env, remoteUrl), GIT_CEILING_DIRECTORIES: ceilingOf() }, cwd: outsideAny() })(['ls-remote', '--heads', remoteUrl, `refs/heads/${STATE_BRANCH}`]);
   if (listed.code !== 0) return false;
   return String(listed.stdout).split(/\r?\n/).some((line) => line.endsWith(`\trefs/heads/${STATE_BRANCH}`));
 }
@@ -2113,7 +2126,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     const accounts = host === 'gitlab' ? 'account or groups' : 'account or organisations';
     parts.push(bare ? 'The repository set up with Wheelhouse, checked out here with its settings.'
       : tight ? `${product.repo ?? product.name}, the one set up with Wheelhouse, checked out here with its settings.`
-        : `${product.repo ?? product.name} on ${company ? `your company's GitLab at ${new URL(base).host}` : `your ${name} ${accounts}`}, brought into this folder once setup finds Wheelhouse's settings in it. Those saved settings then take the place of the starting settings setup made in this folder.`);
+        : `${product.repo ?? product.name} on ${company ? `your company's GitLab at ${new URL(base).host}` : `your ${name} ${accounts}`}, brought into this folder once setup finds Wheelhouse's settings in it. Setup then uses the project's saved settings instead of the choices made here.`);
   } else parts.push(bare ? `This project's repository on ${name}, kept as it is.` : `${product.repo} on ${name}, kept as it is.`);
   if (way === WAYS.asIs) {
     const keyCard = changes.find((c) => c.action === 'key-card');
@@ -2741,7 +2754,7 @@ export function hostStep({
             throw new Error(`${fixed} on ${NAME[host]} can't be found with your sign-in, or is no longer set up with Wheelhouse, so setup has stopped: this folder is checked out to it and joins nothing else; check the repository on ${NAME[host]}, then a fresh Go ahead tries again`);
           }
           if (found.length !== 1) {
-            answerRecord({ joined: join.name, missed: found.length === 0 ? 'none' : found.map((f) => f.repo), host, user, missedAt: now().toISOString(), ...(join.pin === undefined ? {} : { address: true, at: pinHostName(join.pin) }) });
+            answerRecord({ joined: join.name, missed: found.length === 0 ? 'none' : found.map((f) => f.repo), host, user, withdraws: ctx.consent ?? null, ...(join.pin === undefined ? {} : { address: true, at: pinHostName(join.pin) }) });
             throw new Error(joinMissLine({ host, wanted: join.name, found, at: pinHostName(join.pin), user }));
           }
           [joined] = found;
@@ -2836,7 +2849,7 @@ export function hostStep({
         writeProject(slug, kept);
         if (joined === null) await openRecords();
         // The computer's git settings a push trusts, recorded now that the director has seen the card that names them.
-        if (connection.mode === 'as-is') await confirmComputerSettings({ file: path.join(wheelhouseHome(), 'host', 'git-settings.json'), run, gitPath: git.path, cwd: outsideAny() });
+        if (connection.mode === 'as-is') await confirmComputerSettings({ file: path.join(wheelhouseHome(), 'host', 'git-settings.json'), run, gitPath: git.path, cwd: outsideAny(), ceiling: ceilingOf() });
         say(`Connected: ${project.repo} on ${NAME[host]}, ${connection.mode === 'quick' ? 'Quick' : connection.mode === 'as-is' ? 'your own git as it is' : 'narrow'}`);
         return [];
       } finally {

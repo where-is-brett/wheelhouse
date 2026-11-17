@@ -193,6 +193,11 @@ const typedCompanyHost = (choices) => {
 };
 
 
+// What the plan says of a project brought in that holds no Wheelhouse settings: found at step 3, which stops there.
+const SETTINGS_MISS = 'If setup can\'t find them there, it stops and asks you again before doing anything more.';
+// A project brought in is treated as having real users until setup can tell.
+const REAL_USERS_UNTIL = 'Treated as having real users until setup can tell.';
+
 // The plain line a choice adds to the one card, or null when it adds none. `name` is the product's,
 // `platform` the computer's, `host` the host the plan names.
 function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
@@ -212,8 +217,8 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     const named = typeof text === 'string' && backupNamed(text) === null ? repoNamed(text)?.split('/').at(-1) : null;
     // An owner/name looked for on the company's GitLab, as step 3 words it: its account or groups.
     // Whether the project holds Wheelhouse's settings is found at step 3, so the plan says it is brought in once they are found.
-    if (where === null && onCompanyGitLab(choices, host)) return `${named ?? name} from your account or groups on your company's GitLab${typedCompanyHost(choices) === null ? '' : ` at ${typedCompanyHost(choices)}`}, brought into this folder with its saved Wheelhouse settings once setup finds them there.`;
-    if (where !== null) return `${named ?? name} from ${where}, brought into this folder with its saved Wheelhouse settings once setup finds them there.`;
+    if (where === null && onCompanyGitLab(choices, host)) return `${named ?? name} from your account or groups on your company's GitLab${typedCompanyHost(choices) === null ? '' : ` at ${typedCompanyHost(choices)}`}, brought into this folder with its saved Wheelhouse settings. ${SETTINGS_MISS}`;
+    if (where !== null) return `${named ?? name} from ${where}, brought into this folder with its saved Wheelhouse settings. ${SETTINGS_MISS}`;
     return `${named ?? name}, set up with Wheelhouse, brought into this folder with its saved settings.`;
   }
   if (id === 'real-users') {
@@ -321,8 +326,10 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
   const keptHere = list.some((c) => c.label === KEEP_HERE);
   // Steps already done are said as done, and kept as they are, not listed among what setup will do.
   const signedTo = done.signedIn === 'gitlab' ? 'GitLab' : done.signedIn === 'github' ? 'GitHub' : null;
-  const doneLine = [...(done.tools ? ['setup\'s tools (step 2)'] : []), ...(signedTo === null ? [] : [`your sign-in to ${signedTo}`])];
-  if (doneLine.length > 0) lines.push(`Done already, and kept as it is: ${doneLine.join(' and ')}.`);
+  // The sign-in is used again only where the product goes on the host it was made to; else it is kept for later.
+  const signInUsed = signedTo !== null && !keptHere && hostOf(product, list) === signedTo;
+  if (signedTo !== null && !signInUsed) lines.push(`Done already: ${done.tools ? 'setup\'s tools (step 2), and ' : ''}your sign-in to ${signedTo}, kept for later; this project doesn't use it.`);
+  else if (done.tools || signInUsed) lines.push(`Done already, and kept as it is: ${[...(done.tools ? ['setup\'s tools (step 2)'] : []), ...(signInUsed ? [`your sign-in to ${signedTo}`] : [])].join(' and ')}.`);
   if (toRun.includes(3) && product && product.isNew === false && product.host !== 'local') lines.push(`${name} on ${product.host === 'gitlab' ? 'GitLab' : 'GitHub'}, as it is.`);
   // In the card's order: where it is kept, how agents reach it, its phase and data, Locked, the
   // description, then Apple signing.
@@ -332,6 +339,8 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     const readme = describedBy(c);
     const line = readme === null ? lineOf(c, { name, platform, choices: list, host: hostOf(product, list) }) : `Described as: ${readme}`;
     if (line !== null) lines.push(line);
+    const joinAnswer = (c.id === 'join' || c.id.startsWith('join-')) && !NOT_JOINING.includes(c.label) && backupNamed(c.text) === null;
+    if (line !== null && joinAnswer && !list.some((x) => x.id === 'real-users')) lines.push(REAL_USERS_UNTIL);
   }
   // Kept here with no backup: one line says both, since being only on this computer is what staying here means.
   if (lines.includes(ONLY_HERE_LINE) && lines.includes(KEPT_LINE)) {
@@ -416,6 +425,14 @@ export function consentIn(runId, answers) {
 export function customisingSince(answers) {
   const last = stepZero(answers).filter((a) => ONE_CARD_ID.test(a.id)).at(-1);
   return last?.label === CUSTOMISE || last?.label === CHANGE_CHOICE ? last.at : null;
+}
+
+// Whether a Go ahead is one a miss of the join question names as the one it stood on (its id and its time, as written), or one whose
+// time can't be read, which stands for nothing. Never compared against the clock, so a Go ahead given again after the miss is a new one.
+export function consentWithdrawn(changes, consent) {
+  if (consent === null || Number.isNaN(Date.parse(consent.at))) return true;
+  return (Array.isArray(changes) ? changes : []).some((c) => c?.step === 3 && c.kind === 'answer' && c.after?.missed !== undefined
+    && c.after.withdraws?.id === consent.id && c.after.withdraws?.at === consent.at);
 }
 
 const newer = (a, b) => Date.parse(a) > Date.parse(b);

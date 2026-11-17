@@ -307,10 +307,10 @@ function withDirectorsGit(fenced, { reach, directorEnv, settingsFile }) {
 
 // The computer's own settings (system, then global, includes resolved as they apply in `cwd`'s repository, in
 // git's own order) as [{ key, value }], `value` null for a key with no value. Null when git could not say.
-export async function readComputerSettings({ run = realRun, gitPath = 'git', cwd }) {
+export async function readComputerSettings({ run = realRun, gitPath = 'git', cwd, ceiling = null }) {
   let got;
   try {
-    got = await run(gitPath, ['config', '--list', '--includes', '--show-scope', '-z'], { cwd, env: { GIT_TERMINAL_PROMPT: '0' }, baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
+    got = await run(gitPath, ['config', '--list', '--includes', '--show-scope', '-z'], { cwd, env: { GIT_TERMINAL_PROMPT: '0', ...(ceiling === null ? {} : { GIT_CEILING_DIRECTORIES: ceiling }) }, baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
   } catch {
     return null;
   }
@@ -510,8 +510,8 @@ function checkTrusted(file, entries) {
 }
 
 // The director's confirmation of the computer's settings as they are now (a later part's card calls this).
-export async function confirmComputerSettings({ file, run = realRun, gitPath = 'git', cwd }) {
-  const entries = await readComputerSettings({ run, gitPath, cwd });
+export async function confirmComputerSettings({ file, run = realRun, gitPath = 'git', cwd, ceiling = null }) {
+  const entries = await readComputerSettings({ run, gitPath, cwd, ceiling });
   if (entries === null) throw new Error("Git's settings on this computer could not be read");
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   fs.writeFileSync(file, `${JSON.stringify({ fingerprint: settingsFingerprint(entries) }, null, 2)}\n`, { mode: 0o600 });

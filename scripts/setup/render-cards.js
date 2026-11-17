@@ -469,8 +469,11 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
             state.missed = true;
             const { joinMissLine } = await import('./host.js');
             const at = new URL(COMPANY_ADDRESS).host;
+            const { consentIn } = await import('./choices.js');
+            const { answersFor } = await import('./clicks.js');
+            const standing = consentIn(runId(), answersFor(runId()));
             tell(joinMissLine({ host: 'gitlab', wanted: `${USER}/cafe-menu`, found: [], at, user: USER }));
-            addChanges(runId(), [{ id: `chg-render-miss-${clock}`, step: 3, kind: 'answer', target: 'step 3', before: null, after: { joined: `${USER}/cafe-menu`, missed: 'none', host: 'gitlab', user: USER, missedAt: now().toISOString(), address: true, at } }]);
+            addChanges(runId(), [{ id: `chg-render-miss-${clock}`, step: 3, kind: 'answer', target: 'step 3', before: null, after: { joined: `${USER}/cafe-menu`, missed: 'none', host: 'gitlab', user: USER, withdraws: { at: standing.at, id: standing.id }, address: true, at } }]);
             // The Go ahead given before the miss no longer holds: the one card is asked again, then every step from where setup stopped.
             if (!(await oneCard())) return { cards, end, said, heard };
             continue;

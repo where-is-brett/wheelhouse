@@ -194,7 +194,7 @@ function productAsk(name, { described, realUsers }) {
     typed: true,
     card: {
       level: 2,
-      what: `${realUsers ? 'It has real users.' : 'It has no real users yet.'} In a sentence, what is ${name}, and who is it for? ${described === null ? 'Type it' : 'Choose the README\'s words, or type your own'} as your answer.`,
+      what: `${realUsers ? `${name} has real users.` : `${name} has no real users yet.`} In a sentence, what is ${name}, and who is it for? ${described === null ? 'Type it' : 'Choose the README\'s words, or type your own'} as your answer.`,
       why: 'Wheelhouse explains its work to you in terms of your product.',
       options,
       recommend: options[0].label,
