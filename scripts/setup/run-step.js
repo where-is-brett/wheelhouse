@@ -23,14 +23,14 @@ import path from 'node:path';
 import { readJournal, markStep } from './journal.js';
 import { loadSteps, runApply } from './engine.js';
 import { planHash } from './steps.js';
-import { readSketch, sketchOf, sayDifference, sayNoList } from './plan-sketch.js';
+import { readSketch, removeSketch, sketchOf, sayDifference, detailOf, sayNoList } from './plan-sketch.js';
 import { answersWithConsent } from './choices.js';
 import { stopState } from '../lib/stop.js';
 import { STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
 export const TICK_MS = 5 * 1000;
-const CHANGED = 'the list changed before the step began, so nothing was changed';
+const CHANGED = 'The plan for this step changed between your click and its start, so nothing was done. Open setup again for the step\'s new card.';
 
 export async function runStep([modulePath, folder, stepText, hash, runId, clickedAt, deadlineText, userHome, sessionKind, sessionStartedAt], {
   now = () => new Date(), exit = (code) => process.exit(code), tickMs = TICK_MS,
@@ -49,15 +49,16 @@ export async function runStep([modulePath, folder, stepText, hash, runId, clicke
   // before the helper stops counting the step as running and a fresh click may start another.
   const past = () => now().getTime() >= deadline - tickMs;
   if (!mine(run.steps?.[n]) || past()) return 1;
-  const fail = (reason) => {
+  const fail = (reason, detail) => {
     try {
-      markStep(runId, n, 'failed', { now, reason, when: mine });
+      markStep(runId, n, 'failed', { now, reason, detail, when: mine });
     } catch { /* the journal could not take it; status says the step is stuck once its time is up */ }
     return 1;
   };
   const ticker = setInterval(() => {
     if (!past()) return;
     fail(`it was still running ${STEP_TIMEOUT_MS / 60000} minutes after the click`);
+    removeSketch(runId, n);
     expired = true;
     clearInterval(ticker);
     exit(1);
@@ -68,11 +69,18 @@ export async function runStep([modulePath, folder, stepText, hash, runId, clicke
     if (stopState().on) return fail('All stop is on');
     const ctx = { folder, step: n, runId, startedAt: run.startedAt, now, userHome, platform: process.platform, desktop: sessionKind === 'desktop', sessionStartedAt: Number.isFinite(Date.parse(sessionStartedAt)) ? sessionStartedAt : undefined, answers: answersWithConsent(runId).answers, stopped: () => stopState().on };
     const got = await step.plan(ctx);
-    if (!Array.isArray(got?.changes)) return fail(`${CHANGED}: ${sayNoList(got)}`);
+    // The director's line says what is different in plain words; the exact kind, action, target and
+    // field names (never values) go to the entry's failedDetail, for agents.
+    if (!Array.isArray(got?.changes)) {
+      const none = sayNoList(got);
+      return fail(`${CHANGED} What is different: ${none.plain}.`, none.detail);
+    }
     if (planHash(got.changes) !== hash) {
       const before = readSketch(runId, n, hash);
-      const said = before === null ? '' : sayDifference(before, sketchOf(got.changes));
-      return fail(said === '' ? CHANGED : `${CHANGED}: ${said}`);
+      if (before === null) return fail(CHANGED);
+      const planned = sketchOf(got.changes, before.salt);
+      const said = sayDifference(before, planned);
+      return fail(said === '' ? CHANGED : `${CHANGED} What is different: ${said}.`, detailOf(before, planned) || undefined);
     }
     if (expired) return 1;
     const done = await runApply({ step, runId, changes: got.changes, ctx, current: mine });
@@ -81,6 +89,7 @@ export async function runStep([modulePath, folder, stepText, hash, runId, clicke
     return fail((error instanceof Error ? error.message : '') || 'the step did not finish');
   } finally {
     clearInterval(ticker);
+    removeSketch(runId, n);
   }
 }
 
