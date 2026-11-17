@@ -66,6 +66,8 @@ const SHA12 = '([0-9a-f]{12})';
 // The plain lines a card needs before its last: the question, why it is the director's and what happens meanwhile. A
 // question that is the same words as `what` (an answer, setup's kinds) carries them once, so a card with a question of its own has one more.
 const LEAD_LINES = 3;
+// How long a phone card asked after setup finished is still setup's.
+const PHONE_HOURS = 6;
 const EXPLAIN_MORE = 'Explain more';
 const RECOMMENDED = 'Recommended:';
 const REPLY_CODE = 'Reply code:';
@@ -323,11 +325,13 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
   const decided = decidedDeny(found, at);
   if (decided !== undefined) return { deny: decided };
   // A folder that is being set up as well adds setup's cards after the state's, so a state card wins.
-  // Once only the phone step is left (it is offered last), only its cards are setup's.
+  // Once only the phone step is left (it is offered last), only its cards are setup's, and only those asked
+  // within PHONE_HOURS: a phone card never answered doesn't take the project's questions for good.
   const setup = beingSetUp(input.cwd, { phone: true });
   const phoneOnly = setup !== null && beingSetUp(input.cwd) === null;
   const open = allOutcomes(project, outcomes).filter((o) => o.decided === null && typeof o.card?.data?.question === 'string');
-  const setupOpen = setup === null ? [] : setupCardsFor(input.cwd, setup.run?.id).filter((o) => !phoneOnly || o.step === PUSH_TEST_STEP);
+  const recent = (o) => o.step === PUSH_TEST_STEP && at.getTime() - o.at < PHONE_HOURS * 3600000;
+  const setupOpen = setup === null ? [] : setupCardsFor(input.cwd, setup.run?.id).filter((o) => !phoneOnly || recent(o));
   // Each question's card: the one it names exactly, else the waiting card it is a reworded copy of; null for neither.
   const matched = questions.map((q, i) => {
     if (typeof q?.question !== 'string') return null;

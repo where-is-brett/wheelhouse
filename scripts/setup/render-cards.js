@@ -148,7 +148,7 @@ async function connectedAnswer(w, name, args, options) {
 
 // Step 3's Go ahead, as its apply leaves the computer: the project on the pretend host with the host's README, this
 // folder connected to it on main, the company's GitLab named in the folder's git settings, the project's record and
-// private record, and on Narrow the project's own key kept. Gives the world's `connected`.
+// private record, and on Narrow the project's own key kept (on the public GitLab, the pasted token). Gives the world's `connected`.
 async function connectAsStepThree({ folder, scratch, changes }) {
   const { writeProject } = await import('../lib/projects.js');
   const { projectSlug, stateDir } = await import('../lib/paths.js');
@@ -200,7 +200,8 @@ async function connectAsStepThree({ folder, scratch, changes }) {
   writeProject(slug, record);
   fs.mkdirSync(stateDir(slug), { recursive: true });
   await git(stateDir(slug), 'init', '-q', '-b', 'main');
-  if (host === 'gitlab' && mode === 'narrow') writeKey(`gitlab-project-${PROJECT_ID}`, { kind: 'project-key', token: 'glpat-render-project-key', expiresAt: '2027-11-16' });
+  // The public GitLab's free plan makes no project key, so step 3 there keeps the token the director pasted.
+  if (host === 'gitlab' && mode === 'narrow') writeKey(`gitlab-project-${PROJECT_ID}`, base === DEFAULT_GITLAB ? { kind: 'pasted-token', token: 'glpat-render-pasted-token', expiresAt: '2026-12-17' } : { kind: 'project-key', token: 'glpat-render-project-key', expiresAt: '2027-11-16' });
   return connected;
 }
 

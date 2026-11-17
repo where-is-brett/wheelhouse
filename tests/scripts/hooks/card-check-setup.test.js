@@ -238,8 +238,10 @@ const finishAllBut = (run, but) => {
 };
 const cutPhone = () => ({ ...PHONE, question: PHONE.question.replace(' three minutes.', ' three.'), options: [{ label: 'Ready', description: 'x' }, { label: 'Skip for now', description: 'y' }] });
 
+const hoursBefore = (h) => () => new Date(T0 - h * 3600000);
+
 test('in a project whose setup waits only on the phone step, a reworded phone card is swapped back', () => inProject(async ({ folder, first }) => {
-  noteAsked({ runId: first.id, folder, step: PUSH_TEST_STEP, id: 'phone-ready', card: PHONE, now: () => NOW });
+  noteAsked({ runId: first.id, folder, step: PUSH_TEST_STEP, id: 'phone-ready', card: PHONE, now: hoursBefore(1) });
   finishAllBut(first, PUSH_TEST_STEP);
   const out = await inProjectRun({ ...call(folder, cutPhone()), session_id: SID }, { outcomes: () => [] });
   assert.deepEqual(swappedOf(out), [printedOf(PHONE)]);
@@ -252,8 +254,15 @@ test('once only the phone step is left, an earlier setup card is no longer swapp
   assert.equal(out?.hookSpecificOutput?.updatedInput?.questions?.[0]?.question === ASKED.question, false);
 }));
 
+test('a phone card asked more than six hours ago is no longer setup\'s', () => inProject(async ({ folder, first }) => {
+  noteAsked({ runId: first.id, folder, step: PUSH_TEST_STEP, id: 'phone-ready', card: PHONE, now: hoursBefore(7) });
+  finishAllBut(first, PUSH_TEST_STEP);
+  const out = await inProjectRun({ ...call(folder, cutPhone()), session_id: SID }, { outcomes: () => [] });
+  assert.equal(out?.hookSpecificOutput?.updatedInput?.questions?.[0]?.question === PHONE.question, false);
+}));
+
 test('once the phone step is done too, a reworded phone card is no longer setup\'s', () => inProject(async ({ folder, first }) => {
-  noteAsked({ runId: first.id, folder, step: PUSH_TEST_STEP, id: 'phone-ready', card: PHONE, now: () => NOW });
+  noteAsked({ runId: first.id, folder, step: PUSH_TEST_STEP, id: 'phone-ready', card: PHONE, now: hoursBefore(1) });
   finishAllBut(first, null);
   const out = await inProjectRun({ ...call(folder, cutPhone()), session_id: SID }, { outcomes: () => [] });
   assert.equal(out?.hookSpecificOutput?.updatedInput?.questions?.[0]?.question === PHONE.question, false);
