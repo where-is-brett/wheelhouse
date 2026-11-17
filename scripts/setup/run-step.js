@@ -1,7 +1,9 @@
 // scripts/setup/run-step.js
 // A long setup step's own process (ruling R15), started by the helper, detached, once the
 // director's click on the step's card has been checked:
-//   node run-step.js <steps module> <folder> <step> <hash> <run id> <clicked at> <deadline> <user home> <session kind> <session started at>
+//   node run-step.js <steps module> <folder> <step> <hash> <run id> <clicked at> <deadline> <user home> <session kind> <session started at> <handoff error>
+//   (<session started at> may be '': the helper has none; <handoff error> is why the helper could not
+//   write the handed list, or '')
 // It acts only for the attempt it was started for: the step's journal entry must still hold that
 // click (<clicked at>, as the helper recorded it) and no finish. The helper hands it the list the
 // click named (scripts/setup/plan-sketch.js), and it goes ahead only with a list that has the hash
@@ -33,7 +35,7 @@ export const TICK_MS = 5 * 1000;
 // The director's line begins in lower case: status says it after "did not finish:".
 const CHANGED = 'the plan for this step changed between your click and its start';
 const NOTHING_DONE = 'so nothing was done.';
-const AGAIN = 'Open setup again for the step\'s new card.';
+const AGAIN = 'Setup will ask you about this step again.';
 const DIFFERENT = 'What is different:';
 
 export async function runStep([modulePath, folder, stepText, hash, runId, clickedAt, deadlineText, userHome, sessionKind, sessionStartedAt, handoffError], {
@@ -93,7 +95,7 @@ export async function runStep([modulePath, folder, stepText, hash, runId, clicke
         const detail = [none.detail, noHanded].filter((x) => x !== '').join('; ');
         return fail(none.again
           ? `${CHANGED}, ${NOTHING_DONE} ${DIFFERENT} ${none.plain}. ${AGAIN}`
-          : `${CHANGED}: ${none.plain}, so setup has nothing more to do for it.`, detail);
+          : `${CHANGED}, and the step turned out to need nothing more, so nothing was done and setup carries on.`, detail);
       }
       if (planHash(got.changes) !== hash) {
         if (handed === null) return fail(`${CHANGED}, ${NOTHING_DONE} ${AGAIN}`, noHanded);

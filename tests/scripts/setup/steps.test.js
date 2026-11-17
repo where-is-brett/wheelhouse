@@ -15,7 +15,7 @@ import { makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { startRun, markStep, findRun, applyJsonKey, reverseChange, newId } from '../../../scripts/setup/journal.js';
 import { runStep } from '../../../scripts/setup/run-step.js';
-import { writeSketch, readSketch, sketchOf, sayDifference, detailOf } from '../../../scripts/setup/plan-sketch.js';
+import { writeSketch, readSketch, removeSketch, sketchOf, sayDifference, detailOf } from '../../../scripts/setup/plan-sketch.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 import * as setupRun from '../../../scripts/lib/setup-run.js';
@@ -260,7 +260,7 @@ test('a long step\'s process plans in the session kind it was started for, so it
 
 const HEAD = 'the plan for this step changed between your click and its start';
 const CHANGED = `${HEAD}, so nothing was done.`;
-const AGAIN = 'Open setup again for the step\'s new card.';
+const AGAIN = 'Setup will ask you about this step again.';
 const sketchPath = (home, runId, step = 1, clicked = NOW) => path.join(home, 'step-plans', `${runId}-${step}-${clicked.getTime()}.json`);
 
 test('a long step\'s process applies the list the helper handed it, though a fact the plan reads answers differently the next time', async () => {
@@ -288,7 +288,6 @@ test('a long step\'s process applies the list the helper handed it, though a fac
     assert.equal(findRun(folder).steps[1].failed, `${CHANGED} ${AGAIN}`);
     assert.equal(findRun(folder).steps[1].failedDetail, 'no handed list (file missing or for another hash)');
     // A list handed over for another click is not used.
-
     markStep(run.id, 1, 'clickedAt', { now: () => NOW });
     writeSketch(run.id, 1, at(MINUTE).toISOString(), hash, planned);
     assert.equal(await runStep(childArgs({ folder, hash, runId: run.id }), { now: () => NOW }), 1);
@@ -332,7 +331,7 @@ test('a long step\'s process told what it handed itself is not the list the clic
     assert.equal(added.failed, `${CHANGED} What is different: one more item (settings file). ${AGAIN}`);
     assert.equal(added.failedDetail, `added json-key ${path.join(folder, 'y.json')}`);
     const removed = await failedWith({ 1: [{ file: 'z.json', key: ['a'], value: 'token-one-9f3' }] });
-    assert.match(removed.failed, /one more item \(settings file\); one item no longer needed \(settings file\)\. Open setup again/);
+    assert.match(removed.failed, /one more item \(settings file\); one item no longer needed \(settings file\)\. Setup will ask you about this step again/);
     assert.match(removed.failedDetail, /^added json-key .*z\.json; removed json-key .*x\.json$/);
     for (const step of [changed, added, removed]) {
       assert.doesNotMatch(`${step.failed} ${step.failedDetail}`, /token-/);
@@ -349,7 +348,7 @@ test('a long step\'s process told what it handed itself is not the list the clic
     const waiting = await failedWith({ wait: { 1: { ms: 5, why: 'later' } } });
     assert.equal(waiting.failed, `${CHANGED} What is different: the step now has to wait for something else first. ${AGAIN}`);
     const settled = await failedWith({ settle: [1] });
-    assert.equal(settled.failed, `${HEAD}: the step has nothing left to do, so setup has nothing more to do for it.`);
+    assert.equal(settled.failed, `${HEAD}, and the step turned out to need nothing more, so nothing was done and setup carries on.`);
     // Without the file, the line is the first sentence and the way on, and the next click clears the detail.
     fs.writeFileSync(path.join(home, 'test-world.json'), JSON.stringify({ 1: [{ file: 'x.json', key: ['a'], value: 'token-two-b71' }] }));
     markStep(run.id, 1, 'clickedAt', { now: () => NOW });
@@ -436,6 +435,19 @@ test('the file handed for a click is removed when the process is refused, not th
   });
 });
 
+test('a run id that is not plain characters names no file, so nothing outside the folder is read, written or removed', async () => {
+  await withHome(async (home) => {
+    fs.mkdirSync(home, { recursive: true });
+    const outside = path.join(path.dirname(home), 'x-1-' + NOW.getTime() + '.json');
+    fs.writeFileSync(outside, '{}');
+    removeSketch('../../x', 1, NOW.toISOString());
+    assert.equal(fs.existsSync(outside), true, 'nothing outside step-plans is removed');
+    assert.notEqual(writeSketch('../../x', 1, NOW.toISOString(), H, []), '');
+    assert.equal(readSketch('../../x', 1, NOW.toISOString(), H), null);
+    assert.equal(fs.existsSync(path.join(home, 'step-plans')), false, 'nothing was made');
+  });
+});
+
 test('a process with no handed list says so to agents, with why the helper could not write one', async () => {
   await withHome(async (home) => {
     const folder = fs.realpathSync.native(tempFolder('wh-nofile '));
@@ -446,7 +458,7 @@ test('a process with no handed list says so to agents, with why the helper could
     // The folder of the files is not a folder of the user's own: the write is refused and says why.
     fs.writeFileSync(path.join(home, 'step-plans'), 'not a folder');
     const why = writeSketch(run.id, 1, NOW.toISOString(), hash, []);
-    assert.match(why, /\S/);
+    assert.equal(why, 'the folder is not owned by this user');
     markStep(run.id, 1, 'clickedAt', { now: () => NOW });
     assert.equal(await runStep([...childArgs({ folder, hash, runId: run.id }), 'terminal', '', why], { now: () => NOW }), 1);
     assert.equal(findRun(folder).steps[1].failed, `${CHANGED} ${AGAIN}`);

@@ -170,8 +170,8 @@ test('the playbook closes the gaps its pressure runs found', () => {
 
 // A failed step's `Detail:` line under status is for the agent alone.
 test('the playbook keeps status\'s Detail: lines from the director', () => {
-  assert.match(playbook, /A line that begins `Detail:` is for you alone: never show it or paraphrase it to the director/);
-  assert.match(playbook, /a `Detail:` line under it is for you alone[^\n]*never show it or paraphrase it/);
+  assert.match(playbook, /A `Detail:` line \(indented under a step\) is for you alone: never show it or paraphrase it to the director[^\n]*Tell the director only the step's own line/);
+  assert.match(playbook, /a `Detail:` line \(indented under a step\) is for you alone[^\n]*never show it or paraphrase it; tell the director only the step's own line/);
 });
 
 // From a new product's setup on v0.1.2: `wait 10` was refused while step 10 ran, and the session's

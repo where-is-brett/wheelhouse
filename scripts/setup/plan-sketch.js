@@ -41,7 +41,8 @@ const PLAIN = {
 
 // The folder of these files, which uninstall removes.
 export const stepPlansDir = () => path.join(wheelhouseHome(), 'step-plans');
-const sketchFile = (runId, step, clickedAt) => path.join(stepPlansDir(), `${runId}-${step}-${Date.parse(clickedAt)}.json`);
+// The file for a click, or null for a run id that is not plain characters, so no path can leave the folder.
+const sketchFile = (runId, step, clickedAt) => (/^[A-Za-z0-9_-]+$/.test(String(runId)) ? path.join(stepPlansDir(), `${runId}-${step}-${Date.parse(clickedAt)}.json`) : null);
 const nameOf = (entry) => IDENTITY.map((k) => (typeof entry?.[k] === 'string' ? entry[k] : '')).join('\u0000');
 
 // The sketch of a list of changes: a salt, and each entry's name and its fields' digests.
@@ -66,11 +67,12 @@ export function writeSketch(runId, step, clickedAt, hash, changes) {
   let failure = '';
   try {
     const file = sketchFile(runId, step, clickedAt);
+    if (file === null) throw new Error('no such run');
     const dir = path.dirname(file);
     // The folder is the user's own, a real folder and not a link to one.
     if (fs.existsSync(dir)) {
       const found = fs.lstatSync(dir);
-      if (!found.isDirectory() || (process.platform !== 'win32' && found.uid !== process.getuid())) throw new Error('the folder is not the user\'s own');
+      if (!found.isDirectory() || (process.platform !== 'win32' && found.uid !== process.getuid())) throw new Error('the folder is not owned by this user');
     }
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     fs.chmodSync(dir, 0o700);
@@ -108,7 +110,9 @@ function sweep(dir) {
 // What was kept for this click, when it is of the list `hash` names; otherwise null.
 export function readSketch(runId, step, clickedAt, hash) {
   try {
-    const got = JSON.parse(fs.readFileSync(sketchFile(runId, step, clickedAt), 'utf8'));
+    const file = sketchFile(runId, step, clickedAt);
+    if (file === null) return null;
+    const got = JSON.parse(fs.readFileSync(file, 'utf8'));
     return got?.hash === hash && typeof got.salt === 'string' && Array.isArray(got.entries) && Array.isArray(got.changes) ? got : null;
   } catch {
     return null;
@@ -119,7 +123,8 @@ export function readSketch(runId, step, clickedAt, hash) {
 // removes it.
 export function removeSketch(runId, step, clickedAt) {
   try {
-    fs.rmSync(sketchFile(runId, step, clickedAt), { force: true });
+    const file = sketchFile(runId, step, clickedAt);
+    if (file !== null) fs.rmSync(file, { force: true });
   } catch { /* a leftover is removed with the folder at uninstall */ }
 }
 
