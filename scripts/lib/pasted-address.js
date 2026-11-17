@@ -41,9 +41,15 @@ export function pastedAddress(text) {
   } catch {
     return { unreadable: true };
   }
-  // A host written with its root dot (gitlab.com., localhost.) is the same host in these checks.
+  // A host written with its root dot (a public host with its root dot, localhost.) is the same host in these checks.
   const hostname = unrooted(parts.hostname);
   if (isBareHost(hostname)) return { unreadable: true };
+  // A host in another number form (127.0.0.0x1) is the address a URL reader makes of it, and is checked as that too.
+  try {
+    if (isBareHost(unrooted(new URL(`https://${hostname}`).hostname))) return { unreadable: true };
+  } catch {
+    return { unreadable: true };
+  }
   return isOtherForge(hostname) ? { forge: true } : parts;
 }
 
@@ -119,7 +125,9 @@ export function pinOf(text) {
   const hostname = unrooted(there.hostname);
   if (hostname === PUBLIC_HOST || hostname === `www.${PUBLIC_HOST}`) return { host: 'gitlab', company: { base: DEFAULT_GITLAB } };
   const company = companyAddress(hostWords({ ...there, hostname }));
-  return company.why === undefined ? { host: 'gitlab', company } : { unreadable: true };
+  if (company.why !== undefined) return { unreadable: true };
+  // The address the company's base becomes is checked again, whatever form the host was written in.
+  return isBareHost(new URL(company.base).hostname) ? { unreadable: true } : { host: 'gitlab', company };
 }
 
 // The text of a pasted address with anything a secret could sit in taken out, for keeping: the user and token written before

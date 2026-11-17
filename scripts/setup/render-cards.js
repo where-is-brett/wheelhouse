@@ -385,7 +385,7 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
       }, { client, now: () => new Date(clock - 500) });
       // The attempt to bring the pasted project in found no Wheelhouse settings in it, as step 3's apply records it.
       if (id === 'join' && p.miss) {
-        addChanges(runId(), [{ id: `chg-render-miss-${clock}`, step: 3, kind: 'answer', target: 'step 3', before: null, after: { joined: `${USER}/cafe-menu`, missed: 'none', host: 'gitlab', address: true } }]);
+        addChanges(runId(), [{ id: `chg-render-miss-${clock}`, step: 3, kind: 'answer', target: 'step 3', before: null, after: { joined: `${USER}/cafe-menu`, missed: 'none', host: 'gitlab', address: true, at: new URL(COMPANY_ADDRESS).host } }]);
       }
     };
     const plan = (step) => routes['/setup/plan']({ folder, step, ...(desktop ? { desktop: true } : {}) });

@@ -643,11 +643,14 @@ function setupAnswerOf(cwd, { question, label, card, signable, typed, why }) {
   // A pasted project address on step 3's join question is kept without the user, token or query written in it; it reads as the
   // same address. It is cleaned before the scan, so a password written into an address does not lose the whole answer.
   const join = asked.step === 3 && /^join(?:-|$)/.test(String(asked.id));
-  const kept = join && pastedAddress(label) !== null ? withoutSecrets(label) : label;
+  // Join text that is no address loses anything from a ?, # or ; on, where a token could sit.
+  const kept = join ? (pastedAddress(label) !== null ? withoutSecrets(label) : label.replace(/[?#;].*$/s, '')) : label;
   // The text as typed is scanned too, with only the user, query and ;/# parts cut: what the address cleaning leaves out (words
   // after a space or a line break, a second address with a password in it) must not slip past the scan unseen.
   const rawCut = label.replace(/^(\s*[A-Za-z][A-Za-z0-9+.-]*:\/\/)[^/?#\s]*@/, '$1').replace(/[;?#].*$/s, '');
-  if (scanContent(kept).length > 0 || (join && scanContent(rawCut).length > 0)) {
+  // The text is also scanned with its percent-escapes read as spaces, since the scanner does not see a key after %20.
+  const spaced = kept.replace(/%[0-9a-f]{2}/gi, ' ');
+  if (scanContent(kept).length > 0 || scanContent(spaced).length > 0 || (join && scanContent(rawCut).length > 0)) {
     // On the join card the secret is never kept, but the card comes back saying why.
     if (!join) return { why: 'the text typed holds what looks like a secret' };
     return { asked, made: { kind: 'action', data: { ...data, label: null, text: HELD_SECRET } } };

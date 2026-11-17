@@ -19,7 +19,7 @@
 import { askDirectorGit, directorProxy } from '../host/director-git.js';
 import { curlPath, request, NO_CURL } from '../host/curl.js';
 import { gitlabApi } from '../host/gitlab-key.js';
-import { DEFAULT_GITLAB, parseRemote } from '../host/gitlab-base.js';
+import { DEFAULT_GITLAB } from '../host/gitlab-base.js';
 import { tokenUrl } from '../host/token-url.js';
 import { withoutTokens } from '../lib/token-names.js';
 
@@ -94,6 +94,19 @@ export async function checkApiKey({ host, base = DEFAULT_GITLAB, key, via = {} }
   return { state: 'error', status: answer.status };
 }
 
+// The host git itself reads from a remote's address: the authority runs to the first /, the host is what follows the last @,
+// and a backslash in the authority makes it no host to trust (git and a URL reader differ on it). null when none is read.
+function gitHostOf(remoteUrl) {
+  const text = String(remoteUrl).trim();
+  const web = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/]*)/.exec(text);
+  if (web) {
+    if (web[1].includes('\\')) return null;
+    return web[1].replace(/^.*@/, '').replace(/:\d*$/, '').toLowerCase();
+  }
+  const scp = /^(?:[^@/\s]*@)*([^:/\s]+):/.exec(text);
+  return scp ? scp[1].toLowerCase() : null;
+}
+
 // What step 3 finds about the computer's own road to the host, with nothing asked:
 //   { transport, helper, gitReaches, key, user, username }
 // `key` is 'none' (git holds no key), 'works' (it passes GET /user), 'push-only' (a 403), 'refused' (a 401),
@@ -105,7 +118,7 @@ export async function findAccess({ host, base = DEFAULT_GITLAB, repo = null, rem
   // only where git is to reach github.com: the host of the remote asked, else the host's own address.
   const reached = (() => {
     try {
-      return remoteUrl === null ? new URL(address).hostname : parseRemote(remoteUrl).hostname;
+      return remoteUrl === null ? new URL(address).hostname : gitHostOf(remoteUrl);
     } catch {
       return null;
     }

@@ -133,6 +133,22 @@ test('a password written into an address typed on the join card is cleaned out a
         }
       }
     }
+    // A token behind a percent-escape, or after a ; in the host, is kept nowhere either.
+    const key = `ghp_${'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'}`;
+    for (const text of [`https://gitlab.example.org/g/p%20${key}`, `https://h;x.example.org/g/p"${key}`]) {
+      fs.rmSync(path.join(home, 'setup', 'answers'), { recursive: true, force: true });
+      fs.rmSync(path.join(home, 'setup', 'answered'), { recursive: true, force: true });
+      await run(answer(text));
+      assert.deepEqual(texts(), [HELD_SECRET], text);
+      for (const dir of ['answers', 'records', 'answered']) {
+        for (const n of listOf(home, dir)) assert.equal(fs.readFileSync(path.join(home, 'setup', dir, n), 'utf8').includes(key.slice(0, 12)), false, `${dir}/${n}`);
+      }
+    }
+    // Join text with no scheme keeps no query, fragment or ;parameter.
+    fs.rmSync(path.join(home, 'setup', 'answers'), { recursive: true, force: true });
+    fs.rmSync(path.join(home, 'setup', 'answered'), { recursive: true, force: true });
+    await run(answer('gitlab.example.org/g/p?private_token=abc'));
+    assert.deepEqual(texts(), ['gitlab.example.org/g/p']);
   });
 });
 

@@ -36,7 +36,7 @@ import { engineWanted, engineLine } from './engine-parts.js';
 import { HEALTH_STEP, onRunList, stepDone } from '../lib/setup-run.js';
 import { askedRecord, answersFor } from './clicks.js';
 import { macKeepsAway } from '../lib/host-lines.js';
-import { COMPANY_GITLAB, GITLAB_COM, HOST_LABELS, pinOf, repoNamed, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
+import { COMPANY_GITLAB, GITLAB_COM, companyAddress, HOST_LABELS, pinOf, repoNamed, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
 import { LIVE_DATA, PRODUCT, SIGNS_APPS, productName } from './questions.js';
 import { FIRST_CHECK_LINE, KEEP_HERE, KEPT_LINE, ONLY_HERE_AFTER, ONLY_HERE_LINE, PUT_ON_GITLAB, STARTED_LINE } from './local.js';
 import { backupNamed } from '../host/local/restore.js';
@@ -186,6 +186,15 @@ function hostOf(product, choices) {
 // A company's own GitLab, chosen on the which-GitLab card and not taken back on the address card.
 const onCompanyGitLab = (choices, host) => host === 'GitLab' && (addressHostName(choices)?.startsWith('your company') || choices.some((c) => c.id.startsWith('gitlab-where') && c.label === COMPANY_GITLAB) && !choices.some((c) => c.id.startsWith('gitlab-address') && c.label === GITLAB_COM));
 
+// The company GitLab's host name the director typed on step 3's address question, or null while none is read.
+const typedCompanyHost = (choices) => {
+  const typed = choices.filter((c) => c.id.startsWith('gitlab-address') && typeof c.text === 'string').at(-1);
+  return typed === undefined ? null : companyAddress(typed.text).host ?? null;
+};
+
+// What a product brought in from another computer leaves unasked here.
+const OTHER_COMPUTER_ANSWERS = ' Your answers about users, description and live data come from your other computer instead.';
+
 // The plain line a choice adds to the one card, or null when it adds none. `name` is the product's,
 // `platform` the computer's, `host` the host the plan names.
 function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
@@ -204,8 +213,8 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     // The product's own name, where the typed answer (an address, or owner/name) gives it, not the folder's.
     const named = typeof text === 'string' && backupNamed(text) === null ? repoNamed(text)?.split('/').at(-1) : null;
     // An owner/name looked for on the company's GitLab, as step 3 words it: its account or groups.
-    if (where === null && onCompanyGitLab(choices, host)) return `${named ?? name}, from your other computer, found in your account or groups on your company's GitLab, brought into this folder.`;
-    return `${named ?? name}, from your other computer${where === null ? '' : `, on ${where}`}, brought into this folder.`;
+    if (where === null && onCompanyGitLab(choices, host)) return `${named ?? name}, from your other computer, found in your account or groups on your company's GitLab${typedCompanyHost(choices) === null ? '' : ` at ${typedCompanyHost(choices)}`}, brought into this folder.${OTHER_COMPUTER_ANSWERS}`;
+    return `${named ?? name}, from your other computer${where === null ? '' : `, on ${where}`}, brought into this folder.${OTHER_COMPUTER_ANSWERS}`;
   }
   if (id === 'real-users') {
     const live = choices.find((c) => c.id === 'live-data')?.label;
@@ -224,6 +233,7 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
       : host === 'GitLab' && toolOut ? ' On Windows it is kept here, where any agent\'s command could read it.'
         : ` ${host}'s own sign-in also stays here, where any agent's command could read it.`;
     if (label === WAYS.quick) return platform === 'darwin' ? `Agents use your ordinary ${host} sign-in, which reaches your whole account; ${macKeepsAway(host.toLowerCase())}.` : `Agents use your ordinary ${host} sign-in, which reaches your whole account${platform === 'win32' ? '; on Windows any agent\'s command could read it' : ''}.`;
+    if (label === STRICTER && host === 'GitLab') return `A GitLab key for this project only; where GitLab won't allow one, a ${PERSONAL_DAYS}-day token stands in and acts as you across GitLab.${stays}`;
     if (label === STRICTER) return `A key for this project only, made on ${host} (you'll click Authorize and install).`;
     if (label === WAYS.wheelhouse) return `A key for this project only, through the Wheelhouse app (you\'ll type a code and click Install).${stays}`;
     if (label === WAYS.own) return `A key for this project only, from an app you create on GitHub (you\'ll tick Enable Device Flow, click Create, type the code shown, then Authorize and install).${stays}`;

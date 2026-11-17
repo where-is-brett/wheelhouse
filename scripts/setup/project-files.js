@@ -1151,7 +1151,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   if (up?.ownLeft === true) parts.push('your product\'s own files stay as they are, too many for setup\'s commit: commit them when you are ready');
   if (up?.action === 'push') parts.push(`setup's commit, "${COMMIT_MESSAGE}", goes ${upTo}`);
   const where = host === 'gitlab' ? ': changes go in only through merge requests; once it has automatic checks, Wheelhouse asks you to make them required' : ', where your plan allows: changes go in only through pull requests';
-  if (joining) parts.push('the project\'s own files stay as your other computer committed them: nothing is committed and protection stays as it is');
+  if (joining) parts.push(`the project\'s own files stay as they are on ${NAME[host]}: setup adds nothing to them, and the main line\'s protection stays as it is`);
   else if (!local) parts.push(`${up ? 'then ' : ''}protection goes on ${branch}${where}`);
   if (differ.length > 0) parts.push(`${listed(differ)} ${differ.length === 1 ? 'differs' : 'differ'} from what is committed, and setup leaves ${differ.length === 1 ? 'it as it is' : 'them as they are'}`);
   // Step 6's card says Wheelhouse never updates itself, so this one names only the release it stays at.

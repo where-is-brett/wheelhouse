@@ -1511,7 +1511,7 @@ test('a joining computer\'s step 7 lists only this computer\'s files and pins, w
     assert.ok(!planned.changes.some((c) => c.kind === 'host'), 'no commit, no push, no protection');
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
     assert.match(text, /for this computer/);
-    assert.match(text, /nothing is committed and protection stays as it is/);
+    assert.match(text, /setup adds nothing to them, and the main line's protection stays as it is/);
     assert.match(text, /CLAUDE\.md differs from what is committed, and setup leaves it as it is/);
     assert.doesNotMatch(text, /protection goes on|Set up Wheelhouse/);
     assert.deepEqual(w.calls.filter((c) => c.tool === 'gh'), [], 'nothing asked of the host');

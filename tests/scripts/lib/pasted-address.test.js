@@ -54,6 +54,13 @@ test('internal, local and localhost host names are no company host, with or with
   }
 });
 
+test('a host in hex octets is read as the loopback or link-local address it is, and refused', () => {
+  for (const text of ['git@127.0.0.0x1:g/p', 'ssh://git@127.0.0.0x1/g/p', 'git@169.254.169.0xfe:g/p', 'https://127.0.0.0x1/g/p']) {
+    assert.deepEqual(pastedAddress(text), { unreadable: true }, text);
+    assert.deepEqual(pinOf(text), { unreadable: true }, text);
+  }
+});
+
 test('text with whitespace inside an address is unreadable, and nothing after the whitespace is kept', () => {
   const tokens = [`ghp_${'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'}`, `glpat-${'a1B2c3D4e5F6g7H8i9J0'}`, `${['https://x', 'y'].join(':')}@a.example.org/c`];
   for (const gap of [' ', '\t', '\n', '  \n ']) {
