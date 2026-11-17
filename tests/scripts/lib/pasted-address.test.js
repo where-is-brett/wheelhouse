@@ -48,7 +48,7 @@ test('a host written with its root dot is read as the host', () => {
 });
 
 test('internal, local and localhost host names are no company host, with or without the root dot', () => {
-  for (const host of ['db.internal', 'printer.local', 'x.localhost', 'db.internal.', 'printer.local.', 'x.localhost.']) {
+  for (const host of ['db.internal', 'printer.local', 'x.localhost', 'db.internal.', 'printer.local.', 'x.localhost.', 'g.home.arpa', 'g.lan', 'g.corp', 'g.intranet', 'g.localdomain']) {
     assert.deepEqual(pastedAddress(`https://${host}/a/b`), { unreadable: true }, host);
     assert.deepEqual(pinOf(`https://${host}/a/b`), { unreadable: true }, host);
   }

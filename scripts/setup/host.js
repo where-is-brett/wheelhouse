@@ -623,7 +623,11 @@ export function nameGitlabHost({ folder, entry, record }) {
 const PASTE_WITH_SCHEME = 'If that is an address, paste it with https:// at the front.';
 // What a named project that setup could not find Wheelhouse's settings in comes to, and the way on: a project never set up with
 // Wheelhouse is not one this question can bring in, but a folder holding its files, with its own address kept, is set up where it is.
-const notFoundNamed = ({ host, wanted, at }) => `Setup couldn't find Wheelhouse's settings in ${wanted} on ${at ?? (host === 'github' ? 'GitHub' : 'that GitLab')}, or your sign-in can't reach it. Setup can only bring in a project that was set up with Wheelhouse on another computer, so it can't bring this one in here. Paste another address, or start a new product with a button below; a new product needs a different name from the existing project.`;
+const notFoundNamed = ({ host, wanted, at }) => {
+  const where = at ?? (host === 'github' ? 'GitHub' : 'that GitLab');
+  const other = host === 'github' ? 'GitLab' : 'GitHub';
+  return `Setup couldn't find Wheelhouse's settings in ${wanted} on ${where}, or your sign-in can't reach it. Setup can only bring in a project that was set up with Wheelhouse on another computer, so it can't bring this one in here. Paste another address, or start a new product with a button below. A new product can't use the name ${wanted.split('/').at(-1)} on ${where}: to make it there, rename this folder first. On this computer or on ${other} it needs no new name.`;
+};
 // The host a pasted address names, as the join miss says it: the company's own host name, or GitHub or GitLab.
 const pinHostName = (pin) => (pin === undefined ? undefined : pin.host === 'github' ? 'GitHub' : pin.company?.host === undefined ? 'GitLab' : pin.company.host);
 function joinAsk(id, name, { missed }) {
@@ -644,6 +648,9 @@ function joinAsk(id, name, { missed }) {
   return {
     id,
     typed: true,
+    // Where the product is kept can make most of the cards after it unneeded (a product brought in has its own answers), so
+    // the cards after it come only once it is answered.
+    endsBatch: true,
     card: {
       level: 2,
       what: `${found}Where should ${name} be kept?`,
@@ -658,7 +665,8 @@ function joinAsk(id, name, { missed }) {
       // Wheelhouse yet (the director's first setup, design section 15.1), and one kept here needs no account.
       recommend: KEEP_HERE,
       because: 'it is the simplest start, with nothing to sign in to',
-      meanwhile: MEANWHILE,
+      // A miss found at apply comes after the Go ahead and any sign-in, so the card says what already happened, not that nothing has run.
+      meanwhile: missed?.missed === 'none' || Array.isArray(missed?.missed) ? 'Setup has stopped here: what it already did stays, and nothing more runs until you answer and say Go ahead.' : MEANWHILE,
     },
   };
 }
@@ -1661,7 +1669,7 @@ export async function makeRepos({
   let info = await repoInfo({ host, repo, run, api });
   // A new product's name already taken on the account, by a repository setup didn't make, is not
   // taken over.
-  if (info !== null && !madeBySetup(target)) throw new Error(`${repo} already exists on ${NAME[host]} and wasn't set up with Wheelhouse, so setup won't use it for a new product: rename this folder, then ask again`);
+  if (info !== null && !madeBySetup(target)) throw new Error(`${repo} already exists on ${NAME[host]} and wasn't set up with Wheelhouse, so setup won't use it for a new product: rename this folder, then start setup again from it`);
   if (info === null) {
     keep({ id: newId('chg'), kind: 'host', target, before: null, after: { repository: repo, private: true, made: true } });
     info = await createRepo({ host, owner: user, name, run, api, empty: publish !== null });
@@ -2075,7 +2083,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     const accounts = host === 'gitlab' ? 'account or groups' : 'account or organisations';
     parts.push(bare ? 'The repository set up with Wheelhouse, checked out here with its settings.'
       : tight ? `${product.repo ?? product.name}, the one set up with Wheelhouse, checked out here with its settings.`
-        : `${product.repo ?? product.name}, the one set up with Wheelhouse, found on ${company ? `your company's GitLab at ${new URL(base).host}` : `your ${name} ${accounts}`} and brought into this folder. Its saved Wheelhouse settings replace the ones setup put here.`);
+        : `${product.repo ?? product.name}, the one set up with Wheelhouse, found on ${company ? `your company's GitLab at ${new URL(base).host}` : `your ${name} ${accounts}`} and brought into this folder. Its saved Wheelhouse settings take the place of the starting settings setup made in this folder.`);
   } else parts.push(bare ? `This project's repository on ${name}, kept as it is.` : `${product.repo} on ${name}, kept as it is.`);
   if (way === WAYS.asIs) {
     const keyCard = changes.find((c) => c.action === 'key-card');

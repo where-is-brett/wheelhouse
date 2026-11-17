@@ -113,7 +113,11 @@ test('a password written into an address typed on the join card is cleaned out a
     const texts = () => listOf(home, 'answers').map((n) => JSON.parse(fs.readFileSync(path.join(home, 'setup', 'answers', n), 'utf8')).data.text);
     // The user and password are joined here so the file holds no address with a password in it.
     await run(answer(`${['https://oauth2', 'tok'].join(':')}@gitlab.com/ann/shop`));
-    assert.deepEqual(texts(), ['https://gitlab.com/ann/shop']);
+    assert.deepEqual(texts(), [HELD_SECRET]);
+    fs.rmSync(path.join(home, 'setup', 'answers'), { recursive: true, force: true });
+    fs.rmSync(path.join(home, 'setup', 'answered'), { recursive: true, force: true });
+    await run(answer('git@gitlab.com:ann/shop.git?x=1'));
+    assert.deepEqual(texts(), ['git@gitlab.com:ann/shop.git']);
     fs.rmSync(path.join(home, 'setup', 'answers'), { recursive: true, force: true });
     fs.rmSync(path.join(home, 'setup', 'answered'), { recursive: true, force: true });
     const secret = `https://gitlab.com/ann/glpat-${'a1B2c3D4e5F6g7H8i9J0'}`;
@@ -143,6 +147,33 @@ test('a password written into an address typed on the join card is cleaned out a
       for (const dir of ['answers', 'records', 'answered']) {
         for (const n of listOf(home, dir)) assert.equal(fs.readFileSync(path.join(home, 'setup', dir, n), 'utf8').includes(key.slice(0, 12)), false, `${dir}/${n}`);
       }
+    }
+    // A user and password written in, however the password is spelt (with a / # or ?, or one that reads as a port), is held whole.
+    const clean = () => {
+      fs.rmSync(path.join(home, 'setup', 'answers'), { recursive: true, force: true });
+      fs.rmSync(path.join(home, 'setup', 'answered'), { recursive: true, force: true });
+    };
+    for (const text of ['ann:Hunter2@gitlab.acme.org/t/p', 'ann:hunter2@github.com/o/r', 'https://ann:pa/ss@gitlab.acme.org/t/p', 'https://ann:12/ss@gitlab.acme.org/t/p',
+      'https://ann:p#ss@gitlab.acme.org/t/p', 'https://ann:pa?ss@gitlab.acme.org/t/p', 'ssh://ann:pa/ss@host.example.org/x']) {
+      clean();
+      await run(answer(text));
+      assert.deepEqual(texts(), [HELD_SECRET], text);
+    }
+    // The bare git@ forms stay.
+    for (const [text, kept] of [['ssh://git@gitlab.example.org/g/p', 'ssh://gitlab.example.org/g/p'], ['git@gitlab.example.org:g/p.git', 'git@gitlab.example.org:g/p.git']]) {
+      clean();
+      await run(answer(text));
+      assert.deepEqual(texts(), [kept], text);
+    }
+    // Schemeless text is cut at its first whitespace.
+    clean();
+    await run(answer('gitlab.acme.org/t/p private_token=abc123'));
+    assert.deepEqual(texts(), ['gitlab.acme.org/t/p']);
+    // A key with its characters written as percent-escapes is held.
+    for (const text of [`https://gitlab.example.org/g/glpat%2D${'a1B2c3D4e5F6g7H8i9J0'}`, `https://gitlab.example.org/g/ghp_%41${'1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'}`]) {
+      clean();
+      await run(answer(text));
+      assert.deepEqual(texts(), [HELD_SECRET], text);
     }
     // Join text with no scheme keeps no query, fragment or ;parameter.
     fs.rmSync(path.join(home, 'setup', 'answers'), { recursive: true, force: true });

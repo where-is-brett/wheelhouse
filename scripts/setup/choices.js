@@ -192,8 +192,6 @@ const typedCompanyHost = (choices) => {
   return typed === undefined ? null : companyAddress(typed.text).host ?? null;
 };
 
-// What a product brought in from another computer leaves unasked here.
-const OTHER_COMPUTER_ANSWERS = ' Your answers about users, description and live data come from your other computer instead.';
 
 // The plain line a choice adds to the one card, or null when it adds none. `name` is the product's,
 // `platform` the computer's, `host` the host the plan names.
@@ -213,8 +211,8 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     // The product's own name, where the typed answer (an address, or owner/name) gives it, not the folder's.
     const named = typeof text === 'string' && backupNamed(text) === null ? repoNamed(text)?.split('/').at(-1) : null;
     // An owner/name looked for on the company's GitLab, as step 3 words it: its account or groups.
-    if (where === null && onCompanyGitLab(choices, host)) return `${named ?? name}, from your other computer, found in your account or groups on your company's GitLab${typedCompanyHost(choices) === null ? '' : ` at ${typedCompanyHost(choices)}`}, brought into this folder.${OTHER_COMPUTER_ANSWERS}`;
-    return `${named ?? name}, from your other computer${where === null ? '' : `, on ${where}`}, brought into this folder.${OTHER_COMPUTER_ANSWERS}`;
+    if (where === null && onCompanyGitLab(choices, host)) return `${named ?? name}, from the project's saved settings, found in your account or groups on your company's GitLab${typedCompanyHost(choices) === null ? '' : ` at ${typedCompanyHost(choices)}`}, brought into this folder.`;
+    return `${named ?? name}, from the project's saved settings${where === null ? '' : `, on ${where}`}, brought into this folder.`;
   }
   if (id === 'real-users') {
     const live = choices.find((c) => c.id === 'live-data')?.label;

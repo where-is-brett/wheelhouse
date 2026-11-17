@@ -94,17 +94,30 @@ export async function checkApiKey({ host, base = DEFAULT_GITLAB, key, via = {} }
   return { state: 'error', status: answer.status };
 }
 
-// The host git itself reads from a remote's address: the authority runs to the first /, the host is what follows the last @,
-// and a backslash in the authority makes it no host to trust (git and a URL reader differ on it). null when none is read.
+// The host git itself reads from a remote's address: the authority runs to the first /, the host is what follows the @, and an
+// authority holding a backslash, ?, #, % or a second @ is no host to trust (git, curl and a URL reader each end it differently).
+// null when none is read.
 function gitHostOf(remoteUrl) {
   const text = String(remoteUrl).trim();
   const web = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/]*)/.exec(text);
   if (web) {
-    if (web[1].includes('\\')) return null;
+    if (/[\\?#%]/.test(web[1]) || (web[1].match(/@/g) ?? []).length > 1) return null;
     return web[1].replace(/^.*@/, '').replace(/:\d*$/, '').toLowerCase();
   }
-  const scp = /^(?:[^@/\s]*@)*([^:/\s]+):/.exec(text);
+  const scp = /^(?:[^@:/\s]*@)?([^@:/\s]+):/.exec(text);
   return scp ? scp[1].toLowerCase() : null;
+}
+
+// The address the director's own tool would use for a remote once its url.<base>.insteadOf settings have been applied (it
+// rewrites addresses before it reaches them); null when it cannot say, which keeps the token variables out.
+async function resolvedRemote({ remoteUrl, run, gitPath, env }) {
+  try {
+    const got = await askDirectorGit(['ls-remote', '--get-url', remoteUrl], { run, gitPath, env: { ...env, ...withoutTokens() } });
+    const url = got.stdout.trim().split(/\r?\n/).at(-1) ?? '';
+    return got.code === 0 && /^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|[^\s:/@]*@?[^\s:/@]+:)\S*$/.test(url) ? url : null;
+  } catch {
+    return null;
+  }
 }
 
 // What step 3 finds about the computer's own road to the host, with nothing asked:
@@ -116,9 +129,11 @@ export async function findAccess({ host, base = DEFAULT_GITLAB, repo = null, rem
   const address = hostAddress(host, base);
   // git's credential helper may read the director's token variables and send them to any host git reaches, so they are kept
   // only where git is to reach github.com: the host of the remote asked, else the host's own address.
-  const reached = (() => {
+  const reached = await (async () => {
     try {
-      return remoteUrl === null ? new URL(address).hostname : gitHostOf(remoteUrl);
+      if (remoteUrl === null) return new URL(address).hostname;
+      const resolved = await resolvedRemote({ remoteUrl, run, gitPath, env });
+      return resolved === null ? null : gitHostOf(resolved);
     } catch {
       return null;
     }

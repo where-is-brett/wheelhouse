@@ -58,7 +58,7 @@ import { insideCheckout } from '../feature/approved.js';
 import { keepApprovedText, installText } from '../state/approved-text.js';
 import { asQuestion } from '../cards/visit.js';
 import { scanContent } from '../state/secret-scan.js';
-import { pastedAddress, withoutSecrets, HELD_SECRET } from '../lib/pasted-address.js';
+import { joinKept, HELD_SECRET } from '../lib/pasted-address.js';
 import {
   approvalLine, confirmLine, LIFT_STOP_LINES, isLiftStopLine, runbookLine, RUNBOOK_TITLES, ciPushLine,
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, ID, LANES, QUESTION_ID,
@@ -643,14 +643,25 @@ function setupAnswerOf(cwd, { question, label, card, signable, typed, why }) {
   // A pasted project address on step 3's join question is kept without the user, token or query written in it; it reads as the
   // same address. It is cleaned before the scan, so a password written into an address does not lose the whole answer.
   const join = asked.step === 3 && /^join(?:-|$)/.test(String(asked.id));
-  // Join text that is no address loses anything from a ?, # or ; on, where a token could sit.
-  const kept = join ? (pastedAddress(label) !== null ? withoutSecrets(label) : label.replace(/[?#;].*$/s, '')) : label;
+  // An address or path with a user written in it (other than git@) is held whole; the rest is cut at its first whitespace and
+  // loses anything from a ?, # or ; on, where a token could sit.
+  const kept = join ? joinKept(label) : label;
   // The text as typed is scanned too, with only the user, query and ;/# parts cut: what the address cleaning leaves out (words
   // after a space or a line break, a second address with a password in it) must not slip past the scan unseen.
   const rawCut = label.replace(/^(\s*[A-Za-z][A-Za-z0-9+.-]*:\/\/)[^/?#\s]*@/, '$1').replace(/[;?#].*$/s, '');
   // The text is also scanned with its percent-escapes read as spaces, since the scanner does not see a key after %20.
   const spaced = kept.replace(/%[0-9a-f]{2}/gi, ' ');
-  if (scanContent(kept).length > 0 || scanContent(spaced).length > 0 || (join && scanContent(rawCut).length > 0)) {
+  // And with its percent-escapes decoded, again and again until it stops changing (a key written with %2D or %41 in it).
+  const decoded = [];
+  try {
+    for (let text = kept, i = 0; i < 5; i += 1) {
+      const next = decodeURIComponent(text);
+      if (next === text) break;
+      decoded.push(next);
+      text = next;
+    }
+  } catch { /* text that does not decode is scanned as it is */ }
+  if (scanContent(kept).length > 0 || scanContent(spaced).length > 0 || decoded.some((text) => scanContent(text).length > 0) || (join && scanContent(rawCut).length > 0)) {
     // On the join card the secret is never kept, but the card comes back saying why.
     if (!join) return { why: 'the text typed holds what looks like a secret' };
     return { asked, made: { kind: 'action', data: { ...data, label: null, text: HELD_SECRET } } };

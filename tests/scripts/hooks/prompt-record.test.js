@@ -1359,7 +1359,7 @@ test('in a registered project an answer on a setup-asked card goes only to setup
   });
 });
 
-test('a pasted project address answered on the join question is kept without its user, token or query, and reads the same', async () => {
+test('a pasted project address answered on the join question is kept without its query, and reads the same', async () => {
   await withHome(async (home) => {
     const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-join-address-')));
     try {
@@ -1370,7 +1370,7 @@ test('a pasted project address answered on the join question is kept without its
       };
       noteAsked({ runId: run.id, folder, step: 3, id: 'join', card, typed: true, now: () => NOW });
       const c = fake();
-      const answers = { [card.question]: 'https://ann-the-director@gitlab.company.example/ann/cafe-menu?tab=readme' };
+      const answers = { [card.question]: 'https://gitlab.company.example/ann/cafe-menu?tab=readme' };
       await decide({ ...input(answers), tool_input: { questions: [card], answers }, cwd: folder }, deps(c));
       const answersDir = path.join(home, 'setup', 'answers');
       const texts = fs.readdirSync(answersDir).map((n) => JSON.parse(fs.readFileSync(path.join(answersDir, n), 'utf8')).data.text);

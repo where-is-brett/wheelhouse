@@ -86,7 +86,12 @@ test('step 3 finds the transport, the helper, ls-remote and the key without aski
 
 test('on GitLab, git runs without the director\'s token variables, and on GitHub with the environment as it is', async () => {
   const seen = [];
-  const run = async (file, args, opts) => { seen.push(opts.baseEnv); return { code: 0, stdout: 'abc\tHEAD\n' }; };
+  const rewrites = {};
+  const run = async (file, args, opts) => {
+    if (args.includes('--get-url')) return { code: 0, stdout: `${rewrites[args.at(-1)] ?? args.at(-1)}\n` };
+    seen.push(opts.baseEnv);
+    return { code: 0, stdout: 'abc\tHEAD\n' };
+  };
   const env = { PATH: '/bin', GITLAB_TOKEN: 'tok', GH_TOKEN: 'tok2' };
   const base = { repo: 'team/product', run, borrow: async () => null, via: viaOf(curlFor({})), env };
   await findAccess({ ...base, host: 'gitlab', base: GITLAB, remoteUrl: `${GITLAB}/team/product.git` });
@@ -114,9 +119,26 @@ test('on GitLab, git runs without the director\'s token variables, and on GitHub
     assert.ok(seen.length > 0, remote);
     for (const e of seen) assert.equal(e.GH_TOKEN, undefined, remote);
   }
+  // An authority that git, curl and a URL reader end differently, or a second @, keeps the variables out.
+  for (const remote of ['https://evil.example.org?@github.com/o/r', 'https://evil.example.org#@github.com/o/r', 'https://a@evil.example.org@github.com/o/r', 'https://evil.example.org%40@github.com/o/r', 'git@evil.example.org:x@github.com:o/r']) {
+    seen.length = 0;
+    await findAccess({ ...base, host: 'github', remoteUrl: remote });
+    assert.ok(seen.length > 0, remote);
+    for (const e of seen) assert.equal(e.GH_TOKEN, undefined, remote);
+  }
   seen.length = 0;
   await findAccess({ ...base, host: 'github', remoteUrl: 'https://user@github.com/a/b' });
   for (const e of seen) assert.equal(e.GH_TOKEN, 'tok2');
+  // The address git uses after its own url.<base>.insteadOf rewriting decides, and an address it cannot give keeps them out.
+  rewrites['https://github.com/a/b'] = 'https://git.example.org/a/b';
+  seen.length = 0;
+  await findAccess({ ...base, host: 'github', remoteUrl: 'https://github.com/a/b' });
+  assert.ok(seen.length > 0);
+  for (const e of seen) assert.equal(e.GH_TOKEN, undefined);
+  rewrites['https://github.com/a/b'] = 'not an address';
+  seen.length = 0;
+  await findAccess({ ...base, host: 'github', remoteUrl: 'https://github.com/a/b' });
+  for (const e of seen) assert.equal(e.GH_TOKEN, undefined);
 });
 
 test('no key held by git reads as none; a key that only pushes as push-only; a refused one as refused', async () => {

@@ -20,7 +20,7 @@ const PUBLIC_HOST = new URL(DEFAULT_GITLAB).hostname;
 
 // A host that is no company's GitLab: loopback, link-local, internal and bare addresses, in any form a URL reads (127.x, 0x7f.1, [::1]).
 const isBareHost = (hostname) => !hostname.includes('.') || hostname.startsWith('[') || /^[\d.]+$/.test(hostname) || /^0x/i.test(hostname)
-  || hostname === 'localhost' || /\.(?:localhost|local|internal)$/.test(hostname);
+  || hostname === 'localhost' || /\.(?:localhost|local|internal|home\.arpa|lan|corp|intranet|localdomain)$/.test(hostname);
 
 // The host a pasted project address names, as parseRemote reads it, or null for text that is no address. Only https://,
 // ssh:// and git@host: forms are read. { unreadable: true } is an address-looking text that cannot be read (another scheme,
@@ -155,4 +155,22 @@ export function withoutSecrets(text) {
     .replace(/^([^/\s]*)@([A-Za-z0-9.-]+:(?!\/\/))/, (all, user, rest) => (user === 'git' ? all : rest))
     .replace(/^((?:ssh:\/\/)?(?:git@)?[A-Za-z0-9.-]*[A-Za-z0-9])\.(?=[:/])/, '$1')
     .replace(/[;?#].*$/, '');
+}
+
+// ssh://git@host/path and git@host:path, the common forms whose one bare user is no secret.
+const BARE_GIT_USER = /^(?:ssh:\/\/git@[A-Za-z0-9.-]+(?::\d{1,5})?\/|git@[A-Za-z0-9.-]+:(?!\/\/))[^@]*$/;
+
+// What is kept of a typed answer to step 3's join question. An address or path with a user written in it (an @ after the scheme,
+// or before the first / without one) is held whole, as HELD_SECRET, whatever is in it: a password may hold a / ? or #, and no
+// cutting could tell where it ends. Only the bare git@ forms are kept. Where the first run of characters holds a / or @ it is
+// the whole answer (words after a space are dropped); otherwise the text is a name or a sentence and stays as typed. An address
+// is then cleaned (withoutSecrets) and other text loses anything from a ?, # or ; on.
+export function joinKept(text) {
+  const typed = String(text ?? '').trim();
+  const first = typed.split(/\s/)[0];
+  const run = /[/@]/.test(first) ? first : typed;
+  const afterScheme = run.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//, '');
+  const holdsUser = afterScheme !== run ? afterScheme.includes('@') : /^[^/\s]*@/.test(run);
+  if (holdsUser && !BARE_GIT_USER.test(run)) return HELD_SECRET;
+  return pastedAddress(run) !== null ? withoutSecrets(run) : run.replace(/[?#;].*$/s, '');
 }

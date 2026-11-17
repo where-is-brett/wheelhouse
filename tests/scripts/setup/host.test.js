@@ -774,7 +774,7 @@ test('a new product whose name is taken by a repository setup did not make is re
     const folder = productFolder();
     const step = stepFor(w);
     const planned = await answerAll(step, ctxFor(folder), choose());
-    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), (error) => /a-director\/Shop already exists on GitHub and wasn't set up with Wheelhouse, so setup won't use it for a new product: rename this folder, then ask again/.test(error.message) && !/brings it into this folder/.test(error.message));
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), (error) => /a-director\/Shop already exists on GitHub and wasn't set up with Wheelhouse, so setup won't use it for a new product: rename this folder, then start setup again from it/.test(error.message) && !/brings it into this folder/.test(error.message));
     assert.equal(fs.existsSync(path.join(folder, '.git')), false);
   });
 });
@@ -2783,6 +2783,8 @@ test('none or several found are refused saying to type owner/name, the question 
     // Asked again, under an id naming what was missed, saying so; the typed owner/name is used.
     const again = await step.plan({ ...ctx, answers: planned.answers });
     assert.match(again.ask.id, /^join-[0-9a-f]{10}$/);
+    assert.equal(again.ask.endsBatch, true, 'the join card ends its batch, so the cards a joining product skips are not asked with it');
+    assert.match(again.ask.card.meanwhile, /Setup has stopped here: what it already did stays/);
     assert.match(again.ask.card.what, /^More than one Cafe-Menu is set up with Wheelhouse: a-director\/Cafe-Menu, cafe-co\/Cafe-Menu\./);
     const typed = await answerJoin(step, { ...ctx, answers: planned.answers }, joining({ typed: 'cafe-co/Cafe-Menu' }));
     assert.deepEqual(typed.changes.find((c) => c.action === 'join'), { kind: 'host', target: 'github', action: 'join', name: 'cafe-co/Cafe-Menu' });
@@ -2809,7 +2811,7 @@ test('none or several found are refused saying to type owner/name, the question 
     const namedCtx = ctxFor(namedRun.folder ?? folder, { runId: namedRun.id });
     const named = await answerJoin(step, namedCtx, joining({ typed: `${USER}/Cafe-Menu` }));
     await assert.rejects(applyIn(step, namedRun.folder ?? folder, namedRun.id, named.changes, { answers: named.answers }),
-      new RegExp(`^Error: Setup couldn't find Wheelhouse's settings in ${USER}/Cafe-Menu on GitHub, or your sign-in can't reach it\\. Setup can only bring in a project that was set up with Wheelhouse on another computer, so it can't bring this one in here\\. Paste another address, or start a new product with a button below; a new product needs a different name from the existing project\\. Nothing was brought in; setup asks where to keep it again\\.$`));
+      new RegExp(`^Error: Setup couldn't find Wheelhouse's settings in ${USER}/Cafe-Menu on GitHub, or your sign-in can't reach it\\. Setup can only bring in a project that was set up with Wheelhouse on another computer, so it can't bring this one in here\\. Paste another address, or start a new product with a button below\\. A new product can't use the name Cafe-Menu on GitHub: to make it there, rename this folder first\\. On this computer or on GitLab it needs no new name\\. Nothing was brought in; setup asks where to keep it again\\.$`));
     const again = (await step.plan({ ...namedCtx, answers: named.answers })).ask;
     assert.match(again.card.what, new RegExp(`^Setup couldn't find Wheelhouse's settings in ${USER}/Cafe-Menu on GitHub`));
     assert.doesNotMatch(again.card.what, /clone|checked out|download a copy|type the project's owner/);
