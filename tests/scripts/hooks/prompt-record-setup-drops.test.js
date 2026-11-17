@@ -154,7 +154,7 @@ test('a password written into an address typed on the join card is cleaned out a
       fs.rmSync(path.join(home, 'setup', 'answered'), { recursive: true, force: true });
     };
     // A bare token, typed alone as the answer, is held and kept nowhere: not in the answer, not on disk.
-    for (const bare of [`glpat-${'a1B2c3D4e5F6g7H8i9J0'}`, `ghp_${'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'}`, `glptt-${'a1B2c3D4e5F6g7H8i9J0'}`, `glsoat-${'a1B2c3D4e5F6g7H8i9J0'}`, 'a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0']) {
+    for (const bare of [`glpat-${'a1B2c3D4e5F6g7H8i9J0'}`, `ghp_${'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'}`, `glptt-${'a1B2c3D4e5F6g7H8i9J0'}`, `glsoat-${'a1B2c3D4e5F6g7H8i9J0'}`, `glimt-${'a1B2c3D4e5F6g7H8i9J0'}`, `glagent-${'a1B2c3D4e5F6g7H8i9J0'}`, `glffct-${'a1B2c3D4e5F6g7H8i9J0'}`, 'a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0', 'https://gitlab.example.org/a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0/p', 'ann/a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0']) {
       clean();
       await run(answer(bare));
       assert.deepEqual(texts(), [HELD_SECRET], bare);

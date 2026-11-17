@@ -143,7 +143,7 @@ export function outsideRepo() {
 // The environment the director's git is asked in: none of git's own variables (GIT_DIR, GIT_CONFIG*, GIT_WORK_TREE and the rest,
 // which could point it anywhere), and only https and ssh to reach by.
 // Git looks for a repository no higher than Wheelhouse's own folder's parent, so a repository above it is never found.
-export const ceilingOf = () => path.dirname(wheelhouseHome());
+export const ceilingOf = () => path.dirname(path.resolve(wheelhouseHome()));
 export const directorGitEnv = (env) => ({ ...Object.fromEntries(Object.entries(env).filter(([key]) => !/^GIT_/i.test(key))), GIT_ALLOW_PROTOCOL: 'https:ssh', GIT_CEILING_DIRECTORIES: ceilingOf() });
 
 // Whether the folder's own git settings could change where an address goes: any url.<x>.insteadOf or pushInsteadOf key, or an

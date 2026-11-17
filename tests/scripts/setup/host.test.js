@@ -2837,7 +2837,7 @@ test('none or several found are refused saying to type owner/name, the question 
     fs.rmSync(w.hostUrl({ repo: `${USER}/Cafe-Menu` }), { recursive: true });
     delete w.repos[`${USER}/Cafe-Menu`];
     await applyIn(step, folder, run.id, fresh.changes, { answers: fresh.answers });
-    assert.equal(joinedOf(folder).at(-1).missed, 'none', 'the miss stays the latest record: a miss joined nothing, so no { joined: null } is needed');
+    assert.deepEqual(joinedOf(folder).at(-1), { joined: null });
     assert.equal(stepsFor(findRun(folder)), SETUP_STEPS);
   });
 });
@@ -3913,7 +3913,7 @@ test('after a pasted address missed, GitLab on the same host under the name the 
     assert.notEqual(refused.id, first.id);
     assert.equal(refused.card.what, [
       'Cafe-Menu may already be on gitlab.company.example without Wheelhouse\'s settings, so setup won\'t make a new product there under that name.',
-      `Choose Keep it on this computer, GitHub or ${new URL(DEFAULT_GITLAB).hostname}, or rename this folder and start setup again from it.`,
+      `Choose Keep it on this computer or GitHub, or choose GitLab and then ${new URL(DEFAULT_GITLAB).hostname}, or rename this folder and start setup again from it.`,
       'Where should Cafe-Menu be kept?',
     ].join('\n'));
     // Another host's address, or a project in someone else's account, is not refused, and says nothing of the name.

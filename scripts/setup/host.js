@@ -650,7 +650,7 @@ function joinAsk(id, name, { missed }) {
   // The hint to paste with https:// is for a name that looks like a host; never for text that was already an address.
   const dotted = missed?.address !== true && typeof missed?.name === 'string' && missed.name.split('/')[0].includes('.') ? ` ${PASTE_WITH_SCHEME}` : '';
   if (missed?.name === HELD_SECRET) found = 'What you pasted had a sign-in name, password or token in it, so setup didn\'t keep it.\nIf it was a real password or token, change it on GitLab or GitHub: it is now in this chat.\nPaste the address as your browser shows it on the project\'s page, or type owner/name, like ann/cafe-menu.\n';
-  else if (missed?.missed === 'taken') found = `${missed.name.split('/').at(-1)} may already be on ${missed.at} without Wheelhouse's settings, so setup won't make a new product there under that name.\nChoose ${KEEP_HERE}, GitHub or ${new URL(DEFAULT_GITLAB).hostname}, or rename this folder and start setup again from it.\n`;
+  else if (missed?.missed === 'taken') found = `${missed.name.split('/').at(-1)} may already be on ${missed.at} without Wheelhouse's settings, so setup won't make a new product there under that name.\nChoose ${KEEP_HERE} or GitHub, or choose GitLab and then ${new URL(DEFAULT_GITLAB).hostname}, or rename this folder and start setup again from it.\n`;
   else if (missed?.missed === 'not-a-name') {
     found = `"${missed.name}" is not a repository's name. ${missed.address === true ? 'That is the address of the host itself, not of a project: paste the address of the project\'s page, or t' : 'T'}ype owner/name, like ann/cafe-menu, or click a button. `;
   }
@@ -673,7 +673,8 @@ function joinAsk(id, name, { missed }) {
     card: {
       level: 2,
       what: asked ? found : `${found}Where should ${name} be kept?`,
-      why: 'This decides where your work is kept and who can reach it. Back from a backup? Type where the backup file is. Already set up elsewhere under a different name? Type its owner/name, like ann/cafe-menu, or paste its address.',
+      // The question asked again has said what to type, so it leaves out the sentence about a project set up elsewhere.
+      why: missed ? 'This decides where your work is kept and who can reach it. Back from a backup? Type where the backup file is.' : 'This decides where your work is kept and who can reach it. Back from a backup? Type where the backup file is. Already set up elsewhere under a different name? Type its owner/name, like ann/cafe-menu, or paste its address.',
       options: [
         { label: KEEP_HERE, says: 'A new product. Nothing goes online, and it can move to GitHub or GitLab later, in one click.' },
         { label: HOST_LABELS.github, says: 'A new product, in a private repository on your GitHub account.' },
@@ -2684,7 +2685,8 @@ export function hostStep({
         throw new Error(`This folder is checked out to ${fixed} from your other computer, so setup goes on joining it and nothing else: ask for step 3's card again`);
       }
       if (join !== null) answerRecord({ joined: join.name });
-      else if (joinedRepo(thisRun) !== null) answerRecord({ joined: null });
+      // A new product after a join attempt that missed closes the attempt's state, as one after a joined run does.
+      else if (joinedRepo(thisRun) !== null || joinRecords(thisRun).at(-1)?.after.missed !== undefined) answerRecord({ joined: null });
       if (host === 'local') {
         const found = await findGit({ platform, run });
         if (!found?.ok || typeof found.path !== 'string') throw new Error('git is not on this computer yet; step 2 installs it');

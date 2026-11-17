@@ -278,15 +278,15 @@ function describedBy(choice) {
 // with their git as it is, a key only where git holds none that works; on a company's GitLab, a sign-in in the browser or
 // by token; else a sign-in.
 function goAheadAsks({ keptHere, list, host, phone = false, done = { tools: false, signedIn: null } }) {
-  const text = goAheadAsksHost({ keptHere, list, host, done });
+  const text = goAheadAsksHost({ keptHere, list, host, done, phone });
   // Step 9 asks the director to try a notification on their phone, unless an earlier setup's test already reached it.
-  if (!phone) return text;
+  if (!phone || (keptHere && done.tools)) return text;
   return `${text} Near the end, setup offers a test notification on your phone, which you can skip.`;
 }
 
-function goAheadAsksHost({ keptHere, list, host, done }) {
+function goAheadAsksHost({ keptHere, list, host, done, phone }) {
   // Setup's tools are done, so the request to allow its command and the password they could need are behind it.
-  if (keptHere) return done.tools ? 'Nothing more is asked of you here.' : 'Apart from Claude Code\'s own request to allow setup\'s command, you may be asked for your computer\'s password.';
+  if (keptHere) return done.tools ? (phone ? 'The only thing left to ask you is a test notification on your phone near the end, which you can skip.' : 'Nothing more is asked of you here.') : 'Apart from Claude Code\'s own request to allow setup\'s command, you may be asked for your computer\'s password.';
   const signedIn = done.signedIn !== null && host === (done.signedIn === 'gitlab' ? 'GitLab' : 'GitHub');
   const way = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.label ?? null;
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
@@ -328,7 +328,10 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
   const signedTo = done.signedIn === 'gitlab' ? 'GitLab' : done.signedIn === 'github' ? 'GitHub' : null;
   // The sign-in is used again only where the product goes on the host it was made to; else it is kept for later.
   const signInUsed = signedTo !== null && !keptHere && hostOf(product, list) === signedTo;
-  if (signedTo !== null && !signInUsed) lines.push(`Done already: ${done.tools ? 'setup\'s tools (step 2), and ' : ''}your sign-in to ${signedTo}, kept for later; this project doesn't use it.`);
+  if (signedTo !== null && !signInUsed) {
+    if (done.tools) lines.push('Already done: setup\'s tools.');
+    lines.push(`Your ${signedTo} sign-in stays on this computer for later; this project doesn't use it.`);
+  }
   else if (done.tools || signInUsed) lines.push(`Done already, and kept as it is: ${[...(done.tools ? ['setup\'s tools (step 2)'] : []), ...(signInUsed ? [`your sign-in to ${signedTo}`] : [])].join(' and ')}.`);
   if (toRun.includes(3) && product && product.isNew === false && product.host !== 'local') lines.push(`${name} on ${product.host === 'gitlab' ? 'GitLab' : 'GitHub'}, as it is.`);
   // In the card's order: where it is kept, how agents reach it, its phase and data, Locked, the
@@ -431,8 +434,16 @@ export function customisingSince(answers) {
 // time can't be read, which stands for nothing. Never compared against the clock, so a Go ahead given again after the miss is a new one.
 export function consentWithdrawn(changes, consent) {
   if (consent === null || Number.isNaN(Date.parse(consent.at))) return true;
-  return (Array.isArray(changes) ? changes : []).some((c) => c?.step === 3 && c.kind === 'answer' && c.after?.missed !== undefined
-    && c.after.withdraws?.id === consent.id && c.after.withdraws?.at === consent.at);
+  return (Array.isArray(changes) ? changes : []).some((c) => {
+    if (c?.step !== 3 || c.kind !== 'answer' || c.after?.missed === undefined) return false;
+    // A miss recorded before Go aheads were named holds only its time: it withdraws a Go ahead given before it, and one it
+    // can't be compared with (a time that can't be read) too.
+    if (!Object.hasOwn(c.after, 'withdraws') && typeof c.after.missedAt === 'string') {
+      const missed = Date.parse(c.after.missedAt);
+      return Number.isNaN(missed) || missed > Date.parse(consent.at);
+    }
+    return c.after.withdraws?.id === consent.id && c.after.withdraws?.at === consent.at;
+  });
 }
 
 const newer = (a, b) => Date.parse(a) > Date.parse(b);

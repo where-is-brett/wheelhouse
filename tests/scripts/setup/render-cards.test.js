@@ -229,7 +229,8 @@ test('path g: a miss at step 3\'s apply withdraws the Go ahead, so the plan is a
     assert.ok(cards.indexOf(plans[2]) > join, 'the plan comes after the question asked again');
     const after = cards.slice(cards.indexOf(plans[2]) + 1);
     assert.ok(after.find((c) => c.kind === 'go-ahead' && c.step === 3)?.covered, 'step 3\'s Go ahead is covered by the new plan');
-    assert.match(plans[2].card.question, /^- Done already: setup's tools \(step 2\), and your sign-in to GitLab, kept for later; this project doesn't use it\.$/m);
+    assert.match(plans[2].card.question, /^- Already done: setup's tools\.\n- Your GitLab sign-in stays on this computer for later; this project doesn't use it\.$/m);
+    assert.match(plans[2].card.options.find((o) => o.label === 'Go ahead').description, /^Recommended: setup does all of this now\. The only thing left to ask you is a test notification on your phone near the end, which you can skip\.$/);
     // Step 4's questions are asked before the plan, so nothing is asked after the Go ahead, and the plan says what they settled.
     assert.deepEqual(after.filter((c) => c.kind === 'question' && c.step !== 9).map((c) => c.id), [], 'no question card follows the second plan\'s Go ahead, bar the phone test');
     const before = cards.slice(0, cards.indexOf(plans[2]));

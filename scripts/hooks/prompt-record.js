@@ -663,7 +663,7 @@ function setupAnswerOf(cwd, { question, label, card, signable, typed, why }) {
   } catch { /* text that does not decode is scanned as it is */ }
   if (scanContent(kept).length > 0 || scanContent(spaced).length > 0 || decoded.some((text) => scanContent(text).length > 0) || (join && scanContent(rawCut).length > 0)
     // A word of exactly 40 hex characters, the form of an old personal access token, is no project's name or address.
-    || (join && /^[0-9a-f]{40}$/i.test(label.trim()))) {
+    || (join && kept.split('/').some((part) => /^[0-9a-f]{40}$/i.test(part.trim())))) {
     // On the join card the secret is never kept, but the card comes back saying why.
     if (!join) return { why: 'the text typed holds what looks like a secret' };
     return { asked, made: { kind: 'action', data: { ...data, label: null, text: HELD_SECRET } } };

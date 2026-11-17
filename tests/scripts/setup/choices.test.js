@@ -294,6 +294,11 @@ test('a Go ahead is withdrawn only by a miss that names it, by its id and its ti
   assert.equal(consentWithdrawn([miss({ id: 'plan-bbb', at: consent.at })], consent), false);
   assert.equal(consentWithdrawn([miss(null)], consent), false);
   assert.equal(consentWithdrawn([miss({ id: 'plan-aaa', at: consent.at })], { ...consent, at: '2026-11-16T03:00:09.000Z' }), false);
+  // A miss recorded before Go aheads were named holds only its time: it withdraws a Go ahead given before it, and not one given after.
+  const legacy = (missedAt) => ({ step: 3, kind: 'answer', after: { joined: 'a/b', missed: 'none', missedAt } });
+  assert.equal(consentWithdrawn([legacy('2026-11-16T03:00:09.000Z')], consent), true);
+  assert.equal(consentWithdrawn([legacy('2026-11-16T03:00:01.000Z')], consent), false);
+  assert.equal(consentWithdrawn([legacy('not a time')], consent), true);
   // Not a miss, not step 3's, or not an answer: nothing is withdrawn.
   assert.equal(consentWithdrawn([{ step: 3, kind: 'answer', after: { joined: 'a/b', withdraws: { id: 'plan-aaa', at: consent.at } } }], consent), false);
   assert.equal(consentWithdrawn([{ ...miss({ id: 'plan-aaa', at: consent.at }), step: 4 }], consent), false);
@@ -316,7 +321,10 @@ test('a plan asked again after step 3 stopped says its tools and sign-in are don
   const kept = oneCard({ ...base, list: newProductChoices().map((c) => (c.id === 'join' ? { ...c, label: KEEP_HERE } : c)), toRun: [3, 6, 7, 10], done: { tools: true, signedIn: 'gitlab' } });
   assert.doesNotMatch(kept.card.options[0].description, /password/);
   // A sign-in the project no longer uses (kept here, or on another host) is said to be kept for later.
-  assert.match(kept.card.question, /^- Done already: setup's tools \(step 2\), and your sign-in to GitLab, kept for later; this project doesn't use it\.$/m);
+  assert.match(kept.card.question, /^- Already done: setup's tools\.\n- Your GitLab sign-in stays on this computer for later; this project doesn't use it\.$/m);
   assert.doesNotMatch(kept.card.question, /kept as it is/);
+  assert.match(kept.card.options[0].description, /^Recommended: setup does all of this now\. The only thing left to ask you is a test notification on your phone near the end, which you can skip\.$/);
+  // Where setup will not ask about the phone, nothing is left to ask.
+  assert.match(oneCard({ folder: '/x/tide-tables', list: newProductChoices().map((c) => (c.id === 'join' ? { ...c, label: KEEP_HERE } : c)), product: { isNew: true, host: null, repo: null, name: 'tide-tables' }, platform: 'darwin', count: 1, toRun: [3, 7, 10], done: { tools: true, signedIn: 'gitlab' } }).card.options[0].description, /Nothing more is asked of you here\.$/);
   assert.deepEqual(cardProblems(again.card), []);
 });
