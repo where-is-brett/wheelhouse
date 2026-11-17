@@ -7,7 +7,7 @@
 //     "what": { "<step>": what }, "ask": { "<step>": [{ id, options, typed?, what? }] },
 //     "uses": { "<step>": ["<step>.<id>"] }, "settle": [<step>], "record": { "<step>": record },
 //     "wait": { "<step>": { ms, why } }, "after": { "<step>": [<step>] },
-//     "asksDuring": { "<step>": [<step>] }, "needsDesktop": [<step>], "usesStart": [<step>] }
+//     "asksDuring": { "<step>": [<step>] }, "needsDesktop": [<step>], "usesStart": [<step>], "volatile": [<step>] }
 // A file is in the folder being set up, or with `home` in the user's home the step is given;
 // `planMs` makes each plan take that long, so a test can have two requests planning at once. Apply
 // writes each listed key with ctx.applyJsonKey, which records the change in the journal as it is
@@ -15,7 +15,8 @@
 // begins; a step in `fail` throws `why` once it has made its changes; a step in `planFail` throws
 // `why` from its plan. Step 2 is long: it makes its first change, then waits for
 // <WHEELHOUSE_HOME>/release-2 before it makes the rest, so a test can read its progress.
-// A step in `usesStart` lists the session start time its ctx carries, so its hash depends on it.
+// A step in `volatile` lists a fact that reads one more each time the step is planned, as a fact
+// read from the network or the clock may. A step in `usesStart` lists the session start time its ctx carries, so its hash depends on it.
 //
 // The answer path: `what` gives a step's Go-ahead card its own first part. A step in `wait` gives
 // that wait. A step with `ask` asks each of its questions, in order, until ctx.answers holds an
@@ -64,6 +65,17 @@ const questionCard = (n, { options, what }) => ({
   meanwhile: 'Setup waits at this step.',
 });
 
+// How many times step n has been planned, counting this one, kept under the test's home.
+function planned(n) {
+  const file = path.join(wheelhouseHome(), `planned-${n}`);
+  let count = 0;
+  try {
+    count = Number(fs.readFileSync(file, 'utf8')) || 0;
+  } catch { /* the first */ }
+  fs.writeFileSync(file, String(count + 1));
+  return count + 1;
+}
+
 async function released(n) {
   const file = path.join(wheelhouseHome(), `release-${n}`);
   await until(() => fs.existsSync(file), { what: `the test to release step ${n}` });
@@ -81,7 +93,7 @@ function step(n, { long = false } = {}) {
       return world().asksDuring?.[n];
     },
     async plan(ctx) {
-      const { [n]: listed = [], planMs = 0, planFail = {}, what = {}, ask = {}, uses = {}, settle = [], record = {}, wait = {}, needsDesktop = [], usesStart = [] } = world();
+      const { [n]: listed = [], planMs = 0, planFail = {}, what = {}, ask = {}, uses = {}, settle = [], record = {}, wait = {}, needsDesktop = [], usesStart = [], volatile = [] } = world();
       if (planMs > 0) await new Promise((resolve) => { setTimeout(resolve, planMs); });
       if (typeof planFail[n] === 'string') throw new Error(planFail[n]);
       // A step that plans its list only in the Desktop app's session (as step 3 does with a backup folder to pick).
@@ -100,6 +112,7 @@ function step(n, { long = false } = {}) {
         changes: [
           ...listed.map((k) => ({ kind: 'json-key', target: path.join(k.home ? ctx.userHome : ctx.folder, k.file), key: k.key, after: k.value })),
           ...(uses[n] ?? []).map((key) => ({ kind: 'json-key', target: path.join(ctx.folder, '.claude', 'answers.json'), key: [key], after: answerOf(key) })),
+          ...(volatile.includes(n) ? [{ kind: 'json-key', target: path.join(ctx.folder, '.claude', 'volatile.json'), key: ['n'], after: planned(n) }] : []),
           ...(usesStart.includes(n) ? [{ kind: 'json-key', target: path.join(ctx.folder, '.claude', 'start.json'), key: ['started'], after: ctx.sessionStartedAt ?? null }] : []),
         ],
         card: card(n, what[n]),

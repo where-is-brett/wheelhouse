@@ -3,11 +3,11 @@
 // director's click on the step's card has been checked:
 //   node run-step.js <steps module> <folder> <step> <hash> <run id> <clicked at> <deadline> <user home> <session kind> <session started at>
 // It acts only for the attempt it was started for: the step's journal entry must still hold that
-// click (<clicked at>, as the helper recorded it) and no finish. It works the step's list out
-// again, with the helper's user home and every answer of the run (ruling R31) so the two work out
-// the same list, and goes ahead only when the list still has the hash the click named, so nothing
-// but that list is ever applied. When it has not, the step's failure names what differs, from the
-// sketch the helper kept of the list the click named (scripts/setup/plan-sketch.js). Its
+// click (<clicked at>, as the helper recorded it) and no finish. The helper hands it the list the
+// click named (scripts/setup/plan-sketch.js), and it goes ahead only with a list that has the hash
+// the click named, so nothing but that list is ever applied. Without that file it works the list
+// out again, with the helper's user home and every answer of the run (ruling R31), and goes ahead
+// only when that list has the hash; when it has not, the step's failure names what differs. Its
 // progress goes to the journal: each change as the step makes it, then the step done, or failed
 // with why, each mark only while the entry is still its attempt's, so a process that outlived its
 // time never writes over a newer attempt. It runs on when the helper or Desktop goes.
@@ -30,7 +30,11 @@ import { STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
 export const TICK_MS = 5 * 1000;
-const CHANGED = 'The plan for this step changed between your click and its start, so nothing was done. Open setup again for the step\'s new card.';
+// The director's line begins in lower case: status says it after "did not finish:".
+const CHANGED = 'the plan for this step changed between your click and its start, so nothing was done.';
+const AGAIN = 'Open setup again for the step\'s new card.';
+const NOTHING_MORE = 'Setup has nothing more to do for this step.';
+const DIFFERENT = 'What is different:';
 
 export async function runStep([modulePath, folder, stepText, hash, runId, clickedAt, deadlineText, userHome, sessionKind, sessionStartedAt], {
   now = () => new Date(), exit = (code) => process.exit(code), tickMs = TICK_MS,
@@ -48,7 +52,10 @@ export async function runStep([modulePath, folder, stepText, hash, runId, clicke
   // It stops one tick before the deadline (ruling R47), so it has marked the step failed and gone
   // before the helper stops counting the step as running and a fresh click may start another.
   const past = () => now().getTime() >= deadline - tickMs;
-  if (!mine(run.steps?.[n]) || past()) return 1;
+  if (!mine(run.steps?.[n]) || past()) {
+    removeSketch(runId, n, clickedAt);
+    return 1;
+  }
   const fail = (reason, detail) => {
     try {
       markStep(runId, n, 'failed', { now, reason, detail, when: mine });
@@ -58,7 +65,7 @@ export async function runStep([modulePath, folder, stepText, hash, runId, clicke
   const ticker = setInterval(() => {
     if (!past()) return;
     fail(`it was still running ${STEP_TIMEOUT_MS / 60000} minutes after the click`);
-    removeSketch(runId, n);
+    removeSketch(runId, n, clickedAt);
     expired = true;
     clearInterval(ticker);
     exit(1);
@@ -68,28 +75,35 @@ export async function runStep([modulePath, folder, stepText, hash, runId, clicke
     if (!step) return fail(`there is no setup step ${n}`);
     if (stopState().on) return fail('All stop is on');
     const ctx = { folder, step: n, runId, startedAt: run.startedAt, now, userHome, platform: process.platform, desktop: sessionKind === 'desktop', sessionStartedAt: Number.isFinite(Date.parse(sessionStartedAt)) ? sessionStartedAt : undefined, answers: answersWithConsent(runId).answers, stopped: () => stopState().on };
-    const got = await step.plan(ctx);
-    // The director's line says what is different in plain words; the exact kind, action, target and
-    // field names (never values) go to the entry's failedDetail, for agents.
-    if (!Array.isArray(got?.changes)) {
-      const none = sayNoList(got);
-      return fail(`${CHANGED} What is different: ${none.plain}.`, none.detail);
-    }
-    if (planHash(got.changes) !== hash) {
-      const before = readSketch(runId, n, hash);
-      if (before === null) return fail(CHANGED);
-      const planned = sketchOf(got.changes, before.salt);
-      const said = sayDifference(before, planned);
-      return fail(said === '' ? CHANGED : `${CHANGED} What is different: ${said}.`, detailOf(before, planned) || undefined);
+    // The list the helper planned and the click named, handed over with its hash: the plan reads facts
+    // (the network, the clock) that can answer differently a few seconds later, so the list is not
+    // worked out again when it is here and has the hash the click named, and nothing else is applied.
+    const handed = readSketch(runId, n, clickedAt, hash);
+    let changes = handed !== null && planHash(handed.changes) === hash ? handed.changes : null;
+    if (changes === null) {
+      const got = await step.plan(ctx);
+      // The director's line says what is different in plain words; the exact kind, action, target and
+      // field names (never values) go to the entry's failedDetail, for agents.
+      if (!Array.isArray(got?.changes)) {
+        const none = sayNoList(got);
+        return fail(`${CHANGED} ${DIFFERENT} ${none.plain}. ${none.again ? AGAIN : NOTHING_MORE}`, none.detail);
+      }
+      if (planHash(got.changes) !== hash) {
+        if (handed === null) return fail(`${CHANGED} ${AGAIN}`);
+        const planned = sketchOf(got.changes, handed.salt);
+        const said = sayDifference(handed, planned);
+        return fail(`${CHANGED} ${said === '' ? '' : `${DIFFERENT} ${said}. `}${AGAIN}`, detailOf(handed, planned));
+      }
+      changes = got.changes;
     }
     if (expired) return 1;
-    const done = await runApply({ step, runId, changes: got.changes, ctx, current: mine });
+    const done = await runApply({ step, runId, changes, ctx, current: mine });
     return done.ok && !expired ? 0 : 1;
   } catch (error) {
     return fail((error instanceof Error ? error.message : '') || 'the step did not finish');
   } finally {
     clearInterval(ticker);
-    removeSketch(runId, n);
+    removeSketch(runId, n, clickedAt);
   }
 }
 

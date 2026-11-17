@@ -15,7 +15,7 @@ import { makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { startRun, markStep, findRun, applyJsonKey, reverseChange, newId } from '../../../scripts/setup/journal.js';
 import { runStep } from '../../../scripts/setup/run-step.js';
-import { writeSketch, sketchOf, sayDifference, detailOf } from '../../../scripts/setup/plan-sketch.js';
+import { writeSketch, readSketch, sketchOf, sayDifference, detailOf } from '../../../scripts/setup/plan-sketch.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 import * as setupRun from '../../../scripts/lib/setup-run.js';
@@ -258,67 +258,114 @@ test('a long step\'s process plans in the session kind it was started for, so it
   });
 });
 
-const OPENING = 'The plan for this step changed between your click and its start, so nothing was done. Open setup again for the step\'s new card.';
+const CHANGED = 'the plan for this step changed between your click and its start, so nothing was done.';
+const AGAIN = 'Open setup again for the step\'s new card.';
+const NOTHING_MORE = 'Setup has nothing more to do for this step.';
+const sketchPath = (home, runId, step = 1, clicked = NOW) => path.join(home, 'step-plans', `${runId}-${step}-${clicked.getTime()}.json`);
 
-test('a long step\'s process that plans a different list tells the director what is different in plain words, and agents the exact entry and field names, never values', async () => {
+test('a long step\'s process applies the list the helper handed it, though a fact the plan reads answers differently the next time', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(tempFolder('wh-volatile '));
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(path.join(home, 'test-world.json'), JSON.stringify({ 1: [{ file: 'x.json', key: ['a'], value: 1 }], volatile: [1] }));
+    const { STEPS: testSteps } = await import(TEST_STEPS);
+    const step = testSteps.find((s) => s.n === 1);
+    const ctx = { folder, userHome: folder, answers: {} };
+    // The helper's plan, the one the director clicked on: the volatile fact reads 1 the first time.
+    const planned = (await step.plan(ctx)).changes;
+    assert.equal(planned.at(-1).after, 1);
+    assert.notEqual(planHash((await step.plan(ctx)).changes), planHash(planned), 'a second plan of this step differs');
+    const hash = planHash(planned);
+    const run = startRun({ folder, now: () => NOW });
+    writeSketch(run.id, 1, NOW.toISOString(), hash, planned);
+    markStep(run.id, 1, 'clickedAt', { now: () => NOW });
+    assert.equal(await runStep(childArgs({ folder, hash, runId: run.id }), { now: () => NOW }), 0, JSON.stringify(findRun(folder).steps[1]));
+    assert.deepEqual(readJson(path.join(folder, '.claude', 'volatile.json')), { n: 1 }, 'the clicked list was applied, not a second plan');
+    assert.equal(fs.existsSync(sketchPath(home, run.id)), false, 'the handed list is removed when the step ends');
+    // With no list handed over, the process works it out again and the volatile fact makes it differ.
+    markStep(run.id, 1, 'clickedAt', { now: () => NOW });
+    assert.equal(await runStep(childArgs({ folder, hash, runId: run.id }), { now: () => NOW }), 1);
+    assert.equal(findRun(folder).steps[1].failed, `${CHANGED} ${AGAIN}`);
+    // A list handed over for another click is not used.
+    markStep(run.id, 1, 'clickedAt', { now: () => NOW });
+    writeSketch(run.id, 1, at(MINUTE).toISOString(), hash, planned);
+    assert.equal(await runStep(childArgs({ folder, hash, runId: run.id }), { now: () => NOW }), 1);
+    assert.equal(fs.existsSync(sketchPath(home, run.id, 1, at(MINUTE))), true, 'an older attempt never removes a newer click\'s list');
+  });
+});
+
+test('a long step\'s process told what it handed itself is not the list the click named plans again, and says what is different in plain words, and to agents the exact names, never values', async () => {
   await withHome(async (home) => {
     const folder = fs.realpathSync.native(tempFolder('wh-differ '));
     fs.mkdirSync(home, { recursive: true });
     const target = path.join(folder, 'x.json');
     const named = [{ kind: 'json-key', target, key: ['a'], after: 'token-one-9f3' }];
-    const hash = planHash(named);
+    // A handed list that does not have the click's hash is not applied: the step is planned again,
+    // and the sketch of what was handed is what the new plan is compared with.
     const run = startRun({ folder, now: () => NOW });
-    const sketch = path.join(home, 'step-plans', `${run.id}-1.json`);
+    const sketch = sketchPath(home, run.id);
     const failedWith = async (world) => {
-      writeSketch(run.id, 1, hash, named);
+      writeSketch(run.id, 1, NOW.toISOString(), H, named);
       fs.writeFileSync(path.join(home, 'test-world.json'), JSON.stringify(world));
       markStep(run.id, 1, 'clickedAt', { now: () => NOW });
-      assert.equal(await runStep(childArgs({ folder, hash, runId: run.id }), { now: () => NOW }), 1);
-      assert.equal(fs.existsSync(sketch), false, 'the sketch is removed when the step ends');
+      assert.equal(await runStep(childArgs({ folder, hash: H, runId: run.id }), { now: () => NOW }), 1);
+      assert.equal(fs.existsSync(sketch), false, 'the file is removed when the step ends');
       return findRun(folder).steps[1];
     };
-    // The sketch is private to the user, and holds no value, only a salt and digests.
-    writeSketch(run.id, 1, hash, named);
+    // The file is private to the user, and holds no value in its sketch, only a salt and digests.
+    writeSketch(run.id, 1, NOW.toISOString(), H, named);
     if (process.platform !== 'win32') {
       assert.equal(fs.statSync(sketch).mode & 0o777, 0o600);
       assert.equal(fs.statSync(path.dirname(sketch)).mode & 0o777, 0o700);
     }
-    assert.doesNotMatch(fs.readFileSync(sketch, 'utf8'), /token-one/);
-    assert.deepEqual(fs.readdirSync(path.dirname(sketch)), [`${run.id}-1.json`], 'no temporary file is left');
+    const kept = JSON.parse(fs.readFileSync(sketch, 'utf8'));
+    assert.doesNotMatch(JSON.stringify(kept.entries), /token-one/);
+    assert.deepEqual(fs.readdirSync(path.dirname(sketch)), [path.basename(sketch)], 'no temporary file is left');
     // A value that differs: the director's line names the item in plain words, no field or value.
     const changed = await failedWith({ 1: [{ file: 'x.json', key: ['a'], value: 'token-two-b71' }] });
-    assert.equal(changed.failed, `${OPENING} What is different: one item with new details (settings file).`);
+    assert.equal(changed.failed, `${CHANGED} What is different: one item with new details (settings file). ${AGAIN}`);
     assert.equal(changed.failedDetail, `changed json-key ${target} (fields: after)`);
     // An entry added, and one removed.
     const added = await failedWith({ 1: [{ file: 'x.json', key: ['a'], value: 'token-one-9f3' }, { file: 'y.json', key: ['b'], value: 'token-three-c04' }] });
-    assert.equal(added.failed, `${OPENING} What is different: one more item (settings file).`);
+    assert.equal(added.failed, `${CHANGED} What is different: one more item (settings file). ${AGAIN}`);
     assert.equal(added.failedDetail, `added json-key ${path.join(folder, 'y.json')}`);
     const removed = await failedWith({ 1: [{ file: 'z.json', key: ['a'], value: 'token-one-9f3' }] });
-    assert.match(removed.failed, /one more item \(settings file\); one item no longer needed \(settings file\)\.$/);
+    assert.match(removed.failed, /one more item \(settings file\); one item no longer needed \(settings file\)\. Open setup again/);
     assert.match(removed.failedDetail, /^added json-key .*z\.json; removed json-key .*x\.json$/);
     for (const step of [changed, added, removed]) {
       assert.doesNotMatch(`${step.failed} ${step.failedDetail}`, /token-/);
-      assert.doesNotMatch(step.failed, /json-key|fields|after|x\.json|y\.json|z\.json/, 'the director\'s line holds no kind, field name or path');
+      assert.doesNotMatch(step.failed, /json-key|fields|after|\.json|[/\\]/, 'the director\'s line holds no kind, field name or path');
     }
+    // The same items but another hash: agents are told so.
+    const same = await failedWith({ 1: [{ file: 'x.json', key: ['a'], value: 'token-one-9f3' }] });
+    assert.equal(same.failed, `${CHANGED} ${AGAIN}`);
+    assert.equal(same.failedDetail, 'same items; order or a detail outside the sketch differs');
     // A step that now asks a question, waits or settles says so in plain words; agents get the id.
     const asked = await failedWith({ ask: { 1: [{ id: 'which-host', options: ['one', 'two'] }] } });
-    assert.equal(asked.failed, `${OPENING} What is different: the step now needs an answer from you first.`);
+    assert.equal(asked.failed, `${CHANGED} What is different: the step now needs an answer from you first. ${AGAIN}`);
     assert.equal(asked.failedDetail, 'the step asked a question again (id which-host)');
     const waiting = await failedWith({ wait: { 1: { ms: 5, why: 'later' } } });
-    assert.equal(waiting.failed, `${OPENING} What is different: the step now has to wait for something else first.`);
+    assert.equal(waiting.failed, `${CHANGED} What is different: the step now has to wait for something else first. ${AGAIN}`);
     const settled = await failedWith({ settle: [1] });
-    assert.equal(settled.failed, `${OPENING} What is different: the step has nothing left to do.`);
-    // With no kept sketch to compare, the line is the first two sentences, and the next click clears the detail.
+    assert.equal(settled.failed, `${CHANGED} What is different: the step has nothing left to do. ${NOTHING_MORE}`);
+    // Without the file, the line is the first sentence and the way on, and the next click clears the detail.
     fs.writeFileSync(path.join(home, 'test-world.json'), JSON.stringify({ 1: [{ file: 'x.json', key: ['a'], value: 'token-two-b71' }] }));
     markStep(run.id, 1, 'clickedAt', { now: () => NOW });
     assert.equal(findRun(folder).steps[1].failedDetail, undefined);
-    assert.equal(await runStep(childArgs({ folder, hash, runId: run.id }), { now: () => NOW }), 1);
-    assert.equal(findRun(folder).steps[1].failed, OPENING);
+    assert.equal(await runStep(childArgs({ folder, hash: H, runId: run.id }), { now: () => NOW }), 1);
+    assert.equal(findRun(folder).steps[1].failed, `${CHANGED} ${AGAIN}`);
     assert.equal(findRun(folder).steps[1].failedDetail, undefined);
+    // Status says the director's line, then the exact detail for the agent reading it, on a line of its own.
+    markStep(run.id, 1, 'failed', { now: () => NOW, reason: 'the plan changed.', detail: `changed json-key ${target} (fields: after)` });
+    const routes = setupRoutes({ now: () => NOW, stepsModule: TEST_STEPS, userHome: fs.realpathSync.native(tempFolder('wh-user ')) });
+    const { lines } = await routes['/setup/status']({ folder });
+    const at = lines.findIndex((l) => l.startsWith('Step 1,'));
+    assert.equal(lines[at], 'Step 1, Install: did not finish: the plan changed.');
+    assert.equal(lines[at + 1], `  Detail: changed json-key ${target} (fields: after)`);
   });
 });
 
-test('a list is compared entry by entry: an entry put in the middle is one added, and one of two like entries gone is one removed', () => {
+test('a list is compared entry by entry: an entry put in the middle is one added, one of two like entries gone is one removed, repeats are grouped', () => {
   const key = (k, v) => ({ kind: 'json-key', target: '/p/settings.json', key: [k], after: v });
   const line = (before, after) => {
     const kept = sketchOf(before, 'salt');
@@ -328,25 +375,31 @@ test('a list is compared entry by entry: an entry put in the middle is one added
   assert.deepEqual(line([k1, k2, k3], [k1, fresh, k2, k3]), ['one more item (settings file)', 'added json-key /p/settings.json']);
   const same = (v) => ({ kind: 'host', target: 'gitlab', action: 'sign-in', via: v });
   assert.deepEqual(line([same(1), same(2)], [same(2)]), ['one item no longer needed (GitLab sign-in)', 'removed host sign-in gitlab']);
-  assert.deepEqual(line([k1, k2], [k1, k2]), ['', '']);
-  // The first three are named, then how many more.
-  const many = [1, 2, 3, 4, 5].map((i) => ({ kind: 'host', target: `host-${i}`, action: 'certificate' }));
-  assert.equal(line([], many)[0], 'one more item (GitLab certificate); one more item (GitLab certificate); one more item (GitLab certificate), and 2 more');
-  // An item with no plain name is told by its target alone.
-  assert.equal(line([], [{ kind: 'folder', target: '/p/state', action: 'state' }])[0], 'one more item (/p/state)');
+  assert.match(line([k1, k2], [k1, k2])[1], /^same items/);
+  assert.equal(line([k1, k2], [k1, k2])[0], '');
+  // Repeats are grouped, and the first three groups are named, then how many more.
+  const certificate = { kind: 'host', target: 'gitlab', action: 'certificate' };
+  assert.equal(line([], [certificate, certificate, certificate])[0], '3 more items (GitLab certificate)');
+  const four = [certificate, { kind: 'host', target: 'github', action: 'sign-in' }, { kind: 'host', target: 'gitlab', action: 'connection' }, { kind: 'host', target: 'gitlab', action: 'key-card' }];
+  assert.equal(line([], four)[0], 'one more item (GitLab certificate); one more item (GitHub sign-in); one more item (GitLab connection), and 1 more');
+  // An item the table has no name for is "a setup item", and its path or address is never told.
+  assert.equal(line([], [{ kind: 'process', target: '/p/odd', action: 'odd' }])[0], 'one more item (a setup item)');
+  for (const [kind, action] of [['host', 'repository'], ['host', 'join'], ['host', 'own-app'], ['host', 'own-app-again'], ['folder', 'connect'], ['folder', 'checkout'], ['folder', 'state'], ['file', 'project']]) {
+    assert.doesNotMatch(line([], [{ kind, action, target: '/p/x' }])[0], /a setup item|\/p\/x/, `${kind}:${action} has a plain name`);
+  }
+  // A target in a detail keeps only plain characters.
+  assert.equal(line([], [{ kind: 'file', target: '/p/a b\u0007c"d', action: 'x' }])[1], 'added file x /p/a b?c?d');
   // The salt is random for each sketch, so a digest cannot be matched across them.
   assert.notEqual(sketchOf([k1]).salt, sketchOf([k1]).salt);
   assert.notDeepEqual(sketchOf([k1], 'a').entries, sketchOf([k1], 'b').entries);
 });
 
-test('the helper starts a long step\'s process with its own environment, adding no company certificate the helper does not trust itself', async () => {
+test('the helper hands a long step\'s process its list and the company\'s certificate file, once setup has made it', async () => {
   await withHome(async (home) => {
     const user = fs.realpathSync.native(tempFolder('wh-env '));
     const folder = path.join(user, 'Projects', 'shop');
     fs.mkdirSync(folder, { recursive: true });
-    fs.mkdirSync(path.join(home, 'ca'), { recursive: true });
-    // Step 2 has made the company's certificate file since this helper started.
-    fs.writeFileSync(path.join(home, 'ca', 'company.pem'), 'a certificate');
+    fs.mkdirSync(home, { recursive: true });
     fs.writeFileSync(path.join(home, 'test-world.json'), JSON.stringify({ 2: [{ file: 'x.json', key: ['a'], value: 1 }] }));
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
@@ -357,17 +410,22 @@ test('the helper starts a long step\'s process with its own environment, adding 
       return { on: () => {}, unref: () => {} };
     };
     try {
-      for (const own of [undefined, '/helpers/own-certificates.pem']) {
-        if (own === undefined) delete process.env.NODE_EXTRA_CA_CERTS; else process.env.NODE_EXTRA_CA_CERTS = own;
+      process.env.NODE_EXTRA_CA_CERTS = '/helpers/own-certificates.pem';
+      for (const made of [false, true]) {
+        if (made) {
+          fs.mkdirSync(path.join(home, 'ca'), { recursive: true });
+          fs.writeFileSync(path.join(home, 'ca', 'company.pem'), 'a certificate');
+        }
         const routes = setupRoutes({ now: () => NOW, stepsModule: TEST_STEPS, userHome: user, spawn });
         const planned = await routes['/setup/plan']({ folder, step: 2 });
         const runId = findRun(folder).id;
         setupClicks.keepClick(makeEvent({ kind: 'action', data: { action: 'setup', runId, step: 2, hash: planned.hash, question: planned.card.question, label: 'Go ahead' }, now: () => new Date(NOW.getTime() - 1000) }));
         const applied = await routes['/setup/apply']({ folder, step: 2, hash: planned.hash });
         assert.equal(applied.started, true, JSON.stringify(applied));
-        const { options } = started.at(-1);
-        assert.equal(options.env.NODE_EXTRA_CA_CERTS, own, 'the process trusts what the helper trusts, no more');
-        assert.equal(fs.existsSync(path.join(home, 'step-plans', `${runId}-2.json`)), true, 'the sketch of the clicked list is kept for it');
+        const { args, options } = started.at(-1);
+        assert.equal(options.env.NODE_EXTRA_CA_CERTS, made ? path.join(home, 'ca', 'company.pem') : '/helpers/own-certificates.pem');
+        const handed = readSketch(runId, 2, args[6], planned.hash);
+        assert.equal(planHash(handed.changes), planned.hash, 'the list the click named is handed over');
         markStep(runId, 2, 'reset', { now: () => NOW });
       }
     } finally {

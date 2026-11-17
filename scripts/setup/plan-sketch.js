@@ -1,9 +1,12 @@
 // scripts/setup/plan-sketch.js
-// What a long step's process needs to say what changed when its list differs from the one the click
-// named (scripts/setup/run-step.js). The helper keeps, beside the step's hash, a sketch of the list
-// the hash was made from: each entry's kind, action and target, and for each other field its name
-// and a salted digest of its value. A value may hold an address or a secret, so no value is kept,
-// and what the process says names fields, never values. The sketch is removed when the step ends.
+// What the helper hands a long step's process (scripts/setup/run-step.js), kept for one click of one
+// step: the list the click named, with its hash, and a sketch of it. The process applies that list
+// when it has the hash the click named, so facts the plan reads from the network or the clock, which
+// can answer differently a few seconds later in another process, never change what the director
+// clicked on. When there is no such file the process works the list out again, and if that list
+// differs the sketch lets it say what changed: each entry's kind, action and target, and for each
+// other field its name and a salted digest of its value. What is said names fields, never values.
+// The file is for its owner only and is removed when the step ends.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,18 +17,30 @@ import { wheelhouseHome } from '../lib/paths.js';
 const IDENTITY = ['kind', 'action', 'target'];
 const MOST_NAMED = 3;
 const MOST_DETAIL_CHARS = 1000;
+const MOST_TARGET_CHARS = 120;
+const SOMETHING = 'a setup item';
 
-// What the director is told an item is, by its kind and action; any other is told by its target.
+// What the director is told an item is, by its kind and action. A path or an address is never told.
 const PLAIN = {
-  'host:sign-in': 'GitLab sign-in',
-  'host:certificate': 'GitLab certificate',
-  'host:connection': 'connection',
+  'host:sign-in': '{host} sign-in',
+  'host:certificate': '{host} certificate',
+  'host:connection': '{host} connection',
   'host:key-card': 'sign-in key',
-  'json-key': 'settings file',
+  'host:repository': 'project on {host}',
+  'host:join': 'project to join on {host}',
+  'host:own-app': 'your own GitHub app',
+  'host:own-app-again': 'your own GitHub app',
+  'folder:connect': 'folder connection',
+  'folder:checkout': 'folder checkout',
+  'folder:state': 'project record',
+  'file:project': 'project record',
   'file:gitlab-hosts': 'settings file',
+  'json-key': 'settings file',
 };
 
-const sketchFile = (runId, step) => path.join(wheelhouseHome(), 'step-plans', `${runId}-${step}.json`);
+// The folder of these files, which uninstall removes.
+export const stepPlansDir = () => path.join(wheelhouseHome(), 'step-plans');
+const sketchFile = (runId, step, clickedAt) => path.join(stepPlansDir(), `${runId}-${step}-${Date.parse(clickedAt)}.json`);
 const nameOf = (entry) => IDENTITY.map((k) => (typeof entry?.[k] === 'string' ? entry[k] : '')).join('\u0000');
 
 // The sketch of a list of changes: a salt, and each entry's name and its fields' digests.
@@ -41,36 +56,43 @@ export function sketchOf(changes, salt = crypto.randomBytes(16).toString('hex'))
   };
 }
 
-// Keeps the sketch of the list `hash` names for this run's step. Whether it was kept does not
-// matter to the step: without it the failure just says less.
-export function writeSketch(runId, step, hash, changes) {
+// Keeps the list `hash` names, and its sketch, for this click of the run's step. Whether it was kept
+// does not matter to the step: without it the process works the list out again.
+export function writeSketch(runId, step, clickedAt, hash, changes) {
   let temp = null;
   try {
-    const file = sketchFile(runId, step);
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    temp = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(temp, JSON.stringify({ hash, ...sketchOf(changes) }), { mode: 0o600 });
+    const file = sketchFile(runId, step, clickedAt);
+    const dir = path.dirname(file);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(dir, 0o700);
+    temp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+    fs.writeFileSync(temp, JSON.stringify({ hash, changes, ...sketchOf(changes) }), { mode: 0o600, flag: 'wx' });
     fs.renameSync(temp, file);
     temp = null;
-  } catch { /* the failure line then says only that the list changed */ }
-  if (temp !== null) fs.rmSync(temp, { force: true });
+  } catch { /* the process then works the list out again */ }
+  if (temp !== null) {
+    try {
+      fs.rmSync(temp, { force: true });
+    } catch { /* a leftover temporary file is removed with the folder */ }
+  }
 }
 
-// The sketch kept for this run's step, when it is of the list `hash` names; otherwise null.
-export function readSketch(runId, step, hash) {
+// What was kept for this click, when it is of the list `hash` names; otherwise null.
+export function readSketch(runId, step, clickedAt, hash) {
   try {
-    const got = JSON.parse(fs.readFileSync(sketchFile(runId, step), 'utf8'));
-    return got?.hash === hash && typeof got.salt === 'string' && Array.isArray(got.entries) ? got : null;
+    const got = JSON.parse(fs.readFileSync(sketchFile(runId, step, clickedAt), 'utf8'));
+    return got?.hash === hash && typeof got.salt === 'string' && Array.isArray(got.entries) && Array.isArray(got.changes) ? got : null;
   } catch {
     return null;
   }
 }
 
-// The step has ended, so its sketch is not wanted.
-export function removeSketch(runId, step) {
+// This click's file is not wanted any more. A later click has a file of its own, so this never
+// removes it.
+export function removeSketch(runId, step, clickedAt) {
   try {
-    fs.rmSync(sketchFile(runId, step), { force: true });
-  } catch { /* a leftover is written over by the next click */ }
+    fs.rmSync(sketchFile(runId, step, clickedAt), { force: true });
+  } catch { /* a leftover is removed with the folder at uninstall */ }
 }
 
 // How the entries of `after` differ from those of `before`: first the entries whose whole sketch is
@@ -106,49 +128,52 @@ export function differences(before, after) {
   return { added, removed: rest.map((j) => before[j]), changed };
 }
 
-const parts = (diff, say) => [
-  ...diff.added.map((e) => say.added(e)),
-  ...diff.removed.map((e) => say.removed(e)),
-  ...diff.changed.map((c) => say.changed(c)),
-];
+// A host's name is a service's (GitLab, GitHub), never an address.
+const serviceOf = (target) => (target === 'gitlab' ? 'GitLab' : target === 'github' ? 'GitHub' : 'the host');
+const plainOf = (entry) => (PLAIN[`${entry.kind}:${entry.action}`] ?? PLAIN[entry.kind] ?? SOMETHING).replace('{host}', serviceOf(entry.target));
 
-const plainOf = (entry) => {
-  const mapped = PLAIN[`${entry.kind}:${entry.action}`] ?? PLAIN[entry.kind];
-  return mapped ?? (typeof entry.target === 'string' ? hide(entry.target, []) : 'an item');
-};
-
-const technical = (entry) => [entry.kind ?? 'entry', entry.action, typeof entry.target === 'string' ? hide(entry.target, []) : undefined]
+// Only plain characters of a target go to a journal line: anything else is a question mark.
+const safe = (text) => String(text).replace(/[^A-Za-z0-9 _.,/\\:~@+=-]/g, '?').slice(0, MOST_TARGET_CHARS);
+const technical = (entry) => [entry.kind ?? 'entry', entry.action, typeof entry.target === 'string' ? safe(hide(entry.target, [])) : undefined]
   .filter((x) => typeof x === 'string').join(' ');
 
-// For the director, in plain words: what is different, as up to MOST_NAMED parts and a count of the
-// rest, or '' when the sketches agree.
+// For the director, in plain words: what is different, repeats grouped ("3 more items (GitLab
+// certificate)"), the first MOST_NAMED groups and a count of the rest; '' when the sketches agree.
 export function sayDifference(before, after) {
-  const listed = parts(differences(before.entries, after.entries), {
-    added: (e) => `one more item (${plainOf(e)})`,
-    removed: (e) => `one item no longer needed (${plainOf(e)})`,
-    changed: ({ entry }) => `one item with new details (${plainOf(entry)})`,
-  });
+  const { added, removed, changed } = differences(before.entries, after.entries);
+  const groups = new Map();
+  const add = (kind, entry) => {
+    const key = `${kind}|${plainOf(entry)}`;
+    groups.set(key, { kind, plain: plainOf(entry), count: (groups.get(key)?.count ?? 0) + 1 });
+  };
+  added.forEach((e) => add('added', e));
+  removed.forEach((e) => add('removed', e));
+  changed.forEach(({ entry }) => add('changed', entry));
+  const words = { added: ['one more item', 'more items'], removed: ['one item no longer needed', 'items no longer needed'], changed: ['one item with new details', 'items with new details'] };
+  const listed = [...groups.values()].map(({ kind, plain, count }) => `${count === 1 ? words[kind][0] : `${count} ${words[kind][1]}`} (${plain})`);
   if (listed.length === 0) return '';
   const more = listed.length > MOST_NAMED ? `, and ${listed.length - MOST_NAMED} more` : '';
   return `${listed.slice(0, MOST_NAMED).join('; ')}${more}`;
 }
 
 // For agents: the exact kind, action and target of each entry, and for a changed one the names of
-// its fields that differ. Never a value.
+// its fields that differ. Never a value. When the sketches agree but the hashes do not, it says so.
 export function detailOf(before, after) {
-  const listed = parts(differences(before.entries, after.entries), {
-    added: (e) => `added ${technical(e)}`,
-    removed: (e) => `removed ${technical(e)}`,
-    changed: ({ entry, names }) => `changed ${technical(entry)} (fields: ${names.join(', ')})`,
-  });
+  const diff = differences(before.entries, after.entries);
+  const listed = [
+    ...diff.added.map((e) => `added ${technical(e)}`),
+    ...diff.removed.map((e) => `removed ${technical(e)}`),
+    ...diff.changed.map(({ entry, names }) => `changed ${technical(entry)} (fields: ${names.join(', ')})`),
+  ];
+  if (listed.length === 0) return 'same items; order or a detail outside the sketch differs';
   return listed.join('; ').slice(0, MOST_DETAIL_CHARS);
 }
 
-// What a step that no longer has a list says in its place: in plain words for the director, and for
-// agents the exact thing, with the question's id.
+// What a step that no longer has a list says in its place: in plain words for the director, whether
+// opening setup again helps, and for agents the exact thing, with the question's id.
 export function sayNoList(got) {
-  if (got?.ask !== undefined) return { plain: 'the step now needs an answer from you first', detail: `the step asked a question again (id ${hide(String(got.ask.id), [])})` };
-  if (got?.wait !== undefined) return { plain: 'the step now has to wait for something else first', detail: 'the step asked to wait again' };
-  if (got?.settled !== undefined) return { plain: 'the step has nothing left to do', detail: 'the step settled without a list' };
-  return { plain: 'the step has nothing left to do', detail: 'the step gave no list' };
+  if (got?.ask !== undefined) return { plain: 'the step now needs an answer from you first', again: true, detail: `the step asked a question again (id ${safe(hide(String(got.ask.id), []))})` };
+  if (got?.wait !== undefined) return { plain: 'the step now has to wait for something else first', again: true, detail: 'the step asked to wait again' };
+  if (got?.settled !== undefined) return { plain: 'the step has nothing left to do', again: false, detail: 'the step settled without a list' };
+  return { plain: 'the step has nothing left to do', again: false, detail: 'the step gave no list' };
 }

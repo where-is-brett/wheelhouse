@@ -23,7 +23,9 @@
 //
 //   Journal = { v: 1, runs: Array<{
 //     id, folder, project?, startedAt,
-//     steps: Record<number, { shownAt?, clickedAt?, doneAt?, failed?: string, say?: { line, at } }>,
+//     steps: Record<number, { shownAt?, clickedAt?, doneAt?, failed?: string, failedDetail?: string, say?: { line, at } }>,
+//                            `failed` is the director's line; `failedDetail` is for agents, the exact
+//                            names (kind, action, target, field names, a question's id) and never a value
 //     changes: Change[],
 //     closedAt?, closedBy?: 'uninstall',   the run is over: uninstall closed it, last of all
 //   }> }
