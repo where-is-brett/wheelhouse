@@ -47,7 +47,7 @@ import { QUICK_LINE, quickLineFor } from '../../../scripts/lib/host-lines.js';
 import { QUICK_LINE as BOARD_QUICK_LINE } from '../../../scripts/board/health.js';
 import { FREE_PLAN_LINE } from '../../../scripts/host/protection.js';
 import { g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
-import { KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, remotesOf } from '../../../scripts/setup/local.js';
+import { KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, remotesOf, chosenHost } from '../../../scripts/setup/local.js';
 import { homeDir } from '../../../scripts/host/local/home.js';
 import { GITLAB_COM, COMPANY_GITLAB, companyAddress, nameGitlabHost } from '../../../scripts/setup/host.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
@@ -2463,6 +2463,8 @@ test('step 3 asks whether this computer is joining only in a folder holding noth
     for (const bad of ['', 'a b', '../x', 'o/..', 'https://gitlab.example.org', 'https://gitlab.example.org/', 'git@gitlab.example.org:', 'https://h/../x']) assert.equal(repoNamed(bad), null, bad);
     // A pasted project address reads as its owner/name, groups too.
     for (const [pasted, named] of [
+      ['github.com/ann/cafe-menu', 'ann/cafe-menu'],
+      ['gitlab.company.com/team/app', 'team/app'],
       ['https://gitlab.example.org/ann/cafe-menu', 'ann/cafe-menu'],
       ['https://github.com/ann/cafe-menu.git', 'ann/cafe-menu'],
       ['git@gitlab.example.org:ann/cafe-menu.git', 'ann/cafe-menu'],
@@ -2478,7 +2480,7 @@ test('step 3 asks whether this computer is joining only in a folder holding noth
   });
 });
 
-test('a pasted address on another host than setup uses is refused and never looked up; one on the same host joins', async () => {
+test('a pasted address decides the host and its GitLab: no host card and no which-GitLab card is asked', async () => {
   await withHome(async () => {
     const w = standIn();
     await seedProject(w, `${USER}/Cafe-Menu`);
@@ -2486,16 +2488,46 @@ test('a pasted address on another host than setup uses is refused and never look
     const folder = emptyFolder();
     const run = startRun({ folder, now: () => NOW });
     const ctx = ctxFor(folder, { runId: run.id });
-    // GitLab's address while setup looks on GitHub: the question asks again, saying so, and nothing is looked up.
-    const other = `https://gitlab.example.org/${USER}/Cafe-Menu`;
-    const refused = await answerJoin(step, ctx, (id, card) => (id === 'join' ? other : id.startsWith('join-') ? HOST_LABELS.github : choose()(id, card)));
-    const again = refused.asked.find((a) => a.id.startsWith('join-'));
-    assert.equal(again.card.what.startsWith(`"${other}" is on gitlab.example.org, not GitHub. Type owner/name, or click a button. `), true, again?.card.what);
-    assert.equal(refused.changes.some((c) => c.action === 'join'), false);
-    // GitHub's own address (a page of the project, even) joins.
-    const same = await answerJoin(step, ctx, joining({ typed: `https://github.com/${USER}/Cafe-Menu/pulls` }));
-    assert.equal(same.changes.find((c) => c.action === 'join').name, `${USER}/Cafe-Menu`);
-    assert.equal(same.asked.some((a) => a.id.startsWith('join-')), false);
+    const joinedOn = async (typed) => {
+      const got = await answerJoin(step, ctx, (id, card) => {
+        if (id === 'host' || id.startsWith('gitlab-')) throw new Error(`asked ${id}`);
+        return id === 'join' ? typed : choose()(id, card);
+      });
+      return { connection: got.changes.find((c) => c.action === 'connection'), join: got.changes.find((c) => c.action === 'join'), card: got.card };
+    };
+    // GitHub: github.com, with or without https://, and a page of the project, join on GitHub though the run's own answers say GitLab.
+    for (const typed of [`https://github.com/${USER}/Cafe-Menu/pulls`, `github.com/${USER}/Cafe-Menu`, `www.github.com/${USER}/Cafe-Menu/tree/main`]) {
+      const got = await joinedOn(typed);
+      assert.equal(got.connection.target, 'github', typed);
+      assert.equal(got.join.name, `${USER}/Cafe-Menu`, typed);
+    }
+    // The public GitLab.
+    const pub = await joinedOn(`https://gitlab.com/${USER}/Cafe-Menu/-/tree/main`);
+    assert.equal(pub.connection.target, 'gitlab');
+    assert.equal(pub.connection.base ?? 'https://gitlab.com', 'https://gitlab.com');
+    assert.equal(pub.join.name, `${USER}/Cafe-Menu`);
+    // A company's GitLab: its address is the base.
+    const company = await joinedOn(`git@gitlab.company.example:${USER}/Cafe-Menu.git`);
+    assert.equal(company.connection.target, 'gitlab');
+    assert.equal(company.connection.base, 'https://gitlab.company.example');
+    assert.equal(company.join.name, `${USER}/Cafe-Menu`);
+    assert.match(company.card.what ?? JSON.stringify(company.card), /company/i);
+    assert.equal(chosenHost({ '3.join': { label: null, text: 'github.com/ann/x', at: NOW.toISOString() } }), 'github');
+    assert.equal(chosenHost({ '3.join': { label: null, text: 'https://gitlab.company.example/ann/x', at: NOW.toISOString() } }), 'gitlab');
+  });
+});
+
+test('an address setup cannot read is refused as such, never looked up on the run\'s host', async () => {
+  await withHome(async () => {
+    const step = stepFor(standIn());
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    for (const bad of ['https://gitlab.example.org:99999/ann/cafe-menu', 'https://git lab.example.org/ann/cafe-menu', 'https://[::1/ann/cafe-menu', 'https://git^lab.example.org/ann/cafe-menu']) {
+      const ask = (await step.plan({ ...ctx, answers: { '3.join': { label: null, text: bad, at: NOW.toISOString() } } })).ask;
+      assert.notEqual(ask.id, 'join', bad);
+      assert.equal(ask.card.what.startsWith(`"${bad}" is an address setup can't read. Type owner/name, like ann/cafe-menu, or click a button. `), true, ask.card.what);
+    }
   });
 });
 
@@ -2509,6 +2541,11 @@ test('a token in a pasted address is not shown back on the card that asks again'
     const shown = (await step.plan({ ...ctx, answers: typed('https://oauth2:glpat-SECRET123@gitlab.example.org/') })).ask.card.what;
     assert.equal(shown.includes('SECRET123'), false, shown);
     assert.match(shown, /^"https:\/\/gitlab\.example\.org\/" is not a repository's name\./);
+    // A query string, and a user that is not plain git, are not shown back either.
+    for (const secret of ['https://gitlab.example.org/?private_token=SECRET456', 'deploy:SECRET789@gitlab.example.org:']) {
+      const card = (await step.plan({ ...ctx, answers: typed(secret) })).ask.card.what;
+      assert.equal(/SECRET\d+|private_token/.test(card), false, card);
+    }
     // git@host: is no secret, and stays.
     assert.match((await step.plan({ ...ctx, answers: typed('git@gitlab.example.org:') })).ask.card.what, /^"git@gitlab\.example\.org:" is not/);
   });

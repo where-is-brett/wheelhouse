@@ -111,7 +111,7 @@ import {
   KEY_DAYS_ASKED,
 } from './host-access.js';
 import {
-  KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, applyLocal, backupAnswered, backupChoice, branchAsk, branchesOf, chooseBranch, headBranch, keptAsk, localCard, localName, localSteps, remotesOf,
+  KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, applyLocal, backupAnswered, backupChoice, pastedAddress, withScheme, branchAsk, branchesOf, chooseBranch, headBranch, keptAsk, localCard, localName, localSteps, remotesOf,
 } from './local.js';
 import { pickFolder, timeMachine } from '../host/local/backup.js';
 import { backupNamed, projectOfBackup } from '../host/local/restore.js';
@@ -646,8 +646,7 @@ export function nameGitlabHost({ folder, entry, record }) {
 
 // The join question (ruling R77), asked first in a folder holding only step 1's install. `missed`
 // is why it is asked again: { name, missed }, where `missed` is 'none', the repositories found
-// when there were several, 'not-a-name' for typed text that names no repository, or 'other-host' for a pasted address on a host
-// other than the one setup is using ({ name, missed, on, using } then).
+// when there were several, 'not-a-name' for typed text that names no repository, or 'bad-address' for a pasted address setup can't read.
 function joinAsk(id, name, { missed }) {
   const other = fromOtherComputer(name);
   let found = '';
@@ -655,7 +654,7 @@ function joinAsk(id, name, { missed }) {
     const address = /:\/\/|@/.test(missed.name) ? 'An address alone is not a project: ' : '';
     found = `"${missed.name}" is not a repository's name. ${address}${address ? 't' : 'T'}ype owner/name, like ann/cafe-menu, or click a button. `;
   }
-  else if (missed?.missed === 'other-host') found = `"${missed.name}" is on ${missed.on}, not ${missed.using}. Type owner/name, or click a button. `;
+  else if (missed?.missed === 'bad-address') found = `"${missed.name}" is an address setup can't read. Type owner/name, like ann/cafe-menu, or click a button. `;
   else if (missed?.missed === 'no-backup') found = `"${missed.name}" can't be found. `;
   else if (Array.isArray(missed?.missed)) found = `More than one ${missed.name} is set up with Wheelhouse: ${missed.missed.slice(0, 5).join(', ')}. `;
   else if (missed) found = `Setup found no ${missed.name} set up with Wheelhouse on your account or organisations. `;
@@ -686,7 +685,7 @@ function joinAsk(id, name, { missed }) {
 // ssh://git@host/owner/name or git@host:owner/name, with or without .git) reads as its owner/name;
 // an address with no path (a bare host) names no project.
 export function repoNamed(text) {
-  let named = String(text ?? '').trim();
+  let named = withScheme(String(text ?? '').trim());
   const web = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/]*)(.*)$/.exec(named);
   const scp = web ? null : /^[A-Za-z0-9_.-]+@([A-Za-z0-9.-]+):(?!\/\/)(.*)$/.exec(named);
   if (web || scp) {
@@ -702,32 +701,24 @@ export function repoNamed(text) {
   return named.split('/').some((part) => /^\.+$/.test(part)) ? null : named;
 }
 
-// The host a pasted project address names, as parseRemote reads it, or null for typed text that is no address.
-function pastedHost(text) {
-  const named = String(text ?? '').trim();
-  if (!/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(named) && !/^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+:(?!\/\/)/.test(named)) return null;
-  try {
-    return parseRemote(named);
-  } catch {
-    return null;
-  }
-}
+// The text of an answer as the card may show it back: any user or token written before the host of an address
+// (https://oauth2:token@host/..., or user@host:path where the user is not plain git), and any query string, are dropped;
+// it is cut to 100 characters. git@host:path keeps its git@, which is no secret.
+const shown = (text) => String(text ?? '').trim()
+  .replace(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^/?#]*@/, '$1')
+  .replace(/^([^@/\s]+)@([A-Za-z0-9.-]+:(?!\/\/))/, (all, user, rest) => (user === 'git' ? all : rest))
+  .replace(/[?#].*$/, '')
+  .slice(0, 100);
 
-// The text of an answer as the card may show it back: any user or token written before the host of an
-// address (https://oauth2:token@host/...) is dropped, and it is cut to 100 characters. git@host:path keeps its git@, which is no secret.
-const shown = (text) => String(text ?? '').trim().replace(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^/?#]*@/, '$1').slice(0, 100);
-
-// Where a pasted address says the product is, set against the host the run looks on (GitHub, or the GitLab at `base`):
-// null when they are the same, else the words for each. An address names its host and only that host is looked on.
-function otherHost(text, using) {
-  const there = pastedHost(text);
-  if (there === null || using === undefined) return null;
-  if (using.host === 'github') {
-    return there.hostname === 'github.com' || there.hostname === 'www.github.com' ? null : { on: hostWords(there), using: 'GitHub' };
-  }
-  const own = parseRemote(using.base);
-  const same = there.hostname === own.hostname && (there.port === '' || own.port === '' || there.port === own.port);
-  return same ? null : { on: hostWords(there), using: hostWords(own) };
+// Where a pasted address says the product is, so no host card is asked: null for text that is no address;
+// { unreadable: true } for one setup can't read; { host: 'github' } for github.com; else { host: 'gitlab', company } with
+// the GitLab as the which-GitLab cards give it ({ base } for the public service, { base, host } for a company's).
+function pinOf(text) {
+  const there = pastedAddress(text);
+  if (there === null || there.unreadable) return there;
+  if (there.hostname === 'github.com' || there.hostname === 'www.github.com') return { host: 'github' };
+  const company = companyAddress(hostWords(there));
+  return company.why === undefined ? { host: 'gitlab', company } : { unreadable: true };
 }
 
 // Step 3's records of a run's joining (ruling R77), in order: its `answer` changes with `joined`.
@@ -763,7 +754,7 @@ export function joinedFolder(folder, run = null) {
 // step 1's install, unless the run is already joining). Each name an attempt missed, and each
 // typed text that names no repository, asks the question again under an id naming them (ruling
 // R51), so no answer is used again for a name that wasn't found.
-function joinChoice(ctx, using) {
+function joinChoice(ctx) {
   const run = typeof ctx.runId === 'string' ? readJournal().runs.find((r) => r?.id === ctx.runId) ?? null : null;
   // A project brought back from a backup goes on being so, once its folder has filled.
   const restore = backupAnswered(ctx.answers);
@@ -796,13 +787,13 @@ function joinChoice(ctx, using) {
         tried.push({ name: shown(got.text), missed: 'not-a-name' });
         continue;
       }
-      // An address pins its host: one on another host than the run looks on is never looked up there, where a
-      // stranger's repository of the same name could be found and checked out.
-      const elsewhere = otherHost(got.text, using);
-      if (elsewhere !== null) {
-        tried.push({ name: shown(got.text), missed: 'other-host', ...elsewhere });
+      // A pasted address decides the host: it is looked up there and nowhere else, and no host card is asked.
+      const pin = pinOf(got.text);
+      if (pin?.unreadable) {
+        tried.push({ name: shown(got.text), missed: 'bad-address' });
         continue;
       }
+      if (pin !== null) return { join: wanted, known, pin };
       return { join: wanted, known };
     }
     return { join: name, known };
@@ -2121,7 +2112,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     const accounts = host === 'gitlab' ? 'account or groups' : 'account or organisations';
     parts.push(bare ? 'The repository set up with Wheelhouse, checked out here with its settings.'
       : tight ? `${product.repo ?? product.name}, the one set up with Wheelhouse, checked out here with its settings.`
-        : `${product.repo ?? product.name}, the one set up with Wheelhouse, found on your ${name} ${accounts} and checked out into this folder. Its committed .claude/settings.json takes the place of the install's.`);
+        : `${product.repo ?? product.name}, the one set up with Wheelhouse, found on ${company ? `your company's GitLab` : `your ${name} ${accounts}`} and checked out into this folder. Its committed .claude/settings.json takes the place of the install's.`);
   } else parts.push(bare ? `This project's repository on ${name}, kept as it is.` : `${product.repo} on ${name}, kept as it is.`);
   if (way === WAYS.asIs) {
     const keyCard = changes.find((c) => c.action === 'key-card');
@@ -2318,7 +2309,7 @@ export function hostStep({
     return { tool, cliSigned, found, curl, offered, gitPath, proxied: proxy !== null, proxyPassword, noRoad: noTool && !curl };
   }
 
-  const self = {
+  return {
     n: 3,
     title: SETUP_TITLES[3],
     long: true,
@@ -2362,7 +2353,7 @@ export function hostStep({
       const answer = (id) => answers[`3.${id}`] ?? null;
       // A computer joining a product set up on another (ruling R77): asked first, in a folder
       // holding only step 1's install.
-      const join = joinChoice(ctx, ctx.joinUsing);
+      const join = joinChoice(ctx);
       if (join?.ask) return { ask: join.ask };
       const restoring = join?.restore ?? null;
       let product = restoring !== null ? { isNew: false, host: 'local', repo: null, name: projectOfBackup(restoring), others: [], restoring: true }
@@ -2387,7 +2378,7 @@ export function hostStep({
       // so (its checked-out .claude/wheelhouse.json, or a v0.1.x state branch's phase); before then,
       // apply refuses Quick once it has.
       const launched = product.joining === true && (launchedInFolder(ctx.folder) || launchedFound(product.repo));
-      let host = product.host ?? join?.host ?? null;
+      let host = product.host ?? join?.host ?? join?.pin?.host ?? null;
       if (host === null) {
         if (answer('host') === null) return { ask: hostAsk(product.name) };
         const { label } = answer('host');
@@ -2400,7 +2391,9 @@ export function hostStep({
       }
       // GitLab chosen, with no remote naming one: the public service, or the company's own address.
       let company = null;
-      if (host === 'gitlab' && product.host !== 'gitlab') {
+      // A pasted address named its GitLab: neither the which-GitLab card nor the address card is asked.
+      if (join?.pin?.company !== undefined) company = join.pin.company;
+      else if (host === 'gitlab' && product.host !== 'gitlab') {
         company = gitlabWhere({ answer, name: product.name, others: product.others ?? remotesOf(ctx.folder) });
         if (company.ask) return { ask: company.ask };
         // The chosen host is the one the folder's own remote names: that remote's project is the product, never a new one.
@@ -2440,14 +2433,6 @@ export function hostStep({
       // on GitHub with no Wheelhouse app) is no choice, and AskUserQuestion can't show it: that way
       // is taken, and step 3's Go-ahead card lists it.
       const base = product.base ?? company?.base ?? DEFAULT_GITLAB;
-      // A pasted address is set against the host now known: when it names another, the join question is asked again, and
-      // when a newer answer takes its place the plan is read again from it.
-      if (ctx.joinUsing === undefined && join?.join !== undefined) {
-        const using = { host, base };
-        const again = joinChoice(ctx, using);
-        if (again?.ask) return { ask: again.ask };
-        if (again?.join !== join.join) return self.plan({ ...ctx, joinUsing: using });
-      }
       // What the computer already has, found before anything is asked (not for a Locked or launched project, which is
       // never offered the director's own key).
       // GitLab's own tool, missing here with no one yet saying whether to fetch it, is asked about before the connection
@@ -2858,5 +2843,4 @@ export function hostStep({
       }
     },
   };
-  return self;
 }

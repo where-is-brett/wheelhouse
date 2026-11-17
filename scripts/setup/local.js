@@ -191,6 +191,25 @@ export function backupChoice({ answer, name, root, machine, desktop = true }) {
   }
 }
 
+// A pasted project address typed without its https:// (github.com/ann/cafe-menu, gitlab.company.com/team/app): a first
+// part that is a host name (dots, ending in a letters-only label) with more path after it reads as that host's address.
+export const withScheme = (text) => (/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?::\d{1,5})?\/[^\s]/.test(text) ? `https://${text}` : text);
+
+// The host a pasted project address names, as parseRemote reads it: null for text that is no address, { unreadable: true }
+// for one that looks like an address (scheme:// or user@host:) but cannot be read.
+export function pastedAddress(text) {
+  const named = withScheme(String(text ?? '').trim());
+  if (!/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(named) && !/^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+:(?!\/\/)/.test(named)) return null;
+  try {
+    return parseRemote(named);
+  } catch {
+    return { unreadable: true };
+  }
+}
+
+// Which code host a pasted address names: 'github' for github.com, else 'gitlab'; null while the join answer is no address.
+export const hostOfAddress = (parts) => (parts === null || parts.unreadable ? null : parts.hostname === 'github.com' || parts.hostname === 'www.github.com' ? 'github' : 'gitlab');
+
 // The backup file a run's answers name, or null: a path typed on the join card, where the four options are taken (spec 10).
 export function backupAnswered(answers = {}) {
   // Only the newest join answer counts: an earlier one was refused and the question asked again.
@@ -202,6 +221,10 @@ export function backupAnswered(answers = {}) {
 // Where the run's answers keep the project: 'local', 'github', 'gitlab' or null, while no answer says.
 export function chosenHost(answers = {}) {
   if (backupAnswered(answers) !== null) return 'local';
+  const joined = Object.keys(answers ?? {}).filter((k) => /^3\.join(?:-|$)/.test(k)).at(-1);
+  // A pasted address names its own host: no host card is asked.
+  const pinned = joined === undefined ? null : hostOfAddress(pastedAddress(answers[joined]?.text));
+  if (pinned !== null) return pinned;
   const last = Object.keys(answers ?? {}).filter((k) => /^3\.join(?:-|$)/.test(k)).at(-1);
   const labels = [answers?.['3.kept'], answers?.['3.host'], last === undefined ? null : answers[last]].map((a) => a?.label);
   if (labels.includes(KEEP_HERE)) return 'local';

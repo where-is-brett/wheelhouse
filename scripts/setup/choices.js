@@ -38,8 +38,9 @@ import { askedRecord, answersFor } from './clicks.js';
 import { macKeepsAway } from '../lib/host-lines.js';
 import { COMPANY_GITLAB, GITLAB_COM, HOST_LABELS, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
 import { LIVE_DATA, PRODUCT, SIGNS_APPS, productName } from './questions.js';
-import { FIRST_CHECK_LINE, KEEP_HERE, KEPT_LINE, ONLY_HERE_AFTER, ONLY_HERE_LINE, PUT_ON_GITLAB, STARTED_LINE } from './local.js';
+import { hostOfAddress, pastedAddress, FIRST_CHECK_LINE, KEEP_HERE, KEPT_LINE, ONLY_HERE_AFTER, ONLY_HERE_LINE, PUT_ON_GITLAB, STARTED_LINE } from './local.js';
 import { backupNamed } from '../host/local/restore.js';
+import { hostWords, isDefaultHost } from '../host/gitlab-base.js';
 import { compactionLine, compactionRules } from '../protection/settings.js';
 import { HOST_TOOL_NAME, hostToolLabels } from './tools.js';
 
@@ -154,16 +155,29 @@ const joining = (taken) => {
   return last !== undefined && !NOT_JOINING.includes(last.label) && backupNamed(last.text) === null;
 };
 
+// The text typed as the newest join answer, or null.
+const joinedText = (choices) => choices.filter((c) => c.id === 'join' || c.id.startsWith('join-')).at(-1)?.text ?? null;
+
+// How the plan names the host a pasted address gave: GitHub, GitLab, or the company's GitLab with its address; null for no address.
+function addressHostName(choices) {
+  const parts = pastedAddress(joinedText(choices));
+  if (hostOfAddress(parts) === null) return null;
+  return hostOfAddress(parts) === 'github' ? 'GitHub' : isDefaultHost(parts) ? 'GitLab' : `your company's GitLab (${hostWords(parts)})`;
+}
+
 // The host the plan names, as step 3 will use it: the one the folder's own remote names, else
 // the one the kept card or the host or join card chose; GitHub when none says GitLab.
 function hostOf(product, choices) {
+  // A pasted address in the join answer names its own host.
+  const pinned = hostOfAddress(pastedAddress(joinedText(choices)));
+  if (pinned !== null) return pinned === 'gitlab' ? 'GitLab' : 'GitHub';
   if (product && product.isNew === false && (product.host === 'gitlab' || product.host === 'github')) return product.host === 'gitlab' ? 'GitLab' : 'GitHub';
   const chose = choices.some((c) => (c.id === 'kept' && c.label === PUT_ON_GITLAB) || ((c.id === 'host' || c.id === 'join' || c.id.startsWith('join-')) && c.label === HOST_LABELS.gitlab));
   return chose ? 'GitLab' : 'GitHub';
 }
 
 // A company's own GitLab, chosen on the which-GitLab card and not taken back on the address card.
-const onCompanyGitLab = (choices, host) => host === 'GitLab' && choices.some((c) => c.id.startsWith('gitlab-where') && c.label === COMPANY_GITLAB) && !choices.some((c) => c.id.startsWith('gitlab-address') && c.label === GITLAB_COM);
+const onCompanyGitLab = (choices, host) => host === 'GitLab' && (addressHostName(choices)?.startsWith('your company') || choices.some((c) => c.id.startsWith('gitlab-where') && c.label === COMPANY_GITLAB) && !choices.some((c) => c.id.startsWith('gitlab-address') && c.label === GITLAB_COM));
 
 // The plain line a choice adds to the one card, or null when it adds none. `name` is the product's,
 // `platform` the computer's, `host` the host the plan names.
@@ -177,7 +191,11 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     if (id === 'join' || id.startsWith('join-')) return company ? 'A new product, in a private project on your company\'s GitLab.' : `A new product, in a private ${host === 'GitLab' ? 'project' : 'repository'} on your ${host} account.`;
   }
   if ((id === 'join' || id.startsWith('join-')) && backupNamed(text) !== null) return `${name}, brought back from your backup into this folder.`;
-  if (id === 'join' || id.startsWith('join-')) return label === NEW_PRODUCT ? null : `${name}, from your other computer, brought into this folder.`;
+  if (id === 'join' || id.startsWith('join-')) {
+    if (label === NEW_PRODUCT) return null;
+    const where = addressHostName(choices);
+    return `${name}, from your other computer${where === null ? '' : `, on ${where}`}, brought into this folder.`;
+  }
   if (id === 'real-users') {
     const live = choices.find((c) => c.id === 'live-data')?.label;
     if (label === REAL_USERS.no) return live === LIVE_DATA.no ? 'Before launch: no real users and no live data yet.' : 'Before launch: no real users yet.';
