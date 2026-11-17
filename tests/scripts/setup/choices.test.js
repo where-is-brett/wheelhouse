@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import {
-  oneCard, setupTime, consentHolds, customiseBatch, aboutOf, actedBy, GO_AHEAD, CUSTOMISE, PER_CARD,
+  openChoices, oneCard, setupTime, consentHolds, customiseBatch, aboutOf, actedBy, GO_AHEAD, CUSTOMISE, PER_CARD,
 } from '../../../scripts/setup/choices.js';
 import { stepFourDrift, choiceList } from '../../../scripts/setup/redo.js';
 import { NEW_PRODUCT, HOST_LABELS, WAYS, REAL_USERS, STRICTER } from '../../../scripts/setup/host.js';
@@ -220,4 +220,27 @@ test('the backup question waits for where the project is kept, and comes once a 
   assert.deepEqual(ids([open('kept'), open('backup')]), ['kept']);
   assert.deepEqual(ids([open('join', said), open('real-users', said), open('backup'), open('product-before-launch', said)]), ['backup']);
   assert.deepEqual(ids([open('real-users'), open('connection')]), ['real-users', 'connection'], 'a hosted project\'s list is as it was');
+});
+
+test('a join answer refused and asked again leaves one join question, and no plan line from the refused text', async () => {
+  const refused = { label: null, text: 'https://gitlab.example.org/', at: '2026-10-26T10:05:00.000Z' };
+  const card = (what) => ({ what, options: [{ label: NEW_PRODUCT }, { label: HOST_LABELS.gitlab }], recommend: HOST_LABELS.gitlab });
+  // A step 3 that, as host.js's does, asks `join`, then `join-abc` once the first answer is refused.
+  const step = {
+    n: 3,
+    plan: async (ctx) => {
+      if (!ctx.answers['3.join']) return { ask: { id: 'join', typed: true, card: card('Where?') } };
+      if (ctx.answers['3.join-abc']) return { wait: 0, why: 'asked' };
+      return { ask: { id: 'join-abc', typed: true, card: card('Not a name. Where?') } };
+    },
+  };
+  const planOf = (s, answers) => s.plan({ answers });
+  const list = await openChoices({ steps: [step], run: null, answers: { '3.join': refused }, planOf });
+  assert.deepEqual(list.map((c) => c.id), ['join-abc']);
+  // Only the question still open is asked on the next Customise round.
+  assert.deepEqual(customiseBatch(list, '2026-10-26T10:00:00.000Z').map((c) => c.id), ['join-abc']);
+  const plan = oneCard({ folder: os.tmpdir(), list, product: null, platform: 'darwin', toRun: [3], count: 1 }).card.question;
+  assert.doesNotMatch(plan, /from your other computer/);
+  assert.match(plan, /A new product, in a private project on your GitLab account\./);
+  assert.equal(plan.split('\n').filter((l) => l.startsWith('- ')).length, 1);
 });

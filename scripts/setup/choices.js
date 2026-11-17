@@ -135,7 +135,12 @@ export async function openChoices({ steps, run, answers, planOf }) {
       if (chosen === null && (got.ask.waits === true || card.recommend === null)) break;
     }
   }
-  return list;
+  // The join question is asked again, under a new id, after each answer refused (typed text that names no
+  // repository, a backup not found, a miss); only the newest is the question, and only the answer that
+  // settled it counts, so an earlier refused answer is no choice and adds no line to the plan.
+  const isJoin = (c) => c.step === 3 && /^join(?:-|$)/.test(c.id);
+  const lastJoin = list.findLastIndex(isJoin);
+  return list.filter((c, i) => !isJoin(c) || i === lastJoin);
 }
 
 const KEPT_ID = /^(?:join|kept|host)(?:-|$)/;
@@ -143,7 +148,11 @@ const BACKUP_ID = /^backup(?:-|$)/;
 const NOT_JOINING = [NEW_PRODUCT, KEEP_HERE, HOST_LABELS.github, HOST_LABELS.gitlab];
 // Whether the answers taken say this computer joins a product from another (the join question
 // answered with anything but a new product).
-const joining = (taken) => Object.entries(taken).some(([key, a]) => /^3\.join(?:-|$)/.test(key) && !NOT_JOINING.includes(a.label) && backupNamed(a.text) === null);
+// Only the newest join answer counts: an earlier one was refused (not a name, no backup) and asked again.
+const joining = (taken) => {
+  const last = Object.entries(taken).filter(([key]) => /^3\.join(?:-|$)/.test(key)).at(-1)?.[1];
+  return last !== undefined && !NOT_JOINING.includes(last.label) && backupNamed(last.text) === null;
+};
 
 // The host the plan names, as step 3 will use it: the one the folder's own remote names, else
 // the one the kept card or the host or join card chose; GitHub when none says GitLab.

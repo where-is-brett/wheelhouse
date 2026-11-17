@@ -650,7 +650,7 @@ export function nameGitlabHost({ folder, entry, record }) {
 function joinAsk(id, name, { missed }) {
   const other = fromOtherComputer(name);
   let found = '';
-  if (missed?.missed === 'not-a-name') found = `"${missed.name}" is not a repository's name. `;
+  if (missed?.missed === 'not-a-name') found = `"${missed.name}" is not a repository's name. An address alone is not a project: type owner/name, like ann/cafe-menu, or click a button. `;
   else if (missed?.missed === 'no-backup') found = `"${missed.name}" can't be found. `;
   else if (Array.isArray(missed?.missed)) found = `More than one ${missed.name} is set up with Wheelhouse: ${missed.missed.slice(0, 5).join(', ')}. `;
   else if (missed) found = `Setup found no ${missed.name} set up with Wheelhouse on your account or organisations. `;
@@ -677,9 +677,17 @@ function joinAsk(id, name, { missed }) {
 }
 
 // A typed answer to the join question as a repository's name: owner/name (groups too) or a bare
-// name, without .git; null for anything else.
+// name, without .git; null for anything else. A pasted project address (https://host/owner/name,
+// ssh://git@host/owner/name or git@host:owner/name, with or without .git) reads as its owner/name;
+// an address with no path (a bare host) names no project.
 export function repoNamed(text) {
-  const named = String(text ?? '').trim().replace(/\.git$/i, '');
+  let named = String(text ?? '').trim();
+  const web = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/]*)(.*)$/.exec(named);
+  const scp = web ? null : /^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+:(?!\/\/)(.*)$/.exec(named);
+  if (web) named = web[2].split(/[?#]/)[0];
+  else if (scp) named = scp[1].split(/[?#]/)[0];
+  if (web || scp) named = named.replace(/^\/+/, '').replace(/\/+$/, '');
+  named = named.replace(/\.git$/i, '');
   if (!/^[A-Za-z0-9_.][A-Za-z0-9_.-]*(\/[A-Za-z0-9_.][A-Za-z0-9_.-]*)*$/.test(named)) return null;
   return named.split('/').some((part) => /^\.+$/.test(part)) ? null : named;
 }

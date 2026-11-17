@@ -2460,7 +2460,15 @@ test('step 3 asks whether this computer is joining only in a folder holding noth
     assert.equal((await step.plan(ctxFor(tidy))).ask.id, 'join');
     assert.equal(repoNamed(' cafe-co/Cafe-Menu.git '), 'cafe-co/Cafe-Menu');
     assert.equal(repoNamed('Cafe-Menu'), 'Cafe-Menu');
-    for (const bad of ['', 'a b', '../x', 'o/..', 'https://github.com/o/x']) assert.equal(repoNamed(bad), null, bad);
+    for (const bad of ['', 'a b', '../x', 'o/..', 'https://gitlab.example.org', 'https://gitlab.example.org/', 'git@gitlab.example.org:', 'https://h/../x']) assert.equal(repoNamed(bad), null, bad);
+    // A pasted project address reads as its owner/name, groups too.
+    for (const [pasted, named] of [
+      ['https://gitlab.example.org/ann/cafe-menu', 'ann/cafe-menu'],
+      ['https://github.com/ann/cafe-menu.git', 'ann/cafe-menu'],
+      ['git@gitlab.example.org:ann/cafe-menu.git', 'ann/cafe-menu'],
+      ['ssh://git@gitlab.example.org:2222/grp/sub/name.git', 'grp/sub/name'],
+      ['https://gitlab.example.org/grp/sub/name/', 'grp/sub/name'],
+    ]) assert.equal(repoNamed(pasted), named, pasted);
   });
 });
 
@@ -2580,7 +2588,7 @@ test('none or several found are refused saying to type owner/name, the question 
     const answers = { ...planned.answers, [`3.${first.id}`]: { label: null, text: 'the cafe one', at: NOW.toISOString() } };
     const next = (await step.plan({ ...ctx, answers })).ask;
     assert.notEqual(next.id, first.id);
-    assert.match(next.card.what, /^"the cafe one" is not a repository's name\./);
+    assert.match(next.card.what, /^"the cafe one" is not a repository's name\. An address alone is not a project: type owner\/name, like ann\/cafe-menu, or click a button\./);
     // A new product, chosen now: the run is not a joining one any more once its apply starts.
     const fresh = await answerJoin(step, { ...ctx, answers }, (id) => (id.startsWith('join') ? HOST_LABELS.github : choose()(id)));
     assert.ok(fresh.changes.some((c) => c.action === 'repository'));
