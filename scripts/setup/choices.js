@@ -354,7 +354,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
   // The plugin's update is step 6's, so the line names it only while step 6 is still to run.
   if (toRun.includes(2) && engineWanted({ platform, hosts })) lines.push(engineLine(undefined, { claudeHome: toRun.includes(6) ? claudeHome : null }));
   // Step 9 asks nothing where an earlier setup's test push reached the phone (`pushed`), so the line doesn't promise a question.
-  if (toRun.includes(6)) lines.push(`On this computer: usage counted here only; 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted); Claude Code takes only its well-tried updates; and ${pushed ? 'phone notifications on, as an earlier setup on this computer showed they reach your phone' : desktop === false ? 'a question about phone notifications, where setup suggests skipping them since they need Claude Desktop' : 'phone notifications on'}.`);
+  if (toRun.includes(6)) lines.push(`On this computer: usage counted here only; 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted); Claude Code takes only its well-tried updates; and ${pushed ? 'phone notifications on, as an earlier setup on this computer showed they reach your phone' : desktop === false ? 'a question about phone notifications, where setup suggests skipping them since they need Claude Desktop' : 'Claude Code allowed to send phone notifications, which you finish at step 9'}.`);
   if (toRun.includes(7)) {
     const kept = compactionLine(compactionRules({ claudeHome, projectDir: folder }));
     if (kept !== null) lines.push(kept);

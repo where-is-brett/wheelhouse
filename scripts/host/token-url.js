@@ -46,7 +46,7 @@ export function tokenUrl({ host, kind, owner, repos = [], name, days, base = DEF
     const url = new URL(`${root}/-/user_settings/personal_access_tokens`);
     if (kind === 'setup') {
       url.searchParams.set('name', 'Wheelhouse setup (one day)');
-      url.searchParams.set('description', 'Used once by Wheelhouse setup to make the project, its key and its protection, and never kept. It can be revoked afterwards.');
+      url.searchParams.set('description', 'Used once by Wheelhouse setup to make the project, its key and its protection, and never kept. It can be cancelled afterwards.');
       url.searchParams.set('scopes', 'api');
       return url.toString();
     }

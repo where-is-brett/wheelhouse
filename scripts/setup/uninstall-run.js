@@ -719,7 +719,7 @@ export async function applyUninstall({
           const base = checkBaseUrl(holder?.connection?.baseUrl ?? GITLAB_URL);
           const got = await o.revokeGitlabKey({ name: entry.key, projectId, base, repo });
           if (got.found && !got.revoked && got.status !== 401) {
-            halt(`GitLab did not revoke the ${entry.pasted ? 'token' : 'project key'}${got.status === null ? ' (it could not be reached)' : ` (HTTP ${got.status})`}, so its file was kept: open ${got.url}, revoke it, then ask for uninstall's plan again`);
+            halt(`GitLab did not cancel the ${entry.pasted ? 'token' : 'project key'}${got.status === null ? ' (it could not be reached)' : ` (HTTP ${got.status})`}, so its file was kept: open ${got.url}, cancel it, then ask for uninstall's plan again`);
           }
           // A key GitLab no longer accepts no longer works anywhere: its file goes too.
           if (got.status === 401) await removeKey(entry.key);

@@ -126,7 +126,7 @@ function gitHostOf(remoteUrl) {
 async function resolvedRemote({ remoteUrl, run, gitPath, env }) {
   if (transportOf(remoteUrl) === null) return null;
   try {
-    const got = await askDirectorGit(['ls-remote', '--get-url', '--end-of-options', remoteUrl], { run, gitPath, cwd: outsideRepo(), env: directorGitEnv({ ...env, ...withoutTokens() }) });
+    const got = await askDirectorGit(['ls-remote', '--get-url', '--end-of-options', remoteUrl], { run, gitPath, cwd: outsideRepo(), env: directorGitEnv({ ...env, ...withoutTokens({ env: { ...process.env, ...env } }) }) });
     const url = got.stdout.trim().split(/\r?\n/).at(-1) ?? '';
     return got.code === 0 && /^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|[^\s:/@]*@?[^\s:/@]+:)\S*$/.test(url) ? url : null;
   } catch {
@@ -173,7 +173,7 @@ export async function findAccess({ host, base = DEFAULT_GITLAB, repo = null, rem
       return null;
     }
   })();
-  const ask = (args) => askDirectorGit(args, { run, gitPath, cwd: outsideRepo(), env: directorGitEnv(reached !== null && /^(?:www\.)?github\.com\.?$/.test(reached) ? env : { ...env, ...withoutTokens() }) });
+  const ask = (args) => askDirectorGit(args, { run, gitPath, cwd: outsideRepo(), env: directorGitEnv(reached !== null && /^(?:www\.)?github\.com\.?$/.test(reached) ? env : { ...env, ...withoutTokens({ env: { ...process.env, ...env } }) }) });
   const found = {
     transport: transportOf(remoteUrl), helper: await credentialHelperOf({ address, ask }),
     gitReaches: remoteUrl === null ? null : await lsRemoteWorks({ remoteUrl, ask }),

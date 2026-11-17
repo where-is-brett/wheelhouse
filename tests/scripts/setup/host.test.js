@@ -868,8 +868,8 @@ test('a GitLab that forbids a project key (a free plan on gitlab.com) falls back
 test('a pasted personal token is asked what it is: one wider or longer than the cards said is revoked and refused', async () => {
   const far = new Date(NOW.getTime() + 365 * 86400000).toISOString().slice(0, 10);
   const cases = [
-    [{ status: 200, body: { scopes: ['api', 'write_repository', 'sudo'], expires_at: new Date(NOW.getTime() + 30 * 86400000).toISOString().slice(0, 10) } }, 204, /can do more than api and write_repository, so it was not kept and setup revoked it/],
-    [{ status: 200, body: { scopes: ['api', 'write_repository'], expires_at: null } }, 204, /ends later than 30 days from now, or never, so it was not kept and setup revoked it/],
+    [{ status: 200, body: { scopes: ['api', 'write_repository', 'sudo'], expires_at: new Date(NOW.getTime() + 30 * 86400000).toISOString().slice(0, 10) } }, 204, /can do more than api and write_repository, so it was not kept and setup cancelled it/],
+    [{ status: 200, body: { scopes: ['api', 'write_repository'], expires_at: null } }, 204, /ends later than 30 days from now, or never, so it was not kept and setup cancelled it/],
     [{ status: 200, body: { scopes: ['api'], expires_at: far } }, 500, /so it was not kept: delete it on GitLab's Access tokens page/],
   ];
   for (const [self, revoke, words] of cases) {
@@ -3628,9 +3628,9 @@ test('the setup token goes to curl only in the request header on standard input,
 test('a setup token that can do more than api, or lasts longer than a day, is revoked and refused before anything is made; one GitLab can\'t describe is taken', async () => {
   const at = () => NOW;
   for (const [self, words] of [
-    [{ scopes: ['api', 'sudo'], expires_at: '2026-10-21' }, /can do more than api, so setup made nothing with it and revoked it/],
+    [{ scopes: ['api', 'sudo'], expires_at: '2026-10-21' }, /can do more than api, so setup made nothing with it and cancelled it/],
     [{ scopes: ['read_api'], expires_at: '2026-10-21' }, /can do more than api/],
-    [{ scopes: ['api'], expires_at: '2026-11-19' }, /lasts longer than a day, so setup made nothing with it and revoked it/],
+    [{ scopes: ['api'], expires_at: '2026-11-19' }, /lasts longer than a day, so setup made nothing with it and cancelled it/],
     [{ scopes: ['api'], expires_at: null }, /lasts longer than a day/],
   ]) {
     const curl = setupTokenCurl(standIn(), { self });
@@ -3642,8 +3642,8 @@ test('a setup token that can do more than api, or lasts longer than a day, is re
   // Where GitLab does not take a refused token back, setup says to delete it, never that it was revoked.
   for (const self of [{ scopes: ['api', 'sudo'], expires_at: '2026-10-21' }, { scopes: ['api'], expires_at: '2026-11-19' }]) {
     const got = await setupTokenApi({ base: 'https://gitlab.example.com', via: tokenVia(setupTokenCurl(standIn(), { self, revokeStatus: 500 })), open: async () => {}, askSecret: async () => SETUP_TOKEN, now: at }).catch((e) => e);
-    assert.match(got.message, /so setup made nothing with it, but could not revoke it, so delete it on GitLab's Access tokens page and make a new one/, JSON.stringify(self));
-    assert.doesNotMatch(got.message, /and revoked it/);
+    assert.match(got.message, /so setup made nothing with it, but could not cancel it, so delete it on GitLab's Access tokens page and make a new one/, JSON.stringify(self));
+    assert.doesNotMatch(got.message, /and cancelled it/);
   }
   // Ending the day after tomorrow at the latest, for a director a day ahead: taken, and revoked at the end.
   const curl = setupTokenCurl(standIn(), { self: { scopes: ['api'], expires_at: '2026-10-22' } });
@@ -3717,7 +3717,7 @@ test('Narrow on GitLab without its tool makes the project key and protects the m
     const id = w.repos[`${USER}/shop`].id;
     assert.equal(readKey(`gitlab-project-${id}`).kind, 'project-key', 'the project key is in the store');
     assert.ok(curl.calls.some((c) => c.method === 'POST' && /\/protected_branches$/.test(c.url)), 'the main line is protected');
-    assert.ok(lines.some((l) => /Setup has revoked the one-day token/.test(l)), lines.join('\n'));
+    assert.ok(lines.some((l) => /Setup has cancelled the one-day token/.test(l)), lines.join('\n'));
     assert.deepEqual(curl.revoked, [SETUP_TOKEN], 'revoked on GitLab once, at the end');
     const kept = readProject(slugFor(`${USER}/shop`));
     assert.equal(kept.connection.directorSignIn, 'setup-token');
@@ -3732,7 +3732,7 @@ test('Narrow on GitLab without its tool makes the project key and protects the m
 });
 
 test('where GitLab does not revoke the setup token, setup says it ends tomorrow only when GitLab said so, and otherwise to delete it', async () => {
-  for (const [self, said] of [[undefined, /Setup has forgotten the one-day token; it ends by itself within two days/], [null, /Setup has forgotten the one-day token but could not revoke it: delete it on GitLab's Access tokens page/]]) {
+  for (const [self, said] of [[undefined, /Setup has forgotten the one-day token; it ends by itself within two days/], [null, /Setup has forgotten the one-day token but could not cancel it: delete it on GitLab's Access tokens page/]]) {
     await withHome(async () => {
       const w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
       const curl = setupTokenCurl(w, { self, revokeStatus: 500 });

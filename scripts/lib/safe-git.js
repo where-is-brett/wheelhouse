@@ -486,12 +486,22 @@ export class SettingsChanged extends LookRefusal {
 }
 export const SETTINGS_CHANGED_LINE = "Nothing was pushed: this computer's git settings (sign-in, proxy, certificate or address rewrites) differ from the ones you confirmed at setup. If you changed them yourself, run setup again and click Go ahead at step 3 to confirm them.";
 
-const RELEVANT = /^(?:credential\.(?:.+\.)?helper|core\.sshcommand|url\..+\.(?:push)?insteadof|http\.(?:.+\.)?(?:proxy|sslcainfo)|include\.path|includeif\..+\.path|remote\..+\.pushurl)$/;
-// The settings a push trusts, in git's order, and a fingerprint of them.
-export function trustedSettings(entries) {
-  return entries.filter(({ key }) => RELEVANT.test(key.toLowerCase())).map(({ key, value }) => [key.toLowerCase(), value]);
-}
-export const settingsFingerprint = (entries) => crypto.createHash('sha256').update(JSON.stringify(trustedSettings(entries))).digest('hex');
+// What a push trusts: every sign-in, proxy, certificate, address-rewrite and remote setting, the ssh ones, and the includes (which
+// are resolved already, but make the settings depend on the folder). The older fingerprint named fewer; it is kept (OLD_RELEVANT) only
+// to recognise a record made with it, which is then rewritten in this form.
+const RELEVANT = /^(?:credential\..+|core\.sshcommand|url\..+|http\..+|remote\..+|ssh\..+|include\.path|includeif\..+\.path)$/;
+const OLD_RELEVANT = /^(?:credential\.(?:.+\.)?helper|core\.sshcommand|url\..+\.(?:push)?insteadof|http\.(?:.+\.)?(?:proxy|sslcainfo)|include\.path|includeif\..+\.path|remote\..+\.pushurl)$/;
+const pairsOf = (entries, pattern) => entries.filter(({ key }) => pattern.test(key.toLowerCase())).map(({ key, value }) => [key.toLowerCase(), value]);
+// The settings a push trusts, in git's order, and a fingerprint of them. For an ssh push the director's own GIT_SSH_COMMAND and GIT_SSH
+// (the environment's, which the push passes on) are part of it.
+export const trustedSettings = (entries) => pairsOf(entries, RELEVANT);
+const sshVariables = (reach, env) => (reach === 'push-ssh'
+  ? ['GIT_SSH_COMMAND', 'GIT_SSH'].map((name) => [`env:${name.toLowerCase()}`, Object.entries(env ?? {}).find(([k]) => k.toUpperCase() === name)?.[1] ?? null])
+  : []);
+const hashOf = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+export const settingsFingerprint = (entries, { reach = 'push', env = process.env } = {}) => `v2:${hashOf([...trustedSettings(entries), ...sshVariables(reach, env)])}`;
+// The fingerprint as the earlier form made it, to compare with a record that holds one.
+export const legacySettingsFingerprint = (entries) => hashOf(pairsOf(entries, OLD_RELEVANT));
 
 // What the record holds: { folders: { <folder>: <fingerprint> }, legacy? }. Includes (includeIf gitdir:, onbranch:, hasconfig:) make the
 // settings depend on the folder git runs in, so each folder has its own fingerprint, of the very settings read there. A record from
@@ -526,9 +536,17 @@ function readRecord(file) {
   }
 }
 
+// Written to a file of its own and renamed over the record, so a stop part way leaves the old record whole.
 function writeRecord(file, { folders, legacy = null }) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(file, `${JSON.stringify({ folders, ...(legacy === null ? {} : { legacy }) }, null, 2)}\n`, { mode: 0o600 });
+  const temp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temp, `${JSON.stringify({ folders, ...(legacy === null ? {} : { legacy }) }, null, 2)}\n`, { mode: 0o600 });
+    fs.renameSync(temp, file);
+  } catch (error) {
+    fs.rmSync(temp, { force: true });
+    throw error;
+  }
 }
 
 // Whether any project on this computer is connected as-is: its settings were confirmed at setup, so a missing record is a loss.
@@ -542,7 +560,7 @@ const anyAsIs = () => registeredProjects().some(({ record }) => record.connectio
 //   - A folder with none in any other record was never confirmed: refused.
 //   - Where there is no record at all, a push records what it finds as the first use only while no project is connected as-is: with
 //     one, setup would have recorded, so the loss is refused until the director confirms again.
-function checkTrusted(file, folder, now) {
+function checkTrusted(file, folder, { now, old }) {
   const record = readRecord(file);
   if (record === 'refused') throw new SettingsChanged(SETTINGS_CHANGED_LINE);
   const key = folderKey(folder);
@@ -553,23 +571,29 @@ function checkTrusted(file, folder, now) {
   }
   const kept = record.folders[key];
   if (kept === undefined) {
-    if (record.legacy !== null && record.legacy === now) {
+    if (record.legacy !== null && record.legacy === old) {
       writeRecord(file, { folders: { ...record.folders, [key]: now }, legacy: record.legacy });
       return;
     }
     throw new SettingsChanged(SETTINGS_CHANGED_LINE);
   }
-  if (kept !== now) throw new SettingsChanged(SETTINGS_CHANGED_LINE);
+  if (kept === now) return;
+  // An entry made with the earlier fingerprint, still true of the settings: rewritten in the present form.
+  if (!String(kept).startsWith('v2:') && kept === old) {
+    writeRecord(file, { folders: { ...record.folders, [key]: now }, legacy: record.legacy });
+    return;
+  }
+  throw new SettingsChanged(SETTINGS_CHANGED_LINE);
 }
 
 // The director's confirmation of the computer's settings as they are now in `cwd`, the folder the push runs in (a later part's
 // card calls this). It is merged into the record: the other folders' entries and the old single fingerprint stand.
-export async function confirmComputerSettings({ file, run = realRun, gitPath = 'git', cwd }) {
+export async function confirmComputerSettings({ file, run = realRun, gitPath = 'git', cwd, url = null }) {
   const entries = await readSettingsFor({ run, gitPath, cwd });
   if (entries === null) throw new Error("Git's settings on this computer could not be read");
   const record = readRecord(file);
   const kept = record === null || record === 'refused' ? { folders: {}, legacy: null } : record;
-  writeRecord(file, { folders: { ...kept.folders, [folderKey(cwd)]: settingsFingerprint(entries) }, legacy: kept.legacy });
+  writeRecord(file, { folders: { ...kept.folders, [folderKey(cwd)]: settingsFingerprint(entries, { reach: url === null ? 'push' : pushReachFor(url) }) }, legacy: kept.legacy });
 }
 
 // git in `cwd`: `git(args, options)` gives run's answer. `list` says which allowed list the look uses:
@@ -652,7 +676,7 @@ export function safeGit({
     const why = settingsRefusal(entries);
     if (why !== null) throw new LookRefusal(`Git's settings on this computer ${why}, which Wheelhouse does not allow for a push. Remove that setting, then try again.`);
     // What the computer's settings were when as-is pushing was first used: a change since is the director's to confirm.
-    if (trust !== null && subcommandOf(args) === 'push') checkTrusted(trust.file, cwd, settingsFingerprint(entries));
+    if (trust !== null && subcommandOf(args) === 'push') checkTrusted(trust.file, cwd, { now: settingsFingerprint(entries, { reach }), old: legacySettingsFingerprint(entries) });
     const extras = hookNames(entries).map((name) => [`hook.${name}.enabled`, 'false']);
     if (pushTo !== null && /^https?:\/\//i.test(pushTo.url)) extras.push([`http.${pushTo.url}.sslVerify`, 'true']);
     const count = Number.parseInt(given.GIT_CONFIG_COUNT ?? '0', 10) || 0;

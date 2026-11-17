@@ -499,7 +499,7 @@ test('a change to the computer\'s sign-in settings since the first push is refus
     await withDirectorsGit(`[credential]\n\thelper = !${first.file}\n`, async () => {
       assert.deepEqual(await push(), { ok: true });
       assert.equal(fs.existsSync(file), true, 'setup recorded the settings');
-      assert.equal(Object.values(JSON.parse(fs.readFileSync(file, 'utf8')).folders)[0].length, 64);
+      assert.match(Object.values(JSON.parse(fs.readFileSync(file, 'utf8')).folders)[0], /^v2:[0-9a-f]{64}$/);
     });
     // Settings that are not the sign-in, proxy, certificate or rewrites change nothing; the same ones again pass.
     await withDirectorsGit(`[credential]\n\thelper = !${first.file}\n[user]\n\tname = Someone\n[alias]\n\tst = status\n`, async () => {

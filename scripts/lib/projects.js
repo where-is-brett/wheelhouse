@@ -42,7 +42,7 @@ function repoPathOf(remoteUrl) {
     text = scheme[2] ?? '';
     local = scheme[1].toLowerCase() === 'file';
   } else {
-    const scp = /^[^/@\s]+@[^/:\s]+:(?!\/)(.*)$/.exec(text);
+    const scp = /^[^/@:\s]+@[^/:\s]+:(?!\/)(.*)$/.exec(text);
     if (scp) {
       text = scp[1];
       local = false;

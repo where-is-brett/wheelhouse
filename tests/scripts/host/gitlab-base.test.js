@@ -262,3 +262,16 @@ test('an authority with a backslash, ?, # or % is refused everywhere an address 
   }
   assert.equal(gitlabBase({ config, remoteUrl: 'https://gitlab.co/x/y.git' }), 'https://gitlab.co');
 });
+
+test('a colon in the user part of a scp-form address is no way to put another host after it', async () => {
+  const { pastedAddress } = await import('../../../scripts/lib/pasted-address.js');
+  const { detectHost } = await import('../../../scripts/host/adapter.js');
+  const { remoteHost } = await import('../../../scripts/setup/host.js');
+  const { parseRemote } = await import('../../../scripts/host/gitlab-base.js');
+  const sly = 'evil.com:x@git.co.org:o/r.git';
+  assert.equal(parseRemote(sly).hostname, 'evil.com');
+  assert.deepEqual(pastedAddress(sly), { unreadable: true });
+  assert.equal(detectHost(sly, { gitlabHosts: ['git.co.org'] }), 'local');
+  assert.notEqual(remoteHost([sly]), 'git.co.org');
+  assert.equal(gitlabBase({ config: { gitlabHosts: ['git.co.org'] }, remoteUrl: sly }), DEFAULT_GITLAB);
+});

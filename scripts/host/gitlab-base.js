@@ -31,7 +31,7 @@ export function unreadableAuthority(text) {
 export function parseRemote(remoteUrl) {
   const text = String(remoteUrl ?? '').trim();
   if (unreadableAuthority(text)) throw new Error('That is not a repository address this can read');
-  const scp = /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/\/)/.exec(text); // git@host:owner/name.git, or host:owner/name.git
+  const scp = /^(?:[^@:/\s]+@)?([^:/\s]+):(?!\/\/)/.exec(text); // git@host:owner/name.git, or host:owner/name.git
   if (scp) return { hostname: scp[1].toLowerCase(), port: '', origin: `https://${scp[1].toLowerCase()}` };
   let url;
   try {

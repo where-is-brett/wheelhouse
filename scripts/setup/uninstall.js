@@ -119,7 +119,7 @@
 //       'untick-repository' { key, repo }    while another project stays, on a project not shared:
 //                                            the installation's settings page given, to untick
 //                                            this repository
-//       'revoke-key' { key, pasted, line }   a GitLab key revoked through the API, then deleted
+//       'revoke-key' { key, pasted, line }   a GitLab key cancelled through the API, then deleted
 //       'remove' { target, except? }         a file, or a folder whole, of Wheelhouse's own; with
 //                                            `except`, the folder but for those names in it, and
 //                                            the folder itself only once nothing else is left
@@ -844,7 +844,7 @@ export async function uninstallPlan({
           const pasted = c.after?.kind === 'pasted-token';
           add('keys', at, {
             put: 'revoke-key', key: c.target.slice('key '.length), pasted, before: one.before, ids: list,
-            line: pasted ? 'The GitLab token you pasted is revoked, which stops it everywhere it is used' : 'The project\'s GitLab key is revoked, then deleted',
+            line: pasted ? 'The GitLab token you pasted is cancelled, which stops it everywhere it is used' : 'The project\'s GitLab key is cancelled, then deleted',
           });
         } else if (h !== null && h.file?.startsWith('enrolments/')) kept(`this computer's key in ${h.repo} on ${HOSTS[h.host]}`, OLD_STAYS, list);
         else if (h !== null && h.file === null && repoName(h.repo) === OLD_PROFILE_REPO) kept(`${h.repo} on ${HOSTS[h.host]}, your profile`, OLD_STAYS, list);

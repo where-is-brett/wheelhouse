@@ -1296,7 +1296,7 @@ export async function startHelper({
       fs.mkdirSync(mirror, { recursive: true });
       if ((await plain('git', ['init', '-q', '--bare'], { cwd: mirror })).code !== 0) refuse('the project\'s mirror could not be made');
     }
-    if ((await plain('git', ['config', `remote.${REMOTE}.url`, url], { cwd: mirror })).code !== 0) {
+    if ((await plain('git', ['config', '--end-of-options', `remote.${REMOTE}.url`, url], { cwd: mirror })).code !== 0) {
       refuse('the project\'s mirror could not be set up');
     }
     return mirror;

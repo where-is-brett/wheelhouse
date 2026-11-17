@@ -65,7 +65,7 @@ const inWords = (ms) => {
   return `${NUMBERS[m] ?? m} minute${m === 1 ? '' : 's'}`;
 };
 const MINUTES = inWords(PUSH_TEST_WAIT_MS);
-const LOCK = `lock your computer for ${inWords(PUSH_TEST_LOCK_MS)}; the test arrives after ${MINUTES.replace(' minutes', '')}.`;
+const LOCK = `lock your computer for ${inWords(PUSH_TEST_LOCK_MS)}; the test is sent after ${MINUTES}.`;
 // How old a Ready may be before card B is asked rather than card A again (ruling R66).
 const READY_STALE_MS = PUSH_TEST_WAIT_MS + CLICK_FRESH_MS;
 
@@ -85,8 +85,8 @@ function readyAsk(id, { terminal = false, round = 0 } = {}) {
       // verdict and the first briefing. A push isn't sent while the director is at the computer,
       // hence the locked screen.
       what: `Setup step ${PUSH_TEST_STEP}, your phone${tryOf(round)}. ${PHONE_REACHES} `
-        + 'In Claude Desktop\'s settings, switch on Remote Control and both push options, '
-        + 'and allow Claude\'s notifications on your phone. '
+        + 'In Claude Desktop, switch on Remote Control and Push when actions required, '
+        + 'and allow Claude\'s phone notifications. '
         + `Then click Ready and ${LOCK}`,
       why: 'Only you can do these.',
       options: terminal ? [

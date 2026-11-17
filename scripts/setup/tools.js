@@ -285,7 +285,7 @@ export function hostToolCard(tool, { recommend: given, platform = process.platfo
   const win = platform === 'win32';
   const recommend = tool === 'glab' ? 'none' : given;
   const because = given === 'none' ? `your git already holds a key that ${name} accepts, so the tool isn't needed`
-    : tool === 'glab' ? `Wheelhouse does all it needs on ${name} without it`
+    : tool === 'glab' ? `Wheelhouse does almost all it needs on ${name} without it; joining an existing project then uses your git's own sign-in`
       : 'it is the usual route, and it is checked against the published checksums';
   return {
     level: 2,

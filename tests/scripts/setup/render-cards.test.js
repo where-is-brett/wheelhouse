@@ -102,7 +102,7 @@ test('path a: with GitLab\'s tool left out, Quick is not offered, and where git 
   assert.deepEqual(connection[0].card.options.map((o) => o.label), ['Narrow', 'Use my git as it is'], 'the recommended way comes first');
   assert.equal(recommendedOf(connection[0].card), 'Narrow');
   const own = connection[0].card.options.find((o) => o.label === 'Use my git as it is');
-  assert.match(own.description, /If git holds no GitLab key that works, you make one on a page that opens and set its expiry date 90 days ahead\./, 'the way says the key may still be made');
+  assert.match(own.description, /Your git holds no GitLab key yet, so you make one on a page that opens and set its expiry date 90 days ahead\./, 'the way says the key may still be made');
   const tool = cards.find((c) => c.step === 2 && c.kind === 'question');
   assert.equal(recommendedOf(tool.card), 'Don\'t use GitLab\'s tool');
   assert.ok(cards.findIndex((c) => c === tool) < cards.findIndex((c) => c === connection[0]), 'GitLab\'s tool is asked before the connection');
@@ -146,7 +146,7 @@ test('paths b, b\' and c: step 3\'s Go-ahead card says the one-day token is used
     const go = cards.find((c) => c.kind === 'go-ahead' && c.step === 3);
     assert.ok(go, `path ${name} shows step 3's Go-ahead card`);
     assert.match(go.card.question, /one-day GitLab token on a page that opens, setting its expiry date to tomorrow, and paste it into a box on your screen/, `path ${name}`);
-    assert.match(go.card.question, /then revokes it/, `path ${name}`);
+    assert.match(go.card.question, /then cancels it/, `path ${name}`);
     assert.match(go.card.question, /Setup protects the main line now, while it holds that token/, `path ${name}`);
     assert.doesNotMatch(go.card.question, /sign in in your browser/i, `path ${name} asks for no browser sign-in`);
   }
