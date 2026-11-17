@@ -363,7 +363,7 @@ const SETUP_CHECKS_ID = 'setup-checks';
 const CHECKS_CARD = {
   level: 2,
   what: 'Next, the First Mate takes over, starting with what you came here for.',
-  why: 'These are the checks setup ran on this computer. Questions and requests go to the First Mate after your click.',
+  why: 'Questions and requests go to the First Mate after your click.',
   options: [
     { label: 'Carry on', says: 'The First Mate starts now, on what you asked for.' },
     { label: 'Later', says: 'Nothing starts. Say "carry on" when you are ready, and the First Mate starts on what you asked for.' },
@@ -395,11 +395,15 @@ function pendingBriefing(run, answers) {
   return briefingKept(run).some((c) => c.after?.said === true) || readyAnsweredSinceGreen(run, answers) ? null : briefingOf(run);
 }
 // The checks a card opens with after Show the checks on step 10's own card, while that card's
-// answer since green is Show the checks and the checks card is unanswered since; else null.
+// answer since green is Show the checks and the checks card is unanswered since; else null. A run
+// that went green before the checks were kept says so, so the card still comes.
 function pendingChecks(run, answers) {
   const since = (key) => answers[key] !== undefined && Date.parse(answers[key].at) >= Date.parse(greenAt(run)) ? answers[key] : null;
   if (since(`${HEALTH_STEP}.${SETUP_READY_ID}`)?.label !== 'Show the checks' || since(`${HEALTH_STEP}.${SETUP_CHECKS_ID}`) !== null) return null;
-  return greenChecks(run)?.join('\n') ?? null;
+  const checks = greenChecks(run);
+  return checks === undefined
+    ? 'Every check passed. This setup went green before Wheelhouse kept the list of checks, so it has none to show.'
+    : ['These are the checks setup ran on this computer:', ...checks].join('\n');
 }
 // The briefing a phone card opens with: the phone's first card ('phone-ready'), on a green board,
 // while the director hasn't answered it since the board went green; else null.

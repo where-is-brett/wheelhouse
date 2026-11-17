@@ -21,7 +21,7 @@ import { healthGreen, firstUnfinished } from '../../../scripts/lib/setup-run.js'
 import { acceptOwnFiles, checkOwnFiles, ownFilesFile } from '../../../scripts/health/own-files.js';
 import { STEPS } from '../../../scripts/setup/steps.js';
 import { setupRoutes } from '../../../scripts/setup/engine.js';
-import { startRun, markStep, addChanges, newId, readJournal } from '../../../scripts/setup/journal.js';
+import { startRun, markStep, addChanges, newId, readJournal, journalFile } from '../../../scripts/setup/journal.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { setStop, liftStop, stopState } from '../../../scripts/lib/stop.js';
 import { TRIAL_MARKER } from '../../../scripts/health/trials.js';
@@ -777,8 +777,17 @@ test('the trial stays open until the session\'s lines are in; then it is closed,
     assert.equal((await routes['/setup/status']({ folder })).ask, 10, 'the checks card comes next');
     const checks = await routes['/setup/plan']({ folder, step: 10 });
     assert.equal(checks.ask.id, 'setup-checks');
-    assert.ok(checks.ask.card.question.startsWith(`${green.lines.join('\n')}\n`), checks.ask.card.question);
+    assert.ok(checks.ask.card.question.startsWith(`These are the checks setup ran on this computer:\n${green.lines.join('\n')}\n`), checks.ask.card.question);
     assert.deepEqual(checks.ask.card.options.map((o) => o.label), ['Carry on', 'Later']);
+    // A run that went green before the checks were kept still gets the card, which says so.
+    const whole = fs.readFileSync(journalFile(), 'utf8');
+    const unkept = JSON.parse(whole);
+    for (const c of unkept.runs.find((r) => r.id === runOf(folder).id).changes) delete c.after?.checks;
+    fs.writeFileSync(journalFile(), JSON.stringify(unkept));
+    const none = await routes['/setup/plan']({ folder, step: 10 });
+    assert.ok(none.ask.card.question.startsWith('Every check passed. This setup went green before Wheelhouse kept the list of checks'), none.ask.card.question);
+    fs.writeFileSync(journalFile(), whole);
+    await routes['/setup/plan']({ folder, step: 10 });
     answer('setup-checks', checks.ask.card.question, 'Carry on', new Date(greenAt.getTime() + 1000));
     assert.notEqual((await routes['/setup/status']({ folder })).ask, 10, 'answered');
     await assert.rejects(routes['/setup/plan']({ folder, step: 10 }), /already done/);
