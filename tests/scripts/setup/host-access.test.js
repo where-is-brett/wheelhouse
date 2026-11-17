@@ -4,10 +4,13 @@
 // GET /user, and the key card for a key that is missing, refused or can only push. No test asks the computer's own store,
 // runs git against a real host or reaches a real network: the director's git, the store and curl are stand-ins.
 import { test } from 'node:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import assert from 'node:assert/strict';
 import {
   transportOf, credentialHelperOf, lsRemoteWorks, checkApiKey, findAccess, backendFor, runKeyCard, keyCardLine, keyCardPlanLine,
-  asIsReachLine, replacesLine, noRoadLine, hostAddress, NO_KEY_GIVEN,
+  asIsReachLine, replacesLine, noRoadLine, hostAddress, NO_KEY_GIVEN, folderMayRewrite,
 } from '../../../scripts/setup/host-access.js';
 import { makeRoutedCurl } from '../../helpers/fake-curl.js';
 
@@ -296,4 +299,54 @@ test('the key card\'s words never say REST or curl, for any state, host or reaso
 test('a computer with neither a tool nor curl is told so in the design\'s own line, as a wait and not on a card', () => {
   assert.equal(noRoadLine('gitlab'), 'This computer has no curl Wheelhouse can use, so it can only reach GitLab through GitLab\'s own tool. Ask IT for either.');
   assert.match(noRoadLine('github'), /through GitHub's own tool/);
+});
+
+test('a folder whose own git settings could rewrite an address keeps the director\'s token variables out, and git is never run in it', async () => {
+  const folders = [];
+  const folderWith = (config) => {
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-rewrite-'));
+    folders.push(folder);
+    if (config !== null) {
+      fs.mkdirSync(path.join(folder, '.git'));
+      fs.writeFileSync(path.join(folder, '.git', 'config'), config);
+    }
+    return folder;
+  };
+  try {
+    const seen = [];
+    const cwds = [];
+    const run = async (file, args, opts) => {
+      cwds.push(opts.cwd);
+      if (args.includes('--get-url')) return { code: 0, stdout: `${args.at(-1)}\n` };
+      seen.push(opts.baseEnv);
+      return { code: 0, stdout: 'abc\tHEAD\n' };
+    };
+    const env = { PATH: '/bin', GH_TOKEN: 'tok2' };
+    const base = { repo: 'ann/cafe', run, borrow: async () => null, via: viaOf(curlFor({})), env, host: 'github', remoteUrl: 'https://github.com/ann/cafe.git' };
+    const rewriting = [
+      '[remote "origin"]\n\turl = https://github.com/ann/cafe.git\n[url "https://git.example.org/"]\n\tinsteadOf = https://github.com/\n',
+      '[remote "origin"]\n\turl = https://github.com/ann/cafe.git\n[url "https://git.example.org/"]\n\tpushInsteadOf = https://github.com/\n',
+      '[include]\n\tpath = ../more.config\n',
+      '[includeIf "gitdir:~/"]\n\tpath = ../more.config\n',
+    ];
+    for (const config of rewriting) {
+      const folder = folderWith(config);
+      assert.equal(folderMayRewrite(folder), true, config);
+      seen.length = 0;
+      await findAccess({ ...base, folder });
+      assert.ok(seen.length > 0);
+      for (const e of seen) assert.equal(e.GH_TOKEN, undefined, config);
+    }
+    // A folder with plain settings, or none, keeps the environment as it is on GitHub.
+    for (const config of ['[remote "origin"]\n\turl = https://github.com/ann/cafe.git\n[core]\n\tbare = false\n', null]) {
+      const folder = folderWith(config);
+      assert.equal(folderMayRewrite(folder), false);
+      seen.length = 0;
+      await findAccess({ ...base, folder });
+      for (const e of seen) assert.equal(e.GH_TOKEN, 'tok2');
+    }
+    assert.equal(cwds.some((c) => folders.includes(c)), false, 'git is not run inside the folder');
+  } finally {
+    for (const f of folders) fs.rmSync(f, { recursive: true, force: true });
+  }
 });

@@ -16,6 +16,8 @@
 // Nothing here puts a key in a line said, an error or the journal. `borrow` and `store` are the computer's store (the
 // director's key, store.js); `via` is how the checks are made (gitlabApi's run, curl, proxy, caFile and platform), for
 // tests.
+import fs from 'node:fs';
+import path from 'node:path';
 import { askDirectorGit, directorProxy } from '../host/director-git.js';
 import { curlPath, request, NO_CURL } from '../host/curl.js';
 import { gitlabApi } from '../host/gitlab-key.js';
@@ -120,17 +122,33 @@ async function resolvedRemote({ remoteUrl, run, gitPath, env }) {
   }
 }
 
+// Whether the folder's own git settings could change where an address goes: any url.<x>.insteadOf or pushInsteadOf key, or an
+// include or includeIf section (which could bring one in). Read as plain text, the way originUrl reads the remote, and git is
+// never run in the folder for it. A folder with no .git/config is none; one that cannot be read, or whose .git is not a folder, may.
+export function folderMayRewrite(folder) {
+  if (folder === null || folder === undefined) return false;
+  let text;
+  try {
+    text = fs.readFileSync(path.join(folder, '.git', 'config'), 'utf8');
+  } catch (error) {
+    return error?.code !== 'ENOENT' || fs.existsSync(path.join(folder, '.git'));
+  }
+  return /^\s*\[\s*(?:url|include|includeIf)\b/im.test(text) || /^\s*(?:push)?insteadof\s*=/im.test(text);
+}
+
 // What step 3 finds about the computer's own road to the host, with nothing asked:
 //   { transport, helper, gitReaches, key, user, username }
 // `key` is 'none' (git holds no key), 'works' (it passes GET /user), 'push-only' (a 403), 'refused' (a 401),
 // 'unreachable' (the host could not be asked) or 'error'. `repo` is owner/name (null for a product with no repository
 // yet, so there is no remote to try); `remoteUrl` is its address.
-export async function findAccess({ host, base = DEFAULT_GITLAB, repo = null, remoteUrl = null, run, gitPath = 'git', borrow, via = {}, env = process.env }) {
+export async function findAccess({ host, base = DEFAULT_GITLAB, repo = null, remoteUrl = null, folder = null, run, gitPath = 'git', borrow, via = {}, env = process.env }) {
   const address = hostAddress(host, base);
   // git's credential helper may read the director's token variables and send them to any host git reaches, so they are kept
   // only where git is to reach github.com: the host of the remote asked, else the host's own address.
   const reached = await (async () => {
     try {
+      // A folder that may rewrite addresses itself (a handed-over project's own settings) is not trusted to say where git goes.
+      if (folderMayRewrite(folder)) return null;
       if (remoteUrl === null) return new URL(address).hostname;
       const resolved = await resolvedRemote({ remoteUrl, run, gitPath, env });
       return resolved === null ? null : gitHostOf(resolved);

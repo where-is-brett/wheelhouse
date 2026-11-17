@@ -2264,7 +2264,7 @@ export function hostStep({
       } catch { /* none to lend */ }
       found = { transport: null, helper: null, gitReaches: null, key: typeof held?.key === 'string' && held.key !== '' ? 'unchecked' : 'none', user: null, username: null };
     } else {
-      found = await findAccess({ host, base, repo, remoteUrl, run, gitPath, borrow: directorKey.borrow, via });
+      found = await findAccess({ host, base, repo, remoteUrl, folder: ctx.folder, run, gitPath, borrow: directorKey.borrow, via });
     }
     const curl = curlStatus({ platform, gitPath, ...(curlExists === undefined ? {} : { exists: curlExists }) }).found;
     let proxy = null;
