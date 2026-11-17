@@ -1183,7 +1183,7 @@ export function directorGitEnv({ host, gitPath = 'git', env = process.env, platf
 export const SETUP_TOKEN_KEPT = 'Setup could not revoke the one-day GitLab token: delete it on GitLab\'s Access tokens page';
 
 // What step 3's card says of it.
-export const SETUP_TOKEN_LINE = 'You make a one-day GitLab token on a page that opens and paste it into a box on your screen. Setup uses it only to make the project, its key and the main line\'s protection, then revokes it.';
+export const SETUP_TOKEN_LINE = 'You make a one-day GitLab token on a page that opens, setting its expiry date to tomorrow, and paste it into a box on your screen. Setup uses it only to make the project, its key and the main line\'s protection, then revokes it.';
 const NO_SETUP_TOKEN = 'No GitLab token was given, so nothing was made on GitLab; a fresh Go ahead asks again';
 // A setup token GitLab says can do more than api, or lasts longer than about a day: setup makes nothing with it.
 const SETUP_TOKEN_WIDE = 'The GitLab token can do more than api, so setup made nothing with it and revoked it: make a new one with api alone, then a fresh Go ahead';
