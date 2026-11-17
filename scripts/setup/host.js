@@ -114,7 +114,11 @@ import {
 import {
   KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, applyLocal, backupAnswered, backupChoice, hostOfAddress, pastedAddress, withScheme, branchAsk, branchesOf, chooseBranch, headBranch, keptAsk, localCard, localName, localSteps, remotesOf,
 } from './local.js';
+import { companyAddress, pinOf, repoNamed, HELD_SECRET } from '../lib/pasted-address.js';
 import { pickFolder, timeMachine } from '../host/local/backup.js';
+
+// A typed GitLab address and a pasted project address are read in scripts/lib/pasted-address.js, with the rest of its reading.
+export { companyAddress, pinOf, repoNamed };
 import { backupNamed, projectOfBackup } from '../host/local/restore.js';
 import { caFile, probeCertificate, companyGitEnv } from '../host/company-ca.js';
 import {
@@ -491,38 +495,6 @@ function hostAsk(name) {
 export const GITLAB_COM = new URL(DEFAULT_GITLAB).host;
 export const COMPANY_GITLAB = 'My company\'s GitLab';
 
-// A typed GitLab address as { base, host }: https only, a host name with an optional port, no path.
-// `base` is the address as the tools use it, `host` the entry `gitlabHosts` takes (the port with it).
-// The public service's own address gives { base: DEFAULT_GITLAB }. Anything else gives { why }.
-export function companyAddress(text) {
-  const typed = String(text ?? '').trim();
-  const shown = typed.length > 50 ? `${typed.slice(0, 50)}...` : typed;
-  // Only one run of characters can be an address someone typed: words with spaces in them are a placeholder or a
-  // sentence, and the card never quotes them back as the director's address.
-  const called = /^\S+$/.test(typed) ? `"${shown}"` : 'What came back';
-  if (/^http:\/\//i.test(typed)) return { why: `${called} is not https, and a company's GitLab is reached over https only` };
-  // A project's full address is taken too: its host is the GitLab, and its path names the project.
-  const [hostPart, ...rest] = typed.replace(/^https:\/\//i, '').split('/');
-  const bare = hostPart;
-  let repo;
-  const segments = rest.join('/').replace(/[?#].*$/, '').split('/-/')[0].replace(/\.git$/i, '').split('/').filter(Boolean);
-  // A group's page (the host and one group) is trimmed to the host; a path of two or more names a project.
-  if (segments.length > 0) {
-    if (!segments.every((part) => /^[A-Za-z0-9_.][A-Za-z0-9_.-]*$/.test(part) && !/^\.+$/.test(part))) {
-      return { why: `${called} is not a GitLab address: it is a host name and a port if it has one, with no path; or a project's whole address, the host then group/project` };
-    }
-    if (segments.length > 1) repo = segments.join('/');
-  }
-  const match = /^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*)(?::(\d{1,5}))?$/i.exec(bare);
-  if (match === null) return { why: `${called} is not a GitLab address: it is a host name and a port if it has one, with no path` };
-  const [, name, port] = match;
-  if (!name.includes('.') && name.toLowerCase() !== 'localhost') return { why: `${called} is not a GitLab address: it needs the whole host name, such as gitlab.example.org` };
-  if (port !== undefined && (Number(port) < 1 || Number(port) > 65535)) return { why: `${called} has a port that is not a port` };
-  const url = new URL(`https://${name.toLowerCase()}${port === undefined ? '' : `:${port}`}`);
-  if (url.origin === DEFAULT_GITLAB) return { base: DEFAULT_GITLAB, ...(repo === undefined ? {} : { repo }) };
-  return { base: url.origin, host: url.host, ...(repo === undefined ? {} : { repo }) };
-}
-
 // The host a folder's remotes already send work to that is neither GitHub nor the public GitLab, as the
 // address it goes by ('git.example.org:8443'), or null.
 export function remoteHost(others = []) {
@@ -653,7 +625,8 @@ function joinAsk(id, name, { missed }) {
   const other = fromOtherComputer(name);
   let found = '';
   const dotted = typeof missed?.name === 'string' && missed.name.split('/')[0].includes('.') ? ` ${PASTE_WITH_SCHEME}` : '';
-  if (missed?.missed === 'not-a-name') {
+  if (missed?.name === HELD_SECRET) found = 'That address held a password or key, so it wasn\'t kept. Paste it without one, or type owner/name, like ann/cafe-menu. ';
+  else if (missed?.missed === 'not-a-name') {
     found = `"${missed.name}" is not a repository's name. ${missed.address === true ? 'That address names no project. ' : ''}Type owner/name, like ann/cafe-menu, or click a button. `;
   }
   else if (missed?.missed === 'bad-address') found = `"${missed.name}" can't be read as an address: setup reads only addresses that start with https:// or git@ and have a full host name. Or type owner/name, like ann/cafe-menu, or click a button. `;
@@ -683,27 +656,6 @@ function joinAsk(id, name, { missed }) {
   };
 }
 
-// A typed answer to the join question as a repository's name: owner/name (groups too) or a bare
-// name, without .git; null for anything else. A pasted project address (https://host/owner/name,
-// ssh://git@host/owner/name or git@host:owner/name, with or without .git) reads as its owner/name;
-// an address with no path (a bare host) names no project.
-export function repoNamed(text) {
-  let named = withScheme(String(text ?? '').trim());
-  const web = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/]*)(.*)$/.exec(named);
-  const scp = web ? null : /^[A-Za-z0-9_.-]+@([A-Za-z0-9.-]+):(?!\/\/)(.*)$/.exec(named);
-  if (web || scp) {
-    const host = (web ? web[1] : scp[1]).replace(/^.*@/, '').replace(/:\d*$/, '').toLowerCase();
-    named = (web ? web[2] : scp[2]).split(/[?#]/)[0].replace(/^\/+/, '');
-    // A GitLab page's address goes on after '/-/' (ann/cafe-menu/-/tree/main); GitHub's has no such mark, and its
-    // repositories are always owner/name, so only the first two parts count (ann/cafe-menu/pulls).
-    named = named.replace(/\/-(?:\/.*)?$/, '').replace(/\/+$/, '');
-    if (host === 'github.com' || host === 'www.github.com') named = named.split('/').slice(0, 2).join('/');
-  }
-  named = named.replace(/\.git$/i, '');
-  if (!/^[A-Za-z0-9_.][A-Za-z0-9_.-]*(\/[A-Za-z0-9_.][A-Za-z0-9_.-]*)*$/.test(named)) return null;
-  return named.split('/').some((part) => /^\.+$/.test(part)) ? null : named;
-}
-
 // The text of an answer as the card may show it back: anything written before an @ (user:token@host, a lone user@host, a
 // token in a command pasted whole) is dropped wherever it falls, apart from the plain git@ of git@host:path, which is no
 // secret; so is everything from the first ;, ? or #; it is cut to 100 characters.
@@ -713,19 +665,6 @@ const shown = (text) => String(text ?? '').trim()
   .replace(/[;?#].*$/, '')
   .trim()
   .slice(0, 100);
-
-// Where a pasted address says the product is, so no host card is asked: null for text that is no address;
-// { unreadable: true } for one setup can't read; { forge: true } for one on another place to keep code; { host: 'github' }
-// for github.com; else { host: 'gitlab', company } with the GitLab as the which-GitLab cards give it ({ base } for the
-// public service, { base, host } for a company's).
-export function pinOf(text) {
-  const there = pastedAddress(text);
-  if (there === null || there.unreadable || there.forge) return there;
-  if (hostOfAddress(there) === 'github') return { host: 'github' };
-  if (there.hostname === 'gitlab.com' || there.hostname === 'www.gitlab.com') return { host: 'gitlab', company: { base: DEFAULT_GITLAB } };
-  const company = companyAddress(hostWords(there));
-  return company.why === undefined ? { host: 'gitlab', company } : { unreadable: true };
-}
 
 // Step 3's records of a run's joining (ruling R77), in order: its `answer` changes with `joined`.
 const joinRecords = (run) => (Array.isArray(run?.changes) ? run.changes : [])
@@ -2457,7 +2396,7 @@ export function hostStep({
         && await toolState(TOOL.gitlab, { run, platform }) === 'missing') {
         return { ask: { id: hostToolId(TOOL.gitlab), card: hostToolCard(TOOL.gitlab, { recommend: 'fetch', platform }), step: 2 } };
       }
-      const reach = !locked && !launched ? await reachOf({ ctx, host, base, product, platform, quiet: ctx.choicesOnly === true && join?.pin?.company?.host !== undefined }) : null;
+      const reach = !locked && !launched ? await reachOf({ ctx, host, base, product, platform, quiet: ctx.choicesOnly === true && company?.host !== undefined }) : null;
       if (reach?.noRoad && ctx.choicesOnly !== true) return { wait: OWN_APP_WAIT_MS, why: noRoadLine(host) };
       // Narrow on GitLab needs the pasted token wherever the tool won't work (as at apply time below). A Locked or launched
       // project reads no reach, so the tool's own state is read here, and one step 2 is still to fetch counts as working.

@@ -15,7 +15,7 @@ import { projectForFolder, writeProject } from '../lib/projects.js';
 import { STATE_BRANCH, openProjectRecord, openSettings } from '../state/record.js';
 import { PROFILE_BRANCH } from '../profile/store.js';
 import { parseRemote, hostWords } from '../host/gitlab-base.js';
-import { pastedAddress, hostOfAddress } from '../lib/pasted-address.js';
+import { pinOf, repoNamed } from '../lib/pasted-address.js';
 import { readJournal } from '../lib/setup-run.js';
 import { SETUP_LABEL } from '../state/card-lines.js';
 import { setupGit, reaching } from './git.js';
@@ -193,7 +193,7 @@ export function backupChoice({ answer, name, root, machine, desktop = true }) {
 }
 
 // A pasted project address is read by scripts/lib/pasted-address.js, the one reading step 3, the plan card and the tools share.
-export { withScheme, pastedAddress, hostOfAddress } from '../lib/pasted-address.js';
+export { withScheme, pastedAddress, hostOfAddress, pinOf } from '../lib/pasted-address.js';
 
 // The backup file a run's answers name, or null: a path typed on the join card, where the four options are taken (spec 10).
 export function backupAnswered(answers = {}) {
@@ -206,11 +206,12 @@ export function backupAnswered(answers = {}) {
 // Where the run's answers keep the project: 'local', 'github', 'gitlab' or null, while no answer says.
 export function chosenHost(answers = {}) {
   if (backupAnswered(answers) !== null) return 'local';
-  const joined = Object.keys(answers ?? {}).filter((k) => /^3\.join(?:-|$)/.test(k)).at(-1);
-  // A pasted address names its own host: no host card is asked.
-  const pinned = joined === undefined ? null : hostOfAddress(pastedAddress(answers[joined]?.text));
-  if (pinned !== null) return pinned;
   const last = Object.keys(answers ?? {}).filter((k) => /^3\.join(?:-|$)/.test(k)).at(-1);
+  // A pasted address names its own host, as step 3 reads it (an address it refuses, one that names no project or none it can
+  // read, names none): no host card is asked.
+  const text = last === undefined ? null : answers[last]?.text;
+  const pinned = repoNamed(text) === null ? null : pinOf(text)?.host ?? null;
+  if (pinned !== null) return pinned;
   const labels = [answers?.['3.kept'], answers?.['3.host'], last === undefined ? null : answers[last]].map((a) => a?.label);
   if (labels.includes(KEEP_HERE)) return 'local';
   if (labels.includes(PUT_ON_GITHUB) || labels.includes('GitHub')) return 'github';

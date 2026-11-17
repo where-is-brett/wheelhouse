@@ -58,7 +58,7 @@ import { insideCheckout } from '../feature/approved.js';
 import { keepApprovedText, installText } from '../state/approved-text.js';
 import { asQuestion } from '../cards/visit.js';
 import { scanContent } from '../state/secret-scan.js';
-import { pastedAddress, withoutSecrets } from '../lib/pasted-address.js';
+import { pastedAddress, withoutSecrets, HELD_SECRET } from '../lib/pasted-address.js';
 import {
   approvalLine, confirmLine, LIFT_STOP_LINES, isLiftStopLine, runbookLine, RUNBOOK_TITLES, ciPushLine,
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, ID, LANES, QUESTION_ID,
@@ -640,9 +640,15 @@ function setupAnswerOf(cwd, { question, label, card, signable, typed, why }) {
     return { asked, made: { kind: 'action', data: { ...data, label: own.label, text: null } } };
   }
   if (label.trim() === '') return { why: 'the text typed was empty' };
-  if (scanContent(label).length > 0) return { why: 'the text typed holds what looks like a secret' };
-  // A pasted project address on step 3's join question is kept without the user, token or query written in it; it reads as the same address.
-  const kept = asked.step === 3 && /^join(?:-|$)/.test(String(asked.id)) && pastedAddress(label) !== null ? withoutSecrets(label) : label;
+  // A pasted project address on step 3's join question is kept without the user, token or query written in it; it reads as the
+  // same address. It is cleaned before the scan, so a password written into an address does not lose the whole answer.
+  const join = asked.step === 3 && /^join(?:-|$)/.test(String(asked.id));
+  const kept = join && pastedAddress(label) !== null ? withoutSecrets(label) : label;
+  if (scanContent(kept).length > 0) {
+    // On the join card the secret is never kept, but the card comes back saying why.
+    if (!join) return { why: 'the text typed holds what looks like a secret' };
+    return { asked, made: { kind: 'action', data: { ...data, label: null, text: HELD_SECRET } } };
+  }
   return { asked, made: { kind: 'action', data: { ...data, label: null, text: kept } } };
 }
 

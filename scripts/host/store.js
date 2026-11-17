@@ -33,11 +33,20 @@ export function defaultRun({ file, args, input, env }) {
 }
 
 // The director's own settings stay in force; git is told never to ask, and
-// Git Credential Manager is told never to open a window. The director's token variables are taken out: the host asked may be
-// one the director pasted, and a helper that read such a variable would send it there.
-function quietEnv() {
-  return { ...process.env, ...withoutTokens(), GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' };
+// Git Credential Manager is told never to open a window. The director's token variables are taken out unless the host is
+// github.com: the host asked may be one the director pasted, and a helper that read such a variable would send it there,
+// while GitHub's own variables belong to GitHub and its REST calls need them.
+const isGithub = (host) => /^(?:www\.)?github\.com(?::\d+)?$/i.test(String(host ?? ''));
+function quietEnv(host) {
+  return { ...process.env, ...(isGithub(host) ? {} : withoutTokens()), GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' };
 }
+const hostOfUrl = (address) => {
+  try {
+    return new URL(address).host;
+  } catch {
+    return null;
+  }
+};
 
 function oneLine(value, what) {
   if (typeof value !== 'string' || value === '' || /[\r\n\0]/.test(value)) {
@@ -61,7 +70,7 @@ function parse(output) {
 
 async function usesHttpPath(address, run) {
   try {
-    const { code, stdout } = await run({ file: 'git', args: ['config', '--get-urlmatch', 'credential.useHttpPath', address], env: quietEnv() });
+    const { code, stdout } = await run({ file: 'git', args: ['config', '--get-urlmatch', 'credential.useHttpPath', address], env: quietEnv(hostOfUrl(address)) });
     return code === 0 && TRUE.test(stdout.trim());
   } catch {
     return false;
@@ -79,7 +88,7 @@ export async function borrowKey({ host, base, repoPath, run = defaultRun }) {
   }
   let result;
   try {
-    result = await run({ file: 'git', args: ['credential', 'fill'], input: `${lines.join('\n')}\n\n`, env: quietEnv() });
+    result = await run({ file: 'git', args: ['credential', 'fill'], input: `${lines.join('\n')}\n\n`, env: quietEnv(host) });
   } catch {
     return null;
   }
@@ -97,7 +106,7 @@ export async function storeDirectorKey({ host, base, repoPath, username, key, ru
   const input = `protocol=https\nhost=${oneLine(host, 'host')}\n${path}username=${oneLine(username, 'user name')}\npassword=${oneLine(key, 'key')}\n\n`;
   let result;
   try {
-    result = await run({ file: 'git', args: ['credential', 'approve'], input, env: quietEnv() });
+    result = await run({ file: 'git', args: ['credential', 'approve'], input, env: quietEnv(host) });
   } catch {
     throw new Error('The key could not be stored: git could not be run');
   }

@@ -1,7 +1,7 @@
 // scripts/lib/pasted-address.js
 // A project address pasted on step 3's join question, read one way for everyone that needs it: step 3 (which host to
 // use and look on), the plan card, the tools step and the answer's record. Nothing here reaches a host.
-import { parseRemote } from '../host/gitlab-base.js';
+import { DEFAULT_GITLAB, parseRemote, hostWords } from '../host/gitlab-base.js';
 
 // A pasted project address typed without its https://, read only where its first part is one of the two hosts Wheelhouse
 // works with (github.com/ann/cafe-menu). Any other dotted first part (john.smith/cafe-menu, acme.corp/team/app) is a group
@@ -11,6 +11,9 @@ export const withScheme = (text) => (/^(?:www\.)?(?:github|gitlab)\.com\/[^\s]/i
 // Hosts that are other places to keep code, which Wheelhouse does not work with (and github.* hosts that are not github.com).
 const OTHER_FORGES = /^(?:www\.)?(?:bitbucket\.org|dev\.azure\.com|codeberg\.org)$/;
 const isOtherForge = (hostname) => OTHER_FORGES.test(hostname) || (/^github\./.test(hostname) && hostname !== 'github.com');
+
+// A host name without the root dot a URL allows after it (gitlab.com. is gitlab.com).
+const unrooted = (hostname) => hostname.replace(/\.$/, '');
 
 // A host that is no company's GitLab: loopback, link-local and bare addresses, in any form a URL reads (127.x, 0x7f.1, [::1]).
 const isBareHost = (hostname) => !hostname.includes('.') || hostname.startsWith('[') || /^[\d.]+$/.test(hostname) || /^0x/i.test(hostname)
@@ -31,16 +34,104 @@ export function pastedAddress(text) {
   } catch {
     return { unreadable: true };
   }
-  if (isBareHost(parts.hostname)) return { unreadable: true };
-  return isOtherForge(parts.hostname) ? { forge: true } : parts;
+  // A host written with its root dot (gitlab.com., localhost.) is the same host in these checks.
+  const hostname = unrooted(parts.hostname);
+  if (isBareHost(hostname)) return { unreadable: true };
+  return isOtherForge(hostname) ? { forge: true } : parts;
 }
 
 // Which code host a pasted address names: 'github' for github.com, else 'gitlab'; null while the join answer is no readable
 // address. The one reading step 3 uses (pinOf in host.js), so no host is named here that step 3 then refuses.
-export const hostOfAddress = (parts) => (parts === null || parts.unreadable || parts.forge ? null : parts.hostname === 'github.com' || parts.hostname === 'www.github.com' ? 'github' : 'gitlab');
+export const hostOfAddress = (parts) => (parts === null || parts.unreadable || parts.forge ? null : ['github.com', 'www.github.com'].includes(unrooted(parts.hostname)) ? 'github' : 'gitlab');
 
+// A typed answer to the join question as a repository's name: owner/name (groups too) or a bare
+// name, without .git; null for anything else. A pasted project address (https://host/owner/name,
+// ssh://git@host/owner/name or git@host:owner/name, with or without .git) reads as its owner/name;
+// an address with no path (a bare host) names no project.
+export function repoNamed(text) {
+  let named = withScheme(String(text ?? '').trim());
+  const web = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/]*)(.*)$/.exec(named);
+  const scp = web ? null : /^[A-Za-z0-9_.-]+@([A-Za-z0-9.-]+):(?!\/\/)(.*)$/.exec(named);
+  if (web || scp) {
+    const host = (web ? web[1] : scp[1]).replace(/^.*@/, '').replace(/:\d*$/, '').toLowerCase();
+    named = (web ? web[2] : scp[2]).split(/[?#]/)[0].replace(/^\/+/, '');
+    // A GitLab page's address goes on after '/-/' (ann/cafe-menu/-/tree/main); GitHub's has no such mark, and its
+    // repositories are always owner/name, so only the first two parts count (ann/cafe-menu/pulls).
+    named = named.replace(/\/-(?:\/.*)?$/, '').replace(/\/+$/, '');
+    if (host === 'github.com' || host === 'www.github.com') named = named.split('/').slice(0, 2).join('/');
+  }
+  named = named.replace(/\.git$/i, '');
+  if (!/^[A-Za-z0-9_.][A-Za-z0-9_.-]*(\/[A-Za-z0-9_.][A-Za-z0-9_.-]*)*$/.test(named)) return null;
+  return named.split('/').some((part) => /^\.+$/.test(part)) ? null : named;
+}
+
+// What is kept in place of a join answer that still held a secret once its address was cleaned: nothing of what was typed,
+// only these words, which no step reads as a name, so the join card is asked again saying why.
+export const HELD_SECRET = 'an address holding a password or key';
+
+// A typed GitLab address as { base, host }: https only, a host name with an optional port, no path.
+// `base` is the address as the tools use it, `host` the entry `gitlabHosts` takes (the port with it).
+// The public service's own address gives { base: DEFAULT_GITLAB }. Anything else gives { why }.
+export function companyAddress(text) {
+  const typed = String(text ?? '').trim();
+  const shown = typed.length > 50 ? `${typed.slice(0, 50)}...` : typed;
+  // Only one run of characters can be an address someone typed: words with spaces in them are a placeholder or a
+  // sentence, and the card never quotes them back as the director's address.
+  const called = /^\S+$/.test(typed) ? `"${shown}"` : 'What came back';
+  if (/^http:\/\//i.test(typed)) return { why: `${called} is not https, and a company's GitLab is reached over https only` };
+  // A project's full address is taken too: its host is the GitLab, and its path names the project.
+  const [hostPart, ...rest] = typed.replace(/^https:\/\//i, '').split('/');
+  const bare = hostPart;
+  let repo;
+  const segments = rest.join('/').replace(/[?#].*$/, '').split('/-/')[0].replace(/\.git$/i, '').split('/').filter(Boolean);
+  // A group's page (the host and one group) is trimmed to the host; a path of two or more names a project.
+  if (segments.length > 0) {
+    if (!segments.every((part) => /^[A-Za-z0-9_.][A-Za-z0-9_.-]*$/.test(part) && !/^\.+$/.test(part))) {
+      return { why: `${called} is not a GitLab address: it is a host name and a port if it has one, with no path; or a project's whole address, the host then group/project` };
+    }
+    if (segments.length > 1) repo = segments.join('/');
+  }
+  const match = /^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*)(?::(\d{1,5}))?$/i.exec(bare);
+  if (match === null) return { why: `${called} is not a GitLab address: it is a host name and a port if it has one, with no path` };
+  const [, name, port] = match;
+  if (!name.includes('.') && name.toLowerCase() !== 'localhost') return { why: `${called} is not a GitLab address: it needs the whole host name, such as gitlab.example.org` };
+  if (port !== undefined && (Number(port) < 1 || Number(port) > 65535)) return { why: `${called} has a port that is not a port` };
+  const url = new URL(`https://${name.toLowerCase()}${port === undefined ? '' : `:${port}`}`);
+  if (url.origin === DEFAULT_GITLAB) return { base: DEFAULT_GITLAB, ...(repo === undefined ? {} : { repo }) };
+  return { base: url.origin, host: url.host, ...(repo === undefined ? {} : { repo }) };
+}
+
+// Where a pasted address says the product is, so no host card is asked: null for text that is no address;
+// { unreadable: true } for one setup can't read; { forge: true } for one on another place to keep code; { host: 'github' }
+// for github.com; else { host: 'gitlab', company } with the GitLab as the which-GitLab cards give it ({ base } for the
+// public service, { base, host } for a company's).
+export function pinOf(text) {
+  const there = pastedAddress(text);
+  if (there === null || there.unreadable || there.forge) return there;
+  if (hostOfAddress(there) === 'github') return { host: 'github' };
+  if (unrooted(there.hostname) === 'gitlab.com' || unrooted(there.hostname) === 'www.gitlab.com') return { host: 'gitlab', company: { base: DEFAULT_GITLAB } };
+  const company = companyAddress(hostWords(there));
+  return company.why === undefined ? { host: 'gitlab', company } : { unreadable: true };
+}
 
 // The text of a pasted address with anything a secret could sit in taken out, for keeping: the user and token written before
-// the host of an https:// or ssh:// address, and any query string, ;parameters or #fragment. git@host:path keeps its git@.
+// the host, and any query string, ;parameters or #fragment. git@host: keeps its git@. An http(s) address is rebuilt from the
+// address a URL reader makes of it (so a backslash cannot turn one host into another); ssh:// and user@host:path are cut.
 // It reads as the same address as the text it came from.
-export const withoutSecrets = (text) => String(text ?? '').replace(/^(\s*[A-Za-z][A-Za-z0-9+.-]*:\/\/)[^/?#\s]*@/, '$1').replace(/[;?#].*$/, '');
+export function withoutSecrets(text) {
+  const named = String(text ?? '').trim();
+  if (/^https?:\/\//i.test(named)) {
+    try {
+      const url = new URL(named);
+      url.username = '';
+      url.password = '';
+      url.search = '';
+      url.hash = '';
+      url.pathname = url.pathname.replace(/;.*$/, '');
+      return url.toString();
+    } catch { /* kept as the cut below */ }
+  }
+  return named.replace(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^/?#\s]*@/, '$1')
+    .replace(/^(?!git@)[^@/\s:][^@/\s]*@(?=[A-Za-z0-9.-]+:(?!\/\/))/, '')
+    .replace(/[;?#].*$/, '');
+}

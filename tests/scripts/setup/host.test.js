@@ -50,6 +50,7 @@ import { g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, remotesOf, chosenHost } from '../../../scripts/setup/local.js';
 import { homeDir } from '../../../scripts/host/local/home.js';
 import { GITLAB_COM, COMPANY_GITLAB, companyAddress, nameGitlabHost } from '../../../scripts/setup/host.js';
+import { HELD_SECRET } from '../../../scripts/lib/pasted-address.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 import { useFileKeyStore } from '../../helpers/file-key-store.js';
 
@@ -2579,6 +2580,11 @@ test('other places to keep code are refused, and only https, ssh and git@ addres
     }
     for (const other of ['https://bitbucket.org/ann/x', 'https://github.example.com/ann/x']) assert.equal(chosenHost({ '3.join': { label: null, text: other, at: NOW.toISOString() } }), null, other);
     assert.equal(chosenHost({ '3.join': { label: null, text: 'ssh://git@gitlab.example.org/ann/x', at: NOW.toISOString() } }), 'gitlab');
+    // An address step 3 refuses (a host with no project, or a company host with a root dot) names no host; the newest join answer counts.
+    for (const refused of ['https://gitlab.com/', 'https://gitlab.example.org/', 'https://gitlab.example.org./ann/x']) {
+      assert.equal(chosenHost({ '3.join': { label: null, text: refused, at: NOW.toISOString() } }), null, refused);
+    }
+    assert.equal(chosenHost({ '3.join': { label: null, text: 'https://gitlab.com/', at: NOW.toISOString() }, '3.join-abc': { label: null, text: 'github.com/ann/x', at: NOW.toISOString() } }), 'github');
   });
 });
 
@@ -2665,6 +2671,8 @@ test('a token in a pasted address is not shown back on the card that asks again'
       const card = (await step.plan({ ...ctx, answers: typed(secret) })).ask.card.what;
       assert.equal(/SECRET\d+|private_token/.test(card), false, card);
     }
+    // An answer kept as nothing because a secret was left in it brings the card back saying why.
+    assert.match((await step.plan({ ...ctx, answers: typed(HELD_SECRET) })).ask.card.what, /^That address held a password or key, so it wasn't kept\. Paste it without one/);
     // git@host: is no secret, and stays.
     assert.match((await step.plan({ ...ctx, answers: typed('git@gitlab.example.org:') })).ask.card.what, /^"git@gitlab\.example\.org:" is not/);
   });

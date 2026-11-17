@@ -203,6 +203,8 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     const where = addressHostName(choices);
     // The product's own name, where the typed answer (an address, or owner/name) gives it, not the folder's.
     const named = typeof text === 'string' && backupNamed(text) === null ? repoNamed(text)?.split('/').at(-1) : null;
+    // An owner/name looked for on the company's GitLab, as step 3 words it: its account or groups.
+    if (where === null && onCompanyGitLab(choices, host)) return `${named ?? name}, from your other computer, found on your company's GitLab account or groups, brought into this folder.`;
     return `${named ?? name}, from your other computer${where === null ? '' : `, on ${where}`}, brought into this folder.`;
   }
   if (id === 'real-users') {

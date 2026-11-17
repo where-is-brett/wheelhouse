@@ -84,6 +84,23 @@ test('step 3 finds the transport, the helper, ls-remote and the key without aski
   assert.deepEqual(hostAddress('github'), 'https://github.com');
 });
 
+test('on GitLab, git runs without the director\'s token variables, and on GitHub with the environment as it is', async () => {
+  const seen = [];
+  const run = async (file, args, opts) => { seen.push(opts.baseEnv); return { code: 0, stdout: 'abc\tHEAD\n' }; };
+  const env = { PATH: '/bin', GITLAB_TOKEN: 'tok', GH_TOKEN: 'tok2' };
+  const base = { repo: 'team/product', run, borrow: async () => null, via: viaOf(curlFor({})), env };
+  await findAccess({ ...base, host: 'gitlab', base: GITLAB, remoteUrl: `${GITLAB}/team/product.git` });
+  assert.ok(seen.length > 0);
+  for (const e of seen) {
+    assert.equal(e.GITLAB_TOKEN, undefined);
+    assert.equal(e.GH_TOKEN, undefined);
+    assert.equal(e.PATH, '/bin');
+  }
+  seen.length = 0;
+  await findAccess({ ...base, host: 'github', remoteUrl: 'https://github.com/ann/cafe.git' });
+  for (const e of seen) assert.equal(e.GH_TOKEN, 'tok2');
+});
+
 test('no key held by git reads as none; a key that only pushes as push-only; a refused one as refused', async () => {
   const run = async () => ({ code: 1, stdout: '' });
   const curl = curlFor({ 'stand-in-PUSHONLY': 'push-only' });

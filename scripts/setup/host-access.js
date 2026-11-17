@@ -21,6 +21,7 @@ import { curlPath, request, NO_CURL } from '../host/curl.js';
 import { gitlabApi } from '../host/gitlab-key.js';
 import { DEFAULT_GITLAB } from '../host/gitlab-base.js';
 import { tokenUrl } from '../host/token-url.js';
+import { withoutTokens } from '../lib/token-names.js';
 
 const NAME = { github: 'GitHub', gitlab: 'GitLab' };
 const GITHUB_ORIGIN = 'https://github.com';
@@ -99,7 +100,8 @@ export async function checkApiKey({ host, base = DEFAULT_GITLAB, key, via = {} }
 // 'unreachable' (the host could not be asked) or 'error'. `repo` is owner/name (null for a product with no repository
 // yet, so there is no remote to try); `remoteUrl` is its address.
 export async function findAccess({ host, base = DEFAULT_GITLAB, repo = null, remoteUrl = null, run, gitPath = 'git', borrow, via = {}, env = process.env }) {
-  const ask = (args) => askDirectorGit(args, { run, gitPath, env });
+  // git's credential helper may read the director's GitLab token variables and send them to any GitLab git reaches.
+  const ask = (args) => askDirectorGit(args, { run, gitPath, env: host === 'gitlab' ? { ...env, ...withoutTokens() } : env });
   const address = hostAddress(host, base);
   const found = {
     transport: transportOf(remoteUrl), helper: await credentialHelperOf({ address, ask }),

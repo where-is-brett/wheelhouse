@@ -10,7 +10,7 @@ import {
   openChoices, oneCard, setupTime, consentHolds, customiseBatch, aboutOf, actedBy, GO_AHEAD, CUSTOMISE, PER_CARD,
 } from '../../../scripts/setup/choices.js';
 import { stepFourDrift, choiceList } from '../../../scripts/setup/redo.js';
-import { NEW_PRODUCT, HOST_LABELS, WAYS, REAL_USERS, STRICTER } from '../../../scripts/setup/host.js';
+import { COMPANY_GITLAB, NEW_PRODUCT, HOST_LABELS, WAYS, REAL_USERS, STRICTER } from '../../../scripts/setup/host.js';
 import { LIVE_DATA, PRODUCT } from '../../../scripts/setup/questions.js';
 import { PUT_ON_GITLAB } from '../../../scripts/setup/local.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
@@ -259,6 +259,13 @@ test('the plan line for an address join names the product the address gave, and 
     const plan = oneCard({ folder: os.tmpdir(), list, product: null, platform: 'darwin', toRun: [3], count: 1 }).card.question;
     assert.match(plan, line, plan);
   }
+});
+
+test('an owner/name join on the company\'s GitLab, picked on the which-GitLab card, names that GitLab and its account or groups', () => {
+  const entry = (id, label, text = null) => ({ step: 3, id, key: `3.${id}`, card: { options: [] }, typed: true, writes: undefined, chosen: { label, text, at: '2026-10-26T10:05:00.000Z' }, label, text });
+  const list = [entry('join', null, 'ann/cafe-menu'), entry('gitlab-where', COMPANY_GITLAB)];
+  const plan = oneCard({ folder: os.tmpdir(), list, product: { isNew: false, host: 'gitlab', repo: 'ann/cafe-menu', name: 'cafe-menu' }, platform: 'darwin', toRun: [3], count: 1 }).card.question;
+  assert.match(plan, /^- cafe-menu, from your other computer, found on your company's GitLab account or groups, brought into this folder\.$/m, plan);
 });
 
 test('the plan line names a host only as step 3 reads it: www.gitlab.com is the public GitLab, and a host step 3 refuses is named nowhere', async () => {

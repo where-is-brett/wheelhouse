@@ -140,6 +140,14 @@ test('git credential fill runs without the director\'s token variables, so a pas
     await borrowKey({ host: 'gitlab.example.org', repoPath: 'team/app', run });
     assert.ok(calls.length > 0);
     for (const call of calls) for (const n of names) assert.equal(call.env[n], undefined, n);
+    // github.com keeps its own variables: GitHub's REST calls through the store need them.
+    const hub = fake(fill);
+    await borrowKey({ host: 'github.com', repoPath: 'ann/app', run: hub.run });
+    assert.ok(hub.calls.length > 0);
+    for (const call of hub.calls) {
+      assert.equal(call.env.GH_TOKEN, 'SECRET-TOKEN');
+      assert.equal(call.env.GITHUB_TOKEN, 'SECRET-TOKEN');
+    }
   } finally {
     for (const n of names) {
       if (before[n] === undefined) delete process.env[n];

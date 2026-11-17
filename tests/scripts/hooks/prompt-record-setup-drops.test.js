@@ -15,6 +15,7 @@ import { startRun } from '../../../scripts/setup/journal.js';
 import { noteAsked, noteShown, clicksDir } from '../../../scripts/setup/clicks.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { setLineOf } from '../../../scripts/state/card-lines.js';
+import { HELD_SECRET } from '../../../scripts/lib/pasted-address.js';
 
 const NOW = new Date('2026-11-03T00:00:00.000Z');
 const PLAIN = 'A stock tool for shift leads (SLs) in example distribution centres.';
@@ -94,6 +95,32 @@ test('an answer Claude Code gives only in its tool response is kept as one in it
       assert.equal(listOf(home, 'records').length, 2, response);
     });
   }
+});
+
+test('a password written into an address typed on the join card is cleaned out and the address kept; a secret left in it is kept as nothing, and the card says why', async () => {
+  await inSetup(async ({ home, folder, run: r }) => {
+    const join = {
+      question: 'Where should shop be kept?\nWhy: it decides where your work is kept.\nNothing runs until your Go ahead on the plan.\nTo know more, just ask.',
+      header: 'Question',
+      options: [{ label: 'Keep it here', description: 'A new product. Recommended: simplest.' }, { label: 'GitHub', description: 'A new product on GitHub.' }],
+    };
+    noteAsked({ runId: r.id, folder, step: 3, id: 'join', card: join, typed: true, writes: undefined, now: () => NOW });
+    const answer = (text) => ({
+      cwd: folder, hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
+      tool_input: { questions: [{ ...join, multiSelect: false }], answers: { [join.question]: text } },
+      tool_response: { questions: [{ ...join, multiSelect: false }], answers: { [join.question]: text } },
+    });
+    const texts = () => listOf(home, 'answers').map((n) => JSON.parse(fs.readFileSync(path.join(home, 'setup', 'answers', n), 'utf8')).data.text);
+    // The user and password are joined here so the file holds no address with a password in it.
+    await run(answer(`${['https://oauth2', 'tok'].join(':')}@gitlab.com/ann/shop`));
+    assert.deepEqual(texts(), ['https://gitlab.com/ann/shop']);
+    fs.rmSync(path.join(home, 'setup', 'answers'), { recursive: true, force: true });
+    fs.rmSync(path.join(home, 'setup', 'answered'), { recursive: true, force: true });
+    const secret = `https://gitlab.com/ann/glpat-${'a1B2c3D4e5F6g7H8i9J0'}`;
+    await run(answer(secret));
+    assert.deepEqual(texts(), [HELD_SECRET]);
+    assert.equal(texts().some((t) => t.includes('glpat')), false);
+  });
 });
 
 test('with no answer anywhere in the hook input, nothing is kept and the log says the hook was given no answer', async () => {
