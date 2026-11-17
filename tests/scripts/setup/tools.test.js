@@ -532,7 +532,7 @@ test('the longest list\'s card composes within the card\'s length, on a Mac and 
       const planned = await toolsStep({ engine: null, run: m.run, fetch: noFetch, pluginRoot, env: {} }).plan(ctxFor(folder, { platform }));
       assert.deepEqual(planned.changes.map((c) => c.action ?? c.kind), ['install', 'fetch', 'fetch', 'json-key'], platform);
       const { question } = composeCard({ ...planned.card, target: { step: 2, hash: planHash(planned.changes) } });
-      assert.ok(question.question.includes("GitHub's own tool (gh) and GitLab's own tool (glab)"), question.question);
+      assert.ok(question.question.includes("GitHub's own tool and GitLab's own tool"), question.question);
       assert.match(question.question, platform === 'darwin' ? /Apple's own window/ : /Windows asks you to allow it/);
     }
   });

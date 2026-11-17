@@ -36,7 +36,7 @@ import { run as defaultRun } from '../lib/run.js';
 import { directorSignIn, reachFor, safeGit } from '../lib/safe-git.js';
 import { companyGitEnv } from '../host/company-ca.js';
 import { DEFAULT_GITLAB } from '../host/gitlab-base.js';
-import { TOKEN_NAMES } from '../lib/token-names.js';
+import { withoutTokens as tokenNamesOut } from '../lib/token-names.js';
 import { claudeHome as defaultClaudeHome, MARKETPLACE } from '../lineage/manifest.js';
 import { HOST_TOOLS, projectSettings, SWITCHED_OFF_PLUGINS } from '../protection/settings.js';
 
@@ -402,7 +402,7 @@ export function originRepository(originUrl, host) {
   let rest = text;
   const url = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/(?:[^/@]*@)?([^/:]+)(?::\d+)?(\/.*)?$/.exec(text);
   if (text.includes('://') && url === null) return null;
-  const scp = /^(?:[^/@\s]+@)?([^/:\s]{2,}):(?!\/)(.*)$/.exec(text);
+  const scp = /^(?:[^/@:\s]+@)?([^/:\s]{2,}):(?!\/)(.*)$/.exec(text);
   if (url && !/^file:/i.test(text)) { hostname = url[1].toLowerCase(); rest = url[2] ?? ''; } else if (scp) { hostname = scp[1].toLowerCase(); rest = scp[2]; }
   const parts = rest.replace(/\.git\/?$/i, '').split('/').filter(Boolean);
   const named = host === 'gitlab' && hostname !== null ? parts : parts.slice(-2);
@@ -414,8 +414,7 @@ export function originRepository(originUrl, host) {
 export const repositoryOf = (originUrl, host) => originRepository(originUrl, host)?.repo ?? null;
 
 // Variables that would send the director's own token to the host an origin address names.
-const TOKEN_VARIABLES = [...TOKEN_NAMES, 'GH_HOST', 'GITLAB_HOST'];
-const withoutTokens = () => ({ ...Object.fromEntries(TOKEN_VARIABLES.map((n) => [n, undefined])), GH_PROMPT_DISABLED: '1', NO_COLOR: '1' });
+const withoutTokens = () => ({ ...tokenNamesOut({ extra: ['GH_HOST', 'GITLAB_HOST'] }), GH_PROMPT_DISABLED: '1', NO_COLOR: '1' });
 
 // GitLab's open merge requests, by the director's own key through GitLab's API (`gitlab` gives the client:
 // ({ run, baseUrl }) -> a client with `get`; by default the setup client, found when it is needed).

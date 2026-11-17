@@ -116,7 +116,7 @@ const DOING = {
     const home = git(homeDir(project), { list: 'own', what: HOME_WHAT, ...to });
     const names = (await home.must(['for-each-ref', '--format=%(refname:lstrip=2)', 'refs/heads'], 'The project\'s lines of work could not be read')).split('\n').filter((n) => n !== '' && !ownLine(n));
     // The main line goes first, so a new repository takes it as its default branch.
-    const send = (refspecs) => home.must(['push', '--quiet', target.remoteUrl, ...refspecs], 'The project could not be sent there');
+    const send = (refspecs) => home.must(['push', '--quiet', '--end-of-options', target.remoteUrl, ...refspecs], 'The project could not be sent there');
     const main = homeBranch(project);
     await send([`refs/heads/${main}:refs/heads/${main}`]);
     await send([...names.filter((n) => n !== main).map((n) => `refs/heads/${n}:refs/heads/${n}`), 'refs/tags/*:refs/tags/*']);

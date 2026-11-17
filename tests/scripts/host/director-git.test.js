@@ -33,3 +33,20 @@ test('a proxy address that holds a password is refused with its own line', async
     return true;
   });
 });
+
+test('directorProxy, left to ask for itself, asks from a folder of Wheelhouse\'s own with git\'s own variables out and its search held below that folder', async () => {
+  const { wheelhouseHome } = await import('../../../scripts/lib/paths.js');
+  const path = await import('node:path');
+  const seen = [];
+  const run = async (file, args, options) => { seen.push({ args, options }); return { code: 1, stdout: '' }; };
+  const env = { PATH: '/bin', GIT_DIR: '/elsewhere/.git', GIT_CONFIG_GLOBAL: '/elsewhere/config', GITLAB_TOKEN: 'glpat-secret', HTTPS_PROXY: 'http://env.example.org:3128' };
+  const got = await directorProxy('https://gitlab.example.org/api/v4', { run, env });
+  assert.equal(got.source, 'environment', 'the environment still names the proxy where git names none');
+  assert.ok(seen.length > 0);
+  for (const { options } of seen) {
+    assert.equal(options.cwd, wheelhouseHome());
+    assert.equal(options.baseEnv.GIT_CEILING_DIRECTORIES, path.dirname(path.resolve(wheelhouseHome())));
+    for (const key of ['GIT_DIR', 'GIT_CONFIG_GLOBAL']) assert.equal(options.baseEnv[key], undefined, key);
+    assert.equal(options.baseEnv.GITLAB_TOKEN, undefined, 'no token variable');
+  }
+});

@@ -15,7 +15,7 @@ import { toolsStep } from '../../scripts/setup/tools.js';
 import { composeCard } from '../../scripts/cards/compose.js';
 import { startRun, addChanges, findRun } from '../../scripts/setup/journal.js';
 import { readProject } from '../../scripts/lib/projects.js';
-import { wheelhouseHome } from '../../scripts/lib/paths.js';
+import { wheelhouseHome, stateDir } from '../../scripts/lib/paths.js';
 import { run as realRun } from '../../scripts/lib/run.js';
 import { makeRoutedCurl } from '../helpers/fake-curl.js';
 import { useFileKeyStore } from '../helpers/file-key-store.js';
@@ -182,7 +182,9 @@ test('a computer with no glab and a key that can only push: step 2 settles with 
 
       const record = readProject(REPO.replace('/', '__'));
       assert.deepEqual(record.connection, { host: 'gitlab', mode: 'as-is', project: REPO, baseUrl: COMPANY, backend: 'rest' });
-      assert.ok(fs.existsSync(path.join(wheelhouseHome(), 'host', 'git-settings.json')), 'the settings a push trusts were recorded');
+      const mirror = path.join(stateDir(REPO.replace('/', '__')), '..', 'mirror.git');
+      const kept = JSON.parse(fs.readFileSync(path.join(wheelhouseHome(), 'host', 'git-settings.json'), 'utf8'));
+      assert.deepEqual(Object.keys(kept.folders), [fs.realpathSync(mirror)], 'the settings a push trusts were recorded for the mirror');
     } finally {
       restore();
     }

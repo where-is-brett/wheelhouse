@@ -133,7 +133,7 @@ test('with no answer, step 9 asks the card of plain steps, ending with the scree
   // Claude's notifications, then the locked screen.
   assert.match(card.what, /Remote Control/);
   assert.match(card.what, /Claude Desktop/);
-  assert.match(card.what, /both push options/);
+  assert.match(card.what, /switch on Remote Control and Push when actions required, and allow Claude's phone notifications/);
   assert.match(card.what, /phone/);
   assert.ok(card.what.includes(PHONE_REACHES), 'the card says what reaches the phone');
   assert.match(card.what, /allow/i);
@@ -141,7 +141,7 @@ test('with no answer, step 9 asks the card of plain steps, ending with the scree
   // wait before the push is sent, so it goes out while the screen is still locked.
   assert.ok(PUSH_TEST_LOCK_MS > PUSH_TEST_WAIT_MS);
   assert.equal(PUSH_TEST_LOCK_MS, 3 * 60 * 1000);
-  assert.match(card.what, /click Ready and lock your computer for three minutes; the test arrives after two\.$/);
+  assert.match(card.what, /click Ready and lock your computer for three minutes; the test is sent after two minutes\.$/);
   assert.doesNotMatch(card.what, /for two minutes/);
   assert.match(card.options[0].says, /two minutes/);
   // Short, since it opens with the verdict and the first briefing, and its recommended option reads
@@ -162,7 +162,7 @@ test('through the helper, the card is a question with no set line, and Ready wai
     assert.equal(asked.ask.step, 9);
     assert.equal(asked.ask.id, READY_ID);
     assert.equal(setLineOf(asked.ask.card.question), null);
-    assert.ok(asked.ask.card.question.includes('lock your computer for three minutes; the test arrives after two.'));
+    assert.ok(asked.ask.card.question.includes('lock your computer for three minutes; the test is sent after two minutes.'));
 
     // Ready, kept signed; a minute later, a minute is left.
     await answer(asked.ask.card, READY.ready);
@@ -243,8 +243,9 @@ test('after the wait, step 9 asks whether the test arrived, and either answer se
       assert.equal(b.ask.id, ARRIVED_ID);
       assert.deepEqual(b.ask.card.options.map((o) => o.label), [ARRIVED.yes, ARRIVED.no]);
       assert.match(b.ask.card.question, /locked/);
-      // A question of fact: the card recommends answering what was seen, not either answer as such.
-      assert.match(b.ask.card.options.map((o) => o.description).join(' '), /what you saw/);
+      // A question of fact only the director can answer: no recommendation, and the card says so.
+      assert.match(b.ask.card.question, /If nothing came, or you're unsure, choose It didn't/);
+      assert.match(b.ask.card.question, /No recommendation: only you know whether it came/);
       assert.equal(setLineOf(b.ask.card.question), null);
 
       // Suggest a change… is no answer: the card is asked again.

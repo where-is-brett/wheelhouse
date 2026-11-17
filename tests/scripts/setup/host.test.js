@@ -868,8 +868,8 @@ test('a GitLab that forbids a project key (a free plan on gitlab.com) falls back
 test('a pasted personal token is asked what it is: one wider or longer than the cards said is revoked and refused', async () => {
   const far = new Date(NOW.getTime() + 365 * 86400000).toISOString().slice(0, 10);
   const cases = [
-    [{ status: 200, body: { scopes: ['api', 'write_repository', 'sudo'], expires_at: new Date(NOW.getTime() + 30 * 86400000).toISOString().slice(0, 10) } }, 204, /can do more than api and write_repository, so it was not kept and setup revoked it/],
-    [{ status: 200, body: { scopes: ['api', 'write_repository'], expires_at: null } }, 204, /ends later than 30 days from now, or never, so it was not kept and setup revoked it/],
+    [{ status: 200, body: { scopes: ['api', 'write_repository', 'sudo'], expires_at: new Date(NOW.getTime() + 30 * 86400000).toISOString().slice(0, 10) } }, 204, /can do more than api and write_repository, so it was not kept and setup cancelled it/],
+    [{ status: 200, body: { scopes: ['api', 'write_repository'], expires_at: null } }, 204, /ends later than 30 days from now, or never, so it was not kept and setup cancelled it/],
     [{ status: 200, body: { scopes: ['api'], expires_at: far } }, 500, /so it was not kept: delete it on GitLab's Access tokens page/],
   ];
   for (const [self, revoke, words] of cases) {
@@ -1488,10 +1488,12 @@ test('step 3\'s card on a company\'s GitLab composes for ordinary and for very l
   const lengths = [];
   // Each case with the wording its card is expected to come in: the full one, the tight one (shorter clauses) or the bare
   // one (the address and the names left out), so a fallback that stops being reached shows here.
+  const MAC_NEW = process.platform === 'darwin' ? 'tight' : 'full';
   const cases = [
     ['gitlab.acme.com:8443', 'engineering/shop', 'sam', 'full'],
-    ['gitlab.example.com', 'platform/customer-portal', 'a-director', 'full'],
-    ['git.example.org:8443', `${USER}/a-product-with-a-long-name-to-fill-the-card`, USER, 'full'],
+    // On a Mac the sign-in line's exception for an Apple app takes the new product's card over the limit, so it comes in the tight wording there.
+    ['gitlab.example.com', 'platform/customer-portal', 'a-director', { joining: 'full', new: MAC_NEW, existing: 'full' }],
+    ['git.example.org:8443', `${USER}/a-product-with-a-long-name-to-fill-the-card`, USER, { joining: 'full', new: MAC_NEW, existing: 'full' }],
     [`${'h'.repeat(190)}.example.com:8443`, `${'g'.repeat(100)}/${'p'.repeat(99)}`, 'u'.repeat(200), 'tight'],
     // A host name is at most 253 characters, so the bare wording takes an address with a long path after the host.
     [`${'h'.repeat(190)}.example.com:8443/${'s'.repeat(300)}`, `${'g'.repeat(100)}/${'p'.repeat(99)}`, 'u'.repeat(200), 'bare'],
@@ -2435,7 +2437,7 @@ test('step 3 asks whether this computer is joining only in a folder holding noth
     const first = (await step.plan(ctxFor(folder))).ask;
     assert.equal(first.id, 'join');
     assert.equal(first.typed, true, 'an owner/name may be typed');
-    assert.deepEqual(first.card.options.map((o) => o.label), [KEEP_HERE, HOST_LABELS.github, HOST_LABELS.gitlab, 'Cafe-Menu, from my other computer']);
+    assert.deepEqual(first.card.options.map((o) => o.label), [KEEP_HERE, HOST_LABELS.github, HOST_LABELS.gitlab, 'Cafe-Menu, already set up on another computer']);
     assert.equal(first.card.recommend, KEEP_HERE, 'an empty folder is most often a new product, and one kept here needs no account');
     assert.match(`${first.card.what} ${first.card.why}`, /owner\/name, like ann\/cafe-menu/);
     composeCard({ ...first.card, kind: 'question' });
@@ -2763,7 +2765,7 @@ test('a second computer joins from an empty folder: the project found on an orga
     const again = await answerJoin(step, ctxFor(folder, { runId: run.id }), joining());
     assert.deepEqual(again.asked.map((a) => a.id.replace(/-[0-9a-f]{10,}$/, '')), ['host', 'connection']);
     assert.deepEqual(again.changes.find((c) => c.action === 'join'), { kind: 'host', target: 'github', action: 'join', name: 'cafe-co/Cafe-Menu' });
-    await assert.rejects(applyIn(step, folder, run.id, planned.changes, { answers: planned.answers }), /checked out to cafe-co\/Cafe-Menu from your other computer/);
+    await assert.rejects(applyIn(step, folder, run.id, planned.changes, { answers: planned.answers }), /checked out to cafe-co\/Cafe-Menu, already set up on another computer/);
     const count = findRun(folder).changes.filter((c) => c.kind === 'folder' && c.target.endsWith('.git')).length;
     await applyIn(step, folder, run.id, again.changes, { answers: again.answers });
     assert.equal(findRun(folder).changes.filter((c) => c.kind === 'folder' && c.target.endsWith('.git')).length, count);
@@ -2992,7 +2994,7 @@ test('a folder checked out to a joined repository can never become a full run, i
     const own = planned.changes.filter((c) => c.action !== 'join' && c.action !== 'checkout')
       .map((c) => (c.action === 'project' ? { ...c, repo: `${USER}/Cafe-Menu` } : c));
     const before = findRun(folder).changes.length;
-    await assert.rejects(applyIn(step, folder, run.id, own, { answers: planned.answers }), /checked out to a-director\/Cafe-Menu from your other computer/);
+    await assert.rejects(applyIn(step, folder, run.id, own, { answers: planned.answers }), /checked out to a-director\/Cafe-Menu, already set up on another computer/);
     assert.equal(findRun(folder).changes.length, before, 'no { joined: null }');
     assert.equal(stepsFor(findRun(folder)), JOINING_STEPS);
     // Another run in the same folder joins it too, without asking.
@@ -3074,7 +3076,7 @@ test('a folder whose origin is an ssh address of the same repository is fetched 
     assert.equal(await g(folder, 'rev-parse', 'HEAD'), await g(w.hostUrl({ repo: `${USER}/Shop` }), 'rev-parse', 'main'));
     assert.equal(await g(folder, 'rev-parse', '--abbrev-ref', 'main@{upstream}'), 'origin/main');
     assert.equal(await g(folder, 'config', '--get', 'remote.origin.url'), `git@github.com:${USER}/Shop.git`, 'origin is left as the director set it');
-    assert.deepEqual(gits.filter((a) => a[0] === 'fetch'), [['fetch', '-q', `https://github.com/${USER}/Shop.git`, '+refs/heads/main:refs/remotes/origin/main']]);
+    assert.deepEqual(gits.filter((a) => a[0] === 'fetch'), [['fetch', '-q', '--end-of-options', `https://github.com/${USER}/Shop.git`, '+refs/heads/main:refs/remotes/origin/main']]);
 
     // A joining computer's folder, pointed at the project over ssh.
     await seedProject(w, 'cafe-co/Cafe-Menu');
@@ -3086,7 +3088,7 @@ test('a folder whose origin is an ssh address of the same repository is fetched 
     });
     assert.equal(await g(joined, 'rev-parse', 'HEAD'), await g(w.hostUrl({ repo: 'cafe-co/Cafe-Menu' }), 'rev-parse', 'main'));
     assert.equal(fs.readFileSync(path.join(joined, '.claude', 'settings.json'), 'utf8'), COMMITTED);
-    assert.deepEqual(gits.filter((a) => a[0] === 'fetch'), [['fetch', '-q', 'https://github.com/cafe-co/Cafe-Menu.git', '+refs/heads/main:refs/remotes/origin/main']]);
+    assert.deepEqual(gits.filter((a) => a[0] === 'fetch'), [['fetch', '-q', '--end-of-options', 'https://github.com/cafe-co/Cafe-Menu.git', '+refs/heads/main:refs/remotes/origin/main']]);
   });
 });
 
@@ -3320,8 +3322,12 @@ test('where the key the director\'s store holds passes GET /user, "Use my git as
       assert.deepEqual(readProject(slugFor(`${USER}/shop`)).connection, { host: 'gitlab', mode: 'as-is', project: `${USER}/shop`, baseUrl: 'https://gitlab.com', backend: 'rest' });
       assert.deepEqual(held.stored, [], 'the director\'s key is not stored again');
       assert.ok(lines.some((l) => /your own git as it is/.test(l)), lines.join('\n'));
-      // The settings a push trusts were recorded once the director had seen the card that names them.
-      assert.ok(fs.existsSync(path.join(wheelhouseHome(), 'host', 'git-settings.json')));
+      // The settings a push trusts were recorded once the director had seen the card that names them, for the project's mirror, the
+      // folder a push runs in, which setup made for it.
+      const mirror = path.join(stateDir(slugFor(`${USER}/shop`)), '..', 'mirror.git');
+      assert.ok(fs.existsSync(path.join(mirror, 'HEAD')), 'the mirror is there');
+      const kept = JSON.parse(fs.readFileSync(path.join(wheelhouseHome(), 'host', 'git-settings.json'), 'utf8'));
+      assert.deepEqual(Object.keys(kept.folders), [fs.realpathSync(mirror)]);
     } finally {
       held.restore();
     }
@@ -3624,9 +3630,9 @@ test('the setup token goes to curl only in the request header on standard input,
 test('a setup token that can do more than api, or lasts longer than a day, is revoked and refused before anything is made; one GitLab can\'t describe is taken', async () => {
   const at = () => NOW;
   for (const [self, words] of [
-    [{ scopes: ['api', 'sudo'], expires_at: '2026-10-21' }, /can do more than api, so setup made nothing with it and revoked it/],
+    [{ scopes: ['api', 'sudo'], expires_at: '2026-10-21' }, /can do more than api, so setup made nothing with it and cancelled it/],
     [{ scopes: ['read_api'], expires_at: '2026-10-21' }, /can do more than api/],
-    [{ scopes: ['api'], expires_at: '2026-11-19' }, /lasts longer than a day, so setup made nothing with it and revoked it/],
+    [{ scopes: ['api'], expires_at: '2026-11-19' }, /lasts longer than a day, so setup made nothing with it and cancelled it/],
     [{ scopes: ['api'], expires_at: null }, /lasts longer than a day/],
   ]) {
     const curl = setupTokenCurl(standIn(), { self });
@@ -3638,8 +3644,8 @@ test('a setup token that can do more than api, or lasts longer than a day, is re
   // Where GitLab does not take a refused token back, setup says to delete it, never that it was revoked.
   for (const self of [{ scopes: ['api', 'sudo'], expires_at: '2026-10-21' }, { scopes: ['api'], expires_at: '2026-11-19' }]) {
     const got = await setupTokenApi({ base: 'https://gitlab.example.com', via: tokenVia(setupTokenCurl(standIn(), { self, revokeStatus: 500 })), open: async () => {}, askSecret: async () => SETUP_TOKEN, now: at }).catch((e) => e);
-    assert.match(got.message, /so setup made nothing with it, but could not revoke it, so delete it on GitLab's Access tokens page and make a new one/, JSON.stringify(self));
-    assert.doesNotMatch(got.message, /and revoked it/);
+    assert.match(got.message, /so setup made nothing with it, but could not cancel it, so delete it on GitLab's Access tokens page and make a new one/, JSON.stringify(self));
+    assert.doesNotMatch(got.message, /and cancelled it/);
   }
   // Ending the day after tomorrow at the latest, for a director a day ahead: taken, and revoked at the end.
   const curl = setupTokenCurl(standIn(), { self: { scopes: ['api'], expires_at: '2026-10-22' } });
@@ -3713,7 +3719,7 @@ test('Narrow on GitLab without its tool makes the project key and protects the m
     const id = w.repos[`${USER}/shop`].id;
     assert.equal(readKey(`gitlab-project-${id}`).kind, 'project-key', 'the project key is in the store');
     assert.ok(curl.calls.some((c) => c.method === 'POST' && /\/protected_branches$/.test(c.url)), 'the main line is protected');
-    assert.ok(lines.some((l) => /Setup has revoked the one-day token/.test(l)), lines.join('\n'));
+    assert.ok(lines.some((l) => /Setup has cancelled the one-day token/.test(l)), lines.join('\n'));
     assert.deepEqual(curl.revoked, [SETUP_TOKEN], 'revoked on GitLab once, at the end');
     const kept = readProject(slugFor(`${USER}/shop`));
     assert.equal(kept.connection.directorSignIn, 'setup-token');
@@ -3728,7 +3734,7 @@ test('Narrow on GitLab without its tool makes the project key and protects the m
 });
 
 test('where GitLab does not revoke the setup token, setup says it ends tomorrow only when GitLab said so, and otherwise to delete it', async () => {
-  for (const [self, said] of [[undefined, /Setup has forgotten the one-day token; it ends by itself within two days/], [null, /Setup has forgotten the one-day token but could not revoke it: delete it on GitLab's Access tokens page/]]) {
+  for (const [self, said] of [[undefined, /Setup has forgotten the one-day token; it ends by itself within two days/], [null, /Setup has forgotten the one-day token but could not cancel it: delete it on GitLab's Access tokens page/]]) {
     await withHome(async () => {
       const w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
       const curl = setupTokenCurl(w, { self, revokeStatus: 500 });
@@ -3830,7 +3836,7 @@ test('step 3\'s card on a narrow way says the browser sign-in reaches the whole 
     return composeCard({ ...card, target: { step: 3, hash: planHash(changes) } }).question.question;
   };
   assert.match(text(WAYS.own, 'win32'), /That sign-in reaches your whole account and stays here, where any agent's command could read it\./);
-  assert.match(text(WAYS.wheelhouse, 'darwin'), /That sign-in reaches your whole account and stays here, out of agents' reach\./);
+  assert.match(text(WAYS.wheelhouse, 'darwin'), /That sign-in reaches your whole account and stays here, out of agents' reach unless this is an iPhone or Mac app\./);
   assert.doesNotMatch(text(WAYS.quick, 'win32'), /That sign-in reaches/);
   assert.match(text(WAYS.own, 'linux'), /That sign-in reaches your whole account and stays here\./);
   const pasted = [{ kind: 'host', target: 'gitlab', action: 'sign-in', via: 'token' }];
@@ -3863,7 +3869,7 @@ test('a pasted address that names no project says so even when its user and toke
     addChanges(other.id, [{ id: 'chg-1', kind: 'answer', target: 'step 3', before: null, after: { joined: 'gitlab.mycorp.internal', missed: 'none', host: 'gitlab' }, step: 3 }]);
     const again = (await step.plan(ctxFor(folder, { runId: other.id }))).ask;
     assert.match(again.card.what, /on your account or groups\. If that is an address, paste it with https:\/\/ at the front\. /);
-    assert.match(again.card.options.at(-1).says, /in your account or groups, set up/);
+    assert.match(again.card.options.at(-1).says, /in your account, organisations or groups, set up/);
     assert.match(joinMissLine({ host: 'gitlab', wanted: 'gitlab.mycorp.internal', found: [] }), /which asks again. If that is an address, paste it with https:\/\/ at the front\.$/);
     assert.doesNotMatch(joinMissLine({ host: 'gitlab', wanted: 'team/app', found: [] }), /paste it with https/);
   });

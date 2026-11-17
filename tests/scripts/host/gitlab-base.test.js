@@ -240,3 +240,38 @@ test('the project\'s gitlabHosts is read from its committed configuration, and s
 
 // A road to GitLab that is never used: a stand-in curl that fails the test when it is run.
 const NO_ROAD = { run: async () => assert.fail('GitLab was reached'), curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' };
+
+test('an address with a bracketed (IPv6) host in the scp form is refused, not read as the host "["', async () => {
+  const { parseRemote } = await import('../../../scripts/host/gitlab-base.js');
+  assert.throws(() => parseRemote('git@[1:2:3:4:5:6:7:8]:a/b'), /not a repository address/);
+  assert.throws(() => parseRemote('[::1]:a/b'), /not a repository address/);
+  for (const bad of ['ssh://u@v@[::1]/x', 'u@v@[::1]:x', 'ssh://u@v@gitlab.example.org/x', 'u@v@gitlab.example.org:x']) assert.throws(() => parseRemote(bad), /not a repository address/, bad);
+  assert.equal(parseRemote('git@gitlab.example.org:a/b').hostname, 'gitlab.example.org');
+});
+
+test('an authority with a backslash, ?, # or % is refused everywhere an address is read, so the host after it is never trusted', async () => {
+  const { pastedAddress } = await import('../../../scripts/lib/pasted-address.js');
+  const { detectHost } = await import('../../../scripts/host/adapter.js');
+  const { remoteHost } = await import('../../../scripts/setup/host.js');
+  const config = { gitlabHosts: ['gitlab.co'] };
+  for (const bad of ['https://evil.com\\@gitlab.co/x/y.git', 'https://evil.com?@gitlab.co/x/y.git', 'https://evil.com#@gitlab.co/x/y.git', 'https://evil.com%40@gitlab.co/x/y.git']) {
+    assert.deepEqual(pastedAddress(bad), { unreadable: true }, bad);
+    assert.equal(detectHost(bad, { gitlabHosts: ['gitlab.co'] }), 'local', bad);
+    assert.equal(remoteHost([bad]), null, bad);
+    assert.equal(gitlabBase({ config, remoteUrl: bad }), DEFAULT_GITLAB, bad);
+  }
+  assert.equal(gitlabBase({ config, remoteUrl: 'https://gitlab.co/x/y.git' }), 'https://gitlab.co');
+});
+
+test('a colon in the user part of a scp-form address is no way to put another host after it', async () => {
+  const { pastedAddress } = await import('../../../scripts/lib/pasted-address.js');
+  const { detectHost } = await import('../../../scripts/host/adapter.js');
+  const { remoteHost } = await import('../../../scripts/setup/host.js');
+  const { parseRemote } = await import('../../../scripts/host/gitlab-base.js');
+  const sly = 'evil.com:x@git.co.org:o/r.git';
+  assert.equal(parseRemote(sly).hostname, 'evil.com');
+  assert.deepEqual(pastedAddress(sly), { unreadable: true });
+  assert.equal(detectHost(sly, { gitlabHosts: ['git.co.org'] }), 'local');
+  assert.notEqual(remoteHost([sly]), 'git.co.org');
+  assert.equal(gitlabBase({ config: { gitlabHosts: ['git.co.org'] }, remoteUrl: sly }), DEFAULT_GITLAB);
+});

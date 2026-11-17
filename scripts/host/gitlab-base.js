@@ -17,9 +17,21 @@ const LOCAL = ['localhost', '127.0.0.1', '[::1]'];
 // A repository address read into its host name, its port (as written, '' when none) and the address
 // of the web site that goes with it: https unless the address itself is plain http on this computer.
 // An ssh port is the ssh server's, not the web site's, so it is dropped.
+// Whether the part of an address that names the host (before the first / in a URL, before the first : in the scp form) holds a
+// bracket (an IPv6 host, whose colons would be taken for a port or a path's start) or a second @, which git, curl and a URL reader
+// each anchor differently. Such an address is not read.
+export function unreadableAuthority(text) {
+  const address = String(text ?? '').trim();
+  const url = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/]*)/.exec(address);
+  const authority = url !== null ? url[1] : /[[\]]/.test(address.split('/')[0]) ? address.split('/')[0] : address.split(':')[0];
+  // A backslash, ?, # or % end or bend the authority differently in git, curl and a URL reader, so none is read.
+  return /[[\]\\?#%]/.test(authority) || (authority.match(/@/g) ?? []).length > 1;
+}
+
 export function parseRemote(remoteUrl) {
   const text = String(remoteUrl ?? '').trim();
-  const scp = /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/\/)/.exec(text); // git@host:owner/name.git, or host:owner/name.git
+  if (unreadableAuthority(text)) throw new Error('That is not a repository address this can read');
+  const scp = /^(?:[^@:/\s]+@)?([^:/\s]+):(?!\/\/)/.exec(text); // git@host:owner/name.git, or host:owner/name.git
   if (scp) return { hostname: scp[1].toLowerCase(), port: '', origin: `https://${scp[1].toLowerCase()}` };
   let url;
   try {

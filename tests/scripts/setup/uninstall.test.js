@@ -1776,7 +1776,7 @@ test('a GitLab key is revoked through the API, then deleted; one GitLab won\'t r
     assert.equal(done.ok, true, done.refused);
     assert.deepEqual(api.seen(), [{ url: 'https://gitlab.com/api/v4/personal_access_tokens/self', method: 'DELETE', token: 'glpat-secret0123456789' }]);
     assert.equal(readKey('gitlab-project-5'), null);
-    assert.ok(done.lines.includes('The GitLab token you pasted is revoked, which stops it everywhere it is used.'));
+    assert.ok(done.lines.includes('The GitLab token you pasted is cancelled, which stops it everywhere it is used.'));
     assert.equal(JSON.stringify(done).includes('glpat-secret'), false);
     assert.deepEqual(unmarked(), []);
   });
@@ -1786,7 +1786,7 @@ test('a GitLab key is revoked through the API, then deleted; one GitLab won\'t r
     const api = answering([403, 500]);
     const { done } = await applyPlan(world.w, f, { via: api.via });
     assert.equal(done.ok, false);
-    assert.match(done.refused, /GitLab did not revoke the project key \(HTTP 500\), so its file was kept: open https:\/\/gitlab\.com\/o\/Cafe-Menu\/-\/settings\/access_tokens/);
+    assert.match(done.refused, /GitLab did not cancel the project key \(HTTP 500\), so its file was kept: open https:\/\/gitlab\.com\/o\/Cafe-Menu\/-\/settings\/access_tokens/);
     assert.deepEqual(api.asked.map((a) => a.url), ['https://gitlab.com/api/v4/personal_access_tokens/self', 'https://gitlab.com/api/v4/projects/5/access_tokens/9']);
     assert.ok(readKey('gitlab-project-5'));
     assert.equal(readJournal().runs.find((r) => r.id === run.id).closedAt, undefined);

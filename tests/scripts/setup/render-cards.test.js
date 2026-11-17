@@ -102,7 +102,7 @@ test('path a: with GitLab\'s tool left out, Quick is not offered, and where git 
   assert.deepEqual(connection[0].card.options.map((o) => o.label), ['Narrow', 'Use my git as it is'], 'the recommended way comes first');
   assert.equal(recommendedOf(connection[0].card), 'Narrow');
   const own = connection[0].card.options.find((o) => o.label === 'Use my git as it is');
-  assert.match(own.description, /If git holds no GitLab key that works, you make one on a page that opens and set its expiry date 90 days ahead\./, 'the way says the key may still be made');
+  assert.match(own.description, /Your git holds no GitLab key yet, so you make one on a page that opens and set its expiry date 90 days ahead\./, 'the way says the key may still be made');
   const tool = cards.find((c) => c.step === 2 && c.kind === 'question');
   assert.equal(recommendedOf(tool.card), 'Don\'t use GitLab\'s tool');
   assert.ok(cards.findIndex((c) => c === tool) < cards.findIndex((c) => c === connection[0]), 'GitLab\'s tool is asked before the connection');
@@ -146,7 +146,7 @@ test('paths b, b\' and c: step 3\'s Go-ahead card says the one-day token is used
     const go = cards.find((c) => c.kind === 'go-ahead' && c.step === 3);
     assert.ok(go, `path ${name} shows step 3's Go-ahead card`);
     assert.match(go.card.question, /one-day GitLab token on a page that opens, setting its expiry date to tomorrow, and paste it into a box on your screen/, `path ${name}`);
-    assert.match(go.card.question, /then revokes it/, `path ${name}`);
+    assert.match(go.card.question, /then cancels it/, `path ${name}`);
     assert.match(go.card.question, /Setup protects the main line now, while it holds that token/, `path ${name}`);
     assert.doesNotMatch(go.card.question, /sign in in your browser/i, `path ${name} asks for no browser sign-in`);
   }
@@ -204,7 +204,7 @@ test('on GitLab, step 10\'s card names a merge request, never a pull request', a
 });
 
 test('each path\'s plan says what will be asked of the director', async () => {
-  const asks = { a: /a GitLab key only if your git holds none that works: you make it on a page that opens and set its expiry date 90 days ahead/, b: /paste a one-day GitLab token into a box on your screen, not the chat. If GitLab won't make a key for this one project, you'll also paste a token set to end 30 days ahead that can act as you in every GitLab project and group you can reach/, c: /paste a one-day GitLab token into a box on your screen, not the chat. If GitLab won't make a key for this one project, you'll also paste a token set to end 30 days ahead that can act as you in every GitLab project and group you can reach/, d: /sign in on GitHub pages that open/, e: /sign in to your company's GitLab in your browser if your company has set that up, or else with a token you make on a page that opens/ };
+  const asks = { a: /a GitLab key: you make it on a page that opens and set its expiry date 90 days ahead/, b: /paste a one-day GitLab token into a box on your screen, not the chat. If GitLab won't make a key for this one project, you'll also paste a token set to end 30 days ahead that can act as you in every GitLab project and group you can reach/, c: /paste a one-day GitLab token into a box on your screen, not the chat. On a free account, or wherever GitLab won't make a key for this one project, you'll also paste a token set to end 30 days ahead that can act as you in every GitLab project and group you can reach/, d: /sign in on GitHub pages that open/, e: /sign in to your company's GitLab in your browser if your company has set that up, or else with a token you make on a page that opens/ };
   for (const [name, says] of Object.entries(asks)) {
     const { cards } = await rendered(name);
     const plan = cards.filter((c) => /^plan-/.test(c.id)).at(-1);

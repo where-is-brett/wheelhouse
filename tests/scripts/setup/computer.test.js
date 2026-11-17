@@ -101,10 +101,10 @@ test('the card lists each change in plain words, and nothing else changes', asyn
     // The option that goes ahead says what uninstall puts back, and the card's options show it.
     const goesAhead = composeCard({ ...planned.card, kind: 'setup', target: { step: 6, hash: planHash(planned.changes) } }).question.options[0].description;
     assert.match(goesAhead, /Uninstall puts each setting back, but not deleted chats/);
-    assert.match(text, /These are Claude Code's own settings on this computer/);
+    assert.match(text, /These are settings on this computer, mostly Claude Code's/);
     assert.match(text, /never an older version than 2\.1\.100, the oldest Wheelhouse works with/);
     assert.match(text, /Wheelhouse never updates itself/);
-    assert.match(text, /phone notifications on/i);
+    assert.match(text, /phone notifications prepared \(step 9\)/i);
     assert.ok(ownKey());
     assert.match(text, /clicks are marked as coming from this computer, with a key that Claude Code's sandbox keeps agents from reading/);
     assert.match(JSON.stringify(computerCard({ changes: planned.changes, platform: 'win32' })), /On Windows an agent's command could read the key behind that mark/);

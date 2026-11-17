@@ -7,4 +7,14 @@ export const TOKEN_NAMES = [
 ];
 
 // An environment's overrides that take every one out: a variable whose value is undefined is removed by run.js and by spawn.
-export const withoutTokens = () => Object.fromEntries(TOKEN_NAMES.map((name) => [name, undefined]));
+// The environment it is taken from is the process's unless one is given. On Windows, where names are not case-sensitive, every spelling
+// in it goes too. `extra` names more variables to take out the same way.
+export const withoutTokens = ({ env = process.env, platform = process.platform, extra = [] } = {}) => {
+  const wanted = [...TOKEN_NAMES, ...extra];
+  const names = new Set(wanted);
+  if (platform === 'win32' && env !== null && typeof env === 'object') {
+    const lower = new Set(wanted.map((name) => name.toLowerCase()));
+    for (const key of Object.keys(env)) if (lower.has(key.toLowerCase())) names.add(key);
+  }
+  return Object.fromEntries([...names].map((name) => [name, undefined]));
+};

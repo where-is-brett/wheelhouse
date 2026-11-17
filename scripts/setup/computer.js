@@ -197,7 +197,7 @@ function lines({ changes, userSettings, kept, route, platform, floor }) {
       : `${floor}, the oldest Wheelhouse works with${changes.some((c) => c.key?.[0] === 'minimumVersion') ? shown(userSettings.minimumVersion) : ''}`;
     out.push(`Claude Code takes only its well-tried updates, and never an older version than ${minimum}`);
   }
-  if (has('push')) out.push('phone notifications on');
+  if (has('push')) out.push('phone notifications prepared (step 9)');
   const plugin = changes.find((c) => c.what === 'plugin');
   if (plugin) out.push(plugin.update ? pluginUpdateLine(plugin.update.from, plugin.update.to) : PLUGIN_SCOPE_LINE);
   for (const c of changes.filter((x) => x.what === 'agent' && x.line)) out.push(c.line);
@@ -246,8 +246,8 @@ export function computerCard({ changes, userSettings = {}, kept = [], route = TE
   const agents = [...new Set(changes.filter((c) => c.what === 'agent').map((c) => c.label))];
   const alongside = agents.length > 0 ? `, and ${agents.join(' and ')}'s hook file${changes.some((c) => c.what === 'agent' && c.part === 'first-mate') ? ' and First Mate files' : ''}` : '';
   const why = variables
-    ? `These are Claude Code's own settings, and variables for your account${platform === 'darwin' ? ' and a login item' : ''}${alongside}, on this computer.`
-    : `These are Claude Code's own settings${alongside} on this computer.`;
+    ? `These are settings on this computer, mostly Claude Code's, and variables for your account${platform === 'darwin' ? ' and a login item' : ''}${alongside}.`
+    : `These are settings on this computer, mostly Claude Code's${alongside}.`;
   const card = (what) => ({
     kind: 'setup',
     level: 3,

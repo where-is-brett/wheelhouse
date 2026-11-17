@@ -122,9 +122,22 @@ async function computer(repo) {
   await g(dir, 'add', '-A');
   await g(dir, 'commit', '-q', '-m', 'One');
   await g(dir, 'branch', 'feature');
+  // Setup confirms the computer's settings in the project's mirror, so the first push finds them recorded: this does the same, once,
+  // with the settings in force when the first push is made.
+  let confirmed = false;
+  const confirmFirst = () => as(home, async () => {
+    if (confirmed) return;
+    confirmed = true;
+    const mirror = path.join(stateDir(PROJECT), '..', 'mirror.git');
+    fs.mkdirSync(mirror, { recursive: true });
+    const bare = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+    await run('git', ['init', '-q', '--bare'], { cwd: mirror, env: bare });
+    await run('git', ['config', 'remote.origin.url', repo.url], { cwd: mirror, env: bare });
+    await confirmComputerSettings({ file: path.join(home, 'host', 'git-settings.json'), cwd: mirror });
+  });
   return {
     home, dir, client, folder,
-    push: (args) => as(home, () => client.push(args)),
+    push: async (args) => { await confirmFirst(); return as(home, () => client.push(args)); },
     as: (fn) => as(home, fn),
     record: () => as_(home, () => stateDir(PROJECT)),
     mirror: () => path.join(as_(home, () => stateDir(PROJECT)), '..', 'mirror.git'),
@@ -485,8 +498,8 @@ test('a change to the computer\'s sign-in settings since the first push is refus
   try {
     await withDirectorsGit(`[credential]\n\thelper = !${first.file}\n`, async () => {
       assert.deepEqual(await push(), { ok: true });
-      assert.equal(fs.existsSync(file), true, 'the first push recorded the settings');
-      assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).fingerprint.length, 64);
+      assert.equal(fs.existsSync(file), true, 'setup recorded the settings');
+      assert.match(Object.values(JSON.parse(fs.readFileSync(file, 'utf8')).folders)[0], /^v2:[0-9a-f]{64}$/);
     });
     // Settings that are not the sign-in, proxy, certificate or rewrites change nothing; the same ones again pass.
     await withDirectorsGit(`[credential]\n\thelper = !${first.file}\n[user]\n\tname = Someone\n[alias]\n\tst = status\n`, async () => {
@@ -504,8 +517,8 @@ test('a change to the computer\'s sign-in settings since the first push is refus
         const answer = await push();
         assert.equal(answer.ok, false, name);
         assert.equal(answer.code, 'git-settings-changed', name);
-        assert.match(answer.refused, /changed since setup/, name);
-        assert.match(answer.refused, /director needs to confirm/, name);
+        assert.match(answer.refused, /differ from the ones you confirmed at setup/, name);
+        assert.match(answer.refused, /run setup again and click Go ahead at step 3/, name);
       });
     }
     first.clear();

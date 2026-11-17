@@ -152,3 +152,15 @@ test('namesOf gives the repository\'s own name and the folder\'s, each once, and
     });
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
+
+test('a record kept before an address that reads as an option was refused reads as none, not as an address for git', async () => {
+  await as(shortHome(), async () => {
+    writeProject('shop', record());
+    const file = path.join(process.env.WHEELHOUSE_HOME, 'projects', 'shop', 'project.json');
+    assert.deepEqual(readProject('shop'), record());
+    for (const remoteUrl of ['-oProxyCommand=x/owner/name', '--upload-pack=x/owner/name', ' -x/owner/name']) {
+      fs.writeFileSync(file, JSON.stringify(record({ remoteUrl })));
+      assert.equal(readProject('shop'), null, remoteUrl);
+    }
+  });
+});
