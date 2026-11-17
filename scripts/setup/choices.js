@@ -236,7 +236,7 @@ function goAheadAsksHost({ keptHere, list, host }) {
   const way = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.label ?? null;
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
   if (host === 'GitLab' && noTool && way !== null && way !== WAYS.quick && way !== WAYS.asIs) {
-    return `You'll paste a one-day GitLab token into a box on your screen, not the chat. If GitLab won't make a key for this one project, you'll also paste a token lasting ${PERSONAL_DAYS} days that can act as you in every GitLab project and group you can reach. You may be asked for your computer's password.`;
+    return `You'll paste a one-day GitLab token into a box on your screen, not the chat. If GitLab won't make a key for this one project, you'll also paste a token set to end ${PERSONAL_DAYS} days ahead that can act as you in every GitLab project and group you can reach. You may be asked for your computer's password.`;
   }
   if (way === WAYS.asIs) return `You'll be asked for a ${host} key only if your git holds none that works: you make it on a page that opens${host === 'GitLab' ? ` and set its expiry date ${KEY_DAYS_ASKED} days ahead` : `, set to last ${KEY_DAYS_ASKED} days`}, and paste it into a box on your screen, not the chat. You may be asked for your computer's password.`;
   // A narrow way on GitLab with its tool still meets GitLab's refusal of a project key the same way.

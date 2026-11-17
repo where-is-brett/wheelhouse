@@ -15,7 +15,8 @@ import { markPane, readOpen } from '../../../scripts/lib/session-files.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { setupCardsFor } from '../../../scripts/lib/setup-clicks.js';
 import { setLineOf } from '../../../scripts/state/card-lines.js';
-import { startRun } from '../../../scripts/setup/journal.js';
+import { startRun, markStep, addChanges } from '../../../scripts/setup/journal.js';
+import { SETUP_STEPS, PUSH_TEST_STEP } from '../../../scripts/lib/setup-run.js';
 import { noteShown, noteAsked } from '../../../scripts/setup/clicks.js';
 
 const NOW = new Date('2026-11-03T00:00:00.000Z');
@@ -166,4 +167,103 @@ test('two state cards sharing a first line are ambiguous: no setup card is swapp
   const out = await inProjectRun({ ...call(folder, q), session_id: SID }, { outcomes: () => [STATE, twin] });
   assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
   assert.equal(out.hookSpecificOutput.updatedInput, undefined);
+}));
+
+// A one card plan is asked again after each Customise or Change a choice, at the same step. A reworded copy of the newest plan must
+// come back as the newest, never as an earlier plan the director already answered.
+const planCard = (n, yours) => ({
+  question: `Set up Wheelhouse for X${yours ? ' with your choices' : ''}?\nHere's what I recommend (${n}).\nNothing runs until your Go ahead.`,
+  header: 'Setup',
+  options: [
+    { label: 'Go ahead', description: 'Setup goes ahead with these choices.' },
+    { label: yours ? 'Change a choice' : 'Customise', description: 'Setup asks again before it goes ahead.' },
+  ],
+});
+const askPlan = (folder, run, card, id, minute) => noteAsked({
+  runId: run.id, folder, step: 0, id, card, typed: false, now: () => new Date(NOW.getTime() + minute * 60000),
+});
+const rewordedAsFirst = (card, first) => ({ ...card, question: `${first}\nA little different.` });
+
+test('a reworded second plan card is the second card, never the first the director answered', () => inSetup(async ({ folder, first }) => {
+  const [one, two] = [planCard(1, false), planCard(2, true)];
+  askPlan(folder, first, one, 'plan-aaaaaaaaaaaa', 1);
+  askPlan(folder, first, two, 'plan-bbbbbbbbbbbb', 2);
+  const q = rewordedAsFirst(two, one.question.split('\n')[0]);
+  assert.deepEqual(swappedOf(await run(call(folder, q))), [printedOf(two)]);
+  const cut = { ...q, question: two.question.split('\n')[0].replace(' with your choices', ''), options: [{ label: 'Go ahead', description: 'x' }, { label: 'Change a choice', description: 'y' }] };
+  assert.deepEqual(swappedOf(await run(call(folder, cut))), [printedOf(two)]);
+}));
+
+test('the second plan card asked exactly as printed goes through unchanged', () => inSetup(async ({ folder, first }) => {
+  const [one, two] = [planCard(1, false), planCard(2, true)];
+  askPlan(folder, first, one, 'plan-aaaaaaaaaaaa', 1);
+  askPlan(folder, first, two, 'plan-bbbbbbbbbbbb', 2);
+  assert.equal(await run(call(folder, printedOf(two))), undefined);
+  // Even when its first line is the first card's: the exact question is that card.
+  const same = { ...two, question: `${one.question.split('\n')[0]}\nHere's what I recommend (2).` };
+  askPlan(folder, first, same, 'plan-cccccccccccc', 3);
+  assert.equal(await run(call(folder, printedOf(same))), undefined);
+}));
+
+test('a reworded third plan card after a second Change a choice is the third', () => inSetup(async ({ folder, first }) => {
+  const [one, two, three] = [planCard(1, false), planCard(2, true), planCard(3, true)];
+  askPlan(folder, first, one, 'plan-aaaaaaaaaaaa', 1);
+  askPlan(folder, first, two, 'plan-bbbbbbbbbbbb', 2);
+  askPlan(folder, first, three, 'plan-cccccccccccc', 3);
+  for (const line of [one.question.split('\n')[0], two.question.split('\n')[0]]) {
+    assert.deepEqual(swappedOf(await run(call(folder, rewordedAsFirst(three, line)))), [printedOf(three)]);
+  }
+}));
+
+test('the first plan card asked again word for word after a newer plan comes back as the newer plan', () => inSetup(async ({ folder, first }) => {
+  const [one, two] = [planCard(1, false), planCard(2, true)];
+  askPlan(folder, first, one, 'plan-aaaaaaaaaaaa', 1);
+  askPlan(folder, first, two, 'plan-bbbbbbbbbbbb', 2);
+  assert.deepEqual(swappedOf(await run(call(folder, printedOf(one)))), [printedOf(two)]);
+}));
+
+// Setup's phone step is offered last, after the health check: by then every other step is done, and the folder is a
+// project. A reworded phone card is still setup's, and only the phone cards are, until the phone step is done.
+const PHONE = {
+  question: 'Setup step 9, your phone. Switch on Remote Control, then click Ready and lock your computer for three minutes.',
+  header: 'Question',
+  options: [
+    { label: 'Ready', description: 'Recommended: Setup sends a test two minutes later and asks if it arrived.' },
+    { label: 'Skip for now', description: 'Setup carries on without your phone.' },
+  ],
+};
+const finishAllBut = (run, but) => {
+  for (const s of SETUP_STEPS) if (s.n !== but) markStep(run.id, s.n, 'doneAt', { now: () => NOW });
+  addChanges(run.id, [{ id: 'green-10', step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: NOW.toISOString() } }]);
+};
+const cutPhone = () => ({ ...PHONE, question: PHONE.question.replace(' three minutes.', ' three.'), options: [{ label: 'Ready', description: 'x' }, { label: 'Skip for now', description: 'y' }] });
+
+const hoursBefore = (h) => () => new Date(T0 - h * 3600000);
+
+test('in a project whose setup waits only on the phone step, a reworded phone card is swapped back', () => inProject(async ({ folder, first }) => {
+  noteAsked({ runId: first.id, folder, step: PUSH_TEST_STEP, id: 'phone-ready', card: PHONE, now: hoursBefore(1) });
+  finishAllBut(first, PUSH_TEST_STEP);
+  const out = await inProjectRun({ ...call(folder, cutPhone()), session_id: SID }, { outcomes: () => [] });
+  assert.deepEqual(swappedOf(out), [printedOf(PHONE)]);
+}));
+
+test('once only the phone step is left, an earlier setup card is no longer swapped in', () => inProject(async ({ folder, first }) => {
+  finishAllBut(first, PUSH_TEST_STEP);
+  const cut = { ...ASKED, question: ASKED.question.split('\n')[0], options: [{ label: 'The README\'s words', description: 'x' }, { label: 'Describe it later', description: 'y' }] };
+  const out = await inProjectRun({ ...call(folder, cut), session_id: SID }, { outcomes: () => [] });
+  assert.equal(out?.hookSpecificOutput?.updatedInput?.questions?.[0]?.question === ASKED.question, false);
+}));
+
+test('a phone card asked more than six hours ago is no longer setup\'s', () => inProject(async ({ folder, first }) => {
+  noteAsked({ runId: first.id, folder, step: PUSH_TEST_STEP, id: 'phone-ready', card: PHONE, now: hoursBefore(7) });
+  finishAllBut(first, PUSH_TEST_STEP);
+  const out = await inProjectRun({ ...call(folder, cutPhone()), session_id: SID }, { outcomes: () => [] });
+  assert.equal(out?.hookSpecificOutput?.updatedInput?.questions?.[0]?.question === PHONE.question, false);
+}));
+
+test('once the phone step is done too, a reworded phone card is no longer setup\'s', () => inProject(async ({ folder, first }) => {
+  noteAsked({ runId: first.id, folder, step: PUSH_TEST_STEP, id: 'phone-ready', card: PHONE, now: hoursBefore(1) });
+  finishAllBut(first, null);
+  const out = await inProjectRun({ ...call(folder, cutPhone()), session_id: SID }, { outcomes: () => [] });
+  assert.equal(out?.hookSpecificOutput?.updatedInput?.questions?.[0]?.question === PHONE.question, false);
 }));

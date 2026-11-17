@@ -18,7 +18,9 @@
 //   d   GitHub, on Windows
 //   e   a company's GitLab on a Mac, with GitLab's tool in
 // --desktop answers as the Desktop app can: a card whose question is the same as an earlier card's shows the
-// earlier one, so the answer that comes back is the one given there.
+// earlier one, so the answer that comes back is the one given there. It also asks each card with its first line reworded, as a
+// model that doesn't copy a card word for word may, through the card check hook's swap (scripts/hooks/card-check.js): the
+// director is shown what comes out, and a card not swapped back, or swapped for another card, ends the run.
 //
 // renderPath(name, { desktop }) gives { cards, end, said, heard }: each card as { step, id, kind, card, answer }, how
 // the run ended ({ step, how, why? }), what setup said along the way, and after how many cards each line was said.
@@ -146,7 +148,7 @@ async function connectedAnswer(w, name, args, options) {
 
 // Step 3's Go ahead, as its apply leaves the computer: the project on the pretend host with the host's README, this
 // folder connected to it on main, the company's GitLab named in the folder's git settings, the project's record and
-// private record, and on Narrow the project's own key kept. Gives the world's `connected`.
+// private record, and on Narrow the project's own key kept (on the public GitLab, the pasted token). Gives the world's `connected`.
 async function connectAsStepThree({ folder, scratch, changes }) {
   const { writeProject } = await import('../lib/projects.js');
   const { projectSlug, stateDir } = await import('../lib/paths.js');
@@ -198,7 +200,8 @@ async function connectAsStepThree({ folder, scratch, changes }) {
   writeProject(slug, record);
   fs.mkdirSync(stateDir(slug), { recursive: true });
   await git(stateDir(slug), 'init', '-q', '-b', 'main');
-  if (host === 'gitlab' && mode === 'narrow') writeKey(`gitlab-project-${PROJECT_ID}`, { kind: 'project-key', token: 'glpat-render-project-key', expiresAt: '2027-11-16' });
+  // The public GitLab's free plan makes no project key, so step 3 there keeps the token the director pasted.
+  if (host === 'gitlab' && mode === 'narrow') writeKey(`gitlab-project-${PROJECT_ID}`, base === DEFAULT_GITLAB ? { kind: 'pasted-token', token: 'glpat-render-pasted-token', expiresAt: '2026-12-17' } : { kind: 'project-key', token: 'glpat-render-project-key', expiresAt: '2027-11-16' });
   return connected;
 }
 
@@ -339,6 +342,16 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
     // card, so the answer is the one given there.
     const answer = async (step, ask) => {
       const { id, card } = ask;
+      if (desktop) {
+        const { decide: swap } = await import('../hooks/card-check.js');
+        const words = card.question.split('\n');
+        const shortened = words[0].replace(/ \S+(\??)$/, '$1');
+        const asked = { ...card, question: [shortened === words[0] ? `${words[0]} (reworded)` : shortened, ...words.slice(1)].join('\n') };
+        const out = await swap({ cwd: folder, hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [asked] } }, { now });
+        const shown = out?.hookSpecificOutput?.updatedInput?.questions?.[0];
+        if (shown === undefined) throw new Error(`card ${id}, reworded, was not swapped back by the card check`);
+        if (shown.question !== card.question) throw new Error(`card ${id} came out of the card check as another card ("${shown.question.split('\n')[0]}")`);
+      }
       let got = choose(p, { id, card }, { stepTwoDone: state });
       let stale = false;
       if (desktop) {

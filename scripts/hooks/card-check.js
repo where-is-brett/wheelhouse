@@ -37,6 +37,7 @@ import tools from '../../adapters/claude-code/tools.js';
 import { asQuestion } from '../cards/visit.js';
 import { runAndExit, answer, projectOf, beingSetUp, readTailEntries } from './kit.js';
 import { setupCardsFor, bareLabel } from '../lib/setup-clicks.js';
+import { PUSH_TEST_STEP } from '../lib/setup-run.js';
 import { looksLikeBaseline, holdsFigures, cardHash, readShown, cardText, sweepStale } from '../lib/measures-clicks.js';
 import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT, SUGGEST, SHOW_ME, NOT_NOW, SEND_BACK, NO_RECOMMENDATION } from '../lib/calm-words.js';
@@ -65,6 +66,8 @@ const SHA12 = '([0-9a-f]{12})';
 // The plain lines a card needs before its last: the question, why it is the director's and what happens meanwhile. A
 // question that is the same words as `what` (an answer, setup's kinds) carries them once, so a card with a question of its own has one more.
 const LEAD_LINES = 3;
+// How long a phone card asked after setup finished is still setup's.
+const PHONE_HOURS = 6;
 const EXPLAIN_MORE = 'Explain more';
 const RECOMMENDED = 'Recommended:';
 const REPLY_CODE = 'Reply code:';
@@ -222,11 +225,13 @@ function printedProblems(q, card) {
 const COMMON = [SUGGEST, SHOW_ME, NOT_NOW, SEND_BACK];
 function rewordedOf(q, open) {
   const labels = (Array.isArray(q.options) ? q.options : []).map((o) => (typeof o === 'string' ? o : o?.label)).filter((l) => typeof l === 'string');
-  return open.find((o) => {
+  const found = open.filter((o) => {
     const { header, options } = o.card.data;
     const shared = Array.isArray(options) ? options.filter((l) => labels.includes(l) && !COMMON.includes(l)).length : 0;
     return shared >= 2 || (shared >= 1 && typeof header === 'string' && header !== '' && q.header === header);
-  }) ?? null;
+  });
+  // Setup's cards carry the time their record was kept, and the newest is the one a reworded question most likely stands for.
+  return found.some((o) => typeof o.at === 'number') ? newestOf(found) : found[0] ?? null;
 }
 
 // The first line of a question that holds words, trimmed.
@@ -320,14 +325,18 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
   const decided = decidedDeny(found, at);
   if (decided !== undefined) return { deny: decided };
   // A folder that is being set up as well adds setup's cards after the state's, so a state card wins.
-  const setup = beingSetUp(input.cwd);
+  // Once only the phone step is left (it is offered last), only its cards are setup's, and only those asked
+  // within PHONE_HOURS: a phone card never answered doesn't take the project's questions for good.
+  const setup = beingSetUp(input.cwd, { phone: true });
+  const phoneOnly = setup !== null && beingSetUp(input.cwd) === null;
   const open = allOutcomes(project, outcomes).filter((o) => o.decided === null && typeof o.card?.data?.question === 'string');
-  const setupOpen = setup === null ? [] : setupCardsFor(input.cwd, setup.run?.id);
+  const recent = (o) => o.step === PUSH_TEST_STEP && at.getTime() - o.at < PHONE_HOURS * 3600000;
+  const setupOpen = setup === null ? [] : setupCardsFor(input.cwd, setup.run?.id).filter((o) => !phoneOnly || recent(o));
   // Each question's card: the one it names exactly, else the waiting card it is a reworded copy of; null for neither.
   const matched = questions.map((q, i) => {
     if (typeof q?.question !== 'string') return null;
     const swap = swapFor(q, found[i], open)
-      ?? (setupOpen.length === 0 || sharesLine(q, open) ? null : swapFor(q, null, setupOpen));
+      ?? (setupOpen.length === 0 || sharesLine(q, open) ? null : setupSwapFor(q, setupOpen));
     return swap === null ? null : { card: swap.card, setup: swap.setup === true };
   });
   // The picker is for a decision only while typed replies are off, so on it a decision is answered by typing instead.
@@ -436,6 +445,26 @@ export async function decideStop(input, { projectOf: find = projectOf, dir, role
   }
 }
 
+// The newest of setup's stored cards by its record's time.
+function newestOf(cards) {
+  return cards.reduce((a, b) => ((b.at ?? 0) >= (a.at ?? 0) ? b : a));
+}
+
+// Whether a plan card is no longer one a reworded question can stand for. A one card plan is asked again each time the director changes
+// a choice, at the same step, so a plan card with a newer plan card at its step was answered or passed over: handing it back for the
+// new plan would show the director the old card again (the loop). A newer record at the step is not enough on its own, since a step
+// asks several questions (each its own id), so only plan cards (shown, or asked as `plan-*`) supersede plan cards.
+const supersededPlan = (o, open) => o.plan === true && open.some((p) => p.plan === true && p.step === o.step && p !== o && (p.at ?? 0) > (o.at ?? 0));
+
+// Setup's stored card a question stands for, among the cards no newer plan replaced: a question worded exactly as one is that card,
+// whatever else shares its first line or labels (the newest if setup stored the same question twice); only a question that is no
+// card's own is read as a reworded one. Null for none.
+function setupSwapFor(q, open) {
+  const live = open.filter((o) => !supersededPlan(o, open));
+  const own = live.filter((o) => q.question === o.card.data.question || q.question === chatCopy(o.card.data.question));
+  return own.length > 0 ? newestOf(own) : swapFor(q, null, live);
+}
+
 // In a folder being set up (no project yet), a reworded setup card is swapped for the card setup showed or asked, found by
 // the same rules as a waiting card's. No form check, pane hold or open-noting here. A failure lets the call through.
 function swapSetupCards(input, questions) {
@@ -446,7 +475,7 @@ function swapSetupCards(input, questions) {
     if (open.length === 0) return undefined;
     const matched = questions.map((q) => {
       if (typeof q?.question !== 'string') return null;
-      const swap = swapFor(q, null, open);
+      const swap = setupSwapFor(q, open);
       return swap === null ? null : { card: swap.card };
     });
     const swapped = swapQuestions(questions, matched);

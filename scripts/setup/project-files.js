@@ -1145,7 +1145,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   const ownPart = ownFiles.length > 0 ? `, with your product's own ${ownFiles.length === 1 ? 'file' : 'files'}, ${listed(ownNamed)}` : '';
   const ignored = up?.action === 'commit' && Array.isArray(up.files) && up.files.includes(GITIGNORE);
   const archon = up?.action === 'commit' && Array.isArray(up.files) && up.files.some((f) => ENGINE_FILES.includes(f));
-  const upTo = local ? `onto ${branch}` : keyed ? `to ${branch} on ${NAME[host]} through a merge request` : `up to ${branch} on ${NAME[host]}`;
+  const upTo = local ? `onto ${branch}` : keyed ? `to ${branch} on ${NAME[host]} through a merge request that setup merges itself` : `up to ${branch} on ${NAME[host]}`;
   const sharedFiles = ['the settings', 'CLAUDE.md', ...(ignored ? ['.gitignore'] : []), ...(archon ? ['.archon/'] : [])].join(', ').replace(/, ([^,]*)$/, ' and $1');
   if (up?.action === 'commit') parts.push(keyed ? `${sharedFiles} go in one commit, "${COMMIT_MESSAGE}", ${upTo}${yours}${ownPart}` : `${sharedFiles} go ${upTo} in one commit, "${COMMIT_MESSAGE}"${yours}${ownPart}`);
   if (up?.ownLeft === true) parts.push('your product\'s own files stay as they are, too many for setup\'s commit: commit them when you are ready');
@@ -1186,7 +1186,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   }
   const short = [
     ...(shared.length > 0 ? ['the project\'s own files'] : []), ...(files.length > shared.length || excluded || ours ? ['this computer\'s settings'] : []),
-    ...(secrets ? ['.env files kept out of git'] : []), ...(listens ? [LISTENING_CLAUSE] : []), ...(pins.length > 0 ? ['the kits agents work with'] : []), ...(up ? [`the setup commit ${local ? `onto ${cut(branch)}` : keyed ? `to ${cut(branch)} on ${NAME[host]} through a merge request` : `up to ${cut(branch)} on ${NAME[host]}`}${yours === '' ? '' : ', with your changes'}${ownPart === '' ? '' : ', with your product\'s own files'}`] : []),
+    ...(secrets ? ['.env files kept out of git'] : []), ...(listens ? [LISTENING_CLAUSE] : []), ...(pins.length > 0 ? ['the kits agents work with'] : []), ...(up ? [`the setup commit ${local ? `onto ${cut(branch)}` : keyed ? `to ${cut(branch)} on ${NAME[host]} through a merge request setup merges itself` : `up to ${cut(branch)} on ${NAME[host]}`}${yours === '' ? '' : ', with your changes'}${ownPart === '' ? '' : ', with your product\'s own files'}`] : []),
     ...(local || keyed ? [] : [`${up ? 'then ' : ''}protection on ${up ? 'it' : cut(branch)}`]),
   ];
   return card([`Setup step 7, ${titleOf7(local, keyed)}${by}:`, ...short.map(asLine)].join('\n'));

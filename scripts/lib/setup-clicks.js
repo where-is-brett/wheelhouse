@@ -514,14 +514,18 @@ export function setupCardsFor(cwd, runId) {
     }
     shown = shown.filter((r) => r.runId === run);
     asked = asked.filter((r) => r.runId === run);
-    const make = (id, c) => ({
+    // `at`, `step` and `plan` (a plan card: one shown, or one asked with id `plan-<12 hex>`) tell the card check which card a later one replaced.
+    const make = (id, c, r, plan) => ({
       card: { id, data: { question: c.question, header: c.header, options: c.options.map((o) => o.label), descriptions: c.options.map((o) => o.description) } },
       decided: null,
       setup: true,
+      at: Number.isFinite(Date.parse(r.at)) ? Date.parse(r.at) : 0,
+      step: r.step,
+      plan,
     });
     return [
-      ...shown.map((r) => make(`setup:${r.runId}-${r.step}`, shownCard(r.card))),
-      ...asked.map((r) => make(`setup:${r.runId}-${r.step}-${r.id}`, shownCard(r.card))),
+      ...shown.map((r) => make(`setup:${r.runId}-${r.step}`, shownCard(r.card), r, true)),
+      ...asked.map((r) => make(`setup:${r.runId}-${r.step}-${r.id}`, shownCard(r.card), r, /^plan-[0-9a-f]{12}$/.test(r.id))),
     ];
   } catch {
     return [];
