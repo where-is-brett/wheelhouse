@@ -646,7 +646,8 @@ export function nameGitlabHost({ folder, entry, record }) {
 
 // The join question (ruling R77), asked first in a folder holding only step 1's install. `missed`
 // is why it is asked again: { name, missed }, where `missed` is 'none', the repositories found
-// when there were several, or 'not-a-name' for typed text that names no repository.
+// when there were several, 'not-a-name' for typed text that names no repository, or 'other-host' for a pasted address on a host
+// other than the one setup is using ({ name, missed, on, using } then).
 function joinAsk(id, name, { missed }) {
   const other = fromOtherComputer(name);
   let found = '';
@@ -654,6 +655,7 @@ function joinAsk(id, name, { missed }) {
     const address = /:\/\/|@/.test(missed.name) ? 'An address alone is not a project: ' : '';
     found = `"${missed.name}" is not a repository's name. ${address}${address ? 't' : 'T'}ype owner/name, like ann/cafe-menu, or click a button. `;
   }
+  else if (missed?.missed === 'other-host') found = `"${missed.name}" is on ${missed.on}, not ${missed.using}. Type owner/name, or click a button. `;
   else if (missed?.missed === 'no-backup') found = `"${missed.name}" can't be found. `;
   else if (Array.isArray(missed?.missed)) found = `More than one ${missed.name} is set up with Wheelhouse: ${missed.missed.slice(0, 5).join(', ')}. `;
   else if (missed) found = `Setup found no ${missed.name} set up with Wheelhouse on your account or organisations. `;
@@ -686,13 +688,46 @@ function joinAsk(id, name, { missed }) {
 export function repoNamed(text) {
   let named = String(text ?? '').trim();
   const web = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/]*)(.*)$/.exec(named);
-  const scp = web ? null : /^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+:(?!\/\/)(.*)$/.exec(named);
-  if (web) named = web[2].split(/[?#]/)[0];
-  else if (scp) named = scp[1].split(/[?#]/)[0];
-  if (web || scp) named = named.replace(/^\/+/, '').replace(/\/+$/, '');
+  const scp = web ? null : /^[A-Za-z0-9_.-]+@([A-Za-z0-9.-]+):(?!\/\/)(.*)$/.exec(named);
+  if (web || scp) {
+    const host = (web ? web[1] : scp[1]).replace(/^.*@/, '').replace(/:\d*$/, '').toLowerCase();
+    named = (web ? web[2] : scp[2]).split(/[?#]/)[0].replace(/^\/+/, '');
+    // A GitLab page's address goes on after '/-/' (ann/cafe-menu/-/tree/main); GitHub's has no such mark, and its
+    // repositories are always owner/name, so only the first two parts count (ann/cafe-menu/pulls).
+    named = named.replace(/\/-(?:\/.*)?$/, '').replace(/\/+$/, '');
+    if (host === 'github.com' || host === 'www.github.com') named = named.split('/').slice(0, 2).join('/');
+  }
   named = named.replace(/\.git$/i, '');
   if (!/^[A-Za-z0-9_.][A-Za-z0-9_.-]*(\/[A-Za-z0-9_.][A-Za-z0-9_.-]*)*$/.test(named)) return null;
   return named.split('/').some((part) => /^\.+$/.test(part)) ? null : named;
+}
+
+// The host a pasted project address names, as parseRemote reads it, or null for typed text that is no address.
+function pastedHost(text) {
+  const named = String(text ?? '').trim();
+  if (!/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(named) && !/^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+:(?!\/\/)/.test(named)) return null;
+  try {
+    return parseRemote(named);
+  } catch {
+    return null;
+  }
+}
+
+// The text of an answer as the card may show it back: any user or token written before the host of an
+// address (https://oauth2:token@host/...) is dropped, and it is cut to 100 characters. git@host:path keeps its git@, which is no secret.
+const shown = (text) => String(text ?? '').trim().replace(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^/?#]*@/, '$1').slice(0, 100);
+
+// Where a pasted address says the product is, set against the host the run looks on (GitHub, or the GitLab at `base`):
+// null when they are the same, else the words for each. An address names its host and only that host is looked on.
+function otherHost(text, using) {
+  const there = pastedHost(text);
+  if (there === null || using === undefined) return null;
+  if (using.host === 'github') {
+    return there.hostname === 'github.com' || there.hostname === 'www.github.com' ? null : { on: hostWords(there), using: 'GitHub' };
+  }
+  const own = parseRemote(using.base);
+  const same = there.hostname === own.hostname && (there.port === '' || own.port === '' || there.port === own.port);
+  return same ? null : { on: hostWords(there), using: hostWords(own) };
 }
 
 // Step 3's records of a run's joining (ruling R77), in order: its `answer` changes with `joined`.
@@ -728,7 +763,7 @@ export function joinedFolder(folder, run = null) {
 // step 1's install, unless the run is already joining). Each name an attempt missed, and each
 // typed text that names no repository, asks the question again under an id naming them (ruling
 // R51), so no answer is used again for a name that wasn't found.
-function joinChoice(ctx) {
+function joinChoice(ctx, using) {
   const run = typeof ctx.runId === 'string' ? readJournal().runs.find((r) => r?.id === ctx.runId) ?? null : null;
   // A project brought back from a backup goes on being so, once its folder has filled.
   const restore = backupAnswered(ctx.answers);
@@ -752,13 +787,20 @@ function joinChoice(ctx) {
     if (got.label === HOST_LABELS.github) return { host: 'github' };
     if (got.label === HOST_LABELS.gitlab) return { host: 'gitlab' };
     if (backupNamed(got.text) !== null) {
-      tried.push({ name: got.text.trim().slice(0, 100), missed: 'no-backup' });
+      tried.push({ name: shown(got.text), missed: 'no-backup' });
       continue;
     }
     if (typeof got.text === 'string') {
       const wanted = repoNamed(got.text);
       if (wanted === null) {
-        tried.push({ name: got.text.trim().slice(0, 100), missed: 'not-a-name' });
+        tried.push({ name: shown(got.text), missed: 'not-a-name' });
+        continue;
+      }
+      // An address pins its host: one on another host than the run looks on is never looked up there, where a
+      // stranger's repository of the same name could be found and checked out.
+      const elsewhere = otherHost(got.text, using);
+      if (elsewhere !== null) {
+        tried.push({ name: shown(got.text), missed: 'other-host', ...elsewhere });
         continue;
       }
       return { join: wanted, known };
@@ -2276,7 +2318,7 @@ export function hostStep({
     return { tool, cliSigned, found, curl, offered, gitPath, proxied: proxy !== null, proxyPassword, noRoad: noTool && !curl };
   }
 
-  return {
+  const self = {
     n: 3,
     title: SETUP_TITLES[3],
     long: true,
@@ -2320,7 +2362,7 @@ export function hostStep({
       const answer = (id) => answers[`3.${id}`] ?? null;
       // A computer joining a product set up on another (ruling R77): asked first, in a folder
       // holding only step 1's install.
-      const join = joinChoice(ctx);
+      const join = joinChoice(ctx, ctx.joinUsing);
       if (join?.ask) return { ask: join.ask };
       const restoring = join?.restore ?? null;
       let product = restoring !== null ? { isNew: false, host: 'local', repo: null, name: projectOfBackup(restoring), others: [], restoring: true }
@@ -2398,6 +2440,14 @@ export function hostStep({
       // on GitHub with no Wheelhouse app) is no choice, and AskUserQuestion can't show it: that way
       // is taken, and step 3's Go-ahead card lists it.
       const base = product.base ?? company?.base ?? DEFAULT_GITLAB;
+      // A pasted address is set against the host now known: when it names another, the join question is asked again, and
+      // when a newer answer takes its place the plan is read again from it.
+      if (ctx.joinUsing === undefined && join?.join !== undefined) {
+        const using = { host, base };
+        const again = joinChoice(ctx, using);
+        if (again?.ask) return { ask: again.ask };
+        if (again?.join !== join.join) return self.plan({ ...ctx, joinUsing: using });
+      }
       // What the computer already has, found before anything is asked (not for a Locked or launched project, which is
       // never offered the director's own key).
       // GitLab's own tool, missing here with no one yet saying whether to fetch it, is asked about before the connection
@@ -2808,4 +2858,5 @@ export function hostStep({
       }
     },
   };
+  return self;
 }

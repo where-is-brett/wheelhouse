@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { hostStep, productOf, REAL_USERS, LEVELS, fromOtherComputer } from '../../../scripts/setup/host.js';
 import {
-  CHOOSE_BACKUP, KEEP_HERE, KEPT_LINE, NO_BACKUP, ONLY_HERE_LINE, PUT_ON_GITHUB, PUT_ON_GITLAB, FIRST_CHECK_LINE, backupAsk, branchesOf, chooseBranch, chosenHost,
+  CHOOSE_BACKUP, KEEP_HERE, KEPT_LINE, NO_BACKUP, ONLY_HERE_LINE, PUT_ON_GITHUB, PUT_ON_GITLAB, FIRST_CHECK_LINE, backupAnswered, backupAsk, branchesOf, chooseBranch, chosenHost,
   localCard, localName, mirrorOf, othersLine, remotesOf, repoOfLocal,
 } from '../../../scripts/setup/local.js';
 import { redoCard } from '../../../scripts/setup/redo.js';
@@ -95,6 +95,21 @@ test('only other remotes are left alone and the plan says so', async () => {
     assert.equal(await g(folder, 'config', '--get', 'remote.origin.url'), 'https://git.example.com/a-team/shop.git');
     assert.equal(await g(folder, 'config', '--get', 'remote.backup.url'), 'https://backup.example.com/shop.git');
     assert.equal(othersLine([]), null);
+  });
+});
+
+test('only the newest join answer counts: a refused backup path that appears later restores nothing once a newer answer is given', async () => {
+  await withHome(async () => {
+    const dir = tempFolder('wh-backup ');
+    const file = path.join(dir, 'Later.wheelhouse-backup');
+    const typed = (text) => ({ label: null, text, at: NOW.toISOString() });
+    const answers = { '3.join': typed(file), '3.join-abcd': said(KEEP_HERE) };
+    // The first answer named a file that was not there; it is now, but the director has moved on.
+    fs.writeFileSync(file, '{}\n');
+    assert.equal(backupAnswered(answers), null);
+    assert.equal(chosenHost(answers), 'local');
+    assert.equal(chosenHost({ '3.join': typed(file), '3.join-abcd': said(PUT_ON_GITHUB) }), 'github');
+    assert.equal(backupAnswered({ '3.join-abcd': typed(file) }), file);
   });
 });
 

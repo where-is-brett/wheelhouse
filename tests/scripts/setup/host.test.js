@@ -2468,7 +2468,49 @@ test('step 3 asks whether this computer is joining only in a folder holding noth
       ['git@gitlab.example.org:ann/cafe-menu.git', 'ann/cafe-menu'],
       ['ssh://git@gitlab.example.org:2222/grp/sub/name.git', 'grp/sub/name'],
       ['https://gitlab.example.org/grp/sub/name/', 'grp/sub/name'],
+      // A page of the project in a browser: GitLab's goes on after '/-/', GitHub's after the second part.
+      ['https://gitlab.example.com/ann/cafe-menu/-/tree/main', 'ann/cafe-menu'],
+      ['https://gitlab.example.com/grp/sub/name/-/merge_requests', 'grp/sub/name'],
+      ['https://github.com/ann/cafe-menu/tree/main', 'ann/cafe-menu'],
+      ['https://github.com/ann/cafe-menu/pulls', 'ann/cafe-menu'],
+      ['https://github.com/ann/cafe-menu.git', 'ann/cafe-menu'],
     ]) assert.equal(repoNamed(pasted), named, pasted);
+  });
+});
+
+test('a pasted address on another host than setup uses is refused and never looked up; one on the same host joins', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    await seedProject(w, `${USER}/Cafe-Menu`);
+    const step = stepFor(w);
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    // GitLab's address while setup looks on GitHub: the question asks again, saying so, and nothing is looked up.
+    const other = `https://gitlab.example.org/${USER}/Cafe-Menu`;
+    const refused = await answerJoin(step, ctx, (id, card) => (id === 'join' ? other : id.startsWith('join-') ? HOST_LABELS.github : choose()(id, card)));
+    const again = refused.asked.find((a) => a.id.startsWith('join-'));
+    assert.equal(again.card.what.startsWith(`"${other}" is on gitlab.example.org, not GitHub. Type owner/name, or click a button. `), true, again?.card.what);
+    assert.equal(refused.changes.some((c) => c.action === 'join'), false);
+    // GitHub's own address (a page of the project, even) joins.
+    const same = await answerJoin(step, ctx, joining({ typed: `https://github.com/${USER}/Cafe-Menu/pulls` }));
+    assert.equal(same.changes.find((c) => c.action === 'join').name, `${USER}/Cafe-Menu`);
+    assert.equal(same.asked.some((a) => a.id.startsWith('join-')), false);
+  });
+});
+
+test('a token in a pasted address is not shown back on the card that asks again', async () => {
+  await withHome(async () => {
+    const step = stepFor(standIn());
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    const typed = (text) => ({ '3.join': { label: null, text, at: NOW.toISOString() } });
+    const shown = (await step.plan({ ...ctx, answers: typed('https://oauth2:glpat-SECRET123@gitlab.example.org/') })).ask.card.what;
+    assert.equal(shown.includes('SECRET123'), false, shown);
+    assert.match(shown, /^"https:\/\/gitlab\.example\.org\/" is not a repository's name\./);
+    // git@host: is no secret, and stays.
+    assert.match((await step.plan({ ...ctx, answers: typed('git@gitlab.example.org:') })).ask.card.what, /^"git@gitlab\.example\.org:" is not/);
   });
 });
 

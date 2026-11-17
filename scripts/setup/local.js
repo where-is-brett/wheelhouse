@@ -193,15 +193,17 @@ export function backupChoice({ answer, name, root, machine, desktop = true }) {
 
 // The backup file a run's answers name, or null: a path typed on the join card, where the four options are taken (spec 10).
 export function backupAnswered(answers = {}) {
-  const typed = Object.keys(answers ?? {}).filter((k) => /^3\.join(?:-|$)/.test(k)).map((k) => backupNamed(answers[k]?.text));
-  return typed.find((file) => file !== null && fs.existsSync(file)) ?? null;
+  // Only the newest join answer counts: an earlier one was refused and the question asked again.
+  const last = Object.keys(answers ?? {}).filter((k) => /^3\.join(?:-|$)/.test(k)).at(-1);
+  const file = last === undefined ? null : backupNamed(answers[last]?.text);
+  return file !== null && fs.existsSync(file) ? file : null;
 }
 
 // Where the run's answers keep the project: 'local', 'github', 'gitlab' or null, while no answer says.
 export function chosenHost(answers = {}) {
   if (backupAnswered(answers) !== null) return 'local';
-  const joins = Object.keys(answers ?? {}).filter((k) => /^3\.join(?:-|$)/.test(k));
-  const labels = [answers?.['3.kept'], answers?.['3.host'], ...joins.map((k) => answers[k])].map((a) => a?.label);
+  const last = Object.keys(answers ?? {}).filter((k) => /^3\.join(?:-|$)/.test(k)).at(-1);
+  const labels = [answers?.['3.kept'], answers?.['3.host'], last === undefined ? null : answers[last]].map((a) => a?.label);
   if (labels.includes(KEEP_HERE)) return 'local';
   if (labels.includes(PUT_ON_GITHUB) || labels.includes('GitHub')) return 'github';
   return labels.includes(PUT_ON_GITLAB) || labels.includes('GitLab') ? 'gitlab' : null;
