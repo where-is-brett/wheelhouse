@@ -1488,11 +1488,12 @@ test('step 3\'s card on a company\'s GitLab composes for ordinary and for very l
   const lengths = [];
   // Each case with the wording its card is expected to come in: the full one, the tight one (shorter clauses) or the bare
   // one (the address and the names left out), so a fallback that stops being reached shows here.
+  const MAC_NEW = process.platform === 'darwin' ? 'tight' : 'full';
   const cases = [
     ['gitlab.acme.com:8443', 'engineering/shop', 'sam', 'full'],
-    // The sign-in line's exception for an Apple app takes the cards that name a project over the limit, so they come in the tight wording.
-    ['gitlab.example.com', 'platform/customer-portal', 'a-director', { joining: 'full', new: 'tight', existing: 'full' }],
-    ['git.example.org:8443', `${USER}/a-product-with-a-long-name-to-fill-the-card`, USER, { joining: 'full', new: 'tight', existing: 'full' }],
+    // On a Mac the sign-in line's exception for an Apple app takes the new product's card over the limit, so it comes in the tight wording there.
+    ['gitlab.example.com', 'platform/customer-portal', 'a-director', { joining: 'full', new: MAC_NEW, existing: 'full' }],
+    ['git.example.org:8443', `${USER}/a-product-with-a-long-name-to-fill-the-card`, USER, { joining: 'full', new: MAC_NEW, existing: 'full' }],
     [`${'h'.repeat(190)}.example.com:8443`, `${'g'.repeat(100)}/${'p'.repeat(99)}`, 'u'.repeat(200), 'tight'],
     // A host name is at most 253 characters, so the bare wording takes an address with a long path after the host.
     [`${'h'.repeat(190)}.example.com:8443/${'s'.repeat(300)}`, `${'g'.repeat(100)}/${'p'.repeat(99)}`, 'u'.repeat(200), 'bare'],
