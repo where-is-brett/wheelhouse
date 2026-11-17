@@ -157,6 +157,7 @@ import { launchVarState } from './telemetry.js';
 import { PROFILE_TARGET, acceptedOwnApp } from './own-app.js';
 import { SETUP_FILES, WHEELHOUSE_LINE, GITIGNORE, ENV_STAYS_LINES } from './project-files.js';
 import { ENGINE_FILES } from './engine-parts.js';
+import { stepPlansDir } from './plan-sketch.js';
 import { noteAsked, noteUninstallShown, uninstallShownFor, freshUninstallClicks, useClick, releaseClick } from './clicks.js';
 import { admitFolder, SetupRefusal } from './engine.js';
 import { setupGit } from './git.js';
@@ -982,7 +983,7 @@ export async function uninstallPlan({
     // and clicking it write them, and the list must be the same before and after.
     // The trust clicks and the record of the profile's enrolments last fetched (the session start's)
     // too, Wheelhouse's own (ruling R86).
-    for (const p of [clicksDir(), usedDir(), shownDir(), askedDir(), answersDir(), answeredDir(), recordsDir(), droppedFile(), trustDir(), seenFile()]) remove(p, 'last');
+    for (const p of [clicksDir(), usedDir(), shownDir(), askedDir(), answersDir(), answeredDir(), recordsDir(), droppedFile(), trustDir(), seenFile(), stepPlansDir()]) remove(p, 'last');
   } else {
     // The project's own fetch mirror, merge queue folder and the folder an earlier version kept for a reader, in the engine folder (the helper makes them
     // before a run starts), which nothing else reads once the project is gone; the engine and the other projects' stay.

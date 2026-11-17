@@ -23,7 +23,9 @@
 //
 //   Journal = { v: 1, runs: Array<{
 //     id, folder, project?, startedAt,
-//     steps: Record<number, { shownAt?, clickedAt?, doneAt?, failed?: string, say?: { line, at } }>,
+//     steps: Record<number, { shownAt?, clickedAt?, doneAt?, failed?: string, failedDetail?: string, say?: { line, at } }>,
+//                            `failed` is the director's line; `failedDetail` is for agents, the exact
+//                            names (kind, action, target, field names, a question's id) and never a value
 //     changes: Change[],
 //     closedAt?, closedBy?: 'uninstall',   the run is over: uninstall closed it, last of all
 //   }> }
@@ -193,7 +195,7 @@ export function findRun(folder) {
 // the time. A later click or finish clears an earlier failure, and a later click an earlier finish. With `when`, a test of the step's entry as it stands, read under the
 // lock, nothing is recorded unless it passes: a long step's process records only for its own
 // attempt. True when it was recorded.
-export function markStep(runId, step, field, { now = () => new Date(), reason, line, when } = {}) {
+export function markStep(runId, step, field, { now = () => new Date(), reason, detail, line, when } = {}) {
   if (!Number.isInteger(step) || step < 1) throw new Error('A step is a number from 1');
   if (!STEP_FIELDS.includes(field)) throw new Error(`The field to record is one of ${STEP_FIELDS.join(', ')}`);
   if (field === 'failed' && (typeof reason !== 'string' || reason === '')) throw new Error('A failed step needs a reason');
@@ -205,13 +207,20 @@ export function markStep(runId, step, field, { now = () => new Date(), reason, l
     const run = runIn(journal, runId);
     const entry = run.steps[step] ?? {};
     if (typeof when === 'function' && !when(structuredClone(entry))) return false;
-    if (field === 'failed') entry.failed = reason;
+    if (field === 'failed') {
+      entry.failed = reason;
+      if (typeof detail === 'string' && detail !== '') entry.failedDetail = detail;
+      else delete entry.failedDetail;
+    }
     // A step that made a first part of its work and is planned again from the start (step 7's switch).
-    else if (field === 'reset') for (const k of ['shownAt', 'clickedAt', 'doneAt', 'failed', 'say']) delete entry[k];
+    else if (field === 'reset') for (const k of ['shownAt', 'clickedAt', 'doneAt', 'failed', 'failedDetail', 'say']) delete entry[k];
     else if (field === 'say') entry.say = { line: line.trim(), at };
     else {
       entry[field] = at;
-      if (field !== 'shownAt') delete entry.failed;
+      if (field !== 'shownAt') {
+        delete entry.failed;
+        delete entry.failedDetail;
+      }
       // A new attempt says its own lines, never an earlier attempt's, and isn't finished by an
       // earlier one's finish: the health check is run again after a red board (ruling R67).
       if (field === 'clickedAt') {

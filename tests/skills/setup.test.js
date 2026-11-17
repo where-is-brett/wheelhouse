@@ -168,6 +168,12 @@ test('the playbook closes the gaps its pressure runs found', () => {
   assert.match(playbook, /run `wait 10`, saying nothing: it waits while step 10 runs and answers `waited: true` once its own checks are done/);
 });
 
+// A failed step's `Detail:` line under status is for the agent alone.
+test('the playbook keeps status\'s Detail: lines from the director', () => {
+  assert.match(playbook, /A `Detail:` line \(indented under a step\) is for you alone: never show it or paraphrase it to the director[^\n]*Tell the director only the step's own line/);
+  assert.match(playbook, /a `Detail:` line \(indented under a step\) is for you alone[^\n]*never show it or paraphrase it; tell the director only the step's own line/);
+});
+
 // From a new product's setup on v0.1.2: `wait 10` was refused while step 10 ran, and the session's
 // own Bash wait loop failed silently for twenty minutes; it told the director it was "running the
 // last trials in this session"; and the network check's first run, before a new session, read as

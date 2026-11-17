@@ -82,7 +82,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
-import { caEnv } from '../host/company-ca.js';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { jobFolder, wheelhouseHome, stateDir } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
@@ -94,6 +93,8 @@ import { hide, cleanDeep } from '../lib/clean.js';
 import { pluginOnIn } from '../lib/plugin-on.js';
 import { SETUP_QUESTION_ID, keptAnswers } from '../lib/setup-clicks.js';
 import { readJournal, startRun, markStep, addChanges, newId, applyJsonKey as journalKey, SAY_CHARS } from './journal.js';
+import { writeSketch, removeSketch } from './plan-sketch.js';
+import { caEnv } from '../host/company-ca.js';
 import { planHash, firstUnfinished, stepProgress } from './steps.js';
 import {
   noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor, copySetupRecords, typedRefused,
@@ -432,7 +433,11 @@ function statusLines(run, steps, running) {
       const said = (run.changes ?? []).filter((c) => c?.step === n && c.kind === 'answer' && typeof c.said === 'string').at(-1)?.said;
       if (said !== undefined) lines.push(`  ${hide(said, [])}`);
     }
-    else if (entry.failed) lines.push(`${name}: did not finish: ${entry.failed}`);
+    else if (entry.failed) {
+      lines.push(`${name}: did not finish: ${entry.failed}`);
+      // For the agent reading status, never the director's line: the exact names, on a line of its own.
+      if (typeof entry.failedDetail === 'string') lines.push(`  Detail: ${hide(entry.failedDetail, [])}`);
+    }
     else if (entry.clickedAt) {
       lines.push(running(n)
         ? `${name}: running since ${entry.clickedAt}`
@@ -847,7 +852,7 @@ export function setupRoutes({
     const current = (entry) => entry?.clickedAt === clickedAt && !entry.doneAt && !entry.failed;
     if (step.long) {
       // It may run until the helper stops counting it as running: STEP_TIMEOUT_MS from the click.
-      startChild({ step, run, hash: fresh.hash, clickedAt, deadline: new Date(Date.parse(clickedAt) + STEP_TIMEOUT_MS).toISOString() });
+      startChild({ step, run, hash: fresh.hash, changes: fresh.changes, clickedAt, deadline: new Date(Date.parse(clickedAt) + STEP_TIMEOUT_MS).toISOString() });
       return { ok: true, started: true };
     }
     // Counted running in this helper from its click until it finishes, however long that takes.
@@ -866,17 +871,23 @@ export function setupRoutes({
   }
 
   // The long step's own process, detached and hidden, started in Wheelhouse's folder, so it runs
-  // on when the helper or Desktop goes. It works the list out again, with this helper's user home,
-  // and checks it has this hash; it acts for this click only, and stops at the deadline by the wall
-  // clock, which is when this helper stops counting it as running.
-  function startChild({ step, run, hash, clickedAt, deadline }) {
+  // on when the helper or Desktop goes. It is handed the list this click named (plan-sketch.js), for
+  // it to check against this hash and apply, so a fact the plan reads from the network or the clock
+  // cannot change the list between the click and the start. It acts for this click only, and stops
+  // at the deadline by the wall clock, which is when this helper stops counting it as running. It is
+  // given the company's certificate file once there is one, for the calls Node.js makes itself.
+  function startChild({ step, run, hash, changes, clickedAt, deadline }) {
     const failed = () => {
       try {
         mark(run.id, step.n, 'failed', { now, reason: 'its process could not be started', when: (e) => e?.clickedAt === clickedAt && !e.doneAt });
       } catch { /* status then says it is stuck once its time is up */ }
+      removeSketch(run.id, step.n, clickedAt);
     };
+    // The list this click named, in a file for the process to check against the hash and apply; why it
+    // could not be kept, if so, goes to the process too, for its failure line.
+    const kept = writeSketch(run.id, step.n, clickedAt, hash, changes);
     try {
-      const child = spawn(process.execPath, [RUN_STEP, stepsModule, run.folder, String(step.n), hash, run.id, clickedAt, deadline, userHome, sessionIsApp ? 'desktop' : 'terminal'], {
+      const child = spawn(process.execPath, [RUN_STEP, stepsModule, run.folder, String(step.n), hash, run.id, clickedAt, deadline, userHome, sessionIsApp ? 'desktop' : 'terminal', sessionStartedAt ?? '', kept], {
         cwd: jobFolder(), detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, ...caEnv(wheelhouseHome()) },
       });
       child?.on?.('error', failed);
