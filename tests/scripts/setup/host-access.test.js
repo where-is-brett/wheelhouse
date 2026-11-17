@@ -13,6 +13,7 @@ import {
   asIsReachLine, replacesLine, noRoadLine, hostAddress, NO_KEY_GIVEN, folderMayRewrite,
 } from '../../../scripts/setup/host-access.js';
 import { makeRoutedCurl } from '../../helpers/fake-curl.js';
+import { originUrl } from '../../../scripts/setup/tools.js';
 
 const GITLAB = 'https://gitlab.example.org';
 const KEY = 'stand-in-DIRECTORKEY0001';
@@ -46,7 +47,7 @@ test('the credential helper and a working ls-remote are read from the director\'
   const ask = async (args) => {
     seen.push(args);
     if (args[0] === 'config') return { code: 0, stdout: 'manager\n' };
-    return { code: args[1].includes('good') ? 0 : 128, stdout: '' };
+    return { code: args.at(-2).includes('good') ? 0 : 128, stdout: '' };
   };
   assert.equal(await credentialHelperOf({ address: GITLAB, ask }), 'manager');
   assert.deepEqual(seen[0], ['config', '--get-urlmatch', 'credential.helper', GITLAB]);
@@ -348,5 +349,82 @@ test('a folder whose own git settings could rewrite an address keeps the directo
     assert.equal(cwds.some((c) => folders.includes(c)), false, 'git is not run inside the folder');
   } finally {
     for (const f of folders) fs.rmSync(f, { recursive: true, force: true });
+  }
+});
+
+test('an origin address that reads as an option or a transport helper never reaches git, and creates no file', async () => {
+  const marker = path.join(os.tmpdir(), `wh-pwned-${process.pid}`);
+  const evil = `--upload-pack=touch\${IFS}${marker};@x:y`;
+  const seen = [];
+  const run = async (file, args, opts) => {
+    seen.push({ args, opts });
+    return { code: 0, stdout: 'abc\tHEAD\n' };
+  };
+  const base = { host: 'github', repo: 'ann/cafe', run, borrow: async () => null, via: viaOf(curlFor({})), env: { PATH: '/bin', GIT_DIR: '/elsewhere', GIT_CONFIG_COUNT: '1', GH_TOKEN: 'tok2' } };
+  const bad = [evil, '-oProxyCommand=x@y:z', 'ext::sh -c touch pwned', 'ssh://-oProxyCommand=x/y', 'git@-evil:a/b', 'https://-evil/a'];
+  for (const remoteUrl of bad) {
+    assert.equal(transportOf(remoteUrl), null, remoteUrl);
+    seen.length = 0;
+    const found = await findAccess({ ...base, remoteUrl });
+    assert.equal(found.gitReaches, false, remoteUrl);
+    assert.equal(seen.some(({ args }) => args.includes('ls-remote')), false, `${remoteUrl} reached git`);
+  }
+  assert.equal(fs.existsSync(marker), false);
+  // A good address is passed after --end-of-options, from a folder outside any repository, with none of git's own variables.
+  for (const remoteUrl of ['https://github.com/ann/cafe.git', 'git@github.com:ann/cafe.git', 'ssh://git@github.com/ann/cafe.git']) {
+    assert.notEqual(transportOf(remoteUrl), null, remoteUrl);
+    seen.length = 0;
+    await findAccess({ ...base, remoteUrl });
+    const listed = seen.filter(({ args }) => args.includes('ls-remote'));
+    assert.ok(listed.length > 0, remoteUrl);
+    for (const { args, opts } of listed) {
+      assert.ok(args.indexOf('--end-of-options') >= 0 && args.indexOf('--end-of-options') < args.indexOf(remoteUrl), remoteUrl);
+      assert.equal(opts.cwd, os.tmpdir());
+    }
+    for (const { opts } of seen) {
+      assert.equal(opts.baseEnv.GIT_DIR, undefined);
+      assert.equal(opts.baseEnv.GIT_CONFIG_COUNT, undefined);
+      assert.equal(opts.baseEnv.GIT_ALLOW_PROTOCOL, 'https:ssh');
+    }
+  }
+  // The folder's own origin is never read when it starts with a dash.
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-origin-'));
+  try {
+    fs.mkdirSync(path.join(folder, '.git'));
+    fs.writeFileSync(path.join(folder, '.git', 'config'), `[remote "origin"]\n\turl = ${evil}\n`);
+    assert.equal(originUrl(folder), null);
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test('a linked worktree, or a repository with a config of its own for one, may rewrite addresses too', () => {
+  for (const marker of ['commondir', 'config.worktree']) {
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-worktree-'));
+    try {
+      fs.mkdirSync(path.join(folder, '.git'));
+      fs.writeFileSync(path.join(folder, '.git', 'config'), '[core]\n\tbare = false\n');
+      assert.equal(folderMayRewrite(folder), false);
+      fs.writeFileSync(path.join(folder, '.git', marker), 'x\n');
+      assert.equal(folderMayRewrite(folder), true, marker);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  }
+});
+
+test('an address git would rewrite to another scheme, or to a transport helper, keeps the token variables out', async () => {
+  const seen = [];
+  const rewrites = { 'https://github.com/a/b': 'file://github.com/a/b', 'https://github.com/a/c': 'ext::https://github.com/a/c' };
+  const run = async (file, args, opts) => {
+    if (args.includes('--get-url')) return { code: 0, stdout: `${rewrites[args.at(-1)]}\n` };
+    seen.push(opts.baseEnv);
+    return { code: 0, stdout: 'abc\tHEAD\n' };
+  };
+  for (const remoteUrl of Object.keys(rewrites)) {
+    seen.length = 0;
+    await findAccess({ repo: 'a/b', host: 'github', run, borrow: async () => null, via: viaOf(curlFor({})), env: { PATH: '/bin', GH_TOKEN: 'tok2' }, remoteUrl });
+    assert.ok(seen.length > 0, remoteUrl);
+    for (const e of seen) assert.equal(e.GH_TOKEN, undefined, remoteUrl);
   }
 });

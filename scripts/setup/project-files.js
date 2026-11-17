@@ -1171,7 +1171,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   });
   // One thing to a line, as step 3's card lists its own, under a title that says whose sign-in does it.
   const by = local || joining ? '' : pasted ? ', sent with the ' + PERSONAL_DAYS + '-day token you pasted at step 3, which can act as you across GitLab' : keyed ? (pasted === null ? ', sent with the project\'s own key where GitLab allows one, or else the ' + PERSONAL_DAYS + '-day token you pasted at step 3, which can act as you across GitLab' : ', sent with the project\'s own key, not your account') : `, acting as you on ${company ? 'your company\'s GitLab' : NAME[host]}`;
-  const full = card([`Setup step 7, ${titleOf7(local, keyed)}${joining ? ', for this computer' : by}:`, ...[...parts, ...pinned].map(asLine)].join('\n'));
+  const full = card([`Setup step 7, ${titleOf7(local || joining, keyed)}${joining ? ', for this computer' : by}:`, ...[...parts, ...pinned].map(asLine)].join('\n'));
   const fits = (c) => composeCard({ ...c, target: { step: 7, hash: '0'.repeat(64) } }).question.question.length <= CARD.chars;
   try {
     if (fits(full)) return full;
@@ -1182,7 +1182,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
       ...(files.length > 0 || excluded || ours ? ['this computer\'s settings'] : []), ...(secrets ? [negated.length > 0 ? 'some .env files kept out of git' : '.env files kept out of git'] : []), ...(negated.length > 0 ? ['.gitignore lets some .env files in: raise it on the computer that set the project up'] : []), ...(pins.length > 0 ? [`${listed(pins)}, which agents work with`] : []),
       ...(listens ? [LISTENING_CLAUSE] : []), 'nothing committed', ...(differ.length > 0 ? [`${listed(differ)} left as ${differ.length === 1 ? 'it is' : 'they are'}`] : []),
     ];
-    return card([`Setup step 7, ${titleOf7(local)}, for this computer:`, ...mine.map(asLine)].join('\n'));
+    return card([`Setup step 7, ${titleOf7(true)}, for this computer:`, ...mine.map(asLine)].join('\n'));
   }
   const short = [
     ...(shared.length > 0 ? ['Wheelhouse\'s settings in .claude', ...(shared.some((c) => c.section) ? ['a Wheelhouse section in CLAUDE.md'] : [])] : []), ...(files.length > shared.length || excluded || ours ? ['this computer\'s settings'] : []),

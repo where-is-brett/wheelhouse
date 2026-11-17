@@ -632,7 +632,9 @@ export function originUrl(folder) {
     return null;
   }
   const section = /^\s*\[remote\s+"origin"\]\s*$([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m.exec(text)?.[1] ?? '';
-  return /^\s*url\s*=\s*(.+?)\s*$/m.exec(section)?.[1] ?? null;
+  const url = /^\s*url\s*=\s*(.+?)\s*$/m.exec(section)?.[1] ?? null;
+  // An address that starts with a dash would read as an option to git, never as an address.
+  return url !== null && url.startsWith('-') ? null : url;
 }
 
 // The host tools this project needs: the one for the host a remote names, or the one step 3's answers chose; none for a project

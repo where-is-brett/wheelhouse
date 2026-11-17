@@ -2,7 +2,7 @@
 // The reading of a pasted project address, the list of token variables, and what is kept of an address.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pastedAddress, withoutSecrets, pinOf, hostOfAddress } from '../../../scripts/lib/pasted-address.js';
+import { pastedAddress, withoutSecrets, pinOf, hostOfAddress, joinKept, HELD_SECRET } from '../../../scripts/lib/pasted-address.js';
 import { TOKEN_NAMES, withoutTokens } from '../../../scripts/lib/token-names.js';
 import { repoNamed } from '../../../scripts/setup/host.js';
 
@@ -85,4 +85,16 @@ test('one list of token variables serves the survey, the foreman, glab, git and 
   for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GL_TOKEN', 'GLAB_TOKEN', 'GITLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'OAUTH_TOKEN', 'GH_ENTERPRISE_TOKEN']) assert.ok(TOKEN_NAMES.includes(name), name);
   const out = withoutTokens();
   for (const name of TOKEN_NAMES) assert.equal(Object.hasOwn(out, name) && out[name] === undefined, true, name);
+});
+
+test('a join answer with a user and password in it, in any spelling, in any word, is held whole', () => {
+  for (const text of ['https:/ann:Winter2026@gitlab.acme.com/a/b', '//ann:Winter2026@gitlab.acme.com/a', 'htps//ann:pw@github.com/a', 'see ann:Winter2026@gitlab.acme.com:a/b',
+    'ann%3AWinter2026%40gitlab.acme.com/a', 'ann:Hunter2@gitlab.acme.org/t/p', 'https://ann:pa/ss@gitlab.acme.org/t/p', 'ssh://ann:pa/ss@host.example.org/x']) {
+    assert.equal(joinKept(text), HELD_SECRET, text);
+  }
+  // Plain sentences and the bare git@ forms are kept.
+  assert.equal(joinKept('the cafe one'), 'the cafe one');
+  assert.equal(joinKept('git@gitlab.example.org:g/p.git'), 'git@gitlab.example.org:g/p.git');
+  assert.equal(joinKept('https://gitlab.example.org/g/p?tab=readme'), 'https://gitlab.example.org/g/p');
+  assert.equal(joinKept('gitlab.acme.org/t/p private_token=abc123'), 'gitlab.acme.org/t/p');
 });

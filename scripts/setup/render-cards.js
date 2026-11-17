@@ -43,6 +43,8 @@ const T0 = new Date('2026-11-16T03:00:00.000Z');
 export const COMPANY_ADDRESS = 'https://gitlab.example.com';
 // A project's page on that GitLab, as the director pastes it on the join question.
 export const PASTED_ADDRESS = `${COMPANY_ADDRESS}/a-director/cafe-menu`;
+// The same page with a sign-in name and password written into it (joined here so no file holds one whole).
+export const HELD_ADDRESS = `https://${['ann', 'render-only'].join(':')}@gitlab.example.com/a-director/cafe-menu`;
 // The director's account on the pretend host, and the project step 3 makes there.
 const USER = 'a-director';
 const PROJECT_ID = 41;
@@ -56,7 +58,8 @@ export const PATHS = Object.freeze({
   d: { title: 'GitHub on Windows', platform: 'win32', host: 'GitHub', gh: 'in' },
   e: { title: 'A company\'s GitLab on a Mac, GitLab\'s tool in', platform: 'darwin', host: 'GitLab', where: 'company', glab: 'in' },
   f: { title: 'A project on a company\'s GitLab pasted by its address on the join question, on a Mac', platform: 'darwin', host: 'GitLab', where: 'pasted', glab: 'in', join: PASTED_ADDRESS },
-  g: { title: 'The same address for a project with no Wheelhouse settings: asked again saying so, then a new product on the company\'s GitLab', platform: 'darwin', host: 'GitLab', where: 'company', glab: 'in', join: PASTED_ADDRESS, miss: true },
+  g: { title: 'The same address for a project with no Wheelhouse settings: found missing at step 3\'s apply, asked again, GitLab chosen and refused for the name, then kept on this computer', platform: 'darwin', host: 'GitLab', where: 'company', glab: 'in', join: PASTED_ADDRESS, miss: true, missAtApply: true, reask: ['GitLab', 'Keep it on this computer'] },
+  h: { title: 'An address pasted with a sign-in name and password in it: not kept, asked again saying so, then kept on this computer', platform: 'darwin', host: 'Keep it on this computer', glab: 'in', join: HELD_ADDRESS, miss: true, reask: ['Keep it on this computer'] },
 });
 
 // ---- The pretend computer ----
@@ -106,7 +109,7 @@ function scratchGit(connected, args, options = {}) {
     // Setup lets git reach over https only; the scratch copy of the host is a local folder.
     ...(reaches ? { GIT_ALLOW_PROTOCOL: 'https:file' } : {}),
   };
-  const to = reaches ? ['-c', `url.${pathToFileURL(connected.hostRoot).href}/.insteadOf=${connected.hostAddress}/`] : [];
+  const to = reaches && connected.hostAddress !== '' ? ['-c', `url.${pathToFileURL(connected.hostRoot).href}/.insteadOf=${connected.hostAddress}/`] : [];
   return realRun('git', [...to, ...args], { ...options, env, platform: process.platform });
 }
 
@@ -217,6 +220,33 @@ async function connectAsStepThree({ folder, scratch, changes }) {
   return connected;
 }
 
+// Step 3's Go ahead for a product kept on this computer, as its apply leaves it: git started in the folder with a first commit
+// on main, and the project's record and private record opened, with no host.
+async function keepAsStepThree({ folder, scratch, changes }) {
+  const { writeProject } = await import('../lib/projects.js');
+  const { stateDir } = await import('../lib/paths.js');
+  const home = changes.find((c) => c.action === 'home');
+  const project = path.basename(path.dirname(home.target));
+  const connected = { host: 'local', hostAddress: '', hostRoot: path.join(scratch, 'host'), gitConfig: path.join(scratch, 'gitconfig'), protected: false };
+  fs.writeFileSync(connected.gitConfig, '[user]\n\tname = A Director\n\temail = director@example.com\n[init]\n\tdefaultBranch = main\n');
+  const git = async (cwd, ...args) => {
+    const got = await scratchGit(connected, args, { cwd });
+    if (got.code !== 0) throw new Error(`git ${args[0]} failed in the render's scratch folder: ${got.stderr}`);
+  };
+  await git(folder, 'init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(folder, 'README.md'), '# Cafe Menu\n');
+  await git(folder, 'add', 'README.md');
+  await git(folder, 'commit', '-q', '-m', 'First commit');
+  fs.mkdirSync(path.dirname(home.target), { recursive: true });
+  const cloned = await realRun('git', ['clone', '-q', '--bare', '--no-hardlinks', folder, home.target], { env: { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: connected.gitConfig }, platform: process.platform });
+  if (cloned.code !== 0) throw new Error(`git clone failed in the render's scratch folder: ${cloned.stderr}`);
+  const repo = `local/${project}`;
+  writeProject(project, { folder, remoteUrl: null, host: 'local', repo, connection: { host: 'local', mode: 'none', project: repo } });
+  fs.mkdirSync(stateDir(project), { recursive: true });
+  await git(stateDir(project), 'init', '-q', '-b', 'main');
+  return connected;
+}
+
 const settles = (n) => ({ n, title: SETUP_TITLES[n], plan: async () => ({ settled: { record: {} } }), apply: async () => [] });
 
 // The steps for the engine: the real steps 2 to 10 on the pretend computer, read afresh from the world on each call.
@@ -291,8 +321,16 @@ function choose(p, { id, card }, { stepTwoDone }) {
   const pick = (want) => labels.find((l) => l === want) ?? null;
   if (id === 'one-card' || /^plan-/.test(id)) return { label: stepTwoDone.customised ? 'Go ahead' : 'Customise' };
   if (id === 'real-users') return { label: pick('Not yet') };
+  // A project kept on this computer: no backup folder is named, so no window or typed path is asked for.
+  if (/^backup/.test(id)) return { label: pick('Not now, keep building') };
   // A pasted address on the join question; once it missed, the question asked again is answered as any join question is, with the path's host.
   if (id === 'join' && p.join) return { text: p.join };
+  // The question asked again after a miss, a refusal or a held answer: the path's answers in turn, the last one standing.
+  if (/^join-/.test(id) && p.reask) {
+    const label = p.reask[Math.min(stepTwoDone.reasked, p.reask.length - 1)];
+    stepTwoDone.reasked += 1;
+    return { label: pick(label) };
+  }
   if (id === 'host' || /^join/.test(id)) return { label: pick(p.host) };
   if (/^gitlab-where/.test(id)) return { label: pick(p.where === 'company' ? 'My company\'s GitLab' : PUBLIC_GITLAB) };
   if (/^host-tool-/.test(id) && p.tool === 'fetch') return { label: labels.find((l) => l.startsWith('Fetch')) ?? recommended };
@@ -351,7 +389,7 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
       state: { write: async (body) => ({ ok: true, id: body.id }), record: async (body) => ({ ok: true, id: body.event?.id }) },
       profile: { record: async () => ({ ok: true }) },
     };
-    const state = { customised: false };
+    const state = { customised: false, reasked: 0, missed: false };
     // What the director's click returns: on the Desktop app, a card whose question an earlier card had shows that earlier
     // card, so the answer is the one given there.
     const answer = async (step, ask) => {
@@ -383,10 +421,6 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
         cwd: folder, hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
         tool_input: { questions: [card] }, tool_response: { answers: { [card.question]: value } },
       }, { client, now: () => new Date(clock - 500) });
-      // The attempt to bring the pasted project in found no Wheelhouse settings in it, as step 3's apply records it.
-      if (id === 'join' && p.miss) {
-        addChanges(runId(), [{ id: `chg-render-miss-${clock}`, step: 3, kind: 'answer', target: 'step 3', before: null, after: { joined: `${USER}/cafe-menu`, missed: 'none', host: 'gitlab', address: true, at: new URL(COMPANY_ADDRESS).host } }]);
-      }
     };
     const plan = (step) => routes['/setup/plan']({ folder, step, ...(desktop ? { desktop: true } : {}) });
     const runId = () => readJournal().runs.find((r) => r.folder === folder)?.id;
@@ -426,7 +460,24 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
         }
         if (n === 3) {
           const w = world();
-          w.connected = await connectAsStepThree({ folder, scratch, changes: got.changes });
+          // The project pasted holds no Wheelhouse settings: step 3's apply signs in, looks, and stops, so the miss comes after the
+          // Go ahead and the sign-in, said as the apply says it, and the question is asked again.
+          if (p.missAtApply && !state.missed) {
+            state.missed = true;
+            const { joinMissLine } = await import('./host.js');
+            const at = new URL(COMPANY_ADDRESS).host;
+            tell(joinMissLine({ host: 'gitlab', wanted: `${USER}/cafe-menu`, found: [], at, user: USER }));
+            addChanges(runId(), [{ id: `chg-render-miss-${clock}`, step: 3, kind: 'answer', target: 'step 3', before: null, after: { joined: `${USER}/cafe-menu`, missed: 'none', host: 'gitlab', user: USER, address: true, at } }]);
+            continue;
+          }
+          // A new product made under the name of a project that exists fails as the real apply fails.
+          if (p.missAtApply && got.changes.some((c) => c.action === 'repository')) {
+            end = { step: 3, how: 'failed', why: `${USER}/cafe-menu already exists on GitLab and wasn't set up with Wheelhouse, so setup won't use it for a new product: rename this folder, then start setup again from it` };
+            return { cards, end, said, heard };
+          }
+          // A product kept on this computer connects to no host.
+          if (got.changes.some((c) => c.action === 'home')) w.connected = await keepAsStepThree({ folder, scratch, changes: got.changes });
+          else if (got.changes.some((c) => c.action === 'connection')) w.connected = await connectAsStepThree({ folder, scratch, changes: got.changes });
           fs.writeFileSync(path.join(home, 'render-world.json'), JSON.stringify(w));
           // A project joined, not made: the run records the repository it checked out, so it reads as a joining run.
           if (p.join) addChanges(runId(), [{ id: `chg-render-joined-${clock}`, step: 3, kind: 'answer', target: 'step 3', before: null, after: p.miss ? { joined: null } : { joined: `${USER}/cafe-menu`, found: true } }]);

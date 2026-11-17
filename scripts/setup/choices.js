@@ -211,8 +211,8 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     // The product's own name, where the typed answer (an address, or owner/name) gives it, not the folder's.
     const named = typeof text === 'string' && backupNamed(text) === null ? repoNamed(text)?.split('/').at(-1) : null;
     // An owner/name looked for on the company's GitLab, as step 3 words it: its account or groups.
-    if (where === null && onCompanyGitLab(choices, host)) return `${named ?? name}, from the project's saved settings, found in your account or groups on your company's GitLab${typedCompanyHost(choices) === null ? '' : ` at ${typedCompanyHost(choices)}`}, brought into this folder.`;
-    return `${named ?? name}, from the project's saved settings${where === null ? '' : `, on ${where}`}, brought into this folder.`;
+    if (where === null && onCompanyGitLab(choices, host)) return `${named ?? name}, set up with Wheelhouse, found in your account or groups on your company's GitLab${typedCompanyHost(choices) === null ? '' : ` at ${typedCompanyHost(choices)}`}, brought into this folder with its saved settings.`;
+    return `${named ?? name}, set up with Wheelhouse${where === null ? '' : ` on ${where}`}, brought into this folder with its saved settings.`;
   }
   if (id === 'real-users') {
     const live = choices.find((c) => c.id === 'live-data')?.label;
@@ -337,7 +337,12 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     if (kept !== null) lines.push(kept);
   }
   // A free GitHub plan can't protect a private repository, so on GitHub the line says protection is where the plan allows.
-  if (toRun.includes(7)) {
+  // A project brought in keeps what its first computer set up: this computer adds only its own files.
+  const lastJoin = list.filter((c) => c.id === 'join' || c.id.startsWith('join-')).at(-1);
+  const joiningNow = lastJoin !== undefined && !NOT_JOINING.includes(lastJoin.label) && backupNamed(lastJoin.text) === null;
+  if (toRun.includes(7) && joiningNow) {
+    lines.push(`This computer's own Wheelhouse files set up here; the project on ${hostOf(product, list)} and its main line's protection stay as they are.`);
+  } else if (toRun.includes(7)) {
     lines.push(keptHere ? 'Wheelhouse\'s settings saved to the project.'
       : hostOf(product, list) === 'GitHub' ? 'Wheelhouse\'s settings saved to the project, and its main line protected if your GitHub plan allows it (the free plan doesn\'t for a private repository).'
         : 'Wheelhouse\'s settings saved to the project, and its main line protected.');
