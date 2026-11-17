@@ -883,10 +883,11 @@ export function setupRoutes({
       } catch { /* status then says it is stuck once its time is up */ }
       removeSketch(run.id, step.n, clickedAt);
     };
-    // The list in names and digests, for the process to say what changed if its own list differs.
-    writeSketch(run.id, step.n, clickedAt, hash, changes);
+    // The list this click named, in a file for the process to check against the hash and apply; why it
+    // could not be kept, if so, goes to the process too, for its failure line.
+    const kept = writeSketch(run.id, step.n, clickedAt, hash, changes);
     try {
-      const child = spawn(process.execPath, [RUN_STEP, stepsModule, run.folder, String(step.n), hash, run.id, clickedAt, deadline, userHome, sessionIsApp ? 'desktop' : 'terminal', ...(sessionStartedAt === undefined ? [] : [sessionStartedAt])], {
+      const child = spawn(process.execPath, [RUN_STEP, stepsModule, run.folder, String(step.n), hash, run.id, clickedAt, deadline, userHome, sessionIsApp ? 'desktop' : 'terminal', sessionStartedAt ?? '', kept], {
         cwd: jobFolder(), detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, ...caEnv(wheelhouseHome()) },
       });
       child?.on?.('error', failed);

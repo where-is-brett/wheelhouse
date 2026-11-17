@@ -31,31 +31,33 @@ import { startedAsScript } from '../lib/started-as-script.js';
 
 export const TICK_MS = 5 * 1000;
 // The director's line begins in lower case: status says it after "did not finish:".
-const CHANGED = 'the plan for this step changed between your click and its start, so nothing was done.';
+const CHANGED = 'the plan for this step changed between your click and its start';
+const NOTHING_DONE = 'so nothing was done.';
 const AGAIN = 'Open setup again for the step\'s new card.';
-const NOTHING_MORE = 'Setup has nothing more to do for this step.';
 const DIFFERENT = 'What is different:';
 
-export async function runStep([modulePath, folder, stepText, hash, runId, clickedAt, deadlineText, userHome, sessionKind, sessionStartedAt], {
+export async function runStep([modulePath, folder, stepText, hash, runId, clickedAt, deadlineText, userHome, sessionKind, sessionStartedAt, handoffError], {
   now = () => new Date(), exit = (code) => process.exit(code), tickMs = TICK_MS,
 } = {}) {
   const n = Number(stepText);
   const clicked = Date.parse(clickedAt);
   const deadline = Date.parse(deadlineText);
-  if (!Number.isInteger(n) || !Number.isFinite(clicked) || !Number.isFinite(deadline) || deadline > clicked + STEP_TIMEOUT_MS) return 1;
-  if (typeof userHome !== 'string' || !path.isAbsolute(userHome)) return 1;
+  // Refused, it removes the file the helper made for this click, which nothing else will use.
+  const refused = () => {
+    removeSketch(runId, n, clickedAt);
+    return 1;
+  };
+  if (!Number.isInteger(n) || !Number.isFinite(clicked) || !Number.isFinite(deadline) || deadline > clicked + STEP_TIMEOUT_MS) return refused();
+  if (typeof userHome !== 'string' || !path.isAbsolute(userHome)) return refused();
   const run = readJournal().runs.find((r) => r?.id === runId);
-  if (!run || run.folder !== folder) return 1;
+  if (!run || run.folder !== folder) return refused();
   let expired = false;
   // This attempt: the entry still holds the click this process was started for, and no finish.
   const mine = (entry) => !expired && entry?.clickedAt === clickedAt && !entry.doneAt && !entry.failed;
   // It stops one tick before the deadline (ruling R47), so it has marked the step failed and gone
   // before the helper stops counting the step as running and a fresh click may start another.
   const past = () => now().getTime() >= deadline - tickMs;
-  if (!mine(run.steps?.[n]) || past()) {
-    removeSketch(runId, n, clickedAt);
-    return 1;
-  }
+  if (!mine(run.steps?.[n]) || past()) return refused();
   const fail = (reason, detail) => {
     try {
       markStep(runId, n, 'failed', { now, reason, detail, when: mine });
@@ -84,15 +86,20 @@ export async function runStep([modulePath, folder, stepText, hash, runId, clicke
       const got = await step.plan(ctx);
       // The director's line says what is different in plain words; the exact kind, action, target and
       // field names (never values) go to the entry's failedDetail, for agents.
+      // Without a handed list, agents are told so, and why the helper could not keep one if it said.
+      const noHanded = handed !== null ? '' : `no handed list (file missing or for another hash)${typeof handoffError === 'string' && handoffError !== '' ? `; the helper could not write it: ${handoffError}` : ''}`;
       if (!Array.isArray(got?.changes)) {
         const none = sayNoList(got);
-        return fail(`${CHANGED} ${DIFFERENT} ${none.plain}. ${none.again ? AGAIN : NOTHING_MORE}`, none.detail);
+        const detail = [none.detail, noHanded].filter((x) => x !== '').join('; ');
+        return fail(none.again
+          ? `${CHANGED}, ${NOTHING_DONE} ${DIFFERENT} ${none.plain}. ${AGAIN}`
+          : `${CHANGED}: ${none.plain}, so setup has nothing more to do for it.`, detail);
       }
       if (planHash(got.changes) !== hash) {
-        if (handed === null) return fail(`${CHANGED} ${AGAIN}`);
+        if (handed === null) return fail(`${CHANGED}, ${NOTHING_DONE} ${AGAIN}`, noHanded);
         const planned = sketchOf(got.changes, handed.salt);
         const said = sayDifference(handed, planned);
-        return fail(`${CHANGED} ${said === '' ? '' : `${DIFFERENT} ${said}. `}${AGAIN}`, detailOf(handed, planned));
+        return fail(`${CHANGED}, ${NOTHING_DONE} ${said === '' ? '' : `${DIFFERENT} ${said}. `}${AGAIN}`, detailOf(handed, planned));
       }
       changes = got.changes;
     }

@@ -13,6 +13,7 @@ import path from 'node:path';
 import { canonicalJson } from '../lib/canonical.js';
 import { hide } from '../lib/clean.js';
 import { wheelhouseHome } from '../lib/paths.js';
+import { STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 
 const IDENTITY = ['kind', 'action', 'target'];
 const MOST_NAMED = 3;
@@ -24,14 +25,14 @@ const SOMETHING = 'a setup item';
 const PLAIN = {
   'host:sign-in': '{host} sign-in',
   'host:certificate': '{host} certificate',
-  'host:connection': '{host} connection',
+  'host:connection': '{host} link',
   'host:key-card': 'sign-in key',
   'host:repository': 'project on {host}',
   'host:join': 'project to join on {host}',
   'host:own-app': 'your own GitHub app',
   'host:own-app-again': 'your own GitHub app',
-  'folder:connect': 'folder connection',
-  'folder:checkout': 'folder checkout',
+  'folder:connect': 'link from this folder to your project',
+  'folder:checkout': 'copy of your project in this folder',
   'folder:state': 'project record',
   'file:project': 'project record',
   'file:gitlab-hosts': 'settings file',
@@ -56,24 +57,51 @@ export function sketchOf(changes, salt = crypto.randomBytes(16).toString('hex'))
   };
 }
 
-// Keeps the list `hash` names, and its sketch, for this click of the run's step. Whether it was kept
-// does not matter to the step: without it the process works the list out again.
+// Keeps the list `hash` names, and its sketch, for this click of the run's step, after removing
+// files left by clicks older than a step may take. Whether it was kept does not matter to the step:
+// without it the process works the list out again. Gives '' when it was kept, else a short plain
+// reason, which the helper tells the process.
 export function writeSketch(runId, step, clickedAt, hash, changes) {
   let temp = null;
+  let failure = '';
   try {
     const file = sketchFile(runId, step, clickedAt);
     const dir = path.dirname(file);
+    // The folder is the user's own, a real folder and not a link to one.
+    if (fs.existsSync(dir)) {
+      const found = fs.lstatSync(dir);
+      if (!found.isDirectory() || (process.platform !== 'win32' && found.uid !== process.getuid())) throw new Error('the folder is not the user\'s own');
+    }
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     fs.chmodSync(dir, 0o700);
+    sweep(dir);
     temp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
     fs.writeFileSync(temp, JSON.stringify({ hash, changes, ...sketchOf(changes) }), { mode: 0o600, flag: 'wx' });
     fs.renameSync(temp, file);
     temp = null;
-  } catch { /* the process then works the list out again */ }
+  } catch (error) {
+    failure = safe(error?.code ?? error?.message ?? 'unknown').slice(0, 60);
+  }
   if (temp !== null) {
     try {
       fs.rmSync(temp, { force: true });
     } catch { /* a leftover temporary file is removed with the folder */ }
+  }
+  return failure;
+}
+
+// Removes what clicks older than a step may take left behind: a process that was ended before it
+// could remove its own file.
+function sweep(dir) {
+  let names = [];
+  try {
+    names = fs.readdirSync(dir);
+  } catch { /* nothing to sweep */ }
+  for (const name of names) {
+    try {
+      const file = path.join(dir, name);
+      if (Date.now() - fs.statSync(file).mtimeMs > STEP_TIMEOUT_MS) fs.rmSync(file, { force: true });
+    } catch { /* it goes at the next click or at uninstall */ }
   }
 }
 
@@ -134,7 +162,7 @@ const plainOf = (entry) => (PLAIN[`${entry.kind}:${entry.action}`] ?? PLAIN[entr
 
 // Only plain characters of a target go to a journal line: anything else is a question mark.
 const safe = (text) => String(text).replace(/[^A-Za-z0-9 _.,/\\:~@+=-]/g, '?').slice(0, MOST_TARGET_CHARS);
-const technical = (entry) => [entry.kind ?? 'entry', entry.action, typeof entry.target === 'string' ? safe(hide(entry.target, [])) : undefined]
+const technical = (entry) => [safe(entry.kind ?? 'entry'), typeof entry.action === 'string' ? safe(entry.action) : undefined, typeof entry.target === 'string' ? safe(hide(entry.target, [])) : undefined]
   .filter((x) => typeof x === 'string').join(' ');
 
 // For the director, in plain words: what is different, repeats grouped ("3 more items (GitLab
@@ -163,7 +191,7 @@ export function detailOf(before, after) {
   const listed = [
     ...diff.added.map((e) => `added ${technical(e)}`),
     ...diff.removed.map((e) => `removed ${technical(e)}`),
-    ...diff.changed.map(({ entry, names }) => `changed ${technical(entry)} (fields: ${names.join(', ')})`),
+    ...diff.changed.map(({ entry, names }) => `changed ${technical(entry)} (fields: ${names.map(safe).join(', ')})`),
   ];
   if (listed.length === 0) return 'same items; order or a detail outside the sketch differs';
   return listed.join('; ').slice(0, MOST_DETAIL_CHARS);
