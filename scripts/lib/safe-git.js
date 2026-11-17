@@ -492,14 +492,11 @@ export const SETTINGS_CHANGED_LINE = "Nothing was pushed: this computer's git se
 const RELEVANT = /^(?:credential\..+|core\.sshcommand|url\..+|http\..+|remote\..+|ssh\..+|include\.path|includeif\..+\.path)$/;
 const OLD_RELEVANT = /^(?:credential\.(?:.+\.)?helper|core\.sshcommand|url\..+\.(?:push)?insteadof|http\.(?:.+\.)?(?:proxy|sslcainfo)|include\.path|includeif\..+\.path|remote\..+\.pushurl)$/;
 const pairsOf = (entries, pattern) => entries.filter(({ key }) => pattern.test(key.toLowerCase())).map(({ key, value }) => [key.toLowerCase(), value]);
-// The settings a push trusts, in git's order, and a fingerprint of them. For an ssh push the director's own GIT_SSH_COMMAND and GIT_SSH
-// (the environment's, which the push passes on) are part of it.
+// The settings a push trusts, in git's order, and a fingerprint of them. The environment is not part of it: setup and the helper run in
+// different environments, so a hash of it would differ for good.
 export const trustedSettings = (entries) => pairsOf(entries, RELEVANT);
-const sshVariables = (reach, env) => (reach === 'push-ssh'
-  ? ['GIT_SSH_COMMAND', 'GIT_SSH'].map((name) => [`env:${name.toLowerCase()}`, Object.entries(env ?? {}).find(([k]) => k.toUpperCase() === name)?.[1] ?? null])
-  : []);
 const hashOf = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
-export const settingsFingerprint = (entries, { reach = 'push', env = process.env } = {}) => `v2:${hashOf([...trustedSettings(entries), ...sshVariables(reach, env)])}`;
+export const settingsFingerprint = (entries) => `v2:${hashOf(trustedSettings(entries))}`;
 // The fingerprint as the earlier form made it, to compare with a record that holds one.
 export const legacySettingsFingerprint = (entries) => hashOf(pairsOf(entries, OLD_RELEVANT));
 
@@ -588,12 +585,12 @@ function checkTrusted(file, folder, { now, old }) {
 
 // The director's confirmation of the computer's settings as they are now in `cwd`, the folder the push runs in (a later part's
 // card calls this). It is merged into the record: the other folders' entries and the old single fingerprint stand.
-export async function confirmComputerSettings({ file, run = realRun, gitPath = 'git', cwd, url = null }) {
+export async function confirmComputerSettings({ file, run = realRun, gitPath = 'git', cwd }) {
   const entries = await readSettingsFor({ run, gitPath, cwd });
   if (entries === null) throw new Error("Git's settings on this computer could not be read");
   const record = readRecord(file);
   const kept = record === null || record === 'refused' ? { folders: {}, legacy: null } : record;
-  writeRecord(file, { folders: { ...kept.folders, [folderKey(cwd)]: settingsFingerprint(entries, { reach: url === null ? 'push' : pushReachFor(url) }) }, legacy: kept.legacy });
+  writeRecord(file, { folders: { ...kept.folders, [folderKey(cwd)]: settingsFingerprint(entries) }, legacy: kept.legacy });
 }
 
 // git in `cwd`: `git(args, options)` gives run's answer. `list` says which allowed list the look uses:
@@ -676,7 +673,7 @@ export function safeGit({
     const why = settingsRefusal(entries);
     if (why !== null) throw new LookRefusal(`Git's settings on this computer ${why}, which Wheelhouse does not allow for a push. Remove that setting, then try again.`);
     // What the computer's settings were when as-is pushing was first used: a change since is the director's to confirm.
-    if (trust !== null && subcommandOf(args) === 'push') checkTrusted(trust.file, cwd, { now: settingsFingerprint(entries, { reach }), old: legacySettingsFingerprint(entries) });
+    if (trust !== null && subcommandOf(args) === 'push') checkTrusted(trust.file, cwd, { now: settingsFingerprint(entries), old: legacySettingsFingerprint(entries) });
     const extras = hookNames(entries).map((name) => [`hook.${name}.enabled`, 'false']);
     if (pushTo !== null && /^https?:\/\//i.test(pushTo.url)) extras.push([`http.${pushTo.url}.sslVerify`, 'true']);
     const count = Number.parseInt(given.GIT_CONFIG_COUNT ?? '0', 10) || 0;

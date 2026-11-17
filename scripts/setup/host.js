@@ -2864,7 +2864,7 @@ export function hostStep({
         if (connection.mode === 'as-is') {
           const mirror = path.join(stateDir(slug), '..', 'mirror.git');
           const noMirror = 'Setup couldn\'t prepare Wheelhouse\'s own copy of the project on this computer; nothing was pushed. A fresh Go ahead tries again.';
-          const inMirror = setupGit({ run, gitPath: git.path, cwd: mirror, url: String(kept.remoteUrl).trim() });
+          const inMirror = setupGit({ run, gitPath: git.path, cwd: mirror });
           if (!fs.existsSync(path.join(mirror, 'HEAD'))) {
             fs.rmSync(mirror, { recursive: true, force: true });
             fs.mkdirSync(mirror, { recursive: true });

@@ -334,7 +334,7 @@ test('the private copy a push reads holds no include of its own, only the settin
   assert.doesNotMatch(seen.copy, /work\.cfg/);
 });
 
-test('the fingerprint covers a remote\'s own proxy, every certificate and proxy setting, ssh settings, and an ssh push\'s own command', async () => {
+test('the fingerprint covers a remote\'s own proxy, every certificate and proxy setting, and ssh settings, and not the environment', async () => {
   const { settingsFingerprint } = await import('../../../scripts/lib/safe-git.js');
   const base = [{ key: 'credential.helper', value: 'a' }];
   const same = settingsFingerprint(base);
@@ -343,9 +343,6 @@ test('the fingerprint covers a remote\'s own proxy, every certificate and proxy 
     assert.notEqual(settingsFingerprint([...base, { key, value: 'v' }]), same, key);
   }
   assert.equal(settingsFingerprint([...base, { key: 'user.name', value: 'v' }]), same, 'an unrelated setting changes nothing');
-  const env = (command) => ({ GIT_SSH_COMMAND: command });
-  assert.notEqual(settingsFingerprint(base, { reach: 'push-ssh', env: env('ssh -i a') }), settingsFingerprint(base, { reach: 'push-ssh', env: env('ssh -i b') }));
-  assert.equal(settingsFingerprint(base, { reach: 'push', env: env('ssh -i a') }), settingsFingerprint(base, { reach: 'push', env: env('ssh -i b') }), 'an https push passes neither on');
 });
 
 test('a folder setup never confirmed is refused where a record exists, even one that names other folders', async () => {
