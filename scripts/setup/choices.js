@@ -36,7 +36,7 @@ import { engineWanted, engineLine } from './engine-parts.js';
 import { HEALTH_STEP, onRunList, stepDone } from '../lib/setup-run.js';
 import { askedRecord, answersFor } from './clicks.js';
 import { macKeepsAway } from '../lib/host-lines.js';
-import { COMPANY_GITLAB, GITLAB_COM, HOST_LABELS, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
+import { COMPANY_GITLAB, GITLAB_COM, HOST_LABELS, repoNamed, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
 import { LIVE_DATA, PRODUCT, SIGNS_APPS, productName } from './questions.js';
 import { hostOfAddress, pastedAddress, FIRST_CHECK_LINE, KEEP_HERE, KEPT_LINE, ONLY_HERE_AFTER, ONLY_HERE_LINE, PUT_ON_GITLAB, STARTED_LINE } from './local.js';
 import { backupNamed } from '../host/local/restore.js';
@@ -162,7 +162,7 @@ const joinedText = (choices) => choices.filter((c) => c.id === 'join' || c.id.st
 function addressHostName(choices) {
   const parts = pastedAddress(joinedText(choices));
   if (hostOfAddress(parts) === null) return null;
-  return hostOfAddress(parts) === 'github' ? 'GitHub' : isDefaultHost(parts) ? 'GitLab' : `your company's GitLab (${hostWords(parts)})`;
+  return hostOfAddress(parts) === 'github' ? 'GitHub' : isDefaultHost(parts) ? 'GitLab' : `your company's GitLab at ${hostWords(parts)}`;
 }
 
 // The host the plan names, as step 3 will use it: the one the folder's own remote names, else
@@ -194,7 +194,9 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
   if (id === 'join' || id.startsWith('join-')) {
     if (label === NEW_PRODUCT) return null;
     const where = addressHostName(choices);
-    return `${name}, from your other computer${where === null ? '' : `, on ${where}`}, brought into this folder.`;
+    // The product's own name, where the typed answer (an address, or owner/name) gives it, not the folder's.
+    const named = typeof text === 'string' && backupNamed(text) === null ? repoNamed(text)?.split('/').at(-1) : null;
+    return `${named ?? name}, from your other computer${where === null ? '' : `, on ${where}`}, brought into this folder.`;
   }
   if (id === 'real-users') {
     const live = choices.find((c) => c.id === 'live-data')?.label;

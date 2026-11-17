@@ -244,3 +244,19 @@ test('a join answer refused and asked again leaves one join question, and no pla
   assert.match(plan, /A new product, in a private project on your GitLab account\./);
   assert.equal(plan.split('\n').filter((l) => l.startsWith('- ')).length, 1);
 });
+
+test('the plan line for an address join names the product the address gave, and the host it named', async () => {
+  const step = {
+    n: 3,
+    plan: async (ctx) => (ctx.answers['3.join'] ? { wait: 0, why: 'asked' } : { ask: { id: 'join', typed: true, card: { what: 'Where?', options: [{ label: NEW_PRODUCT }], recommend: NEW_PRODUCT } } }),
+  };
+  const planOf = (s, answers) => s.plan({ answers });
+  for (const [text, line] of [
+    ['https://gitlab.company.example/team/app', /^- app, from your other computer, on your company's GitLab at gitlab\.company\.example, brought into this folder\.$/m],
+    ['github.com/ann/cafe-menu', /^- cafe-menu, from your other computer, on GitHub, brought into this folder\.$/m],
+  ]) {
+    const list = await openChoices({ steps: [step], run: null, answers: { '3.join': { label: null, text, at: '2026-10-26T10:05:00.000Z' } }, planOf });
+    const plan = oneCard({ folder: os.tmpdir(), list, product: null, platform: 'darwin', toRun: [3], count: 1 }).card.question;
+    assert.match(plan, line, plan);
+  }
+});

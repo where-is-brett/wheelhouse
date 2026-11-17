@@ -413,7 +413,7 @@ export function originRepository(originUrl, host) {
 export const repositoryOf = (originUrl, host) => originRepository(originUrl, host)?.repo ?? null;
 
 // Variables that would send the director's own token to the host an origin address names.
-const TOKEN_VARIABLES = ['GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_HOST', 'GITLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'OAUTH_TOKEN', 'GITLAB_HOST'];
+export const TOKEN_VARIABLES = ['GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_HOST', 'GITLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'OAUTH_TOKEN', 'GITLAB_HOST'];
 const withoutTokens = () => ({ ...Object.fromEntries(TOKEN_VARIABLES.map((n) => [n, undefined])), GH_PROMPT_DISABLED: '1', NO_COLOR: '1' });
 
 // GitLab's open merge requests, by the director's own key through GitLab's API (`gitlab` gives the client:
