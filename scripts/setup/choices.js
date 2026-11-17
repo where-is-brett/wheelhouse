@@ -36,7 +36,7 @@ import { engineWanted, engineLine } from './engine-parts.js';
 import { HEALTH_STEP, onRunList, stepDone } from '../lib/setup-run.js';
 import { askedRecord, answersFor } from './clicks.js';
 import { macKeepsAway } from '../lib/host-lines.js';
-import { COMPANY_GITLAB, GITLAB_COM, HOST_LABELS, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
+import { COMPANY_GITLAB, GITLAB_COM, companyAddress, HOST_LABELS, pinOf, repoNamed, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
 import { LIVE_DATA, PRODUCT, SIGNS_APPS, productName } from './questions.js';
 import { FIRST_CHECK_LINE, KEEP_HERE, KEPT_LINE, ONLY_HERE_AFTER, ONLY_HERE_LINE, PUT_ON_GITLAB, STARTED_LINE } from './local.js';
 import { backupNamed } from '../host/local/restore.js';
@@ -135,7 +135,12 @@ export async function openChoices({ steps, run, answers, planOf }) {
       if (chosen === null && (got.ask.waits === true || card.recommend === null)) break;
     }
   }
-  return list;
+  // The join question is asked again, under a new id, after each answer refused (typed text that names no
+  // repository, a backup not found, a miss); only the newest is the question, and only the answer that
+  // settled it counts, so an earlier refused answer is no choice and adds no line to the plan.
+  const isJoin = (c) => c.step === 3 && /^join(?:-|$)/.test(c.id);
+  const lastJoin = list.findLastIndex(isJoin);
+  return list.filter((c, i) => !isJoin(c) || i === lastJoin);
 }
 
 const KEPT_ID = /^(?:join|kept|host)(?:-|$)/;
@@ -143,18 +148,55 @@ const BACKUP_ID = /^backup(?:-|$)/;
 const NOT_JOINING = [NEW_PRODUCT, KEEP_HERE, HOST_LABELS.github, HOST_LABELS.gitlab];
 // Whether the answers taken say this computer joins a product from another (the join question
 // answered with anything but a new product).
-const joining = (taken) => Object.entries(taken).some(([key, a]) => /^3\.join(?:-|$)/.test(key) && !NOT_JOINING.includes(a.label) && backupNamed(a.text) === null);
+// Only the newest join answer counts: an earlier one was refused (not a name, no backup) and asked again.
+const joining = (taken) => {
+  const last = Object.entries(taken).filter(([key]) => /^3\.join(?:-|$)/.test(key)).at(-1)?.[1];
+  return last !== undefined && !NOT_JOINING.includes(last.label) && backupNamed(last.text) === null;
+};
+
+// The text typed as the newest join answer, or null.
+const joinedText = (choices) => choices.filter((c) => c.id === 'join' || c.id.startsWith('join-')).at(-1)?.text ?? null;
+
+// What step 3 reads a pasted address as (its own reader, pinOf): { host: 'github' }, or { host: 'gitlab', company }; null for
+// anything it refuses or reads as no address, so the plan never names a host step 3 will not use.
+const pinnedBy = (choices) => {
+  const pin = pinOf(joinedText(choices));
+  return pin?.host === undefined ? null : pin;
+};
+
+// How the plan names the host a pasted address gave, or null.
+function addressHostName(choices) {
+  const pin = pinnedBy(choices);
+  if (pin === null) return null;
+  if (pin.host === 'github') return 'GitHub';
+  return pin.company.host === undefined ? 'GitLab' : `your company's GitLab at ${pin.company.host}`;
+}
 
 // The host the plan names, as step 3 will use it: the one the folder's own remote names, else
 // the one the kept card or the host or join card chose; GitHub when none says GitLab.
 function hostOf(product, choices) {
+  // A pasted address in the join answer names its own host.
+  const pinned = pinnedBy(choices);
+  if (pinned !== null) return pinned.host === 'gitlab' ? 'GitLab' : 'GitHub';
   if (product && product.isNew === false && (product.host === 'gitlab' || product.host === 'github')) return product.host === 'gitlab' ? 'GitLab' : 'GitHub';
   const chose = choices.some((c) => (c.id === 'kept' && c.label === PUT_ON_GITLAB) || ((c.id === 'host' || c.id === 'join' || c.id.startsWith('join-')) && c.label === HOST_LABELS.gitlab));
   return chose ? 'GitLab' : 'GitHub';
 }
 
 // A company's own GitLab, chosen on the which-GitLab card and not taken back on the address card.
-const onCompanyGitLab = (choices, host) => host === 'GitLab' && choices.some((c) => c.id.startsWith('gitlab-where') && c.label === COMPANY_GITLAB) && !choices.some((c) => c.id.startsWith('gitlab-address') && c.label === GITLAB_COM);
+const onCompanyGitLab = (choices, host) => host === 'GitLab' && (addressHostName(choices)?.startsWith('your company') || choices.some((c) => c.id.startsWith('gitlab-where') && c.label === COMPANY_GITLAB) && !choices.some((c) => c.id.startsWith('gitlab-address') && c.label === GITLAB_COM));
+
+// The company GitLab's host name the director typed on step 3's address question, or null while none is read.
+const typedCompanyHost = (choices) => {
+  const typed = choices.filter((c) => c.id.startsWith('gitlab-address') && typeof c.text === 'string').at(-1);
+  return typed === undefined ? null : companyAddress(typed.text).host ?? null;
+};
+
+
+// What the plan says of a project brought in that holds no Wheelhouse settings: found at step 3, which stops there.
+const SETTINGS_MISS = 'If setup can\'t find them there, it stops and asks you again before doing anything more.';
+// A project brought in is treated as having real users until setup can tell.
+const REAL_USERS_UNTIL = 'Treated as having real users until setup can tell.';
 
 // The plain line a choice adds to the one card, or null when it adds none. `name` is the product's,
 // `platform` the computer's, `host` the host the plan names.
@@ -168,7 +210,17 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     if (id === 'join' || id.startsWith('join-')) return company ? 'A new product, in a private project on your company\'s GitLab.' : `A new product, in a private ${host === 'GitLab' ? 'project' : 'repository'} on your ${host} account.`;
   }
   if ((id === 'join' || id.startsWith('join-')) && backupNamed(text) !== null) return `${name}, brought back from your backup into this folder.`;
-  if (id === 'join' || id.startsWith('join-')) return label === NEW_PRODUCT ? null : `${name}, from your other computer, brought into this folder.`;
+  if (id === 'join' || id.startsWith('join-')) {
+    if (label === NEW_PRODUCT) return null;
+    const where = addressHostName(choices);
+    // The product's own name, where the typed answer (an address, or owner/name) gives it, not the folder's.
+    const named = typeof text === 'string' && backupNamed(text) === null ? repoNamed(text)?.split('/').at(-1) : null;
+    // An owner/name looked for on the company's GitLab, as step 3 words it: its account or groups.
+    // Whether the project holds Wheelhouse's settings is found at step 3, so the plan says it is brought in once they are found.
+    if (where === null && onCompanyGitLab(choices, host)) return `${named ?? name} from your account or groups on your company's GitLab${typedCompanyHost(choices) === null ? '' : ` at ${typedCompanyHost(choices)}`}, brought into this folder with its saved Wheelhouse settings. ${SETTINGS_MISS}`;
+    if (where !== null) return `${named ?? name} from ${where}, brought into this folder with its saved Wheelhouse settings. ${SETTINGS_MISS}`;
+    return `${named ?? name}, set up with Wheelhouse, brought into this folder with its saved settings.`;
+  }
   if (id === 'real-users') {
     const live = choices.find((c) => c.id === 'live-data')?.label;
     if (label === REAL_USERS.no) return live === LIVE_DATA.no ? 'Before launch: no real users and no live data yet.' : 'Before launch: no real users yet.';
@@ -186,6 +238,7 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
       : host === 'GitLab' && toolOut ? ' On Windows it is kept here, where any agent\'s command could read it.'
         : ` ${host}'s own sign-in also stays here, where any agent's command could read it.`;
     if (label === WAYS.quick) return platform === 'darwin' ? `Agents use your ordinary ${host} sign-in, which reaches your whole account; ${macKeepsAway(host.toLowerCase())}.` : `Agents use your ordinary ${host} sign-in, which reaches your whole account${platform === 'win32' ? '; on Windows any agent\'s command could read it' : ''}.`;
+    if (label === STRICTER && host === 'GitLab') return `A GitLab key for this project only; where GitLab won't allow one, a ${PERSONAL_DAYS}-day token stands in and acts as you across GitLab.${stays}`;
     if (label === STRICTER) return `A key for this project only, made on ${host} (you'll click Authorize and install).`;
     if (label === WAYS.wheelhouse) return `A key for this project only, through the Wheelhouse app (you\'ll type a code and click Install).${stays}`;
     if (label === WAYS.own) return `A key for this project only, from an app you create on GitHub (you\'ll tick Enable Device Flow, click Create, type the code shown, then Authorize and install).${stays}`;
@@ -224,15 +277,17 @@ function describedBy(choice) {
 // project kept here; on GitLab without its tool, with a key for this project only, the one-day setup token (host.js);
 // with their git as it is, a key only where git holds none that works; on a company's GitLab, a sign-in in the browser or
 // by token; else a sign-in.
-function goAheadAsks({ keptHere, list, host, phone = false }) {
-  const text = goAheadAsksHost({ keptHere, list, host });
+function goAheadAsks({ keptHere, list, host, phone = false, done = { tools: false, signedIn: null } }) {
+  const text = goAheadAsksHost({ keptHere, list, host, done, phone });
   // Step 9 asks the director to try a notification on their phone, unless an earlier setup's test already reached it.
-  if (!phone) return text;
+  if (!phone || (keptHere && done.tools)) return text;
   return `${text} Near the end, setup offers a test notification on your phone, which you can skip.`;
 }
 
-function goAheadAsksHost({ keptHere, list, host }) {
-  if (keptHere) return 'Apart from Claude Code\'s own request to allow setup\'s command, you may be asked for your computer\'s password.';
+function goAheadAsksHost({ keptHere, list, host, done, phone }) {
+  // Setup's tools are done, so the request to allow its command and the password they could need are behind it.
+  if (keptHere) return done.tools ? (phone ? 'The only thing left to ask you is a test notification on your phone near the end, which you can skip.' : 'Nothing more is asked of you here.') : 'Apart from Claude Code\'s own request to allow setup\'s command, you may be asked for your computer\'s password.';
+  const signedIn = done.signedIn !== null && host === (done.signedIn === 'gitlab' ? 'GitLab' : 'GitHub');
   const way = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.label ?? null;
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
   if (host === 'GitLab' && noTool && way !== null && way !== WAYS.quick && way !== WAYS.asIs) {
@@ -243,6 +298,7 @@ function goAheadAsksHost({ keptHere, list, host }) {
   const fallbackBox = (known) => (host === 'GitLab' && way !== null && way !== WAYS.quick
     ? ` If GitLab won't make a key for one project, you'll also paste a ${PERSONAL_DAYS}-day token that can act as you across GitLab into ${known ? 'that box' : 'a box on your screen, not the chat'}.` : '');
   // A company's GitLab without a browser sign-in set up takes a token instead, which only setup's step 3 can tell.
+  if (signedIn) return `You're already signed in to ${host}, so setup doesn't ask for that again.${fallbackBox(true)}`;
   if (onCompanyGitLab(list, host)) return `You'll sign in to your company's GitLab in your browser if your company has set that up, or else with a token you make on a page that opens and paste into a box on your screen, not the chat. You may be asked for your computer's password.${fallbackBox(true)}`;
   return `You'll sign in on ${host} pages that open and click through them. You may be asked for your computer's password.${fallbackBox(false)}`;
 }
@@ -259,13 +315,24 @@ export function setupTime(toRun, list = []) {
   return list.length === 0 && toRun.length > 0 && toRun.every((n) => n === HEALTH_STEP) ? 'about a minute' : 'about 5 minutes';
 }
 
-export function oneCard({ folder, list, product, platform, toRun, count, facts = null, claudeHome = null, hosts, desktop, pushed = false }) {
+// `done` is what an earlier pass of this run has already done, when the card is asked again after step 3 stopped: { tools, signedIn },
+// `signedIn` the host ('github' or 'gitlab') setup signed in to, or null.
+export function oneCard({ folder, list, product, platform, toRun, count, facts = null, claudeHome = null, hosts, desktop, pushed = false, done = { tools: false, signedIn: null } }) {
   const name = product?.name ?? productName(folder);
   // Only the health check left, nothing to choose: a run parked near its end (one v0.1.1 left at
   // its phone card, carried on after the update), whose card names what is left.
   const nearlyDone = setupTime(toRun, list) === 'about a minute';
   const lines = [];
   const keptHere = list.some((c) => c.label === KEEP_HERE);
+  // Steps already done are said as done, and kept as they are, not listed among what setup will do.
+  const signedTo = done.signedIn === 'gitlab' ? 'GitLab' : done.signedIn === 'github' ? 'GitHub' : null;
+  // The sign-in is used again only where the product goes on the host it was made to; else it is kept for later.
+  const signInUsed = signedTo !== null && !keptHere && hostOf(product, list) === signedTo;
+  if (signedTo !== null && !signInUsed) {
+    if (done.tools) lines.push('Already done: setup\'s tools.');
+    lines.push(`Your ${signedTo} sign-in stays on this computer for later; this project doesn't use it.`);
+  }
+  else if (done.tools || signInUsed) lines.push(`Done already, and kept as it is: ${[...(done.tools ? ['setup\'s tools (step 2)'] : []), ...(signInUsed ? [`your sign-in to ${signedTo}`] : [])].join(' and ')}.`);
   if (toRun.includes(3) && product && product.isNew === false && product.host !== 'local') lines.push(`${name} on ${product.host === 'gitlab' ? 'GitLab' : 'GitHub'}, as it is.`);
   // In the card's order: where it is kept, how agents reach it, its phase and data, Locked, the
   // description, then Apple signing.
@@ -275,6 +342,8 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     const readme = describedBy(c);
     const line = readme === null ? lineOf(c, { name, platform, choices: list, host: hostOf(product, list) }) : `Described as: ${readme}`;
     if (line !== null) lines.push(line);
+    const joinAnswer = (c.id === 'join' || c.id.startsWith('join-')) && !NOT_JOINING.includes(c.label) && backupNamed(c.text) === null;
+    if (line !== null && joinAnswer && !list.some((x) => x.id === 'real-users')) lines.push(REAL_USERS_UNTIL);
   }
   // Kept here with no backup: one line says both, since being only on this computer is what staying here means.
   if (lines.includes(ONLY_HERE_LINE) && lines.includes(KEPT_LINE)) {
@@ -291,7 +360,12 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     if (kept !== null) lines.push(kept);
   }
   // A free GitHub plan can't protect a private repository, so on GitHub the line says protection is where the plan allows.
-  if (toRun.includes(7)) {
+  // A project brought in keeps what its first computer set up: this computer adds only its own files.
+  const lastJoin = list.filter((c) => c.id === 'join' || c.id.startsWith('join-')).at(-1);
+  const joiningNow = lastJoin !== undefined && !NOT_JOINING.includes(lastJoin.label) && backupNamed(lastJoin.text) === null;
+  if (toRun.includes(7) && joiningNow) {
+    lines.push(`This computer's own Wheelhouse files set up here. The project's files on ${hostOf(product, list)} and its main line's protection stay as they are; only the key above is added there.`);
+  } else if (toRun.includes(7)) {
     lines.push(keptHere ? 'Wheelhouse\'s settings saved to the project.'
       : hostOf(product, list) === 'GitHub' ? 'Wheelhouse\'s settings saved to the project, and its main line protected if your GitHub plan allows it (the free plan doesn\'t for a private repository).'
         : 'Wheelhouse\'s settings saved to the project, and its main line protected.');
@@ -320,7 +394,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     question,
     header: 'Setup',
     options: [
-      { label: GO_AHEAD, description: `Recommended: setup does all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list), phone: toRun.includes(6) && !pushed })}` },
+      { label: GO_AHEAD, description: `Recommended: setup does all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list), phone: toRun.includes(6) && !pushed, done })}` },
       yours
         ? { label: CHANGE_CHOICE, description: 'See every choice again, and change any before anything runs.' }
         : { label: CUSTOMISE, description: 'See every choice, and change any before anything runs.' },
@@ -354,6 +428,22 @@ export function consentIn(runId, answers) {
 export function customisingSince(answers) {
   const last = stepZero(answers).filter((a) => ONE_CARD_ID.test(a.id)).at(-1);
   return last?.label === CUSTOMISE || last?.label === CHANGE_CHOICE ? last.at : null;
+}
+
+// Whether a Go ahead is one a miss of the join question names as the one it stood on (its id and its time, as written), or one whose
+// time can't be read, which stands for nothing. Never compared against the clock, so a Go ahead given again after the miss is a new one.
+export function consentWithdrawn(changes, consent) {
+  if (consent === null || Number.isNaN(Date.parse(consent.at))) return true;
+  return (Array.isArray(changes) ? changes : []).some((c) => {
+    if (c?.step !== 3 || c.kind !== 'answer' || c.after?.missed === undefined) return false;
+    // A miss recorded before Go aheads were named holds only its time: it withdraws a Go ahead given before it, and one it
+    // can't be compared with (a time that can't be read) too.
+    if (!Object.hasOwn(c.after, 'withdraws') && typeof c.after.missedAt === 'string') {
+      const missed = Date.parse(c.after.missedAt);
+      return Number.isNaN(missed) || missed > Date.parse(consent.at);
+    }
+    return c.after.withdraws?.id === consent.id && c.after.withdraws?.at === consent.at;
+  });
 }
 
 const newer = (a, b) => Date.parse(a) > Date.parse(b);

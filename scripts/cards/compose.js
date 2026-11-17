@@ -207,10 +207,11 @@ function words(kind, part, value) {
   return text;
 }
 
-// What a card is. A setup card may list what it does on lines of their own ("Setup step 3, …:" then "- …" lines), each
-// held to the same rules as any one-line part, so no line of it reads as a set line; every other kind's is one line.
+// What a card is. A setup card may list what it does on lines of their own ("Setup step 3, …:" then "- …" lines), and a question
+// may say what happened and what follows on lines of their own, each held to the same rules as any one-line part, so no line of it
+// reads as a set line; every other kind's is one line.
 function whatOf(kind, value) {
-  if (kind !== 'setup' || typeof value !== 'string' || !value.includes('\n')) return words(kind, 'what', value);
+  if ((kind !== 'setup' && kind !== 'question') || typeof value !== 'string' || !value.includes('\n')) return words(kind, 'what', value);
   return value.trim().split('\n').map((l) => words(kind, 'what', l)).join('\n');
 }
 

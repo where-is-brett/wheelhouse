@@ -7,12 +7,12 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import {
-  oneCard, setupTime, consentHolds, customiseBatch, aboutOf, actedBy, GO_AHEAD, CUSTOMISE, PER_CARD,
+  openChoices, oneCard, setupTime, consentHolds, consentWithdrawn, customiseBatch, aboutOf, actedBy, GO_AHEAD, CUSTOMISE, PER_CARD,
 } from '../../../scripts/setup/choices.js';
 import { stepFourDrift, choiceList } from '../../../scripts/setup/redo.js';
-import { NEW_PRODUCT, HOST_LABELS, WAYS, REAL_USERS, STRICTER } from '../../../scripts/setup/host.js';
+import { COMPANY_GITLAB, NEW_PRODUCT, HOST_LABELS, WAYS, REAL_USERS, STRICTER } from '../../../scripts/setup/host.js';
 import { LIVE_DATA, PRODUCT } from '../../../scripts/setup/questions.js';
-import { PUT_ON_GITLAB } from '../../../scripts/setup/local.js';
+import { PUT_ON_GITLAB, KEEP_HERE } from '../../../scripts/setup/local.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 
 const phase = (value) => [{ kind: 'setting', data: { key: 'phase', value } }];
@@ -220,4 +220,111 @@ test('the backup question waits for where the project is kept, and comes once a 
   assert.deepEqual(ids([open('kept'), open('backup')]), ['kept']);
   assert.deepEqual(ids([open('join', said), open('real-users', said), open('backup'), open('product-before-launch', said)]), ['backup']);
   assert.deepEqual(ids([open('real-users'), open('connection')]), ['real-users', 'connection'], 'a hosted project\'s list is as it was');
+});
+
+test('a join answer refused and asked again leaves one join question, and no plan line from the refused text', async () => {
+  const refused = { label: null, text: 'https://gitlab.example.org/', at: '2026-10-26T10:05:00.000Z' };
+  const card = (what) => ({ what, options: [{ label: NEW_PRODUCT }, { label: HOST_LABELS.gitlab }], recommend: HOST_LABELS.gitlab });
+  // A step 3 that, as host.js's does, asks `join`, then `join-abc` once the first answer is refused.
+  const step = {
+    n: 3,
+    plan: async (ctx) => {
+      if (!ctx.answers['3.join']) return { ask: { id: 'join', typed: true, card: card('Where?') } };
+      if (ctx.answers['3.join-abc']) return { wait: 0, why: 'asked' };
+      return { ask: { id: 'join-abc', typed: true, card: card('Not a name. Where?') } };
+    },
+  };
+  const planOf = (s, answers) => s.plan({ answers });
+  const list = await openChoices({ steps: [step], run: null, answers: { '3.join': refused }, planOf });
+  assert.deepEqual(list.map((c) => c.id), ['join-abc']);
+  // Only the question still open is asked on the next Customise round.
+  assert.deepEqual(customiseBatch(list, '2026-10-26T10:00:00.000Z').map((c) => c.id), ['join-abc']);
+  const plan = oneCard({ folder: os.tmpdir(), list, product: null, platform: 'darwin', toRun: [3], count: 1 }).card.question;
+  assert.doesNotMatch(plan, /from your other computer/);
+  assert.match(plan, /A new product, in a private project on your GitLab account\./);
+  assert.equal(plan.split('\n').filter((l) => l.startsWith('- ')).length, 1);
+});
+
+test('the plan line for an address join names the product the address gave, and the host it named', async () => {
+  const step = {
+    n: 3,
+    plan: async (ctx) => (ctx.answers['3.join'] ? { wait: 0, why: 'asked' } : { ask: { id: 'join', typed: true, card: { what: 'Where?', options: [{ label: NEW_PRODUCT }], recommend: NEW_PRODUCT } } }),
+  };
+  const planOf = (s, answers) => s.plan({ answers });
+  for (const [text, line] of [
+    ['https://gitlab.company.example/team/app', /^- app from your company's GitLab at gitlab\.company\.example, brought into this folder with its saved Wheelhouse settings\. If setup can't find them there, it stops and asks you again before doing anything more\.$/m],
+    ['github.com/ann/cafe-menu', /^- cafe-menu from GitHub, brought into this folder with its saved Wheelhouse settings\. If setup can't find them there, it stops and asks you again before doing anything more\.$/m],
+  ]) {
+    const list = await openChoices({ steps: [step], run: null, answers: { '3.join': { label: null, text, at: '2026-10-26T10:05:00.000Z' } }, planOf });
+    const plan = oneCard({ folder: os.tmpdir(), list, product: null, platform: 'darwin', toRun: [3], count: 1 }).card.question;
+    assert.match(plan, line, plan);
+  }
+});
+
+test('an owner/name join on the company\'s GitLab, picked on the which-GitLab card, names that GitLab and its account or groups', () => {
+  const entry = (id, label, text = null) => ({ step: 3, id, key: `3.${id}`, card: { options: [] }, typed: true, writes: undefined, chosen: { label, text, at: '2026-10-26T10:05:00.000Z' }, label, text });
+  const list = [entry('join', null, 'ann/cafe-menu'), entry('gitlab-where', COMPANY_GITLAB)];
+  const plan = oneCard({ folder: os.tmpdir(), list, product: { isNew: false, host: 'gitlab', repo: 'ann/cafe-menu', name: 'cafe-menu' }, platform: 'darwin', toRun: [3], count: 1 }).card.question;
+  assert.match(plan, /^- cafe-menu from your account or groups on your company's GitLab, brought into this folder with its saved Wheelhouse settings\. If setup can't find them there, it stops and asks you again before doing anything more\.$/m, plan);
+});
+
+test('the plan line names a host only as step 3 reads it: www.gitlab.com is the public GitLab, and a host step 3 refuses is named nowhere', async () => {
+  const step = {
+    n: 3,
+    plan: async (ctx) => (ctx.answers['3.join'] ? { wait: 0, why: 'asked' } : { ask: { id: 'join', typed: true, card: { what: 'Where?', options: [{ label: NEW_PRODUCT }], recommend: NEW_PRODUCT } } }),
+  };
+  const planOf = (s, answers) => s.plan({ answers });
+  const lineFor = async (text) => {
+    const list = await openChoices({ steps: [step], run: null, answers: { '3.join': { label: null, text, at: '2026-10-26T10:05:00.000Z' } }, planOf });
+    return oneCard({ folder: os.tmpdir(), list, product: null, platform: 'darwin', toRun: [3], count: 1 }).card.question;
+  };
+  assert.match(await lineFor('https://www.gitlab.com/ann/cafe-menu'), /^- cafe-menu from GitLab, brought into this folder with its saved Wheelhouse settings\. If setup can't find them there, it stops and asks you again before doing anything more\.$/m);
+  for (const refused of ['https://git_lab.example.com/ann/cafe-menu', 'https://bitbucket.org/ann/cafe-menu']) {
+    assert.doesNotMatch(await lineFor(refused), /, on /, refused);
+  }
+});
+
+test('a Go ahead is withdrawn only by a miss that names it, by its id and its time as written, and one whose time cannot be read stands for nothing', () => {
+  const consent = { id: 'plan-aaa', at: '2026-11-16T03:00:05.000Z', choices: [] };
+  const miss = (withdraws) => ({ step: 3, kind: 'answer', after: { joined: 'a/b', missed: 'none', withdraws } });
+  assert.equal(consentWithdrawn([], consent), false);
+  assert.equal(consentWithdrawn([miss({ id: 'plan-aaa', at: consent.at })], consent), true);
+  // A Go ahead given again after the miss is another: its time differs, even where the same plan is named, and the clock is not read.
+  assert.equal(consentWithdrawn([miss({ id: 'plan-aaa', at: '2026-11-16T03:00:01.000Z' })], consent), false);
+  assert.equal(consentWithdrawn([miss({ id: 'plan-bbb', at: consent.at })], consent), false);
+  assert.equal(consentWithdrawn([miss(null)], consent), false);
+  assert.equal(consentWithdrawn([miss({ id: 'plan-aaa', at: consent.at })], { ...consent, at: '2026-11-16T03:00:09.000Z' }), false);
+  // A miss recorded before Go aheads were named holds only its time: it withdraws a Go ahead given before it, and not one given after.
+  const legacy = (missedAt) => ({ step: 3, kind: 'answer', after: { joined: 'a/b', missed: 'none', missedAt } });
+  assert.equal(consentWithdrawn([legacy('2026-11-16T03:00:09.000Z')], consent), true);
+  assert.equal(consentWithdrawn([legacy('2026-11-16T03:00:01.000Z')], consent), false);
+  assert.equal(consentWithdrawn([legacy('not a time')], consent), true);
+  // Not a miss, not step 3's, or not an answer: nothing is withdrawn.
+  assert.equal(consentWithdrawn([{ step: 3, kind: 'answer', after: { joined: 'a/b', withdraws: { id: 'plan-aaa', at: consent.at } } }], consent), false);
+  assert.equal(consentWithdrawn([{ ...miss({ id: 'plan-aaa', at: consent.at }), step: 4 }], consent), false);
+  // A time that cannot be read, or no Go ahead, stands for nothing.
+  assert.equal(consentWithdrawn([], { ...consent, at: 'not a time' }), true);
+  assert.equal(consentWithdrawn([], { ...consent, at: undefined }), true);
+  assert.equal(consentWithdrawn([], null), true);
+});
+
+test('a plan asked again after step 3 stopped says its tools and sign-in are done, and asks nothing of them again', () => {
+  const list = newProductChoices({ connection: WAYS.narrow }).map((c) => (c.id === 'host' ? { ...c, label: HOST_LABELS.gitlab } : c));
+  const base = { folder: '/x/tide-tables', list, product: { isNew: true, host: null, repo: null, name: 'tide-tables' }, platform: 'darwin', count: 1 };
+  const again = oneCard({ ...base, toRun: [3, 6, 7, 10], done: { tools: true, signedIn: 'gitlab' } });
+  assert.match(again.card.question, /^- Done already, and kept as it is: setup's tools \(step 2\) and your sign-in to GitLab\.$/m);
+  assert.match(again.card.options[0].description, /You're already signed in to GitLab/);
+  assert.doesNotMatch(again.card.options[0].description, /You'll sign in|password/);
+  const first = oneCard({ ...base, toRun: [2, 3, 6, 7, 10] });
+  assert.doesNotMatch(first.card.question, /Done already/);
+
+  const kept = oneCard({ ...base, list: newProductChoices().map((c) => (c.id === 'join' ? { ...c, label: KEEP_HERE } : c)), toRun: [3, 6, 7, 10], done: { tools: true, signedIn: 'gitlab' } });
+  assert.doesNotMatch(kept.card.options[0].description, /password/);
+  // A sign-in the project no longer uses (kept here, or on another host) is said to be kept for later.
+  assert.match(kept.card.question, /^- Already done: setup's tools\.\n- Your GitLab sign-in stays on this computer for later; this project doesn't use it\.$/m);
+  assert.doesNotMatch(kept.card.question, /kept as it is/);
+  assert.match(kept.card.options[0].description, /^Recommended: setup does all of this now\. The only thing left to ask you is a test notification on your phone near the end, which you can skip\.$/);
+  // Where setup will not ask about the phone, nothing is left to ask.
+  assert.match(oneCard({ folder: '/x/tide-tables', list: newProductChoices().map((c) => (c.id === 'join' ? { ...c, label: KEEP_HERE } : c)), product: { isNew: true, host: null, repo: null, name: 'tide-tables' }, platform: 'darwin', count: 1, toRun: [3, 7, 10], done: { tools: true, signedIn: 'gitlab' } }).card.options[0].description, /Nothing more is asked of you here\.$/);
+  assert.deepEqual(cardProblems(again.card), []);
 });

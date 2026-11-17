@@ -128,7 +128,7 @@ import { readConfig, isModelName, ROLES } from '../gate/guardrails.js';
 import { aliasModel, FRONT_DESK_ALIAS, MID_SIZED_ALIAS, soleModelAlias } from './best-model.js';
 import { projectSettings, localSettings, mergeSettings, withoutKeychainDenial, compactionRules } from '../protection/settings.js';
 import { protectionStatus as realProtectionStatus } from '../host/protection.js';
-import { projectPath } from '../host/gitlab-key.js';
+import { projectPath, PERSONAL_DAYS } from '../host/gitlab-key.js';
 import { COMPACT_HEADING, COMPACT_SECTION, EARLIER_COMPACT_HASHES, sectionHash, withCurrentSection, withSection, hasSection, withOwnSection } from '../lib/compact-section.js';
 export { COMPACT_HEADING, COMPACT_SECTION, EARLIER_COMPACT_HASHES, sectionHash, withCurrentSection, withOwnSection };
 import { DEFAULT_GITLAB, commitEmailOf } from '../host/gitlab-base.js';
@@ -1151,7 +1151,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   if (up?.ownLeft === true) parts.push('your product\'s own files stay as they are, too many for setup\'s commit: commit them when you are ready');
   if (up?.action === 'push') parts.push(`setup's commit, "${COMMIT_MESSAGE}", goes ${upTo}`);
   const where = host === 'gitlab' ? ': changes go in only through merge requests; once it has automatic checks, Wheelhouse asks you to make them required' : ', where your plan allows: changes go in only through pull requests';
-  if (joining) parts.push('the project\'s own files stay as your other computer committed them: nothing is committed and protection stays as it is');
+  if (joining) parts.push(`the project\'s own files stay as they are on ${NAME[host]}: setup adds nothing to them, and the main line\'s protection stays as it is`);
   else if (!local) parts.push(`${up ? 'then ' : ''}protection goes on ${branch}${where}`);
   if (differ.length > 0) parts.push(`${listed(differ)} ${differ.length === 1 ? 'differs' : 'differ'} from what is committed, and setup leaves ${differ.length === 1 ? 'it as it is' : 'them as they are'}`);
   // Step 6's card says Wheelhouse never updates itself, so this one names only the release it stays at.
@@ -1160,9 +1160,9 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
     kind: 'setup',
     level: 3,
     what,
-    why: local ? 'Agents start from these files; later changes go through Wheelhouse\'s checks.' : keyed ? `Agents start from these files; ${branch} is already protected, so later changes go through Wheelhouse's checks.` : 'Agents start from these files; once protected, later changes go through Wheelhouse\'s checks.',
+    why: joining ? 'Agents start from these files; what protects the project is left as it was when the project was first set up.' : local ? 'Agents start from these files; later changes go through Wheelhouse\'s checks.' : keyed ? `Agents start from these files; ${branch} is already protected, so later changes go through Wheelhouse's checks.` : 'Agents start from these files; once protected, later changes go through Wheelhouse\'s checks.',
     options: [
-      { label: SETUP_LABEL, says: local || keyed ? 'Setup makes these changes.' : 'Setup makes these changes and tells you whether the protection took.' },
+      { label: SETUP_LABEL, says: local || keyed || joining ? 'Setup makes these changes.' : 'Setup makes these changes and tells you whether the protection took.' },
       { label: 'Not now', says: 'Nothing changes, and agents wait for these files.' },
     ],
     recommend: SETUP_LABEL,
@@ -1170,8 +1170,8 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
     meanwhile: 'Setup waits here; nothing changes.',
   });
   // One thing to a line, as step 3's card lists its own, under a title that says whose sign-in does it.
-  const by = local || joining ? '' : pasted ? ', sent with the token you pasted at step 3, which can act as you across GitLab' : keyed ? (pasted === null ? ', sent with the project\'s own key where GitLab allows one, or else the token you pasted at step 3, which can act as you across GitLab' : ', sent with the project\'s own key, not your account') : `, acting as you on ${company ? 'your company\'s GitLab' : NAME[host]}`;
-  const full = card([`Setup step 7, ${titleOf7(local, keyed)}${joining ? ', for this computer' : by}:`, ...[...parts, ...pinned].map(asLine)].join('\n'));
+  const by = local || joining ? '' : pasted ? ', sent with the ' + PERSONAL_DAYS + '-day token you pasted at step 3, which can act as you across GitLab' : keyed ? (pasted === null ? ', sent with the project\'s own key where GitLab allows one, or else the ' + PERSONAL_DAYS + '-day token you pasted at step 3, which can act as you across GitLab' : ', sent with the project\'s own key, not your account') : `, acting as you on ${company ? 'your company\'s GitLab' : NAME[host]}`;
+  const full = card([`Setup step 7, ${titleOf7(local || joining, keyed)}${joining ? ', for this computer' : by}:`, ...[...parts, ...pinned].map(asLine)].join('\n'));
   const fits = (c) => composeCard({ ...c, target: { step: 7, hash: '0'.repeat(64) } }).question.question.length <= CARD.chars;
   try {
     if (fits(full)) return full;
@@ -1179,14 +1179,14 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   const cut = (text) => (text.length > 60 ? `${text.slice(0, 59)}…` : text);
   if (joining) {
     const mine = [
-      ...(files.length > 0 || excluded || ours ? ['this computer\'s settings'] : []), ...(secrets ? [negated.length > 0 ? 'some .env files kept out of git' : '.env files kept out of git'] : []), ...(negated.length > 0 ? ['.gitignore lets some .env files in: raise it on the computer that set the project up'] : []), ...(pins.length > 0 ? ['the kits agents work with'] : []),
+      ...(files.length > 0 || excluded || ours ? ['this computer\'s settings'] : []), ...(secrets ? [negated.length > 0 ? 'some .env files kept out of git' : '.env files kept out of git'] : []), ...(negated.length > 0 ? ['.gitignore lets some .env files in: raise it on the computer that set the project up'] : []), ...(pins.length > 0 ? [`${listed(pins)}, which agents work with`] : []),
       ...(listens ? [LISTENING_CLAUSE] : []), 'nothing committed', ...(differ.length > 0 ? [`${listed(differ)} left as ${differ.length === 1 ? 'it is' : 'they are'}`] : []),
     ];
-    return card([`Setup step 7, ${titleOf7(local)}, for this computer:`, ...mine.map(asLine)].join('\n'));
+    return card([`Setup step 7, ${titleOf7(true)}, for this computer:`, ...mine.map(asLine)].join('\n'));
   }
   const short = [
-    ...(shared.length > 0 ? ['the project\'s own files'] : []), ...(files.length > shared.length || excluded || ours ? ['this computer\'s settings'] : []),
-    ...(secrets ? ['.env files kept out of git'] : []), ...(listens ? [LISTENING_CLAUSE] : []), ...(pins.length > 0 ? ['the kits agents work with'] : []), ...(up ? [`the setup commit ${local ? `onto ${cut(branch)}` : keyed ? `to ${cut(branch)} on ${NAME[host]} through a merge request setup merges itself` : `up to ${cut(branch)} on ${NAME[host]}`}${yours === '' ? '' : ', with your changes'}${ownPart === '' ? '' : ', with your product\'s own files'}`] : []),
+    ...(shared.length > 0 ? ['Wheelhouse\'s settings in .claude', ...(shared.some((c) => c.section) ? ['a Wheelhouse section in CLAUDE.md'] : [])] : []), ...(files.length > shared.length || excluded || ours ? ['this computer\'s settings'] : []),
+    ...(secrets ? ['.env files kept out of git'] : []), ...(listens ? [LISTENING_CLAUSE] : []), ...(pins.length > 0 ? [`${listed(pins)}, which agents work with`] : []), ...(up ? [`the setup commit ${local ? `onto ${cut(branch)}` : keyed ? `to ${cut(branch)} on ${NAME[host]} through a merge request setup merges itself` : `up to ${cut(branch)} on ${NAME[host]}`}${yours === '' ? '' : ', with your changes'}${ownPart === '' ? '' : ', with your product\'s own files'}`] : []),
     ...(local || keyed ? [] : [`${up ? 'then ' : ''}protection on ${up ? 'it' : cut(branch)}`]),
   ];
   return card([`Setup step 7, ${titleOf7(local, keyed)}${by}:`, ...short.map(asLine)].join('\n'));

@@ -16,11 +16,15 @@
 // Nothing here puts a key in a line said, an error or the journal. `borrow` and `store` are the computer's store (the
 // director's key, store.js); `via` is how the checks are made (gitlabApi's run, curl, proxy, caFile and platform), for
 // tests.
+import fs from 'node:fs';
+import path from 'node:path';
 import { askDirectorGit, directorProxy } from '../host/director-git.js';
 import { curlPath, request, NO_CURL } from '../host/curl.js';
 import { gitlabApi } from '../host/gitlab-key.js';
 import { DEFAULT_GITLAB } from '../host/gitlab-base.js';
 import { tokenUrl } from '../host/token-url.js';
+import { withoutTokens } from '../lib/token-names.js';
+import { wheelhouseHome } from '../lib/paths.js';
 
 const NAME = { github: 'GitHub', gitlab: 'GitLab' };
 const GITHUB_ORIGIN = 'https://github.com';
@@ -36,8 +40,14 @@ export const hostAddress = (host, base = DEFAULT_GITLAB) => (host === 'github' ?
 // How a remote's address reaches the host: 'https', 'ssh' (ssh:// or the scp form) or null (a path on this computer).
 export function transportOf(remoteUrl) {
   const url = String(remoteUrl ?? '').trim();
-  if (/^https:\/\//i.test(url)) return 'https';
-  if (/^ssh:\/\//i.test(url) || /^[^\s/@]+@[^\s/:]+:[^\s]+$/.test(url)) return 'ssh';
+  // An address that starts with a dash would read as an option to git, and `::` names a transport helper: neither is an address.
+  if (url.startsWith('-') || url.includes('::') || /\s/.test(url)) return null;
+  // A Windows drive path (C:/Users/ann/repo, C:\Users\ann\repo, C:repo) is a place on this computer, not host:path.
+  if (/^[A-Za-z]:/.test(url)) return null;
+  if (/^https:\/\/[^/\s-]/i.test(url)) return 'https';
+  if (/^ssh:\/\/(?:[^-/@\s][^/@\s]*@)?[^-/@\s]/i.test(url)) return 'ssh';
+  // The scp form: [user@]host:path, a host that cannot start with a dash, and no scheme.
+  if (/^(?:[A-Za-z0-9_][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9.-]*:(?!\/\/)[^\s]+$/.test(url)) return 'ssh';
   return null;
 }
 
@@ -56,7 +66,7 @@ export async function credentialHelperOf({ address, ask }) {
 export async function lsRemoteWorks({ remoteUrl, ask }) {
   if (transportOf(remoteUrl) === null) return false;
   try {
-    return (await ask(['ls-remote', remoteUrl, 'HEAD'])).code === 0;
+    return (await ask(['ls-remote', '--end-of-options', remoteUrl, 'HEAD'])).code === 0;
   } catch {
     return false;
   }
@@ -93,14 +103,86 @@ export async function checkApiKey({ host, base = DEFAULT_GITLAB, key, via = {} }
   return { state: 'error', status: answer.status };
 }
 
+// The host git itself reads from a remote's address: the authority runs to the first /, the host is what follows the @, and an
+// authority holding a backslash, ?, #, % or a second @ is no host to trust (git, curl and a URL reader each end it differently).
+// null when none is read.
+function gitHostOf(remoteUrl) {
+  const text = String(remoteUrl).trim();
+  if (text.includes('::') || text.startsWith('-')) return null;
+  const web = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([^/]*)/.exec(text);
+  if (web) {
+    if (!['https', 'ssh', 'git+ssh'].includes(web[1].toLowerCase())) return null;
+    if (/[\\?#%]/.test(web[2]) || (web[2].match(/@/g) ?? []).length > 1) return null;
+    return web[2].replace(/^.*@/, '').replace(/:\d*$/, '').toLowerCase();
+  }
+  const scp = /^(?:[^@:/\s]*@)?([^@:/\s]+):/.exec(text);
+  return scp ? scp[1].toLowerCase() : null;
+}
+
+// The address the director's own tool would use for a remote once its url.<base>.insteadOf settings have been applied (it
+// rewrites addresses before it reaches them); null when it cannot say, which keeps the token variables out.
+async function resolvedRemote({ remoteUrl, run, gitPath, env }) {
+  if (transportOf(remoteUrl) === null) return null;
+  try {
+    const got = await askDirectorGit(['ls-remote', '--get-url', '--end-of-options', remoteUrl], { run, gitPath, cwd: outsideRepo(), env: directorGitEnv({ ...env, ...withoutTokens() }) });
+    const url = got.stdout.trim().split(/\r?\n/).at(-1) ?? '';
+    return got.code === 0 && /^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|[^\s:/@]*@?[^\s:/@]+:)\S*$/.test(url) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+// A folder of Wheelhouse's own, made if need be, where the director's git is asked what it needs no repository for: never the
+// system's temporary folder, which may sit inside a repository.
+export function outsideRepo() {
+  const home = wheelhouseHome();
+  fs.mkdirSync(home, { recursive: true });
+  return home;
+}
+
+// The environment the director's git is asked in: none of git's own variables (GIT_DIR, GIT_CONFIG*, GIT_WORK_TREE and the rest,
+// which could point it anywhere), and only https and ssh to reach by.
+// Git looks for a repository no higher than Wheelhouse's own folder's parent, so a repository above it is never found.
+export const ceilingOf = () => path.dirname(path.resolve(wheelhouseHome()));
+export const directorGitEnv = (env) => ({ ...Object.fromEntries(Object.entries(env).filter(([key]) => !/^GIT_/i.test(key))), GIT_ALLOW_PROTOCOL: 'https:ssh', GIT_CEILING_DIRECTORIES: ceilingOf() });
+
+// Whether the folder's own git settings could change where an address goes: any url.<x>.insteadOf or pushInsteadOf key, or an
+// include or includeIf section (which could bring one in). Read as plain text, the way originUrl reads the remote, and git is
+// never run in the folder for it. A folder with no .git/config is none; one that cannot be read, or whose .git is not a folder, may.
+export function folderMayRewrite(folder) {
+  if (folder === null || folder === undefined) return false;
+  // A linked worktree, or a repository with a config of its own for it, reads more settings than .git/config holds.
+  if (fs.existsSync(path.join(folder, '.git', 'commondir')) || fs.existsSync(path.join(folder, '.git', 'config.worktree'))) return true;
+  let text;
+  try {
+    text = fs.readFileSync(path.join(folder, '.git', 'config'), 'utf8');
+  } catch (error) {
+    return error?.code !== 'ENOENT' || fs.existsSync(path.join(folder, '.git'));
+  }
+  return /^\s*\[\s*(?:url|include|includeIf)\b/im.test(text) || /^\s*(?:push)?insteadof\s*=/im.test(text);
+}
+
 // What step 3 finds about the computer's own road to the host, with nothing asked:
 //   { transport, helper, gitReaches, key, user, username }
 // `key` is 'none' (git holds no key), 'works' (it passes GET /user), 'push-only' (a 403), 'refused' (a 401),
 // 'unreachable' (the host could not be asked) or 'error'. `repo` is owner/name (null for a product with no repository
 // yet, so there is no remote to try); `remoteUrl` is its address.
-export async function findAccess({ host, base = DEFAULT_GITLAB, repo = null, remoteUrl = null, run, gitPath = 'git', borrow, via = {}, env = process.env }) {
-  const ask = (args) => askDirectorGit(args, { run, gitPath, env });
+export async function findAccess({ host, base = DEFAULT_GITLAB, repo = null, remoteUrl = null, folder = null, run, gitPath = 'git', borrow, via = {}, env = process.env }) {
   const address = hostAddress(host, base);
+  // git's credential helper may read the director's token variables and send them to any host git reaches, so they are kept
+  // only where git is to reach github.com: the host of the remote asked, else the host's own address.
+  const reached = await (async () => {
+    try {
+      // A folder that may rewrite addresses itself (a handed-over project's own settings) is not trusted to say where git goes.
+      if (folderMayRewrite(folder)) return null;
+      if (remoteUrl === null) return new URL(address).hostname;
+      const resolved = await resolvedRemote({ remoteUrl, run, gitPath, env });
+      return resolved === null ? null : gitHostOf(resolved);
+    } catch {
+      return null;
+    }
+  })();
+  const ask = (args) => askDirectorGit(args, { run, gitPath, cwd: outsideRepo(), env: directorGitEnv(reached !== null && /^(?:www\.)?github\.com\.?$/.test(reached) ? env : { ...env, ...withoutTokens() }) });
   const found = {
     transport: transportOf(remoteUrl), helper: await credentialHelperOf({ address, ask }),
     gitReaches: remoteUrl === null ? null : await lsRemoteWorks({ remoteUrl, ask }),

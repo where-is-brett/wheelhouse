@@ -15,6 +15,7 @@ const cases = [
   { pattern: 'github-token', hit: ['gh', 'p_', b62(36)].join(''), miss: ['gh', 'p_', b62(35)].join('') },
   { pattern: 'github-token', hit: ['github', '_pat_', b62(22)].join(''), miss: ['github', '_pat_', b62(21)].join('') },
   { pattern: 'gitlab-token', hit: ['gl', 'pat-', b62(20)].join(''), miss: ['gl', 'pat-', b62(19)].join('') },
+  ...['glptt', 'glft', 'glsoat', 'glcbt', 'glimt', 'glagent', 'glffct'].map((prefix) => ({ pattern: 'gitlab-token', hit: [prefix.slice(0, 2), prefix.slice(2), '-', b62(20)].join(''), miss: [prefix.slice(0, 2), prefix.slice(2), '-', b62(19)].join('') })),
   { pattern: 'anthropic-key', hit: ['sk', '-ant-', b62(24)].join(''), miss: ['sk', '-ant-', b62(5)].join('') },
   { pattern: 'openai-key', hit: ['sk', '-', b62(40)].join(''), miss: ['sk', '-', b62(20)].join('') },
   { pattern: 'aws-access-key', hit: ['AK', 'IA', rep('Q7', 8)].join(''), miss: ['AK', 'IA', rep('Q7', 7)].join('') },

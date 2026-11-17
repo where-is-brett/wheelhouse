@@ -85,6 +85,9 @@ export const JOINING_STEPS = Object.freeze(SETUP_STEPS.filter((s) => [1, 2, 3, 6
 export function joinedRepo(run) {
   const joined = (Array.isArray(run?.changes) ? run.changes : [])
     .filter((c) => c?.step === JOIN_STEP && c.kind === 'answer' && c.after && typeof c.after === 'object' && Object.hasOwn(c.after, 'joined')).at(-1);
+  // A miss (nothing found to join) is the last record of an attempt that joined nothing: the run is a project's own again until
+  // another attempt starts, so it has every step, step 4's questions among them.
+  if (joined?.after.missed !== undefined) return null;
   return typeof joined?.after.joined === 'string' && joined.after.joined !== '' ? joined.after.joined : null;
 }
 

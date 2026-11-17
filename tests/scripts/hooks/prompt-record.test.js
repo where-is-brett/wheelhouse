@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { repoNamed } from '../../../scripts/setup/host.js';
 import os from 'node:os';
 import path from 'node:path';
 import { decide, sendPending, SIGNED_LABELS, signsOn, storedText } from '../../../scripts/hooks/prompt-record.js';
@@ -1352,6 +1353,29 @@ test('in a registered project an answer on a setup-asked card goes only to setup
       assert.equal(holding(home), false);
       // Explain more on it goes nowhere either.
       assert.deepEqual((await answer('Explain more')).calls, none);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+test('a pasted project address answered on the join question is kept without its query, and reads the same', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-join-address-')));
+    try {
+      const run = startRun({ folder, now: () => NOW });
+      const card = {
+        question: 'What this is: Setup step 3 asks where the product is kept.', header: 'Question', multiSelect: false,
+        options: [{ label: 'Keep it', description: 'Recommended: Setup keeps it here.' }, { label: 'Explain more', description: 'I explain it again.' }],
+      };
+      noteAsked({ runId: run.id, folder, step: 3, id: 'join', card, typed: true, now: () => NOW });
+      const c = fake();
+      const answers = { [card.question]: 'https://gitlab.company.example/ann/cafe-menu?tab=readme' };
+      await decide({ ...input(answers), tool_input: { questions: [card], answers }, cwd: folder }, deps(c));
+      const answersDir = path.join(home, 'setup', 'answers');
+      const texts = fs.readdirSync(answersDir).map((n) => JSON.parse(fs.readFileSync(path.join(answersDir, n), 'utf8')).data.text);
+      assert.deepEqual(texts, ['https://gitlab.company.example/ann/cafe-menu']);
+      assert.equal(repoNamed(texts[0]), 'ann/cafe-menu');
     } finally {
       fs.rmSync(folder, { recursive: true, force: true });
     }

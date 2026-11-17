@@ -15,6 +15,7 @@ import { startRun } from '../../../scripts/setup/journal.js';
 import { noteAsked, noteShown, clicksDir } from '../../../scripts/setup/clicks.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { setLineOf } from '../../../scripts/state/card-lines.js';
+import { HELD_SECRET } from '../../../scripts/lib/pasted-address.js';
 
 const NOW = new Date('2026-11-03T00:00:00.000Z');
 const PLAIN = 'A stock tool for shift leads (SLs) in example distribution centres.';
@@ -94,6 +95,101 @@ test('an answer Claude Code gives only in its tool response is kept as one in it
       assert.equal(listOf(home, 'records').length, 2, response);
     });
   }
+});
+
+test('a password written into an address typed on the join card is cleaned out and the address kept; a secret left in it is kept as nothing, and the card says why', async () => {
+  await inSetup(async ({ home, folder, run: r }) => {
+    const join = {
+      question: 'Where should shop be kept?\nWhy: it decides where your work is kept.\nNothing runs until your Go ahead on the plan.\nTo know more, just ask.',
+      header: 'Question',
+      options: [{ label: 'Keep it here', description: 'A new product. Recommended: simplest.' }, { label: 'GitHub', description: 'A new product on GitHub.' }],
+    };
+    noteAsked({ runId: r.id, folder, step: 3, id: 'join', card: join, typed: true, writes: undefined, now: () => NOW });
+    const answer = (text) => ({
+      cwd: folder, hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
+      tool_input: { questions: [{ ...join, multiSelect: false }], answers: { [join.question]: text } },
+      tool_response: { questions: [{ ...join, multiSelect: false }], answers: { [join.question]: text } },
+    });
+    const texts = () => listOf(home, 'answers').map((n) => JSON.parse(fs.readFileSync(path.join(home, 'setup', 'answers', n), 'utf8')).data.text);
+    // The user and password are joined here so the file holds no address with a password in it.
+    await run(answer(`${['https://oauth2', 'tok'].join(':')}@gitlab.com/ann/shop`));
+    assert.deepEqual(texts(), [HELD_SECRET]);
+    fs.rmSync(path.join(home, 'setup', 'answers'), { recursive: true, force: true });
+    fs.rmSync(path.join(home, 'setup', 'answered'), { recursive: true, force: true });
+    await run(answer('git@gitlab.com:ann/shop.git?x=1'));
+    assert.deepEqual(texts(), ['git@gitlab.com:ann/shop.git']);
+    fs.rmSync(path.join(home, 'setup', 'answers'), { recursive: true, force: true });
+    fs.rmSync(path.join(home, 'setup', 'answered'), { recursive: true, force: true });
+    const secret = `https://gitlab.com/ann/glpat-${'a1B2c3D4e5F6g7H8i9J0'}`;
+    await run(answer(secret));
+    assert.deepEqual(texts(), [HELD_SECRET]);
+    assert.equal(texts().some((t) => t.includes('glpat')), false);
+    // A token after a space, a tab or a line break, or a second address with a password, is kept nowhere: not in the answer, not on disk.
+    const later = [`ghp_${'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'}`, `glpat-${'a1B2c3D4e5F6g7H8i9J0'}`, `${['https://x', 'y'].join(':')}@a.example.org/c`];
+    for (const gap of [' ', '\t', '\n']) {
+      for (const token of later) {
+        fs.rmSync(path.join(home, 'setup', 'answers'), { recursive: true, force: true });
+        fs.rmSync(path.join(home, 'setup', 'answered'), { recursive: true, force: true });
+        await run(answer(`https://gitlab.example.org/g/p${gap}${token}`));
+        assert.deepEqual(texts(), [HELD_SECRET], JSON.stringify(gap + token));
+        for (const dir of ['answers', 'records', 'answered']) {
+          for (const n of listOf(home, dir)) assert.equal(fs.readFileSync(path.join(home, 'setup', dir, n), 'utf8').includes(token.slice(0, 12)), false, `${dir}/${n}`);
+        }
+      }
+    }
+    // A token behind a percent-escape, or after a ; in the host, is kept nowhere either.
+    const key = `ghp_${'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'}`;
+    for (const text of [`https://gitlab.example.org/g/p%20${key}`, `https://h;x.example.org/g/p"${key}`]) {
+      fs.rmSync(path.join(home, 'setup', 'answers'), { recursive: true, force: true });
+      fs.rmSync(path.join(home, 'setup', 'answered'), { recursive: true, force: true });
+      await run(answer(text));
+      assert.deepEqual(texts(), [HELD_SECRET], text);
+      for (const dir of ['answers', 'records', 'answered']) {
+        for (const n of listOf(home, dir)) assert.equal(fs.readFileSync(path.join(home, 'setup', dir, n), 'utf8').includes(key.slice(0, 12)), false, `${dir}/${n}`);
+      }
+    }
+    // A user and password written in, however the password is spelt (with a / # or ?, or one that reads as a port), is held whole.
+    const clean = () => {
+      fs.rmSync(path.join(home, 'setup', 'answers'), { recursive: true, force: true });
+      fs.rmSync(path.join(home, 'setup', 'answered'), { recursive: true, force: true });
+    };
+    // A bare token, typed alone as the answer, is held and kept nowhere: not in the answer, not on disk.
+    for (const bare of [`glpat-${'a1B2c3D4e5F6g7H8i9J0'}`, `ghp_${'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'}`, `glptt-${'a1B2c3D4e5F6g7H8i9J0'}`, `glsoat-${'a1B2c3D4e5F6g7H8i9J0'}`, `glimt-${'a1B2c3D4e5F6g7H8i9J0'}`, `glagent-${'a1B2c3D4e5F6g7H8i9J0'}`, `glffct-${'a1B2c3D4e5F6g7H8i9J0'}`, 'a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0', 'https://gitlab.example.org/a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0/p', 'ann/a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0']) {
+      clean();
+      await run(answer(bare));
+      assert.deepEqual(texts(), [HELD_SECRET], bare);
+      for (const dir of ['answers', 'records', 'answered']) {
+        for (const n of listOf(home, dir)) assert.equal(fs.readFileSync(path.join(home, 'setup', dir, n), 'utf8').includes(bare.slice(0, 12)), false, `${dir}/${n}`);
+      }
+    }
+    for (const text of ['ann:Hunter2@gitlab.acme.org/t/p', 'ann:hunter2@github.com/o/r', 'https://ann:pa/ss@gitlab.acme.org/t/p', 'https://ann:12/ss@gitlab.acme.org/t/p',
+      'https://ann:p#ss@gitlab.acme.org/t/p', 'https://ann:pa?ss@gitlab.acme.org/t/p', 'ssh://ann:pa/ss@host.example.org/x']) {
+      clean();
+      await run(answer(text));
+      assert.deepEqual(texts(), [HELD_SECRET], text);
+    }
+    // The bare git@ forms stay.
+    for (const [text, kept] of [['ssh://git@gitlab.example.org/g/p', 'ssh://gitlab.example.org/g/p'], ['git@gitlab.example.org:g/p.git', 'git@gitlab.example.org:g/p.git']]) {
+      clean();
+      await run(answer(text));
+      assert.deepEqual(texts(), [kept], text);
+    }
+    // Schemeless text is cut at its first whitespace.
+    clean();
+    await run(answer('gitlab.acme.org/t/p private_token=abc123'));
+    assert.deepEqual(texts(), ['gitlab.acme.org/t/p']);
+    // A key with its characters written as percent-escapes is held.
+    for (const text of [`https://gitlab.example.org/g/glpat%2D${'a1B2c3D4e5F6g7H8i9J0'}`, `https://gitlab.example.org/g/ghp_%41${'1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'}`]) {
+      clean();
+      await run(answer(text));
+      assert.deepEqual(texts(), [HELD_SECRET], text);
+    }
+    // Join text with no scheme keeps no query, fragment or ;parameter.
+    fs.rmSync(path.join(home, 'setup', 'answers'), { recursive: true, force: true });
+    fs.rmSync(path.join(home, 'setup', 'answered'), { recursive: true, force: true });
+    await run(answer('gitlab.example.org/g/p?private_token=abc'));
+    assert.deepEqual(texts(), ['gitlab.example.org/g/p']);
+  });
 });
 
 test('with no answer anywhere in the hook input, nothing is kept and the log says the hook was given no answer', async () => {

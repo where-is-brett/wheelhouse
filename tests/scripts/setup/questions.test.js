@@ -12,7 +12,7 @@ import { questionsStep, readmeDescription, signsAppleApps, LIVE_DATA, PRODUCT, S
 import { REAL_USERS, LEVELS } from '../../../scripts/setup/host.js';
 import { noteAsked, answersFor } from '../../../scripts/setup/clicks.js';
 import { keepAnswer } from '../../../scripts/lib/setup-clicks.js';
-import { findRun, readJournal, startRun } from '../../../scripts/setup/journal.js';
+import { findRun, readJournal, startRun, addChanges } from '../../../scripts/setup/journal.js';
 import { checkSetting } from '../../../scripts/settings/catalogue.js';
 import { eventHash, makeEvent } from '../../../scripts/state/events.js';
 import { buildViews } from '../../../scripts/state/views.js';
@@ -67,7 +67,7 @@ test('each answer writes its setting or configuration key, checked by the catalo
       assert.equal(productAsk.typed, true);
       assert.deepEqual(productAsk.card.options.map((o) => o.label), [PRODUCT.readme, PRODUCT.later]);
       assert.match(productAsk.card.what, /what is Cafe-Menu, and who is it for\?/);
-      assert.match(productAsk.card.what, phase === 'launched' ? /It has real users\./ : /It has no real users yet\./);
+      assert.match(productAsk.card.what, phase === 'launched' ? /Cafe-Menu has real users\./ : /Cafe-Menu has no real users yet\./);
       const described = readmeDescription(folder);
       assert.equal(described, 'Café Menu lets a small café put its menu online, for its regulars to read on their phones.');
       // Every setting an answer writes is one the catalogue takes.
@@ -203,6 +203,25 @@ test('a typed answer the engine refuses records nothing and claims nothing, so t
     assert.deepEqual(later.map((s) => [s.route, s.body.target?.data.value]), [['record', 'before-launch']]);
     assert.equal(answersFor(findRun(folder).id)['4.product-before-launch'].label, PRODUCT.later);
   });
+});
+
+test('a product step 3 kept on this computer this run is new, so live data is not recommended; one brought back from a backup is not', async () => {
+  const recommended = async (change) => {
+    let said;
+    await withProject(async ({ folder, plan, answer }) => {
+      answerStep3(folder, { realUsers: REAL_USERS.no });
+      const run = findRun(folder);
+      if (change !== null) addChanges(run.id, [{ id: 'chg-home', step: 3, kind: 'folder', target: path.join(folder, 'home.git'), before: null, after: change }]);
+      const first = await plan(4);
+      await answer(first.ask.card, PRODUCT.later);
+      const live = await plan(4);
+      said = live.ask.card.options.find((o) => /^Recommended/.test(o.description)).label;
+    });
+    return said;
+  };
+  assert.equal(await recommended({ home: true, branch: 'main' }), LIVE_DATA.no);
+  assert.equal(await recommended({ home: true, branch: 'main', restored: true }), LIVE_DATA.yes);
+  assert.equal(await recommended(null), LIVE_DATA.yes);
 });
 
 test('a real-users answer given again keeps the description, and the phase it records follows the answer', async () => {

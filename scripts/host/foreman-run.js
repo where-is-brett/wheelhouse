@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLAUDE_SIGN_IN_NAMES, isClaudeSignIn, withoutHostVariables } from '../lib/claude.js';
 import { withoutGitVars } from '../lib/run.js';
+import { TOKEN_NAMES } from '../lib/token-names.js';
 
 // The scripts /foreman/run runs, by the name the foreman's command line gives them.
 export const FOREMAN_SCRIPTS = Object.freeze(['act', 'wake']);
@@ -27,8 +28,7 @@ const MOST_ARGUMENT_CHARS = 16 * 1024;
 
 // Variables that carry a host's key, a sign-in or a way to one: none reaches the child.
 const KEY_NAMES = new Set([
-  'GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GL_TOKEN', 'GLAB_TOKEN',
-  'CI_JOB_TOKEN', 'SSH_AUTH_SOCK', 'SSH_ASKPASS', 'SUDO_ASKPASS',
+  ...TOKEN_NAMES, 'CI_JOB_TOKEN', 'SSH_AUTH_SOCK', 'SSH_ASKPASS', 'SUDO_ASKPASS',
 ]);
 // Any other name that says it holds a secret.
 const SECRET_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY/i;

@@ -1300,10 +1300,10 @@ test('the card lists every part on GitLab with a long branch and release, and st
   // Made with the setup token: the project's key, or the director's own token GitLab made them paste in its place.
   const keyedText = (pasted) => composeCard({ ...projectFilesCard({ changes: changes.filter((c) => c.action !== 'protect'), host: 'gitlab', branch: 'main', release: null, keyed: true, pasted }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
   assert.match(keyedText(false), /with the project's own key, not your account/);
-  assert.match(keyedText(true), /with the token you pasted at step 3, which can act as you across GitLab/);
+  assert.match(keyedText(true), /with the 30-day token you pasted at step 3, which can act as you across GitLab/);
   assert.doesNotMatch(keyedText(true), /not your account/);
   // Before step 3 has kept either, the card says which applies where GitLab decides.
-  assert.match(keyedText(null), /with the project's own key where GitLab allows one, or else the token you pasted at step 3, which can act as you across GitLab/);
+  assert.match(keyedText(null), /with the project's own key where GitLab allows one, or else the 30-day token you pasted at step 3, which can act as you across GitLab/);
   assert.doesNotMatch(keyedText(null), /not your account/);
 });
 
@@ -1511,7 +1511,9 @@ test('a joining computer\'s step 7 lists only this computer\'s files and pins, w
     assert.ok(!planned.changes.some((c) => c.kind === 'host'), 'no commit, no push, no protection');
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
     assert.match(text, /for this computer/);
-    assert.match(text, /nothing is committed and protection stays as it is/);
+    assert.match(text, /setup adds nothing to them, and the main line's protection stays as it is/);
+    assert.match(text, /what protects the project is left as it was when the project was first set up/);
+    assert.doesNotMatch(text, /once protected/);
     assert.match(text, /CLAUDE\.md differs from what is committed, and setup leaves it as it is/);
     assert.doesNotMatch(text, /protection goes on|Set up Wheelhouse/);
     assert.deepEqual(w.calls.filter((c) => c.tool === 'gh'), [], 'nothing asked of the host');

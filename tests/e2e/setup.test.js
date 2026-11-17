@@ -364,7 +364,7 @@ test('setup stopped after Customise\'s cards resumes at the one card in the next
     assert.equal(one.plan.step, 0);
     await a.click(one.plan.ask.card, 'Customise');
     const { plan } = await a.cli('resume');
-    assert.deepEqual(plan.asks.map((x) => x.id.replace(/-[0-9a-f]{10,}$/, '')), ['join', 'real-users', 'product-before-launch', 'live-data'], 'how agents reach the project waits for where it is kept');
+    assert.deepEqual(plan.asks.map((x) => x.id.replace(/-[0-9a-f]{10,}$/, '')), ['join'], 'the join card ends its batch, so the questions a joining product skips wait for its answer');
     await a.clickAll(plan.asks.map((x) => x.card), plan.asks.map((x) => byId(NEW_ANSWERS)(x.id)));
     const stopped = await a.setupRun();
     await a.stop();
@@ -372,10 +372,14 @@ test('setup stopped after Customise\'s cards resumes at the one card in the next
     // The next session: a helper started afresh, and the session start's reload.
     await a.start();
     await a.sessionStart();
-    // The rest of the choices (step 4's), then the one card with the director's choices on it.
+    // The rest of the choices (step 4's, then GitHub's tool once GitHub is chosen), then the one
+    // card with the director's choices on it.
     const next = (await a.cli('resume')).plan;
-    assert.deepEqual(next.asks.map((x) => x.id.replace(/-[0-9a-f]{10,}$/, '')), ['connection', 'host-tool-gh'], 'the questions already answered are not asked again');
+    assert.deepEqual(next.asks.map((x) => x.id.replace(/-[0-9a-f]{10,}$/, '')), ['real-users', 'connection', 'product-before-launch', 'live-data'], 'the join answered is not asked again');
     await a.clickAll(next.asks.map((x) => x.card), next.asks.map((x) => byId(NEW_ANSWERS)(x.id)));
+    const tool = (await a.cli('resume')).plan;
+    assert.deepEqual(tool.asks.map((x) => x.id), ['host-tool-gh']);
+    await a.clickAll(tool.asks.map((x) => x.card), tool.asks.map((x) => byId(NEW_ANSWERS)(x.id)));
     const card = (await a.cli('resume')).plan;
     assert.equal(card.step, 0);
     assert.match(card.ask.card.question, /Here's the plan, with your choices\./);

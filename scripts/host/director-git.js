@@ -11,8 +11,8 @@ const ASK_MS = 15 * 1000;
 
 // Runs the director's git (the one at `gitPath`) with the arguments given; gives { code, stdout }. Never prompts: git is
 // told not to ask on a terminal, and Git Credential Manager not to open a window.
-export async function askDirectorGit(args, { run = realRun, env = process.env, gitPath = 'git' } = {}) {
-  const got = await run(gitPath, args, { baseEnv: env, env: { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' }, timeoutMs: ASK_MS });
+export async function askDirectorGit(args, { run = realRun, env = process.env, gitPath = 'git', cwd } = {}) {
+  const got = await run(gitPath, args, { baseEnv: env, env: { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' }, timeoutMs: ASK_MS, ...(cwd === undefined ? {} : { cwd }) });
   return { code: got.code, stdout: String(got.stdout ?? '') };
 }
 

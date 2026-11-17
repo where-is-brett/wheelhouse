@@ -8,7 +8,7 @@
 // written: the programs the steps run are stand-ins (`fakeRun`), git alone real and kept to the scratch folder, and
 // the Wheelhouse home, the Claude Code folder and the user's home are made for the run.
 //
-//   node scripts/setup/render-cards.js [a|b|b'|c|d|e|all] [--desktop]
+//   node scripts/setup/render-cards.js [a|b|b'|c|d|e|f|g|all] [--desktop]
 //
 // The paths:
 //   a   a company's GitLab, on Windows, no real users, GitLab's tool left out, git holding no key, Use my git as it is chosen
@@ -17,6 +17,8 @@
 //   c   the public GitLab, on Windows
 //   d   GitHub, on Windows
 //   e   a company's GitLab on a Mac, with GitLab's tool in
+//   f   a project on a company's GitLab, pasted by its address on the join question, on a Mac: the address names the host, so no GitLab card is asked
+//   g   the same address, for a project with no Wheelhouse settings in it: the question is asked again saying so and what to do, and a new product on the company's GitLab is chosen
 // --desktop answers as the Desktop app can: a card whose question is the same as an earlier card's shows the
 // earlier one, so the answer that comes back is the one given there. It also asks each card with its first line reworded, as a
 // model that doesn't copy a card word for word may, through the card check hook's swap (scripts/hooks/card-check.js): the
@@ -39,6 +41,10 @@ const PUBLIC_GITLAB = new URL(DEFAULT_GITLAB).hostname;
 const HERE = fileURLToPath(import.meta.url);
 const T0 = new Date('2026-11-16T03:00:00.000Z');
 export const COMPANY_ADDRESS = 'https://gitlab.example.com';
+// A project's page on that GitLab, as the director pastes it on the join question.
+export const PASTED_ADDRESS = `${COMPANY_ADDRESS}/a-director/cafe-menu`;
+// The same page with a sign-in name and password written into it (joined here so no file holds one whole).
+export const HELD_ADDRESS = `https://${['ann', 'render-only'].join(':')}@gitlab.example.com/a-director/cafe-menu`;
 // The director's account on the pretend host, and the project step 3 makes there.
 const USER = 'a-director';
 const PROJECT_ID = 41;
@@ -51,6 +57,9 @@ export const PATHS = Object.freeze({
   c: { title: 'The public GitLab on Windows', platform: 'win32', host: 'GitLab', where: 'public', glab: 'unavailable' },
   d: { title: 'GitHub on Windows', platform: 'win32', host: 'GitHub', gh: 'in' },
   e: { title: 'A company\'s GitLab on a Mac, GitLab\'s tool in', platform: 'darwin', host: 'GitLab', where: 'company', glab: 'in' },
+  f: { title: 'A project on a company\'s GitLab pasted by its address on the join question, on a Mac', platform: 'darwin', host: 'GitLab', where: 'pasted', glab: 'in', join: PASTED_ADDRESS },
+  g: { title: 'The same address for a project with no Wheelhouse settings: found missing at step 3\'s apply, asked again, GitLab chosen and refused for the name, then kept on this computer', platform: 'darwin', host: 'GitLab', where: 'company', glab: 'in', join: PASTED_ADDRESS, miss: true, missAtApply: true, reask: ['GitLab', 'Keep it on this computer'] },
+  h: { title: 'An address pasted with a sign-in name and password in it: not kept, asked again saying so, then kept on this computer', platform: 'darwin', host: 'Keep it on this computer', glab: 'in', join: HELD_ADDRESS, miss: true, reask: ['Keep it on this computer'] },
 });
 
 // ---- The pretend computer ----
@@ -100,7 +109,7 @@ function scratchGit(connected, args, options = {}) {
     // Setup lets git reach over https only; the scratch copy of the host is a local folder.
     ...(reaches ? { GIT_ALLOW_PROTOCOL: 'https:file' } : {}),
   };
-  const to = reaches ? ['-c', `url.${pathToFileURL(connected.hostRoot).href}/.insteadOf=${connected.hostAddress}/`] : [];
+  const to = reaches && connected.hostAddress !== '' ? ['-c', `url.${pathToFileURL(connected.hostRoot).href}/.insteadOf=${connected.hostAddress}/`] : [];
   return realRun('git', [...to, ...args], { ...options, env, platform: process.platform });
 }
 
@@ -175,6 +184,12 @@ async function connectAsStepThree({ folder, scratch, changes }) {
   await git(scratch, 'init', '-q', '--bare', bare);
   await git(seed, 'init', '-q', '-b', 'main');
   fs.writeFileSync(path.join(seed, 'README.md'), '# Cafe Menu\n');
+  // A project joined was set up with Wheelhouse on another computer, so its last commit holds the settings file.
+  if (world().join && !world().miss) {
+    fs.mkdirSync(path.join(seed, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(seed, '.claude', 'wheelhouse.json'), '{"v":1,"criticalAreas":[],"ciFiles":[],"mcpServers":[],"webDomains":[]}\n');
+    await git(seed, 'add', '.claude/wheelhouse.json');
+  }
   await git(seed, 'add', 'README.md');
   await git(seed, 'commit', '-q', '-m', 'Initial commit');
   await git(seed, 'push', '-q', bare, 'main');
@@ -202,6 +217,33 @@ async function connectAsStepThree({ folder, scratch, changes }) {
   await git(stateDir(slug), 'init', '-q', '-b', 'main');
   // The public GitLab's free plan makes no project key, so step 3 there keeps the token the director pasted.
   if (host === 'gitlab' && mode === 'narrow') writeKey(`gitlab-project-${PROJECT_ID}`, base === DEFAULT_GITLAB ? { kind: 'pasted-token', token: 'glpat-render-pasted-token', expiresAt: '2026-12-17' } : { kind: 'project-key', token: 'glpat-render-project-key', expiresAt: '2027-11-16' });
+  return connected;
+}
+
+// Step 3's Go ahead for a product kept on this computer, as its apply leaves it: git started in the folder with a first commit
+// on main, and the project's record and private record opened, with no host.
+async function keepAsStepThree({ folder, scratch, changes }) {
+  const { writeProject } = await import('../lib/projects.js');
+  const { stateDir } = await import('../lib/paths.js');
+  const home = changes.find((c) => c.action === 'home');
+  const project = path.basename(path.dirname(home.target));
+  const connected = { host: 'local', hostAddress: '', hostRoot: path.join(scratch, 'host'), gitConfig: path.join(scratch, 'gitconfig'), protected: false };
+  fs.writeFileSync(connected.gitConfig, '[user]\n\tname = A Director\n\temail = director@example.com\n[init]\n\tdefaultBranch = main\n');
+  const git = async (cwd, ...args) => {
+    const got = await scratchGit(connected, args, { cwd });
+    if (got.code !== 0) throw new Error(`git ${args[0]} failed in the render's scratch folder: ${got.stderr}`);
+  };
+  await git(folder, 'init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(folder, 'README.md'), '# Cafe Menu\n');
+  await git(folder, 'add', 'README.md');
+  await git(folder, 'commit', '-q', '-m', 'First commit');
+  fs.mkdirSync(path.dirname(home.target), { recursive: true });
+  const cloned = await realRun('git', ['clone', '-q', '--bare', '--no-hardlinks', folder, home.target], { env: { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: connected.gitConfig }, platform: process.platform });
+  if (cloned.code !== 0) throw new Error(`git clone failed in the render's scratch folder: ${cloned.stderr}`);
+  const repo = `local/${project}`;
+  writeProject(project, { folder, remoteUrl: null, host: 'local', repo, connection: { host: 'local', mode: 'none', project: repo } });
+  fs.mkdirSync(stateDir(project), { recursive: true });
+  await git(stateDir(project), 'init', '-q', '-b', 'main');
   return connected;
 }
 
@@ -279,6 +321,16 @@ function choose(p, { id, card }, { stepTwoDone }) {
   const pick = (want) => labels.find((l) => l === want) ?? null;
   if (id === 'one-card' || /^plan-/.test(id)) return { label: stepTwoDone.customised ? 'Go ahead' : 'Customise' };
   if (id === 'real-users') return { label: pick('Not yet') };
+  // A project kept on this computer: no backup folder is named, so no window or typed path is asked for.
+  if (/^backup/.test(id)) return { label: pick('Not now, keep building') };
+  // A pasted address on the join question; once it missed, the question asked again is answered as any join question is, with the path's host.
+  if (id === 'join' && p.join) return { text: p.join };
+  // The question asked again after a miss, a refusal or a held answer: the path's answers in turn, the last one standing.
+  if (/^join-/.test(id) && p.reask) {
+    const label = p.reask[Math.min(stepTwoDone.reasked, p.reask.length - 1)];
+    stepTwoDone.reasked += 1;
+    return { label: pick(label) };
+  }
   if (id === 'host' || /^join/.test(id)) return { label: pick(p.host) };
   if (/^gitlab-where/.test(id)) return { label: pick(p.where === 'company' ? 'My company\'s GitLab' : PUBLIC_GITLAB) };
   if (/^host-tool-/.test(id) && p.tool === 'fetch') return { label: labels.find((l) => l.startsWith('Fetch')) ?? recommended };
@@ -337,7 +389,7 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
       state: { write: async (body) => ({ ok: true, id: body.id }), record: async (body) => ({ ok: true, id: body.event?.id }) },
       profile: { record: async () => ({ ok: true }) },
     };
-    const state = { customised: false };
+    const state = { customised: false, reasked: 0, missed: false };
     // What the director's click returns: on the Desktop app, a card whose question an earlier card had shows that earlier
     // card, so the answer is the one given there.
     const answer = async (step, ask) => {
@@ -372,19 +424,24 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
     };
     const plan = (step) => routes['/setup/plan']({ folder, step, ...(desktop ? { desktop: true } : {}) });
     const runId = () => readJournal().runs.find((r) => r.folder === folder)?.id;
-    // The one card and Customise, until a Go ahead holds.
-    for (let turn = 0; ; turn += 1) {
-      if (turn > 20) { end = { step: 0, how: 'loop', why: 'the one card kept coming back' }; return { cards, end, said, heard }; }
-      const got = await plan(0);
-      if (got.done) break;
-      if (got.ask) await answer(0, got.ask);
-      else if (got.asks) for (const ask of got.asks) await answer(ask.step, ask);
-    }
+    // The one card and Customise, until a Go ahead holds; asked again after a miss at step 3, until the plan's new Go ahead holds.
+    const oneCard = async () => {
+      for (let turn = 0; ; turn += 1) {
+        if (turn > 20) { end = { step: 0, how: 'loop', why: 'the one card kept coming back' }; return false; }
+        const got = await plan(0);
+        if (got.done) return true;
+        if (got.ask) await answer(0, got.ask);
+        else if (got.asks) for (const ask of got.asks) await answer(ask.step, ask);
+      }
+    };
+    if (!(await oneCard())) return { cards, end, said, heard };
     // Every step to the last, in the order setup asks them: step 9 waits for step 10. Step 2's Go ahead is taken as
     // done, with its fetch of a tool that can't be had refused, as on the computer; step 3's is carried out as its apply
     // leaves the computer; every later one is taken as done.
     const seen = new Map();
     for (const n of [1, 2, 3, 4, 5, 6, 7, 8, 10, 9]) {
+      // A computer joining a project runs steps 1, 2, 3, 6, 7, 8 and 9 only.
+      if (p.join && !p.miss && [4, 5, 10].includes(n)) continue;
       for (let turn = 0; ; turn += 1) {
         const got = await plan(n);
         if (got.done) break;
@@ -406,8 +463,37 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
         }
         if (n === 3) {
           const w = world();
-          w.connected = await connectAsStepThree({ folder, scratch, changes: got.changes });
+          // The project pasted holds no Wheelhouse settings: step 3's apply signs in, looks, and stops, so the miss comes after the
+          // Go ahead and the sign-in, said as the apply says it, and the question is asked again.
+          if (p.missAtApply && !state.missed) {
+            state.missed = true;
+            const { joinMissLine } = await import('./host.js');
+            const at = new URL(COMPANY_ADDRESS).host;
+            const { consentIn } = await import('./choices.js');
+            const { answersFor } = await import('./clicks.js');
+            const standing = consentIn(runId(), answersFor(runId()));
+            tell(joinMissLine({ host: 'gitlab', wanted: `${USER}/cafe-menu`, found: [], at, user: USER }));
+            addChanges(runId(), [{ id: `chg-render-miss-${clock}`, step: 3, kind: 'answer', target: 'step 3', before: null, after: { joined: `${USER}/cafe-menu`, missed: 'none', host: 'gitlab', user: USER, withdraws: { at: standing.at, id: standing.id }, address: true, at } }]);
+            // The Go ahead given before the miss no longer holds: the one card is asked again, then every step from where setup stopped.
+            if (!(await oneCard())) return { cards, end, said, heard };
+            continue;
+          }
+          // A new product made under the name of a project that exists fails as the real apply fails.
+          if (p.missAtApply && got.changes.some((c) => c.action === 'repository')) {
+            end = { step: 3, how: 'failed', why: `${USER}/cafe-menu already exists on GitLab and wasn't set up with Wheelhouse, so setup won't use it for a new product: rename this folder, then start setup again from it` };
+            return { cards, end, said, heard };
+          }
+          // A product kept on this computer connects to no host.
+          if (got.changes.some((c) => c.action === 'home')) {
+            w.connected = await keepAsStepThree({ folder, scratch, changes: got.changes });
+            // As step 3's apply records the project's home it makes, so step 4 reads the product as new.
+            const kept = got.changes.find((c) => c.action === 'home');
+            addChanges(runId(), [{ id: `chg-render-home-${clock}`, step: 3, kind: 'folder', target: kept.target, before: null, after: { home: true, branch: kept.branch } }]);
+          }
+          else if (got.changes.some((c) => c.action === 'connection')) w.connected = await connectAsStepThree({ folder, scratch, changes: got.changes });
           fs.writeFileSync(path.join(home, 'render-world.json'), JSON.stringify(w));
+          // A project joined, not made: the run records the repository it checked out, so it reads as a joining run.
+          if (p.join) addChanges(runId(), [{ id: `chg-render-joined-${clock}`, step: 3, kind: 'answer', target: 'step 3', before: null, after: p.miss ? { joined: null } : { joined: `${USER}/cafe-menu`, found: true } }]);
         }
         clock += 1000;
         markStep(runId(), n, 'doneAt', { now });

@@ -51,7 +51,7 @@ for (const name of Object.keys(PATHS)) {
     assert.equal(end?.how, 'finished', `the run ends with setup finished, not ${JSON.stringify(end)}`);
     assert.equal(end.step, 10);
     const p = PATHS[name];
-    const hostAt = cards.findIndex((c) => c.id === 'host' || /^join/.test(c.id));
+    const hostAt = cards.findLastIndex((c) => c.id === 'host' || /^join/.test(c.id));
     assert.ok(hostAt >= 0, 'the host is asked');
     const companyAt = cards.findIndex((c) => /^gitlab-(where|address)/.test(c.id) && c.answer?.text === COMPANY_ADDRESS);
     assert.equal(companyAt >= 0, p.where === 'company', 'the company address is typed where the path has one');
@@ -183,7 +183,7 @@ test('every path\'s Go-ahead cards list one thing to a line, with no jargon', as
   for (const name of Object.keys(PATHS)) {
     const { cards } = await rendered(name);
     const goes = cards.filter((c) => c.kind === 'go-ahead');
-    assert.ok(goes.some((c) => c.step === 10), `path ${name} reaches step 10's card`);
+    assert.ok(goes.some((c) => c.step === (PATHS[name].join && !PATHS[name].miss ? 7 : 10)), `path ${name} reaches its last step's card (a joining computer has no health check, so step 7 is its last Go-ahead card)`);
     for (const c of goes) {
       const lines = c.card.question.split('\n');
       assert.match(lines[0], /^Setup step \d+, [^:]+:$/, `path ${name} step ${c.step}'s card opens with its title alone`);
@@ -210,4 +210,39 @@ test('each path\'s plan says what will be asked of the director', async () => {
     const plan = cards.filter((c) => /^plan-/.test(c.id)).at(-1);
     assert.match(plan.card.options.find((o) => o.label === 'Go ahead').description, says, `path ${name}`);
   }
+});
+
+test('path g: a miss at step 3\'s apply withdraws the Go ahead, so the plan is asked again as a card of its own, with what is done said as done', async () => {
+  for (const desktop of [false, true]) {
+    const { cards, end, said } = await rendered('g', { desktop });
+    assert.equal(end.how, 'finished');
+    const plans = cards.filter((c) => /^plan-/.test(c.id));
+    assert.equal(plans.length, 3, 'the one card, the plan with the director\'s choices, and the plan asked again after the miss');
+    assert.notEqual(plans[1].id, plans[2].id);
+    assert.notEqual(plans[1].card.question, plans[2].card.question);
+    assert.equal(plans[2].answer.label, 'Go ahead', 'the second plan is answered as itself');
+    assert.equal(plans[2].stale, undefined);
+    // The miss, then the question asked again, then the plan again, then the step that was stopped.
+    const join = cards.findIndex((c) => /^join-/.test(c.id));
+    assert.ok(said.some((s) => /Setup couldn't bring in/.test(s)));
+    assert.ok(join > cards.findIndex((c) => c.step === 3 && c.kind === 'go-ahead'), 'the miss comes after step 3\'s Go ahead');
+    assert.ok(cards.indexOf(plans[2]) > join, 'the plan comes after the question asked again');
+    const after = cards.slice(cards.indexOf(plans[2]) + 1);
+    assert.ok(after.find((c) => c.kind === 'go-ahead' && c.step === 3)?.covered, 'step 3\'s Go ahead is covered by the new plan');
+    assert.match(plans[2].card.question, /^- Already done: setup's tools\.\n- Your GitLab sign-in stays on this computer for later; this project doesn't use it\.$/m);
+    assert.match(plans[2].card.options.find((o) => o.label === 'Go ahead').description, /^Recommended: setup does all of this now\. The only thing left to ask you is a test notification on your phone near the end, which you can skip\.$/);
+    // Step 4's questions are asked before the plan, so nothing is asked after the Go ahead, and the plan says what they settled.
+    assert.deepEqual(after.filter((c) => c.kind === 'question' && c.step !== 9).map((c) => c.id), [], 'no question card follows the second plan\'s Go ahead, bar the phone test');
+    const before = cards.slice(0, cards.indexOf(plans[2]));
+    assert.ok(before.some((c) => c.step === 4 && /^product-/.test(c.id)) && before.some((c) => c.id === 'live-data'), 'the description and live data are asked before the plan');
+    assert.match(plans[2].card.question, /no real users and no live data yet/);
+    assert.doesNotMatch(plans[2].card.question, /Setup step 2|install/i);
+    assert.doesNotMatch(plans[2].card.options.find((o) => o.label === 'Go ahead').description, /password|sign in to/i);
+  }
+});
+
+test('path g: a product kept on this computer after a miss is new, so no live data is recommended', async () => {
+  const { cards } = await rendered('g');
+  const live = cards.find((c) => c.id === 'live-data');
+  assert.equal(recommendedOf(live.card), 'No live data');
 });

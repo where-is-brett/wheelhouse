@@ -7,7 +7,7 @@ import fs from 'node:fs';
 const START = '(?<![A-Za-z0-9])';
 const PATTERNS = [
   { name: 'github-token', re: new RegExp(`${START}(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})`) },
-  { name: 'gitlab-token', re: new RegExp(`${START}(?:glpat|gloas|gldt|glrt)-[A-Za-z0-9_-]{20,}`) },
+  { name: 'gitlab-token', re: new RegExp(`${START}(?:glpat|gloas|gldt|glrt|glptt|glft|glsoat|glcbt|glimt|glagent|glffct)-[A-Za-z0-9_-]{20,}`) },
   { name: 'anthropic-key', re: new RegExp(`${START}sk-ant-[A-Za-z0-9_-]{20,}`) },
   { name: 'openai-key', re: new RegExp(`${START}sk-(?!ant-)[A-Za-z0-9_-]{32,}`) },
   { name: 'aws-access-key', re: new RegExp(`${START}(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Za-z0-9])`) },

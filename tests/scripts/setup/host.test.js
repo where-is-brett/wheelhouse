@@ -13,7 +13,7 @@ import path from 'node:path';
 import {
   hostStep, cardFor, signIn, makeRepos, connectionCard, stricterCard, stricterWay, STRICTER, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
   directorGitlabApi, directorKey, signInStatus, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
-  APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, ORGS_UNREAD, launchedIn,
+  APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, pinOf, joinMissLine, ORGS_UNREAD, launchedIn,
   checkOutJoined, findInstallation, CERTIFICATE_GIVEN, reachLine, askAdministrationKey, setupTokenApi, SETUP_TOKEN_KEPT,
   madeWithSetupToken, keyGitlabApi, keyGitEnv, againCard,
 } from '../../../scripts/setup/host.js';
@@ -47,9 +47,11 @@ import { QUICK_LINE, quickLineFor } from '../../../scripts/lib/host-lines.js';
 import { QUICK_LINE as BOARD_QUICK_LINE } from '../../../scripts/board/health.js';
 import { FREE_PLAN_LINE } from '../../../scripts/host/protection.js';
 import { g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
-import { KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, remotesOf } from '../../../scripts/setup/local.js';
+import { KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, remotesOf, chosenHost } from '../../../scripts/setup/local.js';
 import { homeDir } from '../../../scripts/host/local/home.js';
 import { GITLAB_COM, COMPANY_GITLAB, companyAddress, nameGitlabHost } from '../../../scripts/setup/host.js';
+import { HELD_SECRET } from '../../../scripts/lib/pasted-address.js';
+import { DEFAULT_GITLAB } from '../../../scripts/host/gitlab-base.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 import { useFileKeyStore } from '../../helpers/file-key-store.js';
 
@@ -773,7 +775,7 @@ test('a new product whose name is taken by a repository setup did not make is re
     const folder = productFolder();
     const step = stepFor(w);
     const planned = await answerAll(step, ctxFor(folder), choose());
-    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), /a-director\/Shop on GitHub already exists/);
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), (error) => /a-director\/Shop already exists on GitHub and wasn't set up with Wheelhouse, so setup won't use it for a new product: rename this folder, then start setup again from it/.test(error.message) && !/brings it into this folder/.test(error.message));
     assert.equal(fs.existsSync(path.join(folder, '.git')), false);
   });
 });
@@ -1443,7 +1445,7 @@ test('a company remote named in gitlabHosts, with its port, gives that address t
     assert.equal(connection.target, 'gitlab');
     assert.equal(connection.base, 'https://localhost:8929');
     // A company's GitLab with no OAuth application is signed in to with a typed token, not a sign-up page.
-    assert.match(planned.card.what, /You sign in to GitLab with a token: a page opens to make it, and you paste it into a box on your screen, never the chat/);
+    assert.match(planned.card.what, /You sign in to your company's GitLab in your browser if your company has set that up, or else with a token you paste into a box on your screen, never the chat/);
     const glab = w.calls.filter((c) => c.tool === 'glab');
     assert.ok(glab.length > 0);
     for (const c of glab) assert.equal(c.env?.GITLAB_HOST, 'localhost:8929');
@@ -1464,7 +1466,7 @@ test('step 3\'s card for a company\'s GitLab behind its own authority, with the 
     const w = standIn({ signedIn: { github: true, gitlab: false } });
     const folder = productFolder('A product whose folder has a very long name indeed, Zoë');
     fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ gitlabHosts: ['git.example.org:8443'] }));
-    await withOrigin(folder, `https://git.example.org:8443/${USER}/a-product-with-a-long-name-to-fill-the-card.git`);
+    await withOrigin(folder, `https://git.example.org:8443/${USER}/a-product-with-a-long-name.git`);
     const step = stepFor(w, { certificateProbe: async () => 'certificate' });
     const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, way: WAYS.narrow }));
     assert.ok(planned.changes.some((c) => c.action === 'certificate'));
@@ -1493,7 +1495,7 @@ test('step 3\'s card on a company\'s GitLab composes for ordinary and for very l
     [`${'h'.repeat(190)}.example.com:8443`, `${'g'.repeat(100)}/${'p'.repeat(99)}`, 'u'.repeat(200), 'tight'],
     // A host name is at most 253 characters, so the bare wording takes an address with a long path after the host.
     [`${'h'.repeat(190)}.example.com:8443/${'s'.repeat(300)}`, `${'g'.repeat(100)}/${'p'.repeat(99)}`, 'u'.repeat(200), 'bare'],
-    ['gitlab.internal.bigcompany.example.com:8443', `${'group-'.repeat(8)}/${'sub-'.repeat(20)}/shop`, 'a-well-known-user-with-a-long-name', { joining: 'full', new: 'tight', existing: 'full' }],
+    ['gitlab.internal.bigcompany.example.com:8443', `${'group-'.repeat(8)}/${'sub-'.repeat(22)}sub/shop`, 'a-well-known-user-with-a-long-name', { joining: 'tight', new: 'tight', existing: 'tight' }],
   ];
   const wording = (what) => (/copied from this computer's certificate store/.test(what) ? 'full' : /certificate for your GitLab's address/.test(what) ? 'bare' : 'tight');
   for (const [hostName, repo, user, expected] of cases) {
@@ -1546,7 +1548,7 @@ test('on a company\'s GitLab the typed token is the way offered, and the card as
     const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
     const signing = planned.changes.find((c) => c.action === 'sign-in');
     assert.equal(signing.via, 'token');
-    assert.match(planned.card.what, /with a token: a page opens to make it, and you paste it into a box on your screen, never the chat/);
+    assert.match(planned.card.what, /or else with a token you paste into a box on your screen, never the chat/);
     assert.match(planned.card.what, /never the chat/);
     // The card says only what the director does: nothing about an application an admin might register.
     assert.doesNotMatch(planned.card.what, /admin|read_user|client_id|openid|permissions/);
@@ -2460,7 +2462,239 @@ test('step 3 asks whether this computer is joining only in a folder holding noth
     assert.equal((await step.plan(ctxFor(tidy))).ask.id, 'join');
     assert.equal(repoNamed(' cafe-co/Cafe-Menu.git '), 'cafe-co/Cafe-Menu');
     assert.equal(repoNamed('Cafe-Menu'), 'Cafe-Menu');
-    for (const bad of ['', 'a b', '../x', 'o/..', 'https://github.com/o/x']) assert.equal(repoNamed(bad), null, bad);
+    for (const bad of ['', 'a b', '../x', 'o/..', 'https://gitlab.example.org', 'https://gitlab.example.org/', 'git@gitlab.example.org:', 'https://h/../x']) assert.equal(repoNamed(bad), null, bad);
+    // A pasted project address reads as its owner/name, groups too.
+    for (const [pasted, named] of [
+      ['github.com/ann/cafe-menu', 'ann/cafe-menu'],
+      ['www.gitlab.com/team/app', 'team/app'],
+      ['https://gitlab.example.org/ann/cafe-menu', 'ann/cafe-menu'],
+      ['https://github.com/ann/cafe-menu.git', 'ann/cafe-menu'],
+      ['git@gitlab.example.org:ann/cafe-menu.git', 'ann/cafe-menu'],
+      ['ssh://git@gitlab.example.org:2222/grp/sub/name.git', 'grp/sub/name'],
+      ['https://gitlab.example.org/grp/sub/name/', 'grp/sub/name'],
+      // A page of the project in a browser: GitLab's goes on after '/-/', GitHub's after the second part.
+      ['https://gitlab.example.com/ann/cafe-menu/-/tree/main', 'ann/cafe-menu'],
+      ['https://gitlab.example.com/grp/sub/name/-/merge_requests', 'grp/sub/name'],
+      ['https://github.com/ann/cafe-menu/tree/main', 'ann/cafe-menu'],
+      ['https://github.com/ann/cafe-menu/pulls', 'ann/cafe-menu'],
+      ['https://github.com/ann/cafe-menu.git', 'ann/cafe-menu'],
+    ]) assert.equal(repoNamed(pasted), named, pasted);
+  });
+});
+
+test('a pasted address decides the host and its GitLab: no host card and no which-GitLab card is asked', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    await seedProject(w, `${USER}/Cafe-Menu`);
+    const step = stepFor(w);
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    const joinedOn = async (typed) => {
+      const got = await answerJoin(step, ctx, (id, card) => {
+        if (id === 'host' || id.startsWith('gitlab-')) throw new Error(`asked ${id}`);
+        return id === 'join' ? typed : choose()(id, card);
+      });
+      return { connection: got.changes.find((c) => c.action === 'connection'), join: got.changes.find((c) => c.action === 'join'), card: got.card };
+    };
+    // GitHub: github.com, with or without https://, and a page of the project, join on GitHub though the run's own answers say GitLab.
+    for (const typed of [`https://github.com/${USER}/Cafe-Menu/pulls`, `github.com/${USER}/Cafe-Menu`, `www.github.com/${USER}/Cafe-Menu/tree/main`]) {
+      const got = await joinedOn(typed);
+      assert.equal(got.connection.target, 'github', typed);
+      assert.equal(got.join.name, `${USER}/Cafe-Menu`, typed);
+    }
+    // The public GitLab.
+    const pub = await joinedOn(`https://gitlab.com/${USER}/Cafe-Menu/-/tree/main`);
+    assert.equal(pub.connection.target, 'gitlab');
+    assert.equal(pub.connection.base ?? 'https://gitlab.com', 'https://gitlab.com');
+    assert.equal(pub.join.name, `${USER}/Cafe-Menu`);
+    // A company's GitLab: its address is the base.
+    const company = await joinedOn(`git@gitlab.company.example:${USER}/Cafe-Menu.git`);
+    assert.equal(company.connection.target, 'gitlab');
+    assert.equal(company.connection.base, 'https://gitlab.company.example');
+    assert.equal(company.join.name, `${USER}/Cafe-Menu`);
+    assert.match(company.card.what ?? JSON.stringify(company.card), /company/i);
+    assert.equal(chosenHost({ '3.join': { label: null, text: 'github.com/ann/x', at: NOW.toISOString() } }), 'github');
+    assert.equal(chosenHost({ '3.join': { label: null, text: 'https://gitlab.company.example/ann/x', at: NOW.toISOString() } }), 'gitlab');
+  });
+});
+
+test('an address setup cannot read is refused as such, never looked up on the run\'s host', async () => {
+  await withHome(async () => {
+    const step = stepFor(standIn());
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    for (const bad of ['https://gitlab.example.org:99999/ann/cafe-menu', 'https://git lab.example.org/ann/cafe-menu', 'https://[::1/ann/cafe-menu', 'https://git^lab.example.org/ann/cafe-menu']) {
+      const ask = (await step.plan({ ...ctx, answers: { '3.join': { label: null, text: bad, at: NOW.toISOString() } } })).ask;
+      assert.notEqual(ask.id, 'join', bad);
+      assert.equal(ask.card.what.startsWith(`"${bad.replace('deploy@', '')}" can't be read as an address. Paste the address of the project's page as your browser shows it, such as https://gitlab.example.org/team/cafe-menu. A company GitLab's address can be typed on the company GitLab button's address question instead. Or type owner/name, like ann/cafe-menu, or click a button. `), true, ask.card.what);
+    }
+  });
+});
+
+test('schemeless text is an address only for github.com and gitlab.com; any other dotted first part stays owner/name', async () => {
+  // Item 1: GitLab user and group names with dots are common, and are never read as a host to contact.
+  for (const name of ['john.smith/cafe-menu', 'my.app/notes', 'first.last/x', 'acme.corp/team/app']) assert.equal(repoNamed(name), name, name);
+  assert.equal(repoNamed('www.gitlab.com/ann/cafe-menu'), 'ann/cafe-menu');
+  await withHome(async () => {
+    const w = standIn();
+    const step = stepFor(w);
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    // Typed as a name, it asks the host card as a bare owner/name does, and nothing is contacted for the dotted part.
+    const got = await answerJoin(step, ctx, (id, card) => (id === 'join' ? 'john.smith/cafe-menu' : choose()(id, card)));
+    assert.equal(got.asked.some((a) => a.id === 'host'), true);
+    assert.equal(got.changes.find((c) => c.action === 'join').name, 'john.smith/cafe-menu');
+    // And www.gitlab.com is the public GitLab.
+    const pub = await answerJoin(step, ctx, (id, card) => {
+      if (id === 'host' || id.startsWith('gitlab-')) throw new Error(`asked ${id}`);
+      return id === 'join' ? 'www.gitlab.com/ann/cafe-menu' : choose()(id, card);
+    });
+    assert.equal(pub.changes.find((c) => c.action === 'connection').target, 'gitlab');
+    assert.equal(pub.changes.find((c) => c.action === 'connection').base ?? 'https://gitlab.com', 'https://gitlab.com');
+  });
+});
+
+test('other places to keep code are refused, and only https, ssh and git@ addresses on a real host are read', async () => {
+  await withHome(async () => {
+    const step = stepFor(standIn());
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    const whatFor = async (text) => (await step.plan({ ...ctx, answers: { '3.join': { label: null, text, at: NOW.toISOString() } } })).ask;
+    // Item 2: github.* that is not github.com, and Bitbucket, Azure DevOps and Codeberg.
+    for (const other of ['https://github.example.com/ann/x', 'https://bitbucket.org/ann/x', 'https://www.bitbucket.org/ann/x', 'https://dev.azure.com/o/p', 'git@codeberg.org:ann/x.git']) {
+      const ask = await whatFor(other);
+      assert.notEqual(ask.id, 'join', other);
+      assert.equal(ask.card.what.startsWith(`"${other}" is not on github.com or GitLab, the places Wheelhouse works with. Type owner/name, like ann/cafe-menu, or click a button. `), true, ask.card.what);
+    }
+    // Item 5: http, other schemes, other ssh users, loopback, link-local and bare-IP hosts are unreadable.
+    for (const bad of ['http://gitlab.example.org/ann/x', 'ftp://gitlab.example.org/ann/x', 'deploy@gitlab.example.org:ann/x', 'https://localhost/ann/x',
+      'https://127.0.0.1/ann/x', 'https://0x7f.1/ann/x', 'https://169.254.169.254/ann/x', 'git@localhost:ann/x', 'https://[::1]/ann/x', 'https://2130706433/ann/x']) {
+      const ask = await whatFor(bad);
+      assert.notEqual(ask.id, 'join', bad);
+      assert.equal(ask.card.what.startsWith(`"${bad.replace('deploy@', '')}" can't be read as an address. Paste the address of the project's page as your browser shows it, such as https://gitlab.example.org/team/cafe-menu. A company GitLab's address can be typed on the company GitLab button's address question instead. Or type owner/name, like ann/cafe-menu, or click a button. `), true, ask.card.what);
+      // Item 6: what step 3 refuses is no host for the tools or the plan either.
+      assert.equal(chosenHost({ '3.join': { label: null, text: bad, at: NOW.toISOString() } }), null, bad);
+    }
+    // A host written with hex octets is the loopback or link-local address a URL reader makes of it, and is refused as one.
+    for (const hex of ['git@127.0.0.0x1:g/p', 'ssh://git@127.0.0.0x1/g/p', 'git@169.254.169.0xfe:g/p']) {
+      const ask = await whatFor(hex);
+      assert.notEqual(ask.id, 'join', hex);
+      assert.match(ask.card.what, /can't be read as an address/, hex);
+      assert.equal(chosenHost({ '3.join': { label: null, text: hex, at: NOW.toISOString() } }), null, hex);
+    }
+    for (const other of ['https://bitbucket.org/ann/x', 'https://github.example.com/ann/x']) assert.equal(chosenHost({ '3.join': { label: null, text: other, at: NOW.toISOString() } }), null, other);
+    assert.equal(chosenHost({ '3.join': { label: null, text: 'ssh://git@gitlab.example.org/ann/x', at: NOW.toISOString() } }), 'gitlab');
+    // An address step 3 refuses (a host with no project, or a company host with a root dot) names no host; the newest join answer counts.
+    for (const refused of ['https://gitlab.com/', 'https://gitlab.example.org/']) {
+      assert.equal(chosenHost({ '3.join': { label: null, text: refused, at: NOW.toISOString() } }), null, refused);
+    }
+    assert.equal(chosenHost({ '3.join': { label: null, text: 'https://gitlab.com/', at: NOW.toISOString() }, '3.join-abc': { label: null, text: 'github.com/ann/x', at: NOW.toISOString() } }), 'github');
+  });
+});
+
+test('the join card ends its why line with the address, and says groups after a miss on GitLab', async () => {
+  await withHome(async () => {
+    const step = stepFor(standIn());
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    // Item 9.
+    const first = (await step.plan(ctx)).ask;
+    assert.equal(first.card.why.endsWith('Type its owner/name, like ann/cafe-menu, or paste its address.'), true, first.card.why);
+    // Item 11: the miss is recorded with its host.
+    for (const [host, words] of [['gitlab', 'groups'], ['github', 'organisations']]) {
+      const other = startRun({ folder: emptyFolder(), now: () => NOW });
+      addChanges(other.id, [{ id: 'chg-1', kind: 'answer', target: 'step 3', before: null, after: { joined: 'Cafe-Menu', missed: 'none', host }, step: 3 }]);
+      const next = (await step.plan(ctxFor(other.folder ?? folder, { runId: other.id }))).ask;
+      assert.match(next.card.what, new RegExp(`^Setup found no Cafe-Menu set up with Wheelhouse on your account or ${words}\\. `));
+    }
+    // The hint to paste with https:// is for a bare name that looks like a host, never for text that was already an address.
+    for (const [address, hint] of [[false, true], [true, false]]) {
+      const other = startRun({ folder: emptyFolder(), now: () => NOW });
+      addChanges(other.id, [{ id: 'chg-1', kind: 'answer', target: 'step 3', before: null, after: { joined: 'team.alpha', missed: 'none', host: 'gitlab', ...(address ? { address: true } : {}) }, step: 3 }]);
+      const next = (await step.plan(ctxFor(other.folder ?? folder, { runId: other.id }))).ask;
+      assert.equal(/paste it with https:\/\/ at the front/.test(next.card.what), hint, next.card.what);
+    }
+  });
+});
+
+test('no token is shown back in any form it is pasted', async () => {
+  await withHome(async () => {
+    const step = stepFor(standIn());
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    for (const text of ['git clone https://oauth2:glpat-SECRET@gitlab.com/ann/x', 'oauth2:glpat-SECRET@gitlab.com/ann/x', 'https:/oauth2:SECRET@gitlab.com/',
+      'https://oauth2:SEC/RET@gitlab.com/', 'https://gitlab.com/ann/f;private_token=SECRET', 'https://SECRET@gitlab.com/ann/x', 'SECRET@gitlab.com/ann/x', 'the cafe one?token=SECRET']) {
+      const what = (await step.plan({ ...ctx, answers: { '3.join': { label: null, text, at: NOW.toISOString() } } })).ask?.card.what ?? '';
+      assert.equal(/SECRET|SEC\/RET|RET@/.test(what), false, `${text} -> ${what}`);
+    }
+  });
+});
+
+test('a joining pin to a company GitLab names its address on the Go-ahead card, calls glab without the director\'s token variables, and makes no glab call in a look at the choices', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    await seedProject(w, `${USER}/Cafe-Menu`);
+    const step = stepFor(w);
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    const typed = `https://gitlab.company.example/${USER}/Cafe-Menu`;
+    const pick = (id, card) => (id === 'join' ? typed : choose()(id, card));
+    // Item 3.
+    const got = await answerJoin(step, ctx, pick);
+    assert.match(got.card.what, /a-director\/Cafe-Menu on your company's GitLab at gitlab\.company\.example, brought into this folder once setup finds Wheelhouse's settings in it\./);
+    // Item 4, a choices-only look: nothing is run against the pinned host.
+    w.calls.length = 0;
+    await answerJoin(step, { ...ctx, choicesOnly: true }, pick).catch(() => {});
+    assert.deepEqual(w.calls.filter((c) => c.env?.GITLAB_HOST === 'gitlab.company.example'), []);
+  });
+  // Item 4: glab is run without GITLAB_TOKEN, GITLAB_ACCESS_TOKEN and OAUTH_TOKEN, whichever host it is told.
+  const seen = [];
+  const run = async (file, args, options = {}) => { seen.push(options.env ?? {}); return { code: 1, stdout: '', stderr: '' }; };
+  await signInStatus({ host: 'gitlab', run, base: 'https://gitlab.company.example' });
+  await signInStatus({ host: 'gitlab', run });
+  assert.equal(seen.length > 0, true);
+  for (const env of seen) {
+    for (const name of ['GITLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'OAUTH_TOKEN']) assert.equal(Object.hasOwn(env, name) && env[name] === undefined, true, name);
+  }
+  assert.equal(directorGitEnvTokens(), true);
+});
+
+const directorGitEnvTokens = () => {
+  const env = directorGitEnv({ host: 'gitlab', gitPath: '/usr/bin/git', env: { PATH: '/bin' }, platform: 'darwin' });
+  return ['GITLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'OAUTH_TOKEN'].every((n) => Object.hasOwn(env, n) && env[n] === undefined);
+};
+
+test('a token in a pasted address is not shown back on the card that asks again', async () => {
+  await withHome(async () => {
+    const step = stepFor(standIn());
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    const typed = (text) => ({ '3.join': { label: null, text, at: NOW.toISOString() } });
+    const shown = (await step.plan({ ...ctx, answers: typed('https://oauth2:glpat-SECRET123@gitlab.example.org/') })).ask.card.what;
+    assert.equal(shown.includes('SECRET123'), false, shown);
+    assert.match(shown, /^"gitlab\.example\.org\/" is not a repository's name\./);
+    // A query string, and a user that is not plain git, are not shown back either.
+    for (const secret of ['https://gitlab.example.org/?private_token=SECRET456', 'deploy:SECRET789@gitlab.example.org:']) {
+      const card = (await step.plan({ ...ctx, answers: typed(secret) })).ask.card.what;
+      assert.equal(/SECRET\d+|private_token/.test(card), false, card);
+    }
+    // An answer kept as nothing because a secret was left in it brings the card back saying why.
+    assert.equal((await step.plan({ ...ctx, answers: typed(HELD_SECRET) })).ask.card.what, [
+      'What you pasted had a sign-in name, password or token in it, so setup didn\'t keep it.',
+      'If it was a real password or token, change it on GitLab or GitHub: it is now in this chat.',
+      'Paste the address as your browser shows it on the project\'s page, or type owner/name, like ann/cafe-menu.',
+      'Where should Cafe-Menu be kept?',
+    ].join('\n'));
+    // git@host: is no secret, and stays.
+    assert.match((await step.plan({ ...ctx, answers: typed('git@gitlab.example.org:') })).ask.card.what, /^"git@gitlab\.example\.org:" is not/);
   });
 });
 
@@ -2482,7 +2716,7 @@ test('a second computer joins from an empty folder: the project found on an orga
     assert.deepEqual(planned.changes.find((c) => c.action === 'connection'), { kind: 'host', target: 'github', action: 'connection', mode: 'quick', locked: false, backend: 'cli' });
     assert.equal(planned.asked.at(-1).card.recommend, STRICTER, 'a narrow way until the phase is known, never Quick');
     const text = composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } }).question.question;
-    assert.match(text, /Cafe-Menu, the one set up with Wheelhouse, found on your GitHub account or organisations and checked out into this folder/);
+    assert.match(text, /Cafe-Menu on your GitHub account or organisations, brought into this folder once setup finds Wheelhouse's settings in it/);
     assert.doesNotMatch(text, /protection/, 'the first computer\'s step 7 switched it on');
 
     const run = startRun({ folder, now: () => NOW });
@@ -2549,16 +2783,18 @@ test('none or several found are refused saying to type owner/name, the question 
     const planned = await answerJoin(step, ctx, joining());
     await assert.rejects(applyIn(step, folder, run.id, planned.changes, { answers: planned.answers }),
       /^Error: More than one repository named Cafe-Menu is set up with Wheelhouse \(a-director\/Cafe-Menu, cafe-co\/Cafe-Menu\), so nothing was checked out: type the one you mean as owner\/name on step 3's question, which asks again$/);
-    assert.deepEqual(joinedOf(folder).at(-1), { joined: 'Cafe-Menu', missed: [`${USER}/Cafe-Menu`, 'cafe-co/Cafe-Menu'] });
+    assert.deepEqual(joinedOf(folder).at(-1), { joined: 'Cafe-Menu', missed: [`${USER}/Cafe-Menu`, 'cafe-co/Cafe-Menu'], host: 'github', user: USER, withdraws: null });
     assert.equal(fs.existsSync(path.join(folder, '.git')), false, 'nothing checked out');
-    assert.equal(stepsFor(findRun(folder)), JOINING_STEPS, 'the run stays joining, and step 3 can run again');
+    assert.ok(stepsFor(findRun(folder)).some((s) => s.n === 4), 'a miss joins nothing: the run has every step again, step 4\'s questions among them, and step 3 can run again');
     // Asked again, under an id naming what was missed, saying so; the typed owner/name is used.
     const again = await step.plan({ ...ctx, answers: planned.answers });
     assert.match(again.ask.id, /^join-[0-9a-f]{10}$/);
+    assert.equal(again.ask.endsBatch, true, 'the join card ends its batch, so the cards a joining product skips are not asked with it');
+    assert.match(again.ask.card.meanwhile, /Setup has stopped here\. Its tools and your sign-in stay/);
     assert.match(again.ask.card.what, /^More than one Cafe-Menu is set up with Wheelhouse: a-director\/Cafe-Menu, cafe-co\/Cafe-Menu\./);
     const typed = await answerJoin(step, { ...ctx, answers: planned.answers }, joining({ typed: 'cafe-co/Cafe-Menu' }));
     assert.deepEqual(typed.changes.find((c) => c.action === 'join'), { kind: 'host', target: 'github', action: 'join', name: 'cafe-co/Cafe-Menu' });
-    assert.match(typed.card.what, /cafe-co\/Cafe-Menu, the one set up with Wheelhouse, found on your GitHub/);
+    assert.match(typed.card.what, /cafe-co\/Cafe-Menu on your GitHub/);
     await applyIn(step, folder, run.id, typed.changes, { answers: typed.answers });
     assert.equal(joinedRepo(findRun(folder)), 'cafe-co/Cafe-Menu');
     assert.equal(await g(folder, 'config', '--get', 'remote.origin.url'), w.hostUrl({ repo: 'cafe-co/Cafe-Menu' }));
@@ -2573,14 +2809,28 @@ test('none or several found are refused saying to type owner/name, the question 
     const ctx = ctxFor(folder, { runId: run.id });
     const planned = await answerJoin(step, ctx, joining());
     await assert.rejects(applyIn(step, folder, run.id, planned.changes, { answers: planned.answers }),
-      /^Error: Setup found no repository Cafe-Menu set up with Wheelhouse on your GitHub account or your organisations, so nothing was checked out: type the project's owner\/name on step 3's question, which asks again$/);
-    assert.deepEqual(joinedOf(folder).at(-1), { joined: 'Cafe-Menu', missed: 'none' });
+      /^Error: Setup found no repository Cafe-Menu set up with Wheelhouse on your GitHub account or your organisations, so nothing was brought in: type the project's owner\/name on step 3's question, which asks again$/);
+    assert.deepEqual(joinedOf(folder).at(-1), { joined: 'Cafe-Menu', missed: 'none', host: 'github', user: USER, withdraws: null });
+    // A named project (owner/name) not set up with Wheelhouse is not asked for again by the same name: the line says what was
+    // not found and the way on, in plain words, on the error and on the card asked again.
+    const namedRun = startRun({ folder: emptyFolder(), now: () => NOW });
+    const namedCtx = ctxFor(namedRun.folder ?? folder, { runId: namedRun.id });
+    const named = await answerJoin(step, namedCtx, joining({ typed: `${USER}/Cafe-Menu` }));
+    await assert.rejects(applyIn(step, namedRun.folder ?? folder, namedRun.id, named.changes, { answers: named.answers }),
+      new RegExp(`^Error: Setup couldn't bring in ${USER}/Cafe-Menu: nothing was brought in, and setup asks where to keep it again\\.$`));
+    const again = (await step.plan({ ...namedCtx, answers: named.answers })).ask;
+    assert.match(again.card.what, new RegExp(`^Setup couldn't find Wheelhouse's settings in ${USER}/Cafe-Menu on GitHub`));
+    assert.doesNotMatch(again.card.what, /clone|checked out|download a copy|type the project's owner/);
     // Typed text that names no repository asks again at once, saying so.
     const first = (await step.plan({ ...ctx, answers: planned.answers })).ask;
     const answers = { ...planned.answers, [`3.${first.id}`]: { label: null, text: 'the cafe one', at: NOW.toISOString() } };
     const next = (await step.plan({ ...ctx, answers })).ask;
     assert.notEqual(next.id, first.id);
-    assert.match(next.card.what, /^"the cafe one" is not a repository's name\./);
+    assert.match(next.card.what, /^"the cafe one" is not a repository's name\. Type owner\/name, like ann\/cafe-menu, or click a button\./);
+    // A pasted address with no project in it says it names no project.
+    const bare = { ...answers, [`3.${next.id}`]: { label: null, text: 'https://git.example.org/', at: NOW.toISOString() } };
+    assert.match((await step.plan({ ...ctx, answers: bare })).ask.card.what,
+      /^"https:\/\/git\.example\.org\/" is not a repository's name\. That is the address of the host itself, not of a project: paste the address of the project's page, or type owner\/name, like ann\/cafe-menu, or click a button\./);
     // A new product, chosen now: the run is not a joining one any more once its apply starts.
     const fresh = await answerJoin(step, { ...ctx, answers }, (id) => (id.startsWith('join') ? HOST_LABELS.github : choose()(id)));
     assert.ok(fresh.changes.some((c) => c.action === 'repository'));
@@ -3596,4 +3846,81 @@ test('a card asked again drops an earlier own-git recommendation once git holds 
   const again = againCard(earlier, now, WAYS.wheelhouse);
   assert.equal(again.recommend, WAYS.own);
   assert.equal(again.because, now.because);
+});
+
+test('a pasted address that names no project says so even when its user and token are hidden; a dotted miss says to paste the address with https://', async () => {
+  await withHome(async () => {
+    const step = stepFor(standIn());
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    // Item 5: the hint rests on the text as pasted, not on what is shown of it.
+    const ask = (await step.plan({ ...ctx, answers: { '3.join': { label: null, text: 'https://oauth2:tok@gitlab.company.example/', at: NOW.toISOString() } } })).ask;
+    assert.equal(ask.card.what.startsWith('"gitlab.company.example/" is not a repository\'s name. That is the address of the host itself, not of a project: paste the address of the project\'s page, or type owner/name, like ann/cafe-menu, or click a button. '), true, ask.card.what);
+    assert.equal(/tok@|oauth2/.test(ask.card.what), false);
+    // Items 2 and 6: after a miss on a dotted first part, on GitLab, the card says groups and how to paste an address.
+    const other = startRun({ folder: emptyFolder(), now: () => NOW });
+    addChanges(other.id, [{ id: 'chg-1', kind: 'answer', target: 'step 3', before: null, after: { joined: 'gitlab.mycorp.internal', missed: 'none', host: 'gitlab' }, step: 3 }]);
+    const again = (await step.plan(ctxFor(folder, { runId: other.id }))).ask;
+    assert.match(again.card.what, /on your account or groups\. If that is an address, paste it with https:\/\/ at the front\. /);
+    assert.match(again.card.options.at(-1).says, /in your account or groups, set up/);
+    assert.match(joinMissLine({ host: 'gitlab', wanted: 'gitlab.mycorp.internal', found: [] }), /which asks again. If that is an address, paste it with https:\/\/ at the front\.$/);
+    assert.doesNotMatch(joinMissLine({ host: 'gitlab', wanted: 'team/app', found: [] }), /paste it with https/);
+  });
+});
+
+test('a look at the choices asks the computer for no key for a pasted company host, and a pasted host the reader refuses is no host', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const step = stepFor(w);
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    const borrowed = [];
+    const original = directorKey.borrow;
+    directorKey.borrow = async (args) => { borrowed.push(args); return null; };
+    try {
+      await answerJoin(step, { ...ctx, choicesOnly: true }, (id, card) => (id === 'join' ? 'https://gitlab.company.example/ann/Cafe-Menu' : choose()(id, card))).catch(() => {});
+      assert.deepEqual(borrowed.filter((b) => String(b.host).includes('gitlab.company.example')), []);
+    } finally {
+      directorKey.borrow = original;
+    }
+    // One reader: what pinOf refuses, the plan never names (underscore and trailing-dot hosts, www.gitlab.com is public).
+    for (const bad of ['https://git_lab.example.com/ann/x', 'https://db.internal./ann/x']) assert.equal(pinOf(bad)?.host, undefined, bad);
+    assert.deepEqual(pinOf('https://www.gitlab.com/ann/x'), { host: 'gitlab', company: { base: 'https://gitlab.com' } });
+  });
+});
+
+test('after a pasted address missed, GitLab on the same host under the name the miss holds in the director\'s own account is refused before the plan, and not otherwise', async () => {
+  await withHome(async () => {
+    const step = stepFor(standIn());
+    const at = 'gitlab.company.example';
+    const missRun = (owner) => {
+      const folder = emptyFolder();
+      const run = startRun({ folder, now: () => NOW });
+      addChanges(run.id, [{ id: 'chg-1', kind: 'answer', target: 'step 3', before: null, after: { joined: `${owner}/Cafe-Menu`, missed: 'none', host: 'gitlab', user: USER, address: true, at }, step: 3 }]);
+      return { folder, run };
+    };
+    const typed = (text) => ({ label: null, text, at: NOW.toISOString() });
+    // The director's own account: GitLab is chosen, then the same company address is typed, so the question asks again at once.
+    const own = missRun(USER);
+    const first = (await step.plan(ctxFor(own.folder, { runId: own.run.id }))).ask;
+    assert.match(first.id, /^join-[0-9a-f]{10}$/);
+    assert.match(first.card.what, /^Setup couldn't find Wheelhouse's settings in a-director\/Cafe-Menu on gitlab\.company\.example, or your sign-in can't reach it\.\nSetup only brings in a project that was set up with Wheelhouse on another computer\.\nWhere should Cafe-Menu be kept instead\?\nChoose a button for a new product, or paste another address\.\nIf Cafe-Menu is already on gitlab\.company\.example, a new product can't use that name there\. Rename this folder and start setup again from it\.$/);
+    const chose = { [`3.${first.id}`]: { label: HOST_LABELS.gitlab, text: null, at: NOW.toISOString() } };
+    const refused = (await step.plan(ctxFor(own.folder, { runId: own.run.id, answers: { ...chose, '3.gitlab-where': { label: COMPANY_GITLAB, text: null, at: NOW.toISOString() }, '3.gitlab-address-0': typed(`https://${at}`) } }))).ask;
+    assert.match(refused.id, /^join-[0-9a-f]{10}$/);
+    assert.notEqual(refused.id, first.id);
+    assert.equal(refused.card.what, [
+      'Cafe-Menu may already be on gitlab.company.example without Wheelhouse\'s settings, so setup won\'t make a new product there under that name.',
+      `Choose Keep it on this computer or GitHub, or choose GitLab and then ${new URL(DEFAULT_GITLAB).hostname}, or rename this folder and start setup again from it.`,
+      'Where should Cafe-Menu be kept?',
+    ].join('\n'));
+    // Another host's address, or a project in someone else's account, is not refused, and says nothing of the name.
+    const elsewhere = (await step.plan(ctxFor(own.folder, { runId: own.run.id, answers: { ...chose, '3.gitlab-where': { label: COMPANY_GITLAB, text: null, at: NOW.toISOString() }, '3.gitlab-address-0': typed('https://gitlab.other.example') } }))).ask;
+    assert.doesNotMatch(String(elsewhere.id), /^join-/);
+    const theirs = missRun('someone-else');
+    const ask = (await step.plan(ctxFor(theirs.folder, { runId: theirs.run.id }))).ask;
+    assert.doesNotMatch(ask.card.what, /can't use that name/);
+  });
 });

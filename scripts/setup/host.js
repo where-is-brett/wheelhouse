@@ -91,6 +91,7 @@ import { installationCovers } from '../host/connection.js';
 import { gitlabApi, makeProjectKey, isProjectKeyRefused, checkBaseUrl, projectPath, PERSONAL_DAYS, keyExpiry } from '../host/gitlab-key.js';
 import { tokenUrl } from '../host/token-url.js';
 import { composeCard, isTooLong } from '../cards/compose.js';
+import { withoutTokens } from '../lib/token-names.js';
 import { DEFAULT_GITLAB, gitlabBase, readGitlabHosts, parseRemote, hostWords, isDefaultHost, commitEmailOf } from '../host/gitlab-base.js';
 import { findKey, saveKey } from '../host/keys.js';
 import { borrowKey, storeDirectorKey } from '../host/store.js';
@@ -108,12 +109,16 @@ import { readProfileViews, PROFILE_BRANCH } from '../profile/store.js';
 import { toolsStatus, originUrl, applyCompanyCa, curlStatus, toolsLeftOut, hostToolChoice, hostToolId, hostToolCard } from './tools.js';
 import {
   findAccess, backendFor, runKeyCard, asIsReachLine, keyCardPlanLine, noRoadLine, checkApiKey, hostAddress,
-  KEY_DAYS_ASKED,
+  KEY_DAYS_ASKED, directorGitEnv as directorAskEnv, ceilingOf,
 } from './host-access.js';
 import {
-  KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, applyLocal, backupAnswered, backupChoice, branchAsk, branchesOf, chooseBranch, headBranch, keptAsk, localCard, localName, localSteps, remotesOf,
+  KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, applyLocal, backupAnswered, backupChoice, hostOfAddress, pastedAddress, withScheme, branchAsk, branchesOf, chooseBranch, headBranch, keptAsk, localCard, localName, localSteps, remotesOf,
 } from './local.js';
+import { companyAddress, pinOf, repoNamed, HELD_SECRET } from '../lib/pasted-address.js';
 import { pickFolder, timeMachine } from '../host/local/backup.js';
+
+// A typed GitLab address and a pasted project address are read in scripts/lib/pasted-address.js, with the rest of its reading.
+export { companyAddress, pinOf, repoNamed };
 import { backupNamed, projectOfBackup } from '../host/local/restore.js';
 import { caFile, probeCertificate, companyGitEnv } from '../host/company-ca.js';
 import {
@@ -490,38 +495,6 @@ function hostAsk(name) {
 export const GITLAB_COM = new URL(DEFAULT_GITLAB).host;
 export const COMPANY_GITLAB = 'My company\'s GitLab';
 
-// A typed GitLab address as { base, host }: https only, a host name with an optional port, no path.
-// `base` is the address as the tools use it, `host` the entry `gitlabHosts` takes (the port with it).
-// The public service's own address gives { base: DEFAULT_GITLAB }. Anything else gives { why }.
-export function companyAddress(text) {
-  const typed = String(text ?? '').trim();
-  const shown = typed.length > 50 ? `${typed.slice(0, 50)}...` : typed;
-  // Only one run of characters can be an address someone typed: words with spaces in them are a placeholder or a
-  // sentence, and the card never quotes them back as the director's address.
-  const called = /^\S+$/.test(typed) ? `"${shown}"` : 'What came back';
-  if (/^http:\/\//i.test(typed)) return { why: `${called} is not https, and a company's GitLab is reached over https only` };
-  // A project's full address is taken too: its host is the GitLab, and its path names the project.
-  const [hostPart, ...rest] = typed.replace(/^https:\/\//i, '').split('/');
-  const bare = hostPart;
-  let repo;
-  const segments = rest.join('/').replace(/[?#].*$/, '').split('/-/')[0].replace(/\.git$/i, '').split('/').filter(Boolean);
-  // A group's page (the host and one group) is trimmed to the host; a path of two or more names a project.
-  if (segments.length > 0) {
-    if (!segments.every((part) => /^[A-Za-z0-9_.][A-Za-z0-9_.-]*$/.test(part) && !/^\.+$/.test(part))) {
-      return { why: `${called} is not a GitLab address: it is a host name and a port if it has one, with no path; or a project's whole address, the host then group/project` };
-    }
-    if (segments.length > 1) repo = segments.join('/');
-  }
-  const match = /^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*)(?::(\d{1,5}))?$/i.exec(bare);
-  if (match === null) return { why: `${called} is not a GitLab address: it is a host name and a port if it has one, with no path` };
-  const [, name, port] = match;
-  if (!name.includes('.') && name.toLowerCase() !== 'localhost') return { why: `${called} is not a GitLab address: it needs the whole host name, such as gitlab.example.org` };
-  if (port !== undefined && (Number(port) < 1 || Number(port) > 65535)) return { why: `${called} has a port that is not a port` };
-  const url = new URL(`https://${name.toLowerCase()}${port === undefined ? '' : `:${port}`}`);
-  if (url.origin === DEFAULT_GITLAB) return { base: DEFAULT_GITLAB, ...(repo === undefined ? {} : { repo }) };
-  return { base: url.origin, host: url.host, ...(repo === undefined ? {} : { repo }) };
-}
-
 // The host a folder's remotes already send work to that is neither GitHub nor the public GitLab, as the
 // address it goes by ('git.example.org:8443'), or null.
 export function remoteHost(others = []) {
@@ -646,43 +619,87 @@ export function nameGitlabHost({ folder, entry, record }) {
 
 // The join question (ruling R77), asked first in a folder holding only step 1's install. `missed`
 // is why it is asked again: { name, missed }, where `missed` is 'none', the repositories found
-// when there were several, or 'not-a-name' for typed text that names no repository.
+// when there were several, 'not-a-name' for typed text that names no repository, 'bad-address' for a pasted address setup can't read, or 'other-forge' for one on another place to keep code.
+const PASTE_WITH_SCHEME = 'If that is an address, paste it with https:// at the front.';
+// What a named project that setup could not find Wheelhouse's settings in comes to, and the way on: a project never set up with
+// Wheelhouse is not one this question can bring in, but a folder holding its files, with its own address kept, is set up where it is.
+const notFoundNamed = ({ host, wanted, at, user }) => {
+  const where = at ?? (host === 'github' ? 'GitHub' : 'that GitLab');
+  const other = host === 'github' ? 'GitLab' : 'GitHub';
+  // Only the director's own account is one a new product would be made in, so only then does the name matter.
+  const own = typeof user === 'string' && wanted.split('/')[0].toLowerCase() === user.toLowerCase();
+  return {
+    before: [
+      `Setup couldn't find Wheelhouse's settings in ${wanted} on ${where}, or your sign-in can't reach it.`,
+      'Setup only brings in a project that was set up with Wheelhouse on another computer.',
+    ],
+    after: [
+      'Choose a button for a new product, or paste another address.',
+      ...(own ? [`If ${wanted.split('/').at(-1)} is already on ${where}, a new product can't use that name there. Rename this folder and start setup again from it.`] : []),
+    ],
+    other,
+  };
+};
+// The host a pasted address names, as the join miss says it: the company's own host name, or GitHub or GitLab.
+const pinHostName = (pin) => (pin === undefined ? undefined : pin.host === 'github' ? 'GitHub' : pin.company?.host === undefined ? 'GitLab' : pin.company.host);
 function joinAsk(id, name, { missed }) {
   const other = fromOtherComputer(name);
   let found = '';
-  if (missed?.missed === 'not-a-name') found = `"${missed.name}" is not a repository's name. `;
+  // Whether the question's own words are already in `found`, on a line of their own.
+  let asked = false;
+  // The hint to paste with https:// is for a name that looks like a host; never for text that was already an address.
+  const dotted = missed?.address !== true && typeof missed?.name === 'string' && missed.name.split('/')[0].includes('.') ? ` ${PASTE_WITH_SCHEME}` : '';
+  if (missed?.name === HELD_SECRET) found = 'What you pasted had a sign-in name, password or token in it, so setup didn\'t keep it.\nIf it was a real password or token, change it on GitLab or GitHub: it is now in this chat.\nPaste the address as your browser shows it on the project\'s page, or type owner/name, like ann/cafe-menu.\n';
+  else if (missed?.missed === 'taken') found = `${missed.name.split('/').at(-1)} may already be on ${missed.at} without Wheelhouse's settings, so setup won't make a new product there under that name.\nChoose ${KEEP_HERE} or GitHub, or choose GitLab and then ${new URL(DEFAULT_GITLAB).hostname}, or rename this folder and start setup again from it.\n`;
+  else if (missed?.missed === 'not-a-name') {
+    found = `"${missed.name}" is not a repository's name. ${missed.address === true ? 'That is the address of the host itself, not of a project: paste the address of the project\'s page, or t' : 'T'}ype owner/name, like ann/cafe-menu, or click a button. `;
+  }
+  else if (missed?.missed === 'bad-address') found = `"${missed.name}" can't be read as an address. Paste the address of the project's page as your browser shows it, such as https://gitlab.example.org/team/cafe-menu. A company GitLab's address can be typed on the company GitLab button's address question instead. Or type owner/name, like ann/cafe-menu, or click a button. `;
+  else if (missed?.missed === 'other-forge') found = `"${missed.name}" is not on github.com or GitLab, the places Wheelhouse works with. Type owner/name, like ann/cafe-menu, or click a button. `;
   else if (missed?.missed === 'no-backup') found = `"${missed.name}" can't be found. `;
-  else if (Array.isArray(missed?.missed)) found = `More than one ${missed.name} is set up with Wheelhouse: ${missed.missed.slice(0, 5).join(', ')}. `;
-  else if (missed) found = `Setup found no ${missed.name} set up with Wheelhouse on your account or organisations. `;
+  else if (Array.isArray(missed?.missed)) found = `More than one ${missed.name} is set up with Wheelhouse: ${missed.missed.slice(0, 5).join(', ')}.${dotted} `;
+  else if (missed && missed.name.includes('/')) {
+    const said = notFoundNamed({ host: missed.host, wanted: missed.name, at: missed.at, user: missed.user });
+    found = `${said.before.join('\n')}\nWhere should ${name} be kept instead?\n${said.after.join('\n')}`;
+    asked = true;
+  }
+  else if (missed) found = `Setup found no ${missed.name} set up with Wheelhouse on your account or ${missed.host === 'gitlab' ? 'groups' : 'organisations'}.${dotted} `;
   return {
     id,
     typed: true,
+    // Where the product is kept can make most of the cards after it unneeded (a product brought in has its own answers), so
+    // the cards after it come only once it is answered.
+    endsBatch: true,
     card: {
       level: 2,
-      what: `${found}Where should ${name} be kept?`,
-      why: 'This decides where your work is kept and who can reach it. Already set up elsewhere under a different name? Type its owner/name, like ann/cafe-menu. Back from a backup? Type where the backup file is.',
+      what: asked ? found : `${found}Where should ${name} be kept?`,
+      // The question asked again has said what to type, so it leaves out the sentence about a project set up elsewhere.
+      why: missed ? 'This decides where your work is kept and who can reach it. Back from a backup? Type where the backup file is.' : 'This decides where your work is kept and who can reach it. Back from a backup? Type where the backup file is. Already set up elsewhere under a different name? Type its owner/name, like ann/cafe-menu, or paste its address.',
       options: [
         { label: KEEP_HERE, says: 'A new product. Nothing goes online, and it can move to GitHub or GitLab later, in one click.' },
         { label: HOST_LABELS.github, says: 'A new product, in a private repository on your GitHub account.' },
         { label: HOST_LABELS.gitlab, says: 'A new product, in a private project on your GitLab account.' },
-        { label: other, says: `Setup finds ${name} on your account or organisations, set up with Wheelhouse, and checks it out into this folder.` },
+        { label: other, says: `${missed ? `Setup looks for a project named ${name}` : `Setup finds ${name}`} in your ${missed?.host === 'gitlab' ? 'account or groups' : missed?.host === 'github' ? 'account or organisations' : 'account, organisations or groups'}, set up with Wheelhouse, and brings it into this folder.` },
       ],
       // An empty folder is far more often a new product, whether or not this computer knows
       // Wheelhouse yet (the director's first setup, design section 15.1), and one kept here needs no account.
       recommend: KEEP_HERE,
       because: 'it is the simplest start, with nothing to sign in to',
-      meanwhile: MEANWHILE,
+      // A miss found at apply comes after the Go ahead and any sign-in, so the card says what already happened, not that nothing has run.
+      meanwhile: missed?.missed === 'none' || Array.isArray(missed?.missed) ? 'Setup has stopped here. Its tools and your sign-in stay; nothing more runs until you answer and say Go ahead.' : MEANWHILE,
     },
   };
 }
 
-// A typed answer to the join question as a repository's name: owner/name (groups too) or a bare
-// name, without .git; null for anything else.
-export function repoNamed(text) {
-  const named = String(text ?? '').trim().replace(/\.git$/i, '');
-  if (!/^[A-Za-z0-9_.][A-Za-z0-9_.-]*(\/[A-Za-z0-9_.][A-Za-z0-9_.-]*)*$/.test(named)) return null;
-  return named.split('/').some((part) => /^\.+$/.test(part)) ? null : named;
-}
+// The text of an answer as the card may show it back: anything written before an @ (user:token@host, a lone user@host, a
+// token in a command pasted whole) is dropped wherever it falls, apart from the plain git@ of git@host:path, which is no
+// secret; so is everything from the first ;, ? or #; it is cut to 100 characters.
+const shown = (text) => String(text ?? '').trim()
+  .replace(/\S+:\S+@/g, '')
+  .replace(/[^\s/@]+@/g, (all) => (all === 'git@' ? all : ''))
+  .replace(/[;?#].*$/, '')
+  .trim()
+  .slice(0, 100);
 
 // Step 3's records of a run's joining (ruling R77), in order: its `answer` changes with `joined`.
 const joinRecords = (run) => (Array.isArray(run?.changes) ? run.changes : [])
@@ -726,10 +743,11 @@ function joinChoice(ctx) {
   const fixed = joinedFolder(ctx.folder, run);
   if (fixed !== null) return { join: fixed, known: fixed };
   const joined = joinedRepo(run);
-  if (joined === null && !onlyInstall(ctx.folder)) return null;
-  const name = repoName(ctx.folder);
   const records = joinRecords(run);
-  const tried = records.filter((c) => c.after.missed !== undefined).map((c) => ({ name: c.after.joined, missed: c.after.missed }));
+  // A run whose latest attempt missed is no longer joining, but its question is still asked again, whatever step 2 has since put in the folder.
+  if (joined === null && records.at(-1)?.after.missed === undefined && !onlyInstall(ctx.folder)) return null;
+  const name = repoName(ctx.folder);
+  const tried = records.filter((c) => c.after.missed !== undefined).map((c) => ({ name: c.after.joined, missed: c.after.missed, ...(c.after.host === undefined ? {} : { host: c.after.host }), ...(c.after.address === true ? { address: true } : {}), ...(typeof c.after.at === 'string' ? { at: c.after.at } : {}), ...(typeof c.after.user === 'string' ? { user: c.after.user } : {}) }));
   // The repository an attempt since the last miss found.
   const known = records.slice(records.findLastIndex((c) => c.after.missed !== undefined) + 1).filter((c) => c.after.found === true).at(-1)?.after.joined ?? null;
   for (;;) {
@@ -739,21 +757,49 @@ function joinChoice(ctx) {
     if (got.label === NEW_PRODUCT) return null;
     if (got.label === KEEP_HERE) return { host: 'local' };
     if (got.label === HOST_LABELS.github) return { host: 'github' };
-    if (got.label === HOST_LABELS.gitlab) return { host: 'gitlab' };
+    if (got.label === HOST_LABELS.gitlab) {
+      const taken = takenAfterMiss({ tried, name, answers: ctx.answers });
+      if (taken !== null) {
+        tried.push(taken);
+        continue;
+      }
+      return { host: 'gitlab' };
+    }
     if (backupNamed(got.text) !== null) {
-      tried.push({ name: got.text.trim().slice(0, 100), missed: 'no-backup' });
+      tried.push({ name: shown(got.text), missed: 'no-backup' });
       continue;
     }
     if (typeof got.text === 'string') {
       const wanted = repoNamed(got.text);
       if (wanted === null) {
-        tried.push({ name: got.text.trim().slice(0, 100), missed: 'not-a-name' });
+        tried.push({ name: shown(got.text), missed: 'not-a-name', ...(pastedAddress(got.text) === null ? {} : { address: true }) });
         continue;
       }
+      // A pasted address decides the host: it is looked up there and nowhere else, and no host card is asked.
+      const pin = pinOf(got.text);
+      if (pin?.unreadable || pin?.forge) {
+        tried.push({ name: shown(got.text), missed: pin.forge ? 'other-forge' : 'bad-address' });
+        continue;
+      }
+      if (pin !== null) return { join: wanted, known, pin };
       return { join: wanted, known };
     }
     return { join: name, known };
   }
+}
+
+// A new product asked for on GitLab, after a pasted address missed: where the missed project is in the director's own account on
+// that same GitLab and has the name this folder would take, the product can't be made there, so the question asks again at once,
+// saying so. Only once the company's address is answered is the host known; null while it isn't, or where the names differ.
+function takenAfterMiss({ tried, name, answers }) {
+  const miss = tried.findLast((t) => t.address === true && typeof t.at === 'string' && typeof t.user === 'string' && t.missed === 'none');
+  if (miss === undefined || !miss.name.includes('/')) return null;
+  const [owner, ...rest] = miss.name.split('/');
+  if (owner.toLowerCase() !== miss.user.toLowerCase() || rest.at(-1).toLowerCase() !== name.toLowerCase()) return null;
+  const typed = Object.entries(answers ?? {}).filter(([key]) => /^3\.gitlab-address/.test(key)).at(-1)?.[1]?.text;
+  const chosenAt = typeof typed === 'string' ? companyAddress(typed) : null;
+  const there = chosenAt === null || chosenAt.why !== undefined ? null : chosenAt.host ?? new URL(chosenAt.base).host;
+  return there !== null && there === miss.at ? { name: miss.name, missed: 'taken', host: 'gitlab', at: miss.at } : null;
 }
 
 // Whether setup's step 2 is finished in this run (a tool it is still to fetch is not missing yet). A run the plan cannot
@@ -854,7 +900,10 @@ const quickOnMac = (host) => `Your ordinary ${NAME[host]} sign-in, through ${NAM
 // The options with the recommended one first, the others in their own order.
 const recommendedFirst = (options, recommend) => [...options.filter((o) => o.label === recommend), ...options.filter((o) => o.label !== recommend)];
 
-export function connectionCard({ host, locked = false, launched = false, realUsers = false, platform = null, where, appFile, asIs = false, held = true, toolOut = false, publicGitLab = false } = {}) {
+// How a connection card opens when the product has real users, or, for a product brought in from another computer whose
+// users setup can't yet read, says it is treated as if it has them.
+const usersLead = (unsureOf) => (unsureOf === null ? 'The product has real users. ' : `Setup can't tell yet whether ${unsureOf} has real users, so it treats it as if it has. `);
+export function connectionCard({ host, locked = false, launched = false, realUsers = false, unsureOf = null, platform = null, where, appFile, asIs = false, held = true, toolOut = false, publicGitLab = false } = {}) {
   if (!narrowOffered(host)) throw new Error('The connection is to GitHub or GitLab');
   const place = where ?? `the project on ${NAME[host]}`;
   // Where the director's own git already reaches the host (`asIs`), it is the way offered in Quick's place: pushes run with
@@ -863,11 +912,11 @@ export function connectionCard({ host, locked = false, launched = false, realUse
   if (platform === 'darwin' && !locked && !launched) {
     return {
       level: 3,
-      what: `${realUsers ? 'The product has real users. ' : ''}How should Wheelhouse's agents reach ${place}?`,
+      what: `${realUsers ? usersLead(unsureOf) : ''}How should Wheelhouse's agents reach ${place}?`,
       why: `Agents are meant to push and open ${host === 'gitlab' ? 'merge requests' : 'pull requests'} only through Wheelhouse's helper; this chooses whose key it holds.`,
       options: recommendedFirst([asIs ? own : { label: WAYS.quick, says: quickOnMac(host) }, { label: STRICTER, says: STRICTER_SAYS(host) }], realUsers ? STRICTER : (asIs ? WAYS.asIs : WAYS.quick)),
       recommend: realUsers ? STRICTER : (asIs ? WAYS.asIs : WAYS.quick),
-      because: realUsers ? 'the product has real users' : asIs ? `${held ? 'it uses what your computer already has' : 'it works with your own git'}, and you can make it stricter later` : 'it is the simplest start, and you can make it stricter later',
+      because: realUsers ? (unsureOf === null ? 'the product has real users' : 'it is the safer way until setup can tell') : asIs ? `${held ? 'it uses what your computer already has' : 'it works with your own git'}, and you can make it stricter later` : 'it is the simplest start, and you can make it stricter later',
       meanwhile: MEANWHILE,
     };
   }
@@ -912,7 +961,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
     : host === 'gitlab' && toolOut ? '. On Windows the key or token is kept on this computer, where any agent\'s command could read it'
       : `. That guards against slips, not against an agent set on more: ${NAME[host]}'s own tool stays signed in as you on this computer, where any agent's command could read it`;
   // A product with real users says so first, so this card reads differently from the one asked before that was known.
-  const lead = realUsers && !locked && !launched ? 'The product has real users. ' : '';
+  const lead = realUsers && !locked && !launched ? usersLead(unsureOf) : '';
   // Null for the director's own git where it holds no key: off a Mac that is never recommended over a narrow way.
   // Quick is never recommended off a Mac, so it has no reason here either.
   const reasonFor = (way) => (way === WAYS.quick ? null : way !== WAYS.asIs ? `${reach}${lasting}` : held ? 'it uses what this computer already has' : null);
@@ -978,7 +1027,10 @@ export async function askAdministrationKey({ owner, name, say, open, askSecret, 
 
 // `glab` is told a company's GitLab through GITLAB_HOST, which takes a port; `--hostname` refuses one
 // on `glab api` (check 71). The public service needs no telling.
-const ask = (run, host, args, base = DEFAULT_GITLAB) => quietly(run, toolPath(TOOL[host]), args, host === 'gitlab' && base !== DEFAULT_GITLAB ? { env: { GITLAB_HOST: addressOf(host, base) } } : {});
+// The director's own token variables (scripts/lib/token-names.js) are never passed to glab or git's helper: glab would send such a token to whichever GitLab it is told to reach, a company's or a pasted address's.
+export const WITHOUT_TOKENS = withoutTokens();
+const glabEnv = (host, base) => (host === 'gitlab' ? { ...WITHOUT_TOKENS, ...(base !== DEFAULT_GITLAB ? { GITLAB_HOST: addressOf(host, base) } : {}) } : {});
+const ask = (run, host, args, base = DEFAULT_GITLAB) => quietly(run, toolPath(TOOL[host]), args, host === 'gitlab' ? { env: glabEnv(host, base) } : {});
 
 // Who the director's own key for GitLab says they are, or null: the key their git holds, read through
 // GitLab's API (`GET /user`), for a computer with no `glab` or one `glab` is not signed in on.
@@ -1046,7 +1098,7 @@ async function signInWithToken({ run, base, say, stopped, open, askSecret, platf
   if (typeof token !== 'string' || token.trim() === '') throw new Error(NO_TOKEN);
   if (stopped()) throw new Error(STOPPED);
   await quietly(run, toolPath('glab'), ['auth', 'login', '--hostname', address, '--stdin', '--git-protocol', 'https'], {
-    input: `${token.trim()}\n`, timeoutMs: SIGN_IN_TOKEN_WAIT_MS, env: { GITLAB_HOST: address },
+    input: `${token.trim()}\n`, timeoutMs: SIGN_IN_TOKEN_WAIT_MS, env: { ...WITHOUT_TOKENS, GITLAB_HOST: address },
   });
   if (stopped()) throw new Error(STOPPED);
   const after = await signInStatus({ host: 'gitlab', run, base });
@@ -1114,7 +1166,7 @@ export async function signIn({
   const controller = new AbortController();
   const watch = setInterval(() => { if (stopped()) controller.abort(); }, STOP_LOOK_MS);
   try {
-    await quietly(run, toolPath(TOOL[host]), args, { input: '\n', timeoutMs: SIGN_IN_WAIT_MS, onOutput, signal: controller.signal, ...(host === 'gitlab' && base !== DEFAULT_GITLAB ? { env: { GITLAB_HOST: addressOf(host, base) } } : {}) });
+    await quietly(run, toolPath(TOOL[host]), args, { input: '\n', timeoutMs: SIGN_IN_WAIT_MS, onOutput, signal: controller.signal, env: glabEnv(host, base) });
   } finally {
     clearInterval(watch);
   }
@@ -1138,7 +1190,7 @@ export async function openPage(url, { platform = process.platform, run = realRun
 // the "Token found:" line of `glab auth status --show-token`, or a glpat- value there. Held in
 // memory only; null when glab has none.
 async function glabToken({ run, host = ADDRESS.gitlab, base = DEFAULT_GITLAB }) {
-  const got = await quietly(run, toolPath('glab'), ['auth', 'status', '--hostname', host, '--show-token'], base !== DEFAULT_GITLAB ? { env: { GITLAB_HOST: host } } : {});
+  const got = await quietly(run, toolPath('glab'), ['auth', 'status', '--hostname', host, '--show-token'], { env: { ...WITHOUT_TOKENS, ...(base !== DEFAULT_GITLAB ? { GITLAB_HOST: host } : {}) } });
   const text = `${got.stdout ?? ''}\n${got.stderr ?? ''}`;
   const shown = /^[ \t]*\S*[ \t]*Token found\b[^:\n]*:[ \t]*(\S+)/im.exec(text)?.[1];
   return (shown && !/^\*+$/.test(shown) ? shown : null) ?? /\bglpat-[\w-]+/.exec(text)?.[0] ?? null;
@@ -1174,7 +1226,10 @@ export function directorGitEnv({ host, gitPath = 'git', env = process.env, platf
   // A project kept on this computer takes no sign-in.
   if (host === 'local') return setupGitEnv({ gitPath, env, platform });
   // With the company's certificate for a company GitLab's address, once setup has made it (company-ca.js).
-  return companyGitEnv(setupGitEnv({ host, gitPath, env, platform }), { host, base }, { platform });
+  const given = companyGitEnv(setupGitEnv({ host, gitPath, env, platform }), { host, base }, { platform });
+  // glab's credential helper takes the director's token variables over its own sign-in, and would send one to any GitLab git
+  // reaches: they are taken out of what git runs with.
+  return host === 'gitlab' ? { ...given, ...WITHOUT_TOKENS } : given;
 }
 
 // ---- GitLab without its tool: the one-day setup token ----
@@ -1499,7 +1554,7 @@ async function holdsConfig({ host, info, run, api }) {
 
 // Whether a repository holds Wheelhouse v0.1.x's state branch, read with the director's own sign-in.
 async function holdsState({ remoteUrl, gitPath, env, run }) {
-  const listed = await setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: outsideAny() })(['ls-remote', '--heads', remoteUrl, `refs/heads/${STATE_BRANCH}`]);
+  const listed = await setupGit({ run, gitPath, env: { ...reaching(env, remoteUrl), GIT_CEILING_DIRECTORIES: ceilingOf() }, cwd: outsideAny() })(['ls-remote', '--heads', remoteUrl, `refs/heads/${STATE_BRANCH}`]);
   if (listed.code !== 0) return false;
   return String(listed.stdout).split(/\r?\n/).some((line) => line.endsWith(`\trefs/heads/${STATE_BRANCH}`));
 }
@@ -1554,10 +1609,12 @@ async function stateBranchLaunched({ remoteUrl, gitPath, env, run }) {
 }
 
 // Why a joining computer's answer found no repository, or several: said with what to type.
-export function joinMissLine({ host, wanted, found }) {
+export function joinMissLine({ host, wanted, found, at, user }) {
   const where = host === 'gitlab' ? 'your GitLab account or your groups' : 'your GitHub account or your organisations';
-  if (found.length === 0) return `Setup found no repository ${wanted} set up with Wheelhouse on ${where}, so nothing was checked out: type the project's owner/name on step 3's question, which asks again`;
-  return `More than one repository named ${wanted} is set up with Wheelhouse (${found.map((f) => f.repo).join(', ')}), so nothing was checked out: type the one you mean as owner/name on step 3's question, which asks again`;
+  const dotted = wanted.split('/')[0].includes('.') ? `. ${PASTE_WITH_SCHEME}` : '';
+  if (found.length === 0 && wanted.includes('/')) return `Setup couldn't bring in ${wanted}: nothing was brought in, and setup asks where to keep it again.`;
+  if (found.length === 0) return `Setup found no repository ${wanted} set up with Wheelhouse on ${where}, so nothing was brought in: type the project's owner/name on step 3's question, which asks again${dotted}`;
+  return `More than one repository named ${wanted} is set up with Wheelhouse (${found.map((f) => f.repo).join(', ')}), so nothing was checked out: type the one you mean as owner/name on step 3's question, which asks again${dotted}`;
 }
 
 // Checks the project out into this folder in place (ruling R77, as R34 connects a new product's):
@@ -1654,7 +1711,7 @@ export async function makeRepos({
   let info = await repoInfo({ host, repo, run, api });
   // A new product's name already taken on the account, by a repository setup didn't make, is not
   // taken over.
-  if (info !== null && !madeBySetup(target)) throw new Error(`${repo} on ${NAME[host]} already exists, so setup has not used it for a new product: if it is this product from your other computer, say so, and setup brings it into this folder instead; otherwise rename this folder, or connect it to that repository, then ask again`);
+  if (info !== null && !madeBySetup(target)) throw new Error(`${repo} already exists on ${NAME[host]} and wasn't set up with Wheelhouse, so setup won't use it for a new product: rename this folder, then start setup again from it`);
   if (info === null) {
     keep({ id: newId('chg'), kind: 'host', target, before: null, after: { repository: repo, private: true, made: true } });
     info = await createRepo({ host, owner: user, name, run, api, empty: publish !== null });
@@ -2046,7 +2103,9 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
   if (signing?.via === 'setup-token') {
     parts.push(bare ? 'You paste a one-day GitLab token into a box on your screen. Setup uses it for this step only, then revokes it.' : SETUP_TOKEN_LINE);
   } else if (signing?.via === 'token') {
-    parts.push(tight ? 'You sign in with a token you paste into a box on your screen, never the chat.' : `You sign in to ${name} with a token: a page opens to make it, and you paste it into a box on your screen, never the chat.`);
+    parts.push(tight ? 'You sign in with a token you paste into a box on your screen, never the chat.'
+      : company ? 'You sign in to your company\'s GitLab in your browser if your company has set that up, or else with a token you paste into a box on your screen, never the chat.'
+        : `You sign in to ${name} with a token: a page opens to make it, and you paste it into a box on your screen, never the chat.`);
   } else if (signing?.via === 'narrow-key') {
     parts.push(`${bare ? `You sign in to ${name} with a key for this project only.` : `You sign in to ${name} with a key for this project only: a page opens to make it, and you paste it into a box on your screen, never the chat.`}${platform === 'win32' ? ' It stays here, where any agent\'s command could read it.' : ''}`);
   } else if (signing) {
@@ -2068,7 +2127,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     const accounts = host === 'gitlab' ? 'account or groups' : 'account or organisations';
     parts.push(bare ? 'The repository set up with Wheelhouse, checked out here with its settings.'
       : tight ? `${product.repo ?? product.name}, the one set up with Wheelhouse, checked out here with its settings.`
-        : `${product.repo ?? product.name}, the one set up with Wheelhouse, found on your ${name} ${accounts} and checked out into this folder. Its committed .claude/settings.json takes the place of the install's.`);
+        : `${product.repo ?? product.name} on ${company ? `your company's GitLab at ${new URL(base).host}` : `your ${name} ${accounts}`}, brought into this folder once setup finds Wheelhouse's settings in it. Setup then uses the project's saved settings instead of the choices made here.`);
   } else parts.push(bare ? `This project's repository on ${name}, kept as it is.` : `${product.repo} on ${name}, kept as it is.`);
   if (way === WAYS.asIs) {
     const keyCard = changes.find((c) => c.action === 'key-card');
@@ -2223,7 +2282,7 @@ export function hostStep({
   // it is" belongs on the connection card: when git holds a key for the host, when an SSH remote works and the tool is
   // signed in, or when there is no tool that starts here, so the key card is the only road. A tool still to be fetched by
   // step 2 counts as one that will work.
-  async function reachOf({ ctx, host, base, product, platform }) {
+  async function reachOf({ ctx, host, base, product, platform, quiet = false }) {
     let gitPath = 'git';
     try {
       const located = await findGit({ platform, run });
@@ -2234,7 +2293,7 @@ export function hostStep({
     const left = hostToolLeftOut(ctx, host);
     let tool = left ? 'missing' : await toolState(TOOL[host], { run, platform });
     if (tool === 'missing' && !left && !toolsStepDone(ctx)) tool = 'works';
-    const cliSigned = tool === 'works' && (await ask(run, host, ['auth', 'status', '--hostname', addressOf(host, base)], base)).code === 0;
+    const cliSigned = tool === 'works' && !quiet && (await ask(run, host, ['auth', 'status', '--hostname', addressOf(host, base)], base)).code === 0;
     const repo = product.isNew || product.joining || typeof product.repo !== 'string' ? null : product.repo;
     // A look at the choices alone reads nothing from the host: no remote is tried.
     const remoteUrl = ctx.choicesOnly === true ? null : originUrl(ctx.folder) ?? (repo === null ? null : hostUrl({ host, repo, base }));
@@ -2243,18 +2302,19 @@ export function hostStep({
     let found;
     if (ctx.choicesOnly === true) {
       let held = null;
+      // A pasted or company host is not asked what key the computer holds for it: the store may contact it.
       try {
-        held = await directorKey.borrow({ host: new URL(hostAddress(host, base)).host, base: hostAddress(host, base), repoPath: repo ?? undefined });
+        if (!quiet) held = await directorKey.borrow({ host: new URL(hostAddress(host, base)).host, base: hostAddress(host, base), repoPath: repo ?? undefined });
       } catch { /* none to lend */ }
       found = { transport: null, helper: null, gitReaches: null, key: typeof held?.key === 'string' && held.key !== '' ? 'unchecked' : 'none', user: null, username: null };
     } else {
-      found = await findAccess({ host, base, repo, remoteUrl, run, gitPath, borrow: directorKey.borrow, via });
+      found = await findAccess({ host, base, repo, remoteUrl, folder: ctx.folder, run, gitPath, borrow: directorKey.borrow, via });
     }
     const curl = curlStatus({ platform, gitPath, ...(curlExists === undefined ? {} : { exists: curlExists }) }).found;
     let proxy = null;
     let proxyPassword = false;
     try {
-      proxy = await directorProxy(`${hostAddress(host, base)}/`, { ask: (args) => askDirectorGit(args, { run, gitPath }) });
+      proxy = await directorProxy(`${hostAddress(host, base)}/`, { ask: (args) => askDirectorGit(args, { run, gitPath, cwd: outsideAny(), env: directorAskEnv({ ...process.env, ...withoutTokens() }) }) });
     } catch (error) {
       proxyPassword = error?.code === 'PROXY_HAS_PASSWORD';
     }
@@ -2334,7 +2394,7 @@ export function hostStep({
       // so (its checked-out .claude/wheelhouse.json, or a v0.1.x state branch's phase); before then,
       // apply refuses Quick once it has.
       const launched = product.joining === true && (launchedInFolder(ctx.folder) || launchedFound(product.repo));
-      let host = product.host ?? join?.host ?? null;
+      let host = product.host ?? join?.host ?? join?.pin?.host ?? null;
       if (host === null) {
         if (answer('host') === null) return { ask: hostAsk(product.name) };
         const { label } = answer('host');
@@ -2347,7 +2407,9 @@ export function hostStep({
       }
       // GitLab chosen, with no remote naming one: the public service, or the company's own address.
       let company = null;
-      if (host === 'gitlab' && product.host !== 'gitlab') {
+      // A pasted address named its GitLab: neither the which-GitLab card nor the address card is asked.
+      if (join?.pin?.company !== undefined) company = join.pin.company;
+      else if (host === 'gitlab' && product.host !== 'gitlab') {
         company = gitlabWhere({ answer, name: product.name, others: product.others ?? remotesOf(ctx.folder) });
         if (company.ask) return { ask: company.ask };
         // The chosen host is the one the folder's own remote names: that remote's project is the product, never a new one.
@@ -2397,7 +2459,7 @@ export function hostStep({
         && await toolState(TOOL.gitlab, { run, platform }) === 'missing') {
         return { ask: { id: hostToolId(TOOL.gitlab), card: hostToolCard(TOOL.gitlab, { recommend: 'fetch', platform }), step: 2 } };
       }
-      const reach = !locked && !launched ? await reachOf({ ctx, host, base, product, platform }) : null;
+      const reach = !locked && !launched ? await reachOf({ ctx, host, base, product, platform, quiet: ctx.choicesOnly === true && company?.host !== undefined }) : null;
       if (reach?.noRoad && ctx.choicesOnly !== true) return { wait: OWN_APP_WAIT_MS, why: noRoadLine(host) };
       // Narrow on GitLab needs the pasted token wherever the tool won't work (as at apply time below). A Locked or launched
       // project reads no reach, so the tool's own state is read here, and one step 2 is still to fetch counts as working.
@@ -2407,7 +2469,7 @@ export function hostStep({
         if (glabState === 'missing' && !toolsStepDone(ctx)) glabState = 'works';
       }
       const toolOut = host === 'gitlab' && (hostToolLeftOut(ctx, host) || glabState !== 'works');
-      const asked = { host, locked, launched, realUsers: realUsers || launched || product.joining === true, platform, where };
+      const asked = { host, locked, launched, realUsers: realUsers || launched || product.joining === true, unsureOf: product.joining === true && !launched ? product.name : null, platform, where };
       const held = reach === null || reach.found.key !== 'none' || reach.cliSigned === true;
       let card = connectionCard({ ...asked, appFile, asIs: reach?.offered === true, held, toolOut, publicGitLab: base === DEFAULT_GITLAB });
       let way = card.options[0].label;
@@ -2623,7 +2685,8 @@ export function hostStep({
         throw new Error(`This folder is checked out to ${fixed} from your other computer, so setup goes on joining it and nothing else: ask for step 3's card again`);
       }
       if (join !== null) answerRecord({ joined: join.name });
-      else if (joinedRepo(thisRun) !== null) answerRecord({ joined: null });
+      // A new product after a join attempt that missed closes the attempt's state, as one after a joined run does.
+      else if (joinedRepo(thisRun) !== null || joinRecords(thisRun).at(-1)?.after.missed !== undefined) answerRecord({ joined: null });
       if (host === 'local') {
         const found = await findGit({ platform, run });
         if (!found?.ok || typeof found.path !== 'string') throw new Error('git is not on this computer yet; step 2 installs it');
@@ -2693,8 +2756,8 @@ export function hostStep({
             throw new Error(`${fixed} on ${NAME[host]} can't be found with your sign-in, or is no longer set up with Wheelhouse, so setup has stopped: this folder is checked out to it and joins nothing else; check the repository on ${NAME[host]}, then a fresh Go ahead tries again`);
           }
           if (found.length !== 1) {
-            answerRecord({ joined: join.name, missed: found.length === 0 ? 'none' : found.map((f) => f.repo) });
-            throw new Error(joinMissLine({ host, wanted: join.name, found }));
+            answerRecord({ joined: join.name, missed: found.length === 0 ? 'none' : found.map((f) => f.repo), host, user, withdraws: ctx.consent ?? null, ...(join.pin === undefined ? {} : { address: true, at: pinHostName(join.pin) }) });
+            throw new Error(joinMissLine({ host, wanted: join.name, found, at: pinHostName(join.pin), user }));
           }
           [joined] = found;
           answerRecord({ joined: joined.repo, found: true });
@@ -2788,7 +2851,7 @@ export function hostStep({
         writeProject(slug, kept);
         if (joined === null) await openRecords();
         // The computer's git settings a push trusts, recorded now that the director has seen the card that names them.
-        if (connection.mode === 'as-is') await confirmComputerSettings({ file: path.join(wheelhouseHome(), 'host', 'git-settings.json'), run, gitPath: git.path, cwd: outsideAny() });
+        if (connection.mode === 'as-is') await confirmComputerSettings({ file: path.join(wheelhouseHome(), 'host', 'git-settings.json'), run, gitPath: git.path, cwd: outsideAny(), ceiling: ceilingOf() });
         say(`Connected: ${project.repo} on ${NAME[host]}, ${connection.mode === 'quick' ? 'Quick' : connection.mode === 'as-is' ? 'your own git as it is' : 'narrow'}`);
         return [];
       } finally {

@@ -155,7 +155,8 @@ function newProduct(ctx, project) {
     }
   }
   const run = typeof ctx.runId === 'string' ? readJournal().runs.find((r) => r?.id === ctx.runId) : null;
-  return (run?.changes ?? []).some((c) => c?.step === 3 && c.kind === 'host' && c.after?.made === true);
+  // Made on a host, or kept on this computer as a new product (a project's home made here, not brought back from a backup).
+  return (run?.changes ?? []).some((c) => c?.step === 3 && ((c.kind === 'host' && c.after?.made === true) || (c.kind === 'folder' && c.after?.home === true && c.after.restored !== true)));
 }
 
 // The product's name as step 3 names it: its repository's for an existing project, else the folder's.
@@ -193,7 +194,7 @@ function productAsk(name, { described, realUsers }) {
     typed: true,
     card: {
       level: 2,
-      what: `${realUsers ? 'It has real users.' : 'It has no real users yet.'} In a sentence, what is ${name}, and who is it for? ${described === null ? 'Type it' : 'Choose the README\'s words, or type your own'} as your answer.`,
+      what: `${realUsers ? `${name} has real users.` : `${name} has no real users yet.`} In a sentence, what is ${name}, and who is it for? ${described === null ? 'Type it' : 'Choose the README\'s words, or type your own'} as your answer.`,
       why: 'Wheelhouse explains its work to you in terms of your product.',
       options,
       recommend: options[0].label,

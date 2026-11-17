@@ -213,6 +213,13 @@ test('no part label appears in the text', () => {
   }
 });
 
+test('a question may say what happened and what follows on lines of their own; no other kind but a setup card may, and no line may be a set line', () => {
+  const { question } = composeCard(input('question', { what: 'It stopped here.\nPaste another address.\nWhere should it go?' }));
+  const shown = question.question.split('\n');
+  assert.deepEqual(shown.slice(0, 3), ['It stopped here.', 'Paste another address.', 'Where should it go?']);
+  assert.throws(() => composeCard(input('approval', { what: `${INPUTS.approval.what}\nA second line.` })), /one line/);
+});
+
 test('the default ask for each kind is one line ending in a question mark, or the card\'s what', () => {
   const asks = {
     approval: 'Put pull request #7 live?',
