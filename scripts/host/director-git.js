@@ -39,6 +39,6 @@ export const directorGitEnv = (env) => ({ ...Object.fromEntries(Object.entries(e
 // Unless the caller gives its own `ask`, the director's git is asked from a folder of Wheelhouse's own, outside any project,
 // with git's own variables and the token variables left out.
 export function directorProxy(address, { ask, env = process.env, run, gitPath } = {}) {
-  const asked = ask ?? ((args) => askDirectorGit(args, { cwd: outsideRepo(), env: directorGitEnv({ ...env, ...withoutTokens() }), ...(run === undefined ? {} : { run }), ...(gitPath === undefined ? {} : { gitPath }) }));
+  const asked = ask ?? ((args) => askDirectorGit(args, { cwd: outsideRepo(), env: directorGitEnv({ ...env, ...withoutTokens({ env }) }), ...(run === undefined ? {} : { run }), ...(gitPath === undefined ? {} : { gitPath }) }));
   return readProxy({ address, ask: asked, env });
 }

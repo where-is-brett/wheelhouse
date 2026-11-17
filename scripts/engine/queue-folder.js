@@ -85,7 +85,7 @@ export async function prepareQueueFolder({ project, remoteUrl, mirror, socket, e
     if (!ours) {
       fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
       await must(folder, ['init', '-q'], 'the merge queue\'s folder could not be made');
-      await must(folder, ['remote', 'add', 'origin', remoteUrl], 'the merge queue\'s folder could not name its remote');
+      await must(folder, ['remote', 'add', '--end-of-options', 'origin', remoteUrl], 'the merge queue\'s folder could not name its remote');
       fs.writeFileSync(path.join(folder, QUEUE_MARK), `${JSON.stringify({ project, remoteUrl, mirror }, null, 2)}\n`);
       const exclude = path.join(folder, '.git', 'info', 'exclude');
       fs.mkdirSync(path.dirname(exclude), { recursive: true });

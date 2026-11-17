@@ -231,21 +231,22 @@ test('an argument may not lift the fence with -c, bar the named exception', asyn
 });
 
 // A push in a folder, with the director's own settings (a HOME of its own) including a file for that folder alone (includeIf gitdir:).
-async function includedPush({ before, after, confirmed = true, record }) {
+async function includedPush({ before, after, confirmed = true, record, asOld = false, when = (folder) => `gitdir:${folder}/`, remote, seen = {}, second = false }) {
   const { confirmComputerSettings, safeGit } = await import('../../../scripts/lib/safe-git.js');
   const { as, shortHome } = await import('../../helpers/homes.js');
   const { spawnSync } = await import('node:child_process');
   const folder = fs.realpathSync(tempFolder('wh-inc-repo-'));
   spawnSync('git', ['init', '-q'], { cwd: folder });
+  if (remote !== undefined) spawnSync('git', ['config', 'remote.origin.url', remote], { cwd: folder });
   const home = fs.realpathSync(tempFolder('wh-inc-home-'));
   const work = path.join(home, 'work.cfg');
-  fs.writeFileSync(path.join(home, '.gitconfig'), `[includeIf "gitdir:${folder}/"]\n\tpath = ${work}\n`);
+  fs.writeFileSync(path.join(home, '.gitconfig'), `[includeIf "${when(folder)}"]\n\tpath = ${work}\n`);
   fs.writeFileSync(work, `[credential]\n\thelper = !${before}\n`);
   const names = ['HOME', 'USERPROFILE', 'XDG_CONFIG_HOME', 'GIT_CONFIG_NOSYSTEM'];
   const kept = Object.fromEntries(names.map((n) => [n, process.env[n]]));
   Object.assign(process.env, { HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'), GIT_CONFIG_NOSYSTEM: '1' });
   const url = 'https://github.com/o/p.git';
-  const fake = (file, args, options) => (args[0] === 'config' ? run(file, args, options) : Promise.resolve({ code: 0, stdout: args[0] === 'remote' ? `${url}\n` : '', stderr: '' }));
+  const fake = (file, args, options) => (args[0] === 'config' ? run(file, args, options) : (args[0] === 'push' && (seen.copy = fs.readFileSync(options.env.GIT_CONFIG_GLOBAL, 'utf8')), Promise.resolve({ code: 0, stdout: args[0] === 'remote' ? `${url}\n` : '', stderr: '' })));
   const trustFile = path.join(shortHome(), 'host', 'git-settings.json');
   try {
     return await as(path.dirname(path.dirname(trustFile)), async () => {
@@ -254,9 +255,20 @@ async function includedPush({ before, after, confirmed = true, record }) {
         fs.writeFileSync(trustFile, JSON.stringify(record));
       }
       if (confirmed) await confirmComputerSettings({ file: trustFile, run: fake, cwd: folder });
+      if (asOld) {
+        const kept = JSON.parse(fs.readFileSync(trustFile, 'utf8')).folders;
+        fs.writeFileSync(trustFile, JSON.stringify({ fingerprint: Object.values(kept)[0] }));
+      }
+      if (second) {
+        const other = fs.realpathSync(tempFolder('wh-inc-repo2-'));
+        spawnSync('git', ['init', '-q'], { cwd: other });
+        await confirmComputerSettings({ file: trustFile, run: fake, cwd: other });
+      }
       fs.writeFileSync(work, `[credential]\n\thelper = !${after}\n`);
       const push = safeGit({ cwd: folder, reach: 'push', run: fake, pushTo: { remote: 'origin', url }, trust: { file: trustFile } });
-      return await push(['push', '--no-verify', 'origin', 'main']).then((got) => ({ ok: got.code === 0 }), (error) => ({ code: error.code, message: error.message }));
+      const out = await push(['push', '--no-verify', 'origin', 'main']).then((got) => ({ ok: got.code === 0 }), (error) => ({ code: error.code, message: error.message }));
+      if (asOld || second) out.record = JSON.parse(fs.readFileSync(trustFile, 'utf8'));
+      return out;
     });
   } finally {
     for (const n of names) if (kept[n] === undefined) delete process.env[n]; else process.env[n] = kept[n];
@@ -269,9 +281,44 @@ test('a setting a push folder alone includes (includeIf gitdir) is part of what 
   assert.equal(changed.code, 'git-settings-changed');
 });
 
-test('a record from before the settings were kept per folder says nothing of any folder: the push is refused until it is confirmed again', async () => {
-  const old = await includedPush({ before: '/a/helper', after: '/a/helper', confirmed: false, record: { fingerprint: 'a'.repeat(64) } });
+test('a record from before the settings were kept per folder migrates when the settings are as they were, and the old value stays for other projects', async () => {
+  const got = await includedPush({ before: '/a/helper', after: '/a/helper', confirmed: true, asOld: true });
+  assert.equal(got.ok, true);
+  assert.match(got.record.legacy, /^[0-9a-f]{64}$/);
+  assert.equal(Object.keys(got.record.folders).length, 1);
+  assert.equal(Object.values(got.record.folders)[0], got.record.legacy);
+});
+
+test('a record from before the settings were kept per folder is refused when the settings changed, with a line that says how to confirm', async () => {
+  const { SETTINGS_CHANGED_LINE } = await import('../../../scripts/lib/safe-git.js');
+  const old = await includedPush({ before: '/a/helper', after: '/b/other', confirmed: true, asOld: true });
   assert.equal(old.code, 'git-settings-changed');
+  assert.match(SETTINGS_CHANGED_LINE, /run setup again and click Go ahead at step 3/);
+  assert.match(SETTINGS_CHANGED_LINE, /^Nothing was pushed/);
+});
+
+test('confirming a second folder keeps the first entry and the old value', async () => {
+  const got = await includedPush({ before: '/a/helper', after: '/a/helper', confirmed: true, asOld: true, second: true });
+  assert.equal(got.ok, true);
+  assert.equal(Object.keys(got.record.folders).length, 2);
+  assert.ok(got.record.legacy);
+});
+
+test('an include that depends on the remote address (hasconfig) is part of what is checked, in the folder git runs in', async () => {
+  const when = () => 'hasconfig:remote.*.url:https://github.com/**';
+  const remote = 'https://github.com/o/p.git';
+  assert.deepEqual(await includedPush({ before: '/a/helper', after: '/a/helper', when, remote }), { ok: true });
+  const changed = await includedPush({ before: '/a/helper', after: '/b/other', when, remote });
+  assert.equal(changed.code, 'git-settings-changed');
+});
+
+test('the private copy a push reads holds no include of its own, only the settings already resolved', async () => {
+  const seen = {};
+  const got = await includedPush({ before: '/a/helper', after: '/a/helper', seen });
+  assert.equal(got.ok, true);
+  assert.match(seen.copy, /helper/);
+  assert.doesNotMatch(seen.copy, /\[include/i);
+  assert.doesNotMatch(seen.copy, /work\.cfg/);
 });
 
 test('a folder setup never confirmed is refused where a record exists, even one that names other folders', async () => {

@@ -7,4 +7,11 @@ export const TOKEN_NAMES = [
 ];
 
 // An environment's overrides that take every one out: a variable whose value is undefined is removed by run.js and by spawn.
-export const withoutTokens = () => Object.fromEntries(TOKEN_NAMES.map((name) => [name, undefined]));
+// Given the environment it is to be taken from, on Windows (where names are not case-sensitive) it takes out every spelling in it.
+export const withoutTokens = ({ env, platform = process.platform } = {}) => {
+  const names = new Set(TOKEN_NAMES);
+  if (platform === 'win32' && env !== undefined && env !== null) {
+    for (const key of Object.keys(env)) if (TOKEN_NAMES.some((name) => name.toLowerCase() === key.toLowerCase())) names.add(key);
+  }
+  return Object.fromEntries([...names].map((name) => [name, undefined]));
+};

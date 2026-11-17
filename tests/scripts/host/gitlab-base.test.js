@@ -248,3 +248,17 @@ test('an address with a bracketed (IPv6) host in the scp form is refused, not re
   for (const bad of ['ssh://u@v@[::1]/x', 'u@v@[::1]:x', 'ssh://u@v@gitlab.example.org/x', 'u@v@gitlab.example.org:x']) assert.throws(() => parseRemote(bad), /not a repository address/, bad);
   assert.equal(parseRemote('git@gitlab.example.org:a/b').hostname, 'gitlab.example.org');
 });
+
+test('an authority with a backslash, ?, # or % is refused everywhere an address is read, so the host after it is never trusted', async () => {
+  const { pastedAddress } = await import('../../../scripts/lib/pasted-address.js');
+  const { detectHost } = await import('../../../scripts/host/adapter.js');
+  const { remoteHost } = await import('../../../scripts/setup/host.js');
+  const config = { gitlabHosts: ['gitlab.co'] };
+  for (const bad of ['https://evil.com\\@gitlab.co/x/y.git', 'https://evil.com?@gitlab.co/x/y.git', 'https://evil.com#@gitlab.co/x/y.git', 'https://evil.com%40@gitlab.co/x/y.git']) {
+    assert.deepEqual(pastedAddress(bad), { unreadable: true }, bad);
+    assert.equal(detectHost(bad, { gitlabHosts: ['gitlab.co'] }), 'local', bad);
+    assert.equal(remoteHost([bad]), null, bad);
+    assert.equal(gitlabBase({ config, remoteUrl: bad }), DEFAULT_GITLAB, bad);
+  }
+  assert.equal(gitlabBase({ config, remoteUrl: 'https://gitlab.co/x/y.git' }), 'https://gitlab.co');
+});

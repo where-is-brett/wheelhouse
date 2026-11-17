@@ -681,7 +681,7 @@ function joinAsk(id, name, { missed }) {
         { label: KEEP_HERE, says: 'A new product. Nothing goes online, and it can move to GitHub or GitLab later, in one click.' },
         { label: HOST_LABELS.github, says: 'A new product, in a private repository on your GitHub account.' },
         { label: HOST_LABELS.gitlab, says: 'A new product, in a private project on your GitLab account.' },
-        { label: other, says: `${missed ? `Setup looks for a project named ${name}` : `Setup finds ${name}`} in your ${missed?.host === 'gitlab' ? 'account or groups' : missed?.host === 'github' ? 'account or organisations' : 'account, organisations or groups'}, set up with Wheelhouse, and brings it into this folder.` },
+        { label: other, says: `Setup finds ${name} in your account, organisations or groups, set up with Wheelhouse, and brings it into this folder.` },
       ],
       // An empty folder is far more often a new product, whether or not this computer knows
       // Wheelhouse yet (the director's first setup, design section 15.1), and one kept here needs no account.
@@ -2151,6 +2151,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
       ? `Wheelhouse pushes with your own git as it is, and uses its key for merge requests${proxy}.`
       : `Wheelhouse pushes with your own git as it is, and uses ${name}'s own tool, signed in already, for merge requests.`);
     parts.push(`${rest || keyCard ? 'That key reaches' : 'Both reach'} everything your account can on ${name}${platform === 'win32' ? '; on Windows any agent\'s command could ask for it' : ''}.`);
+    parts.push('Your git settings on this computer are recorded as they are now; if they change, pushes wait until you confirm them by running setup again.');
   } else if (way === WAYS.quick) parts.push(`Quick: your own ${name} sign-in, which reaches your whole account${platform === 'win32' ? '; on Windows any agent\'s command could read it' : ''}.`);
   else if (host === 'gitlab') {
     parts.push(tight ? `A key to this project only; if GitLab won't allow one, a ${PERSONAL_DAYS}-day token that can act as you across GitLab.` : `A key to this project only, with the rights agents need there. If GitLab won't allow one, a ${PERSONAL_DAYS}-day token that can act as you across GitLab, pasted into ${['setup-token', 'token', 'narrow-key'].includes(signing?.via) ? 'that box' : 'a box on your screen'}.`);
@@ -2856,25 +2857,27 @@ export function hostStep({
           halt();
         }
         const kept = { folder: ctx.folder, remoteUrl, host, repo: project.repo, connection: connectionFor({ host, mode: connection.mode, repo: project.repo, id: project.id, locked: connection.locked === true, installationId, base, backend: connection.backend, directorSignIn: held !== null ? 'setup-token' : signedWithKey ? 'narrow-key' : undefined, setupAuthor: held?.author }) };
+        // The computer's git settings a push trusts, recorded now that the director has seen the card that names them, and before the
+        // project's record is written, so no project is recorded without them. Recorded for the folder the push runs in, the project's
+        // mirror, since an include can make the settings differ by folder. The mirror is made here if it is not yet, the way the helper
+        // makes it (an empty bare repository; the helper then only sets its origin and fetches into it, and leaves one that has a HEAD as
+        // it is), with its origin set to the address the helper sets, since an include can depend on it (hasconfig:remote.*.url).
+        if (connection.mode === 'as-is') {
+          const mirror = path.join(stateDir(slug), '..', 'mirror.git');
+          const noMirror = 'Setup couldn\'t prepare Wheelhouse\'s own copy of the project on this computer; nothing was pushed. A fresh Go ahead tries again.';
+          const inMirror = setupGit({ run, gitPath: git.path, cwd: mirror });
+          if (!fs.existsSync(path.join(mirror, 'HEAD'))) {
+            fs.rmSync(mirror, { recursive: true, force: true });
+            fs.mkdirSync(mirror, { recursive: true });
+            if ((await inMirror(['init', '-q', '--bare'])).code !== 0) throw new Error(noMirror);
+          }
+          if ((await inMirror(['config', 'remote.origin.url', String(kept.remoteUrl).trim()])).code !== 0) throw new Error(noMirror);
+          await confirmComputerSettings({ file: path.join(wheelhouseHome(), 'host', 'git-settings.json'), run, gitPath: git.path, cwd: mirror });
+        }
         const file = projectFile(slug);
         record({ id: newId('chg'), kind: 'file', target: file, before: readText(file), after: `${JSON.stringify(kept, null, 2)}\n` });
         writeProject(slug, kept);
         if (joined === null) await openRecords();
-        // The computer's git settings a push trusts, recorded now that the director has seen the card that names them.
-        // Recorded for the folder the push runs in, the project's mirror, since an include can make the settings differ by folder.
-        // The mirror is made here if it is not yet, the way the helper makes it (an empty bare repository; the helper then only sets
-        // its origin and fetches into it, and leaves one that has a HEAD as it is), so the settings the director has just seen are
-        // recorded now and not trusted at whatever they are by the first push.
-        if (connection.mode === 'as-is') {
-          const mirror = path.join(stateDir(slug), '..', 'mirror.git');
-          if (!fs.existsSync(path.join(mirror, 'HEAD'))) {
-            fs.rmSync(mirror, { recursive: true, force: true });
-            fs.mkdirSync(mirror, { recursive: true });
-            const made = await setupGit({ run, gitPath: git.path, cwd: mirror })(['init', '-q', '--bare']);
-            if (made.code !== 0) throw new Error('git could not make the project\'s mirror for the push, so the settings a push trusts were not recorded: a fresh Go ahead tries again');
-          }
-          await confirmComputerSettings({ file: path.join(wheelhouseHome(), 'host', 'git-settings.json'), run, gitPath: git.path, cwd: mirror });
-        }
         say(`Connected: ${project.repo} on ${NAME[host]}, ${connection.mode === 'quick' ? 'Quick' : connection.mode === 'as-is' ? 'your own git as it is' : 'narrow'}`);
         return [];
       } finally {

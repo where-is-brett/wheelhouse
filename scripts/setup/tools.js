@@ -906,7 +906,7 @@ function cardFor(changes, status, platform, leftOut = [], hostTools = []) {
     full.push(`${one ? `${HOST_TOOL_NAME[official[0]]}'s own tool` : official.map(toolName).join(' and ')}: fetched from ${one ? `${HOST_TOOL_NAME[official[0]]}'s official release` : 'their official releases'} into Wheelhouse's tools folder, and checked that ${one ? 'it is' : 'each is'} the genuine file; a few seconds, nothing for you to do`);
   }
   for (const c of company) {
-    full.push(`${toolName(c.tool)}, from your company's list at ${c.source} (version ${c.version}); ${c.checksum === 'listed'
+    full.push(`A ${HOST_TOOL_NAME[c.tool]} tool from your company's list at ${c.source} (version ${c.version}); ${c.checksum === 'listed'
       ? 'checked against the checksum the list gives'
       : 'the list gives no checksum, so setup cannot check the file. Setup runs it once to read its version, and after that it becomes the GitLab tool Wheelhouse uses, including for your sign-in. Say Not now if unsure'}`);
   }
@@ -922,8 +922,8 @@ function cardFor(changes, status, platform, leftOut = [], hostTools = []) {
   if (official.length > 0) terse.push(`${official.map(toolName).join(' and ')}: official ${official.length === 1 ? 'release' : 'releases'}, checked`);
   for (const c of company) {
     terse.push(c.checksum === 'listed'
-      ? `${toolName(c.tool)}: from your company's list at ${shownSource(c.source)}, checked`
-      : `${toolName(c.tool)}: from your company's list at ${shownSource(c.source)}, no checksum; it becomes the GitLab tool Wheelhouse uses, including for your sign-in; Not now if unsure`);
+      ? `A ${HOST_TOOL_NAME[c.tool]} tool from your company's list at ${shownSource(c.source)}, checked`
+      : `A ${HOST_TOOL_NAME[c.tool]} tool from your company's list at ${shownSource(c.source)}, no checksum; it becomes the GitLab tool Wheelhouse uses, including for your sign-in; Not now if unsure`);
   }
   if (changes.some((c) => c.action === 'engine')) terse.push('The build engine, Archon: pinned and checked, usage reporting off');
   if (changes.some((c) => c.action === 'archon-settings')) terse.push('The engine set to use Claude');

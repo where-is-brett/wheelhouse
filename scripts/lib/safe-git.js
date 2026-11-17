@@ -22,6 +22,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { wheelhouseHome } from './paths.js';
+import { registeredProjects } from './projects.js';
 import {
   isolated, refuseUnlistedSettings, setupGitEnv, subcommandOf, allowedSetting, unlistedSettingsLine, CONFIG_UNREAD, FENCE, NULL_FILE,
 } from '../setup/git.js';
@@ -483,7 +484,7 @@ export const SETTINGS_CHANGED = 'git-settings-changed';
 export class SettingsChanged extends LookRefusal {
   code = SETTINGS_CHANGED;
 }
-export const SETTINGS_CHANGED_LINE = "The git settings on this computer (your sign-in, proxy, certificate or address rewrites) have changed since setup, so nothing was pushed. The director needs to confirm the change first.";
+export const SETTINGS_CHANGED_LINE = "Nothing was pushed: this computer's git settings (sign-in, proxy, certificate or address rewrites) differ from the ones you confirmed at setup. If you changed them yourself, run setup again and click Go ahead at step 3 to confirm them.";
 
 const RELEVANT = /^(?:credential\.(?:.+\.)?helper|core\.sshcommand|url\..+\.(?:push)?insteadof|http\.(?:.+\.)?(?:proxy|sslcainfo)|include\.path|includeif\..+\.path|remote\..+\.pushurl)$/;
 // The settings a push trusts, in git's order, and a fingerprint of them.
@@ -492,15 +493,18 @@ export function trustedSettings(entries) {
 }
 export const settingsFingerprint = (entries) => crypto.createHash('sha256').update(JSON.stringify(trustedSettings(entries))).digest('hex');
 
-// What the record holds: { folders: { <folder>: <fingerprint> } }. Includes (includeIf gitdir:, onbranch:, hasconfig:) make the settings
-// depend on the folder git runs in, so each folder has its own fingerprint, of the very settings read there. A record from before
-// that (one `fingerprint` for all) says nothing of any folder: it is refused until the director confirms again.
+// What the record holds: { folders: { <folder>: <fingerprint> }, legacy? }. Includes (includeIf gitdir:, onbranch:, hasconfig:) make the
+// settings depend on the folder git runs in, so each folder has its own fingerprint, of the very settings read there. A record from
+// before that held one `fingerprint` for all; it is kept as `legacy`, and a folder with no entry takes the settings as they are
+// now only if they still equal it (see checkTrusted).
 const folderKey = (folder) => {
+  let real;
   try {
-    return fs.realpathSync(folder);
+    real = fs.realpathSync.native(folder);
   } catch {
-    return path.resolve(folder);
+    real = path.resolve(folder);
   }
+  return process.platform === 'win32' ? real.toLowerCase() : real;
 };
 
 // The settings as a push in `cwd` reads them, with git's search held below Wheelhouse's folder. The same read serves the check and
@@ -510,40 +514,62 @@ export const readSettingsFor = ({ run = realRun, gitPath = 'git', cwd }) => read
 function readRecord(file) {
   try {
     const record = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (record !== null && typeof record === 'object' && record.folders !== null && typeof record.folders === 'object' && !Array.isArray(record.folders)) return { folders: record.folders };
-    return 'refused';
+    if (record === null || typeof record !== 'object' || Array.isArray(record)) return 'refused';
+    const isHash = (v) => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
+    const legacy = isHash(record.legacy) ? record.legacy : isHash(record.fingerprint) ? record.fingerprint : null;
+    const folders = record.folders === undefined ? {} : record.folders;
+    if (folders === null || typeof folders !== 'object' || Array.isArray(folders)) return 'refused';
+    if (record.folders === undefined && legacy === null) return 'refused';
+    return { folders, legacy };
   } catch (error) {
     return error?.code === 'ENOENT' ? null : 'refused';
   }
 }
 
-function writeRecord(file, folders) {
+function writeRecord(file, { folders, legacy = null }) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(file, `${JSON.stringify({ folders }, null, 2)}\n`, { mode: 0o600 });
+  fs.writeFileSync(file, `${JSON.stringify({ folders, ...(legacy === null ? {} : { legacy }) }, null, 2)}\n`, { mode: 0o600 });
 }
 
-// Setup records a folder's fingerprint when the director has seen the card that names the settings (confirmComputerSettings), so a
-// folder with no entry was never confirmed: where a record exists at all (an older one, or one that names other folders), that
-// folder is refused until the director confirms it, so a change made after setup is never taken as what was seen. Only where no
-// record exists yet, a first push (a stand-in with no setup before it) records what it finds, as the first use.
+// Whether any project on this computer is connected as-is: its settings were confirmed at setup, so a missing record is a loss.
+const anyAsIs = () => registeredProjects().some(({ record }) => record.connection?.mode === 'as-is');
+
+// Setup records a folder's fingerprint when the director has seen the card that names the settings (confirmComputerSettings).
+//   - A folder with an entry must match it.
+//   - A folder with none, in a record from before folders were kept, takes the settings as they are now if they equal that old
+//     fingerprint (nothing changed since setup), and the entry is added, the old one kept for the projects not yet moved over; if
+//     they differ it is refused until the director confirms.
+//   - A folder with none in any other record was never confirmed: refused.
+//   - Where there is no record at all, a push records what it finds as the first use only while no project is connected as-is: with
+//     one, setup would have recorded, so the loss is refused until the director confirms again.
 function checkTrusted(file, folder, now) {
   const record = readRecord(file);
   if (record === 'refused') throw new SettingsChanged(SETTINGS_CHANGED_LINE);
   const key = folderKey(folder);
   if (record === null) {
-    writeRecord(file, { [key]: now });
+    if (anyAsIs()) throw new SettingsChanged(SETTINGS_CHANGED_LINE);
+    writeRecord(file, { folders: { [key]: now } });
     return;
   }
-  if (record.folders[key] !== now) throw new SettingsChanged(SETTINGS_CHANGED_LINE);
+  const kept = record.folders[key];
+  if (kept === undefined) {
+    if (record.legacy !== null && record.legacy === now) {
+      writeRecord(file, { folders: { ...record.folders, [key]: now }, legacy: record.legacy });
+      return;
+    }
+    throw new SettingsChanged(SETTINGS_CHANGED_LINE);
+  }
+  if (kept !== now) throw new SettingsChanged(SETTINGS_CHANGED_LINE);
 }
 
 // The director's confirmation of the computer's settings as they are now in `cwd`, the folder the push runs in (a later part's
-// card calls this). The other folders' records stand; an older record that named no folder is replaced by this one.
+// card calls this). It is merged into the record: the other folders' entries and the old single fingerprint stand.
 export async function confirmComputerSettings({ file, run = realRun, gitPath = 'git', cwd }) {
   const entries = await readSettingsFor({ run, gitPath, cwd });
   if (entries === null) throw new Error("Git's settings on this computer could not be read");
   const record = readRecord(file);
-  writeRecord(file, { ...(record === null || record === 'refused' ? {} : record.folders), [folderKey(cwd)]: settingsFingerprint(entries) });
+  const kept = record === null || record === 'refused' ? { folders: {}, legacy: null } : record;
+  writeRecord(file, { folders: { ...kept.folders, [folderKey(cwd)]: settingsFingerprint(entries) }, legacy: kept.legacy });
 }
 
 // git in `cwd`: `git(args, options)` gives run's answer. `list` says which allowed list the look uses:
@@ -635,7 +661,9 @@ export function safeGit({
       given[`GIT_CONFIG_VALUE_${count + i}`] = value;
     });
     given.GIT_CONFIG_COUNT = String(count + extras.length);
-    return withSettingsFile(entries, execute);
+    // The includes are already resolved in `entries` (--includes), so the copy the push reads holds no include of its own: git would
+    // otherwise follow it again at push time, and what it reads could differ from what was checked. They stay in the fingerprint.
+    return withSettingsFile(entries.filter(({ key }) => !/^(?:include\.path|includeif\..+\.path)$/i.test(key)), execute);
   };
 }
 

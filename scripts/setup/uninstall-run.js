@@ -173,7 +173,7 @@ async function withScratchGit({ run, gitPath, env, remoteUrl, index = false }, u
 // The tip of a branch on the host, or null when there is no such branch; throws when the host can't
 // be reached.
 async function hostTip(git, remoteUrl, branch) {
-  const got = await git.must(['ls-remote', '--heads', remoteUrl, `refs/heads/${branch}`], 'the host could not be reached with your sign-in');
+  const got = await git.must(['ls-remote', '--heads', '--end-of-options', remoteUrl, `refs/heads/${branch}`], 'the host could not be reached with your sign-in');
   return /^([0-9a-f]{40,64})\t/m.exec(got)?.[1] ?? null;
 }
 
@@ -183,7 +183,7 @@ async function deleteHostBranch(git, remoteUrl, branch, sha) {
   const tip = await hostTip(git, remoteUrl, branch);
   if (tip === null) return { put: true, why: 'gone already' };
   if (sha !== null && tip !== sha) return { put: false, why: 'it moved since setup, so it stays' };
-  await git.must(['push', '-q', '--no-verify', `--force-with-lease=refs/heads/${branch}:${tip}`, remoteUrl, `:refs/heads/${branch}`], `the branch ${branch} could not be deleted on the host`);
+  await git.must(['push', '-q', '--no-verify', `--force-with-lease=refs/heads/${branch}:${tip}`, '--end-of-options', remoteUrl, `:refs/heads/${branch}`], `the branch ${branch} could not be deleted on the host`);
   return { put: true };
 }
 
@@ -460,7 +460,7 @@ export async function applyUninstall({
   };
   // The branch's tip on the host, fetched into the scratch repository.
   const fetchBase = async (g, branch) => {
-    const fetched = await g.git(['fetch', '-q', '--no-tags', placeOf(record), `+refs/heads/${branch}:refs/fetched/base`]);
+    const fetched = await g.git(['fetch', '-q', '--no-tags', '--end-of-options', placeOf(record), `+refs/heads/${branch}:refs/fetched/base`]);
     if (fetched.code !== 0) halt(`${branch} on ${hostName(record.host)} could not be read with your sign-in`);
     return g.must(['rev-parse', '--verify', 'refs/fetched/base^{commit}'], `${branch} could not be read`);
   };
@@ -473,7 +473,7 @@ export async function applyUninstall({
         run, gitPath: git.path, cwd: folder,
         env: reaching({ GIT_NO_REPLACE_OBJECTS: '1', ...o.gitEnvFor({ host: record.host, gitPath: git.path, base: record.connection?.baseUrl }) }, placeOf(record)),
       });
-      await call(['fetch', '-q', '--no-tags', '--no-write-fetch-head', placeOf(record), `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
+      await call(['fetch', '-q', '--no-tags', '--no-write-fetch-head', '--end-of-options', placeOf(record), `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
     } catch { /* the next plan reads the folder's copy as it is */ }
     halt(`the archive of the other agent setup's instructions on ${branch} on ${hostName(record.host)} isn't as this folder last saw it, so ${UNINSTALL_CHANGED}`);
   };
@@ -517,7 +517,7 @@ export async function applyUninstall({
         }
         if (tip === null) return false;
         if (tip === sha) return true;
-        const fetched = await g.git(['fetch', '-q', '--no-tags', remoteUrl, `+refs/heads/${branch}:refs/fetched/branch`]);
+        const fetched = await g.git(['fetch', '-q', '--no-tags', '--end-of-options', remoteUrl, `+refs/heads/${branch}:refs/fetched/branch`]);
         if (fetched.code !== 0) halt(`${branch} on ${hostName(record.host)} could not be read with your sign-in, so uninstall did not go on; try again once it can be`);
         return (await g.git(['cat-file', '-e', `${sha}^{commit}`])).code === 0;
       }, false, record.connection?.baseUrl);
@@ -615,7 +615,7 @@ export async function applyUninstall({
             const tree = await g.must(['write-tree'], 'git could not make the pull request\'s files');
             const sha = await g.must([...AUTHOR, 'commit-tree', tree, '-p', tip, '-m', UNINSTALL_TITLE], 'git could not make uninstall\'s commit');
             // Wheelhouse's own branch: a retry's commit takes the place of an earlier attempt's.
-            await g.must(['push', '-q', '--no-verify', '--force', placeOf(record), `${sha}:refs/heads/${UNINSTALL_BRANCH}`], `uninstall's branch could not be pushed to ${hostName(record.host)} with your sign-in`);
+            await g.must(['push', '-q', '--no-verify', '--force', '--end-of-options', placeOf(record), `${sha}:refs/heads/${UNINSTALL_BRANCH}`], `uninstall's branch could not be pushed to ${hostName(record.host)} with your sign-in`);
             return { tip, left, sha };
           }, true, record.connection?.baseUrl);
           if (made.stale) await archiveChanged(entry.branch);

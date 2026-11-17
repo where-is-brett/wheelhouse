@@ -24,7 +24,8 @@ export function unreadableAuthority(text) {
   const address = String(text ?? '').trim();
   const url = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/]*)/.exec(address);
   const authority = url !== null ? url[1] : /[[\]]/.test(address.split('/')[0]) ? address.split('/')[0] : address.split(':')[0];
-  return /[[\]]/.test(authority) || (authority.match(/@/g) ?? []).length > 1;
+  // A backslash, ?, # or % end or bend the authority differently in git, curl and a URL reader, so none is read.
+  return /[[\]\\?#%]/.test(authority) || (authority.match(/@/g) ?? []).length > 1;
 }
 
 export function parseRemote(remoteUrl) {

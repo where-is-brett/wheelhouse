@@ -243,8 +243,9 @@ test('after the wait, step 9 asks whether the test arrived, and either answer se
       assert.equal(b.ask.id, ARRIVED_ID);
       assert.deepEqual(b.ask.card.options.map((o) => o.label), [ARRIVED.yes, ARRIVED.no]);
       assert.match(b.ask.card.question, /locked/);
-      // A question of fact: the card recommends answering what was seen, not either answer as such.
-      assert.match(b.ask.card.question, /Choose what you saw/);
+      // A question of fact only the director can answer: no recommendation, and the card says so.
+      assert.match(b.ask.card.question, /If nothing came, or you're unsure, choose It didn't/);
+      assert.match(b.ask.card.question, /No recommendation: only you know whether it came/);
       assert.equal(setLineOf(b.ask.card.question), null);
 
       // Suggest a change… is no answer: the card is asked again.

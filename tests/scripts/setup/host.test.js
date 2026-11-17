@@ -3867,7 +3867,7 @@ test('a pasted address that names no project says so even when its user and toke
     addChanges(other.id, [{ id: 'chg-1', kind: 'answer', target: 'step 3', before: null, after: { joined: 'gitlab.mycorp.internal', missed: 'none', host: 'gitlab' }, step: 3 }]);
     const again = (await step.plan(ctxFor(folder, { runId: other.id }))).ask;
     assert.match(again.card.what, /on your account or groups\. If that is an address, paste it with https:\/\/ at the front\. /);
-    assert.match(again.card.options.at(-1).says, /in your account or groups, set up/);
+    assert.match(again.card.options.at(-1).says, /in your account, organisations or groups, set up/);
     assert.match(joinMissLine({ host: 'gitlab', wanted: 'gitlab.mycorp.internal', found: [] }), /which asks again. If that is an address, paste it with https:\/\/ at the front\.$/);
     assert.doesNotMatch(joinMissLine({ host: 'gitlab', wanted: 'team/app', found: [] }), /paste it with https/);
   });
