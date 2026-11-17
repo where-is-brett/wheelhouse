@@ -325,8 +325,8 @@ test('a copy with no checksum is named on the card', async () => {
     const change = fetchChange(planned);
     assert.equal(change.checksum, 'none');
     assert.match(planned.card.what, /gives no checksum/);
-    // It says what the file becomes: the glab Wheelhouse uses afterwards, the sign-in included.
-    assert.match(planned.card.what, /after that it is the glab Wheelhouse uses for your GitLab work, including your sign-in/);
+    // It says what the file becomes: the GitLab tool Wheelhouse uses afterwards, the sign-in included.
+    assert.match(planned.card.what, /after that it is the GitLab tool Wheelhouse uses for your GitLab work, including your sign-in/);
     assert.doesNotMatch(planned.card.what, /runs it only/);
     assert.match(planned.card.what, /Not now/);
     // The file the card is about is pinned by its hash (a read at the plan), and the card composes within its length
@@ -447,9 +447,9 @@ test('step 2\'s card composes in the worst first run, and the no-checksum warnin
       const shown = `${long.slice(0, 40)}…${long.slice(-23)}`;
       assert.ok(planned.card.what.includes(shown), planned.card.what);
       if (checksums === 'none') {
-        assert.match(planned.card.what, /GitLab's own tool \(glab\): from your company's list at .*, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure/);
+        assert.match(planned.card.what, /GitLab's own tool: from your company's list at .*, no checksum; it becomes your GitLab tool for GitLab and sign-in; Not now if unsure/);
       } else {
-        assert.match(planned.card.what, /GitLab's own tool \(glab\): from your company's list at .*, checked/);
+        assert.match(planned.card.what, /GitLab's own tool: from your company's list at .*, checked/);
       }
       if (checksums === 'none') {
         assert.match(planned.card.what, /no checksum/);

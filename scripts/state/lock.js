@@ -62,14 +62,14 @@ async function ensureClone(project, env) {
     fs.rmSync(dir, { recursive: true, force: true });
     throw new Error(message);
   };
-  const listed = await git(dir, ['ls-remote', '--heads', remoteUrl, LOCK_BRANCH], env);
+  const listed = await git(dir, ['ls-remote', '--heads', '--end-of-options', remoteUrl, LOCK_BRANCH], env);
   if (listed.code !== 0) fail('The lock repository could not be reached');
   if (listed.stdout.trim()) {
     const cloned = await git(dir, ['clone', '--single-branch', '--branch', LOCK_BRANCH, '--', remoteUrl, '.'], env);
     if (cloned.code !== 0) fail('The lock branch could not be cloned');
     return dir;
   }
-  for (const args of [['init'], ['symbolic-ref', 'HEAD', `refs/heads/${LOCK_BRANCH}`], ['remote', 'add', 'origin', remoteUrl]]) {
+  for (const args of [['init'], ['symbolic-ref', 'HEAD', `refs/heads/${LOCK_BRANCH}`], ['remote', 'add', '--end-of-options', 'origin', remoteUrl]]) {
     if ((await git(dir, args, env)).code !== 0) fail('The lock branch could not be started');
   }
   return dir;

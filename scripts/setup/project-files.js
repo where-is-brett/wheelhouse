@@ -668,7 +668,7 @@ function gitIn({ run, gitPath, host, platform, folder, remoteUrl, base, keyed = 
 
 // The tip of the default branch on the host, or null when it has none.
 async function remoteTip(git, remoteUrl, branch) {
-  const listed = await git.out(['ls-remote', remoteUrl, `refs/heads/${branch}`]);
+  const listed = await git.out(['ls-remote', '--end-of-options', remoteUrl, `refs/heads/${branch}`]);
   if (listed === null) throw new Error(`Setup could not reach the repository with your sign-in to read ${branch}: check you are still signed in (step 3), then ask again`);
   const sha = listed.split(/\s/)[0];
   return /^[0-9a-f]{40,64}$/.test(sha ?? '') ? sha : null;
@@ -685,7 +685,7 @@ const MERGE_PENDING = new Set(['checking', 'unchecked', 'preparing', 'approvals_
 // one used), then merged at exactly that commit once GitLab says it can be. Throws a plain line when the key may not
 // merge (a project with real users is merged by Maintainers only), leaving the merge request for the director.
 async function mergeUp({ git, api, projectId, remoteUrl, branch, sha, sleep, halt }) {
-  if (!(await git.ok(['push', '-q', '--no-verify', remoteUrl, `+${sha}:refs/heads/${SETUP_SIDE_BRANCH}`]))) {
+  if (!(await git.ok(['push', '-q', '--no-verify', '--end-of-options', remoteUrl, `+${sha}:refs/heads/${SETUP_SIDE_BRANCH}`]))) {
     throw new Error('the setup commit could not be sent to GitLab with the project\'s key; it is kept in this folder, and a fresh Go ahead sends it');
   }
   const at = projectPath(projectId);
@@ -718,7 +718,7 @@ async function mergeUp({ git, api, projectId, remoteUrl, branch, sha, sleep, hal
 // Gives the folder's commit afterwards.
 async function takeMerged(git, { remoteUrl, branch, head, tip }) {
   if (head === null || tip === null || head === tip) return head;
-  if (!(await git.ok(['fetch', '-q', remoteUrl, `+refs/heads/${branch}:refs/remotes/origin/${branch}`]))) return head;
+  if (!(await git.ok(['fetch', '-q', '--end-of-options', remoteUrl, `+refs/heads/${branch}:refs/remotes/origin/${branch}`]))) return head;
   if (!(await git.ok(['merge-base', '--is-ancestor', head, tip]))) return head;
   if ((await git.out(['rev-parse', `${head}^{tree}`])) !== (await git.out(['rev-parse', `${tip}^{tree}`]))) return head;
   if ((await git.out(['symbolic-ref', '--short', '-q', 'HEAD'])) !== branch) return head;
@@ -1125,7 +1125,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   else if (excluded) parts.push(`.claude/settings.local.json${ours ? ' and .wheelhouse/, Wheelhouse\'s working folder,' : ''} kept out of git`);
   if (ours && !excluded) parts.push('.wheelhouse/, Wheelhouse\'s working folder, kept out of git');
   if (frontDesk === NO_PIN) parts.push('the First Mate\'s model is left as it is: Claude Code didn\'t say which model to use');
-  else if (frontDesk) parts.push(`the First Mate uses ${frontDesk}, Claude Code's most capable everyday model`);
+  else if (frontDesk) parts.push("the First Mate uses Claude Code's most capable everyday model, the one Claude Code names for it");
   if (midSized === NO_PIN) parts.push('the settings that spend less wait for a cheaper model: Claude Code didn\'t say which to use');
   else if (midSized) parts.push('a cheaper model, used only if you later ask Wheelhouse to save money (the Lean setting)');
   if (secrets === 'shared') parts.push(`.env files, which hold secrets, kept out of git by .gitignore${envLines.some((c) => c.restate) ? ' (.env.example stays shared)' : ''}`);
@@ -1615,7 +1615,7 @@ export function projectFilesStep({
         const catchUp = changes.find((c) => c.action === 'catch-up');
         if (catchUp !== undefined) {
           ctx.record({ id: newId('chg'), kind: 'host', target: catchUp.target, before: { branch: catchUp.branch, sha: catchUp.from }, after: { action: 'catch-up', branch: catchUp.branch, sha: catchUp.to }, project });
-          if (!(await git.ok(['push', '-q', '--no-verify', remoteUrl, `${catchUp.to}:refs/heads/${catchUp.branch}`]))) throw new Error('This folder\'s newest commits could not be copied, so nothing went up; a fresh Go ahead tries again');
+          if (!(await git.ok(['push', '-q', '--no-verify', '--end-of-options', remoteUrl, `${catchUp.to}:refs/heads/${catchUp.branch}`]))) throw new Error('This folder\'s newest commits could not be copied, so nothing went up; a fresh Go ahead tries again');
         }
         const tipNow = await remoteTip(git, remoteUrl, up.branch);
         let sha = up.commit ?? null;
@@ -1674,14 +1674,14 @@ export function projectFilesStep({
             await mergeUp({ git, api: await keyGitlabApi({ record, via: keyVia }), projectId: record.connection.projectId, remoteUrl, branch: up.branch, sha, sleep, halt });
             await takeMerged(git, { remoteUrl, branch: up.branch, head: sha, tip: await remoteTip(git, remoteUrl, up.branch) });
           } else {
-            const pushed = await git.ok(['push', '-q', '--no-verify', remoteUrl, `${sha}:refs/heads/${up.branch}`]);
+            const pushed = await git.ok(['push', '-q', '--no-verify', '--end-of-options', remoteUrl, `${sha}:refs/heads/${up.branch}`]);
             if (!pushed) throw new Error(`the setup commit could not be pushed to ${up.branch} on ${NAME[host]}; it is kept in this folder, and a fresh Go ahead pushes it`);
           }
           // The folder's copy of the branch on the host, told what the host now holds, when its
           // origin is the repository pushed to: fetched by the address setup recorded, never by the
           // one origin names (ruling R111).
           const origin = await git.out(['remote', 'get-url', 'origin']);
-          if (!local && origin !== null && sameRemote(origin, record.remoteUrl)) await git.ok(['fetch', '-q', record.remoteUrl, `+refs/heads/${up.branch}:refs/remotes/origin/${up.branch}`]);
+          if (!local && origin !== null && sameRemote(origin, record.remoteUrl)) await git.ok(['fetch', '-q', '--end-of-options', record.remoteUrl, `+refs/heads/${up.branch}:refs/remotes/origin/${up.branch}`]);
           // The helper reads a move it didn't make as the main version moved outside it.
           if (local) keepSeenMain(project, sha);
           say(`Setup's commit is on ${up.branch} on ${NAME[host]}`);

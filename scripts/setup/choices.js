@@ -65,7 +65,7 @@ const hash = (value) => crypto.createHash('sha256').update(canonicalJson(value))
 // What each choice is about, in a few words, for the director and for `choices`; by its question id.
 export function aboutOf(key) {
   const id = key.slice(key.indexOf('.') + 1);
-  if (id === 'join' || id.startsWith('join-')) return 'new or from your other computer';
+  if (id === 'join' || id.startsWith('join-')) return 'new, or set up on another computer';
   if (id === 'real-users') return 'real users';
   if (id === 'locked') return 'Locked';
   if (id === 'host') return 'where the project is kept';

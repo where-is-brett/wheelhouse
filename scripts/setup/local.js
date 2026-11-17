@@ -159,7 +159,7 @@ export function backupAsk(name, { id = 'backup', machine = false, refused = null
       what: `${refused === null ? '' : `${refused}. `}${what} To name a folder yourself, type its full path.`,
       why: 'A backup in a folder off this disk is what brings the project back. It holds the project and its history, not your cards and clicks, which stay on this computer.',
       options: [
-        { label: CHOOSE_BACKUP, says: desktop ? 'You pick an external drive, or a folder a cloud service keeps, in a window that opens on this computer. A backup goes there after each merge.' : 'Type the full path of an external drive, or a folder a cloud service keeps, under Type something. A backup goes there after each merge.' },
+        { label: CHOOSE_BACKUP, says: desktop ? 'You pick an external drive, or a folder a cloud service keeps, in a window that opens on this computer. A fresh backup goes there each time a finished change goes in.' : 'Type the full path of an external drive, or a folder a cloud service keeps, under Type something. A fresh backup goes there each time a finished change goes in.' },
         { label: NO_BACKUP, says: 'Building goes on with no backup, and you won\'t be asked again.' },
       ],
       recommend: CHOOSE_BACKUP,
@@ -261,7 +261,7 @@ export function localCard({ changes, branch, others, desktop = true }) {
     ...(changes.some((c) => c.action === 'home' && typeof c.restore === 'string') ? ['the project brought back from your backup, into this folder'] : []),
     'a private copy of the project\'s history on this computer',
     'the project\'s record, kept on this computer',
-    ...(backup === undefined ? [] : [later ? 'no backup: the project stays only on this computer' : 'a backup in the folder you choose, after each merge']),
+    ...(backup === undefined ? [] : [later ? 'no backup: the project stays only on this computer' : 'a backup in the folder you choose, made fresh each time a finished change goes in']),
     FIRST_CHECK_LINE,
   ];
   const line = othersLine(others);

@@ -891,13 +891,14 @@ function cardFor(changes, status, platform, leftOut = [], hostTools = []) {
   const fetches = changes.filter((c) => c.action === 'fetch');
   const official = fetches.filter((c) => c.from !== 'company').map((c) => c.tool);
   // A host tool by the host's name first, so no line starts with a lower-case command name.
-  const toolName = (tool) => `${HOST_TOOL_NAME[tool]}'s own tool (${tool})`;
+  const toolName = (tool) => `${HOST_TOOL_NAME[tool]}'s own tool`;
   const company = fetches.filter((x) => x.from === 'company');
   // How many allow rules the change adds: one or both forms of setup's command.
   const rules = changes.find((c) => c.kind === 'json-key')?.added ?? 0;
   const rule = rules > 0;
   const ruleWords = rules === 1 ? 'one permission rule' : 'two permission rules';
-  const here = Object.entries(status).filter(([, s]) => s.ok).map(([tool, s]) => `${tool === 'node' ? 'Node.js' : tool} ${s.version}`);
+  // Said by name in plain words, with no version number: the director has no use for one.
+  const here = Object.entries(status).filter(([, s]) => s.ok).map(([tool]) => (tool === 'node' ? 'Node.js' : tool === 'git' ? 'Git' : HOST_TOOL_NAME[tool] ? `${HOST_TOOL_NAME[tool]}'s own tool` : tool));
   const full = [];
   for (const c of processes) full.push(c.action === 'wait' ? 'Git: waiting for the git installer already open, which setup leaves to finish' : installLine(platform));
   if (official.length > 0) {
@@ -907,7 +908,7 @@ function cardFor(changes, status, platform, leftOut = [], hostTools = []) {
   for (const c of company) {
     full.push(`${toolName(c.tool)}, from your company's list at ${c.source} (version ${c.version}); ${c.checksum === 'listed'
       ? 'checked against the checksum the list gives'
-      : 'the list gives no checksum, so setup cannot check the file. Setup runs it once to read its version, and after that it is the glab Wheelhouse uses for your GitLab work, including your sign-in. Say Not now if unsure'}`);
+      : 'the list gives no checksum, so setup cannot check the file. Setup runs it once to read its version, and after that it is the GitLab tool Wheelhouse uses for your GitLab work, including your sign-in. Say Not now if unsure'}`);
   }
   if (changes.some((c) => c.action === 'engine')) {
     full.push('The build engine, Archon: built from its pinned source with Wheelhouse\'s safety patch, with the pinned Bun, into Wheelhouse\'s engine folder, each checked against Wheelhouse\'s pins, with its usage reporting off; a few minutes, nothing for you to do');
@@ -922,7 +923,7 @@ function cardFor(changes, status, platform, leftOut = [], hostTools = []) {
   for (const c of company) {
     terse.push(c.checksum === 'listed'
       ? `${toolName(c.tool)}: from your company's list at ${shownSource(c.source)}, checked`
-      : `${toolName(c.tool)}: from your company's list at ${shownSource(c.source)}, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure`);
+      : `${toolName(c.tool)}: from your company's list at ${shownSource(c.source)}, no checksum; it becomes your GitLab tool for GitLab and sign-in; Not now if unsure`);
   }
   if (changes.some((c) => c.action === 'engine')) terse.push('The build engine, Archon: pinned and checked, usage reporting off');
   if (changes.some((c) => c.action === 'archon-settings')) terse.push('The engine set to use Claude');

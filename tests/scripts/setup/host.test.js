@@ -2435,7 +2435,7 @@ test('step 3 asks whether this computer is joining only in a folder holding noth
     const first = (await step.plan(ctxFor(folder))).ask;
     assert.equal(first.id, 'join');
     assert.equal(first.typed, true, 'an owner/name may be typed');
-    assert.deepEqual(first.card.options.map((o) => o.label), [KEEP_HERE, HOST_LABELS.github, HOST_LABELS.gitlab, 'Cafe-Menu, from my other computer']);
+    assert.deepEqual(first.card.options.map((o) => o.label), [KEEP_HERE, HOST_LABELS.github, HOST_LABELS.gitlab, 'Cafe-Menu, set up on another computer']);
     assert.equal(first.card.recommend, KEEP_HERE, 'an empty folder is most often a new product, and one kept here needs no account');
     assert.match(`${first.card.what} ${first.card.why}`, /owner\/name, like ann\/cafe-menu/);
     composeCard({ ...first.card, kind: 'question' });
@@ -2763,7 +2763,7 @@ test('a second computer joins from an empty folder: the project found on an orga
     const again = await answerJoin(step, ctxFor(folder, { runId: run.id }), joining());
     assert.deepEqual(again.asked.map((a) => a.id.replace(/-[0-9a-f]{10,}$/, '')), ['host', 'connection']);
     assert.deepEqual(again.changes.find((c) => c.action === 'join'), { kind: 'host', target: 'github', action: 'join', name: 'cafe-co/Cafe-Menu' });
-    await assert.rejects(applyIn(step, folder, run.id, planned.changes, { answers: planned.answers }), /checked out to cafe-co\/Cafe-Menu from your other computer/);
+    await assert.rejects(applyIn(step, folder, run.id, planned.changes, { answers: planned.answers }), /checked out to cafe-co\/Cafe-Menu, set up on another computer/);
     const count = findRun(folder).changes.filter((c) => c.kind === 'folder' && c.target.endsWith('.git')).length;
     await applyIn(step, folder, run.id, again.changes, { answers: again.answers });
     assert.equal(findRun(folder).changes.filter((c) => c.kind === 'folder' && c.target.endsWith('.git')).length, count);
@@ -2992,7 +2992,7 @@ test('a folder checked out to a joined repository can never become a full run, i
     const own = planned.changes.filter((c) => c.action !== 'join' && c.action !== 'checkout')
       .map((c) => (c.action === 'project' ? { ...c, repo: `${USER}/Cafe-Menu` } : c));
     const before = findRun(folder).changes.length;
-    await assert.rejects(applyIn(step, folder, run.id, own, { answers: planned.answers }), /checked out to a-director\/Cafe-Menu from your other computer/);
+    await assert.rejects(applyIn(step, folder, run.id, own, { answers: planned.answers }), /checked out to a-director\/Cafe-Menu, set up on another computer/);
     assert.equal(findRun(folder).changes.length, before, 'no { joined: null }');
     assert.equal(stepsFor(findRun(folder)), JOINING_STEPS);
     // Another run in the same folder joins it too, without asking.
@@ -3074,7 +3074,7 @@ test('a folder whose origin is an ssh address of the same repository is fetched 
     assert.equal(await g(folder, 'rev-parse', 'HEAD'), await g(w.hostUrl({ repo: `${USER}/Shop` }), 'rev-parse', 'main'));
     assert.equal(await g(folder, 'rev-parse', '--abbrev-ref', 'main@{upstream}'), 'origin/main');
     assert.equal(await g(folder, 'config', '--get', 'remote.origin.url'), `git@github.com:${USER}/Shop.git`, 'origin is left as the director set it');
-    assert.deepEqual(gits.filter((a) => a[0] === 'fetch'), [['fetch', '-q', `https://github.com/${USER}/Shop.git`, '+refs/heads/main:refs/remotes/origin/main']]);
+    assert.deepEqual(gits.filter((a) => a[0] === 'fetch'), [['fetch', '-q', '--end-of-options', `https://github.com/${USER}/Shop.git`, '+refs/heads/main:refs/remotes/origin/main']]);
 
     // A joining computer's folder, pointed at the project over ssh.
     await seedProject(w, 'cafe-co/Cafe-Menu');
@@ -3086,7 +3086,7 @@ test('a folder whose origin is an ssh address of the same repository is fetched 
     });
     assert.equal(await g(joined, 'rev-parse', 'HEAD'), await g(w.hostUrl({ repo: 'cafe-co/Cafe-Menu' }), 'rev-parse', 'main'));
     assert.equal(fs.readFileSync(path.join(joined, '.claude', 'settings.json'), 'utf8'), COMMITTED);
-    assert.deepEqual(gits.filter((a) => a[0] === 'fetch'), [['fetch', '-q', 'https://github.com/cafe-co/Cafe-Menu.git', '+refs/heads/main:refs/remotes/origin/main']]);
+    assert.deepEqual(gits.filter((a) => a[0] === 'fetch'), [['fetch', '-q', '--end-of-options', 'https://github.com/cafe-co/Cafe-Menu.git', '+refs/heads/main:refs/remotes/origin/main']]);
   });
 });
 

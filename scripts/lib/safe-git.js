@@ -493,8 +493,7 @@ export function trustedSettings(entries) {
 export const settingsFingerprint = (entries) => crypto.createHash('sha256').update(JSON.stringify(trustedSettings(entries))).digest('hex');
 
 // Records the fingerprint the first time; after that, throws SettingsChanged when it differs.
-function checkTrusted(file, entries) {
-  const now = settingsFingerprint(entries);
+function checkTrusted(file, now) {
   let kept = null;
   try {
     kept = JSON.parse(fs.readFileSync(file, 'utf8')).fingerprint;
@@ -509,12 +508,22 @@ function checkTrusted(file, entries) {
   if (kept !== now) throw new SettingsChanged(SETTINGS_CHANGED_LINE);
 }
 
+// The one way the computer's settings are fingerprinted, for the record kept and for the check against it. They are read from a
+// folder of Wheelhouse's own with git's search held below it, never from a project's folder, so a setting that applies only
+// inside some folder (includeIf gitdir) reads the same every time. Null when git could not say.
+export async function computerSettingsFingerprint({ run = realRun, gitPath = 'git', cwd, ceiling } = {}) {
+  const home = wheelhouseHome();
+  if (cwd === undefined) fs.mkdirSync(home, { recursive: true });
+  const entries = await readComputerSettings({ run, gitPath, cwd: cwd ?? home, ceiling: ceiling ?? path.dirname(path.resolve(home)) });
+  return entries === null ? null : settingsFingerprint(entries);
+}
+
 // The director's confirmation of the computer's settings as they are now (a later part's card calls this).
-export async function confirmComputerSettings({ file, run = realRun, gitPath = 'git', cwd, ceiling = null }) {
-  const entries = await readComputerSettings({ run, gitPath, cwd, ceiling });
-  if (entries === null) throw new Error("Git's settings on this computer could not be read");
+export async function confirmComputerSettings({ file, run = realRun, gitPath = 'git', cwd, ceiling } = {}) {
+  const fingerprint = await computerSettingsFingerprint({ run, gitPath, cwd, ceiling });
+  if (fingerprint === null) throw new Error("Git's settings on this computer could not be read");
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(file, `${JSON.stringify({ fingerprint: settingsFingerprint(entries) }, null, 2)}\n`, { mode: 0o600 });
+  fs.writeFileSync(file, `${JSON.stringify({ fingerprint }, null, 2)}\n`, { mode: 0o600 });
 }
 
 // git in `cwd`: `git(args, options)` gives run's answer. `list` says which allowed list the look uses:
@@ -597,7 +606,11 @@ export function safeGit({
     const why = settingsRefusal(entries);
     if (why !== null) throw new LookRefusal(`Git's settings on this computer ${why}, which Wheelhouse does not allow for a push. Remove that setting, then try again.`);
     // What the computer's settings were when as-is pushing was first used: a change since is the director's to confirm.
-    if (trust !== null && subcommandOf(args) === 'push') checkTrusted(trust.file, entries);
+    if (trust !== null && subcommandOf(args) === 'push') {
+      const fingerprint = await computerSettingsFingerprint({ run, gitPath });
+      if (fingerprint === null) throw new LookRefusal(`Git's settings on this computer could not be read. ${caller === null ? 'Try the push again.' : UNREAD_NEXT[caller]}`);
+      checkTrusted(trust.file, fingerprint);
+    }
     const extras = hookNames(entries).map((name) => [`hook.${name}.enabled`, 'false']);
     if (pushTo !== null && /^https?:\/\//i.test(pushTo.url)) extras.push([`http.${pushTo.url}.sslVerify`, 'true']);
     const count = Number.parseInt(given.GIT_CONFIG_COUNT ?? '0', 10) || 0;

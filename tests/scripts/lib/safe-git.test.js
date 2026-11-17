@@ -229,3 +229,32 @@ test('an argument may not lift the fence with -c, bar the named exception', asyn
   assert.equal((await git(['-c', 'core.editor=true', 'status', '--porcelain'])).code, 0);
   assert.equal((await git(['-c', 'core.quotepath=off', 'status', '--porcelain'])).code, 0);
 });
+
+test('the computer\'s settings are fingerprinted one way for the record and the check: from Wheelhouse\'s own folder, so an includeIf that depends on the folder reads the same', async () => {
+  const { computerSettingsFingerprint, confirmComputerSettings, settingsFingerprint } = await import('../../../scripts/lib/safe-git.js');
+  const { wheelhouseHome } = await import('../../../scripts/lib/paths.js');
+  const { as, shortHome } = await import('../../helpers/homes.js');
+  const asked = [];
+  // The settings an includeIf gitdir: brings in apply only inside the folder it names; Wheelhouse's own folder is not it.
+  const run = async (file, args, options) => {
+    asked.push(options);
+    const inside = String(options.cwd).includes('a-project');
+    const entries = [['global', 'includeif.gitdir:/a-project/.path', '/x/inc'], ...(inside ? [['global', 'credential.helper', '!other']] : [])];
+    return { code: 0, stdout: entries.map(([scope, key, value]) => `${scope}\0${key}\n${value}\0`).join(''), stderr: '' };
+  };
+  const home = shortHome();
+  await as(home, async () => {
+    const path = await import('node:path');
+    const fs = await import('node:fs');
+    const file = path.join(home, 'host', 'git-settings.json');
+    await confirmComputerSettings({ file, run });
+    const kept = JSON.parse(fs.readFileSync(file, 'utf8')).fingerprint;
+    assert.equal(await computerSettingsFingerprint({ run }), kept, 'the check reads what the record read');
+    for (const options of asked) {
+      assert.equal(options.cwd, wheelhouseHome());
+      assert.equal(options.env.GIT_CEILING_DIRECTORIES, path.dirname(path.resolve(wheelhouseHome())));
+    }
+    assert.equal(kept, settingsFingerprint([{ key: 'includeIf.gitdir:/a-project/.path', value: '/x/inc' }]));
+    assert.equal(await computerSettingsFingerprint({ run: async () => ({ code: 1, stdout: '' }) }), null);
+  });
+});

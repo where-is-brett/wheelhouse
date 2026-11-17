@@ -240,3 +240,10 @@ test('the project\'s gitlabHosts is read from its committed configuration, and s
 
 // A road to GitLab that is never used: a stand-in curl that fails the test when it is run.
 const NO_ROAD = { run: async () => assert.fail('GitLab was reached'), curl: '/usr/bin/curl', proxy: null, caFile: null, platform: 'linux' };
+
+test('an address with a bracketed (IPv6) host in the scp form is refused, not read as the host "["', async () => {
+  const { parseRemote } = await import('../../../scripts/host/gitlab-base.js');
+  assert.throws(() => parseRemote('git@[1:2:3:4:5:6:7:8]:a/b'), /not a repository address/);
+  assert.throws(() => parseRemote('[::1]:a/b'), /not a repository address/);
+  assert.equal(parseRemote('git@gitlab.example.org:a/b').hostname, 'gitlab.example.org');
+});

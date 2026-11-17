@@ -55,7 +55,7 @@
 //
 // A second computer joins a project from an empty folder (design sections 15 and 24.3, ruling R77).
 // In a folder holding nothing but step 1's .claude/ and with no `origin`, the plan first asks
-// `join`: A new product, or `<folder name>, from my other computer`, or a typed owner/name;
+// `join`: A new product, or `<folder name>, set up on another computer`, or a typed owner/name;
 // recommended A new product. Joining asks neither the real-users nor the Locked question (the first
 // computer's; a joining Mac's step 8 asks Locked when the project is launched), but the host and
 // the connection as usual, since each computer signs in for itself. Its Go-ahead list is: the
@@ -202,7 +202,7 @@ export const STOPPED = 'All stop came on, so setup stopped here; once All stop i
 export const STOP_LOOK_MS = 1000;
 // The join question's first option; the second names the folder (ruling R77).
 export const NEW_PRODUCT = 'A new product';
-export const fromOtherComputer = (name) => `${name}, from my other computer`;
+export const fromOtherComputer = (name) => `${name}, set up on another computer`;
 // What a folder may hold beside step 1's .claude/ and still be empty: the system's own files.
 const SYSTEM_FILES = ['.DS_Store', 'Thumbs.db', 'desktop.ini'];
 // Said when Quick is chosen for a launched project a computer joins (design section 11).
@@ -540,11 +540,13 @@ function gitlabWhereAsk(name, { id, refused, remote, company = false }) {
 
 // The address card waits for the director's own answer: its answer is the address typed, so it recommends neither way out,
 // and a look at the choices takes nothing in its place.
-function gitlabAddressAsk(name, { id, refused }) {
+// It ends its batch where the answer could bring the refusal of a name (takenAfterMiss), so that comes before the questions after it.
+function gitlabAddressAsk(name, { id, refused, mayRefuse = false }) {
   return {
     id,
     typed: true,
     waits: true,
+    ...(mayRefuse ? { endsBatch: true } : {}),
     card: {
       level: 2,
       what: `${refused === null ? '' : `${refused}. `}What is your company's GitLab address, such as https://gitlab.example.org? Type it as your answer.`,
@@ -564,7 +566,7 @@ function gitlabAddressAsk(name, { id, refused }) {
 // The first card offers the host the folder's remotes already name, the public service, or the company's own
 // (which asks a second card for the address); an address typed on either is taken directly. One that is
 // not an address asks again under a new id, saying why.
-export function gitlabWhere({ answer, name, others = [] }) {
+export function gitlabWhere({ answer, name, others = [], mayRefuse = false }) {
   const remote = remoteHost(others);
   let state = 'where';
   let refused = null;
@@ -575,7 +577,7 @@ export function gitlabWhere({ answer, name, others = [] }) {
     const got = answer(id);
     // Asked again after Go back, the card says so, so it reads differently from the one answered.
     const said = refused ?? (n > 0 ? 'Choose again' : null);
-    if (got === null) return { ask: state === 'where' ? gitlabWhereAsk(name, { id, refused: said, remote, company }) : gitlabAddressAsk(name, { id, refused }) };
+    if (got === null) return { ask: state === 'where' ? gitlabWhereAsk(name, { id, refused: said, remote, company }) : gitlabAddressAsk(name, { id, refused, mayRefuse }) };
     if (got.label === GITLAB_COM) return { base: DEFAULT_GITLAB };
     if (got.label === COMPANY_GITLAB || (typeof got.text === 'string' && got.text.trim() !== '')) company = true;
     if (state === 'where' && got.label === COMPANY_GITLAB) {
@@ -758,12 +760,12 @@ function joinChoice(ctx) {
     if (got.label === KEEP_HERE) return { host: 'local' };
     if (got.label === HOST_LABELS.github) return { host: 'github' };
     if (got.label === HOST_LABELS.gitlab) {
-      const taken = takenAfterMiss({ tried, name, answers: ctx.answers });
+      const taken = takenAfterMiss({ tried, name, answers: ctx.answers, recorded: ctx.recorded });
       if (taken !== null) {
         tried.push(taken);
         continue;
       }
-      return { host: 'gitlab' };
+      return { host: 'gitlab', ...(missHoldingName({ tried, name }) === null ? {} : { mayRefuse: true }) };
     }
     if (backupNamed(got.text) !== null) {
       tried.push({ name: shown(got.text), missed: 'no-backup' });
@@ -788,15 +790,23 @@ function joinChoice(ctx) {
   }
 }
 
-// A new product asked for on GitLab, after a pasted address missed: where the missed project is in the director's own account on
-// that same GitLab and has the name this folder would take, the product can't be made there, so the question asks again at once,
-// saying so. Only once the company's address is answered is the host known; null while it isn't, or where the names differ.
-function takenAfterMiss({ tried, name, answers }) {
+// The missed pasted address whose project is in the director's own account and has the name this folder would take, or null.
+function missHoldingName({ tried, name }) {
   const miss = tried.findLast((t) => t.address === true && typeof t.at === 'string' && typeof t.user === 'string' && t.missed === 'none');
   if (miss === undefined || !miss.name.includes('/')) return null;
   const [owner, ...rest] = miss.name.split('/');
-  if (owner.toLowerCase() !== miss.user.toLowerCase() || rest.at(-1).toLowerCase() !== name.toLowerCase()) return null;
-  const typed = Object.entries(answers ?? {}).filter(([key]) => /^3\.gitlab-address/.test(key)).at(-1)?.[1]?.text;
+  return owner.toLowerCase() === miss.user.toLowerCase() && rest.at(-1).toLowerCase() === name.toLowerCase() ? miss : null;
+}
+
+// A new product asked for on GitLab, after a pasted address missed: where the missed project is in the director's own account on
+// that same GitLab and has the name this folder would take, the product can't be made there, so the question asks again at once,
+// saying so. Only once the company's address is answered is the host known; null while it isn't, or where the names differ.
+// The address is read from the answers the run holds too (`recorded`): a look at the choices asks the join question before the
+// cards after it, so it would not otherwise see an address already typed, and the refusal would come after the questions that follow.
+function takenAfterMiss({ tried, name, answers, recorded }) {
+  const miss = missHoldingName({ tried, name });
+  if (miss === null) return null;
+  const typed = [answers, recorded].map((from) => Object.entries(from ?? {}).filter(([key]) => /^3\.gitlab-address/.test(key)).at(-1)?.[1]?.text).find((text) => typeof text === 'string');
   const chosenAt = typeof typed === 'string' ? companyAddress(typed) : null;
   const there = chosenAt === null || chosenAt.why !== undefined ? null : chosenAt.host ?? new URL(chosenAt.base).host;
   return there !== null && there === miss.at ? { name: miss.name, missed: 'taken', host: 'gitlab', at: miss.at } : null;
@@ -1250,7 +1260,7 @@ export const SETUP_TOKEN_PROTECTION = 'Setup protects the main line now, while i
 // What step 3's card says of merging a project with real users through a key for that project only.
 export const REAL_USERS_MERGE_LINE = 'With real users, only you can merge on GitLab: when a change is ready, you press Merge there.';
 // Step 3's wait where the setup token can't do what the product needs, in plain words for the director.
-export const SETUP_TOKEN_CANNOT = (what) => `${what === 'joining' ? 'Bringing this product from your other computer' : 'Sending this folder\'s own history to a new GitLab project'} needs git signed in to GitLab as you, and without GitLab's own tool setup only ever holds a key for the project. Tell the director so in one line, and offer the two ways: Use my git as it is (step 3's connection card), or GitLab's own tool, which step 2 fetches. Then ask step 3 again`;
+export const SETUP_TOKEN_CANNOT = (what) => `${what === 'joining' ? 'Bringing this product in from another computer' : 'Sending this folder\'s own history to a new GitLab project'} needs git signed in to GitLab as you, and without GitLab's own tool setup only ever holds a key for the project. Tell the director so in one line, and offer the two ways: Use my git as it is (step 3's connection card), or GitLab's own tool, which step 2 fetches. Then ask step 3 again`;
 
 // Narrow on GitLab where glab is not used: the director makes a personal token with api alone and a
 // one-day expiry on a page that opens, and pastes it into the computer's own box. It is held in memory
@@ -1484,9 +1494,9 @@ async function connectFolder({ folder, remoteUrl, gitPath, env, run, record }) {
   if (origin === null) {
     record({ id: newId('chg'), kind: 'folder', target: path.join(folder, '.git'), before: hadGit ? { origin: null } : null, after: { origin: remoteUrl, branch: 'main' } });
     if (!hadGit) await must(['init', '-q', '-b', 'main'], 'git could not start in this folder');
-    await must(['remote', 'add', 'origin', remoteUrl], 'git could not name the repository in this folder');
+    await must(['remote', 'add', '--end-of-options', 'origin', remoteUrl], 'git could not name the repository in this folder');
   }
-  await must(['fetch', '-q', remoteUrl, '+refs/heads/main:refs/remotes/origin/main'], 'git could not fetch the new repository');
+  await must(['fetch', '-q', '--end-of-options', remoteUrl, '+refs/heads/main:refs/remotes/origin/main'], 'git could not fetch the new repository');
   const theirs = (await must(['rev-parse', '--verify', 'refs/remotes/origin/main'], 'git could not read the new repository\'s main')).stdout.trim();
   const head = await git(['rev-parse', '-q', '--verify', 'HEAD']);
   if (head.code !== 0) {
@@ -1508,12 +1518,12 @@ async function connectFolder({ folder, remoteUrl, gitPath, env, run, record }) {
 // is there: until then the folder still reads as a project kept here, and a fresh Go ahead takes this up again. Safe to repeat.
 async function publishFolder({ folder, remoteUrl, branch, gitPath, env, run, record }) {
   const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: folder, workTree: folder });
-  if ((await git(['push', '-q', '--no-verify', remoteUrl, `refs/heads/${branch}:refs/heads/${branch}`])).code !== 0) {
+  if ((await git(['push', '-q', '--no-verify', '--end-of-options', remoteUrl, `refs/heads/${branch}:refs/heads/${branch}`])).code !== 0) {
     throw new Error('Your project could not be sent to its new repository; a fresh Go ahead tries again');
   }
   if (originUrl(folder) === null) {
     record({ id: newId('chg'), kind: 'folder', target: path.join(folder, '.git'), before: { origin: null }, after: { origin: remoteUrl, branch } });
-    if ((await git(['remote', 'add', 'origin', remoteUrl])).code !== 0) throw new Error('git could not name the repository in this folder');
+    if ((await git(['remote', 'add', '--end-of-options', 'origin', remoteUrl])).code !== 0) throw new Error('git could not name the repository in this folder');
   }
 }
 
@@ -1554,7 +1564,7 @@ async function holdsConfig({ host, info, run, api }) {
 
 // Whether a repository holds Wheelhouse v0.1.x's state branch, read with the director's own sign-in.
 async function holdsState({ remoteUrl, gitPath, env, run }) {
-  const listed = await setupGit({ run, gitPath, env: { ...reaching(env, remoteUrl), GIT_CEILING_DIRECTORIES: ceilingOf() }, cwd: outsideAny() })(['ls-remote', '--heads', remoteUrl, `refs/heads/${STATE_BRANCH}`]);
+  const listed = await setupGit({ run, gitPath, env: { ...reaching(env, remoteUrl), GIT_CEILING_DIRECTORIES: ceilingOf() }, cwd: outsideAny() })(['ls-remote', '--heads', '--end-of-options', remoteUrl, `refs/heads/${STATE_BRANCH}`]);
   if (listed.code !== 0) return false;
   return String(listed.stdout).split(/\r?\n/).some((line) => line.endsWith(`\trefs/heads/${STATE_BRANCH}`));
 }
@@ -1593,7 +1603,7 @@ async function stateBranchLaunched({ remoteUrl, gitPath, env, run }) {
     const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: dir });
     if ((await git(['init', '-q', '--bare', '.'])).code !== 0) return true;
     const ref = 'refs/joined/state';
-    if ((await git(['fetch', '-q', '--no-tags', '--no-write-fetch-head', remoteUrl, `+refs/heads/${STATE_BRANCH}:${ref}`])).code !== 0) return true;
+    if ((await git(['fetch', '-q', '--no-tags', '--no-write-fetch-head', '--end-of-options', remoteUrl, `+refs/heads/${STATE_BRANCH}:${ref}`])).code !== 0) return true;
     const listed = await git(['ls-tree', '-r', '-z', '--name-only', ref, '--', 'events']);
     if (listed.code !== 0) return true;
     for (const file of listed.stdout.split('\0').filter((f) => /_setting_[0-9a-z]{4}\.json$/.test(f))) {
@@ -1636,9 +1646,9 @@ export async function checkOutJoined({ folder, repo, remoteUrl, branch, gitPath,
     const hadGit = fs.existsSync(path.join(folder, '.git'));
     record({ id: newId('chg'), kind: 'folder', target: path.join(folder, '.git'), before: hadGit ? { origin: null } : null, after: { origin: remoteUrl, branch, joined: repo } });
     if (!hadGit) await must(['init', '-q', '-b', branch], 'git could not start in this folder');
-    await must(['remote', 'add', 'origin', remoteUrl], 'git could not name the project\'s repository in this folder');
+    await must(['remote', 'add', '--end-of-options', 'origin', remoteUrl], 'git could not name the project\'s repository in this folder');
   }
-  await must(['fetch', '-q', remoteUrl, `+refs/heads/${branch}:refs/remotes/origin/${branch}`], 'git could not fetch the project');
+  await must(['fetch', '-q', '--end-of-options', remoteUrl, `+refs/heads/${branch}:refs/remotes/origin/${branch}`], 'git could not fetch the project');
   const head = await git(['rev-parse', '-q', '--verify', 'HEAD']);
   if (head.code !== 0) {
     // checkout -f writes over what is in its way, so the folder must still hold only step 1's
@@ -2410,7 +2420,7 @@ export function hostStep({
       // A pasted address named its GitLab: neither the which-GitLab card nor the address card is asked.
       if (join?.pin?.company !== undefined) company = join.pin.company;
       else if (host === 'gitlab' && product.host !== 'gitlab') {
-        company = gitlabWhere({ answer, name: product.name, others: product.others ?? remotesOf(ctx.folder) });
+        company = gitlabWhere({ answer, name: product.name, others: product.others ?? remotesOf(ctx.folder), mayRefuse: join?.mayRefuse === true });
         if (company.ask) return { ask: company.ask };
         // The chosen host is the one the folder's own remote names: that remote's project is the product, never a new one.
         // A project named by its whole address typed is the product too.
@@ -2682,7 +2692,7 @@ export function hostStep({
       const thisRun = readJournal().runs.find((r) => r?.id === ctx.runId) ?? null;
       const fixed = joinedFolder(ctx.folder, thisRun);
       if (fixed !== null && (join === null || join.name.toLowerCase() !== fixed.toLowerCase())) {
-        throw new Error(`This folder is checked out to ${fixed} from your other computer, so setup goes on joining it and nothing else: ask for step 3's card again`);
+        throw new Error(`This folder is checked out to ${fixed}, set up on another computer, so setup goes on joining it and nothing else: ask for step 3's card again`);
       }
       if (join !== null) answerRecord({ joined: join.name });
       // A new product after a join attempt that missed closes the attempt's state, as one after a joined run does.
@@ -2851,7 +2861,7 @@ export function hostStep({
         writeProject(slug, kept);
         if (joined === null) await openRecords();
         // The computer's git settings a push trusts, recorded now that the director has seen the card that names them.
-        if (connection.mode === 'as-is') await confirmComputerSettings({ file: path.join(wheelhouseHome(), 'host', 'git-settings.json'), run, gitPath: git.path, cwd: outsideAny(), ceiling: ceilingOf() });
+        if (connection.mode === 'as-is') await confirmComputerSettings({ file: path.join(wheelhouseHome(), 'host', 'git-settings.json'), run, gitPath: git.path });
         say(`Connected: ${project.repo} on ${NAME[host]}, ${connection.mode === 'quick' ? 'Quick' : connection.mode === 'as-is' ? 'your own git as it is' : 'narrow'}`);
         return [];
       } finally {

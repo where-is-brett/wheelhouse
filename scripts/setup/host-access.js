@@ -18,13 +18,12 @@
 // tests.
 import fs from 'node:fs';
 import path from 'node:path';
-import { askDirectorGit, directorProxy } from '../host/director-git.js';
+import { askDirectorGit, directorProxy, outsideRepo, ceilingOf, directorGitEnv } from '../host/director-git.js';
 import { curlPath, request, NO_CURL } from '../host/curl.js';
 import { gitlabApi } from '../host/gitlab-key.js';
 import { DEFAULT_GITLAB } from '../host/gitlab-base.js';
 import { tokenUrl } from '../host/token-url.js';
 import { withoutTokens } from '../lib/token-names.js';
-import { wheelhouseHome } from '../lib/paths.js';
 
 const NAME = { github: 'GitHub', gitlab: 'GitLab' };
 const GITHUB_ORIGIN = 'https://github.com';
@@ -42,6 +41,8 @@ export function transportOf(remoteUrl) {
   const url = String(remoteUrl ?? '').trim();
   // An address that starts with a dash would read as an option to git, and `::` names a transport helper: neither is an address.
   if (url.startsWith('-') || url.includes('::') || /\s/.test(url)) return null;
+  // A host written as an IP address in brackets (an IPv6 one) is not read: its colons would be taken for a port or a path's start.
+  if (/^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/)?(?:[^/@\s]*@)?\[/.test(url)) return null;
   // A Windows drive path (C:/Users/ann/repo, C:\Users\ann\repo, C:repo) is a place on this computer, not host:path.
   if (/^[A-Za-z]:/.test(url)) return null;
   if (/^https:\/\/[^/\s-]/i.test(url)) return 'https';
@@ -109,6 +110,8 @@ export async function checkApiKey({ host, base = DEFAULT_GITLAB, key, via = {} }
 function gitHostOf(remoteUrl) {
   const text = String(remoteUrl).trim();
   if (text.includes('::') || text.startsWith('-')) return null;
+  // A bracketed (IPv6) host is not read: split on its colons it would name no host.
+  if (/^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/)?(?:[^/@\s]*@)?\[/.test(text)) return null;
   const web = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([^/]*)/.exec(text);
   if (web) {
     if (!['https', 'ssh', 'git+ssh'].includes(web[1].toLowerCase())) return null;
@@ -132,19 +135,8 @@ async function resolvedRemote({ remoteUrl, run, gitPath, env }) {
   }
 }
 
-// A folder of Wheelhouse's own, made if need be, where the director's git is asked what it needs no repository for: never the
-// system's temporary folder, which may sit inside a repository.
-export function outsideRepo() {
-  const home = wheelhouseHome();
-  fs.mkdirSync(home, { recursive: true });
-  return home;
-}
-
-// The environment the director's git is asked in: none of git's own variables (GIT_DIR, GIT_CONFIG*, GIT_WORK_TREE and the rest,
-// which could point it anywhere), and only https and ssh to reach by.
-// Git looks for a repository no higher than Wheelhouse's own folder's parent, so a repository above it is never found.
-export const ceilingOf = () => path.dirname(path.resolve(wheelhouseHome()));
-export const directorGitEnv = (env) => ({ ...Object.fromEntries(Object.entries(env).filter(([key]) => !/^GIT_/i.test(key))), GIT_ALLOW_PROTOCOL: 'https:ssh', GIT_CEILING_DIRECTORIES: ceilingOf() });
+// Where the director's git is asked from, and in what environment (they live with the asker, director-git.js).
+export { outsideRepo, ceilingOf, directorGitEnv };
 
 // Whether the folder's own git settings could change where an address goes: any url.<x>.insteadOf or pushInsteadOf key, or an
 // include or includeIf section (which could bring one in). Read as plain text, the way originUrl reads the remote, and git is

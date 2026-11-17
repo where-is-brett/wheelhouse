@@ -58,7 +58,7 @@ test('the one card for a new product on a Mac says the director\'s approved word
     'Set up Wheelhouse for tide-tables?',
     'Here\'s what I recommend. It takes about 5 minutes.',
     '- A new product, in a private repository on your GitHub account.',
-    '- Agents use your ordinary GitHub sign-in, which reaches your whole account; on this Mac the sandbox keeps agents\' commands away from your Mac\'s saved passwords, where that sign-in is kept, unless the project signs Apple apps, which opens those passwords to agents\' commands.',
+    '- Agents use your ordinary GitHub sign-in, which reaches your whole account; on this Mac the sandbox keeps agents\' commands away from your Mac\'s saved passwords, where that sign-in is kept, unless this is an iPhone or Mac app whose builds are signed on this computer, which opens those passwords to agents\' commands.',
     '- Before launch: no real users and no live data yet.',
     '- On this computer: usage counted here only; 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted); Claude Code takes only its well-tried updates; and phone notifications on.',
     '- Wheelhouse\'s settings saved to the project, and its main line protected if your GitHub plan allows it (the free plan doesn\'t for a private repository).',
@@ -179,7 +179,7 @@ test('Customise asks the choices not yet answered since it was clicked, four at 
 });
 
 test('each choice says what it is about and which step acts on it', () => {
-  assert.equal(aboutOf('3.join-0123456789'), 'new or from your other computer');
+  assert.equal(aboutOf('3.join-0123456789'), 'new, or set up on another computer');
   assert.equal(aboutOf('3.connection-stricter-0123456789'), 'how agents reach the project');
   assert.equal(aboutOf('4.product-launched'), 'the description');
   assert.equal(actedBy('3.host'), 3);
@@ -240,7 +240,7 @@ test('a join answer refused and asked again leaves one join question, and no pla
   // Only the question still open is asked on the next Customise round.
   assert.deepEqual(customiseBatch(list, '2026-10-26T10:00:00.000Z').map((c) => c.id), ['join-abc']);
   const plan = oneCard({ folder: os.tmpdir(), list, product: null, platform: 'darwin', toRun: [3], count: 1 }).card.question;
-  assert.doesNotMatch(plan, /from your other computer/);
+  assert.doesNotMatch(plan, /another computer/);
   assert.match(plan, /A new product, in a private project on your GitLab account\./);
   assert.equal(plan.split('\n').filter((l) => l.startsWith('- ')).length, 1);
 });
@@ -299,6 +299,11 @@ test('a Go ahead is withdrawn only by a miss that names it, by its id and its ti
   assert.equal(consentWithdrawn([legacy('2026-11-16T03:00:09.000Z')], consent), true);
   assert.equal(consentWithdrawn([legacy('2026-11-16T03:00:01.000Z')], consent), false);
   assert.equal(consentWithdrawn([legacy('not a time')], consent), true);
+  // The oldest miss records, from a run saved before any Go ahead was withdrawn, hold neither a `withdraws` nor a `missedAt`: they
+  // withdraw nothing, as they did then, and a run restored from them keeps its Go ahead.
+  const oldest = (after) => ({ step: 3, kind: 'answer', after });
+  assert.equal(consentWithdrawn([oldest({ joined: 'a/b', missed: 'none' })], consent), false);
+  assert.equal(consentWithdrawn([oldest({ joined: 'a/b', missed: ['o/a', 'o/b'], host: 'github' })], consent), false);
   // Not a miss, not step 3's, or not an answer: nothing is withdrawn.
   assert.equal(consentWithdrawn([{ step: 3, kind: 'answer', after: { joined: 'a/b', withdraws: { id: 'plan-aaa', at: consent.at } } }], consent), false);
   assert.equal(consentWithdrawn([{ ...miss({ id: 'plan-aaa', at: consent.at }), step: 4 }], consent), false);

@@ -69,6 +69,9 @@ function checkRecord(record, project) {
     if (record.remoteUrl !== null) throw new Error('A project in git alone has no remote address');
   } else if (typeof record.remoteUrl !== 'string' || !namesRepo(record.remoteUrl, record.repo)) {
     throw new Error('The project\'s remote address does not name its repository');
+  } else if (record.remoteUrl.trim().startsWith('-')) {
+    // A record kept before such an address was refused: it would read as an option to git, never as an address.
+    throw new Error('The project\'s remote address reads as an option, not an address');
   }
   if (!record.connection || typeof record.connection !== 'object' || Array.isArray(record.connection)) {
     throw new Error('The project needs a connection');
