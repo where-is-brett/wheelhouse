@@ -550,12 +550,19 @@ export function setupRoutes({
       return { refused: error instanceof Error ? error.message : 'unread' };
     }
   };
+  // The host a miss of step 3's apply was signed in to ('github' or 'gitlab'), once the apply had signed in to it.
+  const lastMissHost = (run) => (run?.changes ?? []).filter((c) => c?.step === 3 && c.kind === 'answer' && typeof c.after?.missedAt === 'string').at(-1)?.after.host ?? null;
+  // Whether step 3's apply recorded a miss of the join question after `at`.
+  const missedSince = (run, at) => (run?.changes ?? []).some((c) => c?.step === 3 && c.kind === 'answer' && typeof c.after?.missedAt === 'string' && Date.parse(c.after.missedAt) > Date.parse(at));
   // The one card's Go ahead while it holds: its choices unchanged and, while step 3 hasn't run, the
   // folder's facts as the card showed them; else null.
   const consentNow = (run) => {
     if (run === null) return null;
     const { consent } = answersWithConsent(run.id);
     if (consent === null) return null;
+    // A project named on the join question that step 3's apply could not bring in withdraws the Go ahead given before it: the
+    // plan it stood for is not the one the director now wants, so the one card is asked again with the new choices.
+    if (missedSince(run, consent.at)) return null;
     if (stepDone(run, 3) || runningIn(run, 3) !== null) return consent;
     return JSON.stringify(consent.facts ?? null) === JSON.stringify(folderFacts(run.folder)) ? consent : null;
   };
@@ -604,12 +611,19 @@ export function setupRoutes({
       const batch = customiseBatch(list, since);
       if (batch.length > 0) return { ok: true, asks: batch.map((c) => askChoice(run, c)), progress: ['Setup · your choices', 'Change any of these; nothing runs until you say Go ahead.'] };
     }
+    // After a miss at apply, the choices the director has not answered yet (the join question asked again, then those it opens) come
+    // before the plan card, as Customise asks them, so the plan the director says Go ahead to is the one that runs.
+    const withdrawn = consent !== null && missedSince(run, consent.at);
+    if (withdrawn) {
+      const batch = customiseBatch(list.filter((c) => c.chosen === null), new Date(0).toISOString());
+      if (batch.length > 0) return { ok: true, asks: batch.map((c) => askChoice(run, c)), progress: ['Setup · your choices', 'Setup has stopped at step 3; nothing more runs until you answer and say Go ahead.'] };
+    }
     const facts = folderFacts(run.folder);
     const product = facts.refused === undefined ? { ...facts, name: facts.repo?.split('/').at(-1) ?? productName(run.folder) } : null;
     // Step 2 is there for the engine's line (scripts/setup/engine-parts.js), which names the plugin's scope as step 6 finds it.
     const toRun = [2, 3, 6, 7, HEALTH_STEP].filter((n) => onRunList(run, n) && !stepDone(run, n));
     const claudeHome = process.env.CLAUDE_CONFIG_DIR || path.join(userHome, '.claude');
-    const { id, card, choices, writes } = oneCard({ folder: run.folder, list, product, platform, toRun, count: keptAnswers(run.id).length, facts, claudeHome, desktop: sessionIsApp, pushed: phonePushResult()?.arrived === true, hosts: projectHosts({ folder: run.folder, answers: own }) });
+    const { id, card, choices, writes } = oneCard({ folder: run.folder, list, product, platform, toRun, count: keptAnswers(run.id).length, facts, claudeHome, desktop: sessionIsApp, done: { tools: stepDone(run, 2), signedIn: withdrawn ? lastMissHost(run) : null }, pushed: phonePushResult()?.arrived === true, hosts: projectHosts({ folder: run.folder, answers: own }) });
     if (JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error('The one card could not be cleaned as it is sent');
     noteAsked({ runId: run.id, folder: run.folder, step: ONE_CARD_STEP, id, card, writes, choices, facts, now });
     return { ok: true, ask: { step: ONE_CARD_STEP, id, card }, progress: [`Setup · ${setupTime(toRun, list)}`, 'One card: the plan for this project.'] };

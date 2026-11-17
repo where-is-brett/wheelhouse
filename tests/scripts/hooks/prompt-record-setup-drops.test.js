@@ -153,6 +153,15 @@ test('a password written into an address typed on the join card is cleaned out a
       fs.rmSync(path.join(home, 'setup', 'answers'), { recursive: true, force: true });
       fs.rmSync(path.join(home, 'setup', 'answered'), { recursive: true, force: true });
     };
+    // A bare token, typed alone as the answer, is held and kept nowhere: not in the answer, not on disk.
+    for (const bare of [`glpat-${'a1B2c3D4e5F6g7H8i9J0'}`, `ghp_${'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'}`]) {
+      clean();
+      await run(answer(bare));
+      assert.deepEqual(texts(), [HELD_SECRET], bare);
+      for (const dir of ['answers', 'records', 'answered']) {
+        for (const n of listOf(home, dir)) assert.equal(fs.readFileSync(path.join(home, 'setup', dir, n), 'utf8').includes(bare.slice(0, 12)), false, `${dir}/${n}`);
+      }
+    }
     for (const text of ['ann:Hunter2@gitlab.acme.org/t/p', 'ann:hunter2@github.com/o/r', 'https://ann:pa/ss@gitlab.acme.org/t/p', 'https://ann:12/ss@gitlab.acme.org/t/p',
       'https://ann:p#ss@gitlab.acme.org/t/p', 'https://ann:pa?ss@gitlab.acme.org/t/p', 'ssh://ann:pa/ss@host.example.org/x']) {
       clean();

@@ -211,8 +211,10 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     // The product's own name, where the typed answer (an address, or owner/name) gives it, not the folder's.
     const named = typeof text === 'string' && backupNamed(text) === null ? repoNamed(text)?.split('/').at(-1) : null;
     // An owner/name looked for on the company's GitLab, as step 3 words it: its account or groups.
-    if (where === null && onCompanyGitLab(choices, host)) return `${named ?? name}, set up with Wheelhouse, found in your account or groups on your company's GitLab${typedCompanyHost(choices) === null ? '' : ` at ${typedCompanyHost(choices)}`}, brought into this folder with its saved settings.`;
-    return `${named ?? name}, set up with Wheelhouse${where === null ? '' : ` on ${where}`}, brought into this folder with its saved settings.`;
+    // Whether the project holds Wheelhouse's settings is found at step 3, so the plan says it is brought in once they are found.
+    if (where === null && onCompanyGitLab(choices, host)) return `${named ?? name} from your account or groups on your company's GitLab${typedCompanyHost(choices) === null ? '' : ` at ${typedCompanyHost(choices)}`}, brought into this folder with its saved Wheelhouse settings once setup finds them there.`;
+    if (where !== null) return `${named ?? name} from ${where}, brought into this folder with its saved Wheelhouse settings once setup finds them there.`;
+    return `${named ?? name}, set up with Wheelhouse, brought into this folder with its saved settings.`;
   }
   if (id === 'real-users') {
     const live = choices.find((c) => c.id === 'live-data')?.label;
@@ -270,15 +272,17 @@ function describedBy(choice) {
 // project kept here; on GitLab without its tool, with a key for this project only, the one-day setup token (host.js);
 // with their git as it is, a key only where git holds none that works; on a company's GitLab, a sign-in in the browser or
 // by token; else a sign-in.
-function goAheadAsks({ keptHere, list, host, phone = false }) {
-  const text = goAheadAsksHost({ keptHere, list, host });
+function goAheadAsks({ keptHere, list, host, phone = false, done = { tools: false, signedIn: null } }) {
+  const text = goAheadAsksHost({ keptHere, list, host, done });
   // Step 9 asks the director to try a notification on their phone, unless an earlier setup's test already reached it.
   if (!phone) return text;
   return `${text} Near the end, setup offers a test notification on your phone, which you can skip.`;
 }
 
-function goAheadAsksHost({ keptHere, list, host }) {
-  if (keptHere) return 'Apart from Claude Code\'s own request to allow setup\'s command, you may be asked for your computer\'s password.';
+function goAheadAsksHost({ keptHere, list, host, done }) {
+  // Setup's tools are done, so the request to allow its command and the password they could need are behind it.
+  if (keptHere) return done.tools ? 'Nothing more is asked of you here.' : 'Apart from Claude Code\'s own request to allow setup\'s command, you may be asked for your computer\'s password.';
+  const signedIn = done.signedIn !== null && host === (done.signedIn === 'gitlab' ? 'GitLab' : 'GitHub');
   const way = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.label ?? null;
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
   if (host === 'GitLab' && noTool && way !== null && way !== WAYS.quick && way !== WAYS.asIs) {
@@ -289,6 +293,7 @@ function goAheadAsksHost({ keptHere, list, host }) {
   const fallbackBox = (known) => (host === 'GitLab' && way !== null && way !== WAYS.quick
     ? ` If GitLab won't make a key for one project, you'll also paste a ${PERSONAL_DAYS}-day token that can act as you across GitLab into ${known ? 'that box' : 'a box on your screen, not the chat'}.` : '');
   // A company's GitLab without a browser sign-in set up takes a token instead, which only setup's step 3 can tell.
+  if (signedIn) return `You're already signed in to ${host}, so setup doesn't ask for that again.${fallbackBox(true)}`;
   if (onCompanyGitLab(list, host)) return `You'll sign in to your company's GitLab in your browser if your company has set that up, or else with a token you make on a page that opens and paste into a box on your screen, not the chat. You may be asked for your computer's password.${fallbackBox(true)}`;
   return `You'll sign in on ${host} pages that open and click through them. You may be asked for your computer's password.${fallbackBox(false)}`;
 }
@@ -305,13 +310,19 @@ export function setupTime(toRun, list = []) {
   return list.length === 0 && toRun.length > 0 && toRun.every((n) => n === HEALTH_STEP) ? 'about a minute' : 'about 5 minutes';
 }
 
-export function oneCard({ folder, list, product, platform, toRun, count, facts = null, claudeHome = null, hosts, desktop, pushed = false }) {
+// `done` is what an earlier pass of this run has already done, when the card is asked again after step 3 stopped: { tools, signedIn },
+// `signedIn` the host ('github' or 'gitlab') setup signed in to, or null.
+export function oneCard({ folder, list, product, platform, toRun, count, facts = null, claudeHome = null, hosts, desktop, pushed = false, done = { tools: false, signedIn: null } }) {
   const name = product?.name ?? productName(folder);
   // Only the health check left, nothing to choose: a run parked near its end (one v0.1.1 left at
   // its phone card, carried on after the update), whose card names what is left.
   const nearlyDone = setupTime(toRun, list) === 'about a minute';
   const lines = [];
   const keptHere = list.some((c) => c.label === KEEP_HERE);
+  // Steps already done are said as done, and kept as they are, not listed among what setup will do.
+  const signedTo = done.signedIn === 'gitlab' ? 'GitLab' : done.signedIn === 'github' ? 'GitHub' : null;
+  const doneLine = [...(done.tools ? ['setup\'s tools (step 2)'] : []), ...(signedTo === null ? [] : [`your sign-in to ${signedTo}`])];
+  if (doneLine.length > 0) lines.push(`Done already, and kept as it is: ${doneLine.join(' and ')}.`);
   if (toRun.includes(3) && product && product.isNew === false && product.host !== 'local') lines.push(`${name} on ${product.host === 'gitlab' ? 'GitLab' : 'GitHub'}, as it is.`);
   // In the card's order: where it is kept, how agents reach it, its phase and data, Locked, the
   // description, then Apple signing.
@@ -341,7 +352,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
   const lastJoin = list.filter((c) => c.id === 'join' || c.id.startsWith('join-')).at(-1);
   const joiningNow = lastJoin !== undefined && !NOT_JOINING.includes(lastJoin.label) && backupNamed(lastJoin.text) === null;
   if (toRun.includes(7) && joiningNow) {
-    lines.push(`This computer's own Wheelhouse files set up here; the project on ${hostOf(product, list)} and its main line's protection stay as they are.`);
+    lines.push(`This computer's own Wheelhouse files set up here. The project's files on ${hostOf(product, list)} and its main line's protection stay as they are; only the key above is added there.`);
   } else if (toRun.includes(7)) {
     lines.push(keptHere ? 'Wheelhouse\'s settings saved to the project.'
       : hostOf(product, list) === 'GitHub' ? 'Wheelhouse\'s settings saved to the project, and its main line protected if your GitHub plan allows it (the free plan doesn\'t for a private repository).'
@@ -371,7 +382,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     question,
     header: 'Setup',
     options: [
-      { label: GO_AHEAD, description: `Recommended: setup does all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list), phone: toRun.includes(6) && !pushed })}` },
+      { label: GO_AHEAD, description: `Recommended: setup does all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list), phone: toRun.includes(6) && !pushed, done })}` },
       yours
         ? { label: CHANGE_CHOICE, description: 'See every choice again, and change any before anything runs.' }
         : { label: CUSTOMISE, description: 'See every choice, and change any before anything runs.' },

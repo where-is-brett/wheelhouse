@@ -133,8 +133,8 @@ test('no git gets git init on main and the card names it', async () => {
     const folder = folderOf();
     const got = await planned(stepFor(), ctxFor(folder));
     assert.ok(got.changes.some((c) => c.action === 'git-init' && c.branch === 'main'));
-    assert.match(got.card.what, /git starts in this folder, on main/);
-    assert.match(got.card.what, /a first commit on main/);
+    assert.match(got.card.what, /^- Git starts in this folder, on main\.$/m);
+    assert.match(got.card.what, /^- A first commit on main\.$/m);
     await applied(stepFor(), folder, got);
     assert.equal(await g(folder, 'symbolic-ref', '--short', 'HEAD'), 'main');
     assert.equal(await g(folder, 'log', '-1', '--format=%s'), 'Start the project');
@@ -234,10 +234,10 @@ test('changing where a project is kept, once it is set up here, says so without 
 test('in a terminal, the card promises no backup folder it cannot pick, and says where to choose one later', () => {
   const changes = [{ action: 'backup-folder', folder: null }];
   const terminal = localCard({ changes, branch: 'main', others: [], desktop: false });
-  assert.doesNotMatch(terminal.what, /a backup in the folder you choose/);
-  assert.match(terminal.what, /no backup: the project stays only on this computer/);
-  assert.match(localCard({ changes, branch: 'main', others: [], desktop: true }).what, /a backup in the folder you choose/);
-  assert.match(localCard({ changes: [{ action: 'backup-folder', folder: '/b' }], branch: 'main', others: [], desktop: false }).what, /a backup in the folder you choose/);
+  assert.doesNotMatch(terminal.what, /A backup in the folder you choose/);
+  assert.match(terminal.what, /^- No backup: the project stays only on this computer\.$/m);
+  assert.match(localCard({ changes, branch: 'main', others: [], desktop: true }).what, /A backup in the folder you choose/);
+  assert.match(localCard({ changes: [{ action: 'backup-folder', folder: '/b' }], branch: 'main', others: [], desktop: false }).what, /A backup in the folder you choose/);
 });
 
 test('the card says nothing goes online and never says host', async () => {

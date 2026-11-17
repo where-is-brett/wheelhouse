@@ -17,7 +17,7 @@ import { PROFILE_BRANCH } from '../profile/store.js';
 import { parseRemote, hostWords } from '../host/gitlab-base.js';
 import { pinOf, repoNamed } from '../lib/pasted-address.js';
 import { readJournal } from '../lib/setup-run.js';
-import { SETUP_LABEL } from '../state/card-lines.js';
+import { SETUP_LABEL, asLine } from '../state/card-lines.js';
 import { setupGit, reaching } from './git.js';
 import { newId } from './journal.js';
 
@@ -262,13 +262,13 @@ export function localCard({ changes, branch, others, desktop = true }) {
     'a private copy of the project\'s history on this computer',
     'the project\'s record, kept on this computer',
     ...(backup === undefined ? [] : [later ? 'no backup: the project stays only on this computer' : 'a backup in the folder you choose, after each merge']),
-    FIRST_CHECK_LINE.replace(/\.$/, '').replace(/^W/, 'w'),
+    FIRST_CHECK_LINE,
   ];
   const line = othersLine(others);
   return {
     kind: 'setup',
     level: 3,
-    what: `Setup step 3, where the project is kept: ${KEPT_LINE} ${parts.join('; ')}.${line === null ? '' : ` ${line}`}`,
+    what: [`Setup step 3, where the project is kept:`, ...[KEPT_LINE, ...parts, ...(line === null ? [] : [line])].map(asLine)].join('\n'),
     why: 'Agents work from that copy, so nothing they do reaches the main version without your checks.',
     options: [
       { label: SETUP_LABEL, says: 'Setup does what is listed.' },
@@ -328,7 +328,7 @@ export async function applyLocal({ ctx, changes, run, gitPath, say, halt, pick =
   await openSettings({ run });
   halt();
   const route = gitRoute({ run });
-  record({ id: newId('chg'), kind: 'folder', target: home.target, before: fs.existsSync(home.target) ? {} : null, after: { home: true, branch } });
+  record({ id: newId('chg'), kind: 'folder', target: home.target, before: fs.existsSync(home.target) ? {} : null, after: { home: true, branch, ...(typeof home.restore === 'string' ? { restored: true } : {}) } });
   if (typeof home.restore === 'string') await bringBack({ file: home.restore, project, folder, route, record, isEmpty });
   else await makeHome({ project, folder, branch, git: route });
   const remote = changes.find((c) => c.action === 'folder-remote');

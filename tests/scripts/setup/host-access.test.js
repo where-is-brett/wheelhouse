@@ -14,6 +14,7 @@ import {
 } from '../../../scripts/setup/host-access.js';
 import { makeRoutedCurl } from '../../helpers/fake-curl.js';
 import { originUrl } from '../../../scripts/setup/tools.js';
+import { wheelhouseHome } from '../../../scripts/lib/paths.js';
 
 const GITLAB = 'https://gitlab.example.org';
 const KEY = 'stand-in-DIRECTORKEY0001';
@@ -40,6 +41,9 @@ test('the transport of a remote: https, ssh in both forms, or neither for a path
   assert.equal(transportOf('git@gitlab.example.org:team/product.git'), 'ssh');
   assert.equal(transportOf('/Users/a-director/remotes/product.git'), null);
   assert.equal(transportOf(null), null);
+  // A Windows drive path is a place on this computer, not host:path.
+  for (const drive of ['C:/Users/ann/repo', 'C:\\Users\\ann\\repo', 'd:/work/product.git', 'D:\\work\\product.git']) assert.equal(transportOf(drive), null, drive);
+  assert.equal(transportOf('git@gitlab.example.org:team/product.git'), 'ssh');
 });
 
 test('the credential helper and a working ls-remote are read from the director\'s own git, asking nothing', async () => {
@@ -379,7 +383,7 @@ test('an origin address that reads as an option or a transport helper never reac
     assert.ok(listed.length > 0, remoteUrl);
     for (const { args, opts } of listed) {
       assert.ok(args.indexOf('--end-of-options') >= 0 && args.indexOf('--end-of-options') < args.indexOf(remoteUrl), remoteUrl);
-      assert.equal(opts.cwd, os.tmpdir());
+      assert.equal(opts.cwd, wheelhouseHome());
     }
     for (const { opts } of seen) {
       assert.equal(opts.baseEnv.GIT_DIR, undefined);

@@ -155,7 +155,8 @@ function newProduct(ctx, project) {
     }
   }
   const run = typeof ctx.runId === 'string' ? readJournal().runs.find((r) => r?.id === ctx.runId) : null;
-  return (run?.changes ?? []).some((c) => c?.step === 3 && c.kind === 'host' && c.after?.made === true);
+  // Made on a host, or kept on this computer as a new product (a project's home made here, not brought back from a backup).
+  return (run?.changes ?? []).some((c) => c?.step === 3 && ((c.kind === 'host' && c.after?.made === true) || (c.kind === 'folder' && c.after?.home === true && c.after.restored !== true)));
 }
 
 // The product's name as step 3 names it: its repository's for an existing project, else the folder's.

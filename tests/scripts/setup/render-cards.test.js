@@ -185,8 +185,6 @@ test('every path\'s Go-ahead cards list one thing to a line, with no jargon', as
     const goes = cards.filter((c) => c.kind === 'go-ahead');
     assert.ok(goes.some((c) => c.step === (PATHS[name].join && !PATHS[name].miss ? 7 : 10)), `path ${name} reaches its last step's card (a joining computer has no health check, so step 7 is its last Go-ahead card)`);
     for (const c of goes) {
-      // A product kept on this computer has step 3's card in one run-on line: its own wording, left as it is for now.
-      if (c.step === 3 && /^Setup step 3, where the project is kept:/.test(c.card.question)) continue;
       const lines = c.card.question.split('\n');
       assert.match(lines[0], /^Setup step \d+, [^:]+:$/, `path ${name} step ${c.step}'s card opens with its title alone`);
       assert.match(lines[1], /^- /, `path ${name} step ${c.step}'s card lists its first thing on a line of its own`);
@@ -212,4 +210,33 @@ test('each path\'s plan says what will be asked of the director', async () => {
     const plan = cards.filter((c) => /^plan-/.test(c.id)).at(-1);
     assert.match(plan.card.options.find((o) => o.label === 'Go ahead').description, says, `path ${name}`);
   }
+});
+
+test('path g: a miss at step 3\'s apply withdraws the Go ahead, so the plan is asked again as a card of its own, with what is done said as done', async () => {
+  for (const desktop of [false, true]) {
+    const { cards, end, said } = await rendered('g', { desktop });
+    assert.equal(end.how, 'finished');
+    const plans = cards.filter((c) => /^plan-/.test(c.id));
+    assert.equal(plans.length, 3, 'the one card, the plan with the director\'s choices, and the plan asked again after the miss');
+    assert.notEqual(plans[1].id, plans[2].id);
+    assert.notEqual(plans[1].card.question, plans[2].card.question);
+    assert.equal(plans[2].answer.label, 'Go ahead', 'the second plan is answered as itself');
+    assert.equal(plans[2].stale, undefined);
+    // The miss, then the question asked again, then the plan again, then the step that was stopped.
+    const join = cards.findIndex((c) => /^join-/.test(c.id));
+    assert.ok(said.some((s) => /Setup couldn't bring in/.test(s)));
+    assert.ok(join > cards.findIndex((c) => c.step === 3 && c.kind === 'go-ahead'), 'the miss comes after step 3\'s Go ahead');
+    assert.ok(cards.indexOf(plans[2]) > join, 'the plan comes after the question asked again');
+    const after = cards.slice(cards.indexOf(plans[2]) + 1);
+    assert.ok(after.find((c) => c.kind === 'go-ahead' && c.step === 3)?.covered, 'step 3\'s Go ahead is covered by the new plan');
+    assert.match(plans[2].card.question, /^- Done already, and kept as it is: setup's tools \(step 2\) and your sign-in to GitLab\.$/m);
+    assert.doesNotMatch(plans[2].card.question, /Setup step 2|install/i);
+    assert.doesNotMatch(plans[2].card.options.find((o) => o.label === 'Go ahead').description, /password|sign in to/i);
+  }
+});
+
+test('path g: a product kept on this computer after a miss is new, so no live data is recommended', async () => {
+  const { cards } = await rendered('g');
+  const live = cards.find((c) => c.id === 'live-data');
+  assert.equal(recommendedOf(live.card), 'No live data');
 });

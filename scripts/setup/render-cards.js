@@ -424,14 +424,17 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
     };
     const plan = (step) => routes['/setup/plan']({ folder, step, ...(desktop ? { desktop: true } : {}) });
     const runId = () => readJournal().runs.find((r) => r.folder === folder)?.id;
-    // The one card and Customise, until a Go ahead holds.
-    for (let turn = 0; ; turn += 1) {
-      if (turn > 20) { end = { step: 0, how: 'loop', why: 'the one card kept coming back' }; return { cards, end, said, heard }; }
-      const got = await plan(0);
-      if (got.done) break;
-      if (got.ask) await answer(0, got.ask);
-      else if (got.asks) for (const ask of got.asks) await answer(ask.step, ask);
-    }
+    // The one card and Customise, until a Go ahead holds; asked again after a miss at step 3, until the plan's new Go ahead holds.
+    const oneCard = async () => {
+      for (let turn = 0; ; turn += 1) {
+        if (turn > 20) { end = { step: 0, how: 'loop', why: 'the one card kept coming back' }; return false; }
+        const got = await plan(0);
+        if (got.done) return true;
+        if (got.ask) await answer(0, got.ask);
+        else if (got.asks) for (const ask of got.asks) await answer(ask.step, ask);
+      }
+    };
+    if (!(await oneCard())) return { cards, end, said, heard };
     // Every step to the last, in the order setup asks them: step 9 waits for step 10. Step 2's Go ahead is taken as
     // done, with its fetch of a tool that can't be had refused, as on the computer; step 3's is carried out as its apply
     // leaves the computer; every later one is taken as done.
@@ -467,7 +470,9 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
             const { joinMissLine } = await import('./host.js');
             const at = new URL(COMPANY_ADDRESS).host;
             tell(joinMissLine({ host: 'gitlab', wanted: `${USER}/cafe-menu`, found: [], at, user: USER }));
-            addChanges(runId(), [{ id: `chg-render-miss-${clock}`, step: 3, kind: 'answer', target: 'step 3', before: null, after: { joined: `${USER}/cafe-menu`, missed: 'none', host: 'gitlab', user: USER, address: true, at } }]);
+            addChanges(runId(), [{ id: `chg-render-miss-${clock}`, step: 3, kind: 'answer', target: 'step 3', before: null, after: { joined: `${USER}/cafe-menu`, missed: 'none', host: 'gitlab', user: USER, missedAt: now().toISOString(), address: true, at } }]);
+            // The Go ahead given before the miss no longer holds: the one card is asked again, then every step from where setup stopped.
+            if (!(await oneCard())) return { cards, end, said, heard };
             continue;
           }
           // A new product made under the name of a project that exists fails as the real apply fails.
@@ -476,7 +481,12 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
             return { cards, end, said, heard };
           }
           // A product kept on this computer connects to no host.
-          if (got.changes.some((c) => c.action === 'home')) w.connected = await keepAsStepThree({ folder, scratch, changes: got.changes });
+          if (got.changes.some((c) => c.action === 'home')) {
+            w.connected = await keepAsStepThree({ folder, scratch, changes: got.changes });
+            // As step 3's apply records the project's home it makes, so step 4 reads the product as new.
+            const kept = got.changes.find((c) => c.action === 'home');
+            addChanges(runId(), [{ id: `chg-render-home-${clock}`, step: 3, kind: 'folder', target: kept.target, before: null, after: { home: true, branch: kept.branch } }]);
+          }
           else if (got.changes.some((c) => c.action === 'connection')) w.connected = await connectAsStepThree({ folder, scratch, changes: got.changes });
           fs.writeFileSync(path.join(home, 'render-world.json'), JSON.stringify(w));
           // A project joined, not made: the run records the repository it checked out, so it reads as a joining run.

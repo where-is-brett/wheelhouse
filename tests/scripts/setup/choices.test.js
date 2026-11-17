@@ -12,7 +12,7 @@ import {
 import { stepFourDrift, choiceList } from '../../../scripts/setup/redo.js';
 import { COMPANY_GITLAB, NEW_PRODUCT, HOST_LABELS, WAYS, REAL_USERS, STRICTER } from '../../../scripts/setup/host.js';
 import { LIVE_DATA, PRODUCT } from '../../../scripts/setup/questions.js';
-import { PUT_ON_GITLAB } from '../../../scripts/setup/local.js';
+import { PUT_ON_GITLAB, KEEP_HERE } from '../../../scripts/setup/local.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 
 const phase = (value) => [{ kind: 'setting', data: { key: 'phase', value } }];
@@ -252,8 +252,8 @@ test('the plan line for an address join names the product the address gave, and 
   };
   const planOf = (s, answers) => s.plan({ answers });
   for (const [text, line] of [
-    ['https://gitlab.company.example/team/app', /^- app, set up with Wheelhouse on your company's GitLab at gitlab\.company\.example, brought into this folder with its saved settings\.$/m],
-    ['github.com/ann/cafe-menu', /^- cafe-menu, set up with Wheelhouse on GitHub, brought into this folder with its saved settings\.$/m],
+    ['https://gitlab.company.example/team/app', /^- app from your company's GitLab at gitlab\.company\.example, brought into this folder with its saved Wheelhouse settings once setup finds them there\.$/m],
+    ['github.com/ann/cafe-menu', /^- cafe-menu from GitHub, brought into this folder with its saved Wheelhouse settings once setup finds them there\.$/m],
   ]) {
     const list = await openChoices({ steps: [step], run: null, answers: { '3.join': { label: null, text, at: '2026-10-26T10:05:00.000Z' } }, planOf });
     const plan = oneCard({ folder: os.tmpdir(), list, product: null, platform: 'darwin', toRun: [3], count: 1 }).card.question;
@@ -265,7 +265,7 @@ test('an owner/name join on the company\'s GitLab, picked on the which-GitLab ca
   const entry = (id, label, text = null) => ({ step: 3, id, key: `3.${id}`, card: { options: [] }, typed: true, writes: undefined, chosen: { label, text, at: '2026-10-26T10:05:00.000Z' }, label, text });
   const list = [entry('join', null, 'ann/cafe-menu'), entry('gitlab-where', COMPANY_GITLAB)];
   const plan = oneCard({ folder: os.tmpdir(), list, product: { isNew: false, host: 'gitlab', repo: 'ann/cafe-menu', name: 'cafe-menu' }, platform: 'darwin', toRun: [3], count: 1 }).card.question;
-  assert.match(plan, /^- cafe-menu, set up with Wheelhouse, found in your account or groups on your company's GitLab, brought into this folder with its saved settings\.$/m, plan);
+  assert.match(plan, /^- cafe-menu from your account or groups on your company's GitLab, brought into this folder with its saved Wheelhouse settings once setup finds them there\.$/m, plan);
 });
 
 test('the plan line names a host only as step 3 reads it: www.gitlab.com is the public GitLab, and a host step 3 refuses is named nowhere', async () => {
@@ -278,8 +278,23 @@ test('the plan line names a host only as step 3 reads it: www.gitlab.com is the 
     const list = await openChoices({ steps: [step], run: null, answers: { '3.join': { label: null, text, at: '2026-10-26T10:05:00.000Z' } }, planOf });
     return oneCard({ folder: os.tmpdir(), list, product: null, platform: 'darwin', toRun: [3], count: 1 }).card.question;
   };
-  assert.match(await lineFor('https://www.gitlab.com/ann/cafe-menu'), /^- cafe-menu, set up with Wheelhouse on GitLab, brought into this folder with its saved settings\.$/m);
+  assert.match(await lineFor('https://www.gitlab.com/ann/cafe-menu'), /^- cafe-menu from GitLab, brought into this folder with its saved Wheelhouse settings once setup finds them there\.$/m);
   for (const refused of ['https://git_lab.example.com/ann/cafe-menu', 'https://bitbucket.org/ann/cafe-menu']) {
     assert.doesNotMatch(await lineFor(refused), /, on /, refused);
   }
+});
+
+test('a plan asked again after step 3 stopped says its tools and sign-in are done, and asks nothing of them again', () => {
+  const list = newProductChoices({ connection: WAYS.narrow }).map((c) => (c.id === 'host' ? { ...c, label: HOST_LABELS.gitlab } : c));
+  const base = { folder: '/x/tide-tables', list, product: { isNew: true, host: null, repo: null, name: 'tide-tables' }, platform: 'darwin', count: 1 };
+  const again = oneCard({ ...base, toRun: [3, 6, 7, 10], done: { tools: true, signedIn: 'gitlab' } });
+  assert.match(again.card.question, /^- Done already, and kept as it is: setup's tools \(step 2\) and your sign-in to GitLab\.$/m);
+  assert.match(again.card.options[0].description, /You're already signed in to GitLab/);
+  assert.doesNotMatch(again.card.options[0].description, /You'll sign in|password/);
+  const first = oneCard({ ...base, toRun: [2, 3, 6, 7, 10] });
+  assert.doesNotMatch(first.card.question, /Done already/);
+
+  const kept = oneCard({ ...base, list: newProductChoices().map((c) => (c.id === 'join' ? { ...c, label: KEEP_HERE } : c)), toRun: [3, 6, 7, 10], done: { tools: true, signedIn: 'gitlab' } });
+  assert.doesNotMatch(kept.card.options[0].description, /password/);
+  assert.deepEqual(cardProblems(again.card), []);
 });
