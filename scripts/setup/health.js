@@ -67,7 +67,7 @@ import { startWatcher } from '../foreman/start.js';
 import { projectConfig } from '../watcher/main.js';
 import { readJournal, newId } from './journal.js';
 import { HEALTH_STEP } from '../lib/setup-run.js';
-import { directorGitEnv, directorGitlabApi, keyGitEnv, keyGitlabApi, madeWithSetupToken, STOPPED, launchedIn } from './host.js';
+import { directorGitEnv, directorGitlabApi, keyGitEnv, keyGitlabApi, madeWithSetupToken, STOPPED, launchedIn, asIsRouteOf } from './host.js';
 import { setupGit, reaching } from './git.js';
 import { toolsStatus } from './tools.js';
 import { takeSurvey, recordSurvey } from '../survey/take.js';
@@ -329,8 +329,8 @@ function subcommand(args) {
 // system config shut out and a setting of its config not on setup's allowed list refused (rulings
 // R109 to R112, scripts/setup/git.js);
 // its output, or a throw naming only the subcommand (or the hook).
-async function gitIn(run, { gitPath, env, dir }, args) {
-  const got = await setupGit({ run, gitPath, env, cwd: dir })(args);
+async function gitIn(run, { gitPath, env, dir, reachEnv = null, reachGuard = null }, args) {
+  const got = await setupGit({ run, gitPath, env, cwd: dir, reachEnv, reachGuard })(args);
   if (got.code !== 0) throw new Error(`git ${subcommand(args)} failed for the trial branch`);
   return got.stdout.trim();
 }
@@ -360,7 +360,9 @@ async function withTrialGit({ run, findGit, gitEnvFor, host, platform, remoteUrl
   try {
     // https only, with a local path too only when the project's address as setup recorded it is one
     // (ruling R111).
-    const git = { gitPath: located.path, env: reaching(await gitEnvFor({ host, gitPath: located.path, platform, base, record }), remoteUrl), dir };
+    // Where step 3 connected on the as-is route, the calls that reach the host go with the director's own git, guarded, as step 3's do.
+    const { reachEnv, reachGuard } = asIsRouteOf({ record, host, url: remoteUrl, gitPath: located.path, platform, base });
+    const git = { gitPath: located.path, env: reaching(await gitEnvFor({ host, gitPath: located.path, platform, base, record }), remoteUrl), dir, reachEnv, reachGuard };
     await gitIn(run, git, ['init', '-q', '--bare', '.']);
     return await use(git);
   } finally {

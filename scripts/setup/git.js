@@ -221,7 +221,7 @@ export function asIsGitEnv(env, { keep = [] } = {}) {
 }
 
 // The git subcommands that reach a remote: the only calls an as-is route gives the director's own git (`reachEnv`).
-const REMOTE_CALLS = new Set(['fetch', 'push', 'ls-remote']);
+export const REMOTE_CALLS = new Set(['fetch', 'push', 'ls-remote']);
 
 // The address a call that reaches a remote names: the argument after `--end-of-options`, or null.
 export function addressOf(args) {

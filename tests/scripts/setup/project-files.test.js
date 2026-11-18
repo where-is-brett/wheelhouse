@@ -2368,3 +2368,71 @@ test('on the setup token\'s route, step 7 reads, commits and merges with the pro
     assert.ok(!values.some((v) => /glab|git-credential/.test(v)));
   });
 });
+
+// ---- Step 7 where step 3 connected on the as-is route: the director's own git reaches the host ----
+
+// The git calls of step 7 that reach the host, each with whether git's own look at the address came just before it.
+const reachCalls = (w) => w.gitCalls.flatMap((c, i) => {
+  const sub = c.args.find((a) => !a.startsWith('-'));
+  if (!['ls-remote', 'fetch', 'push'].includes(sub) || c.args.includes('--get-url')) return [];
+  const before = w.gitCalls.slice(0, i).reverse().find((p) => p.args.includes('--get-url'));
+  return [{ sub, env: c.env, guarded: before !== undefined && before.args.includes(w.bare) && !c.args.includes('--get-url') }];
+});
+
+test('on the as-is route, step 7\'s ls-remote, push and fetch run with the director\'s own git and are guarded; the folder-only calls stay isolated', async () => {
+  await withHome(async () => {
+    const w = await world({ host: 'gitlab', baseUrl: 'https://gitlab.com' });
+    writeProject(SLUG, { folder: w.folder, remoteUrl: w.bare, host: 'gitlab', repo: REPO, connection: { host: 'gitlab', mode: 'as-is', project: REPO, baseUrl: 'https://gitlab.com' } });
+    const planned = await w.plan();
+    assert.ok(Array.isArray(planned.changes), planned.why);
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(await g(w.bare, 'log', '-1', '--format=%s', 'main'), COMMIT_MESSAGE, 'the commit went up');
+    const reaching = reachCalls(w);
+    for (const sub of ['ls-remote', 'push', 'fetch']) assert.ok(reaching.some((c) => c.sub === sub), `a ${sub} reached the host`);
+    for (const c of reaching) {
+      assert.equal(c.env.GIT_CONFIG_GLOBAL, undefined, `${c.sub}: the director's global settings are not shut out`);
+      assert.equal(c.env.GIT_CONFIG_NOSYSTEM, undefined, `${c.sub}: nor their system settings`);
+      assert.equal(c.env.GIT_TERMINAL_PROMPT, '0', c.sub);
+      assert.ok(c.guarded, `${c.sub}: git's own answer for the address was read first`);
+      assert.ok(Object.entries(c.env).some(([k, v]) => /^GIT_CONFIG_KEY_/.test(k) && /^core\.hookspath$/i.test(v)), `${c.sub}: the fence's settings are in the call`);
+    }
+    const local = w.gitCalls.filter((c) => c.args.includes('rev-parse') && c.env.GIT_WORK_TREE !== undefined);
+    assert.ok(local.length > 0);
+    for (const c of local) assert.equal(c.env.GIT_CONFIG_GLOBAL, '/dev/null', 'a call that touches only the folder stays isolated');
+  });
+});
+
+test('on the as-is route a guard refusal stops step 7\'s call, and a project read that fails says the account git uses must read it, not step 3', async () => {
+  await withHome(async () => {
+    const w = await world({ host: 'gitlab', baseUrl: 'https://gitlab.com' });
+    writeProject(SLUG, { folder: w.folder, remoteUrl: w.bare, host: 'gitlab', repo: REPO, connection: { host: 'gitlab', mode: 'as-is', project: REPO, baseUrl: 'https://gitlab.com' } });
+    w.gitFails = (args) => args.includes('ls-remote') && !args.includes('--get-url');
+    const planned = await w.plan().then((p) => p, (e) => ({ why: e.message }));
+    const said = planned.why ?? planned.reason ?? '';
+    assert.match(said, /account your git uses must be able to read the project/, said);
+    assert.doesNotMatch(said, /step 3/, said);
+  });
+});
+
+test('on every other route step 7\'s calls that reach the host keep setup\'s isolated git, unguarded', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const planned = await w.plan();
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    const reaching = reachCalls(w);
+    for (const sub of ['ls-remote', 'push', 'fetch']) assert.ok(reaching.some((c) => c.sub === sub), `a ${sub} reached the host`);
+    for (const c of reaching) assert.equal(c.env.GIT_CONFIG_GLOBAL, '/dev/null', `${c.sub} stays isolated`);
+    assert.ok(!w.gitCalls.some((c) => c.args.includes('--get-url')), 'no guard on a route that is not as-is');
+  });
+});
+
+test('when the project cannot be read on another route, the line still points at step 3', async () => {
+  await withHome(async () => {
+    const w = await world();
+    w.gitFails = (args) => args.includes('ls-remote');
+    const planned = await w.plan().then((p) => p, (e) => ({ why: e.message }));
+    assert.match(planned.why ?? planned.reason ?? '', /check you are still signed in \(step 3\)/);
+  });
+});
