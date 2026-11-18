@@ -43,6 +43,10 @@
 //                        (not its notes); once green, `resume`: the phone's card opens with the
 //                        verdict and the first briefing (with no phone card left, step 10's
 //                        plan gives them as `said`), then ask `card.question` as it is
+//   sign-in              opens git's own sign-in for the host a step 3 attempt on the "Use my git as it is" route could not
+//                        reach (scripts/setup/sign-in.js): the address is the one setup recorded for that failure, git's
+//                        window may open for the director to sign in, and it says in one line whether git then reached the
+//                        project. Runs git itself, so it is run outside the sandbox like the helper's other setup commands
 //   uninstall plan       uninstall's list worked out by the helper, its card and its level 4
 //                        cards: { hash, card, asks: [{ id, about, card }], last }. Each ask card is
 //                        asked exactly as given, before uninstall's own card. Once an uninstall has
@@ -57,7 +61,7 @@
 //                        otherwise the whole list
 // The playbook (wheelhouse:setup) runs in the sandbox and only talks: every change is the
 // helper's, so every form is a request to its /setup/* routes, naming this folder, and nothing here
-// reads or writes a file. A request carries only the folder, the step and the hash; the helper
+// reads or writes a file (but `sign-in`, which changes nothing on the host: it reads setup's run for the address and asks git to list the project's branches). A request carries only the folder, the step and the hash; the helper
 // works out the list itself. `status` only reads. `plan` and `resume` (which asks for the status,
 // then one plan) change nothing a step lists: they write only setup's own records (the run, a
 // card's shown time, the card asked, and a step settled on answers already given). `health` only
@@ -85,7 +89,7 @@ export const inDesktopApp = (entrypoint, env = process.env) => (entrypoint === '
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
 
-export const USAGE = 'Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, choices, change <key>, health [<trial line> ...], uninstall plan, uninstall apply <hash>, uninstall status';
+export const USAGE = 'Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, choices, change <key>, health [<trial line> ...], sign-in, uninstall plan, uninstall apply <hash>, uninstall status';
 // The longest `wait <step>` waits in one call, well within the two minutes a command may run by
 // default; a longer wait is asked again.
 export const WAIT_MOST_MS = 90 * 1000;
@@ -150,7 +154,7 @@ async function plan(client, folder, step) {
 export async function main(argv, {
   cwd = process.cwd(), client, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
   now = () => Date.now(), sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
-  entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, env = process.env, started = null,
+  entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, env = process.env, started = null, signIn = null,
 } = {}) {
   inApp = inDesktopApp(entrypoint, env);
   sessionStart = started;
@@ -242,6 +246,14 @@ export async function main(argv, {
     } else if (form === 'uninstall' && rest[0] === 'status' && rest.length === 1) {
       const got = await ask((client ?? helperClient()).setup.uninstall.status, { folder });
       out(`${(Array.isArray(got.lines) ? got.lines : []).map((l) => String(l).replace(BREAKS, ' ')).join('\n')}\n`);
+    } else if (form === 'sign-in' && rest.length === 0) {
+      // Git's sign-in for the host step 3 could not reach: setup's own record gives the address, and git runs here, not in the helper.
+      const run = signIn ?? (await import('./sign-in.js')).signIn;
+      try {
+        out(`${await run({ folder })}\n`);
+      } catch (error) {
+        throw new CliError(error instanceof Error ? error.message : 'git\'s sign-in did not finish');
+      }
     } else if (form === 'health') {
       if (rest.length > MOST_TRIAL_LINES || !rest.every((l) => parseTrialLine(l) !== null)) {
         throw new CliError('Give the lines trials.js printed, each as one argument, as they are');

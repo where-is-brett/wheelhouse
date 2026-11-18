@@ -3,7 +3,7 @@
 // reach a remote take the as-is route's environment, and every other call stays isolated.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { setupGit, scrubGitText, gitSaid, gitFailure, DetailedError, NULL_FILE } from '../../../scripts/setup/git.js';
+import { setupGit, scrubGitText, gitSaid, gitFailure, endOf, DetailedError, NULL_FILE } from '../../../scripts/setup/git.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 test('scrubGitText hides the user or token in an address, an Authorization or extra-header value, and anything shaped like a token', () => {
@@ -126,4 +126,47 @@ test('DetailedError keeps the line and, scrubbed, the detail', () => {
   assert.equal(error.message, 'The line');
   assert.equal(error.detail, 'key = https://[hidden]@h/x');
   assert.equal(new DetailedError('x').detail, undefined);
+});
+
+test('scrubGitText hides up to the last @ in an address, a Basic value followed by punctuation, and keeps a GitLab-shaped word with no digit', () => {
+  assert.equal(scrubGitText('fatal: https://user:p@ss@host/x failed'), 'fatal: https://[hidden]@host/x failed');
+  assert.equal(scrubGitText('https://a@b/x https://c@d/y'), 'https://[hidden]@b/x https://[hidden]@d/y');
+  assert.equal(scrubGitText('sent Basic dXNlcjpwYXNzd29yZA==, to host'), 'sent Basic [hidden], to host');
+  assert.equal(scrubGitText('Basic dXNlcjpwYXNzd29yZA==.'), 'Basic [hidden].');
+  assert.equal(scrubGitText('Basic authentication failed'), 'Basic authentication failed');
+  assert.equal(scrubGitText('bad gldt-abcd1234efgh and glab-credential-helper'), 'bad [hidden] and glab-credential-helper');
+  assert.equal(scrubGitText('http.https://h/.extraheader = AUTHORIZATION: basic eHh4'), 'http.https://h/.extraheader = [hidden]');
+  assert.equal(scrubGitText(`extraheader${'z'.repeat(300)}: secret`), `extraheader${'z'.repeat(300)}: secret`, 'a name past the bound is no header name');
+  assert.equal(scrubGitText('x_access_token=abc123 and PRIVATE_TOKEN=zzz'), 'x_access_token=[hidden] and PRIVATE_TOKEN=[hidden]');
+});
+
+test('scrubGitText and gitSaid take 1 MB of hostile text in well under a second', () => {
+  const MB = 1 << 20;
+  for (const hostile of [
+    'glab-'.repeat(MB / 5), 'glab-glab-glab-'.repeat(MB / 15), 'extraheader'.repeat(MB / 11), 'a_'.repeat(MB / 2), 'token'.repeat(MB / 5),
+    `${'Basic '.repeat(MB / 6)}`, `https://${'@'.repeat(MB)}`, 'password'.repeat(MB / 8), 'authorization '.repeat(MB / 14), `${'x'.repeat(MB)}\nfatal: no\n`,
+  ]) {
+    const started = Date.now();
+    scrubGitText(hostile);
+    gitSaid(hostile);
+    assert.ok(Date.now() - started < 1000, `${hostile.slice(0, 12)}: ${Date.now() - started} ms`);
+  }
+});
+
+test('endOf keeps the end of scrubbed text within the cap, drops a first partial word and marks the cut', () => {
+  assert.equal(endOf('short', 10), 'short');
+  const cut = endOf(`${'word '.repeat(2000)}end`, 4096);
+  assert.ok(cut.length <= 4096 && cut.startsWith('…word') && cut.endsWith('word end'));
+  assert.equal(endOf('abcdefghij klmnop', 10), '…klmnop');
+});
+
+test('a journalled failure detail is scrubbed in markStep too, whoever wrote it', async () => {
+  const { as, shortHome, tempFolder: folderIn } = await import('../../helpers/homes.js');
+  const { startRun, markStep, findRun } = await import('../../../scripts/setup/journal.js');
+  await as(shortHome(), async () => {
+    const folder = folderIn('wh-detail-');
+    const run = startRun({ folder });
+    markStep(run.id, 3, 'failed', { reason: 'it stopped', detail: 'git said https://oauth2:glpat-abcdefgh1234@gitlab.com/x and Authorization: Basic abc' });
+    assert.equal(findRun(folder).steps[3].failedDetail, 'git said https://[hidden]@gitlab.com/x and Authorization: [hidden]');
+  });
 });

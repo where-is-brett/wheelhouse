@@ -246,10 +246,9 @@ export function setupGit({ run = realRun, gitPath = 'git', env = {}, cwd, workTr
 // ---- What git said, for a failure line ----
 
 const HIDDEN = '[hidden]';
-// The user or token in an address (`scheme://user:pass@host`, a password with an unencoded `/` in it too): everything from after
-// `://` to the first `@`, with no white space between, goes. A scan, not one pattern: a pattern that reads on to the end for each
-// `scheme://` it meets goes quadratic on a long line of them. A failed scan ends at the white space or end it stopped at, so no
-// text is read twice.
+// The user or token in an address (`scheme://user:pass@host`, a password with an unencoded `/` or `@` in it too): everything from
+// after `://` to the last `@` before the next white space goes. A scan, not one pattern: a pattern that reads on to the end for
+// each `scheme://` it meets goes quadratic on a long line of them. Each run to white space is read once, so no text is read twice.
 function hideUserinfo(text) {
   let out = '';
   let from = 0;
@@ -258,14 +257,16 @@ function hideUserinfo(text) {
     let start = at;
     while (start > from && /[A-Za-z0-9+.-]/.test(text[start - 1])) start -= 1;
     let end = at + 3;
-    while (end < text.length && text[end] !== '@' && !/\s/.test(text[end])) end += 1;
-    if (end < text.length && text[end] === '@' && /[A-Za-z]/.test(text.slice(start, at))) {
-      out += `${text.slice(from, at + 3)}${HIDDEN}`;
-      from = end;
-      at = text.indexOf('://', end + 1);
-    } else {
-      at = text.indexOf('://', end);
+    let lastAt = -1;
+    while (end < text.length && !/\s/.test(text[end])) {
+      if (text[end] === '@') lastAt = end;
+      end += 1;
     }
+    if (lastAt >= 0 && /[A-Za-z]/.test(text.slice(start, at))) {
+      out += `${text.slice(from, at + 3)}${HIDDEN}`;
+      from = lastAt;
+    }
+    at = text.indexOf('://', end);
   }
   return out + text.slice(from);
 }
@@ -276,18 +277,18 @@ function hideUserinfo(text) {
 export function scrubGitText(text) {
   return hideUserinfo(String(text ?? ''))
     .replace(/(authorization\s*[:=]\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
-    .replace(/(extraheader[^\s=:]*\s*[:=]\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    .replace(/(extraheader[^\s=:]{0,256}\s*[:=]\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
     .replace(/(private-token\s*:\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
     .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{4,}/gi, `$1${HIDDEN}`)
-    // A `Basic` value is 8 or more base64 characters, then white space or the end, with a digit, an `=`, a `+` or a `/`, or both cases, in it:
+    // A `Basic` value is 8 or more base64 characters, not followed by another, with a digit, an `=`, a `+` or a `/`, or both cases, in it:
     // prose such as "Basic authentication failed" stays.
-    .replace(/\b(Basic\s+)([A-Za-z0-9+/=]{8,})(?=\s|$)/gi, (all, lead, token) => (/[0-9=+/]|[a-z][A-Z]|[A-Z][a-z]/.test(token) ? `${lead}${HIDDEN}` : all))
-    .replace(/\b((?:[A-Za-z]+_)*token=)[^\s&'"]+/gi, `$1${HIDDEN}`)
+    .replace(/\b(Basic\s+)([A-Za-z0-9+/=]{8,})(?![A-Za-z0-9+/=])/gi, (all, lead, token) => (/[0-9=+/]|[a-z][A-Z]|[A-Z][a-z]/.test(token) ? `${lead}${HIDDEN}` : all))
+    .replace(/token=[^\s&'"]+/gi, (m) => `${m.slice(0, 6)}${HIDDEN}`)
     .replace(/(password\s*=\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
     // GitLab's personal access token, whatever its body; and its other token prefixes (gldt-, glrt-, glcbt-, gloas-, glft-, glptt-,
     // glimt-, glsoat-), by their shape: a body with a digit in it.
     .replace(/\bglpat-[A-Za-z0-9_-]{8,}/g, HIDDEN)
-    .replace(/\bgl[a-z]{2,5}-(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{8,}/g, HIDDEN)
+    .replace(/\bgl[a-z]{2,5}-[A-Za-z0-9_-]{8,}/g, (m) => (/\d/.test(m.slice(m.indexOf('-') + 1)) ? HIDDEN : m))
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,})/g, HIDDEN);
 }
 
@@ -309,6 +310,17 @@ export function gitSaid(stderr, { limit = 300 } = {}) {
   let tail = said.slice(from);
   // A cut that fell inside a word drops that part of the word; with no space to cut at, the hard cut stands.
   if (!/\s/.test(said[from - 1]) && /\s/.test(tail)) tail = tail.slice(tail.search(/\s/)).trimStart();
+  return `\u2026${tail}`;
+}
+
+// The end of already scrubbed text, within `max` characters (the end is what a failure ended on): a cut that falls inside a word drops
+// that part of the word, and an ellipsis marks the cut. Cut after scrubbing, never before.
+export function endOf(text, max = 4096) {
+  const t = String(text ?? '');
+  if (t.length <= max) return t;
+  const from = t.length - (max - 1);
+  let tail = t.slice(from);
+  if (!/\s/.test(t[from - 1]) && /\s/.test(tail)) tail = tail.slice(tail.search(/\s/)).trimStart();
   return `\u2026${tail}`;
 }
 

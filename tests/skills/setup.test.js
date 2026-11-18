@@ -331,3 +331,18 @@ test('setup puts no question to the director in prose where a card exists', asyn
   said.push(NOT_SET_UP, REMOVED, JOURNAL_UNREADABLE, NODE_LINE);
   for (const line of said.filter((l) => typeof l === 'string')) assert.doesNotMatch(line, /\?/, `a prose question in: ${line}`);
 });
+
+test('the playbook opens git\'s sign-in through the sign-in form, offers it as a card, never makes a token, and names the setting only by key and file', () => {
+  const line = playbook.split('\n').find((l) => l.startsWith('- **A step 3 line that says setup could not reach the repository')) ?? '';
+  assert.ok(line !== '', 'the sign-in bullet is there');
+  assert.ok(!/ls-remote/.test(line), 'no raw git command for the session to run');
+  assert.match(line, /`git config --get-all credential\.helper`[^\n]*`manager` nor `manager-core`/);
+  assert.match(line, /"Open git's sign-in for <host> \(recommended\)" and "Use the other way to connect"/);
+  assert.match(line, /the form `sign-in`/);
+  assert.match(line, /sandbox rule below for `scripts\/setup\/cli\.js`[^\n]*`dangerouslyDisableSandbox: true`[^\n]*may ask the director to allow it/);
+  assert.match(line, /close it, and recommend the other way to connect on step 3's card; never explain how to make a token, and never ask for, type or show a token or password/);
+  assert.match(line, /a fresh Go ahead tries step 3 again\.$/);
+  assert.match(playbook, /Its forms:[^\n]*`sign-in`/);
+  assert.match(USAGE, /sign-in/);
+  assert.match(playbook, /when the director asks which setting it is, you may name the setting's key and the file it is set in, in plain words, from the `Detail:` line, and nothing else from it: never its value, never the whole line, and never change the setting yourself/);
+});
