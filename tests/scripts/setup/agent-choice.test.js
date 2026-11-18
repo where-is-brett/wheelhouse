@@ -349,7 +349,7 @@ test('a fresh setup on Copilot writes the First Mate\'s agent and instructions b
     for (const [i, file] of FIRST_MATE_FILES.entries()) assert.equal(fs.readFileSync(mateAt(home)[i], 'utf8'), committedMate(file));
     assert.ok(fs.existsSync(hooks.file({ home })));
     // The full line, or the shorter card's one line for Copilot when the full card is too long.
-    const line = planned.card.what.includes(FIRST_MATE_LINE) ? FIRST_MATE_LINE : 'First Mate files, in your Copilot folder, used only in Wheelhouse projects';
+    const line = planned.card.what.includes(FIRST_MATE_LINE) ? FIRST_MATE_LINE : 'First Mate files, in your Copilot folder for every project (they say to apply only in Wheelhouse projects)';
     assert.equal(planned.card.what.split(line).length, 2, 'one line for both files');
     assert.deepEqual(fs.readdirSync(home).sort(), ['agents', 'config.json', 'hooks', 'instructions']);
     // Already in place: nothing more to plan.

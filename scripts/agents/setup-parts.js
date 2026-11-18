@@ -28,7 +28,7 @@ export function otherAgentsFound({ platform = process.platform, env = process.en
 const labelOf = (name) => (name === DEFAULT ? adapterFor(DEFAULT).identity.label : adapterFor(name).identity.label);
 
 // The question: which agent this computer's crew builds with. Claude Code first, since it is the default.
-export function agentAsk({ found, project }) {
+export function agentAsk({ found, project, platform = process.platform }) {
   const names = [DEFAULT, ...found.map((f) => f.name)];
   const labels = names.map(labelOf);
   const others = found.map((f) => f.label).join(' and ');
@@ -37,10 +37,10 @@ export function agentAsk({ found, project }) {
     card: {
       level: 3,
       what: `${others} is installed on this computer as well as Claude Code. Which should build ${project ?? 'this project'} here?`,
-      why: 'It is chosen for each computer, and it can be changed later from the First Mate. The chat and cards are the same either way; Claude Code\'s sandbox covers only Claude Code.',
+      why: `It is chosen for each computer, and it can be changed later from the First Mate. The chat and cards are the same either way.${platform === 'darwin' ? ' On a Mac, Claude Code keeps its commands from your private files; Copilot\'s commands run without that.' : ''}`,
       options: names.map((name, i) => ({
         label: labels[i],
-        says: name === DEFAULT ? 'Claude Code does the building on this computer, as it does by default.' : `GitHub's ${labels[i]} does the building on this computer, using your ${labels[i]} plan's monthly requests. Setup adds its checks.`,
+        says: name === DEFAULT ? 'Claude Code does the building on this computer, as it does by default.' : `GitHub's ${labels[i]} does the building on this computer, using your ${labels[i]} plan's monthly allowance. Setup adds its checks and reads your plan from your GitHub account.`,
       })),
       recommend: labels[0],
       because: 'it is the default, and nothing about it changes',

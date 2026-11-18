@@ -183,18 +183,18 @@ export function lines({ changes, userSettings, kept, route, platform, floor, ter
     out.push(`usage counting left as you set it (${terse >= 2 ? `${kept.length} ${kept.length === 1 ? 'setting is' : 'settings are'}` : `${kept.map((k) => k.name).join(', ')} ${kept.length === 1 ? 'is' : 'are'}`} yours), so the Logbook shows no token counts here`);
   } else if (has('telemetry')) {
     const where = route === 'launch-env'
-      ? `4 variables for your account${platform === 'darwin' ? ', set again by a login item at log-in' : ''}; ${RESTART}`
+      ? `4 variables for your account${platform === 'darwin' ? `, set again by a login item${terse >= 3 ? '' : ' at log-in'}` : ''}; ${RESTART}`
       : '4 settings in Claude Code';
     out.push(`usage counts go to Wheelhouse on this computer only, never what you type or what tools return (${where})`);
   }
   // Ruling R64: the limit holds even over a longer one of the director's, and the card says what it costs.
   if (has('retention')) {
-    out.push(`chat history kept ${RETENTION_DAYS} days${terse >= 3 ? '' : shown(userSettings.cleanupPeriodDays)}: older chats are deleted, and uninstall can't bring them back`);
+    out.push(`chat history kept ${RETENTION_DAYS} days${terse >= 3 ? '' : shown(userSettings.cleanupPeriodDays)}: older chats are deleted${terse >= 3 ? '' : ", and uninstall can't bring them back"}`);
   }
   if (has('updates')) {
     const own = ownMinimum(userSettings, floor);
     const minimum = own !== null ? `${own} (your own minimum, kept)`
-      : `${floor}, the oldest Wheelhouse works with${changes.some((c) => c.key?.[0] === 'minimumVersion' && terse < 3) ? shown(userSettings.minimumVersion) : ''}`;
+      : `${floor}${terse >= 3 ? '' : ', the oldest Wheelhouse works with'}${changes.some((c) => c.key?.[0] === 'minimumVersion' && terse < 3) ? shown(userSettings.minimumVersion) : ''}`;
     out.push(`Claude Code takes only its well-tried updates, and never an older version than ${minimum}`);
   }
   if (has('push')) out.push('phone notifications prepared (step 9)');
@@ -207,7 +207,7 @@ export function lines({ changes, userSettings, kept, route, platform, floor, ter
       const mate = own.some((x) => x.part === 'first-mate');
       const hook = own.some((x) => x.part === 'hooks');
       const what = [...(hook ? ['checks before each of its actions'] : []), ...(mate ? ['First Mate files'] : [])].join(' and ');
-      out.push(`${label}'s ${what}, in your ${label} folder${mate ? ', used only in Wheelhouse projects' : ''}`);
+      out.push(`${label}'s ${what}, in your ${label} folder for every project${mate ? ' (they say to apply only in Wheelhouse projects)' : ' (they do nothing outside a Wheelhouse project)'}`);
     }
   } else {
     for (const c of changes.filter((x) => x.what === 'agent' && x.line)) out.push(c.line);
@@ -268,11 +268,13 @@ function composeFor({ changes, userSettings = {}, kept = [], route = TELEMETRY_R
   // Windows has no sandbox, and another agent's commands are not in Claude Code's sandbox on any system, so
   // an agent's command could read the key file; the line claims no more than holds.
   const agentNames = [...new Set(changes.filter((c) => c.what === 'agent').map((c) => c.label))];
-  const who = agentNames.length > 0 ? `${agentNames.join(' and ')}'s commands` : 'an agent\'s command';
+  const who = agentNames.length > 0 ? `${agentNames.join(' and ')}'s commands` : 'an agent\'s commands';
   const open = agentNames.length > 0 || platform === 'win32';
+  const win = platform === 'win32';
+  const winWho = agentNames.length > 0 ? `any agent's commands, ${agentNames.join(' and ')}'s among them,` : 'any agent\'s commands';
   const signing = !key ? ''
-    : terse >= 1 ? (open ? `\n- Your clicks are marked as coming from this computer; ${who} could read the key behind that mark, so it shows a click came from here, not that you made it.` : '\n- Your clicks are marked as coming from this computer, with a key Claude Code\'s sandbox keeps agents from reading.')
-    : open ? `\n- Your clicks are marked as coming from this computer. ${agentNames.length > 0 ? who : 'On Windows an agent\'s command'} could read the key behind that mark, so it shows a click came from here, not that you made it.`
+    : terse >= 1 ? (open ? `\n- Your clicks are marked as coming from this computer; ${win ? 'on Windows any agent\'s commands' : who} could read the key behind that mark, so it shows a click came from here, not that you made it.` : '\n- Your clicks are marked as coming from this computer, with a key Claude Code\'s sandbox keeps agents from reading in projects Wheelhouse has set up.')
+    : open ? `\n- Your clicks are marked as coming from this computer. ${win ? `On Windows ${winWho}` : who} could read the key behind that mark, so it shows a click came from here, not that you made it.`
     : '\n- Your clicks are marked as coming from this computer, with a key that Claude Code\'s sandbox keeps agents from reading in projects Wheelhouse has set up.';
   const variables = route === 'launch-env' && changes.some((c) => c.kind === 'env' || c.kind === 'file');
   const agents = [...new Set(changes.filter((c) => c.what === 'agent').map((c) => c.label))];
@@ -298,7 +300,10 @@ function composeFor({ changes, userSettings = {}, kept = [], route = TELEMETRY_R
   const base = composeCard({ ...card(`${head}${signing}`), target: { step: 6, hash: '0'.repeat(64) } }).question.question.length;
   const fit = (sentence) => base + 1 + sentence.length <= CARD.chars;
   const weak = weakeningSentence(weakening(userSettings), fit);
-  return card(`${head}${signing}${weak === '' ? '' : `\n${weak}`}`);
+  const finished = card(`${head}${signing}${weak === '' ? '' : `\n${weak}`}`);
+  // The finished card is what is measured: a sentence that still does not fit in its last form makes this form too long.
+  composeCard({ ...finished, target: { step: 6, hash: '0'.repeat(64) } });
+  return finished;
 }
 
 // What step 6 says when it settles with nothing to change, before the settings that weaken Standard.
@@ -335,7 +340,7 @@ export function computerStep({
       // Where another agent's command line is installed, which agent builds here is asked first, once per computer
       // (scripts/agents/setup-parts.js); a computer with none asks nothing. A chosen agent that is not signed in waits.
       const found = otherAgentsFound({ platform: ctx.platform ?? process.platform, env, ...(exists === undefined ? {} : { exists }) });
-      if (found.length > 0 && agentChosen(ctx.answers) === null) return { ask: agentAsk({ found, project: path.basename(ctx.folder ?? '') || undefined }) };
+      if (found.length > 0 && agentChosen(ctx.answers) === null) return { ask: agentAsk({ found, platform: ctx.platform ?? process.platform, project: path.basename(ctx.folder ?? '') || undefined }) };
       const { platform, userHome, userSettings, floor, kept, agent, changes } = await world(ctx);
       const signIn = agent === null ? null : signInWait(agent, { env, userHome });
       if (signIn !== null) return signIn;
