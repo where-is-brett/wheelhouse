@@ -40,7 +40,7 @@ export function agentAsk({ found, project }) {
       why: 'It is chosen for each computer, and it can be changed later from the First Mate. The same chat, cards and checks apply either way.',
       options: names.map((name, i) => ({
         label: labels[i],
-        says: name === DEFAULT ? 'Claude Code does the building on this computer, as it does by default.' : `${labels[i]} does the building on this computer. Setup adds its checks and reads your plan from your GitHub account.`,
+        says: name === DEFAULT ? 'Claude Code does the building on this computer, as it does by default.' : `${labels[i]} does the building on this computer. Setup adds its checks and reads your ${labels[i]} plan from your GitHub account.`,
       })),
       recommend: labels[0],
       because: 'it is the default, and nothing about it changes',

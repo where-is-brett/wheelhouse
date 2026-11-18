@@ -44,7 +44,7 @@ import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
 import { RETENTION_DAYS, TELEMETRY_ROUTE } from '../lib/setup-numbers.js';
 import { SETUP_TITLES, SETUP_LABEL, asLine } from '../state/card-lines.js';
-import { composeCard } from '../cards/compose.js';
+import { composeCard, isTooLong } from '../cards/compose.js';
 import { CARD } from '../lib/front-desk.js';
 import { ownKey } from '../state/signing.js';
 import { projectForFolder, writeProject, registeredProjects } from '../lib/projects.js';
@@ -176,11 +176,11 @@ const RESTART = 'then quit and reopen Claude Desktop';
 const shown = (now) => (now === undefined ? '' : ` (now ${typeof now === 'number' || versionOf(now) !== null ? now : JSON.stringify(now)})`);
 
 // The card's line for each kind of change, in plain words.
-function lines({ changes, userSettings, kept, route, platform, floor }) {
+function lines({ changes, userSettings, kept, route, platform, floor, terse = 0 }) {
   const out = [];
   const has = (what) => changes.some((c) => c.what === what);
   if (kept.length > 0) {
-    out.push(`usage counting left as you set it (${kept.map((k) => k.name).join(', ')} ${kept.length === 1 ? 'is' : 'are'} yours), so the Logbook shows no token counts here`);
+    out.push(`usage counting left as you set it (${terse >= 3 ? `${kept.length} ${kept.length === 1 ? 'setting is' : 'settings are'}` : `${kept.map((k) => k.name).join(', ')} ${kept.length === 1 ? 'is' : 'are'}`} yours), so the Logbook shows no token counts here`);
   } else if (has('telemetry')) {
     const where = route === 'launch-env'
       ? `4 variables for your account${platform === 'darwin' ? ', set again by a login item at log-in' : ''}; ${RESTART}`
@@ -189,18 +189,28 @@ function lines({ changes, userSettings, kept, route, platform, floor }) {
   }
   // Ruling R64: the limit holds even over a longer one of the director's, and the card says what it costs.
   if (has('retention')) {
-    out.push(`chat history kept ${RETENTION_DAYS} days${shown(userSettings.cleanupPeriodDays)}: older chats are deleted, and uninstall can't bring them back`);
+    out.push(`chat history kept ${RETENTION_DAYS} days${terse >= 2 ? '' : shown(userSettings.cleanupPeriodDays)}: older chats are deleted, and uninstall can't bring them back`);
   }
   if (has('updates')) {
     const own = ownMinimum(userSettings, floor);
     const minimum = own !== null ? `${own} (your own minimum, kept)`
-      : `${floor}, the oldest Wheelhouse works with${changes.some((c) => c.key?.[0] === 'minimumVersion') ? shown(userSettings.minimumVersion) : ''}`;
+      : `${floor}, the oldest Wheelhouse works with${changes.some((c) => c.key?.[0] === 'minimumVersion' && terse < 2) ? shown(userSettings.minimumVersion) : ''}`;
     out.push(`Claude Code takes only its well-tried updates, and never an older version than ${minimum}`);
   }
   if (has('push')) out.push('phone notifications prepared (step 9)');
   const plugin = changes.find((c) => c.what === 'plugin');
   if (plugin) out.push(plugin.update ? pluginUpdateLine(plugin.update.from, plugin.update.to) : PLUGIN_SCOPE_LINE);
-  for (const c of changes.filter((x) => x.what === 'agent' && x.line)) out.push(c.line);
+  if (terse >= 1) {
+    // Every change an agent makes still named, in one line for each agent, not the full sentence of each.
+    for (const label of [...new Set(changes.filter((x) => x.what === 'agent').map((x) => x.label))]) {
+      const own = changes.filter((x) => x.what === 'agent' && x.label === label);
+      const mate = own.some((x) => x.part === 'first-mate');
+      const hook = own.some((x) => x.part === 'hooks');
+      out.push(`${label}'s ${[...(hook ? ['hook file for its checks'] : []), ...(mate ? ['First Mate files'] : [])].join(' and ')}, in your ${label} folder, for every project on this computer`);
+    }
+  } else {
+    for (const c of changes.filter((x) => x.what === 'agent' && x.line)) out.push(c.line);
+  }
   if (has('login')) out.push(`Start Wheelhouse's helper when you sign in${platform === 'darwin' ? ', and again within a minute if it stops' : ''}, so the build carries on with no session open`);
   return out;
 }
@@ -233,13 +243,30 @@ function weakeningSentence(found, fit) {
 
 // Step 6's card: each change in plain words, the signing key, and the settings that weaken Standard.
 // Only a list with something on it has a card: an empty one settles the step (ruling R75).
-export function computerCard({ changes, userSettings = {}, kept = [], route = TELEMETRY_ROUTE, platform = process.platform, floor, key = ownKey() }) {
-  const listed = lines({ changes, userSettings, kept, route, platform, floor });
+// A card too long to compose is made again in fewer words, each time naming every change still: another agent's
+// changes in a line for each agent, then the values the director's own settings held left unsaid, then the settings of
+// theirs that stop usage counting counted, not named. The last form is composed as it is, so a card still too long is refused.
+export function computerCard(options) {
+  for (let terse = 0; terse < TERSEST; terse += 1) {
+    try {
+      return composeFor(options, terse);
+    } catch (error) {
+      if (!isTooLong(error)) throw error;
+    }
+  }
+  return composeFor(options, TERSEST);
+}
+
+const TERSEST = 3;
+
+function composeFor({ changes, userSettings = {}, kept = [], route = TELEMETRY_ROUTE, platform = process.platform, floor, key = ownKey() }, terse) {
+  const listed = lines({ changes, userSettings, kept, route, platform, floor, terse });
   // One change to a line, as step 3's card lists its own.
   const head = [`Setup step 6, ${SETUP_TITLES[6]}:`, ...listed.map(asLine), '- Wheelhouse never updates itself: you choose when.'].join('\n');
   // Named without its id, which a card would read as a commit.
   // Windows has no sandbox, so an agent's command could read the key file there; the line claims no more than holds.
   const signing = !key ? ''
+    : terse >= 1 ? (platform === 'win32' ? '\n- Your clicks are marked as coming from this computer; on Windows an agent\'s command could read that key, so it shows a click came from here, not that you made it.' : '\n- Your clicks are marked as coming from this computer, with a key Claude Code\'s sandbox keeps agents from reading.')
     : platform === 'win32' ? '\n- Your clicks are marked as coming from this computer. On Windows an agent\'s command could read the key behind that mark, so it shows a click came from here, not that you made it.'
     : '\n- Your clicks are marked as coming from this computer, with a key that Claude Code\'s sandbox keeps agents from reading in projects Wheelhouse has set up.';
   const variables = route === 'launch-env' && changes.some((c) => c.kind === 'env' || c.kind === 'file');
@@ -274,11 +301,12 @@ export const SETTLED_LEAD = `Setup step 6, ${SETUP_TITLES[6]}: every setting is 
 
 // Step 6. `run` reads (and on the launch-environment route sets) the account's launch environment;
 // `env` is the environment setup runs in (CLAUDE_CONFIG_DIR, and any telemetry variable of the
-// director's own); `route`, `port` and `manifest` are for tests, read when the plan is.
+// director's own); `route`, `port`, `manifest` and `exists` (how another
+// agent's command line is looked for) are for tests, read when the plan is.
 // `engine` is the build engine's part of this step (scripts/setup/engine-parts.js): the plugin at user scope, and the
 // login start, for a computer that runs the engine; null leaves both out.
 export function computerStep({
-  run = realRun, env = process.env, route = TELEMETRY_ROUTE, port, manifest,
+  run = realRun, env = process.env, route = TELEMETRY_ROUTE, port, manifest, exists,
   engine = { wanted: engineWanted, pluginScope: pluginScopeChanges, applyPlugin: applyPluginScope },
 } = {}) {
   const world = async (ctx) => {
@@ -301,7 +329,7 @@ export function computerStep({
     async plan(ctx) {
       // Where another agent's command line is installed, which agent builds here is asked first, once per computer
       // (scripts/agents/setup-parts.js); a computer with none asks nothing. A chosen agent that is not signed in waits.
-      const found = otherAgentsFound({ platform: ctx.platform ?? process.platform, env });
+      const found = otherAgentsFound({ platform: ctx.platform ?? process.platform, env, ...(exists === undefined ? {} : { exists }) });
       if (found.length > 0 && agentChosen(ctx.answers) === null) return { ask: agentAsk({ found, project: path.basename(ctx.folder ?? '') || undefined }) };
       const { platform, userHome, userSettings, floor, kept, agent, changes } = await world(ctx);
       const signIn = agent === null ? null : signInWait(agent, { env, userHome });

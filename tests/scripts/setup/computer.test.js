@@ -651,3 +651,31 @@ test('off the Mac, a project on the engine gets no login start', async () => {
     assert.ok(!(planned.changes ?? []).some((c) => c.what === 'login'));
   });
 });
+
+test('step 6\'s card with Copilot chosen fits at the longest lengths, in words as short as it must, each change still named', async () => {
+  const { agentComputerChanges } = await import('../../../scripts/agents/setup-parts.js');
+  const root = path.resolve(import.meta.dirname, '..', '..', '..');
+  for (const platform of ['win32', 'darwin']) {
+    const agent = agentComputerChanges('copilot', { env: {}, userHome: 'C:\\Users\\firstname.lastname-longer', platform, root });
+    assert.ok(agent.length >= 2, 'the hook file and the First Mate\'s files');
+    for (const route of ['user-settings', 'launch-env']) {
+      for (const kept of [[], Object.keys(telemetryEnv(47801)).map((name) => ({ name, value: 'their-own-value' }))]) {
+        const changes = [
+          ...(kept.length > 0 ? [] : [{ kind: 'env', what: 'telemetry' }]),
+          { kind: 'json-key', what: 'retention', key: ['cleanupPeriodDays'], after: RETENTION_DAYS },
+          { kind: 'json-key', what: 'updates', key: ['minimumVersion'] }, { kind: 'json-key', what: 'push', key: ['agentPushNotifEnabled'] },
+          ...agent,
+        ];
+        const card = computerCard({ changes, userSettings: { cleanupPeriodDays: 365, minimumVersion: '2.0.0' }, kept, route, platform, floor: '2.1.299', key: true });
+        const text = composeCard({ ...card, kind: 'setup', target: { step: 6, hash: '0'.repeat(64) } }).question.question;
+        const where = `${platform}, ${route}, ${kept.length} kept`;
+        assert.ok(text.length <= 1200, `${where}: ${text.length} characters`);
+        assert.match(text, /Copilot's hook file/, where);
+        assert.match(text, /First Mate files/, where);
+        assert.match(text, /Chat history kept/, where);
+        assert.match(text, /well-tried updates/, where);
+        assert.match(text, /Phone notifications/, where);
+      }
+    }
+  }
+});

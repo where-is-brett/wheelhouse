@@ -246,3 +246,17 @@ test('path g: a product kept on this computer after a miss is new, so no live da
   const live = cards.find((c) => c.id === 'live-data');
   assert.equal(recommendedOf(live.card), 'No live data');
 });
+
+test('path i: Copilot chosen on the builder question, step 6\'s card names every change and fits the composer\'s limit', async () => {
+  const { cards, end } = await rendered('i', { desktop: true });
+  assert.deepEqual(end, { step: 10, how: 'finished' });
+  const ask = cards.find((c) => c.step === 6 && c.id === 'agent');
+  assert.equal(ask.answer.label, 'Copilot');
+  assert.match(ask.card.options.find((o) => o.label === 'Copilot').description, /reads your Copilot plan from your GitHub account/);
+  const six = cards.find((c) => c.step === 6 && c.kind === 'go-ahead');
+  assert.ok(six.card.question.length <= 1200, `step 6's card is ${six.card.question.length} characters`);
+  assert.match(six.card.question, /Copilot's hook file for its checks and First Mate files, in your Copilot folder/);
+  assert.match(six.card.question, /Usage counting left as you set it/);
+  assert.match(six.card.question, /Chat history kept 30 days/);
+  assert.match(six.card.question, /Phone notifications prepared/);
+});
