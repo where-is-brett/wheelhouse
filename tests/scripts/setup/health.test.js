@@ -597,7 +597,7 @@ test('a failed trial is named with what to do, and what to do can be done', asyn
     const run = await cleaned(folder, runWith(folder, { checks }));
     const reported = GREEN_LINES.map((l) => (l.startsWith('read .env.local') ? 'read .env.local: refused / allowed' : l))
       .map((l) => (l.startsWith('helper health') ? 'helper health: reached / could not run' : l));
-    const got = await healthCheck({ folder, run, reported, load: OK_BOARD });
+    const got = await healthCheck({ folder, run, reported, load: OK_BOARD, platform: 'darwin' });
     assert.equal(got.green, false);
     assert.ok(got.lines.includes('Failed: With All stop on, an agent\'s change was not refused (refused was expected, allowed came back). Reload this project in Claude Desktop so Wheelhouse\'s checks run in it, then run step 10 again.'), got.lines.join('\n'));
     assert.ok(got.lines.includes('Failed: An agent could read a .env.local file (refused was expected, allowed came back). The sandbox isn\'t on in this session: reload this project in Claude Desktop, then run step 10 again. (reported by the session)'), got.lines.join('\n'));
@@ -616,7 +616,7 @@ test('the host reached in the session that wrote the network limit needs one new
   await withProject(async ({ folder }) => {
     const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
     const reported = GREEN_LINES.map((l) => (l.startsWith('reach github.com') ? 'reach github.com: not reached / reached' : l));
-    const got = await healthCheck({ folder, run, reported, load: OK_BOARD });
+    const got = await healthCheck({ folder, run, reported, load: OK_BOARD, platform: 'darwin' });
     assert.equal(got.green, false, 'the board is green only once the limit holds');
     const line = got.lines.find((l) => l.includes('reaching the host'));
     assert.match(line, /^Not yet: .*new session.*Start a new session on this folder, then say "carry on with setup"\./);
@@ -624,8 +624,29 @@ test('the host reached in the session that wrote the network limit needs one new
     const every = Object.keys(HELPER_CHECKS).length + Object.keys(SESSION_CHECKS).length;
     assert.equal(got.verdict, `${every - 1} of ${every} checks passed; the rest need one new session, as setup expects. Start a new session on this folder, then say "carry on with setup": the last checks run there.`);
     // Another failure alongside it is still a failure, with the usual verdict.
-    const worse = await healthCheck({ folder, run, reported: reported.map((l) => (l.startsWith('read .env.local') ? 'read .env.local: refused / allowed' : l)), load: OK_BOARD });
+    const worse = await healthCheck({ folder, run, reported: reported.map((l) => (l.startsWith('read .env.local') ? 'read .env.local: refused / allowed' : l)), load: OK_BOARD, platform: 'darwin' });
     assert.equal(worse.verdict, `${every - 2} of ${every} checks passed. Here is what to do.`);
+  });
+});
+
+// From the Windows setup of 19 November 2026: with no sandbox on Windows, an agent's script reads
+// .env.local and the keys and reaches the host in every session, so asking for a reload or a new
+// session went round in a loop. There each says so as known, and the rest decide the board.
+test('on Windows the trials only the sandbox holds are known, not failed, and the board can be green', async () => {
+  await withProject(async ({ folder }) => {
+    const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
+    const open = { 'read .env.local': 'read .env.local: refused / allowed', 'read keys folder': 'read keys folder: refused / allowed', 'reach github.com': 'reach github.com: not reached / reached' };
+    const reported = GREEN_LINES.map((l) => open[Object.keys(open).find((k) => l.startsWith(k))] ?? l);
+    const got = await healthCheck({ folder, run, reported, load: OK_BOARD, platform: 'win32' });
+    assert.equal(got.green, true, got.lines.join('\n'));
+    assert.ok(got.lines.includes('Known: An agent could read a .env.local file, since this Windows computer has no sandbox; agents are held by the deny rules, the gate and the helper. (reported by the session)'), got.lines.join('\n'));
+    assert.equal(got.lines.filter((l) => l.startsWith('Known:')).length, 3);
+    assert.ok(!got.lines.some((l) => /^(Failed|Not yet):|reload|new session/.test(l)), got.lines.join('\n'));
+    const green = await healthCheck({ folder, run, reported: GREEN_LINES, load: OK_BOARD, platform: 'win32' });
+    assert.equal(got.verdict, green.verdict.replace(/\d+/, (n) => String(Number(n) - 3)));
+    // A trial that couldn't run is still a failure there.
+    const broken = await healthCheck({ folder, run, reported: reported.map((l) => (l.startsWith('read keys folder') ? 'read keys folder: refused / could not run' : l)), load: OK_BOARD, platform: 'win32' });
+    assert.equal(broken.green, false);
   });
 });
 

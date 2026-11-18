@@ -189,6 +189,7 @@ export const CLEANUP_CHECK = Object.freeze({
 export const SESSION_CHECKS = Object.freeze({
   'read .env.local': {
     expected: 'refused',
+    sandboxed: true,
     passed: 'An agent couldn\'t read a .env.local file',
     failed: 'An agent could read a .env.local file',
     todo: 'The sandbox isn\'t on in this session: reload this project in Claude Desktop, then run step 10 again',
@@ -196,6 +197,7 @@ export const SESSION_CHECKS = Object.freeze({
   },
   'read keys folder': {
     expected: 'refused',
+    sandboxed: true,
     passed: 'An agent couldn\'t read Wheelhouse\'s keys',
     failed: 'An agent could read Wheelhouse\'s keys',
     todo: 'The sandbox isn\'t on in this session: reload this project in Claude Desktop, then run step 10 again',
@@ -203,6 +205,7 @@ export const SESSION_CHECKS = Object.freeze({
   },
   'reach github.com': {
     expected: 'not reached',
+    sandboxed: true,
     passed: 'An agent couldn\'t reach the host directly',
     failed: 'An agent could reach the host directly',
     todo: 'The sandbox\'s network limit isn\'t on in this session: reload this project in Claude Desktop, then run step 10 again',
@@ -257,6 +260,12 @@ const passes = (check, result, host) => (check.okOn?.[host] ?? check.ok ?? [chec
 // One check's line for the director: passed, or failed with what to do. A check that couldn't be
 // tried says so, with what to do. Each failure's what to do can be done: a red board leaves step 10
 // to be run again by a fresh card (ruling R67), which runs the session's trials again too.
+// On Windows, which has no sandbox (design section 12.2, check 10), what only the sandbox holds is
+// not held, as the director accepted: such a check's line says so, and it is neither counted nor
+// failed. A check that couldn't be tried is still a failure.
+const unsandboxed = (check, result, host, platform) => platform === 'win32' && check.sandboxed === true
+  && !passes(check, result, host) && result !== 'could not run';
+
 const needsNewSession = (check, result, host) => !passes(check, result, host) && check.newSession === true && result !== 'could not run';
 
 function checkLine(check, result, { session = false, host, desktop = false } = {}) {
@@ -721,10 +730,10 @@ function runIn(folder) {
 // healthCheck({ folder, reported }) -> { green, lines, board, trials, project }: step 10's checks in
 // the helper, the session's trial lines (`reported`, as trials.js printed them), and the board's
 // health lines, each said plainly, a failed one with what to do. `trials` names the pull request and
-// project the session's trials take, or is null before step 10 has opened one. `desktop` says the session is in the Desktop app, the only place a line may tell the director to check it is open. `run` (the folder's
+// project the session's trials take, or is null before step 10 has opened one. `desktop` says the session is in the Desktop app, the only place a line may tell the director to check it is open. `platform` is the computer's system, as unsandboxed's. `run` (the folder's
 // run), `load` (loadBoardInputs), `client` (the helper's, for the board) and `now` are for the
 // engine and tests.
-export async function healthCheck({ folder, reported = [], run, load = loadBoardInputs, client, now = () => new Date(), desktop = false } = {}) {
+export async function healthCheck({ folder, reported = [], run, load = loadBoardInputs, client, now = () => new Date(), desktop = false, platform = process.platform } = {}) {
   const here = run ?? runIn(folder);
   const lines = [];
   let green = true;
@@ -796,6 +805,10 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
       continue;
     }
     const result = given.get(name);
+    if (unsandboxed(check, result, host, platform)) {
+      lines.push(`Known: ${check.failed}, since this Windows computer has no sandbox; agents are held by the deny rules, the gate and the helper. (reported by the session)`);
+      continue;
+    }
     count(passes(check, result, host));
     if (needsNewSession(check, result, host)) waiting += 1;
     if (!passes(check, result, host)) green = false;
