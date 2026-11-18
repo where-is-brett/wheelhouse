@@ -2410,7 +2410,7 @@ test('on the as-is route a project read that fails names the network and the acc
     w.gitFails = (args) => args.includes('ls-remote') && !args.includes('--get-url');
     const planned = await w.plan().then((p) => p, (e) => ({ why: e.message }));
     const said = planned.why ?? planned.reason ?? '';
-    assert.match(said, /account your git uses can read the project.*another way to connect on step 3/, said);
+    assert.match(said, /signed in to the host as an account that can read the project.*step 3.s card again/, said);
     assert.doesNotMatch(said, /still signed in/, said);
   });
 });
