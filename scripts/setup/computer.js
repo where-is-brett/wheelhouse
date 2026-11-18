@@ -51,7 +51,7 @@ import { projectForFolder, writeProject, registeredProjects } from '../lib/proje
 import { effectiveSettings } from '../settings/effective.js';
 import { loginEntry, installLoginStart, loginStartRecord, needsLoginStart } from '../lib/login-start.js';
 import { HELPER_START_SCRIPT } from '../agents/index.js';
-import { otherAgentsFound, agentAsk, agentChosen, signInWait, agentComputerChanges, applyAgentComputer } from '../agents/setup-parts.js';
+import { otherAgentsFound, agentAsk, agentChosen, otherAgentChosen, signInWait, agentComputerChanges, applyAgentComputer } from '../agents/setup-parts.js';
 import { localViews } from '../hooks/session-start.js';
 import { computerId, stateDir } from '../lib/paths.js';
 import { joinedRepo } from '../lib/setup-run.js';
@@ -207,7 +207,7 @@ export function lines({ changes, userSettings, kept, route, platform, floor, ter
       const mate = own.some((x) => x.part === 'first-mate');
       const hook = own.some((x) => x.part === 'hooks');
       const what = [...(hook ? ['checks before each of its actions'] : []), ...(mate ? ['First Mate files'] : [])].join(' and ');
-      out.push(`${label}'s ${what}, in your ${label} folder for every project${mate ? ' (they say to apply only in Wheelhouse projects)' : ' (they do nothing outside a Wheelhouse project)'}`);
+      out.push(`${label}'s ${what}, in your ${label} folder for every project${mate && !hook ? ' (they say to apply only in Wheelhouse projects)' : hook ? ' (they act only in Wheelhouse projects)' : ' (they do nothing outside a Wheelhouse project)'}`);
     }
   } else {
     for (const c of changes.filter((x) => x.what === 'agent' && x.line)) out.push(c.line);
@@ -260,14 +260,14 @@ export function computerCard(options) {
 
 const TERSEST = 3;
 
-function composeFor({ changes, userSettings = {}, kept = [], route = TELEMETRY_ROUTE, platform = process.platform, floor, key = ownKey() }, terse) {
+function composeFor({ changes, userSettings = {}, kept = [], route = TELEMETRY_ROUTE, platform = process.platform, floor, key = ownKey(), chosenLabel = null }, terse) {
   const listed = lines({ changes, userSettings, kept, route, platform, floor, terse });
   // One change to a line, as step 3's card lists its own.
   const head = [`Setup step 6, ${SETUP_TITLES[6]}:`, ...listed.map(asLine), '- Wheelhouse never updates itself: you choose when.'].join('\n');
   // Named without its id, which a card would read as a commit.
   // Windows has no sandbox, and another agent's commands are not in Claude Code's sandbox on any system, so
   // an agent's command could read the key file; the line claims no more than holds.
-  const agentNames = [...new Set(changes.filter((c) => c.what === 'agent').map((c) => c.label))];
+  const agentNames = [...new Set([...changes.filter((c) => c.what === 'agent').map((c) => c.label), ...(chosenLabel ? [chosenLabel] : [])])];
   const who = agentNames.length > 0 ? `${agentNames.join(' and ')}'s commands` : 'an agent\'s commands';
   const open = agentNames.length > 0 || platform === 'win32';
   const win = platform === 'win32';
@@ -352,7 +352,7 @@ export function computerStep({
         if (weak !== '') ctx.say?.(`${SETTLED_LEAD} ${weak}`);
         return { settled: { record: { nothing: true } } };
       }
-      const card = computerCard({ changes, userSettings, kept, route, platform, floor });
+      const card = computerCard({ changes, userSettings, kept, route, platform, floor, chosenLabel: otherAgentChosen(ctx.answers) });
       const restart = changes.some((c) => c.kind === 'env');
       return { changes, card, director: restart ? 'One click, then quit and reopen Claude Desktop' : 'One click' };
     },

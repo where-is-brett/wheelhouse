@@ -736,6 +736,34 @@ test('the signing line says an agent\'s commands could read the key whenever ano
   assert.match(win, /On Windows any agent's commands could read the key behind that mark/);
 });
 
+test('Copilot chosen with no agent changes still says its commands could read the key, on a Mac and on Windows', () => {
+  const base = [{ kind: 'json-key', what: 'retention', key: ['cleanupPeriodDays'], after: RETENTION_DAYS }, { kind: 'json-key', what: 'updates', key: ['minimumVersion'] }];
+  for (const platform of ['darwin', 'win32']) {
+    const full = JSON.stringify(computerCard({ changes: base, platform, floor: '2.1.299', key: true, chosenLabel: 'Copilot' }));
+    if (platform === 'darwin') assert.match(full, /Your clicks are marked as coming from this computer\. Copilot's commands could read the key behind that mark/, platform);
+    else assert.match(full, /On Windows any agent's commands, Copilot's among them, could read the key behind that mark/, platform);
+    assert.doesNotMatch(full, /sandbox keeps agents from reading/, platform);
+    assert.doesNotMatch(full, /Copilot's checks/, platform);
+  }
+});
+
+test('the terse agent line says the checks act only in Wheelhouse projects, and the First Mate files alone say to apply only there', async () => {
+  const { agentComputerChanges } = await import('../../../scripts/agents/setup-parts.js');
+  const root = path.resolve(import.meta.dirname, '..', '..', '..');
+  const agent = agentComputerChanges('copilot', { env: {}, userHome: 'C:\\Users\\firstname.lastname-longer', platform: 'win32', root });
+  const others = [
+    { kind: 'env', what: 'telemetry' },
+    { kind: 'json-key', what: 'retention', key: ['cleanupPeriodDays'], after: RETENTION_DAYS },
+    { kind: 'json-key', what: 'updates', key: ['minimumVersion'] }, { kind: 'json-key', what: 'push', key: ['agentPushNotifEnabled'] },
+  ];
+  const userSettings = { cleanupPeriodDays: 365, minimumVersion: '2.0.0', sandbox: { excludedCommands: ['docker'] } };
+  const both = JSON.stringify(computerCard({ changes: [...others, ...agent], userSettings, platform: 'win32', floor: '2.1.299', key: true }));
+  assert.match(both, /Copilot's checks before each of its actions and First Mate files, in your Copilot folder for every project \(they act only in Wheelhouse projects\)/);
+  assert.doesNotMatch(both, /they say to apply only in Wheelhouse projects/);
+  const mate = JSON.stringify(computerCard({ changes: [...others, ...agent.filter((c) => c.part === 'first-mate')], userSettings, platform: 'win32', floor: '2.1.299', key: true }));
+  assert.match(mate, /they say to apply only in Wheelhouse projects/);
+});
+
 test('when the card is cut, the director\'s own usage settings are counted first and the values they held are left unsaid last', () => {
   const kept = Object.keys(telemetryEnv(47801)).map((name) => ({ name, value: 'x' }));
   const changes = [

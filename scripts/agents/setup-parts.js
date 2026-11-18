@@ -37,7 +37,7 @@ export function agentAsk({ found, project, platform = process.platform }) {
     card: {
       level: 3,
       what: `${others} is installed on this computer as well as Claude Code. Which should build ${project ?? 'this project'} here?`,
-      why: `It is chosen for each computer, and it can be changed later from the First Mate. The chat and cards are the same either way.${platform === 'darwin' ? ' On a Mac, Claude Code keeps its commands from your private files; Copilot\'s commands run without that.' : ''}`,
+      why: `It is chosen for each computer, and it can be changed later from the First Mate. The chat and cards are the same either way.${platform === 'win32' ? '' : ` Claude Code's sandbox keeps its commands from the key behind your clicks and your saved sign-ins; ${others}'s commands run without that.`}`,
       options: names.map((name, i) => ({
         label: labels[i],
         says: name === DEFAULT ? 'Claude Code does the building on this computer, as it does by default.' : `GitHub's ${labels[i]} does the building on this computer, using your ${labels[i]} plan's monthly allowance. Setup adds its checks and reads your plan from your GitHub account.`,
@@ -54,6 +54,12 @@ export function agentChosen(answers) {
   const label = answers?.[AGENT_ANSWER]?.label;
   if (typeof label !== 'string') return null;
   return AGENTS.find((name) => labelOf(name) === label) ?? null;
+}
+
+// The label of the chosen agent when it is not Claude Code, else null.
+export function otherAgentChosen(answers) {
+  const name = agentChosen(answers);
+  return name === null || name === DEFAULT ? null : labelOf(name);
 }
 
 // The `agents` map entries this run sets, for the project's configuration: { "<computer id>": name } for a chosen agent
