@@ -276,8 +276,8 @@ function hideUserinfo(text) {
 // Text git (or its helpers) wrote, with anything that could carry a sign-in taken out: the user or token in an address
 // (hideUserinfo), an Authorization or extra-header value (to the end of its line), a Cookie or Set-Cookie value (to the end of its
 // line), a bare `Bearer` or `Basic` value (`bearer: x` too), a `token` or `client_secret` value after `=` or `:` (bare, to the end of its
-// run of non-space characters, or in quotes), a JSON member named for a password, secret or token (accessToken and id_token too, its value
-// hidden even when its closing quote is missing), a `password=` or `passwd=` value, and anything shaped like a GitLab or GitHub token
+// run of non-space characters, or in quotes), a JSON member, in double or single quotes, named for a password, secret, token, key, authorization or auth (accessToken and id_token too,
+// its value hidden even when its closing quote is missing), a `password:` value, a `secret=`, `api_key:` or `sig=` value, an address with no scheme but a user and password (within 256 characters of it), a `password=` or `passwd=` value, and anything shaped like a GitLab or GitHub token
 // (after a letter too). Safe to apply twice. Every pattern reads each stretch of text once, so a long line costs a pass.
 export function scrubGitText(text) {
   return hideUserinfo(String(text ?? ''))
@@ -290,12 +290,18 @@ export function scrubGitText(text) {
     // A `Basic` value is 8 or more base64 (or base64url) characters, not followed by another, with a digit, an `=`, a `+` or a `/`, or both
     // cases, in it: prose such as "Basic authentication failed" stays.
     .replace(/\b(Basic\s+)([A-Za-z0-9+/=_-]{8,})(?![A-Za-z0-9+/=_-])/gi, (all, lead, token) => (/[0-9=+/]|[a-z][A-Z]|[A-Z][a-z]/.test(token) ? `${lead}${HIDDEN}` : all))
-    // A JSON member: "password": "x", and the other names a secret goes by ("accessToken", "id_token", "client_secret", "api-key"). The
-    // key is read once, between its quotes, and tested for the words afterwards; a value whose closing quote is missing ends at the line.
-    .replace(/("([A-Za-z0-9_-]*)"[ \t]*:[ \t]*)"(?:[^"\\\r\n]|\\.)*"?/g, (all, lead, key) => (/password|passwd|secret|token|api[_-]?key/i.test(key) ? `${lead}"${HIDDEN}"` : all))
+    // A JSON member: "password": "x" or 'password': 'x', and the other names a secret goes by ("accessToken", "id_token", "client_secret",
+    // "api-key", "authorization", "auth"; a dot may be in the name). The key is read once, between its quotes, and tested for the words
+    // afterwards; a value whose closing quote is missing ends at the line.
+    .replace(/(((["'])([A-Za-z0-9_.-]*)\3)[ \t]*:[ \t]*)(["'])(?:(?!\5)[^\\\r\n]|\\.)*\5?/g, (all, lead, _quoted, _q, key, quote) => (/password|passwd|secret|token|api[_-]?key|authorization|^auth$/i.test(key) ? `${lead}${quote}${HIDDEN}${quote}` : all))
     // `token=x`, `token: x`, `token = "x"`, `client_secret=x`, `token= A,B`: a quoted string, or the run of characters up to white space.
     .replace(/((?:token|client_secret)[ \t]*[:=][ \t]*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s&'"]+)/gi, `$1${HIDDEN}`)
-    .replace(/(pass(?:word|wd)\s*=\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    .replace(/(pass(?:word|wd)\s*[=:]\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    // `secret=x`, `api_key: x`, `api-key=x`: a quoted string, or the run of characters up to white space; `sig=x` in a query.
+    .replace(/(\bsecret[ \t]*=[ \t]*|api[-_]?key[ \t]*[:=][ \t]*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s&'"]+)/gi, `$1${HIDDEN}`)
+    .replace(/(\bsig=)[^\s&'"]+/gi, `$1${HIDDEN}`)
+    // An address with no scheme: `user:pass@host/path`, from the start of a word to the last @ in it.
+    .replace(/(^|[\s(<'"])[^\s:@/(<'"]+:(?!\/\/)\S{0,256}@(?=[A-Za-z0-9[])/g, `$1${HIDDEN}@`)
     // GitLab's personal access token, whatever its body, and GitHub's tokens, whatever comes before them (a letter too); and GitLab's
     // other token prefixes (gldt-, glrt-, glcbt-, gloas-, glft-, glptt-, glimt-, glsoat-), by their shape: a body with a digit in it. Whatever
     // comes before, an underscore too, is not part of the token.

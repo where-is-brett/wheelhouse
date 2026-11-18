@@ -13,6 +13,7 @@
 // Nothing here imports host.js (which imports this): the as-is environment and the guard are given by the route.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { wheelhouseHome } from '../lib/paths.js';
@@ -41,6 +42,10 @@ const SKEW_MS = 60 * 1000;
 export const SIGN_IN_OTHER = 'Use another way to connect';
 export const signInOpenLabel = (host) => `Open git's sign-in for ${host}`;
 export const signInRetryLabel = (host) => `I have changed git's sign-in for ${host}`;
+export const signInSignedLabel = (host) => `I have signed git in to ${host}`;
+// The option that carries step 3 on after the director has changed git's sign-in outside setup, for a card that offers no window: where
+// git is signed in as another account, or has no sign-in window of its own. Null for a card that offers git's window.
+export const carryOnLabel = (pending) => (pending.why === 'account' ? signInRetryLabel(pending.host) : pending.gcm ? null : signInSignedLabel(pending.host));
 
 const OTHER_WAY = 'choose another way to connect on step 3\'s card';
 const AGAIN = 'I can open its sign-in again';
@@ -56,11 +61,14 @@ export const STOPPED_LINE = 'All stop is on, so git\'s sign-in was not opened.';
 export const STOPPED_DETAIL = 'Once All stop is lifted, run plan 3 and ask the sign-in card it gives, then run this form.';
 export const STOPPED_OPEN_LINE = 'All stop was turned on while git\'s sign-in was open, so setup stopped waiting and closed it.';
 export const NO_GIT = 'Git is not on this computer yet, so nothing was opened; step 2 installs it, then a fresh Go ahead on step 3\'s card tries again.';
-export const ACCOUNT_LINE = (host) => `Git on this computer is signed in to ${host} as a different account from the one that owns the project, and its sign-in window would not open for that. Sign git out of ${host}, or in as the owning account, outside setup, then say Go ahead on step 3; or ${OTHER_WAY} (recommended).`;
+export const ACCOUNT_LINE = (host) => `Git on this computer is signed in to ${host} as a different account from the one that owns the project, and its sign-in window would not open for that. Sign git out of ${host}, or in as the owning account, outside setup, then choose '${signInRetryLabel(host)}' on the card that follows; or ${OTHER_WAY} (recommended).`;
+export const NO_WINDOW_LINE = (host) => `Git on this computer has no sign-in window of its own that setup can open for ${host}, so nothing was opened. Sign git in to ${host} outside setup, then choose '${signInSignedLabel(host)}' on the card that follows, or ${OTHER_WAY} (recommended).`;
 export const NOT_RECORDED = 'Setup could not record that it was opening git\'s sign-in, so nothing was opened. A fresh Go ahead on step 3\'s card tries again.';
 export const signedInLine = (host) => `Git reached ${host} and can see the project. Setup carries on with step 3.`;
 export const SIGN_IN_ONCE_DETAIL = 'Run plan 3: the sign-in card is asked afresh, once. If the same thing fails a second time, stop, tell the director plainly, and recommend another way to connect on step 3\'s card.';
-export const failedLine = (host, said, { timedOut = false } = {}) => (timedOut
+export const failedLine = (host, said, { timedOut = false, gcm = true } = {}) => (!gcm
+  ? `Git still could not reach ${host}${said === '' ? '' : ` (git said: ${said})`}. Next: sign git in to ${host} outside setup, then choose '${signInSignedLabel(host)}' on the card that follows, or ${OTHER_WAY} (recommended).`
+  : timedOut
   ? `Git's sign-in for ${host} was not finished within ${SIGN_IN_WAIT_MS / 60000} minutes, so setup stopped waiting. Next: ${AGAIN}, or ${OTHER_WAY}.`
   : `Git still could not reach ${host}${said === '' ? '' : ` (git said: ${said})`}. Next: ${AGAIN}; if its window asked for a token, or a password you don't use there, close it and ${OTHER_WAY}.`);
 const NEUTRAL_UNSAFE = `Setup could not make sure git would run where no project's settings reach it, so nothing was opened; ${AGAIN}, or ${OTHER_WAY}.`;
@@ -79,26 +87,33 @@ export function signInRecord({ address, base = null, why = 'sign-in', search = f
 }
 
 // Whether a value of git's `credential.helper` is Git Credential Manager (its own sign-in window).
-const isManager = (value) => /^(?:manager|manager-core)$/i.test(value.trim()) || /git-credential-manager/i.test(value);
+// A value that starts with `!` is a shell command, not the manager.
+const isManager = (value) => !value.trim().startsWith('!') && (/^(?:manager|manager-core)$/i.test(value.trim()) || /git-credential-manager/i.test(value));
 
 // Whether the director's own git here has a sign-in window of its own to open: any value of `credential.helper` (an empty one clears
 // those before it) is Git Credential Manager. Read from a folder of Wheelhouse's own that is no repository and has none above it, under
 // the same ceiling and the same look at git's settings as the sign-in itself; anything unclear reads as no window.
-export async function gitHasSignInWindow({ run = realRun, gitPath = 'git', home = wheelhouseHome() }) {
+export async function gitHasSignInWindow({ run = realRun, gitPath = 'git', home = wheelhouseHome(), url = null, platform = process.platform }) {
   let neutral = null;
   try {
     const root = path.resolve(home);
     fs.mkdirSync(root, { recursive: true });
     neutral = fs.mkdtempSync(path.join(root, 'sign-in-'));
-    const env = { GIT_TERMINAL_PROMPT: '0', GIT_CEILING_DIRECTORIES: root };
-    const inside = await run(gitPath, ['rev-parse', '--git-dir'], { cwd: neutral, env, baseEnv: withoutGitVars(), timeoutMs: SETTINGS_MS });
+    const env = signInEnv({ GIT_TERMINAL_PROMPT: '0', GIT_CEILING_DIRECTORIES: root }, { platform });
+    const baseEnv = signInEnv(withoutGitVars(), { platform });
+    const inside = await run(gitPath, ['rev-parse', '--git-dir'], { cwd: neutral, env, baseEnv, timeoutMs: SETTINGS_MS });
     if (inside.code === 0 || inside.timedOut === true) return false;
-    await refuseUnlistedSettings({ run, gitPath, cwd: neutral, env: { GIT_CEILING_DIRECTORIES: root } });
-    const got = await run(gitPath, ['config', '--get-all', 'credential.helper'], { cwd: neutral, env, baseEnv: withoutGitVars(), timeoutMs: SETTINGS_MS });
+    await refuseUnlistedSettings({ run, gitPath, cwd: neutral, env: signInEnv({ GIT_CEILING_DIRECTORIES: root }, { platform }) });
+    const got = await run(gitPath, ['config', '--get-all', 'credential.helper'], { cwd: neutral, env, baseEnv, timeoutMs: SETTINGS_MS });
     if (got.code !== 0) return false;
     let helpers = [];
     for (const value of String(got.stdout ?? '').replace(/\r?\n$/, '').split(/\r?\n/)) helpers = value.trim() === '' ? [] : [...helpers, value];
-    return helpers.some(isManager);
+    if (helpers.some(isManager)) return true;
+    // A helper named for the address (`credential.<url>.helper`) counts too: the most specific one git matches to it.
+    if (plainHttps(url) === null) return false;
+    const scoped = await run(gitPath, ['config', '--get-urlmatch', 'credential.helper', url], { cwd: neutral, env, baseEnv, timeoutMs: SETTINGS_MS });
+    if (scoped.code !== 0) return false;
+    return String(scoped.stdout ?? '').split(/\r?\n/).some((value) => value.trim() !== '' && isManager(value));
   } catch {
     return false;
   } finally {
@@ -147,12 +162,16 @@ export function signInOutdated(pending, { asIs, url, base }) {
 
 // Step 3's card for it, as a question (an id of its own to each record, so a fresh attempt is asked afresh). Where git is signed in as
 // another account, git's own window would not open (it reuses that account), so no window is offered: the card asks the director to
-// change git's sign-in outside setup, or to choose another way (recommended). Where git has no window of its own (`gcm` false), the other
-// way is recommended too, and the window is not promised.
-export function signInAsk(pending) {
+// change git's sign-in outside setup, or to choose another way (recommended). Where git has no window of its own (`gcm` false), the card has
+// the same shape: sign git in outside setup, then click, or choose another way (recommended); no window is offered. `platform` is the
+// computer the card is shown on (where to sign git out differs).
+export function signInAsk(pending, { platform = process.platform } = {}) {
   const account = pending.why === 'account';
   const open = signInOpenLabel(pending.host);
   const retry = signInRetryLabel(pending.host);
+  const signed = signInSignedLabel(pending.host);
+  // Where to sign git out, by the computer the card is shown on.
+  const where = platform === 'win32' ? ' (in Windows\' Credential Manager, under Windows Credentials)' : platform === 'darwin' ? ' (in Keychain Access)' : '';
   const id = `git-sign-in-${crypto.createHash('sha256').update(`${pending.id}\n${pending.address}\n${pending.at}`).digest('hex').slice(0, 10)}`;
   const otherSays = 'Step 3\'s connection card comes back, to choose a way that needs nothing from your git\'s sign-in.';
   if (account) {
@@ -163,7 +182,24 @@ export function signInAsk(pending) {
         what: `Git on this computer is signed in to ${pending.host} as a different account from the one that owns the project, so setup could not reach it.`,
         why: 'You chose to use your own git, so setup relies on its sign-in and makes none. Git would use the same account again and open no window, so setup opens none.',
         options: [
-          { label: retry, says: `Do this first: sign git out of ${pending.host}, or sign it in as the account that owns the project, outside setup. Then say Go ahead on step 3.` },
+          { label: retry, says: `Do this first: sign git out of ${pending.host}${where}, or sign it in as the account that owns the project, outside setup. Then click this, and setup carries on with step 3.` },
+          { label: SIGN_IN_OTHER, says: otherSays },
+        ],
+        recommend: SIGN_IN_OTHER,
+        because: 'it works without any change to git\'s sign-in',
+        meanwhile: 'Nothing more runs on step 3 until you choose.',
+      },
+    };
+  }
+  if (!pending.gcm) {
+    return {
+      id,
+      card: {
+        level: 2,
+        what: `Git on this computer isn't signed in to ${pending.host}, so setup could not reach the project there.`,
+        why: 'You chose to use your own git, so setup relies on its sign-in and makes none. Git on this computer does not seem to have a sign-in window of its own, so setup opens none.',
+        options: [
+          { label: signed, says: `Do this first: sign git in to ${pending.host}, outside setup. Then click this, and setup carries on with step 3.` },
           { label: SIGN_IN_OTHER, says: otherSays },
         ],
         recommend: SIGN_IN_OTHER,
@@ -177,20 +213,16 @@ export function signInAsk(pending) {
     card: {
       level: 2,
       what: `Git on this computer isn't signed in to ${pending.host}, so setup could not reach the project there.`,
-      why: pending.gcm
-        ? 'You chose to use your own git, so setup relies on its sign-in and makes none. Git opens its own window for it, which may take a minute and may open behind other windows, and setup never sees what you type there.'
-        : 'You chose to use your own git, so setup relies on its sign-in and makes none. Git on this computer does not seem to have a sign-in window of its own, so none may open, and setup never sees what you type if one does.',
+      why: 'You chose to use your own git, so setup relies on its sign-in and makes none. Git opens its own window for it, which may take a minute and may open behind other windows, and setup never sees what you type there.',
       options: [
         {
           label: open,
-          says: pending.gcm
-            ? 'Git\'s sign-in window opens (it may take a minute, and may open behind other windows). Sign in, then setup carries on with step 3.'
-            : 'Git is asked to sign in, but no window may open. If one does, sign in there, then setup carries on with step 3.',
+          says: 'Git\'s sign-in window opens (it may take a minute, and may open behind other windows). Sign in, then setup carries on with step 3. If it asks for a token, close it and choose another way to connect.',
         },
         { label: SIGN_IN_OTHER, says: otherSays },
       ],
-      recommend: pending.gcm ? open : SIGN_IN_OTHER,
-      because: pending.gcm ? 'it is the way you chose, and nothing else changes' : 'your git has no sign-in window of its own to open here',
+      recommend: open,
+      because: 'it is the way you chose, and nothing else changes',
       meanwhile: 'Nothing more runs on step 3 until you choose.',
     },
   };
@@ -230,7 +262,17 @@ export function connectionProblem({ pending, run, remoteRepo = null, gitlabHosts
   return `the project ${project} is none of this run's step 3 projects`;
 }
 
-const withoutTrace = (env) => Object.fromEntries(Object.entries(env).filter(([name]) => !/^GCM_(?:TRACE|DEBUG)/i.test(name)));
+// What the credential helper reads from the environment is the director's own files, not a variable a session or a project set: every GCM_*
+// variable is dropped except those named in `keep` (the one setup sets), the home folder is the account's own (from the system, not from
+// HOME), and XDG_CONFIG_HOME, which would move git's and the helper's settings, is gone.
+export function signInEnv(env, { platform = process.platform, keep = [] } = {}) {
+  const out = Object.fromEntries(Object.entries(env).filter(([name]) => !/^GCM_/i.test(name) || keep.includes(name)));
+  for (const name of Object.keys(out)) if (/^XDG_CONFIG_HOME$/i.test(name)) delete out[name];
+  const home = os.userInfo().homedir;
+  out.HOME = home;
+  if (platform === 'win32') out.USERPROFILE = home;
+  return out;
+}
 
 // Opens git's sign-in for the pending address, from a neutral folder, and gives { ok: true, line } once git reaches the project, or
 // { ok: false, refused, detail? } (`detail` is for the agent alone, scrubbed). `route` gives what only host.js knows: `reachEnv({ host,
@@ -261,11 +303,16 @@ export async function signInNow({
   const cleared = (reason) => writes({ signIn: null, cleared: reason });
   // Where git is signed in as another account, git's window would not open: no sign-in is opened for it.
   if (pending.why === 'account') return refuse(ACCOUNT_LINE(pending.host));
-  const ask = signInAsk(pending);
+  // Nor where git has no window of its own: the card offers none to click.
+  if (!pending.gcm) return refuse(NO_WINDOW_LINE(pending.host));
+  const ask = signInAsk(pending, { platform });
   const click = answers[`3.${ask.id}`];
   if (click?.label !== signInOpenLabel(pending.host)) return refuse(NOT_CHOSEN, NOT_CHOSEN_DETAIL);
   const used = (Array.isArray(journalRun.changes) ? journalRun.changes : []).some((c) => c?.kind === 'answer' && c.target === SIGN_IN_USED_TARGET && c.after?.used === ask.id);
-  if (used) return refuse(CLICK_USED, CLICK_DETAIL);
+  if (used) {
+    kept();
+    return refuse(CLICK_USED, CLICK_DETAIL);
+  }
   const clicked = Date.parse(click.at);
   const age = now().getTime() - clicked;
   if (!Number.isFinite(clicked) || age > CLICK_FRESH_MS || age < -SKEW_MS || clicked <= Date.parse(pending.at)) {
@@ -274,14 +321,15 @@ export async function signInNow({
   }
   const problem = connectionProblem({ pending, run: journalRun, remoteRepo: route.remoteRepo, gitlabHosts: route.gitlabHosts });
   if (problem !== null) return refuse(cleared('not the connection') ? NOT_THE_CONNECTION : NOT_THE_CONNECTION_UNCLEARED, problem);
+  // The route's total time starts before the first thing it looks at.
+  const began = Date.now();
+  const left = () => totalMs - (Date.now() - began);
   const git = await route.findGit();
   if (!git?.ok || typeof git.path !== 'string') {
     cleared('no git');
     return refuse(NO_GIT);
   }
   const host = pending.host;
-  const began = Date.now();
-  const left = () => totalMs - (Date.now() - began);
   // Every call before the window is held to what is left of the route's total time.
   const limited = async (file, args, options = {}) => {
     const remaining = left();
@@ -312,22 +360,22 @@ export async function signInNow({
       given = await route.guard({ run: limited, gitPath: git.path, cwd: neutral, env: { ...reach, ...ceiling }, url: pending.address, timeoutMs: SETTINGS_MS });
     } catch (error) {
       kept();
-      const line = typeof error?.lineFor === 'function' ? error.lineFor({ stop: 'nothing was opened', again: AGAIN }) : (error instanceof Error ? error.message : SETTINGS_UNCHECKED);
-      return refuse(line, error?.detail);
+      const line = typeof error?.lineFor === 'function' ? error.lineFor({ stop: 'nothing was opened', again: AGAIN }) : SETTINGS_UNCHECKED;
+      return refuse(line, error?.detail ?? (error instanceof Error ? error.message : undefined));
     }
     if (stopped()) return refuse(STOPPED_LINE, STOPPED_DETAIL);
     // The click opens it once: marked before anything opens, and nothing opens if the mark cannot be kept.
     if (!writes({ used: ask.id }, SIGN_IN_USED_TARGET)) return refuse(NOT_RECORDED);
     // The one change from step 3's calls: git's own window may open. Git itself is still told not to prompt in a terminal, and nothing
-    // here traces what the credential helper does. The window is not hidden on Windows, and off Windows the call leads a process group of
-    // its own, ended with it, so a window git's helper opened does not outlast the wait or All stop.
-    const opened = withoutTrace({ ...given, GCM_INTERACTIVE: 'auto' });
+    // here traces what the credential helper does. Off Windows the call leads a process group of its own, ended with it, so a window git's
+    // helper opened does not outlast the wait or All stop. (windowsHide only stops a console window, never the helper's own window.)
+    const opened = signInEnv({ ...given, GCM_INTERACTIVE: 'auto' }, { platform, keep: ['GCM_INTERACTIVE'] });
     const controller = new AbortController();
     const watch = setInterval(() => { if (stopped()) controller.abort(); }, STOP_LOOK_MS);
     let got;
     try {
       got = await limited(git.path, ['ls-remote', '--heads', '--end-of-options', pending.address], {
-        cwd: neutral, env: opened, baseEnv: withoutTrace(withoutGitVars()), timeoutMs, signal: controller.signal, windowsHide: false, ownGroup: true, platform,
+        cwd: neutral, env: opened, baseEnv: signInEnv(withoutGitVars(), { platform }), timeoutMs, signal: controller.signal, ownGroup: true, platform,
       });
     } finally {
       clearInterval(watch);

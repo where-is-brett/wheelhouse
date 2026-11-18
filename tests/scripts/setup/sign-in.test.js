@@ -8,12 +8,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  signInNow, pendingSignIn, signInAsk, signInRecord, signInOpenLabel, signInRetryLabel, signInOutdated, connectionProblem, gitHasSignInWindow, SIGN_IN_TARGET,
+  signInNow, pendingSignIn, signInAsk, signInRecord, signInOpenLabel, signInRetryLabel, signInSignedLabel, carryOnLabel, signInEnv, signInOutdated, connectionProblem, gitHasSignInWindow, SIGN_IN_TARGET,
   SIGN_IN_USED_TARGET, SIGN_IN_OTHER, SIGN_IN_WAIT_MS, SIGN_IN_TOTAL_MS, NO_SIGN_IN_ADDRESS, NOT_CHOSEN, NOT_THE_CONNECTION, STOPPED_LINE,
-  STOPPED_OPEN_LINE, NO_GIT, ACCOUNT_LINE, CLICK_USED, CLICK_STALE, NOT_RECORDED, signedInLine, failedLine,
+  STOPPED_OPEN_LINE, NO_GIT, ACCOUNT_LINE, NO_WINDOW_LINE, CLICK_USED, CLICK_STALE, NOT_RECORDED, signedInLine, failedLine,
 } from '../../../scripts/setup/sign-in.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { asIsReachEnv, guardAsIsReach } from '../../../scripts/setup/host.js';
+import os from 'node:os';
 import { scrubGitText } from '../../../scripts/setup/git.js';
 import { CLICK_FRESH_MS } from '../../../scripts/lib/setup-numbers.js';
 import { startRun, addChanges, readJournal, markStep } from '../../../scripts/setup/journal.js';
@@ -123,12 +124,22 @@ test('the card offers git\'s sign-in for the host and another way, composes as a
   assert.equal(composed.options.filter((o) => /recommended/i.test(`${o.label} ${o.description}`)).length, 1);
   assert.ok(!/recommended/i.test(composed.options[0].label));
   assert.notEqual(signInAsk(pendingSignIn(runOf(record({ id: 'chg_9', at: '2026-11-18T02:00:00.000Z' })))).id, id);
-  // Where git has no sign-in window of its own, the other way is recommended and no window is promised.
-  const none = signInAsk(pendingSignIn(runOf(record({ gcm: false })))).card;
-  assert.equal(none.recommend, SIGN_IN_OTHER);
-  assert.ok(!/opens its own window|Git opens its own window/.test(`${none.why} ${none.options[0].says}`));
-  assert.match(none.options[0].says, /no window may open/);
-  composeCard({ ...none, kind: 'question', suggest: false });
+  assert.match(card.options[0].says, /If it asks for a token, close it and choose another way to connect\.$/);
+});
+
+test('where git has no sign-in window of its own the card has the account card\'s shape: no Open, a click that carries step 3 on, and the other way recommended', () => {
+  const pending = pendingSignIn(runOf(record({ gcm: false })));
+  const { card } = signInAsk(pending);
+  assert.deepEqual(card.options.map((o) => o.label), ['I have signed git in to gitlab.com', SIGN_IN_OTHER]);
+  assert.equal(card.options[0].label, signInSignedLabel('gitlab.com'));
+  assert.ok(!card.options.some((o) => o.label === signInOpenLabel('gitlab.com')), 'no Open');
+  assert.equal(card.recommend, SIGN_IN_OTHER);
+  assert.equal(card.options[0].says, 'Do this first: sign git in to gitlab.com, outside setup. Then click this, and setup carries on with step 3.');
+  assert.ok(!/window/i.test(`${card.options[0].says} ${card.options[1].says}`));
+  assert.equal(carryOnLabel(pending), signInSignedLabel('gitlab.com'));
+  assert.equal(carryOnLabel(pendingSignIn(runOf(record({ why: 'account' })))), signInRetryLabel('gitlab.com'));
+  assert.equal(carryOnLabel(pendingSignIn(runOf(record()))), null);
+  composeCard({ ...card, kind: 'question', suggest: false });
 });
 
 test('where git is signed in as another account no window is offered: the card says to change git\'s sign-in outside setup, and recommends another way', () => {
@@ -138,7 +149,13 @@ test('where git is signed in as another account no window is offered: the card s
   assert.deepEqual(card.options.map((o) => o.label), [signInRetryLabel('gitlab.com'), SIGN_IN_OTHER]);
   assert.ok(!card.options.some((o) => o.label === signInOpenLabel('gitlab.com')), 'no Open');
   assert.equal(card.recommend, SIGN_IN_OTHER);
-  assert.match(card.options[0].says, /sign git out of gitlab\.com, or sign it in as the account that owns the project, outside setup\. Then say Go ahead on step 3/);
+  assert.equal(card.options[0].says, 'Do this first: sign git out of gitlab.com (in Keychain Access), or sign it in as the account that owns the project, outside setup. Then click this, and setup carries on with step 3.');
+  assert.doesNotMatch(card.options[0].says, /Go ahead/);
+  // Where to sign git out depends on the computer the card is shown on.
+  assert.match(signInAsk(pending, { platform: 'win32' }).card.options[0].says, /^Do this first: sign git out of gitlab\.com \(in Windows' Credential Manager, under Windows Credentials\), or sign it in as the account/);
+  const elsewhere = signInAsk(pending, { platform: 'linux' }).card.options[0].says;
+  assert.equal(elsewhere, 'Do this first: sign git out of gitlab.com, or sign it in as the account that owns the project, outside setup. Then click this, and setup carries on with step 3.');
+  assert.equal(signInAsk(pending, { platform: 'win32' }).id, signInAsk(pending, { platform: 'darwin' }).id);
   composeCard({ ...card, kind: 'question', suggest: false });
 });
 
@@ -201,8 +218,8 @@ test('it lists the address\'s branches with the director\'s own git from a folde
   assert.equal(listed.env.GCM_INTERACTIVE, 'auto', 'its own window may open');
   assert.equal(listed.timeoutMs, 1234);
   assert.ok(listed.signal instanceof AbortSignal, 'All stop can end the wait');
-  // Git's window is not hidden on Windows, and off Windows the call leads a process group of its own, ended with it.
-  assert.equal(listed.windowsHide, false);
+  // Off Windows the call leads a process group of its own, ended with it; windowsHide is left at its default (it hides a console, not git's window).
+  assert.equal(listed.windowsHide, undefined);
   assert.equal(listed.ownGroup, true);
   assert.equal(listed.env.GIT_ALLOW_PROTOCOL, 'https');
   assert.equal(listed.env.GIT_CONFIG_GLOBAL, undefined, 'the director\'s own settings are read');
@@ -270,6 +287,13 @@ test('All stop coming on while git waits ends it, and it says so, in a line of i
   assert.deepEqual(records.map((r) => r.target), [SIGN_IN_USED_TARGET, SIGN_IN_TARGET]);
   assert.equal(pendingSignIn(runOf(record(), ...records)).address, ADDRESS);
   assert.notEqual(signInAsk(pendingSignIn(runOf(record(), ...records.map((r, i) => ({ ...r, id: `chg_n${i}` }))))).id, signInAsk(pendingSignIn(runOf(record()))).id);
+});
+
+test('a failure line where git has no window never offers to open one, and says the card to choose', () => {
+  const line = failedLine('gitlab.com', 'fatal: nope', { gcm: false });
+  assert.equal(line, 'Git still could not reach gitlab.com (git said: fatal: nope). Next: sign git in to gitlab.com outside setup, then choose \'I have signed git in to gitlab.com\' on the card that follows, or choose another way to connect on step 3\'s card (recommended).');
+  assert.ok(!/open|window/i.test(failedLine('gitlab.com', '', { gcm: false, timedOut: true })));
+  assert.match(failedLine('gitlab.com', 'x', { gcm: true }), /I can open its sign-in again/);
 });
 
 test('git\'s failure is said with what git said (scrubbed, never its output), the next step, and a new record so the card is asked afresh', async () => {
@@ -410,9 +434,33 @@ test('where git is signed in as another account nothing is opened: the line says
   const g = fakeGit();
   const { got, records } = await attempt(run, g, { answers: chosen(pendingSignIn(run)) });
   assert.deepEqual({ ok: got.ok, refused: got.refused }, { ok: false, refused: ACCOUNT_LINE('gitlab.com') });
-  assert.match(got.refused, /signed in to gitlab\.com as a different account[^]*Sign git out of gitlab\.com, or in as the owning account, outside setup, then say Go ahead on step 3; or choose another way to connect on step 3's card \(recommended\)/);
+  assert.match(got.refused, /signed in to gitlab\.com as a different account[^]*Sign git out of gitlab\.com, or in as the owning account, outside setup, then choose 'I have changed git's sign-in for gitlab\.com' on the card that follows; or choose another way to connect on step 3's card \(recommended\)/);
   assert.equal(g.calls.length, 0);
   assert.equal(records.length, 0);
+});
+
+test('where git has no sign-in window of its own the route refuses to open one, and no git runs', async () => {
+  const run = runOf(record({ gcm: false }));
+  const g = fakeGit();
+  const { got, records } = await attempt(run, g, { answers: { [`3.${signInAsk(pendingSignIn(run)).id}`]: { label: signInOpenLabel('gitlab.com'), at: '2026-11-18T01:01:00.000Z' } } });
+  assert.deepEqual({ ok: got.ok, refused: got.refused }, { ok: false, refused: NO_WINDOW_LINE('gitlab.com') });
+  assert.match(got.refused, /^Git on this computer has no sign-in window of its own[^]*Sign git in to gitlab\.com outside setup, then choose 'I have signed git in to gitlab\.com' on the card that follows, or choose another way to connect on step 3's card \(recommended\)\.$/);
+  assert.equal(g.calls.length, 0);
+  assert.equal(records.length, 0);
+});
+
+test('step 3\'s plan goes on after a click on the no-window card, as it does for the account card, and asks a card again for a fresh record', async () => {
+  for (const why of ['sign-in', 'account']) {
+    await withProject(async ({ folder, answer, plan }) => {
+      const run = startRun({ folder, now: () => T0 });
+      addChanges(run.id, [made(), record({ at: T0.toISOString(), gcm: false, why })]);
+      const asked = await plan(3);
+      assert.match(asked.ask.card.options[0].label, /^I have (?:signed git in to|changed git's sign-in for) gitlab\.com$/);
+      await answer(asked.ask.card, asked.ask.card.options[0].label, { at: new Date(T0.getTime() + 30 * 1000) });
+      const next = await plan(3);
+      assert.ok(!String(next.ask?.id ?? next.ask?.card?.id ?? '').startsWith('git-sign-in-'), `${why}: plan 3 carries on`);
+    }, { connected: false });
+  }
 });
 
 test('a click opens git\'s sign-in once: it must be fresh and newer than the record, is marked used before anything opens, and a mark that cannot be kept stops it', async () => {
@@ -434,8 +482,15 @@ test('a click opens git\'s sign-in once: it must be fresh and newer than the rec
   // Used: a mark for this card refuses, and nothing opens.
   const marked = { id: 'chg_u', step: 3, kind: 'answer', target: SIGN_IN_USED_TARGET, before: null, after: { used: signInAsk(pending).id } };
   const used = fakeGit();
-  assert.equal((await attempt(runOf(record(), marked), used)).got.refused, CLICK_USED);
+  const usedTry = await attempt(runOf(record(), marked), used);
+  assert.equal(usedTry.got.refused, CLICK_USED);
   assert.equal(used.calls.length, 0);
+  // A used marker with no newer record keeps a fresh record, so the next plan 3 asks a new card, and a click on that is accepted.
+  assert.deepEqual(usedTry.records.map((r) => r.target), [SIGN_IN_TARGET]);
+  const fresh = pendingSignIn(runOf(record(), marked, { ...usedTry.records[0], id: 'chg_f', after: { signIn: { ...usedTry.records[0].after.signIn, at: '2026-11-18T01:02:00.000Z' } } }));
+  assert.notEqual(signInAsk(fresh).id, signInAsk(pending).id, 'a new card id');
+  const reopened = await attempt(runOf(record(), marked, { id: 'chg_f', step: 3, kind: 'answer', target: SIGN_IN_TARGET, before: null, after: { signIn: { ...usedTry.records[0].after.signIn, at: '2026-11-18T01:02:00.000Z' } } }), fakeGit(), { answers: chosen(fresh, '2026-11-18T01:03:00.000Z') });
+  assert.equal(reopened.got.ok, true, 'Open on the new card is accepted');
   // The mark is kept before git is asked; if it cannot be, git is not asked.
   const order = [];
   const g = fakeGit({ during: () => order.push('asked') });
@@ -506,13 +561,86 @@ test('the sign-in window is read from git\'s credential helpers: Git Credential 
   }));
   assert.equal(await helpers('manager\n'), true);
   assert.equal(await helpers('osxkeychain\nmanager-core\n'), true);
-  assert.equal(await helpers('!"/usr/local/share/gcm-core/git-credential-manager" x\n'), true);
+  assert.equal(await helpers('!"/usr/local/share/gcm-core/git-credential-manager" x\n'), false, 'a shell command is not the manager');
+  assert.equal(await helpers('/usr/local/share/gcm-core/git-credential-manager\n'), true);
   assert.equal(await helpers('osxkeychain\n'), false);
   assert.equal(await helpers('manager\n\nosxkeychain\n'), false);
   assert.equal(await helpers('', { code: 1 }), false);
   // Where the folder sits in a repository, or the settings are not allowed, it reads as none.
   assert.equal(await as(shortHome(), async () => gitHasSignInWindow({ home: process.env.WHEELHOUSE_HOME, run: async () => ({ code: 0, stdout: '.git\n', stderr: '' }) })), false);
   assert.equal(await as(shortHome(), async () => gitHasSignInWindow({ home: process.env.WHEELHOUSE_HOME, run: async () => { throw new Error('no git'); } })), false);
+});
+
+test('a helper named for the address (credential.<url>.helper) counts too', async () => {
+  const seen = [];
+  const read = async (scoped, url = ADDRESS) => as(shortHome(), async () => gitHasSignInWindow({
+    gitPath: 'git', home: path.join(process.env.WHEELHOUSE_HOME, 'h'), url,
+    run: async (file, args) => {
+      seen.push(args);
+      if (args[0] === 'rev-parse') return { code: 128, stdout: '', stderr: '' };
+      if (args.includes('--name-only')) return { code: 0, stdout: '', stderr: '' };
+      if (args.includes('--get-urlmatch')) return { code: scoped === null ? 1 : 0, stdout: scoped ?? '', stderr: '' };
+      return { code: 0, stdout: 'osxkeychain\n', stderr: '' };
+    },
+  }));
+  assert.equal(await read('manager\n'), true);
+  assert.equal(await read('!git-credential-manager\n'), false);
+  assert.equal(await read('cache\n'), false);
+  assert.equal(await read(null), false);
+  assert.equal(await read('manager\n', null), false, 'no address, no scoped read');
+  assert.ok(seen.some((a) => a.join(' ') === `config --get-urlmatch credential.helper ${ADDRESS}`));
+});
+
+test('the sign-in\'s environment drops every GCM variable but the one setup sets, takes HOME from the account, and drops XDG_CONFIG_HOME', async () => {
+  const planted = { GCM_CREDENTIAL_STORE: 'plaintext', GCM_TRACE: '1', gcm_authority: 'x', XDG_CONFIG_HOME: '/evil', HOME: '/evil', USERPROFILE: '/evil', GCM_INTERACTIVE: 'never', KEEP: 'y' };
+  const home = os.userInfo().homedir;
+  const out = signInEnv(planted, { platform: 'win32', keep: ['GCM_INTERACTIVE'] });
+  assert.deepEqual(out, { GCM_INTERACTIVE: 'never', KEEP: 'y', HOME: home, USERPROFILE: home });
+  assert.deepEqual(signInEnv(planted, { platform: 'darwin' }), { KEEP: 'y', HOME: home, USERPROFILE: '/evil' });
+  // Through the route: planted in the process environment and in the as-is environment, none reaches the sign-in call.
+  const before = { ...process.env };
+  Object.assign(process.env, { GCM_CREDENTIAL_STORE: 'plaintext', GCM_TRACE: '1', XDG_CONFIG_HOME: '/evil' });
+  try {
+    const g = fakeGit();
+    await attempt(runOf(record()), g, { routeGiven: { reachEnv: (o) => ({ ...asIsReachEnv(o), GCM_CREDENTIAL_STORE: 'plaintext', XDG_CONFIG_HOME: '/evil' }) } });
+    const listed = listing(g);
+    for (const env of [listed.env, listed.baseEnv]) {
+      assert.ok(!Object.keys(env).some((k) => /^GCM_/i.test(k) && k !== 'GCM_INTERACTIVE'), JSON.stringify(Object.keys(env)));
+      assert.equal(env.XDG_CONFIG_HOME, undefined);
+      assert.equal(env.HOME, home);
+    }
+    assert.equal(listed.env.GCM_INTERACTIVE, 'auto');
+    // The look at the credential helpers too.
+    const seenEnvs = [];
+    await as(shortHome(), async () => gitHasSignInWindow({ gitPath: 'git', home: path.join(process.env.WHEELHOUSE_HOME, 'h'), run: async (file, args, options) => { if (args.includes('credential.helper')) seenEnvs.push(options); return args[0] === 'rev-parse' ? { code: 128, stdout: '', stderr: '' } : { code: 0, stdout: '', stderr: '' }; } }));
+    assert.equal(seenEnvs.length, 1, 'the read of the helpers');
+    for (const { env, baseEnv } of seenEnvs) for (const e of [env, baseEnv]) {
+      assert.ok(!Object.keys(e ?? {}).some((k) => /^GCM_/i.test(k)));
+      assert.equal(e?.XDG_CONFIG_HOME, undefined);
+      assert.equal(e?.HOME, home);
+    }
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in before)) delete process.env[k];
+    Object.assign(process.env, before);
+  }
+});
+
+test('a guard failure with no line of its own is refused in the settings line, and the scrubbed message is the detail', async () => {
+  const g = fakeGit();
+  const { got } = await attempt(runOf(record()), g, { routeGiven: { guard: async () => { throw new Error('boom https://u:pw@gitlab.com/x'); } } });
+  assert.equal(got.refused, 'Setup could not check git\'s settings before opening its sign-in, so nothing was opened; I can open its sign-in again, or choose another way to connect on step 3\'s card.');
+  assert.equal(got.detail, 'boom https://[hidden]@gitlab.com/x');
+});
+
+test('the route\'s total time starts before git is looked for', async () => {
+  let slept = 0;
+  const g = fakeGit();
+  const { got } = await attempt(runOf(record()), g, {
+    totalMs: 50, routeGiven: { findGit: async () => { await new Promise((r) => { setTimeout(r, 80); }); slept += 1; return { ok: true, path: 'git' }; } },
+  });
+  assert.equal(slept, 1);
+  assert.equal(got.ok, false);
+  assert.ok(!g.calls.some((c) => c.args[0] === 'ls-remote' && c.args.includes('--heads') && c.timeoutMs > 0), 'no wait is left to give git');
 });
 
 test('two sign-ins for one run do not open at once, and a waiting one counts the helper as busy', async () => {
@@ -534,6 +662,7 @@ test('two sign-ins for one run do not open at once, and a waiting one counts the
     const second = await routes['/setup/sign-in']({ folder });
     assert.equal(second.ok, false);
     assert.match(second.refused, /already open for this setup/);
+  assert.equal(second.detail, 'Wait for the open sign-in\'s line; do not run plan 3 or this form again until it comes.');
     assert.equal(g.calls.filter((c) => c.args[0] === 'ls-remote' && c.args.includes('--heads')).length, 1);
     release();
     assert.equal((await first).ok, true);

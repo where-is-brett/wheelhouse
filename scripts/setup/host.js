@@ -126,7 +126,7 @@ import {
   PROFILE_TARGET,
 } from './own-app.js';
 import { readJournal, newId } from './journal.js';
-import { SIGN_IN_TARGET, SIGN_IN_OTHER, pendingSignIn, signInAsk, signInRecord, signInRetryLabel, gitHasSignInWindow, signInOutdated } from './sign-in.js';
+import { SIGN_IN_TARGET, SIGN_IN_OTHER, pendingSignIn, signInAsk, signInRecord, signInRetryLabel, signInSignedLabel, carryOnLabel, gitHasSignInWindow, signInOutdated } from './sign-in.js';
 import { setupGit, setupGitEnv, keyedGitEnv, refuseUnlistedSettings, reaching, gitFailure, gitSaid, scrubGitText, endOf, DetailedError } from './git.js';
 
 export { SIGN_IN_TARGET };
@@ -1640,12 +1640,12 @@ export const ownSignInFailure = (what, url, record = () => {}, { base = null, jo
   if (kind === 'sign-in' && secure && keep('sign-in')) {
     return gcm
       ? `${lead} Next: I can open git's sign-in for ${host} (its window may take a minute, and may open behind other windows); after you sign in there, setup carries on with step 3. Or ${ASIS_OTHER_WAY}.`
-      : `${lead} Next: git on this computer has no sign-in window of its own that I can open, so sign git in to ${host} outside setup, then a fresh Go ahead tries again; or ${ASIS_OTHER_WAY} (recommended).`;
+      : `${lead} Next: git on this computer has no sign-in window of its own that I can open, so sign git in to ${host} outside setup, then choose '${signInSignedLabel(host)}' on the card that follows, or ${ASIS_OTHER_WAY} (recommended).`;
   }
   if (kind === 'not-found' && joined) return `${lead} Your git sign-in for ${host} can't see this project; ask its owner to add you, then a fresh Go ahead tries again. Or ${ASIS_OTHER_WAY}.`;
   if (kind === 'not-found' && secure) {
     keep('account');
-    return `Git on this computer is signed in to ${host} as a different account from the one setup made the project on${said === '' ? '' : ` (git said: ${said})`}. Next: sign git out of ${host}, or in as the owning account, outside setup, then say Go ahead on step 3; or ${ASIS_OTHER_WAY} (recommended).`;
+    return `Git on this computer is signed in to ${host} as a different account from the one setup made the project on${said === '' ? '' : ` (git said: ${said})`}. Next: sign git out of ${host}, or in as the owning account, outside setup, then choose '${signInRetryLabel(host)}' on the card that follows; or ${ASIS_OTHER_WAY} (recommended).`;
   }
   return `${lead} A fresh Go ahead tries again, or ${ASIS_OTHER_WAY}.`;
 };
@@ -2585,11 +2585,12 @@ export function hostStep({
       const repoMade = (planRun?.changes ?? []).some((c) => c?.kind === 'host' && c.after?.made === true);
       let declinedAsIs = false;
       if (pendingSign !== null) {
-        const sign = signInAsk(pendingSign);
+        const sign = signInAsk(pendingSign, { platform });
         const chosenSign = answer(sign.id)?.label;
         if (chosenSign === SIGN_IN_OTHER) declinedAsIs = true;
-        // Where git is signed in as another account, the director changed git's sign-in outside setup and says so: step 3 goes on.
-        else if (pendingSign.why === 'account' && chosenSign === signInRetryLabel(pendingSign.host)) { /* carry on */ }
+        // Where git is signed in as another account, or has no window to open, the director changed git's sign-in outside setup and says so
+        // by clicking: step 3 goes on.
+        else if (carryOnLabel(pendingSign) !== null && chosenSign === carryOnLabel(pendingSign)) { /* carry on */ }
         else if (ctx.choicesOnly !== true) return { ask: sign };
       }
       // A computer joining a product set up on another (ruling R77): asked first, in a folder
@@ -2954,7 +2955,7 @@ export function hostStep({
         record({ id: newId('chg'), kind: 'answer', target: SIGN_IN_TARGET, before: null, after: { signIn: null, cleared: 'the host or the way to connect changed' } });
       }
       // Whether git here has a sign-in window of its own to open, kept with a sign-in record (sign-in.js).
-      const gcm = reachEnv === null ? false : await gitHasSignInWindow({ run, gitPath: git.path });
+      const gcm = reachEnv === null ? false : await gitHasSignInWindow({ run, gitPath: git.path, url: urlFor({ host, repo: 'owner/name' }), platform });
       const keyCard = changes.find((c) => c.action === 'key-card') ?? null;
       // Narrow on GitLab without its tool: the one-day setup token, held in memory for this step only and dropped
       // when it ends, however it ends. A product whose own history goes up, or a joining computer, needs git with

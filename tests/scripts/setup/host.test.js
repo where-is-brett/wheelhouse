@@ -3280,7 +3280,8 @@ test('as-is connect: a fetch that fails on a missing sign-in says what git said,
   assert.equal(outcome, `Setup could not reach the new repository using git's own sign-in on this computer (git said: fatal: could not read Username for 'https://gitlab.com': terminal prompts disabled). Next: I can open git's sign-in for gitlab.com (its window may take a minute, and may open behind other windows); after you sign in there, setup carries on with step 3. Or ${OTHER_WAY}.`);
   // Where git has no sign-in window of its own, no window is promised, and the other way is recommended.
   const none = await asIsConnectWith('', { fail: said, gcm: false });
-  assert.equal(none.outcome, `Setup could not reach the new repository using git's own sign-in on this computer (git said: fatal: could not read Username for 'https://gitlab.com': terminal prompts disabled). Next: git on this computer has no sign-in window of its own that I can open, so sign git in to gitlab.com outside setup, then a fresh Go ahead tries again; or ${OTHER_WAY} (recommended).`);
+  assert.equal(none.outcome, `Setup could not reach the new repository using git's own sign-in on this computer (git said: fatal: could not read Username for 'https://gitlab.com': terminal prompts disabled). Next: git on this computer has no sign-in window of its own that I can open, so sign git in to gitlab.com outside setup, then choose 'I have signed git in to gitlab.com' on the card that follows, or ${OTHER_WAY} (recommended).`);
+  assert.ok(!/window may|open git's sign-in/.test(none.outcome));
 });
 
 test('as-is connect: a fetch that fails for another reason says what git said, then a fresh Go ahead or the other way, with no sign-in offered', async () => {
@@ -3323,7 +3324,7 @@ test('as-is connect: a new repository git\'s sign-in cannot see means git is sig
     const records = [];
     const { outcome } = await asIsConnectWith('', { fail: `${said}\nfatal: unable to access 'https://gitlab.com/a/b.git/': The requested URL returned error: 403\n`, records });
     assert.ok(outcome.startsWith('Git on this computer is signed in to gitlab.com as a different account from the one setup made the project on (git said: '), outcome);
-    assert.ok(outcome.endsWith(` Next: sign git out of gitlab.com, or in as the owning account, outside setup, then say Go ahead on step 3; or ${OTHER_WAY} (recommended).`), outcome);
+    assert.ok(outcome.endsWith(` Next: sign git out of gitlab.com, or in as the owning account, outside setup, then choose 'I have changed git's sign-in for gitlab.com' on the card that follows; or ${OTHER_WAY} (recommended).`), outcome);
     assert.ok(!/open git's sign-in/.test(outcome), 'no window is offered for another account');
     assert.ok(!/ask its owner/.test(outcome));
     const kept = records.filter((c) => c.target === SIGN_IN_TARGET);
@@ -3378,7 +3379,7 @@ test('a sign-in the record could not keep is not offered in the line', () => {
 test('the account line says what to change outside setup, whatever git has a window for, and keeps the record for its card', () => {
   const records = [];
   const line = ownSignInFailure('reach the new repository', 'https://gitlab.com/o/p.git', (c) => records.push(c), { base: 'https://gitlab.com', gcm: true })('remote: Repository not found.\n');
-  assert.match(line, /^Git on this computer is signed in to gitlab\.com as a different account[^]*Next: sign git out of gitlab\.com, or in as the owning account, outside setup, then say Go ahead on step 3; or choose another way to connect on step 3's card \(recommended\)\.$/);
+  assert.match(line, /^Git on this computer is signed in to gitlab\.com as a different account[^]*Next: sign git out of gitlab\.com, or in as the owning account, outside setup, then choose 'I have changed git's sign-in for gitlab\.com' on the card that follows; or choose another way to connect on step 3's card \(recommended\)\.$/);
   assert.equal(records.length, 1);
   assert.equal(records[0].after.signIn.why, 'account');
 });
