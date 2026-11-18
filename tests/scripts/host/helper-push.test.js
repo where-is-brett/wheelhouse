@@ -241,7 +241,7 @@ test('the as-is connection is accepted, holds no key, and cannot be Locked', asy
 
 // --- Only a push gets the director's settings: every route and its reach ---
 
-test('a list of every route and its reach: only the helper\'s push route takes a push reach', () => {
+test('a list of every route and its reach: only helper.js and safe-git.js define push reach, and setup\'s host.js uses it once, for the as-is route', () => {
   const found = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -255,11 +255,20 @@ test('a list of every route and its reach: only the helper\'s push route takes a
     }
   };
   walk(path.join(ROOT, 'scripts'));
-  assert.deepEqual(found.sort(), ['scripts/host/helper.js', 'scripts/lib/safe-git.js']);
+  // host.js uses the push reach once, inside asIsReachEnv: the as-is route fetches and pushes with the director's own git settings by design.
+  assert.deepEqual(found.sort(), ['scripts/host/helper.js', 'scripts/lib/safe-git.js', 'scripts/setup/host.js']);
   // In the helper, the reach is made in one place, and what runs under it must be a `git push`.
   const text = fs.readFileSync(path.join(ROOT, 'scripts/host/helper.js'), 'utf8');
   assert.equal((text.match(/pushReachFor\(/g) ?? []).length, 1);
   assert.match(text, /subcommandOf\(args\) !== 'push'\) throw/);
+  // In setup's host.js there is the import, one use of pushReachFor (inside asIsReachEnv), and nothing else of push reach.
+  const setup = fs.readFileSync(path.join(ROOT, 'scripts/setup/host.js'), 'utf8');
+  assert.equal((setup.match(/pushReachFor/g) ?? []).length, 2, 'the import and one use');
+  assert.equal((setup.match(/pushReachFor\(/g) ?? []).length, 1);
+  const start = setup.indexOf('export function asIsReachEnv(');
+  const body = setup.slice(start, setup.indexOf('\n}\n', start));
+  assert.ok(start > 0 && (body.match(/pushReachFor\(/g) ?? []).length === 1, 'the one use is inside asIsReachEnv');
+  assert.doesNotMatch(setup, /PUSH_REACHES|reach:\s*['"`]push|isPushReach/);
 });
 
 // --- Real git, against the stand-in host ---

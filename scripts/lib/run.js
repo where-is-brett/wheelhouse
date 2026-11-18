@@ -34,9 +34,13 @@ export function withoutGitVars(env = process.env) {
 // stdout comes back as a Buffer of the bytes the program wrote. With `onOutput(text)`, each piece of output, from either
 // stream, is also given as it comes, for a program that shows something to read before it finishes (a sign-in code);
 // with `onStdout(text)`, each piece of standard output alone, for a program whose output is read as it comes.
+// With `windowsHide: false` (Windows only), the program is not started with its window hidden, for one that may open a window of
+// its own for the person (git's sign-in). With `ownGroup: true`, off Windows, the program is started as the leader of a process
+// group of its own and, when it is ended, the whole group is killed, so a window a helper of its opened goes with it (on Windows
+// `taskkill /T` takes the tree already).
 // Resolves with the exit code and the collected
 // output; rejects only if the program cannot be started.
-export function run(file, args = [], { cwd, env, input, baseEnv = process.env, timeoutMs, limit, platform = process.platform, killer = taskkill, windowsVerbatimArguments = false, encoding = 'utf8', onOutput, onStdout, signal } = {}) {
+export function run(file, args = [], { cwd, env, input, baseEnv = process.env, timeoutMs, limit, platform = process.platform, killer = taskkill, windowsVerbatimArguments = false, encoding = 'utf8', onOutput, onStdout, signal, windowsHide = true, ownGroup = false } = {}) {
   return new Promise((resolve, reject) => {
     const merged = { ...baseEnv, ...env };
     for (const name of Object.keys(merged)) if (merged[name] === undefined || merged[name] === null) delete merged[name];
@@ -44,7 +48,8 @@ export function run(file, args = [], { cwd, env, input, baseEnv = process.env, t
       cwd,
       env: merged,
       shell: false,
-      windowsHide: true,
+      windowsHide,
+      ...(ownGroup && platform !== 'win32' ? { detached: true } : {}),
       windowsVerbatimArguments,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -70,6 +75,10 @@ export function run(file, args = [], { cwd, env, input, baseEnv = process.env, t
       Promise.race([Promise.resolve(killed), new Promise((done) => { waited = setTimeout(done, KILL_WAIT_MS); })])
         .catch(() => {}).then(() => {
           clearTimeout(waited);
+          // The group of a program started as its own leader: the program's helpers and their windows too.
+          if (ownGroup && platform !== 'win32' && Number.isInteger(child.pid)) {
+            try { process.kill(-child.pid, 'SIGKILL'); } catch { /* the group may already be gone */ }
+          }
           child.kill('SIGKILL');
           resolve(result);
         });

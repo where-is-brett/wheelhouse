@@ -43,6 +43,12 @@
 //                        (not its notes); once green, `resume`: the phone's card opens with the
 //                        verdict and the first briefing (with no phone card left, step 10's
 //                        plan gives them as `said`), then ask `card.question` as it is
+//   sign-in              asks the helper to open git's own sign-in for the host a step 3 attempt on the "Use my git as it is" route
+//                        could not reach, after the director chose it on the card step 3's plan asks (scripts/setup/sign-in.js): the
+//                        address is the one setup recorded for that failure, the helper runs git from a folder of its own, git's window
+//                        may open for the director to sign in, and it says in one line whether git then reached the project. It waits
+//                        for the director (up to SIGN_IN_WAIT_MS), so run it with a command timeout above that. A refusal is its line on
+//                        standard error, then a `Detail:` line for the agent alone, when the helper gave one
 //   uninstall plan       uninstall's list worked out by the helper, its card and its level 4
 //                        cards: { hash, card, asks: [{ id, about, card }], last }. Each ask card is
 //                        asked exactly as given, before uninstall's own card. Once an uninstall has
@@ -65,7 +71,7 @@
 // trial left, closes the trial pull request and deletes its branch, and, once the board is green
 // with every other step done, records the green mark, copies the run's records into the project's
 // state and finishes setup (the foreman and the first briefing), once. The STOP guard lets these
-// four through, and `uninstall plan` and `uninstall status`; `apply` and `uninstall apply` are
+// four through, and `uninstall plan` and `uninstall status`; `apply`, `uninstall apply` and `sign-in` are
 // refused under STOP.
 // Errors are one line on standard error.
 import path from 'node:path';
@@ -85,7 +91,7 @@ export const inDesktopApp = (entrypoint, env = process.env) => (entrypoint === '
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
 
-export const USAGE = 'Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, choices, change <key>, health [<trial line> ...], uninstall plan, uninstall apply <hash>, uninstall status';
+export const USAGE = 'Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, choices, change <key>, health [<trial line> ...], sign-in, uninstall plan, uninstall apply <hash>, uninstall status';
 // The longest `wait <step>` waits in one call, well within the two minutes a command may run by
 // default; a longer wait is asked again.
 export const WAIT_MOST_MS = 90 * 1000;
@@ -121,7 +127,12 @@ async function ask(route, body) {
   } catch (error) {
     throw new CliError(`The host helper didn't answer: ${error instanceof Error ? error.message : 'unknown error'}`);
   }
-  if (got?.ok !== true) throw new CliError(got?.refused ?? got?.why ?? 'The host helper refused the request');
+  if (got?.ok !== true) {
+    const error = new CliError(got?.refused ?? got?.why ?? 'The host helper refused the request');
+    // For the agent alone (a refusal's exact names), said on a line of its own after the refusal.
+    if (typeof got?.detail === 'string' && got.detail.trim() !== '') error.detail = got.detail;
+    throw error;
+  }
   return got;
 }
 
@@ -242,6 +253,10 @@ export async function main(argv, {
     } else if (form === 'uninstall' && rest[0] === 'status' && rest.length === 1) {
       const got = await ask((client ?? helperClient()).setup.uninstall.status, { folder });
       out(`${(Array.isArray(got.lines) ? got.lines : []).map((l) => String(l).replace(BREAKS, ' ')).join('\n')}\n`);
+    } else if (form === 'sign-in' && rest.length === 0) {
+      // Git's sign-in for the host step 3 could not reach: the helper takes the address from setup's own record and runs git itself.
+      const got = await ask((client ?? helperClient()).setup.signIn, { folder });
+      out(`${String(got.line ?? '').replace(BREAKS, ' ')}\n`);
     } else if (form === 'health') {
       if (rest.length > MOST_TRIAL_LINES || !rest.every((l) => parseTrialLine(l) !== null)) {
         throw new CliError('Give the lines trials.js printed, each as one argument, as they are');
@@ -255,6 +270,7 @@ export async function main(argv, {
   } catch (error) {
     const message = error instanceof CliError ? error.message : `That did not work: ${error instanceof Error ? error.message : 'unknown error'}`;
     err(`${message.replace(BREAKS, ' ')}\n`);
+    if (error instanceof CliError && typeof error.detail === 'string') err(`Detail: ${error.detail.replace(BREAKS, ' ')}\n`);
     return 1;
   }
 }

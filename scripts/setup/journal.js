@@ -42,6 +42,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { canonicalJson } from '../lib/canonical.js';
 import { journalFile, readJournal } from '../lib/setup-run.js';
+import { scrubGitText } from './git.js';
 
 // The journal's file and its reader are in scripts/lib/setup-run.js, which the hooks read without
 // reaching these writers.
@@ -209,7 +210,8 @@ export function markStep(runId, step, field, { now = () => new Date(), reason, d
     if (typeof when === 'function' && !when(structuredClone(entry))) return false;
     if (field === 'failed') {
       entry.failed = reason;
-      if (typeof detail === 'string' && detail !== '') entry.failedDetail = detail;
+      // Whatever a step's error carried, any sign-in in it is hidden before it is kept.
+      if (typeof detail === 'string' && detail !== '') entry.failedDetail = scrubGitText(detail);
       else delete entry.failedDetail;
     }
     // A step that made a first part of its work and is planned again from the start (step 7's switch).

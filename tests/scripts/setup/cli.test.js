@@ -234,7 +234,7 @@ test('run as a script, a wrong form says how the command is used', () => {
   const got = spawnSync(process.execPath, [SCRIPT, 'go'], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: shortHome() } });
   assert.equal(got.status, 1);
   assert.equal(got.stdout, '');
-  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, choices, change <key>, health \[<trial line> ...\], uninstall plan, uninstall apply <hash>, uninstall status\n$/);
+  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, choices, change <key>, health \[<trial line> ...\], sign-in, uninstall plan, uninstall apply <hash>, uninstall status\n$/);
 });
 
 test('run as a script through a linked plugin folder, it still runs', () => {
@@ -243,7 +243,7 @@ test('run as a script through a linked plugin folder, it still runs', () => {
   fs.symlinkSync(path.resolve(path.dirname(SCRIPT), '..', '..'), linked, process.platform === 'win32' ? 'junction' : 'dir');
   const got = spawnSync(process.execPath, [path.join(linked, 'scripts', 'setup', 'cli.js'), 'go'], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: shortHome() } });
   assert.equal(got.status, 1);
-  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, choices, change <key>, health \[<trial line> ...\], uninstall plan, uninstall apply <hash>, uninstall status\n$/);
+  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, choices, change <key>, health \[<trial line> ...\], sign-in, uninstall plan, uninstall apply <hash>, uninstall status\n$/);
 });
 
 test('the uninstall forms ask the helper\'s uninstall routes for this folder, apply with the full hash only', async () => {

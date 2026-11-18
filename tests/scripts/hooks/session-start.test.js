@@ -1655,7 +1655,7 @@ test('the guards act in a folder being set up', async () => {
         assert.equal(await stop(bash(folder, `${cli} ${reading}`)), undefined, reading);
       }
       for (const writing of [`apply 3 ${'a'.repeat(64)}`, 'plan 11', 'plan', 'status now', 'resume 3', 'status; rm -rf x', 'health "not a line"', 'health status',
-        `uninstall apply ${'a'.repeat(64)}`, 'uninstall', 'uninstall plan 3',
+        `uninstall apply ${'a'.repeat(64)}`, 'uninstall', 'uninstall plan 3', 'sign-in',
         `health ${Array.from({ length: 13 }, () => trialLine).join(' ')}`]) assert.ok(denied(await stop(bash(folder, `${cli} ${writing}`))), writing);
       assert.equal(await stop(call(folder, 'Read')), undefined);
     }

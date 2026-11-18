@@ -15,6 +15,8 @@
 //   /setup/apply  { folder, step, hash }  -> { ok, started: true } (a short step: done: true too)
 //   /setup/status { folder }              -> { ok, lines, next, ask, running? }; a running step's latest
 //                                            line for the director (ctx.say, ruling R40) among them
+//   /setup/sign-in { folder }             -> { ok, line } or { ok: false, refused, detail? }: git's own sign-in for the address step 3
+//                                            kept on the "Use my git as it is" route, once chosen on its card (sign-in.js)
 //   /setup/health { folder, lines? }      -> { ok, green, lines, board, trials }, and once green
 //                                            { started, briefing } too: step 10's checks joined
 //                                            with the session's trial lines (scripts/setup/health.js);
@@ -85,7 +87,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { jobFolder, wheelhouseHome, stateDir } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
-import { projectHosts } from './tools.js';
+import { projectHosts, toolsStatus } from './tools.js';
 import { CLICK_FRESH_MS, STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 import { SETUP_TITLES, withoutListedLine } from '../state/card-lines.js';
 import { composeCard } from '../cards/compose.js';
@@ -108,7 +110,9 @@ import {
   ONE_CARD_STEP, CHOICE_STEPS, openChoices, oneCard, setupTime, answersWithConsent, customisingSince, customiseBatch, consentIn, consentHolds, consentWithdrawn,
 } from './choices.js';
 import { redoCard, choiceList, changeRequests, setUpAgainAsked, stepFourDrift } from './redo.js';
-import { productOf } from './host.js';
+import { productOf, asIsReachEnv, guardAsIsReach } from './host.js';
+import { signInNow } from './sign-in.js';
+import { run as realRun } from '../lib/run.js';
 import { chosenHost } from './local.js';
 import { readGitlabHosts } from '../host/gitlab-base.js';
 import { readmeDescription, productName } from './questions.js';
@@ -319,7 +323,7 @@ export async function runApply({ step, runId, changes, ctx, current, copy = copy
   } catch (error) {
     const reason = (error instanceof Error ? error.message : '') || 'the step did not finish';
     try {
-      markStep(runId, step.n, 'failed', { now: ctx.now, reason, when: current });
+      markStep(runId, step.n, 'failed', { now: ctx.now, reason, detail: typeof error?.detail === 'string' ? error.detail : undefined, when: current });
     } catch { /* the journal could not take it; the step reads as running until its time is up */ }
     return { ok: false, reason };
   }
@@ -472,7 +476,7 @@ export function setupRoutes({
   now = () => new Date(), stopped = () => false, stopRefusal = { ok: false, refused: 'All stop is on' },
   stepsModule = STEPS_MODULE, userHome = os.homedir(), platform = process.platform, spawn = nodeSpawn, mark = markStep,
   writeSurvey, health = healthCheck, finish = (args) => finishSetup({ ...args, now }),
-  closeTrial = (args) => closeOpenTrial(args), copy = copyRunRecords,
+  closeTrial = (args) => closeOpenTrial(args), copy = copyRunRecords, signInWith = {},
 } = {}) {
   let loaded = null;
   const steps = () => (loaded ??= loadSteps(stepsModule).catch((error) => { loaded = null; throw error; }));
@@ -675,6 +679,44 @@ export function setupRoutes({
       return { ok: true, asks: [askChoice(run, asked)] };
     }
     return { ok: true, asks: [askChoice(run, { step: ONE_CARD_STEP, ...redo })] };
+  }
+
+  // /setup/sign-in { folder }: opens git's own sign-in for the address step 3 kept when it could not reach the host on the "Use my git as it
+  // is" route (scripts/setup/sign-in.js), once the director has chosen it on the card step 3's plan asks. The helper runs git, from a folder of
+  // its own, so nothing a session can set reaches it; the answer is `{ ok: true, line }`, or `{ ok: false, refused, detail? }`, whose `detail` is
+  // for the agent alone. Refused under STOP, which also ends it while it waits.
+  async function signInRoute(body) {
+    if (Object.keys(body).some((k) => k !== 'folder')) refuse('git\'s sign-in takes the folder, nothing else: the address is the one setup kept');
+    if (stopped()) return stopRefusal;
+    const folder = admitFolder(body.folder, { userHome });
+    const found = runFor(folder, userHome);
+    const journalRun = found === null ? null : runById(found.id);
+    // One sign-in at a time for a run, counted as the helper's work while it waits, so the helper is not retired or updated under it.
+    const key = found === null ? null : `${found.id}:sign-in`;
+    if (key !== null && inHelper.has(key)) return { ok: false, refused: 'Git\'s sign-in is already open for this setup, so a second was not opened. Wait for it to finish.', detail: 'Wait for the open sign-in\'s line; do not run plan 3 or this form again until it comes, or, if no line comes within 10 minutes, run plan 3.' };
+    if (key !== null) inHelper.add(key);
+    try {
+      return await openSignIn({ journalRun, found, folder });
+    } finally {
+      if (key !== null) inHelper.delete(key);
+    }
+  }
+  async function openSignIn({ journalRun, found, folder }) {
+    let remoteRepo = null;
+    try {
+      remoteRepo = productOf(folder, { config: readGitlabHosts(folder) }).repo ?? null;
+    } catch { /* no project path from the folder's own remote */ }
+    const { route: given = {}, ...rest } = signInWith;
+    return signInNow({
+      journalRun, answers: found === null ? {} : answersFor(found.id), stopped, platform, now,
+      route: {
+        remoteRepo, gitlabHosts: readGitlabHosts(folder).gitlabHosts ?? [], reachEnv: asIsReachEnv, guard: guardAsIsReach,
+        findGit: async () => (await toolsStatus({ platform, run: signInWith.run ?? realRun, tools: ['git'] })).git,
+        record: (change) => addChanges(found.id, [change]),
+        ...given,
+      },
+      ...rest,
+    });
   }
 
   // Step 4 settled on live data or Apple signing that the answers now say differently, and step 7
@@ -1015,6 +1057,7 @@ export function setupRoutes({
   };
   const routes = Object.fromEntries(Object.entries({
     '/setup/plan': plan, '/setup/apply': apply, '/setup/status': status, '/setup/health': healthRoute, '/setup/choices': choicesRoute, '/setup/change': changeRoute,
+    '/setup/sign-in': signInRoute,
   }).map(([path, route]) => [path, aware(route)]));
   // Whether a setup step is running in this helper now. Not a route, so it is left out of a spread of the routes.
   Object.defineProperty(routes, 'busy', { value: () => inHelper.size > 0, enumerable: false });

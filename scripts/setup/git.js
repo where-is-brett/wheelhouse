@@ -184,11 +184,13 @@ export const CONFIG_UNREAD = 'git\'s settings in this folder\'s repository could
 // includes and its worktree config: the global and system config are shut out, and the call's own
 // settings are left off for the look) holds any setting not on the allowed list. Nothing there, or
 // no repository there, passes.
-export async function refuseUnlistedSettings({ run = realRun, gitPath = 'git', cwd }) {
-  const env = { GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: NULL_FILE };
+// `env` is added to the look's own environment (git's sign-in gives GIT_CEILING_DIRECTORIES, so a folder that is no repository finds
+// none above it).
+export async function refuseUnlistedSettings({ run = realRun, gitPath = 'git', cwd, env: given = {}, baseEnv = withoutGitVars() }) {
+  const env = { GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: NULL_FILE, ...given };
   let got;
   try {
-    got = await run(gitPath, ['config', '--includes', '--name-only', '--list', '-z'], { cwd, env, baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
+    got = await run(gitPath, ['config', '--includes', '--name-only', '--list', '-z'], { cwd, env, baseEnv, timeoutMs: GIT_WAIT_MS });
   } catch {
     throw new Error(CONFIG_UNREAD);
   }
@@ -207,16 +209,261 @@ export function subcommandOf(args) {
   return '';
 }
 
+// What the director's own git runs with on the "Use my git as it is" route, wherever it runs: every variable that could make git, or the
+// credential helper it starts, load or trace code or read settings the director's own files do not hold is dropped. Every GCM_* variable
+// goes except those named in `keep` (the one setup sets, GCM_INTERACTIVE, for git's sign-in alone), and so do the .NET startup hooks and
+// host tracing, the runtime's own settings (CORECLR_*, COMPLUS_* and DOTNET_*, but not DOTNET_ROOT, which the helper may need to find its runtime), and the loader's preload, audit and library-path variables. HOME, XDG_CONFIG_HOME, the proxy and certificate variables stay as they are:
+// the director's git reads its settings and reaches the host with them (on a company computer HOME is often set on purpose).
+const ASIS_DROPPED = /^(?:GCM_.*|CORECLR_.*|COMPLUS_.*|DOTNET_(?!ROOT(?:$|\(x86\)$|_))[^]*|COREHOST_TRACE.*|DYLD_.*|LD_PRELOAD|LD_AUDIT|LD_LIBRARY_PATH)$/i;
+export function asIsGitEnv(env, { keep = [] } = {}) {
+  const kept = new Set(keep.map((name) => name.toUpperCase()));
+  return Object.fromEntries(Object.entries(env ?? {}).filter(([name]) => kept.has(name.toUpperCase()) || !ASIS_DROPPED.test(name)));
+}
+
+// The git subcommands that reach a remote: the only calls an as-is route gives the director's own git (`reachEnv`).
+const REMOTE_CALLS = new Set(['fetch', 'push', 'ls-remote']);
+
+// The address a call that reaches a remote names: the argument after `--end-of-options`, or null.
+export function addressOf(args) {
+  const at = args.indexOf('--end-of-options');
+  return at >= 0 && typeof args[at + 1] === 'string' ? args[at + 1] : null;
+}
+
 // git for setup in `cwd` (or none): `git(args, options)` gives run's answer, after refusing any
 // setting of the repository's not on the allowed list; every call isolated as above. With
 // `workTree` (the folder setup names, a project's), that folder is git's working tree whatever the
 // repository's config says; not for `git init`, which makes the repository in `cwd` and takes no
 // working tree without a git folder named too.
-export function setupGit({ run = realRun, gitPath = 'git', env = {}, cwd, workTree = null, timeoutMs = GIT_WAIT_MS } = {}) {
+//
+// With `reachEnv` (the as-is route's: scripts/lib/safe-git.js safeGitEnv with a push reach, so the director's own global and
+// system settings and credential helper come in, the fence still outranks them, and nothing prompts), the calls that reach a
+// remote (REMOTE_CALLS) run with it in place of the isolated one. It is built with the fence already, so it is not isolated
+// again: `isolated` would shut the director's files out once more. Every call that only touches the folder stays isolated.
+// With `reachGuard` (setup's as-is connect gives one), each such call first has the director's settings looked at for the address it
+// names, and runs with the environment the guard gives back.
+export function setupGit({ run = realRun, gitPath = 'git', env = {}, cwd, workTree = null, timeoutMs = GIT_WAIT_MS, reachEnv = null, reachGuard = null } = {}) {
   const fenced = isolated(env);
   const inFolder = workTree === null ? fenced : { ...fenced, GIT_WORK_TREE: workTree };
+  const reaches = reachEnv === null ? null : workTree === null ? reachEnv : { ...reachEnv, GIT_WORK_TREE: workTree };
   return async (args, options = {}) => {
-    await refuseUnlistedSettings({ run, gitPath, cwd });
-    return run(gitPath, args, { cwd, env: subcommandOf(args) === 'init' ? fenced : inFolder, baseEnv: withoutGitVars(), timeoutMs, ...options });
+    const sub = subcommandOf(args);
+    const toRemote = reaches !== null && REMOTE_CALLS.has(sub);
+    // A call to the remote on the as-is route has the as-is base, the one the guard read the settings with; the look at the repository's
+    // settings before it runs with that base too.
+    const baseEnv = toRemote ? asIsGitEnv(withoutGitVars()) : withoutGitVars();
+    await refuseUnlistedSettings({ run, gitPath, cwd, baseEnv });
+    let callEnv = sub === 'init' ? fenced : toRemote ? reaches : inFolder;
+    // `reachGuard` checks the director's own settings for the address the call names and gives back the environment to use.
+    if (toRemote && reachGuard !== null) callEnv = await reachGuard({ run, gitPath, cwd, env: callEnv, url: addressOf(args), timeoutMs, baseEnv });
+    return run(gitPath, args, { cwd, env: callEnv, baseEnv, timeoutMs, ...options });
   };
+}
+
+// ---- What git said, for a failure line ----
+
+const HIDDEN = '[hidden]';
+// The user or token in an address (`scheme://user:pass@host`, a password with an unencoded `/` or `@` in it too): everything from
+// after `://` to the last `@` before the next white space goes. A scan, not one pattern: a pattern that reads on to the end for
+// each `scheme://` it meets goes quadratic on a long line of them. Each run to white space is read once, so no text is read twice.
+function hideUserinfo(text) {
+  let out = '';
+  let from = 0;
+  let at = text.indexOf('://');
+  while (at >= 0) {
+    let start = at;
+    while (start > from && /[A-Za-z0-9+.-]/.test(text[start - 1])) start -= 1;
+    let end = at + 3;
+    let lastAt = -1;
+    while (end < text.length && !/\s/.test(text[end])) {
+      if (text[end] === '@') lastAt = end;
+      end += 1;
+    }
+    if (lastAt >= 0 && /[A-Za-z]/.test(text.slice(start, at))) {
+      out += `${text.slice(from, at + 3)}${HIDDEN}`;
+      from = lastAt;
+    }
+    at = text.indexOf('://', end);
+  }
+  return out + text.slice(from);
+}
+
+// An address with no scheme: `user:pass@host/path`, from the start of a word to the last @ in it that a host name follows.
+// The user is up to 64 characters of
+// a user name's, with a letter in them, and the part after the @ is a host name (then a dot, a colon, a slash, a space, a closing bracket or
+// quote, or the end) or a bracketed address, so `C:\Users\me@corp\repo` and `2026-11-18 10:15:22@server` stay as they are. An `=`
+// may come before it (`http.proxy=user:pw@proxy:3128`).
+// A one-letter user whose password starts with `/` or `\` and has another one in it is shown, as it can't be told from a Windows path.
+// Read in one pass: the @ signs are found and judged once (a host name follows, or a bracketed address), and each lead (a user, a
+// colon) then looks up the last good @ within 256 characters of it with no white space between, so a long run of leads costs a
+// lookup each, not a scan each.
+const SCHEMELESS_LEAD = /(^|[\s(<'"=])(?=[0-9._%+\\-]{0,63}[A-Za-z])([A-Za-z0-9._%+\\-]{1,64}):(?!\/\/)/g;
+const HOST_AFTER_AT = /\[|[A-Za-z0-9-]{1,63}(?:[.:/]|[\s'")>]|$)/y;
+const SCHEMELESS_REACH = 256;
+function hideSchemeless(text) {
+  const ats = [];
+  for (let at = text.indexOf('@'); at >= 0; at = text.indexOf('@', at + 1)) ats.push(at);
+  if (ats.length === 0) return text;
+  // lastGood[i] is the index in ats of the nearest good @ at or before ats[i], or -1.
+  const lastGood = new Int32Array(ats.length);
+  let good = -1;
+  for (let i = 0; i < ats.length; i += 1) {
+    const next = text.charCodeAt(ats[i] + 1);
+    // `[`, `-`, a digit or a letter: the only starts a host can have.
+    if (next === 91 || next === 45 || (next >= 48 && next <= 57) || (next >= 65 && next <= 90) || (next >= 97 && next <= 122)) {
+      HOST_AFTER_AT.lastIndex = ats[i] + 1;
+      if (HOST_AFTER_AT.test(text)) good = i;
+    }
+    lastGood[i] = good;
+  }
+  const space = /\s/g;
+  let spaceFrom = -1;
+  let spaceAt = -1;
+  const nextSpace = (from) => {
+    if (from < spaceFrom || from > spaceAt) {
+      space.lastIndex = from;
+      const found = space.exec(text);
+      spaceFrom = from;
+      spaceAt = found ? found.index : text.length;
+    }
+    return spaceAt;
+  };
+  let out = '';
+  let from = 0;
+  const lead = new RegExp(SCHEMELESS_LEAD.source, 'g');
+  for (let m = lead.exec(text); m !== null; m = lead.exec(text)) {
+    const start = m.index + m[1].length + m[2].length + 1;
+    const limit = Math.min(start + SCHEMELESS_REACH, nextSpace(start) - 1);
+    // The last @ at or before the limit (binary search), then the nearest good one at or before it.
+    let lo = 0;
+    let hi = ats.length - 1;
+    let found = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (ats[mid] <= limit) { found = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    const pick = found >= 0 ? lastGood[found] : -1;
+    if (pick < 0 || ats[pick] < start) { lead.lastIndex = m.index + 1; continue; }
+    const end = ats[pick] + 1;
+    const all = text.slice(m.index, end);
+    // A one-letter user whose password starts with `/` or `\` and has another one in it is shown, as it can't be told from a Windows path.
+    const hide = /[A-Za-z]/.test(m[2]) && !/^[A-Za-z]:[\\/][^:]*[\\/][^:]*$/.test(all.slice(m[1].length));
+    out += text.slice(from, m.index) + (hide ? `${m[1]}${HIDDEN}@` : all);
+    from = end;
+    lead.lastIndex = end;
+  }
+  return out + text.slice(from);
+}
+
+// Reads of the director's own git settings that the as-is route makes. Each one runs git with the arguments, environment and ceiling
+// its caller gives, and gives back the run's result as it is.
+export const readConfigOrigins = ({ run = realRun, gitPath = 'git', cwd, key, regexp = false, timeoutMs, baseEnv }) =>
+  run(gitPath, ['config', '--show-origin', '--show-scope', regexp ? '--get-regexp' : '--get-all', key], { cwd, env: { GIT_TERMINAL_PROMPT: '0' }, baseEnv, timeoutMs });
+export const readSslVerifyFor = ({ run = realRun, gitPath = 'git', cwd, env, baseEnv, timeoutMs, url }) =>
+  run(gitPath, ['config', '--type=bool', '--get-urlmatch', 'http.sslVerify', url], { cwd, env, baseEnv, timeoutMs });
+export const readUrlGitUses = ({ run = realRun, gitPath = 'git', cwd, env, baseEnv, timeoutMs, url }) =>
+  run(gitPath, ['ls-remote', '--get-url', '--end-of-options', url], { cwd, env, baseEnv, timeoutMs });
+export const readGitDir = ({ run = realRun, gitPath = 'git', cwd, env, baseEnv, timeoutMs }) =>
+  run(gitPath, ['rev-parse', '--git-dir'], { cwd, env, baseEnv, timeoutMs });
+export const readCredentialHelpers = ({ run = realRun, gitPath = 'git', cwd, env, baseEnv, timeoutMs }) =>
+  run(gitPath, ['config', '--get-all', 'credential.helper'], { cwd, env, baseEnv, timeoutMs });
+export const readCredentialHelperFor = ({ run = realRun, gitPath = 'git', cwd, env, baseEnv, timeoutMs, url }) =>
+  run(gitPath, ['config', '--get-urlmatch', 'credential.helper', url], { cwd, env, baseEnv, timeoutMs });
+
+// Text git (or its helpers) wrote, with anything that could carry a sign-in taken out: the user or token in an address
+// (hideUserinfo), an Authorization or extra-header value (to the end of its line), a Cookie or Set-Cookie value (to the end of its
+// line), a bare `Bearer` or `Basic` value (`bearer: x` too), a `token` or `client_secret` value after `=` or `:` (bare, to the end of its
+// run of non-space characters, or in quotes), a JSON member, in double or single quotes, named for a password, pass, secret, token, credential, api key, private key, access key,
+// authorization or auth (accessToken and id_token too, its value hidden even when its closing quote is missing), a `password:` value, a `secret=` or `secret:` (`aws_secret_access_key=`, `app_secret=` and `X-Secret:` too), `api_key:` or `sig=` value, an address with no scheme but a user and password (within 256 characters of it, ending at a host name with a dot), a `password=` or `passwd=` value, and anything shaped like a GitLab or GitHub token
+// (after a letter too). Safe to apply twice. Every pattern reads each stretch of text once, so a long line costs a pass.
+export function scrubGitText(text) {
+  return hideSchemeless(hideUserinfo(String(text ?? ''))
+    .replace(/(authorization[ \t]*[:=][ \t]*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    .replace(/(extraheader[^\s=:]{0,256}[ \t]*[:=][ \t]*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    .replace(/(private-token[ \t]*:[ \t]*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    .replace(/(\b(?:set-)?cookie[ \t]*[:=][ \t]*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    .replace(/(\bbearer[ \t]*[:=][ \t]*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{4,}/gi, `$1${HIDDEN}`)
+    // A `Basic` value is 8 or more base64 (or base64url) characters, not followed by another, with a digit, an `=`, a `+` or a `/`, or both
+    // cases, in it: prose such as "Basic authentication failed" stays.
+    .replace(/\b(Basic\s+)([A-Za-z0-9+/=_-]{8,})(?![A-Za-z0-9+/=_-])/gi, (all, lead, token) => (/[0-9=+/]|[a-z][A-Z]|[A-Z][a-z]/.test(token) ? `${lead}${HIDDEN}` : all))
+    // A JSON member: "password": "x" or 'password': 'x', and the other names a secret goes by ("accessToken", "id_token", "client_secret",
+    // "api-key", "authorization", "auth"; a dot may be in the name). The key is read once, between its quotes, and tested for the words
+    // afterwards; a value whose closing quote is missing ends at the line.
+    .replace(/(((["'])([A-Za-z0-9_.-]*)\3)[ \t]*:[ \t]*)(["'])(?:(?!\5)[^\\\r\n]|\\.)*\5?/g, (all, lead, _quoted, _q, key, quote) => (/password|passwd|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|credential|authorization|^auth$|^pass$/i.test(key) ? `${lead}${quote}${HIDDEN}${quote}` : all))
+    // `token=x`, `token: x`, `token = "x"`, `client_secret=x`, `token= A,B`: a quoted string, or the run of characters up to white space.
+    .replace(/((?:token|client_secret)[ \t]*[:=][ \t]*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s&'"]+)/gi, `$1${HIDDEN}`)
+    .replace(/(pass(?:word|wd)[ \t]*[=:][ \t]*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    // `secret=x`, `secret: x`, `aws_secret_access_key=x`, `X-Secret: x`, `api_key: x`, `api-key=x`: a quoted string, or the run of characters up to white space; `sig=x` in a query.
+    .replace(/(secret[A-Za-z0-9_-]{0,64}[ \t]*[:=][ \t]*|api[-_]?key[ \t]*[:=][ \t]*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s&'"]+)/gi, `$1${HIDDEN}`)
+    .replace(/(\bsig=)[^\s&'"]+/gi, `$1${HIDDEN}`))
+    // GitLab's personal access token, whatever its body, and GitHub's tokens, whatever comes before them (a letter too); and GitLab's
+    // other token prefixes (gldt-, glrt-, glcbt-, gloas-, glft-, glptt-, glimt-, glsoat-), by their shape: a body with a digit in it. Whatever
+    // comes before, an underscore too, is not part of the token.
+    .replace(/glpat-[A-Za-z0-9_-]{8,}/g, HIDDEN)
+    .replace(/(?<![A-Za-z0-9])gl[a-z]{2,5}-[A-Za-z0-9_-]{8,}/g, (m) => (/\d/.test(m.slice(m.indexOf('-') + 1)) ? HIDDEN : m))
+    .replace(/(?:gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,})/g, HIDDEN);
+}
+
+// Lines git adds that say nothing of why: its hints, the `To <address>` line of a push (git's own, capital T), and its closing
+// `failed to push` line (the `remote:` reason and the `! [remote rejected]` line before it are what matter).
+const isNoise = (line) => /^To\s+\S/.test(line) || /^(?:hint:|error: failed to push some refs)/i.test(line);
+// How much of the end of git's stderr is scrubbed at all: only the last lines can be said.
+const SCRUBBED_LINES = 16;
+
+// The last line or two of git's stderr, scrubbed, without the noise above, and trimmed to about 300 characters (the end is kept:
+// it is what git ended on, and the cut falls at a word), or '' when git said nothing. Only the last lines are scrubbed, line by
+// line, and nothing is cut by characters before it is scrubbed.
+export function gitSaid(stderr, { limit = 300 } = {}) {
+  const lines = String(stderr ?? '').split(/[\r\n]+/).filter((l) => l.trim() !== '').slice(-SCRUBBED_LINES)
+    .map((l) => scrubGitText(l).trim()).filter((l) => l !== '' && !isNoise(l));
+  const said = lines.slice(-2).join(' ');
+  if (said.length <= limit) return said;
+  const from = said.length - (limit - 1);
+  let tail = said.slice(from);
+  // A cut that fell inside a word drops that part of the word; with no space to cut at, the hard cut stands.
+  if (!/\s/.test(said[from - 1]) && /\s/.test(tail)) tail = tail.slice(tail.search(/\s/)).trimStart();
+  return `\u2026${tail}`;
+}
+
+// The end of already scrubbed text, within `max` characters (the end is what a failure ended on): a cut that falls inside a word drops
+// that part of the word, and an ellipsis marks the cut. Cut after scrubbing, never before.
+export function endOf(text, max = 4096) {
+  const t = String(text ?? '');
+  if (t.length <= max) return t;
+  const from = t.length - (max - 1);
+  let tail = t.slice(from);
+  if (!/\s/.test(t[from - 1]) && /\s/.test(tail)) tail = tail.slice(tail.search(/\s/)).trimStart();
+  return `\u2026${tail}`;
+}
+
+// A failure line: `why`, then what git said when it said anything, then `then` (the next step) when given.
+export function gitFailure(why, stderr, { then = null } = {}) {
+  const said = gitSaid(stderr);
+  return `${why}${said === '' ? '' : ` (git said: ${said})`}${then === null ? '' : `; ${then}`}`;
+}
+
+// A failure with two texts: `message` is the director's line, `detail` the exact names for the agent reading status (the journal's
+// failedDetail, shown on a `Detail:` line the director is never told).
+export class DetailedError extends Error {
+  constructor(message, detail) {
+    super(message);
+    this.detail = typeof detail === 'string' ? scrubGitText(detail) : undefined;
+  }
+}
+
+// What git said when a call that reached the host failed, told by its last lines, one line at a time (so a long stderr costs a
+// pass, nothing more), and in the text of a line outside its addresses and paths, so a project named auth-service.git says nothing:
+// 'not-found' when the project is not there for this sign-in, 'sign-in' when a sign-in is missing or refused, else 'other'.
+const NOT_FOUND = [/could not be found or you don.t have permission/i, /the project you were looking for could not be found/i, /permission to \S+ denied/i, /repository not found/i];
+const SIGN_IN_WORDS = /auth|credential|sign.?in|log.?in|forbidden|denied/i;
+const SIGN_IN_FAILURE = [/could not read (?:username|password)/i, /authentication failed/i, /http basic: access denied/i, /\b401\b/, /terminal prompts (?:have been )?disabled/i, /user interactivity has been disabled/i];
+const SAID_LINES = 16;
+const outsideAddresses = (line) => line.split(/\s+/).filter((word) => !/[/\\]|\.git\b/i.test(word)).join(' ');
+export function reachFailureKind(stderr) {
+  const said = String(stderr ?? '').split(/[\r\n]+/).filter((l) => l.trim() !== '').slice(-SAID_LINES);
+  // These phrases hold spaces, so no address or path can make one.
+  if (said.some((l) => NOT_FOUND.some((re) => re.test(l)))) return 'not-found';
+  const lines = said.map(outsideAddresses);
+  if (lines.some((l) => SIGN_IN_FAILURE.some((re) => re.test(l)) || (/\b403\b/.test(l) && SIGN_IN_WORDS.test(l)))) return 'sign-in';
+  return 'other';
 }

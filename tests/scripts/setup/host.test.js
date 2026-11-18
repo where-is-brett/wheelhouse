@@ -15,7 +15,7 @@ import {
   directorGitlabApi, directorKey, signInStatus, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
   APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, pinOf, joinMissLine, ORGS_UNREAD, launchedIn,
   checkOutJoined, findInstallation, CERTIFICATE_GIVEN, reachLine, askAdministrationKey, setupTokenApi, SETUP_TOKEN_KEPT,
-  madeWithSetupToken, keyGitlabApi, keyGitEnv, againCard,
+  madeWithSetupToken, findJoined, keyGitlabApi, keyGitEnv, againCard, asIsReachEnv, reachFailureKind, ownSignInFailure, holdsState, SIGN_IN_TARGET, ASIS_SETTINGS_UNREAD, asIsSettingLine, ASIS_NO_ADDRESS,
 } from '../../../scripts/setup/host.js';
 import { trialGitEnv, trialAdapter } from '../../../scripts/setup/health.js';
 import { installationCovers } from '../../../scripts/host/connection.js';
@@ -49,7 +49,7 @@ import { FREE_PLAN_LINE } from '../../../scripts/host/protection.js';
 import { g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, remotesOf, chosenHost } from '../../../scripts/setup/local.js';
 import { homeDir } from '../../../scripts/host/local/home.js';
-import { GITLAB_COM, COMPANY_GITLAB, companyAddress, nameGitlabHost } from '../../../scripts/setup/host.js';
+import { GITLAB_COM, COMPANY_GITLAB, companyAddress, nameGitlabHost, guardAsIsReach } from '../../../scripts/setup/host.js';
 import { HELD_SECRET } from '../../../scripts/lib/pasted-address.js';
 import { DEFAULT_GITLAB } from '../../../scripts/host/gitlab-base.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
@@ -3092,6 +3092,467 @@ test('a folder whose origin is an ssh address of the same repository is fetched 
   });
 });
 
+// ---- The as-is route's git: the director's own, for the calls that reach the host ----
+
+// A scratch home holding a global git config with a credential helper of the director's own, for the length of `fn`.
+async function withDirectorsGitConfig(fn, extra = '') {
+  const home = fs.realpathSync.native(tempFolder('wh-dirgit-'));
+  fs.writeFileSync(path.join(home, '.gitconfig'), `[credential]\n\thelper = directors-own-helper\n${extra}`);
+  const was = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  try {
+    return await fn();
+  } finally {
+    for (const [k, v] of Object.entries(was)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+  }
+}
+
+// The stand-in GitLab at https://gitlab.com, answering as overHttps does; each git call's name, environment and (for a call that
+// reaches the host) the credential helpers git would use under that environment are kept in `seen`.
+const overGitlab = (w, seen, { fail = null } = {}) => async (file, args = [], options = {}) => {
+  if (path.basename(file).replace(/\.exe$/, '') !== 'git') return w.run(file, args, options);
+  const sub = args.find((a) => !a.startsWith('-'));
+  // The as-is guard's own reads (the computer's settings, git's answer for the address) are not the calls under test.
+  if (args.includes('--show-scope') || args.includes('--get-url') || args.includes('--get-urlmatch')) return w.run(file, args, options);
+  const reaches = ['fetch', 'push', 'ls-remote'].includes(sub);
+  if (reaches) {
+    const helpers = await hostGuard(file, ['config', '--get-all', 'credential.helper'], options);
+    seen.push({ sub, env: options.env, helpers: helpers.stdout.split(/\r?\n/).filter(Boolean) });
+    if (fail !== null) return { code: 128, stdout: '', stderr: fail };
+  } else {
+    seen.push({ sub, env: options.env });
+  }
+  let served = false;
+  const local = args.map((a) => {
+    const repo = /^https:\/\/gitlab\.com\/(.+)\.git$/.exec(a)?.[1];
+    if (repo === undefined) return a;
+    served = true;
+    return w.hostUrl({ repo });
+  });
+  return w.run(file, local, served ? { ...options, env: { ...options.env, GIT_ALLOW_PROTOCOL: 'https:file' } } : options);
+};
+
+test('as-is on GitLab with no glab: the new folder is fetched with the director\'s own git settings and credential helper, not setup\'s isolated git', async () => {
+  await withHome(async () => withDirectorsGitConfig(async () => {
+    const w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
+    const hostUrl = ({ repo }) => `https://gitlab.com/${repo}.git`;
+    const folder = productFolder();
+    const seen = [];
+    const env = directorGitEnv({ host: 'gitlab', gitPath: 'git', base: 'https://gitlab.com' });
+    const reachEnv = asIsReachEnv({ host: 'gitlab', url: hostUrl({ repo: `${USER}/Shop` }), gitPath: 'git', base: 'https://gitlab.com' });
+    await makeRepos({ host: 'gitlab', owner: USER, name: 'Shop', isNew: true, folder, run: overGitlab(w, seen), api: w.api, env, reachEnv, hostUrl, base: 'https://gitlab.com' });
+    assert.equal(await g(folder, 'rev-parse', 'HEAD'), await g(w.hostUrl({ repo: `${USER}/Shop` }), 'rev-parse', 'main'), 'the folder is connected');
+    const fetch = seen.find((c) => c.sub === 'fetch');
+    assert.equal(fetch.env.GIT_CONFIG_GLOBAL, undefined, 'the director\'s global settings are not shut out');
+    assert.equal(fetch.env.GIT_CONFIG_NOSYSTEM, undefined, 'nor their system settings');
+    assert.equal(fetch.env.GIT_TERMINAL_PROMPT, '0');
+    assert.equal(fetch.env.GCM_INTERACTIVE, 'never');
+    // Their global file's helper, with whatever their system file lists (a Mac's keychain): setup's glab one is not given.
+    assert.ok(fetch.helpers.includes('directors-own-helper'), fetch.helpers.join(', '));
+    assert.ok(!fetch.helpers.some((h) => /git-credential|glab/.test(h)), fetch.helpers.join(', '));
+    assert.ok(!JSON.stringify(fetch.env).includes('git-credential'), 'no glab helper in the environment');
+    // The fence still applies to that call.
+    assert.equal(fetch.env.GIT_ALLOW_PROTOCOL, 'https', 'https only');
+    assert.ok(Object.entries(fetch.env).some(([k, v]) => /^GIT_CONFIG_KEY_/.test(k) && /^core\.hookspath$/i.test(v)), 'the fence\'s settings are in the call');
+    // Calls that touch only the folder keep the isolated environment.
+    for (const c of seen.filter((x) => !['fetch', 'push', 'ls-remote'].includes(x.sub))) assert.equal(c.env.GIT_CONFIG_GLOBAL, '/dev/null', c.sub);
+  }));
+});
+
+// The as-is connect of a new folder under a global git config holding `extra`: what it throws (or null) and the folder.
+async function asIsConnectWith(extra, { fail = null, marker = null, publish = null, records = [], gcm = false } = {}) {
+  let outcome = null;
+  let folder = null;
+  let w = null;
+  await withHome(async () => withDirectorsGitConfig(async () => {
+    w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
+    const hostUrl = ({ repo }) => `https://gitlab.com/${repo}.git`;
+    folder = productFolder();
+    const env = directorGitEnv({ host: 'gitlab', gitPath: 'git', base: 'https://gitlab.com' });
+    const reachEnv = asIsReachEnv({ host: 'gitlab', url: hostUrl({ repo: `${USER}/Shop` }), gitPath: 'git', base: 'https://gitlab.com' });
+    // The stand-in host's own git calls ran under the same scratch home, so a hook's mark from them is cleared first.
+    if (marker !== null) fs.rmSync(marker, { force: true });
+    try {
+      await makeRepos({ host: 'gitlab', owner: USER, name: 'Shop', isNew: true, folder, run: overGitlab(w, [], { fail }), api: w.api, env, reachEnv, hostUrl, base: 'https://gitlab.com', publish, gcm, record: (c) => records.push(c) });
+    } catch (error) {
+      outcome = error.message;
+    }
+  }, extra));
+  return { outcome, folder, w };
+}
+
+test('as-is connect: a hook defined in the director\'s global git settings does not run', async () => {
+  const marker = path.join(fs.realpathSync.native(tempFolder('wh-hookmark-')), 'ran');
+  const { outcome, folder, w } = await asIsConnectWith(`[hook "x"]\n\tevent = reference-transaction\n\tcommand = test ! -d .claude || touch ${marker}\n`, { marker });
+  assert.equal(outcome, null);
+  assert.equal(await g(folder, 'rev-parse', 'HEAD'), await g(w.hostUrl({ repo: `${USER}/Shop` }), 'rev-parse', 'main'), 'it still connects');
+  assert.ok(!fs.existsSync(marker), 'the hook did not run');
+});
+
+const settingLine = (why) => `A setting in git on this computer (${why}) means Wheelhouse can't safely use your own git, so setup did not reach your repository and sent nothing. Ask me which setting it is: whoever looks after this computer can change it, then a fresh Go ahead tries again. Or choose another way to connect on step 3's card.`;
+const noFetch = (folder) => assert.ok(!fs.existsSync(path.join(folder, '.git', 'refs', 'remotes', 'origin', 'main')), 'nothing was fetched');
+
+// What a refusal throws: its line and its detail, kept apart.
+async function asIsRefusal(extra) {
+  let error = null;
+  let folder = null;
+  await withHome(async () => withDirectorsGitConfig(async () => {
+    const w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
+    const hostUrl = ({ repo }) => `https://gitlab.com/${repo}.git`;
+    folder = productFolder();
+    const env = directorGitEnv({ host: 'gitlab', gitPath: 'git', base: 'https://gitlab.com' });
+    const reachEnv = asIsReachEnv({ host: 'gitlab', url: hostUrl({ repo: `${USER}/Shop` }), gitPath: 'git', base: 'https://gitlab.com' });
+    try {
+      await makeRepos({ host: 'gitlab', owner: USER, name: 'Shop', isNew: true, folder, run: overGitlab(w, []), api: w.api, env, reachEnv, hostUrl, base: 'https://gitlab.com' });
+    } catch (e) {
+      error = e;
+    }
+  }, extra));
+  return { error, folder };
+}
+
+test('as-is connect: a global certificate check turned off for the address, or a resolver override, is refused before any contact, in plain words, with the exact setting as detail', async () => {
+  for (const [extra, why, key] of [
+    ['[http "https://gitlab.com/"]\n\tsslVerify = false\n', 'it turns certificate checks off for this address', /reads http\.sslVerify as false for https:\/\/gitlab\.com\/.*global file:.*\.gitconfig: http\.https:\/\/gitlab\.com\/\.sslverify false/],
+    ['[http "https://gitlab.com/"]\n\tsslVerify =\n', 'it turns certificate checks off for this address', /reads http\.sslVerify as false.*\.gitconfig/],
+    ['[http "https://gitlab.com/"]\n\tsslVerify = off\n', 'it turns certificate checks off for this address', /reads http\.sslVerify as false/],
+    ['[http]\n\tsslVerify = false\n[http "https://gitlab.com/"]\n\tsslVerify = no\n', 'it turns certificate checks off for this address', /reads http\.sslVerify as false/],
+    ['[http]\n\tcurloptResolve = gitlab.com:443:10.0.0.9\n', 'it points this site\'s name at a different server', /http\.curloptresolve = gitlab\.com:443:10\.0\.0\.9; set in global file:.*\.gitconfig/],
+  ]) {
+    const { error, folder } = await asIsRefusal(extra);
+    assert.equal(error.message, settingLine(why), extra);
+    assert.ok(!/sslverify|curlopt|http\./i.test(error.message), 'no key name in the director\'s line');
+    assert.match(error.detail, key, extra);
+    noFetch(folder);
+  }
+});
+
+test('as-is connect: certificate checks off for another host, or on for this one, still connects', async () => {
+  for (const extra of ['[http "https://other.example/"]\n\tsslVerify = false\n', '[http "https://gitlab.com/"]\n\tsslVerify = true\n', '[http]\n\tsslVerify = false\n']) {
+    const { outcome, folder, w } = await asIsConnectWith(extra);
+    assert.equal(outcome, null, extra);
+    assert.equal(await g(folder, 'rev-parse', 'HEAD'), await g(w.hostUrl({ repo: `${USER}/Shop` }), 'rev-parse', 'main'), extra);
+  }
+});
+
+test('as-is connect: a global address rewrite of the product\'s address is refused in plain words, the key and file in the detail', async () => {
+  for (const [extra, key] of [
+    ['[url "https://evil.example/"]\n\tinsteadOf = https://gitlab.com/\n', /url\.https:\/\/evil\.example\/\.insteadof = https:\/\/gitlab\.com\/; set in global file:.*\.gitconfig/],
+    ['[url "https://evil.example/"]\n\tpushInsteadOf = https://gitlab.com/\n', /pushinsteadof/i],
+    [`[remote "https://gitlab.com/${USER}/Shop.git"]\n\turl = https://evil.example/x.git\n`, /remote\.https:\/\/gitlab\.com\/.*\.url = https:\/\/evil\.example\/x\.git/],
+  ]) {
+    const { error } = await asIsRefusal(extra);
+    assert.equal(error.message, settingLine('it points this project\'s address somewhere else, for example to SSH'), extra);
+    assert.ok(!/insteadof|pushurl|evil|url\./i.test(error.message));
+    assert.match(error.detail, key, extra);
+  }
+});
+
+test('as-is guard: git that cannot read its settings or answer for the address says the settings could not be read, not a rewrite', async () => {
+  const unread = 'Git\'s settings on this computer could not be read, so setup did not reach your repository and sent nothing; a fresh Go ahead tries again, or choose another way to connect on step 3\'s card.';
+  const url = 'https://gitlab.com/a/b.git';
+  const listing = 'global\0user.name\nx\0';
+  const fakeRun = (answers) => async (file, args) => {
+    const key = args.includes('--list') ? 'list' : args.includes('--get-urlmatch') ? 'urlmatch' : args.includes('--get-url') ? 'url' : 'other';
+    return answers[key] ?? { code: 0, stdout: '', stderr: '' };
+  };
+  const base = { list: { code: 0, stdout: listing, stderr: '' }, urlmatch: { code: 1, stdout: '', stderr: '' }, url: { code: 0, stdout: `${url}\n`, stderr: '' } };
+  const guard = (answers) => guardAsIsReach({ run: fakeRun({ ...base, ...answers }), cwd: tempFolder('wh-guard-'), env: { GIT_CONFIG_COUNT: '0' }, url });
+  assert.equal((await guard({})).GIT_CONFIG_COUNT, '1', 'the pin is added when all is well');
+  await assert.rejects(guard({ url: { code: 128, stdout: '', stderr: 'fatal: bad' } }), (e) => e.message === unread && /exited 128/.test(e.detail));
+  await assert.rejects(guard({ list: { code: 1, stdout: '', stderr: '' } }), (e) => e.message === unread);
+  await assert.rejects(guard({ urlmatch: { code: 128, stdout: '', stderr: 'fatal: bad value' } }), (e) => e.message === unread);
+  await assert.rejects(guard({ url: { code: 0, stdout: 'ssh://git@gitlab.com/a/b.git\n', stderr: '' } }), (e) => e.message === settingLine('it points this project\'s address somewhere else, for example to SSH') && /ssh:\/\/\[hidden\]@gitlab\.com/.test(e.detail));
+  await assert.rejects(guardAsIsReach({ run: fakeRun(base), cwd: tempFolder('wh-guard-'), env: {}, url: '' }), (e) => e.message === 'Setup asked git to reach a repository without naming its address, so it did not reach your repository and sent nothing. This is a fault in Wheelhouse, and a fresh Go ahead won\'t help: tell me and I\'ll report it.');
+});
+
+test('as-is connect: a rewrite of some other address, or none, still connects', async () => {
+  const { outcome, folder, w } = await asIsConnectWith('[url "https://mirror.example/"]\n\tinsteadOf = https://elsewhere.example/\n');
+  assert.equal(outcome, null);
+  assert.equal(await g(folder, 'rev-parse', 'HEAD'), await g(w.hostUrl({ repo: `${USER}/Shop` }), 'rev-parse', 'main'));
+});
+
+const OTHER_WAY = 'choose another way to connect on step 3\'s card';
+test('as-is connect: a fetch that fails on a missing sign-in says what git said, then to ask for git\'s sign-in for the host', async () => {
+  const said = 'fatal: could not read Username for \'https://gitlab.com\': terminal prompts disabled\n';
+  const { outcome } = await asIsConnectWith('', { fail: said, gcm: true });
+  assert.equal(outcome, `Setup could not reach the new repository using git's own sign-in on this computer (git said: fatal: could not read Username for 'https://gitlab.com': terminal prompts disabled). Next: I can open git's sign-in for gitlab.com (its window may take a minute, and may open behind other windows); after you sign in there, setup carries on with step 3. Or ${OTHER_WAY}.`);
+  // Where git has no sign-in window of its own, no window is promised, and the other way is recommended.
+  const none = await asIsConnectWith('', { fail: said, gcm: false });
+  assert.equal(none.outcome, `Setup could not reach the new repository using git's own sign-in on this computer (git said: fatal: could not read Username for 'https://gitlab.com': terminal prompts disabled). Next: git on this computer has no sign-in window of its own that I can open, so sign git in to gitlab.com outside setup, then choose 'I have signed git in to gitlab.com' on the card that follows, or ${OTHER_WAY} (recommended).`);
+  assert.ok(!/window may|open git's sign-in/.test(none.outcome));
+});
+
+test('as-is connect: a fetch that fails for another reason says what git said, then a fresh Go ahead or the other way, with no sign-in offered', async () => {
+  const { outcome } = await asIsConnectWith('', { fail: 'fatal: unable to access \'https://gitlab.com/a/b.git/\': Could not resolve host: gitlab.com\n' });
+  assert.equal(outcome, `Setup could not reach the new repository using git's own sign-in on this computer (git said: fatal: unable to access 'https://gitlab.com/a/b.git/': Could not resolve host: gitlab.com). A fresh Go ahead tries again, or ${OTHER_WAY}.`);
+});
+
+test('as-is publish: a push that fails says what git said, then the next step by git\'s words', async () => {
+  const said = 'remote: You are not allowed to push code to this project.\nTo https://gitlab.com/a/b.git\n ! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs to \'https://gitlab.com/a/b.git\'\n';
+  const { outcome } = await asIsConnectWith('', { fail: said, publish: 'main' });
+  assert.equal(outcome, `Setup could not send your project to its new repository using git's own sign-in on this computer (git said: remote: You are not allowed to push code to this project. ! [remote rejected] main -> main (pre-receive hook declined)). A fresh Go ahead tries again, or ${OTHER_WAY}.`);
+  for (const auth of ['remote: HTTP Basic: Access denied\nfatal: Authentication failed for \'https://gitlab.com/a/b.git/\'\n', 'fatal: The requested URL returned error: 403 Forbidden\n']) {
+    const signIn = await asIsConnectWith('', { fail: auth, publish: 'main', gcm: true });
+    assert.match(signIn.outcome, /^Setup could not send your project to its new repository using git's own sign-in on this computer \(git said: .*\)\. Next: I can open git's sign-in for gitlab\.com \(its window may take a minute, and may open behind other windows\); after you sign in there, setup carries on with step 3\. Or choose another way to connect on step 3's card\.$/, auth);
+  }
+});
+
+test('as-is connect: a sign-in failure records the address (an answer, no user in it) for git\'s sign-in form, and no other failure does', async () => {
+  const records = [];
+  await asIsConnectWith('', { fail: 'fatal: could not read Username for \'https://gitlab.com\': terminal prompts disabled\n', records, gcm: true });
+  const kept = records.filter((c) => c.target === SIGN_IN_TARGET);
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].after.signIn.gcm, true, 'whether git has a window of its own is kept with it');
+  assert.equal(kept[0].kind, 'answer');
+  assert.equal(kept[0].after.signIn.address, `https://gitlab.com/${USER}/Shop.git`);
+  assert.equal(kept[0].after.signIn.base, 'https://gitlab.com', 'the host\'s address is kept beside it');
+  assert.equal(kept[0].after.signIn.why, 'sign-in');
+  assert.ok(Number.isFinite(Date.parse(kept[0].after.signIn.at)));
+  const other = [];
+  await asIsConnectWith('', { fail: 'fatal: unable to access: Could not resolve host: gitlab.com\n', records: other });
+  assert.equal(other.filter((c) => c.target === SIGN_IN_TARGET).length, 0);
+});
+
+test('as-is connect: a new repository git\'s sign-in cannot see means git is signed in as another account, says so, and keeps the address for git\'s sign-in', async () => {
+  for (const said of [
+    'remote: The project you were looking for could not be found or you don\'t have permission to view it.',
+    'remote: Permission to a/b.git denied to someone.',
+    'remote: Repository not found.',
+  ]) {
+    const records = [];
+    const { outcome } = await asIsConnectWith('', { fail: `${said}\nfatal: unable to access 'https://gitlab.com/a/b.git/': The requested URL returned error: 403\n`, records });
+    assert.ok(outcome.startsWith('Git on this computer is signed in to gitlab.com as a different account from the one that has access to the project (git said: '), outcome);
+    assert.ok(outcome.endsWith(` Next: sign git out of gitlab.com, or in as the account that has access to the project (or have the account git uses added to the project), outside setup, then choose 'I have changed git's sign-in for gitlab.com' on the card that follows; or ${OTHER_WAY} (recommended).`), outcome);
+    assert.ok(!/open git's sign-in/.test(outcome), 'no window is offered for another account');
+    const kept = records.filter((c) => c.target === SIGN_IN_TARGET);
+    assert.equal(kept.length, 1, 'the address is kept for the sign-in card');
+    assert.equal(kept[0].after.signIn.why, 'account');
+  }
+});
+
+test('a joined project git\'s sign-in cannot see is one its owner has not shared: ask its owner, and no sign-in is kept', async () => {
+  const records = [];
+  const line = ownSignInFailure('reach the project', 'https://gitlab.com/o/p.git', (c) => records.push(c), { base: 'https://gitlab.com', joined: true })('remote: Repository not found.\n');
+  assert.match(line, /^Setup could not reach the project using git's own sign-in on this computer \(git said: remote: Repository not found\.\)\. Your git sign-in for gitlab\.com can't see this project; ask its owner to add you, then a fresh Go ahead tries again\. Or choose another way to connect on step 3's card\.$/);
+  assert.equal(records.length, 0);
+});
+
+test('a look for a joined project\'s state branch that fails on a missing sign-in says so and keeps the address; any other failure reads as no branch', async () => {
+  const url = 'https://gitlab.com/o/p.git';
+  const fakeFor = (stderr) => async (file, args) => {
+    if (args[0] === 'ls-remote' && args.includes('refs/heads/wheelhouse-state')) return { code: 128, stdout: '', stderr };
+    if (args.includes('--name-only')) return { code: 0, stdout: '', stderr: '' };
+    if (args.includes('--list')) return { code: 0, stdout: 'global\0user.name\nx\0', stderr: '' };
+    if (args.includes('--get-urlmatch')) return { code: 1, stdout: '', stderr: '' };
+    if (args.includes('--get-url')) return { code: 0, stdout: `${url}\n`, stderr: '' };
+    return { code: 0, stdout: '', stderr: '' };
+  };
+  await withHome(async () => {
+    const reachEnv = asIsReachEnv({ host: 'gitlab', url, gitPath: 'git', base: 'https://gitlab.com' });
+    const records = [];
+    await assert.rejects(
+      holdsState({ remoteUrl: url, gitPath: 'git', env: {}, reachEnv, base: 'https://gitlab.com', gcm: true, run: fakeFor('fatal: could not read Username for \'https://gitlab.com\': terminal prompts disabled\n'), record: (c) => records.push(c) }),
+      (e) => /^Setup could not look for the project using git's own sign-in on this computer \(git said: .*\)\. Next: I can open git's sign-in for gitlab\.com \(its window/.test(e.message),
+    );
+    assert.equal(records.length, 1);
+    assert.equal(records[0].target, SIGN_IN_TARGET);
+    assert.equal(records[0].after.signIn.search, true);
+    assert.equal(records[0].after.signIn.address, url);
+    // The project is not there for this sign-in, or the network is down: not a branch, as before.
+    for (const said of ['remote: Repository not found.\n', 'fatal: unable to access: Could not resolve host: gitlab.com\n']) {
+      const none = [];
+      assert.equal(await holdsState({ remoteUrl: url, gitPath: 'git', env: {}, reachEnv, base: 'https://gitlab.com', run: fakeFor(said), record: (c) => none.push(c) }), false);
+      assert.equal(none.length, 0);
+    }
+  });
+});
+
+test('a sign-in the record could not keep is not offered in the line', () => {
+  const line = ownSignInFailure('reach the project', 'https://gitlab.com/o/p.git', () => { throw new Error('disk full'); }, { base: 'https://gitlab.com', gcm: true })('fatal: could not read Username for \'https://gitlab.com\': terminal prompts disabled\n');
+  assert.ok(!/open git's sign-in/.test(line), line);
+  assert.match(line, /A fresh Go ahead tries again, or choose another way to connect on step 3's card\.$/);
+});
+
+test('the account line says what to change outside setup, whatever git has a window for, and keeps the record for its card', () => {
+  const records = [];
+  const line = ownSignInFailure('reach the new repository', 'https://gitlab.com/o/p.git', (c) => records.push(c), { base: 'https://gitlab.com', gcm: true })('remote: Repository not found.\n');
+  assert.match(line, /^Git on this computer is signed in to gitlab\.com as a different account[^]*Next: sign git out of gitlab\.com, or in as the account that has access to the project \(or have the account git uses added to the project\), outside setup, then choose 'I have changed git's sign-in for gitlab\.com' on the card that follows; or choose another way to connect on step 3's card \(recommended\)\.$/);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].after.signIn.why, 'account');
+});
+
+test('a joining search skips a candidate git has no sign-in for, and says the sign-in line (keeping its address) only when none is found', async () => {
+  const host = 'https://gitlab.com';
+  const fakeApi = (configFor) => ({
+    get: async (route) => {
+      if (route.startsWith('/groups')) return { status: 200, body: [{ full_path: 'team' }] };
+      if (route.includes('/repository/files/')) return { status: configFor.some((r) => route.includes(encodeURIComponent(r))) ? 200 : 404, body: {} };
+      const repo = decodeURIComponent(route.replace(/^\/projects\//, '').split('?')[0]);
+      return { status: 200, body: { path_with_namespace: repo, id: 1, default_branch: 'main', visibility: 'private' } };
+    },
+  });
+  const fakeGit = (unsigned) => async (file, args) => {
+    if (args[0] === 'ls-remote' && args.includes('refs/heads/wheelhouse-state')) {
+      const address = args[args.indexOf('--end-of-options') + 1];
+      return unsigned.some((r) => address.includes(`/${r}.git`)) ? { code: 128, stdout: '', stderr: 'fatal: could not read Username for \'https://gitlab.com\': terminal prompts disabled\n' } : { code: 0, stdout: '', stderr: '' };
+    }
+    if (args.includes('--name-only')) return { code: 0, stdout: '', stderr: '' };
+    if (args.includes('--list')) return { code: 0, stdout: 'global\0user.name\nx\0', stderr: '' };
+    if (args.includes('--get-urlmatch')) return { code: 1, stdout: '', stderr: '' };
+    if (args.includes('--get-url')) return { code: 0, stdout: `${args.at(-1)}\n`, stderr: '' };
+    return { code: 0, stdout: '', stderr: '' };
+  };
+  await withHome(async () => {
+    const url = `${host}/ann/cafe.git`;
+    const reachEnv = asIsReachEnv({ host: 'gitlab', url, gitPath: 'git', base: host });
+    const search = (unsigned, configFor, records) => findJoined({
+      host: 'gitlab', wanted: 'cafe', user: 'ann', run: fakeGit(unsigned), api: fakeApi(configFor), gitPath: 'git', env: {}, reachEnv,
+      hostUrl: ({ repo }) => `${host}/${repo}.git`, base: host, gcm: true, record: (c) => records.push(c),
+    });
+    // One account has no sign-in; the other holds the project: it is found, and nothing is said or kept.
+    const found = [];
+    const got = await search(['ann/cafe'], ['team/cafe'], found);
+    assert.deepEqual(got.map((f) => f.repo), ['team/cafe']);
+    assert.equal(found.length, 0);
+    // None found: the sign-in line is said once, for the first address, and its record is kept.
+    const kept = [];
+    await assert.rejects(search(['ann/cafe', 'team/cafe'], [], kept), /^Error: Setup could not look for the project using git's own sign-in[^]*Next: I can open git's sign-in for gitlab\.com/);
+    assert.equal(kept.length, 1);
+    assert.equal(kept[0].after.signIn.address, `${host}/ann/cafe.git`);
+    assert.equal(kept[0].after.signIn.search, true);
+  });
+});
+
+test('a sign-in is never offered for an address that is not https', async () => {
+  const records = [];
+  const say = ownSignInFailure('reach the project', 'http://gitlab.example/o/p.git', (c) => records.push(c))('fatal: could not read Username for \'http://gitlab.example\': terminal prompts disabled');
+  assert.ok(!/open git's sign-in/.test(say), say);
+  assert.equal(records.length, 0);
+});
+
+test('reachFailureKind reads the last lines one at a time, and not the words inside an address or a project\'s name', () => {
+  const kind = reachFailureKind;
+  assert.equal(kind('fatal: could not read Username for \'https://h\': terminal prompts have been disabled'), 'sign-in');
+  assert.equal(kind('fatal: could not read Password for \'https://h\': No such device or address'), 'sign-in');
+  assert.equal(kind('fatal: Authentication failed for \'https://h/a/b.git/\''), 'sign-in');
+  assert.equal(kind('fatal: unable to access \'https://h/a/b.git/\': The requested URL returned error: 403'), 'other');
+  assert.equal(kind('error: The requested URL returned error: 403 Forbidden'), 'sign-in');
+  assert.equal(kind('fatal: HTTP 403 denied'), 'sign-in');
+  assert.equal(kind('HTTP/1.1 401'), 'sign-in');
+  assert.equal(kind('fatal: unable to access \'https://h/auth-service.git/\': Could not resolve host: h'), 'other');
+  assert.equal(kind('fatal: unable to access \'https://h/login/403/x.git/\': Could not resolve host: h'), 'other');
+  assert.equal(kind('fatal: repository \'auth-service.git\' does not exist'), 'other');
+  assert.equal(kind('remote: Permission to a/b.git denied to someone.'), 'not-found');
+  assert.equal(kind('remote: HTTP Basic: Access denied\nremote: The project you were looking for could not be found or you don\'t have permission to view it.'), 'not-found');
+  assert.equal(kind(`fatal: could not read Username for 'https://h': terminal prompts disabled\n${'noise\n'.repeat(40)}`), 'other', 'only the last 16 lines');
+  assert.equal(kind(''), 'other');
+  assert.equal(kind(undefined), 'other');
+});
+
+test('reachFailureKind takes 1 MB of stderr in well under a second, as long lines or as many', () => {
+  for (const big of ['x'.repeat(1 << 20), 'permission to '.repeat(75000), `${'a b '.repeat(260000)}\n`, `${'authentication '.repeat(70000)}`, ' denied\n'.repeat(130000), `${'https://h/a'.repeat(95000)}`]) {
+    const started = Date.now();
+    reachFailureKind(big);
+    assert.ok(Date.now() - started < 1000, `took ${Date.now() - started} ms`);
+  }
+});
+
+test('the as-is guard puts the setting\'s key and the file it is in the detail for the local and worktree files too, and the address settings are looked up inside setup', async () => {
+  const url = 'https://gitlab.com/a/b.git';
+  const listing = 'global\0user.name\nx\0';
+  const seen = [];
+  const fakeRun = async (file, args) => {
+    seen.push(args);
+    if (args.includes('--list')) return { code: 0, stdout: listing, stderr: '' };
+    if (args.includes('--get-urlmatch')) return { code: 1, stdout: '', stderr: '' };
+    if (args.includes('--get-url')) return { code: 0, stdout: 'ssh://git@gitlab.com/a/b.git\n', stderr: '' };
+    if (args.includes('--get-regexp')) return { code: 0, stdout: 'local\tfile:.git/config\turl.ssh://u:pw@evil/.insteadof https://gitlab.com/\nworktree\tfile:.git/config.worktree\tremote.origin.pushurl x\ncommand\t\tfoo.bar baz\n', stderr: '' };
+    return { code: 0, stdout: '', stderr: '' };
+  };
+  await assert.rejects(guardAsIsReach({ run: fakeRun, cwd: tempFolder('wh-guard-'), env: { GIT_CONFIG_COUNT: '0' }, url }), (e) => {
+    assert.match(e.detail, /local file:\.git\/config: url\.ssh:\/\/\[hidden\]@evil\/\.insteadof https:\/\/gitlab\.com\//);
+    assert.match(e.detail, /worktree file:\.git\/config\.worktree: remote\.origin\.pushurl x/);
+    assert.ok(!/foo\.bar|command/.test(e.detail), 'the call\'s own scope is left out');
+    assert.ok(!e.detail.includes('git config --show-origin'), 'no command is suggested to the agent');
+    // A setting in the project's own git files is the project's to change, not the computer's.
+    assert.match(e.message, /^A setting in this project's git settings \(it points this project's address somewhere else, for example to SSH\) means Wheelhouse can't safely use your own git/);
+    assert.match(e.message, /you or whoever looks after the project can change it there, then a fresh Go ahead tries again\./);
+    assert.ok(!/on this computer|looks after this computer/.test(e.message));
+    // The same refusal in the words of git's sign-in, which is opened again rather than tried again by a fresh Go ahead.
+    assert.match(e.lineFor({ stop: 'nothing was opened', again: 'I can open its sign-in again' }), /so nothing was opened\..* then I can open its sign-in again\. Or choose another way/);
+    return true;
+  });
+  assert.ok(seen.some((a) => a.includes('--get-regexp') && a.includes('insteadof|pushurl|^remote')));
+});
+
+test('a refusal\'s raw git words are scrubbed first and then cut to about 4 KB of their end', async () => {
+  const url = 'https://gitlab.com/a/b.git';
+  const noisy = `${'e '.repeat(5000)}https://u:secretpw@h/x glpat-abcdefgh1234567 end\n`;
+  const fakeRun = async (file, args) => {
+    if (args.includes('--list')) return { code: 0, stdout: 'global\0user.name\nx\0', stderr: '' };
+    if (args.includes('--get-urlmatch')) return { code: 1, stdout: '', stderr: '' };
+    return { code: 128, stdout: '', stderr: noisy };
+  };
+  await assert.rejects(guardAsIsReach({ run: fakeRun, cwd: tempFolder('wh-guard-'), env: {}, url }), (e) => {
+    assert.ok(e.detail.length < 4300, String(e.detail.length));
+    assert.ok(e.detail.endsWith('https://[hidden]@h/x [hidden] end'), e.detail.slice(-80));
+    assert.ok(/: \u2026e/.test(e.detail) || /: \u2026/.test(e.detail), 'the cut is marked');
+    return true;
+  });
+});
+
+test('the as-is route\'s own failure line ends with a full stop on every kind', () => {
+  for (const line of [ASIS_SETTINGS_UNREAD, asIsSettingLine('why'), ASIS_NO_ADDRESS]) assert.ok(line.endsWith('.'), line);
+});
+
+test('the as-is route\'s settings refusal names the "different server" for a resolver override', () => {
+  assert.match(asIsSettingLine('it points this site\'s name at a different server'), /\(it points this site's name at a different server\)/);
+});
+
+test('the routes that are not as-is still fetch with setup\'s isolated git and its own credential helper alone', async () => {
+  await withHome(async () => withDirectorsGitConfig(async () => {
+    const w = standIn();
+    const hostUrl = ({ repo }) => `https://gitlab.com/${repo}.git`;
+    const folder = productFolder();
+    const seen = [];
+    const env = directorGitEnv({ host: 'gitlab', gitPath: 'git', base: 'https://gitlab.com' });
+    await makeRepos({ host: 'gitlab', owner: USER, name: 'Shop', isNew: true, folder, run: overGitlab(w, seen), api: w.api, env, hostUrl, base: 'https://gitlab.com' });
+    const fetch = seen.find((c) => c.sub === 'fetch');
+    assert.equal(fetch.env.GIT_CONFIG_GLOBAL, '/dev/null');
+    assert.equal(fetch.env.GIT_CONFIG_NOSYSTEM, '1');
+    assert.equal(fetch.helpers.length, 1, 'one helper only');
+    assert.match(fetch.helpers[0], /auth git-credential/);
+    assert.ok(!fetch.helpers.includes('directors-own-helper'), 'the director\'s own helper is never given to another route');
+  }));
+});
+
+test('asIsReachEnv carries no helper of setup\'s and refuses to take one', () => {
+  const env = asIsReachEnv({ host: 'gitlab', url: 'https://gitlab.com/a/b.git', gitPath: 'git', base: 'https://gitlab.com' });
+  assert.ok(!Object.values(env).some((v) => /git-credential/.test(String(v))));
+  assert.ok(!Object.entries(env).some(([k, v]) => /^GIT_CONFIG_KEY_/.test(k) && /^credential/i.test(v)), 'no credential setting at all');
+  assert.equal(env.GIT_ALLOW_PROTOCOL, 'https');
+  assert.equal(env.GIT_CONFIG_GLOBAL, undefined);
+});
+
+test('a fetch that fails says what git said, with any sign-in in it hidden', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const hostUrl = ({ repo }) => `https://gitlab.com/${repo}.git`;
+    const folder = productFolder();
+    const env = directorGitEnv({ host: 'gitlab', gitPath: 'git', base: 'https://gitlab.com' });
+    const said = 'fatal: could not read Username for \'https://oauth2:glpat-abcdefghijkl1234@gitlab.com\': terminal prompts disabled\n';
+    await assert.rejects(
+      makeRepos({ host: 'gitlab', owner: USER, name: 'Shop', isNew: true, folder, run: overGitlab(w, [], { fail: said }), api: w.api, env, hostUrl, base: 'https://gitlab.com' }),
+      (error) => {
+        assert.equal(error.message, 'git could not fetch the new repository (git said: fatal: could not read Username for \'https://[hidden]@gitlab.com\': terminal prompts disabled)');
+        return true;
+      },
+    );
+  });
+});
+
 // ---- Which GitLab (spec 8.11) ----
 
 test('GitLab chosen and a company address typed gives a plan whose connection has that base, and names it in the settings', async () => {
@@ -3929,4 +4390,12 @@ test('after a pasted address missed, GitLab on the same host under the name the 
     const ask = (await step.plan(ctxFor(theirs.folder, { runId: theirs.run.id }))).ask;
     assert.doesNotMatch(ask.card.what, /can't use that name/);
   });
+});
+
+test('ownSignInFailure leads with another way to connect once git\'s window has been opened for the host', () => {
+  const said = 'fatal: could not read Username for \'https://gitlab.com\': terminal prompts disabled';
+  const first = ownSignInFailure('reach the project', 'https://gitlab.com/o/p.git', () => {}, { base: 'https://gitlab.com', gcm: true })(said);
+  const later = ownSignInFailure('reach the project', 'https://gitlab.com/o/p.git', () => {}, { base: 'https://gitlab.com', gcm: true, opened: true })(said);
+  assert.match(first, /Next: I can open git's sign-in for gitlab\.com/);
+  assert.match(later, /Next: choose another way to connect on step 3's card \(recommended\), or I can open git's sign-in for gitlab\.com again/);
 });
