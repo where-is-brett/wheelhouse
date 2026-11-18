@@ -24,6 +24,7 @@ import * as setupClicks from '../../../scripts/lib/setup-clicks.js';
 import * as journal from '../../../scripts/setup/journal.js';
 import * as clicks from '../../../scripts/setup/clicks.js';
 import { until as waitUntil } from '../../helpers/until.js';
+import { DetailedError } from '../../../scripts/setup/git.js';
 
 const H = 'ab'.repeat(32);
 const TEST_STEPS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'helpers', 'setup-steps.js');
@@ -363,6 +364,33 @@ test('a long step\'s process told what it handed itself is not the list the clic
     const at = lines.findIndex((l) => l.startsWith('Step 1,'));
     assert.equal(lines[at], 'Step 1, Install: did not finish: the plan changed.');
     assert.equal(lines[at + 1], `  Detail: changed json-key ${target} (fields: after)`);
+  });
+});
+
+test('a step that throws a DetailedError gives the director its line and the agent its detail, on separate lines of status', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(tempFolder('wh-detailed '));
+    fs.mkdirSync(home, { recursive: true });
+    const run = startRun({ folder, now: () => NOW });
+    const line = 'A setting in git on this computer (it turns certificate checks off for this address) means Wheelhouse can\'t safely use your own git.';
+    const detail = 'http.sslVerify = false; set in global file:/home/x/.gitconfig';
+    const step = { n: 3, apply: async () => { throw new DetailedError(line, detail); } };
+    markStep(run.id, 3, 'clickedAt', { now: () => NOW });
+    const done = await runApply({ step, runId: run.id, changes: [], ctx: { now: () => NOW, folder }, copy: async () => {} });
+    assert.deepEqual(done, { ok: false, reason: line });
+    const entry = findRun(folder).steps[3];
+    assert.equal(entry.failed, line);
+    assert.equal(entry.failedDetail, detail);
+    const routes = setupRoutes({ now: () => NOW, stepsModule: TEST_STEPS, userHome: fs.realpathSync.native(tempFolder('wh-user ')) });
+    const { lines } = await routes['/setup/status']({ folder });
+    const at = lines.findIndex((l) => l.startsWith('Step 3,'));
+    assert.equal(lines[at], `Step 3, ${SETUP_TITLES[3]}: did not finish: ${line}`);
+    assert.equal(lines[at + 1], `  Detail: ${detail}`);
+    assert.ok(!lines[at].includes('sslVerify'));
+    // A plain error has no detail line.
+    markStep(run.id, 3, 'clickedAt', { now: () => NOW });
+    await runApply({ step: { n: 3, apply: async () => { throw new Error('plain'); } }, runId: run.id, changes: [], ctx: { now: () => NOW, folder }, copy: async () => {} });
+    assert.equal(findRun(folder).steps[3].failedDetail, undefined);
   });
 });
 

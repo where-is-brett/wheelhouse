@@ -223,9 +223,9 @@ const LISTS = { own: allowedSetting, project: allowedProjectSetting };
 // `env` with the whole fence, and the transport `reach` names in place of any given. Safe to apply twice.
 //
 // A push reach (PUSH_REACHES) is the one exception to the shutting out of the global and system
-// settings (used by the helper's push and by setup's as-is connect): the director's own files come in, with their credential helper, proxy, certificate and the
-// rest, and the fence's settings still outrank them (they are in the call's environment). So the
-// call drops GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM, does not clear the credential helpers, never
+// settings (used by the helper's push and by setup's as-is connect): the director's own files come
+// in, with their credential helper, proxy, certificate and the rest, and the fence's settings still
+// outrank them (they are in the call's environment). So the call drops GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM, does not clear the credential helpers, never
 // prompts or opens a window, and for an SSH remote leaves the director's own core.sshCommand (and
 // GIT_SSH_COMMAND, from `directorEnv`) in place. A caller may not give a push a credential helper.
 export function safeGitEnv(env = {}, { reach = 'https', directorEnv = process.env, settingsFile = null } = {}) {
@@ -332,6 +332,11 @@ export async function readComputerSettings({ run = realRun, gitPath = 'git', cwd
 }
 
 const OFF = /^(false|no|off|0)$/i;
+// The setting that sends a host name to another address (`http.curloptResolve`), as { key, value }, or null.
+export function resolveFinding(entries) {
+  const found = entries.find(({ key }) => /^http\.(?:.+\.)?curloptresolve$/.test(key.toLowerCase()));
+  return found === undefined ? null : { key: found.key, value: found.value };
+}
 // Why the computer's settings may not go into a push, in words, or null. A web address's own certificate setting set
 // to off beats the fence's plain one, and a resolver override sends a name to another address.
 export function settingsRefusal(entries) {
@@ -354,19 +359,26 @@ export function hookNames(entries) {
   return [...names];
 }
 
-// Why the computer's settings send the address `url` somewhere else, in words, or null: an `insteadOf` or `pushInsteadOf` whose
-// text begins the address, or a remote named for the address itself (git reads `remote.<address>.url` and `.pushurl` for a
-// bare address) that gives another. Git's own answer for a fetch is checked by the caller too; a push's address is not asked
-// of git for a bare address, so this is how pushInsteadOf and pushurl are seen.
-export function rewriteRefusal(entries, url) {
+// The setting that sends the address `url` somewhere else, as { kind, key, value }, or null: an `insteadOf` or `pushInsteadOf` whose
+// text begins the address (kind 'instead-of'), or a remote named for the address itself (git reads `remote.<address>.url` and
+// `.pushurl` for a bare address) that gives another (kind 'remote'). Git's own answer for a fetch is checked by the caller too; a
+// push's address is not asked of git for a bare address, so this is how pushInsteadOf and pushurl are seen.
+export function rewriteFinding(entries, url) {
   const address = String(url);
   for (const { key, value } of entries) {
     const lower = key.toLowerCase();
-    if (/^url\..+\.(?:push)?insteadof$/.test(lower) && typeof value === 'string' && value !== '' && address.startsWith(value)) return 'rewrite this project\'s address (insteadOf or pushInsteadOf)';
+    if (/^url\..+\.(?:push)?insteadof$/.test(lower) && typeof value === 'string' && value !== '' && address.startsWith(value)) return { kind: 'instead-of', key, value };
     const named = /^remote\.(.+)\.(?:push)?url$/.exec(lower);
-    if (named !== null && named[1] === address.toLowerCase()) return 'name another address for this project\'s address (remote url or pushurl)';
+    if (named !== null && named[1] === address.toLowerCase()) return { kind: 'remote', key, value };
   }
   return null;
+}
+
+// Why the computer's settings send the address `url` somewhere else, in words, or null (rewriteFinding).
+export function rewriteRefusal(entries, url) {
+  const found = rewriteFinding(entries, url);
+  if (found === null) return null;
+  return found.kind === 'instead-of' ? 'rewrite this project\'s address (insteadOf or pushInsteadOf)' : 'name another address for this project\'s address (remote url or pushurl)';
 }
 
 const quoted = (text) => `"${String(text).replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\n', '\\n').replaceAll('\t', '\\t')}"`;

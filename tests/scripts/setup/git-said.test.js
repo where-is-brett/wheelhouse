@@ -3,7 +3,7 @@
 // reach a remote take the as-is route's environment, and every other call stays isolated.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { setupGit, scrubGitText, gitSaid, gitFailure, NULL_FILE } from '../../../scripts/setup/git.js';
+import { setupGit, scrubGitText, gitSaid, gitFailure, DetailedError, NULL_FILE } from '../../../scripts/setup/git.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 test('scrubGitText hides the user or token in an address, an Authorization or extra-header value, and anything shaped like a token', () => {
@@ -21,7 +21,7 @@ test('scrubGitText hides the user or token in an address, an Authorization or ex
 test('scrubGitText leaves plain text and an address with no user alone, and is safe to apply twice', () => {
   const plain = 'fatal: could not read Username for \'https://gitlab.com\': terminal prompts disabled';
   assert.equal(scrubGitText(plain), plain);
-  assert.equal(scrubGitText('https://host/path@thing'), 'https://host/path@thing');
+  assert.equal(scrubGitText('https://host/path and mail me@there'), 'https://host/path and mail me@there');
   const once = scrubGitText('https://u:p@h/x Authorization: Basic zzz glpat-abcdefghijkl1234');
   assert.equal(scrubGitText(once), once);
   assert.equal(scrubGitText(undefined), '');
@@ -93,4 +93,37 @@ test('setupGit with a reachEnv gives it to the calls that reach a remote, and ev
   seen.length = 0;
   await setupGit({ run: fake, cwd: folder })(['fetch']);
   assert.equal(seen.at(-1)[1].GIT_CONFIG_GLOBAL, NULL_FILE, 'no reachEnv, no change');
+});
+
+test('scrubGitText takes a long hostile line in linear time', () => {
+  for (const hostile of ['a://b:/'.repeat(14286), `https://u:${'/'.repeat(100000)}`, `${'a://'.repeat(25000)}x`, `https://${'a@'.repeat(50000)}`]) {
+    const started = Date.now();
+    scrubGitText(hostile);
+    gitSaid(hostile);
+    assert.ok(Date.now() - started < 500, `${hostile.slice(0, 12)}: ${Date.now() - started} ms`);
+  }
+  // Nothing is cut before it is scrubbed: a token in an address at the end of a very long line is hidden.
+  assert.equal(gitSaid(`${'z'.repeat(5000)} https://oauth2:abc123@gitlab.com/x`), '\u2026https://[hidden]@gitlab.com/x');
+  // Only the last lines are scrubbed, and the earlier ones are never said.
+  assert.equal(gitSaid(`${'noise\n'.repeat(40)}one\ntwo\n`), 'one two');
+});
+
+test('scrubGitText hides a GitLab personal access token with no digit, and a Basic value of base64 without a digit', () => {
+  assert.equal(scrubGitText('bad glpat-abcdefghIJKLMN token'), 'bad [hidden] token');
+  assert.equal(scrubGitText('sent Basic AbCdEfGhIjKl to host'), 'sent Basic [hidden] to host');
+  assert.equal(scrubGitText('Basic AbCdEfGhIjKl'), 'Basic [hidden]');
+  assert.equal(scrubGitText('Basic authentication failed for the user'), 'Basic authentication failed for the user');
+  assert.equal(scrubGitText('remote: HTTP Basic: Access denied'), 'remote: HTTP Basic: Access denied');
+});
+
+test('gitSaid drops only git\'s own capital-T To line, and still says a lower-case one', () => {
+  assert.equal(gitSaid('remote: no\nTo https://h/x.git\n'), 'remote: no');
+  assert.equal(gitSaid('fatal: no\nto reach https://h/x.git use the other way\n'), 'fatal: no to reach https://h/x.git use the other way');
+});
+
+test('DetailedError keeps the line and, scrubbed, the detail', () => {
+  const error = new DetailedError('The line', 'key = https://u:pw@h/x');
+  assert.equal(error.message, 'The line');
+  assert.equal(error.detail, 'key = https://[hidden]@h/x');
+  assert.equal(new DetailedError('x').detail, undefined);
 });

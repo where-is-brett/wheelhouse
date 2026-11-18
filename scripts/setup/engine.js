@@ -319,7 +319,7 @@ export async function runApply({ step, runId, changes, ctx, current, copy = copy
   } catch (error) {
     const reason = (error instanceof Error ? error.message : '') || 'the step did not finish';
     try {
-      markStep(runId, step.n, 'failed', { now: ctx.now, reason, when: current });
+      markStep(runId, step.n, 'failed', { now: ctx.now, reason, detail: typeof error?.detail === 'string' ? error.detail : undefined, when: current });
     } catch { /* the journal could not take it; the step reads as running until its time is up */ }
     return { ok: false, reason };
   }

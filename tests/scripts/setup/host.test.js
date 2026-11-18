@@ -49,7 +49,7 @@ import { FREE_PLAN_LINE } from '../../../scripts/host/protection.js';
 import { g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { KEEP_HERE, PUT_ON_GITHUB, PUT_ON_GITLAB, remotesOf, chosenHost } from '../../../scripts/setup/local.js';
 import { homeDir } from '../../../scripts/host/local/home.js';
-import { GITLAB_COM, COMPANY_GITLAB, companyAddress, nameGitlabHost } from '../../../scripts/setup/host.js';
+import { GITLAB_COM, COMPANY_GITLAB, companyAddress, nameGitlabHost, guardAsIsReach } from '../../../scripts/setup/host.js';
 import { HELD_SECRET } from '../../../scripts/lib/pasted-address.js';
 import { DEFAULT_GITLAB } from '../../../scripts/host/gitlab-base.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
@@ -3114,7 +3114,7 @@ const overGitlab = (w, seen, { fail = null } = {}) => async (file, args = [], op
   if (path.basename(file).replace(/\.exe$/, '') !== 'git') return w.run(file, args, options);
   const sub = args.find((a) => !a.startsWith('-'));
   // The as-is guard's own reads (the computer's settings, git's answer for the address) are not the calls under test.
-  if (args.includes('--show-scope') || args.includes('--get-url')) return w.run(file, args, options);
+  if (args.includes('--show-scope') || args.includes('--get-url') || args.includes('--get-urlmatch')) return w.run(file, args, options);
   const reaches = ['fetch', 'push', 'ls-remote'].includes(sub);
   if (reaches) {
     const helpers = await hostGuard(file, ['config', '--get-all', 'credential.helper'], options);
@@ -3190,26 +3190,81 @@ test('as-is connect: a hook defined in the director\'s global git settings does 
   assert.ok(!fs.existsSync(marker), 'the hook did not run');
 });
 
-test('as-is connect: a global certificate check turned off for the host, or a resolver override, is refused before any contact', async () => {
-  for (const [extra, what] of [
-    ['[http "https://gitlab.com/"]\n\tsslVerify = false\n', 'turn certificate checks off for a web address'],
-    ['[http]\n\tcurloptResolve = gitlab.com:443:10.0.0.9\n', 'send a host name to another address'],
+const settingLine = (why) => `A setting in git on this computer (${why}) means Wheelhouse can't safely use your own git, so setup did not reach your repository and sent nothing. Ask me which setting it is; whoever looks after this computer can change it, or choose the other way to connect on step 3's card; then a fresh Go ahead tries again.`;
+const noFetch = (folder) => assert.ok(!fs.existsSync(path.join(folder, '.git', 'refs', 'remotes', 'origin', 'main')), 'nothing was fetched');
+
+// What a refusal throws: its line and its detail, kept apart.
+async function asIsRefusal(extra) {
+  let error = null;
+  let folder = null;
+  await withHome(async () => withDirectorsGitConfig(async () => {
+    const w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
+    const hostUrl = ({ repo }) => `https://gitlab.com/${repo}.git`;
+    folder = productFolder();
+    const env = directorGitEnv({ host: 'gitlab', gitPath: 'git', base: 'https://gitlab.com' });
+    const reachEnv = asIsReachEnv({ host: 'gitlab', url: hostUrl({ repo: `${USER}/Shop` }), gitPath: 'git', base: 'https://gitlab.com' });
+    try {
+      await makeRepos({ host: 'gitlab', owner: USER, name: 'Shop', isNew: true, folder, run: overGitlab(w, []), api: w.api, env, reachEnv, hostUrl, base: 'https://gitlab.com' });
+    } catch (e) {
+      error = e;
+    }
+  }, extra));
+  return { error, folder };
+}
+
+test('as-is connect: a global certificate check turned off for the address, or a resolver override, is refused before any contact, in plain words, with the exact setting as detail', async () => {
+  for (const [extra, why, key] of [
+    ['[http "https://gitlab.com/"]\n\tsslVerify = false\n', 'it turns certificate checks off for this address', /reads http\.sslVerify as false for https:\/\/gitlab\.com\/.*global file:.*\.gitconfig: http\.https:\/\/gitlab\.com\/\.sslverify false/],
+    ['[http "https://gitlab.com/"]\n\tsslVerify =\n', 'it turns certificate checks off for this address', /reads http\.sslVerify as false.*\.gitconfig/],
+    ['[http "https://gitlab.com/"]\n\tsslVerify = off\n', 'it turns certificate checks off for this address', /reads http\.sslVerify as false/],
+    ['[http]\n\tsslVerify = false\n[http "https://gitlab.com/"]\n\tsslVerify = no\n', 'it turns certificate checks off for this address', /reads http\.sslVerify as false/],
+    ['[http]\n\tcurloptResolve = gitlab.com:443:10.0.0.9\n', 'it sends a web address to another computer', /http\.curloptresolve = gitlab\.com:443:10\.0\.0\.9; set in global file:.*\.gitconfig/],
   ]) {
-    const { outcome, folder } = await asIsConnectWith(extra);
-    assert.equal(outcome, `Git's settings on this computer ${what}, which Wheelhouse does not allow, so setup did not reach your repository and sent nothing. Remove that setting from your git settings, then a fresh Go ahead tries again`);
-    assert.ok(!fs.existsSync(path.join(folder, '.git', 'refs', 'remotes', 'origin', 'main')), 'nothing was fetched');
+    const { error, folder } = await asIsRefusal(extra);
+    assert.equal(error.message, settingLine(why), extra);
+    assert.ok(!/sslverify|curlopt|http\./i.test(error.message), 'no key name in the director\'s line');
+    assert.match(error.detail, key, extra);
+    noFetch(folder);
   }
 });
 
-test('as-is connect: a global address rewrite of the product\'s address is refused', async () => {
-  for (const [extra, what] of [
-    ['[url "https://evil.example/"]\n\tinsteadOf = https://gitlab.com/\n', 'rewrite this project\'s address (insteadOf or pushInsteadOf)'],
-    ['[url "https://evil.example/"]\n\tpushInsteadOf = https://gitlab.com/\n', 'rewrite this project\'s address (insteadOf or pushInsteadOf)'],
-    [`[remote "https://gitlab.com/${USER}/Shop.git"]\n\turl = https://evil.example/x.git\n`, 'name another address for this project\'s address (remote url or pushurl)'],
-  ]) {
-    const { outcome } = await asIsConnectWith(extra);
-    assert.equal(outcome, `Git's settings on this computer ${what}, which would send your sign-in somewhere else, so setup did not reach your repository and sent nothing. Remove that rewrite from your git settings, then a fresh Go ahead tries again`);
+test('as-is connect: certificate checks off for another host, or on for this one, still connects', async () => {
+  for (const extra of ['[http "https://other.example/"]\n\tsslVerify = false\n', '[http "https://gitlab.com/"]\n\tsslVerify = true\n', '[http]\n\tsslVerify = false\n']) {
+    const { outcome, folder, w } = await asIsConnectWith(extra);
+    assert.equal(outcome, null, extra);
+    assert.equal(await g(folder, 'rev-parse', 'HEAD'), await g(w.hostUrl({ repo: `${USER}/Shop` }), 'rev-parse', 'main'), extra);
   }
+});
+
+test('as-is connect: a global address rewrite of the product\'s address is refused in plain words, the key and file in the detail', async () => {
+  for (const [extra, key] of [
+    ['[url "https://evil.example/"]\n\tinsteadOf = https://gitlab.com/\n', /url\.https:\/\/evil\.example\/\.insteadof = https:\/\/gitlab\.com\/; set in global file:.*\.gitconfig/],
+    ['[url "https://evil.example/"]\n\tpushInsteadOf = https://gitlab.com/\n', /pushinsteadof/i],
+    [`[remote "https://gitlab.com/${USER}/Shop.git"]\n\turl = https://evil.example/x.git\n`, /remote\.https:\/\/gitlab\.com\/.*\.url = https:\/\/evil\.example\/x\.git/],
+  ]) {
+    const { error } = await asIsRefusal(extra);
+    assert.equal(error.message, settingLine('it points this project\'s address somewhere else, for example to SSH'), extra);
+    assert.ok(!/insteadof|pushurl|evil|url\./i.test(error.message));
+    assert.match(error.detail, key, extra);
+  }
+});
+
+test('as-is guard: git that cannot read its settings or answer for the address says the settings could not be read, not a rewrite', async () => {
+  const unread = 'Git\'s settings on this computer could not be read, so setup did not reach your repository and sent nothing; a fresh Go ahead tries again, or choose the other way to connect on step 3\'s card';
+  const url = 'https://gitlab.com/a/b.git';
+  const listing = 'global\0user.name\nx\0';
+  const fakeRun = (answers) => async (file, args) => {
+    const key = args.includes('--list') ? 'list' : args.includes('--get-urlmatch') ? 'urlmatch' : args.includes('--get-url') ? 'url' : 'other';
+    return answers[key] ?? { code: 0, stdout: '', stderr: '' };
+  };
+  const base = { list: { code: 0, stdout: listing, stderr: '' }, urlmatch: { code: 1, stdout: '', stderr: '' }, url: { code: 0, stdout: `${url}\n`, stderr: '' } };
+  const guard = (answers) => guardAsIsReach({ run: fakeRun({ ...base, ...answers }), cwd: tempFolder('wh-guard-'), env: { GIT_CONFIG_COUNT: '0' }, url });
+  assert.equal((await guard({})).GIT_CONFIG_COUNT, '1', 'the pin is added when all is well');
+  await assert.rejects(guard({ url: { code: 128, stdout: '', stderr: 'fatal: bad' } }), (e) => e.message === unread && /exited 128/.test(e.detail));
+  await assert.rejects(guard({ list: { code: 1, stdout: '', stderr: '' } }), (e) => e.message === unread);
+  await assert.rejects(guard({ urlmatch: { code: 128, stdout: '', stderr: 'fatal: bad value' } }), (e) => e.message === unread);
+  await assert.rejects(guard({ url: { code: 0, stdout: 'ssh://git@gitlab.com/a/b.git\n', stderr: '' } }), (e) => e.message === settingLine('it points this project\'s address somewhere else, for example to SSH') && /ssh:\/\/\[hidden\]@gitlab\.com/.test(e.detail));
+  await assert.rejects(guardAsIsReach({ run: fakeRun(base), cwd: tempFolder('wh-guard-'), env: {}, url: '' }), (e) => e.message === 'Setup asked git to reach a repository without naming its address, so it did not reach your repository and sent nothing. This is a fault in Wheelhouse and a fresh Go ahead won\'t help; tell me and I\'ll report it.');
 });
 
 test('as-is connect: a rewrite of some other address, or none, still connects', async () => {
@@ -3218,16 +3273,26 @@ test('as-is connect: a rewrite of some other address, or none, still connects', 
   assert.equal(await g(folder, 'rev-parse', 'HEAD'), await g(w.hostUrl({ repo: `${USER}/Shop` }), 'rev-parse', 'main'));
 });
 
-test('as-is connect: a fetch that fails says it used their own git sign-in and what to do, with what git said', async () => {
+const OTHER_WAY = 'choose the other way to connect on step 3\'s card';
+test('as-is connect: a fetch that fails on a missing sign-in says what git said, then to ask for git\'s sign-in for the host', async () => {
   const said = 'fatal: could not read Username for \'https://gitlab.com\': terminal prompts disabled\n';
   const { outcome } = await asIsConnectWith('', { fail: said });
-  assert.equal(outcome, 'git could not fetch the new repository with your own git sign-in; sign in to gitlab.com with git once (for example by cloning any project from it), then a fresh Go ahead tries again (git said: fatal: could not read Username for \'https://gitlab.com\': terminal prompts disabled)');
+  assert.equal(outcome, `Setup could not reach the new repository using git's own sign-in on this computer (git said: fatal: could not read Username for 'https://gitlab.com': terminal prompts disabled); ask me to open git's sign-in for gitlab.com, sign in there, then a fresh Go ahead tries again, or ${OTHER_WAY}`);
 });
 
-test('as-is publish: a push that fails says it used their own git sign-in and what to do, with what git said', async () => {
+test('as-is connect: a fetch that fails for another reason says what git said, then a fresh Go ahead or the other way, with no sign-in offered', async () => {
+  const { outcome } = await asIsConnectWith('', { fail: 'fatal: unable to access \'https://gitlab.com/a/b.git/\': Could not resolve host: gitlab.com\n' });
+  assert.equal(outcome, `Setup could not reach the new repository using git's own sign-in on this computer (git said: fatal: unable to access 'https://gitlab.com/a/b.git/': Could not resolve host: gitlab.com); a fresh Go ahead tries again, or ${OTHER_WAY}`);
+});
+
+test('as-is publish: a push that fails says what git said, then the next step by git\'s words', async () => {
   const said = 'remote: You are not allowed to push code to this project.\nTo https://gitlab.com/a/b.git\n ! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs to \'https://gitlab.com/a/b.git\'\n';
   const { outcome } = await asIsConnectWith('', { fail: said, publish: 'main' });
-  assert.equal(outcome, 'Your project could not be sent to its new repository with your own git sign-in; sign in to gitlab.com with git once (for example by cloning any project from it), then a fresh Go ahead tries again (git said: remote: You are not allowed to push code to this project. ! [remote rejected] main -> main (pre-receive hook declined))');
+  assert.equal(outcome, `Setup could not send your project to its new repository using git's own sign-in on this computer (git said: remote: You are not allowed to push code to this project. ! [remote rejected] main -> main (pre-receive hook declined)); a fresh Go ahead tries again, or ${OTHER_WAY}`);
+  for (const auth of ['remote: HTTP Basic: Access denied\nfatal: Authentication failed for \'https://gitlab.com/a/b.git/\'\n', 'fatal: The requested URL returned error: 403 Forbidden\n']) {
+    const signIn = await asIsConnectWith('', { fail: auth, publish: 'main' });
+    assert.match(signIn.outcome, /^Setup could not send your project to its new repository using git's own sign-in on this computer \(git said: .*\); ask me to open git's sign-in for gitlab\.com, sign in there, then a fresh Go ahead tries again, or choose the other way to connect on step 3's card$/, auth);
+  }
 });
 
 test('the routes that are not as-is still fetch with setup\'s isolated git and its own credential helper alone', async () => {

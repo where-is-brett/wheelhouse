@@ -109,7 +109,7 @@ export async function runStep([modulePath, folder, stepText, hash, runId, clicke
     const done = await runApply({ step, runId, changes, ctx, current: mine });
     return done.ok && !expired ? 0 : 1;
   } catch (error) {
-    return fail((error instanceof Error ? error.message : '') || 'the step did not finish');
+    return fail((error instanceof Error ? error.message : '') || 'the step did not finish', typeof error?.detail === 'string' ? error.detail : undefined);
   } finally {
     clearInterval(ticker);
     removeSketch(runId, n, clickedAt);

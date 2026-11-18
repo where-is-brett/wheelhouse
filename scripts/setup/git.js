@@ -246,34 +246,63 @@ export function setupGit({ run = realRun, gitPath = 'git', env = {}, cwd, workTr
 // ---- What git said, for a failure line ----
 
 const HIDDEN = '[hidden]';
+// The user or token in an address (`scheme://user:pass@host`, a password with an unencoded `/` in it too): everything from after
+// `://` to the first `@`, with no white space between, goes. A scan, not one pattern: a pattern that reads on to the end for each
+// `scheme://` it meets goes quadratic on a long line of them. A failed scan ends at the white space or end it stopped at, so no
+// text is read twice.
+function hideUserinfo(text) {
+  let out = '';
+  let from = 0;
+  let at = text.indexOf('://');
+  while (at >= 0) {
+    let start = at;
+    while (start > from && /[A-Za-z0-9+.-]/.test(text[start - 1])) start -= 1;
+    let end = at + 3;
+    while (end < text.length && text[end] !== '@' && !/\s/.test(text[end])) end += 1;
+    if (end < text.length && text[end] === '@' && /[A-Za-z]/.test(text.slice(start, at))) {
+      out += `${text.slice(from, at + 3)}${HIDDEN}`;
+      from = end;
+      at = text.indexOf('://', end + 1);
+    } else {
+      at = text.indexOf('://', end);
+    }
+  }
+  return out + text.slice(from);
+}
+
 // Text git (or its helpers) wrote, with anything that could carry a sign-in taken out: the user or token in an address
-// (`scheme://user:pass@host`, a password with an unencoded `/` in it too), an Authorization or extra-header value (to the end
-// of its line), a bare `Bearer` or `Basic` value, a `token=` value in a query string, a `password=` line, and anything shaped
-// like a GitLab or GitHub token. Safe to apply twice.
+// (hideUserinfo), an Authorization or extra-header value (to the end of its line), a bare `Bearer` or `Basic` value, a `token=`
+// value in a query string, a `password=` line, and anything shaped like a GitLab or GitHub token. Safe to apply twice.
 export function scrubGitText(text) {
-  return String(text ?? '')
-    .replace(/([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/?#]*@/g, `$1${HIDDEN}@`)
-    .replace(/([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s@/:]+:[^\s@]*\/[^\s@]*@/g, `$1${HIDDEN}@`)
+  return hideUserinfo(String(text ?? ''))
     .replace(/(authorization\s*[:=]\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
     .replace(/(extraheader[^\s=:]*\s*[:=]\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
     .replace(/(private-token\s*:\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
     .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{4,}/gi, `$1${HIDDEN}`)
-    .replace(/\b(Basic\s+)(?=[A-Za-z0-9+/]*[0-9=+/])[A-Za-z0-9+/]{8,}=*/gi, `$1${HIDDEN}`)
+    // A `Basic` value is 8 or more base64 characters, then white space or the end, with a digit, an `=`, a `+` or a `/`, or both cases, in it:
+    // prose such as "Basic authentication failed" stays.
+    .replace(/\b(Basic\s+)([A-Za-z0-9+/=]{8,})(?=\s|$)/gi, (all, lead, token) => (/[0-9=+/]|[a-z][A-Z]|[A-Z][a-z]/.test(token) ? `${lead}${HIDDEN}` : all))
     .replace(/\b((?:[A-Za-z]+_)*token=)[^\s&'"]+/gi, `$1${HIDDEN}`)
     .replace(/(password\s*=\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
-    // GitLab's token prefixes (glpat-, gldt-, glrt-, glcbt-, gloas-, glft-, glptt-, glimt-, glsoat-), by their shape: a body with a digit in it.
+    // GitLab's personal access token, whatever its body; and its other token prefixes (gldt-, glrt-, glcbt-, gloas-, glft-, glptt-,
+    // glimt-, glsoat-), by their shape: a body with a digit in it.
+    .replace(/\bglpat-[A-Za-z0-9_-]{8,}/g, HIDDEN)
     .replace(/\bgl[a-z]{2,5}-(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{8,}/g, HIDDEN)
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,})/g, HIDDEN);
 }
 
-// Lines git adds that say nothing of why: its hints, the `To <address>` line of a push, and its closing `failed to push` line
-// (the `remote:` reason and the `! [remote rejected]` line before it are what matter).
-const NOISE = /^(?:hint:|To\s+\S|error: failed to push some refs)/i;
+// Lines git adds that say nothing of why: its hints, the `To <address>` line of a push (git's own, capital T), and its closing
+// `failed to push` line (the `remote:` reason and the `! [remote rejected]` line before it are what matter).
+const isNoise = (line) => /^To\s+\S/.test(line) || /^(?:hint:|error: failed to push some refs)/i.test(line);
+// How much of the end of git's stderr is scrubbed at all: only the last lines can be said.
+const SCRUBBED_LINES = 16;
 
 // The last line or two of git's stderr, scrubbed, without the noise above, and trimmed to about 300 characters (the end is kept:
-// it is what git ended on, and the cut falls at a word), or '' when git said nothing.
+// it is what git ended on, and the cut falls at a word), or '' when git said nothing. Only the last lines are scrubbed, line by
+// line, and nothing is cut by characters before it is scrubbed.
 export function gitSaid(stderr, { limit = 300 } = {}) {
-  const lines = scrubGitText(stderr).split(/[\r\n]+/).map((l) => l.trim()).filter((l) => l !== '' && !NOISE.test(l));
+  const lines = String(stderr ?? '').split(/[\r\n]+/).filter((l) => l.trim() !== '').slice(-SCRUBBED_LINES)
+    .map((l) => scrubGitText(l).trim()).filter((l) => l !== '' && !isNoise(l));
   const said = lines.slice(-2).join(' ');
   if (said.length <= limit) return said;
   const from = said.length - (limit - 1);
@@ -287,4 +316,13 @@ export function gitSaid(stderr, { limit = 300 } = {}) {
 export function gitFailure(why, stderr, { then = null } = {}) {
   const said = gitSaid(stderr);
   return `${why}${said === '' ? '' : ` (git said: ${said})`}${then === null ? '' : `; ${then}`}`;
+}
+
+// A failure with two texts: `message` is the director's line, `detail` the exact names for the agent reading status (the journal's
+// failedDetail, shown on a `Detail:` line the director is never told).
+export class DetailedError extends Error {
+  constructor(message, detail) {
+    super(message);
+    this.detail = typeof detail === 'string' ? scrubGitText(detail) : undefined;
+  }
 }
