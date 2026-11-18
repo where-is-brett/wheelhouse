@@ -126,7 +126,7 @@ import {
   PROFILE_TARGET,
 } from './own-app.js';
 import { readJournal, newId } from './journal.js';
-import { SIGN_IN_TARGET, SIGN_IN_OTHER, pendingSignIn, signInAsk, signInRecord, signInRetryLabel, signInSignedLabel, carryOnLabel, gitHasSignInWindow, signInOutdated, triesOf, openedOf } from './sign-in.js';
+import { SIGN_IN_TARGET, SIGN_IN_OTHER, pendingSignIn, signInAsk, signInRecord, signInRetryLabel, signInSignedLabel, carryOnLabel, gitHasSignInWindow, signInOutdated, triesOf, openedOf, NOT_KEPT } from './sign-in.js';
 import { setupGit, setupGitEnv, keyedGitEnv, refuseUnlistedSettings, asIsGitEnv, reaching, gitFailure, gitSaid, scrubGitText, endOf, DetailedError, reachFailureKind } from './git.js';
 export { reachFailureKind };
 
@@ -1635,8 +1635,8 @@ export const ownSignInFailure = (what, url, record = () => {}, { base = null, jo
   }
   if (kind === 'not-found' && joined) return `${lead} Your git sign-in for ${host} can't see this project; ask its owner to add you, then a fresh Go ahead tries again. Or ${ASIS_OTHER_WAY}.`;
   if (kind === 'not-found' && secure) {
-    keep('account');
-    return `Git on this computer is signed in to ${host} as a different account from the one setup made the project on${said === '' ? '' : ` (git said: ${said})`}. Next: sign git out of ${host}, or in as the owning account, outside setup, then choose '${signInRetryLabel(host)}' on the card that follows; or ${ASIS_OTHER_WAY} (recommended).`;
+    if (!keep('account')) return `${lead} ${NOT_KEPT}`;
+    return `Git on this computer is signed in to ${host} as a different account from the one that has access to the project${said === '' ? '' : ` (git said: ${said})`}. Next: sign git out of ${host}, or in as the account that has access to the project (or ask its owner to add your account), outside setup, then choose '${signInRetryLabel(host)}' on the card that follows; or ${ASIS_OTHER_WAY} (recommended).`;
   }
   return `${lead} A fresh Go ahead tries again, or ${ASIS_OTHER_WAY}.`;
 };
@@ -2576,7 +2576,7 @@ export function hostStep({
       const repoMade = (planRun?.changes ?? []).some((c) => c?.kind === 'host' && c.after?.made === true);
       let declinedAsIs = false;
       if (pendingSign !== null) {
-        const sign = signInAsk(pendingSign, { platform, tries: triesOf(planRun, pendingSign.host), opened: openedOf(planRun, pendingSign.host) });
+        const sign = signInAsk(pendingSign, { platform, tries: triesOf(planRun, pendingSign.host), opened: openedOf(planRun, pendingSign.host, pendingSign.id) });
         const chosenSign = answer(sign.id)?.label;
         if (chosenSign === SIGN_IN_OTHER) declinedAsIs = true;
         // Where git is signed in as another account, or has no window to open, the director changed git's sign-in outside setup and says so

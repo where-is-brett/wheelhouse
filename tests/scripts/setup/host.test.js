@@ -3323,10 +3323,9 @@ test('as-is connect: a new repository git\'s sign-in cannot see means git is sig
   ]) {
     const records = [];
     const { outcome } = await asIsConnectWith('', { fail: `${said}\nfatal: unable to access 'https://gitlab.com/a/b.git/': The requested URL returned error: 403\n`, records });
-    assert.ok(outcome.startsWith('Git on this computer is signed in to gitlab.com as a different account from the one setup made the project on (git said: '), outcome);
-    assert.ok(outcome.endsWith(` Next: sign git out of gitlab.com, or in as the owning account, outside setup, then choose 'I have changed git's sign-in for gitlab.com' on the card that follows; or ${OTHER_WAY} (recommended).`), outcome);
+    assert.ok(outcome.startsWith('Git on this computer is signed in to gitlab.com as a different account from the one that has access to the project (git said: '), outcome);
+    assert.ok(outcome.endsWith(` Next: sign git out of gitlab.com, or in as the account that has access to the project (or ask its owner to add your account), outside setup, then choose 'I have changed git's sign-in for gitlab.com' on the card that follows; or ${OTHER_WAY} (recommended).`), outcome);
     assert.ok(!/open git's sign-in/.test(outcome), 'no window is offered for another account');
-    assert.ok(!/ask its owner/.test(outcome));
     const kept = records.filter((c) => c.target === SIGN_IN_TARGET);
     assert.equal(kept.length, 1, 'the address is kept for the sign-in card');
     assert.equal(kept[0].after.signIn.why, 'account');
@@ -3379,7 +3378,7 @@ test('a sign-in the record could not keep is not offered in the line', () => {
 test('the account line says what to change outside setup, whatever git has a window for, and keeps the record for its card', () => {
   const records = [];
   const line = ownSignInFailure('reach the new repository', 'https://gitlab.com/o/p.git', (c) => records.push(c), { base: 'https://gitlab.com', gcm: true })('remote: Repository not found.\n');
-  assert.match(line, /^Git on this computer is signed in to gitlab\.com as a different account[^]*Next: sign git out of gitlab\.com, or in as the owning account, outside setup, then choose 'I have changed git's sign-in for gitlab\.com' on the card that follows; or choose another way to connect on step 3's card \(recommended\)\.$/);
+  assert.match(line, /^Git on this computer is signed in to gitlab\.com as a different account[^]*Next: sign git out of gitlab\.com, or in as the account that has access to the project \(or ask its owner to add your account\), outside setup, then choose 'I have changed git's sign-in for gitlab\.com' on the card that follows; or choose another way to connect on step 3's card \(recommended\)\.$/);
   assert.equal(records.length, 1);
   assert.equal(records[0].after.signIn.why, 'account');
 });

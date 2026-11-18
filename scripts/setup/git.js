@@ -318,7 +318,8 @@ export function scrubGitText(text) {
     // a user name's, with a letter in them, and the part after the @ is a host name (then a dot, a colon, a slash, a space, a closing bracket or
     // quote, or the end) or a bracketed address, so `C:\Users\me@corp\repo` and `2026-11-18 10:15:22@server` stay as they are. An `=`
     // may come before it (`http.proxy=user:pw@proxy:3128`).
-    .replace(/(^|[\s(<'"=])([A-Za-z0-9._%+\\-]{1,64}):(?!\/\/)\S{0,256}@(?=\[|[A-Za-z0-9-]{1,63}(?:[.:/]|[\s'")>]|$))/g, (all, lead, user) => (/[A-Za-z]/.test(user) && !/^[A-Za-z]:[\\/]/.test(all.slice(lead.length)) ? `${lead}${HIDDEN}@` : all))
+    // A one-letter user whose password starts with `/` or `\` is shown, as it can't be told from a Windows path.
+    .replace(/(^|[\s(<'"=])(?=[0-9._%+\\-]{0,63}[A-Za-z])([A-Za-z0-9._%+\\-]{1,64}):(?!\/\/)\S{0,256}@(?=\[|[A-Za-z0-9-]{1,63}(?:[.:/]|[\s'")>]|$))/g, (all, lead, user) => (/[A-Za-z]/.test(user) && !/^[A-Za-z]:[\\/][^:]*$/.test(all.slice(lead.length)) ? `${lead}${HIDDEN}@` : all))
     // GitLab's personal access token, whatever its body, and GitHub's tokens, whatever comes before them (a letter too); and GitLab's
     // other token prefixes (gldt-, glrt-, glcbt-, gloas-, glft-, glptt-, glimt-, glsoat-), by their shape: a body with a digit in it. Whatever
     // comes before, an underscore too, is not part of the token.

@@ -174,6 +174,20 @@ test('scrubGitText hides a JSON key with a dot or in single quotes, authorizatio
     assert.ok(!/\b(?:pw|tok)\b/.test(got), said);
   }
   assert.equal(scrubGitText('x 1:2@h.example y'), 'x 1:2@h.example y', 'a user with no letter in it is no user');
+  // A drive letter at the start of a stretch does not keep a user and password later in it from being hidden.
+  for (const said of [
+    'C:\\Users\\me\\cfg:http.proxy=user:SECRETPW@proxy.corp.com:8080',
+    'C:/path=user:SECRETPW@proxy.corp.com',
+    'C:\\dir\\CORP\\jsmith:SECRETPW@proxy.corp.com',
+    'D:\\x:SECRETPW@host.com',
+    '\\:(user:SECRETPW@proxy.corp.com',
+    '12:(user:SECRETPW@host.com',
+  ]) assert.ok(!scrubGitText(said).includes('SECRETPW'), said);
+  for (const unit of ['C:\\a:', '=C:/a:']) {
+    const started = Date.now();
+    scrubGitText(unit.repeat(Math.ceil(1048576 / unit.length)));
+    assert.ok(Date.now() - started < 5000, `1 MB of ${unit} is scrubbed in good time`);
+  }
 });
 
 test('scrubGitText never crosses a line, and hides the other secret and key names', () => {
