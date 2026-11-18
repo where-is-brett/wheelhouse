@@ -144,7 +144,8 @@ test('scrubGitText and gitSaid take 1 MB of hostile text in well under a second'
   const MB = 1 << 20;
   for (const hostile of [
     'glab-'.repeat(MB / 5), 'glab-glab-glab-'.repeat(MB / 15), 'extraheader'.repeat(MB / 11), 'a_'.repeat(MB / 2), 'token'.repeat(MB / 5),
-    `${'Basic '.repeat(MB / 6)}`, `https://${'@'.repeat(MB)}`, 'password'.repeat(MB / 8), 'authorization '.repeat(MB / 14), `${'x'.repeat(MB)}\nfatal: no\n`,
+    `${'Basic '.repeat(MB / 6)}`, `Basic ${'a'.repeat(MB)}`, `${'token '.repeat(MB / 6)}x`, `${'token'.repeat(MB / 10)}${' '.repeat(MB / 2)}`, `"token":${' \t'.repeat(MB / 4)}"`,
+    `${'token="'.repeat(MB / 7)}`, `${'"password": "'.repeat(MB / 13)}`, `${'client_secret '.repeat(MB / 14)}`, '_glpat-'.repeat(MB / 7), `https://${'@'.repeat(MB)}`, 'password'.repeat(MB / 8), 'authorization '.repeat(MB / 14), `${'x'.repeat(MB)}\nfatal: no\n`,
   ]) {
     const started = Date.now();
     scrubGitText(hostile);
@@ -169,4 +170,20 @@ test('a journalled failure detail is scrubbed in markStep too, whoever wrote it'
     markStep(run.id, 3, 'failed', { reason: 'it stopped', detail: 'git said https://oauth2:glpat-abcdefgh1234@gitlab.com/x and Authorization: Basic abc' });
     assert.equal(findRun(folder).steps[3].failedDetail, 'git said https://[hidden]@gitlab.com/x and Authorization: [hidden]');
   });
+});
+
+test('scrubGitText hides a base64url Basic value, token and client_secret values after = or :, quoted or not, a JSON password, and a token after an underscore', () => {
+  const hidden = (text, expected) => assert.equal(scrubGitText(text), expected, text);
+  // base64url (`-` and `_`), and prose still stays.
+  hidden('Authorization: x\nBasic dXNlcjpwYXNz-d29yZF9hYmM', 'Authorization: [hidden]\nBasic [hidden]');
+  hidden('fatal: Basic dXNlcjpwYXNz-d29yZF9hYmM failed', 'fatal: Basic [hidden] failed');
+  hidden('Basic authentication failed', 'Basic authentication failed');
+  hidden('token: abc123 and token = def456 and token=\'g h\' and token="i j" and token=k&x=1', 'token: [hidden] and token = [hidden] and token=[hidden] and token=[hidden] and token=[hidden]&x=1');
+  hidden('client_secret=abc&x=1 client_secret: "q r"', 'client_secret=[hidden]&x=1 client_secret: [hidden]');
+  hidden('{"password": "hunter2", "user": "ann", "client_secret":"s3", "token": "t\\"x"}', '{"password": "[hidden]", "user": "ann", "client_secret":"[hidden]", "token": "[hidden]"}');
+  hidden('using _glpat-abcdefgh1234 and x_ghp_abcdefgh1234 and -glpat-abcdefgh1234', 'using _[hidden] and x_[hidden] and -[hidden]');
+  // Safe to apply twice, and words that merely hold the word stay readable.
+  const once = scrubGitText('token: abc client_secret=x {"password": "p"}');
+  assert.equal(scrubGitText(once), once);
+  hidden('the tokens are expired', 'the tokens are expired');
 });
