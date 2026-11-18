@@ -156,12 +156,31 @@ test('scrubGitText hides a JSON key with a dot or in single quotes, authorizatio
   // A Windows path with an @ in it, and a time before an @ and a host with no dot, are not an address with a user.
   assert.equal(scrubGitText('C:\\Users\\me@corp\\repo'), 'C:\\Users\\me@corp\\repo');
   assert.equal(scrubGitText('2026-11-18 10:15:22@server'), '2026-11-18 10:15:22@server');
+  for (const [said, shown] of [
+    ['http.proxy user:pw@proxy:3128', 'http.proxy [hidden]@proxy:3128'],
+    ['http.proxy=user:pw@proxy.corp.com:8080', 'http.proxy=[hidden]@proxy.corp.com:8080'],
+    [' url=user:pw@host.com/x', ' url=[hidden]@host.com/x'],
+    ['user:pw@[fd00::1]/x', '[hidden]@[fd00::1]/x'],
+    ['user:tok@gitlab:group/repo.git', '[hidden]@gitlab:group/repo.git'],
+    ['url.user:tok@gitlab:.insteadof x', '[hidden]@gitlab:.insteadof x'],
+  ]) {
+    const got = scrubGitText(said);
+    assert.equal(got, shown, said);
+    assert.ok(!/\b(?:pw|tok)\b/.test(got), said);
+  }
   assert.equal(scrubGitText('x 1:2@h.example y'), 'x 1:2@h.example y', 'a user with no letter in it is no user');
 });
 
 test('scrubGitText never crosses a line, and hides the other secret and key names', () => {
   assert.equal(scrubGitText('password:\nnext line stays'), 'password:[hidden]\nnext line stays');
   assert.equal(scrubGitText('authorization:\nnext line stays'), 'authorization:[hidden]\nnext line stays');
+  for (const [said, shown] of [
+    ['aws_secret_access_key=abc', 'aws_secret_access_key=[hidden]'],
+    ['AWS_SECRET_ACCESS_KEY = abc', 'AWS_SECRET_ACCESS_KEY = [hidden]'],
+    ['secret: x', 'secret: [hidden]'],
+    ['X-Secret: x', 'X-Secret: [hidden]'],
+    ['secret scanning is on', 'secret scanning is on'],
+  ]) assert.equal(scrubGitText(said), shown, said);
   assert.equal(scrubGitText('aws_secret=abc app_secret=def client_secret=ghi'), 'aws_secret=[hidden] app_secret=[hidden] client_secret=[hidden]');
   for (const key of ['private_key', 'access_key', 'pass', 'credential', 'privateKey']) assert.equal(scrubGitText(`{"${key}": "v"}`), `{"${key}": "[hidden]"}`, key);
 });
@@ -175,7 +194,7 @@ test('scrubGitText and gitSaid take 1 MB of hostile text in well under a second'
     `${'"accessToken": "'.repeat(MB / 16)}`, `"${'a'.repeat(MB)}`, '"a'.repeat(MB / 2), 'bearer '.repeat(MB / 7), 'cookie: '.repeat(MB / 8), 'xghp_'.repeat(MB / 5), `token= ${'A,'.repeat(MB / 2)}`, 'passwd'.repeat(MB / 6), `"${'token'.repeat(MB / 5)}`,
     '"a.b'.repeat(MB / 4), "'password': '".repeat(MB / 13), 'a:'.repeat(MB / 2), '(a:b'.repeat(MB / 4), `${'a:'.repeat(MB / 4)}@`, 'sig='.repeat(MB / 4), 'secret='.repeat(MB / 7), 'api_key'.repeat(MB / 7),
     'password:'.repeat(MB / 9), `${'x:y '.repeat(MB / 4)}@`, 'a:@'.repeat(MB / 3), `user:${'p'.repeat(MB)}@x`, "'a".repeat(MB / 2), '"auth":'.repeat(MB / 7),
-    '(a:'.repeat(MB / 3), '"a:'.repeat(MB / 3), '<a:'.repeat(MB / 3), 'aws_secret'.repeat(MB / 10), 'a_secret'.repeat(MB / 8),
+    '(a:'.repeat(MB / 3), '"a:'.repeat(MB / 3), '<a:'.repeat(MB / 3), '=a:'.repeat(MB / 3), 'secret'.repeat(MB / 6), 'secret-'.repeat(MB / 7), 'secret '.repeat(MB / 7), 'aws_secret'.repeat(MB / 10), 'a_secret'.repeat(MB / 8),
   ]) {
     const started = Date.now();
     scrubGitText(hostile);

@@ -64,7 +64,7 @@ export const ACCOUNT_LINE = (host) => `Git on this computer is signed in to ${ho
 export const NO_WINDOW_LINE = (host) => `Git on this computer has no sign-in window of its own that setup can open for ${host}, so nothing was opened. Sign git in to ${host} outside setup, then choose '${signInSignedLabel(host)}' on the card that follows, or ${OTHER_WAY} (recommended).`;
 export const NOT_RECORDED = 'Setup could not record that it was opening git\'s sign-in, so nothing was opened. A fresh Go ahead on step 3\'s card tries again.';
 export const signedInLine = (host) => `Git reached ${host} and can see the project. Setup carries on with step 3.`;
-export const SIGN_IN_ONCE_DETAIL = 'Run plan 3: the sign-in card is asked afresh, once. If the same thing fails a second time, ask the card plan 3 gives once more and recommend its "Use another way to connect".';
+export const SIGN_IN_ONCE_DETAIL = 'Run plan 3: the sign-in card is asked afresh, once. From the second failure on, the card recommends "Use another way to connect"; ask each fresh card as given, and never run the sign-in form without a fresh click.';
 export const failedLine = (host, said, { timedOut = false, gcm = true } = {}) => (!gcm
   ? `Git still could not reach ${host}${said === '' ? '' : ` (git said: ${said})`}. Next: sign git in to ${host} outside setup, then choose '${signInSignedLabel(host)}' on the card that follows, or ${OTHER_WAY} (recommended).`
   : timedOut
@@ -168,8 +168,9 @@ export function signInAsk(pending, { platform = process.platform, tries = 1 } = 
   const account = pending.why === 'account';
   // The card's words depend on the record and the try only (never the time), so the same record asked again says the same, and a later
   // record, which the Desktop app would show as the earlier card if it said the same, says it is a further try.
-  const again = Number.isInteger(tries) && tries >= 2 ? `Setup tried again (try ${tries}), and ` : null;
-  const lead = (first, later) => (again === null ? first : `${again}${later}`);
+  const again = Number.isInteger(tries) && tries >= 2 ? `Asked again (card ${tries}): ` : null;
+  const later = again !== null;
+  const lead = (first, laterWords) => (again === null ? first : `${again}${laterWords}`);
   const open = signInOpenLabel(pending.host);
   const retry = signInRetryLabel(pending.host);
   const signed = signInSignedLabel(pending.host);
@@ -182,7 +183,7 @@ export function signInAsk(pending, { platform = process.platform, tries = 1 } = 
       id,
       card: {
         level: 2,
-        what: lead(`Git on this computer is signed in to ${pending.host} as a different account from the one that owns the project, so setup could not reach it.`, `git on this computer still reaches ${pending.host} as a different account from the one that owns the project, so setup could not reach it.`),
+        what: lead(`Git on this computer is signed in to ${pending.host} as a different account from the one that owns the project, so setup could not reach it.`, `git on this computer reaches ${pending.host} as a different account from the one that owns the project, so setup could not reach it.`),
         why: 'You chose to use your own git, so setup relies on its sign-in and makes none. Git would use the same account again and open no window, so setup opens none.',
         options: [
           { label: retry, says: `Do this first: sign git out of ${pending.host}${where}, or sign it in as the account that owns the project, outside setup. Then click this, and setup carries on with step 3.` },
@@ -199,7 +200,7 @@ export function signInAsk(pending, { platform = process.platform, tries = 1 } = 
       id,
       card: {
         level: 2,
-        what: lead(`Git on this computer isn't signed in to ${pending.host}, so setup could not reach the project there.`, `git on this computer still isn't signed in to ${pending.host}, so setup could not reach the project there.`),
+        what: lead(`Git on this computer isn't signed in to ${pending.host}, so setup could not reach the project there.`, `git on this computer isn't signed in to ${pending.host} yet, so setup could not reach the project there.`),
         why: 'You chose to use your own git, so setup relies on its sign-in and makes none. Git on this computer does not seem to have a sign-in window of its own, so setup opens none.',
         options: [
           { label: signed, says: `Do this first: sign git in to ${pending.host}, outside setup. Then click this, and setup carries on with step 3. If you're not sure how, choose another way to connect.` },
@@ -215,7 +216,7 @@ export function signInAsk(pending, { platform = process.platform, tries = 1 } = 
     id,
     card: {
       level: 2,
-      what: lead(`Git on this computer isn't signed in to ${pending.host}, so setup could not reach the project there.`, `git on this computer still isn't signed in to ${pending.host}, so setup could not reach the project there.`),
+      what: lead(`Git on this computer isn't signed in to ${pending.host}, so setup could not reach the project there.`, `git on this computer isn't signed in to ${pending.host} yet, so setup could not reach the project there.`),
       why: 'You chose to use your own git, so setup relies on its sign-in and makes none. Git opens its own window for it, which may take a minute and may open behind other windows, and setup never sees what you type there.',
       options: [
         {
@@ -224,8 +225,8 @@ export function signInAsk(pending, { platform = process.platform, tries = 1 } = 
         },
         { label: SIGN_IN_OTHER, says: otherSays },
       ],
-      recommend: open,
-      because: 'it is the way you chose, and nothing else changes',
+      recommend: later ? SIGN_IN_OTHER : open,
+      because: later ? 'git\'s sign-in has not reached the project so far' : 'it is the way you chose, and nothing else changes',
       meanwhile: 'Nothing more runs on step 3 until you choose.',
     },
   };

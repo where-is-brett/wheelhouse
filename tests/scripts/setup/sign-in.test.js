@@ -301,7 +301,7 @@ test('git\'s failure is said with what git said (scrubbed, never its output), th
   assert.equal(got.ok, false);
   assert.equal(got.refused, failedLine('gitlab.com', 'fatal: Authentication failed for \'https://[hidden]@gitlab.com/owner/shop.git/\''));
   assert.match(got.refused, /^Git still could not reach gitlab\.com \(git said: fatal: Authentication failed for 'https:\/\/\[hidden\]@gitlab\.com\/owner\/shop\.git\/'\)\. Next: I can open its sign-in again; if its window asked for a token, or a password you don't use there, close it and choose another way to connect on step 3's card\.$/);
-  assert.match(got.detail, /Run plan 3: the sign-in card is asked afresh, once\. If the same thing fails a second time, ask the card plan 3 gives once more and recommend its "Use another way to connect"/);
+  assert.match(got.detail, /Run plan 3: the sign-in card is asked afresh, once\. From the second failure on, the card recommends "Use another way to connect"; ask each fresh card as given, and never run the sign-in form without a fresh click\./);
   assert.ok(!/glpat|abc\trefs|refs\/heads/.test(JSON.stringify(got)));
   assert.ok(!/make a token|create a token|personal access token/i.test(got.refused));
   assert.deepEqual(records.map((r) => r.target), [SIGN_IN_USED_TARGET, SIGN_IN_TARGET]);
@@ -593,15 +593,16 @@ test('a helper named for the address (credential.<url>.helper) counts too', asyn
 test('the as-is environment drops every GCM variable but the kept ones and the code-loading variables, and keeps HOME, XDG_CONFIG_HOME, proxy and certificate variables', async () => {
   const planted = {
     GCM_CREDENTIAL_STORE: 'plaintext', GCM_TRACE: '1', gcm_authority: 'x', DOTNET_STARTUP_HOOKS: '/evil.dll', COREHOST_TRACE: '1', COREHOST_TRACEFILE: '/x', LD_PRELOAD: '/evil.so', DYLD_INSERT_LIBRARIES: '/evil',
+    CORECLR_ENABLE_PROFILING: '1', COMPLUS_X: '1', DOTNET_gcServer: '1', LD_LIBRARY_PATH: '/evil', DOTNET_ROOT: '/dn', 'DOTNET_ROOT(x86)': '/dn86', DOTNET_ROOT_X64: '/dn64',
     XDG_CONFIG_HOME: '/mine', HOME: '/mine', USERPROFILE: '/mine', HTTPS_PROXY: 'http://p', SSL_CERT_FILE: '/c', GCM_INTERACTIVE: 'never', KEEP: 'y',
   };
-  assert.deepEqual(asIsGitEnv(planted, { keep: ['GCM_INTERACTIVE'] }), { XDG_CONFIG_HOME: '/mine', HOME: '/mine', USERPROFILE: '/mine', HTTPS_PROXY: 'http://p', SSL_CERT_FILE: '/c', GCM_INTERACTIVE: 'never', KEEP: 'y' });
-  assert.deepEqual(asIsGitEnv(planted), { XDG_CONFIG_HOME: '/mine', HOME: '/mine', USERPROFILE: '/mine', HTTPS_PROXY: 'http://p', SSL_CERT_FILE: '/c', KEEP: 'y' });
+  assert.deepEqual(asIsGitEnv(planted, { keep: ['GCM_INTERACTIVE'] }), { DOTNET_ROOT: '/dn', 'DOTNET_ROOT(x86)': '/dn86', DOTNET_ROOT_X64: '/dn64', XDG_CONFIG_HOME: '/mine', HOME: '/mine', USERPROFILE: '/mine', HTTPS_PROXY: 'http://p', SSL_CERT_FILE: '/c', GCM_INTERACTIVE: 'never', KEEP: 'y' });
+  assert.deepEqual(asIsGitEnv(planted), { DOTNET_ROOT: '/dn', 'DOTNET_ROOT(x86)': '/dn86', DOTNET_ROOT_X64: '/dn64', XDG_CONFIG_HOME: '/mine', HOME: '/mine', USERPROFILE: '/mine', HTTPS_PROXY: 'http://p', SSL_CERT_FILE: '/c', KEEP: 'y' });
   // Through the route: planted in the process environment, none reaches any as-is git call, in its environment or its base, and HOME stays.
   const before = { ...process.env };
   // GCM_INTERACTIVE is the one GCM variable setup itself sets: 'never' (the fence) on every call but the sign-in's own, which sets 'auto'.
-  const bad = /^(?:GCM_(?!INTERACTIVE$)|DOTNET_STARTUP_HOOKS$|COREHOST_TRACE|LD_PRELOAD$|DYLD_)/i;
-  Object.assign(process.env, { GCM_CREDENTIAL_STORE: 'plaintext', GCM_TRACE: '1', DOTNET_STARTUP_HOOKS: '/evil.dll', COREHOST_TRACE: '1', LD_PRELOAD: '/evil.so', DYLD_INSERT_LIBRARIES: '/evil', HOME: '/mine/home' });
+  const bad = /^(?:GCM_(?!INTERACTIVE$)|DOTNET_STARTUP_HOOKS$|COREHOST_TRACE|LD_PRELOAD$|LD_LIBRARY_PATH$|CORECLR_|COMPLUS_|DOTNET_(?!ROOT)|DYLD_)/i;
+  Object.assign(process.env, { GCM_CREDENTIAL_STORE: 'plaintext', GCM_TRACE: '1', DOTNET_STARTUP_HOOKS: '/evil.dll', COREHOST_TRACE: '1', LD_PRELOAD: '/evil.so', DYLD_INSERT_LIBRARIES: '/evil', CORECLR_ENABLE_PROFILING: '1', COMPLUS_X: '1', DOTNET_gcServer: '1', LD_LIBRARY_PATH: '/evil', DOTNET_ROOT: '/dn', HOME: '/mine/home' });
   const merged = (call) => ({ ...(call.baseEnv ?? process.env), ...(call.env ?? {}) });
   try {
     const g = fakeGit();
@@ -631,6 +632,13 @@ test('the as-is environment drops every GCM variable but the kept ones and the c
     const env = merged(call);
     assert.ok(!Object.keys(env).some((k) => bad.test(k)), Object.keys(env).filter((k) => bad.test(k)).join());
     assert.equal(env.HOME, '/mine/home');
+    assert.equal(env.DOTNET_ROOT, '/dn');
+    // The look at the repository's settings before a remote call runs on the as-is base too.
+    const look = reached.find((c) => c.args[0] === 'config');
+    assert.ok(look, 'the pre-check ran');
+    const lookEnv = merged(look);
+    assert.ok(!Object.keys(lookEnv).some((k) => bad.test(k)), Object.keys(lookEnv).filter((k) => bad.test(k)).join());
+    assert.equal(lookEnv.DOTNET_ROOT, '/dn');
   } finally {
     for (const k of Object.keys(process.env)) if (!(k in before)) delete process.env[k];
     Object.assign(process.env, before);
@@ -659,11 +667,11 @@ test('plan 3 gives each later sign-in record a card of its own words, the same r
       assert.equal(new Set(asks.map((a) => a.id)).size, 3, `${shape}: a new id each time`);
       assert.equal(new Set(asks.map((a) => a.card.question)).size, 3, `${shape}: different words each time`);
       const words = asks.map((a) => a.card.question);
-      assert.ok(!/Setup tried again/.test(words[0]), `${shape}: try 1 keeps today's words`);
+      assert.ok(!/Asked again/.test(words[0]), `${shape}: try 1 keeps today's words`);
       const host = 'gitlab.com';
       for (const [i, n] of [[1, 2], [2, 3]]) {
-        assert.ok(words[i].includes(`Setup tried again (try ${n}), and `), words[i]);
-        assert.ok(words[i].includes(extra.why === 'account' ? `still reaches ${host} as a different account` : `still isn't signed in to ${host}`), words[i]);
+        assert.ok(words[i].includes(`Asked again (card ${n}): `), words[i]);
+        assert.ok(words[i].includes(extra.why === 'account' ? `reaches ${host} as a different account` : `isn't signed in to ${host} yet`), words[i]);
       }
     }, { connected: false });
   }
@@ -674,9 +682,15 @@ test('the card for a try is a function of the record and the try alone', () => {
   assert.deepEqual(signInAsk(pending, { tries: 2 }), signInAsk(pending, { tries: 2 }));
   assert.deepEqual(signInAsk(pending), signInAsk(pending, { tries: 1 }));
   assert.equal(signInAsk(pending, { tries: 2 }).id, signInAsk(pending).id, 'the id is of the record');
-  assert.match(signInAsk(pending, { tries: 2 }).card.what, /^Setup tried again \(try 2\), and git on this computer still isn't signed in to gitlab\.com, so setup could not reach the project there\.$/);
+  assert.match(signInAsk(pending, { tries: 2 }).card.what, /^Asked again \(card 2\): git on this computer isn't signed in to gitlab\.com yet, so setup could not reach the project there\.$/);
   const account = pendingSignIn(runOf(record({ why: 'account' })));
-  assert.match(signInAsk(account, { tries: 3 }).card.what, /^Setup tried again \(try 3\), and git on this computer still reaches gitlab\.com as a different account from the one that owns the project, so setup could not reach it\.$/);
+  assert.match(signInAsk(account, { tries: 3 }).card.what, /^Asked again \(card 3\): git on this computer reaches gitlab\.com as a different account from the one that owns the project, so setup could not reach it\.$/);
+  for (const t of [1, 2]) {
+    const card = signInAsk(pending, { tries: t }).card;
+    assert.equal(card.recommend, t === 1 ? signInOpenLabel('gitlab.com') : SIGN_IN_OTHER, `gcm true, try ${t}`);
+    assert.ok(card.options.some((o) => o.label === signInOpenLabel('gitlab.com')), 'Open stays offered');
+    assert.equal(/has not reached the project so far/.test(card.because ?? ''), t === 2);
+  }
   assert.equal(triesOf(runOf(record(), record({ id: 'chg_2', at: '2026-11-18T02:00:00.000Z' }))), 2);
   assert.equal(triesOf(runOf()), 1);
   assert.match(signInAsk(pendingSignIn(runOf(record({ gcm: false })))).card.options[0].says, /If you're not sure how, choose another way to connect\.$/);
@@ -700,7 +714,7 @@ test('a used click, and a stale one, each give a fresh record, and plan 3 asks a
       assert.equal(next.ok, true, kind);
       assert.match(next.ask.id, /^git-sign-in-/);
       assert.notEqual(next.ask.id, first.ask.id, 'a fresh card');
-      assert.ok(next.ask.card.question.includes('Setup tried again (try 2), and '), next.ask.card.question);
+      assert.ok(next.ask.card.question.includes('Asked again (card 2): '), next.ask.card.question);
     }, { connected: false });
   }
 });
