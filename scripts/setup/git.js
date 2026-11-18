@@ -210,6 +210,12 @@ export function subcommandOf(args) {
 // The git subcommands that reach a remote: the only calls an as-is route gives the director's own git (`reachEnv`).
 const REMOTE_CALLS = new Set(['fetch', 'push', 'ls-remote']);
 
+// The address a call that reaches a remote names: the argument after `--end-of-options`, or null.
+export function addressOf(args) {
+  const at = args.indexOf('--end-of-options');
+  return at >= 0 && typeof args[at + 1] === 'string' ? args[at + 1] : null;
+}
+
 // git for setup in `cwd` (or none): `git(args, options)` gives run's answer, after refusing any
 // setting of the repository's not on the allowed list; every call isolated as above. With
 // `workTree` (the folder setup names, a project's), that folder is git's working tree whatever the
@@ -220,43 +226,65 @@ const REMOTE_CALLS = new Set(['fetch', 'push', 'ls-remote']);
 // system settings and credential helper come in, the fence still outranks them, and nothing prompts), the calls that reach a
 // remote (REMOTE_CALLS) run with it in place of the isolated one. It is built with the fence already, so it is not isolated
 // again: `isolated` would shut the director's files out once more. Every call that only touches the folder stays isolated.
-export function setupGit({ run = realRun, gitPath = 'git', env = {}, cwd, workTree = null, timeoutMs = GIT_WAIT_MS, reachEnv = null } = {}) {
+// With `reachGuard` (setup's as-is connect gives one), each such call first has the director's settings looked at for the address it
+// names, and runs with the environment the guard gives back.
+export function setupGit({ run = realRun, gitPath = 'git', env = {}, cwd, workTree = null, timeoutMs = GIT_WAIT_MS, reachEnv = null, reachGuard = null } = {}) {
   const fenced = isolated(env);
   const inFolder = workTree === null ? fenced : { ...fenced, GIT_WORK_TREE: workTree };
   const reaches = reachEnv === null ? null : workTree === null ? reachEnv : { ...reachEnv, GIT_WORK_TREE: workTree };
   return async (args, options = {}) => {
     await refuseUnlistedSettings({ run, gitPath, cwd });
     const sub = subcommandOf(args);
-    const callEnv = sub === 'init' ? fenced : reaches !== null && REMOTE_CALLS.has(sub) ? reaches : inFolder;
+    const toRemote = reaches !== null && REMOTE_CALLS.has(sub);
+    let callEnv = sub === 'init' ? fenced : toRemote ? reaches : inFolder;
+    // `reachGuard` checks the director's own settings for the address the call names and gives back the environment to use.
+    if (toRemote && reachGuard !== null) callEnv = await reachGuard({ run, gitPath, cwd, env: callEnv, url: addressOf(args), timeoutMs });
     return run(gitPath, args, { cwd, env: callEnv, baseEnv: withoutGitVars(), timeoutMs, ...options });
   };
 }
 
 // ---- What git said, for a failure line ----
 
-const HIDDEN = '<hidden>';
+const HIDDEN = '[hidden]';
 // Text git (or its helpers) wrote, with anything that could carry a sign-in taken out: the user or token in an address
-// (`scheme://user:pass@host`), an Authorization or extra-header value (to the end of its line), and anything shaped like a
-// GitLab or GitHub token. Safe to apply twice.
+// (`scheme://user:pass@host`, a password with an unencoded `/` in it too), an Authorization or extra-header value (to the end
+// of its line), a bare `Bearer` or `Basic` value, a `token=` value in a query string, a `password=` line, and anything shaped
+// like a GitLab or GitHub token. Safe to apply twice.
 export function scrubGitText(text) {
   return String(text ?? '')
     .replace(/([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/?#]*@/g, `$1${HIDDEN}@`)
+    .replace(/([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s@/:]+:[^\s@]*\/[^\s@]*@/g, `$1${HIDDEN}@`)
     .replace(/(authorization\s*[:=]\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
     .replace(/(extraheader[^\s=:]*\s*[:=]\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
     .replace(/(private-token\s*:\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
-    .replace(/\b(?:glpat-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,})/g, HIDDEN);
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{4,}/gi, `$1${HIDDEN}`)
+    .replace(/\b(Basic\s+)(?=[A-Za-z0-9+/]*[0-9=+/])[A-Za-z0-9+/]{8,}=*/gi, `$1${HIDDEN}`)
+    .replace(/\b((?:[A-Za-z]+_)*token=)[^\s&'"]+/gi, `$1${HIDDEN}`)
+    .replace(/(password\s*=\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    // GitLab's token prefixes (glpat-, gldt-, glrt-, glcbt-, gloas-, glft-, glptt-, glimt-, glsoat-), by their shape: a body with a digit in it.
+    .replace(/\bgl[a-z]{2,5}-(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{8,}/g, HIDDEN)
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,})/g, HIDDEN);
 }
 
-// The last line or two of git's stderr, scrubbed and trimmed to about 300 characters (the end is kept: it is what git ended
-// on), or '' when git said nothing.
+// Lines git adds that say nothing of why: its hints, the `To <address>` line of a push, and its closing `failed to push` line
+// (the `remote:` reason and the `! [remote rejected]` line before it are what matter).
+const NOISE = /^(?:hint:|To\s+\S|error: failed to push some refs)/i;
+
+// The last line or two of git's stderr, scrubbed, without the noise above, and trimmed to about 300 characters (the end is kept:
+// it is what git ended on, and the cut falls at a word), or '' when git said nothing.
 export function gitSaid(stderr, { limit = 300 } = {}) {
-  const lines = scrubGitText(stderr).split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== '');
+  const lines = scrubGitText(stderr).split(/[\r\n]+/).map((l) => l.trim()).filter((l) => l !== '' && !NOISE.test(l));
   const said = lines.slice(-2).join(' ');
-  return said.length > limit ? `...${said.slice(-(limit - 3))}` : said;
+  if (said.length <= limit) return said;
+  const from = said.length - (limit - 1);
+  let tail = said.slice(from);
+  // A cut that fell inside a word drops that part of the word; with no space to cut at, the hard cut stands.
+  if (!/\s/.test(said[from - 1]) && /\s/.test(tail)) tail = tail.slice(tail.search(/\s/)).trimStart();
+  return `\u2026${tail}`;
 }
 
-// A failure line: `why`, then what git said when it said anything.
-export function gitFailure(why, stderr) {
+// A failure line: `why`, then what git said when it said anything, then `then` (the next step) when given.
+export function gitFailure(why, stderr, { then = null } = {}) {
   const said = gitSaid(stderr);
-  return said === '' ? why : `${why} (git said: ${said})`;
+  return `${why}${said === '' ? '' : ` (git said: ${said})`}${then === null ? '' : `; ${then}`}`;
 }

@@ -79,7 +79,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { withoutBom } from '../gate/guardrails.js';
 import { fileURLToPath } from 'node:url';
-import { run as realRun } from '../lib/run.js';
+import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { wheelhouseHome, stateDir, projectSlug } from '../lib/paths.js';
 import { toolPath, toolState } from '../lib/host-tools.js';
 import { canonicalJson } from '../lib/canonical.js';
@@ -95,7 +95,7 @@ import { withoutTokens } from '../lib/token-names.js';
 import { DEFAULT_GITLAB, gitlabBase, readGitlabHosts, parseRemote, hostWords, isDefaultHost, commitEmailOf } from '../host/gitlab-base.js';
 import { findKey, saveKey } from '../host/keys.js';
 import { borrowKey, storeDirectorKey } from '../host/store.js';
-import { confirmComputerSettings, safeGitEnv, pushReachFor } from '../lib/safe-git.js';
+import { confirmComputerSettings, safeGitEnv, pushReachFor, readSettingsFor, settingsRefusal, hookNames, rewriteRefusal } from '../lib/safe-git.js';
 import { switchOnProtection, protectionStatus, readGitlabProtection } from '../host/protection.js';
 import { askSecret as realAskSecret } from '../secrets/secret-box.js';
 import { projectForFolder, writeProject, readProject } from '../lib/projects.js';
@@ -1489,6 +1489,54 @@ async function createRepo({ host, owner, name, run, api, empty = false, isPrivat
 export const madeBySetup = (target) => readJournal().runs.filter((r) => !runClosed(r)).flatMap((r) => r?.changes ?? [])
   .some((c) => c?.kind === 'host' && c.target === target && c.after?.made === true);
 
+// What the as-is route's git calls that reach the host check first, as the helper's push does (scripts/lib/safe-git.js safeGit): the
+// director's own settings are read, and refused when they turn certificate checks off for a web address, send a host name to another
+// address (http.curloptResolve), or rewrite the address the call names (insteadOf, pushInsteadOf, a remote or pushurl named for it,
+// and git's own answer for the address). Config-defined hooks in them are switched off one by one, which core.hooksPath does not do,
+// and the certificate check is set on for the address. The environment it gives back is the call's. A refusal is the line it throws;
+// it comes before any contact with the host.
+const ASIS_STOP = 'setup did not reach your repository and sent nothing';
+export const ASIS_SETTINGS_UNREAD = `Git's settings on this computer could not be read, so ${ASIS_STOP}: a fresh Go ahead tries again`;
+export const asIsSettingsLine = (why) => `Git's settings on this computer ${why}, which Wheelhouse does not allow, so ${ASIS_STOP}. Remove that setting from your git settings, then a fresh Go ahead tries again`;
+export const asIsRewriteLine = (why) => `Git's settings on this computer ${why}, which would send your sign-in somewhere else, so ${ASIS_STOP}. Remove that rewrite from your git settings, then a fresh Go ahead tries again`;
+export const ASIS_NO_ADDRESS = `Setup asked git to reach a repository without naming its address, so ${ASIS_STOP}`;
+export async function guardAsIsReach({ run = realRun, gitPath = 'git', cwd, env, url, timeoutMs }) {
+  if (typeof url !== 'string' || url === '') throw new Error(ASIS_NO_ADDRESS);
+  const entries = await readSettingsFor({ run, gitPath, cwd });
+  if (entries === null) throw new Error(ASIS_SETTINGS_UNREAD);
+  const refused = settingsRefusal(entries);
+  if (refused !== null) throw new Error(asIsSettingsLine(refused));
+  const rewritten = rewriteRefusal(entries, url);
+  if (rewritten !== null) throw new Error(asIsRewriteLine(rewritten));
+  const extras = hookNames(entries).map((name) => [`hook.${name}.enabled`, 'false']);
+  if (/^https?:\/\//i.test(url)) extras.push([`http.${url}.sslVerify`, 'true']);
+  const count = Number.parseInt(env.GIT_CONFIG_COUNT ?? '0', 10) || 0;
+  const given = { ...env, GIT_CONFIG_COUNT: String(count + extras.length) };
+  extras.forEach(([key, value], i) => {
+    given[`GIT_CONFIG_KEY_${count + i}`] = key;
+    given[`GIT_CONFIG_VALUE_${count + i}`] = value;
+  });
+  // Git's own answer for the address, with these very settings, is the address itself (a fetch is not told a pushurl, a push is not
+  // told an insteadOf, and the check above covers both).
+  const where = await run(gitPath, ['ls-remote', '--get-url', '--end-of-options', url], { cwd, env: given, baseEnv: withoutGitVars(), timeoutMs });
+  if (where.code !== 0 || String(where.stdout ?? '').trim() !== url) throw new Error(asIsRewriteLine('send this project\'s address to another one'));
+  return given;
+}
+
+// setupGit with the as-is route's guard on the calls that reach the host, when it has the as-is route's environment.
+const asIsGit = (options) => setupGit({ ...options, reachGuard: options.reachEnv === null || options.reachEnv === undefined ? null : guardAsIsReach });
+
+// The host a repository address is on, for a line that names it.
+const hostOf = (url) => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return 'your host';
+  }
+};
+// Said when a call that reaches the host fails on the as-is route, which signs in with the director's own git: what to do.
+const ownSignIn = (url) => `with your own git sign-in; sign in to ${hostOf(url)} with git once (for example by cloning any project from it), then a fresh Go ahead tries again`;
+
 // A git call that must succeed: `why` when it fails, then the last of what git said (scrubbed of any sign-in, git.js gitFailure),
 // so a refusal by the host or the network is seen in the line and not guessed at.
 const mustGit = (git) => async (args, why) => {
@@ -1506,7 +1554,7 @@ const mustGit = (git) => async (args, why) => {
 // setup adds the remote. Safe to repeat from any point: a retry finishes what an earlier attempt
 // left, and records nothing again.
 async function connectFolder({ folder, remoteUrl, gitPath, env, reachEnv = null, run, record }) {
-  const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), reachEnv, cwd: folder, workTree: folder });
+  const git = asIsGit({ run, gitPath, env: reaching(env, remoteUrl), reachEnv, cwd: folder, workTree: folder });
   const must = mustGit(git);
   const hadGit = fs.existsSync(path.join(folder, '.git'));
   const origin = originUrl(folder);
@@ -1516,7 +1564,7 @@ async function connectFolder({ folder, remoteUrl, gitPath, env, reachEnv = null,
     if (!hadGit) await must(['init', '-q', '-b', 'main'], 'git could not start in this folder');
     await must(['remote', 'add', '--end-of-options', 'origin', remoteUrl], 'git could not name the repository in this folder');
   }
-  await must(['fetch', '-q', '--end-of-options', remoteUrl, '+refs/heads/main:refs/remotes/origin/main'], 'git could not fetch the new repository');
+  await must(['fetch', '-q', '--end-of-options', remoteUrl, '+refs/heads/main:refs/remotes/origin/main'], reachEnv === null ? 'git could not fetch the new repository' : `git could not fetch the new repository ${ownSignIn(remoteUrl)}`);
   const theirs = (await must(['rev-parse', '--verify', 'refs/remotes/origin/main'], 'git could not read the new repository\'s main')).stdout.trim();
   const head = await git(['rev-parse', '-q', '--verify', 'HEAD']);
   if (head.code !== 0) {
@@ -1537,9 +1585,11 @@ async function connectFolder({ folder, remoteUrl, gitPath, env, reachEnv = null,
 // the folder's own stays as it is, so the record's address is the only way there; a folder with none gets it, once its history
 // is there: until then the folder still reads as a project kept here, and a fresh Go ahead takes this up again. Safe to repeat.
 async function publishFolder({ folder, remoteUrl, branch, gitPath, env, reachEnv = null, run, record }) {
-  const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), reachEnv, cwd: folder, workTree: folder });
+  const git = asIsGit({ run, gitPath, env: reaching(env, remoteUrl), reachEnv, cwd: folder, workTree: folder });
   const pushed = await git(['push', '-q', '--no-verify', '--end-of-options', remoteUrl, `refs/heads/${branch}:refs/heads/${branch}`]);
-  if (pushed.code !== 0) throw new Error(gitFailure('Your project could not be sent to its new repository; a fresh Go ahead tries again', pushed.stderr));
+  if (pushed.code !== 0) throw new Error(reachEnv === null
+    ? gitFailure('Your project could not be sent to its new repository', pushed.stderr, { then: 'a fresh Go ahead tries again' })
+    : gitFailure(`Your project could not be sent to its new repository ${ownSignIn(remoteUrl)}`, pushed.stderr));
   if (originUrl(folder) === null) {
     record({ id: newId('chg'), kind: 'folder', target: path.join(folder, '.git'), before: { origin: null }, after: { origin: remoteUrl, branch } });
     if ((await git(['remote', 'add', '--end-of-options', 'origin', remoteUrl])).code !== 0) throw new Error('git could not name the repository in this folder');
@@ -1584,7 +1634,7 @@ async function holdsConfig({ host, info, run, api }) {
 // Whether a repository holds Wheelhouse v0.1.x's state branch, read with the director's own sign-in.
 async function holdsState({ remoteUrl, gitPath, env, reachEnv = null, run }) {
   const ceiling = { GIT_CEILING_DIRECTORIES: ceilingOf() };
-  const listed = await setupGit({ run, gitPath, env: { ...reaching(env, remoteUrl), ...ceiling }, reachEnv: reachEnv === null ? null : { ...reachEnv, ...ceiling }, cwd: outsideAny() })(['ls-remote', '--heads', '--end-of-options', remoteUrl, `refs/heads/${STATE_BRANCH}`]);
+  const listed = await asIsGit({ run, gitPath, env: { ...reaching(env, remoteUrl), ...ceiling }, reachEnv: reachEnv === null ? null : { ...reachEnv, ...ceiling }, cwd: outsideAny() })(['ls-remote', '--heads', '--end-of-options', remoteUrl, `refs/heads/${STATE_BRANCH}`]);
   if (listed.code !== 0) return false;
   return String(listed.stdout).split(/\r?\n/).some((line) => line.endsWith(`\trefs/heads/${STATE_BRANCH}`));
 }
@@ -1620,7 +1670,7 @@ async function stateBranchLaunched({ remoteUrl, gitPath, env, reachEnv = null, r
   fs.mkdirSync(wheelhouseHome(), { recursive: true });
   const dir = fs.mkdtempSync(path.join(wheelhouseHome(), 'join-'));
   try {
-    const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), reachEnv, cwd: dir });
+    const git = asIsGit({ run, gitPath, env: reaching(env, remoteUrl), reachEnv, cwd: dir });
     if ((await git(['init', '-q', '--bare', '.'])).code !== 0) return true;
     const ref = 'refs/joined/state';
     if ((await git(['fetch', '-q', '--no-tags', '--no-write-fetch-head', '--end-of-options', remoteUrl, `+refs/heads/${STATE_BRANCH}:${ref}`])).code !== 0) return true;
@@ -1654,7 +1704,7 @@ export function joinMissLine({ host, wanted, found, at, user }) {
 // (this computer's settings.local.json) stay. Safe to repeat: once the folder has a commit it is
 // left as it is. Fetched by its https address, never by the one the folder's origin names (R111).
 export async function checkOutJoined({ folder, repo, remoteUrl, branch, gitPath, env, reachEnv = null, run, record }) {
-  const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), reachEnv, cwd: folder, workTree: folder });
+  const git = asIsGit({ run, gitPath, env: reaching(env, remoteUrl), reachEnv, cwd: folder, workTree: folder });
   const must = mustGit(git);
   const origin = originUrl(folder);
   if (origin !== null && !sameRemote(origin, remoteUrl)) throw new Error('This folder is connected to another repository, so setup has left it as it is');
@@ -1664,7 +1714,7 @@ export async function checkOutJoined({ folder, repo, remoteUrl, branch, gitPath,
     if (!hadGit) await must(['init', '-q', '-b', branch], 'git could not start in this folder');
     await must(['remote', 'add', '--end-of-options', 'origin', remoteUrl], 'git could not name the project\'s repository in this folder');
   }
-  await must(['fetch', '-q', '--end-of-options', remoteUrl, `+refs/heads/${branch}:refs/remotes/origin/${branch}`], 'git could not fetch the project');
+  await must(['fetch', '-q', '--end-of-options', remoteUrl, `+refs/heads/${branch}:refs/remotes/origin/${branch}`], reachEnv === null ? 'git could not fetch the project' : `git could not fetch the project ${ownSignIn(remoteUrl)}`);
   const head = await git(['rev-parse', '-q', '--verify', 'HEAD']);
   if (head.code !== 0) {
     // checkout -f writes over what is in its way, so the folder must still hold only step 1's

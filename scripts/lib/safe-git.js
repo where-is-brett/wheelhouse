@@ -48,7 +48,8 @@ const TRANSPORT = {
   push: 'https', 'push-ssh': 'https:ssh', 'push-local': 'https:file', 'push-loopback': 'https:http',
 };
 // The push reaches. Only these let the computer's own (the director's) git settings in; every other
-// reach shuts them out. The helper's push route is the one caller (scripts/host/helper.js, pushToHost).
+// reach shuts them out. Two callers use them: the helper's push route (scripts/host/helper.js, pushToHost) and
+// setup's as-is connect (asIsReachEnv in scripts/setup/host.js), which guards each call the way pushToHost does.
 export const PUSH_REACHES = Object.freeze(['push', 'push-ssh', 'push-local', 'push-loopback']);
 export const isPushReach = (reach) => PUSH_REACHES.includes(reach);
 
@@ -222,7 +223,7 @@ const LISTS = { own: allowedSetting, project: allowedProjectSetting };
 // `env` with the whole fence, and the transport `reach` names in place of any given. Safe to apply twice.
 //
 // A push reach (PUSH_REACHES) is the one exception to the shutting out of the global and system
-// settings: the director's own files come in, with their credential helper, proxy, certificate and the
+// settings (used by the helper's push and by setup's as-is connect): the director's own files come in, with their credential helper, proxy, certificate and the
 // rest, and the fence's settings still outrank them (they are in the call's environment). So the
 // call drops GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM, does not clear the credential helpers, never
 // prompts or opens a window, and for an SSH remote leaves the director's own core.sshCommand (and
@@ -351,6 +352,21 @@ export function hookNames(entries) {
     if (first > 0 && last > first && key.slice(0, first).toLowerCase() === 'hook') names.add(key.slice(first + 1, last));
   }
   return [...names];
+}
+
+// Why the computer's settings send the address `url` somewhere else, in words, or null: an `insteadOf` or `pushInsteadOf` whose
+// text begins the address, or a remote named for the address itself (git reads `remote.<address>.url` and `.pushurl` for a
+// bare address) that gives another. Git's own answer for a fetch is checked by the caller too; a push's address is not asked
+// of git for a bare address, so this is how pushInsteadOf and pushurl are seen.
+export function rewriteRefusal(entries, url) {
+  const address = String(url);
+  for (const { key, value } of entries) {
+    const lower = key.toLowerCase();
+    if (/^url\..+\.(?:push)?insteadof$/.test(lower) && typeof value === 'string' && value !== '' && address.startsWith(value)) return 'rewrite this project\'s address (insteadOf or pushInsteadOf)';
+    const named = /^remote\.(.+)\.(?:push)?url$/.exec(lower);
+    if (named !== null && named[1] === address.toLowerCase()) return 'name another address for this project\'s address (remote url or pushurl)';
+  }
+  return null;
 }
 
 const quoted = (text) => `"${String(text).replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\n', '\\n').replaceAll('\t', '\\t')}"`;
