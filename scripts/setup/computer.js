@@ -276,7 +276,7 @@ function composeFor({ changes, userSettings = {}, kept = [], route = TELEMETRY_R
     : '\n- Your clicks are marked as coming from this computer, with a key that Claude Code\'s sandbox keeps agents from reading in projects Wheelhouse has set up.';
   const variables = route === 'launch-env' && changes.some((c) => c.kind === 'env' || c.kind === 'file');
   const agents = [...new Set(changes.filter((c) => c.what === 'agent').map((c) => c.label))];
-  const alongside = agents.length > 0 ? `, and ${agents.join(' and ')}'s hook file${changes.some((c) => c.what === 'agent' && c.part === 'first-mate') ? ' and First Mate files' : ''}` : '';
+  const alongside = agents.length > 0 ? `, and ${agents.join(' and ')}'s checks${changes.some((c) => c.what === 'agent' && c.part === 'first-mate') ? ' and First Mate files' : ''}` : '';
   const why = variables
     ? `These are settings on this computer, mostly Claude Code's, and variables for your account${platform === 'darwin' ? ' and a login item' : ''}${alongside}.`
     : `These are settings on this computer, mostly Claude Code's${alongside}.`;
