@@ -129,7 +129,9 @@ test('gitlabApi gives curl the proxy it is given', async () => {
   const fake = makeFakeCurl([{ body: '{}' }]);
   await gitlabApi({ token: 't', ...via(fake, { proxy }) }).get('/user');
   assert.equal(configOf(fake.calls[0], 'proxy'), 'http://proxy.example.org:8080');
-  assert.ok(fake.calls[0].pairs.some(([name]) => name === 'proxy-ntlm'));
+  // NTLM on the Mac and Linux; any method curl can do on Windows, whose own curl.exe can lack NTLM.
+  const option = process.platform === 'win32' ? 'proxy-anyauth' : 'proxy-ntlm';
+  assert.ok(fake.calls[0].pairs.some(([name]) => name === option));
 });
 
 test('gitlabApi never puts the key in a thrown message, and says why GitLab was not reached', async () => {

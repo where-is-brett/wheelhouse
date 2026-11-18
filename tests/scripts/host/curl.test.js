@@ -227,11 +227,11 @@ test('the file is not given to curl on Windows, where Schannel reads the system 
 
 // ---- The proxy ----
 
-test('a proxy is given as curl\'s own options, signing in as the computer\'s user', async () => {
+test('a proxy is given as curl\'s own options, signing in as the computer\'s user (the Mac)', async () => {
   const cases = { ntlm: 'proxy-ntlm', negotiate: 'proxy-negotiate', anyauth: 'proxy-anyauth' };
   for (const [auth, option] of Object.entries(cases)) {
     const fake = makeFakeCurl([{}]);
-    await request(base(fake, { proxy: { proxy: 'http://p.example.org:8080', auth, user: ':', noProxy: 'a.example.org' } }));
+    await request(base(fake, { platform: 'darwin', proxy: { proxy: 'http://p.example.org:8080', auth, user: ':', noProxy: 'a.example.org' } }));
     const pairs = fake.calls[0].pairs;
     assert.deepEqual(pairs.find(([key]) => key === 'proxy'), ['proxy', 'http://p.example.org:8080']);
     assert.ok(pairs.some(([key]) => key === option), option);
@@ -239,6 +239,22 @@ test('a proxy is given as curl\'s own options, signing in as the computer\'s use
     assert.deepEqual(pairs.find(([key]) => key === 'proxy-user'), ['proxy-user', ':']);
     assert.deepEqual(pairs.find(([key]) => key === 'noproxy'), ['noproxy', 'a.example.org']);
   }
+});
+
+test('on Windows a proxy git signs in to by NTLM is signed in to by any method curl can do', async () => {
+  // Windows' own curl.exe can be built without NTLM and refuses --proxy-ntlm; its Negotiate signs in
+  // as the same Windows user. The Mac and Linux keep the method git names.
+  const expected = { win32: 'proxy-anyauth', darwin: 'proxy-ntlm', linux: 'proxy-ntlm' };
+  for (const [platform, option] of Object.entries(expected)) {
+    const fake = makeFakeCurl([{}]);
+    await request(base(fake, { platform, proxy: { proxy: 'http://p.example.org:8080', auth: 'ntlm', user: ':', noProxy: null } }));
+    const pairs = fake.calls[0].pairs;
+    assert.deepEqual(pairs.filter(([key]) => /^proxy-(ntlm|negotiate|anyauth)$/.test(key)).map(([key]) => key), [option], platform);
+    assert.deepEqual(pairs.find(([key]) => key === 'proxy-user'), ['proxy-user', ':']);
+  }
+  const negotiate = makeFakeCurl([{}]);
+  await request(base(negotiate, { platform: 'win32', proxy: { proxy: 'http://p.example.org:8080', auth: 'negotiate', user: ':', noProxy: null } }));
+  assert.ok(negotiate.calls[0].pairs.some(([key]) => key === 'proxy-negotiate'));
 });
 
 test('no proxy means no proxy lines, and a named user adds no proxy-user', async () => {
