@@ -292,6 +292,48 @@ test('the Claude app\'s own drawing tools pass unlisted, each by its whole name;
   });
 });
 
+test('between step 3 and step 7, when the file holds only host settings, the app\'s own tools pass and everything else stays refused', async () => {
+  await withHome(async (home) => {
+    const mcpJson = (servers) => JSON.stringify({ mcpServers: Object.fromEntries(servers.map((s) => [s, { command: 'node' }])) });
+    // What step 3 can leave: the host settings alone, or a file that carries only a version and a host.
+    for (const config of [{ gitlabHosts: ['git.example.test'] }, { glabFrom: 'path', ghFrom: 'path' }, { v: 1 }, { v: 1, host: 'gitlab' }]) {
+      const { base, main } = makeProject(config);
+      try {
+        for (const tool of APP_TOOLS) assert.equal(await desk(base, home, call(main, tool)), undefined, `${tool} ${JSON.stringify(config)}`);
+        assert.ok(denied(await desk(base, home, call(main, 'mcp__ccd_turn__other'))));
+        assert.ok(denied(await desk(base, home, call(main, 'mcp__github__x'))));
+        assert.ok(denied(await desk(base, home, call(main, 'mcp__ccd_turn__wrap_up'), 'cli')));
+      } finally { fs.rmSync(base, { recursive: true, force: true }); }
+    }
+    // A file that isn't an object, or whose mcpServers is there, gives no pass: it is not read as listing nothing.
+    const refused = [
+      { label: 'not json', config: 'not json' },
+      { label: 'an array', config: '[]' },
+      { label: 'null', config: 'null' },
+      { label: 'mcpServers a string', config: { v: 1, mcpServers: 'ccd_turn' } },
+      { label: 'mcpServers spelled ccd.turn', config: { v: 1, mcpServers: ['ccd.turn'] } },
+      { label: 'mcpServers not strings', config: { v: 1, mcpServers: [1] } },
+      { label: 'mcpServers listing a connector', config: { v: 1, mcpServers: ['figma'] } },
+    ];
+    for (const { label, config } of refused) {
+      const { base, main } = makeProject(config);
+      try {
+        for (const tool of APP_TOOLS) assert.ok(denied(await desk(base, home, call(main, tool))), `${label}: ${tool}`);
+      } finally { fs.rmSync(base, { recursive: true, force: true }); }
+    }
+    // A .mcp.json naming one of the app's servers still refuses them with the partial file.
+    const named = makeProject({ v: 1, host: 'gitlab' });
+    try {
+      fs.writeFileSync(path.join(named.main, '.mcp.json'), mcpJson(['ccd_view']));
+      for (const tool of APP_TOOLS) {
+        const out = await desk(named.base, home, call(named.main, tool));
+        assert.ok(denied(out), tool);
+        assert.match(out.hookSpecificOutput.permissionDecisionReason, /ccd_turn or ccd_view/, tool);
+      }
+    } finally { fs.rmSync(named.base, { recursive: true, force: true }); }
+  });
+});
+
 test('a project whose configuration names ccd_turn or ccd_view is refused those servers\' tools, the app\'s own included', async () => {
   await withHome(async (home) => {
     const plain = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
