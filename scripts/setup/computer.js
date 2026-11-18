@@ -276,9 +276,11 @@ function composeFor({ changes, userSettings = {}, kept = [], route = TELEMETRY_R
     : terse >= 1 ? (open ? `\n- Your clicks are marked as coming from this computer; ${win ? 'on Windows any agent\'s commands' : who} could read the key behind that mark, so it shows a click came from here, not that you made it.` : '\n- Your clicks are marked as coming from this computer, with a key Claude Code\'s sandbox keeps agents from reading in projects Wheelhouse has set up.')
     : open ? `\n- Your clicks are marked as coming from this computer. ${win ? `On Windows ${winWho}` : who} could read the key behind that mark, so it shows a click came from here, not that you made it.`
     : '\n- Your clicks are marked as coming from this computer, with a key that Claude Code\'s sandbox keeps agents from reading in projects Wheelhouse has set up.';
-  const variables = route === 'launch-env' && changes.some((c) => c.kind === 'env' || c.kind === 'file');
+  const variables = route === 'launch-env' && changes.some((c) => c.what === 'telemetry' && (c.kind === 'env' || c.kind === 'file'));
   const agents = [...new Set(changes.filter((c) => c.what === 'agent').map((c) => c.label))];
-  const alongside = agents.length > 0 ? `, and ${agents.join(' and ')}'s checks${changes.some((c) => c.what === 'agent' && c.part === 'first-mate') ? ' and First Mate files' : ''}` : '';
+  const parts = (p) => changes.some((c) => c.what === 'agent' && c.part === p);
+  const agentParts = [...(parts('hooks') ? ['checks'] : []), ...(parts('first-mate') ? ['First Mate files'] : [])].join(' and ');
+  const alongside = agents.length > 0 ? `, and ${agents.join(' and ')}'s ${agentParts}` : '';
   const why = variables
     ? `These are settings on this computer, mostly Claude Code's, and variables for your account${platform === 'darwin' ? ' and a login item' : ''}${alongside}.`
     : `These are settings on this computer, mostly Claude Code's${alongside}.`;
@@ -371,7 +373,7 @@ export function computerStep({
       }
       for (const c of changes.filter((x) => !['telemetry', 'login', 'plugin', 'agent'].includes(x.what))) ctx.applyJsonKey({ file: c.target, key: c.key, value: c.after });
       // The director's own settings that weaken Standard, said in one line as the step finishes,
-      // since a Go ahead on the one card shows no step 6 card (design section 15.1).
+      // since a Go ahead on the one card shows no step 6 card unless it changes another agent's files (design section 15.1).
       const weak = weakeningSentence(weakening((await world(ctx)).userSettings), (line) => line.length <= SAY_CHARS);
       if (weak !== '') ctx.say?.(weak);
       return [];

@@ -787,3 +787,14 @@ test('when the card is cut, the director\'s own usage settings are counted first
   assert.match(at(3), /4 settings are yours/);
   assert.doesNotMatch(at(3), /\(now /);
 });
+
+test('the why line names only the parts of another agent\'s files the card changes', async () => {
+  const { agentComputerChanges } = await import('../../../scripts/agents/setup-parts.js');
+  const root = path.resolve(import.meta.dirname, '..', '..', '..');
+  const base = [{ kind: 'json-key', what: 'retention', key: ['cleanupPeriodDays'], after: RETENTION_DAYS }];
+  const agent = agentComputerChanges('copilot', { env: {}, userHome: '/home/x', platform: 'darwin', root });
+  const why = (changes) => computerCard({ changes: [...base, ...changes], platform: 'darwin', floor: '2.1.299', key: true }).why;
+  assert.match(why(agent), /, and Copilot's checks and First Mate files\.$/);
+  assert.match(why(agent.filter((c) => c.part === 'first-mate')), /, and Copilot's First Mate files\.$/);
+  assert.match(why(agent.filter((c) => c.part === 'hooks')), /, and Copilot's checks\.$/);
+});
