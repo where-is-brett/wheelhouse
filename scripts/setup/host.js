@@ -95,7 +95,7 @@ import { withoutTokens } from '../lib/token-names.js';
 import { DEFAULT_GITLAB, gitlabBase, readGitlabHosts, parseRemote, hostWords, isDefaultHost, commitEmailOf } from '../host/gitlab-base.js';
 import { findKey, saveKey } from '../host/keys.js';
 import { borrowKey, storeDirectorKey } from '../host/store.js';
-import { confirmComputerSettings } from '../lib/safe-git.js';
+import { confirmComputerSettings, safeGitEnv, pushReachFor } from '../lib/safe-git.js';
 import { switchOnProtection, protectionStatus, readGitlabProtection } from '../host/protection.js';
 import { askSecret as realAskSecret } from '../secrets/secret-box.js';
 import { projectForFolder, writeProject, readProject } from '../lib/projects.js';
@@ -126,7 +126,7 @@ import {
   PROFILE_TARGET,
 } from './own-app.js';
 import { readJournal, newId } from './journal.js';
-import { setupGit, setupGitEnv, keyedGitEnv, refuseUnlistedSettings, reaching } from './git.js';
+import { setupGit, setupGitEnv, keyedGitEnv, refuseUnlistedSettings, reaching, gitFailure } from './git.js';
 
 // The Wheelhouse organisation's GitHub App: null fields until the organisation is made and the app
 // registered (Card 1).
@@ -1247,6 +1247,17 @@ export function directorGitEnv({ host, gitPath = 'git', env = process.env, platf
   return host === 'gitlab' ? { ...given, ...withoutTokens({ env: given }) } : given;
 }
 
+// The environment step 3's git calls that reach the remote run with on the as-is route ("Use my git as it is"): the director's own
+// git, as their pushes already are (safe-git.js, safeGitEnv with a push reach). Their own global and system settings come in, so
+// their credential helper, proxy and certificate settings reach the host; the fence's settings still outrank them, nothing prompts
+// or opens a window, and no helper of setup's is given (glab's is not: the director may have no glab, and this route is theirs).
+// With the company's certificate for a company GitLab's address, once setup has made it, as the helper's calls have it. `url` is
+// one of the host's repository addresses, only for the reach its transport needs. Not for any other route: they keep directorGitEnv.
+export function asIsReachEnv({ host, url, gitPath = 'git', env = process.env, platform = process.platform, base } = {}) {
+  const given = companyGitEnv(setupGitEnv({ gitPath, env, platform }), { host, base }, { platform });
+  return safeGitEnv(given, { reach: pushReachFor(url, { platform }), directorEnv: env });
+}
+
 // ---- GitLab without its tool: the one-day setup token ----
 
 // Said where setup stopped with the setup token and GitLab did not take it back.
@@ -1478,6 +1489,14 @@ async function createRepo({ host, owner, name, run, api, empty = false, isPrivat
 export const madeBySetup = (target) => readJournal().runs.filter((r) => !runClosed(r)).flatMap((r) => r?.changes ?? [])
   .some((c) => c?.kind === 'host' && c.target === target && c.after?.made === true);
 
+// A git call that must succeed: `why` when it fails, then the last of what git said (scrubbed of any sign-in, git.js gitFailure),
+// so a refusal by the host or the network is seen in the line and not guessed at.
+const mustGit = (git) => async (args, why) => {
+  const done = await git(args);
+  if (done.code !== 0) throw new Error(gitFailure(why, done.stderr));
+  return done;
+};
+
 // Connects the product's folder to its new repository in place (ruling R34): git init -b main when
 // it has no git, the remote added and fetched, the branch named main (whatever an unborn branch was
 // called) and reset to origin/main without touching the folder's files; any of the repository's
@@ -1486,13 +1505,9 @@ export const madeBySetup = (target) => readJournal().runs.filter((r) => !runClos
 // repository, or one an agent wrote. The folder's .git is recorded once, when
 // setup adds the remote. Safe to repeat from any point: a retry finishes what an earlier attempt
 // left, and records nothing again.
-async function connectFolder({ folder, remoteUrl, gitPath, env, run, record }) {
-  const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: folder, workTree: folder });
-  const must = async (args, why) => {
-    const done = await git(args);
-    if (done.code !== 0) throw new Error(why);
-    return done;
-  };
+async function connectFolder({ folder, remoteUrl, gitPath, env, reachEnv = null, run, record }) {
+  const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), reachEnv, cwd: folder, workTree: folder });
+  const must = mustGit(git);
   const hadGit = fs.existsSync(path.join(folder, '.git'));
   const origin = originUrl(folder);
   if (origin !== null && !sameRemote(origin, remoteUrl)) throw new Error('This folder is connected to another repository, so setup has left it as it is');
@@ -1521,11 +1536,10 @@ async function connectFolder({ folder, remoteUrl, gitPath, env, run, record }) {
 // Sends a folder's own history to its new, empty repository: `branch`, which becomes the repository's default. An `origin` of
 // the folder's own stays as it is, so the record's address is the only way there; a folder with none gets it, once its history
 // is there: until then the folder still reads as a project kept here, and a fresh Go ahead takes this up again. Safe to repeat.
-async function publishFolder({ folder, remoteUrl, branch, gitPath, env, run, record }) {
-  const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: folder, workTree: folder });
-  if ((await git(['push', '-q', '--no-verify', '--end-of-options', remoteUrl, `refs/heads/${branch}:refs/heads/${branch}`])).code !== 0) {
-    throw new Error('Your project could not be sent to its new repository; a fresh Go ahead tries again');
-  }
+async function publishFolder({ folder, remoteUrl, branch, gitPath, env, reachEnv = null, run, record }) {
+  const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), reachEnv, cwd: folder, workTree: folder });
+  const pushed = await git(['push', '-q', '--no-verify', '--end-of-options', remoteUrl, `refs/heads/${branch}:refs/heads/${branch}`]);
+  if (pushed.code !== 0) throw new Error(gitFailure('Your project could not be sent to its new repository; a fresh Go ahead tries again', pushed.stderr));
   if (originUrl(folder) === null) {
     record({ id: newId('chg'), kind: 'folder', target: path.join(folder, '.git'), before: { origin: null }, after: { origin: remoteUrl, branch } });
     if ((await git(['remote', 'add', '--end-of-options', 'origin', remoteUrl])).code !== 0) throw new Error('git could not name the repository in this folder');
@@ -1568,8 +1582,9 @@ async function holdsConfig({ host, info, run, api }) {
 }
 
 // Whether a repository holds Wheelhouse v0.1.x's state branch, read with the director's own sign-in.
-async function holdsState({ remoteUrl, gitPath, env, run }) {
-  const listed = await setupGit({ run, gitPath, env: { ...reaching(env, remoteUrl), GIT_CEILING_DIRECTORIES: ceilingOf() }, cwd: outsideAny() })(['ls-remote', '--heads', '--end-of-options', remoteUrl, `refs/heads/${STATE_BRANCH}`]);
+async function holdsState({ remoteUrl, gitPath, env, reachEnv = null, run }) {
+  const ceiling = { GIT_CEILING_DIRECTORIES: ceilingOf() };
+  const listed = await setupGit({ run, gitPath, env: { ...reaching(env, remoteUrl), ...ceiling }, reachEnv: reachEnv === null ? null : { ...reachEnv, ...ceiling }, cwd: outsideAny() })(['ls-remote', '--heads', '--end-of-options', remoteUrl, `refs/heads/${STATE_BRANCH}`]);
   if (listed.code !== 0) return false;
   return String(listed.stdout).split(/\r?\n/).some((line) => line.endsWith(`\trefs/heads/${STATE_BRANCH}`));
 }
@@ -1579,7 +1594,7 @@ async function holdsState({ remoteUrl, gitPath, env, run }) {
 // state branch. The typed owner/name, or a bare name on the director's own account and each of
 // their organisations (GitLab: groups). Each as repoInfo gives it, with `stateBranch` saying whether
 // it holds the v0.1.x state branch.
-async function findJoined({ host, wanted, user, run, api, gitPath, env, hostUrl }) {
+async function findJoined({ host, wanted, user, run, api, gitPath, env, reachEnv = null, hostUrl }) {
   const accounts = wanted.includes('/') ? [] : [user, ...(await accountsOf({ host, run, api }))];
   const candidates = wanted.includes('/') ? [wanted] : accounts.map((a) => `${a}/${wanted}`);
   const seen = new Set();
@@ -1590,7 +1605,7 @@ async function findJoined({ host, wanted, user, run, api, gitPath, env, hostUrl 
     const info = await repoInfo({ host, repo, run, api });
     if (info === null || found.some((f) => f.repo.toLowerCase() === info.repo.toLowerCase())) continue;
     const config = await holdsConfig({ host, info, run, api });
-    const stateBranch = await holdsState({ remoteUrl: hostUrl({ host, repo: info.repo }), gitPath, env, run });
+    const stateBranch = await holdsState({ remoteUrl: hostUrl({ host, repo: info.repo }), gitPath, env, reachEnv, run });
     if (config || stateBranch) found.push({ ...info, stateBranch });
   }
   return found;
@@ -1601,11 +1616,11 @@ async function findJoined({ host, wanted, user, run, api, gitPath, env, hostUrl 
 // scratch bare repository under Wheelhouse's own folder, removed afterwards: none of the state's
 // history goes into the product's folder, where agents could read it (design section 24.3). A branch
 // that can't be read counts as launched: it only takes Quick away, and narrow still joins.
-async function stateBranchLaunched({ remoteUrl, gitPath, env, run }) {
+async function stateBranchLaunched({ remoteUrl, gitPath, env, reachEnv = null, run }) {
   fs.mkdirSync(wheelhouseHome(), { recursive: true });
   const dir = fs.mkdtempSync(path.join(wheelhouseHome(), 'join-'));
   try {
-    const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: dir });
+    const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), reachEnv, cwd: dir });
     if ((await git(['init', '-q', '--bare', '.'])).code !== 0) return true;
     const ref = 'refs/joined/state';
     if ((await git(['fetch', '-q', '--no-tags', '--no-write-fetch-head', '--end-of-options', remoteUrl, `+refs/heads/${STATE_BRANCH}:${ref}`])).code !== 0) return true;
@@ -1638,13 +1653,9 @@ export function joinMissLine({ host, wanted, found, at, user }) {
 // wrote; that one is recorded first, its text as the value before. Files the project doesn't hold
 // (this computer's settings.local.json) stay. Safe to repeat: once the folder has a commit it is
 // left as it is. Fetched by its https address, never by the one the folder's origin names (R111).
-export async function checkOutJoined({ folder, repo, remoteUrl, branch, gitPath, env, run, record }) {
-  const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: folder, workTree: folder });
-  const must = async (args, why) => {
-    const done = await git(args);
-    if (done.code !== 0) throw new Error(why);
-    return done;
-  };
+export async function checkOutJoined({ folder, repo, remoteUrl, branch, gitPath, env, reachEnv = null, run, record }) {
+  const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), reachEnv, cwd: folder, workTree: folder });
+  const must = mustGit(git);
   const origin = originUrl(folder);
   if (origin !== null && !sameRemote(origin, remoteUrl)) throw new Error('This folder is connected to another repository, so setup has left it as it is');
   if (origin === null) {
@@ -1711,7 +1722,7 @@ function connectionFor({ host, mode, repo, id, locked = false, installationId = 
 // address on the GitLab at `base`. `connect: false` leaves the folder to be connected by the caller,
 // once the project's own key is made (the setup token's route). Gives the changes made.
 export async function makeRepos({
-  host, owner, user = owner, name, isNew, run = realRun, api, folder, record = () => {}, gitPath = 'git', env = {},
+  host, owner, user = owner, name, isNew, run = realRun, api, folder, record = () => {}, gitPath = 'git', env = {}, reachEnv = null,
   hostUrl = httpsRemote, base = DEFAULT_GITLAB, publish = null, connect = true,
 }) {
   const made = [];
@@ -1732,8 +1743,8 @@ export async function makeRepos({
     info = await createRepo({ host, owner: user, name, run, api, empty: publish !== null });
   }
   const remoteUrl = hostUrl({ host, repo: info.repo, base });
-  if (publish !== null) await publishFolder({ folder, remoteUrl, branch: publish, gitPath, env, run, record: keep });
-  else if (connect) await connectFolder({ folder, remoteUrl, gitPath, env, run, record: keep });
+  if (publish !== null) await publishFolder({ folder, remoteUrl, branch: publish, gitPath, env, reachEnv, run, record: keep });
+  else if (connect) await connectFolder({ folder, remoteUrl, gitPath, env, reachEnv, run, record: keep });
   return made;
 }
 
@@ -2737,6 +2748,8 @@ export function hostStep({
       const git = await findGit({ platform, run });
       if (!git?.ok || typeof git.path !== 'string') throw new Error('git is not on this computer yet; step 2 installs it');
       const gitEnv = directorGitEnv({ host, gitPath: git.path, platform, base });
+      // On the as-is route the calls that reach the host run with the director's own git, not setup's isolated one (asIsReachEnv).
+      const reachEnv = connection.mode === 'as-is' ? asIsReachEnv({ host, url: urlFor({ host, repo: 'owner/name' }), gitPath: git.path, platform, base }) : null;
       const keyCard = changes.find((c) => c.action === 'key-card') ?? null;
       // Narrow on GitLab without its tool: the one-day setup token, held in memory for this step only and dropped
       // when it ends, however it ends. A product whose own history goes up, or a joining computer, needs git with
@@ -2768,7 +2781,7 @@ export function hostStep({
         // or a refusal saying to type owner/name, recorded so the question asks again.
         let joined = null;
         if (join !== null) {
-          const found = await findJoined({ host, wanted: join.name, user, run, api, gitPath: git.path, env: gitEnv, hostUrl: urlFor });
+          const found = await findJoined({ host, wanted: join.name, user, run, api, gitPath: git.path, env: gitEnv, reachEnv, hostUrl: urlFor });
           // The repository this folder is checked out to is checked again, never searched for.
           if (fixed !== null && found.length !== 1) {
             throw new Error(`${fixed} on ${NAME[host]} can't be found with your sign-in, or is no longer set up with Wheelhouse, so setup has stopped: this folder is checked out to it and joins nothing else; check the repository on ${NAME[host]}, then a fresh Go ahead tries again`);
@@ -2797,13 +2810,13 @@ export function hostStep({
           if (typeof branch !== 'string' || branch === '' || WHEELHOUSE_BRANCHES.includes(branch)) {
             throw new Error(`${joined.repo}'s default branch on ${NAME[host]} is ${branch || 'not set'}, not a branch of the product's, so setup has not checked it out: make the product's own branch the default in the repository's settings, then ask again`);
           }
-          await checkOutJoined({ folder: ctx.folder, repo: joined.repo, remoteUrl: urlFor({ host, repo: joined.repo }), branch, gitPath: git.path, env: gitEnv, run, record });
+          await checkOutJoined({ folder: ctx.folder, repo: joined.repo, remoteUrl: urlFor({ host, repo: joined.repo }), branch, gitPath: git.path, env: gitEnv, reachEnv, run, record });
           halt();
         }
         // A new product's repository, under the director's own account.
         if (made !== null) {
           await makeRepos({
-            host, owner: projectOwner, user, name: projectRepo.split('/').at(-1), isNew: true, run, api, folder: ctx.folder, record, gitPath: git.path, env: gitEnv, hostUrl, base, publish: made.publish ?? null,
+            host, owner: projectOwner, user, name: projectRepo.split('/').at(-1), isNew: true, run, api, folder: ctx.folder, record, gitPath: git.path, env: gitEnv, reachEnv, hostUrl, base, publish: made.publish ?? null,
             connect: held === null,
           });
         }
@@ -2826,7 +2839,7 @@ export function hostStep({
         // which is recorded so the card is asked again without Quick (design sections 11 and 24.3).
         if (joined !== null) {
           const launched = launchedInFolder(ctx.folder) || launchedFound(project.repo) || (joined.stateBranch === true
-            && await stateBranchLaunched({ remoteUrl, gitPath: git.path, env: gitEnv, run }));
+            && await stateBranchLaunched({ remoteUrl, gitPath: git.path, env: gitEnv, reachEnv, run }));
           if (launched && !launchedInFolder(ctx.folder) && !launchedFound(project.repo)) answerRecord({ joined: project.repo, launched: true });
           if (connection.mode === 'quick' && launched) throw new Error(quickLaunched(project.repo));
           await openRecords();

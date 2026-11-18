@@ -207,16 +207,56 @@ export function subcommandOf(args) {
   return '';
 }
 
+// The git subcommands that reach a remote: the only calls an as-is route gives the director's own git (`reachEnv`).
+const REMOTE_CALLS = new Set(['fetch', 'push', 'ls-remote']);
+
 // git for setup in `cwd` (or none): `git(args, options)` gives run's answer, after refusing any
 // setting of the repository's not on the allowed list; every call isolated as above. With
 // `workTree` (the folder setup names, a project's), that folder is git's working tree whatever the
 // repository's config says; not for `git init`, which makes the repository in `cwd` and takes no
 // working tree without a git folder named too.
-export function setupGit({ run = realRun, gitPath = 'git', env = {}, cwd, workTree = null, timeoutMs = GIT_WAIT_MS } = {}) {
+//
+// With `reachEnv` (the as-is route's: scripts/lib/safe-git.js safeGitEnv with a push reach, so the director's own global and
+// system settings and credential helper come in, the fence still outranks them, and nothing prompts), the calls that reach a
+// remote (REMOTE_CALLS) run with it in place of the isolated one. It is built with the fence already, so it is not isolated
+// again: `isolated` would shut the director's files out once more. Every call that only touches the folder stays isolated.
+export function setupGit({ run = realRun, gitPath = 'git', env = {}, cwd, workTree = null, timeoutMs = GIT_WAIT_MS, reachEnv = null } = {}) {
   const fenced = isolated(env);
   const inFolder = workTree === null ? fenced : { ...fenced, GIT_WORK_TREE: workTree };
+  const reaches = reachEnv === null ? null : workTree === null ? reachEnv : { ...reachEnv, GIT_WORK_TREE: workTree };
   return async (args, options = {}) => {
     await refuseUnlistedSettings({ run, gitPath, cwd });
-    return run(gitPath, args, { cwd, env: subcommandOf(args) === 'init' ? fenced : inFolder, baseEnv: withoutGitVars(), timeoutMs, ...options });
+    const sub = subcommandOf(args);
+    const callEnv = sub === 'init' ? fenced : reaches !== null && REMOTE_CALLS.has(sub) ? reaches : inFolder;
+    return run(gitPath, args, { cwd, env: callEnv, baseEnv: withoutGitVars(), timeoutMs, ...options });
   };
+}
+
+// ---- What git said, for a failure line ----
+
+const HIDDEN = '<hidden>';
+// Text git (or its helpers) wrote, with anything that could carry a sign-in taken out: the user or token in an address
+// (`scheme://user:pass@host`), an Authorization or extra-header value (to the end of its line), and anything shaped like a
+// GitLab or GitHub token. Safe to apply twice.
+export function scrubGitText(text) {
+  return String(text ?? '')
+    .replace(/([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/?#]*@/g, `$1${HIDDEN}@`)
+    .replace(/(authorization\s*[:=]\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    .replace(/(extraheader[^\s=:]*\s*[:=]\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    .replace(/(private-token\s*:\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    .replace(/\b(?:glpat-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,})/g, HIDDEN);
+}
+
+// The last line or two of git's stderr, scrubbed and trimmed to about 300 characters (the end is kept: it is what git ended
+// on), or '' when git said nothing.
+export function gitSaid(stderr, { limit = 300 } = {}) {
+  const lines = scrubGitText(stderr).split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== '');
+  const said = lines.slice(-2).join(' ');
+  return said.length > limit ? `...${said.slice(-(limit - 3))}` : said;
+}
+
+// A failure line: `why`, then what git said when it said anything.
+export function gitFailure(why, stderr) {
+  const said = gitSaid(stderr);
+  return said === '' ? why : `${why} (git said: ${said})`;
 }

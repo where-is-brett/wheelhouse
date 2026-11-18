@@ -15,7 +15,7 @@ import {
   directorGitlabApi, directorKey, signInStatus, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
   APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, pinOf, joinMissLine, ORGS_UNREAD, launchedIn,
   checkOutJoined, findInstallation, CERTIFICATE_GIVEN, reachLine, askAdministrationKey, setupTokenApi, SETUP_TOKEN_KEPT,
-  madeWithSetupToken, keyGitlabApi, keyGitEnv, againCard,
+  madeWithSetupToken, keyGitlabApi, keyGitEnv, againCard, asIsReachEnv,
 } from '../../../scripts/setup/host.js';
 import { trialGitEnv, trialAdapter } from '../../../scripts/setup/health.js';
 import { installationCovers } from '../../../scripts/host/connection.js';
@@ -3089,6 +3089,114 @@ test('a folder whose origin is an ssh address of the same repository is fetched 
     assert.equal(await g(joined, 'rev-parse', 'HEAD'), await g(w.hostUrl({ repo: 'cafe-co/Cafe-Menu' }), 'rev-parse', 'main'));
     assert.equal(fs.readFileSync(path.join(joined, '.claude', 'settings.json'), 'utf8'), COMMITTED);
     assert.deepEqual(gits.filter((a) => a[0] === 'fetch'), [['fetch', '-q', '--end-of-options', 'https://github.com/cafe-co/Cafe-Menu.git', '+refs/heads/main:refs/remotes/origin/main']]);
+  });
+});
+
+// ---- The as-is route's git: the director's own, for the calls that reach the host ----
+
+// A scratch home holding a global git config with a credential helper of the director's own, for the length of `fn`.
+async function withDirectorsGitConfig(fn) {
+  const home = fs.realpathSync.native(tempFolder('wh-dirgit-'));
+  fs.writeFileSync(path.join(home, '.gitconfig'), '[credential]\n\thelper = directors-own-helper\n');
+  const was = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  try {
+    return await fn();
+  } finally {
+    for (const [k, v] of Object.entries(was)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+  }
+}
+
+// The stand-in GitLab at https://gitlab.com, answering as overHttps does; each git call's name, environment and (for a call that
+// reaches the host) the credential helpers git would use under that environment are kept in `seen`.
+const overGitlab = (w, seen, { fail = null } = {}) => async (file, args = [], options = {}) => {
+  if (path.basename(file).replace(/\.exe$/, '') !== 'git') return w.run(file, args, options);
+  const sub = args.find((a) => !a.startsWith('-'));
+  const reaches = ['fetch', 'push', 'ls-remote'].includes(sub);
+  if (reaches) {
+    const helpers = await hostGuard(file, ['config', '--get-all', 'credential.helper'], options);
+    seen.push({ sub, env: options.env, helpers: helpers.stdout.split(/\r?\n/).filter(Boolean) });
+    if (fail !== null) return { code: 128, stdout: '', stderr: fail };
+  } else {
+    seen.push({ sub, env: options.env });
+  }
+  let served = false;
+  const local = args.map((a) => {
+    const repo = /^https:\/\/gitlab\.com\/(.+)\.git$/.exec(a)?.[1];
+    if (repo === undefined) return a;
+    served = true;
+    return w.hostUrl({ repo });
+  });
+  return w.run(file, local, served ? { ...options, env: { ...options.env, GIT_ALLOW_PROTOCOL: 'https:file' } } : options);
+};
+
+test('as-is on GitLab with no glab: the new folder is fetched with the director\'s own git settings and credential helper, not setup\'s isolated git', async () => {
+  await withHome(async () => withDirectorsGitConfig(async () => {
+    const w = standIn({ signedIn: { gitlab: false }, blockedTool: true });
+    const hostUrl = ({ repo }) => `https://gitlab.com/${repo}.git`;
+    const folder = productFolder();
+    const seen = [];
+    const env = directorGitEnv({ host: 'gitlab', gitPath: 'git', base: 'https://gitlab.com' });
+    const reachEnv = asIsReachEnv({ host: 'gitlab', url: hostUrl({ repo: `${USER}/Shop` }), gitPath: 'git', base: 'https://gitlab.com' });
+    await makeRepos({ host: 'gitlab', owner: USER, name: 'Shop', isNew: true, folder, run: overGitlab(w, seen), api: w.api, env, reachEnv, hostUrl, base: 'https://gitlab.com' });
+    assert.equal(await g(folder, 'rev-parse', 'HEAD'), await g(w.hostUrl({ repo: `${USER}/Shop` }), 'rev-parse', 'main'), 'the folder is connected');
+    const fetch = seen.find((c) => c.sub === 'fetch');
+    assert.equal(fetch.env.GIT_CONFIG_GLOBAL, undefined, 'the director\'s global settings are not shut out');
+    assert.equal(fetch.env.GIT_CONFIG_NOSYSTEM, undefined, 'nor their system settings');
+    assert.equal(fetch.env.GIT_TERMINAL_PROMPT, '0');
+    assert.equal(fetch.env.GCM_INTERACTIVE, 'never');
+    // Their global file's helper, with whatever their system file lists (a Mac's keychain): setup's glab one is not given.
+    assert.ok(fetch.helpers.includes('directors-own-helper'), fetch.helpers.join(', '));
+    assert.ok(!fetch.helpers.some((h) => /git-credential|glab/.test(h)), fetch.helpers.join(', '));
+    assert.ok(!JSON.stringify(fetch.env).includes('git-credential'), 'no glab helper in the environment');
+    // The fence still applies to that call.
+    assert.equal(fetch.env.GIT_ALLOW_PROTOCOL, 'https', 'https only');
+    assert.ok(Object.entries(fetch.env).some(([k, v]) => /^GIT_CONFIG_KEY_/.test(k) && /^core\.hookspath$/i.test(v)), 'the fence\'s settings are in the call');
+    // Calls that touch only the folder keep the isolated environment.
+    for (const c of seen.filter((x) => !['fetch', 'push', 'ls-remote'].includes(x.sub))) assert.equal(c.env.GIT_CONFIG_GLOBAL, '/dev/null', c.sub);
+  }));
+});
+
+test('the routes that are not as-is still fetch with setup\'s isolated git and its own credential helper alone', async () => {
+  await withHome(async () => withDirectorsGitConfig(async () => {
+    const w = standIn();
+    const hostUrl = ({ repo }) => `https://gitlab.com/${repo}.git`;
+    const folder = productFolder();
+    const seen = [];
+    const env = directorGitEnv({ host: 'gitlab', gitPath: 'git', base: 'https://gitlab.com' });
+    await makeRepos({ host: 'gitlab', owner: USER, name: 'Shop', isNew: true, folder, run: overGitlab(w, seen), api: w.api, env, hostUrl, base: 'https://gitlab.com' });
+    const fetch = seen.find((c) => c.sub === 'fetch');
+    assert.equal(fetch.env.GIT_CONFIG_GLOBAL, '/dev/null');
+    assert.equal(fetch.env.GIT_CONFIG_NOSYSTEM, '1');
+    assert.equal(fetch.helpers.length, 1, 'one helper only');
+    assert.match(fetch.helpers[0], /auth git-credential/);
+    assert.ok(!fetch.helpers.includes('directors-own-helper'), 'the director\'s own helper is never given to another route');
+  }));
+});
+
+test('asIsReachEnv carries no helper of setup\'s and refuses to take one', () => {
+  const env = asIsReachEnv({ host: 'gitlab', url: 'https://gitlab.com/a/b.git', gitPath: 'git', base: 'https://gitlab.com' });
+  assert.ok(!Object.values(env).some((v) => /git-credential/.test(String(v))));
+  assert.ok(!Object.entries(env).some(([k, v]) => /^GIT_CONFIG_KEY_/.test(k) && /^credential/i.test(v)), 'no credential setting at all');
+  assert.equal(env.GIT_ALLOW_PROTOCOL, 'https');
+  assert.equal(env.GIT_CONFIG_GLOBAL, undefined);
+});
+
+test('a fetch that fails says what git said, with any sign-in in it hidden', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const hostUrl = ({ repo }) => `https://gitlab.com/${repo}.git`;
+    const folder = productFolder();
+    const env = directorGitEnv({ host: 'gitlab', gitPath: 'git', base: 'https://gitlab.com' });
+    const said = 'fatal: could not read Username for \'https://oauth2:glpat-abcdefghijkl1234@gitlab.com\': terminal prompts disabled\n';
+    await assert.rejects(
+      makeRepos({ host: 'gitlab', owner: USER, name: 'Shop', isNew: true, folder, run: overGitlab(w, [], { fail: said }), api: w.api, env, hostUrl, base: 'https://gitlab.com' }),
+      (error) => {
+        assert.equal(error.message, 'git could not fetch the new repository (git said: fatal: could not read Username for \'https://<hidden>@gitlab.com\': terminal prompts disabled)');
+        return true;
+      },
+    );
   });
 });
 
