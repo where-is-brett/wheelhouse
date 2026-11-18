@@ -8,12 +8,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  signInNow, pendingSignIn, signInAsk, signInRecord, signInOpenLabel, connectionProblem, SIGN_IN_TARGET, SIGN_IN_OTHER, SIGN_IN_WAIT_MS,
-  NO_SIGN_IN_ADDRESS, NOT_CHOSEN, NOT_THE_CONNECTION, STOPPED_LINE, signedInLine, failedLine,
+  signInNow, pendingSignIn, signInAsk, signInRecord, signInOpenLabel, signInRetryLabel, signInOutdated, connectionProblem, gitHasSignInWindow, SIGN_IN_TARGET,
+  SIGN_IN_USED_TARGET, SIGN_IN_OTHER, SIGN_IN_WAIT_MS, SIGN_IN_TOTAL_MS, NO_SIGN_IN_ADDRESS, NOT_CHOSEN, NOT_THE_CONNECTION, STOPPED_LINE,
+  STOPPED_OPEN_LINE, NO_GIT, ACCOUNT_LINE, CLICK_USED, CLICK_STALE, NOT_RECORDED, signedInLine, failedLine,
 } from '../../../scripts/setup/sign-in.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { asIsReachEnv, guardAsIsReach } from '../../../scripts/setup/host.js';
-import { startRun, addChanges, readJournal } from '../../../scripts/setup/journal.js';
+import { scrubGitText } from '../../../scripts/setup/git.js';
+import { CLICK_FRESH_MS } from '../../../scripts/lib/setup-numbers.js';
+import { startRun, addChanges, readJournal, markStep } from '../../../scripts/setup/journal.js';
 import { setupRoutes } from '../../../scripts/setup/engine.js';
 import { main } from '../../../scripts/setup/cli.js';
 import { as, shortHome } from '../../helpers/homes.js';
@@ -24,12 +27,13 @@ const BASE = 'https://gitlab.com';
 const FOLDER = '/x/Projects/shop';
 
 // A run as the journal holds it, with a record of the kind a failed attempt keeps (and, by default, a repository setup made).
-const record = ({ address = ADDRESS, base = BASE, why, search, at = '2026-11-18T01:00:00.000Z', id = 'chg_1' } = {}) => ({
-  id, step: 3, kind: 'answer', target: SIGN_IN_TARGET, before: null, after: { signIn: { address, base, why: why ?? 'sign-in', ...(search ? { search: true } : {}), at } },
+const record = ({ address = ADDRESS, base = BASE, why, search, gcm = true, at = '2026-11-18T01:00:00.000Z', id = 'chg_1' } = {}) => ({
+  id, step: 3, kind: 'answer', target: SIGN_IN_TARGET, before: null, after: { signIn: { address, base, why: why ?? 'sign-in', ...(search ? { search: true } : {}), gcm, at } },
 });
 const made = (repo = 'owner/shop') => ({ id: 'chg_h', step: 3, kind: 'host', target: `gitlab:${repo}`, before: null, after: { repository: repo, private: true, made: true } });
 const runOf = (...changes) => ({ id: 'run_1', folder: FOLDER, startedAt: '2026-11-18T00:00:00.000Z', steps: {}, changes: [made(), ...changes] });
-const chosen = (pending) => ({ [`3.${signInAsk(pending).id}`]: { label: signInOpenLabel(pending.host), at: '2026-11-18T01:01:00.000Z' } });
+const NOW = '2026-11-18T01:05:00.000Z';
+const chosen = (pending, at = '2026-11-18T01:01:00.000Z') => ({ [`3.${signInAsk(pending).id}`]: { label: signInOpenLabel(pending.host), at } });
 
 // A stand-in git: the guard's reads answer as a clean computer's, no folder holds a repository, and each ls-remote is kept.
 const fakeGit = ({ list = 'global\0user.name\nx\0', rewrite = null, listing = { code: 0, stdout: '', stderr: '' }, repository = false, during = () => {} } = {}) => {
@@ -58,7 +62,7 @@ async function attempt(journalRun, g, { answers, stopped, home, routeGiven = {},
     const records = [];
     const pending = pendingSignIn(journalRun);
     const got = await signInNow({
-      journalRun, answers: answers ?? (pending === null ? {} : chosen(pending)), stopped, run: g.run, home: home ?? path.join(process.env.WHEELHOUSE_HOME, 'home'), now: () => new Date('2026-11-18T02:00:00.000Z'), timeoutMs: 1234,
+      journalRun, answers: answers ?? (pending === null ? {} : chosen(pending)), stopped, run: g.run, home: home ?? path.join(process.env.WHEELHOUSE_HOME, 'home'), now: () => new Date(NOW), timeoutMs: 1234,
       route: { remoteRepo: null, gitlabHosts: [], reachEnv: asIsReachEnv, guard: guardAsIsReach, findGit: async () => ({ ok: true, path: 'git' }), record: (c) => records.push(c), ...routeGiven },
       ...more,
     });
@@ -66,14 +70,16 @@ async function attempt(journalRun, g, { answers, stopped, home, routeGiven = {},
   });
 }
 
-test('the wait is shorter than the command timeout the playbook gives the form', () => {
-  assert.equal(SIGN_IN_WAIT_MS, 8 * 60 * 1000);
-  assert.ok(SIGN_IN_WAIT_MS < 600000);
+test('the wait, and the whole route, are shorter than the command timeout the playbook gives the form', () => {
+  assert.equal(SIGN_IN_WAIT_MS, 7 * 60 * 1000);
+  assert.equal(SIGN_IN_TOTAL_MS, 9 * 60 * 1000);
+  assert.ok(SIGN_IN_WAIT_MS < SIGN_IN_TOTAL_MS && SIGN_IN_TOTAL_MS < 600000);
 });
 
 test('a record is pending until the attempt after it reaches the host, the run closes, step 3 is done, or its address is not plain https', () => {
   const pending = pendingSignIn(runOf(record()));
-  assert.deepEqual({ ...pending }, { id: 'chg_1', address: ADDRESS, base: BASE, host: 'gitlab.com', why: 'sign-in', search: false, at: '2026-11-18T01:00:00.000Z' });
+  assert.deepEqual({ ...pending }, { id: 'chg_1', address: ADDRESS, base: BASE, host: 'gitlab.com', why: 'sign-in', search: false, gcm: true, at: '2026-11-18T01:00:00.000Z' });
+  assert.equal(pendingSignIn(runOf(record({ gcm: false }))).gcm, false);
   assert.equal(pendingSignIn(runOf()), null);
   assert.equal(pendingSignIn(null), null);
   // The latest record rules: a cleared one (the attempt that followed reached the host) ends it, and a newer one begins it again.
@@ -96,24 +102,44 @@ test('signInRecord keeps GitHub\'s own base for github.com, a company\'s base as
   assert.equal(signInRecord({ address: 'https://git.example.org/code/g/s.git', base: 'https://git.example.org/code' }).base, 'https://git.example.org/code');
   assert.equal(signInRecord({ address: 'https://git.example.org:8443/g/s.git' }).base, 'https://git.example.org:8443');
   assert.equal(signInRecord({ address: ADDRESS, why: 'account', search: true }).why, 'account');
+  assert.equal(signInRecord({ address: ADDRESS }).gcm, false);
+  assert.equal(signInRecord({ address: ADDRESS, gcm: true }).gcm, true);
 });
 
-test('the card offers git\'s sign-in for the host, recommended, and the other way, composes as a question, and is asked afresh for a new record', () => {
+test('the card offers git\'s sign-in for the host and another way, composes as a question, recommends the sign-in only where git has a window, and is asked afresh for a new record', () => {
   const pending = pendingSignIn(runOf(record()));
   const { id, card } = signInAsk(pending);
   assert.match(id, /^git-sign-in-[0-9a-f]{10}$/);
-  assert.deepEqual(card.options.map((o) => o.label), ["Open git's sign-in for gitlab.com (recommended)", 'Use the other way to connect']);
+  assert.deepEqual(card.options.map((o) => o.label), ["Open git's sign-in for gitlab.com", 'Use another way to connect']);
   assert.equal(card.options[0].label, signInOpenLabel('gitlab.com'));
   assert.equal(card.options[1].label, SIGN_IN_OTHER);
   assert.equal(card.recommend, card.options[0].label);
+  assert.match(card.why, /may take a minute and may open behind other windows/);
+  assert.match(card.options[0].says, /may take a minute, and may open behind other windows/);
   for (const part of ['what', 'why', 'because', 'meanwhile']) assert.ok(typeof card[part] === 'string' && card[part] !== '', part);
   const composed = composeCard({ ...card, kind: 'question', suggest: false }).question;
   assert.ok(composed.question.length > 0);
+  // "Recommended" is said once on the option: by the card's own marking, not by its label.
+  assert.equal(composed.options.filter((o) => /recommended/i.test(`${o.label} ${o.description}`)).length, 1);
+  assert.ok(!/recommended/i.test(composed.options[0].label));
   assert.notEqual(signInAsk(pendingSignIn(runOf(record({ id: 'chg_9', at: '2026-11-18T02:00:00.000Z' })))).id, id);
-  // Where the account is the trouble, it says so.
-  const account = signInAsk(pendingSignIn(runOf(record({ why: 'account' })))).card;
-  assert.match(account.what, /signed in to gitlab\.com as a different account/);
-  assert.match(account.options[0].says, /account that owns the project/);
+  // Where git has no sign-in window of its own, the other way is recommended and no window is promised.
+  const none = signInAsk(pendingSignIn(runOf(record({ gcm: false })))).card;
+  assert.equal(none.recommend, SIGN_IN_OTHER);
+  assert.ok(!/opens its own window|Git opens its own window/.test(`${none.why} ${none.options[0].says}`));
+  assert.match(none.options[0].says, /no window may open/);
+  composeCard({ ...none, kind: 'question', suggest: false });
+});
+
+test('where git is signed in as another account no window is offered: the card says to change git\'s sign-in outside setup, and recommends another way', () => {
+  const pending = pendingSignIn(runOf(record({ why: 'account' })));
+  const { card } = signInAsk(pending);
+  assert.match(card.what, /signed in to gitlab\.com as a different account/);
+  assert.deepEqual(card.options.map((o) => o.label), [signInRetryLabel('gitlab.com'), SIGN_IN_OTHER]);
+  assert.ok(!card.options.some((o) => o.label === signInOpenLabel('gitlab.com')), 'no Open');
+  assert.equal(card.recommend, SIGN_IN_OTHER);
+  assert.match(card.options[0].says, /sign git out of gitlab\.com, or sign it in as the account that owns the project, outside setup\. Then say Go ahead on step 3/);
+  composeCard({ ...card, kind: 'question', suggest: false });
 });
 
 test('the address must be the run\'s step 3 connection: its host, base and project', () => {
@@ -140,26 +166,32 @@ test('the address must be the run\'s step 3 connection: its host, base and proje
 
 test('it does nothing under All stop, without a record, without the director\'s click, or for an address that is not the connection\'s', async () => {
   const run = runOf(record());
-  for (const [what, journalRun, options, line] of [
-    ['stop', run, { stopped: () => true }, STOPPED_LINE],
-    ['no record', runOf(), {}, NO_SIGN_IN_ADDRESS],
-    ['not chosen', run, { answers: {} }, NOT_CHOSEN],
-    ['the other way chosen', run, { answers: { [`3.${signInAsk(pendingSignIn(run)).id}`]: { label: SIGN_IN_OTHER } } }, NOT_CHOSEN],
-    ['another project', runOf(record({ address: 'https://gitlab.com/owner/else.git' })), {}, NOT_THE_CONNECTION],
+  for (const [what, journalRun, options, line, kept] of [
+    ['stop', run, { stopped: () => true }, STOPPED_LINE, 0],
+    ['no record', runOf(), {}, NO_SIGN_IN_ADDRESS, 0],
+    ['not chosen', run, { answers: {} }, NOT_CHOSEN, 0],
+    ['the other way chosen', run, { answers: { [`3.${signInAsk(pendingSignIn(run)).id}`]: { label: SIGN_IN_OTHER } } }, NOT_CHOSEN, 0],
+    // An address that is not the connection's clears the record, so its card no longer takes over step 3's plan.
+    ['another project', runOf(record({ address: 'https://gitlab.com/owner/else.git' })), {}, NOT_THE_CONNECTION, 1],
   ]) {
     const g = fakeGit();
     const { got, records } = await attempt(journalRun, g, options);
     assert.deepEqual({ ok: got.ok, refused: got.refused }, { ok: false, refused: line }, what);
     assert.equal(g.calls.length, 0, what);
-    assert.equal(records.length, 0, what);
+    assert.equal(records.length, kept, what);
+    if (kept === 1) {
+      assert.equal(records[0].after.signIn, null, what);
+      assert.equal(pendingSignIn(runOf(record({ address: 'https://gitlab.com/owner/else.git' }), records[0])), null, what);
+    }
   }
+  assert.ok(!/director|plan 3/i.test(`${NOT_CHOSEN} ${STOPPED_LINE} ${NO_GIT}`), 'the director\'s lines carry no instruction for the agent');
   assert.equal(NO_SIGN_IN_ADDRESS, 'Setup has no address from step 3 to open git\'s sign-in for, so nothing was opened. A fresh Go ahead on step 3\'s card tries it again.');
 });
 
 test('it lists the address\'s branches with the director\'s own git from a folder of Wheelhouse\'s own, git\'s window allowed, nothing traced, and says one line', async () => {
   const g = fakeGit();
   const { got, records, home } = await attempt(runOf(record()), g);
-  assert.deepEqual(got, { ok: true, line: 'Git reached gitlab.com and can see the project.' });
+  assert.deepEqual(got, { ok: true, line: 'Git reached gitlab.com and can see the project. Setup carries on with step 3.' });
   assert.equal(got.line, signedInLine('gitlab.com'));
   const listed = listing(g);
   assert.deepEqual(listed.args, ['ls-remote', '--heads', '--end-of-options', ADDRESS]);
@@ -169,6 +201,9 @@ test('it lists the address\'s branches with the director\'s own git from a folde
   assert.equal(listed.env.GCM_INTERACTIVE, 'auto', 'its own window may open');
   assert.equal(listed.timeoutMs, 1234);
   assert.ok(listed.signal instanceof AbortSignal, 'All stop can end the wait');
+  // Git's window is not hidden on Windows, and off Windows the call leads a process group of its own, ended with it.
+  assert.equal(listed.windowsHide, false);
+  assert.equal(listed.ownGroup, true);
   assert.equal(listed.env.GIT_ALLOW_PROTOCOL, 'https');
   assert.equal(listed.env.GIT_CONFIG_GLOBAL, undefined, 'the director\'s own settings are read');
   // Git runs where no repository's settings reach it: the folder's parent is git's ceiling, and a repository there refuses.
@@ -179,11 +214,14 @@ test('it lists the address\'s branches with the director\'s own git from a folde
   assert.equal(g.calls[guarded].cwd, listed.cwd);
   assert.ok(g.calls.findIndex((c) => c.args.includes('--name-only')) < guarded, 'the settings that are not allowed are looked for first');
   // The record is cleared, so step 3's plan asks nothing more of it.
-  assert.equal(records.length, 1);
-  assert.equal(records[0].step, 3);
-  assert.equal(records[0].target, SIGN_IN_TARGET);
-  assert.equal(records[0].after.signIn, null);
-  assert.equal(pendingSignIn(runOf(record(), records[0])), null);
+  // The click is marked used before git was asked, and the record is cleared after.
+  assert.equal(records.length, 2);
+  assert.equal(records[0].target, SIGN_IN_USED_TARGET);
+  assert.equal(records[0].after.used, signInAsk(pendingSignIn(runOf(record()))).id);
+  assert.equal(records[1].step, 3);
+  assert.equal(records[1].target, SIGN_IN_TARGET);
+  assert.equal(records[1].after.signIn, null);
+  assert.equal(pendingSignIn(runOf(record(), records[1])), null);
 });
 
 test('no credential-helper trace variable reaches git, whether in its environment or the base it is merged over', async () => {
@@ -216,7 +254,7 @@ test('a company\'s GitLab base on another port and path is the one the environme
   assert.equal(hub[0].host, 'github');
 });
 
-test('All stop coming on while git waits ends it, and it says so and keeps no record', async () => {
+test('All stop coming on while git waits ends it, and it says so, in a line of its own, and keeps a fresh record', async () => {
   let on = false;
   const g = fakeGit({
     during: async (options) => {
@@ -225,8 +263,13 @@ test('All stop coming on while git waits ends it, and it says so and keeps no re
     },
   });
   const { got, records } = await attempt(runOf(record()), g, { stopped: () => on });
-  assert.deepEqual({ ok: got.ok, refused: got.refused }, { ok: false, refused: STOPPED_LINE });
-  assert.equal(records.length, 0);
+  // The window had opened, so it has a line of its own, and a fresh record so the card is asked afresh (the click is not reused).
+  assert.deepEqual({ ok: got.ok, refused: got.refused }, { ok: false, refused: STOPPED_OPEN_LINE });
+  assert.notEqual(STOPPED_OPEN_LINE, STOPPED_LINE);
+  assert.ok(!/was not opened/.test(STOPPED_OPEN_LINE));
+  assert.deepEqual(records.map((r) => r.target), [SIGN_IN_USED_TARGET, SIGN_IN_TARGET]);
+  assert.equal(pendingSignIn(runOf(record(), ...records)).address, ADDRESS);
+  assert.notEqual(signInAsk(pendingSignIn(runOf(record(), ...records.map((r, i) => ({ ...r, id: `chg_n${i}` }))))).id, signInAsk(pendingSignIn(runOf(record()))).id);
 });
 
 test('git\'s failure is said with what git said (scrubbed, never its output), the next step, and a new record so the card is asked afresh', async () => {
@@ -234,11 +277,12 @@ test('git\'s failure is said with what git said (scrubbed, never its output), th
   const { got, records } = await attempt(runOf(record()), g);
   assert.equal(got.ok, false);
   assert.equal(got.refused, failedLine('gitlab.com', 'fatal: Authentication failed for \'https://[hidden]@gitlab.com/owner/shop.git/\''));
-  assert.match(got.refused, /^Git still could not reach gitlab\.com \(git said: fatal: Authentication failed for 'https:\/\/\[hidden\]@gitlab\.com\/owner\/shop\.git\/'\)\. Next: I can open its sign-in again; if its window asked for a token, or a password you don't use there, close it and choose the other way to connect on step 3's card\.$/);
+  assert.match(got.refused, /^Git still could not reach gitlab\.com \(git said: fatal: Authentication failed for 'https:\/\/\[hidden\]@gitlab\.com\/owner\/shop\.git\/'\)\. Next: I can open its sign-in again; if its window asked for a token, or a password you don't use there, close it and choose another way to connect on step 3's card\.$/);
+  assert.match(got.detail, /Run plan 3: the sign-in card is asked afresh, once\. If the same thing fails a second time, stop/);
   assert.ok(!/glpat|abc\trefs|refs\/heads/.test(JSON.stringify(got)));
   assert.ok(!/make a token|create a token|personal access token/i.test(got.refused));
-  assert.equal(records.length, 1);
-  const again = pendingSignIn(runOf(record(), { ...records[0], id: 'chg_n' }));
+  assert.deepEqual(records.map((r) => r.target), [SIGN_IN_USED_TARGET, SIGN_IN_TARGET]);
+  const again = pendingSignIn(runOf(record(), { ...records[1], id: 'chg_n' }));
   assert.equal(again.address, ADDRESS);
   assert.notEqual(signInAsk(again).id, signInAsk(pendingSignIn(runOf(record()))).id, 'a fresh click is needed to open it again');
 });
@@ -247,7 +291,7 @@ test('a setting that is unsafe is refused before any contact, in the words of th
   const g = fakeGit({ rewrite: 'ssh://git@gitlab.com/owner/shop.git' });
   const { got, records } = await attempt(runOf(record()), g);
   assert.equal(got.ok, false);
-  assert.match(got.refused, /^A setting in git on this computer \(it points this project's address somewhere else, for example to SSH\) means Wheelhouse can't safely use your own git, so nothing was opened\. Ask me which setting it is: whoever looks after this computer can change it, then I can open its sign-in again\. Or choose the other way to connect on step 3's card\.$/);
+  assert.match(got.refused, /^A setting in git on this computer \(it points this project's address somewhere else, for example to SSH\) means Wheelhouse can't safely use your own git, so nothing was opened\. Ask me which setting it is: whoever looks after this computer can change it, then I can open its sign-in again\. Or choose another way to connect on step 3's card\.$/);
   assert.ok(!/fresh Go ahead/.test(got.refused));
   assert.match(got.detail, /^git's own answer for https:\/\/gitlab\.com\/owner\/shop\.git was ssh:\/\/\[hidden\]@gitlab\.com/);
   assert.ok(!g.calls.some((c) => c.args[0] === 'ls-remote' && c.args.includes('--heads')), 'no contact with the host');
@@ -256,7 +300,7 @@ test('a setting that is unsafe is refused before any contact, in the words of th
   const unread = fakeGit({ list: '' });
   const bad = { ...unread, run: async (file, args, options) => (args.includes('--list') && !args.includes('--name-only') ? { code: 1, stdout: '', stderr: '' } : unread.run(file, args, options)) };
   const second = await attempt(runOf(record()), bad);
-  assert.equal(second.got.refused, 'Git\'s settings on this computer could not be read, so nothing was opened; I can open its sign-in again, or choose the other way to connect on step 3\'s card.');
+  assert.equal(second.got.refused, 'Git\'s settings on this computer could not be read, so nothing was opened; I can open its sign-in again, or choose another way to connect on step 3\'s card.');
 });
 
 test('a folder that is inside a repository is refused, and no git runs there', async () => {
@@ -270,7 +314,12 @@ test('a folder that is inside a repository is refused, and no git runs there', a
 
 test('git missing is said plainly', async () => {
   const { got } = await attempt(runOf(record()), fakeGit(), { routeGiven: { findGit: async () => ({ ok: false }) } });
-  assert.deepEqual({ ok: got.ok, refused: got.refused }, { ok: false, refused: 'git is not on this computer yet; step 2 installs it' });
+  assert.deepEqual({ ok: got.ok, refused: got.refused }, { ok: false, refused: NO_GIT });
+  assert.equal(NO_GIT, 'Git is not on this computer yet, so nothing was opened; step 2 installs it, then a fresh Go ahead on step 3\'s card tries again.');
+  // The record is cleared, so the old card does not take over step 3's plan, and the line is true.
+  const kept = await attempt(runOf(record()), fakeGit(), { routeGiven: { findGit: async () => ({ ok: false }) } });
+  assert.equal(kept.records.length, 1);
+  assert.equal(kept.records[0].after.signIn, null);
 });
 
 // ---- Through the helper's routes ----
@@ -289,7 +338,7 @@ test('the route refuses under All stop and anything but the folder; with the car
     const routesWith = (extra = {}) => setupRoutes({ now: () => T0, userHome: user, signInWith: { run: g.run, route: { findGit: async () => ({ ok: true, path: 'git' }) }, ...extra } })['/setup/sign-in'];
     // Not before the click.
     assert.equal((await routesWith()({ folder })).refused, NOT_CHOSEN);
-    await answer(asked.ask.card, signInOpenLabel('gitlab.com'));
+    await answer(asked.ask.card, signInOpenLabel('gitlab.com'), { at: new Date(T0.getTime() + 30 * 1000) });
     assert.equal((await routesWith({ stopped: () => true })({ folder })).refused, STOPPED_LINE);
     const stopRefused = await setupRoutes({ now: () => T0, userHome: user, stopped: () => true })['/setup/sign-in']({ folder });
     assert.deepEqual(stopRefused, { ok: false, refused: 'All stop is on' });
@@ -298,6 +347,8 @@ test('the route refuses under All stop and anything but the folder; with the car
     // With the click, git is asked, and the record is cleared in the run.
     const done = await routesWith()({ folder });
     assert.deepEqual(done, { ok: true, line: signedInLine('gitlab.com') });
+    // The same click opens it once: it is marked used, and the cleared record leaves nothing to open.
+    assert.equal((await routesWith()({ folder })).refused, NO_SIGN_IN_ADDRESS);
     assert.equal(g.calls.filter((c) => c.args[0] === 'ls-remote' && c.args.includes('--heads')).length, 1);
     const kept = readJournal().runs.find((r) => r.id === run.id).changes.filter((c) => c.target === SIGN_IN_TARGET);
     assert.equal(kept.at(-1).after.signIn, null);
@@ -313,6 +364,180 @@ test('the other way to connect is a click that takes git\'s own route out of the
     await answer(asked.ask.card, SIGN_IN_OTHER);
     const next = await plan(3);
     assert.ok(next.ask === undefined || !/^git-sign-in-/.test(next.ask.id), 'the sign-in is not asked again');
+  }, { connected: false });
+});
+
+test('once a sign-in works, plan 3 gives step 3 on: no sign-in card, and the plan covered by the one card\'s Go ahead when it holds, else step 3\'s own cards', async () => {
+  for (const consent of [true, false]) {
+    await withProject(async ({ folder, user, plan, answer }) => {
+      const run = startRun({ folder, now: () => T0 });
+      if (consent) await answer((await plan(0)).ask.card, 'Go ahead');
+      for (const n of [1, 2]) markStep(run.id, n, 'doneAt', { now: () => T0 });
+      addChanges(run.id, [made(), record({ at: T0.toISOString() })]);
+      const asked = await plan(3);
+      assert.match(asked.ask.id, /^git-sign-in-/, 'the sign-in card takes over step 3\'s plan, consent or not');
+      await answer(asked.ask.card, signInOpenLabel('gitlab.com'), { at: new Date(T0.getTime() + 30 * 1000) });
+      const g = fakeGit();
+      const done = await setupRoutes({ now: () => T0, userHome: user, signInWith: { run: g.run, route: { findGit: async () => ({ ok: true, path: 'git' }) } } })['/setup/sign-in']({ folder });
+      assert.deepEqual(done, { ok: true, line: signedInLine('gitlab.com') });
+      const next = await plan(3);
+      assert.ok(next.ask === undefined || !/^git-sign-in-/.test(next.ask.id), 'no sign-in card');
+      if (consent) {
+        assert.ok(Array.isArray(next.changes), 'step 3\'s own plan');
+        assert.equal(next.covered, true, 'it runs on under the Go ahead already given, with no card');
+      } else {
+        assert.notEqual(next.covered, true, 'without that Go ahead, step 3 asks its own cards');
+      }
+    }, { connected: false });
+  }
+  assert.match(signedInLine('gitlab.com'), /Setup carries on with step 3\.$/);
+});
+
+test('a pending sign-in is outdated once step 3 connects another way, or to another host or base', () => {
+  const pending = pendingSignIn(runOf(record()));
+  assert.equal(signInOutdated(null, { asIs: true, url: ADDRESS, base: BASE }), false);
+  assert.equal(signInOutdated(pending, { asIs: true, url: 'https://gitlab.com/o/n.git', base: BASE }), false, 'the same host and base');
+  assert.equal(signInOutdated(pending, { asIs: true, url: 'https://gitlab.com/o/n.git', base: `${BASE}/` }), false);
+  assert.equal(signInOutdated(pending, { asIs: false, url: ADDRESS, base: BASE }), true, 'another way to connect');
+  assert.equal(signInOutdated(pending, { asIs: true, url: 'https://github.com/o/n.git', base: BASE }), true, 'another host');
+  assert.equal(signInOutdated(pending, { asIs: true, url: 'https://git.example.org/o/n.git', base: 'https://git.example.org' }), true, 'another GitLab');
+  const hub = pendingSignIn(runOf(record({ address: 'https://github.com/owner/shop.git', base: 'https://github.com' })));
+  assert.equal(signInOutdated(hub, { asIs: true, url: 'https://github.com/o/n.git', base: BASE }), false, 'GitHub\'s own base is its own');
+});
+
+test('where git is signed in as another account nothing is opened: the line says what to do, and no git runs', async () => {
+  const run = runOf(record({ why: 'account' }));
+  const g = fakeGit();
+  const { got, records } = await attempt(run, g, { answers: chosen(pendingSignIn(run)) });
+  assert.deepEqual({ ok: got.ok, refused: got.refused }, { ok: false, refused: ACCOUNT_LINE('gitlab.com') });
+  assert.match(got.refused, /signed in to gitlab\.com as a different account[^]*Sign git out of gitlab\.com, or in as the owning account, outside setup, then say Go ahead on step 3; or choose another way to connect on step 3's card \(recommended\)/);
+  assert.equal(g.calls.length, 0);
+  assert.equal(records.length, 0);
+});
+
+test('a click opens git\'s sign-in once: it must be fresh and newer than the record, is marked used before anything opens, and a mark that cannot be kept stops it', async () => {
+  const run = runOf(record());
+  const pending = pendingSignIn(run);
+  // Too old, or not newer than the record: nothing opens, and a fresh record means the card is asked afresh.
+  for (const [what, at] of [['old', '2026-11-18T00:50:00.000Z'], ['older than the record', '2026-11-18T00:59:00.000Z'], ['not a time', 'x']]) {
+    const g = fakeGit();
+    const { got, records } = await attempt(run, g, { answers: chosen(pending, at), now: undefined });
+    assert.equal(got.refused, CLICK_STALE, what);
+    assert.equal(g.calls.length, 0, what);
+    assert.equal(records.length, 1, what);
+    assert.equal(records[0].target, SIGN_IN_TARGET, what);
+  }
+  assert.ok(Date.parse(NOW) - Date.parse('2026-11-18T00:50:00.000Z') > CLICK_FRESH_MS);
+  // A click a little after this computer's clock still counts; one far ahead does not.
+  assert.equal((await attempt(run, fakeGit(), { answers: chosen(pending, '2026-11-18T01:05:30.000Z') })).got.ok, true);
+  assert.equal((await attempt(run, fakeGit(), { answers: chosen(pending, '2026-11-18T01:30:00.000Z') })).got.refused, CLICK_STALE);
+  // Used: a mark for this card refuses, and nothing opens.
+  const marked = { id: 'chg_u', step: 3, kind: 'answer', target: SIGN_IN_USED_TARGET, before: null, after: { used: signInAsk(pending).id } };
+  const used = fakeGit();
+  assert.equal((await attempt(runOf(record(), marked), used)).got.refused, CLICK_USED);
+  assert.equal(used.calls.length, 0);
+  // The mark is kept before git is asked; if it cannot be, git is not asked.
+  const order = [];
+  const g = fakeGit({ during: () => order.push('asked') });
+  await attempt(run, g, { routeGiven: { record: (c) => order.push(c.target) } });
+  assert.deepEqual(order, [SIGN_IN_USED_TARGET, 'asked', SIGN_IN_TARGET]);
+  const refused = fakeGit();
+  const { got } = await attempt(run, refused, { routeGiven: { record: () => { throw new Error('disk full'); } } });
+  assert.equal(got.refused, NOT_RECORDED);
+  assert.ok(!listing(refused), 'git was not asked');
+});
+
+test('the whole route is held to its total time: each call is cut to what is left, and a route out of time asks git nothing more', async () => {
+  const seen = [];
+  const g = fakeGit();
+  const timed = async (file, args, options) => {
+    seen.push(options.timeoutMs);
+    return g.run(file, args, options);
+  };
+  const { got } = await attempt(runOf(record()), { ...g, run: timed }, { totalMs: 5000 });
+  assert.equal(got.ok, true);
+  assert.ok(seen.length > 3 && seen.every((ms) => Number.isFinite(ms) && ms <= 5000), `every call is cut to the total: ${seen}`);
+  // With no time at all, nothing runs, and the refusal is the settings' own.
+  const none = fakeGit();
+  const spent = await attempt(runOf(record()), none, { totalMs: 0 });
+  assert.equal(spent.got.ok, false);
+  assert.equal(none.calls.length, 0);
+});
+
+test('the sign-in folder\'s ceiling is its parent in full even where Wheelhouse\'s home is given as a relative path', async () => {
+  const g = fakeGit();
+  const { home } = await attempt(runOf(record()), g, { home: path.relative(process.cwd(), path.join(shortHome(), 'rel-home')) });
+  const listed = listing(g);
+  assert.ok(path.isAbsolute(listed.env.GIT_CEILING_DIRECTORIES));
+  assert.equal(listed.env.GIT_CEILING_DIRECTORIES, path.dirname(listed.cwd));
+  assert.ok(path.isAbsolute(listed.cwd));
+  assert.ok(home);
+});
+
+test('the settings look runs under the ceiling: a parent repository with a setting that is not allowed no longer refuses', async () => {
+  const { refuseUnlistedSettings } = await import('../../../scripts/setup/git.js');
+  const { run: realRun } = await import('../../../scripts/lib/run.js');
+  const parent = fs.realpathSync.native(fs.mkdtempSync(path.join(shortHome(), 'parent-')));
+  await realRun('git', ['init', '-q'], { cwd: parent });
+  await realRun('git', ['config', '--local', 'core.sshCommand', 'evil'], { cwd: parent });
+  const home = path.join(parent, 'wh');
+  const neutral = path.join(home, 'sign-in-x');
+  fs.mkdirSync(neutral, { recursive: true });
+  await assert.rejects(refuseUnlistedSettings({ cwd: neutral }), /core\.sshcommand/, 'without the ceiling the parent\'s setting is found');
+  await refuseUnlistedSettings({ cwd: neutral, env: { GIT_CEILING_DIRECTORIES: home } });
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('what git can print is scrubbed from the detail too: a setting\'s value, a refusal\'s own words', async () => {
+  const g = fakeGit({ rewrite: 'ssh://git@gitlab.com/owner/shop.git' });
+  const { got } = await attempt(runOf(record()), g);
+  assert.equal(scrubGitText(got.detail), got.detail);
+  const unread = fakeGit({ list: '' });
+  const bad = { ...unread, run: async (file, args, options) => (args.includes('--name-only') ? { code: 0, stdout: 'remote.o.url\0http.extraheader\0', stderr: '' } : unread.run(file, args, options)) };
+  const { got: second } = await attempt(runOf(record()), bad);
+  assert.ok(!/secretvalue/.test(JSON.stringify(second)));
+  assert.equal(scrubGitText(second.detail ?? ''), second.detail ?? '');
+});
+
+test('the sign-in window is read from git\'s credential helpers: Git Credential Manager is one, an empty value clears the ones before it, and anything unclear is none', async () => {
+  const helpers = async (stdout, { code = 0 } = {}) => as(shortHome(), async () => gitHasSignInWindow({
+    gitPath: 'git', home: path.join(process.env.WHEELHOUSE_HOME, 'h'),
+    run: async (file, args) => (args[0] === 'rev-parse' ? { code: 128, stdout: '', stderr: '' } : args.includes('--name-only') ? { code: 0, stdout: '', stderr: '' } : { code, stdout, stderr: '' }),
+  }));
+  assert.equal(await helpers('manager\n'), true);
+  assert.equal(await helpers('osxkeychain\nmanager-core\n'), true);
+  assert.equal(await helpers('!"/usr/local/share/gcm-core/git-credential-manager" x\n'), true);
+  assert.equal(await helpers('osxkeychain\n'), false);
+  assert.equal(await helpers('manager\n\nosxkeychain\n'), false);
+  assert.equal(await helpers('', { code: 1 }), false);
+  // Where the folder sits in a repository, or the settings are not allowed, it reads as none.
+  assert.equal(await as(shortHome(), async () => gitHasSignInWindow({ home: process.env.WHEELHOUSE_HOME, run: async () => ({ code: 0, stdout: '.git\n', stderr: '' }) })), false);
+  assert.equal(await as(shortHome(), async () => gitHasSignInWindow({ home: process.env.WHEELHOUSE_HOME, run: async () => { throw new Error('no git'); } })), false);
+});
+
+test('two sign-ins for one run do not open at once, and a waiting one counts the helper as busy', async () => {
+  await withProject(async ({ folder, user, answer, plan }) => {
+    const run = startRun({ folder, now: () => T0 });
+    addChanges(run.id, [made(), record({ at: T0.toISOString() })]);
+    const asked = await plan(3);
+    await answer(asked.ask.card, signInOpenLabel('gitlab.com'), { at: new Date(T0.getTime() + 30 * 1000) });
+    let release;
+    const waiting = new Promise((resolve) => { release = resolve; });
+    let started;
+    const startedWaiting = new Promise((resolve) => { started = resolve; });
+    const g = fakeGit({ during: async () => { started(); await waiting; } });
+    const routes = setupRoutes({ now: () => T0, userHome: user, signInWith: { run: g.run, route: { findGit: async () => ({ ok: true, path: 'git' }) } } });
+    assert.equal(routes.busy(), false);
+    const first = routes['/setup/sign-in']({ folder });
+    await startedWaiting;
+    assert.equal(routes.busy(), true, 'a waiting sign-in is the helper\'s work');
+    const second = await routes['/setup/sign-in']({ folder });
+    assert.equal(second.ok, false);
+    assert.match(second.refused, /already open for this setup/);
+    assert.equal(g.calls.filter((c) => c.args[0] === 'ls-remote' && c.args.includes('--heads')).length, 1);
+    release();
+    assert.equal((await first).ok, true);
+    assert.equal(routes.busy(), false);
   }, { connected: false });
 });
 

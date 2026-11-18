@@ -126,7 +126,7 @@ import {
   PROFILE_TARGET,
 } from './own-app.js';
 import { readJournal, newId } from './journal.js';
-import { SIGN_IN_TARGET, SIGN_IN_OTHER, pendingSignIn, signInAsk, signInRecord } from './sign-in.js';
+import { SIGN_IN_TARGET, SIGN_IN_OTHER, pendingSignIn, signInAsk, signInRecord, signInRetryLabel, gitHasSignInWindow, signInOutdated } from './sign-in.js';
 import { setupGit, setupGitEnv, keyedGitEnv, refuseUnlistedSettings, reaching, gitFailure, gitSaid, scrubGitText, endOf, DetailedError } from './git.js';
 
 export { SIGN_IN_TARGET };
@@ -849,14 +849,15 @@ const AS_IS_WINDOWS = 'On Windows any agent\'s command could ask git for that ke
 // through the host's own tool, so with that tool left out or not to be had it gives way to the director's own git.
 const gone = (label, host, { reach, left, declined = false }) => {
   const plan = 'This changes the plan you said Go ahead to, and each option says what it brings.';
-  if (declined && label === WAYS.asIs) return `You chose another way to connect than ${label}, so choose again. ${plan}`;
+  if (declined && label === WAYS.asIs) return `You chose not to use your own git as it is, so choose another way. ${plan}`;
   if (label !== WAYS.quick || reach?.tool === 'works') return `${label} can't be used on this computer now, so choose again. ${plan}`;
   const why = left ? 'which you chose not to use' : 'which couldn\'t be fetched on this computer';
   return `Quick is no longer offered: it needs ${NAME[host]}'s own tool, ${why}. ${plan}`;
 };
 
 // The line under a connection card asked again: it may come after the plan's Go ahead, so it promises no plan card.
-const againMeanwhile = (host) => `Setup waits for your answer; nothing is made on ${NAME[host]} until you choose.`;
+// Once setup has made the repository, "nothing is made" would not be true, so that line says what is true then.
+const againMeanwhile = (host, made = false) => `Setup waits for your answer; ${made ? `nothing more is sent to ${NAME[host]}` : `nothing is made on ${NAME[host]}`} until you choose.`;
 
 // The reason line on a connection card asked again because the way chosen now does something else, as its words say.
 const changed = (label) => `${label} works differently now, as its words say, so choose again.`;
@@ -868,13 +869,14 @@ function answeredCard(readings, host, named) {
   const labels = [...new Set(readings.flatMap((r) => r.options.map((o) => o.label)))];
   const reasons = (label) => [{ tool: 'works' }, {}].flatMap((reach) => [true, false].map((left) => gone(label, host, { reach, left })))
     .concat(gone(label, host, { declined: true }));
-  const said = (c, why) => ({ ...c, what: `${c.what} ${why}`, meanwhile: againMeanwhile(host) });
+  // The card as asked again, with either meanwhile line (the repository made by setup or not).
+  const said = (c, why) => [false, true].map((made) => ({ ...c, what: `${c.what} ${why}`, meanwhile: againMeanwhile(host, made) }));
   return readings.flatMap((now) => [
     now,
-    ...now.options.map((o) => said(now, changed(o.label))),
+    ...now.options.flatMap((o) => said(now, changed(o.label))),
     ...labels.filter((l) => !now.options.some((o) => o.label === l)).flatMap((l) => reasons(l).flatMap((why) => [
-      said(now, why),
-      ...readings.filter((was) => was.options.some((o) => o.label === l)).map((was) => said(againCard(was, now, l), why)),
+      ...said(now, why),
+      ...readings.filter((was) => was.options.some((o) => o.label === l)).flatMap((was) => said(againCard(was, now, l), why)),
     ])),
   ]).find(named) ?? null;
 }
@@ -1503,7 +1505,7 @@ export const madeBySetup = (target) => readJournal().runs.filter((r) => !runClos
 // it: the exact key, its value and the file it comes from are the error's `detail`, for the agent (a `Detail:` line in status).
 // It comes before any contact with the host.
 const ASIS_STOP = 'setup did not reach your repository and sent nothing';
-const ASIS_OTHER_WAY = 'choose the other way to connect on step 3\'s card';
+const ASIS_OTHER_WAY = 'choose another way to connect on step 3\'s card';
 // The line for a refusal, in the words of what was being done: `stop` says nothing was reached, and `again` how to try again (a fresh Go
 // ahead on step 3, or, in git's sign-in, opening it once more). A setting found in this project's own git files (its repository's or
 // worktree's) is named as the project's, since whoever looks after the computer is not the one to change it.
@@ -1539,7 +1541,7 @@ async function whereSet({ run, gitPath, cwd, key, regexp = false, timeoutMs }) {
 }
 // Git's raw words for a refusal's detail: scrubbed first, then no more than about 4 KB of the end.
 const rawSaid = (text) => endOf(scrubGitText(String(text ?? '').trim()));
-const settingDetail = ({ key, value, where, url }) => `${key} = ${value ?? '(no value)'}; set in ${where === '' ? 'a file git did not name' : where}; the call's address is ${url}`;
+const settingDetail = ({ key, value, where, url }) => scrubGitText(`${key} = ${value ?? '(no value)'}; set in ${where === '' ? 'a file git did not name' : where}; the call's address is ${url}`);
 
 export async function guardAsIsReach({ run = realRun, gitPath = 'git', cwd, env, url, timeoutMs }) {
   if (typeof url !== 'string' || url === '') throw new Error(ASIS_NO_ADDRESS);
@@ -1614,11 +1616,14 @@ export function reachFailureKind(stderr) {
 // Said when a call that reaches the host fails on the as-is route, which signs in with the director's own git: `what` setup could
 // not do, what git said, and the next step, which depends on git's words (a sign-in to open, a project this sign-in can't see, or
 // only a fresh Go ahead). A sign-in to open records the address and the host's address it is for (an `answer`, never read from git's
-// words, and kept only for an https address), which step 3's plan then asks as a card (sign-in.js signInAsk). `joined` is a project
-// the director's team made, brought in here: a project this sign-in can't see there is one its owner has not shared with them. A new
-// repository setup made on the director's account can't be unseen by the account that made it, so the git on this computer is
-// signed in as another one. `search` is a look for a project among the director's own, before the project is known.
-export const ownSignInFailure = (what, url, record = () => {}, { base = null, joined = false, search = false } = {}) => (stderr) => {
+// words, and kept only for an https address), which step 3's plan then asks as a card (sign-in.js signInAsk); the line offers it only
+// when that record was kept. `gcm` is whether git here has a sign-in window of its own (sign-in.js gitHasSignInWindow), kept in the record,
+// and the line promises a window only when it has. `joined` is a project the director's team made, brought in here: a project this
+// sign-in can't see there is one its owner has not shared with them. A new repository setup made on the director's account can't be
+// unseen by the account that made it, so the git on this computer is signed in as another one: no window opens for that (git reuses
+// that account), so the line says to change git's sign-in outside setup. `search` is a look for a project among the director's own,
+// before the project is known.
+export const ownSignInFailure = (what, url, record = () => {}, { base = null, joined = false, search = false, gcm = false } = {}) => (stderr) => {
   const said = gitSaid(stderr);
   const host = hostOf(url);
   const lead = `Setup could not ${what} using git's own sign-in on this computer${said === '' ? '' : ` (git said: ${said})`}.`;
@@ -1626,17 +1631,21 @@ export const ownSignInFailure = (what, url, record = () => {}, { base = null, jo
   const secure = /^https:\/\//i.test(url);
   const keep = (why) => {
     try {
-      record({ id: newId('chg'), kind: 'answer', target: SIGN_IN_TARGET, before: null, after: { signIn: signInRecord({ address: url, base, why, search }) } });
-    } catch { /* the line is the same without the record: the plan then has no sign-in to ask */ }
+      record({ id: newId('chg'), kind: 'answer', target: SIGN_IN_TARGET, before: null, after: { signIn: signInRecord({ address: url, base, why, search, gcm }) } });
+      return true;
+    } catch {
+      return false; // the line then offers no sign-in: the plan has none to ask
+    }
   };
-  if (kind === 'sign-in' && secure) {
-    keep('sign-in');
-    return `${lead} Next: I can open git's sign-in for ${host}; after you sign in there, a fresh Go ahead tries again. Or ${ASIS_OTHER_WAY}.`;
+  if (kind === 'sign-in' && secure && keep('sign-in')) {
+    return gcm
+      ? `${lead} Next: I can open git's sign-in for ${host} (its window may take a minute, and may open behind other windows); after you sign in there, setup carries on with step 3. Or ${ASIS_OTHER_WAY}.`
+      : `${lead} Next: git on this computer has no sign-in window of its own that I can open, so sign git in to ${host} outside setup, then a fresh Go ahead tries again; or ${ASIS_OTHER_WAY} (recommended).`;
   }
   if (kind === 'not-found' && joined) return `${lead} Your git sign-in for ${host} can't see this project; ask its owner to add you, then a fresh Go ahead tries again. Or ${ASIS_OTHER_WAY}.`;
   if (kind === 'not-found' && secure) {
     keep('account');
-    return `Your git on this computer is signed in to ${host} as a different account from the one setup made the project on${said === '' ? '' : ` (git said: ${said})`}. Next: I can open git's sign-in for ${host}; after you sign in there with the right account, a fresh Go ahead tries again. Or ${ASIS_OTHER_WAY}.`;
+    return `Git on this computer is signed in to ${host} as a different account from the one setup made the project on${said === '' ? '' : ` (git said: ${said})`}. Next: sign git out of ${host}, or in as the owning account, outside setup, then say Go ahead on step 3; or ${ASIS_OTHER_WAY} (recommended).`;
   }
   return `${lead} A fresh Go ahead tries again, or ${ASIS_OTHER_WAY}.`;
 };
@@ -1658,7 +1667,7 @@ const mustGit = (git) => async (args, why) => {
 // repository, or one an agent wrote. The folder's .git is recorded once, when
 // setup adds the remote. Safe to repeat from any point: a retry finishes what an earlier attempt
 // left, and records nothing again.
-async function connectFolder({ folder, remoteUrl, gitPath, env, reachEnv = null, base = null, run, record }) {
+async function connectFolder({ folder, remoteUrl, gitPath, env, reachEnv = null, base = null, gcm = false, run, record }) {
   const git = asIsGit({ run, gitPath, env: reaching(env, remoteUrl), reachEnv, cwd: folder, workTree: folder });
   const must = mustGit(git);
   const hadGit = fs.existsSync(path.join(folder, '.git'));
@@ -1669,7 +1678,7 @@ async function connectFolder({ folder, remoteUrl, gitPath, env, reachEnv = null,
     if (!hadGit) await must(['init', '-q', '-b', 'main'], 'git could not start in this folder');
     await must(['remote', 'add', '--end-of-options', 'origin', remoteUrl], 'git could not name the repository in this folder');
   }
-  await must(['fetch', '-q', '--end-of-options', remoteUrl, '+refs/heads/main:refs/remotes/origin/main'], reachEnv === null ? 'git could not fetch the new repository' : ownSignInFailure('reach the new repository', remoteUrl, record, { base }));
+  await must(['fetch', '-q', '--end-of-options', remoteUrl, '+refs/heads/main:refs/remotes/origin/main'], reachEnv === null ? 'git could not fetch the new repository' : ownSignInFailure('reach the new repository', remoteUrl, record, { base, gcm }));
   const theirs = (await must(['rev-parse', '--verify', 'refs/remotes/origin/main'], 'git could not read the new repository\'s main')).stdout.trim();
   const head = await git(['rev-parse', '-q', '--verify', 'HEAD']);
   if (head.code !== 0) {
@@ -1689,12 +1698,12 @@ async function connectFolder({ folder, remoteUrl, gitPath, env, reachEnv = null,
 // Sends a folder's own history to its new, empty repository: `branch`, which becomes the repository's default. An `origin` of
 // the folder's own stays as it is, so the record's address is the only way there; a folder with none gets it, once its history
 // is there: until then the folder still reads as a project kept here, and a fresh Go ahead takes this up again. Safe to repeat.
-async function publishFolder({ folder, remoteUrl, branch, gitPath, env, reachEnv = null, base = null, run, record }) {
+async function publishFolder({ folder, remoteUrl, branch, gitPath, env, reachEnv = null, base = null, gcm = false, run, record }) {
   const git = asIsGit({ run, gitPath, env: reaching(env, remoteUrl), reachEnv, cwd: folder, workTree: folder });
   const pushed = await git(['push', '-q', '--no-verify', '--end-of-options', remoteUrl, `refs/heads/${branch}:refs/heads/${branch}`]);
   if (pushed.code !== 0) throw new Error(reachEnv === null
     ? gitFailure('Your project could not be sent to its new repository', pushed.stderr, { then: 'a fresh Go ahead tries again' })
-    : ownSignInFailure('send your project to its new repository', remoteUrl, record, { base })(pushed.stderr));
+    : ownSignInFailure('send your project to its new repository', remoteUrl, record, { base, gcm })(pushed.stderr));
   if (originUrl(folder) === null) {
     record({ id: newId('chg'), kind: 'folder', target: path.join(folder, '.git'), before: { origin: null }, after: { origin: remoteUrl, branch } });
     if ((await git(['remote', 'add', '--end-of-options', 'origin', remoteUrl])).code !== 0) throw new Error('git could not name the repository in this folder');
@@ -1736,14 +1745,17 @@ async function holdsConfig({ host, info, run, api }) {
   }
 }
 
-// Whether a repository holds Wheelhouse v0.1.x's state branch, read with the director's own sign-in.
-export async function holdsState({ remoteUrl, gitPath, env, reachEnv = null, base = null, run, record = () => {} }) {
+// Whether a repository holds Wheelhouse v0.1.x's state branch, read with the director's own sign-in. With `deferSignIn`, a missing sign-in
+// is thrown as an error that carries what git said (`signInStderr`) and the address (`signInUrl`), for a caller that looks at other
+// repositories before it says anything.
+export async function holdsState({ remoteUrl, gitPath, env, reachEnv = null, base = null, gcm = false, run, record = () => {}, deferSignIn = false }) {
   const ceiling = { GIT_CEILING_DIRECTORIES: ceilingOf() };
   const listed = await asIsGit({ run, gitPath, env: { ...reaching(env, remoteUrl), ...ceiling }, reachEnv: reachEnv === null ? null : { ...reachEnv, ...ceiling }, cwd: outsideAny() })(['ls-remote', '--heads', '--end-of-options', remoteUrl, `refs/heads/${STATE_BRANCH}`]);
   // On the as-is route, a missing sign-in is not a project without the branch: it is said, and the address kept for git's sign-in. Any other
   // failure (the project is not there for this sign-in, the network) reads as the branch not being there, as it always did.
   if (listed.code !== 0 && reachEnv !== null && reachFailureKind(listed.stderr) === 'sign-in') {
-    throw new Error(ownSignInFailure('look for the project', remoteUrl, record, { base, search: true })(listed.stderr));
+    if (deferSignIn) throw Object.assign(new Error('git\'s sign-in is missing'), { signInStderr: listed.stderr, signInUrl: remoteUrl });
+    throw new Error(ownSignInFailure('look for the project', remoteUrl, record, { base, search: true, gcm })(listed.stderr));
   }
   if (listed.code !== 0) return false;
   return String(listed.stdout).split(/\r?\n/).some((line) => line.endsWith(`\trefs/heads/${STATE_BRANCH}`));
@@ -1753,21 +1765,31 @@ export async function holdsState({ remoteUrl, gitPath, env, reachEnv = null, bas
 // default branch holds .claude/wheelhouse.json, or (a project set up with v0.1.x) they hold its
 // state branch. The typed owner/name, or a bare name on the director's own account and each of
 // their organisations (GitLab: groups). Each as repoInfo gives it, with `stateBranch` saying whether
-// it holds the v0.1.x state branch.
-async function findJoined({ host, wanted, user, run, api, gitPath, env, reachEnv = null, hostUrl, base = null, record = () => {} }) {
+// it holds the v0.1.x state branch. Where git has no sign-in for a candidate, that candidate is skipped (its stderr kept) and the
+// others are looked at; the sign-in line is said, and its address kept, only when none was found.
+export async function findJoined({ host, wanted, user, run, api, gitPath, env, reachEnv = null, hostUrl, base = null, gcm = false, record = () => {} }) {
   const accounts = wanted.includes('/') ? [] : [user, ...(await accountsOf({ host, run, api }))];
   const candidates = wanted.includes('/') ? [wanted] : accounts.map((a) => `${a}/${wanted}`);
   const seen = new Set();
   const found = [];
+  let unsigned = null;
   for (const repo of candidates) {
     if (seen.has(repo.toLowerCase())) continue;
     seen.add(repo.toLowerCase());
     const info = await repoInfo({ host, repo, run, api });
     if (info === null || found.some((f) => f.repo.toLowerCase() === info.repo.toLowerCase())) continue;
     const config = await holdsConfig({ host, info, run, api });
-    const stateBranch = await holdsState({ remoteUrl: hostUrl({ host, repo: info.repo }), gitPath, env, reachEnv, base, run, record });
+    let stateBranch;
+    try {
+      stateBranch = await holdsState({ remoteUrl: hostUrl({ host, repo: info.repo }), gitPath, env, reachEnv, base, gcm, run, record, deferSignIn: true });
+    } catch (error) {
+      if (typeof error?.signInUrl !== 'string') throw error;
+      unsigned ??= error;
+      continue;
+    }
     if (config || stateBranch) found.push({ ...info, stateBranch });
   }
+  if (found.length === 0 && unsigned !== null) throw new Error(ownSignInFailure('look for the project', unsigned.signInUrl, record, { base, search: true, gcm })(unsigned.signInStderr));
   return found;
 }
 
@@ -1813,7 +1835,7 @@ export function joinMissLine({ host, wanted, found, at, user }) {
 // wrote; that one is recorded first, its text as the value before. Files the project doesn't hold
 // (this computer's settings.local.json) stay. Safe to repeat: once the folder has a commit it is
 // left as it is. Fetched by its https address, never by the one the folder's origin names (R111).
-export async function checkOutJoined({ folder, repo, remoteUrl, branch, gitPath, env, reachEnv = null, base = null, run, record }) {
+export async function checkOutJoined({ folder, repo, remoteUrl, branch, gitPath, env, reachEnv = null, base = null, gcm = false, run, record }) {
   const git = asIsGit({ run, gitPath, env: reaching(env, remoteUrl), reachEnv, cwd: folder, workTree: folder });
   const must = mustGit(git);
   const origin = originUrl(folder);
@@ -1824,7 +1846,7 @@ export async function checkOutJoined({ folder, repo, remoteUrl, branch, gitPath,
     if (!hadGit) await must(['init', '-q', '-b', branch], 'git could not start in this folder');
     await must(['remote', 'add', '--end-of-options', 'origin', remoteUrl], 'git could not name the project\'s repository in this folder');
   }
-  await must(['fetch', '-q', '--end-of-options', remoteUrl, `+refs/heads/${branch}:refs/remotes/origin/${branch}`], reachEnv === null ? 'git could not fetch the project' : ownSignInFailure('reach the project', remoteUrl, record, { base, joined: true }));
+  await must(['fetch', '-q', '--end-of-options', remoteUrl, `+refs/heads/${branch}:refs/remotes/origin/${branch}`], reachEnv === null ? 'git could not fetch the project' : ownSignInFailure('reach the project', remoteUrl, record, { base, joined: true, gcm }));
   const head = await git(['rev-parse', '-q', '--verify', 'HEAD']);
   if (head.code !== 0) {
     // checkout -f writes over what is in its way, so the folder must still hold only step 1's
@@ -1883,7 +1905,7 @@ function connectionFor({ host, mode, repo, id, locked = false, installationId = 
 // once the project's own key is made (the setup token's route). Gives the changes made.
 export async function makeRepos({
   host, owner, user = owner, name, isNew, run = realRun, api, folder, record = () => {}, gitPath = 'git', env = {}, reachEnv = null,
-  hostUrl = httpsRemote, base = DEFAULT_GITLAB, publish = null, connect = true,
+  hostUrl = httpsRemote, base = DEFAULT_GITLAB, publish = null, connect = true, gcm = false,
 }) {
   const made = [];
   if (!isNew) return made;
@@ -1903,8 +1925,8 @@ export async function makeRepos({
     info = await createRepo({ host, owner: user, name, run, api, empty: publish !== null });
   }
   const remoteUrl = hostUrl({ host, repo: info.repo, base });
-  if (publish !== null) await publishFolder({ folder, remoteUrl, branch: publish, gitPath, env, reachEnv, base, run, record: keep });
-  else if (connect) await connectFolder({ folder, remoteUrl, gitPath, env, reachEnv, base, run, record: keep });
+  if (publish !== null) await publishFolder({ folder, remoteUrl, branch: publish, gitPath, env, reachEnv, base, gcm, run, record: keep });
+  else if (connect) await connectFolder({ folder, remoteUrl, gitPath, env, reachEnv, base, gcm, run, record: keep });
   return made;
 }
 
@@ -2557,11 +2579,17 @@ export function hostStep({
       // An attempt on the "Use my git as it is" route that could not reach the host for want of a sign-in leaves its address in setup's record
       // (ownSignInFailure): the plan then asks, before anything else, whether to open git's own sign-in for it. The other way takes that route
       // out of the connection card, which is asked again.
-      const pendingSign = typeof ctx.runId === 'string' ? pendingSignIn(readJournal().runs.find((r) => r?.id === ctx.runId) ?? null) : null;
+      const planRun = typeof ctx.runId === 'string' ? readJournal().runs.find((r) => r?.id === ctx.runId) ?? null : null;
+      const pendingSign = pendingSignIn(planRun);
+      // Whether setup made the project's repository already: what a connection card asked again can say it does not make.
+      const repoMade = (planRun?.changes ?? []).some((c) => c?.kind === 'host' && c.after?.made === true);
       let declinedAsIs = false;
       if (pendingSign !== null) {
         const sign = signInAsk(pendingSign);
-        if (answer(sign.id)?.label === SIGN_IN_OTHER) declinedAsIs = true;
+        const chosenSign = answer(sign.id)?.label;
+        if (chosenSign === SIGN_IN_OTHER) declinedAsIs = true;
+        // Where git is signed in as another account, the director changed git's sign-in outside setup and says so: step 3 goes on.
+        else if (pendingSign.why === 'account' && chosenSign === signInRetryLabel(pendingSign.host)) { /* carry on */ }
         else if (ctx.choicesOnly !== true) return { ask: sign };
       }
       // A computer joining a product set up on another (ruling R77): asked first, in a folder
@@ -2700,7 +2728,7 @@ export function hostStep({
             const left = hostToolLeftOut(ctx, host);
             const why = on(card, earlier) ? changed(earlier.label) : gone(earlier.label, host, { reach, left, declined: declinedAsIs });
             if (!on(card, earlier) && was !== null) card = againCard(was, card, earlier.label);
-            card = { ...card, what: `${card.what} ${why}`, meanwhile: againMeanwhile(host) };
+            card = { ...card, what: `${card.what} ${why}`, meanwhile: againMeanwhile(host, repoMade) };
             id = `${own}${digest(card)}`;
             got = answer(id);
           }
@@ -2920,6 +2948,13 @@ export function hostStep({
       const gitEnv = directorGitEnv({ host, gitPath: git.path, platform, base });
       // On the as-is route the calls that reach the host run with the director's own git, not setup's isolated one (asIsReachEnv).
       const reachEnv = connection.mode === 'as-is' ? asIsReachEnv({ host, url: urlFor({ host, repo: 'owner/name' }), gitPath: git.path, platform, base }) : null;
+      // A sign-in kept for another host, or for another way to connect, is not this attempt's: cleared, so its card does not come back.
+      const waiting = pendingSignIn(thisRun);
+      if (signInOutdated(waiting, { asIs: reachEnv !== null, url: urlFor({ host, repo: 'owner/name' }), base })) {
+        record({ id: newId('chg'), kind: 'answer', target: SIGN_IN_TARGET, before: null, after: { signIn: null, cleared: 'the host or the way to connect changed' } });
+      }
+      // Whether git here has a sign-in window of its own to open, kept with a sign-in record (sign-in.js).
+      const gcm = reachEnv === null ? false : await gitHasSignInWindow({ run, gitPath: git.path });
       const keyCard = changes.find((c) => c.action === 'key-card') ?? null;
       // Narrow on GitLab without its tool: the one-day setup token, held in memory for this step only and dropped
       // when it ends, however it ends. A product whose own history goes up, or a joining computer, needs git with
@@ -2951,7 +2986,7 @@ export function hostStep({
         // or a refusal saying to type owner/name, recorded so the question asks again.
         let joined = null;
         if (join !== null) {
-          const found = await findJoined({ host, wanted: join.name, user, run, api, gitPath: git.path, env: gitEnv, reachEnv, hostUrl: urlFor, base, record });
+          const found = await findJoined({ host, wanted: join.name, user, run, api, gitPath: git.path, env: gitEnv, reachEnv, hostUrl: urlFor, base, gcm, record });
           // The repository this folder is checked out to is checked again, never searched for.
           if (fixed !== null && found.length !== 1) {
             throw new Error(`${fixed} on ${NAME[host]} can't be found with your sign-in, or is no longer set up with Wheelhouse, so setup has stopped: this folder is checked out to it and joins nothing else; check the repository on ${NAME[host]}, then a fresh Go ahead tries again`);
@@ -2980,13 +3015,13 @@ export function hostStep({
           if (typeof branch !== 'string' || branch === '' || WHEELHOUSE_BRANCHES.includes(branch)) {
             throw new Error(`${joined.repo}'s default branch on ${NAME[host]} is ${branch || 'not set'}, not a branch of the product's, so setup has not checked it out: make the product's own branch the default in the repository's settings, then ask again`);
           }
-          await checkOutJoined({ folder: ctx.folder, repo: joined.repo, remoteUrl: urlFor({ host, repo: joined.repo }), branch, gitPath: git.path, env: gitEnv, reachEnv, base, run, record });
+          await checkOutJoined({ folder: ctx.folder, repo: joined.repo, remoteUrl: urlFor({ host, repo: joined.repo }), branch, gitPath: git.path, env: gitEnv, reachEnv, base, gcm, run, record });
           halt();
         }
         // A new product's repository, under the director's own account.
         if (made !== null) {
           await makeRepos({
-            host, owner: projectOwner, user, name: projectRepo.split('/').at(-1), isNew: true, run, api, folder: ctx.folder, record, gitPath: git.path, env: gitEnv, reachEnv, hostUrl, base, publish: made.publish ?? null,
+            host, owner: projectOwner, user, name: projectRepo.split('/').at(-1), isNew: true, run, api, folder: ctx.folder, record, gitPath: git.path, env: gitEnv, reachEnv, hostUrl, base, gcm, publish: made.publish ?? null,
             connect: held === null,
           });
         }

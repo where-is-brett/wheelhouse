@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { USAGE } from '../../scripts/setup/cli.js';
-import { SIGN_IN_WAIT_MS } from '../../scripts/setup/sign-in.js';
+import { SIGN_IN_TOTAL_MS } from '../../scripts/setup/sign-in.js';
 import { NODE_LINE, INSTALL_COMMANDS } from '../../scripts/setup/tools.js';
 import { setupCommand, frontDeskCommand, allowRule, localSettings } from '../../scripts/protection/settings.js';
 import { PUSH_TEST_STEP } from '../../scripts/lib/setup-run.js';
@@ -172,7 +172,7 @@ test('the playbook closes the gaps its pressure runs found', () => {
 // A failed step's `Detail:` line under status is for the agent alone.
 test('the playbook keeps status\'s Detail: lines from the director', () => {
   assert.match(playbook, /A `Detail:` line \(indented under a step, or the second line of a `sign-in` refusal\) is for you alone: never show it or paraphrase it to the director[^\n]*Tell the director only the step's own line/);
-  assert.match(playbook, /a `Detail:` line \(indented under a step\) is for you alone[^\n]*never show it or paraphrase it; tell the director only the step's own line/);
+  assert.match(playbook, /a `Detail:` line \(indented under a step, or after a refusal of the `sign-in` form\) is for you alone[^\n]*never show it or paraphrase it; tell the director only the step's own line/);
 });
 
 // From a new product's setup on v0.1.2: `wait 10` was refused while step 10 ran, and the session's
@@ -333,21 +333,26 @@ test('setup puts no question to the director in prose where a card exists', asyn
   for (const line of said.filter((l) => typeof l === 'string')) assert.doesNotMatch(line, /\?/, `a prose question in: ${line}`);
 });
 
-test('the playbook checks git\'s helper first, asks the sign-in as step 3\'s card, runs the form with a long timeout, and never makes a token', () => {
-  const line = playbook.split('\n').find((l) => l.startsWith('- **A step 3 line that says setup could not reach the repository')) ?? '';
-  assert.ok(line !== '', 'the sign-in bullet is there');
-  assert.ok(!/ls-remote/.test(line), 'no raw git command for the session to run');
-  assert.match(line, /Check first, before you offer anything: run `git config --get-all credential\.helper`\. If no line of it is `manager` or `manager-core`, or holds `git-credential-manager`, no sign-in window can appear/);
-  assert.match(line, /recommend the other way to connect on step 3's card instead\. Otherwise run `plan 3`: it gives the sign-in card, with clickable options "Open git's sign-in for <host> \(recommended\)" and "Use the other way to connect"\. Ask it exactly as given/);
-  assert.match(line, /the form `sign-in`, in the project's folder, with Bash `timeout: 600000`/);
-  assert.ok(SIGN_IN_WAIT_MS < 600000, 'the wait is under the command timeout the playbook gives');
-  assert.match(line, /the sandbox rule below applies to it; Wheelhouse's helper opens git's window, never your own command/);
-  assert.ok(!/dangerouslyDisableSandbox/.test(line), 'the sign-in bullet leaves the sandbox rule to its own bullet');
-  assert.match(line, /close it, and recommend the other way to connect on step 3's card; never explain how to make a token, and never ask for, type or show a token or password/);
-  assert.match(line, /After "Git reached <host> and can see the project\.", run `plan 3` and ask the card it gives \(a fresh Go ahead\)/);
-  assert.match(line, /A refusal's second line, `Detail:`, is for you alone, as in step 4\./);
-  assert.match(line, /On "Use the other way to connect", run `plan 3`: step 3's connection card comes back; ask it as given\./);
-  assert.match(line, /Never offer git's sign-in for an address that begins `http:\/\/`\.$/);
+test('the playbook asks the sign-in as step 3\'s card, never reads git\'s settings itself, runs the form with a long timeout, asks one fresh card for each failure, and never makes a token', () => {
+  const start = playbook.indexOf('- **A step 3 line that says setup could not reach the repository');
+  assert.ok(start >= 0, 'the sign-in bullet is there');
+  const end = playbook.indexOf('\n- **', start + 1);
+  const block = playbook.slice(start, end);
+  assert.ok(!/ls-remote/.test(block), 'no raw git command for the session to run');
+  assert.ok(!/credential\.helper/.test(block.replace(/never run a git call to look at git's sign-in settings/, '')), 'the session reads no credential helper');
+  assert.match(block, /or a step 3 card whose id begins `git-sign-in-`/);
+  assert.match(block, /never run a git call that reaches the host yourself, and never run a git call to look at git's sign-in settings: setup reads them itself\. Run `plan 3`: it gives the sign-in card/);
+  assert.match(block, /the form `sign-in`, in the project's folder, with Bash `timeout: 600000`/);
+  assert.ok(SIGN_IN_TOTAL_MS < 600000, 'the whole route is under the command timeout the playbook gives');
+  assert.match(block, /the sandbox rule below applies to it\. Wheelhouse's helper opens git's window, never your own command/);
+  assert.ok(!/dangerouslyDisableSandbox/.test(block), 'the sign-in bullet leaves the sandbox rule to its own bullet');
+  assert.match(block, /close it and recommend another way to connect on step 3's card; never explain how to make a token, and never ask for, type or show a token or password/);
+  assert.match(block, /After the line\*\* "Git reached <host> and can see the project\. Setup carries on with step 3\.", run `plan 3` and act on what it gives/);
+  assert.match(block, /one fresh card for each failure\. If the same failure comes a second time, stop, say so plainly, and recommend another way to connect on step 3's card; never loop/);
+  assert.match(block, /A refusal's second line, `Detail:`, is for you alone, as in step 4\./);
+  assert.match(block, /Where git is signed in as another account[^\n]*Never offer to open a window for it\./);
+  assert.match(block, /"Use another way to connect":\*\* run `plan 3`: step 3's connection card comes back; ask it as given\./);
+  assert.match(block, /Never offer git's sign-in for an address that begins `http:\/\/`\.$/);
   assert.match(playbook, /Its forms:[^\n]*`sign-in`/);
   assert.match(USAGE, /sign-in/);
   assert.match(playbook, /for `sign-in` the same line fits: git's window opens from Wheelhouse's side, which the sandbox keeps your command from/);

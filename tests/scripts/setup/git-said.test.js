@@ -146,6 +146,7 @@ test('scrubGitText and gitSaid take 1 MB of hostile text in well under a second'
     'glab-'.repeat(MB / 5), 'glab-glab-glab-'.repeat(MB / 15), 'extraheader'.repeat(MB / 11), 'a_'.repeat(MB / 2), 'token'.repeat(MB / 5),
     `${'Basic '.repeat(MB / 6)}`, `Basic ${'a'.repeat(MB)}`, `${'token '.repeat(MB / 6)}x`, `${'token'.repeat(MB / 10)}${' '.repeat(MB / 2)}`, `"token":${' \t'.repeat(MB / 4)}"`,
     `${'token="'.repeat(MB / 7)}`, `${'"password": "'.repeat(MB / 13)}`, `${'client_secret '.repeat(MB / 14)}`, '_glpat-'.repeat(MB / 7), `https://${'@'.repeat(MB)}`, 'password'.repeat(MB / 8), 'authorization '.repeat(MB / 14), `${'x'.repeat(MB)}\nfatal: no\n`,
+    `${'"accessToken": "'.repeat(MB / 16)}`, `"${'a'.repeat(MB)}`, '"a'.repeat(MB / 2), 'bearer '.repeat(MB / 7), 'cookie: '.repeat(MB / 8), 'xghp_'.repeat(MB / 5), `token= ${'A,'.repeat(MB / 2)}`, 'passwd'.repeat(MB / 6), `"${'token'.repeat(MB / 5)}`,
   ]) {
     const started = Date.now();
     scrubGitText(hostile);
@@ -186,4 +187,19 @@ test('scrubGitText hides a base64url Basic value, token and client_secret values
   const once = scrubGitText('token: abc client_secret=x {"password": "p"}');
   assert.equal(scrubGitText(once), once);
   hidden('the tokens are expired', 'the tokens are expired');
+});
+
+test('scrubGitText hides an unterminated quoted value, accessToken and id_token members, passwd=, bearer: x, a Cookie value, a token after a letter, and the whole run after token=', () => {
+  const hidden = (text, expected) => assert.equal(scrubGitText(text), expected, text);
+  hidden('{"token": "abc123', '{"token": "[hidden]"');
+  hidden('{"accessToken":"a1","id_token": "b2","refreshToken":"c3","api_key":"k"}', '{"accessToken":"[hidden]","id_token": "[hidden]","refreshToken":"[hidden]","api_key":"[hidden]"}');
+  hidden('{"user": "ann", "name": "x"}', '{"user": "ann", "name": "x"}');
+  hidden('passwd=hunter2\nnext', 'passwd=[hidden]\nnext');
+  hidden('Password = x y', 'Password = [hidden]');
+  hidden('bearer: abc.def\nBearer ghi123', 'bearer: [hidden]\nBearer [hidden]');
+  hidden('Cookie: _gitlab_session=abcd; other=1\nSet-Cookie: s=1', 'Cookie: [hidden]\nSet-Cookie: [hidden]');
+  hidden('xghp_abcdefgh12345 and aglpat-abcdefgh1234 and Xgithub_pat_abcdefgh12', 'x[hidden] and a[hidden] and X[hidden]');
+  hidden('token= A,B;C next', 'token= [hidden] next');
+  hidden('the bearer of news', 'the bearer of news');
+  for (const text of ['{"token": "abc123', 'passwd=x', 'bearer: x', 'Cookie: a=b', 'xghp_abcdefgh12345', 'token= A,B']) assert.equal(scrubGitText(scrubGitText(text)), scrubGitText(text), text);
 });

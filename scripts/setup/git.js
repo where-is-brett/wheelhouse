@@ -184,8 +184,10 @@ export const CONFIG_UNREAD = 'git\'s settings in this folder\'s repository could
 // includes and its worktree config: the global and system config are shut out, and the call's own
 // settings are left off for the look) holds any setting not on the allowed list. Nothing there, or
 // no repository there, passes.
-export async function refuseUnlistedSettings({ run = realRun, gitPath = 'git', cwd }) {
-  const env = { GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: NULL_FILE };
+// `env` is added to the look's own environment (git's sign-in gives GIT_CEILING_DIRECTORIES, so a folder that is no repository finds
+// none above it).
+export async function refuseUnlistedSettings({ run = realRun, gitPath = 'git', cwd, env: given = {} }) {
+  const env = { GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: NULL_FILE, ...given };
   let got;
   try {
     got = await run(gitPath, ['config', '--includes', '--name-only', '--list', '-z'], { cwd, env, baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
@@ -272,28 +274,34 @@ function hideUserinfo(text) {
 }
 
 // Text git (or its helpers) wrote, with anything that could carry a sign-in taken out: the user or token in an address
-// (hideUserinfo), an Authorization or extra-header value (to the end of its line), a bare `Bearer` or `Basic` value, a `token` or
-// `client_secret` value after `=` or `:` (bare or in quotes), a JSON password, secret or token, a `password=` line, and anything shaped
-// like a GitLab or GitHub token. Safe to apply twice. Every pattern reads each stretch of text once, so a long line costs a pass.
+// (hideUserinfo), an Authorization or extra-header value (to the end of its line), a Cookie or Set-Cookie value (to the end of its
+// line), a bare `Bearer` or `Basic` value (`bearer: x` too), a `token` or `client_secret` value after `=` or `:` (bare, to the end of its
+// run of non-space characters, or in quotes), a JSON member named for a password, secret or token (accessToken and id_token too, its value
+// hidden even when its closing quote is missing), a `password=` or `passwd=` value, and anything shaped like a GitLab or GitHub token
+// (after a letter too). Safe to apply twice. Every pattern reads each stretch of text once, so a long line costs a pass.
 export function scrubGitText(text) {
   return hideUserinfo(String(text ?? ''))
     .replace(/(authorization\s*[:=]\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
     .replace(/(extraheader[^\s=:]{0,256}\s*[:=]\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
     .replace(/(private-token\s*:\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    .replace(/(\b(?:set-)?cookie[ \t]*[:=][ \t]*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    .replace(/(\bbearer[ \t]*[:=][ \t]*)[^\r\n]*/gi, `$1${HIDDEN}`)
     .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{4,}/gi, `$1${HIDDEN}`)
     // A `Basic` value is 8 or more base64 (or base64url) characters, not followed by another, with a digit, an `=`, a `+` or a `/`, or both
     // cases, in it: prose such as "Basic authentication failed" stays.
     .replace(/\b(Basic\s+)([A-Za-z0-9+/=_-]{8,})(?![A-Za-z0-9+/=_-])/gi, (all, lead, token) => (/[0-9=+/]|[a-z][A-Z]|[A-Z][a-z]/.test(token) ? `${lead}${HIDDEN}` : all))
-    // A JSON member: "password": "x", and the other names a secret goes by.
-    .replace(/("(?:password|passwd|secret|client_secret|token|access_token|private_token|refresh_token)"[ \t]*:[ \t]*)"(?:[^"\\\r\n]|\\.)*"/gi, `$1"${HIDDEN}"`)
-    // `token=x`, `token: x`, `token = "x"`, `client_secret=x`: one word, or a quoted string.
-    .replace(/((?:token|client_secret)[ \t]*[:=][ \t]*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s&'",;]+)/gi, `$1${HIDDEN}`)
-    .replace(/(password\s*=\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
-    // GitLab's personal access token, whatever its body; and its other token prefixes (gldt-, glrt-, glcbt-, gloas-, glft-, glptt-,
-    // glimt-, glsoat-), by their shape: a body with a digit in it. Whatever comes before, an underscore too, is not part of the token.
-    .replace(/(?<![A-Za-z0-9])glpat-[A-Za-z0-9_-]{8,}/g, HIDDEN)
+    // A JSON member: "password": "x", and the other names a secret goes by ("accessToken", "id_token", "client_secret", "api-key"). The
+    // key is read once, between its quotes, and tested for the words afterwards; a value whose closing quote is missing ends at the line.
+    .replace(/("([A-Za-z0-9_-]*)"[ \t]*:[ \t]*)"(?:[^"\\\r\n]|\\.)*"?/g, (all, lead, key) => (/password|passwd|secret|token|api[_-]?key/i.test(key) ? `${lead}"${HIDDEN}"` : all))
+    // `token=x`, `token: x`, `token = "x"`, `client_secret=x`, `token= A,B`: a quoted string, or the run of characters up to white space.
+    .replace(/((?:token|client_secret)[ \t]*[:=][ \t]*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s&'"]+)/gi, `$1${HIDDEN}`)
+    .replace(/(pass(?:word|wd)\s*=\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    // GitLab's personal access token, whatever its body, and GitHub's tokens, whatever comes before them (a letter too); and GitLab's
+    // other token prefixes (gldt-, glrt-, glcbt-, gloas-, glft-, glptt-, glimt-, glsoat-), by their shape: a body with a digit in it. Whatever
+    // comes before, an underscore too, is not part of the token.
+    .replace(/glpat-[A-Za-z0-9_-]{8,}/g, HIDDEN)
     .replace(/(?<![A-Za-z0-9])gl[a-z]{2,5}-[A-Za-z0-9_-]{8,}/g, (m) => (/\d/.test(m.slice(m.indexOf('-') + 1)) ? HIDDEN : m))
-    .replace(/(?<![A-Za-z0-9])(?:gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,})/g, HIDDEN);
+    .replace(/(?:gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,})/g, HIDDEN);
 }
 
 // Lines git adds that say nothing of why: its hints, the `To <address>` line of a push (git's own, capital T), and its closing

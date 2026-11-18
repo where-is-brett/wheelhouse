@@ -171,3 +171,34 @@ test('on Windows a stopped command is killed with its children', async () => {
   assert.equal(sent[0].file, 'taskkill');
   assert.deepEqual(sent[0].args.slice(2), ['/T', '/F']);
 });
+
+test('run passes windowsHide through (hidden unless told not to), and ends a program\'s whole process group when it is its own group\'s leader', async () => {
+  // windowsHide is on by default and can be turned off for a program that opens a window of its own.
+  const { spawn: real } = await import('node:child_process');
+  assert.equal(typeof real, 'function');
+  assert.equal((await run(process.execPath, ['-e', 'console.log(1)'], { windowsHide: false })).code, 0);
+  if (process.platform === 'win32') return;
+  // A program that starts a child of its own and waits: ended by the timeout, with ownGroup its child goes too.
+  const folder = tempFolder('wh-run-group-');
+  const mark = path.join(folder, 'child.pid');
+  const script = `const { spawn } = require('node:child_process'); const c = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); require('node:fs').writeFileSync(${JSON.stringify(mark)}, String(c.pid)); setInterval(() => {}, 1000);`;
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const waitForFile = async () => { for (let i = 0; i < 100 && !fs.existsSync(mark); i += 1) await new Promise((r) => setTimeout(r, 50)); return Number(fs.readFileSync(mark, 'utf8')); };
+  const grouped = run(process.execPath, ['-e', script], { timeoutMs: 1500, ownGroup: true });
+  const childPid = await waitForFile();
+  assert.ok(alive(childPid));
+  const ended = await grouped;
+  assert.equal(ended.timedOut, true);
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(alive(childPid), false, 'the child went with its leader');
+  // Without ownGroup the child is left (the program alone is killed): the old behaviour, kept for every other caller.
+  fs.rmSync(mark);
+  const alone = run(process.execPath, ['-e', script], { timeoutMs: 1500 });
+  const strayPid = await waitForFile();
+  await alone;
+  await new Promise((r) => setTimeout(r, 200));
+  const strayed = alive(strayPid);
+  if (strayed) process.kill(strayPid, 'SIGKILL');
+  assert.equal(strayed, true, 'without ownGroup only the program is killed');
+  fs.rmSync(folder, { recursive: true, force: true });
+});

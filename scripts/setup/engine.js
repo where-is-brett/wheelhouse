@@ -17,8 +17,6 @@
 //                                            line for the director (ctx.say, ruling R40) among them
 //   /setup/sign-in { folder }             -> { ok, line } or { ok: false, refused, detail? }: git's own sign-in for the address step 3
 //                                            kept on the "Use my git as it is" route, once chosen on its card (sign-in.js)
-//   /setup/sign-in { folder }             -> { ok, line }, or { ok: false, refused, detail? }: git's own sign-in for the address step 3
-//                                            kept on the "Use my git as it is" route, once chosen on its card (sign-in.js)
 //   /setup/health { folder, lines? }      -> { ok, green, lines, board, trials }, and once green
 //                                            { started, briefing } too: step 10's checks joined
 //                                            with the session's trial lines (scripts/setup/health.js);
@@ -693,6 +691,17 @@ export function setupRoutes({
     const folder = admitFolder(body.folder, { userHome });
     const found = runFor(folder, userHome);
     const journalRun = found === null ? null : runById(found.id);
+    // One sign-in at a time for a run, counted as the helper's work while it waits, so the helper is not retired or updated under it.
+    const key = found === null ? null : `${found.id}:sign-in`;
+    if (key !== null && inHelper.has(key)) return { ok: false, refused: 'Git\'s sign-in is already open for this setup, so a second was not opened. Wait for it to finish.' };
+    if (key !== null) inHelper.add(key);
+    try {
+      return await openSignIn({ journalRun, found, folder });
+    } finally {
+      if (key !== null) inHelper.delete(key);
+    }
+  }
+  async function openSignIn({ journalRun, found, folder }) {
     let remoteRepo = null;
     try {
       remoteRepo = productOf(folder, { config: readGitlabHosts(folder) }).repo ?? null;
