@@ -47,7 +47,7 @@ A `card` is your clickable-question tool's question, ready: ask it as `questions
 
 Setup opens with one card: the plan for this project, a plain line each, with **Go ahead** and **Customise**.
 
-- **Go ahead:** every step then runs with no more cards, apart from what only the director can do (a sign-in, the system's password window) and their own unfinished work in a project already under way. Keep going: `resume`, act on its plan, `resume` again.
+- **Go ahead:** every step then runs with no more cards, apart from what only the director can do (a sign-in, the system's password window), another coding agent's changes to this computer (step 6 asks its card whenever it changes another agent's files) and their own unfinished work in a project already under way. Keep going: `resume`, act on its plan, `resume` again.
 - **Customise:** run `resume` again. It gives the choices as cards (`asks`), up to four at once: ask them together, in one call. Then `resume` again: more choices, or the one card again with their choices on it. Nothing runs until its **Go ahead**.
 - **The director wants to change an answer** ("I meant no live data", "change it to GitLab"), at any point in setup: run `choices`, pick the key whose `about` matches what they said, then `change <key>`, and ask the cards it gives. `acted: true` means a step has already used that answer: its card then offers what changing it takes, not the answer itself. Never say an answer can't be changed. After their click, `resume`:
   - a new answer to a choice no step has used yet brings the one card back with the change on it: ask it, at any point in setup; its Go ahead covers the steps still to run;

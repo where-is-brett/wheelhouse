@@ -8,7 +8,7 @@
 // written: the programs the steps run are stand-ins (`fakeRun`), git alone real and kept to the scratch folder, and
 // the Wheelhouse home, the Claude Code folder and the user's home are made for the run.
 //
-//   node scripts/setup/render-cards.js [a|b|b'|c|d|e|f|g|all] [--desktop]
+//   node scripts/setup/render-cards.js [a|b|b'|c|d|e|f|g|h|i|all] [--desktop]
 //
 // The paths:
 //   a   a company's GitLab, on Windows, no real users, GitLab's tool left out, git holding no key, Use my git as it is chosen
@@ -19,6 +19,8 @@
 //   e   a company's GitLab on a Mac, with GitLab's tool in
 //   f   a project on a company's GitLab, pasted by its address on the join question, on a Mac: the address names the host, so no GitLab card is asked
 //   g   the same address, for a project with no Wheelhouse settings in it: the question is asked again saying so and what to do, and a new product on the company's GitLab is chosen
+//   h   an address pasted with a sign-in name and password in it: not kept, asked again saying so, then kept on this computer
+//   i   path a with a long user name and project name, and Copilot's command line installed: Copilot is chosen on the builder question and is signed in
 // --desktop answers as the Desktop app can: a card whose question is the same as an earlier card's shows the
 // earlier one, so the answer that comes back is the one given there. It also asks each card with its first line reworded, as a
 // model that doesn't copy a card word for word may, through the card check hook's swap (scripts/hooks/card-check.js): the
@@ -48,6 +50,8 @@ export const HELD_ADDRESS = `https://${['ann', 'render-only'].join(':')}@gitlab.
 // The director's account on the pretend host, and the project step 3 makes there.
 const USER = 'a-director';
 const PROJECT_ID = 41;
+// Where Copilot's command line is on the pretend Windows computer.
+const COPILOT_BIN = 'C:\\Program Files\\Copilot';
 
 // What each path is: the computer, the host and the way the director picks, and how the cards are answered.
 export const PATHS = Object.freeze({
@@ -60,6 +64,7 @@ export const PATHS = Object.freeze({
   f: { title: 'A project on a company\'s GitLab pasted by its address on the join question, on a Mac', platform: 'darwin', host: 'GitLab', where: 'pasted', glab: 'in', join: PASTED_ADDRESS },
   g: { title: 'The same address for a project with no Wheelhouse settings: found missing at step 3\'s apply, asked again, GitLab chosen and refused for the name, then kept on this computer', platform: 'darwin', host: 'GitLab', where: 'company', glab: 'in', join: PASTED_ADDRESS, miss: true, missAtApply: true, reask: ['GitLab', 'Keep it on this computer'] },
   h: { title: 'An address pasted with a sign-in name and password in it: not kept, asked again saying so, then kept on this computer', platform: 'darwin', host: 'Keep it on this computer', glab: 'in', join: HELD_ADDRESS, miss: true, reask: ['Keep it on this computer'] },
+  i: { title: 'A company\'s GitLab on Windows with a long user name and project name, Use my git as it is chosen, Copilot\'s command line installed and chosen on the builder question, and Copilot signed in', platform: 'win32', host: 'GitLab', where: 'company', way: 'Use my git as it is', glab: 'unavailable', agent: 'Copilot', folderName: 'wheelhouse-t6-17-11-2026', userName: 'firstname.lastname-longer' },
 });
 
 // ---- The pretend computer ----
@@ -288,7 +293,12 @@ async function realSteps() {
   const scratchHome = () => process.env.WHEELHOUSE_HOME;
   const made = {
     5: () => rulesStep({ env: {} }),
-    6: () => computerStep({ run: fakeRun(world()), env: {}, port: 47801 }),
+    // Another agent's command line, where the path has one: found in a folder on the pretend computer's PATH.
+    6: () => computerStep({
+      run: fakeRun(world()), port: 47801,
+      env: world().agent === undefined ? {} : { PATH: COPILOT_BIN },
+      ...(world().agent === undefined ? {} : { exists: (file) => file === path.win32.join(COPILOT_BIN, 'copilot.exe') }),
+    }),
     7: () => projectFilesStep({
       run: fakeRun(world()), findGit: async () => git(), keyVia: via(), address, node: node(), env: {},
       gitlab: ({ baseUrl }) => directorGitlabApi({ run: fakeRun(world()), baseUrl, via: via() }),
@@ -320,6 +330,8 @@ function choose(p, { id, card }, { stepTwoDone }) {
   const recommended = recommendedOf(card) ?? labels[0];
   const pick = (want) => labels.find((l) => l === want) ?? null;
   if (id === 'one-card' || /^plan-/.test(id)) return { label: stepTwoDone.customised ? 'Go ahead' : 'Customise' };
+  // The builder question, where another agent's command line is installed: the path's agent.
+  if (id === 'agent' && p.agent !== undefined) return { label: pick(p.agent) };
   if (id === 'real-users') return { label: pick('Not yet') };
   // A project kept on this computer: no backup folder is named, so no window or typed path is asked for.
   if (/^backup/.test(id)) return { label: pick('Not now, keep building') };
@@ -354,10 +366,22 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
   if (!p) throw new Error(`There is no path ${name}: choose one of ${Object.keys(PATHS).join(', ')}`);
   const scratch = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-render-')));
   const home = path.join(scratch, 'wh');
-  const user = path.join(scratch, 'user');
+  const user = path.join(scratch, p.userName ?? 'user');
   const config = path.join(user, 'claude config');
-  const folder = path.join(user, 'Projects', 'Cafe Menu');
+  const folder = path.join(user, 'Projects', p.folderName ?? 'Cafe Menu');
   for (const dir of [home, config, folder]) fs.mkdirSync(dir, { recursive: true });
+  // A computer with Copilot signed in: its home holds a config with a signed-in user (only the key names are read).
+  if (p.agent !== undefined) {
+    fs.mkdirSync(path.join(user, '.copilot'), { recursive: true });
+    fs.writeFileSync(path.join(user, '.copilot', 'config.json'), JSON.stringify({ loggedInUsers: [{ host: 'https://github.com', login: 'a-director' }] }));
+    // The director's own Claude Code settings, the longest a step 6 card has to say about them: a longer history kept, an older
+    // minimum version, and their own usage counting variables, which setup leaves as they are.
+    const { telemetryEnv } = await import('../telemetry/env.js');
+    fs.mkdirSync(path.join(user, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(user, '.claude', 'settings.json'), JSON.stringify({
+      cleanupPeriodDays: 365, minimumVersion: '2.0.0', env: Object.fromEntries(Object.keys(telemetryEnv(47801)).map((name) => [name, 'their-own-value'])),
+    }));
+  }
   const env = { WHEELHOUSE_HOME: process.env.WHEELHOUSE_HOME, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR, WHEELHOUSE_RENDER_STEPS: process.env.WHEELHOUSE_RENDER_STEPS };
   // The pretend computer has no proxy: this computer's own proxy settings are put aside for the run.
   for (const k of Object.keys(process.env)) if (/proxy/i.test(k)) { env[k] = process.env[k]; delete process.env[k]; }

@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { computerStep, computerCard, computerChanges, lockedStep, weakening, SETTLED_LEAD } from '../../../scripts/setup/computer.js';
+import { computerStep, computerCard, lines, computerChanges, lockedStep, weakening, SETTLED_LEAD } from '../../../scripts/setup/computer.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { runApply, setupRoutes, AFTER_WAIT_MS, CHANGED } from '../../../scripts/setup/engine.js';
 import { findRun, markStep, reverseChange, startRun, addChanges, newId } from '../../../scripts/setup/journal.js';
@@ -107,7 +107,7 @@ test('the card lists each change in plain words, and nothing else changes', asyn
     assert.match(text, /phone notifications prepared \(step 9\)/i);
     assert.ok(ownKey());
     assert.match(text, /clicks are marked as coming from this computer, with a key that Claude Code's sandbox keeps agents from reading/);
-    assert.match(JSON.stringify(computerCard({ changes: planned.changes, platform: 'win32' })), /On Windows an agent's command could read the key behind that mark/);
+    assert.match(JSON.stringify(computerCard({ changes: planned.changes, platform: 'win32' })), /On Windows any agent's commands could read the key behind that mark/);
     assert.doesNotMatch(text, /weaken/, 'none of the director\'s settings weakens Standard here');
     assert.equal(planned.director, 'One click');
 
@@ -650,4 +650,151 @@ test('off the Mac, a project on the engine gets no login start', async () => {
     const planned = await step.plan(ctx);
     assert.ok(!(planned.changes ?? []).some((c) => c.what === 'login'));
   });
+});
+
+test('step 6\'s card with Copilot chosen fits at the longest lengths, in words as short as it must, each change still named', async () => {
+  const { agentComputerChanges } = await import('../../../scripts/agents/setup-parts.js');
+  const root = path.resolve(import.meta.dirname, '..', '..', '..');
+  for (const platform of ['win32', 'darwin']) {
+    const agent = agentComputerChanges('copilot', { env: {}, userHome: 'C:\\Users\\firstname.lastname-longer', platform, root });
+    assert.ok(agent.length >= 2, 'the hook file and the First Mate\'s files');
+    for (const route of ['user-settings', 'launch-env']) {
+      for (const kept of [[], Object.keys(telemetryEnv(47801)).map((name) => ({ name, value: 'their-own-value' }))]) {
+        const changes = [
+          ...(kept.length > 0 ? [] : [{ kind: 'env', what: 'telemetry' }]),
+          { kind: 'json-key', what: 'retention', key: ['cleanupPeriodDays'], after: RETENTION_DAYS },
+          { kind: 'json-key', what: 'updates', key: ['minimumVersion'] }, { kind: 'json-key', what: 'push', key: ['agentPushNotifEnabled'] },
+          ...agent,
+        ];
+        const card = computerCard({ changes, userSettings: { cleanupPeriodDays: 365, minimumVersion: '2.0.0' }, kept, route, platform, floor: '2.1.299', key: true });
+        const text = composeCard({ ...card, kind: 'setup', target: { step: 6, hash: '0'.repeat(64) } }).question.question;
+        const where = `${platform}, ${route}, ${kept.length} kept`;
+        assert.ok(text.length <= 1200, `${where}: ${text.length} characters`);
+        assert.match(text, /Copilot's (checks before each of its actions|hook file)/, where);
+        assert.match(text, /First Mate files/, where);
+        assert.match(text, /Chat history kept/, where);
+        assert.match(text, /well-tried updates/, where);
+        assert.match(text, /Phone notifications/, where);
+      }
+    }
+  }
+});
+
+test('step 6\'s card with Copilot chosen and one of the director\'s own weakening settings fits, or moves to fewer words, naming every change', async () => {
+  const { agentComputerChanges } = await import('../../../scripts/agents/setup-parts.js');
+  const root = path.resolve(import.meta.dirname, '..', '..', '..');
+  const names = Object.keys(telemetryEnv(47801));
+  for (const platform of ['darwin', 'win32']) {
+    const agent = agentComputerChanges('copilot', { env: {}, userHome: 'C:\\Users\\firstname.lastname-longer', platform, root });
+    for (const route of ['user-settings', 'launch-env']) {
+      for (const count of [0, 1, 4]) {
+        const kept = names.slice(0, count).map((name) => ({ name, value: 'their-own-value' }));
+        const changes = [
+          ...(count > 0 ? [] : [{ kind: 'env', what: 'telemetry' }]),
+          { kind: 'json-key', what: 'retention', key: ['cleanupPeriodDays'], after: RETENTION_DAYS },
+          { kind: 'json-key', what: 'updates', key: ['minimumVersion'] }, { kind: 'json-key', what: 'push', key: ['agentPushNotifEnabled'] },
+          ...agent,
+        ];
+        const userSettings = { cleanupPeriodDays: 365, minimumVersion: '2.0.0', sandbox: { excludedCommands: ['docker'] } };
+        const card = computerCard({ changes, userSettings, kept, route, platform, floor: '2.1.299', key: true });
+        const text = composeCard({ ...card, kind: 'setup', target: { step: 6, hash: '0'.repeat(64) } }).question.question;
+        const where = `${platform}, ${route}, ${count} kept`;
+        assert.ok(text.length <= 1200, `${where}: ${text.length} characters`);
+        assert.match(text, /Usage (counting left as you set it|counts go to Wheelhouse)/, where);
+        assert.match(text, /Chat history kept/, where);
+        assert.match(text, /well-tried updates/, where);
+        assert.match(text, /Phone notifications/, where);
+        assert.match(text, /Copilot's (checks before each of its actions|checks) and First Mate files|Copilot's hook file/, where);
+        assert.match(text, /sit outside Wheelhouse's Standard safeguards/, where);
+        assert.match(text, /docker runs outside the sandbox|1 command runs outside the sandbox|1 of them/, where);
+      }
+    }
+  }
+});
+
+test('the signing line says an agent\'s commands could read the key whenever another agent is chosen, on every system and in each form', async () => {
+  const { agentComputerChanges } = await import('../../../scripts/agents/setup-parts.js');
+  const root = path.resolve(import.meta.dirname, '..', '..', '..');
+  const base = [{ kind: 'json-key', what: 'retention', key: ['cleanupPeriodDays'], after: RETENTION_DAYS }];
+  for (const platform of ['darwin', 'win32']) {
+    const agent = agentComputerChanges('copilot', { env: {}, userHome: '/home/x', platform, root });
+    const full = JSON.stringify(computerCard({ changes: [...base, ...agent], platform, floor: '2.1.299', key: true }));
+    if (platform === 'darwin') assert.match(full, /Your clicks are marked as coming from this computer\. Copilot's commands could read the key behind that mark, so it shows a click came from here, not that you made it\./, platform);
+    else assert.match(full, /Your clicks are marked as coming from this computer\. On Windows any agent's commands, Copilot's among them, could read the key behind that mark, so it shows a click came from here, not that you made it\./, platform);
+    assert.doesNotMatch(full, /sandbox keeps agents from reading/, platform);
+    const terse = JSON.stringify(computerCard({ changes: [...base, ...agent], platform, floor: '2.1.299', key: true, kept: Object.keys(telemetryEnv(47801)).map((name) => ({ name, value: 'v'.repeat(400) })) }));
+    if (platform === 'darwin') assert.match(terse, /Copilot's commands could read the key behind that mark/, platform);
+    else assert.match(terse, /[Oo]n Windows any agent's commands(, Copilot's among them,)? could read the key behind that mark/, platform);
+    assert.doesNotMatch(terse, /sandbox keeps agents from reading/, platform);
+  }
+  // No agent chosen: the Mac keeps the sandbox claim, Windows says it has none, and neither leaves "that key" dangling.
+  const mac = JSON.stringify(computerCard({ changes: base, platform: 'darwin', floor: '2.1.299', key: true }));
+  assert.match(mac, /Claude Code's sandbox keeps agents from reading in projects Wheelhouse has set up/);
+  const macTerse = JSON.stringify(computerCard({ changes: base, platform: 'darwin', floor: '2.1.299', key: true, kept: Object.keys(telemetryEnv(47801)).map((name) => ({ name, value: 'v'.repeat(400) })) }));
+  assert.match(macTerse, /sandbox keeps agents from reading in projects Wheelhouse has set up/);
+  const win = JSON.stringify(computerCard({ changes: base, platform: 'win32', floor: '2.1.299', key: true }));
+  assert.match(win, /On Windows any agent's commands could read the key behind that mark/);
+});
+
+test('Copilot chosen with no agent changes still says its commands could read the key, on a Mac and on Windows', () => {
+  const base = [{ kind: 'json-key', what: 'retention', key: ['cleanupPeriodDays'], after: RETENTION_DAYS }, { kind: 'json-key', what: 'updates', key: ['minimumVersion'] }];
+  for (const platform of ['darwin', 'win32']) {
+    const full = JSON.stringify(computerCard({ changes: base, platform, floor: '2.1.299', key: true, chosenLabel: 'Copilot' }));
+    if (platform === 'darwin') assert.match(full, /Your clicks are marked as coming from this computer\. Copilot's commands could read the key behind that mark/, platform);
+    else assert.match(full, /On Windows any agent's commands, Copilot's among them, could read the key behind that mark/, platform);
+    assert.doesNotMatch(full, /sandbox keeps agents from reading/, platform);
+    assert.doesNotMatch(full, /Copilot's checks/, platform);
+  }
+});
+
+test('the terse agent line says the checks act only in Wheelhouse projects, and that the First Mate files alone say to apply only there', async () => {
+  const { agentComputerChanges } = await import('../../../scripts/agents/setup-parts.js');
+  const root = path.resolve(import.meta.dirname, '..', '..', '..');
+  const agent = agentComputerChanges('copilot', { env: {}, userHome: 'C:\\Users\\firstname.lastname-longer', platform: 'win32', root });
+  const others = [
+    { kind: 'env', what: 'telemetry' },
+    { kind: 'json-key', what: 'retention', key: ['cleanupPeriodDays'], after: RETENTION_DAYS },
+    { kind: 'json-key', what: 'updates', key: ['minimumVersion'] }, { kind: 'json-key', what: 'push', key: ['agentPushNotifEnabled'] },
+  ];
+  const userSettings = { cleanupPeriodDays: 365, minimumVersion: '2.0.0', sandbox: { excludedCommands: ['docker'] } };
+  const both = JSON.stringify(computerCard({ changes: [...others, ...agent], userSettings, platform: 'win32', floor: '2.1.299', key: true }));
+  assert.match(both, /Copilot's (checks before each of its actions|checks) and First Mate files, in your Copilot folder for every project \((the checks|checks) act only in Wheelhouse projects; (the First Mate )?files say to apply only there\)/);
+  assert.doesNotMatch(both, /\(they act only in Wheelhouse projects\)/);
+  const mate = JSON.stringify(computerCard({ changes: [...others, ...agent.filter((c) => c.part === 'first-mate')], userSettings, platform: 'win32', floor: '2.1.299', key: true }));
+  assert.match(mate, /they say to apply only in Wheelhouse projects/);
+});
+
+test('when the card is cut, the director\'s own usage settings are counted first and the values they held are left unsaid last', () => {
+  const kept = Object.keys(telemetryEnv(47801)).map((name) => ({ name, value: 'x' }));
+  const changes = [
+    { kind: 'json-key', what: 'retention', key: ['cleanupPeriodDays'], after: RETENTION_DAYS },
+    { kind: 'json-key', what: 'updates', key: ['minimumVersion'] },
+  ];
+  const userSettings = { cleanupPeriodDays: 365, minimumVersion: '2.0.0' };
+  const at = (terse) => lines({ changes, userSettings, kept, route: 'user-settings', platform: 'darwin', floor: '2.1.299', terse }).join('\n');
+  const names = Object.keys(telemetryEnv(47801));
+  for (const terse of [0, 1]) {
+    assert.match(at(terse), new RegExp(`${names[0]}, `), `form ${terse} names the variables`);
+    assert.match(at(terse), /\(now 365\)/);
+    assert.match(at(terse), /\(now 2\.0\.0\)/);
+  }
+  // Form 2: the variables are counted, and the old values the director's settings held are still said.
+  assert.match(at(2), /4 settings are yours/);
+  assert.doesNotMatch(at(2), new RegExp(names[0]));
+  assert.match(at(2), /\(now 365\)/);
+  assert.match(at(2), /\(now 2\.0\.0\)/);
+  // Form 3: the old values go last.
+  assert.match(at(3), /4 settings are yours/);
+  assert.doesNotMatch(at(3), /\(now /);
+});
+
+test('the why line names only the parts of another agent\'s files the card changes', async () => {
+  const { agentComputerChanges } = await import('../../../scripts/agents/setup-parts.js');
+  const root = path.resolve(import.meta.dirname, '..', '..', '..');
+  const base = [{ kind: 'json-key', what: 'retention', key: ['cleanupPeriodDays'], after: RETENTION_DAYS }];
+  const agent = agentComputerChanges('copilot', { env: {}, userHome: '/home/x', platform: 'darwin', root });
+  const why = (changes) => computerCard({ changes: [...base, ...changes], platform: 'darwin', floor: '2.1.299', key: true }).why;
+  assert.match(why(agent), /, and Copilot's checks and First Mate files\.$/);
+  assert.match(why(agent.filter((c) => c.part === 'first-mate')), /, and Copilot's First Mate files\.$/);
+  assert.match(why(agent.filter((c) => c.part === 'hooks')), /, and Copilot's checks\.$/);
 });

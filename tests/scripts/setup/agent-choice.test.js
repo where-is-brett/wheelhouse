@@ -101,7 +101,7 @@ test('Copilot chosen and signed in: the card lists the hook file, apply writes i
     const hook = planned.changes.find((c) => c.what === 'agent');
     assert.equal(hook.target, path.join(home, 'hooks', 'wheelhouse.json'));
     assert.match(planned.card.what, /Copilot's checks before each of its actions/);
-    assert.match(planned.card.why, /Copilot's hook file/);
+    assert.match(planned.card.why, /Copilot's checks/);
 
     const recorded = [];
     const said = [];
@@ -348,8 +348,10 @@ test('a fresh setup on Copilot writes the First Mate\'s agent and instructions b
     const { home, planned } = await setUpCopilot(world);
     for (const [i, file] of FIRST_MATE_FILES.entries()) assert.equal(fs.readFileSync(mateAt(home)[i], 'utf8'), committedMate(file));
     assert.ok(fs.existsSync(hooks.file({ home })));
-    assert.match(planned.card.what, new RegExp(FIRST_MATE_LINE.slice(0, 40)));
-    assert.equal(planned.card.what.split(FIRST_MATE_LINE).length, 2, 'one line for both files');
+    // The full line, or the shorter card's one line for Copilot when the full card is too long.
+    const shorter = /First Mate files, in your Copilot folder for every project \((the checks|checks) act only in Wheelhouse projects; (the First Mate )?files say to apply only there\)/g;
+    const lines = planned.card.what.includes(FIRST_MATE_LINE) ? planned.card.what.split(FIRST_MATE_LINE).length - 1 : (planned.card.what.match(shorter) ?? []).length;
+    assert.equal(lines, 1, 'one line for both files');
     assert.deepEqual(fs.readdirSync(home).sort(), ['agents', 'config.json', 'hooks', 'instructions']);
     // Already in place: nothing more to plan.
     assert.deepEqual(computerChanges({ env: { COPILOT_HOME: home }, root: REPO }).filter((c) => c.part === 'first-mate'), []);
@@ -430,7 +432,7 @@ test('the First Mate files say to apply only in a Wheelhouse project, and the pl
   await withProject(async ({ folder, user, config }) => {
     const { env } = copilotEnv(config);
     const planned = await stepFor(env, accountRun().run).plan(ctxFor(folder, user, { '6.agent': COPILOT }));
-    assert.match(planned.card.why, /Copilot's hook file and First Mate files/);
+    assert.match(planned.card.why, /Copilot's checks and First Mate files/);
   });
 });
 

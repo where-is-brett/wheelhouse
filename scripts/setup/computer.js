@@ -44,14 +44,14 @@ import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
 import { RETENTION_DAYS, TELEMETRY_ROUTE } from '../lib/setup-numbers.js';
 import { SETUP_TITLES, SETUP_LABEL, asLine } from '../state/card-lines.js';
-import { composeCard } from '../cards/compose.js';
+import { composeCard, isTooLong } from '../cards/compose.js';
 import { CARD } from '../lib/front-desk.js';
 import { ownKey } from '../state/signing.js';
 import { projectForFolder, writeProject, registeredProjects } from '../lib/projects.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { loginEntry, installLoginStart, loginStartRecord, needsLoginStart } from '../lib/login-start.js';
 import { HELPER_START_SCRIPT } from '../agents/index.js';
-import { otherAgentsFound, agentAsk, agentChosen, signInWait, agentComputerChanges, applyAgentComputer } from '../agents/setup-parts.js';
+import { otherAgentsFound, agentAsk, agentChosen, otherAgentChosen, signInWait, agentComputerChanges, applyAgentComputer } from '../agents/setup-parts.js';
 import { localViews } from '../hooks/session-start.js';
 import { computerId, stateDir } from '../lib/paths.js';
 import { joinedRepo } from '../lib/setup-run.js';
@@ -176,31 +176,42 @@ const RESTART = 'then quit and reopen Claude Desktop';
 const shown = (now) => (now === undefined ? '' : ` (now ${typeof now === 'number' || versionOf(now) !== null ? now : JSON.stringify(now)})`);
 
 // The card's line for each kind of change, in plain words.
-function lines({ changes, userSettings, kept, route, platform, floor }) {
+export function lines({ changes, userSettings, kept, route, platform, floor, terse = 0 }) {
   const out = [];
   const has = (what) => changes.some((c) => c.what === what);
   if (kept.length > 0) {
-    out.push(`usage counting left as you set it (${kept.map((k) => k.name).join(', ')} ${kept.length === 1 ? 'is' : 'are'} yours), so the Logbook shows no token counts here`);
+    out.push(`usage counting left as you set it (${terse >= 2 ? `${kept.length} ${kept.length === 1 ? 'setting is' : 'settings are'}` : `${kept.map((k) => k.name).join(', ')} ${kept.length === 1 ? 'is' : 'are'}`} yours), so the Logbook shows no token counts here`);
   } else if (has('telemetry')) {
     const where = route === 'launch-env'
-      ? `4 variables for your account${platform === 'darwin' ? ', set again by a login item at log-in' : ''}; ${RESTART}`
+      ? `4 variables for your account${platform === 'darwin' ? `, set again by a login item${terse >= 3 ? '' : ' at log-in'}` : ''}; ${RESTART}`
       : '4 settings in Claude Code';
     out.push(`usage counts go to Wheelhouse on this computer only, never what you type or what tools return (${where})`);
   }
   // Ruling R64: the limit holds even over a longer one of the director's, and the card says what it costs.
   if (has('retention')) {
-    out.push(`chat history kept ${RETENTION_DAYS} days${shown(userSettings.cleanupPeriodDays)}: older chats are deleted, and uninstall can't bring them back`);
+    out.push(`chat history kept ${RETENTION_DAYS} days${terse >= 3 ? '' : shown(userSettings.cleanupPeriodDays)}: older chats are deleted${terse >= 3 ? '' : ", and uninstall can't bring them back"}`);
   }
   if (has('updates')) {
     const own = ownMinimum(userSettings, floor);
     const minimum = own !== null ? `${own} (your own minimum, kept)`
-      : `${floor}, the oldest Wheelhouse works with${changes.some((c) => c.key?.[0] === 'minimumVersion') ? shown(userSettings.minimumVersion) : ''}`;
+      : `${floor}${terse >= 3 ? '' : ', the oldest Wheelhouse works with'}${changes.some((c) => c.key?.[0] === 'minimumVersion' && terse < 3) ? shown(userSettings.minimumVersion) : ''}`;
     out.push(`Claude Code takes only its well-tried updates, and never an older version than ${minimum}`);
   }
   if (has('push')) out.push('phone notifications prepared (step 9)');
   const plugin = changes.find((c) => c.what === 'plugin');
   if (plugin) out.push(plugin.update ? pluginUpdateLine(plugin.update.from, plugin.update.to) : PLUGIN_SCOPE_LINE);
-  for (const c of changes.filter((x) => x.what === 'agent' && x.line)) out.push(c.line);
+  if (terse >= 1) {
+    // Every change an agent makes still named, in one line for each agent, not the full sentence of each.
+    for (const label of [...new Set(changes.filter((x) => x.what === 'agent').map((x) => x.label))]) {
+      const own = changes.filter((x) => x.what === 'agent' && x.label === label);
+      const mate = own.some((x) => x.part === 'first-mate');
+      const hook = own.some((x) => x.part === 'hooks');
+      const what = [...(hook ? [terse >= 3 ? 'checks' : 'checks before each of its actions'] : []), ...(mate ? ['First Mate files'] : [])].join(' and ');
+      out.push(`${label}'s ${what}, in your ${label} folder for every project${hook && mate ? (terse >= 3 ? ' (checks act only in Wheelhouse projects; files say to apply only there)' : ' (the checks act only in Wheelhouse projects; the First Mate files say to apply only there)') : hook ? ' (they act only in Wheelhouse projects)' : ' (they say to apply only in Wheelhouse projects)'}`);
+    }
+  } else {
+    for (const c of changes.filter((x) => x.what === 'agent' && x.line)) out.push(c.line);
+  }
   if (has('login')) out.push(`Start Wheelhouse's helper when you sign in${platform === 'darwin' ? ', and again within a minute if it stops' : ''}, so the build carries on with no session open`);
   return out;
 }
@@ -233,18 +244,43 @@ function weakeningSentence(found, fit) {
 
 // Step 6's card: each change in plain words, the signing key, and the settings that weaken Standard.
 // Only a list with something on it has a card: an empty one settles the step (ruling R75).
-export function computerCard({ changes, userSettings = {}, kept = [], route = TELEMETRY_ROUTE, platform = process.platform, floor, key = ownKey() }) {
-  const listed = lines({ changes, userSettings, kept, route, platform, floor });
+// A card too long to compose is made again in fewer words, each time naming every change still: another agent's
+// changes in a line for each agent, then the settings of the director's own that stop usage counting counted, not
+// named, then the values their own settings held left unsaid (ruling R64: what a value costs goes last). The last form is composed as it is, so a card still too long is refused.
+export function computerCard(options) {
+  for (let terse = 0; terse < TERSEST; terse += 1) {
+    try {
+      return composeFor(options, terse);
+    } catch (error) {
+      if (!isTooLong(error)) throw error;
+    }
+  }
+  return composeFor(options, TERSEST);
+}
+
+const TERSEST = 3;
+
+function composeFor({ changes, userSettings = {}, kept = [], route = TELEMETRY_ROUTE, platform = process.platform, floor, key = ownKey(), chosenLabel = null }, terse) {
+  const listed = lines({ changes, userSettings, kept, route, platform, floor, terse });
   // One change to a line, as step 3's card lists its own.
   const head = [`Setup step 6, ${SETUP_TITLES[6]}:`, ...listed.map(asLine), '- Wheelhouse never updates itself: you choose when.'].join('\n');
   // Named without its id, which a card would read as a commit.
-  // Windows has no sandbox, so an agent's command could read the key file there; the line claims no more than holds.
+  // Windows has no sandbox, and another agent's commands are not in Claude Code's sandbox on any system, so
+  // an agent's command could read the key file; the line claims no more than holds.
+  const agentNames = [...new Set([...changes.filter((c) => c.what === 'agent').map((c) => c.label), ...(chosenLabel ? [chosenLabel] : [])])];
+  const who = agentNames.length > 0 ? `${agentNames.join(' and ')}'s commands` : 'an agent\'s commands';
+  const open = agentNames.length > 0 || platform === 'win32';
+  const win = platform === 'win32';
+  const winWho = agentNames.length > 0 ? `any agent's commands, ${agentNames.join(' and ')}'s among them,` : 'any agent\'s commands';
   const signing = !key ? ''
-    : platform === 'win32' ? '\n- Your clicks are marked as coming from this computer. On Windows an agent\'s command could read the key behind that mark, so it shows a click came from here, not that you made it.'
+    : terse >= 1 ? (open ? `\n- Your clicks are marked as coming from this computer; ${win ? 'on Windows any agent\'s commands' : who} could read the key behind that mark, so it shows a click came from here, not that you made it.` : '\n- Your clicks are marked as coming from this computer, with a key Claude Code\'s sandbox keeps agents from reading in projects Wheelhouse has set up.')
+    : open ? `\n- Your clicks are marked as coming from this computer. ${win ? `On Windows ${winWho}` : who} could read the key behind that mark, so it shows a click came from here, not that you made it.`
     : '\n- Your clicks are marked as coming from this computer, with a key that Claude Code\'s sandbox keeps agents from reading in projects Wheelhouse has set up.';
-  const variables = route === 'launch-env' && changes.some((c) => c.kind === 'env' || c.kind === 'file');
+  const variables = route === 'launch-env' && changes.some((c) => c.what === 'telemetry' && (c.kind === 'env' || c.kind === 'file'));
   const agents = [...new Set(changes.filter((c) => c.what === 'agent').map((c) => c.label))];
-  const alongside = agents.length > 0 ? `, and ${agents.join(' and ')}'s hook file${changes.some((c) => c.what === 'agent' && c.part === 'first-mate') ? ' and First Mate files' : ''}` : '';
+  const parts = (p) => changes.some((c) => c.what === 'agent' && c.part === p);
+  const agentParts = [...(parts('hooks') ? ['checks'] : []), ...(parts('first-mate') ? ['First Mate files'] : [])].join(' and ');
+  const alongside = agents.length > 0 ? `, and ${agents.join(' and ')}'s ${agentParts}` : '';
   const why = variables
     ? `These are settings on this computer, mostly Claude Code's, and variables for your account${platform === 'darwin' ? ' and a login item' : ''}${alongside}.`
     : `These are settings on this computer, mostly Claude Code's${alongside}.`;
@@ -266,7 +302,10 @@ export function computerCard({ changes, userSettings = {}, kept = [], route = TE
   const base = composeCard({ ...card(`${head}${signing}`), target: { step: 6, hash: '0'.repeat(64) } }).question.question.length;
   const fit = (sentence) => base + 1 + sentence.length <= CARD.chars;
   const weak = weakeningSentence(weakening(userSettings), fit);
-  return card(`${head}${signing}${weak === '' ? '' : `\n${weak}`}`);
+  const finished = card(`${head}${signing}${weak === '' ? '' : `\n${weak}`}`);
+  // The finished card is what is measured: a sentence that still does not fit in its last form makes this form too long.
+  composeCard({ ...finished, target: { step: 6, hash: '0'.repeat(64) } });
+  return finished;
 }
 
 // What step 6 says when it settles with nothing to change, before the settings that weaken Standard.
@@ -274,11 +313,12 @@ export const SETTLED_LEAD = `Setup step 6, ${SETUP_TITLES[6]}: every setting is 
 
 // Step 6. `run` reads (and on the launch-environment route sets) the account's launch environment;
 // `env` is the environment setup runs in (CLAUDE_CONFIG_DIR, and any telemetry variable of the
-// director's own); `route`, `port` and `manifest` are for tests, read when the plan is.
+// director's own); `route`, `port`, `manifest` and `exists` (how another
+// agent's command line is looked for) are for tests, read when the plan is.
 // `engine` is the build engine's part of this step (scripts/setup/engine-parts.js): the plugin at user scope, and the
 // login start, for a computer that runs the engine; null leaves both out.
 export function computerStep({
-  run = realRun, env = process.env, route = TELEMETRY_ROUTE, port, manifest,
+  run = realRun, env = process.env, route = TELEMETRY_ROUTE, port, manifest, exists,
   engine = { wanted: engineWanted, pluginScope: pluginScopeChanges, applyPlugin: applyPluginScope },
 } = {}) {
   const world = async (ctx) => {
@@ -299,10 +339,10 @@ export function computerStep({
     n: 6,
     title: SETUP_TITLES[6],
     async plan(ctx) {
-      // Where another agent's command line is installed, which agent builds here is asked first, once per computer
+      // Where another agent's command line is installed, which agent builds here is asked first, on every setup run
       // (scripts/agents/setup-parts.js); a computer with none asks nothing. A chosen agent that is not signed in waits.
-      const found = otherAgentsFound({ platform: ctx.platform ?? process.platform, env });
-      if (found.length > 0 && agentChosen(ctx.answers) === null) return { ask: agentAsk({ found, project: path.basename(ctx.folder ?? '') || undefined }) };
+      const found = otherAgentsFound({ platform: ctx.platform ?? process.platform, env, ...(exists === undefined ? {} : { exists }) });
+      if (found.length > 0 && agentChosen(ctx.answers) === null) return { ask: agentAsk({ found, platform: ctx.platform ?? process.platform, project: path.basename(ctx.folder ?? '') || undefined }) };
       const { platform, userHome, userSettings, floor, kept, agent, changes } = await world(ctx);
       const signIn = agent === null ? null : signInWait(agent, { env, userHome });
       if (signIn !== null) return signIn;
@@ -314,7 +354,7 @@ export function computerStep({
         if (weak !== '') ctx.say?.(`${SETTLED_LEAD} ${weak}`);
         return { settled: { record: { nothing: true } } };
       }
-      const card = computerCard({ changes, userSettings, kept, route, platform, floor });
+      const card = computerCard({ changes, userSettings, kept, route, platform, floor, chosenLabel: otherAgentChosen(ctx.answers) });
       const restart = changes.some((c) => c.kind === 'env');
       return { changes, card, director: restart ? 'One click, then quit and reopen Claude Desktop' : 'One click' };
     },
@@ -333,7 +373,7 @@ export function computerStep({
       }
       for (const c of changes.filter((x) => !['telemetry', 'login', 'plugin', 'agent'].includes(x.what))) ctx.applyJsonKey({ file: c.target, key: c.key, value: c.after });
       // The director's own settings that weaken Standard, said in one line as the step finishes,
-      // since a Go ahead on the one card shows no step 6 card (design section 15.1).
+      // since a Go ahead on the one card shows no step 6 card unless it changes another agent's files (design section 15.1).
       const weak = weakeningSentence(weakening((await world(ctx)).userSettings), (line) => line.length <= SAY_CHARS);
       if (weak !== '') ctx.say?.(weak);
       return [];
