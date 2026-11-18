@@ -287,6 +287,88 @@ function hideUserinfo(text) {
   return out + text.slice(from);
 }
 
+// An address with no scheme: `user:pass@host/path`, from the start of a word to the last @ in it that a host name follows.
+// The user is up to 64 characters of
+// a user name's, with a letter in them, and the part after the @ is a host name (then a dot, a colon, a slash, a space, a closing bracket or
+// quote, or the end) or a bracketed address, so `C:\Users\me@corp\repo` and `2026-11-18 10:15:22@server` stay as they are. An `=`
+// may come before it (`http.proxy=user:pw@proxy:3128`).
+// A one-letter user whose password starts with `/` or `\` and has another one in it is shown, as it can't be told from a Windows path.
+// Read in one pass: the @ signs are found and judged once (a host name follows, or a bracketed address), and each lead (a user, a
+// colon) then looks up the last good @ within 256 characters of it with no white space between, so a long run of leads costs a
+// lookup each, not a scan each.
+const SCHEMELESS_LEAD = /(^|[\s(<'"=])(?=[0-9._%+\\-]{0,63}[A-Za-z])([A-Za-z0-9._%+\\-]{1,64}):(?!\/\/)/g;
+const HOST_AFTER_AT = /\[|[A-Za-z0-9-]{1,63}(?:[.:/]|[\s'")>]|$)/y;
+const SCHEMELESS_REACH = 256;
+function hideSchemeless(text) {
+  const ats = [];
+  for (let at = text.indexOf('@'); at >= 0; at = text.indexOf('@', at + 1)) ats.push(at);
+  if (ats.length === 0) return text;
+  // lastGood[i] is the index in ats of the nearest good @ at or before ats[i], or -1.
+  const lastGood = new Int32Array(ats.length);
+  let good = -1;
+  for (let i = 0; i < ats.length; i += 1) {
+    const next = text.charCodeAt(ats[i] + 1);
+    // `[`, `-`, a digit or a letter: the only starts a host can have.
+    if (next === 91 || next === 45 || (next >= 48 && next <= 57) || (next >= 65 && next <= 90) || (next >= 97 && next <= 122)) {
+      HOST_AFTER_AT.lastIndex = ats[i] + 1;
+      if (HOST_AFTER_AT.test(text)) good = i;
+    }
+    lastGood[i] = good;
+  }
+  const space = /\s/g;
+  let spaceFrom = -1;
+  let spaceAt = -1;
+  const nextSpace = (from) => {
+    if (from < spaceFrom || from > spaceAt) {
+      space.lastIndex = from;
+      const found = space.exec(text);
+      spaceFrom = from;
+      spaceAt = found ? found.index : text.length;
+    }
+    return spaceAt;
+  };
+  let out = '';
+  let from = 0;
+  const lead = new RegExp(SCHEMELESS_LEAD.source, 'g');
+  for (let m = lead.exec(text); m !== null; m = lead.exec(text)) {
+    const start = m.index + m[1].length + m[2].length + 1;
+    const limit = Math.min(start + SCHEMELESS_REACH, nextSpace(start) - 1);
+    // The last @ at or before the limit (binary search), then the nearest good one at or before it.
+    let lo = 0;
+    let hi = ats.length - 1;
+    let found = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (ats[mid] <= limit) { found = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    const pick = found >= 0 ? lastGood[found] : -1;
+    if (pick < 0 || ats[pick] < start) { lead.lastIndex = m.index + 1; continue; }
+    const end = ats[pick] + 1;
+    const all = text.slice(m.index, end);
+    // A one-letter user whose password starts with `/` or `\` and has another one in it is shown, as it can't be told from a Windows path.
+    const hide = /[A-Za-z]/.test(m[2]) && !/^[A-Za-z]:[\\/][^:]*[\\/][^:]*$/.test(all.slice(m[1].length));
+    out += text.slice(from, m.index) + (hide ? `${m[1]}${HIDDEN}@` : all);
+    from = end;
+    lead.lastIndex = end;
+  }
+  return out + text.slice(from);
+}
+
+// Reads of the director's own git settings that the as-is route makes. Each one runs git with the arguments, environment and ceiling
+// its caller gives, and gives back the run's result as it is.
+export const readConfigOrigins = ({ run = realRun, gitPath = 'git', cwd, key, regexp = false, timeoutMs, baseEnv }) =>
+  run(gitPath, ['config', '--show-origin', '--show-scope', regexp ? '--get-regexp' : '--get-all', key], { cwd, env: { GIT_TERMINAL_PROMPT: '0' }, baseEnv, timeoutMs });
+export const readSslVerifyFor = ({ run = realRun, gitPath = 'git', cwd, env, baseEnv, timeoutMs, url }) =>
+  run(gitPath, ['config', '--type=bool', '--get-urlmatch', 'http.sslVerify', url], { cwd, env, baseEnv, timeoutMs });
+export const readUrlGitUses = ({ run = realRun, gitPath = 'git', cwd, env, baseEnv, timeoutMs, url }) =>
+  run(gitPath, ['ls-remote', '--get-url', '--end-of-options', url], { cwd, env, baseEnv, timeoutMs });
+export const readGitDir = ({ run = realRun, gitPath = 'git', cwd, env, baseEnv, timeoutMs }) =>
+  run(gitPath, ['rev-parse', '--git-dir'], { cwd, env, baseEnv, timeoutMs });
+export const readCredentialHelpers = ({ run = realRun, gitPath = 'git', cwd, env, baseEnv, timeoutMs }) =>
+  run(gitPath, ['config', '--get-all', 'credential.helper'], { cwd, env, baseEnv, timeoutMs });
+export const readCredentialHelperFor = ({ run = realRun, gitPath = 'git', cwd, env, baseEnv, timeoutMs, url }) =>
+  run(gitPath, ['config', '--get-urlmatch', 'credential.helper', url], { cwd, env, baseEnv, timeoutMs });
+
 // Text git (or its helpers) wrote, with anything that could carry a sign-in taken out: the user or token in an address
 // (hideUserinfo), an Authorization or extra-header value (to the end of its line), a Cookie or Set-Cookie value (to the end of its
 // line), a bare `Bearer` or `Basic` value (`bearer: x` too), a `token` or `client_secret` value after `=` or `:` (bare, to the end of its
@@ -294,7 +376,7 @@ function hideUserinfo(text) {
 // authorization or auth (accessToken and id_token too, its value hidden even when its closing quote is missing), a `password:` value, a `secret=` or `secret:` (`aws_secret_access_key=`, `app_secret=` and `X-Secret:` too), `api_key:` or `sig=` value, an address with no scheme but a user and password (within 256 characters of it, ending at a host name with a dot), a `password=` or `passwd=` value, and anything shaped like a GitLab or GitHub token
 // (after a letter too). Safe to apply twice. Every pattern reads each stretch of text once, so a long line costs a pass.
 export function scrubGitText(text) {
-  return hideUserinfo(String(text ?? ''))
+  return hideSchemeless(hideUserinfo(String(text ?? ''))
     .replace(/(authorization[ \t]*[:=][ \t]*)[^\r\n]*/gi, `$1${HIDDEN}`)
     .replace(/(extraheader[^\s=:]{0,256}[ \t]*[:=][ \t]*)[^\r\n]*/gi, `$1${HIDDEN}`)
     .replace(/(private-token[ \t]*:[ \t]*)[^\r\n]*/gi, `$1${HIDDEN}`)
@@ -313,13 +395,7 @@ export function scrubGitText(text) {
     .replace(/(pass(?:word|wd)[ \t]*[=:][ \t]*)[^\r\n]*/gi, `$1${HIDDEN}`)
     // `secret=x`, `secret: x`, `aws_secret_access_key=x`, `X-Secret: x`, `api_key: x`, `api-key=x`: a quoted string, or the run of characters up to white space; `sig=x` in a query.
     .replace(/(secret[A-Za-z0-9_-]{0,64}[ \t]*[:=][ \t]*|api[-_]?key[ \t]*[:=][ \t]*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s&'"]+)/gi, `$1${HIDDEN}`)
-    .replace(/(\bsig=)[^\s&'"]+/gi, `$1${HIDDEN}`)
-    // An address with no scheme: `user:pass@host/path`, from the start of a word to the last @ in it. The user is up to 64 characters of
-    // a user name's, with a letter in them, and the part after the @ is a host name (then a dot, a colon, a slash, a space, a closing bracket or
-    // quote, or the end) or a bracketed address, so `C:\Users\me@corp\repo` and `2026-11-18 10:15:22@server` stay as they are. An `=`
-    // may come before it (`http.proxy=user:pw@proxy:3128`).
-    // A one-letter user whose password starts with `/` or `\` and has another one in it is shown, as it can't be told from a Windows path.
-    .replace(/(^|[\s(<'"=])(?=[0-9._%+\\-]{0,63}[A-Za-z])([A-Za-z0-9._%+\\-]{1,64}):(?!\/\/)\S{0,256}@(?=\[|[A-Za-z0-9-]{1,63}(?:[.:/]|[\s'")>]|$))/g, (all, lead, user) => (/[A-Za-z]/.test(user) && !/^[A-Za-z]:[\\/][^:]*[\\/][^:]*$/.test(all.slice(lead.length)) ? `${lead}${HIDDEN}@` : all))
+    .replace(/(\bsig=)[^\s&'"]+/gi, `$1${HIDDEN}`))
     // GitLab's personal access token, whatever its body, and GitHub's tokens, whatever comes before them (a letter too); and GitLab's
     // other token prefixes (gldt-, glrt-, glcbt-, gloas-, glft-, glptt-, glimt-, glsoat-), by their shape: a body with a digit in it. Whatever
     // comes before, an underscore too, is not part of the token.

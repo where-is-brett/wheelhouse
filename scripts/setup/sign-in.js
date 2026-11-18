@@ -19,7 +19,7 @@ import { wheelhouseHome } from '../lib/paths.js';
 import { runClosed } from '../lib/setup-run.js';
 import { gitlabBase, DEFAULT_GITLAB } from '../host/gitlab-base.js';
 import { newId } from './journal.js';
-import { gitSaid, scrubGitText, refuseUnlistedSettings, asIsGitEnv, reachFailureKind } from './git.js';
+import { readGitDir, readCredentialHelpers, readCredentialHelperFor, gitSaid, scrubGitText, refuseUnlistedSettings, asIsGitEnv, reachFailureKind } from './git.js';
 import { CLICK_FRESH_MS } from '../lib/setup-numbers.js';
 
 export const SIGN_IN_TARGET = 'step 3: git sign-in address';
@@ -106,17 +106,17 @@ export async function gitHasSignInWindow({ run = realRun, gitPath = 'git', home 
     neutral = fs.mkdtempSync(path.join(root, 'sign-in-'));
     const env = asIsGitEnv({ GIT_TERMINAL_PROMPT: '0', GIT_CEILING_DIRECTORIES: root });
     const baseEnv = asIsGitEnv(withoutGitVars());
-    const inside = await run(gitPath, ['rev-parse', '--git-dir'], { cwd: neutral, env, baseEnv, timeoutMs: SETTINGS_MS });
+    const inside = await readGitDir({ run, gitPath, cwd: neutral, env, baseEnv, timeoutMs: SETTINGS_MS });
     if (inside.code === 0 || inside.timedOut === true) return false;
     await refuseUnlistedSettings({ run, gitPath, cwd: neutral, env: { GIT_CEILING_DIRECTORIES: root }, baseEnv });
-    const got = await run(gitPath, ['config', '--get-all', 'credential.helper'], { cwd: neutral, env, baseEnv, timeoutMs: SETTINGS_MS });
+    const got = await readCredentialHelpers({ run, gitPath, cwd: neutral, env, baseEnv, timeoutMs: SETTINGS_MS });
     if (got.code !== 0) return false;
     let helpers = [];
     for (const value of String(got.stdout ?? '').replace(/\r?\n$/, '').split(/\r?\n/)) helpers = value.trim() === '' ? [] : [...helpers, value];
     if (helpers.some(isManager)) return true;
     // A helper named for the address (`credential.<url>.helper`) counts too: the most specific one git matches to it.
     if (plainHttps(url) === null) return false;
-    const scoped = await run(gitPath, ['config', '--get-urlmatch', 'credential.helper', url], { cwd: neutral, env, baseEnv, timeoutMs: SETTINGS_MS });
+    const scoped = await readCredentialHelperFor({ run, gitPath, cwd: neutral, env, baseEnv, timeoutMs: SETTINGS_MS, url });
     if (scoped.code !== 0) return false;
     return String(scoped.stdout ?? '').split(/\r?\n/).some((value) => value.trim() !== '' && isManager(value));
   } catch {

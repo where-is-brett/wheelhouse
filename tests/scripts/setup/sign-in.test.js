@@ -145,7 +145,7 @@ test('where git has no sign-in window of its own the card has the account card\'
 
 test('where git is signed in as another account no window is offered: the card says to change git\'s sign-in outside setup, and recommends another way', () => {
   const pending = pendingSignIn(runOf(record({ why: 'account' })));
-  const { card } = signInAsk(pending);
+  const { card } = signInAsk(pending, { platform: 'darwin' });
   assert.match(card.what, /signed in to gitlab\.com as a different account/);
   assert.deepEqual(card.options.map((o) => o.label), [signInRetryLabel('gitlab.com'), SIGN_IN_OTHER]);
   assert.ok(!card.options.some((o) => o.label === signInOpenLabel('gitlab.com')), 'no Open');

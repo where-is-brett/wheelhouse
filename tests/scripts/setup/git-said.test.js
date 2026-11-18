@@ -215,7 +215,7 @@ test('scrubGitText and gitSaid take 1 MB of hostile text in well under a second'
     `${'"accessToken": "'.repeat(MB / 16)}`, `"${'a'.repeat(MB)}`, '"a'.repeat(MB / 2), 'bearer '.repeat(MB / 7), 'cookie: '.repeat(MB / 8), 'xghp_'.repeat(MB / 5), `token= ${'A,'.repeat(MB / 2)}`, 'passwd'.repeat(MB / 6), `"${'token'.repeat(MB / 5)}`,
     '"a.b'.repeat(MB / 4), "'password': '".repeat(MB / 13), 'a:'.repeat(MB / 2), '(a:b'.repeat(MB / 4), `${'a:'.repeat(MB / 4)}@`, 'sig='.repeat(MB / 4), 'secret='.repeat(MB / 7), 'api_key'.repeat(MB / 7),
     'password:'.repeat(MB / 9), `${'x:y '.repeat(MB / 4)}@`, 'a:@'.repeat(MB / 3), `user:${'p'.repeat(MB)}@x`, "'a".repeat(MB / 2), '"auth":'.repeat(MB / 7),
-    '\\a:'.repeat(MB / 3), '(a:'.repeat(MB / 3), '"a:'.repeat(MB / 3), '<a:'.repeat(MB / 3), '=a:'.repeat(MB / 3), 'secret'.repeat(MB / 6), 'secret-'.repeat(MB / 7), 'secret '.repeat(MB / 7), 'aws_secret'.repeat(MB / 10), 'a_secret'.repeat(MB / 8),
+    '\\a:'.repeat(MB / 3), '(a:'.repeat(MB / 3), '"a:'.repeat(MB / 3), '<a:'.repeat(MB / 3), '=a:'.repeat(MB / 3), '(a:@'.repeat(MB / 4), '(a:@x'.repeat(MB / 5), '=a:b@'.repeat(MB / 5), `${'(a:'.repeat(MB / 3)}@x.com`, 'secret'.repeat(MB / 6), 'secret-'.repeat(MB / 7), 'secret '.repeat(MB / 7), 'aws_secret'.repeat(MB / 10), 'a_secret'.repeat(MB / 8),
   ]) {
     const started = Date.now();
     scrubGitText(hostile);
