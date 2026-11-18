@@ -2403,15 +2403,15 @@ test('on the as-is route, step 7\'s ls-remote, push and fetch run with the direc
   });
 });
 
-test('on the as-is route a guard refusal stops step 7\'s call, and a project read that fails says the account git uses must read it, not step 3', async () => {
+test('on the as-is route a project read that fails names the network and the account git uses, not step 3\'s sign-in', async () => {
   await withHome(async () => {
     const w = await world({ host: 'gitlab', baseUrl: 'https://gitlab.com' });
     writeProject(SLUG, { folder: w.folder, remoteUrl: w.bare, host: 'gitlab', repo: REPO, connection: { host: 'gitlab', mode: 'as-is', project: REPO, baseUrl: 'https://gitlab.com' } });
     w.gitFails = (args) => args.includes('ls-remote') && !args.includes('--get-url');
     const planned = await w.plan().then((p) => p, (e) => ({ why: e.message }));
     const said = planned.why ?? planned.reason ?? '';
-    assert.match(said, /account your git uses must be able to read the project/, said);
-    assert.doesNotMatch(said, /step 3/, said);
+    assert.match(said, /account your git uses can read the project.*another way to connect on step 3/, said);
+    assert.doesNotMatch(said, /still signed in/, said);
   });
 });
 

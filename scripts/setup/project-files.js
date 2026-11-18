@@ -679,7 +679,7 @@ async function remoteTip(git, remoteUrl, branch) {
   const listed = await git.out(['ls-remote', '--end-of-options', remoteUrl, `refs/heads/${branch}`]);
   if (listed === null) {
     throw new Error(git.asIs
-      ? `Setup could not read ${branch} on the host using git's own sign-in on this computer: the account your git uses must be able to read the project; sign git in to an account that can, or ask for access to the project, then ask again`
+      ? `Setup could not read ${branch} on the host with git as it is on this computer. Check this computer can reach the host (on a company network, that it is connected) and that the account your git uses can read the project, then ask again; or choose another way to connect on step 3's card`
       : `Setup could not reach the repository with your sign-in to read ${branch}: check you are still signed in (step 3), then ask again`);
   }
   const sha = listed.split(/\s/)[0];
@@ -1628,7 +1628,7 @@ export function projectFilesStep({
         const catchUp = changes.find((c) => c.action === 'catch-up');
         if (catchUp !== undefined) {
           ctx.record({ id: newId('chg'), kind: 'host', target: catchUp.target, before: { branch: catchUp.branch, sha: catchUp.from }, after: { action: 'catch-up', branch: catchUp.branch, sha: catchUp.to }, project });
-          if (!(await git.ok(['push', '-q', '--no-verify', '--end-of-options', remoteUrl, `${catchUp.to}:refs/heads/${catchUp.branch}`]))) throw new Error(`This folder's newest commits could not be copied, so nothing went up; ${git.asIs ? 'the account your git uses must be able to write to the project, then ' : ''}a fresh Go ahead tries again`);
+          if (!(await git.ok(['push', '-q', '--no-verify', '--end-of-options', remoteUrl, `${catchUp.to}:refs/heads/${catchUp.branch}`]))) throw new Error(`This folder's newest commits could not be copied, so nothing went up; a fresh Go ahead tries again`);
         }
         const tipNow = await remoteTip(git, remoteUrl, up.branch);
         let sha = up.commit ?? null;
@@ -1688,13 +1688,14 @@ export function projectFilesStep({
             await takeMerged(git, { remoteUrl, branch: up.branch, head: sha, tip: await remoteTip(git, remoteUrl, up.branch) });
           } else {
             const pushed = await git.ok(['push', '-q', '--no-verify', '--end-of-options', remoteUrl, `${sha}:refs/heads/${up.branch}`]);
-            if (!pushed) throw new Error(`the setup commit could not be pushed to ${up.branch} on ${NAME[host]}; it is kept in this folder, and ${git.asIs ? 'once the account your git uses can write to the project, ' : ''}a fresh Go ahead pushes it`);
+            if (!pushed) throw new Error(`the setup commit could not be pushed to ${up.branch} on ${NAME[host]}; it is kept in this folder, and a fresh Go ahead pushes it`);
           }
           // The folder's copy of the branch on the host, told what the host now holds, when its
           // origin is the repository pushed to: fetched by the address setup recorded, never by the
           // one origin names (ruling R111).
           const origin = await git.out(['remote', 'get-url', 'origin']);
-          if (!local && origin !== null && sameRemote(origin, record.remoteUrl)) await git.ok(['fetch', '-q', '--end-of-options', record.remoteUrl, `+refs/heads/${up.branch}:refs/remotes/origin/${up.branch}`]);
+          // Best effort: the commit is already up, so a fetch that fails, or that the as-is route's look at the settings stops, leaves it at that.
+          if (!local && origin !== null && sameRemote(origin, record.remoteUrl)) await git.ok(['fetch', '-q', '--end-of-options', record.remoteUrl, `+refs/heads/${up.branch}:refs/remotes/origin/${up.branch}`]).catch(() => false);
           // The helper reads a move it didn't make as the main version moved outside it.
           if (local) keepSeenMain(project, sha);
           say(`Setup's commit is on ${up.branch} on ${NAME[host]}`);

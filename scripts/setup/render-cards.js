@@ -107,7 +107,9 @@ const REACHES = new Set(['fetch', 'push', 'pull', 'ls-remote', 'clone']);
 function scratchGit(connected, args, options = {}) {
   let at = 0;
   while (at < args.length && String(args[at]).startsWith('-')) at += ['-c', '-C'].includes(args[at]) ? 2 : 1;
-  const reaches = REACHES.has(args[at]);
+  // `ls-remote --get-url` only says the address git would use, and the as-is route's look at the director's settings asks it, so
+  // it is never sent to the scratch copy.
+  const reaches = REACHES.has(args[at]) && !args.includes('--get-url');
   const given = options.env ?? {};
   const env = {
     ...given, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: given.GIT_CONFIG_GLOBAL ?? connected.gitConfig, GIT_TERMINAL_PROMPT: '0',
