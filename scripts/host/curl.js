@@ -60,8 +60,16 @@ function addressOf(url) {
   return { parsed, local };
 }
 
+// The proxy sign-in option for `curl`. On Windows a proxy git signs in to by NTLM is signed in to by
+// whichever method the proxy offers that this `curl` can do: Windows' own curl.exe can be built without
+// NTLM and then refuses the option outright, while its Negotiate signs in as the same Windows user.
+const proxyAuthOption = (auth, platform) => {
+  if (auth === 'ntlm') return platform === 'win32' ? 'proxy-anyauth' : 'proxy-ntlm';
+  return auth === 'negotiate' ? 'proxy-negotiate' : 'proxy-anyauth';
+};
+
 // The config for one call, as text. `proxy` is readProxy's answer (or null).
-function configFor({ url, method, headers, body, proxy, caFile, maxSeconds, revokeBestEffort, local }) {
+function configFor({ url, method, headers, body, proxy, caFile, maxSeconds, revokeBestEffort, local, platform }) {
   const lines = [
     `url = ${quoteConfig(url)}`,
     `request = ${quoteConfig(method)}`,
@@ -77,7 +85,7 @@ function configFor({ url, method, headers, body, proxy, caFile, maxSeconds, revo
   if (body !== undefined && body !== null) lines.push(`data-binary = ${quoteConfig(body)}`);
   if (proxy) {
     lines.push(`proxy = ${quoteConfig(proxy.proxy)}`);
-    lines.push(`proxy-${proxy.auth === 'ntlm' || proxy.auth === 'negotiate' ? proxy.auth : 'anyauth'}`);
+    lines.push(proxyAuthOption(proxy.auth, platform));
     if (proxy.user !== null && proxy.user !== undefined) lines.push(`proxy-user = ${quoteConfig(proxy.user)}`);
     if (proxy.noProxy) lines.push(`noproxy = ${quoteConfig(proxy.noProxy)}`);
   }
@@ -114,7 +122,7 @@ export async function request({
   const args = ['-q', '--config', '-', '--silent', '--show-error', '--write-out', `\\n${nonce}%{http_code} %{http_connect}`];
   const env = cleanEnv(baseEnv);
   const once = async (options) => {
-    const got = await run(curl, args, { input: configFor({ url, method, headers, body, proxy, maxSeconds, local, ...options }), baseEnv: env, env: {}, timeoutMs: (maxSeconds + 15) * 1000 });
+    const got = await run(curl, args, { input: configFor({ url, method, headers, body, proxy, maxSeconds, local, platform, ...options }), baseEnv: env, env: {}, timeoutMs: (maxSeconds + 15) * 1000 });
     const stdout = String(got.stdout ?? '');
     const at = stdout.lastIndexOf(`\n${nonce}`);
     const marker = at < 0 ? null : /^(\d+) (\d+)/.exec(stdout.slice(at + 1 + nonce.length));
