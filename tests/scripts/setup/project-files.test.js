@@ -332,6 +332,45 @@ test('the project settings keep the director\'s own keys and add Wheelhouse\'s',
   });
 });
 
+test('a folder with no commit yet takes in the repository\'s first commit (the README the host made) at step 7, its files untouched', async () => {
+  await withHome(async () => {
+    const w = await world();
+    // As a new product's folder can be found: git started, the host's first commit fetched, but never taken in.
+    fs.rmSync(path.join(w.folder, '.git'), { recursive: true, force: true });
+    fs.rmSync(path.join(w.folder, 'README.md'));
+    fs.rmSync(path.join(w.folder, 'CLAUDE.md'));
+    await g(w.folder, 'init', '-q', '-b', 'main');
+    await g(w.folder, 'remote', 'add', 'origin', w.bare);
+    await g(w.folder, 'fetch', '-q', 'origin');
+    const settings = fs.readFileSync(path.join(w.folder, '.claude', 'settings.json'), 'utf8');
+    const planned = await w.plan();
+    assert.ok(Array.isArray(planned.changes), planned.why);
+    const tip = await lsRemote(w.bare, 'main');
+    assert.equal((await realRun('git', ['-C', w.folder, 'rev-parse', 'HEAD'])).stdout.trim(), tip);
+    assert.equal(fs.readFileSync(path.join(w.folder, 'README.md'), 'utf8'), '# Shop\n', 'the repository\'s files the folder lacked are written out');
+    assert.equal(fs.readFileSync(path.join(w.folder, '.claude', 'settings.json'), 'utf8'), settings, 'the folder\'s own files are untouched');
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+  });
+});
+
+test('a folder with no commit yet is not taken on to a host branch that has gone past its first commit', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const work = tempFolder('wh-more-');
+    await g(work, 'clone', '-q', w.bare, 'c');
+    fs.writeFileSync(path.join(work, 'c', 'more.txt'), 'more\n');
+    await g(path.join(work, 'c'), 'add', '-A');
+    await g(path.join(work, 'c'), '-c', 'user.name=T', '-c', 'user.email=t@example.org', 'commit', '-q', '-m', 'More');
+    await g(path.join(work, 'c'), 'push', '-q', 'origin', 'main');
+    fs.rmSync(path.join(w.folder, '.git'), { recursive: true, force: true });
+    await g(w.folder, 'init', '-q', '-b', 'main');
+    await g(w.folder, 'remote', 'add', 'origin', w.bare);
+    await assert.rejects(w.plan(), /has commits on main that this folder hasn't got yet/);
+    assert.notEqual((await realRun('git', ['-C', w.folder, 'rev-parse', '-q', '--verify', 'HEAD'])).code, 0, 'still no commit');
+  });
+});
+
 test('the configuration has every plan\'s keys with their defaults', () => {
   for (const [label, liveData] of [[LIVE_DATA.yes, true], [LIVE_DATA.no, false]]) {
     const config = starterConfig({ answers: { '4.live-data': { label, text: null } }, host: 'github' });
