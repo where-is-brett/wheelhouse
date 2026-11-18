@@ -4392,3 +4392,11 @@ test('after a pasted address missed, GitLab on the same host under the name the 
     assert.doesNotMatch(ask.card.what, /can't use that name/);
   });
 });
+
+test('ownSignInFailure leads with another way to connect once git\'s window has been opened for the host', () => {
+  const said = 'fatal: could not read Username for \'https://gitlab.com\': terminal prompts disabled';
+  const first = ownSignInFailure('reach the project', 'https://gitlab.com/o/p.git', () => {}, { base: 'https://gitlab.com', gcm: true })(said);
+  const later = ownSignInFailure('reach the project', 'https://gitlab.com/o/p.git', () => {}, { base: 'https://gitlab.com', gcm: true, opened: true })(said);
+  assert.match(first, /Next: I can open git's sign-in for gitlab\.com/);
+  assert.match(later, /Next: choose another way to connect on step 3's card \(recommended\), or I can open git's sign-in for gitlab\.com again/);
+});

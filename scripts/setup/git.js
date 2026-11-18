@@ -318,7 +318,7 @@ export function scrubGitText(text) {
     // a user name's, with a letter in them, and the part after the @ is a host name (then a dot, a colon, a slash, a space, a closing bracket or
     // quote, or the end) or a bracketed address, so `C:\Users\me@corp\repo` and `2026-11-18 10:15:22@server` stay as they are. An `=`
     // may come before it (`http.proxy=user:pw@proxy:3128`).
-    .replace(/(^|[\s(<'"=])([A-Za-z0-9._%+-]{1,64}):(?!\/\/)\S{0,256}@(?=\[|[A-Za-z0-9-]{1,63}(?:[.:/]|[\s'")>]|$))/g, (all, lead, user) => (/[A-Za-z]/.test(user) ? `${lead}${HIDDEN}@` : all))
+    .replace(/(^|[\s(<'"=])([A-Za-z0-9._%+\\-]{1,64}):(?!\/\/)\S{0,256}@(?=\[|[A-Za-z0-9-]{1,63}(?:[.:/]|[\s'")>]|$))/g, (all, lead, user) => (/[A-Za-z]/.test(user) && !/^[A-Za-z]:[\\/]/.test(all.slice(lead.length)) ? `${lead}${HIDDEN}@` : all))
     // GitLab's personal access token, whatever its body, and GitHub's tokens, whatever comes before them (a letter too); and GitLab's
     // other token prefixes (gldt-, glrt-, glcbt-, gloas-, glft-, glptt-, glimt-, glsoat-), by their shape: a body with a digit in it. Whatever
     // comes before, an underscore too, is not part of the token.
@@ -372,4 +372,21 @@ export class DetailedError extends Error {
     super(message);
     this.detail = typeof detail === 'string' ? scrubGitText(detail) : undefined;
   }
+}
+
+// What git said when a call that reached the host failed, told by its last lines, one line at a time (so a long stderr costs a
+// pass, nothing more), and in the text of a line outside its addresses and paths, so a project named auth-service.git says nothing:
+// 'not-found' when the project is not there for this sign-in, 'sign-in' when a sign-in is missing or refused, else 'other'.
+const NOT_FOUND = [/could not be found or you don.t have permission/i, /the project you were looking for could not be found/i, /permission to \S+ denied/i, /repository not found/i];
+const SIGN_IN_WORDS = /auth|credential|sign.?in|log.?in|forbidden|denied/i;
+const SIGN_IN_FAILURE = [/could not read (?:username|password)/i, /authentication failed/i, /http basic: access denied/i, /\b401\b/, /terminal prompts (?:have been )?disabled/i, /user interactivity has been disabled/i];
+const SAID_LINES = 16;
+const outsideAddresses = (line) => line.split(/\s+/).filter((word) => !/[/\\]|\.git\b/i.test(word)).join(' ');
+export function reachFailureKind(stderr) {
+  const said = String(stderr ?? '').split(/[\r\n]+/).filter((l) => l.trim() !== '').slice(-SAID_LINES);
+  // These phrases hold spaces, so no address or path can make one.
+  if (said.some((l) => NOT_FOUND.some((re) => re.test(l)))) return 'not-found';
+  const lines = said.map(outsideAddresses);
+  if (lines.some((l) => SIGN_IN_FAILURE.some((re) => re.test(l)) || (/\b403\b/.test(l) && SIGN_IN_WORDS.test(l)))) return 'sign-in';
+  return 'other';
 }

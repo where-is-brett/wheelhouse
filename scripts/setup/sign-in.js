@@ -19,7 +19,7 @@ import { wheelhouseHome } from '../lib/paths.js';
 import { runClosed } from '../lib/setup-run.js';
 import { gitlabBase, DEFAULT_GITLAB } from '../host/gitlab-base.js';
 import { newId } from './journal.js';
-import { gitSaid, scrubGitText, refuseUnlistedSettings, asIsGitEnv } from './git.js';
+import { gitSaid, scrubGitText, refuseUnlistedSettings, asIsGitEnv, reachFailureKind } from './git.js';
 import { CLICK_FRESH_MS } from '../lib/setup-numbers.js';
 
 export const SIGN_IN_TARGET = 'step 3: git sign-in address';
@@ -64,14 +64,19 @@ export const ACCOUNT_LINE = (host) => `Git on this computer is signed in to ${ho
 export const NO_WINDOW_LINE = (host) => `Git on this computer has no sign-in window of its own that setup can open for ${host}, so nothing was opened. Sign git in to ${host} outside setup, then choose '${signInSignedLabel(host)}' on the card that follows, or ${OTHER_WAY} (recommended).`;
 export const NOT_RECORDED = 'Setup could not record that it was opening git\'s sign-in, so nothing was opened. A fresh Go ahead on step 3\'s card tries again.';
 export const signedInLine = (host) => `Git reached ${host} and can see the project. Setup carries on with step 3.`;
-export const SIGN_IN_ONCE_DETAIL = 'Run plan 3: the sign-in card is asked afresh, once. From the second failure on, the card recommends "Use another way to connect"; ask each fresh card as given, and never run the sign-in form without a fresh click.';
+export const NOT_KEPT = 'Setup could not keep a record of this attempt, so the sign-in card cannot be asked again. This is a fault in Wheelhouse: tell me and I\'ll report it.';
+export const SIGN_IN_ONCE_DETAIL = 'Run plan 3: the sign-in card is asked afresh, once. Once git\'s sign-in window has been opened and setup still can\'t reach the project, the card recommends "Use another way to connect"; ask each fresh card as given, and never run the sign-in form without a fresh click.';
+// The line after a window that opened and did not get git to the project: the card that follows recommends another way.
 export const failedLine = (host, said, { timedOut = false, gcm = true } = {}) => (!gcm
   ? `Git still could not reach ${host}${said === '' ? '' : ` (git said: ${said})`}. Next: sign git in to ${host} outside setup, then choose '${signInSignedLabel(host)}' on the card that follows, or ${OTHER_WAY} (recommended).`
   : timedOut
-  ? `Git's sign-in for ${host} was not finished within ${SIGN_IN_WAIT_MS / 60000} minutes, so setup stopped waiting. Next: ${AGAIN}, or ${OTHER_WAY}.`
-  : `Git still could not reach ${host}${said === '' ? '' : ` (git said: ${said})`}. Next: ${AGAIN}; if its window asked for a token, or a password you don't use there, close it and ${OTHER_WAY}.`);
-const NEUTRAL_UNSAFE = `Setup could not make sure git would run where no project's settings reach it, so nothing was opened; ${AGAIN}, or ${OTHER_WAY}.`;
-const SETTINGS_UNCHECKED = `Setup could not check git's settings before opening its sign-in, so nothing was opened; ${AGAIN}, or ${OTHER_WAY}.`;
+  ? `Git's sign-in for ${host} was not finished within ${SIGN_IN_WAIT_MS / 60000} minutes, so setup stopped waiting. Next: ${OTHER_WAY} (recommended), or ${AGAIN}.`
+  : `Git still could not reach ${host}${said === '' ? '' : ` (git said: ${said})`}. Next: ${OTHER_WAY} (recommended), which is the way to go if its window asked for a token, or a password you don't use there; or ${AGAIN}.`);
+// Git's window opened and git then reached the host as an account that can't see the project: the card that follows has the account's shape.
+export const accountSeenLine = (host, said) => `Git reached ${host} as an account that can't see the project${said === '' ? '' : ` (git said: ${said})`}, so its sign-in window cannot help. Next: sign git out of ${host}, or in as the account that owns the project, outside setup, then choose '${signInRetryLabel(host)}' on the card that follows; or ${OTHER_WAY} (recommended).`;
+// A refusal before the window opened: where the card that follows recommends another way (`opened`), so does the line.
+const neutralUnsafe = (opened) => `Setup could not make sure git would run where no project's settings reach it, so nothing was opened; ${opened ? `${OTHER_WAY} (recommended), or ${AGAIN}` : `${AGAIN}, or ${OTHER_WAY}`}.`;
+const settingsUnchecked = (opened) => `Setup could not check git's settings before opening its sign-in, so nothing was opened; ${opened ? `${OTHER_WAY} (recommended), or ${AGAIN}` : `${AGAIN}, or ${OTHER_WAY}`}.`;
 
 const GITHUB_HOST = new URL(GITHUB_ORIGIN).hostname;
 
@@ -164,19 +169,19 @@ export function signInOutdated(pending, { asIs, url, base }) {
 // change git's sign-in outside setup, or to choose another way (recommended). Where git has no window of its own (`gcm` false), the card has
 // the same shape: sign git in outside setup, then click, or choose another way (recommended); no window is offered. `platform` is the
 // computer the card is shown on (where to sign git out differs).
-export function signInAsk(pending, { platform = process.platform, tries = 1 } = {}) {
+// `tries` is how many cards this host has had; `opened` is whether git's window has been opened for an earlier record of this host.
+export function signInAsk(pending, { platform = process.platform, tries = 1, opened = false } = {}) {
   const account = pending.why === 'account';
   // The card's words depend on the record and the try only (never the time), so the same record asked again says the same, and a later
   // record, which the Desktop app would show as the earlier card if it said the same, says it is a further try.
   const again = Number.isInteger(tries) && tries >= 2 ? `Asked again (card ${tries}): ` : null;
-  const later = again !== null;
   const lead = (first, laterWords) => (again === null ? first : `${again}${laterWords}`);
   const open = signInOpenLabel(pending.host);
   const retry = signInRetryLabel(pending.host);
   const signed = signInSignedLabel(pending.host);
   // Where to sign git out, by the computer the card is shown on.
   const where = platform === 'win32' ? ' (in Windows\' Credential Manager, under Windows Credentials)' : platform === 'darwin' ? ' (in Keychain Access)' : '';
-  const id = `git-sign-in-${crypto.createHash('sha256').update(`${pending.id}\n${pending.address}\n${pending.at}`).digest('hex').slice(0, 10)}`;
+  const id = askId(pending);
   const otherSays = 'Step 3\'s connection card comes back, to choose a way that needs nothing from your git\'s sign-in.';
   if (account) {
     return {
@@ -200,7 +205,7 @@ export function signInAsk(pending, { platform = process.platform, tries = 1 } = 
       id,
       card: {
         level: 2,
-        what: lead(`Git on this computer isn't signed in to ${pending.host}, so setup could not reach the project there.`, `git on this computer isn't signed in to ${pending.host} yet, so setup could not reach the project there.`),
+        what: lead(`Git on this computer isn't signed in to ${pending.host}, so setup could not reach the project there.`, `git on this computer isn't signed in to ${pending.host}, so setup could not reach the project there.`),
         why: 'You chose to use your own git, so setup relies on its sign-in and makes none. Git on this computer does not seem to have a sign-in window of its own, so setup opens none.',
         options: [
           { label: signed, says: `Do this first: sign git in to ${pending.host}, outside setup. Then click this, and setup carries on with step 3. If you're not sure how, choose another way to connect.` },
@@ -216,7 +221,7 @@ export function signInAsk(pending, { platform = process.platform, tries = 1 } = 
     id,
     card: {
       level: 2,
-      what: lead(`Git on this computer isn't signed in to ${pending.host}, so setup could not reach the project there.`, `git on this computer isn't signed in to ${pending.host} yet, so setup could not reach the project there.`),
+      what: lead(`Git on this computer isn't signed in to ${pending.host}, so setup could not reach the project there.`, `git on this computer isn't signed in to ${pending.host}, so setup could not reach the project there.`),
       why: 'You chose to use your own git, so setup relies on its sign-in and makes none. Git opens its own window for it, which may take a minute and may open behind other windows, and setup never sees what you type there.',
       options: [
         {
@@ -225,17 +230,46 @@ export function signInAsk(pending, { platform = process.platform, tries = 1 } = 
         },
         { label: SIGN_IN_OTHER, says: otherSays },
       ],
-      recommend: later ? SIGN_IN_OTHER : open,
-      because: later ? 'git\'s sign-in has not reached the project so far' : 'it is the way you chose, and nothing else changes',
+      recommend: opened ? SIGN_IN_OTHER : open,
+      because: opened ? 'git\'s sign-in window has already been opened and has not reached the project' : 'it is the way you chose, and nothing else changes',
       meanwhile: 'Nothing more runs on step 3 until you choose.',
     },
   };
 }
 
-// How many sign-in records a run has kept: the try the latest one is (a cleared record is no try).
-export function triesOf(run) {
-  const kept = (Array.isArray(run?.changes) ? run.changes : []).filter((c) => c?.kind === 'answer' && c.target === SIGN_IN_TARGET && c.after?.signIn !== null && typeof c.after?.signIn === 'object');
-  return Math.max(1, kept.length);
+// The id of a record's card: its words and the record only (never the time).
+function askId({ id, address, at }) {
+  return `git-sign-in-${crypto.createHash('sha256').update(`${id}\n${address}\n${at}`).digest('hex').slice(0, 10)}`;
+}
+
+// The sign-in records a run has kept for a host (a cleared record is none), as the journal holds them; every host's when `host` is null.
+function recordsOf(run, host) {
+  return (Array.isArray(run?.changes) ? run.changes : []).filter((c) => {
+    if (c?.kind !== 'answer' || c.target !== SIGN_IN_TARGET || c.after?.signIn === null || typeof c.after?.signIn !== 'object') return false;
+    if (host === null) return true;
+    try {
+      return new URL(c.after.signIn.address).hostname === host;
+    } catch {
+      return false;
+    }
+  });
+}
+
+// How many sign-in records a run has kept for this host: the try the latest one is (a cleared record is no try; another host's is not this one's).
+export function triesOf(run, host = null) {
+  return Math.max(1, recordsOf(run, host).length);
+}
+
+// Whether git's window has been opened for a record of this host: a card of its click was marked used, which is kept before anything opens.
+export function openedOf(run, host) {
+  const used = new Set((Array.isArray(run?.changes) ? run.changes : []).filter((c) => c?.kind === 'answer' && c.target === SIGN_IN_USED_TARGET).map((c) => c.after?.used));
+  return recordsOf(run, host).some((c) => {
+    try {
+      return used.has(askId({ id: c.id, address: new URL(c.after.signIn.address).href, at: c.after.signIn.at }));
+    } catch {
+      return false;
+    }
+  });
 }
 
 // Why the pending address is not the run's step 3 connection, or null when it is: its host is GitHub's or the public GitLab's, or a GitLab
@@ -297,25 +331,25 @@ export async function signInNow({
     }
   };
   // A fresh record of the same address, so the card is asked afresh; whether it could be kept.
-  const kept = () => writes({ signIn: signInRecord({ address: pending.address, base: pending.base, why: pending.why, search: pending.search, gcm: pending.gcm, now }) });
+  const kept = (why = pending.why) => writes({ signIn: signInRecord({ address: pending.address, base: pending.base, why, search: pending.search, gcm: pending.gcm, now }) });
   const cleared = (reason) => writes({ signIn: null, cleared: reason });
   // Where git is signed in as another account, git's window would not open: no sign-in is opened for it.
   if (pending.why === 'account') return refuse(ACCOUNT_LINE(pending.host));
   // Nor where git has no window of its own: the card offers none to click.
   if (!pending.gcm) return refuse(NO_WINDOW_LINE(pending.host));
-  const ask = signInAsk(pending, { platform, tries: triesOf(journalRun) });
+  // Whether the card that follows a refusal before the window opens recommends another way: git's window has opened before for this host.
+  const wasOpened = openedOf(journalRun, pending.host);
+  const ask = signInAsk(pending, { platform, tries: triesOf(journalRun, pending.host), opened: wasOpened });
+  // A refusal that keeps a fresh record so the card is asked afresh: a fault in Wheelhouse if the record could not be kept.
+  const keptRefuse = (refused, detail, why) => (kept(why) ? refuse(refused, detail) : refuse(NOT_KEPT, detail));
   const click = answers[`3.${ask.id}`];
   if (click?.label !== signInOpenLabel(pending.host)) return refuse(NOT_CHOSEN, NOT_CHOSEN_DETAIL);
   const used = (Array.isArray(journalRun.changes) ? journalRun.changes : []).some((c) => c?.kind === 'answer' && c.target === SIGN_IN_USED_TARGET && c.after?.used === ask.id);
-  if (used) {
-    kept();
-    return refuse(CLICK_USED, CLICK_DETAIL);
-  }
+  if (used) return keptRefuse(CLICK_USED, CLICK_DETAIL);
   const clicked = Date.parse(click.at);
   const age = now().getTime() - clicked;
   if (!Number.isFinite(clicked) || age > CLICK_FRESH_MS || age < -SKEW_MS || clicked <= Date.parse(pending.at)) {
-    kept();
-    return refuse(CLICK_STALE, CLICK_DETAIL);
+    return keptRefuse(CLICK_STALE, CLICK_DETAIL);
   }
   const problem = connectionProblem({ pending, run: journalRun, remoteRepo: route.remoteRepo, gitlabHosts: route.gitlabHosts });
   if (problem !== null) return refuse(cleared('not the connection') ? NOT_THE_CONNECTION : NOT_THE_CONNECTION_UNCLEARED, problem);
@@ -344,14 +378,12 @@ export async function signInNow({
   try {
     const inside = await limited(git.path, ['rev-parse', '--git-dir'], { cwd: neutral, env: { GIT_TERMINAL_PROMPT: '0', ...ceiling }, baseEnv, timeoutMs: SETTINGS_MS });
     if (inside.code === 0 || inside.timedOut === true) {
-      kept();
-      return refuse(NEUTRAL_UNSAFE, inside.timedOut === true ? 'git did not answer in time where the sign-in\'s folder is' : `git found a repository at ${String(inside.stdout ?? '').trim()} for the sign-in's folder, ${neutral}`);
+      return keptRefuse(neutralUnsafe(wasOpened), inside.timedOut === true ? 'git did not answer in time where the sign-in\'s folder is' : `git found a repository at ${String(inside.stdout ?? '').trim()} for the sign-in's folder, ${neutral}`);
     }
     try {
       await refuseUnlistedSettings({ run: limited, gitPath: git.path, cwd: neutral, env: ceiling, baseEnv });
     } catch (error) {
-      kept();
-      return refuse(SETTINGS_UNCHECKED, error instanceof Error ? error.message : undefined);
+      return keptRefuse(settingsUnchecked(wasOpened), error instanceof Error ? error.message : undefined);
     }
     const isGitHub = host === GITHUB_HOST;
     const reach = route.reachEnv({ host: isGitHub ? 'github' : 'gitlab', url: pending.address, gitPath: git.path, platform, base: isGitHub ? undefined : pending.base });
@@ -359,9 +391,8 @@ export async function signInNow({
     try {
       given = await route.guard({ run: limited, gitPath: git.path, cwd: neutral, env: { ...reach, ...ceiling }, url: pending.address, timeoutMs: SETTINGS_MS, baseEnv });
     } catch (error) {
-      kept();
-      const line = typeof error?.lineFor === 'function' ? error.lineFor({ stop: 'nothing was opened', again: AGAIN }) : SETTINGS_UNCHECKED;
-      return refuse(line, error?.detail ?? (error instanceof Error ? error.message : undefined));
+      const line = typeof error?.lineFor === 'function' ? error.lineFor({ stop: 'nothing was opened', again: wasOpened ? null : AGAIN }) : settingsUnchecked(wasOpened);
+      return keptRefuse(line, error?.detail ?? (error instanceof Error ? error.message : undefined));
     }
     if (stopped()) return refuse(STOPPED_LINE, STOPPED_DETAIL);
     // The click opens it once: marked before anything opens, and nothing opens if the mark cannot be kept.
@@ -384,8 +415,10 @@ export async function signInNow({
       return refuse(STOPPED_OPEN_LINE, kept() ? STOPPED_DETAIL : `${STOPPED_DETAIL} Setup could not keep a fresh record of this, so tell me and I'll report it.`);
     }
     if (got.code !== 0) {
-      kept();
-      return refuse(failedLine(host, got.timedOut === true ? '' : gitSaid(got.stderr), { timedOut: got.timedOut === true, gcm: pending.gcm }), SIGN_IN_ONCE_DETAIL);
+      const said = got.timedOut === true ? '' : gitSaid(got.stderr);
+      // Git opened its window and reached the host as an account that can't see the project: it is signed in, as another account.
+      if (got.timedOut !== true && reachFailureKind(got.stderr) === 'not-found') return keptRefuse(accountSeenLine(host, said), SIGN_IN_ONCE_DETAIL, 'account');
+      return keptRefuse(failedLine(host, said, { timedOut: got.timedOut === true, gcm: pending.gcm }), SIGN_IN_ONCE_DETAIL);
     }
     writes({ signIn: null, reached: now().toISOString() });
     return { ok: true, line: signedInLine(host) };

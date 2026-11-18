@@ -156,6 +156,11 @@ test('scrubGitText hides a JSON key with a dot or in single quotes, authorizatio
   // A Windows path with an @ in it, and a time before an @ and a host with no dot, are not an address with a user.
   assert.equal(scrubGitText('C:\\Users\\me@corp\\repo'), 'C:\\Users\\me@corp\\repo');
   assert.equal(scrubGitText('2026-11-18 10:15:22@server'), '2026-11-18 10:15:22@server');
+  assert.equal(scrubGitText('C:/Users/me@corp/repo'), 'C:/Users/me@corp/repo');
+  assert.equal(scrubGitText('fatal: not a git repository: C:/Users/me@corp/repo'), 'fatal: not a git repository: C:/Users/me@corp/repo');
+  assert.equal(scrubGitText('C:/Users/me/proj@2/repo'), 'C:/Users/me/proj@2/repo');
+  // A domain user with a backslash, in a proxy line, is hidden with its password.
+  assert.equal(scrubGitText('http.proxy CORP\\jsmith:Passw0rd@proxy.corp.com:8080'), 'http.proxy [hidden]@proxy.corp.com:8080');
   for (const [said, shown] of [
     ['http.proxy user:pw@proxy:3128', 'http.proxy [hidden]@proxy:3128'],
     ['http.proxy=user:pw@proxy.corp.com:8080', 'http.proxy=[hidden]@proxy.corp.com:8080'],
@@ -194,7 +199,7 @@ test('scrubGitText and gitSaid take 1 MB of hostile text in well under a second'
     `${'"accessToken": "'.repeat(MB / 16)}`, `"${'a'.repeat(MB)}`, '"a'.repeat(MB / 2), 'bearer '.repeat(MB / 7), 'cookie: '.repeat(MB / 8), 'xghp_'.repeat(MB / 5), `token= ${'A,'.repeat(MB / 2)}`, 'passwd'.repeat(MB / 6), `"${'token'.repeat(MB / 5)}`,
     '"a.b'.repeat(MB / 4), "'password': '".repeat(MB / 13), 'a:'.repeat(MB / 2), '(a:b'.repeat(MB / 4), `${'a:'.repeat(MB / 4)}@`, 'sig='.repeat(MB / 4), 'secret='.repeat(MB / 7), 'api_key'.repeat(MB / 7),
     'password:'.repeat(MB / 9), `${'x:y '.repeat(MB / 4)}@`, 'a:@'.repeat(MB / 3), `user:${'p'.repeat(MB)}@x`, "'a".repeat(MB / 2), '"auth":'.repeat(MB / 7),
-    '(a:'.repeat(MB / 3), '"a:'.repeat(MB / 3), '<a:'.repeat(MB / 3), '=a:'.repeat(MB / 3), 'secret'.repeat(MB / 6), 'secret-'.repeat(MB / 7), 'secret '.repeat(MB / 7), 'aws_secret'.repeat(MB / 10), 'a_secret'.repeat(MB / 8),
+    '\\a:'.repeat(MB / 3), '(a:'.repeat(MB / 3), '"a:'.repeat(MB / 3), '<a:'.repeat(MB / 3), '=a:'.repeat(MB / 3), 'secret'.repeat(MB / 6), 'secret-'.repeat(MB / 7), 'secret '.repeat(MB / 7), 'aws_secret'.repeat(MB / 10), 'a_secret'.repeat(MB / 8),
   ]) {
     const started = Date.now();
     scrubGitText(hostile);
