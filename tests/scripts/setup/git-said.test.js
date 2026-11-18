@@ -149,10 +149,21 @@ test('scrubGitText hides a JSON key with a dot or in single quotes, authorizatio
   assert.equal(scrubGitText('api-key: k1 and API_KEY=k2'), 'api-key: [hidden] and API_KEY=[hidden]');
   assert.equal(scrubGitText('https://h/x?sig=abc123&b=1'), 'https://h/x?sig=[hidden]&b=1');
   assert.equal(scrubGitText('fatal: unable to access oauth2:glpat-x@gitlab.example.com/o/p.git'), 'fatal: unable to access [hidden]@gitlab.example.com/o/p.git');
-  assert.equal(scrubGitText('see "user:pa@ss@host/x" now'), 'see "[hidden]@host/x" now');
+  assert.equal(scrubGitText('see "user:pa@ss@host.example/x" now'), 'see "[hidden]@host.example/x" now');
   assert.equal(scrubGitText('at 12:30 mail me, a:b'), 'at 12:30 mail me, a:b');
   assert.equal(scrubGitText('https://[hidden]@h/x'), 'https://[hidden]@h/x');
-  assert.equal(scrubGitText(scrubGitText('a user:pw@h/x')), 'a [hidden]@h/x');
+  assert.equal(scrubGitText(scrubGitText('a user:pw@h.example/x')), 'a [hidden]@h.example/x');
+  // A Windows path with an @ in it, and a time before an @ and a host with no dot, are not an address with a user.
+  assert.equal(scrubGitText('C:\\Users\\me@corp\\repo'), 'C:\\Users\\me@corp\\repo');
+  assert.equal(scrubGitText('2026-11-18 10:15:22@server'), '2026-11-18 10:15:22@server');
+  assert.equal(scrubGitText('x 1:2@h.example y'), 'x 1:2@h.example y', 'a user with no letter in it is no user');
+});
+
+test('scrubGitText never crosses a line, and hides the other secret and key names', () => {
+  assert.equal(scrubGitText('password:\nnext line stays'), 'password:[hidden]\nnext line stays');
+  assert.equal(scrubGitText('authorization:\nnext line stays'), 'authorization:[hidden]\nnext line stays');
+  assert.equal(scrubGitText('aws_secret=abc app_secret=def client_secret=ghi'), 'aws_secret=[hidden] app_secret=[hidden] client_secret=[hidden]');
+  for (const key of ['private_key', 'access_key', 'pass', 'credential', 'privateKey']) assert.equal(scrubGitText(`{"${key}": "v"}`), `{"${key}": "[hidden]"}`, key);
 });
 
 test('scrubGitText and gitSaid take 1 MB of hostile text in well under a second', () => {
@@ -164,6 +175,7 @@ test('scrubGitText and gitSaid take 1 MB of hostile text in well under a second'
     `${'"accessToken": "'.repeat(MB / 16)}`, `"${'a'.repeat(MB)}`, '"a'.repeat(MB / 2), 'bearer '.repeat(MB / 7), 'cookie: '.repeat(MB / 8), 'xghp_'.repeat(MB / 5), `token= ${'A,'.repeat(MB / 2)}`, 'passwd'.repeat(MB / 6), `"${'token'.repeat(MB / 5)}`,
     '"a.b'.repeat(MB / 4), "'password': '".repeat(MB / 13), 'a:'.repeat(MB / 2), '(a:b'.repeat(MB / 4), `${'a:'.repeat(MB / 4)}@`, 'sig='.repeat(MB / 4), 'secret='.repeat(MB / 7), 'api_key'.repeat(MB / 7),
     'password:'.repeat(MB / 9), `${'x:y '.repeat(MB / 4)}@`, 'a:@'.repeat(MB / 3), `user:${'p'.repeat(MB)}@x`, "'a".repeat(MB / 2), '"auth":'.repeat(MB / 7),
+    '(a:'.repeat(MB / 3), '"a:'.repeat(MB / 3), '<a:'.repeat(MB / 3), 'aws_secret'.repeat(MB / 10), 'a_secret'.repeat(MB / 8),
   ]) {
     const started = Date.now();
     scrubGitText(hostile);

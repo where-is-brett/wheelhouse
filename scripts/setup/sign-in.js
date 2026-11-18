@@ -13,14 +13,13 @@
 // Nothing here imports host.js (which imports this): the as-is environment and the guard are given by the route.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { wheelhouseHome } from '../lib/paths.js';
 import { runClosed } from '../lib/setup-run.js';
 import { gitlabBase, DEFAULT_GITLAB } from '../host/gitlab-base.js';
 import { newId } from './journal.js';
-import { gitSaid, scrubGitText, refuseUnlistedSettings } from './git.js';
+import { gitSaid, scrubGitText, refuseUnlistedSettings, asIsGitEnv } from './git.js';
 import { CLICK_FRESH_MS } from '../lib/setup-numbers.js';
 
 export const SIGN_IN_TARGET = 'step 3: git sign-in address';
@@ -65,7 +64,7 @@ export const ACCOUNT_LINE = (host) => `Git on this computer is signed in to ${ho
 export const NO_WINDOW_LINE = (host) => `Git on this computer has no sign-in window of its own that setup can open for ${host}, so nothing was opened. Sign git in to ${host} outside setup, then choose '${signInSignedLabel(host)}' on the card that follows, or ${OTHER_WAY} (recommended).`;
 export const NOT_RECORDED = 'Setup could not record that it was opening git\'s sign-in, so nothing was opened. A fresh Go ahead on step 3\'s card tries again.';
 export const signedInLine = (host) => `Git reached ${host} and can see the project. Setup carries on with step 3.`;
-export const SIGN_IN_ONCE_DETAIL = 'Run plan 3: the sign-in card is asked afresh, once. If the same thing fails a second time, stop, tell the director plainly, and recommend another way to connect on step 3\'s card.';
+export const SIGN_IN_ONCE_DETAIL = 'Run plan 3: the sign-in card is asked afresh, once. If the same thing fails a second time, ask the card plan 3 gives once more and recommend its "Use another way to connect".';
 export const failedLine = (host, said, { timedOut = false, gcm = true } = {}) => (!gcm
   ? `Git still could not reach ${host}${said === '' ? '' : ` (git said: ${said})`}. Next: sign git in to ${host} outside setup, then choose '${signInSignedLabel(host)}' on the card that follows, or ${OTHER_WAY} (recommended).`
   : timedOut
@@ -99,11 +98,11 @@ export async function gitHasSignInWindow({ run = realRun, gitPath = 'git', home 
     const root = path.resolve(home);
     fs.mkdirSync(root, { recursive: true });
     neutral = fs.mkdtempSync(path.join(root, 'sign-in-'));
-    const env = signInEnv({ GIT_TERMINAL_PROMPT: '0', GIT_CEILING_DIRECTORIES: root }, { platform });
-    const baseEnv = signInEnv(withoutGitVars(), { platform });
+    const env = asIsGitEnv({ GIT_TERMINAL_PROMPT: '0', GIT_CEILING_DIRECTORIES: root });
+    const baseEnv = asIsGitEnv(withoutGitVars());
     const inside = await run(gitPath, ['rev-parse', '--git-dir'], { cwd: neutral, env, baseEnv, timeoutMs: SETTINGS_MS });
     if (inside.code === 0 || inside.timedOut === true) return false;
-    await refuseUnlistedSettings({ run, gitPath, cwd: neutral, env: signInEnv({ GIT_CEILING_DIRECTORIES: root }, { platform }) });
+    await refuseUnlistedSettings({ run, gitPath, cwd: neutral, env: { GIT_CEILING_DIRECTORIES: root }, baseEnv });
     const got = await run(gitPath, ['config', '--get-all', 'credential.helper'], { cwd: neutral, env, baseEnv, timeoutMs: SETTINGS_MS });
     if (got.code !== 0) return false;
     let helpers = [];
@@ -165,8 +164,12 @@ export function signInOutdated(pending, { asIs, url, base }) {
 // change git's sign-in outside setup, or to choose another way (recommended). Where git has no window of its own (`gcm` false), the card has
 // the same shape: sign git in outside setup, then click, or choose another way (recommended); no window is offered. `platform` is the
 // computer the card is shown on (where to sign git out differs).
-export function signInAsk(pending, { platform = process.platform } = {}) {
+export function signInAsk(pending, { platform = process.platform, tries = 1 } = {}) {
   const account = pending.why === 'account';
+  // The card's words depend on the record and the try only (never the time), so the same record asked again says the same, and a later
+  // record, which the Desktop app would show as the earlier card if it said the same, says it is a further try.
+  const again = Number.isInteger(tries) && tries >= 2 ? `Setup tried again (try ${tries}), and ` : null;
+  const lead = (first, later) => (again === null ? first : `${again}${later}`);
   const open = signInOpenLabel(pending.host);
   const retry = signInRetryLabel(pending.host);
   const signed = signInSignedLabel(pending.host);
@@ -179,7 +182,7 @@ export function signInAsk(pending, { platform = process.platform } = {}) {
       id,
       card: {
         level: 2,
-        what: `Git on this computer is signed in to ${pending.host} as a different account from the one that owns the project, so setup could not reach it.`,
+        what: lead(`Git on this computer is signed in to ${pending.host} as a different account from the one that owns the project, so setup could not reach it.`, `git on this computer still reaches ${pending.host} as a different account from the one that owns the project, so setup could not reach it.`),
         why: 'You chose to use your own git, so setup relies on its sign-in and makes none. Git would use the same account again and open no window, so setup opens none.',
         options: [
           { label: retry, says: `Do this first: sign git out of ${pending.host}${where}, or sign it in as the account that owns the project, outside setup. Then click this, and setup carries on with step 3.` },
@@ -196,10 +199,10 @@ export function signInAsk(pending, { platform = process.platform } = {}) {
       id,
       card: {
         level: 2,
-        what: `Git on this computer isn't signed in to ${pending.host}, so setup could not reach the project there.`,
+        what: lead(`Git on this computer isn't signed in to ${pending.host}, so setup could not reach the project there.`, `git on this computer still isn't signed in to ${pending.host}, so setup could not reach the project there.`),
         why: 'You chose to use your own git, so setup relies on its sign-in and makes none. Git on this computer does not seem to have a sign-in window of its own, so setup opens none.',
         options: [
-          { label: signed, says: `Do this first: sign git in to ${pending.host}, outside setup. Then click this, and setup carries on with step 3.` },
+          { label: signed, says: `Do this first: sign git in to ${pending.host}, outside setup. Then click this, and setup carries on with step 3. If you're not sure how, choose another way to connect.` },
           { label: SIGN_IN_OTHER, says: otherSays },
         ],
         recommend: SIGN_IN_OTHER,
@@ -212,7 +215,7 @@ export function signInAsk(pending, { platform = process.platform } = {}) {
     id,
     card: {
       level: 2,
-      what: `Git on this computer isn't signed in to ${pending.host}, so setup could not reach the project there.`,
+      what: lead(`Git on this computer isn't signed in to ${pending.host}, so setup could not reach the project there.`, `git on this computer still isn't signed in to ${pending.host}, so setup could not reach the project there.`),
       why: 'You chose to use your own git, so setup relies on its sign-in and makes none. Git opens its own window for it, which may take a minute and may open behind other windows, and setup never sees what you type there.',
       options: [
         {
@@ -226,6 +229,12 @@ export function signInAsk(pending, { platform = process.platform } = {}) {
       meanwhile: 'Nothing more runs on step 3 until you choose.',
     },
   };
+}
+
+// How many sign-in records a run has kept: the try the latest one is (a cleared record is no try).
+export function triesOf(run) {
+  const kept = (Array.isArray(run?.changes) ? run.changes : []).filter((c) => c?.kind === 'answer' && c.target === SIGN_IN_TARGET && c.after?.signIn !== null && typeof c.after?.signIn === 'object');
+  return Math.max(1, kept.length);
 }
 
 // Why the pending address is not the run's step 3 connection, or null when it is: its host is GitHub's or the public GitLab's, or a GitLab
@@ -262,21 +271,9 @@ export function connectionProblem({ pending, run, remoteRepo = null, gitlabHosts
   return `the project ${project} is none of this run's step 3 projects`;
 }
 
-// What the credential helper reads from the environment is the director's own files, not a variable a session or a project set: every GCM_*
-// variable is dropped except those named in `keep` (the one setup sets), the home folder is the account's own (from the system, not from
-// HOME), and XDG_CONFIG_HOME, which would move git's and the helper's settings, is gone.
-export function signInEnv(env, { platform = process.platform, keep = [] } = {}) {
-  const out = Object.fromEntries(Object.entries(env).filter(([name]) => !/^GCM_/i.test(name) || keep.includes(name)));
-  for (const name of Object.keys(out)) if (/^XDG_CONFIG_HOME$/i.test(name)) delete out[name];
-  const home = os.userInfo().homedir;
-  out.HOME = home;
-  if (platform === 'win32') out.USERPROFILE = home;
-  return out;
-}
-
 // Opens git's sign-in for the pending address, from a neutral folder, and gives { ok: true, line } once git reaches the project, or
 // { ok: false, refused, detail? } (`detail` is for the agent alone, scrubbed). `route` gives what only host.js knows: `reachEnv({ host,
-// url, gitPath, platform, base })` (the as-is environment), `guard({ run, gitPath, cwd, env, url, timeoutMs })` (the look at the director's
+// url, gitPath, platform, base })` (the as-is environment), `guard({ run, gitPath, cwd, env, url, timeoutMs, baseEnv })` (the look at the director's
 // settings, which gives the call's environment), `findGit()`, `remoteRepo` and `gitlabHosts` for the connection check, and `record(change)`
 // (the run's journal). A refusal or a failed attempt that reached git keeps a new record, so the card is asked afresh before git's window
 // opens again; one that shows the record cannot be used (not the connection, no git) clears it. The click must be fresh and newer than
@@ -305,7 +302,7 @@ export async function signInNow({
   if (pending.why === 'account') return refuse(ACCOUNT_LINE(pending.host));
   // Nor where git has no window of its own: the card offers none to click.
   if (!pending.gcm) return refuse(NO_WINDOW_LINE(pending.host));
-  const ask = signInAsk(pending, { platform });
+  const ask = signInAsk(pending, { platform, tries: triesOf(journalRun) });
   const click = answers[`3.${ask.id}`];
   if (click?.label !== signInOpenLabel(pending.host)) return refuse(NOT_CHOSEN, NOT_CHOSEN_DETAIL);
   const used = (Array.isArray(journalRun.changes) ? journalRun.changes : []).some((c) => c?.kind === 'answer' && c.target === SIGN_IN_USED_TARGET && c.after?.used === ask.id);
@@ -341,14 +338,16 @@ export async function signInNow({
   fs.mkdirSync(root, { recursive: true });
   const neutral = fs.mkdtempSync(path.join(root, 'sign-in-'));
   const ceiling = { GIT_CEILING_DIRECTORIES: path.dirname(neutral) };
+  // One base for every git call here: the director's own, less what could make git or its helper load or trace code of anyone's.
+  const baseEnv = asIsGitEnv(withoutGitVars());
   try {
-    const inside = await limited(git.path, ['rev-parse', '--git-dir'], { cwd: neutral, env: { GIT_TERMINAL_PROMPT: '0', ...ceiling }, baseEnv: withoutGitVars(), timeoutMs: SETTINGS_MS });
+    const inside = await limited(git.path, ['rev-parse', '--git-dir'], { cwd: neutral, env: { GIT_TERMINAL_PROMPT: '0', ...ceiling }, baseEnv, timeoutMs: SETTINGS_MS });
     if (inside.code === 0 || inside.timedOut === true) {
       kept();
       return refuse(NEUTRAL_UNSAFE, inside.timedOut === true ? 'git did not answer in time where the sign-in\'s folder is' : `git found a repository at ${String(inside.stdout ?? '').trim()} for the sign-in's folder, ${neutral}`);
     }
     try {
-      await refuseUnlistedSettings({ run: limited, gitPath: git.path, cwd: neutral, env: ceiling });
+      await refuseUnlistedSettings({ run: limited, gitPath: git.path, cwd: neutral, env: ceiling, baseEnv });
     } catch (error) {
       kept();
       return refuse(SETTINGS_UNCHECKED, error instanceof Error ? error.message : undefined);
@@ -357,7 +356,7 @@ export async function signInNow({
     const reach = route.reachEnv({ host: isGitHub ? 'github' : 'gitlab', url: pending.address, gitPath: git.path, platform, base: isGitHub ? undefined : pending.base });
     let given;
     try {
-      given = await route.guard({ run: limited, gitPath: git.path, cwd: neutral, env: { ...reach, ...ceiling }, url: pending.address, timeoutMs: SETTINGS_MS });
+      given = await route.guard({ run: limited, gitPath: git.path, cwd: neutral, env: { ...reach, ...ceiling }, url: pending.address, timeoutMs: SETTINGS_MS, baseEnv });
     } catch (error) {
       kept();
       const line = typeof error?.lineFor === 'function' ? error.lineFor({ stop: 'nothing was opened', again: AGAIN }) : SETTINGS_UNCHECKED;
@@ -369,13 +368,13 @@ export async function signInNow({
     // The one change from step 3's calls: git's own window may open. Git itself is still told not to prompt in a terminal, and nothing
     // here traces what the credential helper does. Off Windows the call leads a process group of its own, ended with it, so a window git's
     // helper opened does not outlast the wait or All stop. (windowsHide only stops a console window, never the helper's own window.)
-    const opened = signInEnv({ ...given, GCM_INTERACTIVE: 'auto' }, { platform, keep: ['GCM_INTERACTIVE'] });
+    const opened = asIsGitEnv({ ...given, GCM_INTERACTIVE: 'auto' }, { keep: ['GCM_INTERACTIVE'] });
     const controller = new AbortController();
     const watch = setInterval(() => { if (stopped()) controller.abort(); }, STOP_LOOK_MS);
     let got;
     try {
       got = await limited(git.path, ['ls-remote', '--heads', '--end-of-options', pending.address], {
-        cwd: neutral, env: opened, baseEnv: signInEnv(withoutGitVars(), { platform }), timeoutMs, signal: controller.signal, ownGroup: true, platform,
+        cwd: neutral, env: opened, baseEnv, timeoutMs, signal: controller.signal, ownGroup: true, platform,
       });
     } finally {
       clearInterval(watch);
@@ -385,7 +384,7 @@ export async function signInNow({
     }
     if (got.code !== 0) {
       kept();
-      return refuse(failedLine(host, got.timedOut === true ? '' : gitSaid(got.stderr), { timedOut: got.timedOut === true }), SIGN_IN_ONCE_DETAIL);
+      return refuse(failedLine(host, got.timedOut === true ? '' : gitSaid(got.stderr), { timedOut: got.timedOut === true, gcm: pending.gcm }), SIGN_IN_ONCE_DETAIL);
     }
     writes({ signIn: null, reached: now().toISOString() });
     return { ok: true, line: signedInLine(host) };

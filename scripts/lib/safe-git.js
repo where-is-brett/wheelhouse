@@ -309,10 +309,10 @@ function withDirectorsGit(fenced, { reach, directorEnv, settingsFile }) {
 
 // The computer's own settings (system, then global, includes resolved as they apply in `cwd`'s repository, in
 // git's own order) as [{ key, value }], `value` null for a key with no value. Null when git could not say.
-export async function readComputerSettings({ run = realRun, gitPath = 'git', cwd, ceiling = null }) {
+export async function readComputerSettings({ run = realRun, gitPath = 'git', cwd, ceiling = null, baseEnv = withoutGitVars() }) {
   let got;
   try {
-    got = await run(gitPath, ['config', '--list', '--includes', '--show-scope', '-z'], { cwd, env: { GIT_TERMINAL_PROMPT: '0', ...(ceiling === null ? {} : { GIT_CEILING_DIRECTORIES: ceiling }) }, baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
+    got = await run(gitPath, ['config', '--list', '--includes', '--show-scope', '-z'], { cwd, env: { GIT_TERMINAL_PROMPT: '0', ...(ceiling === null ? {} : { GIT_CEILING_DIRECTORIES: ceiling }) }, baseEnv, timeoutMs: GIT_WAIT_MS });
   } catch {
     return null;
   }
@@ -544,7 +544,7 @@ const folderKey = (folder) => {
 
 // The settings as a push in `cwd` reads them, with git's search held below Wheelhouse's folder. The same read serves the check and
 // the push, so what is checked is what is used.
-export const readSettingsFor = ({ run = realRun, gitPath = 'git', cwd }) => readComputerSettings({ run, gitPath, cwd, ceiling: path.dirname(path.resolve(wheelhouseHome())) });
+export const readSettingsFor = ({ run = realRun, gitPath = 'git', cwd, baseEnv = withoutGitVars() }) => readComputerSettings({ run, gitPath, cwd, ceiling: path.dirname(path.resolve(wheelhouseHome())), baseEnv });
 
 function readRecord(file) {
   try {

@@ -186,11 +186,11 @@ export const CONFIG_UNREAD = 'git\'s settings in this folder\'s repository could
 // no repository there, passes.
 // `env` is added to the look's own environment (git's sign-in gives GIT_CEILING_DIRECTORIES, so a folder that is no repository finds
 // none above it).
-export async function refuseUnlistedSettings({ run = realRun, gitPath = 'git', cwd, env: given = {} }) {
+export async function refuseUnlistedSettings({ run = realRun, gitPath = 'git', cwd, env: given = {}, baseEnv = withoutGitVars() }) {
   const env = { GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: NULL_FILE, ...given };
   let got;
   try {
-    got = await run(gitPath, ['config', '--includes', '--name-only', '--list', '-z'], { cwd, env, baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
+    got = await run(gitPath, ['config', '--includes', '--name-only', '--list', '-z'], { cwd, env, baseEnv, timeoutMs: GIT_WAIT_MS });
   } catch {
     throw new Error(CONFIG_UNREAD);
   }
@@ -207,6 +207,17 @@ export function subcommandOf(args) {
     else if (!String(args[i]).startsWith('-')) return args[i];
   }
   return '';
+}
+
+// What the director's own git runs with on the "Use my git as it is" route, wherever it runs: every variable that could make git, or the
+// credential helper it starts, load or trace code or read settings the director's own files do not hold is dropped. Every GCM_* variable
+// goes except those named in `keep` (the one setup sets, GCM_INTERACTIVE, for git's sign-in alone), and so do the .NET startup hooks and
+// host tracing, and the loader's preload and audit variables. HOME, XDG_CONFIG_HOME, the proxy and certificate variables stay as they are:
+// the director's git reads its settings and reaches the host with them (on a company computer HOME is often set on purpose).
+const ASIS_DROPPED = /^(?:GCM_.*|DOTNET_STARTUP_HOOKS|COREHOST_TRACE.*|DYLD_.*|LD_PRELOAD|LD_AUDIT)$/i;
+export function asIsGitEnv(env, { keep = [] } = {}) {
+  const kept = new Set(keep.map((name) => name.toUpperCase()));
+  return Object.fromEntries(Object.entries(env ?? {}).filter(([name]) => kept.has(name.toUpperCase()) || !ASIS_DROPPED.test(name)));
 }
 
 // The git subcommands that reach a remote: the only calls an as-is route gives the director's own git (`reachEnv`).
@@ -240,8 +251,10 @@ export function setupGit({ run = realRun, gitPath = 'git', env = {}, cwd, workTr
     const toRemote = reaches !== null && REMOTE_CALLS.has(sub);
     let callEnv = sub === 'init' ? fenced : toRemote ? reaches : inFolder;
     // `reachGuard` checks the director's own settings for the address the call names and gives back the environment to use.
-    if (toRemote && reachGuard !== null) callEnv = await reachGuard({ run, gitPath, cwd, env: callEnv, url: addressOf(args), timeoutMs });
-    return run(gitPath, args, { cwd, env: callEnv, baseEnv: withoutGitVars(), timeoutMs, ...options });
+    // A call to the remote on the as-is route has the as-is base, the one the guard read the settings with.
+    const baseEnv = toRemote ? asIsGitEnv(withoutGitVars()) : withoutGitVars();
+    if (toRemote && reachGuard !== null) callEnv = await reachGuard({ run, gitPath, cwd, env: callEnv, url: addressOf(args), timeoutMs, baseEnv });
+    return run(gitPath, args, { cwd, env: callEnv, baseEnv, timeoutMs, ...options });
   };
 }
 
@@ -276,14 +289,14 @@ function hideUserinfo(text) {
 // Text git (or its helpers) wrote, with anything that could carry a sign-in taken out: the user or token in an address
 // (hideUserinfo), an Authorization or extra-header value (to the end of its line), a Cookie or Set-Cookie value (to the end of its
 // line), a bare `Bearer` or `Basic` value (`bearer: x` too), a `token` or `client_secret` value after `=` or `:` (bare, to the end of its
-// run of non-space characters, or in quotes), a JSON member, in double or single quotes, named for a password, secret, token, key, authorization or auth (accessToken and id_token too,
-// its value hidden even when its closing quote is missing), a `password:` value, a `secret=`, `api_key:` or `sig=` value, an address with no scheme but a user and password (within 256 characters of it), a `password=` or `passwd=` value, and anything shaped like a GitLab or GitHub token
+// run of non-space characters, or in quotes), a JSON member, in double or single quotes, named for a password, pass, secret, token, credential, api key, private key, access key,
+// authorization or auth (accessToken and id_token too, its value hidden even when its closing quote is missing), a `password:` value, a `secret=` (`aws_secret=` and `app_secret=` too), `api_key:` or `sig=` value, an address with no scheme but a user and password (within 256 characters of it, ending at a host name with a dot), a `password=` or `passwd=` value, and anything shaped like a GitLab or GitHub token
 // (after a letter too). Safe to apply twice. Every pattern reads each stretch of text once, so a long line costs a pass.
 export function scrubGitText(text) {
   return hideUserinfo(String(text ?? ''))
-    .replace(/(authorization\s*[:=]\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
-    .replace(/(extraheader[^\s=:]{0,256}\s*[:=]\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
-    .replace(/(private-token\s*:\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    .replace(/(authorization[ \t]*[:=][ \t]*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    .replace(/(extraheader[^\s=:]{0,256}[ \t]*[:=][ \t]*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    .replace(/(private-token[ \t]*:[ \t]*)[^\r\n]*/gi, `$1${HIDDEN}`)
     .replace(/(\b(?:set-)?cookie[ \t]*[:=][ \t]*)[^\r\n]*/gi, `$1${HIDDEN}`)
     .replace(/(\bbearer[ \t]*[:=][ \t]*)[^\r\n]*/gi, `$1${HIDDEN}`)
     .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{4,}/gi, `$1${HIDDEN}`)
@@ -293,15 +306,17 @@ export function scrubGitText(text) {
     // A JSON member: "password": "x" or 'password': 'x', and the other names a secret goes by ("accessToken", "id_token", "client_secret",
     // "api-key", "authorization", "auth"; a dot may be in the name). The key is read once, between its quotes, and tested for the words
     // afterwards; a value whose closing quote is missing ends at the line.
-    .replace(/(((["'])([A-Za-z0-9_.-]*)\3)[ \t]*:[ \t]*)(["'])(?:(?!\5)[^\\\r\n]|\\.)*\5?/g, (all, lead, _quoted, _q, key, quote) => (/password|passwd|secret|token|api[_-]?key|authorization|^auth$/i.test(key) ? `${lead}${quote}${HIDDEN}${quote}` : all))
+    .replace(/(((["'])([A-Za-z0-9_.-]*)\3)[ \t]*:[ \t]*)(["'])(?:(?!\5)[^\\\r\n]|\\.)*\5?/g, (all, lead, _quoted, _q, key, quote) => (/password|passwd|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|credential|authorization|^auth$|^pass$/i.test(key) ? `${lead}${quote}${HIDDEN}${quote}` : all))
     // `token=x`, `token: x`, `token = "x"`, `client_secret=x`, `token= A,B`: a quoted string, or the run of characters up to white space.
     .replace(/((?:token|client_secret)[ \t]*[:=][ \t]*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s&'"]+)/gi, `$1${HIDDEN}`)
-    .replace(/(pass(?:word|wd)\s*[=:]\s*)[^\r\n]*/gi, `$1${HIDDEN}`)
+    .replace(/(pass(?:word|wd)[ \t]*[=:][ \t]*)[^\r\n]*/gi, `$1${HIDDEN}`)
     // `secret=x`, `api_key: x`, `api-key=x`: a quoted string, or the run of characters up to white space; `sig=x` in a query.
-    .replace(/(\bsecret[ \t]*=[ \t]*|api[-_]?key[ \t]*[:=][ \t]*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s&'"]+)/gi, `$1${HIDDEN}`)
+    .replace(/(\b[A-Za-z0-9]*_?secret[ \t]*=[ \t]*|api[-_]?key[ \t]*[:=][ \t]*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s&'"]+)/gi, `$1${HIDDEN}`)
     .replace(/(\bsig=)[^\s&'"]+/gi, `$1${HIDDEN}`)
-    // An address with no scheme: `user:pass@host/path`, from the start of a word to the last @ in it.
-    .replace(/(^|[\s(<'"])[^\s:@/(<'"]+:(?!\/\/)\S{0,256}@(?=[A-Za-z0-9[])/g, `$1${HIDDEN}@`)
+    // An address with no scheme: `user:pass@host/path`, from the start of a word to the last @ in it. The user is up to 64 characters of
+    // a user name's, with a letter in them, and the part after the @ begins like a host name with a dot (so `C:\Users\me@corp\repo` and
+    // `2026-11-18 10:15:22@server` stay as they are).
+    .replace(/(^|[\s(<'"])([A-Za-z0-9._%+-]{1,64}):(?!\/\/)\S{0,256}@(?=[A-Za-z0-9-]{1,63}\.[A-Za-z0-9[])/g, (all, lead, user) => (/[A-Za-z]/.test(user) ? `${lead}${HIDDEN}@` : all))
     // GitLab's personal access token, whatever its body, and GitHub's tokens, whatever comes before them (a letter too); and GitLab's
     // other token prefixes (gldt-, glrt-, glcbt-, gloas-, glft-, glptt-, glimt-, glsoat-), by their shape: a body with a digit in it. Whatever
     // comes before, an underscore too, is not part of the token.

@@ -126,8 +126,8 @@ import {
   PROFILE_TARGET,
 } from './own-app.js';
 import { readJournal, newId } from './journal.js';
-import { SIGN_IN_TARGET, SIGN_IN_OTHER, pendingSignIn, signInAsk, signInRecord, signInRetryLabel, signInSignedLabel, carryOnLabel, gitHasSignInWindow, signInOutdated } from './sign-in.js';
-import { setupGit, setupGitEnv, keyedGitEnv, refuseUnlistedSettings, reaching, gitFailure, gitSaid, scrubGitText, endOf, DetailedError } from './git.js';
+import { SIGN_IN_TARGET, SIGN_IN_OTHER, pendingSignIn, signInAsk, signInRecord, signInRetryLabel, signInSignedLabel, carryOnLabel, gitHasSignInWindow, signInOutdated, triesOf } from './sign-in.js';
+import { setupGit, setupGitEnv, keyedGitEnv, refuseUnlistedSettings, asIsGitEnv, reaching, gitFailure, gitSaid, scrubGitText, endOf, DetailedError } from './git.js';
 
 export { SIGN_IN_TARGET };
 
@@ -1261,8 +1261,9 @@ export function directorGitEnv({ host, gitPath = 'git', env = process.env, platf
 // With the company's certificate for a company GitLab's address, once setup has made it, as the helper's calls have it. `url` is
 // one of the host's repository addresses, only for the reach its transport needs. Not for any other route: they keep directorGitEnv.
 export function asIsReachEnv({ host, url, gitPath = 'git', env = process.env, platform = process.platform, base } = {}) {
-  const given = companyGitEnv(setupGitEnv({ gitPath, env, platform }), { host, base }, { platform });
-  return safeGitEnv(given, { reach: pushReachFor(url, { platform }), directorEnv: env });
+  const clean = asIsGitEnv(env);
+  const given = companyGitEnv(setupGitEnv({ gitPath, env: clean, platform }), { host, base }, { platform });
+  return safeGitEnv(given, { reach: pushReachFor(url, { platform }), directorEnv: clean });
 }
 
 // ---- GitLab without its tool: the one-day setup token ----
@@ -1530,9 +1531,9 @@ const asIsUnread = (detail) => Object.assign(new DetailedError(ASIS_SETTINGS_UNR
 // Where the director's own settings give `key` (or, with `regexp`, every key that matches it): scope and file, one per place it is
 // set (with the key and value, for a match), for a refusal's detail; '' when git can't say. Every scope git names is given but the
 // call's own (`command`): the computer's, and the folder's own repository and worktree files too.
-async function whereSet({ run, gitPath, cwd, key, regexp = false, timeoutMs }) {
+async function whereSet({ run, gitPath, cwd, key, regexp = false, timeoutMs, baseEnv = asIsGitEnv(withoutGitVars()) }) {
   try {
-    const got = await run(gitPath, ['config', '--show-origin', '--show-scope', regexp ? '--get-regexp' : '--get-all', key], { cwd, env: { GIT_TERMINAL_PROMPT: '0' }, baseEnv: withoutGitVars(), timeoutMs });
+    const got = await run(gitPath, ['config', '--show-origin', '--show-scope', regexp ? '--get-regexp' : '--get-all', key], { cwd, env: { GIT_TERMINAL_PROMPT: '0' }, baseEnv, timeoutMs });
     if (got.code !== 0) return '';
     return String(got.stdout ?? '').split(/\r?\n/).map((line) => line.split('\t')).filter((p) => p.length >= 3 && p[0] !== 'command').map((p) => (regexp ? `${p[0]} ${p[1]}: ${p.slice(2).join(' ')}` : `${p[0]} ${p[1]}`)).join(', ');
   } catch {
@@ -1543,27 +1544,27 @@ async function whereSet({ run, gitPath, cwd, key, regexp = false, timeoutMs }) {
 const rawSaid = (text) => endOf(scrubGitText(String(text ?? '').trim()));
 const settingDetail = ({ key, value, where, url }) => scrubGitText(`${key} = ${value ?? '(no value)'}; set in ${where === '' ? 'a file git did not name' : where}; the call's address is ${url}`);
 
-export async function guardAsIsReach({ run = realRun, gitPath = 'git', cwd, env, url, timeoutMs }) {
+export async function guardAsIsReach({ run = realRun, gitPath = 'git', cwd, env, url, timeoutMs, baseEnv = asIsGitEnv(withoutGitVars()) }) {
   if (typeof url !== 'string' || url === '') throw new Error(ASIS_NO_ADDRESS);
-  const entries = await readSettingsFor({ run, gitPath, cwd });
+  const entries = await readSettingsFor({ run, gitPath, cwd, baseEnv });
   if (entries === null) throw asIsUnread('git config --list did not give the computer\'s settings');
   const resolving = resolveFinding(entries);
   if (resolving !== null) {
-    const where = await whereSet({ run, gitPath, cwd, key: resolving.key, timeoutMs });
+    const where = await whereSet({ run, gitPath, cwd, key: resolving.key, timeoutMs, baseEnv });
     throw asIsRefusal({ why: WHY_RESOLVE, where, detail: settingDetail({ ...resolving, where, url }) });
   }
   const rewriting = rewriteFinding(entries, url);
   if (rewriting !== null) {
-    const where = await whereSet({ run, gitPath, cwd, key: rewriting.key, timeoutMs });
+    const where = await whereSet({ run, gitPath, cwd, key: rewriting.key, timeoutMs, baseEnv });
     throw asIsRefusal({ why: WHY_REWRITE, where, detail: settingDetail({ ...rewriting, where, url }) });
   }
   // Whether certificate checks are off for this address, as git itself reads it under the call's settings (without the pin below):
   // another host's setting, or none, passes, and every spelling of off, an empty value too, is false.
   if (/^https?:\/\//i.test(url)) {
-    const checks = await run(gitPath, ['config', '--type=bool', '--get-urlmatch', 'http.sslVerify', url], { cwd, env, baseEnv: withoutGitVars(), timeoutMs });
+    const checks = await run(gitPath, ['config', '--type=bool', '--get-urlmatch', 'http.sslVerify', url], { cwd, env, baseEnv, timeoutMs });
     if (checks.code !== 0 && checks.code !== 1) throw asIsUnread(`git config --get-urlmatch http.sslVerify ${url} exited ${checks.code}: ${rawSaid(checks.stderr)}`);
     if (checks.code === 0 && String(checks.stdout ?? '').trim() === 'false') {
-      const set = await whereSet({ run, gitPath, cwd, key: 'sslverify', regexp: true, timeoutMs });
+      const set = await whereSet({ run, gitPath, cwd, key: 'sslverify', regexp: true, timeoutMs, baseEnv });
       throw asIsRefusal({ why: WHY_CERTIFICATES, where: set, detail: `git reads http.sslVerify as false for ${url}; the sslVerify settings in the computer's git files: ${set === '' ? 'none git named' : endOf(scrubGitText(set))}` });
     }
   }
@@ -1577,10 +1578,10 @@ export async function guardAsIsReach({ run = realRun, gitPath = 'git', cwd, env,
   });
   // Git's own answer for the address, with these very settings, is the address itself (a fetch is not told a pushurl, a push is not
   // told an insteadOf, and the check above covers both).
-  const where = await run(gitPath, ['ls-remote', '--get-url', '--end-of-options', url], { cwd, env: given, baseEnv: withoutGitVars(), timeoutMs });
+  const where = await run(gitPath, ['ls-remote', '--get-url', '--end-of-options', url], { cwd, env: given, baseEnv, timeoutMs });
   if (where.code !== 0) throw asIsUnread(`git ls-remote --get-url ${url} exited ${where.code}: ${rawSaid(where.stderr)}`);
   if (String(where.stdout ?? '').trim() !== url) {
-    const set = await whereSet({ run, gitPath, cwd, key: 'insteadof|pushurl|^remote', regexp: true, timeoutMs });
+    const set = await whereSet({ run, gitPath, cwd, key: 'insteadof|pushurl|^remote', regexp: true, timeoutMs, baseEnv });
     throw asIsRefusal({ why: WHY_REWRITE, where: set, detail: `git's own answer for ${url} was ${rawSaid(where.stdout)}, so a setting rewrites it; the address settings in the computer's git files: ${set === '' ? 'none git named' : endOf(scrubGitText(set))}` });
   }
   return given;
@@ -2585,7 +2586,7 @@ export function hostStep({
       const repoMade = (planRun?.changes ?? []).some((c) => c?.kind === 'host' && c.after?.made === true);
       let declinedAsIs = false;
       if (pendingSign !== null) {
-        const sign = signInAsk(pendingSign, { platform });
+        const sign = signInAsk(pendingSign, { platform, tries: triesOf(planRun) });
         const chosenSign = answer(sign.id)?.label;
         if (chosenSign === SIGN_IN_OTHER) declinedAsIs = true;
         // Where git is signed in as another account, or has no window to open, the director changed git's sign-in outside setup and says so

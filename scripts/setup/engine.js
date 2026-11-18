@@ -693,7 +693,7 @@ export function setupRoutes({
     const journalRun = found === null ? null : runById(found.id);
     // One sign-in at a time for a run, counted as the helper's work while it waits, so the helper is not retired or updated under it.
     const key = found === null ? null : `${found.id}:sign-in`;
-    if (key !== null && inHelper.has(key)) return { ok: false, refused: 'Git\'s sign-in is already open for this setup, so a second was not opened. Wait for it to finish.', detail: 'Wait for the open sign-in\'s line; do not run plan 3 or this form again until it comes.' };
+    if (key !== null && inHelper.has(key)) return { ok: false, refused: 'Git\'s sign-in is already open for this setup, so a second was not opened. Wait for it to finish.', detail: 'Wait for the open sign-in\'s line; do not run plan 3 or this form again until it comes, or, if no line comes within 10 minutes, run plan 3.' };
     if (key !== null) inHelper.add(key);
     try {
       return await openSignIn({ journalRun, found, folder });

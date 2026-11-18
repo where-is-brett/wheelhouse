@@ -8,19 +8,18 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  signInNow, pendingSignIn, signInAsk, signInRecord, signInOpenLabel, signInRetryLabel, signInSignedLabel, carryOnLabel, signInEnv, signInOutdated, connectionProblem, gitHasSignInWindow, SIGN_IN_TARGET,
+  signInNow, pendingSignIn, signInAsk, signInRecord, signInOpenLabel, signInRetryLabel, signInSignedLabel, carryOnLabel, signInOutdated, triesOf, connectionProblem, gitHasSignInWindow, SIGN_IN_TARGET,
   SIGN_IN_USED_TARGET, SIGN_IN_OTHER, SIGN_IN_WAIT_MS, SIGN_IN_TOTAL_MS, NO_SIGN_IN_ADDRESS, NOT_CHOSEN, NOT_THE_CONNECTION, STOPPED_LINE,
   STOPPED_OPEN_LINE, NO_GIT, ACCOUNT_LINE, NO_WINDOW_LINE, CLICK_USED, CLICK_STALE, NOT_RECORDED, signedInLine, failedLine,
 } from '../../../scripts/setup/sign-in.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { asIsReachEnv, guardAsIsReach } from '../../../scripts/setup/host.js';
-import os from 'node:os';
-import { scrubGitText } from '../../../scripts/setup/git.js';
+import { scrubGitText, asIsGitEnv, setupGit } from '../../../scripts/setup/git.js';
 import { CLICK_FRESH_MS } from '../../../scripts/lib/setup-numbers.js';
 import { startRun, addChanges, readJournal, markStep } from '../../../scripts/setup/journal.js';
 import { setupRoutes } from '../../../scripts/setup/engine.js';
 import { main } from '../../../scripts/setup/cli.js';
-import { as, shortHome } from '../../helpers/homes.js';
+import { as, shortHome, tempFolder } from '../../helpers/homes.js';
 import { withProject, T0 } from '../../helpers/setup-answers.js';
 
 const ADDRESS = 'https://gitlab.com/owner/shop.git';
@@ -134,7 +133,7 @@ test('where git has no sign-in window of its own the card has the account card\'
   assert.equal(card.options[0].label, signInSignedLabel('gitlab.com'));
   assert.ok(!card.options.some((o) => o.label === signInOpenLabel('gitlab.com')), 'no Open');
   assert.equal(card.recommend, SIGN_IN_OTHER);
-  assert.equal(card.options[0].says, 'Do this first: sign git in to gitlab.com, outside setup. Then click this, and setup carries on with step 3.');
+  assert.equal(card.options[0].says, 'Do this first: sign git in to gitlab.com, outside setup. Then click this, and setup carries on with step 3. If you\'re not sure how, choose another way to connect.');
   assert.ok(!/window/i.test(`${card.options[0].says} ${card.options[1].says}`));
   assert.equal(carryOnLabel(pending), signInSignedLabel('gitlab.com'));
   assert.equal(carryOnLabel(pendingSignIn(runOf(record({ why: 'account' })))), signInRetryLabel('gitlab.com'));
@@ -302,7 +301,7 @@ test('git\'s failure is said with what git said (scrubbed, never its output), th
   assert.equal(got.ok, false);
   assert.equal(got.refused, failedLine('gitlab.com', 'fatal: Authentication failed for \'https://[hidden]@gitlab.com/owner/shop.git/\''));
   assert.match(got.refused, /^Git still could not reach gitlab\.com \(git said: fatal: Authentication failed for 'https:\/\/\[hidden\]@gitlab\.com\/owner\/shop\.git\/'\)\. Next: I can open its sign-in again; if its window asked for a token, or a password you don't use there, close it and choose another way to connect on step 3's card\.$/);
-  assert.match(got.detail, /Run plan 3: the sign-in card is asked afresh, once\. If the same thing fails a second time, stop/);
+  assert.match(got.detail, /Run plan 3: the sign-in card is asked afresh, once\. If the same thing fails a second time, ask the card plan 3 gives once more and recommend its "Use another way to connect"/);
   assert.ok(!/glpat|abc\trefs|refs\/heads/.test(JSON.stringify(got)));
   assert.ok(!/make a token|create a token|personal access token/i.test(got.refused));
   assert.deepEqual(records.map((r) => r.target), [SIGN_IN_USED_TARGET, SIGN_IN_TARGET]);
@@ -591,37 +590,118 @@ test('a helper named for the address (credential.<url>.helper) counts too', asyn
   assert.ok(seen.some((a) => a.join(' ') === `config --get-urlmatch credential.helper ${ADDRESS}`));
 });
 
-test('the sign-in\'s environment drops every GCM variable but the one setup sets, takes HOME from the account, and drops XDG_CONFIG_HOME', async () => {
-  const planted = { GCM_CREDENTIAL_STORE: 'plaintext', GCM_TRACE: '1', gcm_authority: 'x', XDG_CONFIG_HOME: '/evil', HOME: '/evil', USERPROFILE: '/evil', GCM_INTERACTIVE: 'never', KEEP: 'y' };
-  const home = os.userInfo().homedir;
-  const out = signInEnv(planted, { platform: 'win32', keep: ['GCM_INTERACTIVE'] });
-  assert.deepEqual(out, { GCM_INTERACTIVE: 'never', KEEP: 'y', HOME: home, USERPROFILE: home });
-  assert.deepEqual(signInEnv(planted, { platform: 'darwin' }), { KEEP: 'y', HOME: home, USERPROFILE: '/evil' });
-  // Through the route: planted in the process environment and in the as-is environment, none reaches the sign-in call.
+test('the as-is environment drops every GCM variable but the kept ones and the code-loading variables, and keeps HOME, XDG_CONFIG_HOME, proxy and certificate variables', async () => {
+  const planted = {
+    GCM_CREDENTIAL_STORE: 'plaintext', GCM_TRACE: '1', gcm_authority: 'x', DOTNET_STARTUP_HOOKS: '/evil.dll', COREHOST_TRACE: '1', COREHOST_TRACEFILE: '/x', LD_PRELOAD: '/evil.so', DYLD_INSERT_LIBRARIES: '/evil',
+    XDG_CONFIG_HOME: '/mine', HOME: '/mine', USERPROFILE: '/mine', HTTPS_PROXY: 'http://p', SSL_CERT_FILE: '/c', GCM_INTERACTIVE: 'never', KEEP: 'y',
+  };
+  assert.deepEqual(asIsGitEnv(planted, { keep: ['GCM_INTERACTIVE'] }), { XDG_CONFIG_HOME: '/mine', HOME: '/mine', USERPROFILE: '/mine', HTTPS_PROXY: 'http://p', SSL_CERT_FILE: '/c', GCM_INTERACTIVE: 'never', KEEP: 'y' });
+  assert.deepEqual(asIsGitEnv(planted), { XDG_CONFIG_HOME: '/mine', HOME: '/mine', USERPROFILE: '/mine', HTTPS_PROXY: 'http://p', SSL_CERT_FILE: '/c', KEEP: 'y' });
+  // Through the route: planted in the process environment, none reaches any as-is git call, in its environment or its base, and HOME stays.
   const before = { ...process.env };
-  Object.assign(process.env, { GCM_CREDENTIAL_STORE: 'plaintext', GCM_TRACE: '1', XDG_CONFIG_HOME: '/evil' });
+  // GCM_INTERACTIVE is the one GCM variable setup itself sets: 'never' (the fence) on every call but the sign-in's own, which sets 'auto'.
+  const bad = /^(?:GCM_(?!INTERACTIVE$)|DOTNET_STARTUP_HOOKS$|COREHOST_TRACE|LD_PRELOAD$|DYLD_)/i;
+  Object.assign(process.env, { GCM_CREDENTIAL_STORE: 'plaintext', GCM_TRACE: '1', DOTNET_STARTUP_HOOKS: '/evil.dll', COREHOST_TRACE: '1', LD_PRELOAD: '/evil.so', DYLD_INSERT_LIBRARIES: '/evil', HOME: '/mine/home' });
+  const merged = (call) => ({ ...(call.baseEnv ?? process.env), ...(call.env ?? {}) });
   try {
     const g = fakeGit();
-    await attempt(runOf(record()), g, { routeGiven: { reachEnv: (o) => ({ ...asIsReachEnv(o), GCM_CREDENTIAL_STORE: 'plaintext', XDG_CONFIG_HOME: '/evil' }) } });
-    const listed = listing(g);
-    for (const env of [listed.env, listed.baseEnv]) {
-      assert.ok(!Object.keys(env).some((k) => /^GCM_/i.test(k) && k !== 'GCM_INTERACTIVE'), JSON.stringify(Object.keys(env)));
-      assert.equal(env.XDG_CONFIG_HOME, undefined);
-      assert.equal(env.HOME, home);
+    await attempt(runOf(record()), g);
+    assert.ok(g.calls.length >= 4, 'the rev-parse, the settings looks, the guard and the call itself');
+    for (const call of g.calls) {
+      const env = merged(call);
+      assert.ok(!Object.keys(env).some((k) => bad.test(k)), `${call.args.join(' ')}: ${Object.keys(env).filter((k) => bad.test(k))}`);
+      if (!(call.args[0] === 'ls-remote' && call.args.includes('--heads'))) assert.notEqual(env.GCM_INTERACTIVE, 'auto', call.args.join(' '));
+      assert.equal(env.HOME, '/mine/home', call.args.join(' '));
     }
-    assert.equal(listed.env.GCM_INTERACTIVE, 'auto');
+    assert.equal(merged(listing(g)).GCM_INTERACTIVE, 'auto');
     // The look at the credential helpers too.
-    const seenEnvs = [];
-    await as(shortHome(), async () => gitHasSignInWindow({ gitPath: 'git', home: path.join(process.env.WHEELHOUSE_HOME, 'h'), run: async (file, args, options) => { if (args.includes('credential.helper')) seenEnvs.push(options); return args[0] === 'rev-parse' ? { code: 128, stdout: '', stderr: '' } : { code: 0, stdout: '', stderr: '' }; } }));
-    assert.equal(seenEnvs.length, 1, 'the read of the helpers');
-    for (const { env, baseEnv } of seenEnvs) for (const e of [env, baseEnv]) {
-      assert.ok(!Object.keys(e ?? {}).some((k) => /^GCM_/i.test(k)));
-      assert.equal(e?.XDG_CONFIG_HOME, undefined);
-      assert.equal(e?.HOME, home);
+    const seen = [];
+    await as(shortHome(), async () => gitHasSignInWindow({ gitPath: 'git', home: path.join(process.env.WHEELHOUSE_HOME, 'h'), run: async (file, args, options) => { seen.push(options); return args[0] === 'rev-parse' ? { code: 128, stdout: '', stderr: '' } : { code: 0, stdout: '', stderr: '' }; } }));
+    assert.ok(seen.length >= 2);
+    for (const call of seen) {
+      const env = merged(call);
+      assert.ok(!Object.keys(env).some((k) => bad.test(k)));
+      assert.equal(env.HOME, '/mine/home');
     }
+    // Step 3's own as-is reach calls (through setupGit with the as-is environment) have the same base.
+    const reached = [];
+    const git = setupGit({ run: async (file, args, options) => { reached.push({ args, ...options }); return { code: 0, stdout: '', stderr: '' }; }, cwd: tempFolder('wh-reach-'), reachEnv: asIsReachEnv({ host: 'gitlab', url: ADDRESS, gitPath: 'git', base: BASE }), reachGuard: async ({ env }) => env });
+    await git(['ls-remote', '--heads', '--end-of-options', ADDRESS]);
+    const call = reached.find((c) => c.args[0] === 'ls-remote');
+    const env = merged(call);
+    assert.ok(!Object.keys(env).some((k) => bad.test(k)), Object.keys(env).filter((k) => bad.test(k)).join());
+    assert.equal(env.HOME, '/mine/home');
   } finally {
     for (const k of Object.keys(process.env)) if (!(k in before)) delete process.env[k];
     Object.assign(process.env, before);
+  }
+});
+
+// ---- A second record asked again ----
+
+const TRY_SHAPES = [['gcm', { gcm: true }], ['no window', { gcm: false }], ['account', { why: 'account', gcm: true }]];
+test('plan 3 gives each later sign-in record a card of its own words, the same record the same words, and no record makes plan 3 throw', async () => {
+  for (const [shape, extra] of TRY_SHAPES) {
+    await withProject(async ({ folder, plan }) => {
+      const run = startRun({ folder, now: () => T0 });
+      addChanges(run.id, [made()]);
+      const asks = [];
+      for (const n of [1, 2, 3]) {
+        addChanges(run.id, [record({ ...extra, id: `chg_t${n}`, at: new Date(T0.getTime() + n * 60 * 1000).toISOString() })]);
+        const asked = await plan(3);
+        assert.equal(asked.ok, true, `${shape} try ${n}`);
+        asks.push(asked.ask);
+        // The same record asked again is the same card.
+        const again = await plan(3);
+        assert.equal(again.ask.id, asked.ask.id, `${shape} try ${n} again`);
+        assert.deepEqual(again.ask.card, asked.ask.card);
+      }
+      assert.equal(new Set(asks.map((a) => a.id)).size, 3, `${shape}: a new id each time`);
+      assert.equal(new Set(asks.map((a) => a.card.question)).size, 3, `${shape}: different words each time`);
+      const words = asks.map((a) => a.card.question);
+      assert.ok(!/Setup tried again/.test(words[0]), `${shape}: try 1 keeps today's words`);
+      const host = 'gitlab.com';
+      for (const [i, n] of [[1, 2], [2, 3]]) {
+        assert.ok(words[i].includes(`Setup tried again (try ${n}), and `), words[i]);
+        assert.ok(words[i].includes(extra.why === 'account' ? `still reaches ${host} as a different account` : `still isn't signed in to ${host}`), words[i]);
+      }
+    }, { connected: false });
+  }
+});
+
+test('the card for a try is a function of the record and the try alone', () => {
+  const pending = pendingSignIn(runOf(record()));
+  assert.deepEqual(signInAsk(pending, { tries: 2 }), signInAsk(pending, { tries: 2 }));
+  assert.deepEqual(signInAsk(pending), signInAsk(pending, { tries: 1 }));
+  assert.equal(signInAsk(pending, { tries: 2 }).id, signInAsk(pending).id, 'the id is of the record');
+  assert.match(signInAsk(pending, { tries: 2 }).card.what, /^Setup tried again \(try 2\), and git on this computer still isn't signed in to gitlab\.com, so setup could not reach the project there\.$/);
+  const account = pendingSignIn(runOf(record({ why: 'account' })));
+  assert.match(signInAsk(account, { tries: 3 }).card.what, /^Setup tried again \(try 3\), and git on this computer still reaches gitlab\.com as a different account from the one that owns the project, so setup could not reach it\.$/);
+  assert.equal(triesOf(runOf(record(), record({ id: 'chg_2', at: '2026-11-18T02:00:00.000Z' }))), 2);
+  assert.equal(triesOf(runOf()), 1);
+  assert.match(signInAsk(pendingSignIn(runOf(record({ gcm: false })))).card.options[0].says, /If you're not sure how, choose another way to connect\.$/);
+});
+
+test('a used click, and a stale one, each give a fresh record, and plan 3 asks a fresh card for it (in words of its own)', async () => {
+  for (const kind of ['used', 'stale']) {
+    await withProject(async ({ folder, user, plan, answer }) => {
+      const run = startRun({ folder, now: () => T0 });
+      addChanges(run.id, [made(), record({ at: T0.toISOString() })]);
+      const first = await plan(3);
+      const at = kind === 'used' ? new Date(T0.getTime() + 30 * 1000) : new Date(T0.getTime() - 5 * 60 * 1000);
+      await answer(first.ask.card, signInOpenLabel('gitlab.com'), { at });
+      if (kind === 'used') addChanges(run.id, [{ id: 'chg_used', step: 3, kind: 'answer', target: SIGN_IN_USED_TARGET, before: null, after: { used: first.ask.id } }]);
+      const g = fakeGit();
+      const routes = setupRoutes({ now: () => T0, userHome: user, signInWith: { run: g.run, route: { findGit: async () => ({ ok: true, path: 'git' }) } } });
+      const got = await routes['/setup/sign-in']({ folder });
+      assert.equal(got.refused, kind === 'used' ? CLICK_USED : CLICK_STALE);
+      assert.equal(g.calls.filter((c) => c.args[0] === 'ls-remote' && c.args.includes('--heads')).length, 0);
+      const next = await plan(3);
+      assert.equal(next.ok, true, kind);
+      assert.match(next.ask.id, /^git-sign-in-/);
+      assert.notEqual(next.ask.id, first.ask.id, 'a fresh card');
+      assert.ok(next.ask.card.question.includes('Setup tried again (try 2), and '), next.ask.card.question);
+    }, { connected: false });
   }
 });
 
@@ -662,7 +742,7 @@ test('two sign-ins for one run do not open at once, and a waiting one counts the
     const second = await routes['/setup/sign-in']({ folder });
     assert.equal(second.ok, false);
     assert.match(second.refused, /already open for this setup/);
-  assert.equal(second.detail, 'Wait for the open sign-in\'s line; do not run plan 3 or this form again until it comes.');
+  assert.equal(second.detail, 'Wait for the open sign-in\'s line; do not run plan 3 or this form again until it comes, or, if no line comes within 10 minutes, run plan 3.');
     assert.equal(g.calls.filter((c) => c.args[0] === 'ls-remote' && c.args.includes('--heads')).length, 1);
     release();
     assert.equal((await first).ok, true);

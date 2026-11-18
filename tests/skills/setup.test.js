@@ -348,7 +348,7 @@ test('the playbook asks the sign-in as step 3\'s card, never reads git\'s settin
   assert.ok(!/dangerouslyDisableSandbox/.test(block), 'the sign-in bullet leaves the sandbox rule to its own bullet');
   assert.match(block, /close it and recommend another way to connect on step 3's card; never explain how to make a token, and never ask for, type or show a token or password/);
   assert.match(block, /After the line\*\* "Git reached <host> and can see the project\. Setup carries on with step 3\.", run `plan 3` and act on what it gives/);
-  assert.match(block, /one fresh card for each failure\. If the same failure comes a second time, stop, say so plainly, and recommend another way to connect on step 3's card; never loop/);
+  assert.match(block, /one fresh card for each failure\. If the same failure comes a second time, ask the card plan 3 gives once more and recommend its "Use another way to connect"; never loop/);
   assert.match(block, /A refusal's second line, `Detail:`, is for you alone, as in step 4\./);
   assert.match(block, /Where git is signed in as another account[^\n]*Never offer to open a window for it\./);
   assert.match(block, /"Use another way to connect":\*\* run `plan 3`: step 3's connection card comes back; ask it as given\./);
