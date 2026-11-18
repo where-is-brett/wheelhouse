@@ -1593,6 +1593,14 @@ export async function guardAsIsReach({ run = realRun, gitPath = 'git', cwd, env,
 // setupGit with the as-is route's guard on the calls that reach the host, when it has the as-is route's environment.
 const asIsGit = (options) => setupGit({ ...options, reachGuard: options.reachEnv === null || options.reachEnv === undefined ? null : guardAsIsReach });
 
+// What a project's later git calls that reach the host go with when step 3 connected it on the as-is route ("Use my git as it is",
+// `record.connection.mode`): { reachEnv, reachGuard } for setupGit, the same environment and look at the director's settings step 3's
+// own calls have. { reachEnv: null, reachGuard: null } on every other route, which keep their own sign-in. `url` is the address the calls reach.
+export function asIsRouteOf({ record, host, url, gitPath = 'git', platform = process.platform, base }) {
+  if (record?.connection?.mode !== 'as-is' || typeof url !== 'string' || url === '') return { reachEnv: null, reachGuard: null };
+  return { reachEnv: asIsReachEnv({ host, url, gitPath, platform, base }), reachGuard: guardAsIsReach };
+}
+
 // The host a repository address is on, for a line that names it.
 const hostOf = (url) => {
   try {

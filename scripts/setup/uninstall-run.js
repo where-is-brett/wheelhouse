@@ -111,7 +111,7 @@ import { lockedProjects } from '../protection/managed.js';
 import { readJournal, markPutBack, markOnHost, closeRun, reverseChange, reverseText } from './journal.js';
 import { launchVarState, unsetLaunchVar } from './telemetry.js';
 import { putBackOwnApp } from './own-app.js';
-import { directorGitEnv, directorGitlabApi, openPage } from './host.js';
+import { directorGitEnv, directorGitlabApi, openPage, asIsRouteOf } from './host.js';
 import { setupGit, reaching } from './git.js';
 import { toolsStatus } from './tools.js';
 import { enrolledFile, signingKeyFile } from '../state/signing.js';
@@ -145,12 +145,12 @@ const halt = (why) => { throw new Halt(why); };
 // setup's own under the Wheelhouse home, removed afterwards: never the director's folder, never the
 // project's private record. `use(git)` gets
 // `{ ok(args, input?), out(args, input?), must(args, why, input?) }`.
-async function withScratchGit({ run, gitPath, env, remoteUrl, index = false }, use) {
+async function withScratchGit({ run, gitPath, env, remoteUrl, index = false, reachEnv = null, reachGuard = null }, use) {
   const parent = path.join(wheelhouseHome(), 'setup');
   fs.mkdirSync(parent, { recursive: true });
   const dir = fs.mkdtempSync(path.join(parent, 'uninstall-'));
   try {
-    const call = setupGit({ run, gitPath, env: reaching({ GIT_NO_REPLACE_OBJECTS: '1', ...env, ...(index ? { GIT_INDEX_FILE: path.join(dir, 'uninstall.index') } : {}) }, remoteUrl), cwd: dir });
+    const call = setupGit({ run, gitPath, env: reaching({ GIT_NO_REPLACE_OBJECTS: '1', ...env, ...(index ? { GIT_INDEX_FILE: path.join(dir, 'uninstall.index') } : {}) }, remoteUrl), cwd: dir, reachEnv, reachGuard });
     const git = (args, input) => call([...NO_HOOKS, ...args], input === undefined ? {} : { input });
     const out = async (args, input) => {
       const got = await git(args, input);
@@ -337,10 +337,12 @@ export async function applyUninstall({
     }
   }
   let git = null;
-  const gitFor = async (host, remoteUrl, use, index = false, base = undefined) => {
+  // `record`, the project's, says whether step 3 connected on the as-is route, whose calls to the host go with the director's own git (asIsRouteOf).
+  const gitFor = async (host, remoteUrl, use, index = false, base = undefined, record = null) => {
     git ??= await o.findGit();
     if (!git?.ok || typeof git.path !== 'string') halt('git is not on this computer, so uninstall can\'t reach the host');
-    return withScratchGit({ run, gitPath: git.path, env: o.gitEnvFor({ host, gitPath: git.path, base }), remoteUrl, index }, use);
+    const reach = asIsRouteOf({ record, host, url: remoteUrl, gitPath: git.path, platform, base });
+    return withScratchGit({ run, gitPath: git.path, env: o.gitEnvFor({ host, gitPath: git.path, base }), remoteUrl, index, ...reach }, use);
   };
 
   // A push 15a's plan read as not made may have reached the host if setup stopped before it fetched:
@@ -470,7 +472,7 @@ export async function applyUninstall({
   const archiveChanged = async (branch) => {
     try {
       const call = setupGit({
-        run, gitPath: git.path, cwd: folder,
+        run, gitPath: git.path, cwd: folder, ...asIsRouteOf({ record, host: record.host, url: placeOf(record), gitPath: git.path, platform, base: record.connection?.baseUrl }),
         env: reaching({ GIT_NO_REPLACE_OBJECTS: '1', ...o.gitEnvFor({ host: record.host, gitPath: git.path, base: record.connection?.baseUrl }) }, placeOf(record)),
       });
       await call(['fetch', '-q', '--no-tags', '--no-write-fetch-head', '--end-of-options', placeOf(record), `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
@@ -498,7 +500,7 @@ export async function applyUninstall({
     say(kept === null ? `Setup's files and pins are out of ${entry.branch}, in your folder too.` : `Your folder and the main version changed the same files, so setup's files stay in your folder for now. The main version is kept on the line ${kept}.`);
   };
   const checkArchive = async (entry) => {
-    const same = await gitFor(record.host, placeOf(record), async (g) => sameArchive(await archiveAt(g.git, await fetchBase(g, entry.branch)), entry), false, record.connection?.baseUrl);
+    const same = await gitFor(record.host, placeOf(record), async (g) => sameArchive(await archiveAt(g.git, await fetchBase(g, entry.branch)), entry), false, record.connection?.baseUrl, record);
     if (!same) await archiveChanged(entry.branch);
   };
   try {
@@ -520,7 +522,7 @@ export async function applyUninstall({
         const fetched = await g.git(['fetch', '-q', '--no-tags', '--end-of-options', remoteUrl, `+refs/heads/${branch}:refs/fetched/branch`]);
         if (fetched.code !== 0) halt(`${branch} on ${hostName(record.host)} could not be read with your sign-in, so uninstall did not go on; try again once it can be`);
         return (await g.git(['cat-file', '-e', `${sha}^{commit}`])).code === 0;
-      }, false, record.connection?.baseUrl);
+      }, false, record.connection?.baseUrl, record);
       if (there) {
         // Recorded first, so the next plan reads the push as made and plans the pull request.
         markOnHost(unpushed.id, { now });
@@ -617,7 +619,7 @@ export async function applyUninstall({
             // Wheelhouse's own branch: a retry's commit takes the place of an earlier attempt's.
             await g.must(['push', '-q', '--no-verify', '--force', '--end-of-options', placeOf(record), `${sha}:refs/heads/${UNINSTALL_BRANCH}`], `uninstall's branch could not be pushed to ${hostName(record.host)} with your sign-in`);
             return { tip, left, sha };
-          }, true, record.connection?.baseUrl);
+          }, true, record.connection?.baseUrl, record);
           if (made.stale) await archiveChanged(entry.branch);
           for (const l of made.left) mark(l.ids, false, l.why);
           if (made.sha === null) {
@@ -660,7 +662,7 @@ export async function applyUninstall({
             say(`The trial branch ${entry.branch} stays: its commit was never recorded.`);
             break;
           }
-          const got = await gitFor(record.host, placeOf(record), (g) => deleteHostBranch(g, placeOf(record), entry.branch, entry.sha), false, record.connection?.baseUrl);
+          const got = await gitFor(record.host, placeOf(record), (g) => deleteHostBranch(g, placeOf(record), entry.branch, entry.sha), false, record.connection?.baseUrl, record);
           mark(entry.ids, got.put, got.put ? undefined : got.why);
           say(got.put ? `The trial branch ${entry.branch} is deleted.` : `The trial branch ${entry.branch} stays: ${got.why}.`);
           break;

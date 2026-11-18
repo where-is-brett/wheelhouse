@@ -139,8 +139,8 @@ import { FOLDER_REMOTE } from '../host/local/folder.js';
 import { identityOf, keepSeenMain } from '../host/local/merge.js';
 import { startedBySetup } from './local.js';
 import { askSecret as realAskSecret } from '../secrets/secret-box.js';
-import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED, launchedIn, REAL_USERS, askAdministrationKey, openPage, madeWithSetupToken, keyGitlabApi, keyGitEnv, projectKeyKind } from './host.js';
-import { isolated, refuseUnlistedSettings, reaching } from './git.js';
+import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED, launchedIn, REAL_USERS, askAdministrationKey, openPage, madeWithSetupToken, keyGitlabApi, keyGitEnv, projectKeyKind, asIsRouteOf } from './host.js';
+import { isolated, refuseUnlistedSettings, reaching, setupGit, subcommandOf, REMOTE_CALLS } from './git.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
 import { agentEntries } from '../agents/setup-parts.js';
 import { LIVE_DATA, SIGNS_APPS } from './questions.js';
@@ -633,9 +633,16 @@ async function localAuthor({ folder, run }) {
 // https is its only transport, with a local path too only when `remoteUrl`, the project's address
 // as setup recorded it, is one (ruling R111).
 // `keyed`, where step 3 connected with the setup token, is git's environment with the project's own key instead.
-function gitIn({ run, gitPath, host, platform, folder, remoteUrl, base, keyed = null }) {
+// `reach` ({ reachEnv, reachGuard }, asIsRouteOf), where step 3 connected on the as-is route, sends the calls that reach the host
+// (fetch, push, ls-remote) out with the director's own git, guarded, exactly as step 3's do (setupGit); every call that only
+// touches the folder stays on setup's isolated git. `asIs` says which route this is.
+function gitIn({ run, gitPath, host, platform, folder, remoteUrl, base, keyed = null, reach = { reachEnv: null, reachGuard: null } }) {
   const env = reaching(keyed ?? directorGitEnv({ host, gitPath, platform, base }), remoteUrl);
+  const asIs = reach.reachEnv !== null;
+  const ownGit = asIs ? setupGit({ run, gitPath, env, cwd: folder, workTree: folder, reachEnv: reach.reachEnv, reachGuard: reach.reachGuard, timeoutMs: GIT_WAIT_MS }) : null;
   const call = async (args) => {
+    // A refusal from the guard is not swallowed: it says what in the director's own settings stopped the call.
+    if (asIs && REMOTE_CALLS.has(subcommandOf(args))) return ownGit(args);
     await refuseUnlistedSettings({ run, gitPath, cwd: folder });
     return quietly(run, gitPath, args, { cwd: folder, env: { ...isolated(env), GIT_WORK_TREE: folder }, baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
   };
@@ -644,6 +651,7 @@ function gitIn({ run, gitPath, host, platform, folder, remoteUrl, base, keyed = 
   const callIn = (dir, args) => quietly(run, gitPath, args, { cwd: dir, env: isolated(env), baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
   return {
     env,
+    asIs,
     rawIn: async (dir, args) => {
       const got = await callIn(dir, args);
       return got.code === 0 ? got.stdout : null;
@@ -669,7 +677,11 @@ function gitIn({ run, gitPath, host, platform, folder, remoteUrl, base, keyed = 
 // The tip of the default branch on the host, or null when it has none.
 async function remoteTip(git, remoteUrl, branch) {
   const listed = await git.out(['ls-remote', '--end-of-options', remoteUrl, `refs/heads/${branch}`]);
-  if (listed === null) throw new Error(`Setup could not reach the repository with your sign-in to read ${branch}: check you are still signed in (step 3), then ask again`);
+  if (listed === null) {
+    throw new Error(git.asIs
+      ? `Setup could not read ${branch} on the host with git as it is on this computer. Check this computer can reach the host (for a company host, that you are connected to its network or VPN) and that git is signed in to the host as an account that can read the project, then ask again; or ask for step 3's card again and choose another way to connect`
+      : `Setup could not reach the repository with your sign-in to read ${branch}: check you are still signed in (step 3), then ask again`);
+  }
   const sha = listed.split(/\s/)[0];
   return /^[0-9a-f]{40,64}$/.test(sha ?? '') ? sha : null;
 }
@@ -1240,7 +1252,8 @@ export function projectFilesStep({
     const located = await findGit({ platform, run });
     if (!located?.ok || typeof located.path !== 'string') throw new Error('git is not on this computer; step 2 installs it');
     const keyed = madeWithSetupToken(record) ? await keyGitEnv({ record, gitPath: located.path, platform }) : null;
-    return gitIn({ run, gitPath: located.path, host, platform, folder, remoteUrl, base, keyed });
+    const reach = asIsRouteOf({ record, host, url: remoteUrl, gitPath: located.path, platform, base });
+    return gitIn({ run, gitPath: located.path, host, platform, folder, remoteUrl, base, keyed, reach });
   };
   const apiFor = (record) => (madeWithSetupToken(record) ? () => keyGitlabApi({ record, via: keyVia }) : gitlab);
   const lineage = (folder) => checkInstalled({ manifest: manifest(), projectDir: folder, claudeHome: claudeHome(), locate });
@@ -1615,7 +1628,7 @@ export function projectFilesStep({
         const catchUp = changes.find((c) => c.action === 'catch-up');
         if (catchUp !== undefined) {
           ctx.record({ id: newId('chg'), kind: 'host', target: catchUp.target, before: { branch: catchUp.branch, sha: catchUp.from }, after: { action: 'catch-up', branch: catchUp.branch, sha: catchUp.to }, project });
-          if (!(await git.ok(['push', '-q', '--no-verify', '--end-of-options', remoteUrl, `${catchUp.to}:refs/heads/${catchUp.branch}`]))) throw new Error('This folder\'s newest commits could not be copied, so nothing went up; a fresh Go ahead tries again');
+          if (!(await git.ok(['push', '-q', '--no-verify', '--end-of-options', remoteUrl, `${catchUp.to}:refs/heads/${catchUp.branch}`]))) throw new Error(`This folder's newest commits could not be copied, so nothing went up; check this computer can reach the host and that you can make changes in the project, then a fresh Go ahead tries again`);
         }
         const tipNow = await remoteTip(git, remoteUrl, up.branch);
         let sha = up.commit ?? null;
@@ -1675,13 +1688,14 @@ export function projectFilesStep({
             await takeMerged(git, { remoteUrl, branch: up.branch, head: sha, tip: await remoteTip(git, remoteUrl, up.branch) });
           } else {
             const pushed = await git.ok(['push', '-q', '--no-verify', '--end-of-options', remoteUrl, `${sha}:refs/heads/${up.branch}`]);
-            if (!pushed) throw new Error(`the setup commit could not be pushed to ${up.branch} on ${NAME[host]}; it is kept in this folder, and a fresh Go ahead pushes it`);
+            if (!pushed) throw new Error(`the setup commit could not be pushed to ${up.branch} on ${NAME[host]}; it is kept in this folder; check this computer can reach the host and that you can make changes to ${up.branch} in the project, then a fresh Go ahead pushes it`);
           }
           // The folder's copy of the branch on the host, told what the host now holds, when its
           // origin is the repository pushed to: fetched by the address setup recorded, never by the
           // one origin names (ruling R111).
           const origin = await git.out(['remote', 'get-url', 'origin']);
-          if (!local && origin !== null && sameRemote(origin, record.remoteUrl)) await git.ok(['fetch', '-q', '--end-of-options', record.remoteUrl, `+refs/heads/${up.branch}:refs/remotes/origin/${up.branch}`]);
+          // Best effort: the commit is already up, so a fetch that fails, or that the as-is route's look at the settings stops, leaves it at that.
+          if (!local && origin !== null && sameRemote(origin, record.remoteUrl)) await git.ok(['fetch', '-q', '--end-of-options', record.remoteUrl, `+refs/heads/${up.branch}:refs/remotes/origin/${up.branch}`]).catch(() => false);
           // The helper reads a move it didn't make as the main version moved outside it.
           if (local) keepSeenMain(project, sha);
           say(`Setup's commit is on ${up.branch} on ${NAME[host]}`);
