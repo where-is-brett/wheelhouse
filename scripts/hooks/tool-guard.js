@@ -932,11 +932,10 @@ function bashRefused(command, ctx, depth = 0) {
   return checks.some(({ words, data }) => !data && commandRefused(words));
 }
 
-// The servers the project allows, or null when the configuration cannot be read. Between step 3
-// and step 7 of setup the file holds only the host settings (a gitlabHosts list, say), which
-// readConfig refuses as a configuration. A JSON object that says nothing of mcpServers lists no
-// server, so it is the empty list rather than unreadable: no connector passes by it, and the
-// app's own tools can. Any other file that isn't a configuration stays unreadable.
+// The servers the project allows, or null when the configuration cannot be read. A JSON object
+// with no mcpServers is read the same as no file at all, whenever it is found: it lists no
+// server. Setup's step 3 to step 7, when the file holds only host settings, is where it happens.
+// Any other file that isn't a configuration stays unreadable.
 function allowedServers(mainFolder) {
   let text = null;
   try {

@@ -334,6 +334,26 @@ test('between step 3 and step 7, when the file holds only host settings, the app
   });
 });
 
+test('a partial file never lists a connector: a null mcpServers gives no pass, a __proto__ key and a .mcp.json add none', async () => {
+  await withHome(async (home) => {
+    const hosts = '"gitlabHosts":["git.example.test"]';
+    const nulled = makeProject(`{${hosts},"mcpServers":null}`);
+    try {
+      for (const tool of APP_TOOLS) assert.ok(denied(await desk(nulled.base, home, call(nulled.main, tool))), tool);
+    } finally { fs.rmSync(nulled.base, { recursive: true, force: true }); }
+    const proto = makeProject(`{${hosts},"__proto__":{"mcpServers":["figma"]}}`);
+    try {
+      for (const tool of APP_TOOLS) assert.equal(await desk(proto.base, home, call(proto.main, tool)), undefined, tool);
+      assert.ok(denied(await desk(proto.base, home, call(proto.main, 'mcp__figma__x'))));
+    } finally { fs.rmSync(proto.base, { recursive: true, force: true }); }
+    const plain = makeProject(`{${hosts}}`);
+    try {
+      fs.writeFileSync(path.join(plain.main, '.mcp.json'), JSON.stringify({ mcpServers: { figma: { command: 'node' } } }));
+      assert.ok(denied(await desk(plain.base, home, call(plain.main, 'mcp__figma__x'))));
+    } finally { fs.rmSync(plain.base, { recursive: true, force: true }); }
+  });
+});
+
 test('a project whose configuration names ccd_turn or ccd_view is refused those servers\' tools, the app\'s own included', async () => {
   await withHome(async (home) => {
     const plain = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
