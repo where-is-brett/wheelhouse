@@ -932,18 +932,26 @@ function bashRefused(command, ctx, depth = 0) {
   return checks.some(({ words, data }) => !data && commandRefused(words));
 }
 
-// The servers the project allows, or null when the configuration cannot be read.
+// The servers the project allows, or null when the configuration cannot be read. A JSON object
+// with no mcpServers is read the same as no file at all, whenever it is found: it lists no
+// server. Setup's step 3 to step 7, when the file holds only host settings, is where it happens.
+// Any other file that isn't a configuration stays unreadable.
 function allowedServers(mainFolder) {
+  let text = null;
   try {
-    let text = null;
-    try {
-      text = fs.readFileSync(path.join(mainFolder, '.claude', 'wheelhouse.json'), 'utf8');
-    } catch (error) {
-      if (error?.code !== 'ENOENT') return null;
-    }
+    text = fs.readFileSync(path.join(mainFolder, '.claude', 'wheelhouse.json'), 'utf8');
+  } catch (error) {
+    if (error?.code !== 'ENOENT') return null;
+  }
+  try {
     return readConfig(text).mcpServers;
   } catch {
-    return null;
+    try {
+      const parsed = JSON.parse(withoutBom(text));
+      return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.mcpServers === undefined ? [] : null;
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -979,7 +987,8 @@ function serverOf(input) {
 // past it; and so a project whose connector list or .mcp.json names either server, in any
 // spelling, is refused both servers' tools, these included. A user or local server spelled so in
 // ~/.claude.json isn't checked here, so it would load there and pass: that file is the director's
-// own to write, not a project's.
+// own to write, not a project's. While setup has written only the host settings (step 3 to
+// step 7), the connector list is empty (allowedServers), so the pass holds then too.
 const APP_TOOLS = new Set([
   'mcp__ccd_turn__update_plan', 'mcp__ccd_turn__wrap_up',
   'mcp__ccd_view__show_pane', 'mcp__ccd_view__close_pane', 'mcp__ccd_view__get_layout', 'mcp__ccd_view__set_transcript_view',
