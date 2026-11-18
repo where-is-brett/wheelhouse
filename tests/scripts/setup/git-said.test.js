@@ -173,6 +173,8 @@ test('scrubGitText hides a JSON key with a dot or in single quotes, authorizatio
     assert.equal(got, shown, said);
     assert.ok(!/\b(?:pw|tok)\b/.test(got), said);
   }
+  // A one-letter user is hidden unless the rest reads as a Windows path, with a second slash in it.
+  for (const said of ['C:/SECRETPW@proxy.corp.com', 'u:/SECRETPW@proxy.corp.com', 'x C:\\SECRETPW@proxy.corp.com']) assert.ok(!scrubGitText(said).includes('SECRETPW'), said);
   assert.equal(scrubGitText('x 1:2@h.example y'), 'x 1:2@h.example y', 'a user with no letter in it is no user');
   // A drive letter at the start of a stretch does not keep a user and password later in it from being hidden.
   for (const said of [

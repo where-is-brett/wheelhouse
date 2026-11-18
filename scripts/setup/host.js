@@ -1636,7 +1636,7 @@ export const ownSignInFailure = (what, url, record = () => {}, { base = null, jo
   if (kind === 'not-found' && joined) return `${lead} Your git sign-in for ${host} can't see this project; ask its owner to add you, then a fresh Go ahead tries again. Or ${ASIS_OTHER_WAY}.`;
   if (kind === 'not-found' && secure) {
     if (!keep('account')) return `${lead} ${NOT_KEPT}`;
-    return `Git on this computer is signed in to ${host} as a different account from the one that has access to the project${said === '' ? '' : ` (git said: ${said})`}. Next: sign git out of ${host}, or in as the account that has access to the project (or ask its owner to add your account), outside setup, then choose '${signInRetryLabel(host)}' on the card that follows; or ${ASIS_OTHER_WAY} (recommended).`;
+    return `Git on this computer is signed in to ${host} as a different account from the one that has access to the project${said === '' ? '' : ` (git said: ${said})`}. Next: sign git out of ${host}, or in as the account that has access to the project (or have the account git uses added to the project), outside setup, then choose '${signInRetryLabel(host)}' on the card that follows; or ${ASIS_OTHER_WAY} (recommended).`;
   }
   return `${lead} A fresh Go ahead tries again, or ${ASIS_OTHER_WAY}.`;
 };

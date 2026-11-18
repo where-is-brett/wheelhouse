@@ -60,7 +60,7 @@ export const STOPPED_LINE = 'All stop is on, so git\'s sign-in was not opened.';
 export const STOPPED_DETAIL = 'Once All stop is lifted, run plan 3 and ask the sign-in card it gives, then run this form.';
 export const STOPPED_OPEN_LINE = 'All stop was turned on while git\'s sign-in was open, so setup stopped waiting and closed it.';
 export const NO_GIT = 'Git is not on this computer yet, so nothing was opened; step 2 installs it, then a fresh Go ahead on step 3\'s card tries again.';
-export const ACCOUNT_LINE = (host) => `Git on this computer is signed in to ${host} as a different account from the one that has access to the project, and its sign-in window would not open for that. Sign git out of ${host}, or in as the account that has access to the project (or ask its owner to add your account), outside setup, then choose '${signInRetryLabel(host)}' on the card that follows; or ${OTHER_WAY} (recommended).`;
+export const ACCOUNT_LINE = (host) => `Git on this computer is signed in to ${host} as a different account from the one that has access to the project, and its sign-in window would not open for that. Sign git out of ${host}, or in as the account that has access to the project (or have the account git uses added to the project), outside setup, then choose '${signInRetryLabel(host)}' on the card that follows; or ${OTHER_WAY} (recommended).`;
 export const NO_WINDOW_LINE = (host) => `Git on this computer has no sign-in window of its own that setup can open for ${host}, so nothing was opened. Sign git in to ${host} outside setup, then choose '${signInSignedLabel(host)}' on the card that follows, or ${OTHER_WAY} (recommended).`;
 export const NOT_RECORDED = 'Setup could not record that it was opening git\'s sign-in, so nothing was opened. A fresh Go ahead on step 3\'s card tries again.';
 export const signedInLine = (host) => `Git reached ${host} and can see the project. Setup carries on with step 3.`;
@@ -74,7 +74,7 @@ export const failedLine = (host, said, { timedOut = false, gcm = true } = {}) =>
   ? `Git's sign-in for ${host} was not finished within ${SIGN_IN_WAIT_MS / 60000} minutes, so setup stopped waiting. Next: ${OTHER_WAY} (recommended), or ${AGAIN}.`
   : `Git still could not reach ${host}${said === '' ? '' : ` (git said: ${said})`}. Next: ${OTHER_WAY} (recommended), which is the way to go if its window asked for a token, or a password you don't use there; or ${AGAIN}.`);
 // Git's window opened and git then reached the host as an account that can't see the project: the card that follows has the account's shape.
-export const accountSeenLine = (host, said) => `Git reached ${host} as an account that can't see the project${said === '' ? '' : ` (git said: ${said})`}, so its sign-in window cannot help. Next: sign git out of ${host}, or in as the account that has access to the project (or ask its owner to add your account), outside setup, then choose '${signInRetryLabel(host)}' on the card that follows; or ${OTHER_WAY} (recommended).`;
+export const accountSeenLine = (host, said) => `Git reached ${host} as an account that can't see the project${said === '' ? '' : ` (git said: ${said})`}, so its sign-in window cannot help. Next: sign git out of ${host}, or in as the account that has access to the project (or have the account git uses added to the project), outside setup, then choose '${signInRetryLabel(host)}' on the card that follows; or ${OTHER_WAY} (recommended).`;
 // A refusal before the window opened: where the card that follows recommends another way (`opened`), so does the line.
 const neutralUnsafe = (opened) => `Setup could not make sure git would run where no project's settings reach it, so nothing was opened; ${opened ? `${OTHER_WAY} (recommended), or ${AGAIN}` : `${AGAIN}, or ${OTHER_WAY}`}.`;
 const settingsUnchecked = (opened) => `Setup could not check git's settings before opening its sign-in, so nothing was opened; ${opened ? `${OTHER_WAY} (recommended), or ${AGAIN}` : `${AGAIN}, or ${OTHER_WAY}`}.`;
@@ -192,7 +192,7 @@ export function signInAsk(pending, { platform = process.platform, tries = 1, ope
         what: lead(`Git on this computer is signed in to ${pending.host} as a different account from the one that has access to the project, so setup could not reach it.`, `git on this computer reaches ${pending.host} as a different account from the one that has access to the project, so setup could not reach it.`),
         why: 'You chose to use your own git, so setup relies on its sign-in and makes none. Git would use the same account again and open no window, so setup opens none.',
         options: [
-          { label: retry, says: `Do this first: sign git out of ${pending.host}${where}, or sign it in as the account that has access to the project (or ask its owner to add your account), outside setup. Then click this, and setup carries on with step 3.` },
+          { label: retry, says: `Do this first: sign git out of ${pending.host}${where}, or sign it in as the account that has access to the project (or have the account git uses added to the project), outside setup. Then click this, and setup carries on with step 3. Click this also once that account has been added.` },
           { label: SIGN_IN_OTHER, says: otherSays },
         ],
         recommend: SIGN_IN_OTHER,
@@ -414,7 +414,7 @@ export async function signInNow({
       clearInterval(watch);
     }
     if (stopped() || got.stopped === true) {
-      return refuse(STOPPED_OPEN_LINE, kept() ? STOPPED_DETAIL : `${STOPPED_DETAIL} Setup could not keep a fresh record of this, so tell me and I'll report it.`);
+      return kept() ? refuse(STOPPED_OPEN_LINE, STOPPED_DETAIL) : refuse(`${STOPPED_OPEN_LINE} ${NOT_KEPT}`, NOT_KEPT_DETAIL);
     }
     if (got.code !== 0) {
       const said = got.timedOut === true ? '' : gitSaid(got.stderr);

@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  signInNow, pendingSignIn, signInAsk, openedOf, accountSeenLine, NOT_KEPT, signInRecord, signInOpenLabel, signInRetryLabel, signInSignedLabel, carryOnLabel, signInOutdated, triesOf, connectionProblem, gitHasSignInWindow, SIGN_IN_TARGET,
+  signInNow, pendingSignIn, signInAsk, openedOf, accountSeenLine, NOT_KEPT, NOT_KEPT_DETAIL, signInRecord, signInOpenLabel, signInRetryLabel, signInSignedLabel, carryOnLabel, signInOutdated, triesOf, connectionProblem, gitHasSignInWindow, SIGN_IN_TARGET,
   SIGN_IN_USED_TARGET, SIGN_IN_OTHER, SIGN_IN_WAIT_MS, SIGN_IN_TOTAL_MS, NO_SIGN_IN_ADDRESS, NOT_CHOSEN, NOT_THE_CONNECTION, STOPPED_LINE,
   STOPPED_OPEN_LINE, NO_GIT, ACCOUNT_LINE, NO_WINDOW_LINE, CLICK_USED, CLICK_STALE, NOT_RECORDED, signedInLine, failedLine,
 } from '../../../scripts/setup/sign-in.js';
@@ -150,12 +150,12 @@ test('where git is signed in as another account no window is offered: the card s
   assert.deepEqual(card.options.map((o) => o.label), [signInRetryLabel('gitlab.com'), SIGN_IN_OTHER]);
   assert.ok(!card.options.some((o) => o.label === signInOpenLabel('gitlab.com')), 'no Open');
   assert.equal(card.recommend, SIGN_IN_OTHER);
-  assert.equal(card.options[0].says, 'Do this first: sign git out of gitlab.com (in Keychain Access), or sign it in as the account that has access to the project (or ask its owner to add your account), outside setup. Then click this, and setup carries on with step 3.');
+  assert.equal(card.options[0].says, 'Do this first: sign git out of gitlab.com (in Keychain Access), or sign it in as the account that has access to the project (or have the account git uses added to the project), outside setup. Then click this, and setup carries on with step 3. Click this also once that account has been added.');
   assert.doesNotMatch(card.options[0].says, /Go ahead/);
   // Where to sign git out depends on the computer the card is shown on.
   assert.match(signInAsk(pending, { platform: 'win32' }).card.options[0].says, /^Do this first: sign git out of gitlab\.com \(in Windows' Credential Manager, under Windows Credentials\), or sign it in as the account/);
   const elsewhere = signInAsk(pending, { platform: 'linux' }).card.options[0].says;
-  assert.equal(elsewhere, 'Do this first: sign git out of gitlab.com, or sign it in as the account that has access to the project (or ask its owner to add your account), outside setup. Then click this, and setup carries on with step 3.');
+  assert.equal(elsewhere, 'Do this first: sign git out of gitlab.com, or sign it in as the account that has access to the project (or have the account git uses added to the project), outside setup. Then click this, and setup carries on with step 3. Click this also once that account has been added.');
   assert.equal(signInAsk(pending, { platform: 'win32' }).id, signInAsk(pending, { platform: 'darwin' }).id);
   composeCard({ ...card, kind: 'question', suggest: false });
 });
@@ -435,7 +435,7 @@ test('where git is signed in as another account nothing is opened: the line says
   const g = fakeGit();
   const { got, records } = await attempt(run, g, { answers: chosen(pendingSignIn(run)) });
   assert.deepEqual({ ok: got.ok, refused: got.refused }, { ok: false, refused: ACCOUNT_LINE('gitlab.com') });
-  assert.match(got.refused, /signed in to gitlab\.com as a different account[^]*Sign git out of gitlab\.com, or in as the account that has access to the project \(or ask its owner to add your account\), outside setup, then choose 'I have changed git's sign-in for gitlab\.com' on the card that follows; or choose another way to connect on step 3's card \(recommended\)/);
+  assert.match(got.refused, /signed in to gitlab\.com as a different account[^]*Sign git out of gitlab\.com, or in as the account that has access to the project \(or have the account git uses added to the project\), outside setup, then choose 'I have changed git's sign-in for gitlab\.com' on the card that follows; or choose another way to connect on step 3's card \(recommended\)/);
   assert.equal(g.calls.length, 0);
   assert.equal(records.length, 0);
 });
@@ -864,6 +864,20 @@ test('a record that could not be kept on the failure path is told as a fault in 
   const { got } = await attempt(runOf(record()), g, { answers: chosen(pending), routeGiven: { record: () => { if (++n > 1) throw new Error('disk full'); } } });
   assert.equal(got.refused, NOT_KEPT);
   assert.match(got.refused, /fault in Wheelhouse/);
+});
+
+test('All stop ending an open sign-in whose fresh record could not be kept says the fault in its line, and stops', async () => {
+  let on = false;
+  const g = fakeGit({
+    during: async (options) => {
+      on = true;
+      await new Promise((resolve) => { options.signal.addEventListener('abort', resolve, { once: true }); });
+    },
+  });
+  let n = 0;
+  const { got } = await attempt(runOf(record()), g, { stopped: () => on, routeGiven: { record: () => { if (++n > 1) throw new Error('disk full'); } } });
+  assert.equal(got.refused, `${STOPPED_OPEN_LINE} ${NOT_KEPT}`);
+  assert.equal(got.detail, NOT_KEPT_DETAIL);
 });
 
 test('a record kept after its own used mark is asked again in the same words, through the real noteAsked', async () => {
