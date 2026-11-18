@@ -737,6 +737,24 @@ async function takeMerged(git, { remoteUrl, branch, head, tip }) {
   return (await git.ok(['merge', '-q', '--ff-only', tip])) ? tip : head;
 }
 
+// A folder with no commit yet, on the branch, where the host holds only the repository's first commit (the README the host
+// made when step 3 made the project): the folder takes that commit in, as step 3 does when it connects a folder, without
+// touching the folder's files; the repository's files it lacks are written out. Anything else is left as it is. Gives the
+// folder's commit afterwards.
+async function takeFirst(git, { remoteUrl, branch, head, tip }) {
+  if (head !== null || tip === null) return head;
+  if ((await git.out(['symbolic-ref', '--short', '-q', 'HEAD'])) !== branch) return head;
+  if (!(await git.ok(['cat-file', '-e', `${tip}^{commit}`]))
+    && !(await git.ok(['fetch', '-q', '--end-of-options', remoteUrl, `+refs/heads/${branch}:refs/remotes/origin/${branch}`]))) return head;
+  if (!(await git.ok(['cat-file', '-e', `${tip}^{commit}`]))) return head;
+  if ((await git.out(['rev-list', '--count', tip])) !== '1') return head;
+  if (!(await git.ok(['reset', '-q', tip]))) return head;
+  await git.ok(['branch', '-q', `--set-upstream-to=origin/${branch}`]);
+  const missing = ((await git.raw(['ls-files', '--deleted', '-z'])) ?? '').split('\0').filter(Boolean);
+  if (missing.length > 0) await git.ok(['checkout', '-q', '--', ...missing]);
+  return tip;
+}
+
 // What a file held at HEAD, exactly, or null when it wasn't there.
 const headText = (git, rel, rev = 'HEAD') => git.raw(['show', `${rev}:${rel}`]);
 
@@ -1387,6 +1405,7 @@ export function projectFilesStep({
       let head = await git.out(['rev-parse', '-q', '--verify', 'HEAD^{commit}']);
       // Setup's commit merged on GitLab since (by the director, where the key may not merge): the folder is taken on to it.
       if (keyed) head = await takeMerged(git, { remoteUrl, branch, head, tip });
+      head = await takeFirst(git, { remoteUrl, branch, head, tip });
       let unpushed = false;
       let catchUp = null;
       if (head !== tip) {
