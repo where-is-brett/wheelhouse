@@ -704,7 +704,7 @@ test('step 6\'s card with Copilot chosen and one of the director\'s own weakenin
         assert.match(text, /Chat history kept/, where);
         assert.match(text, /well-tried updates/, where);
         assert.match(text, /Phone notifications/, where);
-        assert.match(text, /Copilot's checks before each of its actions and First Mate files|Copilot's hook file/, where);
+        assert.match(text, /Copilot's (checks before each of its actions|checks) and First Mate files|Copilot's hook file/, where);
         assert.match(text, /sit outside Wheelhouse's Standard safeguards/, where);
         assert.match(text, /docker runs outside the sandbox|1 command runs outside the sandbox|1 of them/, where);
       }
@@ -747,7 +747,7 @@ test('Copilot chosen with no agent changes still says its commands could read th
   }
 });
 
-test('the terse agent line says the checks act only in Wheelhouse projects, and the First Mate files alone say to apply only there', async () => {
+test('the terse agent line says the checks act only in Wheelhouse projects, and that the First Mate files alone say to apply only there', async () => {
   const { agentComputerChanges } = await import('../../../scripts/agents/setup-parts.js');
   const root = path.resolve(import.meta.dirname, '..', '..', '..');
   const agent = agentComputerChanges('copilot', { env: {}, userHome: 'C:\\Users\\firstname.lastname-longer', platform: 'win32', root });
@@ -758,8 +758,8 @@ test('the terse agent line says the checks act only in Wheelhouse projects, and 
   ];
   const userSettings = { cleanupPeriodDays: 365, minimumVersion: '2.0.0', sandbox: { excludedCommands: ['docker'] } };
   const both = JSON.stringify(computerCard({ changes: [...others, ...agent], userSettings, platform: 'win32', floor: '2.1.299', key: true }));
-  assert.match(both, /Copilot's checks before each of its actions and First Mate files, in your Copilot folder for every project \(they act only in Wheelhouse projects\)/);
-  assert.doesNotMatch(both, /they say to apply only in Wheelhouse projects/);
+  assert.match(both, /Copilot's (checks before each of its actions|checks) and First Mate files, in your Copilot folder for every project \((the checks|checks) act only in Wheelhouse projects; (the First Mate )?files say to apply only there\)/);
+  assert.doesNotMatch(both, /\(they act only in Wheelhouse projects\)/);
   const mate = JSON.stringify(computerCard({ changes: [...others, ...agent.filter((c) => c.part === 'first-mate')], userSettings, platform: 'win32', floor: '2.1.299', key: true }));
   assert.match(mate, /they say to apply only in Wheelhouse projects/);
 });

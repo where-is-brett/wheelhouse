@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { STEPS, planHash, firstUnfinished, stepProgress, STEP_MINUTES } from '../../../scripts/setup/steps.js';
-import { admitFolder, runApply, setupRoutes } from '../../../scripts/setup/engine.js';
+import { admitFolder, runApply, setupRoutes, changesAnotherAgent, NOT_COVERED } from '../../../scripts/setup/engine.js';
 import { beingSetUp } from '../../../scripts/hooks/kit.js';
 import { setupLine, SETUP_TITLES, SETUP_LABEL, setLineOf } from '../../../scripts/state/card-lines.js';
 import { composeCard, DECIDING, HEADERS } from '../../../scripts/cards/compose.js';
@@ -801,4 +801,11 @@ test('a step is headed by its place and minutes, what it is, what has happened a
   // A computer joining a project counts the steps it runs, and a step is placed among them.
   const joining = { steps: {}, changes: [{ step: 3, kind: 'answer', after: { joined: 'jo/tide' } }] };
   assert.equal(stepProgress({ n: 6, run: joining })[0], 'Step 4 of 7 · about 1 minute');
+});
+
+test('a step\'s changes to another agent are not covered by the one card\'s Go ahead, and other changes are', () => {
+  assert.equal(changesAnotherAgent([{ what: 'telemetry' }, { what: 'agent', part: 'hooks' }]), true);
+  assert.equal(changesAnotherAgent([{ what: 'telemetry' }, { what: 'retention' }]), false);
+  assert.equal(changesAnotherAgent([]), false);
+  assert.deepEqual([...NOT_COVERED], ['switch', 'own-app-again']);
 });

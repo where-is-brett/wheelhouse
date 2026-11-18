@@ -255,7 +255,7 @@ test('path i: Copilot chosen on the builder question, step 6\'s card names every
   assert.match(ask.card.options.find((o) => o.label === 'Copilot').description, /GitHub's Copilot does the building on this computer, using your Copilot plan's monthly allowance\. Setup adds its checks and reads your plan from your GitHub account/);
   const six = cards.find((c) => c.step === 6 && c.kind === 'go-ahead');
   assert.ok(six.card.question.length <= 1200, `step 6's card is ${six.card.question.length} characters`);
-  assert.match(six.card.question, /Copilot's checks before each of its actions and First Mate files, in your Copilot folder for every project \(they act only in Wheelhouse projects\)/);
+  assert.match(six.card.question, /Copilot's checks before each of its actions and First Mate files, in your Copilot folder for every project \(the checks act only in Wheelhouse projects; the First Mate files say to apply only there\)/);
   assert.match(six.card.question, /Usage counting left as you set it/);
   assert.match(six.card.question, /Chat history kept 30 days/);
   assert.match(six.card.question, /Phone notifications prepared/);

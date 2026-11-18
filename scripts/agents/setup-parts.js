@@ -3,7 +3,7 @@
 // core-neutral guard). Claude Code's part of setup is the plugin and its settings, which setup already makes; another
 // agent brings its own changes to this computer through its entry in SETUPS (design section 8, part 11).
 //
-// The choice is asked in step 6, once per computer, and only where another agent's command line is installed: a
+// The choice is asked in step 6, on every setup run, and only where another agent's command line is installed: a
 // computer with none asks nothing and runs Claude Code. The answer reaches the project's configuration in step 7 as this
 // computer's entry in the `agents` map (agentEntries).
 import { computerId } from '../lib/paths.js';
@@ -37,7 +37,7 @@ export function agentAsk({ found, project, platform = process.platform }) {
     card: {
       level: 3,
       what: `${others} is installed on this computer as well as Claude Code. Which should build ${project ?? 'this project'} here?`,
-      why: `It is chosen for each computer, and it can be changed later from the First Mate. The chat and cards are the same either way.${platform === 'win32' ? '' : ` Claude Code's sandbox keeps its commands from the key behind your clicks and your saved sign-ins; ${others}'s commands run without that.`}`,
+      why: `It is chosen for each computer, and it can be changed later from the First Mate. The chat and cards are the same either way.${platform === 'win32' ? '' : ` In projects Wheelhouse has set up, Claude Code's sandbox keeps its commands from the key behind your clicks; ${others}'s commands run without that.`}`,
       options: names.map((name, i) => ({
         label: labels[i],
         says: name === DEFAULT ? 'Claude Code does the building on this computer, as it does by default.' : `GitHub's ${labels[i]} does the building on this computer, using your ${labels[i]} plan's monthly allowance. Setup adds its checks and reads your plan from your GitHub account.`,

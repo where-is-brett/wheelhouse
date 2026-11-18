@@ -130,6 +130,8 @@ export const OWN_LIST = 'the helper works out the list itself: a request names o
 export const PHONE_NEXT = 'Setup is finished. Phone notifications come next, and are optional.';
 // What the one card's Go ahead never stands for: the director's own decisions, each asked on its card.
 export const NOT_COVERED = Object.freeze(['switch', 'own-app-again']);
+// A list that changes another agent's files on this computer is asked on its own card: the one card's Go ahead says nothing of them.
+export const changesAnotherAgent = (changes) => changes.some((c) => c?.what === 'agent');
 // Said to the director with a card asked again because what they typed on it was not taken, by why
 // (rulings R125, R132); after a question, that whatever they type there next is taken (R135).
 export const NOT_AN_ANSWER = Object.freeze({
@@ -579,7 +581,7 @@ export function setupRoutes({
     if (stepDone(run, 3) || runningIn(run, 3) !== null) return consent;
     return JSON.stringify(consent.facts ?? null) === JSON.stringify(folderFacts(run.folder)) ? consent : null;
   };
-  const coveredByConsent = (run, changes) => consentNow(run) !== null && !changes.some((c) => NOT_COVERED.includes(c?.action));
+  const coveredByConsent = (run, changes) => consentNow(run) !== null && !changes.some((c) => NOT_COVERED.includes(c?.action)) && !changesAnotherAgent(changes);
 
   // A step's plan with a look at the choices only: its questions, taken as answered by `answers`.
   const choicePlan = (run, folder) => (step, answers) => step.plan({

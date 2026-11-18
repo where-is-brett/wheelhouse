@@ -206,8 +206,8 @@ export function lines({ changes, userSettings, kept, route, platform, floor, ter
       const own = changes.filter((x) => x.what === 'agent' && x.label === label);
       const mate = own.some((x) => x.part === 'first-mate');
       const hook = own.some((x) => x.part === 'hooks');
-      const what = [...(hook ? ['checks before each of its actions'] : []), ...(mate ? ['First Mate files'] : [])].join(' and ');
-      out.push(`${label}'s ${what}, in your ${label} folder for every project${mate && !hook ? ' (they say to apply only in Wheelhouse projects)' : hook ? ' (they act only in Wheelhouse projects)' : ' (they do nothing outside a Wheelhouse project)'}`);
+      const what = [...(hook ? [terse >= 3 ? 'checks' : 'checks before each of its actions'] : []), ...(mate ? ['First Mate files'] : [])].join(' and ');
+      out.push(`${label}'s ${what}, in your ${label} folder for every project${hook && mate ? (terse >= 3 ? ' (checks act only in Wheelhouse projects; files say to apply only there)' : ' (the checks act only in Wheelhouse projects; the First Mate files say to apply only there)') : hook ? ' (they act only in Wheelhouse projects)' : ' (they say to apply only in Wheelhouse projects)'}`);
     }
   } else {
     for (const c of changes.filter((x) => x.what === 'agent' && x.line)) out.push(c.line);
@@ -337,7 +337,7 @@ export function computerStep({
     n: 6,
     title: SETUP_TITLES[6],
     async plan(ctx) {
-      // Where another agent's command line is installed, which agent builds here is asked first, once per computer
+      // Where another agent's command line is installed, which agent builds here is asked first, on every setup run
       // (scripts/agents/setup-parts.js); a computer with none asks nothing. A chosen agent that is not signed in waits.
       const found = otherAgentsFound({ platform: ctx.platform ?? process.platform, env, ...(exists === undefined ? {} : { exists }) });
       if (found.length > 0 && agentChosen(ctx.answers) === null) return { ask: agentAsk({ found, platform: ctx.platform ?? process.platform, project: path.basename(ctx.folder ?? '') || undefined }) };
