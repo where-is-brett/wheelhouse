@@ -20,6 +20,7 @@ const ALLOWED_CORE_FILES = {
   'scripts/lib/agent-control.js': 'the guardrail list names the folders and files that steer each agent, Copilot\'s among them (design section 6.5)',
   'README.md': 'the README\'s section "On GitHub Copilot" gives the one request line that sets Wheelhouse up in VS Code with Copilot',
   'scripts/health/own-files.js': 'the weekly look at the files that guard the project names Copilot\'s own folders in the person\'s home, and never reads its sign-in',
+  'scripts/setup/render-cards.js': 'the render driver walks setup\'s cards on pretend computers, one of which has Copilot\'s command line installed and chosen',
   'HANDOVER.md': 'the handover says where the work stands, the Copilot build among it',
 };
 

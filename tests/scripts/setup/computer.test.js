@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { computerStep, computerCard, computerChanges, lockedStep, weakening, SETTLED_LEAD } from '../../../scripts/setup/computer.js';
+import { computerStep, computerCard, lines, computerChanges, lockedStep, weakening, SETTLED_LEAD } from '../../../scripts/setup/computer.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { runApply, setupRoutes, AFTER_WAIT_MS, CHANGED } from '../../../scripts/setup/engine.js';
 import { findRun, markStep, reverseChange, startRun, addChanges, newId } from '../../../scripts/setup/journal.js';
@@ -670,7 +670,7 @@ test('step 6\'s card with Copilot chosen fits at the longest lengths, in words a
         const text = composeCard({ ...card, kind: 'setup', target: { step: 6, hash: '0'.repeat(64) } }).question.question;
         const where = `${platform}, ${route}, ${kept.length} kept`;
         assert.ok(text.length <= 1200, `${where}: ${text.length} characters`);
-        assert.match(text, /Copilot's hook file/, where);
+        assert.match(text, /Copilot's (checks before each of its actions|hook file)/, where);
         assert.match(text, /First Mate files/, where);
         assert.match(text, /Chat history kept/, where);
         assert.match(text, /well-tried updates/, where);
@@ -678,4 +678,48 @@ test('step 6\'s card with Copilot chosen fits at the longest lengths, in words a
       }
     }
   }
+});
+
+test('the signing line says an agent\'s commands could read the key whenever another agent is chosen, on every system and in each form', async () => {
+  const { agentComputerChanges } = await import('../../../scripts/agents/setup-parts.js');
+  const root = path.resolve(import.meta.dirname, '..', '..', '..');
+  const base = [{ kind: 'json-key', what: 'retention', key: ['cleanupPeriodDays'], after: RETENTION_DAYS }];
+  for (const platform of ['darwin', 'win32']) {
+    const agent = agentComputerChanges('copilot', { env: {}, userHome: '/home/x', platform, root });
+    const full = JSON.stringify(computerCard({ changes: [...base, ...agent], platform, floor: '2.1.299', key: true }));
+    assert.match(full, /Your clicks are marked as coming from this computer\. Copilot's commands could read the key behind that mark, so it shows a click came from here, not that you made it\./, platform);
+    assert.doesNotMatch(full, /sandbox keeps agents from reading/, platform);
+    const terse = JSON.stringify(computerCard({ changes: [...base, ...agent], platform, floor: '2.1.299', key: true, kept: Object.keys(telemetryEnv(47801)).map((name) => ({ name, value: 'v'.repeat(400) })) }));
+    assert.match(terse, /Copilot's commands could read the key behind that mark/, platform);
+    assert.doesNotMatch(terse, /sandbox keeps agents from reading/, platform);
+  }
+  // No agent chosen: the Mac keeps the sandbox claim, Windows says it has none, and neither leaves "that key" dangling.
+  const mac = JSON.stringify(computerCard({ changes: base, platform: 'darwin', floor: '2.1.299', key: true }));
+  assert.match(mac, /Claude Code's sandbox keeps agents from reading in projects Wheelhouse has set up/);
+  const win = JSON.stringify(computerCard({ changes: base, platform: 'win32', floor: '2.1.299', key: true }));
+  assert.match(win, /On Windows an agent's command could read the key behind that mark/);
+});
+
+test('when the card is cut, the director\'s own usage settings are counted first and the values they held are left unsaid last', () => {
+  const kept = Object.keys(telemetryEnv(47801)).map((name) => ({ name, value: 'x' }));
+  const changes = [
+    { kind: 'json-key', what: 'retention', key: ['cleanupPeriodDays'], after: RETENTION_DAYS },
+    { kind: 'json-key', what: 'updates', key: ['minimumVersion'] },
+  ];
+  const userSettings = { cleanupPeriodDays: 365, minimumVersion: '2.0.0' };
+  const at = (terse) => lines({ changes, userSettings, kept, route: 'user-settings', platform: 'darwin', floor: '2.1.299', terse }).join('\n');
+  const names = Object.keys(telemetryEnv(47801));
+  for (const terse of [0, 1]) {
+    assert.match(at(terse), new RegExp(`${names[0]}, `), `form ${terse} names the variables`);
+    assert.match(at(terse), /\(now 365\)/);
+    assert.match(at(terse), /\(now 2\.0\.0\)/);
+  }
+  // Form 2: the variables are counted, and the old values the director's settings held are still said.
+  assert.match(at(2), /4 settings are yours/);
+  assert.doesNotMatch(at(2), new RegExp(names[0]));
+  assert.match(at(2), /\(now 365\)/);
+  assert.match(at(2), /\(now 2\.0\.0\)/);
+  // Form 3: the old values go last.
+  assert.match(at(3), /4 settings are yours/);
+  assert.doesNotMatch(at(3), /\(now /);
 });
