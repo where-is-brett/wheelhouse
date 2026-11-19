@@ -10,7 +10,7 @@ import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { standInTools } from '../../helpers/host-stand-ins.js';
 import { tempFolder } from '../../helpers/homes.js';
-import translate, { TOOL_MAP, KNOWN_TOOLS, UNKNOWN_TOOL, UNSETTLED, toGuardInput, fromGuardAnswer, harnessOf, exitCodeFor, patchPaths } from '../../../adapters/copilot/translate.js';
+import translate, { TOOL_MAP, KNOWN_TOOLS, UNKNOWN_TOOL, UNSETTLED, toGuardInput, fromGuardAnswer, harnessOf, exitCodeFor, patchPaths, callsOf, upperDrive } from '../../../adapters/copilot/translate.js';
 import copilot from '../../../adapters/copilot/index.js';
 import tools from '../../../adapters/copilot/tools.js';
 import { hookMain, answer, TRANSLATORS } from '../../../scripts/hooks/kit.js';
@@ -344,11 +344,13 @@ test('Local harness input is told apart from the Copilot harness\'s', () => {
   for (const file of camelFiles) {
     const raw = fixture(file);
     assert.equal(harnessOf(raw, { COPILOT_CLI: '1', COPILOT_CLI_BINARY_VERSION: '1.0.101' }), 'copilot', file);
-    // VS Code's Copilot session target sets no version, but COPILOT_CLI and the hook folder (check 72).
+    // VS Code's Copilot session target sets no version, but COPILOT_CLI, with the hook folder or without it
+    // (check 72, and the director's chat in VS Code on 19 November 2026).
     assert.equal(harnessOf(raw, { COPILOT_CLI: '1', COPILOT_HOOK_DIR: '/h/.copilot/hooks' }), 'copilot', file);
+    assert.equal(harnessOf(raw, { COPILOT_CLI: '1' }), 'copilot', file);
     // No input field names the harness (check 58), so with neither sign the harness is not known, and it is
     // refused as Local is; nothing is read as Local yet.
-    assert.equal(harnessOf(raw, { COPILOT_CLI: '1' }), 'unknown', file);
+    assert.equal(harnessOf(raw, { COPILOT_CLI: '0' }), 'unknown', file);
     assert.equal(harnessOf(raw, { COPILOT_HOOK_DIR: '/h/.copilot/hooks' }), 'unknown', file);
     assert.equal(harnessOf(raw, { COPILOT_CLI_BINARY_VERSION: '' }), 'unknown', file);
     assert.equal(harnessOf(raw, {}), 'unknown', file);
@@ -369,6 +371,8 @@ test('input with the Local harness\'s event name is never taken for the Copilot 
   assert.equal(harnessOf({ ...local, sessionId: 's' }, vscodeCopilot), 'unknown');
   assert.equal(harnessOf(null, vscodeCopilot), 'unknown');
   assert.equal(harnessOf({ sessionId: '' }, vscodeCopilot), 'unknown');
+  // With COPILOT_CLI alone, the Local harness's shape is still told apart.
+  assert.equal(harnessOf(local, { COPILOT_CLI: '1' }), 'unknown');
 });
 
 test('a PascalCase payload is Claude Code\'s, and the guards refuse its patch-string Edit', async () => {
@@ -388,6 +392,46 @@ test('a PascalCase payload is Claude Code\'s, and the guards refuse its patch-st
   const h = harness(fixture('pascal-PreToolUse-Edit.json'));
   await hookMain(toolGuard, { failClosed: true, event: 'PreToolUse' }, { ...h.io, deps: guardDeps });
   assert.deepEqual(written(h), [answer.deny(COULD_NOT_RUN)]);
+});
+
+test('arguments given as a JSON string are read as the object they hold', () => {
+  const raw = { sessionId: 's', cwd: MAIN, toolName: 'view', toolArgs: JSON.stringify({ path: `${MAIN}/a.txt` }) };
+  assert.deepEqual(toGuardInput(raw, 'preToolUse'), toGuardInput({ ...raw, toolArgs: { path: `${MAIN}/a.txt` } }, 'preToolUse'));
+  // A string that isn't a JSON object can't be read, so a guard refuses the call.
+  for (const toolArgs of ['not json', '[1]', '"x"', 'null', '{"path": 1']) assert.equal(toGuardInput({ ...raw, toolArgs }, 'preToolUse'), null, toolArgs);
+  // An apply_patch's string is its patch, never parsed.
+  const patch = '*** Begin Patch\n*** Add File: a.txt\n+x\n*** End Patch\n';
+  assert.equal(toGuardInput({ ...raw, toolName: 'apply_patch', toolArgs: patch }, 'preToolUse')[0].tool_input.patch, patch);
+});
+
+test('a batch of tool calls gives one input per call, and one unreadable call makes the whole batch unreadable', () => {
+  const base = { sessionId: 's', cwd: MAIN };
+  const shell = JSON.stringify({ command: 'ls' });
+  const raw = { ...base, toolCalls: [{ id: 'call_1', name: 'view', args: { path: `${MAIN}/a.txt` } }, { id: 'call_2', name: 'powershell', args: shell }] };
+  assert.deepEqual(callsOf(raw), [{ ...base, toolName: 'view', toolArgs: { path: `${MAIN}/a.txt` } }, { ...base, toolName: 'powershell', toolArgs: shell }]);
+  const inputs = toGuardInput(raw, 'preToolUse');
+  assert.deepEqual(inputs.map((one) => one.tool_name), ['Read', 'PowerShell']);
+  assert.equal(inputs[1].tool_input.command, 'ls');
+  assert.equal(inputs.some((one) => 'tool_calls' in one), false);
+  // A flat call is one call.
+  assert.deepEqual(callsOf({ ...base, toolName: 'view', toolArgs: {} }), [{ ...base, toolName: 'view', toolArgs: {} }]);
+  // An empty batch, a call with no name, or a list that isn't one, can't be read.
+  for (const toolCalls of [[], [{ id: 'x', args: {} }], [null], 'view']) {
+    assert.equal(callsOf({ ...base, toolCalls }), null, JSON.stringify(toolCalls));
+    assert.equal(toGuardInput({ ...base, toolCalls }, 'preToolUse'), null, JSON.stringify(toolCalls));
+  }
+  assert.equal(toGuardInput({ ...base, toolCalls: [raw.toolCalls[0], { id: 'c', name: 'view', args: 'nope' }] }, 'preToolUse'), null);
+  // A tool Wheelhouse doesn't know, anywhere in the batch, is named.
+  assert.deepEqual(toGuardInput({ ...base, toolCalls: [raw.toolCalls[0], { id: 'c', name: 'nosuchtool', args: {} }] }, 'preToolUse'), { unknownTool: 'nosuchtool' });
+});
+
+test('a lower-case drive letter at the start of a folder is written in capitals', () => {
+  assert.equal(upperDrive('c:\\Users\\x\\shop'), 'C:\\Users\\x\\shop');
+  assert.equal(upperDrive('d:/work'), 'D:/work');
+  assert.equal(upperDrive('C:\\shop'), 'C:\\shop');
+  assert.equal(upperDrive('/work/c:/shop'), '/work/c:/shop');
+  assert.equal(upperDrive('c:'), 'c:');
+  assert.equal(upperDrive(7), 7);
 });
 
 test('no real copilot, gh, glab or curl ran', () => {

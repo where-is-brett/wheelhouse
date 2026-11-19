@@ -85,6 +85,8 @@ import { columnsReadyOf } from '../routing/in-force.js';
 import { BY_LAUNCHER, TOOL_SHEETS } from '../agents/tool-sheets.js';
 import { frontDeskCommand, knowsNoSystemCa } from '../protection/settings.js';
 
+import { LAUNCHER_SESSION } from '../lib/launchers.js';
+
 const LAUNCHER_COMMAND = 'wh-frontdesk';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { helperGrace } from '../lib/helper-grace.js';
@@ -147,10 +149,13 @@ export { TOOL_SHEETS };
 // tool sheet, then the command line (the front desk's command, which the playbooks' other scripts
 // are named from). The command line carries --no-use-system-ca when this Node.js knows it, so the sandbox's certificate
 // lines don't fill the output. It is left out when the plugin's folder can't be typed as a command.
-export function toolSheetLines(agent, { pluginRoot, platform = process.platform, allowedFlags = process.allowedNodeEnvironmentFlags } = {}) {
+export function toolSheetLines(agent, { pluginRoot, platform = process.platform, allowedFlags = process.allowedNodeEnvironmentFlags, env = process.env } = {}) {
   const lines = Object.hasOwn(TOOL_SHEETS, agent) && TOOL_SHEETS[agent] !== '' ? TOOL_SHEETS[agent].split('\n') : [];
-  // An agent that matches a shell rule on a command's stem runs Wheelhouse's scripts by launcher (scripts/lib/launchers.js).
-  const command = BY_LAUNCHER.includes(agent) ? LAUNCHER_COMMAND : frontDeskCommand(pluginRoot, { platform, noSystemCa: knowsNoSystemCa(allowedFlags) });
+  // An agent that matches a shell rule on a command's stem runs Wheelhouse's scripts by launcher (scripts/lib/launchers.js)
+  // in a session Wheelhouse started, which has the launchers on its PATH and the marker set. A session opened some
+  // other way (a Copilot chat the director opens) has neither, so it is given the node command.
+  const launched = BY_LAUNCHER.includes(agent) && env?.[LAUNCHER_SESSION] === '1';
+  const command = launched ? LAUNCHER_COMMAND : frontDeskCommand(pluginRoot, { platform, noSystemCa: knowsNoSystemCa(allowedFlags) });
   if (command !== null) lines.push(`The Wheelhouse command is ${command}`);
   return lines;
 }

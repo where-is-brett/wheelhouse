@@ -14,7 +14,9 @@ export function readSheet(file = fileURLToPath(new URL('./tool-sheet.md', import
 }
 
 // Copilot matches a shell rule on a command's stem, so its sessions run Wheelhouse's scripts by launcher
-// (scripts/lib/launchers.js; a rule `shell(wh-frontdesk:*)` matched on CLI 1.0.105, 13 November 2026).
+// (scripts/lib/launchers.js; a rule `shell(wh-frontdesk:*)` matched on CLI 1.0.105, 13 November 2026). Only a
+// session Wheelhouse started has the launchers on its PATH; a chat the director opens is given the node command
+// (scripts/hooks/session-start.js toolSheetLines).
 export const byLauncher = true;
 
 export default readSheet();

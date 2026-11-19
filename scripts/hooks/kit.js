@@ -316,6 +316,35 @@ export function lockedByPath(cwd, { dir = managedDir() } = {}) {
 
 const SELF = fileURLToPath(import.meta.url);
 
+// The Copilot hook entry as a registration's `command` names it, in double quotes (adapters/copilot/hooks.js), which
+// a path holding an apostrophe keeps whole.
+const COPILOT_ENTRY = /"([^"]*scripts[\\/]agents[\\/]copilot[\\/]hook-entry\.js)"/g;
+
+// Whether this script is the plugin copy Copilot installs for itself (under <Copilot home>/installed-plugins,
+// the home being COPILOT_HOME or ~/.copilot) while Wheelhouse's own Copilot hook entry is registered and in
+// place (<Copilot home>/hooks/wheelhouse.json, written by setup). Copilot runs that copy's hooks as well, in
+// Claude Code's form, which they cannot read; the registered entry is the one that answers Copilot. Without
+// the registration the copy keeps guarding, and refuses what it cannot read. Claude Code never runs from there.
+export function copilotCopyStandsAside(self, { env = process.env, homedir = os.homedir() } = {}) {
+  try {
+    const given = env?.COPILOT_HOME;
+    const home = typeof given === 'string' && given !== '' ? given : path.join(homedir, '.copilot');
+    if (!isInside(path.join(home, 'installed-plugins'), self)) return false;
+    const strings = (value) => (typeof value === 'string' ? [value]
+      : value !== null && typeof value === 'object' ? Object.values(value).flatMap(strings) : []);
+    const commands = strings(JSON.parse(fs.readFileSync(path.join(home, 'hooks', 'wheelhouse.json'), 'utf8')));
+    return commands.flatMap((command) => [...command.matchAll(COPILOT_ENTRY)]).some(([, entry]) => {
+      try {
+        return path.isAbsolute(entry) && fs.statSync(entry).isFile();
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
+}
+
 // The plugin's own folder and, for the managed copy, the plugin folder recorded when Locked was installed:
 // the folders a plugin command may be run from. The record comes last, so the plugin's folder is
 // `.at(-1)` (the hook's own folder when there is no record).
@@ -397,7 +426,9 @@ class UnknownTool extends Error {
 // SubagentStop and PreCompact only inform (failClosed: false). So failureAnswer's
 // block answer for those events is kept only for a guard that may one day be added there.
 export async function hookMain(decide, { failClosed, event }, io = {}) {
-  const { stdin = process.stdin, write = (text) => process.stdout.write(text), self = SELF, dir, deps = {}, projectOf: find = projectOf, adapter: given } = io;
+  const { stdin = process.stdin, write = (text) => process.stdout.write(text), self = SELF, dir, deps = {}, projectOf: find = projectOf, adapter: given, env = process.env, homedir } = io;
+  // The plugin copy Copilot installed says nothing once Wheelhouse's Copilot hook entry answers in its place.
+  if (copilotCopyStandsAside(self, { env, ...(homedir === undefined ? {} : { homedir }) })) return;
   // The adapter's translation is applied to what is written, and the refusal goes through it too.
   let adapter = given ?? translators('claude-code');
   try {
