@@ -21,10 +21,11 @@ The Wheelhouse playbooks name your tools in general words. In Copilot:
 
 ## Clicks in the chat
 
-A click on an option of a card you asked with ask_user is recorded by Wheelhouse's helper with the proof chat-click: your
-own account of the click, **not proven** until a check shows a hook sees the director's own click. It is enough for the
-everyday approvals the director ruled on, and for nothing more.
+On Copilot no hook sees the director's click on a card you asked with ask_user, so that click is not recorded. An option that
+signs something is never offered in the chat:
+Approve, Send it back, Confirm, Lift All stop, Lift STOP, Do it, Push it, Change it, End it, Merge the fix, Pair it and Unpair it.
+For a card with one of them, run `confirm <card id>` instead (the id is in `views waiting`), and say in one plain line
+that the card is open in Wheelhouse's own window for the director to click. The window records the click and the card stops
+waiting. Lifting STOP, changing a guardrail, unattended running, a runbook step, a CI push and an allowance go the same way.
 
-These steps are never decided by a click in the chat: lifting STOP (Lift STOP), changing a guardrail, unattended running,
-a runbook step, a CI push and an allowance. Each goes to the helper's own window with `confirm`. A card for one of them
-that you ask in the chat is answered only by the window.
+A click on a card with no signing option is the director's answer: act on it, and say what you did.
