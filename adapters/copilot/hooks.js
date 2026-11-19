@@ -69,14 +69,15 @@ function fullPath(value, platform, what) {
   return value;
 }
 
-// One event's entry. On Windows: `command` for cmd.exe and `powershell` (ruling P5-13; sitting S2 runs it).
-// Elsewhere: `command` and `bash`, the field checks 56 and 58 ran.
+// One event's entry. On Windows: `command` for cmd.exe and `powershell` (ruling P5-13; sitting S2 runs it). The
+// PowerShell line ends by passing on Node.js's exit code: without it PowerShell exits 1 for any failure, and Copilot
+// reads 1 as the hook erroring, refusing the call without the refusal's reason, where 2 carries it. Elsewhere: `command` and `bash`, the field checks 56 and 58 ran.
 function entryFor(event, { node, script, platform }) {
   if (platform === 'win32') {
     return {
       type: 'command',
       command: `${cmdQuoted(node)} ${cmdQuoted(script)} ${event}`,
-      powershell: `& ${powershellQuoted(node)} ${powershellQuoted(script)} ${event}`,
+      powershell: `& ${powershellQuoted(node)} ${powershellQuoted(script)} ${event}; exit $LASTEXITCODE`,
       timeoutSec: GUARD_TIMEOUT_SEC,
     };
   }
