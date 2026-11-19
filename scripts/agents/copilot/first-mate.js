@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import tools from '../../../adapters/copilot/tools.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
+import { SIGNED_LABELS } from '../../hooks/prompt-record.js';
 import { mapToolWords, parse, readSource, renameSkills, withoutPathComment } from './home.js';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -46,18 +47,34 @@ ${sheet.trim()}
 
 ## Clicks in the chat
 
-A click on an option of a card you asked with ask_user is recorded by Wheelhouse's helper with the proof chat-click: your
-own account of the click, **not proven** until a check shows a hook sees the director's own click. It is enough for the
-everyday approvals the director ruled on, and for nothing more.
+On Copilot no hook sees the director's click on a card you asked with ask_user, so that click is not recorded. An option that
+signs something is never offered in the chat:
+${SIGNED_LABELS.slice(0, -1).join(', ')} and ${SIGNED_LABELS.at(-1)}.
+For a card with one of them, run \`confirm <card id>\` instead (the id is in \`views waiting\`), and say in one plain line
+that the card is open in Wheelhouse's own window for the director to click. The window records the click and the card stops
+waiting. Lifting STOP, changing a guardrail, unattended running, a runbook step, a CI push and an allowance go the same way.
 
-These steps are never decided by a click in the chat: lifting STOP (Lift STOP), changing a guardrail, unattended running,
-a runbook step, a CI push and an allowance. Each goes to the helper's own window with \`confirm\`. A card for one of them
-that you ask in the chat is answered only by the window.
+A click on a card with no signing option is the director's answer: act on it, and say what you did.
 `;
+
+// The playbook's lines that say a click in the chat records itself, in Copilot's words: there a click is recorded only in the
+// helper's own window (the instructions' "Clicks in the chat").
+const CLICK_LINES = Object.freeze([
+  ['and a click or a typed reply records itself:', 'and a click in Wheelhouse\'s own window or a typed reply records itself (see "Clicks in the chat"):'],
+  ['- **An answer in the chat:** the click records itself.', '- **An answer in the chat:** a card with an option that signs goes to Wheelhouse\'s own window with `confirm`, whose click records itself.'],
+  ['Its click records itself.', 'Its click is the director\'s answer to act on.'],
+]);
+
+function clickLines(text) {
+  return CLICK_LINES.reduce((out, [from, to]) => {
+    if (!out.includes(from)) throw new Error(`${SOURCE} no longer says "${from}"; update CLICK_LINES in scripts/agents/copilot/first-mate.js`);
+    return out.replace(from, to);
+  }, text);
+}
 
 function agent(root) {
   const { front, body } = parse(readSource(root, SOURCE), SOURCE);
-  const rest = `${GUARD}\n\n${renameSkills(mapFileTool(mapToolWords(withoutPathComment(body, SOURCE), SOURCE)))}`;
+  const rest = `${GUARD}\n\n${clickLines(renameSkills(mapFileTool(mapToolWords(withoutPathComment(body, SOURCE), SOURCE))))}`;
   const lines = [`name: ${q('wheelhouse-first-mate')}`, `description: ${q(front.description)}`, `tools: [${FIRST_MATE_TOOLS.map(q).join(', ')}]`];
   return `---\n${lines.join('\n')}\n---\n<!-- ${FIRST_MATE_DIR}/${AGENT_FILE} (built from ${SOURCE} by ${BUILD_COMMAND}) -->\n${rest}`;
 }

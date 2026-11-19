@@ -11,6 +11,7 @@ import tools from '../../../../adapters/copilot/tools.js';
 import copilot from '../../../../adapters/copilot/index.js';
 import { buildFirstMate, checkFirstMate, FIRST_MATE_DIR, writeFirstMate } from '../../../../scripts/agents/copilot/first-mate.js';
 import { buildHome } from '../../../../scripts/agents/copilot/home.js';
+import { SIGNED_LABELS } from '../../../../scripts/hooks/prompt-record.js';
 import { tempFolder } from '../../../helpers/homes.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
@@ -46,14 +47,20 @@ test('the agent\'s tools are Copilot\'s: it asks with ask_user and runs the Whee
   assert.doesNotMatch(built.get(AGENT), /--allow-all|--yolo/);
 });
 
-test('the instructions give the tool sheet and say a chat click is not proven', () => {
+test('the instructions give the tool sheet and send every card with a signing option to the helper\'s window', () => {
   const text = built.get(INSTRUCTIONS);
   assert.match(text, /^---\napplyTo: "\*\*"\n---\n<!-- /);
   assert.ok(text.includes(copilot.toolSheet.trim()), 'the adapter\'s tool sheet, whole');
-  assert.match(text, /chat-click/);
-  assert.match(text, /not proven/);
-  assert.match(text, /lift-stop|Lift STOP/);
-  assert.match(text, /helper's own window/);
+  assert.match(text, /that click is not recorded/);
+  assert.match(text, /run `confirm <card id>` instead/);
+  for (const label of SIGNED_LABELS) assert.ok(text.includes(label), label);
+  assert.doesNotMatch(text, /chat-click/, 'no route records a chat click on Copilot');
+});
+
+test('the agent never says a click in the chat records itself', () => {
+  const text = built.get(AGENT);
+  assert.doesNotMatch(text, /a click or a typed reply records itself|the click records itself|Its click records itself/);
+  assert.match(text, /goes to Wheelhouse's own window with `confirm`/);
 });
 
 test('no file names a Claude Code tool, a model, a personal path or an attribution line', () => {
