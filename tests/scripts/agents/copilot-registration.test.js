@@ -48,7 +48,7 @@ test('registration quotes a home folder with a space and an apostrophe', () => {
   const win = registration({ node: 'C:\\Program Files\\nodejs\\node.exe', root: 'C:\\Users\\Ann O\'Neil\\wheelhouse', platform: 'win32' });
   const winEntry = win.hooks.preToolUse[0];
   assert.equal(winEntry.command, '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\Ann O\'Neil\\wheelhouse\\scripts\\agents\\copilot\\hook-entry.js" preToolUse');
-  assert.equal(winEntry.powershell, '& \'C:\\Program Files\\nodejs\\node.exe\' \'C:\\Users\\Ann O\'\'Neil\\wheelhouse\\scripts\\agents\\copilot\\hook-entry.js\' preToolUse');
+  assert.equal(winEntry.powershell, '& \'C:\\Program Files\\nodejs\\node.exe\' \'C:\\Users\\Ann O\'\'Neil\\wheelhouse\\scripts\\agents\\copilot\\hook-entry.js\' preToolUse; exit $LASTEXITCODE');
   assert.equal(winEntry.bash, undefined);
 
   // A path no quoting keeps one word is refused, never written.
