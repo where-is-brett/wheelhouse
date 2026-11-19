@@ -469,3 +469,81 @@ test('readSmallText reads a small regular file on every system', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// A Copilot home holding the plugin copy Copilot installs (installed-plugins) and, when `registered`, the
+// hook registration setup writes (hooks/wheelhouse.json) naming a hook entry, which exists when `entry`.
+function putCopilotHome(home, { registered = true, entry = true } = {}) {
+  const copy = path.join(home, 'installed-plugins', 'wheelhouse', 'wheelhouse', 'scripts', 'hooks');
+  fs.mkdirSync(copy, { recursive: true });
+  fs.writeFileSync(path.join(copy, 'kit.js'), '');
+  const script = path.join(home, 'plugin', 'scripts', 'agents', 'copilot', 'hook-entry.js');
+  if (entry) {
+    fs.mkdirSync(path.dirname(script), { recursive: true });
+    fs.writeFileSync(script, '');
+  }
+  if (registered) {
+    fs.mkdirSync(path.join(home, 'hooks'));
+    fs.writeFileSync(path.join(home, 'hooks', 'wheelhouse.json'), JSON.stringify({
+      version: 1,
+      hooks: { preToolUse: [{ type: 'command', command: `"${process.execPath}" "${script}" preToolUse`, powershell: `& '${process.execPath}' '${script}' preToolUse` }] },
+    }));
+  }
+  return path.join(copy, 'kit.js');
+}
+
+const refuseAll = () => answer.deny('refused by the test guard');
+const copilotView = { sessionId: 's1', timestamp: 1, cwd: '/nowhere', toolName: 'view', toolArgs: { path: '/nowhere/a.txt' } };
+const claudeRead = { session_id: 's1', cwd: '/nowhere', hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: '/nowhere/a.txt' } };
+
+test('hookMain: the plugin copy Copilot installed stands aside when the Copilot hook entry is registered', async () => {
+  const home = temp('wh-kit-copilot-');
+  try {
+    const self = putCopilotHome(home);
+    // Input it cannot read gives no refusal either: the registered entry answers for it.
+    for (const input of [copilotView, claudeRead, { toolCalls: 'odd' }]) {
+      const { out, io } = harness(input);
+      await hookMain(refuseAll, { failClosed: true, event: 'PreToolUse' }, { ...io, self, env: { COPILOT_HOME: home } });
+      assert.deepEqual(out, [], JSON.stringify(input));
+    }
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('hookMain: the Copilot copy keeps guarding when the Copilot hook entry is not registered or is missing', async () => {
+  for (const shape of [{ registered: false }, { entry: false }]) {
+    const home = temp('wh-kit-copilot-');
+    try {
+      const self = putCopilotHome(home, shape);
+      const { out, io } = harness(copilotView);
+      await hookMain(refuseAll, { failClosed: true, event: 'PreToolUse' }, { ...io, self, env: { COPILOT_HOME: home } });
+      assert.equal(out.length, 1, JSON.stringify(shape));
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  }
+});
+
+test('hookMain: a plugin outside the Copilot copy keeps guarding though the Copilot hook entry is registered', async () => {
+  const home = temp('wh-kit-copilot-');
+  try {
+    putCopilotHome(home);
+    const { out, io } = harness(claudeRead);
+    await hookMain(refuseAll, { failClosed: true, event: 'PreToolUse' }, { ...io, env: { COPILOT_HOME: home } });
+    assert.equal(out.length, 1);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('hookMain: the Copilot copy is found under ~/.copilot when COPILOT_HOME is not set', async () => {
+  const base = path.join(temp('wh-kit-userhome-'), "O'Brien");
+  try {
+    const self = putCopilotHome(path.join(base, '.copilot'));
+    const { out, io } = harness(copilotView);
+    await hookMain(refuseAll, { failClosed: true, event: 'PreToolUse' }, { ...io, self, env: {}, homedir: base });
+    assert.deepEqual(out, []);
+  } finally {
+    fs.rmSync(path.dirname(base), { recursive: true, force: true });
+  }
+});

@@ -59,6 +59,7 @@ import { pluginOnIn } from '../lib/plugin-on.js';
 import { answer } from '../../adapters/claude-code/answers.js';
 import { agentOfInput } from '../agents/of-input.js';
 import { TRANSLATORS } from '../agents/translators.js';
+import { PLUGIN_COPIES } from '../agents/plugin-copies.js';
 
 export { managedDir, lockedProjects };
 
@@ -316,6 +317,12 @@ export function lockedByPath(cwd, { dir = managedDir() } = {}) {
 
 const SELF = fileURLToPath(import.meta.url);
 
+// Whether this script is a plugin copy another agent installed for itself, which stands aside once the hook entry
+// Wheelhouse registers for that agent answers in its place (scripts/agents/plugin-copies.js).
+export function copyStandsAside(self, { env = process.env, homedir = os.homedir() } = {}) {
+  return PLUGIN_COPIES.some((check) => check(self, { env, homedir, isInside }));
+}
+
 // The plugin's own folder and, for the managed copy, the plugin folder recorded when Locked was installed:
 // the folders a plugin command may be run from. The record comes last, so the plugin's folder is
 // `.at(-1)` (the hook's own folder when there is no record).
@@ -397,7 +404,9 @@ class UnknownTool extends Error {
 // SubagentStop and PreCompact only inform (failClosed: false). So failureAnswer's
 // block answer for those events is kept only for a guard that may one day be added there.
 export async function hookMain(decide, { failClosed, event }, io = {}) {
-  const { stdin = process.stdin, write = (text) => process.stdout.write(text), self = SELF, dir, deps = {}, projectOf: find = projectOf, adapter: given } = io;
+  const { stdin = process.stdin, write = (text) => process.stdout.write(text), self = SELF, dir, deps = {}, projectOf: find = projectOf, adapter: given, env = process.env, homedir } = io;
+  // A plugin copy another agent installed says nothing once Wheelhouse's own hook entry for that agent answers.
+  if (copyStandsAside(self, { env, ...(homedir === undefined ? {} : { homedir }) })) return;
   // The adapter's translation is applied to what is written, and the refusal goes through it too.
   let adapter = given ?? translators('claude-code');
   try {

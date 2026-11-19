@@ -40,7 +40,7 @@
 // mark that can't be sent is lost; nothing is kept to send later.
 import claudeTools from '../../../adapters/claude-code/tools.js';
 import copilotTools from '../../../adapters/copilot/tools.js';
-import { toGuardInput, fromGuardAnswer, harnessOf, exitCodeFor, patchChanges, UNKNOWN_TOOL } from '../../../adapters/copilot/translate.js';
+import { toGuardInput, fromGuardAnswer, harnessOf, exitCodeFor, patchChanges, callsOf, upperDrive, UNKNOWN_TOOL } from '../../../adapters/copilot/translate.js';
 import { readInput, answer, projectOf, registeredByPath, beingSetUp, managedDir } from '../../hooks/kit.js';
 import { C6_PASSED, GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC, HELPER_PROBE_MS } from './numbers.js';
 import { helperClient } from '../../host/helper-client.js';
@@ -256,16 +256,39 @@ function helperStepDeps(shared, given, cwd) {
 
 // The answer, in Claude Code's shape, for one event's input: undefined for none. `seen.mark` is set once the
 // project is known, so a run past its deadline can still be marked.
+//
+// A batch of tool calls (`toolCalls`, as VS Code's CLI session logs a turn's calls) is decided call by call, each
+// through every step, so the STOP guard and the lineage hold see each one: the first refusal is the batch's answer,
+// one deny with exit 2 that Copilot applies to the whole batch, and a call that can't be read refuses it. A folder's
+// drive letter is read in capitals, as Copilot spells it so on some events and not on others.
 async function decideEvent(event, { stdin, env, deps, seen }) {
-  const raw = await readInput(stdin);
+  const given = await readInput(stdin);
+  const raw = isObject(given) && typeof given.cwd === 'string' ? { ...given, cwd: upperDrive(given.cwd) } : given;
   const dir = deps.dir ?? managedDir();
   if (typeof raw.cwd !== 'string' || raw.cwd === '') return refusal(event, COULD_NOT_RUN);
   if (!inWheelhouse(raw.cwd, { find: deps.projectOf ?? projectOf, dir })) return undefined;
+  const calls = event === GUARD_EVENT ? callsOf(raw) : [raw];
   if ((deps.harnessOf ?? harnessOf)(raw, env) !== 'copilot') {
     if (event === 'sessionStart') return answer.context('SessionStart', LOCAL_HARNESS);
-    if (event === GUARD_EVENT && !copilotTools.read.includes(raw.toolName)) return answer.deny(LOCAL_HARNESS);
+    if (event === GUARD_EVENT && (calls === null || !calls.every((one) => copilotTools.read.includes(one.toolName)))) return answer.deny(LOCAL_HARNESS);
     return undefined;
   }
+  if (calls === null) return refusal(event, COULD_NOT_RUN);
+  if (calls.length === 1) return decideCall(event, calls[0], { deps, seen, dir });
+  let passed;
+  let allows = 0;
+  for (const one of calls) {
+    const out = await decideCall(event, one, { deps, seen, dir });
+    if (refuses(out)) return out;
+    if (out?.hookSpecificOutput?.permissionDecision === 'allow') allows += 1;
+    passed ??= out;
+  }
+  // An allow stands only when every call gives it; otherwise the batch is left to Copilot's own rules.
+  return allows === calls.length ? passed : undefined;
+}
+
+// The answer for one call, or for one input of an event that is not about a tool.
+async function decideCall(event, raw, { deps, seen, dir }) {
   // A subagent's own prompt and its own stop come through these two events too, named by `agentId` and `parentAgentId`, both present in the captured inputs (check 96). The
   // prompt is the parent's task, not the director's words, and a block at a subagent's `agentStop` is ignored:
   // the subagent is held by `subagentStop`, which the parent's run sees.

@@ -344,3 +344,76 @@ test('a preToolUse input carrying agentId and parentAgentId is still guarded: a 
   assert.equal(got.code, 2);
   assert.equal(JSON.parse(got.text).permissionDecision, 'deny');
 });
+
+test('arguments given as a JSON string are read as the object they hold', async () => {
+  const r = recording();
+  const got = await run('preToolUse', call('view', JSON.stringify({ path: `${PROJECT}/a` })), { steps: r.steps });
+  assert.deepEqual(got, { text: '', code: 0 });
+  assert.equal(r.calls.find((c) => c.name === 'toolGuard').input.tool_input.file_path, `${PROJECT}/a`);
+  const shell = await run('preToolUse', call('powershell', JSON.stringify({ command: 'ls' })), { steps: r.steps });
+  assert.equal(shell.code, 0);
+  const bad = await run('preToolUse', call('view', 'not json'), { steps: recording().steps });
+  assert.equal(bad.code, 2);
+});
+
+test('a batch of calls runs every step on each call, and one refusal refuses the batch', async () => {
+  const batch = { sessionId: 's1', cwd: PROJECT, toolCalls: [{ id: 'call_1', name: 'view', args: { path: `${PROJECT}/a` } }, { id: 'call_2', name: 'powershell', args: { command: 'ls' } }] };
+  const r = recording();
+  assert.deepEqual(await run('preToolUse', batch, { steps: r.steps }), { text: '', code: 0 });
+  // The STOP guard and the lineage hold see each call, not only the first.
+  assert.deepEqual(names(r.calls), ['stopGuard', 'lineageHold', 'toolGuard', 'stopGuard', 'lineageHold', 'toolGuard', 'protectedTests', 'frontDeskWrites']);
+  assert.deepEqual(r.calls.filter((c) => c.name === 'stopGuard').map((c) => c.input.tool_name), ['Read', 'PowerShell']);
+  // One deny is the batch's answer, with exit 2.
+  const picky = recording({ answers: { toolGuard: (input) => (input.tool_name === 'PowerShell' ? deny('no shell') : undefined) } });
+  const got = await run('preToolUse', batch, { steps: picky.steps });
+  assert.equal(got.code, 2);
+  assert.deepEqual(JSON.parse(got.text), { permissionDecision: 'deny', permissionDecisionReason: 'no shell' });
+  // A batch with a call that can't be read is refused.
+  const unread = await run('preToolUse', { ...batch, toolCalls: [...batch.toolCalls, { id: 'call_3', args: {} }] }, { steps: recording().steps });
+  assert.equal(unread.code, 2);
+  // Outside the Copilot harness, a batch of reads goes through, and one that isn't all reads is refused.
+  const reads = { ...batch, toolCalls: [batch.toolCalls[0], batch.toolCalls[0]] };
+  assert.equal((await run('preToolUse', reads, { steps: recording().steps, env: {} })).code, 0);
+  assert.equal((await run('preToolUse', batch, { steps: recording().steps, env: {} })).code, 2);
+});
+
+test('a folder with a lower-case drive letter is placed as the capital one', async () => {
+  const placed = [];
+  const r = recording();
+  await runEntry('userPromptSubmitted', {
+    stdin: Readable.from([JSON.stringify({ sessionId: 's1', cwd: 'c:\\Users\\d\\shop', prompt: 'hi' })]),
+    env: ENV,
+    deps: { client: up, steps: r.steps, projectOf: (cwd) => { placed.push(cwd); return { project: 'shop' }; }, dir: '/nowhere' },
+  });
+  assert.ok(placed.length > 0);
+  assert.ok(placed.every((cwd) => cwd === 'C:\\Users\\d\\shop'), JSON.stringify(placed));
+  assert.equal(r.calls[0].input.cwd, 'C:\\Users\\d\\shop');
+});
+
+test('a chat with no launchers runs the front desk\'s node command through the real guards unrefused', async () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
+  const { frontDeskCommand } = await import('../../../../scripts/protection/settings.js');
+  for (const [tool, platform] of [['bash', 'darwin'], ['powershell', 'win32']]) {
+    const command = `${frontDeskCommand(root, { platform })} cards`;
+    const got = await runEntry('preToolUse', {
+      stdin: Readable.from([JSON.stringify(call(tool, { command }))]),
+      env: { COPILOT_CLI: '1' },
+      deps: { client: up, stepDeps: { env: { COPILOT_CLI: '1' }, platform }, projectOf: () => ({ project: 'shop' }), dir: '/nowhere' },
+    });
+    assert.deepEqual(got, { text: '', code: 0 }, `${tool}: ${command}`);
+  }
+  // The same guards do refuse here: a launcher given text in double quotes.
+  const refused = await runEntry('preToolUse', {
+    stdin: Readable.from([JSON.stringify(call('bash', { command: 'wh-frontdesk card "a;b"' }))]),
+    env: { COPILOT_CLI: '1' },
+    deps: { client: up, stepDeps: { env: { COPILOT_CLI: '1' } }, projectOf: () => ({ project: 'shop' }), dir: '/nowhere' },
+  });
+  assert.equal(refused.code, 2);
+});
+
+test('the VS Code chat\'s environment, COPILOT_CLI alone, is the Copilot harness', async () => {
+  const r = recording();
+  const got = await run('preToolUse', call('powershell', { command: 'ls' }), { steps: r.steps, env: { COPILOT_CLI: '1' } });
+  assert.deepEqual(got, { text: '', code: 0 });
+  assert.ok(r.calls.length > 0);
+});

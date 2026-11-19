@@ -99,16 +99,17 @@ const isObject = (value) => value !== null && typeof value === 'object' && !Arra
 
 // Which harness ran the hook (ruling P5-6). No input field names it (check 58), so the environment does:
 //   - Copilot's CLI sets COPILOT_CLI_BINARY_VERSION (check 58).
-//   - VS Code's Copilot session target sets COPILOT_CLI=1 and COPILOT_HOOK_DIR but no version (check 72, as the
-//     Copilot SDK's runtime in check 74), and its input is Copilot's camelCase. VS Code's Local harness writes
-//     Claude Code's snake_case (`hook_event_name`, `session_id`, check 59), so camelCase input is asked for too.
+//   - VS Code's Copilot session target sets COPILOT_CLI=1 but no version (check 72, as the Copilot SDK's runtime in
+//     check 74; the hook folder, COPILOT_HOOK_DIR, is set there too but isn't needed), and its input is Copilot's
+//     camelCase. VS Code's Local harness writes Claude Code's snake_case (`hook_event_name`, `session_id`, check 59),
+//     so camelCase input is asked for too.
 // Everything else is 'unknown', which the hook entry refuses as it does the Local harness, letting only reading
 // through. No recorded input is 'local' yet.
 const filled = (value) => typeof value === 'string' && value !== '';
 const camelInput = (raw) => isObject(raw) && filled(raw.sessionId) && !('hook_event_name' in raw) && !('session_id' in raw);
 export function harnessOf(raw, env = process.env) {
   if (filled(env?.COPILOT_CLI_BINARY_VERSION)) return 'copilot';
-  if (env?.COPILOT_CLI === '1' && filled(env?.COPILOT_HOOK_DIR) && camelInput(raw)) return 'copilot';
+  if (env?.COPILOT_CLI === '1' && camelInput(raw)) return 'copilot';
   return 'unknown';
 }
 
@@ -211,6 +212,36 @@ function mcpName(name) {
   return `mcp__${name.slice(0, cut)}__${name.slice(cut + 1)}`;
 }
 
+// A tool's arguments as an object: Copilot may give them as a JSON string of one (the hand runs of 19 November 2026).
+// A string that isn't a JSON object is not read (null). An apply_patch's string is its patch and never comes here.
+function argsObject(args) {
+  if (typeof args !== 'string') return args;
+  try {
+    const parsed = JSON.parse(args);
+    return isObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+// Each tool call in Copilot's input as a call of its own, in the flat shape (`toolName`, `toolArgs`): a flat input is
+// one call, and a batch (`toolCalls`, each `{ id, name, args }`, as VS Code's CLI session logs a turn's calls) is one
+// per call, with the batch's other keys. Null for a batch that is empty, not a list, or holds a call with no name.
+export function callsOf(raw) {
+  if (!isObject(raw)) return null;
+  if (Object.hasOwn(raw, 'toolName') || !Object.hasOwn(raw, 'toolCalls')) return [raw];
+  const { toolCalls, ...rest } = raw;
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) return null;
+  if (!toolCalls.every((call) => isObject(call) && typeof call.name === 'string' && call.name !== '')) return null;
+  return toolCalls.map((call) => ({ ...rest, toolName: call.name, toolArgs: call.args ?? {} }));
+}
+
+// A folder with a lower-case drive letter written with a capital one. Copilot gives some events' folders as `c:\…`
+// and others as `C:\…` in one session (19 November 2026), so every event is placed by the one spelling.
+export function upperDrive(cwd) {
+  return typeof cwd === 'string' && /^[a-z]:[\\/]/.test(cwd) ? cwd[0].toUpperCase() + cwd.slice(1) : cwd;
+}
+
 // The input the guards read, in Claude Code's shape, for Copilot's input `raw` at `event` (either spelling).
 // An apply_patch gives one Edit input per path it changes, as a list, and the call is refused if any one is
 // (ruling P5-14). A tool Wheelhouse doesn't know gives `{ unknownTool: name }` (ruling P5-10). Null for input
@@ -219,6 +250,17 @@ function mcpName(name) {
 // patch with no path.
 export function toGuardInput(raw, event) {
   if (!isObject(raw) || typeof raw.cwd !== 'string' || raw.cwd === '') return null;
+  // A batch of calls gives every call's inputs; one call that can't be read makes the whole batch unreadable, and a
+  // tool Wheelhouse doesn't know, in any call, is named.
+  if (!Object.hasOwn(raw, 'toolName') && Object.hasOwn(raw, 'toolCalls')) {
+    const calls = callsOf(raw);
+    if (calls === null) return null;
+    const each = calls.map((one) => toGuardInput(one, event));
+    const unknown = each.find((one) => typeof one?.unknownTool === 'string');
+    if (unknown !== undefined) return unknown;
+    if (each.some((one) => one === null)) return null;
+    return each.flat();
+  }
   const hookEvent = Object.hasOwn(EVENTS, event) ? EVENTS[event] : event;
   const base = { hook_event_name: hookEvent };
   for (const [key, value] of Object.entries(raw)) {
@@ -243,7 +285,7 @@ export function toGuardInput(raw, event) {
   if (KNOWN_TOOLS.includes(name)) toolName = Object.hasOwn(TOOL_MAP, name) ? TOOL_MAP[name] : name;
   else toolName = mcpName(name);
   if (toolName === null) return { unknownTool: name };
-  const args = raw.toolArgs ?? {};
+  const args = argsObject(raw.toolArgs ?? {});
   const input = isObject(args) ? argumentsOf(name, args) : null;
   if (input === null) return null;
   // rg and glob take `paths`, which may be one path or a list: a list gives one input per path, so each is checked.
