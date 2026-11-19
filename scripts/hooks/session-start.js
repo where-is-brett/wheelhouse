@@ -153,7 +153,7 @@ export function toolSheetLines(agent, { pluginRoot, platform = process.platform,
   const lines = Object.hasOwn(TOOL_SHEETS, agent) && TOOL_SHEETS[agent] !== '' ? TOOL_SHEETS[agent].split('\n') : [];
   // An agent that matches a shell rule on a command's stem runs Wheelhouse's scripts by launcher (scripts/lib/launchers.js)
   // in a session Wheelhouse started, which has the launchers on its PATH and the marker set. A session opened some
-  // other way (a Copilot chat the director opens) has neither, so it is given the node command.
+  // other way (a chat the director opens in their editor) has neither, so it is given the node command.
   const launched = BY_LAUNCHER.includes(agent) && env?.[LAUNCHER_SESSION] === '1';
   const command = launched ? LAUNCHER_COMMAND : frontDeskCommand(pluginRoot, { platform, noSystemCa: knowsNoSystemCa(allowedFlags) });
   if (command !== null) lines.push(`The Wheelhouse command is ${command}`);
