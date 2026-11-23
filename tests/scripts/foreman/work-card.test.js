@@ -3,7 +3,7 @@
 // signed review holds the merge, and with no pull request it offers to wake the session.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stuckAskCommand, workCardFor, workQuestion, FIX_FINDINGS, RESTART_BUILDER } from '../../../scripts/foreman/ask-help.js';
+import { holdingReview, stuckAskCommand, workCardFor, workQuestion, FIX_FINDINGS, RESTART_BUILDER } from '../../../scripts/foreman/ask-help.js';
 import { questionProblem } from '../../../scripts/cards/compose.js';
 
 const COMMIT = 'c'.repeat(40);
@@ -72,4 +72,11 @@ test('no card for a stuck work, a merged pull request, or within 30 minutes of t
 test('the stuck wake\'s command matches the stuck card: fix the findings when a review holds, else restart', () => {
   assert.match(stuckAskCommand('mine', { phase: 'pr-open', still: 20 * 60000, findings: true }), /--option 'Have the builder fix the findings=act restart mine' --option 'Wait=.+' --recommend 'Have the builder fix the findings' --level 2$/);
   assert.match(stuckAskCommand('mine', { findings: false }), /--option 'Restart the builder on where it left off=act restart mine'/);
+});
+
+test('a FINDINGS review with no blocking finding does not hold the pull request', () => {
+  const minors = { reviews: { 2: { [COMMIT]: { at: '2026-11-05T18:35:00.000Z', data: { pr: 2, commit: COMMIT, verdict: 'FINDINGS', findings: 1, blocking: 0 } } } } };
+  assert.equal(holdingReview(views('FINDINGS', minors), 2), null);
+  const blocking = { reviews: { 2: { [COMMIT]: { at: '2026-11-05T18:35:00.000Z', data: { pr: 2, commit: COMMIT, verdict: 'FINDINGS', findings: 2, blocking: 1 } } } } };
+  assert.deepEqual(holdingReview(views('FINDINGS', blocking), 2), { commit: COMMIT });
 });

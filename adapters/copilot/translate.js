@@ -41,6 +41,7 @@ export const TOOL_MAP = Object.freeze({
   create: 'Write',
   // Check 66 saw it; it stops a running shell, as Claude Code's KillShell does.
   stop_bash: 'KillShell',
+  stop_powershell: 'KillShell',
 });
 
 // Each tool's arguments renamed to the ones the guards read (ruling P5-4). An argument not named here is passed
@@ -63,10 +64,16 @@ export const KNOWN_TOOLS = Object.freeze([...new Set([...tools.read, ...tools.ha
 // sees each call inside it or only the wrapper (checks 58 and 66 left it open; ruling P5-10). `sql`,
 // `session_store_sql` and `run_dynamic_workflow` are in the tools' `other` group, which keeps its own names and
 // reaches no guard, so each could run unchecked; they stay refused until a probe shows what each can reach.
-export const UNSETTLED = Object.freeze(['multi_tool_use.parallel', 'sql', 'session_store_sql', 'run_dynamic_workflow']);
+export const UNSETTLED = Object.freeze(['multi_tool_use.parallel', 'sql', 'session_store_sql', 'run_dynamic_workflow', 'write_bash', 'write_powershell']);
+
+// The tools that send input to a shell that is already running. The input is not a command the launcher rules or the
+// command guards can read (it is keystrokes into whatever the shell is running), so it can't be checked as the shell
+// itself is. They are refused with their own reason, and are not a tool Wheelhouse "doesn't know".
+export const SHELL_INPUT_TOOLS = Object.freeze(['write_bash', 'write_powershell']);
 
 // The refusal for a tool Wheelhouse doesn't know (Review Focus 1).
 export function UNKNOWN_TOOL(name) {
+  if (SHELL_INPUT_TOOLS.includes(name)) return `\`${name}\` sends input to a shell that is already running, and Wheelhouse can't check what that input does as it checks a command, so it is refused. Run a new command instead, or read the running shell's output with \`${name.replace('write_', 'read_')}\``;
   return `Copilot has a tool Wheelhouse doesn't know yet, \`${name}\`; it is refused until Wheelhouse is updated`;
 }
 

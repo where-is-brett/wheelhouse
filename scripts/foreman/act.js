@@ -1789,6 +1789,18 @@ async function refreshBrief(ctx, views, f, work, config, launchers) {
   ctx.say(`Wrote ${work}'s brief again (${short(hash)}), with its version, plan and amendments as they were.`);
 }
 
+// The foreman's own questions about `work` that offer this restart and have no answer: the stuck card and the pull request's. Once the
+// work is restarted they ask about a state it has left, so each is closed with its reason and the director never meets a stale card.
+async function closeStuckQuestions(ctx, views, work) {
+  const restart = `act restart ${work}`;
+  for (const q of Object.values(views?.questions ?? {})) {
+    const data = q?.question?.data;
+    const id = questionIdOf(data?.id);
+    if (q.answer !== null || id === null || !id.foreman || id.work !== work || !Array.isArray(data.options) || !data.options.some((o) => o?.says === restart)) continue;
+    await ctx.write('question-closed', { id: data.id, why: `${work} was restarted with act restart, so what this asked about has moved on` });
+  }
+}
+
 // The option a stuck work's card offers: wakes the feature's own session. With a signed review that holds its pull
 // request, the wake tells it to fix the blocking findings, push and dispatch the reviewer; otherwise to carry on from where it
 // left off. The words are fixed here; no caller supplies any.
@@ -1828,6 +1840,7 @@ async function restart(ctx, work, rest) {
   } catch (error) {
     refuse(`The ${work} session wasn't woken: ${oneLine(error instanceof Error ? error.message : 'unknown error', 200)}`);
   }
+  await closeStuckQuestions(ctx, views, work);
   ctx.say(held !== null ? `Woke ${work}'s session to fix the findings of pull request #${kept.pr}.` : `Woke ${work}'s session to carry on from where it left off.`);
 }
 

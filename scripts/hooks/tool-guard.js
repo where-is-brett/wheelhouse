@@ -238,7 +238,7 @@ function fileRefusal(input, { home, platform, pluginRoot, env, roots, engine }) 
   const homeReal = resolveReal(home, home);
   const secrets = secretFolders(home, platform);
   for (const candidate of [absolute, real]) {
-    if (secrets.some((s) => inside(fold, s, candidate))) return refuse('open Wheelhouse\'s keys or the credentials on this computer');
+    if (secrets.some((s) => inside(fold, s, candidate))) return refuse('open Wheelhouse\'s own records and keys, or the credentials on this computer');
   }
   // The build engine's home, but for the step's own run's artefacts and its own worktree: by every spelling of the
   // path (and a Glob pattern's fixed start), and a search over a folder that holds the home.

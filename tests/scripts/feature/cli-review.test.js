@@ -51,7 +51,7 @@ test('review counts by the severity lines: BLOCKER and HIGH block, MEDIUM and LO
   assert.deepEqual([got.step, got.total, got.blocking], ['fix', 3, 1], 'the HIGH line blocks even where the pasted block says blocking: 0');
   const minors = ruled(tree, '2', file(tree, '2.md', reply('MEDIUM', 'LOW')));
   assert.deepEqual([minors.step, minors.total, minors.blocking], ['minors', 2, 0]);
-  assert.match(minors.line, /^Only minors left \(2\): defer each in the ledger as deferred, do not fix them, and stop this task's review loop\. Go on\.$/);
+  assert.match(minors.line, /^Only minors left \(2\): do not fix them, and stop this task's review loop\. Write each as a line starting `Deferred:` in your Superpowers ledger if you keep one, and list them under concerns in report.md\. Do not use the `log` command for them: it is for decisions, and refuses `deferred` as a kind\. Go on\.$/);
 });
 
 test('review numbers a task\'s rounds, and stops at the round limit', () => {

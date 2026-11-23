@@ -42,7 +42,7 @@ export function severityCounts(text) {
 export function reviewStep({ total, blocking, round, fixRounds }) {
   if (total === 0) return { step: 'clean', line: "Clean: the Lookout found nothing. This task's review is done; go on." };
   if (blocking === 0) {
-    return { step: 'minors', line: `Only minors left (${total}): defer each in the ledger as deferred, do not fix them, and stop this task's review loop. Go on.` };
+    return { step: 'minors', line: `Only minors left (${total}): do not fix them, and stop this task's review loop. Write each as a line starting \`Deferred:\` in your Superpowers ledger if you keep one, and list them under concerns in report.md. Do not use the \`log\` command for them: it is for decisions, and refuses \`deferred\` as a kind. Go on.` };
   }
   const found = blocking === 1 ? '1 blocking finding' : `${blocking} blocking findings`;
   if (round > fixRounds) {

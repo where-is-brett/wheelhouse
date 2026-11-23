@@ -17,6 +17,7 @@ const base = (reviews = {}) => ({
   reviews,
 });
 const review = (verdict, findings, commit = HEAD) => ({ 2: { [commit]: { at: '2026-11-05T18:35:00.000Z', data: { pr: 2, commit, verdict, findings } } } });
+const minorsOnly = (findings) => ({ 2: { [HEAD]: { at: '2026-11-05T18:35:00.000Z', data: { pr: 2, commit: HEAD, verdict: 'FINDINGS', findings, blocking: 0 } } } });
 const line = (views, prs) => workLines(views, [], words, prs).join('\n');
 
 test('a pull request with a review that has findings is said to hold the merge, with the count', () => {
@@ -101,4 +102,11 @@ test('a closed work that still has a pull request not recorded as merged is name
   const text = workLines(views, [], words, { 'todo-cli': { pr: 6, head: HEAD, phase: 'waiting', merged: false } }).join('\n');
   assert.match(text, /todo-cli: A to-do tool: finished, but pull request #6 is not recorded as merged/);
   assert.deepEqual(workLines(views, [], words, { 'todo-cli': { pr: 6, merged: true } }), ['No work is open: nothing is running or waiting.']);
+});
+
+test('a FINDINGS review with no blocking finding clears the head: the minors are deferred and the merge waits on the checks and the director', () => {
+  const text = line(base(minorsOnly(1)), { 'todo-cli': { pr: 2, head: HEAD } });
+  assert.match(text, /pull request #2 is open, its review left 1 minor finding, deferred; it merges once the checks pass and the director has approved it/);
+  assert.doesNotMatch(text, /holds the merge/);
+  assert.match(line(base(minorsOnly(2)), { 'todo-cli': { pr: 2, head: HEAD } }), /left 2 minor findings, deferred/);
 });

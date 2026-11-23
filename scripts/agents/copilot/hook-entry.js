@@ -40,7 +40,7 @@
 // mark that can't be sent is lost; nothing is kept to send later.
 import claudeTools from '../../../adapters/claude-code/tools.js';
 import copilotTools from '../../../adapters/copilot/tools.js';
-import { toGuardInput, fromGuardAnswer, harnessOf, exitCodeFor, patchChanges, callsOf, upperDrive, UNKNOWN_TOOL } from '../../../adapters/copilot/translate.js';
+import { toGuardInput, fromGuardAnswer, harnessOf, exitCodeFor, patchChanges, callsOf, upperDrive, UNKNOWN_TOOL, SHELL_INPUT_TOOLS } from '../../../adapters/copilot/translate.js';
 import { readInput, answer, projectOf, registeredByPath, beingSetUp, managedDir } from '../../hooks/kit.js';
 import { C6_PASSED, GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC, HELPER_PROBE_MS } from './numbers.js';
 import { helperClient } from '../../host/helper-client.js';
@@ -308,7 +308,7 @@ async function decideCall(event, raw, { deps, seen, dir }) {
   seen.mark = mark;
   const translated = toGuardInput(raw, event);
   if (typeof translated?.unknownTool === 'string') {
-    if (event === GUARD_EVENT) await mark('unknown-tool', { name: translated.unknownTool });
+    if (event === GUARD_EVENT && !SHELL_INPUT_TOOLS.includes(translated.unknownTool)) await mark('unknown-tool', { name: translated.unknownTool });
     return refusal(event, UNKNOWN_TOOL(translated.unknownTool));
   }
   const inputs = (Array.isArray(translated) ? translated : [translated]).map((input) => (isObject(input) ? withText(input) : input));

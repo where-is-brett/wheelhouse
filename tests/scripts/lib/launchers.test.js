@@ -127,7 +127,9 @@ test('a launcher command with a curly quote, any non-ASCII character, or ; ( ) {
       assert.ok(!LAUNCHER_COMMAND.test(command), command);
     }
   }
-  for (const body of ['a;b', 'a(b', 'a)b', 'a{b', 'a}b']) assert.ok(!LAUNCHER_COMMAND.test(`wh-act note '${body}'`), body);
+  for (const body of ['a(b', 'a)b', 'a{b', 'a}b']) assert.ok(!LAUNCHER_COMMAND.test(`wh-act note '${body}'`), body);
+  assert.ok(LAUNCHER_COMMAND.test("wh-feature log --kind deferred --text 'LOW: plan file at repo root is extra to the README change; deferred'"), 'a ; inside single quotes is text');
+  for (const bad of ["wh-act note a;b", "wh-act note 'a'; wh-act note b", "wh-act note 'a;' ; id", "wh-act note ';' && x"]) assert.ok(!LAUNCHER_COMMAND.test(bad), bad);
   assert.ok(!LAUNCHER_COMMAND.test('wh-act\tnote a'), 'a tab is not printable ASCII');
   assert.ok(LAUNCHER_COMMAND.test("wh-act note 'a, b: c'"));
 });

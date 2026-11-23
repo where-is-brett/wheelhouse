@@ -2458,11 +2458,12 @@ test('act ask --help says exactly what to type, and a missing flag is answered w
 
 // --- restart ---
 
-async function restartScene({ review, cfg } = {}) {
+async function restartScene({ review, cfg, questions = {} } = {}) {
   const checkout = await project({ git: true });
   const views = emptyViews();
   views.work.mine = workView('mine');
   views.features.mine = featureView('mine', { step: 'building', worktree: worktree(checkout, 'mine', { pr: { pr: 7, plan: 'a.md' } }) });
+  Object.assign(views.questions, questions);
   if (review !== undefined) views.reviews = { 7: { abc123: { id: 'r1', at: T0, data: { pr: 7, commit: 'abc123', verdict: review } } } };
   const woken = [];
   const wakerFor = () => ({ wakeFeature: async (work, file) => { woken.push({ work, wake: JSON.parse(fs.readFileSync(file, 'utf8')) }); } });
@@ -2482,6 +2483,26 @@ test('restart wakes the feature to fix the findings when a signed review holds i
   assert.match(event.detail.next, /Read your brief again first/);
   assert.doesNotMatch(event.detail.next, /\bgit\b/i);
   assert.equal(fake.writes.length, 0);
+}));
+
+test('restart closes the work\'s unanswered stuck question, and leaves an answered one and another work\'s alone', () => withHome(async () => {
+  const ask = (id, work, answered = false) => ({
+    question: { key: id, id: `e-${id}`, at: T0, data: { id, work, what: 'Has not moved', why: 'x', options: [{ label: 'Restart', says: `act restart ${work}` }, { label: 'Wait', says: 'Nothing' }], recommendation: 'Restart', level: 2 } },
+    answer: answered ? { label: 'Wait', at: T0 } : null,
+  });
+  const { fake, woken, wakerFor } = await restartScene({
+    questions: {
+      'q-mine-1000000': ask('q-mine-1000000', 'mine'),
+      'q-mine-1000001': ask('q-mine-1000001', 'mine', true),
+      'q-other-1000000': ask('q-other-1000000', 'other'),
+      'q-mine-3': ask('q-mine-3', 'mine'),
+    },
+  });
+  const r = await act(['restart', 'mine'], { client: fake.client, wakerFor });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(woken.length, 1);
+  assert.deepEqual(fake.writes.map((w) => [w.kind, w.data.id]), [['question-closed', 'q-mine-1000000']]);
+  assert.match(fake.writes[0].data.why, /restarted/);
 }));
 
 test('restart wakes the feature to carry on from where it left off when no review holds it', () => withHome(async () => {

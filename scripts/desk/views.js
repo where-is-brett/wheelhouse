@@ -12,6 +12,7 @@ import { cardTextOf, hashOf } from './card-text.js';
 import { cardButtons } from '../cards/buttons.js';
 import { dataHash } from '../state/events.js';
 import { cardOutcomes, latestFor } from '../state/views.js';
+import { minorsOf, reviewClear } from '../lib/review-verdict.js';
 import { decisionsFrom } from '../decisions/pending.js';
 import { canPrivate as canPrivateIn } from '../decisions/visibility.js';
 import { callsFrom, isHelmCall } from '../decisions/calls.js';
@@ -184,7 +185,12 @@ export function prLine(views, open, known) {
   const lead = n === known ? [] : [`pull request #${n} is open`];
   if (!isPlain(review)) return [...lead, 'no signed review yet, so it can\'t merge'];
   if (head !== null && review.commit !== head) return [...lead, 'its signed review is of an earlier commit, so the newest has none yet and it can\'t merge'];
-  if (review.verdict === 'CLEAN') return [...lead, 'its review is clean; it merges once the checks pass and the director has approved it'];
+  // The merge gate's own rule (reviewClear): a clean review clears the head, and so does one whose findings are all minors.
+  if (reviewClear(review)) {
+    const minors = minorsOf(review);
+    if (minors === 0) return [...lead, 'its review is clean; it merges once the checks pass and the director has approved it'];
+    return [...lead, `its review left ${minors} minor finding${minors === 1 ? '' : 's'}, deferred; it merges once the checks pass and the director has approved it`];
+  }
   const found = Number.isSafeInteger(review.findings) ? `${review.findings} finding${review.findings === 1 ? '' : 's'} to fix` : 'findings to fix';
   return [...lead, `its review holds the merge: ${found}`];
 }

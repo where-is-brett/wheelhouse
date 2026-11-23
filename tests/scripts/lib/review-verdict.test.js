@@ -34,7 +34,7 @@ test('reviewStep says only minors left at any round, as soon as no finding is BL
   for (const round of [1, 2, 3, 4, 7]) {
     const got = reviewStep({ total: 2, blocking: 0, round, fixRounds: 3 });
     assert.equal(got.step, 'minors', `round ${round}`);
-    assert.equal(got.line, "Only minors left (2): defer each in the ledger as deferred, do not fix them, and stop this task's review loop. Go on.");
+    assert.equal(got.line, "Only minors left (2): do not fix them, and stop this task's review loop. Write each as a line starting `Deferred:` in your Superpowers ledger if you keep one, and list them under concerns in report.md. Do not use the `log` command for them: it is for decisions, and refuses `deferred` as a kind. Go on.");
   }
 });
 

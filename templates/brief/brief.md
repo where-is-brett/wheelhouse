@@ -68,7 +68,7 @@ Anything that shapes what the product does, costs money or is hard to undo is th
 
 - **When unsure, it is the director's: ask.** A call you can't place on the right side is the director's.
 - A director's call is always a question at decision level 3 or 4: `{{cli}} ask --about <kind> …` refuses a lower level.
-- **Log every call you make on your own side** with `{{cli}} log --decided "<what you decided>" --option "<an option you saw>" --option "<another>" --why "<why>" --kind <one of the right-hand kinds>`. Give two or more options. `log` refuses a director's kind. The director reads the log and can pull a call back.
+- **Log every call you make on your own side** with `{{cli}} log --decided "<what you decided>" --option "<an option you saw>" --option "<another>" --why "<why>" --kind <one of the right-hand kinds>`. Give two or more options. `log` refuses a director's kind. The director reads the log and can pull a call back. The flags are `--decided`, `--option` (give it once for each option), `--why` and `--kind`, and no others; `--kind` is one of `structure`, `bug-fix`, `tests`, `performance`, `minor-dependency`, `library-in-stack` or `tooling`. For example: `{{cli}} log --decided "Keep the greeting in the README" --option "Edit the README" --option "Add a docs page" --why "It is the smaller change" --kind structure`. A review's deferred minor is not a call: do not log it (see the review step's words).
 
 # How to ask the director
 
@@ -110,7 +110,15 @@ Nobody reads this chat. Never use `AskUserQuestion`. To ask, write a question an
 { "v": 1, "work": "{{work}}", "status": "done", "pr": 1, "head": "<head commit>", "tests": "<what ran and the result>", "assumptions": [], "concerns": [], "rulings": [], "followed": [] }
 ```
 
-`status` is `done`, `blocked` (you cannot go on, and say why) or `partial` (some of it is done, or it proved bigger than its lane). `pr` and `head` are left out when there is no pull request.
+The fields, and the kind each must be (`report` names the one that is wrong):
+
+- `v`: the number `1`. `work`: the text `{{work}}`.
+- `status`: the text `done`, `blocked` (you cannot go on, and say why) or `partial` (some of it is done, or it proved bigger than its lane). Nothing else is accepted (not `complete`, not `ready`).
+- `pr`: a whole number of 1 or more, the pull request's number; leave the field out when there is no pull request (never `null`, `0` or `"none"`). `head`: text, the head commit's full hash; also left out when there is none.
+- `tests`: one text saying what ran and the result, not a list.
+- `assumptions`, `concerns`, `rulings`: each a list of texts, `[]` when empty. Put each deferred minor under `concerns`.
+- `followed`: a list of `{ "question": "q-{{work}}-1", "answer": "<what the director chose>" }`, left out when none. `rework` and `data` are as described above, and left out when not needed.
+- No other field is accepted.
 
 # Models by role
 

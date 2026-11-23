@@ -463,22 +463,34 @@ const validData = (d) => isPlain(d) && hasOnly(d, ['expect', 'none'])
   && (d.expect === undefined || (Array.isArray(d.expect) && d.expect.every(isText))) && (d.none === undefined || isText(d.none))
   && !(d.expect !== undefined && d.none !== undefined);
 
-function validReport(f) {
-  return hasOnly(f, REPORT_KEYS)
-    && ['v', 'work', 'status', 'tests', 'assumptions', 'concerns', 'rulings'].every((k) => k in f)
-    && f.v === 1
-    && typeof f.work === 'string' && SLUG.test(f.work)
-    && REPORT_STATUSES.includes(f.status)
-    && (f.pr === undefined || (Number.isInteger(f.pr) && f.pr >= 1))
-    && (f.head === undefined || isText(f.head))
-    && typeof f.tests === 'string'
-    && isTexts(f.assumptions)
-    && isTexts(f.concerns)
-    && isTexts(f.rulings)
-    && (f.rework === undefined || (reworkOf(f).length > 0 && reworkOf(f).every(validRework)))
-    && (f.followed === undefined || (Array.isArray(f.followed) && f.followed.every(validFollowed)))
-    && (f.data === undefined || validData(f.data));
+// What is wrong with a report's fields, one sentence for each, naming the field and the kind it must be. Empty when it is whole.
+// The fields it allows are `REPORT_KEYS`.
+export function reportProblems(f) {
+  if (!isPlain(f)) return ['the fields must be one json object'];
+  const out = [];
+  const unknown = Object.keys(f).filter((k) => !REPORT_KEYS.includes(k));
+  if (unknown.length > 0) out.push(`${unknown.map((k) => `"${k}"`).join(', ')} ${unknown.length > 1 ? 'are not fields' : 'is not a field'} a report has (the fields are ${REPORT_KEYS.join(', ')})`);
+  const required = ['v', 'work', 'status', 'tests', 'assumptions', 'concerns', 'rulings'];
+  const lacking = required.filter((k) => !(k in f));
+  if (lacking.length > 0) out.push(`lacks ${lacking.join(', ')}`);
+  const shown = (v) => { const t = JSON.stringify(v); return t === undefined ? String(v) : t.length > 40 ? `${t.slice(0, 37)}...` : t; };
+  const bad = (k, kind) => out.push(`"${k}" must be ${kind}, not ${shown(f[k])}`);
+  if ('v' in f && f.v !== 1) bad('v', 'the number 1');
+  if ('work' in f && !(typeof f.work === 'string' && SLUG.test(f.work))) bad('work', "the work's name as text, as the brief gives it");
+  if ('status' in f && !REPORT_STATUSES.includes(f.status)) bad('status', `one of ${REPORT_STATUSES.map((s) => `"${s}"`).join(', ')}`);
+  if (f.pr !== undefined && !(Number.isInteger(f.pr) && f.pr >= 1)) bad('pr', 'a whole number of 1 or more (leave "pr" out when there is no pull request)');
+  if (f.head !== undefined && !isText(f.head)) bad('head', 'the head commit\'s hash as non-empty text (leave "head" out when there is none)');
+  if ('tests' in f && typeof f.tests !== 'string') bad('tests', 'one text saying what ran and the result, not a list');
+  for (const k of ['assumptions', 'concerns', 'rulings']) {
+    if (k in f && !isTexts(f[k])) bad(k, 'a list of texts, [] when empty');
+  }
+  if (f.rework !== undefined && !(reworkOf(f).length > 0 && reworkOf(f).every(validRework))) bad('rework', `an object (or a list of them) with ${REWORK_KEYS.map((k) => `"${k}"`).join(', ')}, each non-empty text`);
+  if (f.followed !== undefined && !(Array.isArray(f.followed) && f.followed.every(validFollowed))) bad('followed', 'a list of { "question": "<question id>", "answer": "<what the director chose>" }, with "how" as an optional text');
+  if (f.data !== undefined && !validData(f.data)) bad('data', 'an object with "expect" (a list of table names) or "none" (the reason there is no comparison), not both');
+  return out;
 }
+
+const validReport = (f) => reportProblems(f).length === 0;
 
 // The rework entries a report's fields carry, as a list (none when it has none).
 export const reworksIn = (fields) => (fields?.rework === undefined ? [] : reworkOf(fields));

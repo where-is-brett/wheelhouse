@@ -599,7 +599,6 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   lines.push(...section('Rulebook (accepted):', rules));
   const levels = Object.values(views?.levels ?? {}).map((l) => `${l.key}: ${show(l.value)}`);
   lines.push(...section('Levels:', levels));
-  if (feature) lines.push(`Your feature's ledger: ${path.join(stateRoot, 'features', feature, 'ledger.md')}`);
   let text = lines.join('\n');
   if (text.length > MAX_CHARS) text = `${text.slice(0, MAX_CHARS - 1)}…`;
   return text;

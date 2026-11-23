@@ -108,7 +108,6 @@ export async function whereDigest({ project, input = {}, views, feature = null, 
   };
   await piece(() => `Where you were, before the compaction (role: ${sessionRole({ sessionId: input.session_id, env, cwd: input.cwd })}):`);
   await piece(() => gitLine(input.cwd, { run }));
-  await piece(() => (feature && stateRoot ? `Feature ledger: ${path.join(stateRoot, 'features', feature, 'ledger.md')}` : null));
   await piece(() => cardLine(views, input.session_id));
   await piece(() => noteLines(project, input.session_id, now));
   if (lines.length <= 1) return '';

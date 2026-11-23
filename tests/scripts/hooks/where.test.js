@@ -62,7 +62,8 @@ test('the digest names the role, git, ledger and cards', () => withHome(async (h
   const text = await whereDigest({ project: 'p', input, views, feature: 'x', stateRoot: path.join(home, 'state'), run: fakeGit(GOOD), env: {} });
   assert.match(text, /^Where you were, before the compaction \(role: front-desk\):/);
   assert.match(text, /Git: branch feature\/x/);
-  assert.ok(text.includes(`Feature ledger: ${path.join(home, 'state', 'features', 'x', 'ledger.md')}`));
+  // No ledger path is named: nothing writes a ledger into the record, and the session would read the record's folder for it.
+  assert.doesNotMatch(text, /ledger/);
   assert.doesNotMatch(text, /Goal running/);
   assert.match(text, /Your open cards: c1: Mine$/m);
   assert.doesNotMatch(text, /Theirs/);

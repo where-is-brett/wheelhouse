@@ -1756,6 +1756,22 @@ test('a question that replaces an unanswered one takes its place, and the old on
   assert.deepEqual(Object.keys(questions), ['q-mine-1000002']);
 });
 
+test('a closed foreman question goes from the views, once; a question recorded again under its id afterwards stands, and a feature\'s own is never closed so', () => {
+  const ask = (id, extra = {}) => ({ id, work: 'mine', what: 'What?', why: 'Why', options: [{ label: 'Yes', says: 'Do it' }], recommendation: 'Yes', level: 2, ...extra });
+  const at = (h) => () => new Date(`2026-10-18T0${h}:00:00Z`);
+  const closed = (id, h) => makeEvent({ kind: 'question-closed', data: { id, why: 'The work was restarted' }, now: at(h) });
+  const events = [
+    makeEvent({ kind: 'question', data: ask('q-mine-1000001'), now: at(1) }),
+    makeEvent({ kind: 'question', data: ask('q-mine-2'), now: at(1) }),
+    closed('q-mine-1000001', 2),
+    closed('q-mine-2', 2),
+    makeEvent({ kind: 'question', data: ask('q-mine-1000003'), now: at(3) }),
+    closed('q-mine-1000003', 2),
+  ];
+  const { questions } = buildViews(events, { now: () => new Date('2026-10-18T05:00:00Z') });
+  assert.deepEqual(Object.keys(questions).sort(), ['q-mine-1000003', 'q-mine-2']);
+});
+
 test('a question never takes the place of an engine question, a question with an engine part, or one with a click on it', () => {
   const ask = (id, extra = {}) => ({ id, work: 'mine', what: 'What?', why: 'Why', options: [{ label: 'Yes', says: 'Do it' }], recommendation: 'Yes', level: 3, ...extra });
   const events = [
