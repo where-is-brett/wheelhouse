@@ -405,6 +405,17 @@ async function surveyOf({ project, client, desk }) {
   }
 }
 
+// The helper's small waiting read for an agent whose hooks can't write: whether the panel is live, how many cards were moved to
+// the chat, and the session's last turn time (which this read records, in the helper). Asked of the helper alone, never run in
+// this process, so a helper that isn't running gives null and nothing is written under the Wheelhouse home.
+async function helperTurn({ cwd, client, session }) {
+  const timeout = INPUTS_WAIT_MS + helperGrace();
+  const base = client ?? helperClient({ timeout });
+  const asker = isRecord(base.desk) ? base : { ...base, desk: helperClient({ timeout }).desk };
+  const got = await deskClient({ cwd, client: asker, local: 'never', timeout }).read('waiting', { paneOnly: true, ...(session === null ? {} : { turn: session }) });
+  return got?.ok === true ? got : null;
+}
+
 // decide(input, deps) -> the context to add, or undefined.
 //
 // On an agent whose hooks only read (`writeVia: 'helper'`, ruling P5-20) nothing is written under the Wheelhouse
@@ -467,13 +478,16 @@ export async function decide(input, deps = {}) {
     // On an agent whose hooks can't write, no prompt time is kept here, so the helper keeps the session's last turn time and
     // says whether the project's panel is live. While it is, the panel holds the cards: they are not asked in the chat.
     const sessionId = typeof input.session_id === 'string' ? input.session_id : null;
-    const turn = writes ? null : await within(() => desk.read('waiting', { paneOnly: true, ...(sessionId === null ? {} : { turn: sessionId }) }), waitMs);
+    // The read goes to the helper only (`local: 'never'`): with no helper it gives nothing, and the hook writes nothing here.
+    // A card the director moved to the chat (`handed`) is still asked here while the panel is live.
+    const turn = writes ? null : await within(() => helperTurn({ cwd: input.cwd, client, session: sessionId }), waitMs);
     const turnAt = typeof turn?.data?.turnAt === 'string' ? turn.data.turnAt : null;
-    const cards = count > 0 ? (turn?.data?.paneLive === true ? paneLine(count) : cardsLine(count)) : null;
+    const inPanel = turn?.data?.paneLive === true && !(turn.data.handed > 0);
+    const cards = count > 0 ? (inPanel ? paneLine(count) : cardsLine(count)) : null;
     const sinceAt = writes ? seen.promptAt : turnAt;
     // What the cards just answered or left open say, ahead of the cards line. A session's open.json is read once and
     // cleared by this prompt, whatever comes of the lines.
-    const open =sessionId === null ? null : attempt(() => readOpen(sessionId), null);
+    const open = sessionId === null ? null : attempt(() => readOpen(sessionId), null);
     if (writes && sessionId !== null) attempt(() => clearOpen(sessionId));
     // What the prompt hook makes of a reply (scripts/decisions/answer.js) it tells in its own context for this turn. Here the
     // reply is only read, under the same guards, to leave out the decision it answers.

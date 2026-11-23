@@ -481,7 +481,12 @@ const VIEWS = {
   // other views come with it, for the front desk's own lists (the rulebook, ideas, glossary, levels).
   // With `outcomes: { since }` the decided cards come too (decidedOutcomes), for the front desk's `card` and `views`.
   async waiting(args, source, { now, client = null } = {}) {
-    // `paneOnly`: just whether a panel is live, with no views built, for a hook that must answer quickly.
+    // `paneOnly`: with no views built, for a hook that must answer quickly, this read does three things.
+    //   - It reports whether a panel is live (`paneLive`) and how many cards the director moved to the chat that wait to be asked
+    //     there (`handed`).
+    //   - Given `passHere` (card ids), it uses up a taken mark: `passed` says whether the panel handed every one to the chat, once.
+    //   - Given `turn` (a session's id, for an agent whose hooks can't write), it records a turn time: it gives when that session's
+    //     last turn began (`turnAt`, an ISO time, or null for a first turn) and keeps this turn's time in its place.
     if (args.paneOnly === true) {
       const when = typeof now === 'function' ? now() : new Date();
       // A paired app's signed read may take its Ask me here marks here too (`askHere`), with no views built.
@@ -490,7 +495,8 @@ const VIEWS = {
       const passed = Array.isArray(args.passHere) ? { passed: typeof source.project === 'string' && passHanded(source.project, args.passHere.filter((id) => typeof id === 'string'), when.getTime()) } : {};
       const turn = typeof args.turn === 'string' && args.turn !== '' ? takeTurn(args.turn, when.getTime()) : undefined;
       const turned = turn === undefined ? {} : { turnAt: turn === null ? null : new Date(turn).toISOString() };
-      return { ok: true, data: { paneLive: typeof source.project === 'string' && panelLive(source.project, when.getTime()), ...taken, ...passed, ...turned }, lines: [] };
+      const handedCount = typeof source.project === 'string' ? handedAskHere(source.project, when.getTime()).length : 0;
+      return { ok: true, data: { paneLive: typeof source.project === 'string' && panelLive(source.project, when.getTime()), handed: handedCount, ...taken, ...passed, ...turned }, lines: [] };
     }
     const got = await recordOf(source, { cards: true, answers: args.answers === true });
     if (got.refused) return { ok: false, refused: got.refused };
