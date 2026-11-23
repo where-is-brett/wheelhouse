@@ -11,6 +11,7 @@ import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
+import { composeCard } from '../../../scripts/cards/compose.js';
 import { listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
@@ -92,10 +93,28 @@ test('pairing an app is a confirmed step on both lists, and no chat click pairs 
   });
 });
 
-test('a chat click that would sign is taken only on a merge card', async () => {
+const base = { why: 'It changes what users see.', because: 'the checks passed.', meanwhile: 'Nothing is released.' };
+const says = (label) => ({ label, says: `It ${label.toLowerCase()}s and goes ahead.` });
+const SHA = 'a'.repeat(40);
+const mergeCard = composeCard({ ...base, kind: 'approval', level: 3, recommend: 'Approve', what: 'Pull request #12 has everything else it needs to merge.', options: [says('Approve')], target: { pr: 12, sha: SHA } }).card;
+const guardrailCard = composeCard({ ...base, kind: 'approval', level: 4, recommend: 'Approve', what: 'Pull request #13 changes a file that steers the agents.', checks: 'It changes no checks: the change is still checked before it is added.', options: [says('Approve')], target: { pr: 13, sha: SHA } }).card;
+const shown = async (client, data) => {
+  const made = await client.state.write({ project: 'o__p', kind: 'card', data });
+  assert.equal(made.ok, true, JSON.stringify(made));
+  return made.id;
+};
+
+test('a chat click that would sign is taken only on a plain merge approval, read from the live card and not from its id', async () => {
   await withProject(async (client) => {
+    // A card of another kind, and a guardrail approval, whatever their ids: refused.
     assert.equal((await client.cards.chatClick({ project: 'o__p', card: 'update-3', label: 'Approve', hash: HASH, proof: 'chat-click' })).ok, false);
-    assert.equal((await client.cards.chatClick({ project: 'o__p', card: 'merge-3', label: 'Approve', hash: HASH, proof: 'chat-click' })).ok, true);
+    assert.equal((await client.cards.chatClick({ project: 'o__p', card: 'merge-3', label: 'Approve', hash: HASH, proof: 'chat-click' })).ok, false, 'a name says nothing');
+    const guardrail = await shown(client, guardrailCard);
+    assert.equal((await client.cards.chatClick({ project: 'o__p', card: guardrail, label: 'Approve', hash: HASH, proof: 'chat-click' })).ok, false);
+    assert.deepEqual(answers(), []);
+    // The card the composer writes for a merge, under its real id: taken.
+    const merge = await shown(client, mergeCard);
+    assert.equal((await client.cards.chatClick({ project: 'o__p', card: merge, label: 'Approve', hash: HASH, commit: SHA, proof: 'chat-click' })).ok, true);
     assert.equal(answers().length, 1);
   });
 });

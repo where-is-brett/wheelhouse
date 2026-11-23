@@ -17,6 +17,12 @@ const SIGNED_LABELS = ['Approve', 'Send it back', 'Confirm', 'Lift All stop', 'L
 const isRecord = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const str = (x) => (typeof x === 'string' ? x : '');
 
+// A plain merge approval, as the composer writes one and core's isMergeApproval reads it (scripts/desk/evidence.js): kind approval, at
+// level 3, with the approval set line. A level-4 approval is a guardrail change, which the window confirms. Read from the live card,
+// never from its id.
+const APPROVAL_SET_LINE = /^Approve pull request #[1-9][0-9]* at commit [0-9a-f]{12}$/;
+const isMergeApproval = (data) => isRecord(data) && data.kind === 'approval' && data.level === 3 && typeof data.line === 'string' && APPROVAL_SET_LINE.test(data.line);
+
 function cardOf(entry) {
   const data = isRecord(entry.data) ? entry.data : {};
   const id = str(entry.id);
@@ -37,7 +43,7 @@ function cardOf(entry) {
     why: str(parts.why),
     meanwhile: str(parts.meanwhile),
     recommendation: str(parts.recommendation),
-    merge: /^merge-/.test(id),
+    merge: isMergeApproval(data),
     confirmed: CONFIRMED_STEPS.some((step) => id === step || id.startsWith(`${step}-`)) || CONFIRMED_KINDS.includes(str(data.kind)),
     // A decision is an answer card (scripts/decisions/pending.js); the helper tells a build question from one.
     decision: str(data.kind) === 'answer',
@@ -109,4 +115,4 @@ function stateOf(model) {
   };
 }
 
-module.exports = { stateOf, cardOf, waitingCards, isOpen, stepWords, CONFIRMED_STEPS, SIGNED_LABELS };
+module.exports = { stateOf, cardOf, isMergeApproval, waitingCards, isOpen, stepWords, CONFIRMED_STEPS, SIGNED_LABELS };

@@ -60,6 +60,7 @@ export function deskClient({ address, cwd, project, local = 'auto', timeout, cli
       write: async () => ({ ok: false, refused: HELPER_NOT_RUNNING }),
       chatClick: async () => ({ ok: false, refused: HELPER_NOT_RUNNING }),
       confirm: async () => ({ ok: false, refused: HELPER_NOT_RUNNING }),
+      panelApprove: async () => ({ ok: false, refused: HELPER_NOT_RUNNING }),
     };
     core = deskCore({ source: fileSource(found.project, { cwd: cwd ?? found.record?.folder, client: helper, now, waitMs }), recorder, now });
     return core;

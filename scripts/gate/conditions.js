@@ -63,6 +63,11 @@ export function approvalCounts(entry, headSha, enrolled) {
 const SIGNED_PROOF = 'signed-hook';
 // Clicks in an agent's chat, which a project with real users never takes as an approval.
 const CHAT_PROOFS = ['chat-click'];
+// A panel's Approve (decision 2 of the add-on's return design, 23 November 2026): signed by the helper itself, naming the paired app
+// that was clicked. It counts as any signed approval does, except on a project with real users, where only the window and the host decide.
+const CLIENT_PROOF = 'client';
+// The first add-on's proof: its approvals are never taken, so a record that still names it decides nothing.
+const RETIRED_PROOF = 'add-on';
 // What a project with real users takes, the strongest first: the host's approval, the window.
 const REAL_USER_PROOFS = ['host', 'window'];
 const NEEDS_WORDS = { host: 'the director\'s approval on the code host', window: 'the director\'s click in Wheelhouse\'s window' };
@@ -85,7 +90,8 @@ function approvalOf(i, headSha) {
   const realUsers = i.realUsers === true;
   // A signed approval counts where signed approvals do (today's rule), or where the proof it names is taken.
   const signedProof = i.approval?.data?.proof;
-  const signedTaken = proofs.includes(SIGNED_PROOF) || (typeof signedProof === 'string' && proofs.includes(signedProof) && !(realUsers && CHAT_PROOFS.includes(signedProof)));
+  const refused = signedProof === RETIRED_PROOF || (realUsers && signedProof === CLIENT_PROOF);
+  const signedTaken = !refused && (proofs.includes(SIGNED_PROOF) || (typeof signedProof === 'string' && proofs.includes(signedProof) && !(realUsers && CHAT_PROOFS.includes(signedProof))));
   const counts = headSha !== ''
     && ((signedTaken && approvalCounts(i.approval, headSha, i.enrolled)) || clickApproves(i.approval, headSha, proofs, realUsers));
   if (counts) return { counts: true };

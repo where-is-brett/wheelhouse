@@ -111,6 +111,7 @@ import { FIX_LANE, openRedMain, redMainIncident } from '../engine/fix-main.js';
 import { endedBy } from '../foreman/queue.js';
 import { packTreeDigest } from '../engine/pack-build.js';
 import { deskCore, checkVersion } from '../desk/core.js';
+import { isMergeApproval } from '../desk/evidence.js';
 import { fileSource } from '../desk/file-source.js';
 import { askToPair, pairClient, pairedClients, unpairClient } from '../desk/clients.js';
 import { DESK_VERSION, needsEvidence } from '../desk/vocabulary.js';
@@ -2453,8 +2454,9 @@ export async function startHelper({
   }
 
   // A click in the chat (ruling P5-17): an unsigned card-answer naming its proof, never signed. A label that
-  // decides a signed step is taken only on a card a chat click may decide: a merge card;
+  // decides a signed step is taken only on a card a chat click may decide: a plain merge approval;
   // never one of the confirmed steps (a card named for the step, or `<step>-…`), which need the window.
+  // A merge card is a plain merge approval (isMergeApproval): kind approval, level 3, with the approval set line.
   // Suggest a change… (ruling P5-27 k) carries the director's own words as `text`, and no other click does.
   async function doChatClick({ project, card, hash, label, proof, commit, text }, ctx) {
     if (!CHAT_PROOFS.includes(proof)) refuse(`a click in the chat is recorded as ${CHAT_PROOFS.join(' or ')}`);
@@ -2470,10 +2472,31 @@ export async function startHelper({
     if (confirmed && signsOn(label, asked)) refuse('that step is confirmed outside the chat, never by a click in it');
     // A decision answered by a click the chat can't sign would close it without the signed answer the crew acts on.
     if (isDecisionCard(shownCard?.data)) refuse('a decision is answered in the window or by a typed reply, never by a click in the chat');
-    const mayDecide = /^merge-/.test(card);
+    // Read from the live card, as the desk reads it, never from its id: a card's id is a random one.
+    const mayDecide = isMergeApproval(shownCard?.data);
     if (signsOn(label, asked) && !mayDecide) refuse('a click in the chat can\'t decide that card');
     const data = { question: card, label, hash, ...(commit === undefined ? {} : { commit }), ...(text === undefined ? {} : { text }), proof, where: 'chat' };
     return doWrite({ project, kind: 'card-answer', data }, ctx, { own: true });
+  }
+
+  // A paired app's Approve on a plain merge approval (decision 2 of the add-on's return design): the helper signs the approval the card earns,
+  // as the window does for a click, naming proof `client` and the app that was clicked. Only where no real users are, and only for a plain
+  // merge approval (isMergeApproval), read from the live card. It asks the code host for the head as the card's own line names it
+  // (windowEarned), so a card whose head moved earns nothing. The caller holds the project's queue, as the other desk acts do.
+  async function doPanelApprove({ project, card, label, client }, ctx) {
+    if (launchedIn(project)) refuse('this project has real users, so approve it in Wheelhouse\'s window or on the code host');
+    if (typeof card !== 'string' || card === '' || typeof client !== 'string' || client === '') refuse('the card and the app must be named');
+    const found = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'card' && e.id === card);
+    if (found.length !== 1) refuse('that card is not in this project\'s state');
+    const [shown] = found;
+    if (!isMergeApproval(shown.data)) refuse('the panel can\'t decide that card: answer it in Wheelhouse\'s window');
+    const got = await windowEarned(project, shown, label, ctx);
+    if (got === null || got.made.kind !== 'approval') refuse('that card changed since it was shown, so nothing was recorded');
+    const event = makeEvent({ kind: 'approval', data: { ...got.made.data, proof: 'client', by: client }, now });
+    const result = await writeEvent({ project, event, now });
+    await freshViews(() => writeViews(project, { now }));
+    await doWrite({ project, kind: 'card-answer', data: { card, question: shown.data.question, label, where: 'panel' } }, ctx);
+    return written({ event, result });
   }
 
   // --- the helper's own window (design section 6.3, ruling P5-23) ---
@@ -3687,6 +3710,8 @@ export async function startHelper({
       // Only the helper's own, verified decision-records change lowers the approval condition (decisionsOnly in the gate).
       ...(batching ? { batch: true, changedPaths: changes.paths } : {}),
       approvalRequired: needsApproval,
+      // A panel's approval (proof client) counts only where no real users are: the gate reads it from here, never from the record.
+      realUsers: launchedIn(project),
       touchesGuardrails: guarded,
       review,
       approval,
@@ -4697,6 +4722,7 @@ export async function startHelper({
       }),
       liftStop: tried(async () => { liftStop(); return { ok: true }; }),
       chatClick: tried((click) => doChatClick({ project, ...click }, ctx)),
+      panelApprove: tried((asked) => doPanelApprove({ project, ...asked }, ctx)),
       confirm: tried((asked) => doConfirm({ project, ...asked }, ctx)),
       askPair: tried(async (client) => ({ ok: true, ...askToPair(client, { now }) })),
       safekeeping: tried(({ action }) => doSafekeeping({ project, action }, ctx)),
