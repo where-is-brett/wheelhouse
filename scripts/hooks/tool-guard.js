@@ -60,7 +60,8 @@ const SHELL_STATE = [
   /(?<![\w])env:\s*path/i, // $env:PATH, Set-Item env:PATH, Env:Path
   /\b(?:export|declare|typeset|readonly)\b[^\n;|&]*\$/i, // a variable's name given by another
   /\bSet-Item\b|\bSetEnvironmentVariable\b|\[Environment\]/i,
-  /(?<![\w-])[\w.:-]+\s*\(\s*\)/, // name() { ... }
+  /(?<![\w$.-])(?!\.)[\w.:-]+\s*\(\s*\)/, // name() { ... }, but not a method call such as $_.Trim()
+  /\$\{?\w+\}?\s*\(\s*\)\s*[{(]/, // $name() { ... }
   /(?<![\w-])(?:function|filter)\s+\S/i,
   /(?<![\w-])(?:alias|unalias|Set-Alias|New-Alias|sal|nal)(?![\w-])/i,
   /(?<![\w])(?:alias|function|variable):/i, // the PowerShell drives that hold them
