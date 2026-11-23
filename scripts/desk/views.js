@@ -19,7 +19,7 @@ import { callsFrom, isHelmCall } from '../decisions/calls.js';
 import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { crewNow } from '../crew/runs.js';
-import { paneLive } from '../lib/session-files.js';
+import { paneLive, takeTurn } from '../lib/session-files.js';
 import { registeredProjects } from '../lib/projects.js';
 import { computerId } from '../lib/paths.js';
 import { agentInFolder } from '../agents/names.js';
@@ -466,7 +466,14 @@ const VIEWS = {
   // `cards` and `answers` ask for what the helper's views give with them. The record's
   // other views come with it, for the front desk's own lists (the rulebook, ideas, glossary, levels).
   // With `outcomes: { since }` the decided cards come too (decidedOutcomes), for the front desk's `card` and `views`.
+  // With `turn` (a session's id, for an agent whose hooks can't write), no views are built: it gives when that session's last
+  // turn began (`turnAt`, an ISO time, or null for a first turn) and keeps this turn's time in its place.
   async waiting(args, source, { now } = {}) {
+    if (typeof args.turn === 'string' && args.turn !== '') {
+      const when = typeof now === 'function' ? now() : new Date();
+      const last = takeTurn(args.turn, when.getTime());
+      return { ok: true, data: { turnAt: last === null ? null : new Date(last).toISOString() }, lines: [] };
+    }
     const got = await recordOf(source, { cards: true, answers: args.answers === true });
     if (got.refused) return { ok: false, refused: got.refused };
     const numbered = numberedWaiting(got.views, got.cards ?? []);

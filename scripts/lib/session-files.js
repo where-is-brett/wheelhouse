@@ -1,7 +1,7 @@
 // scripts/lib/session-files.js
 // The small files Wheelhouse keeps beside a session's role.json, in sessions/<id>/: whether a live
 // pane is drawn beside the session (pane.json), the cards the director asked to have in the chat
-// (here.json) and the cards a chat question is open on (open.json). Every reader treats a missing,
+// (here.json), the cards a chat question is open on (open.json) and the time of the session's last turn (turn.json). Every reader treats a missing,
 // unreadable or half-written file as absent and never throws; every writer is atomic and returns
 // false rather than throw. An unsafe session id names no folder, so it reads as absent.
 import crypto from 'node:crypto';
@@ -21,6 +21,7 @@ export const HOLD_FOR_PANE = true;
 const PANE = 'pane.json';
 const HERE = 'here.json';
 const OPEN = 'open.json';
+const TURN = 'turn.json';
 
 function fileOf(sessionId, name) {
   const role = roleFile(sessionId);
@@ -123,6 +124,16 @@ export function readOpen(sessionId) {
   const mark = readJson(fileOf(sessionId, OPEN));
   if (mark === null || !isIds(mark.cards) || !isTime(mark.at)) return null;
   return { cards: mark.cards, at: mark.at };
+}
+
+// For an agent whose hooks can't write: the time the session's last turn began (turn.json), kept by the helper. Gives that
+// time in ms, or null when the session has none yet, and records `now` as the turn now beginning.
+export function takeTurn(sessionId, now) {
+  if (!isTime(now)) return null;
+  const file = fileOf(sessionId, TURN);
+  const mark = readJson(file);
+  writeJson(file, { at: now });
+  return mark !== null && isTime(mark.at) ? mark.at : null;
 }
 
 export function clearOpen(sessionId) {
