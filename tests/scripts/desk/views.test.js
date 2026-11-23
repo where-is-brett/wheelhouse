@@ -136,6 +136,18 @@ test('a paired app\'s signed paneOnly read takes the marks too, building no view
   assert.deepEqual((await readView('waiting', args, bare, { now, client: 'vscode-panel' })).data.askHere, []);
 }));
 
+test('a paneOnly read with `passHere` passes the handed cards once, building no views', () => withRecord(async ({ source }) => {
+  clearPanels();
+  const bare = { ...source, views: async () => { throw new Error('no views are built'); } };
+  await runAct('ask-here', { card: 'c1' }, { ok: true, records: [], client: 'vscode-panel' }, { source, recorder: {}, now });
+  const pass = async () => (await readView('waiting', { paneOnly: true, passHere: ['c1'] }, bare, { now })).data.passed;
+  assert.equal(await pass(), false, 'a mark the panel has not taken is not handed');
+  await readView('waiting', { paneOnly: true, askHere: true }, bare, { now, client: 'vscode-panel' });
+  assert.equal(await pass(), true);
+  assert.equal(await pass(), false, 'given once');
+  assert.equal((await readView('waiting', { paneOnly: true }, bare, { now })).data.passed, undefined, 'said only when asked for');
+}));
+
 test('card carries its buttons, its pane hash and its data hash', () => withRecord(async ({ source }) => {
   const got = await readView('card', { id: 'c1' }, source, { now });
   assert.equal(got.ok, true);

@@ -43,7 +43,7 @@ export function markAskHere(project, cardId, nowMs) {
 
 // The cards of `project` that a paired app's signed read has taken, with when each was taken, left as they are: a look, never a
 // take. A mark the panel hasn't taken yet is not here, so a caller that isn't the panel (the front desk) never sees, and so
-// never moves, a mark. A taken mark stays until the card is asked or stops waiting (the desk's waiting view decides that), with
+// never takes, a mark; the one thing an unsigned caller may do is use up a taken mark (passHanded), and the card stays in this list. A taken mark stays until the card is asked or stops waiting (the desk's waiting view decides that), with
 // a cap of HANDED_MS from when it was taken, so the list can't grow without end: the director may not speak to the chat for
 // minutes. Entries past the cap are dropped here.
 export function handedAskHere(project, nowMs) {
@@ -51,6 +51,19 @@ export function handedAskHere(project, nowMs) {
   if (taken === undefined) return [];
   pruneHanded(taken, nowMs);
   return [...taken].map(([id, mark]) => ({ id, takenAt: mark.takenAt }));
+}
+
+// True once, when every card in `cardIds` is one the panel's read handed to the chat of `project` and the mark is still in time;
+// removes what it passed. For the card-check hook, which lets a card moved by Ask me here be asked in the chat once, whether or not the
+// front desk has already printed it as asked. An unsigned read takes no Ask me here mark: this can only use up a mark the panel has
+// already taken, and the card stays in the panel's list.
+export function passHanded(project, cardIds, nowMs) {
+  const taken = handed.get(project);
+  if (taken === undefined || !Array.isArray(cardIds) || cardIds.length === 0) return false;
+  pruneHanded(taken, nowMs);
+  if (!cardIds.every((id) => taken.has(id))) return false;
+  for (const id of cardIds) taken.delete(id);
+  return true;
 }
 
 function pruneHanded(taken, nowMs) {
