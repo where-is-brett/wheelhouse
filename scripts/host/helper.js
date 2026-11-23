@@ -2507,7 +2507,7 @@ export async function startHelper({
     // in the window, which records the settings as they read when the click is made (settingsEarned, applySettings).
     'confirm-settings': 'git-settings',
     // Pair it and Unpair it on an app's card: confirmed in the window, which enrols or removes the app's key (enrolOn). No
-    // chat can sign these, so the window is how a Copilot session's app is paired.
+    // chat that records no click can sign these, so the window is how an app is paired from such a chat.
     'pair-client': 'pairing', 'unpair-client': 'pairing',
   };
   // The director's signed Pair it or Unpair it on an app's card (spec 5.3) enrols the app's key, or removes it. Shared by

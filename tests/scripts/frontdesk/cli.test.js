@@ -30,7 +30,7 @@ import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { approveWorkLine, approvalLine, answerLine, chatCopy, replyCode, replyCodeOf, ciPushLine, confirmLine, keepControlLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
 import { writeJsonFile, runningFile, sessionFile } from '../../../scripts/watcher/waker.js';
-import { markPane } from '../../../scripts/lib/session-files.js';
+import { markPanel, clearPanels } from '../../../scripts/desk/panel-live.js';
 import { sandboxed } from '../../helpers/sandbox-wall.js';
 import { setStop, stopState } from '../../../scripts/lib/stop.js';
 import { decide as cardCheck, cardProblems } from '../../../scripts/hooks/card-check.js';
@@ -2716,7 +2716,8 @@ test('cards and card still mark a card as asked at print while the panel is live
     const approval = cardEvent({ ...APPROVAL, target: { pr: 7, sha: FULL } }, 1);
     const helper = fakeHelper({ events: [approval] });
     const session = 'session-live';
-    assert.equal(markPane(session, { at: NOW.getTime(), drawn: NOW.getTime(), surface: 'desktop' }), true);
+    clearPanels();
+    markPanel('o__p', 'vscode-panel', NOW.getTime()); // a paired app's signed watch, as the helper keeps it: per project
     const out = await run(helper, ['cards'], undefined, { env: { CLAUDE_CODE_SESSION_ID: session } });
     assert.equal(out.code, 0, out.err);
     assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [approval.id] } }]);
@@ -2724,6 +2725,7 @@ test('cards and card still mark a card as asked at print while the panel is live
     const made = await run(fresh, ['card'], JSON.stringify({ ...APPROVAL, target: { pr: 7 } }), { env: { CLAUDE_CODE_SESSION_ID: session } });
     assert.equal(made.code, 0, made.err);
     assert.deepEqual(fresh.writes().map((w) => w.kind), ['card', 'asked']);
+    clearPanels();
   });
 });
 
@@ -2731,7 +2733,8 @@ test('cards and card read nothing in the Wheelhouse home: the helper says whethe
   await inHome(async () => {
     const home = process.env.WHEELHOUSE_HOME;
     const session = 'session-live';
-    assert.equal(markPane(session, { at: NOW.getTime(), drawn: NOW.getTime(), surface: 'desktop' }), true);
+    clearPanels();
+    markPanel('o__p', 'vscode-panel', NOW.getTime()); // a paired app's signed watch, as the helper keeps it: per project
     // The helper's answers are taken outside the wall, as the helper runs outside the sandbox; the command then runs behind it,
     // handed the answers as they were given, and so can't read the home to find out.
     const visit = async (argv, input, env) => {
@@ -2765,7 +2768,8 @@ test('cards and card read nothing in the Wheelhouse home: the helper says whethe
     assert.deepEqual(cardsVisit.writes.map((w) => [w.kind, w.data.cards?.length]), [['asked', 1]]);
     const cardVisit = await visit(['card'], JSON.stringify({ ...APPROVAL, target: { pr: 7 } }), { CLAUDE_CODE_SESSION_ID: session });
     assert.deepEqual(cardVisit.writes.map((w) => w.kind), ['card', 'asked']);
-    // No panel beside the session: the card with a reply code is left for the picker to mark.
+    // No panel beside the chat: the card with a reply code is left for the picker to mark.
+    clearPanels();
     const quiet = await visit(['cards'], undefined, { CLAUDE_CODE_SESSION_ID: 'session-quiet' });
     assert.ok(quiet.reads.every((got) => got.data?.paneLive !== true));
     assert.deepEqual(quiet.writes, []);

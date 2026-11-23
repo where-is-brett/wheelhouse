@@ -11,6 +11,7 @@ import { NOT_NOW, SUGGEST } from '../lib/calm-words.js';
 import { composeCard } from '../cards/compose.js';
 import { PAIR_LABEL, UNPAIR_LABEL } from '../state/card-lines.js';
 import { fingerprintOf, pairedClients } from './clients.js';
+import { markAskHere } from './panel-live.js';
 import { withOpened } from './views.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -140,6 +141,16 @@ const ACTS = {
     });
     const got = await recorder.write({ kind: 'card', data: card });
     return got?.ok === true ? { ok: true, changed: ['card'], card: got.id, fingerprint } : no(got?.refused ?? 'The card wasn\'t written');
+  },
+  // The panel's Ask me here: the card is marked, for ASK_HERE_MS, as one the director wants asked in the chat, and the front desk's
+  // `waiting` read with `askHere` hands it out once. It answers nothing and closes nothing; the card stays waiting.
+  async 'ask-here'(args, checked, { source, now = () => new Date() }) {
+    if (typeof args.card !== 'string' || args.card === '') return no('Name the card to ask here');
+    const got = await source.views({});
+    const waiting = Array.isArray(got?.views?.waiting) ? got.views.waiting : [];
+    if (!waiting.some((c) => c?.id === args.card)) return no(`Card ${args.card} isn't waiting, so it can't be asked here`);
+    markAskHere(source.project, args.card, now().getTime());
+    return { ok: true, changed: ['ask-here'] };
   },
   // A button on the Safekeeping row: the signed press goes on the record, and the helper does what it names.
   async safekeeping(args, checked, { recorder }) {

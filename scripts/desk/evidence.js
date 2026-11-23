@@ -127,6 +127,8 @@ const askedOn = (views, card) => String(views?.waiting?.find?.((c) => c?.id === 
 export function checkEvidence(command, args, evidence, { enrolled = [], clients = [], views = {}, events = [], now = () => new Date(), computer = computerId() } = {}) {
   try {
     if (!isPlain(evidence) || !EVIDENCE_FORMS.includes(evidence.form)) return no('That evidence isn\'t a form Wheelhouse takes');
+    // Only a paired app's panel asks a card here: a signed record, the window or a click in the chat is none of its business.
+    if (command === 'ask-here' && evidence.form !== 'client') return no('Only a paired app asks a card here');
     if (evidence.form === 'signed') return checkSigned(command, args, evidence.records, { enrolled, views, events, computer });
     if (evidence.form === 'client') {
       const got = checkClient(command, args, evidence, { clients, now });

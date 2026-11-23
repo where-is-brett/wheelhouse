@@ -20,7 +20,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { writeJsonFile, runningFile, sessionFile } from '../../../scripts/watcher/waker.js';
 import { holdFile } from '../../../scripts/crew/hold.js';
-import { markPanel, clearPanels, PANEL_LIVE_MS } from '../../../scripts/desk/panel-live.js';
+import { markPanel, clearPanels, PANEL_LIVE_MS, ASK_HERE_MS } from '../../../scripts/desk/panel-live.js';
+import { runAct } from '../../../scripts/desk/acts.js';
 import { P, NOW, now, CARD, writeRecord, upClient, put, viewsDir } from './fixture.js';
 
 function withRecord(fn) {
@@ -68,6 +69,20 @@ test('waiting says paneLive true while the project\'s panel is live, with no ses
   assert.equal(await paneOf({}), false, 'a panel that stopped watching is not live');
   assert.equal((await readView('waiting', {}, source, { now })).data.askHere, undefined, 'Ask me here is given only when asked for');
   clearPanels();
+}));
+
+test('ask-here marks a waiting card, and waiting with askHere gives it once', () => withRecord(async ({ source }) => {
+  clearPanels();
+  const marked = await runAct('ask-here', { card: 'c1' }, { ok: true, records: [], client: 'vscode-panel' }, { source, recorder: {}, now });
+  assert.deepEqual([marked.ok, marked.changed], [true, ['ask-here']]);
+  const askHere = async () => (await readView('waiting', { askHere: true }, source, { now })).data.askHere;
+  assert.deepEqual(await askHere(), ['c1']);
+  assert.deepEqual(await askHere(), [], 'a mark is taken once');
+  assert.equal((await readView('waiting', {}, source, { now })).data.askHere, undefined, 'asked for only when wanted');
+  // A mark older than two minutes is not given, and the card stays waiting all the same.
+  await runAct('ask-here', { card: 'c1' }, { ok: true, records: [], client: 'vscode-panel' }, { source, recorder: {}, now: () => new Date(Date.parse(NOW) - ASK_HERE_MS - 1000) });
+  assert.deepEqual(await askHere(), []);
+  assert.equal((await readView('waiting', {}, source, { now })).data.numbered.length, 1, 'asking here closes nothing');
 }));
 
 test('card carries its buttons, its pane hash and its data hash', () => withRecord(async ({ source }) => {
