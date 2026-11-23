@@ -36,7 +36,7 @@ h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .outlined { color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); background: var(--vscode-button-secondaryBackground, transparent); border-color: var(--vscode-widget-border, var(--vscode-panel-border)); }
 .outlined:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-toolbar-hoverBackground)); }
 
-/* Not now and Ask me here: quiet, side by side. */
+/* Not now and Ask in the chat: quiet, side by side. */
 .more { display: flex; gap: 8px; margin-top: 6px; }
 .quiet, .link { padding: 3px 8px; font-size: 12px; color: var(--vscode-descriptionForeground); }
 .quiet { border-color: var(--vscode-widget-border, var(--vscode-panel-border)); }

@@ -24,7 +24,7 @@ const path = require('node:path');
 
 const STATES = ['no-helper', 'update', 'unpaired', 'pairing', 'live', 'stopped'];
 const NOT_NOW = 'Not now';
-const ASK_HERE = 'Ask me here';
+const ASK_HERE = 'Ask in the chat';
 const RECOMMENDED = 'Recommended';
 const IN_WINDOW = 'Answer this one in Wheelhouse\'s window. It can\'t be decided from here.';
 const MERGE_WINDOW = 'This project has real users, so a merge is approved in Wheelhouse\'s window or on the code host, not here.';
@@ -89,7 +89,7 @@ function answersOf(card, realUsers) {
 }
 
 // One card: a clear title, a short body, the options as plain buttons with the recommended one marked, then
-// Not now and Ask me here. The reasons wait behind "Why this comes to you", closed.
+// Not now and Ask in the chat. The reasons wait behind "Why this comes to you", closed.
 function drawCard(card, nonce, realUsers) {
   const id = text(card.id);
   const own = { card: id, hash: text(card.hash) };

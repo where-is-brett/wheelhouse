@@ -43,7 +43,7 @@ test('the colours are VS Code\'s theme variables, with no hex colour in the page
   assert.ok(!/(?<![&\w])#[0-9a-fA-F]{3,8}\b/.test(html));
 });
 
-test('a card offers its options with the recommended one marked, Not now and Ask me here', () => {
+test('a card offers its options with the recommended one marked, Not now and Ask in the chat', () => {
   const html = draw('live');
   assert.match(html, /data-act="press"[^>]*data-card="c1"[^>]*data-hash="abc123def456"[^>]*data-option="Dark grey"/);
   assert.match(html, /data-act="press"[^>]*data-option="Brand blue"/);
@@ -51,7 +51,8 @@ test('a card offers its options with the recommended one marked, Not now and Ask
   assert.match(html, /class="option outlined"[^>]*data-option="Brand blue"/);
   assert.equal((html.match(/class="mark"/g) ?? []).length, 1);
   assert.match(html, /data-act="not-now"[^>]*data-card="c1"/);
-  assert.match(html, /data-act="ask-here"[^>]*data-card="c1"/);
+  assert.match(html, /data-act="ask-here"[^>]*data-card="c1"[^>]*>Ask in the chat<\/button>/);
+  assert.ok(!html.includes('Ask me here'));
   assert.ok(html.includes('Which footer colour should the site use?'));
 });
 
