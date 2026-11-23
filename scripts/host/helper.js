@@ -1434,7 +1434,8 @@ export async function startHelper({
   // can't be read or are the confirmed ones.
   async function settingsCardNow(project) {
     const found = await lookAtTrusted({ file: settingsFile(), run, cwd: mirrorOf(project) });
-    return found === null || found.same ? null : { hash: found.hash, card: settingsCard(found.hash, settingsChange(found)) };
+    if (found === null) return null;
+    return found.same ? { same: true } : { hash: found.hash, card: settingsCard(found.hash, settingsChange(found)) };
   }
 
   // A refused push's answer with the card that confirms the settings raised, once, while none waits: the card's id, and `needs`
@@ -1442,7 +1443,7 @@ export async function startHelper({
   async function withSettingsCard(project, pushed) {
     try {
       const made = await settingsCardNow(project);
-      if (made === null) return pushed;
+      if (made === null || made.same === true) return pushed;
       const ours = () => listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'card' && e.data?.line === made.card.line && sameCard(e.data, made.card));
       // Found or written under the state's queue, as the engine's writes are, so two refusals at once raise one card.
       let card = null;
@@ -1462,6 +1463,33 @@ export async function startHelper({
     }
   }
 
+  // Whether `event` is a settings card for a project whose settings now read as the confirmed ones.
+  async function settingsCardSettled(project, event) {
+    const lines = typeof event.data?.question === 'string' ? event.data.question.split('\n').filter((l) => SETTINGS_LINE.test(l)) : [];
+    if (lines.length !== 1 || readProject(project)?.connection?.mode !== 'as-is') return false;
+    try {
+      return (await settingsCardNow(project))?.same === true;
+    } catch {
+      return false;
+    }
+  }
+
+  // The lock, kept or taken once the settings are confirmed: { held: true } or { held: false, why } (another computer holds it, or it
+  // could not be pushed), so the First Mate can say so.
+  async function keepLockAfterConfirm(project, ctx) {
+    try {
+      return await oneAtATime(`lock:${project}`, async () => {
+        const push = pushFor(project, ctx);
+        const args = { project, push, now, env: ctx.gitEnv };
+        if ((await touchLock(args)).touched === true) return { held: true };
+        const took = await takeLock(args);
+        return took.taken === true ? { held: true } : { held: false, why: 'another computer holds the lock' };
+      });
+    } catch (error) {
+      return { held: false, why: clean(error instanceof Error ? error.message : '', ctx?.secrets ?? []) || 'the lock could not be taken' };
+    }
+  }
+
   // What a click on Confirm on the settings card would record, or null: the card is the helper's own, word for word, composed
   // again from its own read of the settings now, so a card another hand wrote with the line, or one made for settings that have
   // since changed, is never signed. Undefined for a card that is not this one.
@@ -1471,7 +1499,7 @@ export async function startHelper({
     if (lines.length !== 1 || readProject(project)?.connection?.mode !== 'as-is') return undefined;
     try {
       const made = await settingsCardNow(project);
-      if (made === null || !sameCard(data, made.card)) return null;
+      if (made === null || made.same === true || !sameCard(data, made.card)) return null;
       return { made: { kind: 'action', data: { action: 'confirm-settings', hash: made.hash, question, label: 'Confirm' } }, step: ACTION_STEPS['confirm-settings'], lift: false };
     } catch {
       return null;
@@ -2618,6 +2646,11 @@ export async function startHelper({
       const got = await windowEarned(project, event, label, ctx);
       if (got) deciding.push({ label, ...got });
     }
+    // A settings card whose settings are the confirmed ones again can no longer be answered: it is closed, and says so.
+    if (deciding.length === 0 && card !== LIFT_STOP_NAME && await settingsCardSettled(project, event)) {
+      await doWrite({ project, kind: 'card-answer', data: { card, question: event.data.question, label: 'Settled', where: 'panel' } }, ctx);
+      refuse('this computer\'s git settings are the confirmed ones again, so that card was closed');
+    }
     if (deciding.length === 0) refuse('that card is not one the window confirms: only Lift All stop, a guardrail change, Unattended, a runbook step, a CI push, an approval or an Ask allowance');
     return { event, deciding };
   }
@@ -2679,6 +2712,9 @@ export async function startHelper({
       return { ...written({ event, result }), choice: still.label, kind: event.kind, step: still.step, recorded: true, keep, undo };
     })({ project, card, hash }, ctx);
     const { keep = null, undo = null, ...said } = answer;
+    // The settings confirmed, this computer takes up the lock the refused pushes left, as a session start does (kept if it holds it
+    // already, else taken), so code pushes go on without a new session. Outside the state's queue, as the lock comes before it.
+    if (said.step === 'git-settings' && readProject(project)?.host !== 'local') return { ...said, lock: await keepLockAfterConfirm(project, ctx) };
     // Keep it: the record's main version becomes the one the card named, if nothing moved it since. Undo and Undo it:
     // the undo is made now, on the record just signed. Both outside the state's queue, since the project's lock is taken
     // before it by a merge.

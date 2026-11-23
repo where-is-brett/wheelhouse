@@ -646,12 +646,40 @@ test('a lock refused because the settings changed carries the code, raises a car
       assert.equal(click.data.proof, 'window');
       assert.ok(as_(c.home, () => verify(click, readEnrolled())));
       assert.match((await c.as(() => c.client.confirm({ project: PROJECT, ...shown }))).refused, /no longer waits/);
+      assert.deepEqual(got.lock, { held: true }, 'the click also keeps the lock, with no new session');
       assert.deepEqual(await c.push({ project: PROJECT, dir: c.dir, refspec: 'feature' }), { ok: true });
-      assert.equal((await touch()).ok, true, 'the lock is kept again');
       const record = JSON.parse(fs.readFileSync(file, 'utf8'));
       assert.deepEqual(record.names[Object.keys(record.folders)[0]], ['credential.helper', 'http.proxy', 'url.insteadof']);
       assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /s3cretpass|proxy\.example|mirror\.example/i, 'the record holds no value or address');
     });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
+test('a settings card whose settings are the confirmed ones again is closed when it is found, and says so', { skip: !unix && 'the credential helper is a shell script' }, async () => {
+  const window = windowStandIn(() => said('Confirm'));
+  const repo = await privateRepo();
+  const c = await computer(repo, { askWindow: window.askWindow });
+  const first = signIn(tempFolder('wh-helperbin-'));
+  const base = `[credential]\n\thelper = !${first.file}\n`;
+  const events = () => as_(c.home, () => listEvents(stateDir(PROJECT), { report: () => {} }));
+  try {
+    await withDirectorsGit(base, async () => {
+      assert.deepEqual(await c.push({ project: PROJECT, dir: c.dir, refspec: 'feature' }), { ok: true });
+    });
+    let shown;
+    await withDirectorsGit(`${base}[http "https://other.example.org/"]\n\tproxy = ${PROXY}\n`, async () => {
+      const refused = await c.push({ project: PROJECT, dir: c.dir, refspec: 'feature' });
+      shown = { card: refused.card, hash: dataHash(events().find((e) => e.id === refused.card).data) };
+    });
+    // The settings went back to the confirmed ones: the card can't be answered, so it is closed.
+    await withDirectorsGit(base, async () => {
+      const got = await c.as(() => c.client.confirm({ project: PROJECT, ...shown }));
+      assert.equal(got.ok, false);
+      assert.match(got.refused, /confirmed ones again/);
+      assert.equal(events().some((e) => e.kind === 'card-answer' && e.data.card === shown.card), true);
+      assert.match((await c.as(() => c.client.confirm({ project: PROJECT, ...shown }))).refused, /no longer waits/);
+    });
+    assert.equal(window.shown.length, 0, 'no window opened');
   } finally { await c.close(); await repo.cleanup(); }
 });
 
