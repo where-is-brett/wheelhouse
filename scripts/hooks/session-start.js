@@ -55,6 +55,7 @@ import { WINDOWS_LINE, UNATTENDED_LINE } from '../lib/platform-lines.js';
 import { buildsShown, settingKey } from '../protection/windows-builds.js';
 import { listEvents, makeEvent } from '../state/events.js';
 import { buildViews } from '../state/views.js';
+import { numberedWaiting } from '../board/model.js';
 import { startBackground, startDetached } from '../lib/background.js';
 import { sessionRole, asideKind } from '../lib/role.js';
 import { RECENT_MS, readSeat, takeSeat, refreshSeat, seatInUse, firstMatePid } from '../lib/first-mate-seat.js';
@@ -295,6 +296,16 @@ function fallbackViews(project) {
     return views;
   }
   return { ...views, settings: built.settings, unconfirmed: built.unconfirmed };
+}
+
+// The waiting list as `views waiting` numbers it (numberedWaiting over the views and the card events), one line each.
+// Cards come with their id, which a press names beside its number.
+export function waitingLines(views, events = []) {
+  try {
+    return numberedWaiting(views, events).map((i) => `${i.n}. ${show(i.what)}${i.card ? ` (card ${i.card})` : ''}`);
+  } catch {
+    return (views?.waiting ?? []).map((w, i) => `${i + 1}. ${show(w.data?.title ?? w.data?.question ?? '')} (card ${w.id})`);
+  }
 }
 
 const MARKER_DAYS = 7;
@@ -570,7 +581,7 @@ const isBuildsProposal = (u) => u?.kind === 'setting' && [u.key, u.data?.key].so
 // Unattended line after that while it is on. All come before the lists, so the cut at MAX_CHARS
 // never takes them. `sheet` (toolSheetLines) comes after the front desk's line and before the notes and the lists, so
 // a cut takes the briefing and never the tool sheet.
-export function reload({ views, stop, lineage = [], notes, feature, stateRoot, windows, builds, frontDesk = false, aside = null, sheet = [], where = '' }) {
+export function reload({ views, stop, lineage = [], notes, feature, stateRoot, windows, builds, frontDesk = false, aside = null, sheet = [], where = '', events = [] }) {
   const lines = [];
   if (stop?.on) lines.push(`All stop is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
   lines.push(...lineage);
@@ -590,10 +601,11 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   // A proposal kept as is on its card here is no longer waiting for the director (ruling F49).
   const kept = new Set(Array.isArray(views?.keptAsIs) ? views.keptAsIs : []);
   const unconfirmed = (views?.unconfirmed ?? []).filter((u) => !isBuildsProposal(u) && !kept.has(u?.id) && !isRetiredProposal(u)).map((u) => `${u.id} (${u.kind}${u.key ? ` ${u.key}` : ''}): ${title(u.data)}`);
-  const quoted = (unconfirmed.length > 0 || (views?.waiting ?? []).length > 0 || (views?.rulebook ?? []).some((r) => r.status === 'accepted'));
+  const waiting = waitingLines(views, events);
+  const quoted = (unconfirmed.length > 0 || waiting.length > 0 || (views?.rulebook ?? []).some((r) => r.status === 'accepted'));
   if (quoted) lines.push('Titles are quoted as agents wrote them.');
   lines.push(...section('Changed without the director\'s confirmation:', unconfirmed));
-  lines.push(...section('Waiting on the director:', (views?.waiting ?? []).map((w) => `${w.id}: ${title(w.data)}`)));
+  lines.push(...section('Waiting on the director:', waiting));
   const rules = (views?.rulebook ?? []).filter((r) => r.status === 'accepted')
     .map((r) => `${r.id} (accepted): ${show(r.words ?? '').split('\n')[0]}`);
   lines.push(...section('Rulebook (accepted):', rules));
@@ -761,16 +773,20 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
   const { project } = found;
   const notes = [];
   let views = null;
+  let events = [];
   if (!up) notes.push(NO_HELPER_STOP);
   else {
     // The helper keeps or takes the lock: a request, so this start still writes nothing itself.
     const lockLine = await keepLock(project, api, left);
     if (lockLine !== null) notes.push(lockLine);
-    const got = await left(api.state.views({ project }));
-    if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
+    const got = await left(api.state.views({ project, cards: true }));
+    if (got?.ok === true && got.views && typeof got.views === 'object') {
+      views = got.views;
+      if (Array.isArray(got.cards)) events = got.cards;
+    }
   }
   views ??= localViews(project);
-  const text = reload({ views, stop: stopOf(), notes, feature: madeFeatureSlug(input.cwd), stateRoot: stateDir(project), sheet: sheet() });
+  const text = reload({ views, events, stop: stopOf(), notes, feature: madeFeatureSlug(input.cwd), stateRoot: stateDir(project), sheet: sheet() });
   return text === '' ? undefined : answer.context('SessionStart', text);
 }
 
@@ -875,6 +891,7 @@ async function started(input, deps) {
   // Records what this session is for and starts the usage receiver, alongside the import below.
   const usage = Promise.resolve().then(() => background({ pluginRoot, session: input.session_id, cwd: input.cwd, project, spawn, now })).catch(() => null);
   let views = null;
+  let cardEvents = [];
   const lockSeen = {};
   // Whether this computer holds the lock or can take it (or the helper is down, so nothing can be asked): the seat may be taken.
   let lockFree = true;
@@ -903,8 +920,11 @@ async function started(input, deps) {
     const lockLine = await keepLock(project, clientNow(), left, lockSeen);
     lockFree = lockLine === null;
     if (lockLine !== null) notes.push(lockLine);
-    const got = await left(clientNow().state.views({ project }));
-    if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
+    const got = await left(clientNow().state.views({ project, cards: true }));
+    if (got?.ok === true && got.views && typeof got.views === 'object') {
+      views = got.views;
+      if (Array.isArray(got.cards)) cardEvents = got.cards;
+    }
     // Starting the foreman is the last thing setup does, once its health check's board is green
     // (rulings R44, R67, scripts/setup/health.js): not while setup is finishing in this project,
     // which it is until that board has been green, nor while setup's journal can't be read, when
@@ -998,7 +1018,7 @@ async function started(input, deps) {
     resetEpisode(project, input.session_id);
   }
   const text = reload({
-    views, stop: stopOf(), lineage, notes, feature: madeFeatureSlug(input.cwd), stateRoot, windows, builds, frontDesk, aside: asideNote, where,
+    views, events: cardEvents, stop: stopOf(), lineage, notes, feature: madeFeatureSlug(input.cwd), stateRoot, windows, builds, frontDesk, aside: asideNote, where,
     sheet: toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: commandRoot({ dir, self }, pluginRoot), platform }),
   });
   return text === '' ? undefined : answer.context('SessionStart', text);

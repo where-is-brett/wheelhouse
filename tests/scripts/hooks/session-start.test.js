@@ -34,6 +34,7 @@ import { helperAddress, keysDir, computerId, stateDir, wheelhouseHome } from '..
 import { lowNodeReady, selfTestFile } from '../../../scripts/windows/low.js';
 import { settingKey } from '../../../scripts/protection/windows-builds.js';
 import { unattendedBuildsLine, takeOverLine, setLineOf } from '../../../scripts/state/card-lines.js';
+import { numberedWaiting } from '../../../scripts/board/model.js';
 import { makeEvent, confirmationFor, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { cardHash } from '../../../scripts/lib/measures-clicks.js';
@@ -62,7 +63,7 @@ function withHome(fn) {
 
 const VIEWS = { rulebook: [], levels: {}, waiting: [], unconfirmed: [], damaged: [] };
 
-function fake({ answersAfterStart = true, startsUp = true, views = VIEWS } = {}) {
+function fake({ answersAfterStart = true, startsUp = true, views = VIEWS, cards } = {}) {
   const calls = { spawn: [], health: 0, sync: 0, imports: [], views: 0, unref: 0, writes: [], records: [] };
   let started = false;
   return {
@@ -72,7 +73,7 @@ function fake({ answersAfterStart = true, startsUp = true, views = VIEWS } = {})
       state: {
         sync: async () => { calls.sync += 1; return { ok: true, pulled: 0, unpushed: 0 }; },
         import: async (body) => { calls.imports.push(['state', body]); return { ok: true, done: false, imported: 0, held: 0, unsigned: 0, unreadable: 0 }; },
-        views: async () => { calls.views += 1; return { ok: true, views }; },
+        views: async (body) => { calls.views += 1; calls.viewsAsked = body; return { ok: true, views, ...(cards === undefined ? {} : { cards }) }; },
         write: async (body) => { calls.writes.push(body); return { ok: true }; },
         record: async (body) => { calls.records.push(body); return { ok: true }; },
       },
@@ -297,7 +298,7 @@ test('the reload lists ids and titles, not whole files', async () => {
       rulebook: [{ id: 'r1', status: 'accepted', words: 'First line\nsecond line is long and private', reason: 'secret reason' }],
     } });
     const t = text(await run(f));
-    assert.match(t, /c0: Card 0/);
+    assert.match(t, /1\. Card 0 \(card c0\)/);
     assert.match(t, /and 5 more/);
     assert.doesNotMatch(t, /c20/);
     assert.match(t, /r9 \(ruling\): Do it this way/);
@@ -520,7 +521,7 @@ test('a computer id that can\'t be read leaves the rest of the reload, and shows
     assert.match(t, /^All stop is on/);
     assert.ok(t.includes(WINDOWS_LINE));
     assert.ok(!t.includes(UNATTENDED_LINE));
-    assert.match(t, /c1: T/);
+    assert.match(t, /1\. T \(card c1\)/);
   });
 });
 
@@ -700,7 +701,7 @@ test('views are read from views.old when a crash left no views folder', async ()
     for (const [name, value] of Object.entries({ ...VIEWS, waiting: [{ id: 'c9', data: { title: 'Kept' } }] })) {
       fs.writeFileSync(path.join(old, `${name}.json`), JSON.stringify(value));
     }
-    assert.match(text(await run(fake({ startsUp: false }))), /c9: Kept/);
+    assert.match(text(await run(fake({ startsUp: false }))), /1\. Kept \(card c9\)/);
   });
 });
 
@@ -2387,5 +2388,49 @@ test('only the First Mate writes the running model', async () => {
     assert.equal(runningModel(P).model, 'model-first');
     await run(fake(), { env: {}, now: SOON(1) }, { session_id: 'b', model: 'model-aside' });
     assert.equal(runningModel(P).model, 'model-first');
+  });
+});
+
+// The waiting list in the briefing is the one `views waiting` numbers: the waiting cards and the build loop's unanswered questions, oldest first.
+const WITH_QUESTION = {
+  ...VIEWS,
+  work: {}, features: {},
+  waiting: [{ id: 'c1', at: '2026-11-20T02:00:00.000Z', data: { title: 'Git settings' } }],
+  questions: {
+    q1: { question: { at: '2026-11-20T01:00:00.000Z', data: { what: 'Which colour?' } } },
+    q2: { question: { at: '2026-11-20T03:00:00.000Z', data: { what: 'Asked on a card' } } },
+  },
+};
+const RAISED = [{ id: 'c2', kind: 'card', at: '2026-11-20T03:30:00.000Z', data: { question: 'Answer question q2 please' } }];
+
+test('the briefing numbers the waiting list as views waiting does, on the full start', async () => {
+  await withHome(async () => {
+    const f = fake({ views: WITH_QUESTION, cards: RAISED });
+    f.client.health = async () => ({ ok: true });
+    const t = text(await run(f));
+    assert.equal(f.calls.viewsAsked.cards, true, 'the card events are asked for');
+    const want = numberedWaiting(WITH_QUESTION, RAISED).map((i) => `${i.n}. ${i.what}${i.card ? ` (card ${i.card})` : ''}`);
+    assert.deepEqual(want, ['1. Which colour?', '2. Git settings (card c1)']);
+    assert.ok(t.includes(`Waiting on the director:\n${want.map((l) => `- ${l}`).join('\n')}`), t);
+    assert.doesNotMatch(t, /Asked on a card/, 'a question a card names is not listed twice');
+  });
+});
+
+test('the briefing numbers the waiting list the same way on the read-only start', async () => {
+  await withHome(async () => {
+    const f = fake({ views: WITH_QUESTION, cards: RAISED });
+    const t = text(await run(f, { writeVia: 'helper', helperUp: true }));
+    assert.equal(f.calls.viewsAsked.cards, true);
+    assert.ok(t.includes('Waiting on the director:\n- 1. Which colour?\n- 2. Git settings (card c1)'), t);
+  });
+});
+
+test('the waiting list keeps its cut at twenty entries and its line length', async () => {
+  await withHome(async () => {
+    const waiting = Array.from({ length: 25 }, (_, i) => ({ id: `c${i}`, at: `2026-11-20T00:00:${String(i).padStart(2, '0')}.000Z`, data: { title: 'x'.repeat(300) } }));
+    const t = text(await run(fake({ views: { ...VIEWS, waiting } }), { writeVia: 'helper', helperUp: true }));
+    assert.match(t, /- 20\. x+…/);
+    assert.doesNotMatch(t, /- 21\./);
+    assert.match(t, /and 5 more/);
   });
 });
