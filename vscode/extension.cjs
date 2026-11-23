@@ -16,11 +16,12 @@
 // visible, and stops when it hides.
 'use strict';
 
-const crypto = require('node:crypto');
 const { helperAddress, projectIdFor } = require('./resolver.cjs');
 const { deskClient } = require('./desk-client.cjs');
 const { loadKey } = require('./key.cjs');
 const { stateOf, waitingCards } = require('./model.cjs');
+const { makeNonces } = require('./nonce.cjs');
+const { press, askToPair } = require('./press.cjs');
 
 const OPEN_PANEL = 'wheelhouse.openPanel';
 const PANEL_ID = 'wheelhouse.panel';
@@ -80,29 +81,37 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
   item.text = statusText(model);
   item.show();
 
+  const nonces = makeNonces();
   const draw = () => {
     item.text = statusText(model);
     if (run.view === null || run.view.visible === false) return;
-    // A new nonce for each draw: what an older page posts counts for nothing (the press guard, Part 5).
-    run.view.webview.html = render(stateOf(model),{ nonce: crypto.randomBytes(16).toString('base64') });
+    // A new nonce for each draw: what an older page posts counts for nothing (the press guard, vscode/press.cjs).
+    run.view.webview.html = render(stateOf(model), { nonce: nonces.renew() });
   };
   const set = (state, extra = {}) => { Object.assign(model, { state, says: SAYS[state] ?? null, looked: true, ...extra }); draw(); };
 
   // Never signs anything for a project it can't name.
   const deskFor = (project) => deps.desk ?? deskClient({ address, sign: key.sign, project });
 
-  // Asks the helper to raise the Pair card for this key. The director's signed Pair it on that card enrols it.
-  async function pair() {
-    const project = projectNow();
-    if (project === null || key.unavailable) return { ok: false };
-    run.askedUp = true;
-    const got = await deskFor(project).act('pair', { client: { id: key.client, name: APP_NAME, publicKey: key.publicKey } });
+  // What the add-on says of itself when it asks to pair (vscode/press.cjs builds the request from it).
+  const app = key.unavailable ? null : { id: key.client, name: APP_NAME, publicKey: key.publicKey };
+
+  // The panel after the helper's answer to a request to pair.
+  function paired(got) {
     run.pending = got.ok === true;
     if (got.ok === true) set('pairing', { fingerprint: got.fingerprint ?? key.fingerprint });
     else if (got.update === true) set('update');
     else if (got.down === true) set('no-helper');
     else set('unpaired', { says: got.refused ?? SAYS.unpaired });
     return got;
+  }
+
+  // Asks the helper to raise the Pair card for this key. The director's signed Pair it on that card enrols it.
+  async function pair() {
+    const project = projectNow();
+    if (project === null || key.unavailable) return { ok: false };
+    run.askedUp = true;
+    return paired(await askToPair(deskFor(project), app));
   }
 
   async function readViews(desk) {
@@ -159,6 +168,24 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     }
   }
 
+  // The panel's one door to the desk. Every message the page posts goes to press(), which takes it only with the
+  // latest draw's nonce, only for a known act, and only for a card that is still waiting as drawn. The helper's
+  // own words are shown when it refuses.
+  async function onPaneMessage(message) {
+    const project = projectNow();
+    if (project === null || app === null) return;
+    const out = await press(message, { latestNonce: nonces.latest(), client: deskFor(project), waiting: waitingCards(model.waiting), app });
+    if (out.act === 'pair' && out.got !== undefined) {
+      run.askedUp = true;
+      paired(out.got);
+      return;
+    }
+    if (typeof out.says === 'string' && out.says !== '') {
+      try { await vscode.window.showInformationMessage?.(out.says); } catch { /* The next look shows the panel as it is. */ }
+    }
+    if (out.ok === true) await tick();
+  }
+
   const every = deps.every ?? ((fn, ms) => { const t = setInterval(fn, ms); t.unref?.(); return { dispose: () => clearInterval(t) }; });
   const start = () => {
     if (run.timer !== null) return;
@@ -174,14 +201,15 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     item.text = statusText(model);
   };
 
-  context.subscriptions?.push(vscode.commands.registerCommand(OPEN_PANEL, async () => {
-    await vscode.commands.executeCommand(`${PANEL_ID}.focus`);
+  context.subscriptions?.push(vscode.commands.registerCommand('wheelhouse.openPanel', async () => {
+    await vscode.commands.executeCommand('wheelhouse.panel.focus');
   }));
   context.subscriptions?.push(vscode.window.registerWebviewViewProvider(PANEL_ID, {
     resolveWebviewView(view) {
       run.view = view;
       // No file is loaded into the page: its one script and style are inline, under the nonce.
       view.webview.options = { enableScripts: true, localResourceRoots: [] };
+      view.webview.onDidReceiveMessage?.((message) => onPaneMessage(message));
       view.onDidDispose?.(() => { if (run.view === view) { run.view = null; stop(); } });
       // Hidden, the page is gone (no retainContextWhenHidden), and the watch stops, so the panel stops being live.
       view.onDidChangeVisibility?.(() => {
