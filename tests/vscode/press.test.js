@@ -11,7 +11,7 @@ const { makeNonces } = require('../../vscode/nonce.cjs');
 
 const hashOf = (question) => crypto.createHash('sha256').update(question).digest('hex').slice(0, 12);
 const PLAIN = { id: 'ask-colour', data: { kind: 'question', question: 'Which colour?', options: ['Blue', 'Green'] } };
-const MERGE = { id: 'merge-7', data: { kind: 'approval', level: 3, question: 'Merge pull request 7?', line: 'Approve pull request #7 at commit 0123456789ab', options: ['Approve', 'Send it back'] } };
+const MERGE = { id: '3f2b8c1e-5d4a-4b7e-9c6d-1a2b3c4d5e6f', data: { kind: 'approval', level: 3, question: 'Merge pull request 7?', line: 'Approve pull request #7 at commit 0123456789ab', options: ['Approve', 'Send it back'] } };
 const STEP = { id: 'lift-stop-1', data: { kind: 'lift-stop', question: 'Lift All stop?', options: ['Lift All stop'] } };
 const DECISION = { id: 'choose-1', data: { kind: 'answer', question: 'Which way?', options: ['Do it', 'Leave it'] } };
 const OFFERED = [PLAIN, MERGE, STEP, DECISION].map((c) => ({ id: c.id, at: 'x', data: c.data }));
@@ -124,7 +124,18 @@ test('an Approve on a merge card carries the commit from the card', async () => 
   const { nonce, acts, ctx } = setup();
   const got = await press(msg(nonce, MERGE, { option: 'Approve', commit: 'ffffffffffff' }), ctx());
   assert.equal(got.ok, true);
-  assert.deepEqual(acts, [['answer', { card: 'merge-7', hash: hashOf('Merge pull request 7?'), option: 'Approve', commit: '0123456789ab' }]]);
+  assert.deepEqual(acts, [['answer', { card: MERGE.id, hash: hashOf('Merge pull request 7?'), option: 'Approve', commit: '0123456789ab' }]]);
+});
+
+test('a Send it back on a merge card is left to the desk, and its refusal comes back to the panel without a throw', async () => {
+  const { nonce, desk, acts, ctx } = setup();
+  const words = 'The panel approves a merge only; Send it back is decided in Wheelhouse\'s window or by a typed reply.';
+  desk.act = async (command, args) => { acts.push([command, args]); return { ok: false, refused: words }; };
+  const got = await press(msg(nonce, MERGE, { option: 'Send it back' }), ctx());
+  assert.equal(got.ok, false);
+  assert.equal(got.says, words);
+  assert.equal(acts.length, 1);
+  assert.equal(acts[0][1].option, 'Send it back');
 });
 
 test('a confirmed step, a decision, or a deciding option off a merge card is not sent, and says where to answer', async () => {
