@@ -90,7 +90,7 @@ function zipOf(files) {
 // --- the package ---
 
 const xml = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&apos;' })[c]);
-const CONTENT_TYPES = { json: 'application/json', js: 'application/javascript', cjs: 'application/javascript', mjs: 'application/javascript', css: 'text/css', svg: 'image/svg+xml', md: 'text/markdown', txt: 'text/plain', vsixmanifest: 'text/xml', html: 'text/html' };
+const CONTENT_TYPES = { json: 'application/json', js: 'application/javascript', cjs: 'application/javascript', mjs: 'application/javascript', css: 'text/css', svg: 'image/svg+xml', png: 'image/png', md: 'text/markdown', txt: 'text/plain', vsixmanifest: 'text/xml', html: 'text/html' };
 
 function contentTypes(names) {
   const exts = [...new Set(names.map((n) => path.posix.extname(n).slice(1).toLowerCase()).filter(Boolean))].sort();
@@ -107,7 +107,7 @@ function manifestOf(pkg) {
     <DisplayName>${xml(pkg.displayName)}</DisplayName>
     <Description xml:space="preserve">${xml(pkg.description)}</Description>
     <Tags></Tags>
-    <Categories>${xml((pkg.categories ?? ['Other']).join(','))}</Categories>
+    <Categories>${xml(pkg.categories.join(','))}</Categories>
     <GalleryFlags>Public</GalleryFlags>
     <Properties>
       ${prop('Engine', pkg.engines.vscode)}
@@ -130,17 +130,34 @@ function manifestOf(pkg) {
 `;
 }
 
-const filesUnder = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-  if (e.name.startsWith('.') || e.name === 'node_modules') return [];
-  const full = path.join(dir, e.name);
-  return e.isDirectory() ? filesUnder(full) : [full];
-});
+// The file types the add-on ships. Anything else under vscode/ (a key, a fixture, a test, a .map file, a hidden file)
+// refuses the pack, so it fails loudly instead of shipping.
+export const ALLOWED_EXTENSIONS = ['.cjs', '.js', '.json', '.css', '.svg', '.png', '.md'];
+
+// The files under `dir`, found with lstat so a link is seen as a link. A link, or a file that isn't of an allowed type,
+// throws naming its path (relative to `base`).
+function filesUnder(dir, base = dir) {
+  return fs.readdirSync(dir).flatMap((name) => {
+    const full = path.join(dir, name);
+    const rel = path.relative(base, full).split(path.sep).join('/');
+    const stat = fs.lstatSync(full);
+    if (stat.isSymbolicLink()) throw new Error(`vscode/${rel} is a symbolic link, which the add-on doesn't carry`);
+    if (stat.isDirectory()) return filesUnder(full, base);
+    if (!stat.isFile()) throw new Error(`vscode/${rel} is not a plain file, which the add-on doesn't carry`);
+    if (rel !== 'vsix.sha256' && !ALLOWED_EXTENSIONS.includes(path.extname(name).toLowerCase())) {
+      throw new Error(`vscode/${rel} is not a file type the add-on ships (${ALLOWED_EXTENSIONS.join(', ')}), so nothing is packed`);
+    }
+    return [full];
+  });
+}
 
 // vsixBytes({ root }) -> Buffer: the packed add-on. Only the files of `vscode/` go in; the recorded hash of the pack
 // (vscode/vsix.sha256) is not one of them, or the hash would have to contain itself.
 export function vsixBytes({ root = HERE } = {}) {
   const folder = path.join(root, 'vscode');
   const pkg = { ...JSON.parse(fs.readFileSync(path.join(folder, 'package.json'), 'utf8')), version: pluginVersion(root) };
+  if (typeof pkg.publisher !== 'string' || pkg.publisher === '') throw new Error('vscode/package.json has no publisher, so nothing is packed');
+  pkg.categories = Array.isArray(pkg.categories) ? pkg.categories : [];
   const files = new Map();
   files.set('extension/package.json', Buffer.from(`${JSON.stringify(pkg, null, 2)}\n`));
   for (const full of filesUnder(folder).sort()) {

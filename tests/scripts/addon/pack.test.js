@@ -123,3 +123,50 @@ test('run as a script, it packs into the file named', () => {
   assert.equal(run.status, 0, run.stderr);
   assert.ok(fs.existsSync(out));
 });
+
+// A scratch root with a plugin version and a minimal add-on, for the refusals.
+function scratchRoot(pkg = { name: 'x', displayName: 'X', description: 'd', publisher: 'p', engines: { vscode: '^1.100.0' } }) {
+  const root = tempFolder('wh-pack-');
+  fs.mkdirSync(path.join(root, '.claude-plugin'));
+  fs.mkdirSync(path.join(root, 'vscode'));
+  fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ version: '1.0.0' }));
+  fs.writeFileSync(path.join(root, 'vscode', 'package.json'), JSON.stringify(pkg));
+  fs.writeFileSync(path.join(root, 'vscode', 'a.cjs'), 'module.exports = 1;\n');
+  return root;
+}
+
+test('a file of a type the add-on doesn\'t ship refuses the pack, naming it', async () => {
+  for (const stray of ['key.pem', 'extension.js.map', 'fixture.txt', 'LICENSE', '.env', '.DS_Store', 'pane/notes.ts']) {
+    const root = scratchRoot();
+    fs.mkdirSync(path.dirname(path.join(root, 'vscode', stray)), { recursive: true });
+    fs.writeFileSync(path.join(root, 'vscode', stray), 'x');
+    await assert.rejects(pack({ root, out: path.join(root, 'o.vsix') }), (error) => error.message.includes(`vscode/${stray}`), stray);
+  }
+});
+
+test('every file type the add-on ships today is allowed', async () => {
+  const { file } = await pack({ root: ROOT, out: path.join(tempFolder('wh-vsix-'), 'a.vsix') });
+  assert.ok(fs.existsSync(file));
+});
+
+test('a symbolic link anywhere under vscode/ refuses the pack, naming it', async (t) => {
+  for (const [name, target] of [['link.cjs', 'a.cjs'], ['pane/dirlink', '..']]) {
+    const root = scratchRoot();
+    fs.mkdirSync(path.join(root, 'vscode', 'pane'), { recursive: true });
+    try {
+      fs.symlinkSync(target, path.join(root, 'vscode', name));
+    } catch {
+      t.skip('this computer will not make a symbolic link');
+      return;
+    }
+    await assert.rejects(pack({ root, out: path.join(root, 'o.vsix') }), (error) => error.message.includes(`vscode/${name}`) && /symbolic link/.test(error.message), name);
+  }
+});
+
+test('no publisher fails the pack, and no categories gives an empty list', async () => {
+  const noPublisher = scratchRoot({ name: 'x', displayName: 'X', description: 'd', engines: { vscode: '^1.100.0' } });
+  await assert.rejects(pack({ root: noPublisher, out: path.join(noPublisher, 'o.vsix') }), /publisher/);
+  const root = scratchRoot();
+  const { file } = await pack({ root, out: path.join(root, 'o.vsix') });
+  assert.match(unzip(file).get('extension.vsixmanifest').toString('utf8'), /<Categories><\/Categories>/);
+});

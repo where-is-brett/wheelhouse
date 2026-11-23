@@ -1,8 +1,8 @@
 # .github/workflows/release.yml
 # When a release tag is pushed, packs the VS Code add-on, checks it against vscode/vsix.sha256 (recorded in the tagged commit)
 # and attaches the .vsix and its hash to that tag's release, as a draft release when there is none. It never creates or moves
-# a tag, and it attaches nothing whose hash differs from the recorded one or whose contents fail the add-on's checks.
-# Nothing is published to a marketplace.
+# a tag, and it attaches nothing whose tag isn't on main, whose hash differs from the recorded one or whose contents fail the
+# add-on's checks. A file already attached is never replaced. Nothing is published to a marketplace.
 name: Release
 
 on:
@@ -20,9 +20,18 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
+      - name: The tagged commit is on main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "The tagged commit $GITHUB_SHA is not on main, so no add-on is attached."
+            exit 1
+          fi
       - name: The tag names the version the add-on carries
         env:
           TAG: ${{ github.ref_name }}
@@ -32,15 +41,13 @@ jobs:
             echo "The tag $TAG doesn't match the plugin's version $VERSION, so no add-on is attached."
             exit 1
           fi
+      # pack.js names the file wheelhouse-panel-<version>.vsix (vsixName) and prints its path.
       - name: Pack the add-on
-        run: node scripts/addon/pack.js
+        run: echo "VSIX=$(node scripts/addon/pack.js)" >> "$GITHUB_ENV"
       - name: Check the packed file against the recorded hash
-        run: |
-          VSIX=$(ls wheelhouse-panel-*.vsix)
-          node scripts/addon/hash.js --check "$VSIX"
+        run: node scripts/addon/hash.js --check "$VSIX"
       - name: Check what the packed file holds
         run: |
-          VSIX=$(ls wheelhouse-panel-*.vsix)
           WORK=$(mktemp -d)
           unzip -q "$VSIX" 'extension/*' -d "$WORK"
           mv "$WORK/extension" "$WORK/vscode"
@@ -50,9 +57,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
-          VSIX=$(ls wheelhouse-panel-*.vsix)
           if ! gh release view "$TAG" > /dev/null 2>&1; then
             gh release create "$TAG" --draft --title "$TAG" --notes ""
           fi
           cp vscode/vsix.sha256 "$VSIX.sha256"
-          gh release upload "$TAG" "$VSIX" "$VSIX.sha256" --clobber
+          gh release upload "$TAG" "$VSIX" "$VSIX.sha256"
