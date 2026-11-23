@@ -43,7 +43,7 @@ import { assertUnderTmp } from '../../probes/lib/scratch.js';
 import { copilotHome, file as hookFile } from './hooks.js';
 import { levelRules } from './permissions.js';
 import { sessionUsage } from '../../scripts/agents/copilot/run-output.js';
-import { CMD_LINE_MOST, DEFAULT_PLAN, copilotSessionEnv, planOf, sessionArgs, writeHomeWithKits } from './sessions.js';
+import { CMD_LINE_MOST, DEFAULT_PLAN, copilotSessionEnv, featureAllow, planOf, sessionArgs, writeHomeWithKits } from './sessions.js';
 import { toGuardInput } from './translate.js';
 
 // The session home's target: a feature's, so it sits where a builder's would (sessions.js sessionHome).
@@ -147,13 +147,15 @@ async function homeFor(home, env, signedInFrom, platform, kits) {
   return writeEvalHome(home, { signedInFrom: signedInFrom ?? signInSource(), platform, kits });
 }
 
-// The rules: Ask's for the scratch project, and one shell rule for each command the scenario names.
+// The rules: Ask's for the scratch project, the feature command's launcher as a watcher's feature session has it, and one
+// shell rule for each command the scenario names. Those last are why an evaluation never showed a command the session's
+// own rules refuse: feature-commands.test.js checks the brief and agent files against the session's rules alone.
 function rulesFor(home, dir, commands, platform) {
   if (!Array.isArray(commands) || !commands.every((c) => typeof c === 'string' && c.trim() !== '' && c.length <= 400 && !RULE_BREAKERS.test(c))) {
     throw new Error('A scenario\'s commands are each a plain command line, with no *, comma, bracket or control character');
   }
   const { allow, deny } = inHome(home, () => levelRules({ level: 'ask', worktree: realOr(dir), domains: [], platform }));
-  return { allow: [...allow, ...commands.map((c) => `shell(${c}:*)`)], deny };
+  return { allow: [...allow, ...featureAllow(), ...commands.map((c) => `shell(${c}:*)`)], deny };
 }
 
 // The program and its arguments: `copilot` as resolveCommand finds it (through cmd.exe for a .cmd shim, every

@@ -137,6 +137,8 @@ import { questionProblem, shapeProblems } from '../cards/compose.js';
 import { endedBy, needsApprovalOfWork } from './queue.js';
 import { approvedText, installText, keepApprovedText } from '../state/approved-text.js';
 import { amendBrief, renderBrief } from '../feature/brief.js';
+import { agentOfConfig } from '../agents/names.js';
+import { BY_LAUNCHER } from '../agents/tool-sheets.js';
 import { approvedDocument, insideCheckout, placeApproved } from '../feature/approved.js';
 import { report as reportCheck, STUCK_AFTER } from '../feature/cli.js';
 import {
@@ -664,7 +666,12 @@ async function start(ctx, work, rest) {
   };
   let text;
   try {
-    text = renderBrief({ fields, pluginRoot: ctx.pluginRoot, windowsBuilds: windowsBuildsOf(ctx, views, config) });
+    // A session whose agent runs Wheelhouse's commands by launcher (scripts/lib/launchers.js) is briefed with them.
+    let launchers = false;
+    try {
+      launchers = BY_LAUNCHER.includes(agentOfConfig(config, { computerId: computerId() }));
+    } catch { /* the agent can't be read: the brief names the commands as Claude Code's */ }
+    text = renderBrief({ fields, pluginRoot: ctx.pluginRoot, windowsBuilds: windowsBuildsOf(ctx, views, config), launchers });
   } catch (error) {
     refuse(`The brief can't be written: ${oneLine(error.message, 200)}`);
   }

@@ -271,6 +271,12 @@ test('a subagent named for Wheelhouse\'s builder and reviewer reaches report-che
   await run('subagentStop', fixtureStop('probe-agent'), { steps: other.steps });
   assert.equal(other.calls.find((c) => c.name === 'reportCheck').input.agent_type, 'probe-agent');
 });
+test('report-check is told a builder\'s report names no commit, since Wheelhouse commits its work after its run', async () => {
+  const r = recording();
+  await run('subagentStop', fixtureStop('wheelhouse-builder'), { steps: r.steps });
+  assert.equal(r.calls.find((c) => c.name === 'reportCheck').deps.commitNamed, false);
+  assert.equal(r.calls.find((c) => c.name === 'featureStatus').deps.commitNamed, undefined);
+});
 function fixtureStop(type) {
   return { ...fixture('camel-subagentStop-none.json'), agentType: type, agentName: type };
 }

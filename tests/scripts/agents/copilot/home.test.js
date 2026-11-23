@@ -106,8 +106,9 @@ test('the home is byte-stable: LF only, sorted, the same on every build', () => 
   }
 });
 
-test('the home holds the four agents, the foreman\'s rule and the manifest, and no skill, hook or instruction', () => {
-  assert.deepEqual([...home.keys()], ['MANIFEST.txt', ...AGENTS.map((a) => `agents/wheelhouse-${a}.agent.md`), 'rules/wheelhouse-foreman.json']);
+test('the home holds the four agents, the builder\'s and the foreman\'s rule and the manifest, and no skill, hook or instruction', () => {
+  assert.deepEqual([...home.keys()], ['MANIFEST.txt', ...AGENTS.map((a) => `agents/wheelhouse-${a}.agent.md`), 'rules/wheelhouse-builder.json', 'rules/wheelhouse-foreman.json']);
+  assert.deepEqual(JSON.parse(home.get('rules/wheelhouse-builder.json')), { agent: 'wheelhouse-builder', shell: ['bash', 'powershell'], allow: ['wh-feature:*'] });
 });
 
 test('the foreman gets two commands: its agent holds the shell tools and nothing else, and its rule names wake and act', () => {
@@ -153,15 +154,15 @@ test('every agent\'s tools are Copilot\'s names, and no agent but the builder ma
 });
 
 test('the agents carry today\'s prompt text, with Claude Code\'s tool words mapped', () => {
-  for (const agent of ['builder', 'reviewer', 'tester']) {
+  // The builder's own wording is pinned by the tests below: it runs no git, and Wheelhouse commits for it.
+  for (const agent of ['reviewer', 'tester']) {
     const source = split(lf(fs.readFileSync(path.join(ROOT, 'agents', `${agent}.md`), 'utf8')));
     const built = split(home.get(`agents/wheelhouse-${agent}.agent.md`));
     assert.equal(built.front.name, `wheelhouse-${agent}`);
     assert.equal(built.front.description, source.front.description);
     const strip = (body) => body.replace(/^\n?<!--[^\n]*-->\n/, '').split('\n');
     const a = strip(source.body);
-    // The builder's one added line is the folder rule, which the next test pins.
-    const b = strip(built.body).filter((l) => agent !== 'builder' || !l.startsWith('- **Folders that already exist.**'));
+    const b = strip(built.body);
     assert.equal(a.length, b.length, `${agent}: the same number of lines`);
     for (const line of a.filter((l, i) => l !== b[i])) assert.match(line, /`(Read|Grep|Glob|Bash|WebFetch)`|CLAUDE\.md/, `${agent}: an unmapped change: ${line}`);
     assert.ok(built.body.includes(source.body.slice(source.body.indexOf('```\nWHEELHOUSE REPORT'))), `${agent}'s report block`);
@@ -179,6 +180,20 @@ test('the builder agent tells a Copilot session to write only in folders that ex
   assert.ok(builder.indexOf('Folders that already exist') < builder.indexOf('## Before you start'), 'it sits in the "Where you work" list');
   for (const agent of ['reviewer', 'tester', 'foreman']) assert.ok(!home.get(`agents/wheelhouse-${agent}.agent.md`).includes('Folders that already exist'), agent);
   assert.ok(!fs.readFileSync(path.join(ROOT, 'agents', 'builder.md'), 'utf8').includes('Folders that already exist'), "Claude Code's builder is unchanged");
+});
+
+test('the builder agent runs no git, runs one command per shell call and reports no commit; Claude Code\'s builder is unchanged', () => {
+  const builder = home.get('agents/wheelhouse-builder.agent.md');
+  const source = fs.readFileSync(path.join(ROOT, 'agents', 'builder.md'), 'utf8');
+  assert.match(builder, /- \*\*One command per shell call\.\*\* .*never chained with `;`, `&&`, `\|\|` or a pipe, and never run `git`, `mkdir` or `New-Item`/);
+  assert.ok(builder.indexOf('One command per shell call') < builder.indexOf('## Before you start'), 'it sits in the "Where you work" list');
+  assert.match(builder, /- \*\*Do not commit\.\*\* Wheelhouse commits the finished task for you after your run, with no co-author line\./);
+  assert.ok(!/git (rev-parse|commit|add|branch)|\bpwd\b/.test(builder), 'no git command is told to the builder');
+  assert.ok(!/^commit:|- `commit` is/m.test(builder), 'its report block has no commit line');
+  assert.ok(!builder.includes('test first, commits it'), 'its description does not say it commits');
+  assert.match(source, /^commit: <full 40-character hash/m, 'Claude Code\'s builder still reports its commit');
+  assert.ok(source.includes('git rev-parse HEAD'), 'and still runs git');
+  for (const agent of ['reviewer', 'tester', 'foreman']) assert.ok(!home.get(`agents/wheelhouse-${agent}.agent.md`).includes('One command per shell call'), agent);
 });
 
 test('the foreman agent\'s prompt is the foreman playbook\'s body', () => {

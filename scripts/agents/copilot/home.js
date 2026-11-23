@@ -132,8 +132,40 @@ function folderWords(text, rel) {
   return text.replace(BUILDER_LIST_END, `${BUILDER_FOLDER_RULE}${BUILDER_LIST_END}`);
 }
 
+// At Ask a session's shell runs only the build commands the director allowed, a rule matches a whole command, and Wheelhouse
+// commits the session's work itself once its run has ended (scripts/feature/commit-work.js). So the builder is told
+// to run no git, to run one command per shell call, and to report no commit. Each pair is [source text, Copilot's text], and a
+// source that no longer holds the text throws, so a change to the builder is seen here.
+const BUILDER_ONE_COMMAND = "\n- **One command per shell call.** Your shell runs only the commands you were allowed, such as the project's checks, and a rule matches the whole command. Run each command on its own, never chained with `;`, `&&`, `||` or a pipe, and never run `git`, `mkdir` or `New-Item`. Wheelhouse's own command `wh-feature` is the one other command you may run: `wh-feature commit` commits your work. Read and write files with the file tools.";
+const BUILDER_COMMIT_WORDS = Object.freeze([
+  [' Check with `pwd` and `git branch --show-current` before you begin. Never change', ' Never change'],
+  ['- **Your branch only.** Commit on the branch you start on. Never check out, merge into, rebase onto or push to the default branch. Do not push at all, and do not open a pull request: the session does that.',
+    '- **Your branch only.** Wheelhouse commits your work on the branch you start on, once your run has ended: you do not commit. Never check out, merge into, rebase onto or push to the default branch. Do not push at all, and do not open a pull request: the session does that.'],
+  ['No model names or co-author lines in commits.', 'No model names or co-author lines in anything you write.'],
+  ['before you commit, and read their output', 'before you report, and read their output'],
+  ['- **Commit** the finished task on your branch with a message that says what the change does.',
+    "- **Do not commit.** Wheelhouse commits the finished task for you after your run, with no co-author line. Don't run `git`."],
+  ['fix it, commit, and report the commit that holds the fix.', 'fix it, and report what you changed.'],
+  ['- `commit` is the full 40-character hash of your last commit (`git rev-parse HEAD`).\n', ''],
+  ['commit: <full 40-character hash of your last commit>\n', ''],
+]);
+function commitWords(text, rel) {
+  let out = text;
+  for (const [from, to] of BUILDER_COMMIT_WORDS) {
+    if (!out.includes(from)) throw new Error(`${rel} no longer holds the text commitWords rewrites: ${from.slice(0, 50)}`);
+    out = out.replace(from, to);
+  }
+  return out.replace(BUILDER_LIST_END, `${BUILDER_ONE_COMMAND}${BUILDER_LIST_END}`);
+}
+// The builder's description says it commits; Copilot's doesn't.
+const BUILDER_COMMITS = ', test first, commits it and ends with a report block.';
+const builderDescription = (text, rel) => {
+  if (!text.includes(BUILDER_COMMITS)) throw new Error(`${rel}'s description no longer holds the words builderDescription rewrites`);
+  return text.replace(BUILDER_COMMITS, ', test first, and ends with a report block. Wheelhouse commits its work after its run.');
+};
+
 const q = (value) => JSON.stringify(value);
-const list = (values) => `[${values.map(q).join(', ')}]`;
+const list =(values) => `[${values.map(q).join(', ')}]`;
 
 // A built file: front matter, then its path comment straight after, then the rest.
 function assemble({ file, source, front, rest }) {
@@ -217,9 +249,10 @@ function agentFrom(root, agent) {
     granted = [...BUILDER_TOOLS];
   }
   let rest = renameSkills(mapRulesFiles(mapToolWords(withoutPathComment(body, source), source)));
-  if (agent === 'builder') rest = folderWords(rest, source);
+  if (agent === 'builder') rest = commitWords(folderWords(rest, source), source);
   if (/CLAUDE\.md/.test(rest)) throw new Error(`${source} still names CLAUDE.md after mapping`);
-  return [file, assemble({ file, source, front: { name: `wheelhouse-${agent}`, description: front.description, tools: granted }, rest })];
+  const description = agent === 'builder' ? builderDescription(front.description, source) : front.description;
+  return [file, assemble({ file, source, front: { name: `wheelhouse-${agent}`, description, tools: granted }, rest })];
 }
 
 // The foreman's prompt is the foreman playbook's body. Its agent file names the shell tools, because `tools: []` gives a
@@ -235,6 +268,16 @@ function foremanFrom(root) {
     [file, assemble({ file, source: FOREMAN_SOURCE, front: { name: 'wheelhouse-foreman', description: front.description, tools: [...rule.shell] }, rest })],
     [FOREMAN_RULES, `${JSON.stringify(rule, null, 2)}\n`],
   ];
+}
+
+// A feature session runs as the builder agent, and its shell runs one Wheelhouse command besides the project's build
+// commands: the feature command's launcher, which takes a fixed list of subcommands and never a command or a path to run
+// (scripts/feature/cli.js). The record names it, as the foreman's names its two, for the sessions part to turn into a rule.
+export const BUILDER_RULES = 'rules/wheelhouse-builder.json';
+function builderRule() {
+  const launcher = launcherOf('scripts/feature/cli.js');
+  if (launcher === null) throw new Error('The feature command has no launcher to give the builder agent its rule');
+  return { agent: 'wheelhouse-builder', shell: [...CLAUDE_TO_COPILOT.Bash], allow: [`${launcher}:*`] };
 }
 
 // ---- The manifest ----
@@ -255,7 +298,7 @@ function manifestOf(files) {
 // can't be read.
 export function buildHome({ root = REPO } = {}) {
   const files = new Map();
-  for (const entry of [...AGENT_SOURCES.map((agent) => agentFrom(root, agent)), ...foremanFrom(root)]) files.set(entry[0], entry[1]);
+  for (const entry of [...AGENT_SOURCES.map((agent) => agentFrom(root, agent)), ...foremanFrom(root), [BUILDER_RULES, `${JSON.stringify(builderRule(), null, 2)}\n`]]) files.set(entry[0], entry[1]);
   files.set('MANIFEST.txt', manifestOf(files));
   return new Map([...files.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
 }

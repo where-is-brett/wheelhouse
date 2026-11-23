@@ -23,7 +23,9 @@ const KEY = /^([a-z]+):[ \t]*(.*?)[ \t]*$/;
 
 // The fields of the last report block in `text`, and the names of those that are
 // missing or invalid for `role` (the agent's role, when given).
-export function parseReport(text, role) {
+// `commitNamed: false` is for an agent whose commit is made for it after its run: a builder's report then needs no `commit`
+// line (one it gives must still be a hash), while a reviewer's, which is checked against the pull request's head, always does.
+export function parseReport(text, role, { commitNamed = true } = {}) {
   const lines = String(text ?? '').split(/\r?\n/);
   let start = -1;
   for (let i = 0; i < lines.length; i += 1) if (lines[i].trim() === HEADER) start = i;
@@ -41,8 +43,8 @@ export function parseReport(text, role) {
   // `none` is for work done before the feature has a pull request; only a number can sign.
   need('pr', (v) => v === 'none' || (/^[1-9][0-9]*$/.test(v ?? '') && Number.isSafeInteger(Number(v))));
   // A full hash, or a short one of at least seven digits, which a reviewer's report is checked against the pull request's head.
-  need('commit', (v) => /^[0-9a-f]{7,40}$/.test(v ?? ''));
   const kind = fields.role ?? role;
+  if (commitNamed || kind !== 'builder' || fields.commit !== undefined) need('commit', (v) => /^[0-9a-f]{7,40}$/.test(v ?? ''));
   if (kind === 'builder') {
     need('status', (v) => ['done', 'blocked', 'partial'].includes(v));
     for (const name of ['tests', 'assumptions', 'concerns']) need(name, (v) => typeof v === 'string' && v !== '');
@@ -118,7 +120,7 @@ function answerDropped(file) {
 
 // On an agent whose hooks only read (`writeVia: 'helper'`), nothing is kept under the Wheelhouse home: a report missing
 // its parts is not counted or sent back but noted to the helper, and a record the helper doesn't take is noted, not kept.
-export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS + helperGrace(), writeVia = 'self' } = {}) {
+export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS + helperGrace(), writeVia = 'self', commitNamed = true } = {}) {
   const role = ROLES[input.agent_type];
   if (role === undefined) return undefined;
   const found = find(input.cwd, { dir });
@@ -126,7 +128,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   const project = found.project;
   const api = client ?? helperClient({ timeout: budget });
   const left = withinBudget(Date.now() + budget);
-  const { fields, missing } = parseReport(input.last_assistant_message, role);
+  const { fields, missing } = parseReport(input.last_assistant_message, role, { commitNamed });
   const id = text(input.agent_id) ?? text(input.session_id) ?? 'unknown';
   const file = countFile(project, id);
 
