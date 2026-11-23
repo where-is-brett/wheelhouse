@@ -186,3 +186,17 @@ for (const hostKind of ['github', 'gitlab']) {
     host: { ciState: async (sha) => ({ sha, state: 'success' }), checkContexts: async () => [{ name: 'lint', state: 'success', startedAt: '2026-11-23T00:00:00Z' }] },
   }));
 }
+
+for (const hostKind of ['github', 'gitlab']) {
+  test(`${hostKind}: when where the checks run can't be read, a passing pipeline does not merge the change, and the reason says to try again`, { timeout: 300000 }, () => checksWorld(async ({ host, remote, checkout, client }) => {
+    const { number, head } = await brokenChange({ host, remote, checkout });
+    await failed(head);
+    const answer = await client.merge({ project: P, number });
+    assert.equal(answer.ok, false);
+    assert.match(answer.refused, /try the merge again in a moment/);
+  }, {
+    engineless: true,
+    hostKind,
+    host: { ciState: async (sha) => ({ sha, state: 'success' }), checkContexts: async () => { throw new Error('the host did not answer'); } },
+  }));
+}

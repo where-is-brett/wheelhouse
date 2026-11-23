@@ -3638,8 +3638,12 @@ export async function startHelper({
     let checkWaiting = false;
     // Where the project's checks run here, the signed check is what the gate asks, whatever a pipeline or status on the host says.
     if (fixCall || keeping || ['local', 'github', 'gitlab'].includes(recordOf(project).host)) {
-      const permit = await checkPermit(project, headSha, { unreadOpen: !fixCall && !keeping });
-      if (permit.checksHere === true && !checkCounts(permit.check, headSha, permit.digest, enrolled, { notCounting: permit.notCounting })) {
+      const permit = await checkPermit(project, headSha);
+      if (permit.checksHere === true && permit.unread === true) {
+        // Fails closed: the host's own CI never stands in for a check that may be owed on this computer.
+        stateReasons.push(`there is no passing check on this computer of ${headSha.slice(0, 7)} that can be read just now (where the checks run couldn't be read), so try the merge again in a moment`);
+        checkWaiting = true;
+      } else if (permit.checksHere === true && !checkCounts(permit.check, headSha, permit.digest, enrolled, { notCounting: permit.notCounting })) {
         stateReasons.push(`there is no passing check on this computer of ${headSha.slice(0, 7)}`);
         checkWaiting = !['failed', 'timed-out'].includes(permit.check?.data?.result);
       } else if (permit.checksHere === true && ci?.state !== 'success') {
@@ -4844,9 +4848,7 @@ export async function startHelper({
   const signedChecks = (project) => signedOf(project, 'check');
   // What the merge condition reads for a head. What can't be read counts as checks that run here with none passed, so a
   // merge is refused rather than let through; only a project whose checks are known to run on the host goes as before.
-  // `unreadOpen`: for the gate's own read of a project on a host, where the host's CI answers too, facts that can't be read leave
-  // the host's reading to decide (the engine's permit, which has no other answer, keeps failing closed).
-  async function checkPermit(project, head, { unreadOpen = false } = {}) {
+  async function checkPermit(project, head) {
     const { host } = recordOf(project);
     if (host !== 'github' && host !== 'gitlab' && host !== 'local') return { checksHere: false };
     let facts;
@@ -4854,8 +4856,7 @@ export async function startHelper({
       facts = await checksFacts(project);
     } catch (error) {
       if (error instanceof LookRefusal) throw error;
-      if (unreadOpen && host !== 'local') return { checksHere: false };
-      return { checksHere: true, check: null, digest: null, notCounting: false };
+      return { checksHere: true, check: null, digest: null, notCounting: false, unread: true };
     }
     if (!checksRunHere(project, facts)) return { checksHere: false };
     const check = signedChecks(project).filter((e) => e.data?.commit === head && e.data?.command === facts.digest).at(-1) ?? null;

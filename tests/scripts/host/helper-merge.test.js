@@ -34,6 +34,8 @@ const T0 = new Date('2026-10-18T01:00:00.000Z');
 const at = (ms) => () => new Date(T0.getTime() + ms);
 const UNREADABLE = 'the changed files couldn\'t be read, so this needs the director\'s approval';
 // The mirror can't read the pull request, so whether it is up to date is not known.
+// The checks' place couldn't be read here (a project whose mirror can't be read), so the merge waits and is tried again.
+const unread = (sha) => `there is no passing check on this computer of ${sha.slice(0, 7)} that can be read just now (where the checks run couldn't be read), so try the merge again in a moment`;
 const UNCHECKED = 'whether the branch is up to date could not be checked';
 
 function write(dir, files) {
@@ -93,6 +95,10 @@ function fakeAdapter(head, overrides = {}) {
   return {
     merges,
     defaultBranch: async () => 'main',
+    // What reports on a head: a job of the host's own, so the project's checks run on the host.
+    checkContexts: async () => [{ name: 'test', state: 'success', startedAt: '2026-11-23T00:00:00Z', app: null }],
+    requiredChecks: async () => [],
+    branchHead: async () => 'a'.repeat(40),
     prState: async () => ({ headSha: head, headRef: 'feature/x', mergeable: 'mergeable', state: 'open', body: BODY }),
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async (args) => { merges.push(args); return { merged: true }; },
@@ -217,7 +223,7 @@ test('/merge refuses when the fetched head differs from the head the host report
 });
 
 test('/merge treats unreadable changes or configuration as touching the guardrails', async () => {
-  // A malformed configuration on the default branch; and no pull request ref on the host.
+  // A malformed configuration on the default branch (where the checks run can't be read either); and no pull request ref on the host.
   const bad = await remoteWithPr({ base: { '.claude/wheelhouse.json': '{ nope' }, change: (w) => write(w, { 'src/a.js': 'export const a = 1;\n' }) });
   const missing = await remoteWithPr({ change: (w) => write(w, { 'src/a.js': 'export const a = 1;\n' }), ref: 'refs/heads/feature' });
   try {
@@ -230,7 +236,7 @@ test('/merge treats unreadable changes or configuration as touching the guardrai
           before: () => reviewed(pr.head),
           async after(answer) {
             assert.equal(answer.ok, false);
-            assert.deepEqual(answer.reasons, [`no approval of ${pr.head.slice(0, 7)}`, ...behind, UNREADABLE]);
+            assert.deepEqual(answer.reasons, [...(pr === bad ? [unread(pr.head)] : []), `no approval of ${pr.head.slice(0, 7)}`, ...behind, UNREADABLE]);
             assert.deepEqual([answer.guardrailPaths, answer.criticalAreas], [[], []]);
             assert.deepEqual(adapter.merges, []);
           },
@@ -240,7 +246,8 @@ test('/merge treats unreadable changes or configuration as touching the guardrai
           before: () => approved(pr.head),
           async after(answer) {
             if (pr === missing) assert.deepEqual(answer.reasons, [UNCHECKED, UNREADABLE]);
-            else assert.equal(answer.ok, true);
+            // Where the checks run can't be read, so even an approved change waits.
+            else assert.deepEqual(answer.reasons, [unread(pr.head), UNREADABLE]);
           },
         },
       ]);
