@@ -54,6 +54,7 @@ import { lineageFixture, writeFiles } from '../helpers/lineage.js';
 import { writeSessionProvenance } from '../helpers/provenance.js';
 import { sandboxed as wallSandboxed, sandboxHolds as wallHolds } from '../helpers/sandbox-wall.js';
 import { waitLongerOnTheHelper } from '../helpers/until.js';
+import { HOST_CI } from '../helpers/host-ci-facts.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
 const hostLog = [];
@@ -122,6 +123,7 @@ function standInHost(remoteUrl) {
       if (pr.state === 'open') await g(remoteUrl, 'update-ref', `refs/pull/${number}/head`, headSha);
       return { number, headSha, headRef: pr.head, baseRef: pr.base, mergeable: 'yes', state: pr.state, body: pr.body };
     },
+    ...HOST_CI,
     ciState: async (sha) => ({ sha, state: passed.has(sha) ? 'success' : 'pending' }),
     merge: async ({ number, sha }) => {
       merges.push({ number, sha });

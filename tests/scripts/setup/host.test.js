@@ -1065,7 +1065,7 @@ test('GitLab pipelines must succeed only where a pipeline exists', async () => {
   assert.deepEqual(none.puts, [], 'no pipeline: the rule is left off');
   assert.equal(quiet.on, true);
   assert.equal(quiet.askPipelines, true, 'the director is asked instead');
-  assert.match(quiet.line, /no checks yet/);
+  assert.match(quiet.line, /its checks run on this computer/);
   const piped = gitlabProtection({ pipelines: true });
   const ruled = await switchOnAsDirector({ host: 'gitlab', repo: 41, api: piped });
   assert.deepEqual(piped.puts, [{ only_allow_merge_if_pipeline_succeeds: true }]);

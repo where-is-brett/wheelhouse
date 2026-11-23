@@ -66,11 +66,11 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
       const said = `${got.stderr}\n${got.stdout}`;
       const status = statusIn(said);
       // Posting the state the commit already holds is refused as a transition; it has been reported all the same.
-      if (status === 400 && /cannot transition/i.test(said) && await holdsState({ get: (path) => ask(['api', path]), project, sha, state })) return { ok: true };
+      if (status === 400 && /cannot transition/i.test(said) && await holdsState({ get: (path) => ask(['api', `${project}${path.slice(project.length)}`]), project, sha, state })) return { ok: true };
       return { refused: postRefusal(status) };
     },
     async checkContexts(sha) {
-      return contextsOf(await ask(['api', statusesOf(project, sha)]));
+      return contextsOf(await ask(['api', `${project}${statusesOf(project, sha).slice(project.length)}`]));
     },
     async requiredChecks() {
       return [];
@@ -78,7 +78,7 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
 
     async hasCi(sha, branch) {
       // Any pipeline on the head counts, a skipped one too: it was run, and ran nothing.
-      const pipelines = await ask(['api', pipelinesOf(project, sha)]);
+      const pipelines = await ask(['api', `${project}${pipelinesOf(project, sha).slice(project.length)}`]);
       if (!Array.isArray(pipelines)) throw new Error('GitLab did not list the commit\'s pipelines');
       // Wheelhouse's own status is kept as an external pipeline, and is no CI of the project's.
       if (realPipelines(pipelines).length > 0 || await mergedResults(sha, { strict: true }) !== 'none') return true;
@@ -95,7 +95,7 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
     },
 
     async ciState(sha) {
-      return ciStateOf({ get: (path) => ask(['api', path]), project, sha });
+      return ciStateOf({ get: (path) => ask(['api', `${project}${path.slice(project.length)}`]), project, sha });
     },
 
     // The project's successful deployments, newest first (GitLab can't list them by commit). The

@@ -50,6 +50,7 @@ import { writeFiles } from '../helpers/lineage.js';
 import { matchingBody } from '../helpers/provenance.js';
 import { sandboxed as wallSandboxed } from '../helpers/sandbox-wall.js';
 import { waitLongerOnTheHelper, until as waitUntil, WAIT_MS } from '../helpers/until.js';
+import { HOST_CI } from '../helpers/host-ci-facts.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
 const hostLog = [];
@@ -104,6 +105,7 @@ function standInHost(remoteUrl) {
       if (pr.state === 'open') await g(remoteUrl, 'update-ref', `refs/pull/${number}/head`, headSha);
       return { number, headSha, headRef: pr.branch, baseRef: 'main', mergeable: 'yes', state: pr.state, body: BODY };
     },
+    ...HOST_CI,
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async ({ number, sha }) => {
       merges.push({ number, sha });

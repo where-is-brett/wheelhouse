@@ -3639,7 +3639,11 @@ export async function startHelper({
     // Where the project's checks run here, the signed check is what the gate asks, whatever a pipeline or status on the host says.
     if (fixCall || keeping || ['local', 'github', 'gitlab'].includes(recordOf(project).host)) {
       const permit = await checkPermit(project, headSha);
-      if (permit.checksHere === true && permit.unread === true) {
+      // A restore is the director's own recovery, approved on its card and built by the helper: it may go ahead on the host's reading
+      // where the access it would read the checks with has been cut (runbook step 2). Where the checks can be read, it is held to them.
+      if (permit.checksHere === true && permit.unread === true && restore) {
+        // left to the host's reading and the approval
+      } else if (permit.checksHere === true && permit.unread === true) {
         // Fails closed: the host's own CI never stands in for a check that may be owed on this computer.
         stateReasons.push(`there is no passing check on this computer of ${headSha.slice(0, 7)} that can be read just now (where the checks run couldn't be read), so try the merge again in a moment`);
         checkWaiting = true;
@@ -5581,7 +5585,7 @@ export async function startHelper({
         room = engineRoom({ spawn, command: () => roomEngine.roomCommand(), wanted: roomWanted, held: stopped });
         try { room.tend(); } catch { /* tried again with the dispatcher */ }
       }
-      sleeping.beat();
+      if (engineHosts.length > 0) sleeping.beat();
     }
     if (dispatchWatch === null) {
       dispatchWatch = setInterval(() => {

@@ -35,6 +35,7 @@ import { useFileKeyStore } from '../../helpers/file-key-store.js';
 useFileKeyStore();
 import { matchingBody } from '../../helpers/provenance.js';
 import { makeFakeCurl } from '../../helpers/fake-curl.js';
+import { HOST_CI } from '../../helpers/host-ci-facts.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
 const hostLog = [];
@@ -128,6 +129,7 @@ function fakeAdapter(overrides = {}) {
     defaultBranch: async () => 'main',
     openPr: async (args) => { opened.push(args); return { number: 7, url: 'https://example.invalid/pull/7' }; },
     prState: async () => ({ headSha: 'f'.repeat(40), headRef: 'x', baseRef: 'main', mergeable: 'yes', state: 'open' }),
+    ...HOST_CI,
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async (args) => { merges.push(args); return { merged: true }; },
     ...overrides,

@@ -34,6 +34,7 @@ import { startHttpHost } from '../helpers/http-host.js';
 import { hostKeyEnv } from '../helpers/host-key.js';
 import { matchingBody } from '../helpers/provenance.js';
 import { waitLongerOnTheHelper } from '../helpers/until.js';
+import { HOST_CI } from '../helpers/host-ci-facts.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
 const hostLog = [];
@@ -66,6 +67,7 @@ function fakeAdapter(head = sha('head')) {
     merges,
     defaultBranch: async () => 'main',
     prState: async () => ({ headSha: head, headRef: 'feature/x', mergeable: 'mergeable', state: 'open', body: BODY }),
+    ...HOST_CI,
     ciState: async (s) => ({ sha: s, state: 'success' }),
     merge: async (args) => { merges.push(args); return { merged: true }; },
     openPr: async () => ({ number: PR }),

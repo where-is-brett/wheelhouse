@@ -26,6 +26,7 @@ import { as, shortHome, testAddress } from '../helpers/homes.js';
 import { prOnHost } from '../helpers/pr-on-host.js';
 import { matchingBody } from '../helpers/provenance.js';
 import { waitLongerOnTheHelper } from '../helpers/until.js';
+import { HOST_CI } from '../helpers/host-ci-facts.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
 const hostLog = [];
@@ -55,6 +56,7 @@ function fakeAdapter(headOf = () => HEAD) {
     merges,
     defaultBranch: async () => 'main',
     prState: async () => ({ headSha: headOf(), headRef: 'feature/x', mergeable: 'mergeable', state: 'open', body: BODY }),
+    ...HOST_CI,
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async (args) => { merges.push(args); return { merged: true }; },
     openPr: async () => ({ number: PR }),
