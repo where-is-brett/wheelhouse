@@ -28,7 +28,7 @@ import { listEvents } from '../state/events.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { claudeHome as claudeHomeDir } from '../lineage/manifest.js';
 import { retiredInstalls } from './install.js';
-import { addonInstalled } from './addon.js';
+import { addonOffer } from './addon.js';
 import { accountCatalogue } from './account-settings.js';
 import { runningVersion } from './board.js';
 import { releaseKind, updateMirror } from './change.js';
@@ -165,7 +165,7 @@ function milestones(steps, tag) {
 export function updateRoutes({
   now = () => new Date(), stopped = () => false, updateHeld = updateLockHeld, from = runningVersion, userHome = os.homedir(),
   run = realRun, spawn = nodeSpawn, list, fetch, check, kind, locked, requirements, claudeVersion = async () => null, signed = signedByDefault, clicked = clickedByDefault,
-  startRunner, account, retired, addon,
+  startRunner, account, retired, addon, panelAllowed,
 } = {}) {
   const listing = list ?? (() => listReleases({ run }));
   const fetching = fetch ?? ((tag) => fetchTag({ ref: tag, run, mirror: updateMirror() }));
@@ -204,14 +204,22 @@ export function updateRoutes({
     });
     if (made.plan === undefined) return { ok: true, lines: made.lines };
     const removes = (retired ?? ((where) => retiredInstalls({ claudeHome: claudeHomeDir(), ...where })))({ projectDir: folder });
-    // Where VS Code lists the add-on, the card says the update removes it; the plan names it, so only that click removes it.
-    let addonHere = false;
-    try { addonHere = (await (addon ?? (() => addonInstalled({ run })))()) === true; } catch { addonHere = false; }
-    const planned = { ...made.plan, ...(removes.length > 0 ? { removes } : {}), ...(addonHere ? { addon: true } : {}) };
+    // Where the panel is not in VS Code, or is older than this release's, the card says the update installs it; the plan names it, so only that click does.
+    // A company list that leaves it out means no offer, and one plain line saying why.
+    let panel = null;
+    let panelLine = null;
+    try {
+      panel = await (addon ?? (() => addonOffer({ run, pluginVersion: made.plan.to })))();
+      if (panel !== null && (await (panelAllowed ?? (async () => (await import('../addon/allowed.js')).addonAllowed({ version: panel.to })))())?.allowed === false) {
+        panel = null;
+        panelLine = (await import('../addon/allowed.js')).NOT_ALLOWED_LINE;
+      }
+    } catch { panel = null; }
+    const planned = { ...made.plan, ...(removes.length > 0 ? { removes } : {}), ...(panel !== null ? { addon: panel } : {}) };
     const hash = hashOf(project, planned);
     const card = updateCard({ ...planned, hash });
     writeAtomic(planFile(project), { hash, project, folder, at: now().toISOString(), plan: planned, card });
-    return { ok: true, hash, card, lines: made.lines };
+    return { ok: true, hash, card, lines: panelLine === null ? made.lines : [...made.lines, panelLine] };
   }
   async function apply(body) {
     if (stopped()) return { ok: false, refused: STOP_FIRST };

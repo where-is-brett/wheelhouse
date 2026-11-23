@@ -1,11 +1,12 @@
 // tests/scripts/update/addon.test.js
-// What the update says about the VS Code add-on parked in the core cut: one left on this computer is a line on the
-// Update card, and is removed only after the director's click on it.
+// What setup and the update command offer about the Wheelhouse panel for VS Code: nothing for the same version, "Install the panel"
+// where it is not there, "Update the panel" where it is older, and no offer where VS Code can't be found. The Update card names
+// it once, and only the director's click on that card installs it, in the finish step.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { addonInstalled, removeAddon, planNamedAddon, ADDON_ID, ADDON_ON_CARD } from '../../../scripts/update/addon.js';
+import { addonOffer, panelVersionIn, panelOnCard, planNamedAddon, vscodeHere, ADDON_ID } from '../../../scripts/update/addon.js';
 import { updateCard } from '../../../scripts/update/cards.js';
 import { finish } from '../../../scripts/update/finish.js';
 import { openJournal } from '../../../scripts/update/journal.js';
@@ -27,7 +28,7 @@ function finishOptions() {
   };
 }
 
-const runOf = (calls, { listing = `ms-python.python\n${ADDON_ID}\n`, code = 0 } = {}) => async (file, args) => {
+const runOf = (calls, { listing = `ms-python.python@2024.1.0\n${ADDON_ID}@0.3.0\n`, code = 0 } = {}) => async (file, args) => {
   calls.push([path.basename(file), ...args]);
   if (args[0] === '--list-extensions') return { code, stdout: listing };
   return { code, stdout: '' };
@@ -38,66 +39,79 @@ const env = () => {
   fs.chmodSync(path.join(bin, 'code'), 0o755);
   return { PATH: bin };
 };
+const offer = (opts) => addonOffer({ platform: 'darwin', env: env(), present: () => false, ...opts });
 
-test('the add-on is found when VS Code lists it, and not found when it does not, or cannot be asked', async () => {
-  const calls = [];
-  assert.equal(await addonInstalled({ run: runOf(calls), platform: 'darwin', env: env() }), true);
-  assert.equal(await addonInstalled({ run: runOf([], { listing: 'ms-python.python\n' }), platform: 'darwin', env: env() }), false);
-  assert.equal(await addonInstalled({ run: runOf([], { code: 1 }), platform: 'darwin', env: env() }), null);
-  assert.deepEqual(calls[0].slice(1), ['--list-extensions']);
+test('the panel\'s version is read from VS Code\'s listing, case aside', () => {
+  assert.equal(panelVersionIn(`a.b@1.0.0\nWheelhouse.Wheelhouse@0.3.0\r\n`), '0.3.0');
+  assert.equal(panelVersionIn('a.b@1.0.0\n'), null);
+  assert.equal(panelVersionIn(`${ADDON_ID}\n`), '');
 });
 
-test('the Update card carries one line about the add-on only when one is installed', () => {
+test('the same version: nothing is offered; a newer one installed is left alone', async () => {
+  const calls = [];
+  assert.equal(await offer({ run: runOf(calls), pluginVersion: '0.3.0' }), null);
+  assert.equal(await offer({ run: runOf([]), pluginVersion: 'v0.3.0' }), null, 'a leading v is no difference');
+  assert.equal(await offer({ run: runOf([], { listing: `${ADDON_ID}@0.4.0\n` }), pluginVersion: '0.3.0' }), null);
+  assert.deepEqual(calls[0].slice(1), ['--list-extensions', '--show-versions']);
+});
+
+test('an older panel is offered as an update, naming both versions', async () => {
+  assert.deepEqual(await offer({ run: runOf([]), pluginVersion: '0.3.1' }), { kind: 'update', from: '0.3.0', to: '0.3.1' });
+  assert.deepEqual(await offer({ run: runOf([], { listing: `${ADDON_ID}@0.3.1-rc.1\n` }), pluginVersion: '0.3.1' }), { kind: 'update', from: '0.3.1-rc.1', to: '0.3.1' });
+});
+
+test('no panel in VS Code is offered as an install', async () => {
+  assert.deepEqual(await offer({ run: runOf([], { listing: 'ms-python.python@2024.1.0\n' }), pluginVersion: '0.3.1' }), { kind: 'install', to: '0.3.1' });
+});
+
+test('with no code to ask, the offer comes only where VS Code is on this computer', async () => {
+  const none = async () => { throw new Error('spawn code ENOENT'); };
+  assert.equal(await offer({ run: none, pluginVersion: '0.3.1', present: () => false }), null);
+  assert.deepEqual(await offer({ run: none, pluginVersion: '0.3.1', present: () => true }), { kind: 'install', to: '0.3.1' });
+  assert.deepEqual(await offer({ run: runOf([], { code: 1 }), pluginVersion: '0.3.1', present: () => true }), { kind: 'install', to: '0.3.1' });
+  assert.equal(await addonOffer({ run: none, platform: 'win32', env: { Path: 'C:\\nowhere' }, pluginVersion: '0.3.1', present: () => false }), null, 'Windows with no code.cmd');
+  assert.equal(await offer({ run: runOf([]), pluginVersion: '' }), null, 'no release version, no offer');
+});
+
+test('VS Code is found where it installs by default', () => {
+  assert.equal(vscodeHere({ platform: 'darwin', home: '/Users/p', exists: (f) => f === '/Applications/Visual Studio Code.app' }), true);
+  assert.equal(vscodeHere({ platform: 'win32', env: { LOCALAPPDATA: 'C:\\Users\\p\\AppData\\Local' }, exists: (f) => f.endsWith('Microsoft VS Code') }), true);
+  assert.equal(vscodeHere({ platform: 'darwin', home: '/Users/p', exists: () => false }), false);
+  assert.equal(vscodeHere({ platform: 'darwin', exists: () => { throw new Error('x'); } }), false);
+});
+
+test('the Update card carries one line about the panel only when one is offered', () => {
   const base = { from: 'v0.3.0', to: 'v0.3.1', says: 'x', hash: 'a'.repeat(64) };
-  assert.ok(!updateCard(base).question.includes(ADDON_ON_CARD));
-  const withIt = updateCard({ ...base, addon: true });
-  assert.equal(withIt.question.split(ADDON_ON_CARD).length, 2, 'named once');
-  assert.deepEqual(withIt.options.map((o) => o.label), ['Update', 'Not now']);
+  assert.ok(!updateCard(base).question.includes('Wheelhouse panel'));
+  for (const addon of [{ kind: 'install', to: '0.3.1' }, { kind: 'update', from: '0.3.0', to: '0.3.1' }]) {
+    const card = updateCard({ ...base, addon });
+    assert.equal(card.question.split(panelOnCard(addon)).length, 2, 'named once');
+    assert.deepEqual(card.options.map((o) => o.label), ['Update', 'Not now']);
+  }
 });
 
-test('the removal runs VS Code\'s own uninstall for the add-on, once, and keeps its record', async () => {
-  const calls = [];
-  const progress = {};
-  const got = await removeAddon({ run: runOf(calls), platform: 'darwin', env: env(), progress, save: () => {}, now: () => new Date('2026-11-07T09:00:00Z') });
-  assert.equal(got.done, true);
-  assert.deepEqual(calls.map((c) => c.slice(1)), [['--list-extensions'], ['--uninstall-extension', ADDON_ID]]);
-  assert.equal(progress.addon.removed, true);
-  const again = await removeAddon({ run: runOf(calls), platform: 'darwin', env: env(), progress, save: () => {} });
-  assert.equal(again.done, true);
-  assert.equal(calls.length, 2, 'a second run asks and removes nothing');
+test('the Update card with every line at once still composes', () => {
+  const card = updateCard({
+    from: 'v0.3.0', to: 'v0.3.1', says: 'A short summary of the release.', approval: 'card', locked: true, others: ['alpha', 'beta'],
+    account: { from: 'v0.2.9', to: 'v0.3.1' }, removes: ['superpowers'], addon: { kind: 'update', from: '0.3.0', to: '0.3.1' }, hash: 'a'.repeat(64),
+  });
+  assert.match(card.question, /Wheelhouse panel in VS Code goes from 0\.3\.0 to 0\.3\.1/);
+  assert.match(card.question, /Locked on this computer/);
 });
 
-test('an add-on already gone, or VS Code that cannot be asked, is no work', async () => {
-  const calls = [];
-  const progress = {};
-  const got = await removeAddon({ run: runOf(calls, { listing: '' }), platform: 'darwin', env: env(), progress, save: () => {} });
-  assert.equal(got.done, true);
-  assert.deepEqual(calls.map((c) => c[1]), ['--list-extensions']);
-  assert.equal(progress.addon.removed, false);
-});
-
-test('a refused removal says how to do it by hand and is not tried again', async () => {
-  const calls = [];
-  const progress = {};
-  const run = async (file, args) => { calls.push(args[0]); return args[0] === '--list-extensions' ? { code: 0, stdout: `${ADDON_ID}\n` } : { code: 1, stdout: '' }; };
-  const got = await removeAddon({ run, platform: 'darwin', env: env(), progress, save: () => {} });
-  assert.equal(got.done, true);
-  assert.match(got.lines.join(' '), /by hand/);
-  await removeAddon({ run, platform: 'darwin', env: env(), progress, save: () => {} });
-  assert.deepEqual(calls, ['--list-extensions', '--uninstall-extension']);
-});
-
-test('the plan names the add-on only when the card the director clicked did', () => withHome(async () => {
+test('the plan names the panel only when the card the director clicked did', () => withHome(async () => {
   const journal = openJournal('proj');
-  assert.equal(planNamedAddon(journal), false, 'no plan, no removal');
+  assert.equal(planNamedAddon(journal), null, 'no plan, no install');
   fs.mkdirSync(journal.folder, { recursive: true });
   fs.writeFileSync(path.join(journal.folder, 'plan.json'), JSON.stringify({ plan: { to: 'v0.3.1' } }));
-  assert.equal(planNamedAddon(journal), false);
+  assert.equal(planNamedAddon(journal), null);
   fs.writeFileSync(path.join(journal.folder, 'plan.json'), JSON.stringify({ plan: { to: 'v0.3.1', addon: true } }));
-  assert.equal(planNamedAddon(journal), true);
+  assert.equal(planNamedAddon(journal), null, 'the old removal flag names nothing');
+  fs.writeFileSync(path.join(journal.folder, 'plan.json'), JSON.stringify({ plan: { to: 'v0.3.1', addon: { kind: 'update', from: '0.3.0', to: '0.3.1' } } }));
+  assert.deepEqual(planNamedAddon(journal), { kind: 'update', from: '0.3.0', to: '0.3.1' });
 }));
 
-test('finish: the last line carries what the add-on step says, and it runs after the hand-over', () => withHome(async () => {
+test('finish: the last line carries what the panel step says, and it runs after the hand-over', () => withHome(async () => {
   const journal = openJournal('proj');
   journal.mark('checks', 'done', { tag: 'v0.3.1' });
   journal.mark('finish', 'running');
@@ -105,10 +119,25 @@ test('finish: the last line carries what the add-on step says, and it runs after
   const got = await finish({
     ...finishOptions(),
     journal,
-    addon: async () => { seen.push('addon'); return { done: true, lines: ['The VS Code add-on was removed.'] }; },
-    agentHooks: () => { seen.push('hooks'); return []; },
+    addon: async (given) => { seen.push(['addon', given.newRoot]); return { done: true, lines: ['The Wheelhouse panel is installed in VS Code. Reload VS Code to start it.'] }; },
+    agentHooks: () => { seen.push(['hooks']); return []; },
   });
   assert.equal(got.ok, true, got.line);
-  assert.deepEqual(seen, ['addon', 'hooks']);
-  assert.match(got.line, /add-on was removed/);
+  assert.deepEqual(seen.map((s) => s[0]), ['addon', 'hooks']);
+  assert.equal(seen[0][1], finishOptions().newRoot, 'the step is given the new release\'s folder');
+  assert.match(got.line, /panel is installed/);
+}));
+
+test('finish: a plan that named the panel installs it from the new folder once; a release with no package for it says so and the update still finishes', () => withHome(async () => {
+  const journal = openJournal('proj');
+  journal.mark('checks', 'done', { tag: 'v0.3.1' });
+  journal.mark('finish', 'running');
+  fs.mkdirSync(journal.folder, { recursive: true });
+  fs.writeFileSync(path.join(journal.folder, 'plan.json'), JSON.stringify({ plan: { to: 'v0.3.1', addon: { kind: 'install', to: '0.3.1' } } }));
+  // The new folder carries no plugin version, so there is nothing to pack, whether or not the packing files are in the tree.
+  const got = await finish({ ...finishOptions(), journal, agentHooks: () => [] });
+  assert.equal(got.ok, true, got.line);
+  assert.match(got.line, /panel's package isn't in this release/);
+  const progress = JSON.parse(fs.readFileSync(path.join(journal.folder, 'finish.json'), 'utf8'));
+  assert.equal(progress.addon.ok, false);
 }));

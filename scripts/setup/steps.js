@@ -75,6 +75,7 @@ import { hostStep } from './host.js';
 import { questionsStep } from './questions.js';
 import { rulesStep } from './rules.js';
 import { computerStep, lockedStep } from './computer.js';
+import { realOffer, realInstall } from './panel.js';
 import { projectFilesStep } from './project-files.js';
 import { notifyStep } from './notify.js';
 import { healthStep } from './health.js';
@@ -88,7 +89,7 @@ export { firstUnfinished } from '../lib/setup-run.js';
 export const planHash = (changes) => listHash(changes);
 
 const STEP_OF = {
-  1: installStep, 2: () => toolsStep({ webReady: webRouteReady }), 3: hostStep, 4: questionsStep, 5: rulesStep, 6: computerStep, 7: projectFilesStep, 8: lockedStep, 9: notifyStep, 10: healthStep,
+  1: installStep, 2: () => toolsStep({ webReady: webRouteReady }), 3: hostStep, 4: questionsStep, 5: rulesStep, 6: () => computerStep({ panel: { offer: (ctx) => realOffer({ platform: ctx.platform, env: ctx.env, home: ctx.userHome }), install: (ctx) => realInstall({ platform: ctx.platform, env: ctx.env }) } }), 7: projectFilesStep, 8: lockedStep, 9: notifyStep, 10: healthStep,
 };
 
 export const STEPS = Object.freeze(Object.keys(SETUP_TITLES).map(Number).sort((a, b) => a - b).map((n) => STEP_OF[n]()));
