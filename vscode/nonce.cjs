@@ -9,6 +9,8 @@ const crypto = require('node:crypto');
 // Two nonces compared without stopping at the first difference. Anything that isn't a non-empty string never matches.
 function sameNonce(given, latest) {
   if (typeof given !== 'string' || typeof latest !== 'string' || latest === '' || given.length !== latest.length) return false;
+  // Hex only, so the byte lengths match the string lengths and the comparison can't throw.
+  if (!/^[0-9a-f]+$/.test(given) || !/^[0-9a-f]+$/.test(latest)) return false;
   return crypto.timingSafeEqual(Buffer.from(given), Buffer.from(latest));
 }
 

@@ -7,6 +7,8 @@
 // a card, a card that is waiting now, with the hash the panel drew it with and (for an answer) one of the options
 // that card really offers. Everything sent to the desk is built here from the live card and the app's own identity;
 // nothing is taken from the page's text. The helper checks all of it again, and refuses what a panel may not decide.
+// `askToPair` is a second route to the desk: it is called by the add-on itself, never from a message, sends one fixed
+// request (to raise the Pair card for this app's key) and decides nothing.
 'use strict';
 
 const { sameNonce } = require('./nonce.cjs');
@@ -66,25 +68,25 @@ function build(act, message, { waiting, app }) {
 }
 
 function done(act, got) {
-  if (got?.update === true) return { ok: false, act, got, says: 'Update Wheelhouse: this panel and the helper speak different versions, so nothing was sent.' };
-  if (got?.down === true) return { ok: false, act, got, says: 'Wheelhouse\'s helper isn\'t running, so nothing was sent.' };
-  if (got?.ok === true) return { ok: true, act, got, ...(typeof got.says === 'string' && got.says !== '' ? { says: got.says } : {}) };
-  return { ok: false, act, got, says: text(got?.refused) || 'Wheelhouse didn\'t take that.' };
+  if (got?.update === true) return { ok: false, made: act, got, says: 'Update Wheelhouse: this panel and the helper speak different versions, so nothing was sent.' };
+  if (got?.down === true) return { ok: false, made: act, got, says: 'Wheelhouse\'s helper isn\'t running, so nothing was sent.' };
+  if (got?.ok === true) return { ok: true, made: act, got, ...(typeof got.says === 'string' && got.says !== '' ? { says: got.says } : {}) };
+  return { ok: false, made: act, got, says: text(got?.refused) || 'Wheelhouse didn\'t take that.' };
 }
 
-// press(message, { latestNonce, client, waiting, app }) -> Promise<{ ok, says?, act?, got? }>. Never throws.
+// press(message, { latestNonce, client, waiting, app }) -> Promise<{ ok, says?, made?, got? }>. Never throws.
 //   message      what the panel posted
 //   latestNonce  the nonce of the panel's latest draw
 //   client       the desk/1 client for this project (`act` signs with the add-on's key)
 //   waiting      the cards waiting now, as the desk's `waiting` view gives them ({ id, data })
 //   app          this add-on's identity, { id, name, publicKey }
 async function press(message, { latestNonce, client, waiting, app } = {}) {
-  if (!isRecord(message)) return dropped();
-  if (!sameNonce(own(message, 'nonce'), latestNonce)) return dropped();
-  const type = text(own(message, 'type'));
-  const act = ALIASES[type] ?? type;
-  if (!ACTS.includes(act) || typeof client?.act !== 'function') return dropped();
   try {
+    if (!isRecord(message)) return dropped();
+    if (!sameNonce(own(message, 'nonce'), latestNonce)) return dropped();
+    const type = text(own(message, 'type'));
+    const act = Object.hasOwn(ALIASES, type) ? ALIASES[type] : type;
+    if (!ACTS.includes(act) || typeof client?.act !== 'function') return dropped();
     const built = build(act, message, { waiting, app });
     if (built === null) return dropped();
     if (built.says !== undefined) return refused(built.says);

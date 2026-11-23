@@ -47,12 +47,41 @@ test('code that registers a language-model tool or a chat participant fails', ()
 });
 
 test('a call to act outside press.cjs fails', () => {
-  assert.match(withSource('vscode/extension.cjs', (s) => `${s}\ndesk.act('all-stop', {});\n`).join('\n'), /extension\.cjs: a call to the desk's act/);
+  assert.match(withSource('vscode/extension.cjs', (s) => `${s}\ndesk.act('all-stop', {});\n`).join('\n'), /extension\.cjs: the desk's act is reached/);
   assert.match(withSource('vscode/extension.cjs', (s) => `${s}\ndesk.answer('c', 'o', 'h');\n`).join('\n'), /answer/);
   assert.match(withSource('vscode/extension.cjs', (s) => `${s}\ndesk['act']('all-stop');\n`).join('\n'), /computed/);
   const add = built();
   add.sources['vscode/other.cjs'] = 'module.exports = (d) => d.act("x", {});';
-  assert.match(checkAddon(add).join('\n'), /other\.cjs: a call to the desk's act/);
+  assert.match(checkAddon(add).join('\n'), /other\.cjs: the desk's act is reached/);
+});
+
+test('every way to hold or call act or answer without calling it plainly fails', () => {
+  for (const line of [
+    'const { act } = d; act("x", {});',
+    'const { answer } = d;',
+    'const { act: go } = d;',
+    'const go = d.act;',
+    'd.act.call(d, "x", {});',
+    'Reflect.apply(d.act, d, ["x", {}]);',
+    'const go = d?.act;',
+    'const go = d.answer;',
+  ]) {
+    assert.notDeepEqual(withSource('vscode/extension.cjs', (s) => `${s}\n${line}\n`), [], line);
+  }
+});
+
+test('registerCommand and executeCommand fail unless called plainly with the one approved id', () => {
+  for (const line of [
+    'const r = vscode.commands.registerCommand;',
+    'vscode.commands[\'registerCommand\']("wheelhouse.openPanel", () => {});',
+    'const e = vscode.commands.executeCommand; e("workbench.action.chat.open");',
+    'const { executeCommand } = vscode.commands;',
+    'vscode.commands.executeCommand(name);',
+    'vscode.commands.registerCommand(id, () => {});',
+    'vscode.commands.registerTextEditorCommand("wheelhouse.openPanel", () => {});',
+  ]) {
+    assert.notDeepEqual(withSource('vscode/extension.cjs', (s) => `${s}\n${line}\n`), [], line);
+  }
 });
 
 test('a comment that mentions act does not fail', () => {

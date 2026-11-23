@@ -172,18 +172,20 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
   // latest draw's nonce, only for a known act, and only for a card that is still waiting as drawn. The helper's
   // own words are shown when it refuses.
   async function onPaneMessage(message) {
-    const project = projectNow();
-    if (project === null || app === null) return;
-    const out = await press(message, { latestNonce: nonces.latest(), client: deskFor(project), waiting: waitingCards(model.waiting), app });
-    if (out.act === 'pair' && out.got !== undefined) {
-      run.askedUp = true;
-      paired(out.got);
-      return;
+    try {
+      const project = projectNow();
+      if (project === null || app === null) return;
+      const out = await press(message, { latestNonce: nonces.latest(), client: deskFor(project), waiting: waitingCards(model.waiting), app });
+      if (out.made === 'pair' && out.got !== undefined) {
+        run.askedUp = true;
+        paired(out.got);
+        return;
+      }
+      if (typeof out.says === 'string' && out.says !== '') await vscode.window.showInformationMessage?.(out.says);
+      if (out.ok === true) await tick();
+    } catch {
+      // Nothing was sent that the helper didn't answer; the next look shows the panel as it is.
     }
-    if (typeof out.says === 'string' && out.says !== '') {
-      try { await vscode.window.showInformationMessage?.(out.says); } catch { /* The next look shows the panel as it is. */ }
-    }
-    if (out.ok === true) await tick();
   }
 
   const every = deps.every ?? ((fn, ms) => { const t = setInterval(fn, ms); t.unref?.(); return { dispose: () => clearInterval(t) }; });

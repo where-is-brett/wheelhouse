@@ -44,6 +44,44 @@ test('a press with no nonce, a wrong one, or a message that is not an object doe
   assert.deepEqual(acts, []);
 });
 
+test('a nonce with characters outside hex, even of the same length, does nothing and does not throw', async () => {
+  const { nonce, acts, ctx } = setup();
+  for (const bad of ['é'.repeat(nonce.length), `${nonce.slice(0, -1)}é`, nonce.toUpperCase(), `${nonce} `]) {
+    assert.equal((await press(msg(bad, PLAIN, { option: 'Blue' }), ctx())).ok, false);
+  }
+  const nonces = makeNonces();
+  nonces.renew();
+  assert.equal(nonces.matches('é'.repeat(64)), false);
+  assert.deepEqual(acts, []);
+});
+
+test('Not now posted as an answer option is not sent as an answer', async () => {
+  const { nonce, acts, ctx } = setup();
+  const withNotNow = { id: 'ask-x', data: { kind: 'question', question: 'X?', options: ['Yes', 'Not now'] } };
+  const got = await press(msg(nonce, withNotNow, { option: 'Not now' }), ctx({ waiting: [{ id: withNotNow.id, at: 'x', data: withNotNow.data }] }));
+  assert.equal(got.ok, false);
+  assert.deepEqual(acts, []);
+});
+
+test('Pair and Unpair with no app identity send nothing', async () => {
+  const { nonce, acts, ctx } = setup();
+  for (const type of ['pair', 'unpair']) assert.equal((await press({ type, nonce }, ctx({ app: null }))).ok, false);
+  assert.deepEqual(acts, []);
+});
+
+test('a type that is a name on the object prototype is not an act', async () => {
+  const { nonce, acts, ctx } = setup();
+  for (const type of ['toString', 'hasOwnProperty', 'valueOf']) assert.equal((await press({ type, nonce }, ctx())).ok, false);
+  assert.deepEqual(acts, []);
+});
+
+test('a client that throws on the way in still leaves press answering, not throwing', async () => {
+  const { nonce, ctx } = setup();
+  const hostile = { get act() { throw new Error('no'); } };
+  const got = await press(msg(nonce, PLAIN, { option: 'Blue' }), ctx({ client: hostile }));
+  assert.equal(got.ok, false);
+});
+
 test('a press with no draw yet (no latest nonce) does nothing', async () => {
   const { nonce, acts, desk } = setup();
   assert.equal((await press(msg(nonce, PLAIN, { option: 'Blue' }), { latestNonce: null, client: desk, waiting: OFFERED, app: APP })).ok, false);

@@ -108,13 +108,14 @@ function checkSource(file, source) {
   const add = (why) => problems.push(`${file}: ${why}`);
   const isPress = file === PRESS_FILE;
 
-  for (const name of REGISTERS) {
-    for (const span of callsOf(code, name)) {
-      if (name !== 'registerCommand' || plainFirst(code, span) !== OPEN_PANEL) add(`${name} may register only ${OPEN_PANEL}, as a plain string`);
+  // These names may appear only as the start of a call with the one approved plain string: never aliased, held in a
+  // variable, reached by a computed name or called with another id.
+  const approved = [...REGISTERS.map((name) => [name, name === 'registerCommand' ? OPEN_PANEL : null]), ['executeCommand', FOCUS_PANEL]];
+  for (const [name, id] of approved) {
+    const calls = id === null ? [] : callsOf(code, name).filter((span) => plainFirst(code, span) === id).map(([start]) => start);
+    for (const m of code.matchAll(word(name))) {
+      if (!calls.includes(m.index)) add(`${name} may appear only as a call with ${id ?? 'no id'}, as a plain string, never aliased or reached by a computed name`);
     }
-  }
-  for (const span of callsOf(code, 'executeCommand')) {
-    if (plainFirst(code, span) !== FOCUS_PANEL) add(`executeCommand may run only ${FOCUS_PANEL}, as a plain string`);
   }
   if (word('registerUriHandler').test(code)) add('registerUriHandler: the add-on takes no address from outside');
   for (const name of CHAT_REGISTERS) {
@@ -123,10 +124,16 @@ function checkSource(file, source) {
   if (word('eval').test(code)) add('eval: the add-on builds no code at run time');
   if (/(?<![\w$])(?:new\s+)?Function\s*\(/.test(code)) add('Function: the add-on builds no code at run time');
 
-  // Only press.cjs calls an act; no other file, and no computed way to one.
+  // Only press.cjs calls an act, and no other file even holds one: no `.act` or `.answer` property access (which
+  // covers calls, aliases, `.call` and `Reflect.apply`), no `{ act }` or `{ answer }` destructuring and no computed name.
   if (!isPress) {
-    for (const m of code.matchAll(/\.(?:act|answer)\s*\(/g)) add(`a call to the desk's ${m[0].replace(/\W/g, '')} is made outside ${PRESS_FILE}, where only the panel's messages reach it`);
-    for (const m of code.matchAll(/\[\s*['"`](?:act|answer)['"`]\s*\]/g)) add(`the desk's ${m[0]} is reached by a computed name`);
+    const reach = file === DESK_CLIENT_FILE ? [] : [
+      // `dataset.act` is the page's own button attribute (data-act), not the desk's.
+      [/(?<!dataset)\.\s*(?:act|answer)(?![\w$])/g, (m) => `the desk's ${m[0].replace(/[^\w]/g, '')} is reached outside ${PRESS_FILE}, where only the panel's messages reach it`],
+      [/\{[^{}]*(?<![\w$])(?:act|answer)(?![\w$])[^{}]*\}\s*=(?![=>])/g, () => `the desk's act or answer is taken out of an object outside ${PRESS_FILE}`],
+      [/\[\s*['"`](?:act|answer)['"`]\s*\]/g, (m) => `the desk's ${m[0]} is reached by a computed name`],
+    ];
+    for (const [pattern, say] of reach) for (const m of code.matchAll(pattern)) add(say(m));
     if (file !== DESK_CLIENT_FILE && /\/desk\/act/.test(code)) add('the desk\'s act route is named outside the desk client');
   } else {
     for (const m of code.matchAll(/\[\s*(?!['"`])[^\]]*\]\s*\(/g)) add(`a computed call (${m[0].trim()}) in ${PRESS_FILE}`);
