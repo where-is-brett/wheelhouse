@@ -154,7 +154,7 @@ test('a deciding answer from a paired app goes to panelApprove, not to a plain w
   const recorder = spy();
   const got = await runAct('answer', { card: 'c1', option: 'Approve', hash: HASH, commit: 'a'.repeat(40) }, { ok: true, records: [], client: 'vscode-panel', decides: true }, { source, recorder, now });
   assert.equal(got.ok, true, got.refused);
-  assert.deepEqual(recorder.calls, [['panelApprove', { card: 'c1', label: 'Approve', client: 'vscode-panel' }]]);
+  assert.deepEqual(recorder.calls, [['panelApprove', { card: 'c1', label: 'Approve', client: 'vscode-panel', hash: HASH }]]);
   assert.ok(got.changed.includes('approval'));
 }));
 
@@ -164,6 +164,14 @@ test('a deciding answer the helper refuses is refused, and nothing else is writt
   const got = await runAct('answer', { card: 'c1', option: 'Approve', hash: HASH }, { ok: true, records: [], client: 'vscode-panel', decides: true }, { source, recorder, now });
   assert.equal(got.ok, false);
   assert.match(got.refused, /real users/);
+  assert.deepEqual(recorder.calls, []);
+}));
+
+test('a deciding Send it back from a paired app is refused with honest words and reaches nothing', () => withKey(async () => {
+  const recorder = spy();
+  const got = await runAct('answer', { card: 'c1', option: 'Send it back', hash: HASH }, { ok: true, records: [], client: 'vscode-panel', decides: true }, { source: memory(), recorder, now });
+  assert.equal(got.ok, false);
+  assert.match(got.refused, /Send it back is decided in Wheelhouse's window/);
   assert.deepEqual(recorder.calls, []);
 }));
 

@@ -68,6 +68,9 @@ const CHAT_PROOFS = ['chat-click'];
 const CLIENT_PROOF = 'client';
 // The first add-on's proof: its approvals are never taken, so a record that still names it decides nothing.
 const RETIRED_PROOF = 'add-on';
+// Whether an approval's proof is one a pull request that touches guardrails never takes: a panel's click decides a plain merge only, and the
+// retired add-on's decides nothing. The broker reads the same rule.
+export const notForGuardrails = (entry) => [CLIENT_PROOF, RETIRED_PROOF].includes(entry?.data?.proof);
 // What a project with real users takes, the strongest first: the host's approval, the window.
 const REAL_USER_PROOFS = ['host', 'window'];
 const NEEDS_WORDS = { host: 'the director\'s approval on the code host', window: 'the director\'s click in Wheelhouse\'s window' };
@@ -85,12 +88,12 @@ function clickApproves(entry, headSha, proofs, realUsers) {
 }
 
 // Whether the approval given counts, and, when it doesn't on a project with real users, the proof it needs.
-function approvalOf(i, headSha) {
+function approvalOf(i, headSha, guardrails = false) {
   const proofs = Array.isArray(i.approvalProofs) ? i.approvalProofs : [SIGNED_PROOF];
   const realUsers = i.realUsers === true;
   // A signed approval counts where signed approvals do (today's rule), or where the proof it names is taken.
   const signedProof = i.approval?.data?.proof;
-  const refused = signedProof === RETIRED_PROOF || (realUsers && signedProof === CLIENT_PROOF);
+  const refused = signedProof === RETIRED_PROOF || (realUsers && signedProof === CLIENT_PROOF) || (guardrails && signedProof === CLIENT_PROOF);
   const signedTaken = !refused && (proofs.includes(SIGNED_PROOF) || (typeof signedProof === 'string' && proofs.includes(signedProof) && !(realUsers && CHAT_PROOFS.includes(signedProof))));
   const counts = headSha !== ''
     && ((signedTaken && approvalCounts(i.approval, headSha, i.enrolled)) || clickApproves(i.approval, headSha, proofs, realUsers));
@@ -226,7 +229,7 @@ export function gateDecision(input) {
   // answer to that card.
   const byRelease = isRelease(i.release);
   let approved = { counts: true };
-  if (needApproval) approved = byRelease ? { counts: i.release.approved === true } : approvalOf(i, headSha);
+  if (needApproval) approved = byRelease ? { counts: i.release.approved === true } : approvalOf(i, headSha, guardrails);
   const approvalMissing = !approved.counts;
   if (approvalMissing) reasons.push(byRelease ? releaseApprovalReason(i.release) : approvalReason(short, approved.needs));
 

@@ -259,3 +259,12 @@ test('a chat click that would sign on a card that is not waiting is refused', ()
   const got = checkEvidence('answer', { card: 'merge-12', option: 'Approve' }, { form: 'chat-click', proof: 'chat-click' }, context(enrolled, { views: { waiting: [] } }));
   assert.equal(got.ok, false);
 }));
+
+test('a paired app\'s Send it back on a merge approval is refused with honest words, and its Approve still passes', async () => {
+  const card = waitingOf({ ...MERGE, options: [...MERGE.options, 'Send it back'] });
+  const back = await paired('answer', answerOn(card, 'Send it back'), card.views);
+  assert.equal(back.ok, false);
+  assert.match(back.refused, /Send it back is decided in Wheelhouse's window/);
+  const yes = await paired('answer', answerOn(card, 'Approve'), card.views);
+  assert.deepEqual([yes.ok, yes.decides], [true, true], yes.refused);
+});

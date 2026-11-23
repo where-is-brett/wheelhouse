@@ -112,6 +112,7 @@ import { endedBy } from '../foreman/queue.js';
 import { packTreeDigest } from '../engine/pack-build.js';
 import { deskCore, checkVersion } from '../desk/core.js';
 import { isMergeApproval } from '../desk/evidence.js';
+import { namesCard } from '../desk/acts.js';
 import { fileSource } from '../desk/file-source.js';
 import { askToPair, pairClient, pairedClients, unpairClient } from '../desk/clients.js';
 import { DESK_VERSION, needsEvidence } from '../desk/vocabulary.js';
@@ -2483,14 +2484,21 @@ export async function startHelper({
   // as the window does for a click, naming proof `client` and the app that was clicked. Only where no real users are, and only for a plain
   // merge approval (isMergeApproval), read from the live card. It asks the code host for the head as the card's own line names it
   // (windowEarned), so a card whose head moved earns nothing. The caller holds the project's queue, as the other desk acts do.
-  async function doPanelApprove({ project, card, label, client }, ctx) {
+  async function doPanelApprove({ project, card, label, client, hash }, ctx) {
     if (launchedIn(project)) refuse('this project has real users, so approve it in Wheelhouse\'s window or on the code host');
     if (typeof card !== 'string' || card === '' || typeof client !== 'string' || client === '') refuse('the card and the app must be named');
     const found = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'card' && e.id === card);
     if (found.length !== 1) refuse('that card is not in this project\'s state');
     const [shown] = found;
     if (!isMergeApproval(shown.data)) refuse('the panel can\'t decide that card: answer it in Wheelhouse\'s window');
+    if (label !== 'Approve') refuse('the panel approves a merge only; Send it back is decided in Wheelhouse\'s window or by a typed reply');
+    // The card is the one shown, and still waits, as the window checks before it records.
+    if (!namesCard(hash, shown.data)) refuse('that card is not the one shown: its hash differs');
+    const { waiting } = await writeViews(project, { now });
+    if (!(waiting ?? []).some((w) => w.id === card)) refuse('that card no longer waits for a click');
     const got = await windowEarned(project, shown, label, ctx);
+    // All stop may have been set while the code host was asked.
+    if (stopped()) refuse('All stop is on');
     if (got === null || got.made.kind !== 'approval') refuse('that card changed since it was shown, so nothing was recorded');
     const event = makeEvent({ kind: 'approval', data: { ...got.made.data, proof: 'client', by: client }, now });
     const result = await writeEvent({ project, event, now });
@@ -6969,5 +6977,7 @@ export async function startHelper({
   safekeepingWatch.unref?.();
 
   // `engine.start` is the helper's own way to start a run (the dispatcher's): no route starts one.
-  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() }, safekeeping: { tick: () => safekeepingRound() }, watcher: { tick: () => watcherRound() }, move: { tick: () => moveRound() }, undo: { tick: () => undoRound() } };
+  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() }, safekeeping: { tick: () => safekeepingRound() }, watcher: { tick: () => watcherRound() },
+    // A test's way to the panel's approval without the desk's own checks before it, which refuse most of what it refuses again.
+    panel: { approve: async (asked, ctx) => { try { return await doPanelApprove(asked, ctx); } catch (error) { return { ok: false, refused: error instanceof Error ? error.message : 'the request failed' }; } } }, move: { tick: () => moveRound() }, undo: { tick: () => undoRound() } };
 }

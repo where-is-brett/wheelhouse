@@ -144,6 +144,8 @@ function clientMayAnswer(command, args, views) {
   if (signs && WINDOW_KINDS.includes(data?.kind)) return no('That step is confirmed in Wheelhouse\'s window, never from the panel');
   if (signs && data?.kind === 'approval' && !isMergeApproval(data)) return no('That approval is confirmed in Wheelhouse\'s window, never from the panel');
   if (signs && !isMergeApproval(data)) return no('The panel can\'t decide that card: answer it in Wheelhouse\'s window');
+  // The panel's one deciding click on a merge approval is Approve: Send it back is the window's or a typed reply.
+  if (signs && label !== 'Approve') return no('The panel approves a merge only; Send it back is decided in Wheelhouse\'s window or by a typed reply');
   return { ok: true, decides: signs };
 }
 

@@ -11,7 +11,7 @@ import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { setStop } from '../../../scripts/lib/stop.js';
+import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { eventPath, listEvents, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
@@ -266,3 +266,47 @@ test('a panel\'s Approve for a head that moved is refused, and so is one on a gu
   assert.match(guardrail.got.refused, /window/);
   assert.deepEqual(guardrail.approvals(), []);
 }, prAt(`def5678${'0'.repeat(33)}`)));
+
+// doPanelApprove's own checks, reached past the desk's (which refuse most of the same first) by the helper's test seam.
+async function withPanel(fn, adapter = prAt(HEAD)) {
+  const p = await project();
+  try {
+    await as(p.home, async () => {
+      const helper = await startHelper({ run: hostGuard, address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => adapter, envFor: async () => ({}), now: at(10) });
+      try { await fn(helper.panel.approve); } finally { await helper.close(); }
+    });
+  } finally { p.cleanup(); }
+}
+const asked = (card, extra = {}) => ({ project: P, card, label: 'Approve', client: 'vscode-panel', hash: hashOf(cardTextOf(mergeCard())), ...extra });
+
+test('the panel\'s approval refuses a card that is not in this project\'s state, not a merge approval, or not the one shown', () => withPanel(async (approve) => {
+  const absent = await approve(asked(crypto.randomUUID()));
+  assert.equal(absent.ok, false);
+  assert.match(absent.refused, /not in this project's state/);
+  const guardrail = makeEvent({ kind: 'card', data: mergeCard(4), now: at(1) });
+  keep(P, guardrail);
+  const notMerge = await approve(asked(guardrail.id));
+  assert.equal(notMerge.ok, false);
+  assert.match(notMerge.refused, /window/);
+  const merge = makeEvent({ kind: 'card', data: mergeCard(), now: at(1) });
+  keep(P, merge);
+  const stale = await approve(asked(merge.id, { hash: 'stale0000000' }));
+  assert.equal(stale.ok, false);
+  assert.match(stale.refused, /hash differs/);
+  const back = await approve(asked(merge.id, { label: 'Send it back' }));
+  assert.equal(back.ok, false);
+  assert.match(back.refused, /Send it back is decided in Wheelhouse's window/);
+  assert.deepEqual(listEvents(stateDir(P), { report: () => {} }).filter((e) => e.kind === 'approval' || e.kind === 'card-answer'), []);
+}));
+
+test('All stop set while the code host is asked stops the panel\'s approval before anything is written', async () => {
+  const stopping = { defaultBranch: async () => 'main', prState: async () => { setStop({ by: 'helper', now: at(10) }); return { headSha: HEAD, mergeable: 'mergeable', state: 'open' }; } };
+  await inProject(async (client) => {
+    try {
+      const { got, approvals } = await approveFrom(client, mergeCard());
+      assert.equal(got.ok, false);
+      assert.match(got.refused, /All stop is on/);
+      assert.deepEqual(approvals(), []);
+    } finally { liftStop(); }
+  }, stopping)();
+});
