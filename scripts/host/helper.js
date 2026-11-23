@@ -1444,12 +1444,18 @@ export async function startHelper({
       const made = await settingsCardNow(project);
       if (made === null) return pushed;
       const ours = () => listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'card' && e.data?.line === made.card.line && sameCard(e.data, made.card));
-      const { waiting } = await writeViews(project, { now });
-      let card = ours().find((e) => (waiting ?? []).some((w) => w.id === e.id));
-      if (!card) {
-        await engineWrite(project, 'card', made.card);
-        card = ours().at(-1);
-      }
+      // Found or written under the state's queue, as the engine's writes are, so two refusals at once raise one card.
+      let card = null;
+      await oneAtATime(`state:${project}`, async () => {
+        await ensureStateClone(project, engineCtx());
+        const { waiting } = await writeViews(project, { now });
+        card = ours().find((e) => (waiting ?? []).some((w) => w.id === e.id)) ?? null;
+        if (card === null) {
+          await writeEvent({ project, event: makeEvent({ kind: 'card', data: made.card, now }), now });
+          await freshViews(() => writeViews(project, { now }));
+          card = ours().at(-1) ?? null;
+        }
+      });
       return card ? { ...pushed, needs: 'window', card: card.id } : pushed;
     } catch {
       return pushed;
@@ -2659,7 +2665,7 @@ export async function startHelper({
       if (card !== LIFT_STOP_NAME && stopped() && servedUnderStop([still]).length === 0) return STOP_REFUSAL;
       // The settings are recorded as they read now, and only if they still read as the card named; the click is kept after, so one
       // that confirmed nothing leaves no record that it did.
-      if (still.made.data?.action === 'confirm-settings') await confirmComputerSettings({ file: settingsFile(), run, cwd: mirrorOf(project), expect: still.made.data.hash.slice(0, 12) });
+      if (still.made.data?.action === 'confirm-settings') await confirmComputerSettings({ file: settingsFile(), run, cwd: mirrorOf(project), expect: still.made.data.hash });
       const event = makeEvent({ kind: still.made.kind, data: { ...still.made.data, proof: 'window' }, now });
       const result = await writeEvent({ project, event, now });
       // A work's approved text is kept, and a proposed change installed, as a hook that signs the same click does.

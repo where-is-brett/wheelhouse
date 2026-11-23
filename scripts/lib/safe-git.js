@@ -627,8 +627,8 @@ function checkTrusted(file, folder, { now, old }) {
 
 // The director's confirmation of the computer's settings as they are now in `cwd`, the folder the push runs in (setup's step 3 calls
 // this, and so does the helper once the director has clicked the card that asks for it). It is merged into the record: the other
-// folders' entries and the old single fingerprint stand. The names of the settings are kept beside it, names only. With `expect` (twelve
-// characters of the fingerprint the director's card named), settings that read differently now are not confirmed.
+// folders' entries and the old single fingerprint stand. The names of the settings are kept beside it, names only. With `expect` (the
+// hash of the fingerprint the director's card named, in full or its first characters), settings that read differently now are not confirmed.
 export async function confirmComputerSettings({ file, run = realRun, gitPath = 'git', cwd, expect }) {
   const entries = await readSettingsFor({ run, gitPath, cwd });
   if (entries === null) throw new Error("Git's settings on this computer could not be read");
