@@ -185,6 +185,9 @@ function baselineFaults(questions, now, { figures = true } = {}) {
 
 export const DECIDED_LEAD = 'The director has already answered: ';
 export const DECISION_IN_CHAT = 'A decision is shown as a message in the chat, not through the question picker. Run `decision list`, then print each decision exactly as `decision show <n>` prints it, and ask nothing else for it. The director answers by typing.';
+// An agent whose hooks only read can neither sign a click in its picker nor record a typed reply, so the director answers a
+// decision in Wheelhouse's own window, which signs their click as a hook that signs does.
+export const DECISION_IN_WINDOW = 'A decision is shown as a message in the chat, not through the question picker. Run `decision list`, then print each decision exactly as `decision show <n>` prints it, and ask nothing else for it. Then run `decision confirm <n>`: it opens the decision in Wheelhouse\'s own window, where the director clicks their answer.';
 export { PANE_LEAD };
 
 // The cards the questions are, as `standing` matches them: for each question, { card } while it waits or
@@ -316,7 +319,7 @@ function swapQuestions(questions, matched) {
   return { questions: next, swapped, origins, changed };
 }
 
-function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop }) {
+function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop, writeVia }) {
   const asked = input.tool_input.questions;
   const questions = stop().on ? asked.map(wholeLift) : asked;
   const restored = questions.some((q, i) => q !== asked[i]);
@@ -339,8 +342,11 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
       ?? (setupOpen.length === 0 || sharesLine(q, open) ? null : setupSwapFor(q, setupOpen));
     return swap === null ? null : { card: swap.card, setup: swap.setup === true };
   });
-  // The picker is for a decision only while typed replies are off, so on it a decision is answered by typing instead.
-  if (typedRepliesOn(project) && matched.some((m) => m && !m.setup && isDecisionCard(m.card.data))) return { deny: DECISION_IN_CHAT };
+  // The picker is for a decision only while typed replies are off, so on it a decision is answered by typing instead. On an
+  // agent whose hooks only read, a click in its picker would close the decision unsigned, so it is answered in the window.
+  const decisionAsked = matched.some((m) => m && !m.setup && isDecisionCard(m.card.data));
+  if (decisionAsked && writeVia !== 'self') return { deny: DECISION_IN_WINDOW };
+  if (decisionAsked && typedRepliesOn(project)) return { deny: DECISION_IN_CHAT };
   // The Lift All stop question is composed on each visit and never recorded as a card, so the state can't say it is
   // decided: STOP being off is what says so.
   const lifts = questions.map(isLiftQuestion);
@@ -397,7 +403,8 @@ const trimmed = (text) => text.split(/\r\n|[\n\r]/).map((l) => l.trimEnd()).join
 export function checkShown(lastMessage, pending) {
   const waiting = Array.isArray(pending) ? pending : [];
   for (const block of blocksIn(lastMessage)) {
-    if (waiting.some((d) => trimmed(block) === trimmed(decisionText(d)))) continue;
+    // Either form `decision show` prints: the typed reply's, or the window's on an agent whose hooks only read.
+    if (waiting.some((d) => [decisionText(d), decisionText(d, { window: true })].some((text) => trimmed(block) === trimmed(text)))) continue;
     const named = Number(/^Decision needed \(([1-9][0-9]*)\)/.exec(block)?.[1]);
     const meant = waiting.find((d) => d.n === named) ?? (waiting.length === 1 ? waiting[0] : undefined);
     if (meant !== undefined) return { ok: false, reason: `Show decision ${meant.n} exactly as printed: run \`decision show ${meant.n}\` and copy its text word for word, with nothing added inside it.` };
@@ -488,6 +495,7 @@ function swapSetupCards(input, questions) {
 export async function decide(input, {
   projectOf: find = projectOf, dir, now = () => new Date(), outcomes, paneLive: live = paneLive, takeHere: take = takeHere,
   markOpen: open = markOpen, holdForPane = HOLD_FOR_PANE, role = sessionRole, stop = stopState, env = process.env, decisions,
+  writeVia = 'self',
 } = {}) {
   if (input.hook_event_name === 'Stop') return decideStop(input, { projectOf: find, dir, role, env, decisions });
   if (input.tool_name !== tools.ask) return undefined;
@@ -501,7 +509,7 @@ export async function decide(input, {
   let open_ = null;
   let checked_ = null;
   try {
-    const checked = oneCardCheck(input, find(input.cwd, { dir }).project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop });
+    const checked = oneCardCheck(input, find(input.cwd, { dir }).project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop, writeVia });
     if (checked.deny !== undefined) return answer.deny(checked.deny);
     open_ = checked.open;
     checked_ = checked;

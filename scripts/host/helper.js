@@ -33,7 +33,7 @@ import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { approvalCounts, checkCounts, decisionsOnly, gateDecision, reviewCounts, selfMergeDecision } from '../gate/conditions.js';
 import { visibleFromChange } from '../gate/visible.js';
 import { isManifest } from '../gate/dependencies.js';
-import { decisionsFrom } from '../decisions/pending.js';
+import { decisionsFrom, isDecisionCard } from '../decisions/pending.js';
 import { BATCH_BRANCH, batchChange } from '../decisions/batch.js';
 import { DECISIONS_DIR, dayOf } from '../decisions/record-file.js';
 import { writePublic } from '../decisions/visibility.js';
@@ -2465,8 +2465,11 @@ export async function startHelper({
     if (hashRefusal(hash) !== null) refuse(hashRefusal(hash));
     if (commit !== undefined && (typeof commit !== 'string' || !/^[0-9a-f]{40}$/.test(commit))) refuse('the commit must be written in full');
     const confirmed = CONFIRMED_STEPS.some((step) => card === step || card.startsWith(`${step}-`));
-    const asked = listEvents(stateDir(project), { report: () => {} }).find((e) => e.kind === 'card' && e.id === card)?.data?.question ?? card;
+    const shownCard = listEvents(stateDir(project), { report: () => {} }).find((e) => e.kind === 'card' && e.id === card);
+    const asked = shownCard?.data?.question ?? card;
     if (confirmed && signsOn(label, asked)) refuse('that step is confirmed outside the chat, never by a click in it');
+    // A decision answered by a click the chat can't sign would close it without the signed answer the crew acts on.
+    if (isDecisionCard(shownCard?.data)) refuse('a decision is answered in the window or by a typed reply, never by a click in the chat');
     const mayDecide = /^merge-/.test(card);
     if (signsOn(label, asked) && !mayDecide) refuse('a click in the chat can\'t decide that card');
     const data = { question: card, label, hash, ...(commit === undefined ? {} : { commit }), ...(text === undefined ? {} : { text }), proof, where: 'chat' };
@@ -2487,7 +2490,7 @@ export async function startHelper({
     // on an agent whose chat records no click (its playbook sends these cards to the window).
     'approve-work': 'approval', amend: 'approval',
     // An Ask allowance (ruling P8-8): Allow this time or Allow for this feature on a build question, and only there
-    // (allowanceQuestion); an answer to any other question is no step the window confirms.
+    // (allowanceQuestion). An answer to a decision is DECISION_STEP; an answer to any other question is no step the window confirms.
     answer: 'ask-allowance',
     // The other answer of a parked pull request's approval card, confirmed as its Approve is.
     'send-back': 'approval',
@@ -2511,11 +2514,17 @@ export async function startHelper({
   // The labels of the cards a project in git alone answers on its home. Its approval is a pull request's, as any.
   const HOME_ANSWERS = ['Keep it', 'Undo it', 'Undo'];
   const servedUnderStop = (deciding) => deciding.filter((d) => d.made.kind === 'action' && UNDER_STOP.includes(d.made.data?.action));
+  // The answer to a decision, on an agent whose hooks only read, so its chat can neither sign a click nor record a typed
+  // reply: the director picks the option here, and the signed answer wakes the crew as a click in a signing hook does.
+  const DECISION_STEP = 'decision-answer';
   // What /confirm's `card` is for the Lift STOP card, which has no id in the state.
   const LIFT_STOP_NAME = 'lift-stop';
-  function windowStep(project, made, shownAt) {
+  function windowStep(project, made, shownAt, shown) {
     if (made.kind === 'approval') return 'approval';
-    if (made.kind === 'action' && made.data?.action === 'answer') return allowanceQuestion(project, made.data, shownAt) === null ? null : ACTION_STEPS.answer;
+    if (made.kind === 'action' && made.data?.action === 'answer') {
+      if (allowanceQuestion(project, made.data, shownAt) !== null) return ACTION_STEPS.answer;
+      return isDecisionCard(shown) ? DECISION_STEP : null;
+    }
     if (made.kind === 'action') return Object.hasOwn(ACTION_STEPS, made.data?.action) ? ACTION_STEPS[made.data.action] : null;
     if (made.kind !== 'confirmation') return null;
     const target = listEvents(stateDir(project), { report: () => {} }).find((e) => e.id === made.data?.confirms);
@@ -2582,7 +2591,7 @@ export async function startHelper({
       return null;
     }
     if (!got?.made || got.profile) return null;
-    const step = windowStep(project, got.made, card.at);
+    const step = windowStep(project, got.made, card.at, card.data);
     return step === null ? null : { made: got.made, step, lift: got.lift === true };
   }
 
@@ -2651,7 +2660,7 @@ export async function startHelper({
       await doWrite({ project, kind: 'card-answer', data: { card, question: event.data.question, label: 'Confirm', where: 'panel' } }, ctx); // a plain answer, signed by nothing: only an option closes a card
       refuse('this computer\'s git settings are the confirmed ones again, so that card was closed');
     }
-    if (deciding.length === 0) refuse('that card is not one the window confirms: only Lift All stop, a guardrail change, Unattended, a runbook step, a CI push, an approval or an Ask allowance');
+    if (deciding.length === 0) refuse('that card is not one the window confirms: only Lift All stop, a guardrail change, Unattended, a runbook step, a CI push, an approval, an Ask allowance or a decision');
     return { event, deciding };
   }
 

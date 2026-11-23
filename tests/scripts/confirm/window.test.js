@@ -18,7 +18,9 @@ import { stopState, liftStop } from '../../../scripts/lib/stop.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
-import { dataHash, listEvents, makeEvent } from '../../../scripts/state/events.js';
+import { dataHash, eventPath, listEvents, makeEvent } from '../../../scripts/state/events.js';
+import { answerInput, composeCard } from '../../../scripts/cards/compose.js';
+import { decisionsFrom } from '../../../scripts/decisions/pending.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { approvalLine, confirmLine, runbookLine, LIFT_STOP, approveWorkLine, amendLine } from '../../../scripts/state/card-lines.js';
 import { briefHash } from '../../../scripts/feature/files.js';
@@ -316,6 +318,47 @@ test('a card not in state, or with another hash, opens no window', async () => {
     assert.match(decided.refused, /no longer waits/);
     assert.equal(c.windows.length, 0);
     assert.equal(c.events().length, before + 1, 'only the answer was written');
+  } finally {
+    await c.close();
+  }
+});
+
+// A question from the build kept in the project's record, as the helper keeps one the crew raised.
+function keepQuestion(project, data) {
+  const event = makeEvent({ kind: 'question', data, now: () => T0 });
+  const file = path.join(stateDir(project), eventPath(event));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(event));
+  return event;
+}
+
+test('a decision is answered in the window: the click is signed as the answer the crew acts on, and a click in the chat is refused', async () => {
+  const c = await computer(() => said('Weekly'));
+  try {
+    const asked = {
+      id: 'q-w-tide-1-1', work: 'w-tide-1', what: 'How often should the digest go out?', why: 'It changes what readers get.',
+      options: [{ label: 'Daily', says: 'One a day.' }, { label: 'Weekly', says: 'One a week.' }], recommendation: 'Weekly', level: 3,
+    };
+    const data = composeCard(answerInput(asked, 'w-tide-1')).card;
+    const shown = await c.card(data);
+    // Kept once the record is open, as the crew's question is before its card is raised.
+    const question = keepQuestion(PROJECT, asked);
+    assert.equal(decisionsFrom(c.events(), readEnrolled()).pending.length, 1, 'the card is a waiting decision');
+    // A click in the chat would close it unsigned, and nothing would wake the crew, so it is refused.
+    const clicked = await c.client.cards.chatClick({ project: PROJECT, card: shown.card, label: 'Weekly', hash: 'a'.repeat(64), proof: 'chat-click' });
+    assert.equal(clicked.ok, false);
+    assert.match(clicked.refused, /decision is answered in the window/);
+    const got = await c.client.confirm({ project: PROJECT, ...shown });
+    assert.equal(got.ok, true, JSON.stringify(got));
+    assert.deepEqual([got.recorded, got.choice, got.kind, got.step], [true, 'Weekly', 'action', 'decision-answer']);
+    assert.deepEqual(argvOf(c.windows.at(-1).args).slice(3), ['Daily', 'Weekly'], 'the window offers the decision\'s own options');
+    const record = c.events().find((e) => e.id === got.id);
+    assert.deepEqual(record.data, { action: 'answer', questionId: asked.id, questionHash: dataHash(question.data), question: data.question, label: 'Weekly', proof: 'window' });
+    assert.ok(verify(record, readEnrolled()), 'the helper signed it');
+    assert.equal(c.events().find((e) => e.kind === 'card-answer' && e.data.card === shown.card)?.data.where, 'panel');
+    const after = decisionsFrom(c.events(), readEnrolled());
+    assert.equal(after.pending.length, 0);
+    assert.deepEqual([after.answered[0].label, after.answered[0].where], ['Weekly', 'panel']);
   } finally {
     await c.close();
   }

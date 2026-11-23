@@ -54,6 +54,11 @@ For a card with one of them, run \`confirm <card id>\` instead (the id is in \`v
 that the card is open in Wheelhouse's own window for the director to click. The window records the click and the card stops
 waiting. Lifting STOP, changing a guardrail, unattended running, a runbook step, a CI push and an allowance go the same way.
 
+A decision is never asked with ask_user, and a reply typed here is not recorded. Print it exactly as \`decision show <n>\`
+prints it, then run \`decision confirm <n>\`: it opens the decision in Wheelhouse's own window, and the director's click there
+is their answer, which the crew acts on. When the director closes the window to say "why <n>", run \`why decision <n> <their
+words>\`, relay its answer, then run \`decision confirm <n>\` again.
+
 A click on a card with no signing option is the director's answer: act on it, and say what you did.
 `;
 

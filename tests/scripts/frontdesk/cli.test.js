@@ -3164,6 +3164,46 @@ test('a configuration that still names another agent has its cards asked in the 
   });
 });
 
+test('where the agent\'s hooks only read, a decision says to reply in Wheelhouse\'s own window and decision confirm opens it there', async () => {
+  await inHome(async () => {
+    const folder = agentProject('copilot');
+    const helper = fakeHelper({ events: [...typedOn(), questionEvent()] });
+    const asked = [];
+    helper.client.confirm = async (body) => { asked.push(body); return { ok: true, step: 'decision-answer', label: 'Tab' }; };
+    const opts = { cwd: folder, env: {} };
+    assert.equal((await run(helper, ['cards'], undefined, opts)).code, 0);
+    const shown = await run(helper, ['decision', 'show', '1'], undefined, opts);
+    assert.equal(shown.code, 0, shown.err);
+    assert.match(shown.out, /Reply in Wheelhouse's own window, which opens for decision 1: click the option you choose there\./);
+    assert.doesNotMatch(shown.out, /Reply 1 A, 1 B/);
+    const card = helper.held.find((e) => e.kind === 'card');
+    const opened = await run(helper, ['decision', 'confirm', '1'], undefined, opts);
+    assert.equal(opened.code, 0, opened.err);
+    assert.deepEqual(asked, [{ cwd: folder, card: card.id, hash: dataHash(card.data) }]);
+    assert.deepEqual(opened.json, { ok: true, step: 'decision-answer', label: 'Tab' });
+    const none = await run(helper, ['decision', 'confirm', '2'], undefined, opts);
+    assert.equal(none.code, 1);
+    assert.match(none.err, /Decision 2 isn't waiting/);
+  });
+});
+
+test('where the agent\'s hooks sign, a decision is answered by a typed reply and decision confirm opens no window', async () => {
+  await inHome(async () => {
+    const folder = agentProject('claude-code');
+    const helper = fakeHelper({ events: [...typedOn(), questionEvent()] });
+    helper.client.confirm = async () => { throw new Error('no window is opened here'); };
+    const opts = { cwd: folder, env: {} };
+    assert.equal((await run(helper, ['cards'], undefined, opts)).code, 0);
+    const shown = await run(helper, ['decision', 'show', '1'], undefined, opts);
+    assert.equal(shown.code, 0, shown.err);
+    assert.doesNotMatch(shown.out, /own window/);
+    assert.match(shown.out, /Reply 1 A, 1 B/);
+    const refused = await run(helper, ['decision', 'confirm', '1'], undefined, opts);
+    assert.equal(refused.code, 1);
+    assert.equal(refused.err, 'Here the director answers a decision by typing their reply in the chat, so no window is opened.\n');
+  });
+});
+
 test('--here needs a Claude Code session id', async () => {
   await inHome(async () => {
     const folder = agentProject('claude-code');

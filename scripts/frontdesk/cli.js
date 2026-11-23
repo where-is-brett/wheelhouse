@@ -11,7 +11,9 @@
 //                   asked in the chat once
 //   decision list   the decisions waiting for the director, by number and question, after making a card of each open question from the
 //                   build that has none; decision show <n> prints decision n as the chat message it is, to copy word for word. A decision
-//                   is shown in the chat and answered by the director's typed reply, never through the question picker
+//                   is shown in the chat and answered by the director's typed reply, never through the question picker. On an agent whose
+//                   hooks only read, which records no typed reply, decision confirm <n> opens decision n in the helper's own window, where
+//                   the director's click is signed as the answer, and decision show says so in its reply line
 //   card            composes one card from the composer's input and records it ({ question, id });
 //                   with `revises`, the id of a card of its kind waiting now or closed by a later
 //                   head, and `changed`, one line saying what changed, it is a revised card that
@@ -131,7 +133,7 @@ import { deskClient } from '../desk/client.js';
 export { surveyLines, workLines };
 import { SUGGEST, WHY, suggestedAt } from '../lib/calm-words.js';
 import { keep, taken } from '../hooks/pending.js';
-import { projectOf } from '../hooks/kit.js';
+import { projectOf, writeVia } from '../hooks/kit.js';
 import { agentInFolder } from '../agents/names.js';
 import { computerId } from '../lib/paths.js';
 import { noteProblem } from '../lib/session-note.js';
@@ -244,6 +246,9 @@ async function viewsOf(client, cwd, { cards = false, answers = false, since, ses
 function agentHere(cwd) {
   try { return agentInFolder(cwd, { computerId: computerId() }) ?? 'claude-code'; } catch { return 'claude-code'; }
 }
+
+// Whether the agent in `cwd` has hooks that only read, so its chat records no typed reply and a decision is answered in the window.
+const answersInWindow = (cwd) => writeVia(agentHere(cwd)) !== 'self';
 
 async function ownSettings(client, cwd) {
   try {
@@ -656,11 +661,24 @@ export async function decisionList({ client, cwd, now }) {
 }
 
 // One decision's message, to print word for word. Refused when none waits by that number.
-export async function decisionShow({ client, cwd, n }) {
+// On an agent whose hooks only read, its reply line says the director answers in the window.
+async function waitingDecision(client, cwd, n) {
   const { pending } = await decisionsOf(client, cwd);
   const found = pending.find((d) => d.n === n);
   if (found === undefined) throw new CliError(`Decision ${n} isn't waiting${pending.length === 0 ? '' : `: ${pending.map((d) => d.n).join(', ')} are`}. Run decision list.`);
-  return decisionText(found);
+  return found;
+}
+
+export async function decisionShow({ client, cwd, n }) {
+  return decisionText(await waitingDecision(client, cwd, n), { window: answersInWindow(cwd) });
+}
+
+// Decision n opened in the helper's own window, for an agent whose hooks only read: the director's click there is signed as
+// their answer, as a click in a hook that signs is. Where the chat records a typed reply, it is answered there instead.
+export async function decisionConfirm({ client, cwd, n }) {
+  if (!answersInWindow(cwd)) throw new CliError('Here the director answers a decision by typing their reply in the chat, so no window is opened.');
+  const found = await waitingDecision(client, cwd, n);
+  return confirm({ client, cwd, card: found.id });
 }
 
 // The director's Show them: the cards held back are named as pulled, which spends none of the day's budget, then this
@@ -1636,7 +1654,8 @@ export async function main(argv, {
   try {
     const [command, ...rest] = argv;
     if (!COMMANDS.includes(command)) throw new CliError(`Commands: ${COMMANDS.join(', ')}`);
-    const helper = client ?? helperClient(command === 'confirm' ? { timeout: CONFIRM_WAIT_MS } : {});
+    const windowed = command === 'confirm' || (command === 'decision' && rest[0] === 'confirm');
+    const helper = client ?? helperClient(windowed ? { timeout: CONFIRM_WAIT_MS } : {});
     const refused = await seatRefusal({ command, env, cwd, client: helper });
     if (refused !== null) throw new CliError(refused);
     const here = path.resolve(cwd);
@@ -1672,9 +1691,10 @@ export async function main(argv, {
       only(left, 0, 'cards takes no arguments');
       json(await cards({ client: helper, cwd: here, now, onAsked, session: env.CLAUDE_CODE_SESSION_ID }));
     } else if (command === 'decision') {
-      const usage = 'Give decision list, or decision show <n> with the decision\'s number';
+      const usage = 'Give decision list, or decision show <n> or decision confirm <n> with the decision\'s number';
       if (rest[0] === 'list' && rest.length === 1) lines(await decisionList({ client: helper, cwd: here, now }));
       else if (rest[0] === 'show' && rest.length === 2 && /^[1-9][0-9]{0,2}$/.test(rest[1])) out(`${await decisionShow({ client: helper, cwd: here, n: Number(rest[1]) })}\n`);
+      else if (rest[0] === 'confirm' && rest.length === 2 && /^[1-9][0-9]{0,2}$/.test(rest[1])) json(await decisionConfirm({ client: helper, cwd: here, n: Number(rest[1]) }));
       else throw new CliError(usage);
     } else if (command === 'alerts') {
       lines(await alerts({ client: helper, cwd: here, args: rest }));
