@@ -95,6 +95,41 @@ function approvedSection() {
     + 'and where they leave something out, the document says it. Never make up what it already decides; where it and this brief disagree, ask.\n\n';
 }
 
+// A session that runs Wheelhouse's commands by launcher (`wh-feature`, scripts/lib/launchers.js) has a shell that allows that
+// command and the project's build commands, and no git. Its brief names the launcher for the feature command and says what the
+// command does in place of each git step. Each pair is [the template's words, the launcher's]; a template that no longer holds
+// the words throws, so a change to it is seen here.
+const LAUNCHER = 'wh-feature';
+const LAUNCHER_WORDS = Object.freeze([
+  ['to see what your branch adds, run `git diff {{baseRef}}...HEAD`. To bring in newer work, run `git fetch origin` and then rebase or merge `{{baseRef}}`; `pull` brings in only your own branch.',
+    'to see what your branch adds, run `{{cli}} diff <n>`, which writes it to `{{featureDir}}/review/<n>.diff` for you to read with your file tools. To bring in newer work, run `{{cli}} pull --default`, which merges `{{baseRef}}` into your branch; `pull` alone brings in only your own branch.'],
+  ['- **Conflicts.**',
+    "- **You run no git.** Your shell allows Wheelhouse's own command `{{cli}}` and the project's build commands, and nothing else. `{{cli}} commit` commits everything you have changed (git's hooks off, a message Wheelhouse writes, no co-author line) and prints the head's full hash; `push`, `pull`, `open-pr` and `diff` commit first. `{{cli}} head` prints the head's full hash. Run one command per call, never chained with `;`, `&&` or a pipe. Give each argument as plain letters, digits and `. , : / = + @ -`, or in single quotes (never double quotes) holding none of `' \" % ^ & | < > $ ! ; ( ) { }` or a backtick.\n- **Conflicts.**"],
+  ['write the diff under review to `{{featureDir}}/review/<n>.diff` (`<n>` counting up from 1), and give the Lookout that path, the full commit hash of the head it reviews,',
+    'write the diff under review with `{{cli}} diff <n>` (`<n>` counting up from 1; it writes `{{featureDir}}/review/<n>.diff` and prints the full hash of the head it holds), and give the Lookout that path, that hash,'],
+  ["in `.wheelhouse/tmp/` in this worktree (make the folder if it isn't there).", "in `.wheelhouse/tmp/` in this worktree if the folder is there (your file tools can't make a folder)."],
+  ["except local git. Local git (`git status`, `git add`, `git commit` and the rest) doesn't go through it, and nor does a command that fetches new code: each is asked for like any build command.",
+    "except `{{cli}}`, which doesn't go through it. A command that fetches new code doesn't either: it is asked for like any build command."],
+  ['It does not commit it: commit that file with your next commit on your branch, so it merges with your work, and push it with the rest.',
+    'It does not commit it: your next `{{cli}} commit`, `push` or `open-pr` commits it with your work.'],
+  ['rework to that answer on your branch, commit and push it, then run', 'rework to that answer on your branch, commit it with `{{cli}} commit`, push it, then run'],
+  ["remove the markers, `git add` them, run `git commit --no-edit`, run the tests, then push.", 'remove the markers, run `{{cli}} commit`, run the tests, then push.'],
+  ['=yes|no|partly', '=<yes, no or partly>'],
+  ['--because "<why, in the director\'s terms>"', '--because "<why, in plain product terms>"'],
+]);
+
+function launcherWords(text) {
+  let out = text;
+  for (const [from, to] of LAUNCHER_WORDS) {
+    if (!out.includes(from)) throw new Error(`The brief's template no longer holds the words launcherWords rewrites: ${from.slice(0, 60)}`);
+    out = out.replaceAll(from, to);
+  }
+  return out.replaceAll('…', '...');
+}
+
+// The launcher's commands in `text` with each double-quoted argument single-quoted, the only quoting its grammar allows.
+const singleQuoted = (text) => text.replace(new RegExp(`${LAUNCHER}\\b[^\`\\n]*`, 'g'), (command) => command.replace(/"([^"'\n]*)"/g, "'$1'"));
+
 const numbered = (items) => (items.length === 0 ? 'Nothing is listed.' : items.map((item, i) => `${i + 1}. ${item}`).join('\n'));
 
 function appetiteLine({ sessions, tokens }) {
@@ -104,25 +139,27 @@ function appetiteLine({ sessions, tokens }) {
 // The brief's text for `fields`: its JSON block, then the override, the goal and
 // done contract, the appetite, the rulings, the lane's loop, how to ask, how to
 // finish and the subagent roles. `pluginRoot` is put into the commands the brief
-// names, so the session can run them as written. `windowsBuilds` is null off
+// names, so the session can run them as written. With `launchers`, a session that runs Wheelhouse's commands by launcher and
+// runs no git: the commands are `wh-feature` and each git step is a command of its own. `windowsBuilds` is null off
 // Windows, else `{ level, guardedCommand, shape }`: at Ask the brief says to ask for every build
 // command at once, at Unattended to ask the same way if one is refused, at Guarded to run each
 // through `guardedCommand`, and at watcher Shape 2 (`shape` 2) to ask once for the director to
 // click Allow in the session itself.
-export function renderBrief({ fields, pluginRoot, windowsBuilds = null } = {}) {
+export function renderBrief({ fields, pluginRoot, windowsBuilds = null, launchers = false } = {}) {
   if (typeof pluginRoot !== 'string' || pluginRoot === '' || /["\r\n\0]/.test(pluginRoot)) {
     throw new Error("The plugin root can't be put into the brief");
   }
   const block = `\`\`\`json\n${JSON.stringify(fields, null, 2)}\n\`\`\`\n`;
   const { fields: f } = parseBrief(block);
 
-  const cli = `node "${path.join(pluginRoot, 'scripts', 'feature', 'cli.js')}"`;
+  const cli = launchers === true ? LAUNCHER : `node "${path.join(pluginRoot, 'scripts', 'feature', 'cli.js')}"`;
   const shared = { baseRef: BASE_REF, cli, featureDir: FEATURE_DIR, fixRounds: String(FIX_ROUNDS), reportWords: String(REPORT_WORDS), work: f.work, lane: f.lane };
   const laneTemplate = template('lanes', `${f.lane}.md`);
   const laneText = fill(laneTemplate, shared).trim();
 
   const level = buildsLevelOf(windowsBuilds);
-  const text = fill(withBuildsBlock(template('brief.md'), level), {
+  const wording = launchers === true ? launcherWords : (words) => words;
+  const text = fill(withBuildsBlock(wording(template('brief.md')), level), {
     ...shared,
     ...(level === 'guarded' ? { guardedCommand: windowsBuilds.guardedCommand } : {}),
     ...(Object.hasOwn(ASK_WHEN, level) ? { buildsAskWhen: ASK_WHEN[level] } : {}),
@@ -141,7 +178,7 @@ export function renderBrief({ fields, pluginRoot, windowsBuilds = null } = {}) {
     laneText,
     models: roleLines(),
   });
-  return `${block}\n${text}`;
+  return `${block}\n${launchers === true ? singleQuoted(text) : text}`;
 }
 
 // --- Amending ---

@@ -1,4 +1,4 @@
-// tests/scripts/agents/copilot/commit-work.test.js
+// tests/scripts/feature/commit-work.test.js
 // What Wheelhouse commits for a Copilot feature session once its run has ended: the whole worktree but the feature's own
 // folder, with git's hooks off, no co-author line, and the hash read from the commit it made.
 import test from 'node:test';
@@ -7,8 +7,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { commitWork } from '../../../../scripts/agents/copilot/commit-work.js';
-import { recordPlan } from '../../../../scripts/feature/cli.js';
+import { commitWork } from '../../../scripts/feature/commit-work.js';
+import { recordPlan } from '../../../scripts/feature/cli.js';
 
 const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1' };
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, env: GIT_ENV, encoding: 'utf8' }).trim();

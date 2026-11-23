@@ -106,8 +106,9 @@ test('the home is byte-stable: LF only, sorted, the same on every build', () => 
   }
 });
 
-test('the home holds the four agents, the foreman\'s rule and the manifest, and no skill, hook or instruction', () => {
-  assert.deepEqual([...home.keys()], ['MANIFEST.txt', ...AGENTS.map((a) => `agents/wheelhouse-${a}.agent.md`), 'rules/wheelhouse-foreman.json']);
+test('the home holds the four agents, the builder\'s and the foreman\'s rule and the manifest, and no skill, hook or instruction', () => {
+  assert.deepEqual([...home.keys()], ['MANIFEST.txt', ...AGENTS.map((a) => `agents/wheelhouse-${a}.agent.md`), 'rules/wheelhouse-builder.json', 'rules/wheelhouse-foreman.json']);
+  assert.deepEqual(JSON.parse(home.get('rules/wheelhouse-builder.json')), { agent: 'wheelhouse-builder', shell: ['bash', 'powershell'], allow: ['wh-feature:*'] });
 });
 
 test('the foreman gets two commands: its agent holds the shell tools and nothing else, and its rule names wake and act', () => {

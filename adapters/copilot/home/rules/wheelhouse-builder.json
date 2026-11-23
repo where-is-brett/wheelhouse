@@ -1,0 +1,10 @@
+{
+  "agent": "wheelhouse-builder",
+  "shell": [
+    "bash",
+    "powershell"
+  ],
+  "allow": [
+    "wh-feature:*"
+  ]
+}

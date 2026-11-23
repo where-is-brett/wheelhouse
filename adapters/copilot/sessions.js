@@ -24,11 +24,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIVITY_DAYS, BACKGROUND_SESSIONS_READY, LEVELS } from '../../scripts/agents/copilot/numbers.js';
 import { activitySummary, finalAnswer, modelOfRun, monthRefusedIn, sessionIdOf, sessionUsage, eventsOf } from '../../scripts/agents/copilot/run-output.js';
-import { commitWork } from '../../scripts/agents/copilot/commit-work.js';
+import { commitWork } from '../../scripts/feature/commit-work.js';
 import { recordRefusal, recordRun } from '../../scripts/agents/copilot/usage.js';
 import { checkVersions, noSubsetRunner, readVersions } from '../../scripts/agents/copilot/versions.js';
 import { PLUGIN_ROOT, foremanCommands } from '../../scripts/foreman/tools.js';
-import { BIN_DIR, LAUNCHER_SESSION, pathWithLaunchers } from '../../scripts/lib/launchers.js';
+import { BIN_DIR, LAUNCHER_SESSION, launcherOf, pathWithLaunchers } from '../../scripts/lib/launchers.js';
 import { DEFAULT_BUILD_COMMANDS, isModelName } from '../../scripts/gate/guardrails.js';
 import { quoteForCmd, resolveCommand } from '../../scripts/lib/claude.js';
 import { commandPath } from '../../scripts/lib/command-path.js';
@@ -238,6 +238,27 @@ export function foremanAllow({ pluginRoot = PLUGIN_ROOT, platform = process.plat
   return [`shell(${wake}:*)`, `shell(${act}:*)`];
 }
 
+// The one rule a feature session's shell has besides the project's build commands: its feature command's launcher, from the
+// record in adapters/copilot/home/rules/wheelhouse-builder.json (scripts/agents/copilot/home.js builds it). The launcher runs
+// a fixed list of subcommands and never a command or a path (scripts/feature/cli.js), so it is Wheelhouse's own, as the
+// foreman's two are, and not one of the commands the person allowed. A record that can't be read, or holds anything else,
+// refuses the start.
+export const BUILDER_RULES_FILE = path.join(HOME, 'rules', 'wheelhouse-builder.json');
+const FEATURE_RULE = 'wh-feature:*';
+export function featureAllow({ rulesFile = BUILDER_RULES_FILE } = {}) {
+  let record;
+  try {
+    record = JSON.parse(fs.readFileSync(rulesFile, 'utf8'));
+  } catch {
+    throw new Error("The feature session's rule record can't be read, so no feature session is started");
+  }
+  if (record === null || typeof record !== 'object' || record.agent !== 'wheelhouse-builder' || !Array.isArray(record.allow) || record.allow.length !== 1 || record.allow[0] !== FEATURE_RULE) {
+    throw new Error("The feature session's rule record allows more or less than its feature command, so no feature session is started");
+  }
+  if (launcherOf('scripts/feature/cli.js') !== FEATURE_RULE.slice(0, -2)) throw new Error("The feature session's rule names a command that has no launcher, so no feature session is started");
+  return [`shell(${FEATURE_RULE})`];
+}
+
 // A fresh foreman for one wake, run in the project's main checkout, with the two commands its record allows and no write.
 // Copilot runs the watcher's first shape only, so there is no long foreman session, and asking for one refuses. The
 // waker's `tools` (Claude Code's allow list) and the column's model, effort and fallback are ignored: the rule is the
@@ -251,8 +272,8 @@ function buildForemanCall({ config, project, prompt, plan, env, platform = proce
 // ignored. levelAllowed says which level runs, and only that level's rules are made (levelRules doesn't check the level
 // itself): given no level, or one that can't be read, it is Ask with no grants (failing closed). The grants' commands count
 // only while the configuration still lists them. `domains` are the project's web domains, its configuration's when not
-// given. Throws when the worktree isn't a whole path.
-export function featureRules({ config, level, grants, guardedCommand = null, worktree, domains, realUsers, keysUnreadable, hostApproval, unattendedConfirmed, platform = process.platform }) {
+// given. Every level also allows the feature command's launcher (featureAllow). Throws when the worktree isn't a whole path.
+export function featureRules({ config, level, grants, guardedCommand = null, worktree, domains, realUsers, keysUnreadable, hostApproval, unattendedConfirmed, platform = process.platform, rulesFile = BUILDER_RULES_FILE }) {
   const known = LEVELS.includes(level);
   const allowed = levelAllowed({ level: known ? level : 'ask', realUsers, keysUnreadable, hostApproval, unattendedConfirmed, platform });
   const commands = config?.buildCommands ?? DEFAULT_BUILD_COMMANDS;
@@ -260,7 +281,7 @@ export function featureRules({ config, level, grants, guardedCommand = null, wor
     .filter((g) => g !== null && typeof g === 'object' && Array.isArray(g.commands))
     .map((g) => ({ ...g, commands: g.commands.filter((c) => isConfiguredBuildCommand(c, commands)) }));
   const rules = levelRules({ level: allowed.level, grants: given, runner: guardedCommand, worktree, domains: domains ?? config?.webDomains ?? [], platform });
-  return { level: allowed.level, rules };
+  return { level: allowed.level, rules: { ...rules, allow: [...new Set([...rules.allow, ...featureAllow({ rulesFile })])] } };
 }
 
 // The inputs a feature call reads for its level, which never reach sessionCall.
@@ -402,7 +423,7 @@ function reportedCommit(text) {
 }
 
 // What a feature session's finished run leaves in its worktree, committed by Wheelhouse once the run has ended: at Ask a
-// session's shell runs only the build commands allowed, so it never runs git (commit-work.js). Returns `{ records, commit?,
+// session's shell runs only the build commands allowed, so it never runs git (scripts/feature/commit-work.js). Returns `{ records, commit?,
 // head? }`; `records` are notes for the board, raised by the waker, when the commit failed or the report names a commit that
 // isn't the worktree's HEAD. A foreman's run, a run with no result and a worktree not given leave nothing to commit. `commit`
 // is for tests.

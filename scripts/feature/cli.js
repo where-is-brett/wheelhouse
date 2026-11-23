@@ -15,13 +15,19 @@
 //   pull     brings the host's copy of the worktree's branch into it, through the helper (when
 //            the host's has moved on, as when the gate brought it up to date); `pull --default` brings in the
 //            default branch instead, which the session can fetch no other way
+//   commit   commits everything the session changed (hooks off, a fixed message, no co-author line), or finishes a merge
+//            whose clashes are resolved; prints the head's full hash
+//   head     prints the head's full hash
+//   diff <n> writes what the branch adds to the default branch to .wheelhouse/feature/review/<n>.diff, for a Lookout, and
+//            prints the head it holds
 //   open-pr  pushes the branch, opens the feature's pull request, whose body is the proof note (scripts/proof/note.js), and
 //            keeps its number with its plan
 // Each command's core is an exported function that takes the helper's client and
 // the worktree, so tests use a fake helper. Files are read and written only in the
 // feature folder, through the safe readers and writers of status.js; the head
-// branch is read from the .git files. Only `pull` runs git: the session's own, in its
-// worktree, inside the sandbox, to bring in the commits the helper hands back.
+// branch is read from the .git files. Only `pull`, `commit`, `head` and `diff` (and a push or open-pr of a session run by
+// launcher, which commits first) run git: the session's own, in its worktree, inside the sandbox, fenced as safe-git.js
+// does. None takes a command or a path to run: the arguments are a number or a flag from a fixed list.
 // These commands run inside the project's sandbox, which cannot read ~/.wheelhouse
 // (ruling R150): nothing here reads it. Each helper request carries the worktree's
 // folder as `cwd`, and the helper places the project from it; STOP, too, comes
@@ -43,6 +49,8 @@ import { reviewStep, severityCounts } from '../lib/review-verdict.js';
 import { dataModelPaths, readConfig } from '../gate/guardrails.js';
 import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, isConfiguredBuildCommand } from '../protection/windows-builds.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { LAUNCHED } from '../lib/launchers.js';
+import { commitWork } from './commit-work.js';
 import { appendCall, readLog } from '../decisions/log.js';
 import { touchedPages } from '../engine/preview.js';
 import { proofNote } from '../proof/note.js';
@@ -638,14 +646,88 @@ export function recordPlan({ worktree, argv }) {
 // Pushes the worktree's branch to the host through the helper, which places the project from
 // the worktree's folder and applies its push rules (never the default branch, never a force).
 // Returns `{ branch }`.
-export async function push({ client, worktree }) {
+export async function push({ client, worktree, commitFirst = false }) {
   const branch = branchOf(worktree);
   if (branch === null) throw new CliError("This worktree isn't on a branch, so there is nothing to push");
+  if (commitFirst) await commitPending(worktree, 'Nothing was pushed');
   const pushed = await client.push({ cwd: worktree, dir: worktree, refspec: branch });
   if (pushed?.ok === true) return { branch };
   if (isPlainObject(pushed?.ciPush)) throw new CliError(CARD_SENT);
   if (pushed?.rejected === 'non-fast-forward') throw new CliError(`The branch was not pushed: ${MOVED_ON}`);
   throw new CliError(`The branch was not pushed: ${pushed?.refused ?? 'the host helper gave no answer'}`);
+}
+
+// --- commit, head and diff ---
+// A session run by launcher (WHEELHOUSE_LAUNCHED) may not run git: its shell allows Wheelhouse's own command alone. So
+// Wheelhouse commits for it (commitWork: hooks off, a fixed message, no co-author line), and reads what it needs of git here.
+
+const launchedBy = (env = process.env) => env[LAUNCHED] === '1';
+const lstatOf = (file) => fs.lstatSync(file, { throwIfNoEntry: false }) ?? null;
+
+// The feature's name from its brief, for a commit's message.
+function workOf(worktree) {
+  return readBriefOrSay(worktree).work;
+}
+
+// Commits what the session left, before a push or a diff. A folder that is no git working tree (a test's) has nothing to
+// commit; any other failure stops the command, saying `said` first. Returns commitWork's answer.
+async function commitPending(worktree, said) {
+  const made = await commitWork({ worktree, work: workOf(worktree) });
+  if (typeof made.failed === 'string' && made.notGit !== true) throw new CliError(`${said}: the work in this worktree could not be committed (${made.failed})`);
+  return made;
+}
+
+// Commits everything the session changed, or finishes a merge whose clashes it has resolved. Returns `{ head, commit?, skipped? }`.
+export async function commit({ worktree }) {
+  const made = await commitWork({ worktree, work: workOf(worktree), finishMerge: true });
+  if (typeof made.failed === 'string') throw new CliError(`Nothing was committed: ${made.failed}`);
+  return made;
+}
+
+const fencedGit = (worktree) => {
+  const fenced = safeGit({ cwd: worktree, reach: 'local', look: 'each', list: 'project', timeoutMs: 60 * 1000, caller: 'feature' });
+  return (args) => fenced(args, { env: { GIT_TERMINAL_PROMPT: '0' }, input: '' });
+};
+
+// The full hash of the worktree's HEAD.
+export async function head({ worktree }) {
+  const got = await fencedGit(worktree)(['rev-parse', 'HEAD']);
+  const sha = got.stdout.trim();
+  if (got.code !== 0 || !FULL_SHA.test(sha)) throw new CliError(`git could not read the head: ${firstLine(got.stderr)}`);
+  return sha;
+}
+
+const DIFF_NUMBER = /^[1-9][0-9]{0,3}$/;
+const DIFF_BYTES = 4 * 1024 * 1024;
+const BASES = ['origin/HEAD', 'origin/main', 'origin/master', 'origin/trunk', 'origin/develop'];
+
+// Writes what the branch adds to the default branch (the merge base to HEAD) to `.wheelhouse/feature/review/<n>.diff`, for a
+// Lookout to read, after committing what the session left, so the diff is of the head it names. Read-only in the worktree
+// but for that file. Returns `{ file, head }`, `file` relative to the worktree.
+export async function diff({ worktree, argv, commitFirst = false }) {
+  if (argv.length !== 1 || !DIFF_NUMBER.test(argv[0])) throw new CliError('Give the review number: diff <n>, counting up from 1');
+  if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
+  if (commitFirst) await commitPending(worktree, 'No diff was written');
+  const git = fencedGit(worktree);
+  let base = null;
+  for (const ref of BASES) {
+    const got = await git(['merge-base', 'HEAD', ref]);
+    if (got.code === 0 && /^[0-9a-f]{40,64}$/.test(got.stdout.trim())) {
+      base = got.stdout.trim();
+      break;
+    }
+  }
+  if (base === null) throw new CliError("There is no default branch here to compare with, so no diff was written");
+  const got = await git(['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--binary', base, 'HEAD']);
+  if (got.code !== 0) throw new CliError(`git could not make the diff: ${firstLine(got.stderr)}`);
+  if (Buffer.byteLength(got.stdout) > DIFF_BYTES) throw new CliError('The diff is bigger than 4 MB, which a Lookout cannot read in one: split the work into smaller pull requests');
+  const folder = path.join(featurePaths(worktree).dir, 'review');
+  const was = lstatOf(folder);
+  if (was !== null && !was.isDirectory()) throw new CliError('The review folder is not a real folder');
+  fs.mkdirSync(folder, { recursive: true });
+  if (!lstatOf(folder)?.isDirectory()) throw new CliError('The review folder is not a real folder');
+  writeWhole(path.join(folder, `${argv[0]}.diff`), got.stdout);
+  return { file: `.wheelhouse/feature/review/${argv[0]}.diff`, head: await head({ worktree }) };
 }
 
 // What a push the host held for the director's click on a CI file says.
@@ -900,7 +982,7 @@ async function followedFor({ worktree, client, fields }) {
 // nothing is opened until the report passes the `report` check. The branch is pushed first,
 // through the helper, since the host opens a pull request only from a branch it holds. The
 // helper places the project from the worktree's folder.
-export async function openPr({ client, worktree, argv, dataClient = client, dataMs = DATA_CHECK_MS, localChange = localChangeOf }) {
+export async function openPr({ client, worktree, argv, dataClient = client, dataMs = DATA_CHECK_MS, localChange = localChangeOf, commitFirst = false }) {
   const found = flagsOf(argv, ['title']);
   const title = needed(found, 'title');
   if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
@@ -915,7 +997,7 @@ export async function openPr({ client, worktree, argv, dataClient = client, data
   // Read before anything is pushed: an answer that can't be read stops the pull request here.
   const followed = await followedFor({ worktree, client, fields: checked.fields });
   // The host opens a pull request only from a branch it holds.
-  await push({ client, worktree });
+  await push({ client, worktree, commitFirst });
   const note = proofFor({ worktree, checked: { ...checked, fields: { ...checked.fields, followed } }, facts: await dataFacts({ client: dataClient, worktree, branch: head, declared: checked.fields.data !== undefined, dataMs, localChange }) });
   const opened = await client.openPr({ cwd: worktree, head, title, body: note, ...(session ? { session } : {}) });
   if (opened?.ok !== true) throw new CliError(opened?.refused ?? 'The host helper did not open the pull request');
@@ -931,7 +1013,7 @@ export async function openPr({ client, worktree, argv, dataClient = client, data
 
 // --- The command line ---
 
-const COMMANDS = ['ask', 'stuck', 'wait-for', 'log', 'review', 'answer', 'plan', 'report', 'push', 'pull', 'open-pr'];
+const COMMANDS = ['ask', 'stuck', 'wait-for', 'log', 'review', 'answer', 'plan', 'report', 'push', 'pull', 'open-pr', 'commit', 'head', 'diff'];
 
 // Runs a command and resolves with the exit code. `out` and `err` take text to show.
 export async function main(argv, {
@@ -998,20 +1080,32 @@ export async function main(argv, {
       out('The report is whole.\n');
     } else if (command === 'push') {
       if (rest.length > 0) throw new CliError('push takes no arguments');
-      out(`Pushed ${(await push({ client: helper(), worktree })).branch}\n`);
+      out(`Pushed ${(await push({ client: helper(), worktree, commitFirst: launchedBy() })).branch}\n`);
     } else if (command === 'pull') {
       if (rest.length > 1 || (rest.length === 1 && rest[0] !== '--default')) throw new CliError('pull takes no arguments, or --default to bring in the default branch');
       const fromDefault = rest[0] === '--default';
+      if (launchedBy()) await commitPending(worktree, 'Nothing was brought in');
       const pulled = await pull({ client: helper(), worktree, ...(fromDefault ? { from: 'default' } : {}) });
       if (pulled.conflict) {
         out(`${fromDefault ? 'The default branch' : `The host's ${pulled.branch}`} is merged into this worktree, but these files clash:\n${pulled.conflicts.map((f) => `  ${plainName(f)}\n`).join('')}`
-          + 'Open each one, keep both sides\' intent, and remove the conflict markers. Then `git add` each file, run `git commit --no-edit`, run the tests, and push.\n');
+          + (launchedBy() ? 'Open each one, keep both sides\' intent, and remove the conflict markers. Then run `wh-feature commit`, run the tests, and push.\n'
+            : 'Open each one, keep both sides\' intent, and remove the conflict markers. Then `git add` each file, run `git commit --no-edit`, run the tests, and push.\n'));
       } else if (pulled.already) out(fromDefault ? 'Already up to date with the default branch\n' : `Already up to date with the host's ${pulled.branch}\n`);
       else if (pulled.merged && fromDefault) out(`Brought in the default branch: merged with this branch at ${pulled.sha.slice(0, 12)}. Run the tests, push, then have the new head reviewed.\n`);
       else if (pulled.merged) out(`Brought in the host's ${pulled.branch}: merged with this branch at ${pulled.sha.slice(0, 12)}\n`);
       else out(`Brought in the host's ${pulled.branch}: this branch is now at ${pulled.sha.slice(0, 12)}\n`);
+    } else if (command === 'commit') {
+      if (rest.length > 0) throw new CliError('commit takes no arguments');
+      const made = await commit({ worktree });
+      out(made.commit === undefined ? `Nothing to commit (${made.skipped}). The head is ${made.head}\n` : `Committed ${made.commit}\n`);
+    } else if (command === 'head') {
+      if (rest.length > 0) throw new CliError('head takes no arguments');
+      out(`${await head({ worktree })}\n`);
+    } else if (command === 'diff') {
+      const made = await diff({ worktree, argv: rest, commitFirst: launchedBy() });
+      out(`Wrote ${made.file}. The head it holds is ${made.head}\n`);
     } else {
-      const { number, already } = await openPr({ client: helper(), worktree, argv: rest, dataClient: client ?? helperClient({ timeout: DATA_CHECK_MS }) });
+      const { number, already } = await openPr({ client: helper(), worktree, commitFirst: launchedBy(), argv: rest, dataClient: client ?? helperClient({ timeout: DATA_CHECK_MS }) });
       out(already ? `The pull request is open already: #${number}\n` : `Opened pull request #${number}\n`);
     }
     return 0;

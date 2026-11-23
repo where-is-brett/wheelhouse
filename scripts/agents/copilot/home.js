@@ -133,10 +133,10 @@ function folderWords(text, rel) {
 }
 
 // At Ask a session's shell runs only the build commands the director allowed, a rule matches a whole command, and Wheelhouse
-// commits the session's work itself once its run has ended (scripts/agents/copilot/commit-work.js). So the builder is told
+// commits the session's work itself once its run has ended (scripts/feature/commit-work.js). So the builder is told
 // to run no git, to run one command per shell call, and to report no commit. Each pair is [source text, Copilot's text], and a
 // source that no longer holds the text throws, so a change to the builder is seen here.
-const BUILDER_ONE_COMMAND = "\n- **One command per shell call.** Your shell runs only the commands you were allowed, such as the project's checks, and a rule matches the whole command. Run each command on its own, never chained with `;`, `&&`, `||` or a pipe, and never run `git`, `mkdir` or `New-Item`. Read and write files with the file tools.";
+const BUILDER_ONE_COMMAND = "\n- **One command per shell call.** Your shell runs only the commands you were allowed, such as the project's checks, and a rule matches the whole command. Run each command on its own, never chained with `;`, `&&`, `||` or a pipe, and never run `git`, `mkdir` or `New-Item`. Wheelhouse's own command `wh-feature` is the one other command you may run: `wh-feature commit` commits your work. Read and write files with the file tools.";
 const BUILDER_COMMIT_WORDS = Object.freeze([
   [' Check with `pwd` and `git branch --show-current` before you begin. Never change', ' Never change'],
   ['- **Your branch only.** Commit on the branch you start on. Never check out, merge into, rebase onto or push to the default branch. Do not push at all, and do not open a pull request: the session does that.',
@@ -270,6 +270,16 @@ function foremanFrom(root) {
   ];
 }
 
+// A feature session runs as the builder agent, and its shell runs one Wheelhouse command besides the project's build
+// commands: the feature command's launcher, which takes a fixed list of subcommands and never a command or a path to run
+// (scripts/feature/cli.js). The record names it, as the foreman's names its two, for the sessions part to turn into a rule.
+export const BUILDER_RULES = 'rules/wheelhouse-builder.json';
+function builderRule() {
+  const launcher = launcherOf('scripts/feature/cli.js');
+  if (launcher === null) throw new Error('The feature command has no launcher to give the builder agent its rule');
+  return { agent: 'wheelhouse-builder', shell: [...CLAUDE_TO_COPILOT.Bash], allow: [`${launcher}:*`] };
+}
+
 // ---- The manifest ----
 
 // What `git hash-object` prints for a file with these bytes: sha1 of "blob <bytes>\0<content>".
@@ -288,7 +298,7 @@ function manifestOf(files) {
 // can't be read.
 export function buildHome({ root = REPO } = {}) {
   const files = new Map();
-  for (const entry of [...AGENT_SOURCES.map((agent) => agentFrom(root, agent)), ...foremanFrom(root)]) files.set(entry[0], entry[1]);
+  for (const entry of [...AGENT_SOURCES.map((agent) => agentFrom(root, agent)), ...foremanFrom(root), [BUILDER_RULES, `${JSON.stringify(builderRule(), null, 2)}\n`]]) files.set(entry[0], entry[1]);
   files.set('MANIFEST.txt', manifestOf(files));
   return new Map([...files.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
 }
