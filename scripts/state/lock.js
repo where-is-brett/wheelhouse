@@ -131,9 +131,11 @@ async function resetToRemote(dir, present, env) {
 }
 
 // The push's own reason, when it gave one, goes with the error, so the line that says the lock wasn't taken can say why.
+// The push's code, and the card it raised for the director, go with it (`carry`), for the helper's answer to give on, so a caller keys on them, not on the words.
 function notPushed(result) {
   const why = typeof result?.refused === 'string' && result.refused !== '' ? `: ${result.refused}` : '';
-  return new Error(`The lock could not be pushed${why}`);
+  const carry = Object.fromEntries(['code', 'needs', 'card'].filter((k) => typeof result?.[k] === 'string' && result[k] !== '').map((k) => [k, result[k]]));
+  return Object.assign(new Error(`The lock could not be pushed${why}`), { carry });
 }
 
 async function commitAndPush(dir, lock, message, push, env) {

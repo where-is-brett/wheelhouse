@@ -11,6 +11,7 @@ import {
   decide, toolSheetLines, NO_HELPER, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
   importedLine, importFailedLine, keptLine, NOT_SET_UP, TITLES, sessionTitle, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, heldElsewhere, TAKEOVER_ASK, SEAT_TAKEOVER_ASK, RECENT_MS,
 } from '../../../scripts/hooks/session-start.js';
+import { SETTINGS_CHANGED, settingsCardNote } from '../../../scripts/lib/settings-card.js';
 import { readSeat, seatFile } from '../../../scripts/lib/first-mate-seat.js';
 import { USAGE_ASK } from '../../../scripts/routing/offer.js';
 import { keepRequest } from '../../../scripts/lib/kept-request.js';
@@ -175,6 +176,29 @@ test('a project in git alone has no lock branch: the session start asks for no l
     const out = await run(f);
     assert.deepEqual(asked, []);
     assert.ok(!text(out).includes(NO_LOCK));
+  });
+});
+
+test('a lock refused because the computer\'s git settings changed tells the First Mate to confirm them in the window, by the code and the card the helper raised', async () => {
+  await withHome(async () => {
+    const card = '0b7c1d1e-2f3a-4b5c-8d6e-7f8091a2b3c4';
+    const said = fake();
+    withLock(said, { touch: { ok: false, refused: 'x' }, take: { ok: false, refused: 'The lock could not be pushed: Nothing was pushed: settings changed', code: SETTINGS_CHANGED, needs: 'window', card } });
+    const out = text(await run(said));
+    assert.ok(out.includes(NO_LOCK));
+    assert.ok(out.includes(settingsCardNote(card)));
+    assert.match(out, new RegExp(`run the Wheelhouse command \`confirm ${card}\``));
+
+    // The words alone, with no code, offer no card; nor does a code with no card.
+    for (const take of [
+      { ok: false, refused: 'Nothing was pushed: this computer\'s git settings differ', card },
+      { ok: false, refused: 'x', code: SETTINGS_CHANGED },
+      { ok: false, refused: 'x', code: 'other', card },
+    ]) {
+      const other = fake();
+      withLock(other, { touch: { ok: false, refused: 'x' }, take });
+      assert.doesNotMatch(text(await run(other)), /confirm 0b7c1d1e/);
+    }
   });
 });
 

@@ -8,6 +8,7 @@ import { scanContent } from './secret-scan.js';
 import { briefProblem, briefWords } from './brief.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
+import { settingsLine } from '../lib/settings-card.js';
 import { RELEASE_LABEL, RELEASE_TAG, releaseLine, UPDATE_LABEL, updateLine, keepControlLine, approvalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, seatTakeOverLine, SEAT_SESSION, isSeatSince, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, UUID, HASH, mayReplace } from '../lib/build-loop.js';
@@ -70,7 +71,7 @@ export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident
 export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'by-hand', 'slept', 'self-merged'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'seat-take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'approve-release', 'update-helper-answer', 'update-click'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'seat-take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'approve-release', 'update-helper-answer', 'update-click', 'confirm-settings'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -134,6 +135,9 @@ const ACTION_OWN = {
   // The director's Confirm on the card keeping a feature's files that steer agents as they are
   // (ruling P7-31): the work, and the full hash of the watcher's finding the card's line names.
   'keep-control-files': ['work', 'hash'],
+  // The director's Confirm, in the helper's window, on the card for the computer's git settings after a push was refused because
+  // they changed: the full hash of the settings' fingerprint the card named. The helper records them as they read at the click.
+  'confirm-settings': ['hash'],
   // The director's Undo, in the helper's window, on a Lean project's card asking to undo a merge (ruling P5-50: undo
   // is a runbook step): the merge, in full.
   'undo-merge': ['merge'],
@@ -278,6 +282,10 @@ function checkAction(data) {
     if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of what the watcher found');
     if (data.label !== 'Confirm') bad('needs the Confirm label');
     if (setLineOf(data.question) !== keepControlLine(data.work, data.hash)) bad('carries the Keep line for its work and hash as its question\'s one set line');
+  } else if (data.action === 'confirm-settings') {
+    if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the settings it confirms');
+    if (data.label !== 'Confirm') bad('needs the Confirm label');
+    if (!data.question.split('\n').includes(settingsLine(data.hash))) bad('carries the settings line for its hash in its question');
   } else if (data.action === 'undo-merge') {
     if (typeof data.merge !== 'string' || !/^[0-9a-f]{40}$/.test(data.merge)) bad('needs the merge it undoes, in full');
     if (data.label !== 'Undo') bad('needs the Undo label');

@@ -319,7 +319,8 @@ test('a record from before the settings were kept per folder is refused when the
   const { SETTINGS_CHANGED_LINE } = await import('../../../scripts/lib/safe-git.js');
   const old = await includedPush({ before: '/a/helper', after: '/b/other', confirmed: true, asOld: true });
   assert.equal(old.code, 'git-settings-changed');
-  assert.match(SETTINGS_CHANGED_LINE, /run setup again and click Go ahead at step 3/);
+  assert.match(SETTINGS_CHANGED_LINE, /Wheelhouse shows a card asking you to confirm the new settings in its own window/);
+  assert.doesNotMatch(SETTINGS_CHANGED_LINE, /run setup again/);
   assert.match(SETTINGS_CHANGED_LINE, /^Nothing was pushed/);
 });
 
@@ -361,4 +362,69 @@ test('the fingerprint covers a remote\'s own proxy, every certificate and proxy 
 test('a folder setup never confirmed is refused where a record exists, even one that names other folders', async () => {
   const other = await includedPush({ before: '/a/helper', after: '/a/helper', confirmed: false, record: { folders: { '/somewhere/else': 'a'.repeat(64) } } });
   assert.equal(other.code, 'git-settings-changed');
+});
+
+// The names of the settings kept at confirmation, so a later refusal and its card can say which were added or taken away.
+async function inFolderWith(config, fn) {
+  const { as, shortHome } = await import('../../helpers/homes.js');
+  const { spawnSync } = await import('node:child_process');
+  const wh = shortHome();
+  const folder = fs.realpathSync(tempFolder('wh-names-repo-'));
+  spawnSync('git', ['init', '-q'], { cwd: folder });
+  const home = fs.realpathSync(tempFolder('wh-names-home-'));
+  const names = ['HOME', 'USERPROFILE', 'XDG_CONFIG_HOME', 'GIT_CONFIG_NOSYSTEM'];
+  const kept = Object.fromEntries(names.map((n) => [n, process.env[n]]));
+  Object.assign(process.env, { HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'), GIT_CONFIG_NOSYSTEM: '1' });
+  const change = (text) => fs.writeFileSync(path.join(home, '.gitconfig'), text);
+  change(config);
+  try {
+    return await as(wh, () => fn({ folder, file: path.join(wh, 'host', 'git-settings.json'), change }));
+  } finally {
+    for (const n of names) if (kept[n] === undefined) delete process.env[n]; else process.env[n] = kept[n];
+  }
+}
+
+test('confirming keeps the names of the settings, names only, and lookAtTrusted says what changed since', async () => {
+  const { confirmComputerSettings, lookAtTrusted } = await import('../../../scripts/lib/safe-git.js');
+  const { settingsChange } = await import('../../../scripts/lib/settings-card.js');
+  await inFolderWith('[credential]\n\thelper = !/a/helper\n[http "https://corp.example.org/"]\n\tproxy = http://ada:s3cretpass@p.example.org:8080\n', async ({ folder, file, change }) => {
+    assert.equal((await lookAtTrusted({ file, cwd: folder })).was, null, 'nothing is recorded yet');
+    await confirmComputerSettings({ file, cwd: folder });
+    const text = fs.readFileSync(file, 'utf8');
+    assert.doesNotMatch(text, /s3cretpass|corp\.example|p\.example/, 'the record holds names, never an address or a value');
+    assert.deepEqual(Object.values(JSON.parse(text).names), [['credential.helper', 'http.proxy']]);
+    const same = await lookAtTrusted({ file, cwd: folder });
+    assert.equal(same.same, true);
+    // A setting added, one taken away, and a value changed on a name that stays.
+    change('[credential]\n\thelper = !/b/other\n[http]\n\tsslCAInfo = /x/ca.pem\n');
+    const moved = await lookAtTrusted({ file, cwd: folder });
+    assert.equal(moved.same, false);
+    assert.deepEqual(settingsChange(moved), { added: ['http.sslcainfo'], removed: ['http.proxy'] });
+    change('[credential]\n\thelper = !/b/other\n[http "https://corp.example.org/"]\n\tproxy = http://ada:s3cretpass@p.example.org:8080\n');
+    assert.deepEqual(settingsChange(await lookAtTrusted({ file, cwd: folder })), { added: [], removed: [] }, 'a changed value can\'t be named');
+    // Confirming only what the card named: other settings now are not confirmed.
+    await assert.rejects(confirmComputerSettings({ file, cwd: folder, expect: moved.hash.slice(0, 12) }), /changed while the card was open/);
+    const now = await lookAtTrusted({ file, cwd: folder });
+    await confirmComputerSettings({ file, cwd: folder, expect: now.hash.slice(0, 12) });
+    assert.equal((await lookAtTrusted({ file, cwd: folder })).same, true);
+  });
+});
+
+test('a record kept before names were recorded is read as it was, and confirming adds the names beside it', async () => {
+  const { confirmComputerSettings, lookAtTrusted } = await import('../../../scripts/lib/safe-git.js');
+  const { settingsChange } = await import('../../../scripts/lib/settings-card.js');
+  await inFolderWith('[credential]\n\thelper = !/a/helper\n', async ({ folder, file }) => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ folders: { '/elsewhere': `v2:${'a'.repeat(64)}` }, legacy: 'b'.repeat(64) }));
+    const before = await lookAtTrusted({ file, cwd: folder });
+    assert.deepEqual([before.same, before.was, settingsChange(before)], [false, null, null]);
+    await confirmComputerSettings({ file, cwd: folder });
+    const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.equal(record.legacy, 'b'.repeat(64));
+    assert.equal(record.folders['/elsewhere'], `v2:${'a'.repeat(64)}`);
+    assert.deepEqual(Object.values(record.names), [['credential.helper']]);
+    // A record whose names are not lists of text counts for none.
+    fs.writeFileSync(file, JSON.stringify({ folders: record.folders, names: { x: 'nope', y: [1] } }));
+    assert.equal((await lookAtTrusted({ file, cwd: folder })).was, null);
+  });
 });

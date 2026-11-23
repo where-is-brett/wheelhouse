@@ -67,7 +67,8 @@ import { cutAccess, INSTALLATIONS_PAGE } from './cut-access.js';
 import { checkRecord, listEvents, makeEvent, writeEvent, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, CONFIRMABLE_KINDS, RED_MAIN_FIELDS, RED_MAIN_OWN, confirmationFor } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { directorSignIn, reachFor, safeGitEnv, safeGit, pushReachFor } from '../lib/safe-git.js';
-import { lookAtSettings, lookRefusalLine, LookRefusal } from '../lib/safe-git.js';
+import { lookAtSettings, lookRefusalLine, LookRefusal, lookAtTrusted, confirmComputerSettings } from '../lib/safe-git.js';
+import { SETTINGS_CHANGED, SETTINGS_LINE, settingsCard, settingsChange } from '../lib/settings-card.js';
 import { openProjectRecord, openSettings } from '../state/record.js';
 import { importEvents } from '../state/import.js';
 import { takeStartLock } from '../lib/start-lock.js';
@@ -1419,7 +1420,56 @@ export async function startHelper({
         tidyAfterAnswer(args.project, ctx);
       }
     });
+    if (pushed.code === SETTINGS_CHANGED) return withSettingsCard(args.project, pushed);
     return pushed.ok && readProject(args.project)?.host === 'local' ? afterHomePush(args, pushed, ctx) : pushed;
+  }
+
+  // --- the computer's git settings, confirmed again (safe-git.js, the record of the computer's settings) ---
+  // A push is refused while the computer's settings differ from the ones confirmed for the project's mirror. The director confirms
+  // the new ones by a click in this helper's own window on a card the helper composes from its own read of them, which shows the
+  // names of settings and never a value. Nothing else records them: no route takes a confirmation.
+  const settingsFile = () => path.join(wheelhouseHome(), 'host', 'git-settings.json');
+  const mirrorOf = (project) => path.join(stateDir(project), '..', 'mirror.git');
+  // The card for the settings as the project's mirror reads them now, with the fingerprint's hash it is for; null when they
+  // can't be read or are the confirmed ones.
+  async function settingsCardNow(project) {
+    const found = await lookAtTrusted({ file: settingsFile(), run, cwd: mirrorOf(project) });
+    return found === null || found.same ? null : { hash: found.hash, card: settingsCard(found.hash, settingsChange(found)) };
+  }
+
+  // A refused push's answer with the card that confirms the settings raised, once, while none waits: the card's id, and `needs`
+  // `window`, as an undo's answer says. The refusal stands without a card that could not be raised.
+  async function withSettingsCard(project, pushed) {
+    try {
+      const made = await settingsCardNow(project);
+      if (made === null) return pushed;
+      const ours = () => listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'card' && e.data?.line === made.card.line && sameCard(e.data, made.card));
+      const { waiting } = await writeViews(project, { now });
+      let card = ours().find((e) => (waiting ?? []).some((w) => w.id === e.id));
+      if (!card) {
+        await engineWrite(project, 'card', made.card);
+        card = ours().at(-1);
+      }
+      return card ? { ...pushed, needs: 'window', card: card.id } : pushed;
+    } catch {
+      return pushed;
+    }
+  }
+
+  // What a click on Confirm on the settings card would record, or null: the card is the helper's own, word for word, composed
+  // again from its own read of the settings now, so a card another hand wrote with the line, or one made for settings that have
+  // since changed, is never signed. Undefined for a card that is not this one.
+  async function settingsEarned(project, data) {
+    const question = data?.question;
+    const lines = typeof question === 'string' ? question.split('\n').filter((l) => SETTINGS_LINE.test(l)) : [];
+    if (lines.length !== 1 || readProject(project)?.connection?.mode !== 'as-is') return undefined;
+    try {
+      const made = await settingsCardNow(project);
+      if (made === null || !sameCard(data, made.card)) return null;
+      return { made: { kind: 'action', data: { action: 'confirm-settings', hash: made.hash, question, label: 'Confirm' } }, step: ACTION_STEPS['confirm-settings'], lift: false };
+    } catch {
+      return null;
+    }
   }
 
   // A branch has reached a project's home. Its open change's head moves with it, as nothing else moves one, and the engine's
@@ -2416,10 +2466,13 @@ export async function startHelper({
     // The click on the Update card (update design, section 4): confirmed in the window for the plan the card names, and counted
     // only by the update's apply. Its Not now is signed the same way (windowEarned).
     'update-click': 'update',
+    // The director's Confirm on the card for the computer's git settings, after a push was refused because they changed: confirmed
+    // in the window, which records the settings as they read when the click is made (settingsEarned, applySettings).
+    'confirm-settings': 'git-settings',
   };
   // The steps the window serves while STOP is on: Lift STOP, and an undo, as the runbook's local steps carry on.
   // The update's steps: their window names no default button, so a stray Return or Enter chooses nothing.
-  const NO_DEFAULT_STEPS = ['update', 'release-approval', 'update-helper'];
+  const NO_DEFAULT_STEPS = ['update', 'release-approval', 'update-helper', 'git-settings'];
   const UNDER_STOP = ['lift-stop', 'undo-merge', 'undo-main'];
   // The labels of the cards a project in git alone answers on its home. Its approval is a pull request's, as any.
   const HOME_ANSWERS = ['Keep it', 'Undo it', 'Undo'];
@@ -2475,6 +2528,10 @@ export async function startHelper({
     // The Update card's Not now is the one put-off the window signs: a decline of that plan, earned as the panel's press earns it.
     const declines = label === NOT_NOW && askedUpdateCard(question, card.data) !== undefined;
     if (typeof question !== 'string' || (PUT_OFF.includes(label) && !declines)) return null;
+    if (label === 'Confirm') {
+      const settings = await settingsEarned(project, card.data);
+      if (settings !== undefined) return settings;
+    }
     if (readProject(project)?.host === 'local' && HOME_ANSWERS.includes(label)) {
       const home = await homeEarned(project, card.data, label);
       if (home !== undefined) return home;
@@ -2600,6 +2657,9 @@ export async function startHelper({
       const still = again.deciding.find((d) => d.label === picked.label && d.step === picked.step && d.made.kind === picked.made.kind);
       if (!still) refuse(CHANGED);
       if (card !== LIFT_STOP_NAME && stopped() && servedUnderStop([still]).length === 0) return STOP_REFUSAL;
+      // The settings are recorded as they read now, and only if they still read as the card named; the click is kept after, so one
+      // that confirmed nothing leaves no record that it did.
+      if (still.made.data?.action === 'confirm-settings') await confirmComputerSettings({ file: settingsFile(), run, cwd: mirrorOf(project), expect: still.made.data.hash.slice(0, 12) });
       const event = makeEvent({ kind: still.made.kind, data: { ...still.made.data, proof: 'window' }, now });
       const result = await writeEvent({ project, event, now });
       // A work's approved text is kept, and a proposed change installed, as a hook that signs the same click does.
@@ -6767,7 +6827,9 @@ export async function startHelper({
       const message = error instanceof Error ? error.message : 'the request failed';
       // Every merge answer carries what was found in the changed files: nothing, when it failed first.
       const found = url.pathname === '/merge' ? { guardrailPaths: [], criticalAreas: [] } : {};
-      return send(res, 200, { ok: false, refused: clean(message, ctx?.secrets ?? []) || 'the request failed', ...found });
+      // A push's code and the card it raised (lock.js carries them) go on in the answer, so a caller keys on them, not on the words.
+      const carried = Object.fromEntries(['code', 'needs', 'card'].filter((k) => typeof error?.carry?.[k] === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(error.carry[k])).map((k) => [k, error.carry[k]]));
+      return send(res, 200, { ok: false, refused: clean(message, ctx?.secrets ?? []) || 'the request failed', ...found, ...carried });
     }
   }
 
