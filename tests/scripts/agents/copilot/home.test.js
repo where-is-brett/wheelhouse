@@ -110,16 +110,15 @@ test('the home holds the four agents, the foreman\'s rule and the manifest, and 
   assert.deepEqual([...home.keys()], ['MANIFEST.txt', ...AGENTS.map((a) => `agents/wheelhouse-${a}.agent.md`), 'rules/wheelhouse-foreman.json']);
 });
 
-test('the foreman gets one command, not the shell: its agent holds no tool and its rule names the command', () => {
+test('the foreman gets one command: its agent holds the shell tools and nothing else, and its rule names the command', () => {
   const { front } = split(home.get('agents/wheelhouse-foreman.agent.md'));
-  assert.deepEqual(front.tools, [], 'neither bash nor powershell is granted whole');
+  // `tools: []` leaves a session no tool at all, so the shell tools are named; the rule is what narrows them to one command.
+  assert.deepEqual(front.tools, [...tools.shell]);
   const rule = JSON.parse(home.get(FOREMAN_RULES));
   assert.deepEqual(rule, { agent: 'wheelhouse-foreman', shell: [...tools.shell], allow: ['wh-wake:*'] });
   // The pattern is the source's, as the launcher's bare name (Copilot matches a rule on the command's stem).
   assert.match(fs.readFileSync(path.join(ROOT, 'skills', 'foreman', 'SKILL.md'), 'utf8'), /^allowed-tools: Bash\(node '\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/foreman\/wake\.js':\*\)$/m);
   assert.ok(!home.get(FOREMAN_RULES).includes('CLAUDE_PLUGIN_ROOT'));
-  // No file of the home grants the shell whole to the foreman.
-  for (const [file, text] of home) if (file.startsWith('agents/') && file.includes('foreman')) assert.doesNotMatch(text, /tools:.*(bash|powershell)/);
 });
 
 test('the build refuses a pattern an agent file can\'t carry, and a foreman grant that isn\'t one command', () => {
@@ -142,7 +141,7 @@ test('the reviewer\'s tools are reading and searching only', () => {
 test('every agent\'s tools are Copilot\'s names, and no agent but the builder may edit', () => {
   for (const agent of AGENTS) {
     const { front } = split(home.get(`agents/wheelhouse-${agent}.agent.md`));
-    assert.ok(Array.isArray(front.tools) && (agent === 'foreman' ? front.tools.length === 0 : front.tools.length > 0), `${agent} has tools`);
+    assert.ok(Array.isArray(front.tools) && front.tools.length > 0, `${agent} has tools`);
     for (const tool of front.tools) assert.ok(ALL_COPILOT_TOOLS.has(tool), `${agent}: ${tool} is not a Copilot tool`);
     assert.equal(new Set(front.tools).size, front.tools.length, `${agent} names no tool twice`);
     for (const forbidden of ['task', 'skill', 'sql', 'ask_user']) assert.ok(!front.tools.includes(forbidden), `${agent} has ${forbidden}`);

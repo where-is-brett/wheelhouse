@@ -217,8 +217,8 @@ function sessionCall({ project, target, role, config, plan, prompt, sessionId = 
 // wheelhouse-foreman.json, which home.js builds from the foreman's playbook: the wake script's launcher, by its bare
 // name, which the session's PATH reaches (copilotSessionEnv). The record may hold the wake script and nothing else, and the rule it gives must be the
 // command the foreman's playbook is shown (foremanCommands), so the two can't drift. A record that can't be read, or holds
-// anything else, refuses the start: with no rule the foreman could run nothing. The foreman's agent file holds `tools: []`
-// (no tool); whether Copilot reads that as no tools is still open until the first real run (design section 3.2).
+// anything else, refuses the start: with no rule the foreman could run nothing. The foreman's agent file names the shell
+// tools (`tools: []` gave the first real run no tool at all), and this rule is the only command they may run.
 export function foremanAllow({ pluginRoot = PLUGIN_ROOT, platform = process.platform, rulesFile = FOREMAN_RULES_FILE } = {}) {
   let record;
   try {
