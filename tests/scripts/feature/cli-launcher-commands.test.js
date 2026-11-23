@@ -12,7 +12,10 @@ import { featurePaths } from '../../../scripts/feature/files.js';
 import { LAUNCHED } from '../../../scripts/lib/launchers.js';
 import { briefFields, briefText } from '../../helpers/foreman.js';
 
-const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1' };
+// An empty file for git's own settings: Windows git won't read os.devNull (\\.\nul) as one.
+const NO_SETTINGS = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-git-settings-')), 'config');
+fs.writeFileSync(NO_SETTINGS, '');
+const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: NO_SETTINGS, GIT_CONFIG_NOSYSTEM: '1' };
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, env: GIT_ENV, encoding: 'utf8' }).trim();
 
 // A project repository with a default branch the worktree is cut from, and a feature worktree with its brief.
