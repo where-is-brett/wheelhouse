@@ -47,6 +47,16 @@ test('briefing matches what board-context gives today for the same record', () =
   assert.ok(given.endsWith(got.data.text), 'the desk\'s briefing is the hook\'s');
 }));
 
+test('waiting with a turn gives the session\'s last turn time and keeps this one, building no views', () => withRecord(async ({ source }) => {
+  const guarded = { ...source, views: async () => { throw new Error('no views are built'); } };
+  const first = (await readView('waiting', { turn: 's-turn' }, guarded, { now })).data;
+  assert.equal(first.turnAt, null, 'a first turn has none before it');
+  const later = () => new Date(Date.parse(NOW) + 60000);
+  const second = (await readView('waiting', { turn: 's-turn' }, guarded, { now: later })).data;
+  assert.equal(second.turnAt, now().toISOString());
+  assert.equal((await readView('waiting', { turn: 's-other' }, guarded, { now: later })).data.turnAt, null, 'per session');
+}));
+
 test('waiting numbers cards as the Logbook does', () => withRecord(async ({ source }) => {
   const got = await readView('waiting', {}, source, { now });
   assert.deepEqual(got.data.numbered, numberedWaiting(localViews(P, null), []));
