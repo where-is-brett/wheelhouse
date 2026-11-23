@@ -440,7 +440,8 @@ async function keepLock(project, client, left, seen = {}) {
   if (took?.ok === true && took.result?.taken === true) return null;
   if (took?.ok === true && took.result?.taken === false) seen.holder = took.result.holder;
   if (took?.ok === true && took.result?.taken === false) return heldElsewhere(took.result.holder ?? 'unknown', took.result.since ?? 'at an unknown time');
-  return NO_LOCK;
+  // The helper's reason, when it gave one, so a push the host turned down says why.
+  return typeof took?.refused === 'string' && took.refused !== '' ? `${NO_LOCK} (${took.refused})` : NO_LOCK;
 }
 
 // The words before the window take-over card's AskUserQuestion input.
