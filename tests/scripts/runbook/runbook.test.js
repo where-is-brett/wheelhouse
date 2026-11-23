@@ -361,6 +361,62 @@ test('the restore pull request merges under STOP with the director\'s approval a
   } finally { s.cleanup(); }
 });
 
+// A restore merge is held to the checks like any merge: the facts of where they run are read for it, and an unread fact refuses it.
+async function restoreMergeScene(s, adapter, withClick, fn) {
+  // The click opens the restore; without one at the merge, it is taken away again after the opening.
+  await as(s.home, async () => { click(3, { sha: s.c1.slice(0, 12) }); });
+  await viaHelper(s, adapter, async (client) => {
+    const tip = await openedRestore(s, client, s.c1);
+    adapter.prState = async () => ({ headSha: tip, headRef: restoreBranch(s.c1), baseRef: 'main', mergeable: 'yes', state: 'open' });
+    await as(s.home, async () => {
+      if (!withClick) fs.rmSync(path.join(stateDir('o__p'), 'events'), { recursive: true, force: true });
+      setStop({ by: 'runbook', now: () => NOW });
+      record('approval', { pr: 7, commit: tip });
+    });
+    await fn(() => client.merge({ project: 'o__p', number: 7, stop: false, bypass: false }), tip);
+  });
+}
+
+test('a verified restore merges when the facts are read and the host\'s CI is green', async () => {
+  const s = await scenario();
+  const adapter = fakeAdapter();
+  try {
+    await restoreMergeScene(s, adapter, true, async (merge, tip) => {
+      assert.deepEqual(await merge(), { ok: true, merged: true, sha: tip, guardrailPaths: [], criticalAreas: [] });
+    });
+  } finally { s.cleanup(); }
+});
+
+test('a verified restore is refused when the host\'s CI is red, and when the facts cannot be read', async () => {
+  const s = await scenario();
+  const adapter = fakeAdapter({ ciState: async (sha) => ({ sha, state: 'failure' }) });
+  try {
+    await restoreMergeScene(s, adapter, true, async (merge, tip) => {
+      assert.equal((await merge()).ok, false);
+      assert.deepEqual(adapter.merges, []);
+      adapter.ciState = async (sha) => ({ sha, state: 'success' });
+      adapter.checkContexts = async () => { throw new Error('the host did not answer'); };
+      const unread = await merge();
+      assert.equal(unread.ok, false);
+      assert.match(unread.reasons.join(' '), /can be read just now/);
+      assert.deepEqual(adapter.merges, []);
+    });
+  } finally { s.cleanup(); }
+});
+
+test('a restore-named branch with no step 3 click stays stopped, whatever the CI says', async () => {
+  const s = await scenario();
+  const adapter = fakeAdapter();
+  try {
+    await restoreMergeScene(s, adapter, false, async (merge) => {
+      const answer = await merge();
+      assert.equal(answer.ok, false);
+      assert.ok(answer.reasons.includes('All stop is on'));
+      assert.deepEqual(adapter.merges, []);
+    });
+  } finally { s.cleanup(); }
+});
+
 test('a restore branch whose tree is not the chosen commit\'s stays stopped', async () => {
   const s = await scenario();
   const adapter = fakeAdapter();

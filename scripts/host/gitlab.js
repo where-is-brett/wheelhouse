@@ -59,6 +59,7 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
     // Reports Wheelhouse's check on the commit: a status named for it, which GitLab keeps as an external pipeline. A refusal
     // is an answer, never thrown; a key that may not post (it needs the api scope and the Developer role) reads 'permission'.
     // The decision status is GitHub's: GitLab is not asked for it.
+    // The `${project}${path.slice(project.length)}` paths below equal `path`; the form only lets the safe-git source scan see the repository named.
     async setStatus({ sha, state, description, context }) {
       if (context !== undefined) return { refused: DECISION_REFUSED };
       const got = await attempt(['api', '--method', 'POST', `${project}/statuses/${sha}`, '-f', `state=${POSTED_STATE[state]}`, '-f', `name=${STATUS_CONTEXT}`, '-f', `description=${description}`]);

@@ -3638,12 +3638,10 @@ export async function startHelper({
     let checkWaiting = false;
     // Where the project's checks run here, the signed check is what the gate asks, whatever a pipeline or status on the host says.
     if (fixCall || keeping || ['local', 'github', 'gitlab'].includes(recordOf(project).host)) {
-      const permit = await checkPermit(project, headSha);
-      // A restore is the director's own recovery, approved on its card and built by the helper: it may go ahead on the host's reading
-      // where the access it would read the checks with has been cut (runbook step 2). Where the checks can be read, it is held to them.
-      if (permit.checksHere === true && permit.unread === true && restore) {
-        // left to the host's reading and the approval
-      } else if (permit.checksHere === true && permit.unread === true) {
+      const permit = await checkPermit(project, headSha, ctx);
+      // The facts are read with the merge's own context, so a restore after a key cut reads them with the director's sign-in
+      // and is held to the checks like any merge; facts that still can't be read refuse it.
+      if (permit.checksHere === true && permit.unread === true) {
         // Fails closed: the host's own CI never stands in for a check that may be owed on this computer.
         stateReasons.push(`there is no passing check on this computer of ${headSha.slice(0, 7)} that can be read just now (where the checks run couldn't be read), so try the merge again in a moment`);
         checkWaiting = true;
@@ -4805,10 +4803,11 @@ export async function startHelper({
   // What a project's checks go by, from the host and the default branch and never from a change or a folder. What the
   // default branch says is read once for each of its heads. Null on a host that takes no status.
   const checksRead = new Map();
-  async function checksFacts(project) {
+  // `given` is the context the caller already holds (a merge's own, which after a key cut falls back to the director's sign-in).
+  async function checksFacts(project, given = null) {
     const { host } = recordOf(project);
     if (host !== 'github' && host !== 'gitlab' && host !== 'local') return null;
-    const ctx = await contextFor(project);
+    const ctx = given ?? await contextFor(project);
     const adapter = await ctx.adapter();
     const defaultBranch = await defaultBranchOf(project, adapter);
     const main = await adapter.branchHead(defaultBranch);
@@ -4852,12 +4851,12 @@ export async function startHelper({
   const signedChecks = (project) => signedOf(project, 'check');
   // What the merge condition reads for a head. What can't be read counts as checks that run here with none passed, so a
   // merge is refused rather than let through; only a project whose checks are known to run on the host goes as before.
-  async function checkPermit(project, head) {
+  async function checkPermit(project, head, ctx = null) {
     const { host } = recordOf(project);
     if (host !== 'github' && host !== 'gitlab' && host !== 'local') return { checksHere: false };
     let facts;
     try {
-      facts = await checksFacts(project);
+      facts = await checksFacts(project, ctx);
     } catch (error) {
       if (error instanceof LookRefusal) throw error;
       return { checksHere: true, check: null, digest: null, notCounting: false, unread: true };
@@ -5012,7 +5011,7 @@ export async function startHelper({
     // Whether the work is shown first comes from the run that opened the pull request; one no run of the helper's
     // opened needs the director's approval, as shown-first work does.
     const opened = engineRun.openedOf(project, call.pr);
-    const checked = call.kind === 'merge' ? await checkPermit(project, call.sha) : {};
+    const checked = call.kind === 'merge' ? await checkPermit(project, call.sha, ctx) : {};
     // The director's decisions on the piece hold a merge here as at the gate (design section 6.4). Read from the pull request's
     // branch as the host says; one that can't be read is `null`, which the rules refuse. A restore is exempt, as in doMerge.
     let decisions;
