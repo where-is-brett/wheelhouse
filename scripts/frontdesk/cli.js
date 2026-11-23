@@ -52,6 +52,8 @@
 //   page <work>     "watch <work>": raises the piece to the transcript level when it is below it, writes the piece's run as a page
 //                   in .wheelhouse/watch/ (it stays on this computer), and prints one line: the page's path and the command that
 //                   follows it live. For a piece that is closed or unknown it prints a line saying so and writes nothing
+//   unpair <app id> raises the Unpair card for a paired app, and prints its id ({ card }); the director's signed Unpair
+//                   it removes the app's key. It works when the app's panel is gone or its key is in doubt
 //   similar [words] the open work, ideas and rejections that share words with a request: its
 //                   words as the arguments, or its text on standard input
 //   views <name>    one view as short lines: rulebook, waiting, ideas, glossary, settings, levels, brief or
@@ -110,7 +112,7 @@ import { checkSetting, definitionOf, SETTINGS, WINDOWS_BUILD_COMMANDS, OWN_GITHU
 import { CARD, WORK_REPORTS } from '../lib/front-desk.js';
 import { effectiveSettings, settingsText, settingWords } from '../settings/effective.js';
 import { similar as similarTo } from '../intake/similar.js';
-import { answerLine, approveWorkLine, chatCopy, ID, keepControlLine } from '../state/card-lines.js';
+import { answerLine, approveWorkLine, chatCopy, ID, keepControlLine, APP_ID } from '../state/card-lines.js';
 import { gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
 import { readSlices } from '../engine/feature.js';
@@ -151,7 +153,7 @@ export const RECORD_KINDS = Object.freeze([
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'brief']);
 // The commands that write a record, hand out a card or change the board: only the window that holds the First Mate's seat runs them.
 // Settings change through `record` and `suggest`, so they are covered. The rest only read, or keep a note by the session's own id.
-export const SEAT_WRITES = Object.freeze(['cards', 'pull-cards', 'again', 'card', 'record', 'confirm', 'suggest', 'pull-back', 'drop', 'ask-bosun', 'undo', 'move', 'carry-on', 'archive', 'restore', 'premium-card', 'page', 'helm']);
+export const SEAT_WRITES = Object.freeze(['cards', 'pull-cards', 'again', 'card', 'record', 'confirm', 'suggest', 'pull-back', 'drop', 'ask-bosun', 'undo', 'move', 'carry-on', 'archive', 'restore', 'premium-card', 'page', 'helm', 'unpair']);
 export const SEAT_REFUSAL = 'The First Mate is in another window, so this window can look things up but not record anything or hand out cards. The director can move the First Mate here with the take-over card in this window.';
 
 // The refusal for a seat write from a window that doesn't hold the seat; null when the command may run. A script or test
@@ -167,7 +169,7 @@ export async function seatRefusal({ command, env, cwd, client }) {
   return got?.ok === true && got.holds === false ? SEAT_REFUSAL : null;
 }
 
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts', 'page', 'helm'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts', 'page', 'helm', 'unpair'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -1739,6 +1741,13 @@ export async function main(argv, {
     } else if (command === 'page') {
       only(rest, 1, 'Give the piece to watch: page <work>');
       lines([await page({ client: helper, cwd: here, work: rest[0] })]);
+    } else if (command === 'unpair') {
+      // Raises the Unpair card for a paired app, which works when the app's panel is gone or its key is in doubt. The director's
+      // signed Unpair it, in the window or where signed clicks are made, removes the key.
+      if (rest.length !== 1 || !APP_ID.test(rest[0])) throw new CliError('Give the app\'s id: unpair <app id>');
+      const got = await deskOf(helper, here).act('unpair', { client: rest[0] });
+      if (got?.ok !== true) throw new CliError(got?.refused ?? 'The Unpair card wasn\'t raised');
+      json({ card: got.card });
     } else if (command === 'helm') {
       only(rest, 2, HELM_USAGE);
       lines(await helm({ client: helper, cwd: here, action: rest[0], work: rest[1], session: env.CLAUDE_CODE_SESSION_ID }));

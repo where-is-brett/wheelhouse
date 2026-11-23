@@ -2894,7 +2894,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page, helm\n$/);
+    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page, helm, unpair\n$/);
     const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -2961,7 +2961,7 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page, helm\n');
+  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page, helm, unpair\n');
   assert.equal(done.stdout, '');
 });
 
@@ -3256,6 +3256,31 @@ async function seatHeldByB(fn) {
     await fn(folder);
   });
 }
+
+test('unpair <app id> raises the Unpair card through the desk, and names the card', async () => {
+  await inHome(async () => {
+    const { generateKeyPairSync } = await import('node:crypto');
+    const { askToPair, pairClient, pairedClients, fingerprintOf } = await import('../../../scripts/desk/clients.js');
+    const { earned } = await import('../../../scripts/hooks/prompt-record.js');
+    const { pairLine, unpairLine } = await import('../../../scripts/state/card-lines.js');
+    const publicKey = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+    askToPair({ id: 'panel-app', name: 'The panel', publicKey }, { now: () => NOW });
+    const click = await earned({ project: 'p', question: pairLine('panel-app', fingerprintOf(publicKey)), label: 'Pair it', now: () => NOW });
+    assert.equal(pairClient({ id: 'panel-app' }, makeEvent({ ...click.made, now: () => NOW }), { now: () => NOW }).ok, true);
+    const helper = fakeHelper();
+    const got = await run(helper, ['unpair', 'panel-app']);
+    assert.equal(got.code, 0, got.err);
+    const card = helper.held.find((e) => e.kind === 'card');
+    assert.deepEqual(got.json, { card: card.id });
+    assert.equal(card.data.line, unpairLine('panel-app', fingerprintOf(publicKey)));
+    assert.equal(pairedClients().length, 1, 'raising the card unpairs nothing');
+    const unknown = await run(fakeHelper(), ['unpair', 'never-paired']);
+    assert.equal(unknown.code, 1);
+    assert.match(unknown.err, /never-paired/);
+    assert.equal((await run(fakeHelper(), ['unpair'])).code, 1);
+    assert.equal((await run(fakeHelper(), ['unpair', 'bad id!'])).code, 1);
+  });
+});
 
 test('every seat write is refused for a session that doesn\'t hold the seat', async () => {
   await seatHeldByB(async (folder) => {

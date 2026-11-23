@@ -17,6 +17,7 @@ import { openTestRecord } from '../../helpers/record-fixture.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { CONFIRMED_STEPS } from '../../../scripts/agents/chat-clicks.js';
+import { CONFIRMED_STEPS as COPILOT_CONFIRMED_STEPS } from '../../../scripts/agents/copilot/numbers.js';
 
 const hostLog = [];
 const hostGuard = guardedRun(realRun, { log: hostLog });
@@ -71,6 +72,21 @@ test('every confirmed step refuses a signing click in the chat, so it goes to th
           assert.equal(got.ok, false, `${card} ${label}`);
         }
       }
+    }
+    assert.deepEqual(answers(), []);
+  });
+});
+
+test('pairing an app is a confirmed step on both lists, and no chat click pairs or unpairs one', async () => {
+  assert.ok(CONFIRMED_STEPS.includes('pairing'));
+  assert.deepEqual([...COPILOT_CONFIRMED_STEPS], [...CONFIRMED_STEPS], 'the two lists are the same');
+  await withProject(async (client) => {
+    for (const label of ['Pair it', 'Unpair it']) {
+      for (const card of ['pairing', 'pairing-1']) {
+        assert.equal((await client.cards.chatClick({ project: 'o__p', card, label, hash: HASH, proof: 'chat-click' })).ok, false, `${card} ${label}`);
+      }
+      // On any other card a click that would sign is refused too, as a Pair it or Unpair it signs on the card's own line.
+      assert.equal((await client.cards.chatClick({ project: 'o__p', card: 'update-3', label, hash: HASH, proof: 'chat-click' })).ok, false, label);
     }
     assert.deepEqual(answers(), []);
   });

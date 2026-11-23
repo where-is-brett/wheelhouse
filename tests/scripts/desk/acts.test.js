@@ -1,7 +1,11 @@
 // tests/scripts/desk/acts.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { runAct } from '../../../scripts/desk/acts.js';
+import { askToPair, pairClient, pairedClients, unpairClient, fingerprintOf } from '../../../scripts/desk/clients.js';
+import { earned } from '../../../scripts/hooks/prompt-record.js';
+import { pairLine, unpairLine } from '../../../scripts/state/card-lines.js';
 import { checkEvidence } from '../../../scripts/desk/evidence.js';
 import { needsEvidence } from '../../../scripts/desk/vocabulary.js';
 import { makeEvent, confirmationFor, dataHash } from '../../../scripts/state/events.js';
@@ -151,4 +155,47 @@ test('acts: all stop names the helm session it leaves running', () => withKey(as
   assert.equal(got.says, "The helm session for build is the director's own, so it keeps running. The helm session for login is the director's own, so it keeps running.", 'search was taken but never opened, so it has no session');
   const none = await runAct('all-stop', {}, { ok: true, records: [] }, { source: memory(), recorder: spy(), now });
   assert.equal('says' in none, false, 'nothing held, nothing added');
+}));
+
+// Unpair: the card the panel's Unpair button and the front desk's `unpair` raise.
+const phone = () => {
+  const { publicKey } = crypto.generateKeyPairSync('ed25519');
+  return { id: 'phone-app', name: 'The phone app', publicKey: publicKey.export({ type: 'spki', format: 'der' }).toString('base64') };
+};
+async function pairedPhone() {
+  const app = phone();
+  askToPair(app, { now });
+  const record = await earned({ project: 'p', question: pairLine(app.id, fingerprintOf(app.publicKey)), label: 'Pair it', now });
+  assert.equal(pairClient({ id: app.id }, makeEvent({ ...record.made, now }), { now }).ok, true);
+  return app;
+}
+
+test('unpair raises one level-4 card naming the app and its key, and removes nothing itself', () => withKey(async () => {
+  const app = await pairedPhone();
+  const recorder = spy();
+  const got = await runAct('unpair', { client: app.id }, { ok: true, records: [] }, { source: memory(), recorder, now });
+  assert.equal(got.ok, true, got.refused);
+  assert.equal(got.fingerprint, fingerprintOf(app.publicKey));
+  assert.equal(recorder.calls.length, 1);
+  const [name, written] = recorder.calls[0];
+  assert.equal(name, 'write');
+  assert.equal(written.kind, 'card');
+  assert.equal(written.data.kind, 'unpair');
+  assert.equal(written.data.level, 4);
+  assert.equal(written.data.line, unpairLine(app.id, fingerprintOf(app.publicKey)));
+  assert.deepEqual(written.data.options, ['Unpair it', 'Not now']);
+  assert.equal(pairedClients().length, 1, 'asking unpairs nothing');
+  // The director's click on it, signed as the prompt record signs it, removes the key.
+  const click = await earned({ project: 'p', question: written.data.question, label: 'Unpair it', now });
+  assert.equal(unpairClient(app.id, makeEvent({ ...click.made, now })).ok, true);
+  assert.deepEqual(pairedClients(), []);
+}));
+
+test('unpair for an app that isn\'t paired is refused, raising nothing', () => withKey(async () => {
+  const recorder = spy();
+  const got = await runAct('unpair', { client: 'never-paired' }, { ok: true, records: [] }, { source: memory(), recorder, now });
+  assert.equal(got.ok, false);
+  assert.match(got.refused, /never-paired/);
+  assert.deepEqual(recorder.calls, []);
+  assert.equal((await runAct('unpair', {}, { ok: true, records: [] }, { source: memory(), recorder, now })).ok, false);
 }));

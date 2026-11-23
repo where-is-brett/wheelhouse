@@ -2506,7 +2506,17 @@ export async function startHelper({
     // The director's Confirm on the card for the computer's git settings, after a push was refused because they changed: confirmed
     // in the window, which records the settings as they read when the click is made (settingsEarned, applySettings).
     'confirm-settings': 'git-settings',
+    // Pair it and Unpair it on an app's card: confirmed in the window, which enrols or removes the app's key (enrolOn). No
+    // chat can sign these, so the window is how a Copilot session's app is paired.
+    'pair-client': 'pairing', 'unpair-client': 'pairing',
   };
+  // The director's signed Pair it or Unpair it on an app's card (spec 5.3) enrols the app's key, or removes it. Shared by
+  // the signed record route and the window, so either click leaves the key as the card said.
+  function enrolOn(event) {
+    if (event.kind !== 'action') return;
+    if (event.data?.action === 'pair-client') pairClient({ id: event.data.client }, event, { now });
+    if (event.data?.action === 'unpair-client') unpairClient(event.data.client, event);
+  }
   // The steps the window serves while STOP is on: Lift STOP, and an undo, as the runbook's local steps carry on.
   // The update's steps: their window names no default button, so a stray Return or Enter chooses nothing.
   const NO_DEFAULT_STEPS = ['update', 'release-approval', 'update-helper', 'git-settings'];
@@ -2660,7 +2670,7 @@ export async function startHelper({
       await doWrite({ project, kind: 'card-answer', data: { card, question: event.data.question, label: 'Confirm', where: 'panel' } }, ctx); // a plain answer, signed by nothing: only an option closes a card
       refuse('this computer\'s git settings are the confirmed ones again, so that card was closed');
     }
-    if (deciding.length === 0) refuse('that card is not one the window confirms: only Lift All stop, a guardrail change, Unattended, a runbook step, a CI push, an approval, an Ask allowance or a decision');
+    if (deciding.length === 0) refuse('that card is not one the window confirms: only Lift All stop, a guardrail change, Unattended, a runbook step, a CI push, an approval, an Ask allowance, pairing an app or a decision');
     return { event, deciding };
   }
 
@@ -2712,6 +2722,7 @@ export async function startHelper({
       const result = await writeEvent({ project, event, now });
       // A work's approved text is kept, and a proposed change installed, as a hook that signs the same click does.
       keepAfterClick(project, readProject(project)?.folder, event);
+      enrolOn(event);
       await freshViews(() => writeViews(project, { now }));
       if (card !== LIFT_STOP_NAME) await doWrite({ project, kind: 'card-answer', data: { card, question: again.event.data.question, label: still.label, where: 'panel' } }, ctx);
       if (still.lift) liftStop();
@@ -2789,9 +2800,7 @@ export async function startHelper({
     if (held.length > 0) refuse('the state already holds an event with that id');
     const result = await writeEvent({ project, event, now });
     await freshViews(() => writeViews(project, { now }));
-    // The director's Pair it or Unpair it on an app's card (spec 5.3) enrols the app's key, or removes it.
-    if (event.kind === 'action' && event.data?.action === 'pair-client') pairClient({ id: event.data.client }, event, { now });
-    if (event.kind === 'action' && event.data?.action === 'unpair-client') unpairClient(event.data.client, event);
+    enrolOn(event);
     return written({ event, result });
   }
 

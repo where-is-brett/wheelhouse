@@ -9,7 +9,8 @@ import { dataHash } from '../state/events.js';
 import { cardTextOf, hashOf } from './card-text.js';
 import { NOT_NOW, SUGGEST } from '../lib/calm-words.js';
 import { composeCard } from '../cards/compose.js';
-import { PAIR_LABEL } from '../state/card-lines.js';
+import { PAIR_LABEL, UNPAIR_LABEL } from '../state/card-lines.js';
+import { fingerprintOf, pairedClients } from './clients.js';
 import { withOpened } from './views.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -119,6 +120,26 @@ const ACTS = {
     });
     const got = await recorder.write({ kind: 'card', data: card });
     return got?.ok === true ? { ok: true, changed: ['card'], card: got.id, fingerprint: asked.fingerprint } : no(got?.refused ?? 'The card wasn\'t written');
+  },
+  // The panel's Unpair button, or the front desk's `unpair`: one card, Unpair this app, naming the app and its key. It decides
+  // nothing until the director's signed Unpair it, which removes the key (scripts/desk/clients.js); until then the app works.
+  async unpair(args, checked, { recorder }) {
+    const id = typeof args.client === 'string' ? args.client : isPlain(args.client) ? args.client.id : undefined;
+    const app = pairedClients().find((c) => c.id === id);
+    if (app === undefined) return no(typeof id === 'string' ? `No app ${id} is paired, so there is nothing to unpair` : 'Name the paired app to unpair');
+    const fingerprint = fingerprintOf(app.publicKey);
+    const { card } = composeCard({
+      kind: 'unpair', level: 4, recommend: UNPAIR_LABEL,
+      what: `Unpair the app "${app.name}" (${app.id}), key ${fingerprint}?`,
+      why: 'Only you can unpair an app, at level 4.',
+      because: 'you asked to stop this app deciding through Wheelhouse.',
+      meanwhile: 'The app keeps working until you unpair it.',
+      options: [{ label: UNPAIR_LABEL, says: 'It removes the app\'s key at once, and the app can\'t read or decide anything until it is paired again.' }],
+      checks: 'It changes no checks.',
+      target: { client: app.id, fingerprint },
+    });
+    const got = await recorder.write({ kind: 'card', data: card });
+    return got?.ok === true ? { ok: true, changed: ['card'], card: got.id, fingerprint } : no(got?.refused ?? 'The card wasn\'t written');
   },
   // A button on the Safekeeping row: the signed press goes on the record, and the helper does what it names.
   async safekeeping(args, checked, { recorder }) {
