@@ -58,8 +58,12 @@ export const planOf = (plan) => (PLANS.includes(plan) ? plan : DEFAULT_PLAN);
 // the keychain, found from config.json and the real HOME (a scratch HOME breaks it), so GH_TOKEN, GITHUB_TOKEN,
 // COPILOT_GITHUB_TOKEN and the like are all dropped, as are COPILOT_ALLOW_ALL (which lets everything through),
 // COPILOT_MODEL (a model is never passed by the environment) and every variable that steers what a session loads.
-// Whether Windows also needs ComSpec, PATHEXT or APPDATA is the Windows sitting's (T6).
-const KEPT_VARIABLES = ['PATH', 'HOME', 'USERPROFILE', 'TMPDIR', 'TEMP', 'TMP', 'LANG', 'SystemRoot', 'WHEELHOUSE_HOME'];
+// Windows needs the rest: the copilot shim VS Code puts on the PATH exits 0 with no output at all when ComSpec or PATHEXT
+// is missing (T6), and the npm program reads its own data from APPDATA and LOCALAPPDATA.
+const KEPT_VARIABLES = [
+  'PATH', 'HOME', 'USERPROFILE', 'TMPDIR', 'TEMP', 'TMP', 'LANG', 'SystemRoot', 'WHEELHOUSE_HOME',
+  'ComSpec', 'PATHEXT', 'windir', 'SystemDrive', 'APPDATA', 'LOCALAPPDATA', 'ProgramFiles', 'ProgramData',
+];
 
 // The longest command line cmd.exe runs; a .cmd start past it is refused before anything runs.
 export const CMD_LINE_MOST = 8191;
@@ -373,9 +377,10 @@ export function afterRun({ stdout = '', code: _code = null, call = {}, target, p
   if (typeof project === 'string' && sessionId !== null) recordRunOutcome({ project, sessionId, work, usage, model, versions, at });
   const guards = summary.refusals.filter((r) => r.kind === 'guard');
   if (guards.length > 0) records.push({ kind: 'note', data: { text: guardNote(guards, work) } });
-  return finished
-    ? { ok: true, why: null, sessionId, records }
-    : { ok: false, why: 'its session ended without a result', sessionId, records };
+  if (finished) return { ok: true, why: null, sessionId, records };
+  // A run that wrote nothing never started a session: the program found as copilot did nothing and said so to no one.
+  if (stdout.trim() === '') return { ok: false, why: 'copilot gave no output at all, so no session started: the program found as copilot may not be the Copilot command-line tool, or could not run', sessionId, records };
+  return { ok: false, why: 'its session ended without a result', sessionId, records };
 }
 
 // The project's activity folder, made before a start so the waker can hand the child its output file there.

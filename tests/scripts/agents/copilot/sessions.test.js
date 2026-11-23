@@ -163,6 +163,12 @@ test('no argument starts a session trusted or with every permission, whatever a 
   assert.deepEqual(copilotSessionEnv({ PATH: '/bin', COPILOT_MODEL: 'm', GH_TOKEN: 't' }, { home: '/h', binDir: '/wh/bin' }), { PATH: '/wh/bin:/bin', WHEELHOUSE_LAUNCHER_SESSION: '1', COPILOT_HOME: '/h' });
   // On Windows the folder goes first under the PATH's own spelling, with that system's separator.
   assert.deepEqual(copilotSessionEnv({ Path: 'C:\\npm' }, { home: 'C:\\h', binDir: 'C:\\wh\\bin', platform: 'win32' }), { Path: 'C:\\wh\\bin;C:\\npm', WHEELHOUSE_LAUNCHER_SESSION: '1', COPILOT_HOME: 'C:\\h' });
+  // Windows keeps what the copilot shim and the npm program need to run (ComSpec, PATHEXT, the app-data folders), under
+  // the spelling they came with, and still drops the proxy and token variables.
+  assert.deepEqual(
+    copilotSessionEnv({ Path: 'C:\\npm', COMSPEC: 'C:\\cmd.exe', PATHEXT: '.EXE;.CMD', APPDATA: 'C:\\a', LOCALAPPDATA: 'C:\\l', WINDIR: 'C:\\W', HTTPS_PROXY: 'p', GH_TOKEN: 't' }, { home: 'C:\\h', binDir: 'C:\\wh\\bin', platform: 'win32' }),
+    { Path: 'C:\\wh\\bin;C:\\npm', COMSPEC: 'C:\\cmd.exe', PATHEXT: '.EXE;.CMD', APPDATA: 'C:\\a', LOCALAPPDATA: 'C:\\l', WINDIR: 'C:\\W', WHEELHOUSE_LAUNCHER_SESSION: '1', COPILOT_HOME: 'C:\\h' },
+  );
 });
 
 // ---- The level is checked before its rules ----
@@ -331,6 +337,10 @@ test('a run with no result failed, whatever its exit code said, and an ordinary 
   assert.equal(died.waiting, undefined);
   assert.match(died.why, /ended without a result/);
   assert.deepEqual(readLedger(), []);
+  // A run that wrote nothing at all never started: the why says so rather than naming a session.
+  const silent = afterRun({ stdout: '', code: 0, target: 'foreman', project: P });
+  assert.equal(silent.ok, false);
+  assert.match(silent.why, /copilot gave no output at all/);
 }));
 
 test('a run GitHub refused for the month settles as waiting and goes in the ledger as a refusal, never as a fault', () => withHome(async () => {
