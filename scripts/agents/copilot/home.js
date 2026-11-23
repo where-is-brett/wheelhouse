@@ -123,6 +123,15 @@ function launcherWords(text, rel) {
   return text.replace(WAKE_STEP[0], WAKE_STEP[1]);
 }
 
+// Copilot's `create` tool makes no parent folder and its session's shell can't (a builder's rules allow only its runner), so
+// the builder is told to write only where a folder already exists. It goes at the end of the "Where you work" list.
+const BUILDER_LIST_END = '\n\n## Before you start';
+const BUILDER_FOLDER_RULE = "\n- **Folders that already exist.** Copilot's `create` tool can't make a folder, and your shell can't either. Write files (the plan first) only in folders that already exist in your worktree. If the project has no folder for plans, put the plan at the worktree's root.";
+function folderWords(text, rel) {
+  if (!text.includes(BUILDER_LIST_END)) throw new Error(`${rel} no longer holds the place folderWords adds the folder rule`);
+  return text.replace(BUILDER_LIST_END, `${BUILDER_FOLDER_RULE}${BUILDER_LIST_END}`);
+}
+
 const q = (value) => JSON.stringify(value);
 const list = (values) => `[${values.map(q).join(', ')}]`;
 
@@ -207,7 +216,8 @@ function agentFrom(root, agent) {
   } else {
     granted = [...BUILDER_TOOLS];
   }
-  const rest = renameSkills(mapRulesFiles(mapToolWords(withoutPathComment(body, source), source)));
+  let rest = renameSkills(mapRulesFiles(mapToolWords(withoutPathComment(body, source), source)));
+  if (agent === 'builder') rest = folderWords(rest, source);
   if (/CLAUDE\.md/.test(rest)) throw new Error(`${source} still names CLAUDE.md after mapping`);
   return [file, assemble({ file, source, front: { name: `wheelhouse-${agent}`, description: front.description, tools: granted }, rest })];
 }
