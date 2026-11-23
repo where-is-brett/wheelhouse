@@ -152,6 +152,9 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
         return set('unpaired');
       }
       run.pending = false;
+      // A signed read takes the cards the director marked Ask me here, which the front desk then asks in the chat. It builds no
+      // views, so it costs the helper almost nothing, and what it says is not needed here: the cards stay in the panel's list.
+      await desk.read('waiting', { askHere: true, paneOnly: true });
       const events = Array.isArray(got.events) ? got.events : [];
       for (const event of events) {
         if (event?.type === 'all-stop') model.allStop = event.on === true;

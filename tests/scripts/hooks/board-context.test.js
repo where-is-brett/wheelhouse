@@ -1098,6 +1098,21 @@ test('since the last turn: a panel answer is named and a chat answer is left out
   });
 });
 
+test('since the last turn, Copilot\'s prompt hook carries the panel answer too: its translated prompt reaches the same since line', async () => {
+  await withProject(async ({ repo }) => {
+    seenAt();
+    store(stateDir(P), [askedCard(QUESTION_A, '30'), answeredCard(QUESTION_A, '34', 'panel')]);
+    // The prompt as Copilot sends it, translated as its hook entry translates it before any step runs.
+    const { toGuardInput } = await import('../../../adapters/copilot/translate.js');
+    const translated = toGuardInput({ sessionId: SESSION, cwd: repo, prompt: 'Done?', timestamp: Date.parse(sessionNow) }, 'userPromptSubmitted');
+    const input = Array.isArray(translated) ? translated[0] : translated;
+    assert.equal(input.hook_event_name, 'UserPromptSubmit');
+    const text = contextOf(await hook(input));
+    assert.ok(text.startsWith(SINCE_LEAD), text);
+    assert.match(text, /the footer wording on the contact page\?: approved in the panel at \d\d:34/);
+  });
+});
+
 // A transcript tail holding the hidden line the mod appended after a panel press.
 function notedTranscript(home, ...ids) {
   const lines = ids.map((id) => ({

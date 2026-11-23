@@ -1,6 +1,6 @@
 // vscode/desk-client.cjs
 // The add-on's one way to Wheelhouse: desk/1 over the helper's socket or pipe. `deskClient({ address, sign, project })`
-// gives `read`, `act` and `watch`. Each call posts `{ v: 'desk/1', project, ... }`; `act` and `watch` carry the
+// gives `read`, `act` and `watch`. Each call posts `{ v: 'desk/1', project, ... }`; each carries the
 // add-on's signature over the command, its arguments, the time and the project as `evidence`. Plain Node.js with no import from `scripts/`.
 //
 // An answer is `{ ok: true, ... }` or `{ ok: false, refused }`, and never a rejection. Two marks are added:
@@ -57,7 +57,9 @@ function meant(got) {
 function deskClient({ address, sign, project, timeout = TIMEOUT_MS } = {}) {
   const ask = async (route, body) => meant(await post(address, route, { v: DESK_VERSION, project, ...body }, timeout));
   return {
-    read: (view, args = {}) => ask('/desk/read', { view, args }),
+    // A read is signed too, over the view and its arguments, so the helper can tell the panel's own read (which takes its Ask me
+    // here marks) from any other. A read nobody signed is still answered by the helper, and takes nothing.
+    read: (view, args = {}) => ask('/desk/read', { view, args, evidence: sign('read', { view, args }, project) }),
     act: (command, args = {}) => ask('/desk/act', { command, args, evidence: sign(command, args, project) }),
     watch: (cursor = null) => ask('/desk/watch', { cursor, evidence: sign('watch', { cursor }, project) }),
     // An answer names the hash of the card as it was shown, as a click in the chat does; the helper refuses one without it.
