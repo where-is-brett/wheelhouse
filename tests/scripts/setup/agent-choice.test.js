@@ -10,7 +10,7 @@ import { computerStep } from '../../../scripts/setup/computer.js';
 import { configFrom, starterConfig, agentsAfter, committedAgents } from '../../../scripts/setup/project-files.js';
 import { newId, reverseChange, startRun, addChanges, findRun } from '../../../scripts/setup/journal.js';
 import { agentChosen, agentEntries, otherAgentsFound, refreshAgentComputer, AGENT_ANSWER } from '../../../scripts/agents/setup-parts.js';
-import { planOf, signedIn, computerChanges, FIRST_MATE_LINE } from '../../../scripts/agents/copilot/setup.js';
+import { planOf, signedIn, computerChanges, questionSettingsLine, FIRST_MATE_LINE } from '../../../scripts/agents/copilot/setup.js';
 import { FIRST_MATE_DIR, FIRST_MATE_FILES } from '../../../scripts/agents/copilot/first-mate.js';
 import hooks from '../../../adapters/copilot/hooks.js';
 import { readAccount as readUsageAccount } from '../../../scripts/agents/copilot/usage.js';
@@ -454,4 +454,13 @@ test('an update that cannot write one First Mate file names that file and keeps 
       fs.chmodSync(path.dirname(agentFile), 0o700);
     }
   });
+});
+
+test('setup says so when VS Code would answer Copilot\'s questions with no click, or not show them', () => {
+  const line = (text) => questionSettingsLine({ userHome: '/home/a', platform: 'linux', read: () => text });
+  assert.match(line('{\n // mine\n "chat.autoReply": true,\n}'), /chat\.autoReply is on.*no click/);
+  assert.match(line('{"github.copilot.chat.cli.askUser": false}'), /askUser setting.*off/);
+  assert.equal(line('{"chat.autoReply": false, "github.copilot.chat.cli.askUser": true}'), null);
+  assert.equal(line('not json'), null);
+  assert.equal(line(null), null);
 });
