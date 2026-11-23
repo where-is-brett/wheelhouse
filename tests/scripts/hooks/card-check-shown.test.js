@@ -5,7 +5,7 @@ import path from 'node:path';
 import { sessionRole } from '../../../scripts/lib/role.js';
 import { seatFile, readSeat } from '../../../scripts/lib/first-mate-seat.js';
 import assert from 'node:assert/strict';
-import { decide, checkShown, plainQuestion, DECISION_IN_CHAT } from '../../../scripts/hooks/card-check.js';
+import { decide, checkShown, plainQuestion, DECISION_IN_CHAT, DECISION_IN_WINDOW } from '../../../scripts/hooks/card-check.js';
 import { pendingDecisions } from '../../../scripts/decisions/pending.js';
 import { decisionText } from '../../../scripts/decisions/message.js';
 import { asQuestion } from '../../../scripts/cards/visit.js';
@@ -157,6 +157,36 @@ test('typed replies switched off: the question picker is allowed for a decision,
     turnOn();
     const on = await decide(input, { projectOf: () => ({ project: P }), env: {} });
     assert.equal(on.hookSpecificOutput.permissionDecisionReason, DECISION_IN_CHAT);
+  });
+});
+
+test('on an agent whose hooks only read, the picker is refused for a decision whatever the switch, and it is answered in the window', async () => {
+  await inHomeOff(async () => {
+    const card = raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    const question = asQuestion({ data: card.data });
+    const input = { cwd: '/x', session_id: 's-desk', hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [question] } };
+    for (const turn of [turnOff, turnOn]) {
+      turn();
+      const out = await decide(input, { projectOf: () => ({ project: P }), env: {}, writeVia: 'helper' });
+      assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
+      assert.equal(out.hookSpecificOutput.permissionDecisionReason, DECISION_IN_WINDOW);
+      assert.match(DECISION_IN_WINDOW, /`decision confirm <n>`/);
+      // An agent whose hooks sign keeps the picker it had: allowed while typed replies are off, refused for the chat while on.
+      const own = await decide(input, { projectOf: () => ({ project: P }), env: {}, writeVia: 'self' });
+      assert.notEqual(own?.hookSpecificOutput?.permissionDecisionReason, DECISION_IN_WINDOW);
+    }
+  });
+});
+
+test('the decision as printed for the window passes the Stop check, as the typed form does', async () => {
+  await inHome(async () => {
+    raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    const [one] = pendingDecisions(P);
+    const windowed = decisionText(one, { window: true });
+    assert.notEqual(windowed, decisionText(one));
+    assert.match(windowed.split('\n').at(-1), /^Reply in Wheelhouse's own window, which opens for decision 1/);
+    assert.equal(await decide(stop(`Decision 1:\n\n${windowed}\n`), deps), undefined);
+    assert.equal(await decide(stop(decisionText(one)), deps), undefined);
   });
 });
 

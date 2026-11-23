@@ -174,6 +174,12 @@ test('an answer to the foreman\'s own question wakes the foreman, not the featur
   assert.deepEqual(routed.features['login-page'].map((e) => e.id), ['ev-theirs']);
 });
 
+test('an answer the helper\'s own window signed wakes the foreman as one a hook signed does', () => {
+  const windowed = action('ev-window', { action: 'answer', questionId: 'q-login-page-1000001', questionHash: 'abcdefabcdef', label: 'Option A', proof: 'window' });
+  const routed = route(diff(observation(), observation({ at: iso(1000), awake: 1000, events: [windowed] })));
+  assert.deepEqual(routed.foreman.map((e) => [e.type, e.id, e.work, e.detail.label, e.detail.foreman ?? false]), [['answer', 'ev-window', 'login-page', 'Option A', true]]);
+});
+
 test('an event the foreman wrote while handling a wake does not wake it again', () => {
   const prev = observation();
   const quick = { id: 'ev-foreman-quick', kind: 'work', data: { id: 'fix-typo', title: 'Fix', lane: 'quick', visible: false, dependsOn: [] }, verified: false };
