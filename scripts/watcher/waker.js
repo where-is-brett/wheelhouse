@@ -65,6 +65,9 @@
 //     (ruling P8-3). A run whose exit this watcher didn't see (one the
 //     foreman's command started, or one from before a restart) is read the same
 //     way once its record ends;
+//   - `afterWork({ stdout, target, project, worktree, at })`, called once a feature's run whose output was kept has been
+//     read, with the feature's worktree: for an agent whose session may not commit its own work. Its `records` are written
+//     through `raise`; it informs, so a throw is reported and the run still settles;
 //   - `pruneActivity({ project, now })`, called by prune;
 //   - `takesColumn: true`, for an agent whose sessions pass each subagent its model and effort (Claude Code's): only
 //     then does a feature's prompt carry the Thoroughness column's lines, and a Shape 2 wake's copy its `column`;
@@ -1079,6 +1082,29 @@ export function makeWaker({
     }
   };
 
+  // What a feature's run leaves in its worktree, handled by the adapter's afterWork once the run has ended, when it has
+  // one (see the list of what an adapter may add): its records are written through `raise`. It informs: a throw, or a
+  // record that can't be written, is reported, and the run still settles.
+  async function afterWork(adapter, target, kept) {
+    if (target === 'foreman' || typeof adapter?.afterWork !== 'function') return;
+    let result;
+    try {
+      const worktree = locate(nameOf(target));
+      if (worktree === null) return;
+      result = await adapter.afterWork({ stdout: readOutput(kept.output, kept.from), target, project, worktree, at: now().toISOString() });
+    } catch (error) {
+      onError(`What the ${nameOf(target)} session left in its worktree couldn't be settled: ${error instanceof Error ? error.message : 'unknown error'}`);
+      return;
+    }
+    for (const record of list(result?.records)) {
+      try {
+        await raise(record);
+      } catch (error) {
+        onError(`What the ${nameOf(target)} session's worktree held couldn't be recorded: ${error instanceof Error ? error.message : 'unknown error'}`);
+      }
+    }
+  }
+
   // What a run whose output was kept (`kept`: the record's `run`, { output, from, usageFile, idFromRun }) leaves,
   // read by the adapter's afterRun from what the run appended (ruling P8-2): its records written through `raise`
   // (a record that can't be written is reported, and the run still settles), a first run's session id kept for
@@ -1097,6 +1123,7 @@ export function makeWaker({
         onError(`What the ${nameOf(target)} session did couldn't be recorded: ${error instanceof Error ? error.message : 'unknown error'}`);
       }
     }
+    await afterWork(adapter, target, kept);
     if (target !== 'foreman' && kept.idFromRun === true) keepStartedId(nameOf(target), result?.sessionId ?? null);
     if (result?.ok === true) settle(entries, 'done');
     else {

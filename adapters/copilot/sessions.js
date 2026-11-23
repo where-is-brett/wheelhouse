@@ -9,7 +9,7 @@
 //
 // Beside the contract's six members the part has three the waker asks for when they are there: `prepare` runs before
 // every start (the version check, the kits, the session's own home), `afterRun` reads a run's whole output once it ends,
-// and `pruneActivity` removes old activity; and `grantProofs`, the proofs a build-command grant must name.
+// `afterWork` commits a feature run's changes in its worktree, `pruneActivity` removes old activity; and `grantProofs`, the proofs a build-command grant must name.
 //
 // A session id is given up front (`--session-id`, check 96), so no call has `idFromRun`. On a plan where Auto is the only
 // model choice (`auto-only`, the default) no call passes `--model`, and the environment never carries COPILOT_MODEL:
@@ -24,6 +24,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIVITY_DAYS, BACKGROUND_SESSIONS_READY, LEVELS } from '../../scripts/agents/copilot/numbers.js';
 import { activitySummary, finalAnswer, modelOfRun, monthRefusedIn, sessionIdOf, sessionUsage, eventsOf } from '../../scripts/agents/copilot/run-output.js';
+import { commitWork } from '../../scripts/agents/copilot/commit-work.js';
 import { recordRefusal, recordRun } from '../../scripts/agents/copilot/usage.js';
 import { checkVersions, noSubsetRunner, readVersions } from '../../scripts/agents/copilot/versions.js';
 import { PLUGIN_ROOT, foremanCommands } from '../../scripts/foreman/tools.js';
@@ -386,6 +387,47 @@ export function afterRun({ stdout = '', code: _code = null, call = {}, target, p
   return { ok: false, why: 'its session ended without a result', sessionId, records };
 }
 
+// The commit a feature session's report names (`commit: <hash>` in its WHEELHOUSE REPORT block), or null: the last block's.
+function reportedCommit(text) {
+  const lines = String(text ?? '').split(/\r?\n/);
+  let start = -1;
+  for (let i = 0; i < lines.length; i += 1) if (lines[i].trim() === 'WHEELHOUSE REPORT') start = i;
+  if (start < 0) return null;
+  for (const line of lines.slice(start + 1)) {
+    const m = /^([a-z]+):[ \t]*(.*?)[ \t]*$/.exec(line);
+    if (!m) break;
+    if (m[1] === 'commit') return /^[0-9a-f]{7,40}$/.test(m[2]) ? m[2] : null;
+  }
+  return null;
+}
+
+// What a feature session's finished run leaves in its worktree, committed by Wheelhouse once the run has ended: at Ask a
+// session's shell runs only the build commands allowed, so it never runs git (commit-work.js). Returns `{ records, commit?,
+// head? }`; `records` are notes for the board, raised by the waker, when the commit failed or the report names a commit that
+// isn't the worktree's HEAD. A foreman's run, a run with no result and a worktree not given leave nothing to commit. `commit`
+// is for tests.
+export async function afterWork({ stdout = '', target, worktree = null, commit = commitWork } = {}) {
+  if (typeof target !== 'string' || !target.startsWith('feature-') || typeof worktree !== 'string') return { records: [] };
+  if (!eventsOf(stdout).some((event) => event.type === 'result')) return { records: [] };
+  const work = target.slice('feature-'.length);
+  let made;
+  try {
+    made = await commit({ worktree, work });
+  } catch (error) {
+    made = { failed: error instanceof Error ? error.message : 'unknown error' };
+  }
+  const records = [];
+  if (typeof made?.failed === 'string') {
+    records.push({ kind: 'note', data: { text: `The ${work} session's changes could not be committed: ${made.failed}. They are still in its worktree.` } });
+    return { records };
+  }
+  const named = reportedCommit(finalAnswer(stdout));
+  if (named !== null && typeof made?.head === 'string' && !made.head.startsWith(named)) {
+    records.push({ kind: 'note', data: { text: `The ${work} session's report names commit ${named.slice(0, 12)}, but its worktree's head is ${made.head.slice(0, 12)}.` } });
+  }
+  return { records, ...(made?.commit === undefined ? {} : { commit: made.commit }), ...(made?.head === undefined ? {} : { head: made.head }) };
+}
+
 // The project's activity folder, made before a start so the waker can hand the child its output file there.
 function activityFolder(project) {
   const dir = path.join(projectFolder(project), 'activity');
@@ -437,6 +479,7 @@ export function sessionsPart({ ready = BACKGROUND_SESSIONS_READY, plan: given = 
       return { lifted: checked?.lifted === true || lifted === true };
     },
     afterRun: (options) => afterRun({ ...options, versions: lastVersions }),
+    afterWork,
     pruneActivity,
     grantProofs: GRANT_PROOFS,
   });

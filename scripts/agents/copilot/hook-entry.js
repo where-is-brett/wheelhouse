@@ -248,9 +248,10 @@ function stopClient(client, cwd) {
 }
 
 // Each step's deps on Copilot: every write through the helper, and the STOP guard marks no bypass. The card check
-// notes no open card (that note is kept under the Wheelhouse home).
+// notes no open card (that note is kept under the Wheelhouse home). A builder's report names no commit: Wheelhouse
+// commits its work after the run (commit-work.js).
 function helperStepDeps(shared, given, cwd) {
-  const own = { stopGuard: { bypass: false }, stopWord: { client: stopClient(shared.client, cwd) }, cardCheck: { markOpen: () => {} } };
+  const own = { stopGuard: { bypass: false }, stopWord: { client: stopClient(shared.client, cwd) }, cardCheck: { markOpen: () => {} }, reportCheck: { commitNamed: false } };
   return Object.fromEntries(Object.keys(STEP_MODULES).map((name) => [name, { ...shared, ...own[name], ...given?.[name] }]));
 }
 
