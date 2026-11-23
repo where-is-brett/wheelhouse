@@ -214,6 +214,16 @@ test('unpair raises one level-4 card naming the app and its key, and removes not
   assert.deepEqual(pairedClients(), []);
 }));
 
+test('unpair skips a repeat while an Unpair card for the app already waits', () => withKey(async () => {
+  const app = await pairedPhone();
+  const line = unpairLine(app.id, fingerprintOf(app.publicKey));
+  const source = memory({ waiting: [{ id: 'u-1', at: cardEvent.at, data: { ...CARD, kind: 'unpair', line } }] });
+  const recorder = spy();
+  const got = await runAct('unpair', { client: app.id }, { ok: true, records: [] }, { source, recorder, now });
+  assert.deepEqual([got.ok, got.card, got.changed], [true, 'u-1', []]);
+  assert.deepEqual(recorder.calls, [], 'no second card');
+}));
+
 test('unpair for an app that isn\'t paired is refused, raising nothing', () => withKey(async () => {
   const recorder = spy();
   const got = await runAct('unpair', { client: 'never-paired' }, { ok: true, records: [] }, { source: memory(), recorder, now });

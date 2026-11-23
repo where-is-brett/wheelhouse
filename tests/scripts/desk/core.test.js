@@ -91,7 +91,7 @@ const nowAt = () => NOW;
 const panelApp = (id = 'vscode-panel') => {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
   const entry = { id, name: 'The panel', publicKey: publicKey.export({ type: 'spki', format: 'der' }).toString('base64') };
-  const signs = (cursor, at = NOW.toISOString()) => ({ form: 'client', client: id, at, sig: crypto.sign(null, Buffer.from(canonicalJson({ command: 'watch', args: { cursor }, at })), privateKey).toString('base64') });
+  const signs = (cursor, at = NOW.toISOString(), project = 'o__p') => ({ form: 'client', client: id, at, sig: crypto.sign(null, Buffer.from(canonicalJson({ command: 'watch', args: { cursor }, at, project })), privateKey).toString('base64') });
   return { entry, signs };
 };
 const watching = (project, entry) => {
@@ -145,6 +145,21 @@ test('a watch whose time is six minutes old, or ahead by six, marks nothing', as
   }
   await core.watch('cur-1', app.signs('cur-1', new Date(NOW.getTime() - 4 * 60 * 1000).toISOString()));
   assert.equal(panelLive('o__p', NOW.getTime()), true, 'four minutes old is within the window');
+});
+
+test('a watch signed for another project marks nothing, and the answer says whether the evidence checked', async () => {
+  const app = panelApp();
+  const core = watching('o__p', app.entry);
+  const wrong = await core.watch('cur-1', app.signs('cur-1', NOW.toISOString(), 'o__other'));
+  assert.equal(wrong.ok, true);
+  assert.equal(wrong.paired, false);
+  assert.equal(panelLive('o__p', NOW.getTime()), false);
+  assert.equal(panelLive('o__other', NOW.getTime()), false);
+  const good = await core.watch('cur-1', app.signs('cur-1'));
+  assert.equal(good.paired, true);
+  assert.equal((await core.watch('cur-1')).paired, undefined, 'a watch with no evidence says nothing about pairing');
+  const stranger = panelApp();
+  assert.equal((await core.watch('cur-1', stranger.signs('cur-1'))).paired, false, 'a key that is no longer paired');
 });
 
 test('a watch whose signature is over another cursor marks nothing', async () => {

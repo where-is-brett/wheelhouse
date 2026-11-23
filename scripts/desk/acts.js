@@ -9,7 +9,7 @@ import { dataHash } from '../state/events.js';
 import { cardTextOf, hashOf } from './card-text.js';
 import { NOT_NOW, SUGGEST } from '../lib/calm-words.js';
 import { composeCard } from '../cards/compose.js';
-import { PAIR_LABEL, UNPAIR_LABEL } from '../state/card-lines.js';
+import { PAIR_LABEL, UNPAIR_LABEL, unpairLine } from '../state/card-lines.js';
 import { fingerprintOf, pairedClients } from './clients.js';
 import { markAskHere } from './panel-live.js';
 import { withOpened } from './views.js';
@@ -124,11 +124,16 @@ const ACTS = {
   },
   // The panel's Unpair button, or the front desk's `unpair`: one card, Unpair this app, naming the app and its key. It decides
   // nothing until the director's signed Unpair it, which removes the key (scripts/desk/clients.js); until then the app works.
-  async unpair(args, checked, { recorder }) {
+  async unpair(args, checked, { source, recorder }) {
     const id = typeof args.client === 'string' ? args.client : isPlain(args.client) ? args.client.id : undefined;
     const app = pairedClients().find((c) => c.id === id);
     if (app === undefined) return no(typeof id === 'string' ? `No app ${id} is paired, so there is nothing to unpair` : 'Name the paired app to unpair');
     const fingerprint = fingerprintOf(app.publicKey);
+    // An Unpair card for this app and key that already waits is not raised again: it is the one asked about.
+    const line = unpairLine(app.id, fingerprint);
+    const seen = await source.views({});
+    const waiting = (Array.isArray(seen?.views?.waiting) ? seen.views.waiting : []).find((c) => c?.data?.line === line);
+    if (waiting !== undefined) return { ok: true, changed: [], card: waiting.id, fingerprint };
     const { card } = composeCard({
       kind: 'unpair', level: 4, recommend: UNPAIR_LABEL,
       what: `The app "${app.name}" (${app.id}), with its key ${fingerprint}, is paired and can decide through Wheelhouse.`,

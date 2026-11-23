@@ -36,6 +36,13 @@ export function markAskHere(project, cardId, nowMs) {
   asks.get(project).set(cardId, nowMs);
 }
 
+// The cards of `project` marked within ASK_HERE_MS of `nowMs`, left as they are: a look, not a take.
+export function peekAskHere(project, nowMs) {
+  const marked = asks.get(project);
+  if (marked === undefined) return [];
+  return [...marked].filter(([, at]) => nowMs >= at && nowMs - at <= ASK_HERE_MS).map(([id]) => id);
+}
+
 // The cards of `project` marked within ASK_HERE_MS of `nowMs`, which are then forgotten: a mark is taken once. Older marks are dropped.
 export function takeAskHere(project, nowMs) {
   const marked = asks.get(project);

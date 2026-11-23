@@ -53,7 +53,7 @@ import { stopState } from '../lib/stop.js';
 import { stateDir } from '../lib/paths.js';
 import { subjectOf, answeredWords } from '../cards/answered.js';
 import { PANE_LEAD, paneLine } from '../cards/panel-words.js';
-import { paneLive, takeHere, markOpen, HOLD_FOR_PANE } from '../lib/session-files.js';
+import { takeHere, markOpen, HOLD_FOR_PANE } from '../lib/session-files.js';
 import { sessionRole } from '../lib/role.js';
 import { refreshSeat } from '../lib/first-mate-seat.js';
 import { cardButtons } from '../cards/buttons.js';
@@ -493,8 +493,20 @@ function swapSetupCards(input, questions) {
   }
 }
 
+// Whether a panel is live beside this project's chat, as the front desk reads it: the helper says so (a paired app's signed watch,
+// kept per project), never a file an agent might write. A helper that can't be asked says no, so the chat asks the card.
+export async function helperPaneLive(session, ms, { cwd, client } = {}) {
+  try {
+    const { deskClient } = await import('../desk/client.js');
+    const got = await deskClient({ cwd, local: 'never', ...(client === undefined ? {} : { client }) }).read('waiting', {});
+    return got?.ok === true && got.data?.paneLive === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function decide(input, {
-  projectOf: find = projectOf, dir, now = () => new Date(), outcomes, paneLive: live = paneLive, takeHere: take = takeHere,
+  projectOf: find = projectOf, dir, now = () => new Date(), outcomes, paneLive: live = helperPaneLive, takeHere: take = takeHere,
   markOpen: open = markOpen, holdForPane = HOLD_FOR_PANE, role = sessionRole, stop = stopState, env = process.env, decisions,
   writeVia = 'self',
 } = {}) {
@@ -510,7 +522,9 @@ export async function decide(input, {
   let open_ = null;
   let checked_ = null;
   try {
-    const checked = oneCardCheck(input, find(input.cwd, { dir }).project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop, writeVia });
+    // Asked once, before the check, only where a hold could apply: the same per-project answer the front desk reads.
+    const panel = holdForPane && Array.isArray(questions) ? await live(input.session_id, now().getTime(), { cwd: input.cwd }) === true : false;
+    const checked = oneCardCheck(input, find(input.cwd, { dir }).project, { now, outcomes, paneLive: () => panel, takeHere: take, holdForPane, role, stop, writeVia });
     if (checked.deny !== undefined) return answer.deny(checked.deny);
     open_ = checked.open;
     checked_ = checked;

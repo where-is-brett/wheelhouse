@@ -75,13 +75,16 @@ test('ask-here marks a waiting card, and waiting with askHere gives it once', ()
   clearPanels();
   const marked = await runAct('ask-here', { card: 'c1' }, { ok: true, records: [], client: 'vscode-panel' }, { source, recorder: {}, now });
   assert.deepEqual([marked.ok, marked.changed], [true, ['ask-here']]);
-  const askHere = async () => (await readView('waiting', { askHere: true }, source, { now })).data.askHere;
-  assert.deepEqual(await askHere(), ['c1']);
-  assert.deepEqual(await askHere(), [], 'a mark is taken once');
+  const look = async () => (await readView('waiting', { askHere: true }, source, { now })).data.askHere;
+  const take = async () => (await readView('waiting', { askHere: true }, source, { now, client: 'vscode-panel' })).data.askHere;
+  assert.deepEqual(await look(), ['c1']);
+  assert.deepEqual(await look(), ['c1'], 'a read nobody signed only looks, so it clears no mark');
+  assert.deepEqual(await take(), ['c1']);
+  assert.deepEqual(await take(), [], 'a signed read takes a mark once');
   assert.equal((await readView('waiting', {}, source, { now })).data.askHere, undefined, 'asked for only when wanted');
   // A mark older than two minutes is not given, and the card stays waiting all the same.
   await runAct('ask-here', { card: 'c1' }, { ok: true, records: [], client: 'vscode-panel' }, { source, recorder: {}, now: () => new Date(Date.parse(NOW) - ASK_HERE_MS - 1000) });
-  assert.deepEqual(await askHere(), []);
+  assert.deepEqual(await take(), []);
   assert.equal((await readView('waiting', {}, source, { now })).data.numbered.length, 1, 'asking here closes nothing');
 }));
 

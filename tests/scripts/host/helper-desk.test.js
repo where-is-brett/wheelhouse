@@ -124,7 +124,7 @@ test('the helper\'s /desk/watch passes the evidence through: a signed watch mark
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
   fs.mkdirSync(keysDir(), { recursive: true });
   fs.writeFileSync(clientsFile(), JSON.stringify([{ id: 'vscode-panel', name: 'The panel', publicKey: publicKey.export({ type: 'spki', format: 'der' }).toString('base64') }]));
-  const sign = (cursor, when = at(10)().toISOString()) => ({ form: 'client', client: 'vscode-panel', at: when, sig: crypto.sign(null, Buffer.from(canonicalJson({ command: 'watch', args: { cursor }, at: when })), privateKey).toString('base64') });
+  const sign = (cursor, when = at(10)().toISOString()) => ({ form: 'client', client: 'vscode-panel', at: when, sig: crypto.sign(null, Buffer.from(canonicalJson({ command: 'watch', args: { cursor }, at: when, project: P })), privateKey).toString('base64') });
   const live = async () => (await client.desk.read({ v, project: P, view: 'waiting' })).data.paneLive;
   assert.equal(await live(), false);
   assert.equal((await client.desk.watch({ v, project: P, cursor: null })).ok, true);

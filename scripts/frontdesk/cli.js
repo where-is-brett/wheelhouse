@@ -302,13 +302,15 @@ async function markAsked(client, cwd, ids, stop) {
 }
 
 // Records, as asked, the cards handed out that the question picker can never mark: a card whose question carries no reply code
-// (no set line, or a kind of set line with none), a card handed out for the chat (`inChat`), which no picker shows, and a card
-// handed out while a live panel is beside the session (`panel`), where no picker call is allowed. A card with a reply code is
+// (no set line, or a kind of set line with none) and a card handed out for the chat (`inChat`), which no picker shows. While a live
+// panel holds the project's cards (`panel`) nothing is marked unless it is handed out for the chat: the panel shows them, and a card
+// marked asked there would show nowhere once the panel stopped, as it is offered again only while unasked. A card with a reply code is
 // not marked here otherwise: it counts as asked once the picker's hook has written the signed `shown` record for it
 // (scripts/hooks/prompt-record.js, read by the waiting view), so a card printed and never shown comes back.
 // `handed` is [{ id, question }], the card's stored question text. Resolves with the problems to report.
 async function handOut(client, cwd, handed, { stop, inChat = false, panel = false }) {
-  const ids = handed.filter(({ question }) => inChat || panel || replyCodeOf(question) === null).map(({ id }) => id);
+  if (panel && !inChat) return [];
+  const ids = handed.filter(({ question }) => inChat || replyCodeOf(question) === null).map(({ id }) => id);
   return markAsked(client, cwd, ids, stop);
 }
 
@@ -616,8 +618,8 @@ async function questionCards({ client, cwd, views, words, stop, problems }) {
 // question from the build that no waiting card asks gets its answer card first, and the build
 // loop's records theirs (buildLoopCards). A card the picker can mark counts as asked once the picker has shown it (its
 // `shown` record), so a card printed and never shown comes back; a card it cannot mark, a card handed out for the chat
-// (`onAsked`) and one handed out under a live panel are recorded as asked when printed, so they aren't offered on every
-// turn. A write the helper refuses is a problem, not a failure: the cards waiting are still given. Under STOP the visit's one card is Lift STOP:
+// (`onAsked`) are recorded as asked when printed, so they aren't offered on every turn; one handed out under a live panel is not,
+// so it comes back to the chat when the panel stops. A write the helper refuses is a problem, not a failure: the cards waiting are still given. Under STOP the visit's one card is Lift STOP:
 // the helper writes nothing, so no card is made, and the cards waiting stay on the board, counted
 // in `left`, for the visit after STOP is lifted.
 export async function cards({ client, cwd, now, onAsked, session }) {
@@ -727,7 +729,7 @@ async function refuseEventId(views, given) {
 // Composes one card and records it, unless a waiting card already carries its set line: then that
 // card comes back as it was recorded, so the director is asked the card the state holds, with
 // `alreadyAsked` when it counts as asked. A card the picker can mark counts as asked once the picker has shown it; one it cannot
-// mark, and one handed out under a live panel, is recorded as asked when printed.
+// mark is recorded as asked when printed, unless a live panel holds the cards.
 // An approval whose target names only the pull request gets its head commit from the host. A
 // topic is kept in lower case. A revised card names the
 // card it replaces by `revises`, which must wait now, or have been closed by a later head of its pull

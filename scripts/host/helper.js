@@ -4712,7 +4712,7 @@ export async function startHelper({
       await ensureStateClone(project, ctx);
       return fn();
     });
-    if (op === 'read') return inQueue(() => core.read(body.view, body.args ?? {}));
+    if (op === 'read') return inQueue(() => core.read(body.view, body.args ?? {}, body.evidence));
     // A watch may carry a paired app's signature, which marks that project's panel live (scripts/desk/panel-live.js).
     if (op === 'watch') return inQueue(() => core.watch(body.cursor ?? null, body.evidence));
     const { command, args = {}, evidence } = body;

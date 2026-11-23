@@ -2711,7 +2711,7 @@ test('cards --here hands cards out for the chat, which the picker never shows, s
   });
 });
 
-test('cards and card still mark a card as asked at print while the panel is live, since no picker call can show it then', async () => {
+test('cards and card mark nothing as asked while the panel is live, so a card the panel held is offered in the chat once it lapses', async () => {
   await inHome(async () => {
     const approval = cardEvent({ ...APPROVAL, target: { pr: 7, sha: FULL } }, 1);
     const helper = fakeHelper({ events: [approval] });
@@ -2720,11 +2720,23 @@ test('cards and card still mark a card as asked at print while the panel is live
     markPanel('o__p', 'vscode-panel', NOW.getTime()); // a paired app's signed watch, as the helper keeps it: per project
     const out = await run(helper, ['cards'], undefined, { env: { CLAUDE_CODE_SESSION_ID: session } });
     assert.equal(out.code, 0, out.err);
-    assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [approval.id] } }]);
+    assert.deepEqual(helper.writes(), [], 'a card the panel holds is not marked asked, or it would show nowhere once the panel stopped');
+    assert.equal(helper.views().waiting[0].asked, null);
     const fresh = fakeHelper();
     const made = await run(fresh, ['card'], JSON.stringify({ ...APPROVAL, target: { pr: 7 } }), { env: { CLAUDE_CODE_SESSION_ID: session } });
     assert.equal(made.code, 0, made.err);
-    assert.deepEqual(fresh.writes().map((w) => w.kind), ['card', 'asked']);
+    assert.deepEqual(fresh.writes().map((w) => w.kind), ['card']);
+    // The panel's live mark lapses (the watch stopped, 45 seconds on): the same card is offered in the chat.
+    clearPanels();
+    const later = await run(helper, ['cards'], undefined, { env: { CLAUDE_CODE_SESSION_ID: session } });
+    assert.equal(later.code, 0, later.err);
+    assert.equal(later.json.questions.length, 1, 'the card is offered in the chat');
+    assert.deepEqual(helper.writes(), [], 'the picker marks it once it has shown it');
+    // Asked here, in the chat, it is marked: that one the director chose.
+    markPanel('o__p', 'vscode-panel', NOW.getTime());
+    const here = await run(helper, ['cards', '--here'], undefined, { env: { CLAUDE_CODE_SESSION_ID: session } });
+    assert.equal(here.json.questions.length, 1);
+    assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [approval.id] } }]);
     clearPanels();
   });
 });
@@ -2765,9 +2777,9 @@ test('cards and card read nothing in the Wheelhouse home: the helper says whethe
     };
     const cardsVisit = await visit(['cards'], undefined, { CLAUDE_CODE_SESSION_ID: session });
     assert.ok(cardsVisit.reads.some((got) => got.data?.paneLive === true), 'the helper said the panel is live');
-    assert.deepEqual(cardsVisit.writes.map((w) => [w.kind, w.data.cards?.length]), [['asked', 1]]);
+    assert.deepEqual(cardsVisit.writes, [], 'nothing is marked asked while the panel holds the cards');
     const cardVisit = await visit(['card'], JSON.stringify({ ...APPROVAL, target: { pr: 7 } }), { CLAUDE_CODE_SESSION_ID: session });
-    assert.deepEqual(cardVisit.writes.map((w) => w.kind), ['card', 'asked']);
+    assert.deepEqual(cardVisit.writes.map((w) => w.kind), ['card']);
     // No panel beside the chat: the card with a reply code is left for the picker to mark.
     clearPanels();
     const quiet = await visit(['cards'], undefined, { CLAUDE_CODE_SESSION_ID: 'session-quiet' });

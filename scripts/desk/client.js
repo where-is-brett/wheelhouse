@@ -71,8 +71,9 @@ export function deskClient({ address, cwd, project, local = 'auto', timeout, cli
   };
 
   return {
-    async read(view, args = {}) {
-      const { got, away } = await ask('read', { view, args });
+    // `evidence` is a paired app's signature over the read, which lets it take what the view gives only a paired app.
+    async read(view, args = {}, evidence) {
+      const { got, away } = await ask('read', { view, args, ...(evidence === undefined ? {} : { evidence }) });
       if (!away || localCore() === null) return got;
       return { ...(await localCore().read(view, args)), local: true };
     },

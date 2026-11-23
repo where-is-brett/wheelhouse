@@ -6,8 +6,8 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { decide, decideRepeat, cardProblems, DECIDED_LEAD, PANE_LEAD } from '../../../scripts/hooks/card-check.js';
-import { markPane, markHere, readOpen } from '../../../scripts/lib/session-files.js';
+import { decide, decideRepeat, cardProblems, helperPaneLive, DECIDED_LEAD, PANE_LEAD } from '../../../scripts/hooks/card-check.js';
+import { markPane, markHere, readOpen, paneLive as sessionPane } from '../../../scripts/lib/session-files.js';
 import { hookMain } from '../../../scripts/hooks/kit.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { baselineCard } from '../../../scripts/measures/baseline.js';
@@ -448,7 +448,8 @@ const COLOUR = outcome('c-2', colour);
 const PLAIN = question('Which folder should the report go in?', { recommend: 'Shared', options: [{ label: 'Shared', says: 'Goes in the shared folder.' }, { label: 'Private', says: 'Goes in your folder.' }] }).question;
 
 const live = () => markPane(SID, { at: T0, drawn: T0, surface: 'desktop' });
-const run = (input, over = {}) => decide(input, { ...quick, role: () => 'front-desk', ...over });
+// A live panel is the helper's say, kept per project; these tests stand it in with the session mark `live()` and `markPane` write.
+const run = (input, over = {}) => decide(input, { ...quick, role: () => 'front-desk', paneLive: async (session, ms) => sessionPane(session, ms), ...over });
 
 test('a decided card is refused, naming what counted and where', () => withHome(async () => {
   const decided = outcome('c-1', separator, { at: whenLocal, label: 'Comma', where: 'panel' });
@@ -458,6 +459,26 @@ test('a decided card is refused, naming what counted and where', () => withHome(
   assert.ok(out.includes('The export needs to know which separator to use.'));
   assert.ok(!out.includes('c-1'));
 }));
+
+test('the hold reads the project\'s live panel as the helper says it, with no session file', () => withHome(async () => {
+  // No `markPane`: the session wrote nothing. The helper's per-project answer alone holds the card, and its lapse lets it through.
+  let said = true;
+  const asked = [];
+  const paneLive = async (session, ms, where) => { asked.push(where.cwd); return said; };
+  const held = reason(await run(withSession([separator.question]), { outcomes: () => [SEPARATOR], paneLive }));
+  assert.ok(held.startsWith(PANE_LEAD) || /wait in the panel/.test(held), held);
+  assert.equal(asked.length, 1);
+  said = false;
+  assert.equal(await run(withSession([separator.question]), { outcomes: () => [SEPARATOR], paneLive }), undefined, 'the panel lapsed, so the chat asks the card');
+}));
+
+test('helperPaneLive asks the helper for the waiting view\'s paneLive, and says no when it can\'t', async () => {
+  const answering = (data) => ({ desk: { read: async (body) => ({ ok: true, data: body.view === 'waiting' ? data : {} }) } });
+  assert.equal(await helperPaneLive('s', 0, { cwd: '/p', client: answering({ paneLive: true }) }), true);
+  assert.equal(await helperPaneLive('s', 0, { cwd: '/p', client: answering({ paneLive: false }) }), false);
+  assert.equal(await helperPaneLive('s', 0, { cwd: '/p', client: { desk: { read: async () => { throw new Error('away'); } } } }), false);
+  assert.equal(await helperPaneLive('s', 0, { cwd: '/p', client: { desk: { read: async () => ({ ok: false, refused: 'could not be reached' }) } } }), false);
+});
 
 test('the repeat check alone refuses a decided card, with no form or pane check', () => withHome(async () => {
   const decided = outcome('c-1', separator, { at: whenLocal, label: 'Comma', where: 'panel' });
