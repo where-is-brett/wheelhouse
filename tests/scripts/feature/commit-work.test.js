@@ -10,7 +10,10 @@ import { execFileSync } from 'node:child_process';
 import { commitWork } from '../../../scripts/feature/commit-work.js';
 import { recordPlan } from '../../../scripts/feature/cli.js';
 
-const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1' };
+// An empty file for git's own settings: Windows git won't read os.devNull (\\.\nul) as one.
+const NO_SETTINGS = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-git-settings-')), 'config');
+fs.writeFileSync(NO_SETTINGS, '');
+const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: NO_SETTINGS, GIT_CONFIG_NOSYSTEM: '1' };
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, env: GIT_ENV, encoding: 'utf8' }).trim();
 
 // A repository with one commit, and the worktree a feature session works in, as a linked worktree of it.
