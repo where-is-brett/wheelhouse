@@ -49,18 +49,18 @@ A part is one branch and one pull request, built by one session. Parts in the sa
 | A | 1 Core seam · 3 Add-on shell · 4 Panel drawing | nothing | 1: `scripts/desk/*`, `scripts/host/helper.js`, `scripts/agents/chat-clicks.js`, `scripts/agents/copilot/numbers.js`, `scripts/frontdesk/cli.js` (the `unpair` command only). 3: `vscode/extension.cjs`, `vscode/desk-client.cjs`, `vscode/resolver.cjs`, `vscode/key.cjs`, `vscode/package.json`. 4: `vscode/pane/*`, `vscode/media/*`, `tests/vscode/render.test.js` |
 | B | 2 Merge approval from the panel · 5 Acts and guards · 6 One card, one answer for Copilot | A | 2: `scripts/gate/conditions.js`, `scripts/desk/evidence.js`, `scripts/desk/acts.js`, `scripts/host/helper.js`. 5: `vscode/press.cjs`, `vscode/nonce.cjs`, `vscode/extension.cjs` (message handler), `scripts/addon/validate.js`. 6: `scripts/frontdesk/cli.js`, `skills/front-desk/SKILL.md`, `adapters/copilot/tool-sheet.md`, `adapters/copilot/first-mate/` |
 | C | 7 Pack, hash, CI, release · 8 Offer, install and update | B (5) | 7: `scripts/addon/pack.js`, `scripts/addon/hash.js`, `vscode/vsix.sha256`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`. 8: `scripts/addon/install.js`, `scripts/addon/allowed.js`, `scripts/update/addon.js`, `scripts/update/cards.js`, `scripts/update/finish.js`, `scripts/update/routes.js`, `scripts/setup/` |
-| D | 9 Trial: Copilot chat in VS Code | C | trial records outside the repository; fixes go in their own small branches |
+| D | 9 Trial: Copilot chat in VS Code | B and C, all merged | trial records outside the repository; fixes go in their own small branches |
 | E | 10 Claude Code in VS Code · 11 Papers | D | 10: `scripts/hooks/card-check.js`, `scripts/lib/session-files.js`. 11: `docs/parked.md`, the main design's section 22, `HANDOVER.md`, `README.md` |
 
 Part 3 builds against Part 1's interfaces as written below, with a stand-in helper in its tests, so the two run together. Part 2 and Part 6 both read what Part 1 adds and touch no file in common: Part 2 owns `helper.js`, `evidence.js` and `acts.js` in group B, and Part 6 owns `cli.js`. Part 7 rewrites `vscode/vsix.sha256` last; a later change to `vscode/` reruns `node scripts/addon/hash.js --write`. Part 8 uses Part 7's `vsixName(version)` and `checkHash()` as written below, so it runs alongside.
 
-The director is needed in none of these parts. Part 10 waits for the director to start using Claude Code in VS Code; it isn't on Copilot's path.
+No part waits on a decision. The director is needed only for the Windows laptop sitting in Part 9 (the steps an agent can't do there), and Part 10 starts when the director uses Claude Code in VS Code; it isn't on Copilot's path.
 
 ---
 
 ## Part 1: Core seam (group A)
 
-The three core gaps the design names (spec sections 2, 3 and 4), plus the Unpair card, `ask-here`, and the `add-on` proof test.
+The three core gaps the design names (spec sections 2, 3 and 4), plus the Unpair card and `ask-here`. The guard that proof `add-on` decides nothing is in Task 2.1, which owns the gate.
 
 ### Task 1.1: A paired app decides only what a chat click may
 
@@ -161,26 +161,26 @@ test('a paired app\'s plain option on any card passes, deciding nothing', () => 
 
 - [ ] **Step 5: Commit.** `git commit -m "Mark the panel live per project from a signed watch"`
 
-### Task 1.4: Ask me here, and proof `add-on` decides nothing
+### Task 1.4: Ask me here
 
 **Files:**
 - Modify: `scripts/desk/panel-live.js` (Ask me here marks), `scripts/desk/vocabulary.js` (`COMMANDS` gains `'ask-here'`), `scripts/desk/acts.js` (`ask-here` act), `scripts/desk/views.js` (`waiting` with `askHere: true`)
-- Test: `tests/scripts/desk/acts.test.js`, `tests/scripts/desk/views.test.js`, `tests/scripts/state/events.test.js` (or the test file that holds `checkRecord`'s proofs)
+- Test: `tests/scripts/desk/acts.test.js`, `tests/scripts/desk/views.test.js`
 
 **Interfaces:**
 - Produces, in `scripts/desk/panel-live.js`: `export const ASK_HERE_MS = 120000;` `markAskHere(project, cardId, nowMs): void`; `takeAskHere(project, nowMs): string[]` (returns the live marks and clears them).
 - Produces: desk/1 command `ask-here` with args `{ card: string }`, which needs `client` evidence (it is not in `NO_EVIDENCE`: only the paired app moves a card), -> `{ ok, changed: ['ask-here'] }`; refused when the card isn't waiting.
 - Produces: the `waiting` view read with `args.askHere === true` adds `data.askHere: string[]` from `takeAskHere`. Part 6 reads it.
 
-- [ ] **Step 1: Write the failing tests.** "ask-here marks a waiting card, and waiting with askHere gives it once"; "ask-here on a card that isn't waiting is refused"; "ask-here without a paired app's signature is refused"; "a mark older than two minutes is not given"; and "a record naming proof add-on decides nothing": a signed `approval` with `proof: 'add-on'` on a merge card gives no counted approval in the gate (`gateDecision` with that approval: `approvalMissing` true) and a `card-answer` with `proof: 'add-on'` closes no card in `cardOutcomes`.
+- [ ] **Step 1: Write the failing tests.** "ask-here marks a waiting card, and waiting with askHere gives it once"; "ask-here on a card that isn't waiting is refused"; "ask-here without a paired app's signature is refused"; "a mark older than two minutes is not given".
 
 - [ ] **Step 2: Run them and see them fail.** `node --test --import ./tests/helpers/test-home.js tests/scripts/desk/acts.test.js tests/scripts/desk/views.test.js`
 
-- [ ] **Step 3: Implement** the marks and the act as the Interfaces say. If the `add-on` test passes without a change, keep it as the guard it is meant to be; if it fails, make the gate and `cardOutcomes` ignore that proof and say so in the commit.
+- [ ] **Step 3: Implement** the marks and the act as the Interfaces say.
 
 - [ ] **Step 4: Run them and see them pass.** Same command. Expected: PASS.
 
-- [ ] **Step 5: Commit.** `git commit -m "Add Ask me here for the panel, and guard that proof add-on decides nothing"`
+- [ ] **Step 5: Commit.** `git commit -m "Add Ask me here for the panel"`
 
 ---
 
@@ -196,9 +196,9 @@ test('a paired app\'s plain option on any card passes, deciding nothing', () => 
 **Interfaces:**
 - Produces: `const CLIENT_PROOF = 'client'` in `conditions.js`. A signed approval whose `data.proof` is `client` counts as any signed approval does, except when `realUsers` is true.
 
-- [ ] **Step 1: Write the failing tests.** "a signed approval naming proof client counts on a project with no real users"; "a signed approval naming proof client doesn't count on a project with real users"; "an unsigned card-answer naming proof client never counts" (it isn't a chat proof, and `CHAT_PROOFS` in `scripts/agents/chat-clicks.js` must not gain `client`: that list is what `/cards/chat-click` accepts).
+- [ ] **Step 1: Write the failing tests.** "a signed approval naming proof add-on never counts" (the old add-on's proof: a stale record must decide nothing), and the same for a `card-answer` naming it in `cardOutcomes`; "a signed approval naming proof client counts on a project with no real users"; "a signed approval naming proof client doesn't count on a project with real users"; "an unsigned card-answer naming proof client never counts" (it isn't a chat proof, and `CHAT_PROOFS` in `scripts/agents/chat-clicks.js` must not gain `client`: that list is what `/cards/chat-click` accepts).
 - [ ] **Step 2: Run** `node --test --import ./tests/helpers/test-home.js tests/scripts/gate/conditions.test.js`; the real-users test fails.
-- [ ] **Step 3: Implement.** In `approvalOf`, `signedTaken` is false when `realUsers && i.approval?.data?.proof === CLIENT_PROOF`. Update the P5-48 comment: it is widened by decision 2 of the add-on's return design (23 November 2026). Pass `realUsers` from the helper; read the gate's other uses of `realUsers` and confirm none changes for a signed-hook approval.
+- [ ] **Step 3: Implement.** In `approvalOf`, `signedTaken` is false when `i.approval?.data?.proof === 'add-on'`, or when `realUsers && i.approval?.data?.proof === CLIENT_PROOF`. If `cardOutcomes` counts an `add-on` answer, make it ignore that proof too. Update the P5-48 comment: it is widened by decision 2 of the add-on's return design (23 November 2026). Pass `realUsers` from the helper; read the gate's other uses of `realUsers` and confirm none changes for a signed-hook approval.
 - [ ] **Step 4: Run** the same file and `tests/scripts/gate/self-merge.test.js`. Expected: PASS.
 - [ ] **Step 5: Commit.** `git commit -m "Count a panel approval in the gate on projects with no real users"`
 
