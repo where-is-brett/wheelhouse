@@ -210,10 +210,7 @@ const DEFAULT_RULESET = 'Wheelhouse: default branch';
 const STATE_RULESET = 'Wheelhouse: state and lock';
 
 export const FREE_PLAN_LINE = "GitHub's free plan doesn't protect private projects; Wheelhouse's helper and checks hold the line.";
-// A commit with no pipeline has not passed (design section 12.3), so with no
-// checks at all nothing merges on GitLab: the line must not suggest otherwise.
-const NO_PIPELINES = "the project has no checks yet, so Wheelhouse won't merge anything until it has CI.";
-// On GitHub the project's tests run on this computer instead (local checks, spec 4.1). The permit holds the line for a
+// On either host the project's tests run on this computer instead (local checks, spec 4.1). The permit holds the line for a
 // project protected before that, so nothing blocks on the required check being named.
 const NO_CI = 'the project has no CI, so its checks run on this computer.';
 
@@ -418,9 +415,10 @@ async function gitlabDefaults(api, repo) {
 }
 
 async function gitlabHasPipelines(api, repo, branch) {
-  const answer = await api.get(`${projectPath(repo)}/pipelines?ref=${encodeURIComponent(branch)}&per_page=1`);
+  const answer = await api.get(`${projectPath(repo)}/pipelines?ref=${encodeURIComponent(branch)}&per_page=20`);
   if (answer.status !== 200) throw new Error(refusal(answer.status, 'reading the pipelines'));
-  return Array.isArray(answer.body) && answer.body.length > 0;
+  // A status Wheelhouse posts is kept as an external pipeline: it is no CI of the project's, so it doesn't count.
+  return Array.isArray(answer.body) && answer.body.some((p) => p?.source !== 'external');
 }
 
 const sameList = (got, want) => got.length === 1 && got[0] === want;
@@ -470,7 +468,7 @@ async function gitlabStatus(api, repo, { realUsers = false, director = false } =
   return {
     available: true,
     on: true,
-    line: `GitLab blocks direct pushes to ${defaultBranch}, and force-pushes and deletion of Wheelhouse's lock branch${main.pipelinesMustSucceed ? ', and requires pipelines to pass.' : `; ${NO_PIPELINES}`}`,
+    line: `GitLab blocks direct pushes to ${defaultBranch}, and force-pushes and deletion of Wheelhouse's lock branch${main.pipelinesMustSucceed ? ', and requires pipelines to pass.' : `; ${NO_CI}`}`,
     defaultBranch,
     main,
     gaps,

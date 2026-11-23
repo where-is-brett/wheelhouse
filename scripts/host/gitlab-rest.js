@@ -15,7 +15,9 @@ import { gitlabHistory } from './gitlab-history.js';
 import {
   mergedResults as mergedResultsOf, stateOf, prStateOf, requestOf, branchRequestOf, issueOf, fileOf, subjectsOf, previewOf,
   approvalRefusal, approvalsLeft, MERGE_KEY_REFUSED, publicOf,
+  realPipelines, pipelinesOf, statusesOf, contextsOf, ciStateOf, holdsState, postRefusal, POSTED_STATE, DECISION_REFUSED,
 } from './gitlab-shared.js';
+import { STATUS_CONTEXT } from '../checks/where.js';
 
 const API = '/api/v4/';
 const PAGE = 100;
@@ -111,20 +113,29 @@ export function gitlabRestCommands({ send, repo }) {
       return prStateOf(await get(mr(number)));
     },
 
-    async setStatus() {
-      return { refused: 'GitLab projects run their checks on the host' };
+    // Reports Wheelhouse's check on the commit: a status named for it, which GitLab keeps as an external pipeline. A refusal
+    // is an answer, never thrown; a key that may not post (it needs the api scope and the Developer role) reads 'permission'.
+    // The decision status is GitHub's: GitLab is not asked for it.
+    async setStatus({ sha, state, description, context }) {
+      if (context !== undefined) return { refused: DECISION_REFUSED };
+      const { status, body } = await send('POST', `${project}/statuses/${sha}`, { state: POSTED_STATE[state], name: STATUS_CONTEXT, description });
+      if (ok(status)) return { ok: true };
+      // Posting the state the commit already holds is refused as a transition; it has been reported all the same.
+      if (status === 400 && /cannot transition/i.test(messageOf(body)) && await holdsState({ get, project, sha, state })) return { ok: true };
+      return { refused: postRefusal(status) };
     },
-    async checkContexts() {
-      throw new Error('GitLab projects run their checks on the host');
+    async checkContexts(sha) {
+      return contextsOf(await get(statusesOf(project, sha)));
     },
     async requiredChecks() {
       return [];
     },
 
     async hasCi(sha, branch) {
-      const pipelines = await get(`${project}/pipelines?sha=${sha}&per_page=1&order_by=id&sort=desc`);
+      const pipelines = await get(pipelinesOf(project, sha));
       if (!Array.isArray(pipelines)) throw new Error('GitLab did not list the commit\'s pipelines');
-      if (pipelines.length > 0 || await mergedResults(sha, { strict: true }) !== 'none') return true;
+      // Wheelhouse's own status is kept as an external pipeline, and is no CI of the project's.
+      if (realPipelines(pipelines).length > 0 || await mergedResults(sha, { strict: true }) !== 'none') return true;
       const { status } = await send('GET', `${project}/repository/files/.gitlab-ci.yml?ref=${encodeURIComponent(branch)}`);
       if (ok(status)) return true;
       if (status === 404) return false;
@@ -136,10 +147,7 @@ export function gitlabRestCommands({ send, repo }) {
     },
 
     async ciState(sha) {
-      const pipelines = await get(`${project}/pipelines?sha=${sha}&per_page=1&order_by=id&sort=desc`);
-      const newest = Array.isArray(pipelines) ? pipelines[0] : undefined;
-      if (newest) return { sha, state: stateOf(newest) };
-      return { sha, state: await mergedResults(sha) };
+      return ciStateOf({ get, project, sha });
     },
 
     async previewUrl(sha) {

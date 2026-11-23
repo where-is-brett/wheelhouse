@@ -3676,9 +3676,16 @@ export async function startHelper({
     }
     // Where a project's checks run here, a fix passes the condition the broker asks of every other merge.
     let checkWaiting = false;
-    if (fixCall || keeping || recordOf(project).host === 'local') {
-      const permit = await checkPermit(project, headSha);
-      if (permit.checksHere === true && !checkCounts(permit.check, headSha, permit.digest, enrolled, { notCounting: permit.notCounting })) {
+    // Where the project's checks run here, the signed check is what the gate asks, whatever a pipeline or status on the host says.
+    if (fixCall || keeping || ['local', 'github', 'gitlab'].includes(recordOf(project).host)) {
+      const permit = await checkPermit(project, headSha, ctx);
+      // The facts are read with the merge's own context, so a restore after a key cut reads them with the director's sign-in
+      // and is held to the checks like any merge; facts that still can't be read refuse it.
+      if (permit.checksHere === true && permit.unread === true) {
+        // Fails closed: the host's own CI never stands in for a check that may be owed on this computer.
+        stateReasons.push(`there is no passing check on this computer of ${headSha.slice(0, 7)} that can be read just now (where the checks run couldn't be read), so try the merge again in a moment`);
+        checkWaiting = true;
+      } else if (permit.checksHere === true && !checkCounts(permit.check, headSha, permit.digest, enrolled, { notCounting: permit.notCounting })) {
         stateReasons.push(`there is no passing check on this computer of ${headSha.slice(0, 7)}`);
         checkWaiting = !['failed', 'timed-out'].includes(permit.check?.data?.result);
       } else if (permit.checksHere === true && ci?.state !== 'success') {
@@ -3926,7 +3933,7 @@ export async function startHelper({
     if (made.refused) return { ok: false, refused: made.refused };
     const opened = await adapter.openPr({ head: branch, base: defaultBranch, title: COMMAND_TITLE, body: COMMAND_BODY });
     writeWhole(commandFile(project), { pr: opened.number, head: made.commit, base: base.head });
-    await engineHosts.find((h) => h.project === project)?.checks.took(made.commit, COMMAND_WORK);
+    await checksOf(project)?.took(made.commit, COMMAND_WORK);
     return { ok: true, step: 'opened', pr: opened.number, head: made.commit };
   }
 
@@ -4066,7 +4073,7 @@ export async function startHelper({
     // A new record: nothing of an earlier pull request's merge carries over.
     writeWhole(compactFile(project), { pr: opened.number, head: made.commit, base: base.head, value });
     // Where the project's checks run on this computer, the new head is queued for them, as the found command's is.
-    await engineHosts.find((h) => h.project === project)?.checks.took(made.commit, COMPACT_WORK);
+    await checksOf(project)?.took(made.commit, COMPACT_WORK);
     return { ok: true, step: 'opened', pr: opened.number, head: made.commit };
   }
 
@@ -4139,7 +4146,7 @@ export async function startHelper({
       if (number !== undefined) {
         kept = { ...kept, open: { pr: number, head: wait.head, base: wait.base, branch: wait.branch, ids: wait.ids }, pending: null };
         keepBatches(project, kept);
-        await engineHosts.find((h) => h.project === project)?.checks.took(wait.head, 'decision-records');
+        await checksOf(project)?.took(wait.head, 'decision-records');
       }
     }
     // The change still open: merged (its records are in the project), turned down, or yet to merge.
@@ -4197,7 +4204,7 @@ export async function startHelper({
     keepBatches(project, { ...kept, pending: { head: made.commit, base: base.head, branch: change.branch, ids: taken } });
     const opened = await adapter.openPr({ head: change.branch, base: defaultBranch, title: DECISION_TITLE(day), body: DECISION_BODY });
     keepBatches(project, { ...kept, open: { pr: opened.number, head: made.commit, base: base.head, branch: change.branch, ids: taken }, pending: null });
-    await engineHosts.find((h) => h.project === project)?.checks.took(made.commit, 'decision-records');
+    await checksOf(project)?.took(made.commit, 'decision-records');
     return { ok: true, step: 'opened', pr: opened.number, head: made.commit, files: change.files.length };
   }
 
@@ -4673,8 +4680,8 @@ export async function startHelper({
         const branch = await defaultBranchOf(project, adapter);
         const has = await adapter.hasCi(await adapter.branchHead(branch), branch);
         awayLog.clear(project);
-        // Only GitHub takes a check from this computer so far: a GitLab project with no CI still can't merge.
-        return has ? 'present' : host === 'github' ? 'here' : 'none';
+        // A project on either host with no CI has its checks run on this computer, and the result is posted to the host.
+        return has ? 'present' : host === 'github' || host === 'gitlab' ? 'here' : 'none';
       } catch (error) {
         if (error?.code === 'HOST_UNREACHABLE') awayLog.set(project, gitlabBaseOf(recordOf(project)));
         return 'unknown';
@@ -4833,17 +4840,18 @@ export async function startHelper({
         return { ok: false, refused: error instanceof Error ? error.message : 'the helper\'s gate didn\'t add the fix' };
       }
     },
-    checkTook: (project, { head, work }) => engineHosts.find((h) => h.project === project)?.checks.took(head, work),
+    checkTook: (project, { head, work }) => checksOf(project)?.took(head, work),
     mainCheck: (project) => mainCheck(project),
   });
 
   // What a project's checks go by, from the host and the default branch and never from a change or a folder. What the
   // default branch says is read once for each of its heads. Null on a host that takes no status.
   const checksRead = new Map();
-  async function checksFacts(project) {
+  // `given` is the context the caller already holds (a merge's own, which after a key cut falls back to the director's sign-in).
+  async function checksFacts(project, given = null) {
     const { host } = recordOf(project);
-    if (host !== 'github' && host !== 'local') return null;
-    const ctx = await contextFor(project);
+    if (host !== 'github' && host !== 'gitlab' && host !== 'local') return null;
+    const ctx = given ?? await contextFor(project);
     const adapter = await ctx.adapter();
     const defaultBranch = await defaultBranchOf(project, adapter);
     const main = await adapter.branchHead(defaultBranch);
@@ -4852,7 +4860,8 @@ export async function startHelper({
       read = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed, must }) => {
         const { head } = await defaultHistory(must, defaultBranch);
         const config = await checksConfig({ git: (args) => keyed('git', args, { cwd: mirror, input: '' }), ref: BASE_REF });
-        const workflows = await must(['ls-tree', '-r', '--name-only', BASE_REF, '--', '.github/workflows'], 'listing the workflows');
+        // The host's own CI files: GitHub's workflows folder, or GitLab's pipeline file.
+        const workflows = await must(['ls-tree', '-r', '--name-only', BASE_REF, '--', host === 'gitlab' ? '.gitlab-ci.yml' : '.github/workflows'], 'listing the workflows');
         // The finder reads the default branch itself, never the folder, where a person's unfinished work could be.
         const files = (await must(['ls-tree', '-r', '-z', '--name-only', BASE_REF], 'listing the default branch')).split('\0').filter(Boolean);
         const texts = {};
@@ -4886,15 +4895,15 @@ export async function startHelper({
   const signedChecks = (project) => signedOf(project, 'check');
   // What the merge condition reads for a head. What can't be read counts as checks that run here with none passed, so a
   // merge is refused rather than let through; only a project whose checks are known to run on the host goes as before.
-  async function checkPermit(project, head) {
+  async function checkPermit(project, head, ctx = null) {
     const { host } = recordOf(project);
-    if (host !== 'github' && host !== 'local') return { checksHere: false };
+    if (host !== 'github' && host !== 'gitlab' && host !== 'local') return { checksHere: false };
     let facts;
     try {
-      facts = await checksFacts(project);
+      facts = await checksFacts(project, ctx);
     } catch (error) {
       if (error instanceof LookRefusal) throw error;
-      return { checksHere: true, check: null, digest: null, notCounting: false };
+      return { checksHere: true, check: null, digest: null, notCounting: false, unread: true };
     }
     if (!checksRunHere(project, facts)) return { checksHere: false };
     const check = signedChecks(project).filter((e) => e.data?.commit === head && e.data?.command === facts.digest).at(-1) ?? null;
@@ -5046,7 +5055,7 @@ export async function startHelper({
     // Whether the work is shown first comes from the run that opened the pull request; one no run of the helper's
     // opened needs the director's approval, as shown-first work does.
     const opened = engineRun.openedOf(project, call.pr);
-    const checked = call.kind === 'merge' ? await checkPermit(project, call.sha) : {};
+    const checked = call.kind === 'merge' ? await checkPermit(project, call.sha, ctx) : {};
     // The director's decisions on the piece hold a merge here as at the gate (design section 6.4). Read from the pull request's
     // branch as the host says; one that can't be read is `null`, which the rules refuse. A restore is exempt, as in doMerge.
     let decisions;
@@ -5467,6 +5476,11 @@ export async function startHelper({
   // Only the first keeps the wake process, since the engine's wake carries on every project's answered runs. Each
   // writes its project's `run` and `ask` records, and keeps the stream's cursor beside the record.
   const engineHosts = [];
+  // The projects with no engine plugged in (Wheelhouse's own engine) whose checks run on this computer: each has only its
+  // check runner, which reports to the host so the watcher and the gate read the result there.
+  const checkHosts = [];
+  const handedOver = new Set();
+  const checksOf = (project) => (engineHosts.find((h) => h.project === project) ?? checkHosts.find((h) => h.project === project))?.checks;
   const engineCtx = () => ({ mode: 'quick', env: {}, signedOut: false, looked: new Map(), gitEnv: {}, secrets: [] });
   function engineWrite(project, kind, data) {
     return oneAtATime(`state:${project}`, async () => {
@@ -5519,9 +5533,9 @@ export async function startHelper({
   let stopSeen = false;
   function stopEngines(reason = 'All stop') {
     stopDataRuns();
-    if (engineHosts.length === 0) return Promise.resolve(null);
     // Not waited for: a check waiting its turn behind another process's runs on until that one ends.
-    for (const { checks } of engineHosts) checks.stop().catch(() => {});
+    for (const { checks } of [...checkHosts, ...engineHosts]) checks.stop().catch(() => {});
+    if (engineHosts.length === 0) return Promise.resolve(null);
     stopSeen = true;
     engineStopping ??= (async () => {
       const got = await stopEngine({
@@ -5572,7 +5586,17 @@ export async function startHelper({
       if (engineHosts.some((h) => h.project === project)) continue;
       let engine = null;
       try { engine = engineFor(project); } catch { engine = null; }
-      if (!engine) continue;
+      if (!engine) {
+        // No engine: a project on a host still has its checks run here, where it has no CI (scripts/checks/where.js).
+        const host = registeredProjects().find((p) => p.project === project)?.record?.host;
+        if ((host === 'github' || host === 'gitlab') && !checkHosts.some((h) => h.project === project)) {
+          try { checkHosts.push({ project, checks: makeChecks(project) }); } catch { /* looked at again next time */ }
+        }
+        continue;
+      }
+      // A project that has gained an engine has the runner of its engine host instead.
+      // It is taken out between ticks (engineTick), never while one is going through the list.
+      if (checkHosts.some((h) => h.project === project)) handedOver.add(project);
       try {
         const { runner, dispatcher, checks, inStep } = engineDesk(project, engine);
         const host = startEngineHost({
@@ -5595,22 +5619,22 @@ export async function startHelper({
         // An engine that can't be followed gets no host; the other projects' hosts start all the same.
       }
     }
-    if (engineHosts.length > 0 && stopWatch === null) {
+    if (engineHosts.length + checkHosts.length > 0 && stopWatch === null) {
       watchStop();
       stopWatch = setInterval(watchStop, stopPollMs);
       stopWatch.unref?.();
-      const roomEngine = engineHosts[0].engine;
-      if (typeof roomEngine.roomCommand === 'function') {
+      const roomEngine = engineHosts[0]?.engine;
+      if (roomEngine !== undefined && typeof roomEngine.roomCommand === 'function') {
         room = engineRoom({ spawn, command: () => roomEngine.roomCommand(), wanted: roomWanted, held: stopped });
         try { room.tend(); } catch { /* tried again with the dispatcher */ }
       }
-      sleeping.beat();
+      if (engineHosts.length > 0) sleeping.beat();
     }
     if (dispatchWatch === null) {
       dispatchWatch = setInterval(() => {
         if (closing) return;
         try { startEngineHosts(); } catch { /* looked at again next time */ }
-        if (engineHosts.length === 0) return;
+        if (engineHosts.length === 0 && checkHosts.length === 0) return;
         sleeping.beat().then(engineTick).catch(() => {});
         try { room?.tend(); } catch { /* tried again next time */ }
       }, dispatchMs);
@@ -6228,6 +6252,79 @@ export async function startHelper({
   }
 
   // The card router and the dispatcher for one project on the engine (Archon design, sections 7.3, 8 and 10).
+  // The check runner of a project whose checks run on this computer (scripts/checks/runner.js). It is made apart from the
+  // engine, so a project on Wheelhouse's own engine has its checks run and reported as one on Archon does: `onRed` and
+  // `onPassed` tell a dispatcher what happened, and the own engine, which reads the host's status itself, needs neither.
+  function makeChecks(project, { onRed = () => {}, onPassed = () => {} } = {}) {
+    const views = () => buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now });
+    const write = (kind, data) => engineWrite(project, kind, data);
+    const adapterNow = async () => (await contextFor(project)).adapter();
+    return checkRunner({
+      project, repo: () => readProject(project)?.repo, permissionLink: INSTALLATIONS_PAGE, hostName: () => (readProject(project)?.host === 'gitlab' ? 'GitLab' : 'GitHub'), stopped, now, run: check,
+      adapter: {
+        setStatus: async (args) => (await adapterNow()).setStatus(args),
+        checkContexts: async (sha) => (await adapterNow()).checkContexts(sha),
+      },
+      facts: () => checksFacts(project),
+      // The helper's mirror, with every head of the host's in it; a project in git alone has them all in its home.
+      source: async () => {
+        if (readProject(project)?.host === 'local') return homeDir(project);
+        const got = await (refreshMirror ?? refreshFetchMirror)(project);
+        if (got?.ok === false) throw new Error(got.refused);
+        return path.join(stateDir(project), '..', 'mirror.git');
+      },
+      results: () => signedChecks(project).map((e) => e.data),
+      write: ({ event }) => checkWrite(project, event),
+      onRed, onPassed,
+      // A first red the director chose to mend: the same incident as a red main line, which holds other work.
+      onFix: async (commit) => {
+        if (!openRedMain(views())) await write('incident', redMainIncident({ id: `first-${commit}` }));
+      },
+      // No queue asks to hold a project in git alone: the check is the main line's CI, and the merge that made the commit is
+      // the suspect (spec 7.6).
+      onRedMain: async (commit) => {
+        if (readProject(project)?.host !== 'local' || openRedMain(views())) return;
+        const suspect = localChanges({ project, git: gitRoute({ run }) }).mergedChanges().find((c) => c.mergeCommit === commit)?.n;
+        await write('incident', redMainIncident({ commit, suspect }));
+      },
+      keep: async () => {
+        const got = await doKeepCommand({ project }, await contextFor(project));
+        if (got?.ok === false) throw new Error(got.refused);
+      },
+      note: (words) => write('note', { about: 'engine', words }),
+      record: (kind, data) => engineWrite(project, kind, data),
+      states: () => signedOf(project, 'checks-state').map((e) => e.data),
+      card: (data) => write('question', data),
+      answerOf: (id) => views().questions?.[id]?.answer?.label ?? null,
+      // A fix's work is its incident's, and no piece of the queue: it has ended when the incident has.
+      ended: (work) => {
+        if (work === COMMAND_WORK) return readCommand(project)?.merged === true;
+        if (work === COMPACT_WORK) {
+          const kept = readCompact(project);
+          return kept?.merged === true && kept.value === chosenWindow(views().settings, { now: now() });
+        }
+        const seen = views();
+        const entry = seen.work?.[work];
+        if (!entry) return work.startsWith(`${FIX_LANE}-`) && openRedMain(seen)?.work !== work;
+        return seen.reports?.[work]?.data?.outcome === 'merged' || endedBy(seen.reports ?? {}, work, entry.work);
+      },
+      // The heads of the changes runs opened, as the host has them: the merge queue brings a change up to date itself.
+      // A change a session opened (a feature's, carried on from a hand edit or a request) has no run's record: its work is
+      // the one whose feature branch it is, so a project whose checks run here checks that head too and reports on it.
+      openHeads: async () => {
+        const open = await (await adapterNow()).openRequests();
+        const features = open.some((r) => !r.fork && typeof r.head === 'string' && !engineRun.openedOf(project, r.number)) ? views().features ?? {} : {};
+        return open.flatMap((r) => {
+          if (r.fork || typeof r.head !== 'string') return [];
+          const opened = engineRun.openedOf(project, r.number);
+          if (opened) return [{ head: r.head, work: opened.work }];
+          const work = typeof r.branch === 'string' ? Object.keys(features).find((w) => features[w]?.data?.branch === r.branch) : undefined;
+          return work === undefined ? [] : [{ head: r.head, work }];
+        });
+      },
+    });
+  }
+
   function engineDesk(project, engine) {
     const views = () => buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now });
     const settings = () => Object.fromEntries(Object.entries(effectiveSettings({ project: views().settings ?? {}, now })).map(([k, v]) => [k, v.value]));
@@ -6315,71 +6412,7 @@ export async function startHelper({
     dispatcher.onLost(() => runner.lostNow());
     runner.onMergeRuled(() => dispatcher.queueDue());
     const adapterNow = async () => (await contextFor(project)).adapter();
-    const checks = checkRunner({
-      project, repo: () => readProject(project)?.repo, permissionLink: INSTALLATIONS_PAGE, stopped, now, run: check,
-      adapter: {
-        setStatus: async (args) => (await adapterNow()).setStatus(args),
-        checkContexts: async (sha) => (await adapterNow()).checkContexts(sha),
-      },
-      facts: () => checksFacts(project),
-      // The helper's mirror, with every head of the host's in it; a project in git alone has them all in its home.
-      source: async () => {
-        if (readProject(project)?.host === 'local') return homeDir(project);
-        const got = await (refreshMirror ?? refreshFetchMirror)(project);
-        if (got?.ok === false) throw new Error(got.refused);
-        return path.join(stateDir(project), '..', 'mirror.git');
-      },
-      results: () => signedChecks(project).map((e) => e.data),
-      write: ({ event }) => checkWrite(project, event),
-      onRed: (head, work, tail) => dispatcher.sentBack(work, 'red', tail),
-      onPassed: (work) => dispatcher.passed(work),
-      // A first red the director chose to mend: the same incident as a red main line, which holds other work.
-      onFix: async (commit) => {
-        if (!openRedMain(views())) await write('incident', redMainIncident({ id: `first-${commit}` }));
-      },
-      // No queue asks to hold a project in git alone: the check is the main line's CI, and the merge that made the commit is
-      // the suspect (spec 7.6).
-      onRedMain: async (commit) => {
-        if (readProject(project)?.host !== 'local' || openRedMain(views())) return;
-        const suspect = localChanges({ project, git: gitRoute({ run }) }).mergedChanges().find((c) => c.mergeCommit === commit)?.n;
-        await write('incident', redMainIncident({ commit, suspect }));
-      },
-      keep: async () => {
-        const got = await doKeepCommand({ project }, await contextFor(project));
-        if (got?.ok === false) throw new Error(got.refused);
-      },
-      note: (words) => write('note', { about: 'engine', words }),
-      record: (kind, data) => engineWrite(project, kind, data),
-      states: () => signedOf(project, 'checks-state').map((e) => e.data),
-      card: (data) => write('question', data),
-      answerOf: (id) => views().questions?.[id]?.answer?.label ?? null,
-      // A fix's work is its incident's, and no piece of the queue: it has ended when the incident has.
-      ended: (work) => {
-        if (work === COMMAND_WORK) return readCommand(project)?.merged === true;
-        if (work === COMPACT_WORK) {
-          const kept = readCompact(project);
-          return kept?.merged === true && kept.value === chosenWindow(views().settings, { now: now() });
-        }
-        const seen = views();
-        const entry = seen.work?.[work];
-        if (!entry) return work.startsWith(`${FIX_LANE}-`) && openRedMain(seen)?.work !== work;
-        return seen.reports?.[work]?.data?.outcome === 'merged' || endedBy(seen.reports ?? {}, work, entry.work);
-      },
-      // The heads of the changes runs opened, as the host has them: the merge queue brings a change up to date itself.
-      // A change a session opened (a feature's, carried on from a hand edit or a request) has no run's record: its work is
-      // the one whose feature branch it is, so a project whose checks run here checks that head too and reports on it.
-      openHeads: async () => {
-        const open = await (await adapterNow()).openRequests();
-        const features = open.some((r) => !r.fork && typeof r.head === 'string' && !engineRun.openedOf(project, r.number)) ? views().features ?? {} : {};
-        return open.flatMap((r) => {
-          if (r.fork || typeof r.head !== 'string') return [];
-          const opened = engineRun.openedOf(project, r.number);
-          if (opened) return [{ head: r.head, work: opened.work }];
-          const work = typeof r.branch === 'string' ? Object.keys(features).find((w) => features[w]?.data?.branch === r.branch) : undefined;
-          return work === undefined ? [] : [{ head: r.head, work }];
-        });
-      },
-    });
+    const checks = makeChecks(project, { onRed: (head, work, tail) => dispatcher.sentBack(work, 'red', tail), onPassed: (work) => dispatcher.passed(work) });
     // A project in git alone: its open changes follow their branches, whatever broke off after a push, and its folder is
     // kept in step with its home.
     const inStep = record?.host !== 'local' ? null : (() => {
@@ -6527,7 +6560,7 @@ export async function startHelper({
   async function carryChange(project, { n, number, head }) {
     const reviews = signedOf(project, 'review').filter((e) => e.data.pr === n && e.data.commit === head);
     for (const { data } of reviews) await checkWrite(project, sign(makeEvent({ kind: 'review', data: { ...data, pr: number }, now })));
-    engineHosts.find((h) => h.project === project)?.checks.reportAgain(head);
+    checksOf(project)?.reportAgain(head);
   }
 
   function moveWays(project) {
@@ -6594,11 +6627,21 @@ export async function startHelper({
   let ticking = null;
   function engineTick() {
     ticking ??= (async () => {
+      // A project that gained an engine leaves its runner to the engine host's: the old one is ended before either ticks.
+      for (const project of handedOver) {
+        const at = checkHosts.findIndex((h) => h.project === project);
+        if (at !== -1) await checkHosts.splice(at, 1)[0].checks.stop().catch(() => {});
+      }
+      handedOver.clear();
       for (const { runner, dispatcher, checks, inStep } of engineHosts) {
         if (closing) break;
         await runner.tick().catch(() => {});
         await dispatcher.tick().catch(() => {});
         await inStep?.().catch(() => {});
+        await checks.tick().catch(() => {});
+      }
+      for (const { checks } of checkHosts) {
+        if (closing) break;
         await checks.tick().catch(() => {});
       }
     })().finally(() => { ticking = null; });
@@ -6641,7 +6684,7 @@ export async function startHelper({
       await renewing;
       await engineStopping?.catch(() => {});
       await Promise.race([
-        Promise.allSettled(engineHosts.map(({ checks }) => checks.stop())),
+        Promise.allSettled([...checkHosts, ...engineHosts].map(({ checks }) => checks.stop())),
         new Promise((resolve) => { setTimeout(resolve, CHECK_END_MS).unref?.(); }),
       ]);
       await Promise.allSettled(engineHosts.map(({ host }) => host.stop()));
@@ -6731,6 +6774,7 @@ export async function startHelper({
     try {
       if (setup.busy()) return 'a setup step is running';
       if (queues.size > 0) return 'a push or merge is under way';
+      for (const { checks } of checkHosts) if (checks.running()) return 'a check is running';
       for (const { project, dispatcher, checks } of engineHosts) {
         if (checks.running()) return 'a check is running';
         if (engineRunsAtWork(project).length > 0) return 'a build run is going';

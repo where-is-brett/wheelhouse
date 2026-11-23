@@ -22,6 +22,7 @@ import { raiseBuildQuestion, typedAnswer } from '../../helpers/decisions-world.j
 import { dayOf } from '../../../scripts/decisions/record-file.js';
 import { readPublic } from '../../../scripts/decisions/visibility.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
+import { HOST_CI } from '../../helpers/host-ci-facts.js';
 
 const hostLog = [];
 const hostGuard = guardedRun(realRun, { log: hostLog });
@@ -95,6 +96,7 @@ function host(remote, { visibility = true, failOpen = null, listing = true } = {
       return pr ? { ...pr, state: said.get(number) ?? pr.state } : null;
     },
     closePr: async (number) => { prs.set(number, { ...prs.get(number), state: 'closed' }); return { number }; },
+    ...HOST_CI,
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async ({ number, sha }) => {
       merges.push({ number, sha });

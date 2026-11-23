@@ -20,6 +20,7 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
+import { HOST_CI } from '../../helpers/host-ci-facts.js';
 
 const hostLog = [];
 const hostGuard = guardedRun(realRun, { log: hostLog });
@@ -37,6 +38,7 @@ function standIns({ history = [MERGE], revert = { ok: true, commit: REVERT, subj
     host,
     openPr: async (x) => { calls.push(['openPr', x]); return { number: 12 }; },
     prState: async (n) => { calls.push(['prState', n]); return { state: 'open', headSha: REVERT, baseRef: 'main', ...pr }; },
+    ...HOST_CI,
     ciState: async (sha) => { calls.push(['ciState', sha]); return { sha, state: ci }; },
     openRequests: async () => { calls.push(['openRequests']); return requests; },
   });
@@ -247,6 +249,7 @@ function hostOver(remote, { forge = 'github' } = {}) {
       }
       return prs.get(number);
     },
+    ...HOST_CI,
     ciState: async (sha) => ({ sha, state: host.ci }),
     merge: async ({ number, sha }) => {
       merges.push({ number, sha });

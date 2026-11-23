@@ -399,13 +399,30 @@ test('GitLab switch-on protects the default branch (no pushes) and state and loc
   );
   const result = await switchOnProtection({ host: 'gitlab', repo: 'group/app', api });
   assert.equal(result.on, true);
-  assert.match(result.line, /the project has no checks yet, so Wheelhouse won't merge anything until it has CI\.$/);
+  assert.match(result.line, /the project has no CI, so its checks run on this computer\.$/);
   assert.doesNotMatch(result.line, /isn't required/);
-  assert.match(calls[1].path, /pipelines\?ref=trunk&per_page=1/);
+  assert.match(calls[1].path, /pipelines\?ref=trunk&per_page=20/);
   const posts = calls.filter((c) => c.method === 'POST').map((c) => c.body);
   assert.deepEqual(posts.map((b) => [b.name, b.push_access_level, b.merge_access_level, b.allow_force_push]), [
     ['trunk', 0, 30, false], ['wheelhouse-state', 30, 30, false], ['wheelhouse-lock', 30, 30, false],
   ]);
+  assert.equal(calls.filter((c) => c.method === 'PUT').length, 0);
+});
+
+test('GitLab switch-on leaves pipelines alone where the only pipeline is a status Wheelhouse posted', async () => {
+  const { api, calls } = fakeApi(
+    glProject(),
+    { status: 200, body: [{ id: 1, source: 'external' }] },
+    notFound, { status: 201, body: {} },
+    notFound, { status: 201, body: {} },
+    notFound, { status: 201, body: {} },
+    glProject(),
+    glBranch(0, 'No one'), glProject(), freePlan, noVariables,
+    glBranch(30, 'Developers + Maintainers'), glProject(),
+    glBranch(30, 'Developers + Maintainers'), glProject(),
+  );
+  const result = await switchOnProtection({ host: 'gitlab', repo: 'group/app', api });
+  assert.match(result.line, /its checks run on this computer\.$/);
   assert.equal(calls.filter((c) => c.method === 'PUT').length, 0);
 });
 

@@ -86,6 +86,10 @@ function fakeAdapter(head, { headRef = 'feature/x', body = BODY } = {}) {
   return {
     merges,
     defaultBranch: async () => 'main',
+    // What reports on a head: a job of the host's own, so the project's checks run on the host.
+    checkContexts: async () => [{ name: 'test', state: 'success', startedAt: '2026-11-23T00:00:00Z', app: null }],
+    requiredChecks: async () => [],
+    branchHead: async () => 'a'.repeat(40),
     prState: async () => ({ headSha: head, headRef, baseRef: 'main', mergeable: 'mergeable', state: 'open', body }),
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async (args) => { merges.push(args); return { merged: true }; },

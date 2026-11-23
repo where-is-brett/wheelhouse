@@ -22,6 +22,7 @@ import { SETTINGS_FILE } from '../../../scripts/settings/compact-window.js';
 import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
+import { HOST_CI } from '../../helpers/host-ci-facts.js';
 
 const hostLog = [];
 const hostGuard = guardedRun(realRun, { log: hostLog });
@@ -94,6 +95,7 @@ function host(remote) {
     },
     close: (number) => prs.set(number, { ...prs.get(number), state: 'closed' }),
     closePr: async (number) => { prs.set(number, { ...prs.get(number), state: 'closed' }); return { number }; },
+    ...HOST_CI,
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async ({ number, sha }) => {
       merges.push({ number, sha });

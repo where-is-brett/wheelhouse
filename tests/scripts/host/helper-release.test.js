@@ -26,6 +26,7 @@ import { RELEASE_WHY, briefingLine, releaseBranch, releaseChange, settingsText, 
 import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { matchingBody } from '../../helpers/provenance.js';
+import { HOST_CI } from '../../helpers/host-ci-facts.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
 const hostLog = [];
@@ -119,6 +120,7 @@ async function mergeRelease({ pr, headRef, repo, before = () => {}, ci = 'succes
       const adapter = {
         defaultBranch: async () => 'main',
         prState: async () => ({ headSha: pr.head, headRef, baseRef: 'main', mergeable: 'mergeable', state: 'open', body: BODY }),
+        ...HOST_CI,
         ciState: async (sha) => ({ sha, state: ci }),
         merge: async (args) => { merges.push(args); return { merged: true }; },
       };
@@ -363,6 +365,7 @@ async function mergeByUpdate({ pr, repo, tag, put = 'release', checksFrom = 'v1.
       const adapter = {
         defaultBranch: async () => 'main',
         prState: async () => ({ headSha: pr.head, headRef: branch, baseRef: 'main', mergeable: 'mergeable', state: 'open', body: BODY }),
+        ...HOST_CI,
         ciState: async (s) => ({ sha: s, state: 'success' }),
         merge: async (args) => { merges.push(args); return { merged: true }; },
       };

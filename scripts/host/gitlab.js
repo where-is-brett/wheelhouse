@@ -7,7 +7,9 @@ import { gitlabHistory } from './gitlab-history.js';
 import {
   stateOf, mergedResults as mergedResultsOf, prStateOf, requestOf, branchRequestOf, issueOf, fileOf, subjectsOf, previewOf,
   approvalRefusal, approvalsLeft, statusIn, MERGE_KEY_REFUSED, publicOf,
+  realPipelines, pipelinesOf, statusesOf, contextsOf, ciStateOf, holdsState, postRefusal, POSTED_STATE, DECISION_REFUSED,
 } from './gitlab-shared.js';
+import { STATUS_CONTEXT } from '../checks/where.js';
 
 const MR_ADDRESS = /(https?:\/\/\S+\/-\/merge_requests\/(\d+))/;
 const ISSUE_ADDRESS = /(https?:\/\/\S+\/-\/(?:issues|work_items)\/(\d+))/;
@@ -54,12 +56,22 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
       return prStateOf(mr);
     },
 
-    // GitLab stays on the old engine, whose checks run on the host (spec, non-goals).
-    async setStatus() {
-      return { refused: 'GitLab projects run their checks on the host' };
+    // Reports Wheelhouse's check on the commit: a status named for it, which GitLab keeps as an external pipeline. A refusal
+    // is an answer, never thrown; a key that may not post (it needs the api scope and the Developer role) reads 'permission'.
+    // The decision status is GitHub's: GitLab is not asked for it.
+    // The `${project}${path.slice(project.length)}` paths below equal `path`; the form only lets the safe-git source scan see the repository named.
+    async setStatus({ sha, state, description, context }) {
+      if (context !== undefined) return { refused: DECISION_REFUSED };
+      const got = await attempt(['api', '--method', 'POST', `${project}/statuses/${sha}`, '-f', `state=${POSTED_STATE[state]}`, '-f', `name=${STATUS_CONTEXT}`, '-f', `description=${description}`]);
+      if (got.code === 0) return { ok: true };
+      const said = `${got.stderr}\n${got.stdout}`;
+      const status = statusIn(said);
+      // Posting the state the commit already holds is refused as a transition; it has been reported all the same.
+      if (status === 400 && /cannot transition/i.test(said) && await holdsState({ get: (path) => ask(['api', `${project}${path.slice(project.length)}`]), project, sha, state })) return { ok: true };
+      return { refused: postRefusal(status) };
     },
-    async checkContexts() {
-      throw new Error('GitLab projects run their checks on the host');
+    async checkContexts(sha) {
+      return contextsOf(await ask(['api', `${project}${statusesOf(project, sha).slice(project.length)}`]));
     },
     async requiredChecks() {
       return [];
@@ -67,9 +79,10 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
 
     async hasCi(sha, branch) {
       // Any pipeline on the head counts, a skipped one too: it was run, and ran nothing.
-      const pipelines = await ask(['api', `${project}/pipelines?sha=${sha}&per_page=1&order_by=id&sort=desc`]);
+      const pipelines = await ask(['api', `${project}${pipelinesOf(project, sha).slice(project.length)}`]);
       if (!Array.isArray(pipelines)) throw new Error('GitLab did not list the commit\'s pipelines');
-      if (pipelines.length > 0 || await mergedResults(sha, { strict: true }) !== 'none') return true;
+      // Wheelhouse's own status is kept as an external pipeline, and is no CI of the project's.
+      if (realPipelines(pipelines).length > 0 || await mergedResults(sha, { strict: true }) !== 'none') return true;
       // Pipelines that run only for merge requests leave none on the branch's head, and a head just
       // pushed has none yet: the configuration file says whether CI is set up.
       const { code, stdout, stderr } = await attempt(['api', `${project}/repository/files/.gitlab-ci.yml?ref=${encodeURIComponent(branch)}`]);
@@ -83,10 +96,7 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
     },
 
     async ciState(sha) {
-      const pipelines = await ask(['api', `${project}/pipelines?sha=${sha}&per_page=1&order_by=id&sort=desc`]);
-      const newest = Array.isArray(pipelines) ? pipelines[0] : undefined;
-      if (newest) return { sha, state: stateOf(newest) };
-      return { sha, state: await mergedResults(sha) };
+      return ciStateOf({ get: (path) => ask(['api', `${project}${path.slice(project.length)}`]), project, sha });
     },
 
     // The project's successful deployments, newest first (GitLab can't list them by commit). The

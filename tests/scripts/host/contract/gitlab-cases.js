@@ -21,6 +21,9 @@ const both = (glab, rest) => ({ glab, rest });
 const answers = (...pairs) => ({ glab: pairs.map((p) => p[0]), rest: pairs.map((p) => p[1]) });
 
 const text = (value) => JSON.stringify(value);
+// One external pipeline, as GitLab keeps for a commit status posted with a key; and Wheelhouse's own status in the given state.
+const EXTERNAL = [{ id: 9001, sha: '3f6c1a9e2b7d4c8f0a5e1b9d6c2f7a4e8b0d3c5f', ref: 'main', status: 'success', source: 'external' }];
+const OWN = (status) => ({ id: 7, name: 'wheelhouse/checks', status, started_at: status === 'pending' ? null : '2026-11-23T01:00:00Z', created_at: '2026-11-23T01:00:00Z', author: { username: 'a-director' } });
 const MR_URL = 'https://gitlab.com/a-director/product/-/merge_requests/4';
 const ISSUE_URL = 'https://gitlab.com/a-director/product/-/issues/7';
 const REFUSED = (words) => ({ code: 1, stderr: `ERROR: ${words}\n` });
@@ -59,13 +62,57 @@ export const cases = [
     ...answers(json(text({ ...JSON.parse(gl('mr-view-open.json')), state: 'something_new' }))), check: (got) => { assert(got.state === 'unknown', got); } },
 
   // ---- checks ----
-  { name: 'ciState of a running pipeline', call: (a) => a.ciState(SHA), ...answers(same('pipelines.json')), expect: { sha: SHA, state: 'pending' } },
-  { name: 'ciState with no pipeline and no merge request is none', call: (a) => a.ciState(SHA), ...answers(same('pipelines-none.json'), json('[]')), expect: { sha: SHA, state: 'none' } },
+  { name: 'ciState of a running pipeline', call: (a) => a.ciState(SHA), ...answers(same('pipelines.json'), json('[]')), expect: { sha: SHA, state: 'pending' } },
+  { name: 'ciState with no pipeline and no merge request is none', call: (a) => a.ciState(SHA), ...answers(same('pipelines-none.json'), json('[]'), json('[]')), expect: { sha: SHA, state: 'none' } },
   { name: 'hasCi is true when a pipeline ran', call: (a) => a.hasCi(SHA, 'main'), ...answers(same('pipelines.json')), expect: true },
   { name: 'hasCi is true when the branch holds a CI file', call: (a) => a.hasCi(SHA, 'main'),
     ...answers(same('pipelines-none.json'), json('[]'), json(text({ file_name: '.gitlab-ci.yml' }))), expect: true },
   { name: 'hasCi is false when there is no CI file', call: (a) => a.hasCi(SHA, 'main'),
     ...answers(same('pipelines-none.json'), json('[]'), [{ code: 1, stderr: 'ERROR: 404 Not Found {message: 404 File Not Found}' }, { status: 404, body: text({ message: '404 File Not Found' }) }]), expect: false },
+  // A status Wheelhouse posts makes GitLab keep a pipeline whose source is external: it is not CI, and it is Wheelhouse's check.
+  { name: 'ciState reads Wheelhouse\'s own passing status when only an external pipeline is there', call: (a) => a.ciState(SHA),
+    ...answers(json(text(EXTERNAL)), json('[]'), json(text([OWN('success')]))), expect: { sha: SHA, state: 'success' } },
+  { name: 'ciState reads Wheelhouse\'s own failed status as failure', call: (a) => a.ciState(SHA),
+    ...answers(json(text(EXTERNAL)), json('[]'), json(text([OWN('failed')]))), expect: { sha: SHA, state: 'failure' } },
+  { name: 'ciState reads Wheelhouse\'s own running or pending status as pending', call: async (a) => [await a.ciState(SHA)],
+    ...answers(json('[]'), json('[]'), json(text([OWN('running')]))), expect: [{ sha: SHA, state: 'pending' }] },
+  { name: 'ciState is none when only another tool\'s status is there', call: (a) => a.ciState(SHA),
+    ...answers(json(text(EXTERNAL)), json('[]'), json(text([{ id: 8, name: 'lint', status: 'success' }]))), expect: { sha: SHA, state: 'none' } },
+  { name: 'ciState reads the newest of Wheelhouse\'s statuses on the commit', call: (a) => a.ciState(SHA),
+    ...answers(json('[]'), json('[]'), json(text([{ ...OWN('success'), id: 5 }, { ...OWN('pending'), id: 9 }]))), expect: { sha: SHA, state: 'pending' } },
+  { name: 'ciState lets a real pipeline decide where Wheelhouse has posted nothing worse', call: (a) => a.ciState(SHA),
+    ...answers(same('pipelines.json'), json(text([OWN('success')]))), expect: { sha: SHA, state: 'pending' } },
+  { name: 'ciState gives the worse of a passing pipeline and Wheelhouse\'s failed status', call: (a) => a.ciState(SHA),
+    ...answers(json(text([{ id: 5, sha: SHA, ref: 'x', status: 'success', source: 'push' }])), json(text([OWN('failed')]))), expect: { sha: SHA, state: 'failure' } },
+  { name: 'ciState gives pending for a passing pipeline and Wheelhouse\'s pending status', call: (a) => a.ciState(SHA),
+    ...answers(json(text([{ id: 5, sha: SHA, ref: 'x', status: 'success', source: 'push' }])), json(text([OWN('pending')]))), expect: { sha: SHA, state: 'pending' } },
+  { name: 'ciState lets a failed pipeline stand over Wheelhouse\'s pending status', call: (a) => a.ciState(SHA),
+    ...answers(json(text([{ id: 5, sha: SHA, ref: 'x', status: 'failed', source: 'push' }])), json(text([OWN('pending')]))), expect: { sha: SHA, state: 'failure' } },
+  { name: 'ciState passes a skipped pipeline over to Wheelhouse\'s own status', call: (a) => a.ciState(SHA),
+    ...answers(json(text([{ id: 5, sha: SHA, ref: 'x', status: 'skipped', source: 'push' }])), json('[]'), json(text([OWN('success')]))), expect: { sha: SHA, state: 'success' } },
+  { name: 'hasCi is false when only Wheelhouse\'s own external pipeline is there and there is no CI file', call: (a) => a.hasCi(SHA, 'main'),
+    ...answers(json(text(EXTERNAL)), json('[]'), [{ code: 1, stderr: 'ERROR: 404 Not Found {message: 404 File Not Found}' }, { status: 404, body: text({ message: '404 File Not Found' }) }]), expect: false },
+  { name: 'checkContexts lists what reports on the commit, by name', call: (a) => a.checkContexts(SHA),
+    ...answers(json(text([OWN('success'), { id: 3, name: 'build', status: 'failed', started_at: null, created_at: '2026-11-23T01:00:00Z', author: { username: 'ci-bot' } }, { id: 4, name: 'unit', status: 'running', started_at: '2026-11-23T01:05:00Z', author: { username: 'ci-bot' } }]))),
+    expect: [
+      { name: 'wheelhouse/checks', state: 'success', startedAt: '2026-11-23T01:00:00Z', app: 'a-director' },
+      { name: 'build', state: 'failure', startedAt: '2026-11-23T01:00:00Z', app: 'ci-bot' },
+      { name: 'unit', state: 'running', startedAt: '2026-11-23T01:05:00Z', app: 'ci-bot' },
+    ] },
+  { name: 'setStatus reports Wheelhouse\'s check', call: (a) => a.setStatus({ sha: SHA, state: 'success', description: 'The tests passed on this computer' }),
+    ...answers([{ stdout: '{}' }, { status: 201, body: '{}' }]), expect: { ok: true } },
+  { name: 'setStatus is refused for a key that may not post', call: (a) => a.setStatus({ sha: SHA, state: 'pending', description: 'Checking on this computer' }),
+    ...answers([REFUSED('403 Forbidden'), { status: 403, body: text({ message: '403 Forbidden' }) }]), expect: { refused: 'permission' } },
+  { name: 'setStatus is refused for a key GitLab does not accept', call: (a) => a.setStatus({ sha: SHA, state: 'pending', description: 'Checking on this computer' }),
+    ...answers([REFUSED('401 Unauthorized'), { status: 401, body: text({ message: '401 Unauthorized' }) }]), expect: { refused: 'permission' } },
+  { name: 'setStatus says it is limited when GitLab limits it', call: (a) => a.setStatus({ sha: SHA, state: 'pending', description: 'Checking on this computer' }),
+    ...answers([REFUSED('429 Too Many Requests'), { status: 429, body: text({ message: 'Retry later' }) }]), expect: { refused: 'GitLab is limiting how fast it takes reports' } },
+  { name: 'setStatus counts a state the commit already holds as posted', call: (a) => a.setStatus({ sha: SHA, state: 'success', description: 'The tests passed on this computer' }),
+    ...answers([REFUSED('400 Bad Request {message: Cannot transition status via :success from :success}'), { status: 400, body: text({ message: 'Cannot transition status via :success from :success' }) }], json(text([OWN('success')]))), expect: { ok: true } },
+  { name: 'setStatus does not count a state GitLab will not change to', call: (a) => a.setStatus({ sha: SHA, state: 'success', description: 'The tests passed on this computer' }),
+    ...answers([REFUSED('400 Bad Request {message: Cannot transition status via :success from :failed}'), { status: 400, body: text({ message: 'Cannot transition status via :success from :failed' }) }], json(text([OWN('failed')]))), expect: { refused: 'GitLab did not take the report' } },
+  { name: 'setStatus takes only Wheelhouse\'s check, and asks GitLab nothing for the decision status', call: (a) => a.setStatus({ sha: SHA, state: 'pending', description: 'Waiting on decision 1', context: 'wheelhouse/decision' }),
+    ...answers(), expect: { refused: 'GitLab takes only the check\'s report' } },
   { name: 'previewUrl is the newest deployment of the commit', call: (a) => a.previewUrl(SHA), ...answers(same('deployments.json')), expect: 'https://feature-welcome-page-3f6c1a9e.review.example.org/' },
   { name: 'previewUrl is none when nothing was deployed', call: (a) => a.previewUrl(SHA), ...answers(same('deployments-none.json')), expect: null },
 

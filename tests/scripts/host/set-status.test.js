@@ -64,9 +64,9 @@ test('a long description is cut to what the host keeps', async () => {
   assert.equal(calls[0].args.at(-1).length, 'description='.length + 140);
 });
 
-test('GitLab refuses setStatus', async () => {
+test('GitLab refuses the decision status, which is GitHub\'s, and asks the host nothing', async () => {
   const { adapter: a, calls } = adapter([], 'gitlab');
-  const got = await a.setStatus({ sha: SHA, state: 'success', description: 'Passed' });
+  const got = await a.setStatus({ sha: SHA, state: 'pending', description: 'Waiting on decision 1', context: 'wheelhouse/decision' });
   assert.equal(typeof got.refused, 'string');
   assert.equal(calls.length, 0);
 });

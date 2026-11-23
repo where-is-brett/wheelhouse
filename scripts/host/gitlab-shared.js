@@ -3,6 +3,8 @@
 // `gitlab-rest.js` (the web API through `curl`). The mappings from GitLab's answers to the adapter's
 // values live here once, so the backends cannot drift apart.
 
+import { STATUS_CONTEXT } from '../checks/where.js';
+
 // Mergeability comes from `detailed_merge_status`. The recorded merge request
 // (tests/fixtures/host/gitlab/mr-view-closed.json) has this field and no
 // `merge_status`, which GitLab has deprecated.
@@ -49,6 +51,80 @@ const PIPELINE = {
 // stands for no run of the project's tests and reads as none. This narrows Wheelhouse's own gate
 // only; GitLab's own page still shows such a merge request as mergeable.
 export const stateOf = (pipeline) => (pipeline.source === 'external' ? 'none' : (PIPELINE[pipeline.status] ?? 'pending'));
+
+// ---- Wheelhouse's own status (checks run on this computer) ----
+
+// GitLab keeps a commit status posted with a key as a pipeline whose source is `external`. It is no CI of the project's, so
+// the pipelines that count are the others, and Wheelhouse's own status is read from the commit's statuses.
+export const realPipelines = (pipelines) => (Array.isArray(pipelines) ? pipelines.filter((p) => p?.source !== 'external') : pipelines);
+// Where a commit's pipelines are listed: twenty, newest first, enough to pass over the external ones.
+export const pipelinesOf = (project, sha) => `${project}/pipelines?sha=${sha}&per_page=20&order_by=id&sort=desc`;
+export const statusesOf = (project, sha) => `${project}/repository/commits/${sha}/statuses?per_page=100`;
+
+// The adapter's states for what GitLab posts: its `failed` is a failure, and a status not yet finished is pending.
+export const POSTED_STATE = { pending: 'pending', success: 'success', failure: 'failed' };
+const STATUS_WORD = { success: 'success', failed: 'failure', canceled: 'failure', running: 'running' };
+
+// The newest status of each name, in the order the names first appear.
+function newestByName(statuses) {
+  const newest = new Map();
+  for (const s of Array.isArray(statuses) ? statuses : []) {
+    if (typeof s?.name !== 'string' || s.name === '') continue;
+    if (!newest.has(s.name) || (Number(s.id) || 0) >= (Number(newest.get(s.name).id) || 0)) newest.set(s.name, s);
+  }
+  return [...newest.values()];
+}
+
+// Everything that reports on the commit, by name: { name, state, startedAt, app }, with `startedAt` null unless it has begun.
+export function contextsOf(statuses) {
+  return newestByName(statuses).map((s) => {
+    const state = STATUS_WORD[s.status] ?? 'pending';
+    return { name: s.name, state, startedAt: state === 'pending' ? null : s.started_at ?? s.finished_at ?? s.created_at ?? null, app: s.author?.username ?? null };
+  });
+}
+
+// What Wheelhouse's own status says of the commit, as a CI state: 'none' when it has posted none.
+export function ownStateOf(statuses) {
+  const own = newestByName(statuses).find((s) => s.name === STATUS_CONTEXT);
+  if (own === undefined) return 'none';
+  const state = STATUS_WORD[own.status] ?? 'pending';
+  return state === 'running' ? 'pending' : state;
+}
+
+// The CI state of a commit: the newest pipeline that is the project's, else its merge requests' merged results, else
+// Wheelhouse's own status, which stands for CI only where the project has none. `get(path)` gives GitLab's JSON.
+export async function ciStateOf({ get, project, sha }) {
+  // A skipped pipeline ran nothing, so the newest that ran is not it.
+  const newest = realPipelines(await get(pipelinesOf(project, sha)))?.[0];
+  const pipeline = newest ? stateOf(newest) : 'none';
+  const merged = pipeline === 'none' ? await mergedResults({ get, project, sha }) : pipeline;
+  // Wheelhouse's own status, where it has one that isn't passing, holds the commit whatever a pipeline says: a failure first,
+  // then a pending one. A status that can't be read claims nothing.
+  let own = 'none';
+  try {
+    own = ownStateOf(await get(statusesOf(project, sha)));
+  } catch { /* read as none */ }
+  if (merged === 'none') return { sha, state: own };
+  if (own === 'failure' || (own === 'pending' && merged !== 'failure')) return { sha, state: own };
+  return { sha, state: merged };
+}
+
+// A post GitLab refused as a state it cannot move to counts only when the commit already holds the state asked for.
+export async function holdsState({ get, project, sha, state }) {
+  try {
+    return ownStateOf(await get(statusesOf(project, sha))) === (state === 'failure' ? 'failure' : state);
+  } catch {
+    return false;
+  }
+}
+
+// What a refused post is told as: 'permission' for a key that may not post, and a line for the rest.
+export function postRefusal(status) {
+  if (status === 401 || status === 403) return 'permission';
+  if (status === 429) return 'GitLab is limiting how fast it takes reports';
+  return 'GitLab did not take the report';
+}
+export const DECISION_REFUSED = 'GitLab takes only the check\'s report';
 
 // ---- Merged results ----
 

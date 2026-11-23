@@ -21,6 +21,7 @@ import { takeLock } from '../../../scripts/state/lock.js';
 import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { matchingBody } from '../../helpers/provenance.js';
+import { HOST_CI } from '../../helpers/host-ci-facts.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
 const hostLog = [];
@@ -89,6 +90,7 @@ function fakeAdapter(remote, over = {}) {
     merges,
     defaultBranch: async () => 'main',
     prState: async () => ({ headSha: await hostHead(remote), headRef: BRANCH, baseRef: 'main', mergeable: 'yes', state: 'open', body: BODY, ...over }),
+    ...HOST_CI,
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async (args) => { merges.push(args); return { merged: true }; },
   };
