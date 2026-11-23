@@ -137,7 +137,8 @@ export async function askInWindow({ title, lines, options, noDefault = false, pl
     if (platform === 'win32') {
       const card = Buffer.from(JSON.stringify({ title, lines, options: known, waitMs: timeoutMs, ...(noDefault === true ? { noDefault: true } : {}) }), 'utf8').toString('base64');
       answer = await run(windowsShell(env.SystemRoot ?? env.SYSTEMROOT), ['-NoProfile', '-NonInteractive', '-STA', '-EncodedCommand', WINDOWS_ENCODED], {
-        env: { [CARD_VARIABLE]: card }, timeoutMs: timeoutMs + GRACE_MS,
+        // Not started hidden: a hidden start hides the form too, since it is the first window PowerShell shows.
+        env: { [CARD_VARIABLE]: card }, timeoutMs: timeoutMs + GRACE_MS, windowsHide: false,
       });
       if (answer.code !== 0 || answer.timedOut) return { choice: null };
       const said = String(answer.stdout).trim();

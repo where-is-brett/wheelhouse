@@ -158,6 +158,8 @@ test('the Windows script is constant and the text travels base64 in the environm
     title, lines, options: ['Do it', NOT_NOW], waitMs: 30000,
   });
   assert.ok(options.timeoutMs > 30000);
+  // PowerShell is started shown, or the form opens hidden and nobody can click it.
+  assert.equal(options.windowsHide, false);
   assert.match(WINDOWS_SCRIPT, /UseMnemonic = \$false/);
   assert.match(WINDOWS_SCRIPT, /\$form\.ActiveControl = \$last/, 'Not now, the last button, has the focus');
 
