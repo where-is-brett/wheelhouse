@@ -8,6 +8,7 @@ applyTo: "**"
 
 The Wheelhouse playbooks name your tools in general words. In Copilot:
 - Your clickable-question tool is ask_user (askQuestions in VS Code).
+- Ask a card with ask_user exactly so: one card per call (several cards are several calls, one after another). The question is the card's text, then one line per option, "Label: what it does". The options are the card's exact labels, in the card's order. The `default` is the card's recommended option (`recommend`), never just the first. Signing options and decisions never go to ask_user (see "Clicks in the chat").
 - Your notification tool: none. Tell the director in the chat.
 - Your tool-search tool: none. Every tool you have is already offered.
 - Your message tool is send_message in VS Code, which asks the person first.
@@ -35,3 +36,7 @@ is their answer, which the crew acts on. When the director closes the window to 
 words>`, relay its answer, then run `decision confirm <n>` again.
 
 A click on a card with no signing option is the director's answer: act on it, and say what you did.
+
+Ask each card with ask_user as the tool sheet says: one card per call, and several cards one call after another. The question is
+the card's text, then one line per option, "Label: what it does". The options are the card's exact labels. The `default` is
+the card's recommended option (`recommend`), not the first option.

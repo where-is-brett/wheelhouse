@@ -60,6 +60,10 @@ is their answer, which the crew acts on. When the director closes the window to 
 words>\`, relay its answer, then run \`decision confirm <n>\` again.
 
 A click on a card with no signing option is the director's answer: act on it, and say what you did.
+
+Ask each card with ask_user as the tool sheet says: one card per call, and several cards one call after another. The question is
+the card's text, then one line per option, "Label: what it does". The options are the card's exact labels. The \`default\` is
+the card's recommended option (\`recommend\`), not the first option.
 `;
 
 // The playbook's lines that say a click in the chat records itself, in Copilot's words: there a click is recorded only in the

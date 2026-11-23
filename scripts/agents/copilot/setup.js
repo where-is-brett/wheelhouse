@@ -11,9 +11,11 @@
 // allowance already goes by (scripts/agents/copilot/usage.js). The `copilotPlan` setting is the director's own, kept in
 // their profile, which only the helper writes; setup says what the account shows and leaves the setting.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import hooks, { copilotHome } from '../../../adapters/copilot/hooks.js';
 import { SIGN_IN_KEYS, readCopilotConfig } from '../../../adapters/copilot/session-home.js';
+import { homeControlFolders } from '../../lib/agent-control.js';
 import { readJournal, addChanges, newId } from '../../setup/journal.js';
 import { accountOf, recordAccount, DEFAULT_ALLOWANCE } from './usage.js';
 import { FIRST_MATE_DIR, FIRST_MATE_FILES } from './first-mate.js';
@@ -182,14 +184,33 @@ export function refresh({
   return said.length === 0 ? null : said.join(' ');
 }
 
+// What VS Code's user settings say about the chat's questions, in one plain line, or null when they are as Wheelhouse needs.
+// `chat.autoReply` answers every question with no click, and Copilot's askUser setting off means no question is shown. The
+// settings file may hold comments; a file that can't be read or understood says nothing.
+export function questionSettingsLine({ env = process.env, userHome = os.homedir(), platform = process.platform, read = textOf } = {}) {
+  const text = read(path.join(homeControlFolders({ home: userHome, platform, env }).at(-1), 'settings.json'));
+  if (text === null) return null;
+  let settings;
+  try {
+    settings = JSON.parse(text.replace(/^\s*\/\/.*$/gm, '').replace(/,(\s*[}\]])/g, '$1'));
+  } catch {
+    return null;
+  }
+  if (!isRecord(settings)) return null;
+  const off = Object.entries(settings).some(([key, value]) => /(^|\.)askUser$/.test(key) && value === false);
+  if (settings['chat.autoReply'] === true) return "Your VS Code setting chat.autoReply is on, so Copilot's questions are answered with no click from you.";
+  return off ? "Your Copilot askUser setting in VS Code is off, so Copilot's questions are not shown to you." : null;
+}
+
 // After the hook file: reads the account and keeps the reading. Resolves the line to say. Keeping the reading is the one
 // write; it is the usage store's own file, in Wheelhouse's home.
-export async function afterApply({ run, at, env, keep = recordAccount }) {
+export async function afterApply({ run, at, env, keep = recordAccount, questions = questionSettingsLine }) {
   const got = await readAccount({ run, at, env });
   if (got.account !== null) {
     try { keep(got.account); } catch { /* the line below still says what was read */ }
   }
-  return accountLine(got);
+  const chat = questions({ env });
+  return chat === null ? accountLine(got) : `${accountLine(got)} ${chat}`;
 }
 
 export default Object.freeze({ label: LABEL, signedIn, computerChanges, applyComputer, afterApply, refresh, SIGN_IN_WAIT_MS, SIGN_IN_WHY });
