@@ -164,8 +164,8 @@ function grantedTools(line, rel) {
   return out;
 }
 
-// The foreman's grant is Bash for one command, and nothing else. Its agent file holds no tool, so it can't run the shell
-// whole; the command goes in a record beside it (`rules/wheelhouse-foreman.json`) for the sessions part to turn into the
+// The foreman's grant is Bash for one command, and nothing else. Its agent file names only the shell tools, and the command
+// goes in a record beside it (`rules/wheelhouse-foreman.json`) for the sessions part to turn into the
 // session's allow rule.
 // A rule `node '${CLAUDE_PLUGIN_ROOT}/<script>':*` as the launcher's: Copilot matches a shell rule on the command's stem,
 // `node`, so a script is allowed by its launcher's bare name (scripts/lib/launchers.js).
@@ -206,7 +206,9 @@ function agentFrom(root, agent) {
   return [file, assemble({ file, source, front: { name: `wheelhouse-${agent}`, description: front.description, tools: granted }, rest })];
 }
 
-// The foreman's prompt is the foreman playbook's body. Its agent file holds no tool; what it may run is in its rule record.
+// The foreman's prompt is the foreman playbook's body. Its agent file names the shell tools, because `tools: []` gives a
+// session no tool at all (T6's first real run); the one command it may run through them is its rule record's, given as the
+// session's only --allow-tool, and with --no-ask-user any other command is refused.
 function foremanFrom(root) {
   const { front, body } = parse(readSource(root, FOREMAN_SOURCE), FOREMAN_SOURCE);
   const file = 'agents/wheelhouse-foreman.agent.md';
@@ -214,7 +216,7 @@ function foremanFrom(root) {
   const rule = foremanRule(front['allowed-tools'], FOREMAN_SOURCE);
   const rest = renameSkills(mapToolWords(launcherWords(withoutPathComment(body, FOREMAN_SOURCE), FOREMAN_SOURCE), FOREMAN_SOURCE));
   return [
-    [file, assemble({ file, source: FOREMAN_SOURCE, front: { name: 'wheelhouse-foreman', description: front.description, tools: [] }, rest })],
+    [file, assemble({ file, source: FOREMAN_SOURCE, front: { name: 'wheelhouse-foreman', description: front.description, tools: [...rule.shell] }, rest })],
     [FOREMAN_RULES, `${JSON.stringify(rule, null, 2)}\n`],
   ];
 }
