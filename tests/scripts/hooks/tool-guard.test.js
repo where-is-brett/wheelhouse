@@ -1787,7 +1787,7 @@ test('in a launcher session a command that sets PATH, defines a function or alia
         const out = await bare(command);
         assert.ok(!/launcher session/.test(out?.hookSpecificOutput?.permissionDecisionReason ?? ''), command);
       }
-      for (const command of ['ls -la', 'echo $PATHNAME', 'git status', 'node --version', 'wh-act note abc', '$l | ? {$_.Trim()} | select -First 1', '"x".ToUpper()', '$s.Length; $s.Trim( )']) {
+      for (const command of ['ls -la', 'echo $PATHNAME', 'git status', 'node --version', 'wh-act note abc', '$l | ? {$_.Trim()} | select -First 1', '"x".ToUpper()', '$s.Length; $s.Trim( )', '[guid]::NewGuid()', '[IO.Path]::GetTempPath()', 'Select-Object -Property Path', 'Get-Content src\\source.txt', 'cat lib/source.js']) {
         const out = await inSession(command);
         assert.ok(!/launcher session/.test(out?.hookSpecificOutput?.permissionDecisionReason ?? ''), command);
       }
