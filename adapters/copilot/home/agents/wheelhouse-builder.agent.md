@@ -12,6 +12,7 @@ You are a Crew member. A feature session has given you one task from its plan. Y
 - **Your worktree only.** The worktree you start in is the only place you read from, write to or run commands in for the build. Check with `pwd` and `git branch --show-current` before you begin. Never change into another worktree, the main checkout or another folder to edit files there, and never touch a file outside your worktree.
 - **Your branch only.** Commit on the branch you start on. Never check out, merge into, rebase onto or push to the default branch. Do not push at all, and do not open a pull request: the session does that.
 - **Never merge,** never change repository settings, secrets or permissions, and never run a command that reaches outside the project.
+- **Folders that already exist.** Copilot's `create` tool can't make a folder, and your shell can't either. Write files (the plan first) only in folders that already exist in your worktree. If the project has no folder for plans, put the plan at the worktree's root.
 
 ## Before you start
 

@@ -160,7 +160,8 @@ test('the agents carry today\'s prompt text, with Claude Code\'s tool words mapp
     assert.equal(built.front.description, source.front.description);
     const strip = (body) => body.replace(/^\n?<!--[^\n]*-->\n/, '').split('\n');
     const a = strip(source.body);
-    const b = strip(built.body);
+    // The builder's one added line is the folder rule, which the next test pins.
+    const b = strip(built.body).filter((l) => agent !== 'builder' || !l.startsWith('- **Folders that already exist.**'));
     assert.equal(a.length, b.length, `${agent}: the same number of lines`);
     for (const line of a.filter((l, i) => l !== b[i])) assert.match(line, /`(Read|Grep|Glob|Bash|WebFetch)`|CLAUDE\.md/, `${agent}: an unmapped change: ${line}`);
     assert.ok(built.body.includes(source.body.slice(source.body.indexOf('```\nWHEELHOUSE REPORT'))), `${agent}'s report block`);
@@ -170,6 +171,14 @@ test('the agents carry today\'s prompt text, with Claude Code\'s tool words mapp
   assert.match(home.get('agents/wheelhouse-reviewer.agent.md'), /Use `rg` and `glob` to find callers and tests/);
   assert.match(home.get('agents/wheelhouse-tester.agent.md'), /Use `bash` to run Playwright/);
   assert.match(home.get('agents/wheelhouse-tester.agent.md'), /Fetch it with `web_fetch`/);
+});
+
+test('the builder agent tells a Copilot session to write only in folders that exist, the plan at the root if none holds plans', () => {
+  const builder = home.get('agents/wheelhouse-builder.agent.md');
+  assert.match(builder, /- \*\*Folders that already exist\.\*\* Copilot's `create` tool can't make a folder, and your shell can't either\. Write files \(the plan first\) only in folders that already exist in your worktree\. If the project has no folder for plans, put the plan at the worktree's root\./);
+  assert.ok(builder.indexOf('Folders that already exist') < builder.indexOf('## Before you start'), 'it sits in the "Where you work" list');
+  for (const agent of ['reviewer', 'tester', 'foreman']) assert.ok(!home.get(`agents/wheelhouse-${agent}.agent.md`).includes('Folders that already exist'), agent);
+  assert.ok(!fs.readFileSync(path.join(ROOT, 'agents', 'builder.md'), 'utf8').includes('Folders that already exist'), "Claude Code's builder is unchanged");
 });
 
 test('the foreman agent\'s prompt is the foreman playbook\'s body', () => {
