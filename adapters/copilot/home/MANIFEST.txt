@@ -2,4 +2,4 @@
 293236d6995a659558d399b4ec53b749d5b011bf agents/wheelhouse-foreman.agent.md
 4c959fc19bf702ab93f3c7f349be606ccfe7fd73 agents/wheelhouse-reviewer.agent.md
 136265bef8ad8f02c9977a92d4492e5431c406f2 agents/wheelhouse-tester.agent.md
-bc4b3a27cb1696788a0e3ef38c40ae0ae970bf45 rules/wheelhouse-foreman.json
+77a257c997696333d7b17e1cf2c7021acba33a77 rules/wheelhouse-foreman.json

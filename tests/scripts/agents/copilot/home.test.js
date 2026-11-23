@@ -110,13 +110,13 @@ test('the home holds the four agents, the foreman\'s rule and the manifest, and 
   assert.deepEqual([...home.keys()], ['MANIFEST.txt', ...AGENTS.map((a) => `agents/wheelhouse-${a}.agent.md`), 'rules/wheelhouse-foreman.json']);
 });
 
-test('the foreman gets one command: its agent holds the shell tools and nothing else, and its rule names the command', () => {
+test('the foreman gets two commands: its agent holds the shell tools and nothing else, and its rule names wake and act', () => {
   const { front } = split(home.get('agents/wheelhouse-foreman.agent.md'));
   // `tools: []` leaves a session no tool at all, so the shell tools are named; the rule is what narrows them to one command.
   assert.deepEqual(front.tools, [...tools.shell]);
   const rule = JSON.parse(home.get(FOREMAN_RULES));
-  assert.deepEqual(rule, { agent: 'wheelhouse-foreman', shell: [...tools.shell], allow: ['wh-wake:*'] });
-  // The pattern is the source's, as the launcher's bare name (Copilot matches a rule on the command's stem).
+  assert.deepEqual(rule, { agent: 'wheelhouse-foreman', shell: [...tools.shell], allow: ['wh-wake:*', 'wh-act:*'] });
+  // The skill's pattern is the wake script's, as the launcher's bare name; the act script's is added from the foreman's commands (Copilot matches a rule on the command's stem).
   assert.match(fs.readFileSync(path.join(ROOT, 'skills', 'foreman', 'SKILL.md'), 'utf8'), /^allowed-tools: Bash\(node '\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/foreman\/wake\.js':\*\)$/m);
   assert.ok(!home.get(FOREMAN_RULES).includes('CLAUDE_PLUGIN_ROOT'));
 });

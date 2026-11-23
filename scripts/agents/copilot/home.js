@@ -1,5 +1,5 @@
 // scripts/agents/copilot/home.js
-// Builds the agents a Copilot session's clean home holds: the builder, reviewer, tester and foreman (with the one command
+// Builds the agents a Copilot session's clean home holds: the builder, reviewer, tester and foreman (with the two commands
 // the foreman may run, in a record beside it), from the same
 // playbooks as Claude Code's (agents/ and skills/foreman), so there is one text. Each is given Copilot's names and front
 // matter, with Claude Code's tool words mapped to Copilot's by one table. The home's skills are the pinned kits' (kits.js)
@@ -22,6 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import tools from '../../../adapters/copilot/tools.js';
+import { foremanCommands } from '../../foreman/tools.js';
 import { launcherOf } from '../../lib/launchers.js';
 import { safeGit } from '../../lib/safe-git.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
@@ -62,7 +63,7 @@ const BUILDER_TOOLS = Object.freeze(['view', 'glob', 'rg', ...tools.edit, ...too
 // The explicit list of sources. A source missing from the tree is an error, never skipped.
 const AGENT_SOURCES = Object.freeze(['builder', 'reviewer', 'tester']);
 const FOREMAN_SOURCE = 'skills/foreman/SKILL.md';
-// The record of the one command the foreman may run (JSON has no comments, so it carries no path comment).
+// The record of the two commands the foreman may run (JSON has no comments, so it carries no path comment).
 export const FOREMAN_RULES = 'rules/wheelhouse-foreman.json';
 export const SOURCES = Object.freeze([...AGENT_SOURCES.map((agent) => `agents/${agent}.md`), FOREMAN_SOURCE]);
 
@@ -164,9 +165,11 @@ function grantedTools(line, rel) {
   return out;
 }
 
-// The foreman's grant is Bash for one command, and nothing else. Its agent file names only the shell tools, and the command
-// goes in a record beside it (`rules/wheelhouse-foreman.json`) for the sessions part to turn into the
-// session's allow rule.
+// The foreman's grant is Bash for its two scripts, wake and act, and nothing else. Its agent file names only the shell
+// tools, and the commands go in a record beside it (`rules/wheelhouse-foreman.json`) for the sessions part to turn into the
+// session's allow rules. The skill's allowed-tools names the wake script alone (Claude Code's foreman gets act from
+// scripts/foreman/tools.js), so the record's launchers come from foremanCommands, after a check that the skill's grant is
+// the wake launcher.
 // A rule `node '${CLAUDE_PLUGIN_ROOT}/<script>':*` as the launcher's: Copilot matches a shell rule on the command's stem,
 // `node`, so a script is allowed by its launcher's bare name (scripts/lib/launchers.js).
 function launcherRule(pattern, rel) {
@@ -179,10 +182,13 @@ function launcherRule(pattern, rel) {
 function foremanRule(line, rel) {
   const items = itemsOf(line);
   if (items.length === 0 || items.some((i) => i.name !== 'Bash' || i.pattern === null)) throw new Error(`${rel}'s allowed-tools must be Bash for a command pattern and nothing else`);
+  const { wake, act } = foremanCommands(undefined, { launchers: true });
+  const granted = items.map((i) => launcherRule(i.pattern, rel));
+  if (granted.length !== 1 || granted[0] !== `${wake}:*`) throw new Error(`${rel}'s allowed-tools must name the foreman's wake script (${wake}) and nothing else`);
   return {
     agent: 'wheelhouse-foreman',
     shell: [...CLAUDE_TO_COPILOT.Bash],
-    allow: items.map((i) => launcherRule(i.pattern, rel)),
+    allow: [`${wake}:*`, `${act}:*`],
   };
 }
 
@@ -207,8 +213,8 @@ function agentFrom(root, agent) {
 }
 
 // The foreman's prompt is the foreman playbook's body. Its agent file names the shell tools, because `tools: []` gives a
-// session no tool at all (T6's first real run); the one command it may run through them is its rule record's, given as the
-// session's only --allow-tool, and with --no-ask-user any other command is refused.
+// session no tool at all (T6's first real run); the two commands it may run through them are its rule record's, given as the
+// session's only --allow-tool rules, and with --no-ask-user any other command is refused.
 function foremanFrom(root) {
   const { front, body } = parse(readSource(root, FOREMAN_SOURCE), FOREMAN_SOURCE);
   const file = 'agents/wheelhouse-foreman.agent.md';
