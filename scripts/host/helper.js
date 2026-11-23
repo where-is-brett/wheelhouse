@@ -4713,7 +4713,8 @@ export async function startHelper({
       return fn();
     });
     if (op === 'read') return inQueue(() => core.read(body.view, body.args ?? {}));
-    if (op === 'watch') return inQueue(() => core.watch(body.cursor ?? null));
+    // A watch may carry a paired app's signature, which marks that project's panel live (scripts/desk/panel-live.js).
+    if (op === 'watch') return inQueue(() => core.watch(body.cursor ?? null, body.evidence));
     const { command, args = {}, evidence } = body;
     // The form is read only for a command that needs evidence: any other ignores what it was sent with.
     const signed = needsEvidence(command) && evidence?.form === 'signed';

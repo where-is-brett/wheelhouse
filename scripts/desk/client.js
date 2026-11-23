@@ -82,8 +82,9 @@ export function deskClient({ address, cwd, project, local = 'auto', timeout, cli
       if (command === 'all-stop' && localCore() !== null) return { ...(await localCore().act(command, args, evidence)), local: true };
       return { ok: false, v: DESK_VERSION, refused: HELPER_NOT_RUNNING, away: true };
     },
-    async watch(cursor = null) {
-      const { got, away } = await ask('watch', { cursor });
+    // `evidence` is a paired app's signature over the watch, which marks the project's panel live on the helper.
+    async watch(cursor = null, evidence) {
+      const { got, away } = await ask('watch', { cursor, ...(evidence === undefined ? {} : { evidence }) });
       if (!away || localCore() === null) return got;
       return { ...(await localCore().watch(cursor)), local: true };
     },

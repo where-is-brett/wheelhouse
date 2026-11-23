@@ -148,7 +148,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     desk: {
       read: post('/desk/read'), //   { v, project | cwd, view, args } -> { ok, v, view, data, lines }: a view, finished
       act: post('/desk/act'), //     { v, project | cwd, command, args, evidence } -> { ok, v, changed } or { ok: false, v, refused }
-      watch: post('/desk/watch'), // { v, project | cwd, cursor } -> { ok, v, events, cursor }: the changes since the cursor
+      watch: post('/desk/watch'), // { v, project | cwd, cursor, evidence? } -> { ok, v, events, cursor }: the changes since the cursor
     },
     state: {
       clone: post('/state/clone'), //   { project }: opens the project's private record, making it the first time

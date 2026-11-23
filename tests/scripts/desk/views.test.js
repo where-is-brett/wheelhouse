@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { writeJsonFile, runningFile, sessionFile } from '../../../scripts/watcher/waker.js';
 import { holdFile } from '../../../scripts/crew/hold.js';
-import { markPane } from '../../../scripts/lib/session-files.js';
+import { markPanel, clearPanels, PANEL_LIVE_MS } from '../../../scripts/desk/panel-live.js';
 import { P, NOW, now, CARD, writeRecord, upClient, put, viewsDir } from './fixture.js';
 
 function withRecord(fn) {
@@ -54,17 +54,20 @@ test('waiting numbers cards as the Logbook does', () => withRecord(async ({ sour
   assert.equal(got.data.numbered.length, 1);
 }));
 
-test('waiting with a session says whether a live panel is beside it, as the helper reads it; with none it says nothing', () => withRecord(async ({ source }) => {
-  assert.equal(markPane('s-live', { at: Date.parse(NOW), drawn: Date.parse(NOW), surface: 'desktop' }), true);
-  assert.equal(markPane('s-terminal', { at: Date.parse(NOW), drawn: Date.parse(NOW), surface: 'terminal' }), true);
-  assert.equal(markPane('s-stale', { at: Date.parse(NOW) - 60 * 60 * 1000, drawn: Date.parse(NOW) - 60 * 60 * 1000, surface: 'desktop' }), true);
+test('waiting says paneLive true while the project\'s panel is live, with no session named, and false once it stops', () => withRecord(async ({ source }) => {
+  clearPanels();
   const paneOf = async (args) => (await readView('waiting', args, source, { now })).data.paneLive;
-  assert.equal(await paneOf({ session: 's-live' }), true);
-  assert.equal(await paneOf({ session: 's-terminal' }), false, 'a terminal session draws no panel');
-  assert.equal(await paneOf({ session: 's-stale' }), false, 'a panel that stopped ticking is not live');
-  assert.equal(await paneOf({ session: 's-none' }), false);
-  assert.equal(await paneOf({}), undefined);
-  assert.equal(await paneOf({ session: '' }), undefined);
+  assert.equal(await paneOf({}), false, 'no panel has watched');
+  markPanel(P, 'vscode-panel', Date.parse(NOW));
+  assert.equal(await paneOf({}), true);
+  assert.equal(await paneOf({ session: 's-any' }), true, 'it follows the project, not a session');
+  clearPanels();
+  markPanel('o__other', 'vscode-panel', Date.parse(NOW));
+  assert.equal(await paneOf({}), false, 'another project\'s panel is not this one\'s');
+  markPanel(P, 'vscode-panel', Date.parse(NOW) - PANEL_LIVE_MS - 1000);
+  assert.equal(await paneOf({}), false, 'a panel that stopped watching is not live');
+  assert.equal((await readView('waiting', {}, source, { now })).data.askHere, undefined, 'Ask me here is given only when asked for');
+  clearPanels();
 }));
 
 test('card carries its buttons, its pane hash and its data hash', () => withRecord(async ({ source }) => {

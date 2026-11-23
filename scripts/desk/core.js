@@ -7,10 +7,12 @@
 import { DESK_VERSION, VIEWS, COMMANDS, needsEvidence } from './vocabulary.js';
 import { READERS } from './views.js';
 import { ACTORS } from './acts.js';
-import { sourceVerifier } from './evidence.js';
+import { sourceVerifier, checkClient } from './evidence.js';
+import { markPanel } from './panel-live.js';
 import { watchSource } from './watch.js';
 
-const notBuilt = (name) => async () => ({ ok: false, refused: `The desk can't give ${name} yet` });
+const isPlainEvidence = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+const notBuilt =(name) => async () => ({ ok: false, refused: `The desk can't give ${name} yet` });
 
 export function checkVersion(message) {
   const v = message?.v;
@@ -48,8 +50,16 @@ export function deskCore({ source, recorder, verifier, now = () => new Date(), r
       }
     },
 
-    async watch(cursor) {
+    // A watch may carry a paired app's evidence, signed over `{ command: 'watch', args: { cursor }, at }`. Good evidence marks the
+    // project's panel live; none, or evidence that doesn't check, is answered all the same and marks nothing.
+    async watch(cursor, evidence) {
       try {
+        if (evidence !== undefined && evidence !== null && typeof source.project === 'string') {
+          const checked = isPlainEvidence(evidence) && evidence.form === 'client'
+            ? checkClient('watch', { cursor: cursor ?? null }, evidence, { clients: typeof clients === 'function' ? clients() : [], now })
+            : { ok: false };
+          if (checked.ok) markPanel(source.project, checked.client, now().getTime());
+        }
         return stamp(await watcher(cursor, source, { now }));
       } catch (error) {
         return failed(error);
