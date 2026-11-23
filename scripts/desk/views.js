@@ -19,7 +19,7 @@ import { callsFrom, isHelmCall } from '../decisions/calls.js';
 import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { crewNow } from '../crew/runs.js';
-import { panelLive, takeAskHere, handedAskHere } from './panel-live.js';
+import { panelLive, takeAskHere, handedAskHere, passHanded } from './panel-live.js';
 import { registeredProjects } from '../lib/projects.js';
 import { computerId } from '../lib/paths.js';
 import { agentInFolder } from '../agents/names.js';
@@ -485,7 +485,9 @@ const VIEWS = {
       const when = typeof now === 'function' ? now() : new Date();
       // A paired app's signed read may take its Ask me here marks here too (`askHere`), with no views built.
       const taken = args.askHere === true && client !== null && typeof source.project === 'string' ? { askHere: takeAskHere(source.project, when.getTime()) } : {};
-      return { ok: true, data: { paneLive: typeof source.project === 'string' && panelLive(source.project, when.getTime()), ...taken }, lines: [] };
+      // `passHere` (card ids): says whether the panel handed every one to the chat, once (panel-live.js `passHanded`), for the card-check hook.
+      const passed = Array.isArray(args.passHere) ? { passed: typeof source.project === 'string' && passHanded(source.project, args.passHere.filter((id) => typeof id === 'string'), when.getTime()) } : {};
+      return { ok: true, data: { paneLive: typeof source.project === 'string' && panelLive(source.project, when.getTime()), ...taken, ...passed }, lines: [] };
     }
     const got = await recordOf(source, { cards: true, answers: args.answers === true });
     if (got.refused) return { ok: false, refused: got.refused };

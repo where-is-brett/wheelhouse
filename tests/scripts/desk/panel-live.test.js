@@ -1,7 +1,7 @@
 // tests/scripts/desk/panel-live.test.js
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { PANEL_LIVE_MS, ASK_HERE_MS, markPanel, panelLive, clearPanels, markAskHere, takeAskHere } from '../../../scripts/desk/panel-live.js';
+import { PANEL_LIVE_MS, ASK_HERE_MS, markPanel, panelLive, clearPanels, markAskHere, takeAskHere, handedAskHere, passHanded, HANDED_MS } from '../../../scripts/desk/panel-live.js';
 
 beforeEach(() => clearPanels());
 
@@ -39,4 +39,16 @@ test('an Ask me here mark is taken once, within two minutes, and per project', (
   assert.deepEqual(takeAskHere('o__p', T + 90000), [], 'taken once');
   assert.deepEqual(takeAskHere('o__q', T + ASK_HERE_MS + 1), [], 'a mark older than two minutes is not given');
   assert.deepEqual(takeAskHere('o__none', T), []);
+});
+
+test('passHanded gives a handed mark once, only when every card is handed and in time', () => {
+  markAskHere('p', 'c1', T);
+  markAskHere('p', 'c2', T);
+  takeAskHere('p', T + 1000);
+  assert.equal(passHanded('p', ['c1', 'c3'], T + 2000), false, 'a card not handed refuses the lot');
+  assert.equal(passHanded('p', ['c1'], T + 2000), true);
+  assert.equal(passHanded('p', ['c1'], T + 2000), false, 'given once');
+  assert.deepEqual(handedAskHere('p', T + 2000).map((m) => m.id), ['c2'], 'the other mark is untouched');
+  assert.equal(passHanded('p', ['c2'], T + 1000 + HANDED_MS + 1), false, 'past the cap');
+  assert.equal(passHanded('p', [], T), false);
 });

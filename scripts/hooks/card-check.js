@@ -321,7 +321,7 @@ function swapQuestions(questions, matched) {
   return { questions: next, swapped, origins, changed };
 }
 
-async function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop, writeVia }) {
+async function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere: take, askHere, holdForPane, role, stop, writeVia }) {
   const asked = input.tool_input.questions;
   const questions = stop().on ? asked.map(wholeLift) : asked;
   const restored = questions.some((q, i) => q !== asked[i]);
@@ -363,7 +363,8 @@ async function oneCardCheck(input, project, { now, outcomes, paneLive: live, tak
   const heldAt = questions.map((_, i) => lifts[i] || (matched[i] ? pane(matched[i]) : false));
   const held = [...waiting.filter(pane).map((f) => f.card.id), ...(lifts.includes(true) ? [LIFT_ID] : [])];
   if (held.length > 0 && holdForPane && role({ sessionId: session, cwd: input.cwd }) === 'front-desk'
-    && await live(session, at.getTime(), { cwd: input.cwd }) === true && !take(session, held, at.getTime())) {
+    && await live(session, at.getTime(), { cwd: input.cwd }) === true && !take(session, held, at.getTime())
+    && !(await askHere(session, held, { cwd: input.cwd }))) {
     return { deny: paneLine(held.length, { others: heldAt.includes(false) }) };
   }
   const { questions: next, swapped, origins, changed } = swapQuestions(questions, matched);
@@ -514,8 +515,26 @@ export async function helperPaneLive(session, ms, { cwd, client, timeout = PANE_
   }
 }
 
+// Whether the helper handed every one of these cards to the chat by the panel's Ask me here, taking them (once). A helper that
+// can't be asked says no, so the card stays in the panel.
+export async function helperAskHere(session, cardIds, { cwd, client, timeout = PANE_ASK_MS } = {}) {
+  let timer;
+  try {
+    const { deskClient } = await import('../desk/client.js');
+    const ask = deskClient({ cwd, local: 'never', timeout, ...(client === undefined ? {} : { client }) }).read('waiting', { paneOnly: true, passHere: cardIds });
+    const gone = new Promise((resolve) => { timer = setTimeout(() => resolve(null), timeout + 250); });
+    const got = await Promise.race([ask, gone]);
+    return got?.ok === true && got.data?.passed === true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function decide(input, {
   projectOf: find = projectOf, dir, now = () => new Date(), outcomes, paneLive: live = helperPaneLive, takeHere: take = takeHere,
+  askHere = helperAskHere,
   markOpen: open = markOpen, holdForPane = HOLD_FOR_PANE, role = sessionRole, stop = stopState, env = process.env, decisions,
   writeVia = 'self',
 } = {}) {
@@ -532,7 +551,7 @@ export async function decide(input, {
   let checked_ = null;
   try {
     // The helper is asked about the panel only at the hold itself, after the cheaper role and held checks.
-    const checked = await oneCardCheck(input, find(input.cwd, { dir }).project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop, writeVia });
+    const checked = await oneCardCheck(input, find(input.cwd, { dir }).project, { now, outcomes, paneLive: live, takeHere: take, askHere, holdForPane, role, stop, writeVia });
     if (checked.deny !== undefined) return answer.deny(checked.deny);
     open_ = checked.open;
     checked_ = checked;

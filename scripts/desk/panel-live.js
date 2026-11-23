@@ -53,6 +53,18 @@ export function handedAskHere(project, nowMs) {
   return [...taken].map(([id, mark]) => ({ id, takenAt: mark.takenAt }));
 }
 
+// True once, when every card in `cardIds` is one the panel's read handed to the chat of `project` and the mark is still in time;
+// removes what it passed. For the card-check hook, which lets a card moved by Ask me here be asked in the chat once, whether or not the
+// front desk has already printed it as asked. It makes no mark and moves none the panel didn't take.
+export function passHanded(project, cardIds, nowMs) {
+  const taken = handed.get(project);
+  if (taken === undefined || !Array.isArray(cardIds) || cardIds.length === 0) return false;
+  pruneHanded(taken, nowMs);
+  if (!cardIds.every((id) => taken.has(id))) return false;
+  for (const id of cardIds) taken.delete(id);
+  return true;
+}
+
 function pruneHanded(taken, nowMs) {
   for (const [id, mark] of taken) if (!(nowMs >= mark.takenAt && nowMs - mark.takenAt <= HANDED_MS)) taken.delete(id);
 }
