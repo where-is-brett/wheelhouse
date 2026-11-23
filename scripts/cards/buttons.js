@@ -34,7 +34,7 @@ export const CANT_ANSWER = 'This card can\'t be answered here: ask the First Mat
 // A setup card's note: setup asks it in its own chat, and that is where it is answered.
 export const SETUP_ANSWER = 'This card can\'t be answered here: answer it in the chat where setup asked it.';
 // A trust card's note, and a take-over card's: each is answered only in the chat where it was asked. (On an agent whose hooks only
-// read, the First Mate's seat card is answered in Wheelhouse's own window instead, which /cards/chat-click still refuses it for.)
+// read, the First Mate's seat card is answered in Wheelhouse's own window instead: a click in the chat records at most an unsigned answer, and never moves the seat.)
 export const TRUST_ANSWER = 'This card can\'t be answered here: answer it in the chat where it was asked.';
 // Uninstall's card's note: it is answered only in the chat where setup's playbook asked it.
 export const UNINSTALL_ANSWER = 'This card can\'t be answered here: answer it in the chat where uninstall asked it.';

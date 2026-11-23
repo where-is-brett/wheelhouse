@@ -502,3 +502,17 @@ test('a session start from another window\'s seat carries the id line and the wi
     assert.doesNotMatch(context, /AskUserQuestion/);
   });
 });
+
+test('through the entry, a front-desk command that records is refused without the chat\'s own --session, and passes with it', async () => {
+  const { frontDeskWrites, ...others } = recording().steps;
+  const stepDeps = { frontDeskWrites: { env: {}, find: () => ({ project: 'shop', record: { folder: PROJECT } }), setUp: () => null, role: () => 'front-desk' } };
+  const go = (command, extra = {}) => run('preToolUse', call('bash', { command }, { sessionId: 'chat-9', ...extra }), { steps: others, stepDeps });
+  const bare = await go('wh-frontdesk cards');
+  assert.equal(bare.code, 2);
+  assert.match(bare.text, /--session chat-9/);
+  assert.equal((await go('wh-frontdesk cards --session other')).code, 2);
+  assert.equal((await go('wh-frontdesk confirm seat-take-over')).code, 2);
+  assert.equal((await go('wh-frontdesk cards --session chat-9')).code, 0);
+  assert.equal((await go('wh-frontdesk confirm seat-take-over --session chat-9')).code, 0);
+  assert.equal((await go('wh-frontdesk views waiting')).code, 0, 'a read needs no id');
+});

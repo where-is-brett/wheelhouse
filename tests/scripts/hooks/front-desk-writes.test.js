@@ -441,3 +441,17 @@ test('Claude Code is unchanged: no --session is asked of it', () => {
     assert.equal(decide(shell(`${NODE_CLI} confirm seat-take-over`, 's1', folder), opts), undefined);
   }
 });
+
+test('redirects, pipes and heredocs are read around, and a line that can\'t be read but names the front desk is refused', () => {
+  const { folder } = project();
+  const opts = options(folder, { writeVia: 'helper' });
+  for (const ok of [
+    'wh-frontdesk cards --session s1 2>&1', 'wh-frontdesk cards --session s1 2>/dev/null', 'wh-frontdesk card --session s1 < in.json',
+    'wh-frontdesk card < in.json --session s1', 'echo x | wh-frontdesk record ruling --session s1', "wh-frontdesk card --session s1 <<'EOF'\n{}\nEOF",
+    'wh-frontdesk views waiting 2>&1', 'wh-frontdesk note < in.txt',
+  ]) assert.equal(decide(shell(ok, 's1', folder), opts), undefined, ok);
+  for (const bad of [
+    'wh-frontdesk cards 2>&1', 'wh-frontdesk cards 2>/dev/null', 'wh-frontdesk card < in.json', 'echo x | wh-frontdesk record ruling',
+    "wh-frontdesk card <<'EOF'\n{}\nEOF", 'wh-frontdesk card < in.json --session other', 'echo $(wh-frontdesk cards)', 'wh-frontdesk cards `id`',
+  ]) assert.ok(denied(decide(shell(bad, 's1', folder), opts)), bad);
+});

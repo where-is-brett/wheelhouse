@@ -73,7 +73,10 @@
 //   confirm <card>  shows the card (its id in the state, or lift-stop) in the helper's own window,
 //                   where the director's click is the binding one, and waits for it; prints the
 //                   helper's answer, `"recorded":true` when the click was recorded (ruling P8-7). For
-//                   an agent whose chat clicks can't bind, and for an undo that answers `needs` `window`
+//                   an agent whose chat clicks can't bind, and for an undo that answers `needs` `window`.
+//                   `confirm seat-take-over` shows the card that moves the First Mate's seat to this window, composed by the helper from
+//                   the seat; it needs this window's session id (`--session <id>`, else CLAUDE_CODE_SESSION_ID) and any window may run it
+//   --session <id>  anywhere in a command: the session id of the chat that runs it, which wins over CLAUDE_CODE_SESSION_ID
 // The front desk runs in the sandbox, which can't read ~/.wheelhouse/, so every read and write is
 // a request to the helper, naming this folder for the helper to place the project: it reads through
 // the desk (scripts/desk/), and writes through the helper's own routes. Nothing here

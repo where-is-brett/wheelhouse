@@ -20,6 +20,8 @@ import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/st
 import { seatTakeOverLine } from '../../../scripts/state/card-lines.js';
 import { readSeat, seatFile } from '../../../scripts/lib/first-mate-seat.js';
 import { askInWindow, NOT_NOW } from '../../../scripts/confirm/window.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
+import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 
 const shims = standInTools();
 const hostLog = [];
@@ -39,14 +41,22 @@ const argvOf = (args) => args.slice(args.indexOf('--') + 1);
 const said = (text) => ({ code: 0, stdout: `${text}\n`, stderr: '' });
 
 // A computer with a project kept on it, an enrolled key and a helper whose window is askInWindow with a stand-in `run`.
-async function computer(answer) {
+// With `hosted`, the project is on a (stand-in) code host, where STOP refuses a card before it is looked up.
+async function computer(answer, { hosted = false } = {}) {
   const home = shortHome();
   const folder = path.join(shortHome(), 'shop');
   fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
   fs.writeFileSync(path.join(folder, '.git', 'HEAD'), 'ref: refs/heads/main\n');
   const before = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;
-  writeProject(PROJECT, { folder, remoteUrl: null, host: 'local', repo: 'local/shop', connection: { mode: 'none' } });
+  const remote = hosted ? await makeBareRemote({ repo: 'o/p' }) : null;
+  const project = hosted ? 'o__p' : PROJECT;
+  if (remote) {
+    writeProject(project, { folder, remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+    await openTestRecord({ env: LOCAL_PATHS, project, remoteUrl: remote.url });
+  } else {
+    writeProject(project, { folder, remoteUrl: null, host: 'local', repo: 'local/shop', connection: { mode: 'none' } });
+  }
   const own = makeSigningKey();
   enrol({ computer: own.computer, publicKey: own.publicKey, enrolledAt: T0.toISOString() });
   const windows = [];
@@ -60,7 +70,7 @@ async function computer(answer) {
     askWindow: (card) => askInWindow({ ...card, platform: 'darwin', run: windowRun }),
     address: testAddress(home),
     envFor: async () => ({}),
-    adapterFor: async () => ({}),
+    adapterFor: async () => ({ defaultBranch: async () => 'main' }),
     now: () => new Date(T0.getTime() + 1000 * (tick += 1)),
   });
   const real = fs.realpathSync.native(folder);
@@ -68,15 +78,17 @@ async function computer(answer) {
     windows,
     folder: real,
     client: helperClient({ address: helper.address }),
-    events: () => listEvents(stateDir(PROJECT), { report: () => {} }),
+    project,
+    events: () => listEvents(stateDir(project), { report: () => {} }),
     // The seat as another live window holds it (this test's own process stands for the window).
     hold: (over = {}) => {
-      const file = seatFile(PROJECT);
+      const file = seatFile(project);
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, JSON.stringify({ session: 'a', pid: process.pid, pidStart: null, folder: real, since: SINCE, seenAt: T0.toISOString(), ...over }));
     },
     close: async () => {
       await helper.close();
+      remote?.cleanup();
       if (before === undefined) delete process.env.WHEELHOUSE_HOME;
       else process.env.WHEELHOUSE_HOME = before;
       fs.rmSync(home, { recursive: true, force: true });
@@ -198,5 +210,18 @@ test('it is refused with no seat, a free seat, the caller\'s own seat, a bad ses
     const sub = path.join(c.folder, 'src');
     fs.mkdirSync(sub);
     assert.equal((await confirm(c, { cwd: sub })).ok, true);
+  } finally { await c.close(); }
+});
+
+test('on a project kept on a code host, it is served under STOP too, as Lift All stop is', async () => {
+  const c = await computer(() => said(TAKE), { hosted: true });
+  try {
+    c.hold();
+    setStop({ by: 'prompt' });
+    const got = await confirm(c);
+    assert.equal(got.ok, true, JSON.stringify(got));
+    assert.deepEqual([got.recorded, got.moved], [true, true]);
+    assert.equal(readSeat(c.project).session, 'chat-1');
+    assert.ok(!c.events().some((e) => e.kind === 'card-answer'));
   } finally { await c.close(); }
 });

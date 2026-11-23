@@ -2725,7 +2725,9 @@ export async function startHelper({
   // before the window closes, records nothing. Under STOP only the Lift STOP card and an undo are served, with only
   // their undo offered (rulings P5-49 and P5-50). A card
   // in the state gets the plain card-answer beside its signed record, as a hook that signs writes one, so the card
-  // no longer waits.
+  // no longer waits. `lift-stop` and `seat-take-over` are named, not found: the seat card is composed from the seat file for the
+  // `session` that asks (from `cwd`, in the project's main folder), and a click on Take over here signs the take-over, then moves the
+  // seat to that session with no process recorded, only while the seat still names the holder and `since` the card showed.
   async function doConfirm({ project, card, hash, session, cwd }, ctx) {
     const composed = COMPOSED_CARDS.includes(card);
     if (!composed && (typeof card !== 'string' || !RANDOM_UUID.test(card))) refuse('the card must be named by its id, or be lift-stop or seat-take-over');

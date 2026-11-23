@@ -301,12 +301,20 @@ function frontDeskArgs(args) {
   return { ids, command: rest[0] };
 }
 
-// Whether the shell command runs a front-desk command that records without naming `session` (and only it) with --session.
+// Whether the shell command runs a front-desk command that records without naming `session` (and only it) with --session. A
+// command that can't be read, and names the front desk's program, is held to the same rule: a missing id never falls through.
 function recordsWithoutSession(command, session, windows) {
-  const read = segmentsWithOperators(withoutHeredocs(command).text, windows);
-  if (read === null) return false;
-  return read.segments.some((words, i) => {
-    if (read.operators[i] === '>' || read.operators[i] === '<') return false;
+  const { text } = withoutHeredocs(command);
+  // A redirect of a stream onto another (`2>&1`) is no redirect to a file, and no part of the command.
+  const read = segmentsWithOperators(text.replace(/\d*>&(\d+|-)(?=$|[\s;|&)])/g, ' '), windows);
+  if (read === null) return /wh-frontdesk|frontdesk[\\/]cli\.js/.test(command);
+  // A segment a redirect opened holds the file first, then more of the same command's words (`card < in.json --session x`).
+  const commands = [];
+  read.segments.forEach((words, i) => {
+    if (read.operators[i] === '>' || read.operators[i] === '<') commands.at(-1)?.push(...words.slice(1));
+    else commands.push([...words]);
+  });
+  return commands.some((words) => {
     const at = words.findIndex(isFrontDeskProgram);
     if (at < 0) return false;
     const { ids, command: name } = frontDeskArgs(words.slice(at + 1));

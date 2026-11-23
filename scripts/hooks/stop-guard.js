@@ -126,8 +126,8 @@ function isFeatureRead(command, pluginRoots, platform) {
 // The front desk's commands that only read (scripts/frontdesk/cli.js), by their exact words:
 // `cards`, `decision list`, `decision show <n>`, `similar`, `similar <the request's words>` (see REQUEST), `again <n>`, `views <name>`,
 // `explain <term>` (one to four words of letters and digits, a word's parts joined by hyphens) and
-// `preview <pull request>`, and `confirm lift-stop`, which only opens the helper's window on the Lift All stop card (the director's
-// click there signs the lift; the command itself writes nothing). `cards` and `again` record which cards they handed out, and under STOP
+// `preview <pull request>`, and `confirm lift-stop` and `confirm seat-take-over`, which only open the helper's window on the Lift All stop
+// card or the First Mate's seat card (the director's click there signs the record; the command itself writes nothing). `cards` and `again` record which cards they handed out, and under STOP
 // the helper refuses that write, so the cards are still given. `card` and `record` write, so they
 // stay refused, as does every other form. The lineage hold lets the same forms through (ruling F70).
 const VIEW_NAMES = ['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey'];
@@ -136,14 +136,30 @@ const TERM = /^[\p{L}\p{N}]+(?:[ -][\p{L}\p{N}]+)*$/u;
 // A request's words for `similar`, quoted or not: they start with a letter or digit and hold only
 // letters, digits, spaces and plain punctuation, nothing a shell would expand or read as a comment.
 const REQUEST = /^[\p{L}\p{N}][\p{L}\p{N} ,.:'’"!?\/@%+=-]*$/u;
+// On an agent whose hooks only read, a front-desk command names the chat's own session (`--session <id>`, checked by the write guard),
+// so one such flag, anywhere among the arguments, is taken out before the words are read.
+const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
+function withoutSessionFlag(args) {
+  const left = [];
+  let seen = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const flag = /^--session(?:=(.*))?$/.exec(args[i]);
+    if (flag === null) { left.push(args[i]); continue; }
+    const id = flag[1] ?? args[i += 1];
+    if (seen || typeof id !== 'string' || !SESSION_ID.test(id)) return null;
+    seen = true;
+  }
+  return left;
+}
 export function isFrontDeskRead(command, pluginRoots, platform) {
-  const args = scriptArguments(command, pluginRoots, platform, 'scripts/frontdesk/cli.js');
+  const given = scriptArguments(command, pluginRoots, platform, 'scripts/frontdesk/cli.js');
+  const args = given === null ? null : withoutSessionFlag(given);
   if (args === null || args.length === 0) return false;
   const [name, ...rest] = args;
   if (name === 'cards') return rest.length === 0;
   if (name === 'similar') return rest.length === 0 || REQUEST.test(rest.join(' '));
   if (name === 'again' || name === 'preview') return rest.length === 1 && COUNT.test(rest[0]);
-  if (name === 'confirm') return rest.length === 1 && rest[0] === 'lift-stop';
+  if (name === 'confirm') return rest.length === 1 && (rest[0] === 'lift-stop' || rest[0] === 'seat-take-over');
   if (name === 'views') return rest.length === 1 && VIEW_NAMES.includes(rest[0]);
   if (name === 'decision') return (rest.length === 1 && rest[0] === 'list') || (rest.length === 2 && rest[0] === 'show' && COUNT.test(rest[1]));
   if (name === 'explain') {

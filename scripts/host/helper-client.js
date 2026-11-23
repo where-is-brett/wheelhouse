@@ -57,7 +57,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     stop: post('/stop/set'), //      { by?, wait? } -> { ok, engine? }: turns STOP on, then the engine's runs are cancelled; nothing here lifts it. `by: 'prompt'` records that the director's word set it, `by: 'runbook'` the runbook; `wait: true` waits for the engine and gives what it cancelled
     session: {
       mark: post('/session/mark'), // { project | cwd, mark, data } -> { ok, id }: a session's mark, as a plain note: 'unknown-tool' ({ name }), 'compaction' ({ trigger }) or 'deadline' ({ event })
-      seat: post('/session/seat'), // { project | cwd, session } -> { ok, holds }: whether the session holds the project's First Mate seat; answered under STOP
+      seat: post('/session/seat'), // { project | cwd, session, take? } -> { ok, holds }: whether the session holds the project's First Mate seat (the holder's ask keeps it fresh); with `take`, a session in the main folder takes a free seat; answered under STOP
       note: post('/session/note'), // { project | cwd, session, text } -> { ok, file }: the session's note, up to 1,200 characters, written beside its gauge reading; refused under STOP
     },
     crew: {
@@ -70,6 +70,8 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     // { project | cwd, card, hash } -> { ok, recorded, choice, id?, kind?, step? }: the card, by its id in the state and the
     // sha256 of its data, shown in the helper's own window; a deciding click there is signed by the helper with proof
     // `window`. One window at a time on this computer, so this may wait for a click: give the client a long timeout.
+    // `card` may also be `lift-stop`, or `seat-take-over` with `session` (the asking window's id) and `cwd`: the helper composes the card from
+    // the seat, and a click moves the seat to `session` -> { ok, recorded, choice, moved, holder }.
     confirm: post('/confirm'),
     // Updating Wheelhouse (scripts/update/routes.js), naming the folder, a full path; `scripts/update/cli.js` calls these.
     update: {
