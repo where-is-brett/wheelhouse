@@ -19,7 +19,7 @@ import { callsFrom, isHelmCall } from '../decisions/calls.js';
 import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { crewNow } from '../crew/runs.js';
-import { paneLive } from '../lib/session-files.js';
+import { panelLive, takeAskHere, peekAskHere } from './panel-live.js';
 import { registeredProjects } from '../lib/projects.js';
 import { computerId } from '../lib/paths.js';
 import { agentInFolder } from '../agents/names.js';
@@ -466,7 +466,12 @@ const VIEWS = {
   // `cards` and `answers` ask for what the helper's views give with them. The record's
   // other views come with it, for the front desk's own lists (the rulebook, ideas, glossary, levels).
   // With `outcomes: { since }` the decided cards come too (decidedOutcomes), for the front desk's `card` and `views`.
-  async waiting(args, source, { now } = {}) {
+  async waiting(args, source, { now, client = null } = {}) {
+    // `paneOnly`: just whether a panel is live, with no views built, for a hook that must answer quickly.
+    if (args.paneOnly === true) {
+      const when = typeof now === 'function' ? now() : new Date();
+      return { ok: true, data: { paneLive: typeof source.project === 'string' && panelLive(source.project, when.getTime()) }, lines: [] };
+    }
     const got = await recordOf(source, { cards: true, answers: args.answers === true });
     if (got.refused) return { ok: false, refused: got.refused };
     const numbered = numberedWaiting(got.views, got.cards ?? []);
@@ -486,10 +491,15 @@ const VIEWS = {
     const stuck = args.stuck === true && typeof source.events === 'function' ? { stuck: stuckNotes(source.events()) } : {};
     // With `helmNotes: true`, the notes a piece's crew wrote of what the director did at its helm, oldest first.
     const helmNotes = args.helmNotes === true && typeof source.events === 'function' ? { helmNotes: helmNoteEvents(source.events()) } : {};
-    // With `session`, whether a live panel is beside that session now: read here, outside the sandbox, for the front desk's
-    // `cards` and `card`, which can't read the session's files themselves (it decides which cards the picker can never mark).
-    const pane = typeof args.session === 'string' && args.session !== '' ? { paneLive: paneLive(args.session, at.getTime()) } : {};
-    return { ok: true, data: { ...got, numbered, ...given, ...decisions, ...calls, ...stuck, ...helmNotes, ...pane }, lines };
+    // Whether a live panel is beside this project's chat now: a paired app's signed watch, no older than PANEL_LIVE_MS, as the
+    // helper keeps it (panel-live.js). Read here, outside the sandbox, for the front desk's `cards` and `card`, which can't read
+    // it themselves (it decides which cards the chat asks and which stay in the panel).
+    const pane = { paneLive: typeof source.project === 'string' && panelLive(source.project, at.getTime()) };
+    // With `askHere: true`, the cards the director marked Ask me here in the panel. A read a paired app signed takes them (given
+    // once); any other only looks, so no one else can clear a mark the director made.
+    const here = args.askHere === true
+      ? { askHere: typeof source.project !== 'string' ? [] : client !== null ? takeAskHere(source.project, at.getTime()) : peekAskHere(source.project, at.getTime()) } : {};
+    return { ok: true, data: { ...got, numbered, ...given, ...decisions, ...calls, ...stuck, ...helmNotes, ...pane, ...here }, lines };
   },
 
   async card(args, source) {
@@ -555,8 +565,8 @@ const VIEWS = {
 };
 
 // readView(view, args, source, { now }) -> { ok, view, data, lines } | { ok: false, refused }.
-export async function readView(view, args, source, { now = () => new Date() } = {}) {
-  const answer = await VIEWS[view](args ?? {}, source, { now });
+export async function readView(view, args, source, { now = () => new Date(), client = null } = {}) {
+  const answer = await VIEWS[view](args ?? {}, source, { now, client });
   return answer.ok ? { ...answer, view } : answer;
 }
 

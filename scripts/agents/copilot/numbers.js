@@ -17,7 +17,7 @@ export const REVIEW_KINDS = Object.freeze(['chat-review', 'clean-session', 'suba
 export const ACTIVITY_DAYS = 30;
 // The steps that need the director's confirmed click. `ask-allowance` is an Ask build question's Allow this time or
 // Allow for this feature (ruling P8-8).
-export const CONFIRMED_STEPS = Object.freeze(['lift-stop', 'guardrail-change', 'unattended', 'runbook-step', 'ci-push', 'ask-allowance']);
+export const CONFIRMED_STEPS = Object.freeze(['lift-stop', 'guardrail-change', 'unattended', 'runbook-step', 'ci-push', 'ask-allowance', 'pairing']);
 // The board's file, inside the project's Copilot folder.
 export const BOARD_FILE = 'wheelhouse/board.md';
 // The hook file's name, in the person's Copilot hook folder.

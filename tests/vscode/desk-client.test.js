@@ -52,7 +52,7 @@ test('read posts the view with the project and no signature', async () => {
   assert.equal(helper.seen[0].route, '/desk/read');
 });
 
-test('act signs the command, its arguments and the time', async () => {
+test('act signs the command, its arguments, the time and the project', async () => {
   const helper = await standIn(() => ok({ changed: [] }));
   const { desk, key } = await client(helper);
   await desk.act('not-now', { card: 'c1' });
@@ -60,10 +60,10 @@ test('act signs the command, its arguments and the time', async () => {
   assert.equal(evidence.form, 'client');
   assert.equal(evidence.client, key.client);
   assert.equal(evidence.at, NOW.toISOString());
-  const text = canonicalJson({ command: 'not-now', args: { card: 'c1' }, at: evidence.at });
+  const text = canonicalJson({ command: 'not-now', args: { card: 'c1' }, at: evidence.at, project: 'owner__name' });
   const publicKey = crypto.createPublicKey({ key: Buffer.from(key.publicKey, 'base64'), format: 'der', type: 'spki' });
   assert.equal(crypto.verify(null, Buffer.from(text), publicKey, Buffer.from(evidence.sig, 'base64')), true);
-  const other = canonicalJson({ command: 'not-now', args: { card: 'c2' }, at: evidence.at });
+  const other = canonicalJson({ command: 'not-now', args: { card: 'c2' }, at: evidence.at, project: 'owner__name' });
   assert.equal(crypto.verify(null, Buffer.from(other), publicKey, Buffer.from(evidence.sig, 'base64')), false);
 });
 
@@ -76,7 +76,7 @@ test('watch signs { command: watch, args: { cursor } }', async () => {
   assert.equal(helper.seen[0].body.cursor, 'k1');
   const { evidence } = helper.seen[0].body;
   const publicKey = crypto.createPublicKey({ key: Buffer.from(key.publicKey, 'base64'), format: 'der', type: 'spki' });
-  const text = canonicalJson({ command: 'watch', args: { cursor: 'k1' }, at: evidence.at });
+  const text = canonicalJson({ command: 'watch', args: { cursor: 'k1' }, at: evidence.at, project: 'owner__name' });
   assert.equal(crypto.verify(null, Buffer.from(text), publicKey, Buffer.from(evidence.sig, 'base64')), true);
 });
 
@@ -117,4 +117,36 @@ test('no helper answers as down, not as an update', async () => {
     const got = await desk.read('glance');
     assert.deepEqual([got.ok, got.down, got.update], [false, true, undefined]);
   });
+});
+
+// The add-on's signer against core's own check: what the add-on signs, the helper accepts, and no more.
+test('core\'s checkClient verifies what the add-on signs, for its project only, and an answer carries its hash', async () => {
+  const { checkClient, checkEvidence, clearUsedSignatures } = await import('../../scripts/desk/evidence.js');
+  const { composeCard } = await import('../../scripts/cards/compose.js');
+  clearUsedSignatures();
+  const helper = await standIn(() => ok({ changed: [] }));
+  const { desk, key } = await client(helper);
+  const paired = [{ id: key.client, name: 'The panel', publicKey: key.publicKey }];
+  const now = () => NOW;
+  await desk.watch('k1');
+  const watch = helper.seen.at(-1).body.evidence;
+  assert.equal(checkClient('watch', { cursor: 'k1' }, watch, { clients: paired, now, project: 'owner__name' }).ok, true);
+  assert.equal(checkClient('watch', { cursor: 'k1' }, watch, { clients: paired, now, project: 'owner__other' }).ok, false, 'another project');
+  // A merge approval answered through the add-on's answer(): the helper's whole evidence check passes, and it needs the hash.
+  const card = composeCard({
+    kind: 'approval', level: 3, recommend: 'Approve', what: 'Pull request #12 has everything else it needs to merge.', why: 'It changes what users see.',
+    because: 'the checks passed.', meanwhile: 'Nothing is released.', options: [{ label: 'Approve', says: 'It merges.' }], target: { pr: 12, sha: 'a'.repeat(40) },
+  }).card;
+  const id = crypto.randomUUID();
+  const views = { waiting: [{ id, at: NOW.toISOString(), data: card }] };
+  await desk.answer(id, 'Approve', 'c'.repeat(64), { commit: 'a'.repeat(40) });
+  const { args, evidence, command } = helper.seen.at(-1).body;
+  assert.equal(command, 'answer');
+  assert.equal(args.hash, 'c'.repeat(64));
+  const got = checkEvidence('answer', args, evidence, { clients: paired, views, now, project: 'owner__name', events: [], enrolled: [] });
+  assert.deepEqual([got.ok, got.decides], [true, true], got.refused);
+  const before = helper.seen.length;
+  const none = await desk.answer(id, 'Approve', '');
+  assert.equal(none.ok, false);
+  assert.equal(helper.seen.length, before, 'with no hash nothing is sent');
 });

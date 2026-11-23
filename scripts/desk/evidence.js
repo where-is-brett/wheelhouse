@@ -16,12 +16,38 @@ import { confirmLine } from '../state/card-lines.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { signsOn } from '../hooks/prompt-record.js';
 import { computerId } from '../lib/paths.js';
+import { isDecisionCard } from '../decisions/pending.js';
 
 export const CLIENT_WINDOW_MS = 5 * 60 * 1000;
 export const EVIDENCE_FORMS = Object.freeze(['signed', 'window', 'chat-click', 'client']);
 // The cards a click in the chat may decide, which the helper's own route checks again: a merge card.
 const CHAT_DECIDES = /^merge-/;
 const CARD_COMMANDS = ['answer', 'suggest', 'not-now'];
+// The only commands a paired app's signature carries: card answers (under clientMayAnswer), its watch, and Ask me here.
+// pair and unpair take no evidence at all, so they never reach here. Everything else (settings, safekeeping, All stop, Lift
+// STOP, a request) is the director's own, in the window or the chat.
+export const CLIENT_COMMANDS = Object.freeze([...CARD_COMMANDS, 'watch', 'ask-here']);
+// The kinds of card whose click is confirmed in the window: a paired app never decides one, whatever its option's label.
+const WINDOW_KINDS = ['lift-stop', 'runbook', 'ci-push', 'pair', 'unpair', 'take-over', 'trust', 'uninstall', 'setup', 'confirm-all', 'baseline', 'usage', 'premium', 'release', 'update-helper', 'update', 'keep-control-files'];
+const APPROVAL_SET_LINE = /^Approve pull request #[1-9][0-9]* at commit [0-9a-f]{12}$/;
+
+// Whether a card's data is a plain merge approval, as the composer writes one: kind approval, at level 3, with the approval set
+// line. A level-4 approval is a guardrail change or a parked change, which is confirmed in the window. Read from the live card,
+// never from its id.
+export function isMergeApproval(data) {
+  return isPlain(data) && data.kind === 'approval' && data.level === 3 && typeof data.line === 'string' && APPROVAL_SET_LINE.test(data.line);
+}
+
+// The signatures an app's acts have used, kept in this process for as long as they could be accepted (CLIENT_WINDOW_MS), so an act
+// signed once is taken once. A watch may be signed again with the same words, and is not kept here.
+const usedSignatures = new Map();
+export const clearUsedSignatures = () => usedSignatures.clear();
+function useOnce(sig, nowMs) {
+  for (const [key, at] of usedSignatures) if (nowMs - at > CLIENT_WINDOW_MS * 2) usedSignatures.delete(key);
+  if (usedSignatures.has(sig)) return false;
+  usedSignatures.set(sig, nowMs);
+  return true;
+}
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const no = (refused) => ({ ok: false, refused });
@@ -78,7 +104,9 @@ function checkSigned(command, args, records, { enrolled, views, events, computer
   return { ok: true, records: out };
 }
 
-function checkClient(command, args, { client, at, sig }, { clients, now }) {
+// The app signs `{ command, args, at, project }`, so an act signed for one project is no act for another.
+export function checkClient(command, args, { client, at, sig }, { clients, now, project }) {
+  if (typeof project !== 'string' || project === '') return no('A paired app\'s signature names the project it is for');
   const entry = (Array.isArray(clients) ? clients : []).find((c) => c?.id === client);
   if (entry === undefined) return no('That app was never paired with Wheelhouse');
   const atMs = Date.parse(at);
@@ -86,7 +114,7 @@ function checkClient(command, args, { client, at, sig }, { clients, now }) {
   if (!Number.isFinite(atMs) || Math.abs(nowMs - atMs) > CLIENT_WINDOW_MS) return no('That app\'s signature is more than five minutes old');
   try {
     const key = crypto.createPublicKey({ key: Buffer.from(entry.publicKey, 'base64'), format: 'der', type: 'spki' });
-    if (typeof sig === 'string' && crypto.verify(null, Buffer.from(canonicalJson({ command, args, at })), key, Buffer.from(sig, 'base64'))) {
+    if (typeof sig === 'string' && crypto.verify(null, Buffer.from(canonicalJson({ command, args, at, project })), key, Buffer.from(sig, 'base64'))) {
       return { ok: true, records: [], client: entry.id };
     }
   } catch {
@@ -95,16 +123,53 @@ function checkClient(command, args, { client, at, sig }, { clients, now }) {
   return no('That app\'s signature doesn\'t check');
 }
 
+// The waiting card `id`'s data, or null.
+function cardOf(views, id) {
+  const card = (Array.isArray(views?.waiting) ? views.waiting : []).find((c) => c?.id === id);
+  return isPlain(card?.data) ? card.data : null;
+}
+
+// What a paired app may decide, never more than a click in the chat: a plain option on any card, and a signing option on a plain
+// merge approval only (isMergeApproval, read from the live card the act names). Never a confirmed step, a guardrail change, a
+// decision, or any other signing option. An answer names the card's hash, as a click in the chat does, and an option the card
+// offers. `decides` is true where the option signs on a merge approval.
+function clientMayAnswer(command, args, views) {
+  if (!CARD_COMMANDS.includes(command)) return { ok: true, decides: false };
+  const card = String(args?.card ?? '');
+  const label = command === 'answer' ? args?.option : undefined;
+  if (command === 'answer' && (typeof args?.hash !== 'string' || args.hash === '')) return no('An answer names the hash of the card it was shown');
+  const data = cardOf(views, card);
+  if (command === 'answer' && data !== null && Array.isArray(data.options) && !data.options.includes(label)) return no('That isn\'t one of the options the card offers');
+  const asked = typeof data?.question === 'string' ? data.question : card;
+  const signs = typeof label === 'string' && signsOn(label, asked);
+  if (command === 'answer' && isDecisionCard(data)) return no('A decision is answered in Wheelhouse\'s window or by a typed reply, never from the panel');
+  if (signs && WINDOW_KINDS.includes(data?.kind)) return no('That step is confirmed in Wheelhouse\'s window, never from the panel');
+  if (signs && data?.kind === 'approval' && !isMergeApproval(data)) return no('That approval is confirmed in Wheelhouse\'s window, never from the panel');
+  if (signs && !isMergeApproval(data)) return no('The panel can\'t decide that card: answer it in Wheelhouse\'s window');
+  return { ok: true, decides: signs };
+}
+
 // The words of the card a click names, by its id in the views, or the name as given: a click in the chat names either.
 const askedOn = (views, card) => String(views?.waiting?.find?.((c) => c?.id === card)?.data?.question ?? card);
 
-// checkEvidence(command, args, evidence, { enrolled, clients, views, events, now, computer })
+// checkEvidence(command, args, evidence, { enrolled, clients, views, events, now, computer, project })
 //   -> { ok, records?, refused? }. Never throws.
-export function checkEvidence(command, args, evidence, { enrolled = [], clients = [], views = {}, events = [], now = () => new Date(), computer = computerId() } = {}) {
+export function checkEvidence(command, args, evidence, { enrolled = [], clients = [], views = {}, events = [], now = () => new Date(), computer = computerId(), project } = {}) {
   try {
     if (!isPlain(evidence) || !EVIDENCE_FORMS.includes(evidence.form)) return no('That evidence isn\'t a form Wheelhouse takes');
+    // Only a paired app's panel asks a card here: a signed record, the window or a click in the chat is none of its business.
+    if (command === 'ask-here' && evidence.form !== 'client') return no('Only a paired app asks a card here');
     if (evidence.form === 'signed') return checkSigned(command, args, evidence.records, { enrolled, views, events, computer });
-    if (evidence.form === 'client') return checkClient(command, args, evidence, { clients, now });
+    if (evidence.form === 'client') {
+      const got = checkClient(command, args, evidence, { clients, now, project });
+      if (!got.ok) return got;
+      if (!CLIENT_COMMANDS.includes(command)) return no(`A paired app can't ${command}: that is decided in Wheelhouse's window or the chat`);
+      const may = clientMayAnswer(command, args, views);
+      if (!may.ok) return may;
+      // An act's signature is taken once; a watch is signed again each time it is renewed, so it may repeat.
+      if (command !== 'watch' && !useOnce(evidence.sig, now().getTime())) return no('That app\'s signature was used already, so it is signed again for each act');
+      return { ...got, decides: may.decides };
+    }
     if (evidence.form === 'window') return command === 'answer' ? { ok: true, records: [], window: true } : no('The confirm window decides an answer only');
     // A click in the chat.
     if (evidence.proof !== 'chat-click') return no('A click in the chat is recorded as chat-click');
@@ -123,7 +188,7 @@ export function sourceVerifier(source, { clients = () => [], now = () => new Dat
     async check(command, args, evidence) {
       const got = await source.views({ cards: true });
       return checkEvidence(command, args, evidence, {
-        enrolled: source.enrolled?.() ?? [], clients: clients(), views: got?.views ?? {}, events: source.events?.() ?? [], now,
+        enrolled: source.enrolled?.() ?? [], clients: clients(), views: got?.views ?? {}, events: source.events?.() ?? [], now, project: source.project,
       });
     },
   };

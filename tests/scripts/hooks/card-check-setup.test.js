@@ -11,7 +11,7 @@ import { decide } from '../../../scripts/hooks/card-check.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { baselineCard } from '../../../scripts/measures/baseline.js';
 import { asQuestion } from '../../../scripts/cards/visit.js';
-import { markPane, readOpen } from '../../../scripts/lib/session-files.js';
+import { markPane, readOpen, paneLive as sessionPane } from '../../../scripts/lib/session-files.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { setupCardsFor } from '../../../scripts/lib/setup-clicks.js';
 import { setLineOf } from '../../../scripts/state/card-lines.js';
@@ -138,7 +138,7 @@ const inProject = (fn) => inSetup(async (world) => {
 const stateCard = composeCard({ ...common, kind: 'question', recommend: 'Comma', what: 'The export needs to know which separator to use.', options: [
   { label: 'Comma', says: 'Commas between values.' }, { label: 'Tab', says: 'Tabs between values.' }] });
 const STATE = { card: { id: 'c-1', data: stateCard.card }, decided: null };
-const inProjectRun = (input, over = {}) => decide(input, { projectOf: () => ({ project: PROJECT }), now: () => new Date(T0), stop: () => ({ on: true }), role: () => 'front-desk', holdForPane: false, outcomes: () => [STATE], ...over });
+const inProjectRun = (input, over = {}) => decide(input, { projectOf: () => ({ project: PROJECT }), now: () => new Date(T0), stop: () => ({ on: true }), role: () => 'front-desk', holdForPane: false, paneLive: async (session, ms) => sessionPane(session, ms), outcomes: () => [STATE], ...over });
 
 test('in a project being set up, the state card wins over a setup card sharing its first line', () => inProject(async ({ folder, first }) => {
   const line = stateCard.question.question.split('\n')[0];

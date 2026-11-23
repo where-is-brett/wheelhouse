@@ -19,6 +19,11 @@ import { hashOf, cardTextOf } from '../../../scripts/desk/card-text.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { CARD } from '../desk/fixture.js';
+import crypto from 'node:crypto';
+import { canonicalJson } from '../../../scripts/lib/canonical.js';
+import { clearPanels } from '../../../scripts/desk/panel-live.js';
+import { clientsFile } from '../../../scripts/desk/clients.js';
+import { keysDir } from '../../../scripts/lib/paths.js';
 import { safekeepingFile } from '../../../scripts/safekeeping/readings.js';
 
 const hostLog = [];
@@ -112,6 +117,25 @@ test('desk watch returns card-added for a new card, then nothing for the same cu
   assert.deepEqual(second.events.filter((e) => e.type.startsWith('card')).map((e) => [e.type, e.card]), [['card-added', card.id]]);
   const third = await client.desk.watch({ v, project: P, cursor: second.cursor });
   assert.deepEqual(third.events, []);
+}));
+
+test('the helper\'s /desk/watch passes the evidence through: a signed watch marks the panel live, and nothing else does', inProject(async (client) => {
+  clearPanels();
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+  fs.mkdirSync(keysDir(), { recursive: true });
+  fs.writeFileSync(clientsFile(), JSON.stringify([{ id: 'vscode-panel', name: 'The panel', publicKey: publicKey.export({ type: 'spki', format: 'der' }).toString('base64') }]));
+  const sign = (cursor, when = at(10)().toISOString()) => ({ form: 'client', client: 'vscode-panel', at: when, sig: crypto.sign(null, Buffer.from(canonicalJson({ command: 'watch', args: { cursor }, at: when, project: P })), privateKey).toString('base64') });
+  const live = async () => (await client.desk.read({ v, project: P, view: 'waiting' })).data.paneLive;
+  assert.equal(await live(), false);
+  assert.equal((await client.desk.watch({ v, project: P, cursor: null })).ok, true);
+  assert.equal(await live(), false, 'an unsigned watch marks nothing');
+  const stale = at(10)().getTime() - 6 * 60 * 1000;
+  assert.equal((await client.desk.watch({ v, project: P, cursor: null, evidence: sign(null, new Date(stale).toISOString()) })).ok, true);
+  assert.equal(await live(), false, 'a watch signed six minutes ago marks nothing');
+  const signed = await client.desk.watch({ v, project: P, cursor: null, evidence: sign(null) });
+  assert.equal(signed.ok, true, signed.refused);
+  assert.equal(await live(), true);
+  clearPanels();
 }));
 
 test('under STOP, desk read answers and desk act answer is refused', inProject(async (client) => {

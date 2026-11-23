@@ -52,9 +52,9 @@ test('a signature from the kept key checks against its public key', async () => 
   const { secrets } = fakeContext();
   const key = await loadKey(secrets);
   const again = await loadKey(secrets);
-  const evidence = again.sign('request', { text: 'x' });
+  const evidence = again.sign('request', { text: 'x' }, 'owner__name');
   assert.equal(evidence.client, key.client);
   const publicKey = crypto.createPublicKey({ key: Buffer.from(key.publicKey, 'base64'), format: 'der', type: 'spki' });
-  const text = canonicalJson({ command: 'request', args: { text: 'x' }, at: evidence.at });
+  const text = canonicalJson({ command: 'request', args: { text: 'x' }, at: evidence.at, project: 'owner__name' });
   assert.equal(crypto.verify(null, Buffer.from(text), publicKey, Buffer.from(evidence.sig, 'base64')), true);
 });

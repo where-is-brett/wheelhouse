@@ -34,7 +34,7 @@ test('only the cards waiting are drawn, not every card event', () => {
 });
 
 test('the copied lists match core\'s', () => {
-  assert.deepEqual(CONFIRMED_STEPS.filter((s) => s !== 'pairing'), [...CORE_STEPS]);
+  assert.deepEqual([...CONFIRMED_STEPS], [...CORE_STEPS]);
   for (const label of SIGNED_LABELS) assert.equal(signsOn(label), true, label);
 });
 

@@ -137,7 +137,7 @@ test('while paired and visible it watches every 10 seconds, signed with the key'
   const publicKey = crypto.createPublicKey({ key: Buffer.from(add.key.publicKey, 'base64'), format: 'der', type: 'spki' });
   for (const { body } of watches) {
     assert.equal(body.evidence.client, add.key.client);
-    const text = canonicalJson({ command: 'watch', args: { cursor: body.cursor }, at: body.evidence.at });
+    const text = canonicalJson({ command: 'watch', args: { cursor: body.cursor }, at: body.evidence.at, project: 'owner__name' });
     assert.equal(crypto.verify(null, Buffer.from(text), publicKey, Buffer.from(body.evidence.sig, 'base64')), true);
   }
 });

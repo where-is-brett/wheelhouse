@@ -20,7 +20,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { writeJsonFile, runningFile, sessionFile } from '../../../scripts/watcher/waker.js';
 import { holdFile } from '../../../scripts/crew/hold.js';
-import { markPane } from '../../../scripts/lib/session-files.js';
+import { markPanel, clearPanels, PANEL_LIVE_MS, ASK_HERE_MS } from '../../../scripts/desk/panel-live.js';
+import { runAct } from '../../../scripts/desk/acts.js';
 import { P, NOW, now, CARD, writeRecord, upClient, put, viewsDir } from './fixture.js';
 
 function withRecord(fn) {
@@ -54,17 +55,46 @@ test('waiting numbers cards as the Logbook does', () => withRecord(async ({ sour
   assert.equal(got.data.numbered.length, 1);
 }));
 
-test('waiting with a session says whether a live panel is beside it, as the helper reads it; with none it says nothing', () => withRecord(async ({ source }) => {
-  assert.equal(markPane('s-live', { at: Date.parse(NOW), drawn: Date.parse(NOW), surface: 'desktop' }), true);
-  assert.equal(markPane('s-terminal', { at: Date.parse(NOW), drawn: Date.parse(NOW), surface: 'terminal' }), true);
-  assert.equal(markPane('s-stale', { at: Date.parse(NOW) - 60 * 60 * 1000, drawn: Date.parse(NOW) - 60 * 60 * 1000, surface: 'desktop' }), true);
+test('waiting says paneLive true while the project\'s panel is live, with no session named, and false once it stops', () => withRecord(async ({ source }) => {
+  clearPanels();
   const paneOf = async (args) => (await readView('waiting', args, source, { now })).data.paneLive;
-  assert.equal(await paneOf({ session: 's-live' }), true);
-  assert.equal(await paneOf({ session: 's-terminal' }), false, 'a terminal session draws no panel');
-  assert.equal(await paneOf({ session: 's-stale' }), false, 'a panel that stopped ticking is not live');
-  assert.equal(await paneOf({ session: 's-none' }), false);
-  assert.equal(await paneOf({}), undefined);
-  assert.equal(await paneOf({ session: '' }), undefined);
+  assert.equal(await paneOf({}), false, 'no panel has watched');
+  markPanel(P, 'vscode-panel', Date.parse(NOW));
+  assert.equal(await paneOf({}), true);
+  assert.equal(await paneOf({ session: 's-any' }), true, 'it follows the project, not a session');
+  clearPanels();
+  markPanel('o__other', 'vscode-panel', Date.parse(NOW));
+  assert.equal(await paneOf({}), false, 'another project\'s panel is not this one\'s');
+  markPanel(P, 'vscode-panel', Date.parse(NOW) - PANEL_LIVE_MS - 1000);
+  assert.equal(await paneOf({}), false, 'a panel that stopped watching is not live');
+  assert.equal((await readView('waiting', {}, source, { now })).data.askHere, undefined, 'Ask me here is given only when asked for');
+  clearPanels();
+}));
+
+test('waiting with paneOnly says only whether a panel is live, building no views', () => withRecord(async ({ source }) => {
+  clearPanels();
+  const guarded = { ...source, views: async () => { throw new Error('no views are built'); } };
+  assert.deepEqual((await readView('waiting', { paneOnly: true }, guarded, { now })).data, { paneLive: false });
+  markPanel(P, 'vscode-panel', Date.parse(NOW));
+  assert.deepEqual((await readView('waiting', { paneOnly: true }, guarded, { now })).data, { paneLive: true });
+  clearPanels();
+}));
+
+test('ask-here marks a waiting card, and waiting with askHere gives it once', () => withRecord(async ({ source }) => {
+  clearPanels();
+  const marked = await runAct('ask-here', { card: 'c1' }, { ok: true, records: [], client: 'vscode-panel' }, { source, recorder: {}, now });
+  assert.deepEqual([marked.ok, marked.changed], [true, ['ask-here']]);
+  const look = async () => (await readView('waiting', { askHere: true }, source, { now })).data.askHere;
+  const take = async () => (await readView('waiting', { askHere: true }, source, { now, client: 'vscode-panel' })).data.askHere;
+  assert.deepEqual(await look(), ['c1']);
+  assert.deepEqual(await look(), ['c1'], 'a read nobody signed only looks, so it clears no mark');
+  assert.deepEqual(await take(), ['c1']);
+  assert.deepEqual(await take(), [], 'a signed read takes a mark once');
+  assert.equal((await readView('waiting', {}, source, { now })).data.askHere, undefined, 'asked for only when wanted');
+  // A mark older than two minutes is not given, and the card stays waiting all the same.
+  await runAct('ask-here', { card: 'c1' }, { ok: true, records: [], client: 'vscode-panel' }, { source, recorder: {}, now: () => new Date(Date.parse(NOW) - ASK_HERE_MS - 1000) });
+  assert.deepEqual(await take(), []);
+  assert.equal((await readView('waiting', {}, source, { now })).data.numbered.length, 1, 'asking here closes nothing');
 }));
 
 test('card carries its buttons, its pane hash and its data hash', () => withRecord(async ({ source }) => {

@@ -30,7 +30,7 @@ import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { approveWorkLine, approvalLine, answerLine, chatCopy, replyCode, replyCodeOf, ciPushLine, confirmLine, keepControlLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
 import { writeJsonFile, runningFile, sessionFile } from '../../../scripts/watcher/waker.js';
-import { markPane } from '../../../scripts/lib/session-files.js';
+import { markPanel, clearPanels } from '../../../scripts/desk/panel-live.js';
 import { sandboxed } from '../../helpers/sandbox-wall.js';
 import { setStop, stopState } from '../../../scripts/lib/stop.js';
 import { decide as cardCheck, cardProblems } from '../../../scripts/hooks/card-check.js';
@@ -2711,19 +2711,33 @@ test('cards --here hands cards out for the chat, which the picker never shows, s
   });
 });
 
-test('cards and card still mark a card as asked at print while the panel is live, since no picker call can show it then', async () => {
+test('cards and card mark nothing as asked while the panel is live, so a card the panel held is offered in the chat once it lapses', async () => {
   await inHome(async () => {
     const approval = cardEvent({ ...APPROVAL, target: { pr: 7, sha: FULL } }, 1);
     const helper = fakeHelper({ events: [approval] });
     const session = 'session-live';
-    assert.equal(markPane(session, { at: NOW.getTime(), drawn: NOW.getTime(), surface: 'desktop' }), true);
+    clearPanels();
+    markPanel('o__p', 'vscode-panel', NOW.getTime()); // a paired app's signed watch, as the helper keeps it: per project
     const out = await run(helper, ['cards'], undefined, { env: { CLAUDE_CODE_SESSION_ID: session } });
     assert.equal(out.code, 0, out.err);
-    assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [approval.id] } }]);
+    assert.deepEqual(helper.writes(), [], 'a card the panel holds is not marked asked, or it would show nowhere once the panel stopped');
+    assert.equal(helper.views().waiting[0].asked, null);
     const fresh = fakeHelper();
     const made = await run(fresh, ['card'], JSON.stringify({ ...APPROVAL, target: { pr: 7 } }), { env: { CLAUDE_CODE_SESSION_ID: session } });
     assert.equal(made.code, 0, made.err);
-    assert.deepEqual(fresh.writes().map((w) => w.kind), ['card', 'asked']);
+    assert.deepEqual(fresh.writes().map((w) => w.kind), ['card']);
+    // The panel's live mark lapses (the watch stopped, 45 seconds on): the same card is offered in the chat.
+    clearPanels();
+    const later = await run(helper, ['cards'], undefined, { env: { CLAUDE_CODE_SESSION_ID: session } });
+    assert.equal(later.code, 0, later.err);
+    assert.equal(later.json.questions.length, 1, 'the card is offered in the chat');
+    assert.deepEqual(helper.writes(), [], 'the picker marks it once it has shown it');
+    // Asked here, in the chat, it is marked: that one the director chose.
+    markPanel('o__p', 'vscode-panel', NOW.getTime());
+    const here = await run(helper, ['cards', '--here'], undefined, { env: { CLAUDE_CODE_SESSION_ID: session } });
+    assert.equal(here.json.questions.length, 1);
+    assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [approval.id] } }]);
+    clearPanels();
   });
 });
 
@@ -2731,7 +2745,8 @@ test('cards and card read nothing in the Wheelhouse home: the helper says whethe
   await inHome(async () => {
     const home = process.env.WHEELHOUSE_HOME;
     const session = 'session-live';
-    assert.equal(markPane(session, { at: NOW.getTime(), drawn: NOW.getTime(), surface: 'desktop' }), true);
+    clearPanels();
+    markPanel('o__p', 'vscode-panel', NOW.getTime()); // a paired app's signed watch, as the helper keeps it: per project
     // The helper's answers are taken outside the wall, as the helper runs outside the sandbox; the command then runs behind it,
     // handed the answers as they were given, and so can't read the home to find out.
     const visit = async (argv, input, env) => {
@@ -2762,10 +2777,11 @@ test('cards and card read nothing in the Wheelhouse home: the helper says whethe
     };
     const cardsVisit = await visit(['cards'], undefined, { CLAUDE_CODE_SESSION_ID: session });
     assert.ok(cardsVisit.reads.some((got) => got.data?.paneLive === true), 'the helper said the panel is live');
-    assert.deepEqual(cardsVisit.writes.map((w) => [w.kind, w.data.cards?.length]), [['asked', 1]]);
+    assert.deepEqual(cardsVisit.writes, [], 'nothing is marked asked while the panel holds the cards');
     const cardVisit = await visit(['card'], JSON.stringify({ ...APPROVAL, target: { pr: 7 } }), { CLAUDE_CODE_SESSION_ID: session });
-    assert.deepEqual(cardVisit.writes.map((w) => w.kind), ['card', 'asked']);
-    // No panel beside the session: the card with a reply code is left for the picker to mark.
+    assert.deepEqual(cardVisit.writes.map((w) => w.kind), ['card']);
+    // No panel beside the chat: the card with a reply code is left for the picker to mark.
+    clearPanels();
     const quiet = await visit(['cards'], undefined, { CLAUDE_CODE_SESSION_ID: 'session-quiet' });
     assert.ok(quiet.reads.every((got) => got.data?.paneLive !== true));
     assert.deepEqual(quiet.writes, []);
@@ -2894,7 +2910,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page, helm\n$/);
+    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page, helm, unpair\n$/);
     const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -2961,7 +2977,7 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page, helm\n');
+  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page, helm, unpair\n');
   assert.equal(done.stdout, '');
 });
 
@@ -3256,6 +3272,31 @@ async function seatHeldByB(fn) {
     await fn(folder);
   });
 }
+
+test('unpair <app id> raises the Unpair card through the desk, and names the card', async () => {
+  await inHome(async () => {
+    const { generateKeyPairSync } = await import('node:crypto');
+    const { askToPair, pairClient, pairedClients, fingerprintOf } = await import('../../../scripts/desk/clients.js');
+    const { earned } = await import('../../../scripts/hooks/prompt-record.js');
+    const { pairLine, unpairLine } = await import('../../../scripts/state/card-lines.js');
+    const publicKey = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+    askToPair({ id: 'panel-app', name: 'The panel', publicKey }, { now: () => NOW });
+    const click = await earned({ project: 'p', question: pairLine('panel-app', fingerprintOf(publicKey)), label: 'Pair it', now: () => NOW });
+    assert.equal(pairClient({ id: 'panel-app' }, makeEvent({ ...click.made, now: () => NOW }), { now: () => NOW }).ok, true);
+    const helper = fakeHelper();
+    const got = await run(helper, ['unpair', 'panel-app']);
+    assert.equal(got.code, 0, got.err);
+    const card = helper.held.find((e) => e.kind === 'card');
+    assert.deepEqual(got.json, { card: card.id });
+    assert.equal(card.data.line, unpairLine('panel-app', fingerprintOf(publicKey)));
+    assert.equal(pairedClients().length, 1, 'raising the card unpairs nothing');
+    const unknown = await run(fakeHelper(), ['unpair', 'never-paired']);
+    assert.equal(unknown.code, 1);
+    assert.match(unknown.err, /never-paired/);
+    assert.equal((await run(fakeHelper(), ['unpair'])).code, 1);
+    assert.equal((await run(fakeHelper(), ['unpair', 'bad id!'])).code, 1);
+  });
+});
 
 test('every seat write is refused for a session that doesn\'t hold the seat', async () => {
   await seatHeldByB(async (folder) => {

@@ -7,10 +7,12 @@
 import { DESK_VERSION, VIEWS, COMMANDS, needsEvidence } from './vocabulary.js';
 import { READERS } from './views.js';
 import { ACTORS } from './acts.js';
-import { sourceVerifier } from './evidence.js';
+import { sourceVerifier, checkClient } from './evidence.js';
+import { markPanel } from './panel-live.js';
 import { watchSource } from './watch.js';
 
-const notBuilt = (name) => async () => ({ ok: false, refused: `The desk can't give ${name} yet` });
+const isPlainEvidence = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+const notBuilt =(name) => async () => ({ ok: false, refused: `The desk can't give ${name} yet` });
 
 export function checkVersion(message) {
   const v = message?.v;
@@ -26,11 +28,20 @@ const failed = (error) => stamp({ ok: false, refused: `Wheelhouse couldn't do th
 // `(cursor, source, { now }) -> { ok, events, cursor }`. The defaults are the desk's own.
 export function deskCore({ source, recorder, verifier, now = () => new Date(), readers = READERS, actors = ACTORS, watcher = watchSource, clients }) {
   verifier ??= sourceVerifier(source, { clients, now });
+  // The paired app a message's evidence names, when its signature checks for this project, else null.
+  const signedBy = (command, args, evidence) => {
+    if (!isPlainEvidence(evidence) || evidence.form !== 'client' || typeof source.project !== 'string') return null;
+    const checked = checkClient(command, args, evidence, { clients: typeof clients === 'function' ? clients() : [], now, project: source.project });
+    return checked.ok ? checked.client : null;
+  };
   return {
-    async read(view, args = {}) {
+    // A read may carry a paired app's signature over `{ command: 'read', args: { view, args }, at, project }`; a view that gives a
+    // paired app something it may take (the waiting view's `askHere`) gives it only to that.
+    async read(view, args = {}, evidence) {
       if (!VIEWS.includes(view)) return stamp({ ok: false, refused: `Wheelhouse has no view called "${view}"` });
       try {
-        return stamp(await (readers[view] || notBuilt(`the ${view} view`))(args, source, { now }));
+        const client = evidence === undefined || evidence === null ? null : signedBy('read', { view, args }, evidence);
+        return stamp(await (readers[view] || notBuilt(`the ${view} view`))(args, source, { now, client }));
       } catch (error) {
         return failed(error);
       }
@@ -48,9 +59,16 @@ export function deskCore({ source, recorder, verifier, now = () => new Date(), r
       }
     },
 
-    async watch(cursor) {
+    // A watch may carry a paired app's evidence, signed over `{ command: 'watch', args: { cursor }, at, project }`. Good evidence marks
+    // the project's panel live; none, or evidence that doesn't check, is answered all the same and marks nothing. With evidence the
+    // answer says whether it checked (`paired`), so the app can tell its key is no longer paired.
+    async watch(cursor, evidence) {
       try {
-        return stamp(await watcher(cursor, source, { now }));
+        const given = evidence !== undefined && evidence !== null;
+        const client = given ? signedBy('watch', { cursor: cursor ?? null }, evidence) : null;
+        if (client !== null) markPanel(source.project, client, now().getTime());
+        const answer = await watcher(cursor, source, { now });
+        return stamp(given ? { ...answer, paired: client !== null } : answer);
       } catch (error) {
         return failed(error);
       }

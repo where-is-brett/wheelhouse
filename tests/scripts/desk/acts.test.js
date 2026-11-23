@@ -1,14 +1,19 @@
 // tests/scripts/desk/acts.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { runAct } from '../../../scripts/desk/acts.js';
+import { askToPair, pairClient, pairedClients, unpairClient, fingerprintOf } from '../../../scripts/desk/clients.js';
+import { earned } from '../../../scripts/hooks/prompt-record.js';
+import { pairLine, unpairLine } from '../../../scripts/state/card-lines.js';
 import { checkEvidence } from '../../../scripts/desk/evidence.js';
 import { needsEvidence } from '../../../scripts/desk/vocabulary.js';
 import { makeEvent, confirmationFor, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { hashOf, cardTextOf } from '../../../scripts/desk/card-text.js';
 import { as, shortHome } from '../../helpers/homes.js';
-import { CARD, now } from './fixture.js';
+import { CARD, NOW as NOW_ISO, now } from './fixture.js';
+import { clearPanels, takeAskHere } from '../../../scripts/desk/panel-live.js';
 
 const HASH = hashOf(cardTextOf(CARD));
 const cardEvent = { id: 'c1', kind: 'card', at: '2026-10-29T09:00:00.000Z', computer: 'x', data: CARD };
@@ -151,4 +156,79 @@ test('acts: all stop names the helm session it leaves running', () => withKey(as
   assert.equal(got.says, "The helm session for build is the director's own, so it keeps running. The helm session for login is the director's own, so it keeps running.", 'search was taken but never opened, so it has no session');
   const none = await runAct('all-stop', {}, { ok: true, records: [] }, { source: memory(), recorder: spy(), now });
   assert.equal('says' in none, false, 'nothing held, nothing added');
+}));
+
+test('ask-here on a card that isn\'t waiting is refused, and marks nothing', () => withKey(async () => {
+  clearPanels();
+  const source = memory();
+  const got = await runAct('ask-here', { card: 'gone' }, { ok: true, records: [], client: 'vscode-panel' }, { source, recorder: spy(), now });
+  assert.equal(got.ok, false);
+  assert.match(got.refused, /isn't waiting/);
+  assert.equal((await runAct('ask-here', {}, { ok: true, records: [], client: 'vscode-panel' }, { source, recorder: spy(), now })).ok, false);
+  assert.deepEqual(takeAskHere('p', Date.parse(NOW_ISO)), []);
+}));
+
+test('ask-here needs a paired app\'s signature: no signed record, window or chat click carries it', () => withKey(async () => {
+  assert.equal(needsEvidence('ask-here'), true, 'it is not among the acts that need no evidence');
+  const source = memory();
+  const views = (await source.views()).views;
+  const args = { card: 'c1' };
+  const context = { enrolled: readEnrolled(), views, events: source.events(), now, clients: [] };
+  for (const evidence of [{ form: 'window' }, { form: 'chat-click', proof: 'chat-click' }, { form: 'signed', records: [approve()] }, { form: 'client', client: 'vscode-panel', at: NOW_ISO, sig: 'AAAA' }]) {
+    const got = checkEvidence('ask-here', args, evidence, context);
+    assert.equal(got.ok, false, JSON.stringify(evidence));
+  }
+}));
+
+// Unpair: the card the panel's Unpair button and the front desk's `unpair` raise.
+const phone = () => {
+  const { publicKey } = crypto.generateKeyPairSync('ed25519');
+  return { id: 'phone-app', name: 'The phone app', publicKey: publicKey.export({ type: 'spki', format: 'der' }).toString('base64') };
+};
+async function pairedPhone() {
+  const app = phone();
+  askToPair(app, { now });
+  const record = await earned({ project: 'p', question: pairLine(app.id, fingerprintOf(app.publicKey)), label: 'Pair it', now });
+  assert.equal(pairClient({ id: app.id }, makeEvent({ ...record.made, now }), { now }).ok, true);
+  return app;
+}
+
+test('unpair raises one level-4 card naming the app and its key, and removes nothing itself', () => withKey(async () => {
+  const app = await pairedPhone();
+  const recorder = spy();
+  const got = await runAct('unpair', { client: app.id }, { ok: true, records: [] }, { source: memory(), recorder, now });
+  assert.equal(got.ok, true, got.refused);
+  assert.equal(got.fingerprint, fingerprintOf(app.publicKey));
+  assert.equal(recorder.calls.length, 1);
+  const [name, written] = recorder.calls[0];
+  assert.equal(name, 'write');
+  assert.equal(written.kind, 'card');
+  assert.equal(written.data.kind, 'unpair');
+  assert.equal(written.data.level, 4);
+  assert.equal(written.data.line, unpairLine(app.id, fingerprintOf(app.publicKey)));
+  assert.deepEqual(written.data.options, ['Unpair it', 'Not now']);
+  assert.equal(pairedClients().length, 1, 'asking unpairs nothing');
+  // The director's click on it, signed as the prompt record signs it, removes the key.
+  const click = await earned({ project: 'p', question: written.data.question, label: 'Unpair it', now });
+  assert.equal(unpairClient(app.id, makeEvent({ ...click.made, now })).ok, true);
+  assert.deepEqual(pairedClients(), []);
+}));
+
+test('unpair skips a repeat while an Unpair card for the app already waits', () => withKey(async () => {
+  const app = await pairedPhone();
+  const line = unpairLine(app.id, fingerprintOf(app.publicKey));
+  const source = memory({ waiting: [{ id: 'u-1', at: cardEvent.at, data: { ...CARD, kind: 'unpair', line } }] });
+  const recorder = spy();
+  const got = await runAct('unpair', { client: app.id }, { ok: true, records: [] }, { source, recorder, now });
+  assert.deepEqual([got.ok, got.card, got.changed], [true, 'u-1', []]);
+  assert.deepEqual(recorder.calls, [], 'no second card');
+}));
+
+test('unpair for an app that isn\'t paired is refused, raising nothing', () => withKey(async () => {
+  const recorder = spy();
+  const got = await runAct('unpair', { client: 'never-paired' }, { ok: true, records: [] }, { source: memory(), recorder, now });
+  assert.equal(got.ok, false);
+  assert.match(got.refused, /never-paired/);
+  assert.deepEqual(recorder.calls, []);
+  assert.equal((await runAct('unpair', {}, { ok: true, records: [] }, { source: memory(), recorder, now })).ok, false);
 }));
