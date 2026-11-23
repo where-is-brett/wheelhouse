@@ -2479,6 +2479,8 @@ test('restart wakes the feature to fix the findings when a signed review holds i
   assert.equal(event.type, 'findings');
   assert.equal(event.pr, 7);
   assert.match(event.detail.next, /Fix its BLOCKER and HIGH findings.*dispatch wheelhouse:reviewer/);
+  assert.match(event.detail.next, /Read your brief again first/);
+  assert.doesNotMatch(event.detail.next, /\bgit\b/i);
   assert.equal(fake.writes.length, 0);
 }));
 
@@ -2489,6 +2491,8 @@ test('restart wakes the feature to carry on from where it left off when no revie
     assert.equal(r.code, 0, r.err);
     assert.equal(woken[0].wake.events[0].type, 'build');
     assert.match(woken[0].wake.events[0].detail.next, /carry on from where it left off/);
+    assert.match(woken[0].wake.events[0].detail.next, /Read your brief again first \(\.wheelhouse\/feature\/brief\.md/);
+    assert.doesNotMatch(woken[0].wake.events[0].detail.next, /\bgit\b/i);
   }
 }));
 

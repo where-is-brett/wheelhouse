@@ -1770,12 +1770,12 @@ async function restart(ctx, work, rest) {
     ? {
       type: 'findings', work, pr: kept.pr, id, detail: {
         head: held.commit,
-        next: `Pull request #${kept.pr}'s review at ${held.commit} holds it with findings. Fix its BLOCKER and HIGH findings and defer its MEDIUM and LOW ones as minors (a failing test first, as your instructions say), commit and push, then dispatch wheelhouse:reviewer on the new head.`,
+        next: `Pull request #${kept.pr}'s review at ${held.commit} holds it with findings. Read your brief again first (.wheelhouse/feature/brief.md, which says how to commit and push). Fix its BLOCKER and HIGH findings and defer its MEDIUM and LOW ones as minors (a failing test first, as your instructions say), then commit and push the way your brief says to, then dispatch wheelhouse:reviewer on the new head.`,
       },
     }
     : {
       type: 'build', work, id, detail: {
-        next: 'This work stopped moving. Read where it stands (your status, plan and git log), then carry on from where it left off.',
+        next: 'This work stopped moving. Read your brief again first (.wheelhouse/feature/brief.md, which says how to commit and push), then read where it stands (your status and plan), then carry on from where it left off.',
       },
     };
   const file = writeWake(ctx.project, { to: 'feature', work, events: [event], digest: [], dropped: 0 }, { now: ctx.now });

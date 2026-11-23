@@ -158,3 +158,41 @@ test('a folder that is not a worktree, or a work name that is not a name, fails 
     w.done();
   }
 });
+
+test('a worktree whose .wheelhouse folder is ignored through the repository\'s exclude file still commits its other files', async () => {
+  const w = worktreeOf();
+  try {
+    const exclude = git(w.tree, 'rev-parse', '--git-path', 'info/exclude');
+    fs.mkdirSync(path.dirname(path.resolve(w.tree, exclude)), { recursive: true });
+    fs.appendFileSync(path.resolve(w.tree, exclude), '.wheelhouse/\n');
+    fs.mkdirSync(path.join(w.tree, '.wheelhouse', 'feature'), { recursive: true });
+    fs.writeFileSync(path.join(w.tree, '.wheelhouse', 'feature', 'report.md'), 'report\n');
+    fs.writeFileSync(path.join(w.tree, 'a.js'), 'a\n');
+    const made = await commitWork({ worktree: w.tree, work: 'login' });
+    assert.equal(made.failed, undefined, made.failed);
+    assert.equal(made.commit, git(w.tree, 'rev-parse', 'HEAD'));
+    assert.equal(git(w.tree, 'show', '--name-only', '--format=', 'HEAD'), 'a.js');
+    assert.equal(git(w.tree, 'status', '--porcelain'), '');
+  } finally {
+    w.done();
+  }
+});
+
+test('a tracked file under .wheelhouse that changed is not committed, and a change only there makes no commit', async () => {
+  const w = worktreeOf();
+  try {
+    fs.mkdirSync(path.join(w.tree, '.wheelhouse'), { recursive: true });
+    fs.writeFileSync(path.join(w.tree, '.wheelhouse', 'kept.md'), 'one\n');
+    git(w.tree, 'add', '-f', '.wheelhouse/kept.md');
+    git(w.tree, 'commit', '-q', '-m', 'Track it');
+    fs.writeFileSync(path.join(w.tree, '.wheelhouse', 'kept.md'), 'two\n');
+    const quiet = await commitWork({ worktree: w.tree, work: 'login' });
+    assert.equal(quiet.skipped, 'nothing has changed');
+    fs.writeFileSync(path.join(w.tree, 'a.js'), 'a\n');
+    const made = await commitWork({ worktree: w.tree, work: 'login' });
+    assert.equal(made.failed, undefined, made.failed);
+    assert.equal(git(w.tree, 'show', '--name-only', '--format=', 'HEAD'), 'a.js');
+  } finally {
+    w.done();
+  }
+});
