@@ -194,6 +194,33 @@ test('the foreman\'s command gets no key or secret, and none comes back in its o
   });
 });
 
+test('the launcher\'s marker reaches the foreman\'s command only when the request says it was launched, never from the helper\'s own environment', async () => {
+  assert.deepEqual(foremanEnv({ PATH: '/bin', WHEELHOUSE_LAUNCHED: '1' }), { PATH: '/bin' });
+  assert.deepEqual(foremanEnv({ PATH: '/bin' }, { launched: true }), { PATH: '/bin', WHEELHOUSE_LAUNCHED: '1' });
+  assert.deepEqual(foremanEnv({ PATH: '/bin', WHEELHOUSE_LAUNCHED: '1' }, { launched: false }), { PATH: '/bin' });
+  assert.equal(foremanRequestRefusal({ script: 'wake', argv: [], launched: true }), null);
+  assert.equal(foremanRequestRefusal({ script: 'wake', argv: [] }), null);
+  assert.match(foremanRequestRefusal({ script: 'wake', argv: [], launched: '1' }), /true or false/);
+
+  const p = await project();
+  const seen = [];
+  const run = async (file, args, options = {}) => {
+    if (file !== process.execPath) return hostGuard(file, args, options);
+    seen.push(options.baseEnv);
+    return { code: 0, stdout: '', stderr: '' };
+  };
+  try {
+    await withHelper(p.home, async (client) => {
+      for (const launched of [true, false, undefined]) {
+        const answer = await client.foreman.run({ folder: p.checkout, script: 'wake', argv: ['measures'], ...(launched === undefined ? {} : { launched }) });
+        assert.equal(answer.ok, true, JSON.stringify(answer));
+      }
+      assert.match((await client.foreman.run({ folder: p.checkout, script: 'wake', argv: ['measures'], launched: 'yes' })).refused, /true or false/);
+    }, { run });
+  } finally { p.remote.cleanup(); }
+  assert.deepEqual(seen.map((env) => env.WHEELHOUSE_LAUNCHED), ['1', undefined, undefined]);
+});
+
 test('a feature session\'s push names its worktree, and the helper places the project from it (R157)', async () => {
   const p = await project();
   try {

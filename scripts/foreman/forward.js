@@ -4,16 +4,18 @@
 // sandbox, which can't read or write the Wheelhouse home their work needs. So each sends its
 // folder, its name and its arguments to the host helper's /foreman/run, which runs the script
 // outside the sandbox in the project's main checkout, and prints what it printed and ends with
-// its exit code. The helper refuses any folder but the main checkout.
+// its exit code. The helper refuses any folder but the main checkout. Whether the script was started by its launcher
+// (scripts/lib/launchers.js) goes too, so the commands it prints are the ones the session's rules allow.
 import { helperClient } from '../host/helper-client.js';
+import { LAUNCHED } from '../lib/launchers.js';
 
 // Resolves with the exit code. `out` and `err` take text to show.
 export async function forward(script, argv, {
-  cwd = process.cwd(), client = helperClient(), out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
+  cwd = process.cwd(), env = process.env, client = helperClient(), out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
 } = {}) {
   let answer;
   try {
-    answer = await client.foreman.run({ folder: cwd, script, argv });
+    answer = await client.foreman.run({ folder: cwd, script, argv, launched: env[LAUNCHED] === '1' });
   } catch {
     answer = null;
   }

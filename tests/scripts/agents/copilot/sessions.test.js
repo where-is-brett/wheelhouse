@@ -61,38 +61,43 @@ const COPILOT_ON_PATH = () => {
 
 // ---- The foreman's one command ----
 
-test("the foreman's allow rule is the one command its record names, with the folder Wheelhouse is in", () => {
-  // The rule is the wake script's launcher by its bare name, wherever Wheelhouse is, on either system.
-  assert.deepEqual(foremanAllow({ pluginRoot: '/plugins/wheelhouse', platform: 'darwin' }), ['shell(wh-wake:*)']);
-  assert.deepEqual(foremanAllow({ pluginRoot: 'C:\\Wheelhouse', platform: 'win32' }), ['shell(wh-wake:*)']);
-  // The rule is the command the foreman's playbook is shown to a Copilot session, with the pattern's own ending.
-  assert.deepEqual(foremanAllow(), [`shell(${foremanCommands(undefined, { launchers: true }).wake}:*)`]);
+test("the foreman's allow rule is the two commands its record names, with the folder Wheelhouse is in", () => {
+  // The rules are the wake and act scripts' launchers by their bare names, wherever Wheelhouse is, on either system.
+  assert.deepEqual(foremanAllow({ pluginRoot: '/plugins/wheelhouse', platform: 'darwin' }), ['shell(wh-wake:*)', 'shell(wh-act:*)']);
+  assert.deepEqual(foremanAllow({ pluginRoot: 'C:\\Wheelhouse', platform: 'win32' }), ['shell(wh-wake:*)', 'shell(wh-act:*)']);
+  // The rules are the commands the foreman's playbook is shown to a Copilot session, with the pattern's own ending.
+  const { wake, act } = foremanCommands(undefined, { launchers: true });
+  assert.deepEqual(foremanAllow(), [`shell(${wake}:*)`, `shell(${act}:*)`]);
 });
 
-test('a rule record that allows more, less or another command than the wake script refuses the start', () => {
+test('a rule record that allows more, less or another command than the wake and act scripts refuses the start', () => {
   const dir = tempFolder('wh-copilot-rules-');
   const record = JSON.parse(fs.readFileSync(FOREMAN_RULES_FILE, 'utf8'));
-  assert.deepEqual(record.allow, ['wh-wake:*'], 'the committed record holds the wake script and nothing else');
+  assert.deepEqual(record.allow, ['wh-wake:*', 'wh-act:*'], 'the committed record holds the wake and act scripts and nothing else');
   const write = (value) => {
     const file = path.join(dir, 'rules.json');
     fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value));
     return file;
   };
   for (const bad of [
-    { ...record, allow: [...record.allow, 'wh-act:*'] },
+    { ...record, allow: [...record.allow, 'wh-probe:*'] },
     { ...record, allow: [] },
-    { ...record, allow: ['node:*'] },
+    { ...record, allow: ['wh-wake:*'] },
     { ...record, allow: ['wh-act:*'] },
+    { ...record, allow: ['wh-wake:*', 'wh-wake:*'] },
+    { ...record, allow: ['wh-wake:*', 'wh-acts:*'] },
+    { ...record, allow: ['wh-wake:*', 'node:*'] },
     { ...record, allow: ["node '<wheelhouse-root>/scripts/foreman/wake.js':*"] },
     { ...record, agent: 'wheelhouse-builder' },
     'not json',
   ]) {
     assert.throws(() => foremanAllow({ rulesFile: write(bad) }), /foreman's rule record/);
   }
+  assert.deepEqual(foremanAllow({ rulesFile: write({ ...record, allow: [...record.allow].reverse() }) }), ['shell(wh-wake:*)', 'shell(wh-act:*)'], 'either order is accepted');
   assert.throws(() => foremanAllow({ rulesFile: path.join(dir, 'missing.json') }), /can't be read/);
 });
 
-test("the foreman's call carries that one rule and no write, a session id given up front, and no model", () => withHome(async () => {
+test("the foreman's call carries those two rules and no write, a session id given up front, and no model", () => withHome(async () => {
   const on = part();
   await on.prepare({ project: P, target: 'foreman' });
   const call = on.foremanCall({
@@ -101,7 +106,7 @@ test("the foreman's call carries that one rule and no write, a session id given 
     env: { PATH: '/bin', HOME: '/h', COPILOT_MODEL: 'model-z', COPILOT_ALLOW_ALL: '1', GH_TOKEN: 'secret', WHEELHOUSE_HOME: '/wh' },
   });
   assert.equal(call.file, '/bin/copilot');
-  assert.deepEqual(flagsOf(call.args, '--allow-tool'), ['shell(wh-wake:*)']);
+  assert.deepEqual(flagsOf(call.args, '--allow-tool'), ['shell(wh-wake:*)', 'shell(wh-act:*)']);
   assert.deepEqual(flagsOf(call.args, '--deny-tool'), []);
   assert.equal(valueOf(call.args, '--session-id'), 'a1b2c3d4-0000-4000-8000-000000000001');
   assert.equal(valueOf(call.args, '--agent'), 'wheelhouse-foreman');

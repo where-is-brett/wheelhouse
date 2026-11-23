@@ -5381,15 +5381,15 @@ export async function startHelper({
     // running (the forwarder waits as long as the child runs; the foreman's Bash tool may give up
     // sooner) waits its turn, then finds what the first did. The key is the foreman's own, so it
     // never waits on the state:, merge:, mirror: or push: queues the child's own calls take.
-    '/foreman/run': ({ project, script, argv }) => oneAtATime(`foreman:${project}`, async () => {
-      const why = foremanRequestRefusal({ script, argv });
+    '/foreman/run': ({ project, script, argv, launched }) => oneAtATime(`foreman:${project}`, async () => {
+      const why = foremanRequestRefusal({ script, argv, launched });
       if (why !== null) refuse(why);
       let result;
       const pass = crypto.randomUUID();
       foremanRuns.set(pass, project);
       try {
         result = await run(process.execPath, [FOREMAN_RUNNER, address, script, ...argv], {
-          cwd: recordOf(project).folder, baseEnv: { ...foremanEnv(process.env), WHEELHOUSE_FOREMAN_RUN: pass }, timeoutMs: FOREMAN_RUN_MS, limit: FOREMAN_OUTPUT_BYTES,
+          cwd: recordOf(project).folder, baseEnv: { ...foremanEnv(process.env, { launched }), WHEELHOUSE_FOREMAN_RUN: pass }, timeoutMs: FOREMAN_RUN_MS, limit: FOREMAN_OUTPUT_BYTES,
         });
       } catch {
         return { ok: false, refused: `the Bosun's ${script} command could not be started` };

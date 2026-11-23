@@ -44,10 +44,11 @@ export { sessionHome, SIGN_IN_KEYS, COPILOT_STATE, readCopilotConfig, signInOf, 
 export { eventsOf, finalAnswer, sessionIdOf } from '../../scripts/agents/copilot/run-output.js';
 
 const HOME = path.join(path.dirname(fileURLToPath(import.meta.url)), 'home');
-// The record of the one command the foreman may run (scripts/agents/copilot/home.js builds it from the foreman's playbook).
+// The record of the two commands the foreman may run (scripts/agents/copilot/home.js builds it from the foreman's playbook).
 export const FOREMAN_RULES_FILE = path.join(HOME, 'rules', 'wheelhouse-foreman.json');
-// The one rule it may hold: the wake script, `<wheelhouse-root>` standing for the folder Wheelhouse is in.
+// The two rules it may hold, in either order: the wake script's launcher and the act script's, by their bare names.
 const WAKE_RULE = 'wh-wake:*';
+const ACT_RULE = 'wh-act:*';
 
 // The plans a Copilot account can be on (the `copilotPlan` setting). Anything else is taken as the first, which passes no model.
 const PLANS = Object.freeze(['auto-only', 'credits', 'requests']);
@@ -213,12 +214,13 @@ function sessionCall({ project, target, role, config, plan, prompt, sessionId = 
   };
 }
 
-// The foreman's one allow rule, as the session's `--allow-tool`: the command in adapters/copilot/home/rules/
-// wheelhouse-foreman.json, which home.js builds from the foreman's playbook: the wake script's launcher, by its bare
-// name, which the session's PATH reaches (copilotSessionEnv). The record may hold the wake script and nothing else, and the rule it gives must be the
-// command the foreman's playbook is shown (foremanCommands), so the two can't drift. A record that can't be read, or holds
-// anything else, refuses the start: with no rule the foreman could run nothing. The foreman's agent file names the shell
-// tools (`tools: []` gave the first real run no tool at all), and this rule is the only command they may run.
+// The foreman's allow rules, each as a session `--allow-tool`: the two commands in adapters/copilot/home/rules/
+// wheelhouse-foreman.json, which home.js builds from the foreman's playbook: the wake script's launcher and the act
+// script's, by their bare names, which the session's PATH reaches (copilotSessionEnv). The record may hold those two and
+// nothing else, in either order, and each must be the command the foreman's playbook is shown (foremanCommands), so the two
+// can't drift. A record that can't be read, or holds anything else, refuses the start: with no rule the foreman could run
+// nothing. The foreman's agent file names the shell tools (`tools: []` gave the first real run no tool at all), and these
+// rules are the only commands they may run.
 export function foremanAllow({ pluginRoot = PLUGIN_ROOT, platform = process.platform, rulesFile = FOREMAN_RULES_FILE } = {}) {
   let record;
   try {
@@ -226,15 +228,16 @@ export function foremanAllow({ pluginRoot = PLUGIN_ROOT, platform = process.plat
   } catch {
     throw new Error("The foreman's rule record can't be read, so no foreman is started");
   }
-  if (record === null || typeof record !== 'object' || record.agent !== 'wheelhouse-foreman' || !Array.isArray(record.allow) || record.allow.length !== 1 || record.allow[0] !== WAKE_RULE) {
-    throw new Error("The foreman's rule record allows more or less than its wake script, so no foreman is started");
+  if (record === null || typeof record !== 'object' || record.agent !== 'wheelhouse-foreman' || !Array.isArray(record.allow) || record.allow.length !== 2
+    || !record.allow.includes(WAKE_RULE) || !record.allow.includes(ACT_RULE)) {
+    throw new Error("The foreman's rule record allows more or less than its wake and act scripts, so no foreman is started");
   }
-  const command = record.allow[0].slice(0, -':*'.length);
-  if (command !== foremanCommands(pluginRoot, { platform, launchers: true }).wake) throw new Error("The foreman's rule record names a command the foreman's playbook doesn't, so no foreman is started");
-  return [`shell(${command}:*)`];
+  const { wake, act } = foremanCommands(pluginRoot, { platform, launchers: true });
+  if (WAKE_RULE !== `${wake}:*` || ACT_RULE !== `${act}:*`) throw new Error("The foreman's rule record names a command the foreman's playbook doesn't, so no foreman is started");
+  return [`shell(${wake}:*)`, `shell(${act}:*)`];
 }
 
-// A fresh foreman for one wake, run in the project's main checkout, with the one command its record allows and no write.
+// A fresh foreman for one wake, run in the project's main checkout, with the two commands its record allows and no write.
 // Copilot runs the watcher's first shape only, so there is no long foreman session, and asking for one refuses. The
 // waker's `tools` (Claude Code's allow list) and the column's model, effort and fallback are ignored: the rule is the
 // record's, and Auto chooses the model (on a plan with model choice, the Copilot column's).

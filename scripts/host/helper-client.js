@@ -82,7 +82,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     pull: post('/pull'), //          { project | cwd, dir, branch } -> { ok, already } or { ok, already: false, merged, from, sha, bundle }, or { ok: false, refused, conflicts? }: `cli.js pull` brings the host's copy of the worktree's own feature branch in; `bundle` (base64) holds the commits the worktree lacks, under refs/wheelhouse/pulled
     fetchBase: post('/base/fetch'), // { project } -> { ok, branch, sha } or { ok: false, refused }: the foreman's start has the host's default branch fetched into the project's mirror (refs/wheelhouse/base), which its child then copies into the main checkout with no key
     foreman: {
-      run: post('/foreman/run'), // { folder, script: 'act' | 'wake', argv } -> { ok, code, stdout, stderr }: the foreman's command, run by the helper outside the sandbox; `folder` must be the project's main checkout; answered under STOP
+      run: post('/foreman/run'), // { folder, script: 'act' | 'wake', argv, launched } -> { ok, code, stdout, stderr }: the foreman's command, run by the helper outside the sandbox; `folder` must be the project's main checkout; answered under STOP
     },
     // /push, /pull, /pr/open, /state/answer and /config take `cwd`, a full
     // path, in place of or beside `project`, and the helper places the project from it (scripts/feature/cli.js

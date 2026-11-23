@@ -5,6 +5,7 @@
     "powershell"
   ],
   "allow": [
-    "wh-wake:*"
+    "wh-wake:*",
+    "wh-act:*"
   ]
 }
