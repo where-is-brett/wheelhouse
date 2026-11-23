@@ -130,6 +130,12 @@ async function resetToRemote(dir, present, env) {
   }
 }
 
+// The push's own reason, when it gave one, goes with the error, so the line that says the lock wasn't taken can say why.
+function notPushed(result) {
+  const why = typeof result?.refused === 'string' && result.refused !== '' ? `: ${result.refused}` : '';
+  return new Error(`The lock could not be pushed${why}`);
+}
+
 async function commitAndPush(dir, lock, message, push, env) {
   fs.writeFileSync(path.join(dir, 'lock.json'), `${JSON.stringify(lock, null, 2)}\n`);
   for (const args of [['add', '--', 'lock.json'], ['commit', '-q', '-m', message]]) {
@@ -182,7 +188,7 @@ export async function takeLock({ project, push, now = () => new Date(), env, ove
     const winner = await readRemoteLock(dir, nowPresent, env);
     return { taken: false, holder: winner?.computer ?? 'unknown', since: winner?.lastWriteAt ?? '' };
   }
-  throw new Error('The lock could not be pushed');
+  throw notPushed(result);
 }
 
 export async function touchLock({ project, push, now = () => new Date(), env }) {
@@ -199,7 +205,7 @@ export async function touchLock({ project, push, now = () => new Date(), env }) 
   const nowPresent = await fetchRemote(dir, env).catch(() => present);
   await resetToRemote(dir, nowPresent, env);
   if (result.rejected === 'non-fast-forward') return { touched: false };
-  throw new Error('The lock could not be pushed');
+  throw notPushed(result);
 }
 
 export async function holdsLock({ project, counter, env }) {

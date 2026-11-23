@@ -186,7 +186,7 @@ test('a lock another computer holds, or one that can\'t be reached, is said in o
 
     const unreachable = fake();
     withLock(unreachable, { touch: { ok: false, refused: 'the lock repository could not be reached' }, take: { ok: false, refused: 'the lock repository could not be reached' } });
-    assert.ok(text(await run(unreachable)).includes(NO_LOCK));
+    assert.ok(text(await run(unreachable)).includes(`${NO_LOCK} (the lock repository could not be reached)`));
 
     // With no helper, nothing is asked: the helper's own line says pushes and merges can't happen.
     const down = fake({ answersAfterStart: false });

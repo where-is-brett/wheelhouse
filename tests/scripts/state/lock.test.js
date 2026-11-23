@@ -107,6 +107,8 @@ test('any push failure other than non-fast-forward throws a plain error', async 
     await as(a, async () => {
       await assert.rejects(takeLock({ env: LOCAL_PATHS, project: 'o__p', push: async () => ({ ok: false, rejected: 'other' }), now: at(0) }), /could not be pushed/);
       assert.equal(await readLock({ env: LOCAL_PATHS, project: 'o__p' }), null);
+      // The push's own reason goes with the error.
+      await assert.rejects(takeLock({ env: LOCAL_PATHS, project: 'o__p', push: async () => ({ ok: false, refused: 'git could not push the branch: denied' }), now: at(0) }), /could not be pushed: git could not push the branch: denied/);
     });
   } finally { remote.cleanup(); }
 });
