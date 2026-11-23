@@ -136,7 +136,7 @@ import {
 import { questionProblem, shapeProblems } from '../cards/compose.js';
 import { endedBy, needsApprovalOfWork } from './queue.js';
 import { approvedText, installText, keepApprovedText } from '../state/approved-text.js';
-import { amendBrief, renderBrief } from '../feature/brief.js';
+import { amendBrief, LAUNCHER, renderBrief } from '../feature/brief.js';
 import { agentOfConfig } from '../agents/names.js';
 import { BY_LAUNCHER } from '../agents/tool-sheets.js';
 import { approvedDocument, insideCheckout, placeApproved } from '../feature/approved.js';
@@ -667,10 +667,7 @@ async function start(ctx, work, rest) {
   let text;
   try {
     // A session whose agent runs Wheelhouse's commands by launcher (scripts/lib/launchers.js) is briefed with them.
-    let launchers = false;
-    try {
-      launchers = BY_LAUNCHER.includes(agentOfConfig(config, { computerId: computerId() }));
-    } catch { /* the agent can't be read: the brief names the commands as Claude Code's */ }
+    const launchers = runsByLauncher(config);
     text = renderBrief({ fields, pluginRoot: ctx.pluginRoot, windowsBuilds: windowsBuildsOf(ctx, views, config), launchers });
   } catch (error) {
     refuse(`The brief can't be written: ${oneLine(error.message, 200)}`);
@@ -1749,6 +1746,22 @@ function queueAgainLine(work, status, lane) {
 
 // --- restart ---
 
+// Whether the agent this computer runs feature sessions with runs Wheelhouse's commands by launcher (scripts/lib/launchers.js),
+// the condition that sets the brief's `launchers` option. An agent that can't be read counts as one that doesn't.
+function runsByLauncher(config) {
+  try {
+    return BY_LAUNCHER.includes(agentOfConfig(config, { computerId: computerId() }));
+  } catch {
+    return false;
+  }
+}
+
+// How a woken session commits and pushes. A session whose shell runs no git is given the launcher's commands here, because the
+// brief it holds may be from before its agent was switched on; any other is sent to its brief, which says how for its agent.
+const commitWays = (launchers) => (launchers
+  ? `Your shell can't run git: commit with \`${LAUNCHER} commit\`, see the head's full hash with \`${LAUNCHER} head\`, and push with \`${LAUNCHER} push\`. Run one command per call.`
+  : 'Your brief says how to commit and push.');
+
 // The option a stuck work's card offers: wakes the feature's own session. With a signed review that holds its pull
 // request, the wake tells it to fix the blocking findings, push and dispatch the reviewer; otherwise to carry on from where it
 // left off. The words are fixed here; no caller supplies any.
@@ -1766,16 +1779,17 @@ async function restart(ctx, work, rest) {
   const kept = readPrRecord(worktree);
   const held = kept === null || kept.merged ? null : holdingReview(views, kept.pr);
   const id = `restart:${work}:${ctx.now().getTime()}`;
+  const way = commitWays(runsByLauncher(await ctx.config()));
   const event = held !== null
     ? {
       type: 'findings', work, pr: kept.pr, id, detail: {
         head: held.commit,
-        next: `Pull request #${kept.pr}'s review at ${held.commit} holds it with findings. Fix its BLOCKER and HIGH findings and defer its MEDIUM and LOW ones as minors (a failing test first, as your instructions say), commit and push, then dispatch wheelhouse:reviewer on the new head.`,
+        next: `Pull request #${kept.pr}'s review at ${held.commit} holds it with findings. Read your brief again first (.wheelhouse/feature/brief.md). ${way} Fix its BLOCKER and HIGH findings and defer its MEDIUM and LOW ones as minors (a failing test first, as your instructions say), then commit and push, then dispatch wheelhouse:reviewer on the new head.`,
       },
     }
     : {
       type: 'build', work, id, detail: {
-        next: 'This work stopped moving. Read where it stands (your status, plan and git log), then carry on from where it left off.',
+        next: `This work stopped moving. Read your brief again first (.wheelhouse/feature/brief.md). ${way} Then read where it stands (your status and plan), and carry on from where it left off.`,
       },
     };
   const file = writeWake(ctx.project, { to: 'feature', work, events: [event], digest: [], dropped: 0 }, { now: ctx.now });

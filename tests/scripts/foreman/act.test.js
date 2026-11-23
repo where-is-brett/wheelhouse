@@ -2458,7 +2458,7 @@ test('act ask --help says exactly what to type, and a missing flag is answered w
 
 // --- restart ---
 
-async function restartScene({ review } = {}) {
+async function restartScene({ review, cfg } = {}) {
   const checkout = await project({ git: true });
   const views = emptyViews();
   views.work.mine = workView('mine');
@@ -2466,7 +2466,7 @@ async function restartScene({ review } = {}) {
   if (review !== undefined) views.reviews = { 7: { abc123: { id: 'r1', at: T0, data: { pr: 7, commit: 'abc123', verdict: review } } } };
   const woken = [];
   const wakerFor = () => ({ wakeFeature: async (work, file) => { woken.push({ work, wake: JSON.parse(fs.readFileSync(file, 'utf8')) }); } });
-  return { fake: fakeClient({ views }), woken, wakerFor };
+  return { fake: fakeClient({ views, ...(cfg ? { cfg } : {}) }), woken, wakerFor };
 }
 
 test('restart wakes the feature to fix the findings when a signed review holds its pull request', () => withHome(async () => {
@@ -2479,6 +2479,8 @@ test('restart wakes the feature to fix the findings when a signed review holds i
   assert.equal(event.type, 'findings');
   assert.equal(event.pr, 7);
   assert.match(event.detail.next, /Fix its BLOCKER and HIGH findings.*dispatch wheelhouse:reviewer/);
+  assert.match(event.detail.next, /Read your brief again first/);
+  assert.doesNotMatch(event.detail.next, /\bgit\b/i);
   assert.equal(fake.writes.length, 0);
 }));
 
@@ -2489,6 +2491,21 @@ test('restart wakes the feature to carry on from where it left off when no revie
     assert.equal(r.code, 0, r.err);
     assert.equal(woken[0].wake.events[0].type, 'build');
     assert.match(woken[0].wake.events[0].detail.next, /carry on from where it left off/);
+    assert.match(woken[0].wake.events[0].detail.next, /Read your brief again first \(\.wheelhouse\/feature\/brief\.md/);
+    assert.doesNotMatch(woken[0].wake.events[0].detail.next, /\bgit\b/i);
+  }
+}));
+
+test('restart wakes a feature whose agent runs commands by launcher with the launcher\'s commit, head and push, and no git step', () => withHome(async () => {
+  for (const review of [undefined, 'FINDINGS']) {
+    const { fake, woken, wakerFor } = await restartScene({ review, cfg: config({ agents: { [computerId()]: 'copilot' } }) });
+    const r = await act(['restart', 'mine'], { client: fake.client, wakerFor });
+    assert.equal(r.code, 0, r.err);
+    const next = woken[0].wake.events[0].detail.next;
+    assert.match(next, /Read your brief again first/);
+    assert.match(next, /`wh-feature commit`.*`wh-feature head`.*`wh-feature push`/);
+    assert.match(next, /shell can't run git/);
+    assert.doesNotMatch(next, /git (add|commit|push|log|status|diff)/i);
   }
 }));
 

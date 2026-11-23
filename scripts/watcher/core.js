@@ -408,7 +408,7 @@ const prSettledText = (pr, state) => `Pull request #${pr} you were waiting on ha
 // What the session reads when its pull request no longer merges cleanly with the default branch. It can fetch nothing, so the
 // helper brings the default branch in (`pull --default`), and the session resolves what clashes, tests, pushes and has the new head reviewed.
 const conflictText = (pr) => `Pull request #${pr} no longer merges cleanly with the default branch. You can't fetch it yourself: run \`pull --default\` to bring the default branch in through the helper. `
-  + 'If files clash, open each one, keep both sides\' intent, `git add` them and run `git commit --no-edit`. Then run the tests, push, and dispatch wheelhouse:reviewer on the new head.';
+  + 'If files clash, open each one, keep both sides\' intent, remove the conflict markers and finish the merge the way your brief says to commit. Then run the tests, push, and dispatch wheelhouse:reviewer on the new head.';
 
 // What a pull request's state says, each to whom section 11 sends it.
 const PR_CONDITIONS = [

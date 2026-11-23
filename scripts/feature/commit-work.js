@@ -16,11 +16,14 @@ import { safeGit } from '../lib/safe-git.js';
 const IDENTITY = { name: 'Wheelhouse', email: 'wheelhouse@localhost' };
 const WORK = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const FULL_SHA = /^[0-9a-f]{40,64}$/;
-// What is kept out of the add: the feature's own folder (report, calls, answers), which is never committed.
-const KEPT_OUT = ':(exclude).wheelhouse';
+// What is kept out of the commit: the feature's own folder (report, calls, answers), which is never committed. It is never named
+// in an add's pathspec, because git exits 1 on a pathspec that names an ignored path (even an excluding one), and the folder is
+// ignored through the worktree's exclude file. It is added with the rest, then taken out of the index again.
+const KEPT_OUT = '.wheelhouse';
+const IN_KEPT_OUT = /^.{2} "?\.wheelhouse\//;
 const GIT_MS = 60 * 1000;
 
-const said = (got) => String(got?.stderr ?? '').split(/\r?\n/).map((l) => l.replace(/^(?:error|fatal):\s*/, '').trim()).find((l) => l !== '') ?? 'no reason given';
+const said = (got) => String(got?.stderr ?? '').split(/\r?\n/).map((l) => l.replace(/^(?:error|fatal):\s*/, '').trim()).filter((l) => l !== '').slice(0, 3).join(' ') || 'no reason given';
 
 // Commits the worktree's changes as `Work on <work>`, as `{ head, commit?, skipped? }` or `{ failed }`:
 // `head` is the full hash of HEAD afterwards; `commit` is set when this call made a commit; `skipped` says why it made none
@@ -61,12 +64,16 @@ async function commitIn({ worktree, work, finishMerge = false, git = null }) {
     if (where.code === 0 && found !== '' && fs.existsSync(path.resolve(worktree, found))) return { head: before, skipped: 'a rebase is not finished' };
   }
 
-  const changed = await call(['status', '--porcelain', '--untracked-files=all', '--', '.', KEPT_OUT]);
+  const changed = await call(['status', '--porcelain', '--untracked-files=all', '--', '.']);
   if (changed.code !== 0) return { failed: `git could not read the worktree: ${said(changed)}` };
-  if (String(changed.stdout).trim() === '' && !(finishMerge && midMerge)) return { head: before, skipped: 'nothing has changed' };
+  const outside = String(changed.stdout ?? '').split(/\r?\n/).filter((l) => l.trim() !== '' && !IN_KEPT_OUT.test(l));
+  if (outside.length === 0 && !(finishMerge && midMerge)) return { head: before, skipped: 'nothing has changed' };
 
-  const added = await call(['add', '-A', '--', '.', KEPT_OUT]);
+  const added = await call(['add', '-A', '--', '.']);
   if (added.code !== 0) return { failed: `git could not add the changes: ${said(added)}` };
+  // Back to what HEAD holds for the feature's folder: new files there leave the index, and a tracked one's change is unstaged.
+  const left = await call(['reset', '-q', '--', KEPT_OUT]);
+  if (left.code !== 0) return { failed: `git could not leave the feature's folder out: ${said(left)}` };
   // Finishing a merge: a file that still holds a conflict marker is not committed.
   if (finishMerge && midMerge) {
     const marked = await call(['diff', '--cached', '--check']);

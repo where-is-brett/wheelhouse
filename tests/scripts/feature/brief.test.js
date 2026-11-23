@@ -276,6 +276,11 @@ test('a brief for work from a ready-made change says to read the change and the 
   const carried = render('feature', { from: { ...from, request: 7 } });
   assert.ok(carried.includes(`\n${said} Begin your report's words, which become the pull request's body, with "Carries on #7."\n`), carried);
 
+  // A session that runs Wheelhouse's commands by launcher is told the launcher's diff, never git's.
+  const launched = renderBrief({ fields: { ...fields('feature'), from }, pluginRoot, launchers: true });
+  assert.ok(launched.includes('read the change (`wh-feature diff 1`, then the file it writes) and the work\'s document'), launched);
+  assert.ok(!launched.includes('git diff origin/HEAD...HEAD'), launched);
+
   for (const bad of [{ ...from, sha: 'short' }, { ...from, ref: 'refs/heads/x' }, { ...from, ref: 'refs/wheelhouse/from/another' }, { ...from, request: 0 }, { ...from, extra: 1 }]) {
     assert.throws(() => render('feature', { from: bad }), /can't be read/, JSON.stringify(bad));
   }

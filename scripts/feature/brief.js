@@ -80,10 +80,10 @@ function withBuildsBlock(text, level) {
 // What the session reads first when its work starts from a ready-made change: the change and
 // the work's document, that only its own branch is pushed, and, when it carries on a pull
 // request, how the new pull request's body begins.
-function fromLine(f) {
+function fromLine(f, launchers = false) {
   const carries = f.from.request === undefined ? '' : ` Begin your report's words, which become the pull request's body, with "Carries on #${f.from.request}."`;
   return `\nThis work starts from a ready-made change: your branch \`feature/${f.work}\` begins where that change stands. `
-    + "Before anything else, read the change (`git diff origin/HEAD...HEAD`) and the work's document, and carry the work on from there. "
+    + `Before anything else, read the change (${launchers ? `\`${LAUNCHER} diff 1\`, then the file it writes` : `\`git diff ${BASE_REF}...HEAD\``}) and the work's document, and carry the work on from there. `
     + `Push only through \`open-pr\` and \`push\`, which push your own branch; never push to the change's own branch.${carries}\n`;
 }
 
@@ -99,7 +99,7 @@ function approvedSection() {
 // command and the project's build commands, and no git. Its brief names the launcher for the feature command and says what the
 // command does in place of each git step. Each pair is [the template's words, the launcher's]; a template that no longer holds
 // the words throws, so a change to it is seen here.
-const LAUNCHER = 'wh-feature';
+export const LAUNCHER = 'wh-feature';
 const LAUNCHER_WORDS = Object.freeze([
   ['to see what your branch adds, run `git diff {{baseRef}}...HEAD`. To bring in newer work, run `git fetch origin` and then rebase or merge `{{baseRef}}`; `pull` brings in only your own branch.',
     'to see what your branch adds, run `{{cli}} diff <n>`, which writes it to `{{featureDir}}/review/<n>.diff` for you to read with your file tools. To bring in newer work, run `{{cli}} pull --default`, which merges `{{baseRef}}` into your branch; `pull` alone brings in only your own branch.'],
@@ -166,7 +166,7 @@ export function renderBrief({ fields, pluginRoot, windowsBuilds = null, launcher
     override: template('override.md').trim(),
     planLine: f.plan === undefined ? '' : `\nThe plan is at \`${f.plan}\`; use it rather than writing another.\n`,
     slicesLine: f.slices === undefined ? '' : `\nThis feature has ${f.slices} ${f.slices === 1 ? 'slice' : 'slices'}, each its own plan and its own pull request.\n`,
-    fromLine: f.from === undefined ? '' : fromLine(f),
+    fromLine: f.from === undefined ? '' : fromLine(f, launchers === true),
     approvedSection: f.approved === undefined ? '' : approvedSection(),
     shownFirstLine: f.shownFirst
       ? '\nThis change is marked shown first: the director sees it before it ships. Do not alter what users see beyond the goal and the done contract; if you must, ask at decision level 3.\n'
