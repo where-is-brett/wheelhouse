@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   RECENT_MS, STALE_AFTER_MS, SEEN_EVERY_MS,
-  seatFile, readSeat, firstMatePid, seatInUse, takeSeat, holdsSeat, refreshSeat, handOverSeat, releaseSeat, movedAway,
+  seatFile, readSeat, firstMatePid, seatFree, seatInUse, takeSeat, holdsSeat, refreshSeat, handOverSeat, releaseSeat, movedAway,
 } from '../../../scripts/lib/first-mate-seat.js';
 
 const T0 = new Date('2026-11-08T10:00:00Z');
@@ -373,4 +373,35 @@ test('movedAway is true once for the window the seat left', async () => {
     if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;
     s.done();
   }
+});
+
+test('options.holder is recorded as given, in place of the caller\'s own ancestor', async () => {
+  const s = setup();
+  try {
+    const none = { pid: null, pidStart: null };
+    const { seat: first } = await take('p', 'a', s.options);
+    assert.equal(first.pid, 10);
+    const got = await handOverSeat('p', { session: 'b', folder: '/work/b', from: { session: 'a', since: first.since } }, { ...s.options, holder: none });
+    assert.equal(got.moved, true);
+    assert.equal(got.seat.pid, null);
+    assert.equal(got.seat.pidStart, null);
+    assert.equal(readSeat('p', s.options).session, 'b');
+    const fresh = setup();
+    try {
+      const taken = await take('p', 'c', { ...fresh.options, holder: none });
+      assert.equal(taken.held, true);
+      assert.deepEqual([taken.seat.pid, taken.seat.pidStart], [null, null]);
+    } finally { fresh.done(); }
+  } finally { s.done(); }
+});
+
+test('a seat with no process is free once it has been idle STALE_AFTER_MS, and not before', async () => {
+  const s = setup();
+  try {
+    const { seat: first } = await take('p', 'a', { ...s.options, holder: { pid: null, pidStart: null } });
+    s.clock.t = at(STALE_AFTER_MS - 1000);
+    assert.equal(await seatFree(first, s.options), false);
+    s.clock.t = at(STALE_AFTER_MS + 1000);
+    assert.equal(await seatFree(first, s.options), true);
+  } finally { s.done(); }
 });

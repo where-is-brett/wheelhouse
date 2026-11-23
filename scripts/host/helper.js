@@ -123,7 +123,7 @@ import { askInWindow, NOT_NOW } from '../confirm/window.js';
 import { composeCard, questionProblem } from '../cards/compose.js';
 import { LIFT_STOP_CARD } from '../frontdesk/cli.js';
 import { matchGlob } from '../gate/glob.js';
-import { answerLine } from '../state/card-lines.js';
+import { answerLine, SEAT_SESSION } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
 import { READY_LEVELS, PREMIUM_LEVEL, barFailures, readiness, samePins } from '../routing/column-ready.js';
 import { PREMIUM_ASK, PREMIUM_DO, checkRefusal, foundPremium, offeredFrom, premiumInput, premiumRefusal, premiumPinOf } from '../routing/premium.js';
@@ -178,7 +178,10 @@ import { briefHash } from '../feature/files.js';
 import { HAND_DONE, HAND_GOAL } from '../lib/by-hand-done.js';
 import { writeInside } from '../lib/write-inside.js';
 import { tieNamesWork } from '../lib/by-hand-tie.js';
-import { holdsSeat } from '../lib/first-mate-seat.js';
+import { holdsSeat, readSeat, takeSeat, refreshSeat, handOverSeat, seatFree } from '../lib/first-mate-seat.js';
+import { seatCard } from '../lib/seat-card.js';
+import { asideKind } from '../lib/role.js';
+import { worktreeRoot, sameFolder } from '../hooks/kit.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 // The adapter's refusal of a merge by a key GitLab does not let merge (adapter.js), and what the
@@ -2401,10 +2404,32 @@ export async function startHelper({
   }
 
   // Whether a session holds the project's First Mate seat, for the front desk, whose sandbox cannot read the
-  // Wheelhouse home. A read: answered under STOP.
-  async function doSessionSeat({ project, session }) {
+  // Wheelhouse home. A read: answered under STOP. For the holder it also keeps the seat fresh, at most once a minute: an agent whose
+  // hooks only read can't, and the front desk asks this before every write, so a working holder doesn't go stale. With `take`, a
+  // session in the project's main folder takes the seat while it is free, with no process recorded (the helper's own ancestor is
+  // not the session's window), as a session start does where hooks can write; it is then free again after it has been idle a while.
+  async function doSessionSeat({ project, session, take, cwd }) {
     if (typeof session !== 'string' || session === '') refuse('this session has no id to look the seat up by');
-    return { ok: true, holds: holdsSeat(project, session) };
+    if (take === true) {
+      if (!SEAT_SESSION.test(session)) refuse('the session id is not one a seat can name');
+      const folder = recordOf(project).folder;
+      if (!(await inMainFolder(cwd, folder))) return { ok: true, holds: holdsSeat(project, session) };
+      const got = await takeSeat(project, { session, folder }, { holder: NO_PROCESS });
+      return { ok: true, holds: got.held };
+    }
+    const holds = holdsSeat(project, session);
+    if (holds) refreshSeat(project, session);
+    return { ok: true, holds };
+  }
+
+  // Whether `cwd` is the project's main folder or inside it, and not in a linked worktree of it.
+  async function inMainFolder(cwd, folder) {
+    if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || typeof folder !== 'string') return false;
+    try {
+      return asideKind({ cwd }) === 'main' && sameFolder(worktreeRoot(cwd) ?? cwd, folder);
+    } catch {
+      return false;
+    }
   }
 
   // The page of what a piece's crew did (crew visibility design, 7.3), for "watch <work>": the piece is checked, raised to the
@@ -2506,11 +2531,16 @@ export async function startHelper({
     // The director's Confirm on the card for the computer's git settings, after a push was refused because they changed: confirmed
     // in the window, which records the settings as they read when the click is made (settingsEarned, applySettings).
     'confirm-settings': 'git-settings',
+    // The click on the card that moves the First Mate's seat to the asking window, composed here from the seat (seatToOffer):
+    // confirmed in the window, as the click in a hook that signs is, and counted only by the seat's move (/confirm).
+    'seat-take-over': 'seat-take-over',
   };
   // The steps the window serves while STOP is on: Lift STOP, and an undo, as the runbook's local steps carry on.
   // The update's steps: their window names no default button, so a stray Return or Enter chooses nothing.
-  const NO_DEFAULT_STEPS = ['update', 'release-approval', 'update-helper', 'git-settings'];
-  const UNDER_STOP = ['lift-stop', 'undo-merge', 'undo-main'];
+  // The seat's take-over names no default either, so a stray Return can't take the seat.
+  const NO_DEFAULT_STEPS = ['update', 'release-approval', 'update-helper', 'git-settings', 'seat-take-over'];
+  // The seat moves no product file and pushes nothing, so STOP doesn't hold it back.
+  const UNDER_STOP = ['lift-stop', 'undo-merge', 'undo-main', 'seat-take-over'];
   // The labels of the cards a project in git alone answers on its home. Its approval is a pull request's, as any.
   const HOME_ANSWERS = ['Keep it', 'Undo it', 'Undo'];
   const servedUnderStop = (deciding) => deciding.filter((d) => d.made.kind === 'action' && UNDER_STOP.includes(d.made.data?.action));
@@ -2519,6 +2549,12 @@ export async function startHelper({
   const DECISION_STEP = 'decision-answer';
   // What /confirm's `card` is for the Lift STOP card, which has no id in the state.
   const LIFT_STOP_NAME = 'lift-stop';
+  // The same for the seat card, which the helper composes from the seat file on each look, for the window that asks.
+  const SEAT_CARD_NAME = 'seat-take-over';
+  // The cards /confirm names rather than finds in the state: composed here, with no id and no record of their own, so no
+  // card-answer follows a click and the STOP check before a card is looked up doesn't apply.
+  const COMPOSED_CARDS = [LIFT_STOP_NAME, SEAT_CARD_NAME];
+  const NO_PROCESS = Object.freeze({ pid: null, pidStart: null });
   function windowStep(project, made, shownAt, shown) {
     if (made.kind === 'approval') return 'approval';
     if (made.kind === 'action' && made.data?.action === 'answer') {
@@ -2569,6 +2605,8 @@ export async function startHelper({
   async function windowEarned(project, card, label, ctx) {
     const question = card.data?.question;
     // The Update card's Not now is the one put-off the window signs: a decline of that plan, earned as the panel's press earns it.
+    // The card's own data stands for the card as asked where the helper composed it (the seat card), as the Update card's does.
+    const asked = card.seat === undefined ? askedUpdateCard(question, card.data) : card.data;
     const declines = label === NOT_NOW && askedUpdateCard(question, card.data) !== undefined;
     if (typeof question !== 'string' || (PUT_OFF.includes(label) && !declines)) return null;
     if (label === 'Confirm') {
@@ -2586,7 +2624,7 @@ export async function startHelper({
     const client = { prState: ({ number }) => routes['/pr/state']({ project, number }, ctx) };
     let got;
     try {
-      got = await earned({ project, question, label, card: askedUpdateCard(question, card.data), client, now, left: (p) => p, shownAt: card.at });
+      got = await earned({ project, question, label, card: asked, client, now, left: (p) => p, shownAt: card.at });
     } catch {
       return null;
     }
@@ -2630,17 +2668,32 @@ export async function startHelper({
     return undefined;
   }
 
+  // The seat the card offers to `session`, as the seat file holds it now: held by another window that is still live, and the
+  // asker a session in the project's main folder with an id a seat can name. Refuses otherwise, before any window opens.
+  async function seatToOffer({ project, session, cwd }) {
+    if (typeof session !== 'string' || !SEAT_SESSION.test(session)) refuse('this window has no session id to move the First Mate to');
+    if (!(await inMainFolder(cwd, recordOf(project).folder))) refuse('the First Mate\'s seat moves only to a window in the project\'s main folder');
+    const seat = readSeat(project);
+    if (!seat) refuse('no window holds the First Mate\'s seat, so there is nothing to take over');
+    if (seat.session === session) refuse('this window already holds the First Mate\'s seat');
+    if (await seatFree(seat)) refuse('the First Mate\'s seat is free, so there is nothing to take over');
+    return seat;
+  }
+
   // The card the request names, as the state holds it: there once, still waiting, its data hashing to `hash` (what
   // the caller was shown), with the options a click in the window would decide it by. Refuses otherwise. The Lift
   // STOP card is never in the state (the front desk composes it on each visit, since under STOP nothing is written:
   // ruling F25), so `lift-stop` names the one the helper composes itself, while STOP is on, shown at `shownAt` (now,
   // on the first look): the look after the click passes the time the window opened, so a click on a window shown
   // during one STOP never lifts a later one (earned()'s rule).
-  async function windowCard({ project, card, hash }, ctx, { shownAt } = {}) {
+  async function windowCard({ project, card, hash, session, cwd }, ctx, { shownAt } = {}) {
     let event;
     if (card === LIFT_STOP_NAME) {
       if (!stopped()) refuse('All stop is not on, so there is nothing to lift');
       event = { at: shownAt ?? now().toISOString(), data: composeCard(LIFT_STOP_CARD).card };
+    } else if (card === SEAT_CARD_NAME) {
+      const seat = await seatToOffer({ project, session, cwd });
+      event = { at: shownAt ?? now().toISOString(), data: seatCard({ seat, now }).card, seat };
     } else {
       const found = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'card' && e.id === card);
       if (found.length !== 1) refuse('that card is not in this project\'s state');
@@ -2656,7 +2709,7 @@ export async function startHelper({
       if (got) deciding.push({ label, ...got });
     }
     // A settings card whose settings are the confirmed ones again can no longer be answered: it is closed, and says so.
-    if (deciding.length === 0 && card !== LIFT_STOP_NAME && await settingsCardSettled(project, event)) {
+    if (deciding.length === 0 && !COMPOSED_CARDS.includes(card) && await settingsCardSettled(project, event)) {
       await doWrite({ project, kind: 'card-answer', data: { card, question: event.data.question, label: 'Confirm', where: 'panel' } }, ctx); // a plain answer, signed by nothing: only an option closes a card
       refuse('this computer\'s git settings are the confirmed ones again, so that card was closed');
     }
@@ -2673,15 +2726,16 @@ export async function startHelper({
   // their undo offered (rulings P5-49 and P5-50). A card
   // in the state gets the plain card-answer beside its signed record, as a hook that signs writes one, so the card
   // no longer waits.
-  async function doConfirm({ project, card, hash }, ctx) {
-    if (card !== LIFT_STOP_NAME && (typeof card !== 'string' || !RANDOM_UUID.test(card))) refuse('the card must be named by its id, or be lift-stop');
-    if (card !== LIFT_STOP_NAME && (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash))) refuse('the card\'s hash must be its sha256, in lower case');
+  async function doConfirm({ project, card, hash, session, cwd }, ctx) {
+    const composed = COMPOSED_CARDS.includes(card);
+    if (!composed && (typeof card !== 'string' || !RANDOM_UUID.test(card))) refuse('the card must be named by its id, or be lift-stop or seat-take-over');
+    if (!composed && (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash))) refuse('the card\'s hash must be its sha256, in lower case');
     // Under STOP a card of a project that isn't kept at home is refused before it is looked up (no read of the code host);
     // a home card is looked at, and only its undo offered.
-    if (card !== LIFT_STOP_NAME && stopped() && readProject(project)?.host !== 'local') return STOP_REFUSAL;
-    const look = () => stateRoute((body) => windowCard(body, ctx))({ project, card, hash }, ctx);
+    if (!composed && stopped() && readProject(project)?.host !== 'local') return STOP_REFUSAL;
+    const look = () => stateRoute((body) => windowCard(body, ctx))({ project, card, hash, session, cwd }, ctx);
     const shown = await look();
-    if (card !== LIFT_STOP_NAME && stopped()) {
+    if (!composed && stopped()) {
       shown.deciding = servedUnderStop(shown.deciding);
       if (shown.deciding.length === 0) return STOP_REFUSAL;
     }
@@ -2698,13 +2752,15 @@ export async function startHelper({
       const CHANGED = 'that card changed while the window was open, so nothing was recorded';
       let again;
       try {
-        again = await windowCard({ project, card, hash }, ctx, { shownAt: shown.event.at });
+        again = await windowCard({ project, card, hash, session, cwd }, ctx, { shownAt: shown.event.at });
       } catch {
         refuse(CHANGED);
       }
       const still = again.deciding.find((d) => d.label === picked.label && d.step === picked.step && d.made.kind === picked.made.kind);
       if (!still) refuse(CHANGED);
-      if (card !== LIFT_STOP_NAME && stopped() && servedUnderStop([still]).length === 0) return STOP_REFUSAL;
+      // The seat card: the click is for the seat as it was shown, so one that has changed hands since signs nothing.
+      if (card === SEAT_CARD_NAME && (again.event.seat.session !== shown.event.seat.session || again.event.seat.since !== shown.event.seat.since)) refuse(CHANGED);
+      if (!composed && stopped() && servedUnderStop([still]).length === 0) return STOP_REFUSAL;
       // The settings are recorded as they read now, and only if they still read as the card named; the click is kept after, so one
       // that confirmed nothing leaves no record that it did.
       if (still.made.data?.action === 'confirm-settings') await confirmComputerSettings({ file: settingsFile(), run, cwd: mirrorOf(project), expect: still.made.data.hash });
@@ -2713,13 +2769,20 @@ export async function startHelper({
       // A work's approved text is kept, and a proposed change installed, as a hook that signs the same click does.
       keepAfterClick(project, readProject(project)?.folder, event);
       await freshViews(() => writeViews(project, { now }));
-      if (card !== LIFT_STOP_NAME) await doWrite({ project, kind: 'card-answer', data: { card, question: again.event.data.question, label: still.label, where: 'panel' } }, ctx);
+      if (!composed) await doWrite({ project, kind: 'card-answer', data: { card, question: again.event.data.question, label: still.label, where: 'panel' } }, ctx);
       if (still.lift) liftStop();
+      // The seat moves to the asking session, fenced on the holder and `since` the card showed, with no process recorded.
+      if (card === SEAT_CARD_NAME) {
+        const from = { session: again.event.seat.session, since: again.event.seat.since };
+        const done = await handOverSeat(project, { session, folder: recordOf(project).folder, from }, { holder: NO_PROCESS });
+        return { ...written({ event, result }), choice: still.label, kind: event.kind, step: still.step, recorded: true, moved: done.moved, holder: done.seat?.session ?? null };
+      }
       const action = event.kind === 'action' ? event.data?.action : null;
       const keep = action === 'keep-main' ? { from: event.data.from, to: event.data.to } : null;
       const undo = action === 'undo-merge' ? { merge: event.data.merge } : action === 'undo-main' ? { moved: true } : null;
       return { ...written({ event, result }), choice: still.label, kind: event.kind, step: still.step, recorded: true, keep, undo };
-    })({ project, card, hash }, ctx);
+    })({ project, card, hash, session, cwd }, ctx);
+    if (card === SEAT_CARD_NAME) return answer;
     const { keep = null, undo = null, ...said } = answer;
     // The settings confirmed, this computer takes up the lock the refused pushes left, as a session start does (kept if it holds it
     // already, else taken), so code pushes go on without a new session. Outside the state's queue, as the lock comes before it.

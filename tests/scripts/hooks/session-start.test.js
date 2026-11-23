@@ -40,7 +40,7 @@ import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/st
 import { cardHash } from '../../../scripts/lib/measures-clicks.js';
 import { startRun, markStep, addChanges, newId, closeRun } from '../../../scripts/setup/journal.js';
 import { main as refreshMain } from '../../../scripts/setup/local-refresh.js';
-import { setStop, liftStop } from '../../../scripts/lib/stop.js';
+import { setStop, liftStop, NO_HELPER_STOP } from '../../../scripts/lib/stop.js';
 import { decide as toolGuard } from '../../../scripts/hooks/tool-guard.js';
 import { decide as stopGuard } from '../../../scripts/hooks/stop-guard.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -2432,5 +2432,122 @@ test('the waiting list keeps its cut at twenty entries and its line length', asy
     assert.match(t, /- 20\. x+…/);
     assert.doesNotMatch(t, /- 21\./);
     assert.match(t, /and 5 more/);
+  });
+});
+
+// --- The First Mate's seat on an agent whose hooks only read (writeVia 'helper') ---
+
+const NO_HOLDER = { pid: null, pidStart: null };
+// A helper whose /session/seat takes a free seat for the asker, as the real route does (no process recorded), and says whether it holds it.
+const seatHelper = () => {
+  const f = fake();
+  f.client.health = async () => ({ ok: true });
+  f.client.session = {
+    seat: async (body) => {
+      f.calls.seat = [...(f.calls.seat ?? []), body];
+      if (body.take === true) {
+        const { takeSeat } = await import('../../../scripts/lib/first-mate-seat.js');
+        const got = await takeSeat(P, { session: body.session, folder: '/x' }, { holder: NO_HOLDER, now: SOON(0) });
+        return { ok: true, holds: got.held };
+      }
+      return { ok: true, holds: readSeat(P)?.session === body.session };
+    },
+  };
+  return f;
+};
+const readOnly = (f, extra = {}, input = {}) => run(f, { writeVia: 'helper', agent: 'copilot', helperUp: true, env: {}, now: SOON(0), ...extra }, { session_id: 'b', ...input });
+const filesUnder = (dir) => fs.readdirSync(dir, { recursive: true }).map(String).sort();
+const WINDOW_ASK = 'The First Mate is in another window: when the director asks for Wheelhouse work, show them this card as text in the chat';
+const windowCard = (out) => {
+  const row = text(out).split('\n').find((l) => l.startsWith(WINDOW_ASK));
+  return row === undefined ? null : JSON.parse(row.slice(row.indexOf('{')));
+};
+
+test('on an agent whose hooks only read, another live holder gives the aside line and the window card before the lists, and no AskUserQuestion wording', async () => {
+  await withHome(async (home) => {
+    putSeat(seatLine('a', 4));
+    const before = filesUnder(home);
+    const out = await readOnly(seatHelper());
+    const lines = text(out).split('\n');
+    assert.ok(text(out).includes(asideFirst('4 minutes ago')));
+    assert.ok(text(out).includes('offer this card'));
+    const card = windowCard(out);
+    assert.equal(setLineOf(card.question), `Take over the First Mate from window session a, since ${seatLine('a', 4).since}`);
+    assert.deepEqual(cardProblems(card), []);
+    assert.ok(!text(out).includes('AskUserQuestion'), 'no click-question wording');
+    assert.ok(!text(out).includes(SEAT_TAKEOVER_ASK));
+    assert.match(text(out), /confirm seat-take-over --session <your session id>/);
+    const at = lines.findIndex((l) => l.startsWith(WINDOW_ASK));
+    const lists = lines.findIndex((l) => /^(Waiting on the director|Levels|Rulebook)/.test(l));
+    assert.ok(lists === -1 || at < lists, 'the card comes before the lists');
+    assert.equal(readSeat(P).session, 'a');
+    assert.deepEqual(filesUnder(home), before, 'nothing written under the home');
+  });
+});
+
+test('every read-only start in a project is told its own session id, and to give it with --session', async () => {
+  await withHome(async () => {
+    const out = await readOnly(seatHelper(), {}, { session_id: 'chat-77' });
+    assert.ok(text(out).split('\n').includes('Your session id is chat-77: give it as --session chat-77 to every Wheelhouse command that records.'));
+  });
+});
+
+test('on an agent whose hooks only read, a free seat is taken at the start with no process, and gives no card', async () => {
+  await withHome(async () => {
+    const f = seatHelper();
+    const out = await readOnly(f);
+    assert.equal(windowCard(out), null);
+    assert.ok(!text(out).includes('isn\'t the First Mate'));
+    assert.equal(readSeat(P).session, 'b');
+    assert.equal(readSeat(P).pid, null);
+    assert.equal(f.calls.seat[0].take, true);
+  });
+});
+
+test('a free seat that is held by a dead window is taken too, and gives no card', async () => {
+  await withHome(async () => {
+    putSeat(seatLine('a', 300, { pid: 2 ** 22 }));
+    const out = await readOnly(seatHelper());
+    assert.equal(windowCard(out), null);
+    assert.equal(readSeat(P).session, 'b');
+  });
+});
+
+test('a worktree, a chosen aside and a script-started session give no card and take no seat', async () => {
+  await withHome(async (home) => {
+    putSeat(seatLine('a', 4));
+    assert.equal(windowCard(await readOnly(seatHelper(), {}, { cwd: linkedTree(home) })), null, 'worktree');
+    recordRole('s-aside', 'aside');
+    assert.equal(windowCard(await readOnly(seatHelper(), {}, { session_id: 's-aside' })), null, 'chosen aside');
+    assert.equal(windowCard(await readOnly(seatHelper(), { env: { CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' } })), null, 'script');
+    fs.rmSync(seatFile(P));
+    const f = seatHelper();
+    await readOnly(f, {}, { cwd: linkedTree(home) });
+    await readOnly(f, {}, { session_id: 's-aside' });
+    assert.equal(readSeat(P), null, 'no seat taken');
+  });
+});
+
+test('with no helper the aside line is given without the card, and nothing is taken', async () => {
+  await withHome(async () => {
+    putSeat(seatLine('a', 4));
+    const out = await readOnly(fake({ startsUp: false }), { helperUp: false });
+    assert.ok(text(out).includes(asideFirst('4 minutes ago')));
+    assert.ok(!text(out).includes('offer this card'));
+    assert.equal(windowCard(out), null);
+    assert.ok(text(out).includes(NO_HELPER_STOP));
+    assert.equal(readSeat(P).session, 'a');
+    fs.rmSync(seatFile(P));
+    await readOnly(fake({ startsUp: false }), { helperUp: false });
+    assert.equal(readSeat(P), null);
+  });
+});
+
+test('the holder\'s own start gives no card', async () => {
+  await withHome(async () => {
+    putSeat(seatLine('b', 4, { pid: null }));
+    const out = await readOnly(seatHelper());
+    assert.equal(windowCard(out), null);
+    assert.ok(!text(out).includes('isn\'t the First Mate'));
   });
 });

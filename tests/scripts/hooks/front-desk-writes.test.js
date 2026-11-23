@@ -389,3 +389,55 @@ test('a seat that cannot be taken leaves the guard\'s answer as it was', async (
   const out = await decideWithSeat(write(folder, path.join(folder, 'a.js')), { ...options(folder), take, client: {} });
   assert.ok(denied(out));
 });
+
+// --- a seat write on an agent whose hooks only read must name the chat's own session ---
+
+const shell = (command, session = 's1', cwd) => ({ tool_name: 'Bash', cwd, session_id: session, tool_input: { command } });
+const NODE_CLI = 'node "/plugin/scripts/frontdesk/cli.js"';
+
+test('on an agent whose hooks only read, a seat write with no --session, or with another id, is refused, with the right flag in the line', () => {
+  const { folder } = project();
+  const opts = options(folder, { writeVia: 'helper' });
+  for (const launcher of ['wh-frontdesk', NODE_CLI]) {
+    for (const command of ['cards', 'record ruling', 'confirm seat-take-over', 'confirm lift-stop', 'helm take login']) {
+      const bare = decide(shell(`${launcher} ${command}`, 's1', folder), opts);
+      assert.ok(denied(bare), `${launcher} ${command}`);
+      assert.match(bare.hookSpecificOutput.permissionDecisionReason, /--session s1/);
+      assert.ok(denied(decide(shell(`${launcher} ${command} --session other`, 's1', folder), opts)), `another id: ${command}`);
+    }
+  }
+});
+
+test('a seat write that carries the chat\'s own id passes, wherever the flag stands', () => {
+  const { folder } = project();
+  const opts = options(folder, { writeVia: 'helper' });
+  for (const command of ['wh-frontdesk cards --session s1', 'wh-frontdesk --session s1 cards', 'wh-frontdesk cards --session=s1', `${NODE_CLI} confirm seat-take-over --session s1`, 'FOO=bar wh-frontdesk record ruling --session s1']) {
+    assert.equal(decide(shell(command, 's1', folder), opts), undefined, command);
+  }
+});
+
+test('every command in a chained line is checked, and a command that only reads needs no id', () => {
+  const { folder } = project();
+  const opts = options(folder, { writeVia: 'helper' });
+  assert.equal(decide(shell('wh-frontdesk views waiting', 's1', folder), opts), undefined);
+  assert.equal(decide(shell('wh-frontdesk note', 's1', folder), opts), undefined);
+  assert.ok(denied(decide(shell('wh-frontdesk views waiting && wh-frontdesk card', 's1', folder), opts)));
+  assert.ok(denied(decide(shell('wh-frontdesk cards --session s1 && wh-frontdesk card', 's1', folder), opts)));
+  assert.equal(decide(shell('wh-frontdesk cards --session s1 && wh-frontdesk card --session s1', 's1', folder), opts), undefined);
+  assert.equal(decide(shell('ls src', 's1', folder), opts), undefined);
+});
+
+test('the check holds for an aside in the main folder too, and for a session with no id', () => {
+  const { folder } = project();
+  assert.ok(denied(decide(shell('wh-frontdesk confirm seat-take-over', 's2', folder), options(folder, { writeVia: 'helper', role: () => 'aside' }))));
+  assert.ok(denied(decide(shell('wh-frontdesk cards', undefined, folder), options(folder, { writeVia: 'helper' }))));
+});
+
+test('Claude Code is unchanged: no --session is asked of it', () => {
+  const { folder } = project();
+  for (const writeVia of [undefined, 'self']) {
+    const opts = options(folder, writeVia === undefined ? {} : { writeVia });
+    assert.equal(decide(shell('wh-frontdesk cards', 's1', folder), opts), undefined);
+    assert.equal(decide(shell(`${NODE_CLI} confirm seat-take-over`, 's1', folder), opts), undefined);
+  }
+});

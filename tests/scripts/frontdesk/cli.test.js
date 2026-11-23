@@ -3411,3 +3411,73 @@ test('cli: helm from a window without the First Mate\'s seat is refused before t
   assert.equal(out.err, `${SEAT_REFUSAL}\n`);
   assert.deepEqual(asked, []);
 });
+
+// --- the seat card, answered in Wheelhouse's own window (confirm seat-take-over) ---
+
+test('confirm seat-take-over passes seatRefusal from an aside, and other confirms don\'t', async () => {
+  await seatHeldByB(async (folder) => {
+    const { client } = fakeHelper();
+    const env = { CLAUDE_CODE_SESSION_ID: 'a' };
+    assert.equal(await seatRefusal({ command: 'confirm', rest: ['seat-take-over'], env, cwd: folder, client }), null);
+    assert.equal(await seatRefusal({ command: 'confirm', rest: ['lift-stop'], env, cwd: folder, client }), SEAT_REFUSAL);
+    assert.equal(await seatRefusal({ command: 'confirm', rest: ['seat-take-over', 'x'], env, cwd: folder, client }), SEAT_REFUSAL, 'only the card by its name');
+    assert.equal(await seatRefusal({ command: 'confirm', rest: [], env, cwd: folder, client }), SEAT_REFUSAL);
+    assert.equal(await seatRefusal({ command: 'cards', rest: [], env, cwd: folder, client }), SEAT_REFUSAL);
+  });
+});
+
+test('confirm seat-take-over sends the session given, and says the result in one line', async () => {
+  await seatHeldByB(async (folder) => {
+    const helper = fakeHelper();
+    const sent = [];
+    const client = { ...helper.client, confirm: async (body) => { sent.push(body); return { ok: true, choice: 'Take over here', recorded: true, moved: true, holder: 'chat-1' }; } };
+    let out = '';
+    let err = '';
+    const code = await main(['confirm', 'seat-take-over', '--session', 'chat-1'], { cwd: folder, client, env: { CLAUDE_CODE_SESSION_ID: 'inherited' }, now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; } });
+    assert.equal(code, 0, err);
+    assert.deepEqual(sent, [{ cwd: folder, card: 'seat-take-over', session: 'chat-1' }]);
+    assert.match(out, /this window is now the First Mate/i);
+    assert.equal(out.trim().split('\n').length, 1);
+  });
+});
+
+test('confirm seat-take-over with no session id refuses, and the answer when the director doesn\'t click is said plainly', async () => {
+  await seatHeldByB(async (folder) => {
+    const helper = fakeHelper();
+    const sent = [];
+    const answers = [{ ok: true, choice: null, recorded: false }, { ok: true, choice: 'Take over here', recorded: true, moved: false, holder: 'a' }];
+    const client = { ...helper.client, confirm: async (body) => { sent.push(body); return answers.shift(); } };
+    const go = async (argv, env) => {
+      let out = '';
+      let err = '';
+      const code = await main(argv, { cwd: folder, client, env, now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; } });
+      return { code, out, err };
+    };
+    const none = await go(['confirm', 'seat-take-over'], {});
+    assert.equal(none.code, 1);
+    assert.equal(none.err, 'this window has no session id to move the First Mate to\n');
+    assert.deepEqual(sent, []);
+    const quiet = await go(['confirm', 'seat-take-over'], { CLAUDE_CODE_SESSION_ID: 'chat-1' });
+    assert.equal(quiet.code, 0);
+    assert.match(quiet.out, /did not move/i);
+    const stale = await go(['confirm', 'seat-take-over', '--session=chat-1'], {});
+    assert.match(stale.out, /did not move/i);
+    assert.match(stale.out, /session a/);
+  });
+});
+
+test('--session wins over an inherited CLAUDE_CODE_SESSION_ID, for the seat check and the commands that name the session', async () => {
+  await seatHeldByB(async (folder) => {
+    const helper = fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] });
+    const env = { CLAUDE_CODE_SESSION_ID: 'a' };
+    const refused = await run(helper, ['cards'], undefined, { cwd: folder, env });
+    assert.equal(refused.err, `${SEAT_REFUSAL}\n`, 'the inherited id is not the holder');
+    const own = await run(helper, ['cards', '--session', 'b'], undefined, { cwd: folder, env });
+    assert.equal(own.code, 0, own.err);
+    const other = await run(helper, ['--session', 'a', 'cards'], undefined, { cwd: folder, env: { CLAUDE_CODE_SESSION_ID: 'b' } });
+    assert.equal(other.err, `${SEAT_REFUSAL}\n`, 'the flag is the id, wherever it stands');
+    const bad = await run(helper, ['cards', '--session'], undefined, { cwd: folder, env });
+    assert.equal(bad.code, 1);
+    assert.match(bad.err, /--session/);
+  });
+});

@@ -48,7 +48,7 @@
 //                   an amendment needs its read-back, and prints the route line and the read-back to say
 //   note            asks the host helper to write this session's note, up to 1,200 characters on standard input (four lines: the task, what
 //                   is done, what is next, the decisions open), to <wheelhouse home>/projects/<project>/sessions/<session id>.md,
-//                   beside the context gauge's reading; the session is named by CLAUDE_CODE_SESSION_ID
+//                   beside the context gauge's reading; the session is named by `--session <id>` when given, else by CLAUDE_CODE_SESSION_ID
 //   page <work>     "watch <work>": raises the piece to the transcript level when it is below it, writes the piece's run as a page
 //                   in .wheelhouse/watch/ (it stays on this computer), and prints one line: the page's path and the command that
 //                   follows it live. For a piece that is closed or unknown it prints a line saying so and writes nothing
@@ -134,6 +134,7 @@ export { surveyLines, workLines };
 import { SUGGEST, WHY, suggestedAt } from '../lib/calm-words.js';
 import { keep, taken } from '../hooks/pending.js';
 import { projectOf, writeVia } from '../hooks/kit.js';
+import { SEAT_WRITES } from '../lib/seat-writes.js';
 import { agentInFolder, agentsNamedAbove } from '../agents/names.js';
 import { computerId } from '../lib/paths.js';
 import { noteProblem } from '../lib/session-note.js';
@@ -150,21 +151,41 @@ export const RECORD_KINDS = Object.freeze([
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'brief']);
 // The commands that write a record, hand out a card or change the board: only the window that holds the First Mate's seat runs them.
-// Settings change through `record` and `suggest`, so they are covered. The rest only read, or keep a note by the session's own id.
-export const SEAT_WRITES = Object.freeze(['cards', 'pull-cards', 'again', 'card', 'record', 'confirm', 'suggest', 'pull-back', 'drop', 'ask-bosun', 'undo', 'move', 'carry-on', 'archive', 'restore', 'premium-card', 'page', 'helm']);
+export { SEAT_WRITES };
 export const SEAT_REFUSAL = 'The First Mate is in another window, so this window can look things up but not record anything or hand out cards. The director can move the First Mate here with the take-over card in this window.';
 
 // The refusal for a seat write from a window that doesn't hold the seat; null when the command may run. A script or test
 // (no session id) and a folder in no project are never refused. The seat is read through the host helper, since this
 // command runs in the project's sandbox, which cannot read the Wheelhouse home; refused only on its plain answer that
-// another window holds the seat.
-export async function seatRefusal({ command, env, cwd, client }) {
+// another window holds the seat. `session` is the id given with --session, which wins over CLAUDE_CODE_SESSION_ID: on an
+// agent whose chat doesn't carry its own id in the environment, the chat names itself. `confirm seat-take-over` is the
+// one write an aside may run: the card that moves the seat here is answered in Wheelhouse's own window.
+export const SEAT_CARD = 'seat-take-over';
+export async function seatRefusal({ command, rest = [], env, cwd, client, session: given }) {
   if (!SEAT_WRITES.includes(command)) return null;
-  const session = env?.CLAUDE_CODE_SESSION_ID;
+  if (command === 'confirm' && rest.length === 1 && rest[0] === SEAT_CARD) return null;
+  const session = given ?? env?.CLAUDE_CODE_SESSION_ID;
   if (typeof session !== 'string' || session === '') return null;
   let got;
   try { got = await client.session.seat({ cwd, session }); } catch { return null; }
   return got?.ok === true && got.holds === false ? SEAT_REFUSAL : null;
+}
+
+// `--session <id>` (or `--session=<id>`) taken out of the arguments: { argv, session }. The id is the chat's own, which an
+// agent whose chat has none in the environment is told at its start; it wins over CLAUDE_CODE_SESSION_ID.
+const SESSION_FLAG = /^--session(?:=(.*))?$/;
+const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
+export function sessionFlag(argv) {
+  const left = [];
+  let session;
+  for (let i = 0; i < argv.length; i += 1) {
+    const flag = SESSION_FLAG.exec(argv[i]);
+    if (flag === null) { left.push(argv[i]); continue; }
+    const value = flag[1] ?? argv[i += 1];
+    if (typeof value !== 'string' || !SESSION_ID.test(value)) throw new CliError('Give --session the session\'s id: --session <id>');
+    session = value;
+  }
+  return { argv: left, session };
 }
 
 const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts', 'page', 'helm'];
@@ -1509,11 +1530,15 @@ export async function preview({ client, cwd, n }) {
 // What the helper's window answers for `card`: `lift-stop` for the Lift STOP card the helper composes itself, or a
 // card's id in the state, named with the hash of its data as the state holds it, so the window shows that card and
 // no other (the caller's own text is never shown). Posts /confirm; a refusal is said as is.
-export async function confirm({ client, cwd, card }) {
+export async function confirm({ client, cwd, card, session }) {
   if (typeof card !== 'string' || card === '') throw new CliError('Give the card\'s id, or lift-stop: confirm <card>');
   let got;
   if (card === 'lift-stop') {
     got = await client.confirm({ cwd, card });
+  } else if (card === SEAT_CARD) {
+    // The seat card isn't in the state: the helper composes it from the seat as it stands, for the session named here.
+    if (typeof session !== 'string' || session === '') throw new CliError('this window has no session id to move the First Mate to');
+    got = await client.confirm({ cwd, card, session });
   } else {
     const { cards } = await viewsOf(client, cwd, { cards: true });
     const found = cards.filter((e) => isPlain(e) && e.id === card);
@@ -1522,6 +1547,14 @@ export async function confirm({ client, cwd, card }) {
   }
   if (got?.ok !== true) throw new CliError(said(got, 'The host helper gave no answer from its window'));
   return got;
+}
+
+// The one line to say after the seat card's window: whether the First Mate moved to this window.
+export function seatMoved(got) {
+  if (got.moved === true) return 'This window is now the First Mate.';
+  if (got.recorded !== true) return 'The First Mate did not move: the director did not choose Take over here.';
+  const holder = typeof got.holder === 'string' && got.holder !== '' ? `Window session ${got.holder} holds it now, so this window is still an ordinary one.` : 'No window holds it now.';
+  return `The First Mate did not move, because the seat changed hands after that card was shown. ${holder}`;
 }
 
 // --- The premium model's opt-in (design section 14.6) ---
@@ -1660,11 +1693,13 @@ export async function main(argv, {
   out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
 } = {}) {
   try {
-    const [command, ...rest] = argv;
+    const flagged = sessionFlag(argv);
+    const [command, ...rest] = flagged.argv;
+    const sessionId = flagged.session ?? env?.CLAUDE_CODE_SESSION_ID;
     if (!COMMANDS.includes(command)) throw new CliError(`Commands: ${COMMANDS.join(', ')}`);
     const windowed = command === 'confirm' || (command === 'decision' && rest[0] === 'confirm');
     const helper = client ?? helperClient(windowed ? { timeout: CONFIRM_WAIT_MS } : {});
-    const refused = await seatRefusal({ command, env, cwd, client: helper });
+    const refused = await seatRefusal({ command, rest, env, cwd, client: helper, session: flagged.session });
     if (refused !== null) throw new CliError(refused);
     const here = path.resolve(cwd);
     const stdin = async () => (input === undefined ? readInput() : input);
@@ -1673,7 +1708,7 @@ export async function main(argv, {
 
     if (command === 'note') {
       only(rest, 0, 'note takes no arguments: give the note on standard input');
-      lines([`Note kept at ${await writeNote({ client: helper, cwd: here, sessionId: env.CLAUDE_CODE_SESSION_ID, text: await stdin() })}`]);
+      lines([`Note kept at ${await writeNote({ client: helper, cwd: here, sessionId, text: await stdin() })}`]);
       return 0;
     }
     // `--here` on cards, again and pull-cards: the cards handed out are marked to be asked in the chat, once (here.json).
@@ -1681,7 +1716,7 @@ export async function main(argv, {
       const wanted = args.includes('--here');
       const left = args.filter((a) => a !== '--here');
       const stamp = (typeof now === 'function' ? now() : new Date(now ?? Date.now())).getTime();
-      const session = env.CLAUDE_CODE_SESSION_ID;
+      const session = sessionId;
       if (typeof session === 'string' && session !== '') {
         return wanted ? { left, onAsked: (ids) => { if (ids.length > 0) markHere(session, ids, stamp); } } : { left };
       }
@@ -1691,13 +1726,13 @@ export async function main(argv, {
     if (command === 'pull-cards') {
       const { left, onAsked } = await hereMark(rest);
       only(left, 0, 'pull-cards takes no arguments');
-      json(await pullCards({ client: helper, cwd: here, now, onAsked, session: env.CLAUDE_CODE_SESSION_ID }));
+      json(await pullCards({ client: helper, cwd: here, now, onAsked, session: sessionId }));
       return 0;
     }
     if (command === 'cards') {
       const { left, onAsked } = await hereMark(rest);
       only(left, 0, 'cards takes no arguments');
-      json(await cards({ client: helper, cwd: here, now, onAsked, session: env.CLAUDE_CODE_SESSION_ID }));
+      json(await cards({ client: helper, cwd: here, now, onAsked, session: sessionId }));
     } else if (command === 'decision') {
       const usage = 'Give decision list, or decision show <n> or decision confirm <n> with the decision\'s number';
       if (rest[0] === 'list' && rest.length === 1) lines(await decisionList({ client: helper, cwd: here, now }));
@@ -1708,7 +1743,7 @@ export async function main(argv, {
       lines(await alerts({ client: helper, cwd: here, args: rest }));
     } else if (command === 'card') {
       only(rest, 0, 'card takes no arguments: give the card as JSON on standard input');
-      json(await card({ client: helper, cwd: here, input: parsed(await stdin()), now, session: env.CLAUDE_CODE_SESSION_ID }));
+      json(await card({ client: helper, cwd: here, input: parsed(await stdin()), now, session: sessionId }));
     } else if (command === 'again') {
       const { left, onAsked } = await hereMark(rest);
       if (left.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(left[0])) throw new CliError('Give the card\'s number in the Logbook: again <n> [--here]');
@@ -1741,7 +1776,7 @@ export async function main(argv, {
       lines([await page({ client: helper, cwd: here, work: rest[0] })]);
     } else if (command === 'helm') {
       only(rest, 2, HELM_USAGE);
-      lines(await helm({ client: helper, cwd: here, action: rest[0], work: rest[1], session: env.CLAUDE_CODE_SESSION_ID }));
+      lines(await helm({ client: helper, cwd: here, action: rest[0], work: rest[1], session: sessionId }));
     } else if (command === 'similar') {
       // The request's words as the arguments, which STOP lets through, or its text on standard input.
       json(await similar({ client: helper, cwd: here, text: rest.length > 0 ? rest.join(' ') : await stdin() }));
@@ -1766,8 +1801,10 @@ export async function main(argv, {
       only(rest, 0, `${command} takes no arguments`);
       json(await ready(helper.survey[command], { cwd: here }, command === 'archive' ? 'archive' : 'putting back'));
     } else if (command === 'confirm') {
-      only(rest, 1, 'Give the card\'s id, or lift-stop: confirm <card>');
-      json(await confirm({ client: helper, cwd: here, card: rest[0] }));
+      only(rest, 1, 'Give the card\'s id, lift-stop or seat-take-over: confirm <card>');
+      const done = await confirm({ client: helper, cwd: here, card: rest[0], session: sessionId });
+      if (rest[0] === SEAT_CARD) lines([seatMoved(done)]);
+      else json(done);
     } else if (command === 'premium-card' || command === 'premium-check') {
       only(rest, 0, `${command} takes no arguments`);
       lines([await (command === 'premium-card' ? premiumCard : premiumCheck)({ client: helper, cwd: here })]);
