@@ -178,9 +178,11 @@ import { briefHash } from '../feature/files.js';
 import { HAND_DONE, HAND_GOAL } from '../lib/by-hand-done.js';
 import { writeInside } from '../lib/write-inside.js';
 import { tieNamesWork } from '../lib/by-hand-tie.js';
-import { holdsSeat, readSeat, takeSeat, refreshSeat, handOverSeat, seatFree } from '../lib/first-mate-seat.js';
+import { holdsSeat, readSeat, takeSeat, refreshSeat, handOverSeat, releaseSeat, seatFree, STALE_AFTER_MS } from '../lib/first-mate-seat.js';
 import { seatCard } from '../lib/seat-card.js';
-import { asideKind } from '../lib/role.js';
+import { readTurn } from '../lib/session-files.js';
+import { lockFreeNow } from '../lib/free-seat.js';
+import { asideKind, sessionRole, recordAside, recordRole } from '../lib/role.js';
 import { worktreeRoot, sameFolder } from '../hooks/kit.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
@@ -2405,11 +2407,20 @@ export async function startHelper({
 
   // Whether a session holds the project's First Mate seat, for the front desk, whose sandbox cannot read the
   // Wheelhouse home. A read: answered under STOP. For the holder it also keeps the seat fresh, at most once a minute: an agent whose
-  // hooks only read can't, and the front desk asks this before every write, so a working holder doesn't go stale. With `take`, a
-  // session in the project's main folder takes the seat while it is free, with no process recorded (the helper's own ancestor is
-  // not the session's window), as a session start does where hooks can write; it is then free again after it has been idle a while.
-  async function doSessionSeat({ project, session, take, cwd }) {
+  // hooks only read can't, and the front desk asks this before every write, so a working holder doesn't go stale. A session that
+  // doesn't hold it takes it here when it is free or absent and the session may (takeFree), as a Claude Code window's first write
+  // does. With `take`, a session in the project's main folder takes the seat while it is free, with no process recorded (the
+  // helper's own ancestor is not the session's window), as a session start does where hooks can write; it is then free again
+  // after it has been idle a while. With `aside`, the session has chosen to be an aside: its role is recorded and it gives up
+  // any seat it holds.
+  async function doSessionSeat({ project, session, take, aside, cwd }, ctx) {
     if (typeof session !== 'string' || session === '') refuse('this session has no id to look the seat up by');
+    if (aside === true) {
+      if (!SEAT_SESSION.test(session)) refuse('the session id is not one a seat can name');
+      if (!recordAside(session)) recordRole(session, 'aside');
+      releaseSeat(project, session);
+      return { ok: true, holds: false };
+    }
     if (take === true) {
       if (!SEAT_SESSION.test(session)) refuse('the session id is not one a seat can name');
       const folder = recordOf(project).folder;
@@ -2417,9 +2428,36 @@ export async function startHelper({
       const got = await takeSeat(project, { session, folder }, { holder: NO_PROCESS });
       return { ok: true, holds: got.held };
     }
-    const holds = holdsSeat(project, session);
+    let holds = holdsSeat(project, session);
     if (holds) refreshSeat(project, session);
+    else if (await takeFree({ project, session, cwd }, ctx)) holds = true;
     return { ok: true, holds };
+  }
+
+  // A session that doesn't hold the seat takes it when it is absent or free, only if it is in the project's main folder, has not
+  // chosen to be an aside (its recorded role, as Claude Code's guard reads it) and this computer holds or could take the lock.
+  // A doubt about the lock is no. True when the session holds the seat afterwards.
+  async function takeFree({ project, session, cwd }, ctx) {
+    try {
+      if (!SEAT_SESSION.test(session)) return false;
+      const seat = readSeat(project);
+      if (seat && !(await seatFree(seat))) return false;
+      const folder = recordOf(project)?.folder;
+      if (!(await inMainFolder(cwd, folder))) return false;
+      if (sessionRole({ sessionId: session, env: {}, cwd, seat: null }) !== 'front-desk') return false;
+      if (!(await lockFreeHere(project, ctx))) return false;
+      return (await takeSeat(project, { session, folder }, { holder: NO_PROCESS })).held;
+    } catch {
+      return false;
+    }
+  }
+
+  // Whether this computer holds the project's lock or could take it (the rule a Claude Code hook applies, lockFreeNow). A read
+  // that fails is not free.
+  async function lockFreeHere(project, ctx) {
+    if (readProject(project)?.host === 'local') return true;
+    const client = { lock: { read: async () => { await lookAtLock(ctx, project); return { ok: true, result: await readLock({ project, env: ctx.gitEnv }) }; } } };
+    return lockFreeNow({ client, project, now, failClosed: true });
   }
 
   // Whether `cwd` is the project's main folder or inside it, and not in a linked worktree of it.
@@ -2668,6 +2706,9 @@ export async function startHelper({
     return undefined;
   }
 
+  // A session id in short, to name the window the seat moves to.
+  const shortSession = (id) => id.slice(0, 8);
+
   // The seat the card offers to `session`, as the seat file holds it now: held by another window that is still live, and the
   // asker a session in the project's main folder with an id a seat can name. Refuses otherwise, before any window opens.
   async function seatToOffer({ project, session, cwd }) {
@@ -2676,6 +2717,10 @@ export async function startHelper({
     const seat = readSeat(project);
     if (!seat) refuse('no window holds the First Mate\'s seat, so there is nothing to take over');
     if (seat.session === session) refuse('this window already holds the First Mate\'s seat');
+    // The seat is for a chat that is there: one the helper has seen take a turn lately, for a seat with no process is free again
+    // after it has been idle STALE_AFTER_MS, so one named for an id with no chat behind it would only lapse.
+    const turn = readTurn(session);
+    if (turn === null || now().getTime() - turn > STALE_AFTER_MS) refuse(`no live chat has the session id ${shortSession(session)}, so the First Mate has no window to move to`);
     if (await seatFree(seat)) refuse('the First Mate\'s seat is free, so there is nothing to take over');
     return seat;
   }
@@ -2742,6 +2787,8 @@ export async function startHelper({
       if (shown.deciding.length === 0) return STOP_REFUSAL;
     }
     const lines = String(shown.event.data.question).split(/\r?\n/);
+    // The seat card names the window the seat moves to, by the start of its session id.
+    if (card === SEAT_CARD_NAME) lines.push('', `Take over here moves the First Mate to the chat with session ${shortSession(session)}.`);
     // An Ask allowance's window also says what allowing the commands means (allowanceWindowLines), from the question
     // the state holds, never the caller's words.
     const allowance = shown.deciding.find((d) => d.step === ACTION_STEPS.answer);

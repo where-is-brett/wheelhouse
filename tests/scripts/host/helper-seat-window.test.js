@@ -18,6 +18,7 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { seatTakeOverLine } from '../../../scripts/state/card-lines.js';
+import { takeTurn } from '../../../scripts/lib/session-files.js';
 import { readSeat, seatFile } from '../../../scripts/lib/first-mate-seat.js';
 import { askInWindow, NOT_NOW } from '../../../scripts/confirm/window.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
@@ -59,6 +60,8 @@ async function computer(answer, { hosted = false } = {}) {
   }
   const own = makeSigningKey();
   enrol({ computer: own.computer, publicKey: own.publicKey, enrolledAt: T0.toISOString() });
+  // The chat that asks is one the helper has seen take a turn.
+  takeTurn('chat-1', T0.getTime());
   const windows = [];
   const windowRun = async (file, args) => {
     windows.push({ file, args });
@@ -76,6 +79,7 @@ async function computer(answer, { hosted = false } = {}) {
   const real = fs.realpathSync.native(folder);
   return {
     windows,
+    live: (session, at = T0.getTime()) => takeTurn(session, at),
     folder: real,
     client: helperClient({ address: helper.address }),
     project,
@@ -223,5 +227,32 @@ test('on a project kept on a code host, it is served under STOP too, as Lift All
     assert.deepEqual([got.recorded, got.moved], [true, true]);
     assert.equal(readSeat(c.project).session, 'chat-1');
     assert.ok(!c.events().some((e) => e.kind === 'card-answer'));
+  } finally { await c.close(); }
+});
+
+test('the window names the session the seat moves to, by the start of its id', async () => {
+  const c = await computer(() => said(TAKE));
+  try {
+    c.hold();
+    c.live('0123456789abcdef');
+    assert.equal((await confirm(c, { session: '0123456789abcdef' })).ok, true);
+    const shown = c.windows[0].args.join(' ');
+    assert.match(shown, /session 01234567\b/);
+    assert.ok(!shown.includes('89abcdef'), 'only the short form');
+  } finally { await c.close(); }
+});
+
+test('it is refused for a session with no live chat behind it: no turn seen, or none for two hours', async () => {
+  const c = await computer(() => said(TAKE));
+  try {
+    c.hold();
+    const unseen = await confirm(c, { session: 'ghost-session' });
+    assert.equal(unseen.ok, false);
+    assert.match(unseen.refused, /no live chat has the session id ghost-se/);
+    c.live('old-session', T0.getTime() - 3 * 3600 * 1000);
+    assert.equal((await confirm(c, { session: 'old-session' })).ok, false);
+    assert.equal(c.windows.length, 0, 'no window opened');
+    assert.equal(c.events().length, 0, 'nothing recorded');
+    assert.equal(readSeat(PROJECT).session, 'a');
   } finally { await c.close(); }
 });

@@ -10,7 +10,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { main, readInput, SEAT_WRITES, SEAT_REFUSAL, seatRefusal, RECORD_KINDS, needsApproval, MEANWHILE, CHECKS_UNSAID, RECENT_MS, RECENT_LEAD } from '../../../scripts/frontdesk/cli.js';
+import { main, readInput, SEAT_WRITES, SEAT_REFUSAL, seatRefusal, SESSION_NEEDED, RECORD_KINDS, needsApproval, MEANWHILE, CHECKS_UNSAID, RECENT_MS, RECENT_LEAD } from '../../../scripts/frontdesk/cli.js';
 import { cardsDue } from '../../../scripts/hooks/board-context.js';
 import { numberedWaiting } from '../../../scripts/board/model.js';
 import { composeCard, whatProblem } from '../../../scripts/cards/compose.js';
@@ -3155,8 +3155,9 @@ function agentProject(agent) {
 test('a configuration that still names another agent has its cards asked in the chat, and the desk is not asked about a panel', async () => {
   await inHome(async () => {
     const folder = agentProject('copilot');
+    await takeSeat('o__p', { session: 'chat-1', folder }, { holder: { pid: null, pidStart: null } });
     const helper = fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] });
-    const out = await run(helper, ['cards'], undefined, { cwd: folder, env: {} });
+    const out = await run(helper, ['cards', '--session', 'chat-1'], undefined, { cwd: folder, env: {} });
     assert.equal(out.code, 0, out.err);
     assert.equal(out.json.panel, undefined);
     assert.equal(out.json.questions.length, 1);
@@ -3167,11 +3168,12 @@ test('a configuration that still names another agent has its cards asked in the 
 test('where the agent\'s hooks only read, a decision says to reply in Wheelhouse\'s own window and decision confirm opens it there', async () => {
   await inHome(async () => {
     const folder = agentProject('copilot');
+    await takeSeat('o__p', { session: 'chat-1', folder }, { holder: { pid: null, pidStart: null } });
     const helper = fakeHelper({ events: [...typedOn(), questionEvent()] });
     const asked = [];
     helper.client.confirm = async (body) => { asked.push(body); return { ok: true, step: 'decision-answer', label: 'Tab' }; };
     const opts = { cwd: folder, env: {} };
-    assert.equal((await run(helper, ['cards'], undefined, opts)).code, 0);
+    assert.equal((await run(helper, ['cards', '--session', 'chat-1'], undefined, opts)).code, 0);
     const shown = await run(helper, ['decision', 'show', '1'], undefined, opts);
     assert.equal(shown.code, 0, shown.err);
     assert.match(shown.out, /Reply in Wheelhouse's own window, which opens for decision 1: click the option you choose there\./);
@@ -3479,5 +3481,41 @@ test('--session wins over an inherited CLAUDE_CODE_SESSION_ID, for the seat chec
     const bad = await run(helper, ['cards', '--session'], undefined, { cwd: folder, env });
     assert.equal(bad.code, 1);
     assert.match(bad.err, /--session/);
+  });
+});
+
+// --- where the chat is named by --session alone ---
+
+test('where the agent\'s hooks only read, the command refuses a seat write with no --session, however it was reached, and inherits no id', async () => {
+  await inHome(async () => {
+    const folder = agentProject('copilot');
+    await takeSeat('o__p', { session: 'chat-1', folder }, { holder: { pid: null, pidStart: null } });
+    const helper = fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] });
+    const go = async (argv, env) => {
+      let err = '';
+      const code = await main(argv, { cwd: folder, client: helper.client, env, now: () => NOW, out: () => {}, err: (t) => { err += t; } });
+      return { code, err };
+    };
+    // The forms the hook can't read (a relative path, sh -c, node -e, a variable, a Windows path in another case) all reach this
+    // command the same way: no flag, and perhaps an id the chat inherited from another session.
+    for (const env of [{}, { CLAUDE_CODE_SESSION_ID: 'inherited' }]) {
+      for (const argv of [['cards'], ['record', 'idea'], ['confirm', 'lift-stop'], ['again'], ['helm', 'take', 'x']]) {
+        const out = await go(argv, env);
+        assert.equal(out.code, 1, argv.join(' '));
+        assert.equal(out.err, `${SESSION_NEEDED}\n`);
+      }
+    }
+    for (const argv of [['views', 'rulebook'], ['alerts']]) assert.ok(!(await go(argv, {})).err.includes(SESSION_NEEDED), 'reads need no id');
+    assert.equal((await go(['cards', '--session', 'chat-1'], {})).code, 0, 'the chat names itself');
+    assert.equal(await seatRefusal({ command: 'confirm', rest: ['seat-take-over'], env: {}, cwd: folder, client: helper.client }), null, 'its own message for a take-over');
+  });
+});
+
+test('where the agent\'s hooks sign, a seat write with no --session is not refused for it', async () => {
+  await inHome(async () => {
+    const folder = agentProject('claude-code');
+    const helper = fakeHelper({ events: [cardEvent(PRODUCT(1), 1)] });
+    assert.equal(await seatRefusal({ command: 'cards', env: {}, cwd: folder, client: helper.client }), null);
+    assert.equal(await seatRefusal({ command: 'record', env: { CLAUDE_CODE_SESSION_ID: 'a' }, cwd: folder, client: helper.client }), SEAT_REFUSAL);
   });
 });

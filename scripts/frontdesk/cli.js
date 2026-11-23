@@ -164,9 +164,13 @@ export const SEAT_REFUSAL = 'The First Mate is in another window, so this window
 // agent whose chat doesn't carry its own id in the environment, the chat names itself. `confirm seat-take-over` is the
 // one write an aside may run: the card that moves the seat here is answered in Wheelhouse's own window.
 export const SEAT_CARD = 'seat-take-over';
+export const SESSION_NEEDED = 'This command records, so it must name this chat\'s own session: add --session <id> to it (the id this chat was given at its start).';
 export async function seatRefusal({ command, rest = [], env, cwd, client, session: given }) {
   if (!SEAT_WRITES.includes(command)) return null;
   if (command === 'confirm' && rest.length === 1 && rest[0] === SEAT_CARD) return null;
+  // Where the chat's environment can't name it, a command that records names the chat itself, whatever form the command took
+  // to reach here: the hook holds the forms it can read, and this holds the rest.
+  if (given === undefined && answersInWindow(cwd)) return SESSION_NEEDED;
   const session = given ?? env?.CLAUDE_CODE_SESSION_ID;
   if (typeof session !== 'string' || session === '') return null;
   let got;

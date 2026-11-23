@@ -448,6 +448,11 @@ export async function decide(input, deps = {}) {
       attempt(() => recordAside(input.session_id));
       attempt(() => releaseSeat(found.project, input.session_id));
     }
+    // Where hooks can't write, the helper records the choice and gives the seat up, so a chat that chose to be an aside never takes a free seat.
+    if (!writes && role === 'aside' && keep && typeof input.session_id === 'string' && input.session_id !== '') {
+      const asker = client ?? helperClient({ timeout: WAIT_MS + helperGrace() });
+      await within(() => asker.session.seat({ cwd: input.cwd, session: input.session_id, aside: true }), waitMs);
+    }
     // A foreman known only from its first prompt was pointed at the front desk by the session start.
     if (role === 'foreman' && first && env?.WHEELHOUSE_ROLE !== 'foreman') return answer.context('UserPromptSubmit', FOREMAN_LINE);
     if (setup !== null && role === 'front-desk') return answer.context('UserPromptSubmit', SETUP_FIRST);

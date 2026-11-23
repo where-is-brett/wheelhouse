@@ -469,3 +469,16 @@ test('redirects, pipes and heredocs are read around, and a line that can\'t be r
     "wh-frontdesk card <<'EOF'\n{}\nEOF", 'wh-frontdesk card < in.json --session other', 'echo $(wh-frontdesk cards)', 'wh-frontdesk cards `id`',
   ]) assert.ok(denied(decide(shell(bad, 's1', folder), opts)), bad);
 });
+
+test('a Windows path or launcher in another case, and a relative path to the command, are read as the front desk\'s', () => {
+  const { folder } = project();
+  const opts = options(folder, { writeVia: 'helper' });
+  const power = (command) => ({ tool_name: 'PowerShell', cwd: folder, session_id: 's1', tool_input: { command } });
+  for (const bad of ['node "C:\\Plugin\\Scripts\\FrontDesk\\CLI.js" record ruling', '& "C:\\Plugin\\scripts\\frontdesk\\cli.js" cards', 'WH-FrontDesk.CMD cards']) {
+    assert.ok(denied(decide(power(bad), opts)), bad);
+    assert.equal(decide(power(`${bad} --session s1`), opts), undefined, `${bad} with its id`);
+  }
+  for (const bad of ['node ./frontdesk/cli.js record ruling', 'node scripts/frontdesk/cli.js cards', 'node "/plugin/Scripts/FrontDesk/CLI.js" cards']) {
+    assert.ok(denied(decide(shell(bad, 's1', folder), opts)), bad);
+  }
+});

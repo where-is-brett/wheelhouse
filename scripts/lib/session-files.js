@@ -136,6 +136,12 @@ export function takeTurn(sessionId, now) {
   return mark !== null && isTime(mark.at) ? mark.at : null;
 }
 
+// The time (ms) the session's last turn began, as the helper kept it, or null when it has none. Reads only.
+export function readTurn(sessionId) {
+  const mark = readJson(fileOf(sessionId, TURN));
+  return mark !== null && isTime(mark.at) ? mark.at : null;
+}
+
 export function clearOpen(sessionId) {
   const file = fileOf(sessionId, OPEN);
   if (file === null) return;

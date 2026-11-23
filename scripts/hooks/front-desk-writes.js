@@ -285,8 +285,10 @@ export const SESSION_FLAG_NEEDED = (id) => (typeof id === 'string' && id !== ''
 
 const FRONT_DESK_LAUNCHER = Object.entries(LAUNCHERS).find(([, script]) => script === 'scripts/frontdesk/cli.js')?.[0];
 const isFrontDeskProgram = (word) => {
-  const base = path.basename(String(word).replaceAll('\\', '/')).replace(/\.(exe|cmd)$/i, '');
-  return base === FRONT_DESK_LAUNCHER || String(word).replaceAll('\\', '/').endsWith('/scripts/frontdesk/cli.js');
+  // Compared without regard to case (a Windows path), and the script by its own folder, so a relative path reads too.
+  const slashed = String(word).replaceAll('\\', '/').toLowerCase();
+  const base = path.basename(slashed).replace(/\.(exe|cmd)$/, '');
+  return base === FRONT_DESK_LAUNCHER?.toLowerCase() || /(^|\/)frontdesk\/cli\.js$/.test(slashed);
 };
 
 // The ids given with --session and the command named, in the arguments after the front desk's program.
@@ -309,7 +311,7 @@ function recordsWithoutSession(command, session, windows, required = true) {
   const { text } = withoutHeredocs(command);
   // A redirect of a stream onto another (`2>&1`) is no redirect to a file, and no part of the command.
   const read = segmentsWithOperators(text.replace(/\d*>&(\d+|-)(?=$|[\s;|&)])/g, ' '), windows);
-  if (read === null) return required && /wh-frontdesk|frontdesk[\\/]cli\.js/.test(command);
+  if (read === null) return required && /wh-frontdesk|frontdesk[\\/]cli\.js/i.test(command);
   // A segment a redirect opened holds the file first, then more of the same command's words (`card < in.json --session x`).
   const commands = [];
   read.segments.forEach((words, i) => {

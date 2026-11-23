@@ -1379,3 +1379,17 @@ test('Claude Code\'s since line still comes from seen.json, and needs no turn ti
     assert.ok(contextOf(await hook(prompt(repo, 'Done?', SESSION))).startsWith(SINCE_LEAD));
   });
 });
+
+test('an agent whose hooks can\'t write tells the helper that a chat which typed the aside command is an aside, and an ordinary prompt tells it nothing', async () => {
+  await withProject(async ({ repo }) => {
+    const asked = [];
+    const helper = { writeVia: 'helper', client: { ...client, session: { seat: async (body) => { asked.push(body); return { ok: true, holds: false }; } }, desk: { read: async () => ({ ok: false, refused: 'down' }) } } };
+    await decide(prompt(repo, 'Hello', 's1'), { now: at(NOW), env: {}, ...helper });
+    assert.deepEqual(asked, []);
+    await decide(prompt(repo, ASIDE_COMMAND, 's1'), { now: at(NOW), env: {}, ...helper });
+    assert.deepEqual(asked, [{ cwd: repo, session: 's1', aside: true }]);
+    // A hook that writes records the choice itself and asks nothing.
+    await decide(prompt(repo, ASIDE_COMMAND, 's2'), { now: at(NOW), env: {}, client: helper.client });
+    assert.equal(asked.length, 1);
+  });
+});
