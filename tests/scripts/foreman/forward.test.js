@@ -23,9 +23,18 @@ test('forward sends the folder, the script and its arguments, and gives back wha
   const asked = [];
   const client = { foreman: { run: async (body) => { asked.push(body); return { ok: true, code: 3, stdout: 'Merged.\n', stderr: 'A warning.\n' }; } } };
   const { said, out, err } = io();
-  assert.equal(await forward('act', ['merge', 'export'], { cwd: '/the/checkout', client, out, err }), 3);
-  assert.deepEqual(asked, [{ folder: '/the/checkout', script: 'act', argv: ['merge', 'export'] }]);
+  assert.equal(await forward('act', ['merge', 'export'], { cwd: '/the/checkout', env: {}, client, out, err }), 3);
+  assert.deepEqual(asked, [{ folder: '/the/checkout', script: 'act', argv: ['merge', 'export'], launched: false }]);
   assert.deepEqual(said, { out: 'Merged.\n', err: 'A warning.\n' });
+});
+
+test('forward says whether its script was started by its launcher, so the helper\'s run prints the launcher\'s commands', async () => {
+  const asked = [];
+  const client = { foreman: { run: async (body) => { asked.push(body); return { ok: true, code: 0, stdout: '', stderr: '' }; } } };
+  for (const env of [{ WHEELHOUSE_LAUNCHED: '1' }, { WHEELHOUSE_LAUNCHED: 'yes' }, {}]) {
+    await forward('wake', ['read', 'x.json'], { cwd: '/c', env, client, ...io() });
+  }
+  assert.deepEqual(asked.map((a) => a.launched), [true, false, false]);
 });
 
 test('a refusal, an odd answer or a throw from the client is one line and exit code 1', async () => {
@@ -68,8 +77,8 @@ test('act.js and wake.js run as commands forward to the helper, and touch nothin
     }
     assert.deepEqual(asked.map((a) => a.path), ['/foreman/run', '/foreman/run']);
     assert.deepEqual(asked.map((a) => a.body), [
-      { folder: checkout, script: 'act', argv: ['merge', 'export'] },
-      { folder: checkout, script: 'wake', argv: ['merge', 'export'] },
+      { folder: checkout, script: 'act', argv: ['merge', 'export'], launched: false },
+      { folder: checkout, script: 'wake', argv: ['merge', 'export'], launched: false },
     ]);
   } finally {
     await new Promise((resolve) => server.close(resolve));

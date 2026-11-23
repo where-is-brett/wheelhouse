@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLAUDE_SIGN_IN_NAMES, isClaudeSignIn, withoutHostVariables } from '../lib/claude.js';
 import { withoutGitVars } from '../lib/run.js';
+import { LAUNCHED } from '../lib/launchers.js';
 import { TOKEN_NAMES } from '../lib/token-names.js';
 
 // The scripts /foreman/run runs, by the name the foreman's command line gives them.
@@ -46,20 +47,21 @@ export const SIGN_IN_NAMES = CLAUDE_SIGN_IN_NAMES;
 // started by the waker gets it), every GIT_* variable, every spelling of WHEELHOUSE_ROLE, and
 // every variable that holds or leads to a host's key or any other secret, but for Claude Code's
 // sign-in variables above, spelt exactly. WHEELHOUSE_HOME and PATH stay, so the scripts find
-// Wheelhouse's records and git.
-export function foremanEnv(env = process.env) {
+// Wheelhouse's records and git. The launcher's marker is the request's to give (`launched`), never the helper's own.
+export function foremanEnv(env = process.env, { launched = false } = {}) {
   const kept = Object.fromEntries(Object.entries(env).filter(([name]) => isClaudeSignIn(name)));
   const rest = Object.entries(withoutGitVars(withoutHostVariables(env))).filter(([name]) => {
     const upper = name.toUpperCase();
-    return upper !== ROLE && !KEY_NAMES.has(upper) && !SECRET_NAME.test(name);
+    return upper !== ROLE && upper !== LAUNCHED && !KEY_NAMES.has(upper) && !SECRET_NAME.test(name);
   });
-  return { ...Object.fromEntries(rest), ...kept };
+  return { ...Object.fromEntries(rest), ...kept, ...(launched === true ? { [LAUNCHED]: '1' } : {}) };
 }
 
 // Why a /foreman/run request can't be run, or null when it can: the script must be act or wake,
-// and its arguments a short list of plain text.
-export function foremanRequestRefusal({ script, argv } = {}) {
+// its arguments a short list of plain text, and `launched`, when given, true or false.
+export function foremanRequestRefusal({ script, argv, launched } = {}) {
   if (!FOREMAN_SCRIPTS.includes(script)) return `the Bosun's commands are ${FOREMAN_SCRIPTS.join(' and ')}`;
+  if (launched !== undefined && typeof launched !== 'boolean') return 'whether the command was started by its launcher must be true or false';
   if (!Array.isArray(argv) || argv.length > MOST_ARGUMENTS) return 'the arguments must be a list of at most 256';
   if (!argv.every((a) => typeof a === 'string' && a.length <= MOST_ARGUMENT_CHARS && !a.includes('\0'))) {
     return 'each argument must be text of at most 16,384 characters';
