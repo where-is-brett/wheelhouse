@@ -232,7 +232,7 @@ test('GitLab prState maps detailed_merge_status and state', async () => {
 });
 
 test('GitLab ciState reads the newest pipeline for the commit', async () => {
-  const { a, calls } = adapter('gitlab', { stdout: gl('pipelines.json') }, { stdout: gl('pipelines-none.json') });
+  const { a, calls } = adapter('gitlab', { stdout: gl('pipelines.json') }, { stdout: '[]' }, { stdout: gl('pipelines-none.json') });
   assert.deepEqual(await a.ciState(GL_SHA), { sha: GL_SHA, state: 'pending' });
   assert.deepEqual(calls[0].args, ['api', `projects/a-director%2Fproduct/pipelines?sha=${GL_SHA}&per_page=20&order_by=id&sort=desc`]);
   assert.deepEqual(await a.ciState(GL_SHA), { sha: GL_SHA, state: 'none' });
@@ -293,6 +293,7 @@ test('a key in the environment never appears in an argument', async () => {
       { stdout: f(host === 'github' ? 'pr-edit.txt' : 'mr-update.txt') },
       { stdout: f(host === 'github' ? 'pr-view-open.json' : 'mr-view-open.json') },
       { stdout: f(host === 'github' ? 'ci-success.json' : 'pipelines.json') },
+      ...(host === 'github' ? [] : [{ stdout: '[]' }]),
       { stdout: '' },
       { stdout: f(host === 'github' ? 'pr-view-merged.json' : 'mr-view-merged.json') },
       { stdout: f('issue-create.txt') },
@@ -307,7 +308,7 @@ test('a key in the environment never appears in an argument', async () => {
     await a.issue.create({ title: 't', body: 'b', labels: ['x'] });
     await a.issue.update({ number: 7, body: 'b' });
     await a.issue.list({ label: 'x' });
-    assert.equal(calls.length, 10);
+    assert.equal(calls.length, host === 'github' ? 10 : 11);
     for (const call of calls) {
       assert.equal(call.env, ENV, 'every call gets the adapter environment');
       for (const arg of call.args) {

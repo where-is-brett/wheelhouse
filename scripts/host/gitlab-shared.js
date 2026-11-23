@@ -94,16 +94,19 @@ export function ownStateOf(statuses) {
 // The CI state of a commit: the newest pipeline that is the project's, else its merge requests' merged results, else
 // Wheelhouse's own status, which stands for CI only where the project has none. `get(path)` gives GitLab's JSON.
 export async function ciStateOf({ get, project, sha }) {
+  // A skipped pipeline ran nothing, so the newest that ran is not it.
   const newest = realPipelines(await get(pipelinesOf(project, sha)))?.[0];
-  if (newest) return { sha, state: stateOf(newest) };
-  const merged = await mergedResults({ get, project, sha });
-  if (merged !== 'none') return { sha, state: merged };
-  // A status that can't be read claims nothing: the gate reads none as not passed.
+  const pipeline = newest ? stateOf(newest) : 'none';
+  const merged = pipeline === 'none' ? await mergedResults({ get, project, sha }) : pipeline;
+  // Wheelhouse's own status, where it has one that isn't passing, holds the commit whatever a pipeline says: a failure first,
+  // then a pending one. A status that can't be read claims nothing.
+  let own = 'none';
   try {
-    return { sha, state: ownStateOf(await get(statusesOf(project, sha))) };
-  } catch {
-    return { sha, state: 'none' };
-  }
+    own = ownStateOf(await get(statusesOf(project, sha)));
+  } catch { /* read as none */ }
+  if (merged === 'none') return { sha, state: own };
+  if (own === 'failure' || (own === 'pending' && merged !== 'failure')) return { sha, state: own };
+  return { sha, state: merged };
 }
 
 // A post GitLab refused as a state it cannot move to counts only when the commit already holds the state asked for.

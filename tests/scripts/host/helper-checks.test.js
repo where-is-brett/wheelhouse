@@ -11,7 +11,7 @@ import { workOrder } from '../../../scripts/engine/order.js';
 import { withTicket } from '../../../scripts/engine/ticket.js';
 import { makeEvent, writeEvent } from '../../../scripts/state/events.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
-import { commandDigest } from '../../../scripts/checks/record.js';
+import { commandDigest, writeCheck } from '../../../scripts/checks/record.js';
 import { run } from '../../../scripts/lib/run.js';
 import { g } from '../../helpers/git-fixture.js';
 import { until, waitLongerOnTheHelper } from '../../helpers/until.js';
@@ -140,3 +140,49 @@ test('a GitLab project whose default branch holds a pipeline file has its checks
   await helper.engine.tick();
   assert.deepEqual(statuses, [], 'nothing is reported');
 }, { engineless: true, hostKind: 'gitlab', files: { '.gitlab-ci.yml': 'test:\n  script: [true]\n' } }));
+
+// --- a pipeline on the host never stands for the check that failed on this computer ---
+
+// The helper's signed record of a check that failed on this computer for the head.
+const failed = (head) => writeCheck(P, { commit: head, command: commandDigest(COMMAND), result: 'failed', minutes: 0, tail: 'the tests said so' });
+
+// A change that breaks the price, opened as a pull request the host holds, with the host's own CI reading green.
+async function brokenChange({ host, remote, checkout, extra = {} }) {
+  hostWithRefs(host, remote);
+  const branch = 'wh/broken-change';
+  await g(checkout, 'checkout', '-q', '-b', branch);
+  fs.writeFileSync(path.join(checkout, 'src/price.js'), 'export const price = () => "broken";\n');
+  for (const [file, text] of Object.entries(extra)) {
+    fs.mkdirSync(path.dirname(path.join(checkout, file)), { recursive: true });
+    fs.writeFileSync(path.join(checkout, file), text);
+  }
+  await g(checkout, 'add', '-A');
+  await g(checkout, 'commit', '-q', '-m', 'A change');
+  await g(checkout, 'push', '-q', remote.url, branch);
+  const { number } = await host.openPr({ head: branch, base: 'main', title: 'A change', body: '' });
+  const head = (await run('git', ['rev-parse', 'HEAD'], { cwd: checkout })).stdout.trim();
+  return { number, head };
+}
+
+for (const hostKind of ['github', 'gitlab']) {
+  test(`${hostKind}: a pipeline the change itself adds, passing, does not let a failed check merge`, { timeout: 300000 }, () => checksWorld(async ({ host, remote, checkout, client }) => {
+    const { number, head } = await brokenChange({ host, remote, checkout, extra: hostKind === 'gitlab' ? { '.gitlab-ci.yml': 't:\n  script: [true]\n' } : { '.github/workflows/ci.yml': 'on: push\n' } });
+    await failed(head);
+    const answer = await client.merge({ project: P, number });
+    assert.equal(answer.ok, false);
+    assert.match(answer.refused, /no passing check on this computer/);
+  }, { engineless: true, hostKind, host: { ciState: async (sha) => ({ sha, state: 'success' }) } }));
+
+  test(`${hostKind}: checks set to run here, with a passing lint-only pipeline, do not let a failed check merge`, { timeout: 300000 }, () => checksWorld(async ({ host, remote, checkout, client }) => {
+    const { number, head } = await brokenChange({ host, remote, checkout });
+    await failed(head);
+    const answer = await client.merge({ project: P, number });
+    assert.equal(answer.ok, false);
+    assert.match(answer.refused, /no passing check on this computer/);
+  }, {
+    engineless: true,
+    hostKind,
+    files: { '.claude/wheelhouse.json': JSON.stringify({ ...readConfig(null), testCommand: COMMAND, checks: { where: 'here' } }) },
+    host: { ciState: async (sha) => ({ sha, state: 'success' }), checkContexts: async () => [{ name: 'lint', state: 'success', startedAt: '2026-11-23T00:00:00Z' }] },
+  }));
+}

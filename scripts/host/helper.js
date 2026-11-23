@@ -3636,8 +3636,9 @@ export async function startHelper({
     }
     // Where a project's checks run here, a fix passes the condition the broker asks of every other merge.
     let checkWaiting = false;
-    if (fixCall || keeping || recordOf(project).host === 'local') {
-      const permit = await checkPermit(project, headSha);
+    // Where the project's checks run here, the signed check is what the gate asks, whatever a pipeline or status on the host says.
+    if (fixCall || keeping || ['local', 'github', 'gitlab'].includes(recordOf(project).host)) {
+      const permit = await checkPermit(project, headSha, { unreadOpen: !fixCall && !keeping });
       if (permit.checksHere === true && !checkCounts(permit.check, headSha, permit.digest, enrolled, { notCounting: permit.notCounting })) {
         stateReasons.push(`there is no passing check on this computer of ${headSha.slice(0, 7)}`);
         checkWaiting = !['failed', 'timed-out'].includes(permit.check?.data?.result);
@@ -4843,7 +4844,9 @@ export async function startHelper({
   const signedChecks = (project) => signedOf(project, 'check');
   // What the merge condition reads for a head. What can't be read counts as checks that run here with none passed, so a
   // merge is refused rather than let through; only a project whose checks are known to run on the host goes as before.
-  async function checkPermit(project, head) {
+  // `unreadOpen`: for the gate's own read of a project on a host, where the host's CI answers too, facts that can't be read leave
+  // the host's reading to decide (the engine's permit, which has no other answer, keeps failing closed).
+  async function checkPermit(project, head, { unreadOpen = false } = {}) {
     const { host } = recordOf(project);
     if (host !== 'github' && host !== 'gitlab' && host !== 'local') return { checksHere: false };
     let facts;
@@ -4851,6 +4854,7 @@ export async function startHelper({
       facts = await checksFacts(project);
     } catch (error) {
       if (error instanceof LookRefusal) throw error;
+      if (unreadOpen && host !== 'local') return { checksHere: false };
       return { checksHere: true, check: null, digest: null, notCounting: false };
     }
     if (!checksRunHere(project, facts)) return { checksHere: false };
@@ -5427,6 +5431,7 @@ export async function startHelper({
   // The projects with no engine plugged in (Wheelhouse's own engine) whose checks run on this computer: each has only its
   // check runner, which reports to the host so the watcher and the gate read the result there.
   const checkHosts = [];
+  const handedOver = new Set();
   const checksOf = (project) => (engineHosts.find((h) => h.project === project) ?? checkHosts.find((h) => h.project === project))?.checks;
   const engineCtx = () => ({ mode: 'quick', env: {}, signedOut: false, looked: new Map(), gitEnv: {}, secrets: [] });
   function engineWrite(project, kind, data) {
@@ -5542,8 +5547,8 @@ export async function startHelper({
         continue;
       }
       // A project that has gained an engine has the runner of its engine host instead.
-      const apart = checkHosts.findIndex((h) => h.project === project);
-      if (apart !== -1) checkHosts.splice(apart, 1)[0].checks.stop().catch(() => {});
+      // It is taken out between ticks (engineTick), never while one is going through the list.
+      if (checkHosts.some((h) => h.project === project)) handedOver.add(project);
       try {
         const { runner, dispatcher, checks, inStep } = engineDesk(project, engine);
         const host = startEngineHost({
@@ -5566,12 +5571,12 @@ export async function startHelper({
         // An engine that can't be followed gets no host; the other projects' hosts start all the same.
       }
     }
-    if (engineHosts.length > 0 && stopWatch === null) {
+    if (engineHosts.length + checkHosts.length > 0 && stopWatch === null) {
       watchStop();
       stopWatch = setInterval(watchStop, stopPollMs);
       stopWatch.unref?.();
-      const roomEngine = engineHosts[0].engine;
-      if (typeof roomEngine.roomCommand === 'function') {
+      const roomEngine = engineHosts[0]?.engine;
+      if (roomEngine !== undefined && typeof roomEngine.roomCommand === 'function') {
         room = engineRoom({ spawn, command: () => roomEngine.roomCommand(), wanted: roomWanted, held: stopped });
         try { room.tend(); } catch { /* tried again with the dispatcher */ }
       }
@@ -6574,6 +6579,12 @@ export async function startHelper({
   let ticking = null;
   function engineTick() {
     ticking ??= (async () => {
+      // A project that gained an engine leaves its runner to the engine host's: the old one is ended before either ticks.
+      for (const project of handedOver) {
+        const at = checkHosts.findIndex((h) => h.project === project);
+        if (at !== -1) await checkHosts.splice(at, 1)[0].checks.stop().catch(() => {});
+      }
+      handedOver.clear();
       for (const { runner, dispatcher, checks, inStep } of engineHosts) {
         if (closing) break;
         await runner.tick().catch(() => {});
