@@ -579,7 +579,7 @@ function installAmendment(project, folder, record) {
   installText(target, changed);
 }
 
-function keepAfterClick(project, folder, made) {
+export function keepAfterClick(project, folder, made) {
   const data = made?.data;
   try {
     if (data?.action === 'approve-work') keepDocument(project, folder, data);

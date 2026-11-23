@@ -20,7 +20,9 @@ import { openTestRecord } from '../../helpers/record-fixture.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { dataHash, listEvents, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, runbookLine, LIFT_STOP } from '../../../scripts/state/card-lines.js';
+import { approvalLine, confirmLine, runbookLine, LIFT_STOP, approveWorkLine, amendLine } from '../../../scripts/state/card-lines.js';
+import { briefHash } from '../../../scripts/feature/files.js';
+import { approvedText } from '../../../scripts/state/approved-text.js';
 import {
   askInWindow, CARD_VARIABLE, MAC_OSASCRIPT, MAC_SCRIPT, MAC_SCRIPT_NO_DEFAULT, NOT_NOW, WINDOWS_SCRIPT, WINDOW_MS, windowsShell,
 } from '../../../scripts/confirm/window.js';
@@ -487,6 +489,59 @@ test('a window-signed approval takes its card out of waiting, with the plain ans
     const { views } = await c.client.state.views({ project: c.project });
     assert.ok(!views.waiting.some((w) => w.id === shown.card), 'the card no longer waits');
     assert.match((await c.client.confirm({ project: c.project, ...shown })).refused, /no longer waits/);
+  } finally {
+    await c.close();
+  }
+});
+
+// On Copilot, whose chat records no click, the First Mate sends a work's approval card and its change card to the window.
+test('approving a work as written, and changing it, are signed in the window, with the approved text kept', async () => {
+  let reply = said('Approve');
+  const c = await computer(() => reply);
+  try {
+    const text = '# Export\nAdd an export of orders as CSV.\n';
+    const doc = briefHash(text);
+    fs.writeFileSync(path.join(c.folder, 'd.md'), text);
+    const work = await c.client.state.write({ project: PROJECT, kind: 'work', data: { id: 'export-csv', title: 'Export', lane: 'small', doc: { path: 'd.md', hash: doc }, visible: true, dependsOn: [] } });
+    assert.equal(work.ok, true, JSON.stringify(work));
+    const card = {
+      question: `Approve this work as written?\nIt adds an export.\n${approveWorkLine('export-csv', 'small', doc)}`,
+      header: 'Approve work',
+      options: ['Approve', 'Suggest a change…', 'Show me', 'Not now'],
+      kind: 'approve-work',
+      level: 3,
+    };
+    const shown = await c.card(card);
+    const got = await c.client.confirm({ project: PROJECT, ...shown });
+    assert.equal(got.ok, true, JSON.stringify(got));
+    assert.deepEqual([got.recorded, got.kind, got.step, got.choice], [true, 'action', 'approval', 'Approve']);
+    assert.deepEqual(argvOf(c.windows[0].args).slice(3), ['Approve'], 'the other options stay in the chat');
+    const record = c.events().find((e) => e.id === got.id);
+    assert.deepEqual(record.data, { action: 'approve-work', work: 'export-csv', lane: 'small', hash: doc, shownFirst: false, question: card.question, label: 'Approve', proof: 'window' });
+    assert.ok(verify(record, readEnrolled()));
+    assert.equal(approvedText(PROJECT, doc), text, 'the approved text is kept');
+    const { views } = await c.client.state.views({ project: PROJECT });
+    assert.equal(views.work['export-csv'].approval?.hash, doc, 'the views read the work as approved');
+    assert.match((await c.client.confirm({ project: PROJECT, ...shown })).refused, /no longer waits/);
+
+    // A proposed change: Change it signs the amend the change card names.
+    const changed = '# Export\nAdd an export of orders as Excel.\n';
+    const next = briefHash(changed);
+    const amendment = await c.client.state.write({ project: PROJECT, kind: 'amendment', data: { work: 'export-csv', change: 'Excel, not CSV', hash: next } });
+    assert.equal(amendment.ok, true, JSON.stringify(amendment));
+    const change = {
+      question: `Change the work as proposed?\n${amendLine('export-csv', next)}`,
+      header: 'Change',
+      options: ['Change it', 'Not now'],
+      kind: 'amend',
+      level: 3,
+    };
+    reply = said('Change it');
+    const asked = await c.card(change);
+    const amended = await c.client.confirm({ project: PROJECT, ...asked });
+    assert.equal(amended.ok, true, JSON.stringify(amended));
+    assert.deepEqual([amended.recorded, amended.kind, amended.step], [true, 'action', 'approval']);
+    assert.deepEqual(c.events().find((e) => e.id === amended.id).data, { action: 'amend', work: 'export-csv', hash: next, question: change.question, label: 'Change it', proof: 'window' });
   } finally {
     await c.close();
   }

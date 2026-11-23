@@ -117,7 +117,7 @@ import { helperClient } from './helper-client.js';
 import { windowClick, undoCards, undoLine, UNDO_LINE, UNDO_NEEDS_WINDOW } from './local/undo.js';
 import { UNDO_BRANCH, undoConflictCard, undoOnHost } from './undo.js';
 import { CHAT_PROOFS, CONFIRMED_STEPS, hashRefusal } from '../agents/chat-clicks.js';
-import { earned, signsOn, askedUpdateCard } from '../hooks/prompt-record.js';
+import { earned, signsOn, askedUpdateCard, keepAfterClick } from '../hooks/prompt-record.js';
 import { askInWindow, NOT_NOW } from '../confirm/window.js';
 import { composeCard, questionProblem } from '../cards/compose.js';
 import { LIFT_STOP_CARD } from '../frontdesk/cli.js';
@@ -2399,6 +2399,9 @@ export async function startHelper({
   const ACTION_STEPS = {
     'lift-stop': 'lift-stop', runbook: 'runbook-step', 'ci-push': 'ci-push', 'keep-main': 'keep-main', 'undo-merge': 'runbook-step', 'undo-main': 'runbook-step',
     'keep-control-files': 'guardrail-change', // keeping a feature's files that steer agents as they are (ruling P7-31)
+    // Approving a work as written, and changing it to a proposed change: the director's approval of the work, given here
+    // on an agent whose chat records no click (its playbook sends these cards to the window).
+    'approve-work': 'approval', amend: 'approval',
     // An Ask allowance (ruling P8-8): Allow this time or Allow for this feature on a build question, and only there
     // (allowanceQuestion); an answer to any other question is no step the window confirms.
     answer: 'ask-allowance',
@@ -2599,6 +2602,8 @@ export async function startHelper({
       if (card !== LIFT_STOP_NAME && stopped() && servedUnderStop([still]).length === 0) return STOP_REFUSAL;
       const event = makeEvent({ kind: still.made.kind, data: { ...still.made.data, proof: 'window' }, now });
       const result = await writeEvent({ project, event, now });
+      // A work's approved text is kept, and a proposed change installed, as a hook that signs the same click does.
+      keepAfterClick(project, readProject(project)?.folder, event);
       await freshViews(() => writeViews(project, { now }));
       if (card !== LIFT_STOP_NAME) await doWrite({ project, kind: 'card-answer', data: { card, question: again.event.data.question, label: still.label, where: 'panel' } }, ctx);
       if (still.lift) liftStop();
