@@ -1,0 +1,32 @@
+{
+  "state": "live",
+  "project": "<b>x</b>",
+  "glance": "<i>g</i>",
+  "notice": "<u>n</u>",
+  "cards": [
+    {
+      "id": "c<9>",
+      "hash": "h\"1",
+      "kind": "<k>",
+      "header": "<h>",
+      "question": "<script>alert(1)</script>",
+      "what": "<img src=x onerror=y>",
+      "why": "<w>",
+      "meanwhile": "<m>",
+      "waited": "<t>",
+      "recommendation": "<r>",
+      "options": [
+        {
+          "label": "\"><svg onload=x>",
+          "says": "<s>"
+        }
+      ]
+    }
+  ],
+  "work": [
+    {
+      "title": "<wk>",
+      "state": "<q>"
+    }
+  ]
+}
