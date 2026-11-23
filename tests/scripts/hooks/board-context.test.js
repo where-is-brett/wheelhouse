@@ -27,6 +27,8 @@ import { SETUP_STEPS } from '../../../scripts/lib/setup-run.js';
 import { NOT_SET_UP, SETUP_FIRST } from '../../../scripts/hooks/session-start.js';
 import { keptRequest } from '../../../scripts/lib/kept-request.js';
 import { deskCore } from '../../../scripts/desk/core.js';
+import { markPanel, clearPanels } from '../../../scripts/desk/panel-live.js';
+import { PANE_LEAD } from '../../../scripts/cards/panel-words.js';
 import { fileSource } from '../../../scripts/desk/file-source.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
 import { markOpen, readOpen } from '../../../scripts/lib/session-files.js';
@@ -1342,5 +1344,55 @@ test('board-context: with more helm notes than it names, it names the newest', a
     const text = contextOf(await run(repo, 'What is going on?', NOW));
     assert.ok(text.includes('Note number 7.') && text.includes('Note number 3.'), text);
     assert.ok(!text.includes('Note number 2.') && !text.includes('Note number 1.'), text);
+  });
+});
+
+// --- An agent whose hooks can't write: the since line and the panel hint ---
+
+test('an agent whose hooks can\'t write is told what the panel answered since its last turn, from a per-session turn time', async () => {
+  await withProject(async ({ repo }) => {
+    store(stateDir(P), [askedCard(QUESTION_A, '30'), answeredCard(QUESTION_A, '34', 'panel')]);
+    const helper = { writeVia: 'helper' };
+    // The session's first turn has no earlier turn to count from.
+    assert.ok(!(contextOf(await run(repo, 'Hello', '2026-10-19T10:20:00.000Z', helper)) ?? '').includes(SINCE_LEAD));
+    // Nothing is written to seen.json by a hook that can't write.
+    assert.equal(readSeen(P, { now: at('2026-10-19T10:21:00.000Z') }).promptAt, null);
+    const text = contextOf(await run(repo, 'Done?', '2026-10-19T10:40:00.000Z', helper));
+    assert.ok(text.startsWith(SINCE_LEAD), text);
+    assert.match(text, /the footer wording on the contact page\?: approved in the panel at \d\d:34/);
+    // The turn time moved on: the same answer is not told again.
+    assert.ok(!(contextOf(await run(repo, 'And?', '2026-10-19T10:41:00.000Z', helper)) ?? '').includes(SINCE_LEAD));
+    // Another session's first turn counts from nothing.
+    const other = await decide(prompt(repo, 'Hi', 's2'), { now: at('2026-10-19T10:42:00.000Z'), env: {}, client, ...helper });
+    assert.ok(!(contextOf(other) ?? '').includes(SINCE_LEAD));
+  });
+});
+
+test('Claude Code\'s since line still comes from seen.json, and needs no turn time', async () => {
+  await withProject(async ({ repo }) => {
+    seenAt();
+    store(stateDir(P), [askedCard(QUESTION_A, '30'), answeredCard(QUESTION_A, '34', 'panel')]);
+    assert.ok(contextOf(await hook(prompt(repo, 'Done?', SESSION))).startsWith(SINCE_LEAD));
+  });
+});
+
+test('while the panel is live, an agent whose hooks can\'t write is told the cards are in the panel, not to ask them', async () => {
+  await withProject(async ({ repo }) => {
+    markSeen(P, { promptAt: new Date('2026-10-19T11:59:00.000Z') });
+    put(viewFile('waiting'), unasked(2));
+    clearPanels();
+    try {
+      markPanel(P, 'vscode-panel', Date.parse(NOW));
+      const text = contextOf(await run(repo, 'Hi', NOW, { writeVia: 'helper' }));
+      assert.ok(text.includes(PANE_LEAD), text);
+      assert.ok(!text.includes('Cards to ask this visit'), text);
+      // Claude Code's line stays as it was.
+      assert.equal(contextOf(await run(repo, 'Hi', NOW)), cardsLine(2));
+      // With no live panel the agent is told to ask them.
+      clearPanels();
+      assert.equal(contextOf(await run(repo, 'Hi', NOW, { writeVia: 'helper' })), cardsLine(2));
+    } finally {
+      clearPanels();
+    }
   });
 });

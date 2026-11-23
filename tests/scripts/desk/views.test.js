@@ -126,6 +126,16 @@ test('a mark is not given once the card has been asked since the panel took it, 
   assert.deepEqual(await look(empty), [], 'a card no longer waiting is not asked');
 }));
 
+test('waiting with paneOnly and a turn gives the session\'s last turn time and keeps this one', () => withRecord(async ({ source }) => {
+  clearPanels();
+  const first = (await readView('waiting', { paneOnly: true, turn: 's-turn' }, source, { now })).data;
+  assert.equal(first.turnAt, null, 'a first turn has none before it');
+  const later = () => new Date(Date.parse(NOW) + 60000);
+  const second = (await readView('waiting', { paneOnly: true, turn: 's-turn' }, source, { now: later })).data;
+  assert.equal(second.turnAt, now().toISOString());
+  assert.equal((await readView('waiting', { paneOnly: true, turn: 's-other' }, source, { now: later })).data.turnAt, null, 'per session');
+}));
+
 test('a paired app\'s signed paneOnly read takes the marks too, building no views; an unsigned one takes nothing', () => withRecord(async ({ source }) => {
   clearPanels();
   const bare = { ...source, views: async () => { throw new Error('no views are built'); } };

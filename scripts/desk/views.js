@@ -20,6 +20,7 @@ import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { crewNow } from '../crew/runs.js';
 import { panelLive, takeAskHere, handedAskHere, passHanded } from './panel-live.js';
+import { takeTurn } from '../lib/session-files.js';
 import { registeredProjects } from '../lib/projects.js';
 import { computerId } from '../lib/paths.js';
 import { agentInFolder } from '../agents/names.js';
@@ -487,7 +488,9 @@ const VIEWS = {
       const taken = args.askHere === true && client !== null && typeof source.project === 'string' ? { askHere: takeAskHere(source.project, when.getTime()) } : {};
       // `passHere` (card ids): says whether the panel handed every one to the chat, once (panel-live.js `passHanded`), for the card-check hook.
       const passed = Array.isArray(args.passHere) ? { passed: typeof source.project === 'string' && passHanded(source.project, args.passHere.filter((id) => typeof id === 'string'), when.getTime()) } : {};
-      return { ok: true, data: { paneLive: typeof source.project === 'string' && panelLive(source.project, when.getTime()), ...taken, ...passed }, lines: [] };
+      const turn = typeof args.turn === 'string' && args.turn !== '' ? takeTurn(args.turn, when.getTime()) : undefined;
+      const turned = turn === undefined ? {} : { turnAt: turn === null ? null : new Date(turn).toISOString() };
+      return { ok: true, data: { paneLive: typeof source.project === 'string' && panelLive(source.project, when.getTime()), ...taken, ...passed, ...turned }, lines: [] };
     }
     const got = await recordOf(source, { cards: true, answers: args.answers === true });
     if (got.refused) return { ok: false, refused: got.refused };

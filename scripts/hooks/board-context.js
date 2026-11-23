@@ -45,7 +45,7 @@
 import { answer, runAndExit, projectOf, beingSetUp, readTailEntries } from './kit.js';
 import { stoppedQuestion } from './stopped-question.js';
 import { answeredWords, subjectOf, NOTE_LEAD } from '../cards/answered.js';
-import { SINCE_LEAD, SINCE_TAIL } from '../cards/panel-words.js';
+import { SINCE_LEAD, SINCE_TAIL, paneLine } from '../cards/panel-words.js';
 import { chatCopy, approveWorkLine } from '../state/card-lines.js';
 import { isOpen } from '../desk/views.js';
 import { readOpen, clearOpen } from '../lib/session-files.js';
@@ -464,11 +464,16 @@ export async function decide(input, deps = {}) {
     }
     const desk = givenDesk ?? deskOf({ cwd: input.cwd, client, at });
     const count = (await within(() => cardsToAsk(desk, at), waitMs)) ?? 0;
-    const cards = count > 0 ? cardsLine(count) : null;
+    // On an agent whose hooks can't write, no prompt time is kept here, so the helper keeps the session's last turn time and
+    // says whether the project's panel is live. While it is, the panel holds the cards: they are not asked in the chat.
+    const sessionId = typeof input.session_id === 'string' ? input.session_id : null;
+    const turn = writes ? null : await within(() => desk.read('waiting', { paneOnly: true, ...(sessionId === null ? {} : { turn: sessionId }) }), waitMs);
+    const turnAt = typeof turn?.data?.turnAt === 'string' ? turn.data.turnAt : null;
+    const cards = count > 0 ? (turn?.data?.paneLive === true ? paneLine(count) : cardsLine(count)) : null;
+    const sinceAt = writes ? seen.promptAt : turnAt;
     // What the cards just answered or left open say, ahead of the cards line. A session's open.json is read once and
     // cleared by this prompt, whatever comes of the lines.
-    const sessionId = typeof input.session_id === 'string' ? input.session_id : null;
-    const open = sessionId === null ? null : attempt(() => readOpen(sessionId), null);
+    const open =sessionId === null ? null : attempt(() => readOpen(sessionId), null);
     if (writes && sessionId !== null) attempt(() => clearOpen(sessionId));
     // What the prompt hook makes of a reply (scripts/decisions/answer.js) it tells in its own context for this turn. Here the
     // reply is only read, under the same guards, to leave out the decision it answers.
@@ -481,7 +486,7 @@ export async function decide(input, deps = {}) {
     // only reads leaves it for one that can take it away.
     // A session a script started is no director arriving, so it never uses the digest up.
     const digest = writes && !startedByScript(env) ? attempt(() => readDigest(project), null) : null;
-    const notes = [decisionLine, orphans, digest?.text ?? null, stuck, helmNote, ...((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
+    const notes = [decisionLine, orphans, digest?.text ?? null, stuck, helmNote, ...((await within(() => cardNotes({ project, input, since: sinceAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
     const reserve = (cards === null ? 0 : cards.length + 2) + notes.reduce((sum, line) => sum + line.length + 2, 0);
     // A survey not worked out in time is left to the briefing view, which takes the record's latest.
     const survey = want === 'briefing' ? (await within(() => surveyOf({ project, client, desk }), learnWaitMs)) ?? undefined : null;
