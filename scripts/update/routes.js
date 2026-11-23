@@ -29,6 +29,7 @@ import { readEnrolled, verify } from '../state/signing.js';
 import { claudeHome as claudeHomeDir } from '../lineage/manifest.js';
 import { retiredInstalls } from './install.js';
 import { addonOffer } from './addon.js';
+import { INSTALL_THE_PANEL, NOT_NOW_PANEL, declinePanel, panelCard, panelHeld } from './panel.js';
 import { accountCatalogue } from './account-settings.js';
 import { runningVersion } from './board.js';
 import { releaseKind, updateMirror } from './change.js';
@@ -165,7 +166,7 @@ function milestones(steps, tag) {
 export function updateRoutes({
   now = () => new Date(), stopped = () => false, updateHeld = updateLockHeld, from = runningVersion, userHome = os.homedir(),
   run = realRun, spawn = nodeSpawn, list, fetch, check, kind, locked, requirements, claudeVersion = async () => null, signed = signedByDefault, clicked = clickedByDefault,
-  startRunner, account, retired, addon, panelAllowed,
+  startRunner, account, retired, addon, panelAllowed, panelOffer, panelInstall,
 } = {}) {
   const listing = list ?? (() => listReleases({ run }));
   const fetching = fetch ?? ((tag) => fetchTag({ ref: tag, run, mirror: updateMirror() }));
@@ -204,15 +205,19 @@ export function updateRoutes({
     });
     if (made.plan === undefined) return { ok: true, lines: made.lines };
     const removes = (retired ?? ((where) => retiredInstalls({ claudeHome: claudeHomeDir(), ...where })))({ projectDir: folder });
-    // Where the panel is not in VS Code, or is older than this release's, the card says the update installs it; the plan names it, so only that click does.
-    // A company list that leaves it out means no offer, and one plain line saying why.
+    // A panel already in VS Code and older than this release's is named on the card, and the plan names it, so only that click brings it up to
+    // date. Not for a put-back. A first install is never on this card: it is its own question (the /update/panel route). A company list that
+    // leaves the panel out means no line on the card, and one plain line saying why.
     let panel = null;
     let panelLine = null;
     try {
-      panel = await (addon ?? (() => addonOffer({ run, pluginVersion: made.plan.to })))();
-      if (panel !== null && (await (panelAllowed ?? (async () => (await import('../addon/allowed.js')).addonAllowed({ version: panel.to })))())?.allowed === false) {
-        panel = null;
-        panelLine = (await import('../addon/allowed.js')).NOT_ALLOWED_LINE;
+      if (made.plan.put !== 'undo') {
+        panel = await (addon ?? (() => addonOffer({ run, pluginVersion: made.plan.to })))();
+        if (panel?.kind !== 'update') panel = null;
+        if (panel !== null && (await (panelAllowed ?? (async () => (await import('../addon/allowed.js')).addonAllowed({ version: panel.to })))())?.allowed === false) {
+          panel = null;
+          panelLine = (await import('../addon/allowed.js')).NOT_ALLOWED_LINE;
+        }
       }
     } catch { panel = null; }
     const planned = { ...made.plan, ...(removes.length > 0 ? { removes } : {}), ...(panel !== null ? { addon: panel } : {}) };
@@ -311,6 +316,35 @@ export function updateRoutes({
     return { ok: true, recorded: true, lines: [waking ? 'Carrying on with the update.' : 'Your answer is recorded.'] };
   }
 
+  // The first install of the panel, its own question, asked once the update is done (or when there is nothing newer). Without `label` it
+  // gives the card, or the line saying why there is none. With a label it acts: Install the panel installs it; Skip for now keeps that for
+  // this computer, and the install is not offered again within this minor release.
+  async function panelRoute(body) {
+    onlyFields(body, ['folder', 'label']);
+    placeProject(body.folder);
+    if (stopped()) return { ok: true, lines: [STOP_FIRST] };
+    const now_ = from();
+    const allowedNow = async (version) => (await (panelAllowed ?? (async () => (await import('../addon/allowed.js')).addonAllowed({ version })))())?.allowed;
+    let offer = null;
+    try { offer = await (panelOffer ?? (() => addonOffer({ run, pluginVersion: now_ })))(); } catch { offer = null; }
+    const blocked = offer?.kind === 'install' && (await allowedNow(offer.to)) === false;
+    if (body.label === undefined) {
+      if (offer?.kind !== 'install') return { ok: true, lines: [] };
+      if (blocked) return { ok: true, lines: [(await import('../addon/allowed.js')).NOT_ALLOWED_LINE] };
+      if (panelHeld(offer.to)) return { ok: true, lines: [] };
+      return { ok: true, card: panelCard({ to: offer.to }), lines: [] };
+    }
+    if (![INSTALL_THE_PANEL, NOT_NOW_PANEL].includes(body.label)) refuse('the answer must be the label of one of the card\'s options');
+    if (offer?.kind !== 'install') return { ok: true, lines: ['There is no panel to add: it is in VS Code already, or this computer has no VS Code to add it to.'] };
+    if (body.label === NOT_NOW_PANEL) {
+      declinePanel(offer.to);
+      return { ok: true, recorded: true, lines: [`Understood. Nothing was added, and ${offer.to}'s panel won't be offered again in this series of releases.`] };
+    }
+    if (blocked) return { ok: true, lines: [(await import('../addon/allowed.js')).NOT_ALLOWED_LINE] };
+    const got = await (panelInstall ?? (async () => (await import('../addon/install.js')).installPanel({ run })))();
+    return { ok: true, installed: got.ok === true, lines: [got.says] };
+  }
+
   const guarded = (fn) => async (body) => {
     try {
       return await fn(body);
@@ -325,6 +359,7 @@ export function updateRoutes({
     '/update/apply': guarded(apply),
     '/update/status': guarded(status),
     '/update/answer': guarded(answer),
+    '/update/panel': guarded(panelRoute),
   };
 }
 

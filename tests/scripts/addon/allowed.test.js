@@ -164,3 +164,14 @@ test('the one line said when a list leaves the panel out is plain and names what
   assert.match(NOT_ALLOWED_LINE, /wheelhouse\.wheelhouse/);
   assert.ok(!NOT_ALLOWED_LINE.includes('\n'));
 });
+
+test('a Mac reads the machine-wide managed preference, then the one for this user', async () => {
+  const seen = [];
+  const run = async (file, args) => {
+    seen.push(args[1]);
+    return args[1].includes('/p/') ? { code: 0, stdout: '{"github": true}\n', stderr: '' } : { code: 1, stdout: '', stderr: 'does not exist' };
+  };
+  const got = await addonAllowed({ platform: 'darwin', run, readFile: async () => { throw new Error('ENOENT'); }, env: {}, home: '/Users/p', version: '0.3.0', user: 'p' });
+  assert.deepEqual(seen, ['/Library/Managed Preferences/com.microsoft.VSCode', '/Library/Managed Preferences/p/com.microsoft.VSCode']);
+  assert.equal(got.allowed, false);
+});

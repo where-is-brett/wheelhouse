@@ -96,7 +96,7 @@ const regValue = (stdout) => /^\s*AllowedExtensions\s+REG_\w+\s+(.*?)\s*$/m.exec
 // The one plain line said when the panel isn't offered because a list leaves it out.
 export const NOT_ALLOWED_LINE = 'Your company\'s VS Code settings don\'t allow the Wheelhouse panel, so it isn\'t offered. Wheelhouse works in the chat as it does now, and your IT can allow wheelhouse.wheelhouse if you\'d like the panel.';
 
-// addonAllowed({ platform, run, readFile, env, home, version }) -> Promise<{ allowed: true | false | null, why }>. Never throws.
+// addonAllowed({ platform, run, readFile, env, home, version, user }) -> Promise<{ allowed: true | false | null, why }>. Never throws.
 export async function addonAllowed({
   platform = process.platform,
   run = realRun,
@@ -104,6 +104,7 @@ export async function addonAllowed({
   env = process.env,
   home = os.homedir(),
   version = pluginVersion(),
+  user = (() => { try { return os.userInfo().username; } catch { return ''; } })(),
 } = {}) {
   try {
     // 1. The policy.
@@ -119,10 +120,13 @@ export async function addonAllowed({
         } catch { /* no registry tool to ask: nothing read from this hive */ }
       }
     } else if (platform === 'darwin') {
-      try {
-        const got = await run('defaults', ['read', MAC_DOMAIN, 'AllowedExtensions'], { env, input: '', timeoutMs: READ_WAIT_MS });
-        if (got?.code === 0 && String(got.stdout).trim() !== '') policy = String(got.stdout).trim();
-      } catch { /* no preference tool to ask: nothing read */ }
+      // The machine-wide managed preference first, then the one for this user.
+      for (const domain of [MAC_DOMAIN, ...(typeof user === 'string' && user !== '' ? [`/Library/Managed Preferences/${user}/com.microsoft.VSCode`] : [])]) {
+        try {
+          const got = await run('defaults', ['read', domain, 'AllowedExtensions'], { env, input: '', timeoutMs: READ_WAIT_MS });
+          if (got?.code === 0 && String(got.stdout).trim() !== '') { policy = String(got.stdout).trim(); break; }
+        } catch { /* no preference tool to ask: nothing read */ }
+      }
     } else {
       // Linux: VS Code's policy file. Its path and shape are not in VS Code's published enterprise documentation, only in its
       // source, so this read is a best effort: a file that isn't there or can't be read is "nothing read", never "blocked".

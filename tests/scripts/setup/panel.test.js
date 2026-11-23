@@ -109,6 +109,26 @@ test('a company list that leaves the panel out: no question, no change, one plai
   });
 });
 
+test('the question says why it is the director\'s choice and how to get the panel later', () => {
+  const card = panelAsk(NEW).card;
+  assert.match(card.why, /It adds software to VS Code on this computer, so it's your choice\./);
+  assert.match(card.options.find((o) => o.label === 'Skip for now').says, /Run setup again to add it/);
+});
+
+test('a company list that leaves the panel out is said once where step 6 has a card (in apply), and not in its plan', async () => {
+  await withProject(async ({ folder, user, config }) => {
+    const said = [];
+    const step = stepWith(config, offering({ blocked: NOT_ALLOWED_LINE }));
+    const ctx = { ...ctxFor(folder, user), say: (l) => said.push(l) };
+    const planned = await step.plan(ctx);
+    assert.ok(planned.changes.length > 0, 'a card, so the plan\'s line would not be kept');
+    // The engine keeps a plan's line only when the step settles, so the plan's say is dropped here and apply says it.
+    said.length = 0;
+    await step.apply({ ...ctx, applyJsonKey: () => {}, record: () => {} }, planned.changes);
+    assert.deepEqual(said.filter((l) => l === NOT_ALLOWED_LINE), [NOT_ALLOWED_LINE]);
+  });
+});
+
 test('the real offer needs this release to carry the panel\'s package, and says nothing without it', async () => {
   const root = tempFolder('wh-root-');
   const none = async () => { throw new Error('never asked'); };
