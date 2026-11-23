@@ -57,6 +57,9 @@
 //     once, and its `raised(record)`, when it has one, is told of each once it
 //     is in the state; a prepare that answers `{ lifted: true }` removed a hold
 //     of the project's, and its lift is recorded (liftHolds);
+//   - `beforeWork({ project, target, worktree })`, run before every start and wake of a feature's session, with the
+//     feature's worktree: for an agent whose session can't make a folder its brief names. It informs, so a throw is
+//     reported and the run still starts;
 //   - a call's `output`, a file the child's stdout and stderr are appended to,
 //     with `afterRun({ stdout, code, call, target, project, at })` reading what the run
 //     appended once it ends: its `{ ok, why }` settles the wakes in place of the
@@ -1269,6 +1272,13 @@ export function makeWaker({
         throw error;
       }
       if (prepared?.lifted === true) await liftHolds();
+    }
+    if (target !== 'foreman' && typeof adapter.beforeWork === 'function' && typeof cwd === 'string') {
+      try {
+        await adapter.beforeWork({ project, target, worktree: cwd });
+      } catch (error) {
+        onError(`The ${nameOf(target)} session's folders couldn't be made before its run: ${error instanceof Error ? error.message : 'unknown error'}`);
+      }
     }
     const call = build(adapter);
     beforeRun(call);

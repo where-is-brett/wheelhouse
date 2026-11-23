@@ -10,8 +10,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tempFolder } from '../../../helpers/homes.js';
 import tools from '../../../../adapters/copilot/tools.js';
+import { FEATURE_AGENT as SESSIONS_FEATURE_AGENT, FEATURE_RULES_FILE } from '../../../../adapters/copilot/sessions.js';
 import {
-  CLAUDE_TO_COPILOT, FOREMAN_RULES, HOME_DIR, SOURCES, buildCleanHome, buildHome, checkHome, cleanCheckout, gitBlobHash, writeHome,
+  CLAUDE_TO_COPILOT, FEATURE_AGENT, FEATURE_RULES, FOREMAN_RULES, HOME_DIR, SOURCES, buildCleanHome, buildHome, checkHome, cleanCheckout, gitBlobHash, writeHome,
 } from '../../../../scripts/agents/copilot/home.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
@@ -19,7 +20,7 @@ const HOME_SCRIPT = path.join(ROOT, 'scripts', 'agents', 'copilot', 'home.js');
 const CLAUDE_ONLY = ['AskUserQuestion', 'PushNotification', 'ToolSearch', 'SendMessage', 'CLAUDE_PLUGIN_ROOT'];
 const CLAUDE_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'Task', 'TodoWrite', 'NotebookRead', 'LS'];
 const ALL_COPILOT_TOOLS = new Set(Object.values(tools).flatMap((v) => (Array.isArray(v) ? v : [v])));
-const AGENTS = ['builder', 'foreman', 'reviewer', 'tester'];
+const AGENTS = ['builder', 'feature', 'foreman', 'reviewer', 'tester'];
 
 const home = buildHome({ root: ROOT });
 const lf = (text) => text.replaceAll('\r\n', '\n');
@@ -106,9 +107,27 @@ test('the home is byte-stable: LF only, sorted, the same on every build', () => 
   }
 });
 
-test('the home holds the four agents, the builder\'s and the foreman\'s rule and the manifest, and no skill, hook or instruction', () => {
-  assert.deepEqual([...home.keys()], ['MANIFEST.txt', ...AGENTS.map((a) => `agents/wheelhouse-${a}.agent.md`), 'rules/wheelhouse-builder.json', 'rules/wheelhouse-foreman.json']);
-  assert.deepEqual(JSON.parse(home.get('rules/wheelhouse-builder.json')), { agent: 'wheelhouse-builder', shell: ['bash', 'powershell'], allow: ['wh-feature:*'] });
+test('the home holds the five agents, the feature session\'s and the foreman\'s rule and the manifest, and no skill, hook or instruction', () => {
+  assert.deepEqual([...home.keys()], ['MANIFEST.txt', ...AGENTS.map((a) => `agents/wheelhouse-${a}.agent.md`), 'rules/wheelhouse-feature.json', 'rules/wheelhouse-foreman.json']);
+  assert.deepEqual(JSON.parse(home.get('rules/wheelhouse-feature.json')), { agent: 'wheelhouse-feature', shell: ['bash', 'powershell'], allow: ['wh-feature:*'] });
+});
+
+test('the feature session has the builder\'s tools and `task` and `skill`, and no Crew member has either', () => {
+  const feature = split(home.get('agents/wheelhouse-feature.agent.md'));
+  const builder = split(home.get('agents/wheelhouse-builder.agent.md'));
+  assert.deepEqual(feature.front.tools, [...builder.front.tools, 'task', 'skill']);
+  for (const agent of ['builder', 'reviewer', 'tester', 'foreman']) {
+    const { front } = split(home.get(`agents/wheelhouse-${agent}.agent.md`));
+    for (const tool of ['task', 'skill']) assert.ok(!front.tools.includes(tool), `${agent} has ${tool}`);
+  }
+  // It dispatches the Crew by their Copilot names, and the brief it runs from is the brief's own.
+  for (const name of ['wheelhouse-builder', 'wheelhouse-reviewer', 'wheelhouse-tester']) assert.ok(feature.body.includes(`\`${name}\``), name);
+  assert.ok(feature.body.includes('.wheelhouse/feature/brief.md'));
+});
+
+test('the sessions part names the feature agent the home builds, and its rule file is the home\'s', () => {
+  assert.equal(FEATURE_AGENT, SESSIONS_FEATURE_AGENT);
+  assert.equal(path.relative(path.join(ROOT, 'adapters', 'copilot', 'home'), FEATURE_RULES_FILE).split(path.sep).join('/'), FEATURE_RULES);
 });
 
 test('the foreman gets two commands: its agent holds the shell tools and nothing else, and its rule names wake and act', () => {
@@ -145,8 +164,9 @@ test('every agent\'s tools are Copilot\'s names, and no agent but the builder ma
     assert.ok(Array.isArray(front.tools) && front.tools.length > 0, `${agent} has tools`);
     for (const tool of front.tools) assert.ok(ALL_COPILOT_TOOLS.has(tool), `${agent}: ${tool} is not a Copilot tool`);
     assert.equal(new Set(front.tools).size, front.tools.length, `${agent} names no tool twice`);
-    for (const forbidden of ['task', 'skill', 'sql', 'ask_user']) assert.ok(!front.tools.includes(forbidden), `${agent} has ${forbidden}`);
-    if (agent !== 'builder') assert.deepEqual(front.tools.filter((t) => tools.edit.includes(t)), [], agent);
+    // Only the feature session dispatches (`task`) and loads skills; no agent has `sql` or the question tool.
+    for (const forbidden of agent === 'feature' ? ['sql', 'ask_user'] : ['task', 'skill', 'sql', 'ask_user']) assert.ok(!front.tools.includes(forbidden), `${agent} has ${forbidden}`);
+    if (agent !== 'builder' && agent !== 'feature') assert.deepEqual(front.tools.filter((t) => tools.edit.includes(t)), [], agent);
   }
   assert.deepEqual([...split(home.get('agents/wheelhouse-tester.agent.md')).front.tools].sort(), ['bash', 'glob', 'powershell', 'rg', 'view', 'web_fetch']);
   const builder = split(home.get('agents/wheelhouse-builder.agent.md')).front.tools;
@@ -211,7 +231,7 @@ test('every file starts with its path comment, after front matter, and names the
     if (file === 'MANIFEST.txt' || file.endsWith('.json')) continue;
     assert.match(text, /^---\n[\s\S]*?\n---\n<!-- /, `${file}: the comment follows the front matter`);
     const first = text.split('\n---\n')[1].split('\n')[0];
-    assert.match(first, new RegExp(`^<!-- ${HOME_DIR}/${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\(built from (agents/[a-z]+\\.md|skills/foreman/SKILL\\.md) by npm run copilot-home\\) -->$`), `${file}: ${first}`);
+    assert.match(first, new RegExp(`^<!-- ${HOME_DIR}/${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\(built from (agents/[a-z]+\\.md|skills/foreman/SKILL\\.md|scripts/agents/copilot/home\\.js) by npm run copilot-home\\) -->$`), `${file}: ${first}`);
     const { front } = split(text);
     assert.match(front.name, /^wheelhouse-[a-z]+$/);
     assert.equal(file, `agents/${front.name}.agent.md`);

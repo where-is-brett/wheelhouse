@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as briefModule from '../../../scripts/feature/brief.js';
-import { renderBrief, amendBrief } from '../../../scripts/feature/brief.js';
+import { renderBrief, renderAgain, amendBrief } from '../../../scripts/feature/brief.js';
 import { parseBrief, briefHash } from '../../../scripts/feature/files.js';
 import { LANES } from '../../../scripts/lib/build-loop.js';
 
@@ -446,4 +446,46 @@ test('the brief names the base ref and says to compare against it, never the loc
     assert.ok(text.includes('git fetch origin'), `${lane}: fetches before comparing`);
     assert.ok(text.includes('never the local default branch'), `${lane}: not the local default branch`);
   }
+});
+
+// --- The Crew's names ---
+
+test('a launcher brief names the Crew with a hyphen, as the agent files do, and a Claude Code brief with a colon', () => {
+  for (const lane of LANES) {
+    const claude = render(lane);
+    const launched = renderBrief({ fields: fields(lane), pluginRoot, launchers: true });
+    assert.doesNotMatch(launched, /wheelhouse:(builder|reviewer|tester)/, lane);
+    assert.match(launched, /wheelhouse-reviewer/, lane);
+    assert.match(claude, /wheelhouse:reviewer/, lane);
+    assert.doesNotMatch(claude, /wheelhouse-(builder|reviewer|tester)/, lane);
+    // Skills keep their colon.
+    assert.doesNotMatch(launched, /superpowers-/, lane);
+  }
+  const roles = renderBrief({ fields: fields('feature'), pluginRoot, launchers: true });
+  for (const line of ['- builder (`wheelhouse-builder`', '- reviewer (`wheelhouse-reviewer`', '- tester (`wheelhouse-tester`']) assert.ok(roles.includes(line), line);
+});
+
+// --- Writing a brief again ---
+
+test('a brief written again keeps its fields and amendments and takes the words of the agent that runs now', () => {
+  const stale = render('feature');
+  const amended = amendBrief(stale, { change: 'The director wants sign in by email only', now: '2026-10-19T03:04:05.000Z' });
+  const again = renderAgain(amended, { pluginRoot, launchers: true });
+  assert.deepEqual(parseBrief(again).fields, parseBrief(amended).fields);
+  assert.equal(parseBrief(again).fields.version, 2);
+  assert.equal(parseBrief(again).fields.plan, 'docs/plans/login.md');
+  const { body } = parseBrief(again);
+  assert.ok(body.trimStart().startsWith(overrideText()), 'the override still opens the text');
+  assert.match(body.trimStart().slice(overrideText().length), /^\n\n# What changed\n\n- 19 October 2026 \(version 2\): The director wants sign in by email only\n\n# The work\n/);
+  assert.equal(body.match(/# What changed/g).length, 1);
+  assert.doesNotMatch(again, /wheelhouse:(builder|reviewer|tester)/);
+  assert.doesNotMatch(again, /git diff/);
+  // It is the brief a start would write now, with the amendment put back.
+  const start = renderBrief({ fields: parseBrief(amended).fields, pluginRoot, launchers: true });
+  assert.equal(again.slice(again.indexOf('# The work')), start.slice(start.indexOf('# The work')));
+  // Written again once more, it is the same text.
+  assert.equal(renderAgain(again, { pluginRoot, launchers: true }), again);
+  // A brief with no amendment is a fresh render.
+  assert.equal(renderAgain(stale, { pluginRoot, launchers: true }), start.replace(/"version": 2/, '"version": 1'));
+  assert.throws(() => renderAgain('not a brief', { pluginRoot }), /can't be read/);
 });

@@ -196,7 +196,9 @@ test('an evaluation session is started as the watcher starts the same role\'s: t
   await part.prepare({ project: EVAL_PROJECT, target: EVAL_TARGET });
   const waker = part.featureStartCall({ config: {}, project: EVAL_PROJECT, work: EVAL_TARGET.slice('feature-'.length), prompt: 'The watcher\'s prompt.', worktree, level: 'ask', grants: [], env: process.env, copilot: { kind: 'direct', file: 'copilot' } });
   // The evaluation's.
-  const { saw, dir, home } = await viaStandIn(fixtureFile({ events: [] }));
+  // A scenario that plays the feature session names that role: the watcher starts a feature as `wheelhouse-feature`, which
+  // has the `task` tool the builder lacks.
+  const { saw, dir, home } = await viaStandIn(fixtureFile({ events: [] }), { role: 'feature' });
 
   const valueAfter = (args, flag) => args[args.indexOf(flag) + 1];
   const plain = (args, { prompt, project, root }) => {
@@ -207,7 +209,7 @@ test('an evaluation session is started as the watcher starts the same role\'s: t
   const watcherArgs = plain(waker.args, { prompt: 'The watcher\'s prompt.', project: slashed(worktree), root: slashed(wakerHome) });
   const evalArgs = plain(saw.args, { prompt: 'Say hello.', project: slashed(dir), root: slashed(home) });
   assert.deepEqual(evalArgs, watcherArgs);
-  assert.equal(valueAfter(evalArgs, '--agent'), 'wheelhouse-builder');
+  assert.equal(valueAfter(evalArgs, '--agent'), 'wheelhouse-feature');
 
   // The homes: the same files, each the same apart from the Wheelhouse home's own path.
   const tree = (own, root) => {

@@ -86,6 +86,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { BUNDLE_MS, STUCK_MS, questionIdOf } from '../lib/build-loop.js';
+import { crewAgent } from '../lib/crew-names.js';
 import { stateDir } from '../lib/paths.js';
 
 // How many ids the cursor remembers.
@@ -307,7 +308,7 @@ function stateEvents(next, prs, out) {
   }
 }
 
-function featureEvents(prev, next, settled, out) {
+function featureEvents(prev, next, settled, out, launchers) {
   const anchor = seqOf(prev);
   for (const [work, f] of entries(next.features)) {
     if (!isPlain(f)) continue;
@@ -388,7 +389,7 @@ function featureEvents(prev, next, settled, out) {
       if (isPlain(open) && reviewNeeded(open) && typeof open.head === 'string') {
         // Its pull request waits for a review nobody has dispatched: the session is told again, and the Bosun hears of it in
         // place of a bare stuck.
-        out.push({ type: 'review-needed', work, pr: status.pr, id: `review-needed:${work}:${open.head}:again`, detail: { head: open.head, next: reviewAgainText(status.pr, open.head) } });
+        out.push({ type: 'review-needed', work, pr: status.pr, id: `review-needed:${work}:${open.head}:again`, detail: { head: open.head, next: reviewAgainText(status.pr, open.head, launchers) } });
         out.push({ type: 'review-overdue', work, pr: status.pr, id: `review-overdue:${work}:${open.head}`, detail: { head: open.head, still: s.still } });
       } else {
         const id = status ? `stuck:${work}:${status.updatedAt}` : `stuck:${work}:none:${anchor}`;
@@ -407,8 +408,8 @@ const prSettledText = (pr, state) => `Pull request #${pr} you were waiting on ha
 
 // What the session reads when its pull request no longer merges cleanly with the default branch. It can fetch nothing, so the
 // helper brings the default branch in (`pull --default`), and the session resolves what clashes, tests, pushes and has the new head reviewed.
-const conflictText = (pr) => `Pull request #${pr} no longer merges cleanly with the default branch. You can't fetch it yourself: run \`pull --default\` to bring the default branch in through the helper. `
-  + 'If files clash, open each one, keep both sides\' intent, remove the conflict markers and finish the merge the way your brief says to commit. Then run the tests, push, and dispatch wheelhouse:reviewer on the new head.';
+const conflictText = (pr, launchers = false) => `Pull request #${pr} no longer merges cleanly with the default branch. You can't fetch it yourself: run \`pull --default\` to bring the default branch in through the helper. `
+  + `If files clash, open each one, keep both sides' intent, remove the conflict markers and finish the merge the way your brief says to commit. Then run the tests, push, and dispatch ${crewAgent('reviewer', launchers)} on the new head.`;
 
 // What a pull request's state says, each to whom section 11 sends it.
 const PR_CONDITIONS = [
@@ -424,22 +425,22 @@ const PR_CONDITIONS = [
 // What the session reads in a review-needed wake. Wheelhouse has already looked in its own record of signed reviews: the head
 // has none, so there is nothing for the session to check. Its own notes of a review never count (ruling R119: the gate's
 // update merge moved the context the earlier review was taken against).
-const reviewNeededText = (pr, head) => `Wheelhouse checked its record of signed reviews: ${head} has no review yet. The gate brought the branch up to date, and the review of the earlier commit didn't carry over to it. `
-  + `Pull the branch, then dispatch wheelhouse:reviewer now with pr: ${pr} on ${head}. Your own notes of a review don't count, only the reviewer's signed one.`;
+const reviewNeededText = (pr, head, launchers = false) => `Wheelhouse checked its record of signed reviews: ${head} has no review yet. The gate brought the branch up to date, and the review of the earlier commit didn't carry over to it. `
+  + `Pull the branch, then dispatch ${crewAgent('reviewer', launchers)} now with pr: ${pr} on ${head}. Your own notes of a review don't count, only the reviewer's signed one.`;
 // The same ask once the session has let it stand: said again, firmly, before the Bosun hears of it.
-const reviewAgainText = (pr, head) => `Second notice. Wheelhouse checked its record of signed reviews again: ${head} still has no review, and the pull request cannot merge without one. `
-  + `Dispatch wheelhouse:reviewer now with pr: ${pr} on ${head}. Do nothing else first, and don't stop until it has run.`;
+const reviewAgainText = (pr, head, launchers = false) => `Second notice. Wheelhouse checked its record of signed reviews again: ${head} still has no review, and the pull request cannot merge without one. `
+  + `Dispatch ${crewAgent('reviewer', launchers)} now with pr: ${pr} on ${head}. Do nothing else first, and don't stop until it has run.`;
 // What the session reads in a findings wake or a review-passed note, decided here from the signed review's counts: it
 // never judges severity itself. A review that holds the merge says to fix its blocking findings and defer any minors; one that leaves only minors
 // says they are deferred.
 const short = (head) => String(head ?? '').slice(0, 7);
-export const findingsText = (head, p) => `Wheelhouse's signed review of ${short(head)} holds the merge (${p.findings ?? 'an unknown number of'} findings; `
+export const findingsText = (head, p, launchers = false) => `Wheelhouse's signed review of ${short(head)} holds the merge (${p.findings ?? 'an unknown number of'} findings; `
   + `${Number.isInteger(p.blocking) ? `${p.blocking} of them BLOCKER or HIGH` : 'no severity count'}). `
-  + `Fix the ${Number.isInteger(p.blocking) ? `${p.blocking} BLOCKER or HIGH finding${p.blocking === 1 ? '' : 's'}` : 'BLOCKER and HIGH findings'} it lists and defer its MEDIUM and LOW ones as minors, push, then dispatch wheelhouse:reviewer on the new head. You can't defer the blocking ones.`;
+  + `Fix the ${Number.isInteger(p.blocking) ? `${p.blocking} BLOCKER or HIGH finding${p.blocking === 1 ? '' : 's'}` : 'BLOCKER and HIGH findings'} it lists and defer its MEDIUM and LOW ones as minors, push, then dispatch ${crewAgent('reviewer', launchers)} on the new head. You can't defer the blocking ones.`;
 export const minorsText = (head) => `The review of ${short(head)} leaves only minor findings; they're deferred and the merge goes ahead; nothing to do.`;
 
 // The PRs this observation names, each against its last known state.
-function prEvents(prev, next, out) {
+function prEvents(prev, next, out, launchers) {
   for (const [key, p] of entries(next.prs)) {
     if (!isPlain(p)) continue;
     const pr = Number(key);
@@ -448,9 +449,9 @@ function prEvents(prev, next, out) {
     for (const [type, holds] of PR_CONDITIONS) {
       if (holds(p) && !(sameHead && holds(before))) {
         let detail = { head: p.head };
-        if (type === 'conflict') detail = { head: p.head, next: conflictText(pr) };
-        else if (type === 'review-needed') detail = { head: p.head, next: reviewNeededText(pr, p.head) };
-        else if (type === 'findings') detail = { head: p.head, next: findingsText(p.head, p), ...(Number.isInteger(p.findings) ? { findings: p.findings } : {}), blocking: Number.isInteger(p.blocking) ? p.blocking : null };
+        if (type === 'conflict') detail = { head: p.head, next: conflictText(pr, launchers) };
+        else if (type === 'review-needed') detail = { head: p.head, next: reviewNeededText(pr, p.head, launchers) };
+        else if (type === 'findings') detail = { head: p.head, next: findingsText(p.head, p, launchers), ...(Number.isInteger(p.findings) ? { findings: p.findings } : {}), blocking: Number.isInteger(p.blocking) ? p.blocking : null };
         else if (type === 'review-passed' && Number.isInteger(p.findings) && p.findings > 0) detail = { head: p.head, next: minorsText(p.head), minors: p.findings };
         out.push({ type, work: p.work, pr, id: `${type}:${p.work}:${p.head}`, detail });
       }
@@ -478,14 +479,14 @@ function edgeEvents(prev, next, out) {
 // judged against an empty observation, so what is already waiting wakes on the
 // first run. An id in `seen` was sent before and is dropped; an id in `handled`
 // (the foreman wrote it while handling a wake) is marked so it goes to the digest.
-export function diff(prev, next, { handled = new Set(), seen = new Set() } = {}) {
+export function diff(prev, next, { handled = new Set(), seen = new Set(), launchers = false } = {}) {
   if (!isPlain(next)) return [];
   const before = isPlain(prev) ? prev : EMPTY;
   const settled = settle(before, next);
   const out = [];
   stateEvents(next, settled.prs, out);
-  featureEvents(before, next, settled, out);
-  prEvents(before, next, out);
+  featureEvents(before, next, settled, out, launchers);
+  prEvents(before, next, out, launchers);
   edgeEvents(before, next, out);
   const kept = new Set();
   const events = [];
@@ -585,10 +586,10 @@ export function makeBundler({ windowMs = BUNDLE_MS, now = () => new Date(), held
 // after them (the ids now seen, and the observation settled for the next diff).
 // The returned cursor has no `held`: the caller sets it from its bundler's
 // `held()` before writing, so a restart never brings back an old bundle.
-export function step(cursor, next, { handled = new Set() } = {}) {
+export function step(cursor, next, { handled = new Set(), launchers = false } = {}) {
   const prev = isPlain(cursor?.prev) ? cursor.prev : null;
   const before = list(cursor?.seen);
-  const events = diff(prev, next, { handled, seen: new Set(before) });
+  const events = diff(prev, next, { handled, seen: new Set(before), launchers });
   const seen = [...before, ...events.map((e) => e.id)].slice(-SEEN_CAP);
   return { events, cursor: { seen, prev: settle(prev, next) } };
 }

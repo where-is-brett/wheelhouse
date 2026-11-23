@@ -136,9 +136,8 @@ import {
 import { questionProblem, shapeProblems } from '../cards/compose.js';
 import { endedBy, needsApprovalOfWork } from './queue.js';
 import { approvedText, installText, keepApprovedText } from '../state/approved-text.js';
-import { amendBrief, LAUNCHER, renderBrief } from '../feature/brief.js';
-import { agentOfConfig } from '../agents/names.js';
-import { BY_LAUNCHER } from '../agents/tool-sheets.js';
+import { amendBrief, LAUNCHER, renderAgain, renderBrief } from '../feature/brief.js';
+import { crewAgent, runsByLauncher } from '../lib/crew-names.js';
 import { approvedDocument, insideCheckout, placeApproved } from '../feature/approved.js';
 import { report as reportCheck, STUCK_AFTER } from '../feature/cli.js';
 import {
@@ -1746,21 +1745,49 @@ function queueAgainLine(work, status, lane) {
 
 // --- restart ---
 
-// Whether the agent this computer runs feature sessions with runs Wheelhouse's commands by launcher (scripts/lib/launchers.js),
-// the condition that sets the brief's `launchers` option. An agent that can't be read counts as one that doesn't.
-function runsByLauncher(config) {
-  try {
-    return BY_LAUNCHER.includes(agentOfConfig(config, { computerId: computerId() }));
-  } catch {
-    return false;
-  }
-}
-
 // How a woken session commits and pushes. A session whose shell runs no git is given the launcher's commands here, because the
 // brief it holds may be from before its agent was switched on; any other is sent to its brief, which says how for its agent.
 const commitWays = (launchers) => (launchers
   ? `Your shell can't run git: commit with \`${LAUNCHER} commit\`, see the head's full hash with \`${LAUNCHER} head\`, and push with \`${LAUNCHER} push\`. Run one command per call.`
   : 'Your brief says how to commit and push.');
+
+// The feature's brief written again as a start would write it now (renderAgain: its version, plan, approved document and
+// amendments kept), so a session started before a change to the brief's words, such as its git steps or the names it
+// dispatches the Crew by, reads the current ones when it is woken. Only the brief the foreman recorded is rewritten, as an
+// amendment does: one the session changed is left, and said so. The hash is recorded before the file is written (R41), so a
+// repeat after a stop in between records nothing more. `launchers` is whether the session runs by launcher.
+async function refreshBrief(ctx, views, f, work, config, launchers) {
+  const worktree = worktreeOf(ctx.project, views, work);
+  const file = featurePaths(worktree).brief;
+  const text = readCapped(file, BRIEF_BYTES);
+  if (text === null) {
+    ctx.say(`${work}'s brief can't be read, so it was not written again.`);
+    return;
+  }
+  const recorded = recordedBriefs(stateEvents(ctx.project)).get(work);
+  const found = briefHash(text);
+  let next;
+  try {
+    next = renderAgain(text, { pluginRoot: ctx.pluginRoot, windowsBuilds: windowsBuildsOf(ctx, views, config), launchers });
+  } catch (error) {
+    ctx.say(`${work}'s brief can't be written again (${oneLine(error.message, 200)}), so its session reads the one it has.`);
+    return;
+  }
+  const hash = briefHash(next);
+  if (hash === found) return;
+  const midway = recorded?.recorded === hash && found === recorded.before;
+  if (found !== recorded?.recorded && !midway) {
+    ctx.say(`${work}'s brief isn't the one recorded, so it was not written again: ask the director.`);
+    return;
+  }
+  if (!safeFeatureFolder(worktree)) {
+    ctx.say(`${work}'s feature folder isn't a real folder inside its worktree, so its brief was not written again.`);
+    return;
+  }
+  if (recorded.recorded !== hash) await ctx.write('feature', { ...carried(f), step: f.step, ...pausedFields(f), brief: hash });
+  writeWhole(file, next);
+  ctx.say(`Wrote ${work}'s brief again (${short(hash)}), with its version, plan and amendments as they were.`);
+}
 
 // The option a stuck work's card offers: wakes the feature's own session. With a signed review that holds its pull
 // request, the wake tells it to fix the blocking findings, push and dispatch the reviewer; otherwise to carry on from where it
@@ -1779,12 +1806,15 @@ async function restart(ctx, work, rest) {
   const kept = readPrRecord(worktree);
   const held = kept === null || kept.merged ? null : holdingReview(views, kept.pr);
   const id = `restart:${work}:${ctx.now().getTime()}`;
-  const way = commitWays(runsByLauncher(await ctx.config()));
+  const config = await ctx.config();
+  const launchers = runsByLauncher(config);
+  const way = commitWays(launchers);
+  await refreshBrief(ctx, views, f, work, config, launchers);
   const event = held !== null
     ? {
       type: 'findings', work, pr: kept.pr, id, detail: {
         head: held.commit,
-        next: `Pull request #${kept.pr}'s review at ${held.commit} holds it with findings. Read your brief again first (.wheelhouse/feature/brief.md). ${way} Fix its BLOCKER and HIGH findings and defer its MEDIUM and LOW ones as minors (a failing test first, as your instructions say), then commit and push, then dispatch wheelhouse:reviewer on the new head.`,
+        next: `Pull request #${kept.pr}'s review at ${held.commit} holds it with findings. Read your brief again first (.wheelhouse/feature/brief.md). ${way} Fix its BLOCKER and HIGH findings and defer its MEDIUM and LOW ones as minors (a failing test first, as your instructions say), then commit and push, then dispatch ${crewAgent('reviewer', launchers)} on the new head.`,
       },
     }
     : {

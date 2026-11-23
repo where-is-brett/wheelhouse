@@ -12,7 +12,7 @@ import path from 'node:path';
 import { buildHome } from '../../../../scripts/agents/copilot/home.js';
 import { renderBrief } from '../../../../scripts/feature/brief.js';
 import { LAUNCHER_COMMAND } from '../../../../scripts/lib/launchers.js';
-import { BUILDER_RULES_FILE, featureAllow, featureRules } from '../../../../adapters/copilot/sessions.js';
+import { FEATURE_RULES_FILE, featureAllow, featureRules } from '../../../../adapters/copilot/sessions.js';
 import { briefFields } from '../../../helpers/foreman.js';
 
 // A POSIX path, to go with the 'linux' these tests pass; the 'win32' one also takes a rooted path.
@@ -70,7 +70,7 @@ const typed = (command) => command.replace(/<[^>]*>/g, 'x');
 test('every command the Copilot feature brief and agent files tell a session to run is allowed at Ask with no grants', () => {
   const allow = askRules();
   const home = buildHome();
-  const texts = [...renderedBriefs(), { name: 'the builder agent file', text: home.get('agents/wheelhouse-builder.agent.md') }, { name: 'the reviewer agent file', text: home.get('agents/wheelhouse-reviewer.agent.md') }];
+  const texts = [...renderedBriefs(), { name: 'the builder agent file', text: home.get('agents/wheelhouse-builder.agent.md') }, { name: 'the feature agent file', text: home.get('agents/wheelhouse-feature.agent.md') }, { name: 'the reviewer agent file', text: home.get('agents/wheelhouse-reviewer.agent.md') }];
   const refused = [];
   let seen = 0;
   for (const { name, text } of texts) {
@@ -127,7 +127,7 @@ test('feature sessions are allowed the feature launcher at every level, and the 
     assert.ok(rules.rules.allow.includes('shell(wh-feature:*)'), level);
   }
   assert.deepEqual(featureAllow(), ['shell(wh-feature:*)']);
-  assert.deepEqual(JSON.parse(fs.readFileSync(BUILDER_RULES_FILE, 'utf8')), { agent: 'wheelhouse-builder', shell: ['bash', 'powershell'], allow: ['wh-feature:*'] });
+  assert.deepEqual(JSON.parse(fs.readFileSync(FEATURE_RULES_FILE, 'utf8')), { agent: 'wheelhouse-feature', shell: ['bash', 'powershell'], allow: ['wh-feature:*'] });
   // At Ask the shell allows that and the granted commands, nothing else.
   assert.deepEqual(askRules().filter((r) => r.startsWith('shell')), ['shell(wh-feature:*)']);
   assert.deepEqual(featureRules({ config: null, level: 'ask', grants: [{ scope: 'feature', commands: ['npm test'] }], worktree: WORKTREE, platform: 'linux' }).rules.allow.filter((r) => r.startsWith('shell')).sort(), ['shell(npm test:*)', 'shell(wh-feature:*)']);
@@ -144,16 +144,16 @@ test('a rule record that allows more, less or another command refuses the start'
     assert.throws(() => featureAllow({ rulesFile: path.join(folder, 'missing.json') }), /can't be read/);
     assert.throws(() => featureAllow({ rulesFile: write('{') }), /can't be read/);
     for (const record of [
-      { agent: 'wheelhouse-builder', allow: [] },
-      { agent: 'wheelhouse-builder', allow: ['wh-feature:*', 'wh-act:*'] },
-      { agent: 'wheelhouse-builder', allow: ['wh-act:*'] },
-      { agent: 'wheelhouse-builder', allow: ['node:*'] },
+      { agent: 'wheelhouse-feature', allow: [] },
+      { agent: 'wheelhouse-feature', allow: ['wh-feature:*', 'wh-act:*'] },
+      { agent: 'wheelhouse-feature', allow: ['wh-act:*'] },
+      { agent: 'wheelhouse-feature', allow: ['node:*'] },
       { agent: 'wheelhouse-foreman', allow: ['wh-feature:*'] },
       { allow: ['wh-feature:*'] },
       null,
     ]) assert.throws(() => featureAllow({ rulesFile: write(record) }), /allows more or less than its feature command/);
-    assert.throws(() => featureRules({ config: null, level: 'ask', grants: [], worktree: WORKTREE, platform: 'linux', rulesFile: write({ agent: 'wheelhouse-builder', allow: ['sh:*'] }) }), /no feature session is started/);
-    assert.deepEqual(featureAllow({ rulesFile: write({ agent: 'wheelhouse-builder', allow: ['wh-feature:*'] }) }), ['shell(wh-feature:*)']);
+    assert.throws(() => featureRules({ config: null, level: 'ask', grants: [], worktree: WORKTREE, platform: 'linux', rulesFile: write({ agent: 'wheelhouse-feature', allow: ['sh:*'] }) }), /no feature session is started/);
+    assert.deepEqual(featureAllow({ rulesFile: write({ agent: 'wheelhouse-feature', allow: ['wh-feature:*'] }) }), ['shell(wh-feature:*)']);
   } finally {
     fs.rmSync(folder, { recursive: true, force: true });
   }

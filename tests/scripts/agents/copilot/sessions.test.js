@@ -228,7 +228,9 @@ test('a feature starts under the waker\'s session id, and a wake resumes that id
   assert.equal(resume.args.includes('--session-id'), false);
   assert.equal(start.env.COPILOT_HOME, resume.env.COPILOT_HOME);
   assert.equal(start.activityFile, resume.activityFile, 'a session\'s wakes append to one record');
-  assert.equal(valueOf(start.args, '--agent'), 'wheelhouse-builder');
+  // The feature session is its own agent, with the `task` tool the builder lacks; its resume names the same agent.
+  assert.equal(valueOf(start.args, '--agent'), 'wheelhouse-feature');
+  assert.equal(valueOf(resume.args, '--agent'), 'wheelhouse-feature');
   assert.notEqual(start.usageFile, resume.usageFile, 'each run has its own usage file');
   assert.throws(() => on.featureResumeCall({ ...shared }), /needs the session id/);
   assert.throws(() => on.featureResumeCall({ ...shared, sessionId: '../x' }), /can't be used as a session id/);
@@ -392,7 +394,7 @@ test('the waker starts a Copilot foreman and a feature, and resumes a feature th
   const [first] = calls;
   assert.equal(path.basename(first.file), 'copilot');
   assert.equal(valueOf(first.args, '--session-id'), started.sessionId, 'the id the waker keeps is the one given to Copilot');
-  assert.equal(valueOf(first.args, '--agent'), 'wheelhouse-builder');
+  assert.equal(valueOf(first.args, '--agent'), 'wheelhouse-feature');
   assert.equal(first.args.includes('--model'), false);
   assert.equal('COPILOT_MODEL' in first.env, false);
   assert.equal(first.env.COPILOT_HOME, sessionHome(P, 'feature-login-page'));
@@ -412,3 +414,29 @@ test('the waker starts a Copilot foreman and a feature, and resumes a feature th
   assert.equal(resumed.sessionId, started.sessionId);
   assert.equal(second.output, first.output);
 }));
+
+test('before a feature run the part makes the scratch and plans folders its tools can\'t, through real folders only', () => {
+  const wt = tempFolder('wh-before-work-');
+  assert.deepEqual(sessions.beforeWork({ target: 'feature-login', worktree: wt }), ['.wheelhouse', '.wheelhouse/tmp', 'docs', 'docs/plans']);
+  for (const folder of ['.wheelhouse/tmp', 'docs/plans']) assert.ok(fs.lstatSync(path.join(wt, folder)).isDirectory(), folder);
+  // The review folder is `wh-feature diff`'s to make.
+  assert.equal(fs.existsSync(path.join(wt, '.wheelhouse', 'feature')), false);
+  // Folders already there are kept, with what they hold, and nothing more is made.
+  fs.writeFileSync(path.join(wt, 'docs', 'plans', 'a.md'), 'plan');
+  assert.deepEqual(sessions.beforeWork({ target: 'feature-login', worktree: wt }), []);
+  assert.equal(fs.readFileSync(path.join(wt, 'docs', 'plans', 'a.md'), 'utf8'), 'plan');
+  // A foreman's run, and a worktree that isn't a whole path, make nothing.
+  assert.deepEqual(sessions.beforeWork({ target: 'foreman', worktree: wt }), []);
+  assert.deepEqual(sessions.beforeWork({ target: 'feature-login', worktree: 'relative/path' }), []);
+  assert.deepEqual(sessions.beforeWork({ target: 'feature-login' }), []);
+});
+
+test('a link or a file where a folder belongs is left alone, so nothing is made outside the worktree', { skip: process.platform === 'win32' }, () => {
+  const wt = tempFolder('wh-before-work-');
+  const outside = tempFolder('wh-outside-');
+  fs.symlinkSync(outside, path.join(wt, 'docs'));
+  fs.writeFileSync(path.join(wt, '.wheelhouse'), 'a file');
+  assert.deepEqual(sessions.beforeWork({ target: 'feature-login', worktree: wt }), []);
+  assert.deepEqual(fs.readdirSync(outside), []);
+  assert.equal(fs.readFileSync(path.join(wt, '.wheelhouse'), 'utf8'), 'a file');
+});

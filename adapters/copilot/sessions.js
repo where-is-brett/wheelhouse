@@ -141,15 +141,16 @@ function rulesOf(list, what) {
 
 // The arguments of one `copilot -p` session, the watcher's and the evaluation runner's alike: `prompt`, its `sessionId`
 // (given up front, so the run's own events and the folder under session-state carry it; or `resume`, an id already
-// checked), where its log and usage go, its agent (`--agent wheelhouse-<role>`), its model or null, and its rules in
+// checked), where its log and usage go, its agent (`--agent`: `agent` as given, else `wheelhouse-<role>`; the role also
+// picks its model), its model or null, and its rules in
 // Copilot's syntax. Throws when an argument would start the session trusted or with every permission given, whatever a
 // caller passes: the prompt is the one argument not read as a flag.
-export function sessionArgs({ prompt, sessionId = null, resume = null, logDir, usageFile, role, model = null, allow = [], deny = [] }) {
+export function sessionArgs({ prompt, sessionId = null, resume = null, logDir, usageFile, role, agent = `wheelhouse-${role}`, model = null, allow = [], deny = [] }) {
   const args = [
     ...(resume === null ? [] : [`--resume=${resume}`]),
     ...(sessionId === null ? [] : ['--session-id', sessionId]),
     '-p', prompt, '--output-format', 'json', '--no-auto-update', '--disable-builtin-mcps', '--no-ask-user', '--disallow-temp-dir',
-    '--log-dir', logDir, '--usage-output-file', usageFile, '--agent', `wheelhouse-${role}`,
+    '--log-dir', logDir, '--usage-output-file', usageFile, '--agent', agent,
     ...(model === null ? [] : ['--model', model]),
     ...allow.map((rule) => `--allow-tool=${rule}`),
     ...deny.map((rule) => `--deny-tool=${rule}`),
@@ -168,7 +169,7 @@ export function sessionArgs({ prompt, sessionId = null, resume = null, logDir, u
 // shim the whole line, the prompt included, goes through quoteForCmd: every prompt is Wheelhouse's own short text naming a
 // file, and one quoteForCmd refuses fails the start in plain words. The home must already hold Wheelhouse's hook file
 // (writeSessionHome), or the call refuses.
-function sessionCall({ project, target, role, config, plan, prompt, sessionId = null, rules = {}, resume = null, runId = crypto.randomUUID(), env = process.env, platform = process.platform, copilot = null }) {
+function sessionCall({ project, target, role, agent, config, plan, prompt, sessionId = null, rules = {}, resume = null, runId = crypto.randomUUID(), env = process.env, platform = process.platform, copilot = null }) {
   if (typeof prompt !== 'string' || prompt === '') throw new Error('A session needs a prompt');
   if (prompt.startsWith('-')) throw new Error("A session's prompt can't start with a dash");
   const home = sessionHome(project, target);
@@ -183,7 +184,7 @@ function sessionCall({ project, target, role, config, plan, prompt, sessionId = 
   const logDir = path.join(activity, `${run}.logs`);
   const usageFile = path.join(activity, `${run}.usage.json`);
   const args = sessionArgs({
-    prompt, sessionId: resume === null ? named : null, resume: resume === null ? null : named, logDir, usageFile, role, model,
+    prompt, sessionId: resume === null ? named : null, resume: resume === null ? null : named, logDir, usageFile, role, ...(agent === undefined ? {} : { agent }), model,
     allow: rulesOf(rules.allow, 'allow'), deny: rulesOf(rules.deny, 'deny'),
   });
   const resolved = copilot ?? resolveCommand({ name: 'copilot', platform, env });
@@ -239,20 +240,22 @@ export function foremanAllow({ pluginRoot = PLUGIN_ROOT, platform = process.plat
 }
 
 // The one rule a feature session's shell has besides the project's build commands: its feature command's launcher, from the
-// record in adapters/copilot/home/rules/wheelhouse-builder.json (scripts/agents/copilot/home.js builds it). The launcher runs
+// record in adapters/copilot/home/rules/wheelhouse-feature.json (scripts/agents/copilot/home.js builds it). The launcher runs
 // a fixed list of subcommands and never a command or a path (scripts/feature/cli.js), so it is Wheelhouse's own, as the
 // foreman's two are, and not one of the commands the person allowed. A record that can't be read, or holds anything else,
 // refuses the start.
-export const BUILDER_RULES_FILE = path.join(HOME, 'rules', 'wheelhouse-builder.json');
+export const FEATURE_RULES_FILE = path.join(HOME, 'rules', 'wheelhouse-feature.json');
 const FEATURE_RULE = 'wh-feature:*';
-export function featureAllow({ rulesFile = BUILDER_RULES_FILE } = {}) {
+// The agent a feature session runs as (not the builder: it dispatches the Crew, so it has the `task` tool the builder lacks).
+export const FEATURE_AGENT = 'wheelhouse-feature';
+export function featureAllow({ rulesFile = FEATURE_RULES_FILE } = {}) {
   let record;
   try {
     record = JSON.parse(fs.readFileSync(rulesFile, 'utf8'));
   } catch {
     throw new Error("The feature session's rule record can't be read, so no feature session is started");
   }
-  if (record === null || typeof record !== 'object' || record.agent !== 'wheelhouse-builder' || !Array.isArray(record.allow) || record.allow.length !== 1 || record.allow[0] !== FEATURE_RULE) {
+  if (record === null || typeof record !== 'object' || record.agent !== FEATURE_AGENT || !Array.isArray(record.allow) || record.allow.length !== 1 || record.allow[0] !== FEATURE_RULE) {
     throw new Error("The feature session's rule record allows more or less than its feature command, so no feature session is started");
   }
   if (launcherOf('scripts/feature/cli.js') !== FEATURE_RULE.slice(0, -2)) throw new Error("The feature session's rule names a command that has no launcher, so no feature session is started");
@@ -273,7 +276,7 @@ function buildForemanCall({ config, project, prompt, plan, env, platform = proce
 // itself): given no level, or one that can't be read, it is Ask with no grants (failing closed). The grants' commands count
 // only while the configuration still lists them. `domains` are the project's web domains, its configuration's when not
 // given. Every level also allows the feature command's launcher (featureAllow). Throws when the worktree isn't a whole path.
-export function featureRules({ config, level, grants, guardedCommand = null, worktree, domains, realUsers, keysUnreadable, hostApproval, unattendedConfirmed, platform = process.platform, rulesFile = BUILDER_RULES_FILE }) {
+export function featureRules({ config, level, grants, guardedCommand = null, worktree, domains, realUsers, keysUnreadable, hostApproval, unattendedConfirmed, platform = process.platform, rulesFile = FEATURE_RULES_FILE }) {
   const known = LEVELS.includes(level);
   const allowed = levelAllowed({ level: known ? level : 'ask', realUsers, keysUnreadable, hostApproval, unattendedConfirmed, platform });
   const commands = config?.buildCommands ?? DEFAULT_BUILD_COMMANDS;
@@ -293,14 +296,14 @@ function featureCall({ rules: _rules, allowed: _allowed, level, grants, guardedC
 // A feature's first session, run in its worktree, at the level levelAllowed lets run (`level` in the call's result). The
 // waker's `sessionId` is the session's own, given to Copilot up front (check 96), so the waker keeps it before the run.
 function buildFeatureStartCall({ project, work, ...rest }) {
-  return featureCall(rest, { project, target: `feature-${work}`, role: 'builder' });
+  return featureCall(rest, { project, target: `feature-${work}`, role: 'builder', agent: FEATURE_AGENT });
 }
 
 // A feature's session, woken: `--resume=<id>` in the feature's own home, never `--continue` (which takes the newest
 // session in the home, check 61). Its rules are worked out afresh, so a grant spent by an earlier run is not given.
 function buildFeatureResumeCall({ sessionId, project, work, ...rest }) {
   if (sessionId === undefined || sessionId === null) throw new Error('A wake needs the session id');
-  return featureCall(rest, { project, target: `feature-${work}`, role: 'builder', resume: sessionId });
+  return featureCall(rest, { project, target: `feature-${work}`, role: 'builder', agent: FEATURE_AGENT, resume: sessionId });
 }
 
 // Why a run GitHub refused for the month settles as it does.
@@ -449,6 +452,31 @@ export async function afterWork({ stdout = '', target, worktree = null, commit =
   return { records, ...(made?.commit === undefined ? {} : { commit: made.commit }), ...(made?.head === undefined ? {} : { head: made.head }) };
 }
 
+// The folders a feature session's brief names that its own tools can't make: Copilot's `create` tool makes no parent folder
+// ("Parent directory does not exist", T6) and its shell can't run `mkdir`. The scratch folder, and the folder for plans
+// (`docs/plans/<work>.md`, as the brief's lanes say). The review folder is not here: `wh-feature diff` makes its own.
+export const SESSION_FOLDERS = Object.freeze([['.wheelhouse', 'tmp'], ['docs', 'plans']]);
+
+// Makes each of SESSION_FOLDERS in a feature's worktree where it is missing, before a start or a wake. A folder is made only
+// through real folders: where a part is a link or a file, that folder is left alone, so nothing is made outside the worktree.
+// Returns the folders made, as paths under the worktree; a worktree that isn't a whole path makes none.
+export function beforeWork({ target, worktree = null } = {}) {
+  if (typeof target !== 'string' || !target.startsWith('feature-') || typeof worktree !== 'string' || !path.isAbsolute(worktree)) return [];
+  const made = [];
+  for (const parts of SESSION_FOLDERS) {
+    let dir = worktree;
+    for (const part of parts) {
+      dir = path.join(dir, part);
+      const stat = fs.lstatSync(dir, { throwIfNoEntry: false });
+      if (stat === undefined) {
+        fs.mkdirSync(dir);
+        made.push(path.relative(worktree, dir).split(path.sep).join('/'));
+      } else if (!stat.isDirectory()) break;
+    }
+  }
+  return made;
+}
+
 // The project's activity folder, made before a start so the waker can hand the child its output file there.
 function activityFolder(project) {
   const dir = path.join(projectFolder(project), 'activity');
@@ -501,6 +529,7 @@ export function sessionsPart({ ready = BACKGROUND_SESSIONS_READY, plan: given = 
     },
     afterRun: (options) => afterRun({ ...options, versions: lastVersions }),
     afterWork,
+    beforeWork,
     pruneActivity,
     grantProofs: GRANT_PROOFS,
   });
