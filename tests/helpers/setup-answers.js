@@ -14,12 +14,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { setupRoutes } from '../../scripts/setup/engine.js';
+import { panelPart } from '../../scripts/setup/steps.js';
 import { decide } from '../../scripts/hooks/prompt-record.js';
 import { makeSigningKey, enrol } from '../../scripts/state/signing.js';
 import { writeProject } from '../../scripts/lib/projects.js';
 import { stateDir } from '../../scripts/lib/paths.js';
 import { as, shortHome, tempFolder } from './homes.js';
 import { standInTools } from './host-stand-ins.js';
+
+// Setup's offer of the VS Code panel never asks a real VS Code in a test.
+panelPart.offer = async () => ({});
 
 export const T0 = new Date('2026-10-20T03:00:00.000Z');
 export const REPO = 'o/Cafe-Menu';

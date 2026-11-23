@@ -192,6 +192,12 @@ export const UPDATE_HELPER_LINE = /^Answer the old helper's question (update-hel
 export const UPDATE_LABEL = 'Update';
 export const updateLine = (from, to, put, hash) => `Update Wheelhouse from ${from} to ${to} (${put}), plan ${String(hash).slice(0, 12)}`;
 export const UPDATE_LINE = /^Update Wheelhouse from ([A-Za-z0-9][A-Za-z0-9._-]{0,99}) to ([A-Za-z0-9][A-Za-z0-9._-]{0,99}) \((release|undo)\), plan ([0-9a-f]{12})$/;
+// The line on the update command's card about adding the Wheelhouse panel to VS Code: the panel's version, and the first twelve
+// characters of the token the helper made when it showed the card, so a click stands for that showing and no other. The full token is
+// kept in the update's journal folder, where the prompt record reads it.
+export const PANEL_LABEL = 'Install the panel';
+export const panelLine = (to, token) => `Add the Wheelhouse panel ${to} to VS Code, offer ${String(token).slice(0, 12)}`;
+export const PANEL_LINE = /^Add the Wheelhouse panel ([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.]+)?) to VS Code, offer ([0-9a-f]{12})$/;
 export const RELEASE_TAG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 export const RELEASE_LINE = /^Move this project from Wheelhouse ([A-Za-z0-9][A-Za-z0-9._-]{0,99}) to ([A-Za-z0-9][A-Za-z0-9._-]{0,99}), commit ([0-9a-f]{40})$/;
 
@@ -337,6 +343,7 @@ export const SET_LINES = [
   new RegExp(RELEASE_LINE.source, 'm'),
   new RegExp(UPDATE_HELPER_LINE.source, 'm'),
   new RegExp(UPDATE_LINE.source, 'm'),
+  new RegExp(PANEL_LINE.source, 'm'),
   new RegExp(PAIR_LINE.source, 'm'),
   new RegExp(UNPAIR_LINE.source, 'm'),
   new RegExp(UNINSTALL_LINE.source, 'm'),

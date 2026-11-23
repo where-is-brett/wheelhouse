@@ -51,6 +51,7 @@ import { projectForFolder, writeProject, registeredProjects } from '../lib/proje
 import { effectiveSettings } from '../settings/effective.js';
 import { loginEntry, installLoginStart, loginStartRecord, needsLoginStart } from '../lib/login-start.js';
 import { HELPER_START_SCRIPT } from '../agents/index.js';
+import { PANEL_LABELS, panelAsk, panelChosen, panelChange, panelLine } from './panel.js';
 import { otherAgentsFound, agentAsk, agentChosen, otherAgentChosen, signInWait, agentComputerChanges, applyAgentComputer } from '../agents/setup-parts.js';
 import { localViews } from '../hooks/session-start.js';
 import { computerId, stateDir } from '../lib/paths.js';
@@ -212,6 +213,7 @@ export function lines({ changes, userSettings, kept, route, platform, floor, ter
   } else {
     for (const c of changes.filter((x) => x.what === 'agent' && x.line)) out.push(c.line);
   }
+  for (const c of changes.filter((x) => x.what === 'panel')) out.push(panelLine(c));
   if (has('login')) out.push(`Start Wheelhouse's helper when you sign in${platform === 'darwin' ? ', and again within a minute if it stops' : ''}, so the build carries on with no session open`);
   return out;
 }
@@ -315,11 +317,14 @@ export const SETTLED_LEAD = `Setup step 6, ${SETUP_TITLES[6]}: every setting is 
 // `env` is the environment setup runs in (CLAUDE_CONFIG_DIR, and any telemetry variable of the
 // director's own); `route`, `port`, `manifest` and `exists` (how another
 // agent's command line is looked for) are for tests, read when the plan is.
+// `panel` is the optional VS Code panel's part of this step (scripts/setup/panel.js): { offer(ctx) -> { offer?, blocked? }, install(ctx) -> { ok, says } };
+// null leaves the offer out.
 // `engine` is the build engine's part of this step (scripts/setup/engine-parts.js): the plugin at user scope, and the
 // login start, for a computer that runs the engine; null leaves both out.
 export function computerStep({
   run = realRun, env = process.env, route = TELEMETRY_ROUTE, port, manifest, exists,
   engine = { wanted: engineWanted, pluginScope: pluginScopeChanges, applyPlugin: applyPluginScope },
+  panel = null,
 } = {}) {
   const world = async (ctx) => {
     const platform = ctx.platform ?? process.platform;
@@ -343,9 +348,19 @@ export function computerStep({
       // (scripts/agents/setup-parts.js); a computer with none asks nothing. A chosen agent that is not signed in waits.
       const found = otherAgentsFound({ platform: ctx.platform ?? process.platform, env, ...(exists === undefined ? {} : { exists }) });
       if (found.length > 0 && agentChosen(ctx.answers) === null) return { ask: agentAsk({ found, platform: ctx.platform ?? process.platform, project: path.basename(ctx.folder ?? '') || undefined }) };
-      const { platform, userHome, userSettings, floor, kept, agent, changes } = await world(ctx);
+      const { platform, userHome, userSettings, floor, kept, agent, changes: made } = await world(ctx);
       const signIn = agent === null ? null : signInWait(agent, { env, userHome });
       if (signIn !== null) return signIn;
+      // The optional panel for VS Code comes after the agent is set up: asked once, and listed with the rest on a yes. A company
+      // list that leaves it out is one plain line and no question.
+      const changes = [...made];
+      const offered = panel === null ? {} : await panel.offer({ ...ctx, platform, env });
+      if (offered.blocked) ctx.say?.(offered.blocked);
+      if (offered.offer) {
+        const chosen = panelChosen(ctx.answers);
+        if (chosen === null) return { ask: panelAsk(offered.offer) };
+        if (chosen !== 'skip') changes.push(panelChange(offered.offer));
+      }
       // Every setting already as Wheelhouse needs settles the step, with no Go ahead (ruling R75).
       // The director's own settings that weaken Standard are still named, as a line status shows
       // (ruling R101); the signing key, no change, is not.
@@ -371,7 +386,14 @@ export function computerStep({
         const said = await applyAgentComputer(chosen, agentChanges, { record: ctx.record, newId, run, at: (ctx.now ?? (() => new Date()))(), env });
         if (typeof said === 'string' && said.length <= SAY_CHARS) ctx.say?.(said);
       }
-      for (const c of changes.filter((x) => !['telemetry', 'login', 'plugin', 'agent'].includes(x.what))) ctx.applyJsonKey({ file: c.target, key: c.key, value: c.after });
+      // The panel, installed from this release's folder. A refusal is said in a line and never stops setup; the answer is kept.
+      for (const c of changes.filter((x) => x.what === 'panel')) {
+        let got;
+        try { got = await panel.install({ ...ctx, platform, env }); } catch { got = { ok: false, says: 'The Wheelhouse panel was not installed.' }; }
+        ctx.record({ id: newId('chg'), kind: 'answer', target: `step 6: ${c.target}`, before: null, after: { panel: c.offer, ok: got.ok === true } });
+        if (typeof got.says === 'string' && got.says.length <= SAY_CHARS) ctx.say?.(got.says);
+      }
+      for (const c of changes.filter((x) => !['telemetry', 'login', 'plugin', 'agent', 'panel'].includes(x.what))) ctx.applyJsonKey({ file: c.target, key: c.key, value: c.after });
       // The director's own settings that weaken Standard, said in one line as the step finishes,
       // since a Go ahead on the one card shows no step 6 card unless it changes another agent's files (design section 15.1).
       const weak = weakeningSentence(weakening((await world(ctx)).userSettings), (line) => line.length <= SAY_CHARS);
