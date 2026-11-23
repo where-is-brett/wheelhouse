@@ -26,13 +26,13 @@ test('an unpaired add-on asks to pair once and shows the fingerprint the card sh
 
 test('once the director has paired it, the panel goes live and reads the desk', async () => {
   const desk = fakeDesk({ paired: false });
-  desk.state.views = { waiting: { numbered: [{ n: 1 }, { n: 2 }] }, glance: { glance: 'Two cards wait' }, work: {} };
+  desk.state.views = { waiting: { numbered: [{ n: 1 }, { n: 2 }], cards: [{ id: 'c1', data: { question: 'Q1', options: ['Approve'] } }, { id: 'merge-12', data: { question: 'Q2', kind: 'approval' } }] }, glance: { glance: 'Two cards wait' }, work: {} };
   const { view, every, vscode } = await start({ desk });
   desk.state.paired = true;
   await every.run();
   await settle();
   assert.equal(modelOf(view).state, 'live');
-  assert.equal(modelOf(view).count, 2);
+  assert.equal(modelOf(view).cards.length, 2);
   assert.equal(vscode.seen.items[0].text, 'Wheelhouse · 2 need you');
 });
 
@@ -89,7 +89,7 @@ test('with no helper it says so and starts nothing', async () => {
   const desk = fakeDesk({ helper: 'down' });
   const { view, vscode } = await start({ desk });
   assert.equal(modelOf(view).state, 'no-helper');
-  assert.match(modelOf(view).says, /isn't running/);
+  assert.match(modelOf(view).notice, /isn't running/);
   assert.equal(vscode.seen.items[0].text, 'Wheelhouse · not running');
   assert.deepEqual(desk.calls.filter((c) => c[0] === 'act' && c[1] !== 'answer'), []);
 });
@@ -98,7 +98,7 @@ test('a folder that is not a Wheelhouse project is said so, and nothing is sent'
   const desk = fakeDesk();
   const { view } = await start({ desk, project: null });
   assert.equal(modelOf(view).state, 'no-helper');
-  assert.match(modelOf(view).says, /isn't a Wheelhouse project/);
+  assert.match(modelOf(view).notice, /isn't a Wheelhouse project/);
   assert.equal(desk.calls.length, 0);
 });
 
@@ -106,7 +106,7 @@ test('on another desk version it shows Update Wheelhouse and decides nothing', a
   const desk = fakeDesk({ helper: 'update' });
   const { view, vscode } = await start({ desk });
   assert.equal(modelOf(view).state, 'update');
-  assert.match(modelOf(view).says, /Update Wheelhouse/);
+  assert.match(modelOf(view).notice, /Update Wheelhouse/);
   assert.equal(vscode.seen.items[0].text, 'Wheelhouse · update');
   const acted = desk.calls.filter((c) => c[0] === 'act');
   assert.deepEqual(acted.map((c) => c[1]), ['answer'], 'only the pairing check, which decides nothing');

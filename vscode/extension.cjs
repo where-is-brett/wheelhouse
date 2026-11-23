@@ -4,9 +4,8 @@
 // helper over desk/1 (desk-client.cjs) and signs with its own key (key.cjs). VS Code is a parameter, so tests give
 // it a stand-in; `require('vscode')` is only the default.
 //
-// The state the panel is drawn from (handed to `render(state, { nonce })`, vscode/pane/render.js):
-//   { state, says, fingerprint, glance, waiting, work, count, allStop, notices }
-// where `state` is one of
+// The panel is drawn by `render(stateOf(model), { nonce })` (vscode/model.cjs, vscode/pane/render.js). The model
+// held here is { state, says, fingerprint, glance, waiting, work, count, allStop, notices }, with `state` one of
 //   'no-helper'  the helper isn't running, or this folder isn't a Wheelhouse project (`says` tells which)
 //   'update'     the helper speaks another version or doesn't know a command: "Update Wheelhouse"
 //   'unpaired'   not paired; `fingerprint` is the key's, as the Pair card shows it
@@ -21,6 +20,7 @@ const crypto = require('node:crypto');
 const { helperAddress, projectIdFor } = require('./resolver.cjs');
 const { deskClient } = require('./desk-client.cjs');
 const { loadKey } = require('./key.cjs');
+const { stateOf } = require('./model.cjs');
 
 const OPEN_PANEL = 'wheelhouse.openPanel';
 const PANEL_ID = 'wheelhouse.panel';
@@ -85,7 +85,7 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     item.text = statusText(model);
     if (run.view === null || run.view.visible === false) return;
     // A new nonce for each draw: what an older page posts counts for nothing (the press guard, Part 5).
-    run.view.webview.html = render({ ...model }, { nonce: crypto.randomBytes(16).toString('base64') });
+    run.view.webview.html = render(stateOf(model),{ nonce: crypto.randomBytes(16).toString('base64') });
   };
   const set = (state, extra = {}) => { Object.assign(model, { state, says: SAYS[state] ?? null, ...extra }); draw(); };
 
