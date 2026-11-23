@@ -43,7 +43,7 @@ import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT, SUGGEST, SHOW_ME, NOT_NOW, SEND_BACK, NO_RECOMMENDATION } from '../lib/calm-words.js';
 import { CARD } from '../lib/front-desk.js';
 import {
-  chatCopy, setLinesOf, setLineOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, LIFT_STOP, LIFT_LABELS, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, SEAT_TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LINE, PANEL_LINE,
+  chatCopy, setLinesOf, setLineOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, LIFT_STOP, LIFT_LABELS, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, SEAT_TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LINE,
 } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { cardOutcomes } from '../state/views.js';
@@ -53,7 +53,7 @@ import { stopState } from '../lib/stop.js';
 import { stateDir } from '../lib/paths.js';
 import { subjectOf, answeredWords } from '../cards/answered.js';
 import { PANE_LEAD, paneLine } from '../cards/panel-words.js';
-import { takeHere, markOpen, HOLD_FOR_PANE } from '../lib/session-files.js';
+import { paneLive, takeHere, markOpen, HOLD_FOR_PANE } from '../lib/session-files.js';
 import { sessionRole } from '../lib/role.js';
 import { refreshSeat } from '../lib/first-mate-seat.js';
 import { cardButtons } from '../cards/buttons.js';
@@ -96,14 +96,12 @@ function targetOf(line) {
   if ((m = TAKEOVER_LINE.exec(line))) return { kind: 'take-over', target: { holder: m[1], counter: Number(m[2]) } };
   if ((m = SEAT_TAKEOVER_LINE.exec(line))) return { kind: 'take-over', target: { session: m[1], since: m[2] } };
   if ((m = PAIR_LINE.exec(line))) return { kind: 'pair', target: { client: m[1], fingerprint: m[2] } };
-  if ((m = UNPAIR_LINE.exec(line))) return { kind: 'unpair', target: { client: m[1], fingerprint: m[2] } };
   if ((m = UNINSTALL_LINE.exec(line))) return { kind: 'uninstall', target: { project: m[1], hash: m[2] } };
   if ((m = KEEP_CONTROL_LINE.exec(line))) return { kind: 'keep-control-files', target: { work: m[1], hash: m[2] } };
   if ((m = USAGE_LINE.exec(line))) return { kind: 'usage', target: { to: m[1], at: m[2] } };
   if ((m = PREMIUM_LINE.exec(line))) return { kind: 'premium', target: { at: m[1] } };
   if ((m = RELEASE_LINE.exec(line))) return { kind: 'release', target: { previous: m[1], release: m[2], commit: m[3] } };
   if ((m = UPDATE_HELPER_LINE.exec(line))) return { kind: 'update-helper', target: { card: m[1] } };
-  if ((m = PANEL_LINE.exec(line))) return { kind: 'panel', target: { to: m[1], offer: m[2] } };
   if ((m = UPDATE_LINE.exec(line))) return { kind: 'update', target: { from: m[1], to: m[2], put: m[3] } };
   return null;
 }
@@ -321,7 +319,7 @@ function swapQuestions(questions, matched) {
   return { questions: next, swapped, origins, changed };
 }
 
-async function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere: take, askHere, holdForPane, role, stop, writeVia }) {
+function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop, writeVia }) {
   const asked = input.tool_input.questions;
   const questions = stop().on ? asked.map(wholeLift) : asked;
   const restored = questions.some((q, i) => q !== asked[i]);
@@ -363,11 +361,8 @@ async function oneCardCheck(input, project, { now, outcomes, paneLive: live, tak
   const heldAt = questions.map((_, i) => lifts[i] || (matched[i] ? pane(matched[i]) : false));
   const held = [...waiting.filter(pane).map((f) => f.card.id), ...(lifts.includes(true) ? [LIFT_ID] : [])];
   if (held.length > 0 && holdForPane && role({ sessionId: session, cwd: input.cwd }) === 'front-desk'
-    && await live(session, at.getTime(), { cwd: input.cwd }) === true) {
-    // Both routes are used, so a card marked in the session file and by the panel is let through once, not twice.
-    const viaFile = take(session, held, at.getTime());
-    const viaPanel = await askHere(session, held, { cwd: input.cwd });
-    if (!viaFile && !viaPanel) return { deny: paneLine(held.length, { others: heldAt.includes(false) }) };
+    && live(session, at.getTime()) && !take(session, held, at.getTime())) {
+    return { deny: paneLine(held.length, { others: heldAt.includes(false) }) };
   }
   const { questions: next, swapped, origins, changed } = swapQuestions(questions, matched);
   return { open: waiting.filter((f) => !f.setup).map((f) => f.card.id), questions: changed || restored ? next : null, swapped, origins };
@@ -497,46 +492,8 @@ function swapSetupCards(input, questions) {
   }
 }
 
-// Whether a panel is live beside this project's chat, as the front desk reads it: the helper says so (a paired app's signed watch,
-// kept per project), never a file an agent might write. A helper that can't be asked says no, so the chat asks the card.
-// A small read (waiting with `paneOnly`, which builds no views) with a short time limit: a helper that is slow or gone says no, so the
-// hook's other refusals still run well inside its own limit.
-export const PANE_ASK_MS = 1500;
-export async function helperPaneLive(session, ms, { cwd, client, timeout = PANE_ASK_MS } = {}) {
-  let timer;
-  try {
-    const { deskClient } = await import('../desk/client.js');
-    const ask = deskClient({ cwd, local: 'never', timeout, ...(client === undefined ? {} : { client }) }).read('waiting', { paneOnly: true });
-    const gone = new Promise((resolve) => { timer = setTimeout(() => resolve(null), timeout + 250); });
-    const got = await Promise.race([ask, gone]);
-    return got?.ok === true && got.data?.paneLive === true;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// Whether the helper handed every one of these cards to the chat by the panel's Ask me here, taking them (once). A helper that
-// can't be asked says no, so the card stays in the panel.
-export async function helperAskHere(session, cardIds, { cwd, client, timeout = PANE_ASK_MS } = {}) {
-  let timer;
-  try {
-    const { deskClient } = await import('../desk/client.js');
-    const ask = deskClient({ cwd, local: 'never', timeout, ...(client === undefined ? {} : { client }) }).read('waiting', { paneOnly: true, passHere: cardIds });
-    const gone = new Promise((resolve) => { timer = setTimeout(() => resolve(null), timeout + 250); });
-    const got = await Promise.race([ask, gone]);
-    return got?.ok === true && got.data?.passed === true;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 export async function decide(input, {
-  projectOf: find = projectOf, dir, now = () => new Date(), outcomes, paneLive: live = helperPaneLive, takeHere: take = takeHere,
-  askHere = helperAskHere,
+  projectOf: find = projectOf, dir, now = () => new Date(), outcomes, paneLive: live = paneLive, takeHere: take = takeHere,
   markOpen: open = markOpen, holdForPane = HOLD_FOR_PANE, role = sessionRole, stop = stopState, env = process.env, decisions,
   writeVia = 'self',
 } = {}) {
@@ -552,8 +509,7 @@ export async function decide(input, {
   let open_ = null;
   let checked_ = null;
   try {
-    // The helper is asked about the panel only at the hold itself, after the cheaper role and held checks.
-    const checked = await oneCardCheck(input, find(input.cwd, { dir }).project, { now, outcomes, paneLive: live, takeHere: take, askHere, holdForPane, role, stop, writeVia });
+    const checked = oneCardCheck(input, find(input.cwd, { dir }).project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop, writeVia });
     if (checked.deny !== undefined) return answer.deny(checked.deny);
     open_ = checked.open;
     checked_ = checked;

@@ -22,7 +22,7 @@ import { fileHash, recordUpdate } from '../health/own-files.js';
 import {
   RESTART_LINE, defaultCacheRoot, findByAddress, pidAlive, proveRecorded, reprove, stopProved, waitForQuiet,
 } from './old-helper.js';
-import { planNamedAddon } from './addon.js';
+import { planNamedAddon, removeAddon } from './addon.js';
 import { openJournal, updateLockHeld } from './journal.js';
 import { statusLineStep } from './status-line.js';
 import { verify, readEnrolled } from '../state/signing.js';
@@ -318,12 +318,12 @@ export async function finish({
       if (moved && moved.done !== true) left.push(...moved.lines);
     }
 
-    // 3c. Once the new helper is up: the VS Code panel, installed or brought up to date only where the card the director
-    // clicked named it, and Wheelhouse's own status line taken out of the local settings. They inform: a line each, never a stop for the update.
+    // 3c. The pieces parked in the core cut, once the new helper is up: the VS Code add-on, removed only where the card the
+    // director clicked named it, and Wheelhouse's own status line taken out of the local settings. They inform: a line each, never a stop for the update.
     const said = [];
     if (handing.done) {
       for (const step of [addon, statusLine]) {
-        try { said.push(...((await step({ project, folder: dir, journal, progress, save, client, run, platform, newRoot }))?.lines ?? [])); } catch { /* it informs */ }
+        try { said.push(...((await step({ project, folder: dir, journal, progress, save, client, run, platform }))?.lines ?? [])); } catch { /* it informs */ }
       }
       // Another agent's hook file on this computer, made to name the new release's folder.
       try { said.push(...agentHooks({ root: newRoot, platform })); } catch { /* it informs */ }
@@ -353,16 +353,10 @@ export async function finish({
   }
 }
 
-// The panel's install or update, from the new release's folder, for a plan whose card named it; null when it did not. Done once:
-// `progress.addon` is the record, so a second run installs nothing. A panel VS Code won't take is a line, never a stop.
-async function realAddon({ journal, progress, save, run, platform, newRoot }) {
-  if (planNamedAddon(journal) === null) return null;
-  if (progress.addon !== undefined) return { done: true, lines: [] };
-  const { installPanel } = await import('../addon/install.js');
-  const got = await installPanel({ root: newRoot, run, platform });
-  progress.addon = { ok: got.ok === true, at: new Date().toISOString() };
-  save();
-  return { done: true, lines: [got.says] };
+// The add-on's removal, for a plan whose card named it; null when it did not.
+async function realAddon({ journal, progress, save, run, platform }) {
+  if (!planNamedAddon(journal)) return null;
+  return removeAddon({ run, platform, progress, save });
 }
 
 // The move off Archon with the real helper, settings and connector. Archon's connector is built only for a project that

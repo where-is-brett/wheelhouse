@@ -9,7 +9,7 @@ import { briefProblem, briefWords } from './brief.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { settingsLine } from '../lib/settings-card.js';
-import { RELEASE_LABEL, RELEASE_TAG, releaseLine, UPDATE_LABEL, updateLine, PANEL_LABEL, panelLine, keepControlLine, approvalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, seatTakeOverLine, SEAT_SESSION, isSeatSince, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
+import { RELEASE_LABEL, RELEASE_TAG, releaseLine, UPDATE_LABEL, updateLine, keepControlLine, approvalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, seatTakeOverLine, SEAT_SESSION, isSeatSince, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, UUID, HASH, mayReplace } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
@@ -71,7 +71,7 @@ export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident
 export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'by-hand', 'slept', 'self-merged'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'seat-take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'approve-release', 'update-helper-answer', 'update-click', 'panel-click', 'confirm-settings'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'seat-take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'approve-release', 'update-helper-answer', 'update-click', 'confirm-settings'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -132,9 +132,6 @@ const ACTION_OWN = {
   // The director's click on the Update card (update design, section 4), Update or Not now: the full hash of the plan the card
   // showed, the release the computer is on and the one it moves to, and whether the move is an update or a put-back.
   'update-click': ['hash', 'from', 'to', 'put'],
-  // The director's click on the update command's card about adding the panel to VS Code, Install the panel or Not now: the panel's
-  // version and the full token of the showing the card named.
-  'panel-click': ['to', 'offer'],
   // The director's Confirm on the card keeping a feature's files that steer agents as they are
   // (ruling P7-31): the work, and the full hash of the watcher's finding the card's line names.
   'keep-control-files': ['work', 'hash'],
@@ -274,11 +271,6 @@ function checkAction(data) {
     if (data.put !== 'release' && data.put !== 'undo') bad('needs to say whether it is an update or a put-back');
     if (data.label !== UPDATE_LABEL && data.label !== 'Not now') bad(`needs the ${UPDATE_LABEL} or Not now label`);
     if (setLineOf(data.question) !== updateLine(data.from, data.to, data.put, data.hash)) bad('carries the Update line for its move and plan as its question\'s one set line');
-  } else if (data.action === 'panel-click') {
-    if (typeof data.to !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.]+)?$/.test(data.to)) bad('needs the panel\'s version');
-    if (typeof data.offer !== 'string' || !/^[0-9a-f]{64}$/.test(data.offer)) bad('needs the full token of the showing its card named');
-    if (data.label !== PANEL_LABEL && data.label !== 'Not now') bad(`needs the ${PANEL_LABEL} or Not now label`);
-    if (setLineOf(data.question) !== panelLine(data.to, data.offer)) bad('carries the panel line for its version and showing as its question\'s one set line');
   } else if (data.action === 'update-helper-answer') {
     if (typeof data.card !== 'string' || !/^update-helper-[A-Za-z0-9.-]{1,80}$/.test(data.card)) bad('needs the id of the helper card it answers');
     if (!['Stop it', 'Leave it', 'Wait longer'].includes(data.label)) bad('needs one of the helper card\'s labels');

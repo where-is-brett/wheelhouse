@@ -41,8 +41,7 @@ function setup(over = {}) {
     kind: async () => 'pins-only',
     locked: async () => ({ locked: false, others: [] }),
     startRunner: (args) => started.push(args),
-    addon: async () => null,
-    panelAllowed: async () => ({ allowed: null }),
+    addon: async () => false,
     clicked: () => true,
     ...over,
   });
@@ -70,97 +69,16 @@ test('plan: a project with the dropped plugin installed at project scope has the
   assert.doesNotMatch((await none.routes['/update/plan']({ folder: none.folder })).card.question, /removes it/);
 }));
 
-test('plan: an older panel is named on the card and in the plan, and nowhere else; a first install never is', () => withHome(async () => {
-  const t = setup({ addon: async () => ({ kind: 'update', from: '0.2.5', to: '0.2.7' }) });
+test('plan: where VS Code lists the add-on the card and the plan say the update removes it, and nowhere else', () => withHome(async () => {
+  const t = setup({ addon: async () => true });
   const got = await t.routes['/update/plan']({ folder: t.folder });
-  assert.match(got.card.question, /Wheelhouse panel in VS Code goes from 0\.2\.5 to 0\.2\.7 too/);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(openJournal('p1').folder, 'plan.json'), 'utf8')).plan.addon, { kind: 'update', from: '0.2.5', to: '0.2.7' });
-  const fresh = setup({ addon: async () => ({ kind: 'install', to: '0.2.7' }) });
-  const first = await fresh.routes['/update/plan']({ folder: fresh.folder });
-  assert.doesNotMatch(first.card.question, /panel/);
-  assert.equal('addon' in JSON.parse(fs.readFileSync(path.join(openJournal('p1').folder, 'plan.json'), 'utf8')).plan, false, 'not in the plan, so not in its hash');
+  assert.match(got.card.question, /add-on is installed in VS Code on this computer; the update removes it/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(openJournal('p1').folder, 'plan.json'), 'utf8')).plan.addon, true);
   const none = setup();
   const plain = await none.routes['/update/plan']({ folder: none.folder });
-  assert.equal(plain.hash, first.hash, 'a first install changes nothing about the plan');
-  assert.notEqual(plain.hash, got.hash, 'the click is for the plan that named the update');
-}));
-
-test('plan: a put-back names no panel', () => withHome(async () => {
-  const releases2 = [...releases, { tag: 'v0.2.8', sha: 'd'.repeat(40) }];
-  const t = setup({ from: () => 'v0.2.8', list: async () => releases2, fetch: async (tag) => ({ ok: true, sha: releases2.find((r) => r.tag === tag).sha }), addon: async () => ({ kind: 'update', from: '0.2.5', to: '0.2.7' }) });
-  const back = await t.routes['/update/plan']({ folder: t.folder, tag: 'v0.2.7' });
-  assert.match(back.card.question, /^Put Wheelhouse back to v0\.2\.7/m);
-  assert.doesNotMatch(back.card.question, /Wheelhouse panel/);
+  assert.doesNotMatch(plain.card.question, /add-on/);
   assert.equal('addon' in JSON.parse(fs.readFileSync(path.join(openJournal('p1').folder, 'plan.json'), 'utf8')).plan, false);
-}));
-
-test('plan: a company list that leaves the panel out means no line on the card, and one plain line says why', () => withHome(async () => {
-  const t = setup({ addon: async () => ({ kind: 'update', from: '0.2.5', to: '0.2.7' }), panelAllowed: async () => ({ allowed: false }) });
-  const got = await t.routes['/update/plan']({ folder: t.folder });
-  assert.doesNotMatch(got.card.question, /Wheelhouse panel/);
-  assert.equal('addon' in JSON.parse(fs.readFileSync(path.join(openJournal('p1').folder, 'plan.json'), 'utf8')).plan, false);
-  assert.equal(got.lines.filter((l) => /don't allow the Wheelhouse panel/.test(l)).length, 1);
-  const unsure = setup({ addon: async () => ({ kind: 'update', from: '0.2.5', to: '0.2.7' }), panelAllowed: async () => ({ allowed: null }) });
-  assert.match((await unsure.routes['/update/plan']({ folder: unsure.folder })).card.question, /Wheelhouse panel/);
-}));
-
-test('panel: a first install is its own card, Not now is remembered for this computer until a release that adds features, and a later minor asks again', () => withHome(async () => {
-  const offer = { kind: 'install', to: '0.2.7' };
-  const t = setup({ panelOffer: async () => offer, panelClicked: () => true });
-  const asked = await t.routes['/update/panel']({ folder: t.folder });
-  assert.deepEqual(asked.card.options.map((o) => o.label), ['Install the panel', 'Not now']);
-  assert.match(asked.card.question, /your choice/);
-  assert.match(asked.card.question, /Add the Wheelhouse panel 0\.2\.7 to VS Code, offer [0-9a-f]{12}/);
-  const said = await t.routes['/update/panel']({ folder: t.folder, label: 'Not now' });
-  assert.equal(said.recorded, true);
-  assert.match(said.lines[0], /won't be offered again until a release that adds features/);
-  assert.deepEqual(await t.routes['/update/panel']({ folder: t.folder }), { ok: true, lines: [] }, 'not asked again');
-  const patch = setup({ panelOffer: async () => ({ kind: 'install', to: '0.2.9' }) });
-  assert.equal((await patch.routes['/update/panel']({ folder: patch.folder })).card, undefined, 'same minor: still held');
-  const minor = setup({ panelOffer: async () => ({ kind: 'install', to: '0.3.0' }) });
-  assert.ok((await minor.routes['/update/panel']({ folder: minor.folder })).card, 'a later minor asks again');
-}));
-
-test('panel: Install the panel installs only after the director\'s signed click on the card shown; a bare label from a session installs nothing', () => withHome(async () => {
-  const offer = { kind: 'install', to: '0.2.7' };
-  const installed = [];
-  const install = async () => { installed.push(1); return { ok: true, says: 'The Wheelhouse panel is installed in VS Code. Reload VS Code to start it.' }; };
-  // With no card ever shown, and with the real check of signed clicks, a bare label does nothing.
-  const bare = setup({ panelOffer: async () => offer, panelInstall: install });
-  const none = await bare.routes['/update/panel']({ folder: bare.folder, label: 'Install the panel' });
-  assert.match(none.refused, /has not clicked/);
-  // The card shown, but no signed click: still nothing.
-  await bare.routes['/update/panel']({ folder: bare.folder });
-  assert.match((await bare.routes['/update/panel']({ folder: bare.folder, label: 'Install the panel' })).refused, /has not clicked/);
-  assert.deepEqual(installed, []);
-  // A click the check finds, made for the card shown: it installs once, and the showing is spent.
-  const asks = setup({ panelOffer: async () => offer, panelInstall: install, panelClicked: ({ shown, label }) => shown.to === '0.2.7' && label === 'Install the panel' });
-  await asks.routes['/update/panel']({ folder: asks.folder });
-  const got = await asks.routes['/update/panel']({ folder: asks.folder, label: 'Install the panel' });
-  assert.equal(got.installed, true);
-  assert.deepEqual(installed, [1]);
-  assert.match((await asks.routes['/update/panel']({ folder: asks.folder, label: 'Install the panel' })).refused, /has not clicked/, 'one click, one answer');
-  // Not now shares the check.
-  const decline = setup({ panelOffer: async () => offer });
-  await decline.routes['/update/panel']({ folder: decline.folder });
-  assert.match((await decline.routes['/update/panel']({ folder: decline.folder, label: 'Not now' })).refused, /has not clicked/);
-  // While an update is running, nothing is installed.
-  const busy = setup({ panelOffer: async () => offer, panelInstall: install, panelClicked: () => true });
-  await busy.routes['/update/panel']({ folder: busy.folder });
-  busy.hold(true);
-  assert.match((await busy.routes['/update/panel']({ folder: busy.folder, label: 'Install the panel' })).refused, /under way/);
-  assert.deepEqual(installed, [1]);
-}));
-
-test('panel: no card where the panel is installed, where there is no VS Code, or where a company list blocks it', () => withHome(async () => {
-  const none = setup({ panelOffer: async () => null });
-  assert.deepEqual(await none.routes['/update/panel']({ folder: none.folder }), { ok: true, lines: [] });
-  const update = setup({ panelOffer: async () => ({ kind: 'update', from: '0.2.5', to: '0.2.7' }) });
-  assert.deepEqual(await update.routes['/update/panel']({ folder: update.folder }), { ok: true, lines: [] }, 'an update rides on the Update card');
-  const blocked = setup({ panelOffer: async () => ({ kind: 'install', to: '0.2.7' }), panelAllowed: async () => ({ allowed: false }) });
-  const got = await blocked.routes['/update/panel']({ folder: blocked.folder });
-  assert.equal(got.card, undefined);
-  assert.match(got.lines[0], /don't allow the Wheelhouse panel/);
+  assert.notEqual(plain.hash, got.hash, 'the click is for the plan that named it');
 }));
 
 test('plan: with nothing newer it gives the one line and no card', () => withHome(async () => {

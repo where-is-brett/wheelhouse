@@ -16,7 +16,7 @@ import { NOW, now } from './fixture.js';
 function app(id = 'phone-app') {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
   const key = publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
-  const signs = (command, args, at = NOW) => ({ form: 'client', client: id, at, sig: crypto.sign(null, Buffer.from(canonicalJson({ command, args, at, project: 'o__p' })), privateKey).toString('base64') });
+  const signs = (command, args, at = NOW) => ({ form: 'client', client: id, at, sig: crypto.sign(null, Buffer.from(canonicalJson({ command, args, at })), privateKey).toString('base64') });
   return { client: { id, name: 'The phone app', publicKey: key }, fingerprint: fingerprintOf(key), signs };
 }
 
@@ -35,8 +35,8 @@ async function clicked(line, label) {
   return makeEvent({ ...got.made, now });
 }
 
-const answer = { card: 'c1', option: 'Not now', hash: 'b'.repeat(64) };
-const context = (extra) => ({ enrolled: [], views: {}, events: [], now, clients: pairedClients(), project: 'o__p', ...extra });
+const answer = { card: 'c1', option: 'Not now' };
+const context = (extra) => ({ enrolled: [], views: {}, events: [], now, clients: pairedClients(), ...extra });
 
 test('pair raises one Pair this app card naming the key\'s fingerprint', () => withKey(async () => {
   const phone = app();

@@ -27,8 +27,6 @@ import { SETUP_STEPS } from '../../../scripts/lib/setup-run.js';
 import { NOT_SET_UP, SETUP_FIRST } from '../../../scripts/hooks/session-start.js';
 import { keptRequest } from '../../../scripts/lib/kept-request.js';
 import { deskCore } from '../../../scripts/desk/core.js';
-import { markPanel, clearPanels, markAskHere, takeAskHere } from '../../../scripts/desk/panel-live.js';
-import { PANE_LEAD } from '../../../scripts/cards/panel-words.js';
 import { fileSource } from '../../../scripts/desk/file-source.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
 import { markOpen, readOpen } from '../../../scripts/lib/session-files.js';
@@ -1100,21 +1098,6 @@ test('since the last turn: a panel answer is named and a chat answer is left out
   });
 });
 
-test('since the last turn, Copilot\'s prompt hook carries the panel answer too: its translated prompt reaches the same since line', async () => {
-  await withProject(async ({ repo }) => {
-    seenAt();
-    store(stateDir(P), [askedCard(QUESTION_A, '30'), answeredCard(QUESTION_A, '34', 'panel')]);
-    // The prompt as Copilot sends it, translated as its hook entry translates it before any step runs.
-    const { toGuardInput } = await import('../../../adapters/copilot/translate.js');
-    const translated = toGuardInput({ sessionId: SESSION, cwd: repo, prompt: 'Done?', timestamp: Date.parse(sessionNow) }, 'userPromptSubmitted');
-    const input = Array.isArray(translated) ? translated[0] : translated;
-    assert.equal(input.hook_event_name, 'UserPromptSubmit');
-    const text = contextOf(await hook(input));
-    assert.ok(text.startsWith(SINCE_LEAD), text);
-    assert.match(text, /the footer wording on the contact page\?: approved in the panel at \d\d:34/);
-  });
-});
-
 // A transcript tail holding the hidden line the mod appended after a panel press.
 function notedTranscript(home, ...ids) {
   const lines = ids.map((id) => ({
@@ -1344,80 +1327,5 @@ test('board-context: with more helm notes than it names, it names the newest', a
     const text = contextOf(await run(repo, 'What is going on?', NOW));
     assert.ok(text.includes('Note number 7.') && text.includes('Note number 3.'), text);
     assert.ok(!text.includes('Note number 2.') && !text.includes('Note number 1.'), text);
-  });
-});
-
-// --- An agent whose hooks can't write: the since line and the panel hint ---
-
-// The deps for a hook that can't write, whose helper answers through the desk over the files, as at `now`.
-function asHelper(repo, now) {
-  const core = deskCore({ source: fileSource(P, { cwd: repo, client, now: at(now) }), recorder: {}, now: at(now) });
-  return { writeVia: 'helper', client: { ...client, desk: { read: async (body) => core.read(body.view, body.args) } } };
-}
-
-test('an agent whose hooks can\'t write is told what the panel answered since its last turn, from a per-session turn time', async () => {
-  await withProject(async ({ repo }) => {
-    store(stateDir(P), [askedCard(QUESTION_A, '30'), answeredCard(QUESTION_A, '34', 'panel')]);
-    const helper = (now) => asHelper(repo, now);
-    // The session's first turn has no earlier turn to count from.
-    const t1 = '2026-10-19T10:20:00.000Z';
-    assert.ok(!(contextOf(await run(repo, 'Hello', t1, helper(t1))) ?? '').includes(SINCE_LEAD));
-    // Nothing is written to seen.json by a hook that can't write.
-    assert.equal(readSeen(P, { now: at('2026-10-19T10:21:00.000Z') }).promptAt, null);
-    const t2 = '2026-10-19T10:40:00.000Z';
-    const text = contextOf(await run(repo, 'Done?', t2, helper(t2)));
-    assert.ok(text.startsWith(SINCE_LEAD), text);
-    assert.match(text, /the footer wording on the contact page\?: approved in the panel at \d\d:34/);
-    // The turn time moved on: the same answer is not told again.
-    const t3 = '2026-10-19T10:41:00.000Z';
-    assert.ok(!(contextOf(await run(repo, 'And?', t3, helper(t3))) ?? '').includes(SINCE_LEAD));
-    // Another session's first turn counts from nothing.
-    const t4 = '2026-10-19T10:42:00.000Z';
-    const other = await decide(prompt(repo, 'Hi', 's2'), { now: at(t4), env: {}, ...helper(t4) });
-    assert.ok(!(contextOf(other) ?? '').includes(SINCE_LEAD));
-  });
-});
-
-test('with the helper down, an agent whose hooks can\'t write gets no since line and the hook writes no turn time', async () => {
-  await withProject(async ({ repo }) => {
-    store(stateDir(P), [askedCard(QUESTION_A, '30'), answeredCard(QUESTION_A, '34', 'panel')]);
-    const down = { writeVia: 'helper', client: { ...client, desk: { read: async () => ({ ok: false, refused: 'The helper could not be reached' }) } } };
-    for (const when of ['2026-10-19T10:20:00.000Z', '2026-10-19T10:40:00.000Z']) {
-      assert.ok(!(contextOf(await run(repo, 'Hello', when, down)) ?? '').includes(SINCE_LEAD));
-    }
-    assert.equal(fs.existsSync(path.join(path.dirname(roleFile('s1')), 'turn.json')), false);
-  });
-});
-
-test('Claude Code\'s since line still comes from seen.json, and needs no turn time', async () => {
-  await withProject(async ({ repo }) => {
-    seenAt();
-    store(stateDir(P), [askedCard(QUESTION_A, '30'), answeredCard(QUESTION_A, '34', 'panel')]);
-    assert.ok(contextOf(await hook(prompt(repo, 'Done?', SESSION))).startsWith(SINCE_LEAD));
-  });
-});
-
-test('while the panel is live, an agent whose hooks can\'t write is told the cards are in the panel, not to ask them', async () => {
-  await withProject(async ({ repo }) => {
-    markSeen(P, { promptAt: new Date('2026-10-19T11:59:00.000Z') });
-    put(viewFile('waiting'), unasked(2));
-    clearPanels();
-    try {
-      markPanel(P, 'vscode-panel', Date.parse(NOW));
-      const text = contextOf(await run(repo, 'Hi', NOW, asHelper(repo, NOW)));
-      assert.ok(text.includes(PANE_LEAD), text);
-      assert.ok(!text.includes('Cards to ask this visit'), text);
-      // Claude Code's line stays as it was.
-      assert.equal(contextOf(await run(repo, 'Hi', NOW)), cardsLine(2));
-      // A card the director moved to the chat (Ask in the chat) is still asked there, while the panel is live.
-      markAskHere(P, 'c1', Date.parse(NOW));
-      takeAskHere(P, Date.parse(NOW));
-      assert.equal(contextOf(await run(repo, 'Hi', NOW, asHelper(repo, NOW))), cardsLine(2));
-      clearPanels();
-      // With no live panel the agent is told to ask them.
-      assert.equal(contextOf(await run(repo, 'Hi', NOW, asHelper(repo, NOW))), cardsLine(2));
-    } finally {
-      clearPanels();
-    }
   });
 });

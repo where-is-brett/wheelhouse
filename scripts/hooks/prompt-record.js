@@ -65,7 +65,7 @@ import {
 } from '../state/card-lines.js';
 import {
   chatCopy, setLineOf, setLinesOf, replyCodeOf, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
-  RELEASE_LABEL, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LABEL, UPDATE_LINE, PANEL_LABEL, PANEL_LINE, TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, SEAT_TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE,
+  RELEASE_LABEL, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LABEL, UPDATE_LINE, TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, SEAT_TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE,
 } from '../state/card-lines.js';
 import {
   keepClick, shownHash, shownByCard, keepAnswer, askedFor, claimAnswer, claimedAt, noteClaimed, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords, sameWords,
@@ -419,23 +419,6 @@ export async function earned({ project, question, label, card, client, now, left
     if (!stored.hash.startsWith(m[4]) || plan.from !== m[1] || plan.to !== m[2] || plan.put !== m[3]) return null;
     if (stored.card?.question !== question || card.question !== question || !sameLabels(card.options, stored.card.options)) return null;
     return action({ action: 'update-click', hash: stored.hash, from: m[1], to: m[2], put: m[3] });
-  }
-  // The update command's card about adding the panel to VS Code: its one set line names the panel's version and the first twelve
-  // characters of the token the helper made when it showed the card. A click on Install the panel or Not now earns the director's
-  // click only from the card the helper showed last: the record in the update's folder, which only the helper writes, must hold
-  // that version and token and this very card, word for word, and the card as asked must offer the same options. Nothing is
-  // earned from a reply, a pane press, or a card that was not asked, nor for a showing already used.
-  if (setLinesOf(question).some((line) => PANEL_LINE.test(line))) {
-    if (label !== PANEL_LABEL && label !== NOT_NOW) return null;
-    const lines = setLinesOf(question);
-    const m = lines.length === 1 ? PANEL_LINE.exec(lines[0]) : null;
-    if (!m || !card || typeof card !== 'object') return null;
-    let stored = null;
-    try { stored = JSON.parse(fs.readFileSync(path.join(openJournal(project).folder, 'panel-offer.json'), 'utf8')); } catch { /* no card was shown */ }
-    if (!stored || typeof stored.token !== 'string' || !/^[0-9a-f]{64}$/.test(stored.token) || stored.used === true) return null;
-    if (!stored.token.startsWith(m[2]) || stored.to !== m[1]) return null;
-    if (stored.card?.question !== question || card.question !== question || !sameLabels(card.options, stored.card.options)) return null;
-    return action({ action: 'panel-click', to: m[1], offer: stored.token });
   }
   // The card about an old helper that did not make way for an update (update design, section 7.3): its one set line names the
   // helper card's id, and a click on one of its options earns the director's answer to that card. Earned only from the card

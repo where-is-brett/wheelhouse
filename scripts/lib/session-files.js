@@ -21,7 +21,6 @@ export const HOLD_FOR_PANE = true;
 const PANE = 'pane.json';
 const HERE = 'here.json';
 const OPEN = 'open.json';
-const TURN = 'turn.json';
 
 function fileOf(sessionId, name) {
   const role = roleFile(sessionId);
@@ -124,16 +123,6 @@ export function readOpen(sessionId) {
   const mark = readJson(fileOf(sessionId, OPEN));
   if (mark === null || !isIds(mark.cards) || !isTime(mark.at)) return null;
   return { cards: mark.cards, at: mark.at };
-}
-
-// For an agent whose hooks can't write: the time the session's last turn began (turn.json), kept by the helper. Gives that
-// time in ms, or null when the session has none yet, and records `now` as the turn now beginning.
-export function takeTurn(sessionId, now) {
-  if (!isTime(now)) return null;
-  const file = fileOf(sessionId, TURN);
-  const mark = readJson(file);
-  writeJson(file, { at: now });
-  return mark !== null && isTime(mark.at) ? mark.at : null;
 }
 
 export function clearOpen(sessionId) {

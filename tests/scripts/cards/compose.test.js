@@ -10,7 +10,7 @@ import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, pairLine, unpairLine, uninstallLine, keepControlLine, usageLine, premiumLine, releaseLine, updateHelperLine, updateLine, panelLine, replyCode, replyCodeLine, setLineOf, SET_LINES,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, pairLine, uninstallLine, keepControlLine, usageLine, premiumLine, releaseLine, updateHelperLine, updateLine, replyCode, replyCodeLine, setLineOf, SET_LINES,
 } from '../../../scripts/state/card-lines.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../../../scripts/lib/front-desk.js';
@@ -71,10 +71,6 @@ const INPUTS = {
     ...common, recommend: 'Pair it', kind: 'pair', level: 4, checks: 'It changes no checks.', what: 'The app phone-app asks to read Wheelhouse and decide through it, with its key abcdef012345.',
     options: [says('Pair it')], target: { client: 'phone-app', fingerprint: 'abcdef012345' },
   },
-  unpair: {
-    ...common, recommend: 'Unpair it', kind: 'unpair', level: 4, checks: 'It changes no checks.', what: 'The app phone-app, with its key abcdef012345, is paired and can decide through Wheelhouse.',
-    options: [says('Unpair it')], target: { client: 'phone-app', fingerprint: 'abcdef012345' },
-  },
   uninstall: {
     ...common, recommend: 'Remove it', kind: 'uninstall', level: 4, checks: 'The checks no longer guard this project.',
     what: 'Remove Wheelhouse from cafe menu: stop its jobs, put back 3 changes on this computer.',
@@ -108,10 +104,6 @@ const INPUTS = {
     ...common, level: 4, checks: 'It starts the update.', recommend: 'Update', kind: 'update', what: 'Update Wheelhouse v0.2.6 to v0.2.7.',
     options: [says('Update')], target: { from: 'v0.2.6', to: 'v0.2.7', put: 'release', hash: DOC },
   },
-  panel: {
-    ...common, level: 3, recommend: 'Install the panel', kind: 'panel', what: 'The panel 0.3.1 is a small panel beside the chat.',
-    options: [says('Install the panel')], target: { to: '0.3.1', offer: DOC },
-  },
 };
 const LINES = {
   approval: approvalLine(7, FULL),
@@ -130,7 +122,6 @@ const LINES = {
   trust: trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', 'abcdef012345'),
   'take-over': takeOverLine('0a1b2c3d', 4),
   pair: pairLine('phone-app', 'abcdef012345'),
-  unpair: unpairLine('phone-app', 'abcdef012345'),
   uninstall: uninstallLine('cafe menu', DOC),
   question: null,
   'keep-control-files': keepControlLine('export-csv', DOC),
@@ -139,7 +130,6 @@ const LINES = {
   release: releaseLine('v0.2.6', 'v0.2.7', FULL),
   'update-helper': updateHelperLine('update-helper-4242-x'),
   update: updateLine('v0.2.6', 'v0.2.7', 'release', DOC),
-  panel: panelLine('0.3.1', DOC),
 };
 const input = (kind, over = {}) => ({ ...INPUTS[kind], ...over });
 const refused = (over, pattern, kind = 'approval') => assert.throws(() => composeCard(input(kind, over)), pattern);
@@ -171,7 +161,7 @@ test("each kind's card carries its plain lines in Calm's order, then its set lin
       assert.equal(setLineOf(question.question), LINES[kind]);
       assert.equal(card.line, LINES[kind]);
       assert.equal(card.code, null);
-      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair', 'unpair', 'release', 'update-helper', 'update', 'panel']);
+      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair', 'release', 'update-helper', 'update']);
     } else {
       assert.deepEqual(after, [LINES[kind], replyCodeLine(replyCode(LINES[kind]))]);
       assert.equal(setLineOf(question.question), LINES[kind]);
@@ -246,11 +236,9 @@ test('the default ask for each kind is one line ending in a question mark, or th
     premium: 'Allow the premium model at Thorough?',
     'take-over': 'Move the First Mate to this computer?',
     pair: 'Pair this app?',
-    unpair: 'Unpair this app?',
     release: 'Move this project to Wheelhouse v0.2.7?',
     'update-helper': 'What should the update do about the old helper?',
     update: 'Update Wheelhouse to v0.2.7?',
-    panel: 'Add the Wheelhouse panel 0.3.1 to VS Code?',
   };
   for (const kind of CARD_KINDS) {
     const { card } = composeCard(input(kind));

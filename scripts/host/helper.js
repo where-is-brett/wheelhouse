@@ -111,8 +111,6 @@ import { FIX_LANE, openRedMain, redMainIncident } from '../engine/fix-main.js';
 import { endedBy } from '../foreman/queue.js';
 import { packTreeDigest } from '../engine/pack-build.js';
 import { deskCore, checkVersion } from '../desk/core.js';
-import { isMergeApproval } from '../desk/evidence.js';
-import { namesCard } from '../desk/acts.js';
 import { fileSource } from '../desk/file-source.js';
 import { askToPair, pairClient, pairedClients, unpairClient } from '../desk/clients.js';
 import { DESK_VERSION, needsEvidence } from '../desk/vocabulary.js';
@@ -2455,9 +2453,8 @@ export async function startHelper({
   }
 
   // A click in the chat (ruling P5-17): an unsigned card-answer naming its proof, never signed. A label that
-  // decides a signed step is taken only on a card a chat click may decide: a plain merge approval;
+  // decides a signed step is taken only on a card a chat click may decide: a merge card;
   // never one of the confirmed steps (a card named for the step, or `<step>-…`), which need the window.
-  // A merge card is a plain merge approval (isMergeApproval): kind approval, level 3, with the approval set line.
   // Suggest a change… (ruling P5-27 k) carries the director's own words as `text`, and no other click does.
   async function doChatClick({ project, card, hash, label, proof, commit, text }, ctx) {
     if (!CHAT_PROOFS.includes(proof)) refuse(`a click in the chat is recorded as ${CHAT_PROOFS.join(' or ')}`);
@@ -2473,38 +2470,10 @@ export async function startHelper({
     if (confirmed && signsOn(label, asked)) refuse('that step is confirmed outside the chat, never by a click in it');
     // A decision answered by a click the chat can't sign would close it without the signed answer the crew acts on.
     if (isDecisionCard(shownCard?.data)) refuse('a decision is answered in the window or by a typed reply, never by a click in the chat');
-    // Read from the live card, as the desk reads it, never from its id: a card's id is a random one.
-    const mayDecide = isMergeApproval(shownCard?.data);
+    const mayDecide = /^merge-/.test(card);
     if (signsOn(label, asked) && !mayDecide) refuse('a click in the chat can\'t decide that card');
     const data = { question: card, label, hash, ...(commit === undefined ? {} : { commit }), ...(text === undefined ? {} : { text }), proof, where: 'chat' };
     return doWrite({ project, kind: 'card-answer', data }, ctx, { own: true });
-  }
-
-  // A paired app's Approve on a plain merge approval (decision 2 of the add-on's return design): the helper signs the approval the card earns,
-  // as the window does for a click, naming proof `client` and the app that was clicked. Only where no real users are, and only for a plain
-  // merge approval (isMergeApproval), read from the live card. It asks the code host for the head as the card's own line names it
-  // (windowEarned), so a card whose head moved earns nothing. The caller holds the project's queue, as the other desk acts do.
-  async function doPanelApprove({ project, card, label, client, hash }, ctx) {
-    if (launchedIn(project)) refuse('this project has real users, so approve it in Wheelhouse\'s window or on the code host');
-    if (typeof card !== 'string' || card === '' || typeof client !== 'string' || client === '') refuse('the card and the app must be named');
-    const found = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'card' && e.id === card);
-    if (found.length !== 1) refuse('that card is not in this project\'s state');
-    const [shown] = found;
-    if (!isMergeApproval(shown.data)) refuse('the panel can\'t decide that card: answer it in Wheelhouse\'s window');
-    if (label !== 'Approve') refuse('the panel approves a merge only; Send it back is decided in Wheelhouse\'s window or by a typed reply');
-    // The card is the one shown, and still waits, as the window checks before it records.
-    if (!namesCard(hash, shown.data)) refuse('that card is not the one shown: its hash differs');
-    const { waiting } = await writeViews(project, { now });
-    if (!(waiting ?? []).some((w) => w.id === card)) refuse('that card no longer waits for a click');
-    const got = await windowEarned(project, shown, label, ctx);
-    // All stop may have been set while the code host was asked.
-    if (stopped()) refuse('All stop is on');
-    if (got === null || got.made.kind !== 'approval') refuse('that card changed since it was shown, so nothing was recorded');
-    const event = makeEvent({ kind: 'approval', data: { ...got.made.data, proof: 'client', by: client }, now });
-    const result = await writeEvent({ project, event, now });
-    await freshViews(() => writeViews(project, { now }));
-    await doWrite({ project, kind: 'card-answer', data: { card, question: shown.data.question, label, where: 'panel' } }, ctx);
-    return written({ event, result });
   }
 
   // --- the helper's own window (design section 6.3, ruling P5-23) ---
@@ -2537,17 +2506,7 @@ export async function startHelper({
     // The director's Confirm on the card for the computer's git settings, after a push was refused because they changed: confirmed
     // in the window, which records the settings as they read when the click is made (settingsEarned, applySettings).
     'confirm-settings': 'git-settings',
-    // Pair it and Unpair it on an app's card: confirmed in the window, which enrols or removes the app's key (enrolOn). No
-    // chat that records no click can sign these, so the window is how an app is paired from such a chat.
-    'pair-client': 'pairing', 'unpair-client': 'pairing',
   };
-  // The director's signed Pair it or Unpair it on an app's card (spec 5.3) enrols the app's key, or removes it. Shared by
-  // the signed record route and the window, so either click leaves the key as the card said.
-  function enrolOn(event) {
-    if (event.kind !== 'action') return;
-    if (event.data?.action === 'pair-client') pairClient({ id: event.data.client }, event, { now });
-    if (event.data?.action === 'unpair-client') unpairClient(event.data.client, event);
-  }
   // The steps the window serves while STOP is on: Lift STOP, and an undo, as the runbook's local steps carry on.
   // The update's steps: their window names no default button, so a stray Return or Enter chooses nothing.
   const NO_DEFAULT_STEPS = ['update', 'release-approval', 'update-helper', 'git-settings'];
@@ -2701,7 +2660,7 @@ export async function startHelper({
       await doWrite({ project, kind: 'card-answer', data: { card, question: event.data.question, label: 'Confirm', where: 'panel' } }, ctx); // a plain answer, signed by nothing: only an option closes a card
       refuse('this computer\'s git settings are the confirmed ones again, so that card was closed');
     }
-    if (deciding.length === 0) refuse('that card is not one the window confirms: only Lift All stop, a guardrail change, Unattended, a runbook step, a CI push, an approval, an Ask allowance, pairing an app or a decision');
+    if (deciding.length === 0) refuse('that card is not one the window confirms: only Lift All stop, a guardrail change, Unattended, a runbook step, a CI push, an approval, an Ask allowance or a decision');
     return { event, deciding };
   }
 
@@ -2753,7 +2712,6 @@ export async function startHelper({
       const result = await writeEvent({ project, event, now });
       // A work's approved text is kept, and a proposed change installed, as a hook that signs the same click does.
       keepAfterClick(project, readProject(project)?.folder, event);
-      enrolOn(event);
       await freshViews(() => writeViews(project, { now }));
       if (card !== LIFT_STOP_NAME) await doWrite({ project, kind: 'card-answer', data: { card, question: again.event.data.question, label: still.label, where: 'panel' } }, ctx);
       if (still.lift) liftStop();
@@ -2831,7 +2789,9 @@ export async function startHelper({
     if (held.length > 0) refuse('the state already holds an event with that id');
     const result = await writeEvent({ project, event, now });
     await freshViews(() => writeViews(project, { now }));
-    enrolOn(event);
+    // The director's Pair it or Unpair it on an app's card (spec 5.3) enrols the app's key, or removes it.
+    if (event.kind === 'action' && event.data?.action === 'pair-client') pairClient({ id: event.data.client }, event, { now });
+    if (event.kind === 'action' && event.data?.action === 'unpair-client') unpairClient(event.data.client, event);
     return written({ event, result });
   }
 
@@ -3725,8 +3685,6 @@ export async function startHelper({
       // Only the helper's own, verified decision-records change lowers the approval condition (decisionsOnly in the gate).
       ...(batching ? { batch: true, changedPaths: changes.paths } : {}),
       approvalRequired: needsApproval,
-      // A panel's approval (proof client) counts only where no real users are: the gate reads it from here, never from the record.
-      realUsers: launchedIn(project),
       touchesGuardrails: guarded,
       review,
       approval,
@@ -4737,7 +4695,6 @@ export async function startHelper({
       }),
       liftStop: tried(async () => { liftStop(); return { ok: true }; }),
       chatClick: tried((click) => doChatClick({ project, ...click }, ctx)),
-      panelApprove: tried((asked) => doPanelApprove({ project, ...asked }, ctx)),
       confirm: tried((asked) => doConfirm({ project, ...asked }, ctx)),
       askPair: tried(async (client) => ({ ok: true, ...askToPair(client, { now }) })),
       safekeeping: tried(({ action }) => doSafekeeping({ project, action }, ctx)),
@@ -4753,9 +4710,8 @@ export async function startHelper({
       await ensureStateClone(project, ctx);
       return fn();
     });
-    if (op === 'read') return inQueue(() => core.read(body.view, body.args ?? {}, body.evidence));
-    // A watch may carry a paired app's signature, which marks that project's panel live (scripts/desk/panel-live.js).
-    if (op === 'watch') return inQueue(() => core.watch(body.cursor ?? null, body.evidence));
+    if (op === 'read') return inQueue(() => core.read(body.view, body.args ?? {}));
+    if (op === 'watch') return inQueue(() => core.watch(body.cursor ?? null));
     const { command, args = {}, evidence } = body;
     // The form is read only for a command that needs evidence: any other ignores what it was sent with.
     const signed = needsEvidence(command) && evidence?.form === 'signed';
@@ -7021,7 +6977,5 @@ export async function startHelper({
   safekeepingWatch.unref?.();
 
   // `engine.start` is the helper's own way to start a run (the dispatcher's): no route starts one.
-  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() }, safekeeping: { tick: () => safekeepingRound() }, watcher: { tick: () => watcherRound() },
-    // A test's way to the panel's approval without the desk's own checks before it, which refuse most of what it refuses again.
-    panel: { approve: async (asked, ctx) => { try { return await doPanelApprove(asked, ctx); } catch (error) { return { ok: false, refused: error instanceof Error ? error.message : 'the request failed' }; } } }, move: { tick: () => moveRound() }, undo: { tick: () => undoRound() } };
+  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() }, safekeeping: { tick: () => safekeepingRound() }, watcher: { tick: () => watcherRound() }, move: { tick: () => moveRound() }, undo: { tick: () => undoRound() } };
 }

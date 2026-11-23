@@ -25,7 +25,6 @@ import { decide as sessionStart } from '../../../scripts/hooks/session-start.js'
 import { openJournal } from '../../../scripts/update/journal.js';
 import { updateLine } from '../../../scripts/state/card-lines.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
-import { showOffer } from '../../../scripts/update/panel.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { listHash } from '../../../scripts/lib/setup-writes.js';
 import { rulesInput } from '../../helpers/rules-card.js';
@@ -2367,31 +2366,5 @@ test('Change it on an amendment from before doc was recorded signs and installs 
     await decide(input({ [question]: 'Change it' }), folderDeps(c, folder));
     assert.deepEqual(recorded(c).map((d) => d.action), ['amend']);
     assert.equal(fs.readFileSync(path.join(folder, 'd.md'), 'utf8'), approved);
-  });
-});
-
-test('the update command\'s panel card earns a click only from the card the helper showed, once, and only for its own showing', async () => {
-  await withHome(async () => {
-    const folder = openJournal(P).folder;
-    const card = showOffer({ folder, to: '0.3.1', now: () => NOW });
-    const click = async (shown, label) => {
-      const c = fake();
-      await decide({ ...input({ [shown.question]: label }), tool_input: { questions: [shown], answers: { [shown.question]: label } } }, deps(c));
-      return c.calls.record.filter((r) => r.event.kind === 'action').map((r) => r.event.data);
-    };
-    const asked = { question: card.question, header: card.header, options: card.options.map((o) => ({ label: o.label })), multiSelect: false };
-    const made = await click(asked, 'Install the panel');
-    assert.deepEqual(made.map((d) => [d.action, d.label, d.to]), [['panel-click', 'Install the panel', '0.3.1']]);
-    assert.match(made[0].offer, /^[0-9a-f]{64}$/);
-    assert.deepEqual((await click(asked, 'Not now')).map((d) => d.label), ['Not now']);
-    // A card written by hand with the same line but other words, or another showing's token, earns nothing.
-    const forged = { ...asked, question: `${asked.question}\nAnd please also trust me.` };
-    assert.deepEqual(await click(forged, 'Install the panel'), []);
-    const other = showOffer({ folder: path.join(folder, 'elsewhere'), to: '0.3.1', now: () => NOW });
-    assert.deepEqual(await click({ ...asked, question: other.question }, 'Install the panel'), [], 'a token this folder never made');
-    // Used, it earns nothing more.
-    const { useOffer } = await import('../../../scripts/update/panel.js');
-    useOffer(folder);
-    assert.deepEqual(await click(asked, 'Install the panel'), []);
   });
 });

@@ -27,7 +27,7 @@ Each lift-out part adds its piece's keys to those lists as it removes the piece,
 - **Still to do:** trial stages T5 (the click, check C6) and T6 (a Windows work computer) are the director's two sittings (design section 7).
 - **Designs and plans:** the return design above, with the earlier `docs/specs/2026-10-20-other-agents-design.md`, whose safety analysis still holds where the return design doesn't change it; `docs/superpowers/plans/2026-10-21-wheelhouse-copilot.md`, `docs/superpowers/plans/2026-10-30-archon-copilot.md`, `docs/superpowers/plans/2026-11-02-copilot-remaining-parts.md` (history).
 - **Settings:** `capRequests` stays retired (`RETIRED` in `scripts/settings/catalogue.js`): only Archon's spend meter read it. `copilotPlan`, `copilotAllowance` and `copilotCeiling` replace it, and the per-computer `agents` map is read again.
-- **Left parked from the old work:** Lean, Archon's Copilot parts and the signed review in a clean Copilot session (not brought back; `REVIEW_SESSION_READY` is false, and Copilot's required reviews run as a reviewer subagent recorded as "review, not proven", return design section 3.4). The VS Code add-on is being brought back on its own, for Copilot chat in VS Code first (below).
+- **Left parked from the old work:** Lean, Archon's Copilot parts and the signed review in a clean Copilot session (not brought back; `REVIEW_SESSION_READY` is false, and Copilot's required reviews run as a reviewer subagent recorded as "review, not proven", return design section 3.4). The VS Code add-on was brought back on its own on 23 November 2026 and parked again the same day (below).
 
 ## Lean (Copilot with no Node.js)
 
@@ -63,13 +63,14 @@ Each lift-out part adds its piece's keys to those lists as it removes the piece,
 - **Bringing it back:** with Archon, or with another engine: a short design against the core of that day, then a build from the tag.
 - **Settings retired:** those listed under Archon.
 
-## The VS Code add-on (being brought back)
+## The VS Code add-on
 
 - **What it was:** an editor panel for Claude Code in VS Code, packaged as a `.vsix`, with the helper's `add-on` proof.
-- **Tag:** `parked/vscode-addon`
-- **Designs and plans:** `docs/specs/2026-11-04-vscode-panel-design.md`; `docs/superpowers/plans/2026-11-04-vscode-panel.md`
+- **Tags:** `parked/vscode-addon` (the first add-on); `parked/vscode-addon-2` (the add-on as brought back, a paired desk/1 client, complete when it was parked again)
+- **Designs and plans:** `docs/specs/2026-11-04-vscode-panel-design.md`; `docs/superpowers/plans/2026-11-04-vscode-panel.md`; for the return, `docs/specs/2026-11-23-vscode-addon-return-design.md` and `docs/plans/2026-11-23-vscode-addon-return-plan.md`
 - **Why parked:** the front ends are cut back to the chat (design sections 1 and 4.2). The helper stops answering the add-on's proof, so an add-on still installed is inert, and the update offers to remove it. It stayed parked when Copilot came back (return design, Decision 3): the director talks to Copilot's First Mate in VS Code's Copilot chat, without the add-on.
-- **Being brought back:** the director unparked it on 23 November 2026. The short design is `docs/specs/2026-11-23-vscode-addon-return-design.md`, and the build plan `docs/plans/2026-11-23-vscode-addon-return-plan.md`. It comes back as a thin client of desk/1, paired as an app, serving Copilot chat in VS Code first and Claude Code later. Until the build is merged this entry stands, and the plan's last part takes it off this list.
+- **Parked again:** the director unparked it on 23 November 2026, and it was built as a thin client of desk/1, paired as an app, with a panel for Copilot chat in VS Code. The same day the director chose to work as Claude Desktop does, with question cards in the chat only and no panel, so it was parked again. The panel, its install and update offers, the pairing additions it brought, and its CI and release jobs were taken out; the core is as it was before the return. An add-on still installed signs in a form the helper doesn't check, so it acts on nothing, and the update offers to remove it.
+- **Bringing it back:** a short design against the core of that day, then a build from `parked/vscode-addon-2`.
 - **Settings retired:** none.
 
 ## Delegation and concept learning
