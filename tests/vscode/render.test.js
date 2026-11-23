@@ -135,3 +135,21 @@ test('the add-on\'s picture is a plain svg that follows the theme colour', () =>
   const svg = fs.readFileSync(path.join(here, '..', '..', 'vscode', 'media', 'wheel.svg'), 'utf8');
   assert.ok(svg.startsWith('<!-- vscode/media/wheel.svg -->') && svg.includes('currentColor') && !svg.includes('<script'));
 });
+
+test('a card that has moved to the chat says so and offers no button', () => {
+  const html = render({ state: 'live', cards: [{ id: 'c1', hash: 'abc123def456', question: 'Which colour?', moved: true, options: [{ label: 'Blue' }] }] }, { nonce: NONCE });
+  assert.ok(html.includes('Moved to the chat'));
+  assert.ok(!html.includes('data-card="c1"'));
+});
+
+test('the question is drawn once, and not again as what it is about', () => {
+  const html = render({ state: 'live', cards: [{ id: 'c1', hash: 'abc123def456', question: 'Trial A: Hi or Hello?\nA throwaway question.', what: 'Trial A: Hi or Hello?', options: [] }] }, { nonce: NONCE });
+  assert.equal(html.split('Trial A: Hi or Hello?').length - 1, 1);
+});
+
+test('the header lets the All stop button keep its width at the narrowest sidebar', () => {
+  const css = fs.readFileSync(path.join(here, '..', '..', 'vscode', 'pane', 'style.css'), 'utf8');
+  assert.match(css, /header \{[^}]*flex-wrap: wrap/);
+  assert.match(css, /\.stop \{[^}]*white-space: nowrap/);
+  assert.match(css, /\.stop \{[^}]*flex: none/);
+});

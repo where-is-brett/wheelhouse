@@ -29,7 +29,7 @@ export function panelAsk(offer) {
         : `Add the Wheelhouse panel to VS Code (${offer.to})? It is a small panel beside the chat that shows your cards. It is optional.`,
       why: `It adds software to VS Code on this computer, so it's your choice. Wheelhouse works in the chat without it; with it, the cards that wait for you sit in the panel.`,
       options: [
-        { label, says: update ? 'The next card lists it with the rest, and it is brought up to date on your Go ahead.' : 'The next card lists it with the rest, and it is added on your Go ahead.' },
+        { label, says: update ? 'The next card lists it with the rest, and it is brought up to date on your Go ahead.' : 'The next card lists it with the rest, and it is added on your Go ahead. A Pair it step in Wheelhouse\'s window follows the install, so the panel\'s clicks count.' },
         { label: PANEL_LABELS.skip, says: 'The panel is left as it is. Run setup again to add it.' },
       ],
       recommend: label,

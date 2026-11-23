@@ -23,6 +23,24 @@ const str = (x) => (typeof x === 'string' ? x : '');
 const APPROVAL_SET_LINE = /^Approve pull request #[1-9][0-9]* at commit [0-9a-f]{12}$/;
 const isMergeApproval = (data) => isRecord(data) && data.kind === 'approval' && data.level === 3 && typeof data.line === 'string' && APPROVAL_SET_LINE.test(data.line);
 
+// A card's text as the director reads it: the lines that are for the signing, not for them, are left out. They are the reply
+// code, the set line just before it, and the last line of a card that has a set line without a reply code (setup's).
+const REPLY_CODE_LINE = /^Reply code: \S+$/;
+const LISTED_LINE = /^(?:Set up step [0-9]{1,2} as listed|Confirm all [1-9][0-9]* rules? as listed), [0-9a-f]{12}$/;
+const SET_LINE = /^(?:Approve|Confirm|Push|Runbook|Answer|Change|End|Merge|Set|Unpair|Pair|Lift|Uninstall|Keep|Install|Update)\b.*$/;
+function readable(question) {
+  const lines = question.split(/\r\n|[\n\r\u2028\u2029]/);
+  const drop = new Set();
+  lines.forEach((line, i) => {
+    if (REPLY_CODE_LINE.test(line)) {
+      drop.add(i);
+      if (i > 0 && SET_LINE.test(lines[i - 1])) drop.add(i - 1);
+    }
+  });
+  if (lines.length > 1 && LISTED_LINE.test(lines.at(-1))) drop.add(lines.length - 1);
+  return lines.filter((_, i) => !drop.has(i)).join('\n').trim();
+}
+
 function cardOf(entry) {
   const data = isRecord(entry.data) ? entry.data : {};
   const id = str(entry.id);
@@ -38,7 +56,7 @@ function cardOf(entry) {
     hash: crypto.createHash('sha256').update(question).digest('hex').slice(0, CARD_HASH_CHARS),
     kind: str(data.kind),
     header: str(parts.header),
-    question,
+    question: readable(question),
     what: str(parts.what),
     why: str(parts.why),
     meanwhile: str(parts.meanwhile),
@@ -99,13 +117,17 @@ const noticeLines = (notices) => (Array.isArray(notices) ? notices : []).flatMap
 
 // stateOf({ state, says, fingerprint, glance, waiting, work, allStop, notices, realUsers }) -> the drawing's state.
 function stateOf(model) {
-  const waiting = waitingCards(model.waiting).map(cardOf);
+  const moved = isRecord(model.moved) ? model.moved : {};
+  const waiting = waitingCards(model.waiting).map(cardOf).map((c) => (moved[c.id] === c.hash ? { ...c, moved: true } : c));
   const notices = noticeLines(model.notices);
-  const project = [model.waiting, model.work, model.glance].map((d) => (Array.isArray(d?.names) ? str(d.names[0]) : '')).find((n) => n !== '') ?? '';
+  // A name the desk gives, else the folder's name; the desk's slug ("host__name") is never shown whole.
+  const slug = [model.waiting, model.work, model.glance].map((d) => (Array.isArray(d?.names) ? str(d.names[0]) : '')).find((n) => n !== '') ?? '';
+  const project = slug !== '' && !slug.includes('__') ? slug : str(model.projectName) !== '' ? str(model.projectName) : slug.slice(slug.lastIndexOf('__') + 2);
   return {
     state: model.state,
     notice: model.says ?? (notices.length > 0 ? notices.join(' ') : undefined),
     notices,
+    ...(str(model.said) !== '' ? { answered: model.said } : {}),
     ...(project !== '' ? { project } : {}),
     fingerprint: model.fingerprint,
     glance: str(model.glance?.glance),

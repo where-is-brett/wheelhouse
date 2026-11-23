@@ -106,7 +106,7 @@ test('a watch answer that does not say whether it is paired keeps the last state
   assert.equal(acts(desk, 'pair').length, 0);
 });
 
-test('while paired and visible it watches every 10 seconds, signed with the key', async () => {
+test('while paired and visible it watches every few seconds, signed with the key', async () => {
   const home = shortHome();
   const address = testAddress(home);
   const seen = [];
@@ -125,7 +125,8 @@ test('while paired and visible it watches every 10 seconds, signed with the key'
   const { every, add } = await start({ address });
   assert.equal(every.timers.length, 1);
   assert.equal(every.timers[0].ms, WATCH_MS);
-  assert.equal(WATCH_MS, 10000);
+  assert.ok(WATCH_MS <= 5000, 'a new card shows within a few seconds');
+  assert.ok(WATCH_MS <= 15000, 'the watch renews at least every 15 seconds');
   // The first look finishes (its watch and three reads) before the next tick, which a busy look would skip.
   for (let i = 0; i < 100 && seen.length < 4; i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
   await new Promise((resolve) => setTimeout(resolve, 50));

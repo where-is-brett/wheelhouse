@@ -6,10 +6,10 @@ button { font: inherit; cursor: pointer; border: 1px solid transparent; border-r
 button:focus-visible, summary:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 code { font-family: var(--vscode-editor-font-family, monospace); }
 
-header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
-h1 { font-size: 16px; font-weight: 600; margin: 0; }
-.project { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--vscode-descriptionForeground); font-size: 12px; }
-.stop { margin-left: auto; padding: 3px 10px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; color: var(--vscode-errorForeground); border-color: var(--vscode-errorForeground); }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-bottom: 12px; }
+h1 { font-size: 16px; font-weight: 600; margin: 0; flex: none; }
+.project { flex: 1 1 6em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--vscode-descriptionForeground); font-size: 12px; }
+.stop { flex: none; white-space: nowrap; margin-left: auto; padding: 3px 10px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; color: var(--vscode-errorForeground); border-color: var(--vscode-errorForeground); }
 .glance { margin: 0 0 12px; color: var(--vscode-descriptionForeground); }
 .group { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--vscode-descriptionForeground); margin: 16px 0 6px; }
 

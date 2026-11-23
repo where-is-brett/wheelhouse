@@ -87,3 +87,12 @@ test('the add-on reads a merge approval as core does', () => {
   const cases = [merge.data, { ...merge.data, level: 4 }, { ...merge.data, kind: 'runbook' }, { ...merge.data, line: 'Do the step' }, { ...merge.data, line: undefined }, { ...merge.data, line: 'Approve pull request #0 at commit aaaaaaaaaaaa' }, null, 'x', []];
   for (const data of cases) assert.equal(isMergeApproval(data), coreIsMergeApproval(data), JSON.stringify(data));
 });
+
+test('a card is shown without its reply code and set line, and a project by a plain name', () => {
+  const question = 'Put pull request #1 live?\nProposed change #1 adds a shout.\nApprove pull request #1 at commit b881b780e107\nReply code: PN78';
+  const waiting = { names: ['local__vscode-part9'], views: { waiting: [{ id: 'c1', data: { question, parts: { what: 'Proposed change #1 adds a shout.' } } }] } };
+  const out = stateOf({ state: 'live', projectName: 'My shop', waiting });
+  assert.equal(out.cards[0].question, 'Put pull request #1 live?\nProposed change #1 adds a shout.');
+  assert.equal(out.project, 'My shop');
+  assert.equal(stateOf({ state: 'live', waiting }).project, 'vscode-part9');
+});
