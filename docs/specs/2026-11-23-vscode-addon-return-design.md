@@ -29,7 +29,7 @@ One webview view in the activity bar, in the Inset look (old design section 5), 
 | All stop on or off | `watch` `all-stop` |
 | Notices | `watch` `notice` |
 
-What a panel click can do follows from the evidence rules already on main (`scripts/desk/evidence.js`, `scripts/desk/acts.js`). It needs no new rule:
+What a panel click can do mostly follows from the evidence rules already on main (`scripts/desk/evidence.js`, `scripts/desk/acts.js`). It needs one new rule. Today `checkClient` takes a paired app's `answer` on any card. Unlike a chat click, it doesn't check whether the option signs (`signsOn`) or whether the card is one of Copilot's confirmed steps. So part 1 refuses a `client` answer to either kind of card and names where to answer it instead, as the chat-click branch does. With that rule:
 
 | The panel can | The panel can't, and where it happens instead |
 |---|---|
@@ -53,14 +53,14 @@ The add-on needs two things from core without importing it. These are the helper
 3. The director clicks Pair it where signed clicks are made. The key is enrolled in `<WHEELHOUSE_HOME>/keys/clients.json`. Unpair it removes it.
 4. Each act carries `{ form: 'client', client, at, sig }`, a signature over the command, its arguments and the time, good for five minutes. The helper checks it (`checkClient`) and writes the answer as `card-answer { where: 'panel', proof: 'client', by }`. A stale or changed card is refused, and the refusal says which answer counted.
 
-Pairing needs a signed Pair it. In Claude Code the prompt-record hook signs it. In Copilot no chat click can, because `CHAT_DECIDES` allows merge cards only. So the Pair card joins the steps the helper's window confirms (`CONFIRMED_STEPS` in `scripts/agents/chat-clicks.js`). That is part 1.
+Pairing needs a signed Pair it. In Claude Code the prompt-record hook signs it. In Copilot no chat click can, because `CHAT_DECIDES` allows merge cards only. So the Pair card joins the steps the helper's window confirms (`CONFIRMED_STEPS` in `scripts/agents/chat-clicks.js`). A confirmation alone isn't enough, because the helper enrols a key only on a signed `pair-client` action. So the window's Pair it must make that signed action. That is part 1.
 
 The alternative, which the old add-on used, is to sign records with this computer's key inside VS Code's process (proof `add-on`). It reuses more code. It also brings back the packed core scripts and the hash churn, and it puts the computer's key in reach of every extension host. Section 6 and decision 1 compare the two.
 
 **The one-card rule.** A card is answered in one place. While the panel is live, a card it shows is held back from the chat. The chat then says "These cards are in the panel beside the chat", and each card offers "Ask me here" to bring it back. The hold code is still on main and dormant (`paneLive`, `HOLD_FOR_PANE` in `scripts/lib/session-files.js`). Two things change:
 
 - **Per project, not per session.** The add-on can't know which chat session is open.
-- **Live means a paired app's watch is open on the helper,** not a file an agent might write. The helper itself knows this, and an agent can't fake it without the app's private key. Faking it would let an agent hide cards from the director, so this matters.
+- **Live means a paired app's watch is open on the helper,** not a file an agent might write. Today `/desk/watch` takes no evidence, and on Windows any process run as the director can reach the helper's pipe. So part 1 makes the panel's watch carry the app's signature, renewed within the five-minute window. Only then can an agent not fake it without the app's private key. Faking it would let an agent hide cards from the director, so this matters.
 
 The alternative is no hold: cards show in both places, the first answer counts, and the other place shows "answered in the panel" (decision 3).
 
@@ -131,7 +131,12 @@ The director is never needed for testing. Agents do all of it:
 
 ## 10. Build parts
 
-1. **Core seam.** The Pair card in the helper's window for Copilot. The per-project hold driven by an open paired watch. The test that proof `add-on` decides nothing. Plus the gate change, if decision 2 says yes.
+1. **Core seam.** The core changes the panel needs:
+   - Refuse a paired app's answer on a card whose option signs, or on a confirmed step.
+   - Make the window's Pair it a signed `pair-client` action, for Copilot.
+   - Require a signed watch, renewed within five minutes, and drive the per-project hold from it.
+   - Add a test that proof `add-on` decides nothing.
+   - Change the gate, if decision 2 says yes.
 2. **Add-on shell** from the tag, thin over desk/1: resolver, version check, pairing, and its key in SecretStorage.
 3. **Panel drawing:** Inset look, every state, fixtures and pictures.
 4. **Acts and guards:** the press guard, client signatures, and `validate.js` reworked for the new rules.
@@ -154,7 +159,7 @@ The director is never needed for testing. Agents do all of it:
 - *What this is:* today a merge needs your signed approval, or for Copilot a chat click on a project with no real users. A panel click is neither yet.
 - *Why it comes to you:* it decides whether merges can be approved from the panel.
 - *Options:* **Yes, on the same terms as a chat click** (projects with no real users only). **Yes, everywhere.** **No:** approve merges in the chat or the helper's window as now.
-- *Recommendation:* yes, on the same terms as a chat click. A paired panel's click is better proof than a chat click, and projects with real users still need the window.
+- *Recommendation:* yes, on the same terms as a chat click. This widens an earlier ruling (P5-48), under which an unsigned answer counts only as a chat click does. On a Mac, where the sandbox keeps agents from the panel's key, a panel click is better proof than a chat click. On a Windows laptop with no sandbox it is about the same. Either way, projects with real users still need the window.
 - *Meanwhile:* the panel shows merge cards and says where to approve them.
 
 **3. When the panel is open, should cards leave the chat?**
