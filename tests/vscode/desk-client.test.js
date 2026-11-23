@@ -97,6 +97,18 @@ test('a helper that doesn\'t know a command asks for an update', async () => {
   assert.match(refused.refused, /never paired/);
 });
 
+test('a helper without the route, or one calling it an unknown request, asks for an update', async () => {
+  const missing = http.createServer((req, res) => { req.resume(); req.on('end', () => { res.statusCode = 404; res.end('{"ok":false,"refused":"not found"}'); }); });
+  servers.push(missing);
+  const address = testAddress(shortHome());
+  await new Promise((resolve) => missing.listen(address, resolve));
+  const key = await loadKey(memory(), { now: () => NOW });
+  const got = await deskClient({ address, sign: key.sign, project: 'owner__name' }).watch(null);
+  assert.deepEqual([got.ok, got.update, got.down], [false, true, undefined]);
+  const odd = await standIn(() => ({ ok: false, refused: 'unknown request /desk/watch' }));
+  assert.equal((await (await client(odd)).desk.watch(null)).update, true);
+});
+
 test('no helper answers as down, not as an update', async () => {
   const home = shortHome();
   await as(home, async () => {

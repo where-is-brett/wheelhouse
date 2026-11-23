@@ -59,45 +59,50 @@ export function fakeContext() {
     secrets: { get: async (k) => kept.get(k), store: async (k, v) => { kept.set(k, v); stored.push(k); } },
   };
 }
-
-// A desk whose answers a test sets by command or view, and which keeps every call.
+// A desk whose answers a test sets, and which keeps every call. The views are shaped as the helper gives them:
+// `waiting` is { views: { waiting: [the cards waiting] }, cards: [every card event, answered ones too], names }.
+// A signed watch answers `paired`, as the helper's does (`paired: undefined` is a helper that doesn't say).
 export function fakeDesk({ paired = true, helper = 'up' } = {}) {
   const calls = [];
-  const state = { paired, helper, cursor: 'k1', events: [], views: {} };
+  const state = { paired, helper, cursor: 'k1', events: [], views: {}, pairRefused: false };
+  const gone = () => (state.helper === 'down' ? { ok: false, down: true } : state.helper === 'update' ? { ok: false, update: true } : null);
   const desk = {
     calls,
     state,
     read: async (view) => {
       calls.push(['read', view]);
-      if (state.helper === 'down') return { ok: false, down: true };
-      if (state.helper === 'update') return { ok: false, update: true };
-      return { ok: true, data: state.views[view] ?? {} };
+      return gone() ?? { ok: true, data: state.views[view] ?? {} };
     },
     act: async (command, args) => {
       calls.push(['act', command, args]);
-      if (state.helper === 'down') return { ok: false, down: true };
-      if (state.helper === 'update') return { ok: false, update: true };
-      if (command === 'pair') return { ok: true, changed: ['card'], fingerprint: 'abc123abc123' };
-      return state.paired ? { ok: false, refused: 'Card wheelhouse-pair-check isn\'t waiting' } : { ok: false, refused: 'That app was never paired with Wheelhouse' };
+      if (gone()) return gone();
+      if (command === 'pair') return state.pairRefused ? { ok: false, refused: 'Wheelhouse can\'t pair now' } : { ok: true, changed: ['card'], fingerprint: 'abc123abc123' };
+      return { ok: false, refused: 'not expected' };
     },
     watch: async (cursor) => {
       calls.push(['watch', cursor]);
-      if (state.helper === 'down') return { ok: false, down: true };
-      return { ok: true, events: state.events, cursor: state.cursor };
+      return gone() ?? { ok: true, ...(state.paired === undefined ? {} : { paired: state.paired }), events: state.events, cursor: state.cursor };
     },
   };
   return desk;
 }
 
+// The record's waiting view with these cards waiting and these answered (answered ones appear only in `cards`).
+export const waitingView = (waiting, answered = []) => ({
+  views: { waiting: waiting.map((c) => ({ id: c.id, at: 'x', data: c.data })) },
+  cards: [...answered, ...waiting].map((c) => ({ id: c.id, kind: 'card', at: 'x', data: c.data })),
+  names: ['name'],
+});
+
 export const settle = async () => { for (let i = 0; i < 6; i += 1) await new Promise((resolve) => setImmediate(resolve)); };
 
 // Activates the add-on over a stand-in VS Code and desk, resolves its view, and lets the first look finish.
-export async function start({ desk = fakeDesk(), project = 'owner__name', visible = true, render = (s) => JSON.stringify(s) } = {}) {
+// With `address`, the real desk client talks to a stand-in helper there instead of `desk`.
+export async function start({ desk = fakeDesk(), address, project = 'owner__name', visible = true, render = (s) => JSON.stringify(s), context = fakeContext() } = {}) {
   const ext = require('../../vscode/extension.cjs');
   const vscode = fakeVscode();
-  const context = fakeContext();
   const every = fakeEvery();
-  const add = await ext.activate(context, { vscode, deps: { desk, project: () => project, every, render, expose: true } });
+  const add = await ext.activate(context, { vscode, deps: { ...(address === undefined ? { desk } : { address }), project: () => project, every, render, expose: true } });
   const view = fakeView();
   view.visible = visible;
   vscode.seen.providers.get(ext.PANEL_ID).resolveWebviewView(view);

@@ -27,6 +27,27 @@ test('the key is made once and kept in SecretStorage, never in a file', async ()
   assert.equal(/writeFile|createWriteStream|\.wheelhouse/.test(source), false);
 });
 
+test('a key that can\'t be read is never replaced', async () => {
+  const { secrets, stored } = fakeContext();
+  secrets.get = async () => { throw new Error('locked'); };
+  const got = await loadKey(secrets);
+  assert.match(got.unavailable, /secret storage/);
+  assert.equal(got.sign, undefined);
+  assert.deepEqual(stored, []);
+});
+
+test('two windows starting together use the key that was stored last', async () => {
+  const rival = await fakeContext().secrets.get('x');
+  const other = fakeContext();
+  const theirs = await loadKey(other.secrets);
+  const theirKey = await other.secrets.get('wheelhouse.panelKey');
+  const { secrets } = fakeContext();
+  let reads = 0;
+  secrets.get = async () => (reads++ === 0 ? rival : theirKey);
+  const used = await loadKey(secrets);
+  assert.equal(used.publicKey, theirs.publicKey);
+});
+
 test('a signature from the kept key checks against its public key', async () => {
   const { secrets } = fakeContext();
   const key = await loadKey(secrets);

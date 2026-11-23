@@ -29,9 +29,10 @@ function post(address, route, body, timeout) {
       res.on('end', () => {
         try {
           const got = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-          resolve(got !== null && typeof got === 'object' && !Array.isArray(got) ? got : { ok: false, unreadable: true });
+          const plain = got !== null && typeof got === 'object' && !Array.isArray(got);
+          resolve(plain ? { ...got, ...(res.statusCode === 404 ? { notFound: true } : {}) } : { ok: false, unreadable: true });
         } catch {
-          resolve({ ok: false, unreadable: true });
+          resolve({ ok: false, ...(res.statusCode === 404 ? { notFound: true } : { unreadable: true }) });
         }
       });
       res.on('error', () => resolve({ ok: false, down: true }));
@@ -45,6 +46,8 @@ function post(address, route, body, timeout) {
 // What an answer means to the panel: another version, or a command the helper doesn't know, is an update to make.
 function meant(got) {
   if (got.down === true) return { ok: false, down: true, refused: 'Wheelhouse\'s helper isn\'t running' };
+  // A route an older helper doesn't have (404), or one it calls an unknown request, is a helper to update.
+  if (got.ok !== true && (got.notFound === true || (typeof got.refused === 'string' && /unknown request/i.test(got.refused)))) return { ok: false, update: true, refused: got.refused ?? 'This Wheelhouse helper doesn\'t know that request' };
   if (got.unreadable === true) return { ok: false, update: true, refused: 'Wheelhouse gave an answer this can\'t read' };
   if (typeof got.v === 'string' && got.v !== DESK_VERSION) return { ok: false, update: true, refused: `Wheelhouse speaks ${got.v}, not ${DESK_VERSION}` };
   if (got.ok !== true && typeof got.refused === 'string' && CANT.test(got.refused)) return { ok: false, update: true, refused: got.refused };

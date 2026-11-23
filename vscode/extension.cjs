@@ -20,16 +20,12 @@ const crypto = require('node:crypto');
 const { helperAddress, projectIdFor } = require('./resolver.cjs');
 const { deskClient } = require('./desk-client.cjs');
 const { loadKey } = require('./key.cjs');
-const { stateOf } = require('./model.cjs');
+const { stateOf, waitingCards } = require('./model.cjs');
 
 const OPEN_PANEL = 'wheelhouse.openPanel';
 const PANEL_ID = 'wheelhouse.panel';
 // The signed watch renews this often while the view is visible (the helper counts the panel live for 45 seconds).
 const WATCH_MS = 10000;
-// A card id nothing has: the helper checks a signed answer's evidence before it looks for the card, so the way it
-// refuses says whether this app's key is paired. It decides nothing.
-const PAIR_CHECK = { card: 'wheelhouse-pair-check', option: 'Not now' };
-const UNPAIRED = /never paired|signature doesn't check/;
 const APP_NAME = 'Wheelhouse for VS Code';
 
 const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }[c]));
@@ -40,11 +36,12 @@ function defaultRender() {
   try {
     return require('./pane/render.js').render;
   } catch {
-    return (state, { nonce }) => `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'"><style nonce="${nonce}">body{font-family:var(--vscode-font-family);padding:8px}</style></head><body><p>${escapeHtml(state.says ?? state.glance?.glance ?? 'Wheelhouse')}</p></body></html>`;
+    return (state, { nonce }) => `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'"><style nonce="${nonce}">body{font-family:var(--vscode-font-family);padding:8px}</style></head><body><p>${escapeHtml(state.notice || state.glance || 'Wheelhouse')}</p></body></html>`;
   }
 }
 
 const SAYS = {
+  looking: 'Looking for Wheelhouse\'s helper.',
   'no-helper': 'Wheelhouse\'s helper isn\'t running.',
   'no-project': 'This folder isn\'t a Wheelhouse project.',
   update: 'Update Wheelhouse: this panel and the helper speak different versions.',
@@ -54,6 +51,8 @@ const SAYS = {
 
 // The status bar's words for a state.
 function statusText(state) {
+  // Neutral until the first look, and again while the panel is hidden and nothing is being watched.
+  if (state.looked !== true) return 'Wheelhouse';
   switch (state.state) {
     case 'live': return state.count > 0 ? `Wheelhouse · ${state.count} need${state.count === 1 ? 's' : ''} you` : 'Wheelhouse';
     case 'stopped': return 'Wheelhouse · stopped';
@@ -64,8 +63,6 @@ function statusText(state) {
   }
 }
 
-const countOf = (waiting) => (Array.isArray(waiting?.numbered) ? waiting.numbered.length : Array.isArray(waiting?.cards) ? waiting.cards.length : 0);
-
 async function activate(context, { vscode = require('vscode'), deps = {} } = {}) {
   const folder = vscode.workspace?.workspaceFolders?.[0]?.uri?.fsPath;
   const key = await loadKey(context.secrets, deps.now ? { now: deps.now } : undefined);
@@ -73,8 +70,10 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
   const render = deps.render ?? defaultRender();
   const projectNow = deps.project ?? (() => (typeof folder === 'string' ? projectIdFor(folder) : null));
 
-  const model = { state: 'no-helper', says: SAYS['no-helper'], fingerprint: key.fingerprint, glance: null, waiting: null, work: null, count: 0, allStop: false, notices: [] };
-  const run = { view: null, timer: null, cursor: null, asked: false, pending: false, wasPaired: false, busy: false, loops: 0 };
+  const model = { state: 'no-helper', says: SAYS.looking, looked: false, fingerprint: key.fingerprint ?? '', glance: null, waiting: null, work: null, count: 0, allStop: false, notices: [] };
+  // `askedUp`: this helper start has been asked to pair once already, so a later tick doesn't ask again until the
+  // helper has gone away and come back.
+  const run = { view: null, timer: null, cursor: null, askedUp: false, pending: false, busy: false, loops: 0 };
 
   const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   item.command = OPEN_PANEL;
@@ -87,7 +86,7 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     // A new nonce for each draw: what an older page posts counts for nothing (the press guard, Part 5).
     run.view.webview.html = render(stateOf(model),{ nonce: crypto.randomBytes(16).toString('base64') });
   };
-  const set = (state, extra = {}) => { Object.assign(model, { state, says: SAYS[state] ?? null, ...extra }); draw(); };
+  const set = (state, extra = {}) => { Object.assign(model, { state, says: SAYS[state] ?? null, looked: true, ...extra }); draw(); };
 
   // Never signs anything for a project it can't name.
   const deskFor = (project) => deps.desk ?? deskClient({ address, sign: key.sign, project });
@@ -95,8 +94,8 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
   // Asks the helper to raise the Pair card for this key. The director's signed Pair it on that card enrols it.
   async function pair() {
     const project = projectNow();
-    if (project === null) return { ok: false };
-    run.asked = true;
+    if (project === null || key.unavailable) return { ok: false };
+    run.askedUp = true;
     const got = await deskFor(project).act('pair', { client: { id: key.client, name: APP_NAME, publicKey: key.publicKey } });
     run.pending = got.ok === true;
     if (got.ok === true) set('pairing', { fingerprint: got.fingerprint ?? key.fingerprint });
@@ -117,34 +116,33 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
       waiting: waiting.ok ? waiting.data : model.waiting,
       work: work.ok ? work.data : model.work,
     });
-    model.count = countOf(model.waiting);
+    model.count = waitingCards(model.waiting).length;
     return set(model.allStop ? 'stopped' : 'live');
   }
 
-  // One look: is the key still paired, then a signed watch, then a read when the desk says something changed.
+  // One look: a signed watch, whose answer says whether this key is paired, then a read when the desk says
+  // something changed. An answer that doesn't say (a helper from before pairing was reported) is not known: the last
+  // state stays and nothing is sent.
   async function tick() {
     if (run.busy) return;
     run.busy = true;
     try {
+      if (key.unavailable) return set('unpaired', { says: key.unavailable });
       const project = projectNow();
       if (project === null) return set('no-helper', { says: typeof folder === 'string' ? SAYS['no-project'] : SAYS['no-helper'] });
       const desk = deskFor(project);
-      const check = await desk.act('answer', PAIR_CHECK);
-      if (check.down === true) return set('no-helper');
-      if (check.update === true) return set('update');
-      if (typeof check.refused === 'string' && UNPAIRED.test(check.refused)) {
-        run.cursor = null;
-        if (run.pending) return set('pairing');
-        if (run.asked || run.wasPaired) return set('unpaired');
-        await pair();
-        return undefined;
-      }
-      run.wasPaired = true;
-      run.pending = false;
       const got = await desk.watch(run.cursor);
-      if (got.down === true) return set('no-helper');
+      if (got.down === true) { run.askedUp = false; return set('no-helper'); }
       if (got.update === true) return set('update');
       if (got.ok !== true) return set('no-helper', { says: got.refused });
+      if (got.paired === undefined) return undefined;
+      if (got.paired !== true) {
+        run.cursor = null;
+        if (run.pending) return set('pairing');
+        if (!run.askedUp) { await pair(); return undefined; }
+        return set('unpaired');
+      }
+      run.pending = false;
       const events = Array.isArray(got.events) ? got.events : [];
       for (const event of events) {
         if (event?.type === 'all-stop') model.allStop = event.on === true;
@@ -171,6 +169,9 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
   const stop = () => {
     run.timer?.dispose();
     run.timer = null;
+    // Nothing is watched now, so the status bar shows no count that could be old.
+    model.looked = false;
+    item.text = statusText(model);
   };
 
   context.subscriptions?.push(vscode.commands.registerCommand(OPEN_PANEL, async () => {

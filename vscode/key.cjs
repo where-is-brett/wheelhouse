@@ -35,18 +35,24 @@ const fingerprintOf = (publicKey) => crypto.createHash('sha256').update(Buffer.f
 
 // loadKey(secrets, { now }) -> { client, publicKey, fingerprint, sign(command, args) }. `secrets` is VS Code's
 // SecretStorage (`get`, `store`). A stored key that can't be read is replaced by a new one, which is then unpaired.
+// A key that can't be had is `{ unavailable: <words> }`, never a new key: replacing a key that exists but can't be
+// read would unpair the panel without anyone saying so, so it stays unpaired for this run and says why.
+const UNAVAILABLE = 'Wheelhouse couldn\'t read its key from VS Code\'s secret storage, so this panel stays unpaired until it can.';
+const privateOf = (kept) => crypto.createPrivateKey({ key: Buffer.from(kept, 'base64'), format: 'der', type: 'pkcs8' });
+
 async function loadKey(secrets, { now = () => new Date() } = {}) {
   let privateKey = null;
   try {
-    const kept = await secrets.get(SECRET_NAME);
-    if (typeof kept === 'string' && kept !== '') privateKey = crypto.createPrivateKey({ key: Buffer.from(kept, 'base64'), format: 'der', type: 'pkcs8' });
+    let kept = await secrets.get(SECRET_NAME);
+    if (typeof kept !== 'string' || kept === '') {
+      const made = crypto.generateKeyPairSync('ed25519');
+      await secrets.store(SECRET_NAME, made.privateKey.export({ format: 'der', type: 'pkcs8' }).toString('base64'));
+      // Read it back: two windows starting together each store one, and the last stored is the one both use.
+      kept = await secrets.get(SECRET_NAME);
+    }
+    privateKey = privateOf(kept);
   } catch {
-    privateKey = null;
-  }
-  if (privateKey === null) {
-    const made = crypto.generateKeyPairSync('ed25519');
-    privateKey = made.privateKey;
-    await secrets.store(SECRET_NAME, made.privateKey.export({ format: 'der', type: 'pkcs8' }).toString('base64'));
+    return { unavailable: UNAVAILABLE };
   }
   const publicKey = crypto.createPublicKey(privateKey).export({ format: 'der', type: 'spki' }).toString('base64');
   const fingerprint = fingerprintOf(publicKey);
