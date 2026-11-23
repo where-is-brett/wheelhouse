@@ -303,11 +303,13 @@ function frontDeskArgs(args) {
 
 // Whether the shell command runs a front-desk command that records without naming `session` (and only it) with --session. A
 // command that can't be read, and names the front desk's program, is held to the same rule: a missing id never falls through.
-function recordsWithoutSession(command, session, windows) {
+// With `required` false (an agent whose environment names the chat), a command with no --session passes, and one that names
+// another session doesn't: the flag wins over the environment, so it may only name the chat's own.
+function recordsWithoutSession(command, session, windows, required = true) {
   const { text } = withoutHeredocs(command);
   // A redirect of a stream onto another (`2>&1`) is no redirect to a file, and no part of the command.
   const read = segmentsWithOperators(text.replace(/\d*>&(\d+|-)(?=$|[\s;|&)])/g, ' '), windows);
-  if (read === null) return /wh-frontdesk|frontdesk[\\/]cli\.js/.test(command);
+  if (read === null) return required && /wh-frontdesk|frontdesk[\\/]cli\.js/.test(command);
   // A segment a redirect opened holds the file first, then more of the same command's words (`card < in.json --session x`).
   const commands = [];
   read.segments.forEach((words, i) => {
@@ -319,6 +321,7 @@ function recordsWithoutSession(command, session, windows) {
     if (at < 0) return false;
     const { ids, command: name } = frontDeskArgs(words.slice(at + 1));
     if (!SEAT_WRITES.includes(name)) return false;
+    if (!required && ids.length === 0) return false;
     return typeof session !== 'string' || session === '' || ids.length === 0 || ids.some((id) => id !== session);
   });
 }
@@ -335,8 +338,8 @@ export function decide(input, { env = process.env, find = projectOf, setUp = bei
   const found = find(input.cwd);
   const folder = found?.record?.folder;
   if (!folder) return undefined;
-  // On an agent whose hooks only read, a front-desk command that records names the chat's own session.
-  if (writeVia !== 'self' && SHELL.includes(tool) && typeof input.tool_input?.command === 'string' && recordsWithoutSession(input.tool_input.command, input.session_id, tool === 'PowerShell')) {
+  // On an agent whose hooks only read, a front-desk command that records names the chat's own session; elsewhere it may name no other.
+  if (SHELL.includes(tool) && typeof input.tool_input?.command === 'string' && recordsWithoutSession(input.tool_input.command, input.session_id, tool === 'PowerShell', writeVia !== 'self')) {
     return answer.deny(SESSION_FLAG_NEEDED(input.session_id));
   }
   const running = setUp(input.cwd);

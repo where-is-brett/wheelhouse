@@ -442,6 +442,20 @@ test('Claude Code is unchanged: no --session is asked of it', () => {
   }
 });
 
+test('on Claude Code a seat write may name only its own session with --session, as the flag wins over its own id', () => {
+  const { folder } = project();
+  for (const writeVia of [undefined, 'self']) {
+    const opts = options(folder, writeVia === undefined ? {} : { writeVia });
+    assert.equal(decide(shell('wh-frontdesk record ruling --session s1', 's1', folder), opts), undefined);
+    for (const bad of ['wh-frontdesk record ruling --session holder', `${NODE_CLI} cards --session=holder`, 'wh-frontdesk card --session s1 --session holder']) {
+      const got = decide(shell(bad, 's1', folder), opts);
+      assert.ok(denied(got), bad);
+      assert.match(got.hookSpecificOutput.permissionDecisionReason, /--session s1/);
+    }
+    assert.equal(decide(shell('wh-frontdesk views waiting --session holder', 's1', folder), opts), undefined, 'a read is not held to it');
+  }
+});
+
 test('redirects, pipes and heredocs are read around, and a line that can\'t be read but names the front desk is refused', () => {
   const { folder } = project();
   const opts = options(folder, { writeVia: 'helper' });
