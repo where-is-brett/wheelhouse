@@ -122,3 +122,21 @@ test('rules naming Wheelhouse\'s check beat a setting of host, with nothing else
   files: { '.claude/wheelhouse.json': JSON.stringify({ ...readConfig(null), testCommand: COMMAND, checks: { where: 'host' } }) },
   host: { requiredChecks: async () => ['wheelhouse/checks'] },
 }));
+
+// --- a project on Wheelhouse's own engine, with no engine plugged in ---
+
+test('a GitHub project with no CI has its checks run and reported on this computer without an engine', { timeout: 300000 }, () => checksWorld(async ({ stand, reported }) => {
+  await reported(await stand.branchHead('main'), 'success');
+}, { engineless: true }));
+
+test('a GitLab project with no CI has its checks run and reported on this computer', { timeout: 300000 }, () => checksWorld(async ({ stand, reported, statuses }) => {
+  const main = await stand.branchHead('main');
+  await reported(main, 'success');
+  assert.ok(statuses.every((s) => s.context === undefined), 'only the check is reported');
+}, { engineless: true, hostKind: 'gitlab' }));
+
+test('a GitLab project whose default branch holds a pipeline file has its checks left to GitLab', { timeout: 300000 }, () => checksWorld(async ({ helper, statuses }) => {
+  await helper.engine.tick();
+  await helper.engine.tick();
+  assert.deepEqual(statuses, [], 'nothing is reported');
+}, { engineless: true, hostKind: 'gitlab', files: { '.gitlab-ci.yml': 'test:\n  script: [true]\n' } }));

@@ -36,7 +36,8 @@ const standInCheck = (remote) => async ({ commit, main }) => {
 };
 
 // checksWorld(fn, { files, host }) gives `fn` the world: the helper, its client, the host's stand-in, and the steps a run takes.
-export async function checksWorld(fn, { files = {}, host: more = {}, check } = {}) {
+// With `engineless` no engine is plugged in, as for a project on Wheelhouse's own engine; `hostKind` is the project's host (github by default).
+export async function checksWorld(fn, { files = {}, host: more = {}, check, engineless = false, hostKind = 'github' } = {}) {
   const remote = await makeBareRemote({ repo: 'o/p' });
   const seed = tempFolder('wh-seed-');
   await g(seed, 'init', '-q', '-b', 'main');
@@ -65,14 +66,14 @@ export async function checksWorld(fn, { files = {}, host: more = {}, check } = {
   };
   try {
     await as(home, async () => {
-      writeProject(P, { folder: checkout, remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+      writeProject(P, { folder: checkout, remoteUrl: remote.url, host: hostKind, repo: 'o/p', connection: { host: hostKind, mode: hostKind === 'github' ? 'quick' : 'narrow', project: 'o/p' } });
       enrol({ ...makeSigningKey(), enrolledAt: '2026-10-30T00:00:00.000Z' });
       buildPack({ out: path.join(engineDir(), 'pack') });
       buildPack({ out: path.join(frozen, 'project') });
       const given = check ?? (process.platform === 'darwin' ? {} : { check: standInCheck(remote.url) });
       const helper = await startHelper({
         run: hostGuard, address: testAddress(home), adapterFor: async () => host, envFor: async () => ({}), spawn: stubSpawn(),
-        engineFor: (project) => (project === P ? engine : null), ...given,
+        engineFor: (project) => (project === P && !engineless ? engine : null), ...given,
       });
       const client = helperClient({ address: helper.address });
       await client.state.clone({ project: P });

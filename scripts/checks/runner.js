@@ -47,16 +47,19 @@ const isRed = (word) => word === 'failed' || word === 'timed-out';
 // - `onRed(head, work, tail)` sends a change back; `onPassed(work)` says a work's head passed; `onFix(commit)` starts mending a
 //   main line whose first check failed; `onRedMain(commit)` opens the incident for a red main line where no queue asks to; `keep()` takes a command kept only in the record to the default branch; `note(words)`
 //   writes to the Logbook; `record(kind, data)` signs a `checks-state` or `checks-found`; `states()` the verified `checks-state`s; `card(data)` raises a question; `answerOf(id)` the label the director chose;
+// - `hostName` (a name, or a function giving it) what the host is called on a card: 'GitHub' or 'GitLab';
 // - `ended(work)` whether a work's change has merged or closed; `stopped()` whether All stop is on;
 // - `openHeads()` [{ head, work }], the open changes' heads as the host has them, for a head nothing told the helper of.
 export function checkRunner({
   project, repo, permissionLink, adapter, facts, source, results, write, onRed, onPassed = () => {}, onFix = async () => {}, onRedMain = async () => {}, keep = async () => {}, note = async () => {}, record = async () => {}, states = () => [], card, answerOf = () => null, ended = () => false, stopped = () => false,
-  openHeads = async () => [], now = () => new Date(), run = runCheck, turn = withCheckTurn, sweep = sweepHeads,
+  openHeads = async () => [], now = () => new Date(), run = runCheck, turn = withCheckTurn, sweep = sweepHeads, hostName = 'GitHub',
 }) {
   let active = null;
   let abort = null;
   // A function where the project can move to a host while the helper runs.
   const repoNow = () => (typeof repo === 'function' ? repo() : repo);
+  const hostNow = () => (typeof hostName === 'function' ? hostName() : hostName);
+  const onGitlab = () => hostNow() === 'GitLab';
   const change = (fn) => {
     const kept = readQueue(project);
     fn(kept);
@@ -80,10 +83,12 @@ export function checkRunner({
   }
 
   const askPermission = () => ask('permission', {
-    what: `Wheelhouse has this project's check results but isn't allowed to tell GitHub, so nothing can be added to the main line yet. Accept the one new permission here: ${permissionLink}`,
-    why: 'Giving Wheelhouse a new permission on GitHub is yours to decide, at level 3.',
+    what: onGitlab()
+      ? 'Wheelhouse has this project\'s check results but GitLab won\'t take them from its key, so nothing can be added to the main line yet. The key needs the api scope and the Developer role, or above, on the project: change that under the project\'s Settings, then Access tokens.'
+      : `Wheelhouse has this project's check results but isn't allowed to tell GitHub, so nothing can be added to the main line yet. Accept the one new permission here: ${permissionLink}`,
+    why: `Giving Wheelhouse a new permission on ${hostNow()} is yours to decide, at level 3.`,
     options: [
-      { label: CHECK_ACCEPTED, says: 'Wheelhouse tells GitHub the results it is holding, and the work carries on.' },
+      { label: CHECK_ACCEPTED, says: `Wheelhouse tells ${hostNow()} the results it is holding, and the work carries on.` },
       { label: 'Leave it', says: 'Finished work waits. The checks still run, and nothing is added to the main line.' },
     ],
     recommendation: CHECK_ACCEPTED,
@@ -100,21 +105,23 @@ export function checkRunner({
   });
 
   const askBroken = () => ask('broken', {
-    what: 'GitHub\'s checks for this project aren\'t running: on the last two versions they waited or stopped with no job started, so nothing can be added to the main line.',
-    why: 'Wheelhouse isn\'t allowed to change a project\'s settings on GitHub, so turning those checks off takes your click, at level 3.',
+    what: `${hostNow()}'s checks for this project aren't running: on the last two versions they waited or stopped with no job started, so nothing can be added to the main line.`,
+    why: `Wheelhouse isn't allowed to change a project's settings on ${hostNow()}, so turning those checks off takes your click, at level 3.`,
     options: [
-      { label: RUN_CHECKS_HERE, says: `Open https://github.com/${repoNow()}/settings/actions, choose Disable actions and press Save. You can turn them back on there at any time. If https://github.com/${repoNow()}/settings/rules asks for those checks by name, take them off the list there too. Wheelhouse sees them stop, and runs the checks on this computer.` },
-      { label: LEAVE_THEM, says: 'Wheelhouse keeps waiting for GitHub\'s checks, and finished work waits with them.' },
+      { label: RUN_CHECKS_HERE, says: onGitlab()
+        ? 'On GitLab, open the project\'s Settings, then General, then Visibility, project features, permissions, and turn CI/CD off. You can turn it back on there at any time. If the project holds a .gitlab-ci.yml, Wheelhouse still reads it as CI, so take it out of the main line too. Wheelhouse sees the checks stop, and runs them on this computer.'
+        : `Open https://github.com/${repoNow()}/settings/actions, choose Disable actions and press Save. You can turn them back on there at any time. If https://github.com/${repoNow()}/settings/rules asks for those checks by name, take them off the list there too. Wheelhouse sees them stop, and runs the checks on this computer.` },
+      { label: LEAVE_THEM, says: `Wheelhouse keeps waiting for ${hostNow()}'s checks, and finished work waits with them.` },
     ],
     recommendation: RUN_CHECKS_HERE,
   });
 
   const askUnread = () => ask('rulesUnread', {
-    what: 'Wheelhouse can\'t read this project\'s rules on GitHub, so it can\'t tell whether they still ask for its own check. If they do and it stops reporting, nothing can be added to the main line.',
-    why: 'Running the checks here as well as on GitHub costs this computer some time, and only you can say whether that is wanted, at level 3.',
+    what: `Wheelhouse can't read this project's rules on ${hostNow()}, so it can't tell whether they still ask for its own check. If they do and it stops reporting, nothing can be added to the main line.`,
+    why: `Running the checks here as well as on ${hostNow()} costs this computer some time, and only you can say whether that is wanted, at level 3.`,
     options: [
-      { label: KEEP_REPORTING, says: 'The checks run on this computer as well, and report to GitHub, so nothing waits for a report that never comes.' },
-      { label: CHECK_LEAVE_IT, says: 'Only GitHub\'s own checks run. If the rules still ask for Wheelhouse\'s check, finished work waits.' },
+      { label: KEEP_REPORTING, says: `The checks run on this computer as well, and report to ${hostNow()}, so nothing waits for a report that never comes.` },
+      { label: CHECK_LEAVE_IT, says: `Only ${hostNow()}'s own checks run. If the rules still ask for Wheelhouse's check, finished work waits.` },
     ],
     recommendation: KEEP_REPORTING,
   });

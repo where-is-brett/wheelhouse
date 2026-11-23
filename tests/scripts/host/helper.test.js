@@ -1167,6 +1167,18 @@ function asGitlab(remote, home) {
   }));
 }
 
+test('/host/facts says a GitLab project with no CI has its checks run on this computer', async () => {
+  const p = await project({ lock: false });
+  try {
+    await asGitlab(p.remote, p.home);
+    await as(p.home, async () => {
+      await withHelper(fakeAdapter({ hasCi: async () => false }), async (client) => {
+        assert.equal((await client.host.facts({ project: 'o__p' })).ci, 'here');
+      }, { envFor: async () => ({ GITLAB_TOKEN: 'a-stand-in-key' }) });
+    });
+  } finally { p.cleanup(); }
+});
+
 test('/host/facts on GitLab carries the plan and the gaps the key could read', async () => {
   const p = await project({ lock: false });
   try {

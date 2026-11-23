@@ -234,7 +234,7 @@ test('GitLab prState maps detailed_merge_status and state', async () => {
 test('GitLab ciState reads the newest pipeline for the commit', async () => {
   const { a, calls } = adapter('gitlab', { stdout: gl('pipelines.json') }, { stdout: gl('pipelines-none.json') });
   assert.deepEqual(await a.ciState(GL_SHA), { sha: GL_SHA, state: 'pending' });
-  assert.deepEqual(calls[0].args, ['api', `projects/a-director%2Fproduct/pipelines?sha=${GL_SHA}&per_page=1&order_by=id&sort=desc`]);
+  assert.deepEqual(calls[0].args, ['api', `projects/a-director%2Fproduct/pipelines?sha=${GL_SHA}&per_page=20&order_by=id&sort=desc`]);
   assert.deepEqual(await a.ciState(GL_SHA), { sha: GL_SHA, state: 'none' });
 });
 

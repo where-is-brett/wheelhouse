@@ -48,6 +48,7 @@ function world({ word = () => 'passed', status = () => ({ ok: true }), ...given 
     project: 'p',
     repo: 'o/p',
     permissionLink: 'https://github.com/settings/installations/7',
+    hostName: given.hostName,
     adapter: new Proxy({
       setStatus: async (post) => { w.log.push(`status ${post.state}`); w.posts.push(post); return status(post); },
       checkContexts: async (sha) => w.contextsOf?.(sha) ?? [],
@@ -251,6 +252,17 @@ test('permission raises one card', () => withHome(async () => {
   assert.equal(w.cards[0].level, 3);
   assert.doesNotMatch(JSON.stringify(w.cards[0]), /commit status/i);
   assert.equal(checksStanding('p', { now: new Date(w.time) }).waitingForPermission, true);
+}));
+
+test('on GitLab the permission card names GitLab and the key it needs, never GitHub', () => withHome(async () => {
+  const { w, runner } = world({ status: () => ({ refused: 'permission' }), hostName: 'GitLab' });
+  w.facts = { ...w.facts, main: null };
+  await runner.took(HEAD, 'w-1');
+  await settled(runner);
+  assert.equal(w.cards.length, 1);
+  assert.match(w.cards[0].what, /GitLab won't take them from its key/);
+  assert.match(w.cards[0].what, /api scope and the Developer role/);
+  assert.doesNotMatch(JSON.stringify(w.cards[0]), /GitHub|installations/);
 }));
 
 test('the permission card goes once a status posts', () => withHome(async () => {

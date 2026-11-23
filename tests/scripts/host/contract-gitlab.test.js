@@ -100,6 +100,32 @@ test('glab: an approval is `glab mr approve --sha`', async () => {
   assert.deepEqual(calls[0].args, ['mr', 'approve', '4', '-R', REPO, '--sha', SHA]);
 });
 
+test('rest: a check report is POSTed to the commit\'s statuses with the check\'s name, and a merge never waits for a pipeline', async () => {
+  const { adapter, calls } = viaCurl([{ status: 201, body: '{}' }]);
+  await adapter.setStatus({ sha: SHA, state: 'failure', description: 'The tests failed on this computer' });
+  assert.deepEqual(pair(calls[0], 'request'), ['POST']);
+  assert.ok(pair(calls[0], 'url')[0].endsWith(`/projects/a-director%2Fproduct/statuses/${SHA}`));
+  assert.deepEqual(JSON.parse(pair(calls[0], 'data-binary')[0]), { state: 'failed', name: 'wheelhouse/checks', description: 'The tests failed on this computer' });
+  assert.ok(!calls[0].args.join(' ').includes(KEY));
+  const merge = viaCurl(mergeAnswers);
+  await merge.adapter.merge({ number: 4, sha: SHA });
+  assert.ok(!('merge_when_pipeline_succeeds' in JSON.parse(pair(merge.calls[0], 'data-binary')[0])));
+});
+
+test('glab: a check report is `glab api --method POST` on the commit\'s statuses', async () => {
+  const { adapter, calls } = viaGlab([{ stdout: '{}' }]);
+  await adapter.setStatus({ sha: SHA, state: 'pending', description: 'Checking on this computer' });
+  assert.deepEqual(calls[0].args, ['api', '--method', 'POST', `projects/a-director%2Fproduct/statuses/${SHA}`, '-f', 'state=pending', '-f', 'name=wheelhouse/checks', '-f', 'description=Checking on this computer']);
+});
+
+test('both: a report refuses a state that is not pending, success or failure before anything runs', async () => {
+  for (const build of [viaGlab, viaCurl]) {
+    const { adapter, calls } = build([]);
+    await assert.rejects(() => adapter.setStatus({ sha: SHA, state: 'running', description: 'x' }), /pending, success or failure/);
+    assert.equal(calls.length, 0);
+  }
+});
+
 test('both: a merge always carries the sha guard', async () => {
   const rest = viaCurl(mergeAnswers);
   await rest.adapter.merge({ number: 4, sha: SHA });
