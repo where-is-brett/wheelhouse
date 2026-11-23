@@ -467,6 +467,11 @@ const VIEWS = {
   // other views come with it, for the front desk's own lists (the rulebook, ideas, glossary, levels).
   // With `outcomes: { since }` the decided cards come too (decidedOutcomes), for the front desk's `card` and `views`.
   async waiting(args, source, { now, client = null } = {}) {
+    // `paneOnly`: just whether a panel is live, with no views built, for a hook that must answer quickly.
+    if (args.paneOnly === true) {
+      const when = typeof now === 'function' ? now() : new Date();
+      return { ok: true, data: { paneLive: typeof source.project === 'string' && panelLive(source.project, when.getTime()) }, lines: [] };
+    }
     const got = await recordOf(source, { cards: true, answers: args.answers === true });
     if (got.refused) return { ok: false, refused: got.refused };
     const numbered = numberedWaiting(got.views, got.cards ?? []);

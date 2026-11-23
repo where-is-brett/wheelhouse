@@ -71,6 +71,15 @@ test('waiting says paneLive true while the project\'s panel is live, with no ses
   clearPanels();
 }));
 
+test('waiting with paneOnly says only whether a panel is live, building no views', () => withRecord(async ({ source }) => {
+  clearPanels();
+  const guarded = { ...source, views: async () => { throw new Error('no views are built'); } };
+  assert.deepEqual((await readView('waiting', { paneOnly: true }, guarded, { now })).data, { paneLive: false });
+  markPanel(P, 'vscode-panel', Date.parse(NOW));
+  assert.deepEqual((await readView('waiting', { paneOnly: true }, guarded, { now })).data, { paneLive: true });
+  clearPanels();
+}));
+
 test('ask-here marks a waiting card, and waiting with askHere gives it once', () => withRecord(async ({ source }) => {
   clearPanels();
   const marked = await runAct('ask-here', { card: 'c1' }, { ok: true, records: [], client: 'vscode-panel' }, { source, recorder: {}, now });

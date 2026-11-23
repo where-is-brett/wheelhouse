@@ -320,7 +320,7 @@ function swapQuestions(questions, matched) {
   return { questions: next, swapped, origins, changed };
 }
 
-function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop, writeVia }) {
+async function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop, writeVia }) {
   const asked = input.tool_input.questions;
   const questions = stop().on ? asked.map(wholeLift) : asked;
   const restored = questions.some((q, i) => q !== asked[i]);
@@ -362,7 +362,7 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
   const heldAt = questions.map((_, i) => lifts[i] || (matched[i] ? pane(matched[i]) : false));
   const held = [...waiting.filter(pane).map((f) => f.card.id), ...(lifts.includes(true) ? [LIFT_ID] : [])];
   if (held.length > 0 && holdForPane && role({ sessionId: session, cwd: input.cwd }) === 'front-desk'
-    && live(session, at.getTime()) && !take(session, held, at.getTime())) {
+    && await live(session, at.getTime(), { cwd: input.cwd }) === true && !take(session, held, at.getTime())) {
     return { deny: paneLine(held.length, { others: heldAt.includes(false) }) };
   }
   const { questions: next, swapped, origins, changed } = swapQuestions(questions, matched);
@@ -495,13 +495,21 @@ function swapSetupCards(input, questions) {
 
 // Whether a panel is live beside this project's chat, as the front desk reads it: the helper says so (a paired app's signed watch,
 // kept per project), never a file an agent might write. A helper that can't be asked says no, so the chat asks the card.
-export async function helperPaneLive(session, ms, { cwd, client } = {}) {
+// A small read (waiting with `paneOnly`, which builds no views) with a short time limit: a helper that is slow or gone says no, so the
+// hook's other refusals still run well inside its own limit.
+export const PANE_ASK_MS = 1500;
+export async function helperPaneLive(session, ms, { cwd, client, timeout = PANE_ASK_MS } = {}) {
+  let timer;
   try {
     const { deskClient } = await import('../desk/client.js');
-    const got = await deskClient({ cwd, local: 'never', ...(client === undefined ? {} : { client }) }).read('waiting', {});
+    const ask = deskClient({ cwd, local: 'never', timeout, ...(client === undefined ? {} : { client }) }).read('waiting', { paneOnly: true });
+    const gone = new Promise((resolve) => { timer = setTimeout(() => resolve(null), timeout + 250); });
+    const got = await Promise.race([ask, gone]);
     return got?.ok === true && got.data?.paneLive === true;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -522,9 +530,8 @@ export async function decide(input, {
   let open_ = null;
   let checked_ = null;
   try {
-    // Asked once, before the check, only where a hold could apply: the same per-project answer the front desk reads.
-    const panel = holdForPane && Array.isArray(questions) ? await live(input.session_id, now().getTime(), { cwd: input.cwd }) === true : false;
-    const checked = oneCardCheck(input, find(input.cwd, { dir }).project, { now, outcomes, paneLive: () => panel, takeHere: take, holdForPane, role, stop, writeVia });
+    // The helper is asked about the panel only at the hold itself, after the cheaper role and held checks.
+    const checked = await oneCardCheck(input, find(input.cwd, { dir }).project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop, writeVia });
     if (checked.deny !== undefined) return answer.deny(checked.deny);
     open_ = checked.open;
     checked_ = checked;
