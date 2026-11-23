@@ -73,7 +73,7 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
   const render = deps.render ?? defaultRender();
   const projectNow = deps.project ?? (() => (typeof folder === 'string' ? projectIdFor(folder) : null));
 
-  const model = { state: 'no-helper', says: SAYS.looking, looked: false, said: '', moved: {}, projectName: typeof folder === 'string' ? path.basename(folder) : '', fingerprint: key.fingerprint ?? '', glance: null, waiting: null, work: null, count: 0, allStop: false, notices: [] };
+  const model = { state: 'no-helper', says: SAYS.looking, looked: false, said: '', saidCard: '', moved: {}, projectName: typeof folder === 'string' ? path.basename(folder) : '', fingerprint: key.fingerprint ?? '', glance: null, waiting: null, work: null, count: 0, allStop: false, notices: [] };
   // `askedUp`: this helper start has been asked to pair once already, so a later tick doesn't ask again until the
   // helper has gone away and come back.
   const run = { view: null, timer: null, cursor: null, askedUp: false, pending: false, busy: false, loops: 0 };
@@ -131,6 +131,8 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     // A card that has gone from the list was answered, or left, so it is no longer marked as moved.
     const here = new Set(waitingCards(model.waiting).map((c) => c.id));
     for (const id of Object.keys(model.moved)) if (!here.has(id)) delete model.moved[id];
+    // A refusal about a card that has gone is of no use now.
+    if (model.saidCard !== '' && !here.has(model.saidCard)) { model.said = ''; model.saidCard = ''; }
     return set(model.allStop ? 'stopped' : 'live');
   }
 
@@ -184,6 +186,7 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
       const project = projectNow();
       if (project === null || app === null) return;
       model.said = '';
+      model.saidCard = typeof message?.card === 'string' ? message.card : '';
       const out = await press(message, { latestNonce: nonces.latest(), client: deskFor(project), waiting: waitingCards(model.waiting), app });
       if (out.made === 'pair' && out.got !== undefined) {
         run.askedUp = true;
@@ -195,7 +198,7 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
       // A card asked in the chat stays in the list until it is answered; the panel shows it has moved.
       if (out.ok === true && out.made === 'ask-here' && typeof message?.card === 'string') model.moved[message.card] = typeof message.hash === 'string' ? message.hash : '';
       if (out.ok === true) await tick();
-      // A message that was dropped drew nothing and changes nothing, so it doesn't renew the nonce either.
+      // A message that was dropped has no words to show and changes nothing but clearing the last refusal, so it draws nothing and doesn't renew the nonce.
       if (out.ok === true || model.said !== '') draw();
     } catch {
       // Nothing was sent that the helper didn't answer; the next look shows the panel as it is.
