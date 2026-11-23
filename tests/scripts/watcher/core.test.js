@@ -959,3 +959,37 @@ test('a wait on a pull request ends by itself once it settles, so the stuck time
   const events = diff(cursor, { ...held('merged'), awake: STUCK_MS }, { handled: new Set() });
   assert.ok(events.some((e) => e.type === 'stuck' && e.work === 'login-page'));
 });
+
+test('the wakes name the Lookout by its launcher name when the session runs by launcher, and by its colon name otherwise', () => {
+  const HEAD = 'd'.repeat(40);
+  const open = feature({ status: status({ phase: 'pr-open', pr: 7, updatedAt: iso(3) }) });
+  const pr = (p) => ({ work: 'login-page', head: HEAD, ci: 'success', mergeable: 'yes', review: 'needed', ...p });
+  const before = observation({ features: { 'login-page': open } });
+  const observed = (p) => observation({ features: { 'login-page': open }, prs: { 7: pr(p) } });
+  const texts = (launchers) => {
+    const given = { launchers };
+    const needed = diff(before, observed({}), given).find((e) => e.type === 'review-needed').detail.next;
+    const findings = diff(before, observed({ review: 'findings', findings: 2, blocking: 1 }), given).find((e) => e.type === 'findings').detail.next;
+    const conflict = diff(before, observed({ mergeable: 'no', review: 'clean' }), given).find((e) => e.type === 'conflict').detail.next;
+    let cursor = { seen: [], prev: observed({}) };
+    let again = null;
+    for (let i = 0; i < 3; i += 1) {
+      const r = step(cursor, observation({ awake: 10 * MIN, features: { 'login-page': open }, prs: { 7: pr({}) } }), given);
+      cursor = r.cursor;
+      again ??= r.events.find((e) => e.id.endsWith(':again'))?.detail.next ?? null;
+    }
+    return { needed, findings, conflict, again };
+  };
+  const hyphen = texts(true);
+  const colon = texts(false);
+  for (const [name, text] of Object.entries(hyphen)) {
+    assert.match(text, /dispatch wheelhouse-reviewer/i, name);
+    assert.doesNotMatch(text, /wheelhouse:reviewer/, name);
+  }
+  for (const [name, text] of Object.entries(colon)) {
+    assert.match(text, /dispatch wheelhouse:reviewer/i, name);
+    assert.doesNotMatch(text, /wheelhouse-reviewer/, name);
+  }
+  // With no flag, the names are Claude Code's.
+  assert.match(diff(before, observed({})).find((e) => e.type === 'review-needed').detail.next, /wheelhouse:reviewer/);
+});

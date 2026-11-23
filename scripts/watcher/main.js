@@ -62,6 +62,7 @@ import { foremanTools } from '../foreman/tools.js';
 import { cleanOrphans } from '../crew/hold.js';
 import { readConfig } from '../gate/guardrails.js';
 import { helperClient } from '../host/helper-client.js';
+import { runsByLauncher } from '../lib/crew-names.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { PROTECTED_KINDS, makeEvent } from '../state/events.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -287,7 +288,7 @@ export async function runWatcher({
         }
 
         const seen = await look({ project, client, now, intervals: every, prev: cursor.prev, awake });
-        const { events, cursor: next } = step(cursor, seen, { handled: handled(seen) });
+        const { events, cursor: next } = step(cursor, seen, { handled: handled(seen), launchers: runsByLauncher(settings) });
         // The routine moves a script can make are made now; what is left to the foreman is judgement, with its reason.
         const give = async (list, queue) => {
           if (routine === null) return list;

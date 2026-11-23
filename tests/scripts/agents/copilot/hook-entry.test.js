@@ -13,6 +13,10 @@ import { GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC } from '../../../../scripts/agents
 import { toGuardInput, patchChanges, patchPaths } from '../../../../adapters/copilot/translate.js';
 import { NO_HELPER_STOP } from '../../../../scripts/lib/stop.js';
 import { hookMain } from '../../../../scripts/hooks/kit.js';
+import { LAUNCHER_SESSION } from '../../../../scripts/lib/launchers.js';
+import { setStop } from '../../../../scripts/lib/stop.js';
+import { makeSigningKey, enrol } from '../../../../scripts/state/signing.js';
+import { withHome } from '../../../helpers/homes.js';
 
 const FIXTURES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'fixtures', 'copilot', 'hook-input');
 const PROJECT = '/work/shop';
@@ -280,6 +284,61 @@ test('report-check is told a builder\'s report names no commit, since Wheelhouse
 function fixtureStop(type) {
   return { ...fixture('camel-subagentStop-none.json'), agentType: type, agentName: type };
 }
+
+// The feature session dispatches the Lookout with `task` (T6): the call, and the Lookout's stop, as Copilot sends them.
+const LAUNCHER_ENV = { ...ENV, [LAUNCHER_SESSION]: '1' };
+const taskCall = () => fixture('camel-preToolUse-task.json');
+
+test('a feature session\'s `task` call is let through by every guard that sees it, and refused only under STOP', () => withHome(async () => {
+  // `task` is in the translation's `other` group: only the STOP guard and the lineage hold are on it, and neither refuses it.
+  const r = recording();
+  assert.deepEqual(await run('preToolUse', taskCall(), { steps: r.steps, env: LAUNCHER_ENV }), { text: '', code: 0 });
+  assert.deepEqual(names(r.calls), ['stopGuard', 'lineageHold']);
+  // With the real steps, as the entry runs them for a launcher session, nothing refuses it.
+  assert.deepEqual(await run('preToolUse', taskCall(), { env: LAUNCHER_ENV }), { text: '', code: 0 });
+  // Under STOP it is refused, as any tool that isn't reading is.
+  setStop({ by: 'prompt' });
+  const stopped = await run('preToolUse', taskCall(), { env: LAUNCHER_ENV });
+  assert.equal(stopped.code, 2);
+  assert.match(JSON.parse(stopped.text).permissionDecisionReason, /All stop is on/);
+}));
+
+test('the Lookout\'s stop, sent as Copilot sends it, reaches report-check by its colon name and is recorded as a review of the pull request\'s head', () => withHome(async () => {
+  // The computer's signing key signs the review, as it does for Claude Code: report-check is the only signer.
+  const { computer, publicKey } = makeSigningKey();
+  enrol({ computer, publicKey, enrolledAt: '2026-11-01T00:00:00.000Z' });
+  const HEAD = 'c'.repeat(40);
+  const report = ['The branch is sound.', '', 'WHEELHOUSE REPORT', 'role: reviewer', 'pr: 7', `commit: ${HEAD}`, 'verdict: CLEAN', ''].join('\n');
+  const recorded = [];
+  const notes = [];
+  const client = {
+    ...up,
+    prState: async () => ({ ok: true, result: { state: 'open', headSha: HEAD } }),
+    state: { record: async (body) => { recorded.push(body); return { ok: true }; }, write: async (body) => { notes.push(body); return { ok: true }; } },
+  };
+  const { decide } = await import('../../../../scripts/hooks/report-check.js');
+  const seen = [];
+  const reportCheck = (input, deps) => {
+    seen.push(input.agent_type);
+    return decide(input, { ...deps, projectOf: () => ({ project: 'shop' }), now: () => new Date('2026-11-23T01:00:00Z') });
+  };
+  const stop = { ...fixture('camel-subagentStop-none.json'), agentType: 'wheelhouse-reviewer', agentName: 'wheelhouse-reviewer', response: report };
+  const got = await run('subagentStop', stop, { client, steps: { reportCheck, featureStatus: async () => undefined }, env: LAUNCHER_ENV });
+  assert.deepEqual(got, { text: '', code: 0 });
+  assert.deepEqual(seen, ['wheelhouse:reviewer']);
+  assert.deepEqual(notes, []);
+  assert.equal(recorded.length, 1);
+  const { data, kind } = recorded[0].event;
+  assert.equal(kind, 'review');
+  assert.deepEqual([data.pr, data.commit, data.verdict, data.findings], [7, HEAD, 'CLEAN', 0]);
+
+  // A report on a head that has moved is not recorded, and says so.
+  recorded.length = 0;
+  const moved = { ...stop, response: report.replace(HEAD, 'd'.repeat(40)) };
+  await run('subagentStop', moved, { client, steps: { reportCheck, featureStatus: async () => undefined }, env: LAUNCHER_ENV });
+  assert.equal(recorded.length, 0);
+  assert.match(notes[0].data.text, /was not recorded: the head has moved since the review/);
+}));
 
 test('a context line that reads as a header once trimmed refuses the whole patch', async () => {
   const hidden = [

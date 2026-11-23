@@ -34,7 +34,7 @@ function worktree() {
 }
 
 // A part that reads a run as finished, and keeps what afterWork is asked.
-function partWith({ afterWork }) {
+function partWith({ afterWork, beforeWork }) {
   const output = path.join(tempFolder('wh-run-'), 'run.jsonl');
   const asked = [];
   const part = {
@@ -46,14 +46,15 @@ function partWith({ afterWork }) {
     finalAnswer: () => null,
     afterRun: () => ({ ok: true, why: null, sessionId: 's1', records: [{ kind: 'activity', data: { role: 'builder' } }] }),
     afterWork: async (options) => { asked.push(options); return afterWork(options); },
+    ...(beforeWork === undefined ? {} : { beforeWork }),
   };
   return { part, output, asked };
 }
 
-function driven({ afterWork, raise, onError = () => {} }) {
+function driven({ afterWork = async () => ({ records: [] }), beforeWork, raise = async () => {}, onError = () => {} }) {
   const dir = worktree();
   writeBaseline(P, 'login-page', dir);
-  const { part, output, asked } = partWith({ afterWork });
+  const { part, output, asked } = partWith({ afterWork, beforeWork });
   const live = new Set();
   let end;
   const run = () => ({ pid: 200, exited: new Promise((resolve) => { live.add(200); end = (code) => { live.delete(200); resolve(code); }; }) });
@@ -85,6 +86,24 @@ test('the adapter is asked, with the worktree and the run\'s output, once a feat
   assert.equal(h.asked[0].project, P);
   assert.match(h.asked[0].stdout, /the run/);
   assert.deepEqual(raised, ['activity', 'note'], 'the run\'s own records first, then the work\'s');
+}));
+
+test('the adapter is asked to make the session\'s folders before a feature\'s start, and a throw is reported while the run still starts', () => withHome(async () => {
+  const asked = [];
+  const h = driven({ beforeWork: async (options) => { asked.push(options); } });
+  await h.start();
+  assert.deepEqual(asked, [{ project: P, target: 'feature-login-page', worktree: h.dir }]);
+  h.end(0);
+  await flush();
+
+  const errors = [];
+  const failing = driven({ beforeWork: async () => { throw new Error('no room'); }, onError: (e) => errors.push(e) });
+  const started = await failing.start();
+  assert.ok(Number.isInteger(started.pid), 'the session started');
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /login-page session's folders couldn't be made before its run: no room/);
+  failing.end(0);
+  await flush();
 }));
 
 test('an afterWork that throws is reported, and the run still settles', () => withHome(async () => {

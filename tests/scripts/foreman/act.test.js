@@ -44,10 +44,10 @@ import { NULL_FILE } from '../../../scripts/lib/safe-git.js';
 import { holdFile } from '../../../scripts/crew/hold.js';
 import { withHome, tempFolder } from '../../helpers/homes.js';
 import {
-  P, T0, HASH, config, emptyViews, fakeClient, featureView, planText, project, recordInState, reportText, workView, worktree,
+  P, T0, HASH, briefFields, config, emptyViews, fakeClient, featureView, planText, project, recordInState, reportText, workView, worktree,
 } from '../../helpers/foreman.js';
 import { buildStatus } from '../../../scripts/feature/status.js';
-import { amendBrief } from '../../../scripts/feature/brief.js';
+import { amendBrief, renderBrief } from '../../../scripts/feature/brief.js';
 import { readStatus, writeStatus } from '../../../scripts/feature/files.js';
 import { step } from '../../../scripts/watcher/core.js';
 import { observe } from '../../../scripts/watcher/sources.js';
@@ -2507,6 +2507,85 @@ test('restart wakes a feature whose agent runs commands by launcher with the lau
     assert.match(next, /shell can't run git/);
     assert.doesNotMatch(next, /git (add|commit|push|log|status|diff)/i);
   }
+}));
+
+test('restart on a launcher session names the Lookout by its launcher name, and a Claude Code session by its colon name', () => withHome(async () => {
+  const { fake, woken, wakerFor } = await restartScene({ review: 'FINDINGS', cfg: config({ agents: { [computerId()]: 'copilot' } }) });
+  await act(['restart', 'mine'], { client: fake.client, wakerFor });
+  assert.match(woken[0].wake.events[0].detail.next, /dispatch wheelhouse-reviewer on the new head/);
+  assert.doesNotMatch(woken[0].wake.events[0].detail.next, /wheelhouse:reviewer/);
+}));
+
+// The brief here is the one a session started with, before its agent ran by launcher: the colon names and git steps. It is the
+// one the foreman recorded, with an amendment and a plan, so a restart may write it again.
+test('restart writes a stale brief again for a launcher session, keeping its version, plan, fields and amendments, and records its hash first', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  const views = emptyViews();
+  views.work.mine = workView('mine', { lane: 'feature' });
+  const stale = renderBrief({ fields: briefFields('mine', { lane: 'feature', version: 1, plan: 'docs/plans/mine.md', slices: 2, goal: 'Greet people' }), pluginRoot: '/plugin' });
+  const amended = amendBrief(stale, { change: 'Greet people by first name', now: new Date(T0 - 60000) });
+  const wt = worktree(checkout, 'mine', { pr: { pr: 7, plan: 'docs/plans/mine.md' } });
+  fs.writeFileSync(featurePaths(wt).brief, amended);
+  assert.match(amended, /wheelhouse:reviewer/);
+  assert.match(amended, /git diff/);
+  views.features.mine = featureView('mine', { step: 'building', worktree: wt, branch: 'feature/mine', plan: 'docs/plans/mine.md', files: ['a.js'] });
+  recordInState('feature', { work: 'mine', step: 'started', worktree: wt, brief: briefHash(amended) }, T0 - 120000);
+  recordInState('feature', { work: 'mine', step: 'building', worktree: wt }, T0 - 90000);
+  const fake = fakeClient({ views, cfg: config({ agents: { [computerId()]: 'copilot' } }) });
+  const fileAtWrite = [];
+  const write = fake.client.state.write;
+  fake.client.state.write = async (body) => {
+    fileAtWrite.push(fs.readFileSync(featurePaths(wt).brief, 'utf8'));
+    return write(body);
+  };
+  const woken = [];
+  const wakerFor = () => ({ wakeFeature: async (work, file) => { woken.push({ work, wake: JSON.parse(fs.readFileSync(file, 'utf8')) }); } });
+  const r = await act(['restart', 'mine'], { client: fake.client, wakerFor });
+  assert.equal(r.code, 0, r.err);
+  const after = fs.readFileSync(featurePaths(wt).brief, 'utf8');
+  // The words are the launcher's now.
+  assert.doesNotMatch(after, /wheelhouse:(builder|reviewer|tester)/);
+  assert.match(after, /wheelhouse-reviewer/);
+  assert.doesNotMatch(after, /git diff/);
+  assert.match(after, /wh-feature diff/);
+  // Its fields and its amendment are as they were.
+  assert.deepEqual(parseBrief(after).fields, parseBrief(amended).fields);
+  assert.equal(parseBrief(after).fields.version, 2);
+  assert.equal(parseBrief(after).fields.plan, 'docs/plans/mine.md');
+  assert.match(after, /^- 19 October 2026 \(version 2\): Greet people by first name$/m);
+  assert.equal(after.match(/# What changed/g).length, 1);
+  assert.ok(after.indexOf('# What changed') < after.indexOf('# The goal'));
+  // The hash is recorded at the feature's own step, while the file still held the old brief.
+  assert.deepEqual(fake.writes.map((w) => w.data), [{ work: 'mine', step: 'building', worktree: wt, branch: 'feature/mine', plan: 'docs/plans/mine.md', files: ['a.js'], brief: briefHash(after) }]);
+  assert.deepEqual(fileAtWrite, [amended]);
+  assert.match(r.out, /Wrote mine's brief again/);
+  assert.equal(woken.length, 1);
+
+  // A second restart has nothing to write.
+  const again = await act(['restart', 'mine'], { client: fake.client, wakerFor });
+  assert.equal(again.code, 0, again.err);
+  assert.equal(fake.writes.length, 1);
+  assert.equal(fs.readFileSync(featurePaths(wt).brief, 'utf8'), after);
+}));
+
+test('restart leaves a brief the session changed as it is, says so, and still wakes the session', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  const views = emptyViews();
+  views.work.mine = workView('mine', { lane: 'feature' });
+  const recorded = renderBrief({ fields: briefFields('mine', { lane: 'feature' }), pluginRoot: '/plugin' });
+  const wt = worktree(checkout, 'mine', { pr: { pr: 7, plan: 'a.md' } });
+  fs.writeFileSync(featurePaths(wt).brief, `${recorded}\nThe session added this line.\n`);
+  views.features.mine = featureView('mine', { step: 'building', worktree: wt });
+  recordInState('feature', { work: 'mine', step: 'started', worktree: wt, brief: briefHash(recorded) }, T0 - 120000);
+  const fake = fakeClient({ views, cfg: config({ agents: { [computerId()]: 'copilot' } }) });
+  const woken = [];
+  const wakerFor = () => ({ wakeFeature: async (work, file) => { woken.push(JSON.parse(fs.readFileSync(file, 'utf8'))); } });
+  const r = await act(['restart', 'mine'], { client: fake.client, wakerFor });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /mine's brief isn't the one recorded, so it was not written again/);
+  assert.match(fs.readFileSync(featurePaths(wt).brief, 'utf8'), /The session added this line\.\n$/);
+  assert.equal(fake.writes.length, 0);
+  assert.equal(woken.length, 1);
 }));
 
 test('restart on a held piece says the wake waits for the hand-back', () => withHome(async () => {

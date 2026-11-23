@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { FEATURE_DIR, parseBrief } from './files.js';
 import { APPROVED_PATH } from './approved.js';
 import { FIX_ROUNDS, REPORT_WORDS } from '../lib/build-loop.js';
+import { withLauncherCrewNames } from '../lib/crew-names.js';
 
 // The ref a feature's worktree is cut from and compared against: the remote's default branch, never the local one.
 export const BASE_REF = 'origin/HEAD';
@@ -178,7 +179,23 @@ export function renderBrief({ fields, pluginRoot, windowsBuilds = null, launcher
     laneText,
     models: roleLines(),
   });
-  return `${block}\n${launchers === true ? singleQuoted(text) : text}`;
+  return `${block}\n${launchers === true ? singleQuoted(withLauncherCrewNames(text)) : text}`;
+}
+
+// A brief again from the brief `text` already in a worktree, with the words its agent runs by now (`pluginRoot`,
+// `windowsBuilds` and `launchers` as renderBrief takes them): its fields (the version, the plan, the approved document's
+// hash and the rest) are read from the text and put back as they stand, and so is the "What changed" section the
+// amendments built. Only the words around them are written afresh, so a session started before a change to them reads the
+// brief as a start now would write it. Returns text only; the caller writes it and records its hash. Throws if `text` is
+// not a brief.
+export function renderAgain(text, { pluginRoot, windowsBuilds = null, launchers = false } = {}) {
+  const { fields, body } = parseBrief(text);
+  const fresh = renderBrief({ fields, pluginRoot, windowsBuilds, launchers });
+  const { changed } = splitOverride(body);
+  if (changed === '') return fresh;
+  const at = splitOverride(parseBrief(fresh).body);
+  const block = `\`\`\`json\n${JSON.stringify(fields, null, 2)}\n\`\`\`\n`;
+  return `${block}\n${at.override}\n\n# What changed\n\n${changed}\n${at.rest === '' ? '' : `\n${at.rest}`}`;
 }
 
 // --- Amending ---
@@ -193,6 +210,24 @@ function dayMonthYear(now) {
 
 const OVERRIDE_HEADING = '# The Wheelhouse override';
 
+// A brief's text after its fields block, in its parts: the override, which opens the text and ends at the next top-level
+// heading; the entries of the "What changed" section the amendments built (empty when there is none); and the rest. Throws
+// if the text has no override.
+function splitOverride(body) {
+  const text0 = body.replace(/^\s+/, '');
+  if (!text0.startsWith(OVERRIDE_HEADING)) throw new Error('The brief has no override');
+  const end = text0.indexOf('\n# ', OVERRIDE_HEADING.length);
+  const override = end === -1 ? text0.trimEnd() : text0.slice(0, end).trimEnd();
+  let rest = end === -1 ? '' : text0.slice(end + 1);
+  let changed = '';
+  const section = /^# What changed\r?\n([\s\S]*?)(?=\r?\n# |$)/.exec(rest);
+  if (section) {
+    changed = section[1].trim();
+    rest = rest.slice(section[0].length).replace(/^\s+/, '');
+  }
+  return { override, changed, rest };
+}
+
 // The brief `text` with its version one higher and a "What changed" section
 // straight after the override, which stays first. A section from an earlier amendment
 // is kept, with the latest line first. Returns text only; the caller writes it and
@@ -204,19 +239,7 @@ export function amendBrief(text, { change, now } = {}) {
   const date = dayMonthYear(now);
   const version = fields.version + 1;
 
-  // The override opens the text and ends at the next top-level heading.
-  const text0 = body.replace(/^\s+/, '');
-  if (!text0.startsWith(OVERRIDE_HEADING)) throw new Error('The brief has no override');
-  const end = text0.indexOf('\n# ', OVERRIDE_HEADING.length);
-  const override = end === -1 ? text0.trimEnd() : text0.slice(0, end).trimEnd();
-  let rest = end === -1 ? '' : text0.slice(end + 1);
-
-  let earlier = '';
-  const section = /^# What changed\r?\n([\s\S]*?)(?=\r?\n# |$)/.exec(rest);
-  if (section) {
-    earlier = section[1].trim();
-    rest = rest.slice(section[0].length).replace(/^\s+/, '');
-  }
+  const { override, rest, changed: earlier } = splitOverride(body);
   const entries = [`- ${date} (version ${version}): ${said}`, ...(earlier === '' ? [] : [earlier])].join('\n');
   const block = `\`\`\`json\n${JSON.stringify({ ...fields, version }, null, 2)}\n\`\`\`\n`;
   return `${block}\n${override}\n\n# What changed\n\n${entries}\n${rest === '' ? '' : `\n${rest}`}`;
