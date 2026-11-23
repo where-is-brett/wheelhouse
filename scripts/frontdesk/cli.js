@@ -134,7 +134,7 @@ export { surveyLines, workLines };
 import { SUGGEST, WHY, suggestedAt } from '../lib/calm-words.js';
 import { keep, taken } from '../hooks/pending.js';
 import { projectOf, writeVia } from '../hooks/kit.js';
-import { agentInFolder } from '../agents/names.js';
+import { agentInFolder, agentsNamedAbove } from '../agents/names.js';
 import { computerId } from '../lib/paths.js';
 import { noteProblem } from '../lib/session-note.js';
 import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
@@ -242,9 +242,17 @@ async function viewsOf(client, cwd, { cards = false, answers = false, since, ses
 }
 
 // The director's own settings view, as the desk's settings view gives it; none when it can't be read.
-// The agent the project in `cwd` runs on this computer; Claude Code where that can't be told.
+// The agent the project in `cwd` runs on this computer; Claude Code where that can't be told. Where the configuration names
+// no agent but Claude Code for any computer, the answer is Claude Code without this computer's id, so a sandboxed command
+// never reads or makes the Wheelhouse home to learn it.
 function agentHere(cwd) {
-  try { return agentInFolder(cwd, { computerId: computerId() }) ?? 'claude-code'; } catch { return 'claude-code'; }
+  try {
+    const named = agentsNamedAbove(cwd);
+    if (named === null || Object.values(named).every((agent) => agent === 'claude-code')) return 'claude-code';
+    return agentInFolder(cwd, { computerId: computerId() }) ?? 'claude-code';
+  } catch {
+    return 'claude-code';
+  }
 }
 
 // Whether the agent in `cwd` has hooks that only read, so its chat records no typed reply and a decision is answered in the window.
