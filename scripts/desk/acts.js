@@ -130,7 +130,7 @@ const ACTS = {
     const fingerprint = fingerprintOf(app.publicKey);
     const { card } = composeCard({
       kind: 'unpair', level: 4, recommend: UNPAIR_LABEL,
-      what: `Unpair the app "${app.name}" (${app.id}), key ${fingerprint}?`,
+      what: `The app "${app.name}" (${app.id}), with its key ${fingerprint}, is paired and can decide through Wheelhouse.`,
       why: 'Only you can unpair an app, at level 4.',
       because: 'you asked to stop this app deciding through Wheelhouse.',
       meanwhile: 'The app keeps working until you unpair it.',

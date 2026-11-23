@@ -43,7 +43,7 @@ export const HEADERS = Object.freeze({
   trust: 'Trust',
   'take-over': 'Take over',
   pair: 'Pair an app',
-  unpair: 'Unpair an app',
+  unpair: 'Unpair',
   uninstall: 'Uninstall',
   question: 'Question',
   'keep-control-files': 'Agent files',
