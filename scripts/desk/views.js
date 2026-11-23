@@ -514,7 +514,8 @@ const VIEWS = {
     const pane = { paneLive: typeof source.project === 'string' && panelLive(source.project, at.getTime()) };
     // With `askHere: true`: a read a paired app signed takes the cards the director marked Ask me here (given once, and handed to
     // the chat); any other read gives the cards so taken that still wait and haven't been asked since (the front desk's read,
-    // which asks them in the chat), and takes nothing, so no one else can move a mark the director made.
+    // which asks them in the chat), and takes no mark, so no one else can move a mark the director made. An unsigned `passHere`
+    // (paneOnly) can only use up a mark the panel has already taken; the card stays in the panel's list.
     const here = args.askHere === true
       ? { askHere: typeof source.project !== 'string' ? [] : client !== null ? takeAskHere(source.project, at.getTime()) : askedHere(source.project, at.getTime(), got.views?.waiting) } : {};
     return { ok: true, data: { ...got, numbered, ...given, ...decisions, ...calls, ...stuck, ...helmNotes, ...pane, ...here }, lines };

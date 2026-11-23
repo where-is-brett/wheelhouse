@@ -148,7 +148,7 @@ test('a paneOnly read with `passHere` passes the handed cards once, building no 
   assert.equal((await readView('waiting', { paneOnly: true }, bare, { now })).data.passed, undefined, 'said only when asked for');
 }));
 
-test('card carries its buttons, its pane hash and its data hash',() => withRecord(async ({ source }) => {
+test('card carries its buttons, its pane hash and its data hash', () => withRecord(async ({ source }) => {
   const got = await readView('card', { id: 'c1' }, source, { now });
   assert.equal(got.ok, true);
   assert.deepEqual(got.data.buttons, cardButtons(CARD, { preview: null }).buttons);

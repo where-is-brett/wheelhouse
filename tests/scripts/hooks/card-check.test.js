@@ -6,7 +6,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { decide, decideRepeat, cardProblems, helperPaneLive, helperAskHere,DECIDED_LEAD, PANE_LEAD } from '../../../scripts/hooks/card-check.js';
+import { decide, decideRepeat, cardProblems, helperPaneLive, helperAskHere, DECIDED_LEAD, PANE_LEAD } from '../../../scripts/hooks/card-check.js';
 import { markPane, markHere, readOpen, paneLive as sessionPane } from '../../../scripts/lib/session-files.js';
 import { hookMain } from '../../../scripts/hooks/kit.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
@@ -857,7 +857,17 @@ test('a card the helper has just handed out by Ask me here passes once; another 
   assert.ok(handed.has('c-1'), 'a refused call takes nothing');
 }));
 
-test('the helper is asked for an Ask me here pass only at a hold', () => withHome(async () => {
+test('a card marked both in the session file and by the panel is passed once, using up both', () => withHome(async () => {
+  const handed = new Set(['c-1']);
+  const askHere = async (session, ids) => { const ok = ids.every((id) => handed.has(id)); if (ok) ids.forEach((id) => handed.delete(id)); return ok; };
+  const over = { outcomes: () => [SEPARATOR], paneLive: async () => true, askHere };
+  markHere(SID, ['c-1'], T0);
+  assert.equal(await run(withSession([separator.question]), over), undefined, 'the first ask passes');
+  assert.equal(handed.size, 0, 'the panel mark is used up with the file mark');
+  assert.ok(reason(await run(withSession([separator.question]), over)).startsWith(PANE_LEAD), 'a second ask is refused');
+}));
+
+test('the helper is asked for an Ask me here pass only at a hold',() => withHome(async () => {
   let asked = 0;
   const askHere = async () => { asked += 1; return false; };
   assert.equal(await run(withSession([separator.question]), { outcomes: () => [SEPARATOR], paneLive: async () => false, askHere }), undefined, 'no live panel: asked as now');

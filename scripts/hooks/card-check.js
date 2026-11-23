@@ -363,9 +363,11 @@ async function oneCardCheck(input, project, { now, outcomes, paneLive: live, tak
   const heldAt = questions.map((_, i) => lifts[i] || (matched[i] ? pane(matched[i]) : false));
   const held = [...waiting.filter(pane).map((f) => f.card.id), ...(lifts.includes(true) ? [LIFT_ID] : [])];
   if (held.length > 0 && holdForPane && role({ sessionId: session, cwd: input.cwd }) === 'front-desk'
-    && await live(session, at.getTime(), { cwd: input.cwd }) === true && !take(session, held, at.getTime())
-    && !(await askHere(session, held, { cwd: input.cwd }))) {
-    return { deny: paneLine(held.length, { others: heldAt.includes(false) }) };
+    && await live(session, at.getTime(), { cwd: input.cwd }) === true) {
+    // Both routes are used, so a card marked in the session file and by the panel is let through once, not twice.
+    const viaFile = take(session, held, at.getTime());
+    const viaPanel = await askHere(session, held, { cwd: input.cwd });
+    if (!viaFile && !viaPanel) return { deny: paneLine(held.length, { others: heldAt.includes(false) }) };
   }
   const { questions: next, swapped, origins, changed } = swapQuestions(questions, matched);
   return { open: waiting.filter((f) => !f.setup).map((f) => f.card.id), questions: changed || restored ? next : null, swapped, origins };
