@@ -94,6 +94,7 @@ import { keepRunningModel, modelOfInput } from '../lib/front-desk-model.js';
 import { whereDigest, resetEpisode } from './where.js';
 import { keptRequest, clearRequest } from '../lib/kept-request.js';
 import { retiredPiece } from '../settings/catalogue.js';
+import { SETTINGS_CHANGED, settingsCardNote } from '../lib/settings-card.js';
 
 const SELF = fileURLToPath(import.meta.url);
 // The script that brings this computer's settings for a project up to date, run detached.
@@ -440,8 +441,10 @@ async function keepLock(project, client, left, seen = {}) {
   if (took?.ok === true && took.result?.taken === true) return null;
   if (took?.ok === true && took.result?.taken === false) seen.holder = took.result.holder;
   if (took?.ok === true && took.result?.taken === false) return heldElsewhere(took.result.holder ?? 'unknown', took.result.since ?? 'at an unknown time');
-  // The helper's reason, when it gave one, so a push the host turned down says why.
-  return typeof took?.refused === 'string' && took.refused !== '' ? `${NO_LOCK} (${took.refused})` : NO_LOCK;
+  // The helper's reason, when it gave one, so a push the host turned down says why. Where it says the computer's git settings
+  // changed (by its code, not its words) and raised the card that confirms them, the First Mate is told to show it.
+  const why = typeof took?.refused === 'string' && took.refused !== '' ? `${NO_LOCK} (${took.refused})` : NO_LOCK;
+  return took?.code === SETTINGS_CHANGED && typeof took.card === 'string' && took.card !== '' ? `${why}. ${settingsCardNote(took.card)}` : why;
 }
 
 // The words before the window take-over card's AskUserQuestion input.

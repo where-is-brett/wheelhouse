@@ -109,6 +109,11 @@ test('any push failure other than non-fast-forward throws a plain error', async 
       assert.equal(await readLock({ env: LOCAL_PATHS, project: 'o__p' }), null);
       // The push's own reason goes with the error.
       await assert.rejects(takeLock({ env: LOCAL_PATHS, project: 'o__p', push: async () => ({ ok: false, refused: 'git could not push the branch: denied' }), now: at(0) }), /could not be pushed: git could not push the branch: denied/);
+      // The push's code and the card it raised go with the error, for the helper's answer to give on; nothing else does.
+      await assert.rejects(
+        takeLock({ env: LOCAL_PATHS, project: 'o__p', push: async () => ({ ok: false, refused: 'settings changed', code: 'git-settings-changed', needs: 'window', card: 'c1', stdout: 'secret' }), now: at(0) }),
+        (error) => { assert.deepEqual(error.carry, { code: 'git-settings-changed', needs: 'window', card: 'c1' }); return true; },
+      );
     });
   } finally { remote.cleanup(); }
 });
