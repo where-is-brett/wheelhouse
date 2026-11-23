@@ -156,6 +156,23 @@ test('a merge of a shown-first change without the director\'s approval of that h
   });
 });
 
+test('a panel\'s approval (proof client) or the retired add-on\'s never lets a guardrail change merge at the broker', async () => {
+  await withHome(async () => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const enrolled = [{ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' }];
+    const call = classifyCall(['pr', 'merge', '14', '--repo', R, '--squash', '--match-head-commit', HEAD]);
+    const review = makeEvent({ kind: 'review', data: { pr: 14, commit: HEAD, verdict: 'CLEAN', findings: 0 } });
+    const ctx = { stop: false, lockHeld: true, incident: { open: false }, enrolled, review, guardrail: true };
+    for (const proof of ['client', 'add-on']) {
+      const approval = makeEvent({ kind: 'approval', data: { pr: 14, commit: HEAD, proof, by: 'vscode-panel' } });
+      assert.match(brokerDecision(call, { ...ctx, approval }).reason, /director's approval/, proof);
+    }
+    const window = makeEvent({ kind: 'approval', data: { pr: 14, commit: HEAD, proof: 'window' } });
+    assert.deepEqual(brokerDecision(call, { ...ctx, approval: window }), { allow: true });
+  });
+});
+
 test('a merge during an incident is refused unless it is the fix', async () => {
   await withHome(async () => {
     const { computer, publicKey } = makeSigningKey();

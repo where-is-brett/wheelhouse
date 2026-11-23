@@ -69,6 +69,12 @@ async function onCard(command, args, checked, { source, recorder }) {
   const stop = await source.stop?.();
   // Under STOP the signed record closes the card on its own; a plain answer waits.
   if (stop?.on === true) return records.length > 0 ? { ok: true, changed: ['record'] } : no('All stop is on');
+  // A paired app's deciding click on a plain merge approval: the helper turns it into the approval the card earns, or refuses it.
+  if (checked.decides === true && checked.client) {
+    if (label !== 'Approve') return no('The panel approves a merge only; Send it back is decided in Wheelhouse\'s window or by a typed reply');
+    const got = await recorder.panelApprove({ card: args.card, label, client: checked.client, hash: args.hash });
+    return got?.ok === true ? { ok: true, changed: ['approval', 'card-answer'] } : no(got?.refused ?? 'The approval wasn\'t recorded');
+  }
   const data = { question: live.question, label, where: 'panel', ...(checked.client ? { proof: 'client', by: checked.client } : {}) };
   const got = await recorder.write({ kind: 'card-answer', data });
   if (got?.ok !== true) return no(got?.refused ?? 'The answer wasn\'t written');

@@ -234,3 +234,37 @@ test('a signature over one answer doesn\'t carry another', () => withKey(async (
   const evidence = { form: 'client', client: 'vscode-panel', at: NOW, sig: app.signs('answer', answerOn(card, 'Not now'), NOW) };
   assert.equal(checkEvidence('answer', sent, evidence, context(enrolled, { clients: [app.entry], views: card.views, project: PROJECT })).ok, false);
 }));
+
+// A click in the chat is judged from the live card, as a paired app's answer is: a plain merge approval is read from its fields, and the
+// card's id says nothing (a real card's id is a random one, never a name).
+test('a chat click that would sign is taken on a plain merge approval, whatever its id', () => withKey(async ({ enrolled }) => {
+  for (const id of [crypto.randomUUID(), 'x']) {
+    const card = waitingOf(MERGE, id);
+    const got = checkEvidence('answer', { card: id, option: 'Approve' }, { form: 'chat-click', proof: 'chat-click' }, context(enrolled, { views: card.views }));
+    assert.deepEqual([got.ok, got.chatClick], [true, true], `${id} ${got.refused}`);
+  }
+}));
+
+test('a chat click that would sign is refused on any card that is not a plain merge approval, even one named merge-', () => withKey(async ({ enrolled }) => {
+  for (const [data, option] of [[GUARDRAIL, 'Approve'], [RUNBOOK, 'Do it'], [LIFT, 'Lift STOP'], [CARD, 'Approve']]) {
+    for (const id of [crypto.randomUUID(), 'merge-12']) {
+      const card = waitingOf(data, id);
+      const got = checkEvidence('answer', { card: id, option }, { form: 'chat-click', proof: 'chat-click' }, context(enrolled, { views: card.views }));
+      assert.equal(got.ok, false, `${data.kind} under ${id}`);
+    }
+  }
+}));
+
+test('a chat click that would sign on a card that is not waiting is refused', () => withKey(async ({ enrolled }) => {
+  const got = checkEvidence('answer', { card: 'merge-12', option: 'Approve' }, { form: 'chat-click', proof: 'chat-click' }, context(enrolled, { views: { waiting: [] } }));
+  assert.equal(got.ok, false);
+}));
+
+test('a paired app\'s Send it back on a merge approval is refused with honest words, and its Approve still passes', async () => {
+  const card = waitingOf({ ...MERGE, options: [...MERGE.options, 'Send it back'] });
+  const back = await paired('answer', answerOn(card, 'Send it back'), card.views);
+  assert.equal(back.ok, false);
+  assert.match(back.refused, /Send it back is decided in Wheelhouse's window/);
+  const yes = await paired('answer', answerOn(card, 'Approve'), card.views);
+  assert.deepEqual([yes.ok, yes.decides], [true, true], yes.refused);
+});

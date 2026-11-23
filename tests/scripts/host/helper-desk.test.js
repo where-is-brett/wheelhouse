@@ -11,7 +11,7 @@ import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { setStop } from '../../../scripts/lib/stop.js';
+import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { eventPath, listEvents, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
@@ -19,6 +19,10 @@ import { hashOf, cardTextOf } from '../../../scripts/desk/card-text.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { CARD } from '../desk/fixture.js';
+import { composeCard } from '../../../scripts/cards/compose.js';
+import { clearUsedSignatures } from '../../../scripts/desk/evidence.js';
+import { approvalCounts, gateDecision } from '../../../scripts/gate/conditions.js';
+import { readEnrolled, verify } from '../../../scripts/state/signing.js';
 import crypto from 'node:crypto';
 import { canonicalJson } from '../../../scripts/lib/canonical.js';
 import { clearPanels } from '../../../scripts/desk/panel-live.js';
@@ -59,8 +63,8 @@ function keep(project, event) {
 const cardEvent = () => makeEvent({ kind: 'card', data: CARD, now: at(1) });
 const approve = () => makeEvent({ kind: 'action', data: { action: 'approve-work', work: 'export-csv', lane: 'feature', hash: 'a'.repeat(64), shownFirst: false, question: CARD.question, label: 'Approve' }, now: at(2) });
 
-async function withHelper(fn) {
-  const helper = await startHelper({ run: hostGuard, address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => ({ defaultBranch: async () => 'main' }), envFor: async () => ({}), now: at(10) });
+async function withHelper(fn, adapter = { defaultBranch: async () => 'main' }) {
+  const helper = await startHelper({ run: hostGuard, address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => adapter, envFor: async () => ({}), now: at(10) });
   try {
     return await fn(helperClient({ address: helper.address }));
   } finally {
@@ -68,10 +72,10 @@ async function withHelper(fn) {
   }
 }
 
-const inProject = (fn) => async () => {
+const inProject = (fn, adapter) => async () => {
   const p = await project();
   try {
-    await as(p.home, () => withHelper((client) => fn(client, p)));
+    await as(p.home, () => withHelper((client) => fn(client, p), adapter));
   } finally { p.cleanup(); }
 };
 
@@ -198,3 +202,111 @@ test('a press needs the signed press it names, and All stop holds it', inProject
   assert.equal(held.ok, false);
   assert.equal(held.submit, undefined);
 }));
+
+// A panel's Approve (decision 2): the helper signs the approval the merge card earns, naming proof client, where no real users are.
+const HEAD = `abc1234${'0'.repeat(33)}`;
+const prAt = (headSha) => ({ defaultBranch: async () => 'main', prState: async () => ({ headSha, mergeable: 'mergeable', state: 'open' }) });
+const mergeCard = (level = 3) => composeCard({
+  kind: 'approval', level, recommend: 'Approve', what: 'Pull request #12 has everything else it needs to merge.', why: 'It changes what users see.', because: 'the checks passed.',
+  meanwhile: 'Nothing is released.', options: [{ label: 'Approve', says: 'It merges.' }], target: { pr: 12, sha: HEAD },
+  ...(level === 4 ? { checks: 'It changes no checks: the change is still checked before it is added.' } : {}),
+}).card;
+
+function pairedPanel() {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+  fs.mkdirSync(keysDir(), { recursive: true });
+  fs.writeFileSync(clientsFile(), JSON.stringify([{ id: 'vscode-panel', name: 'The panel', publicKey: publicKey.export({ type: 'spki', format: 'der' }).toString('base64') }]));
+  const when = at(10)().toISOString();
+  return (command, args) => ({ form: 'client', client: 'vscode-panel', at: when, sig: crypto.sign(null, Buffer.from(canonicalJson({ command, args, at: when, project: P })), privateKey).toString('base64') });
+}
+
+async function approveFrom(client, data, option = 'Approve') {
+  clearUsedSignatures();
+  const sign = pairedPanel();
+  const card = makeEvent({ kind: 'card', data, now: at(1) });
+  keep(P, card);
+  const args = { card: card.id, option, hash: hashOf(cardTextOf(data)), commit: HEAD };
+  const got = await client.desk.act({ v, project: P, command: 'answer', args, evidence: sign('answer', args) });
+  return { got, card, approvals: () => listEvents(stateDir(P), { report: () => {} }).filter((e) => e.kind === 'approval') };
+}
+
+test('a paired app\'s Approve writes a signed approval naming proof client and the head commit, and the gate takes it', inProject(async (client) => {
+  const { got, card, approvals } = await approveFrom(client, mergeCard());
+  assert.equal(got.ok, true, got.refused);
+  const [approval] = approvals();
+  assert.deepEqual(approval.data, { pr: 12, commit: HEAD, words: 'Approve', question: mergeCard().question, proof: 'client', by: 'vscode-panel' });
+  assert.ok(verify(approval, readEnrolled()), 'signed by the helper');
+  assert.equal(approvalCounts(approval, HEAD, readEnrolled()), true);
+  const input = { stop: false, bypass: false, holdsLock: true, headSha: HEAD, ci: { sha: HEAD, state: 'success' }, reviewRequired: false, review: null, approvalRequired: true, approval, touchesGuardrails: false, enrolled: readEnrolled(), upToDate: true, provenance: { ok: true }, incident: { open: false } };
+  assert.equal(gateDecision({ ...input, realUsers: false }).allow, true);
+  assert.equal(gateDecision({ ...input, realUsers: true }).allow, false);
+  const waiting = (await client.desk.read({ v, project: P, view: 'waiting' })).data.numbered;
+  assert.ok(!waiting.some((i) => i.card === card.id), 'the card no longer waits');
+}, prAt(HEAD)));
+
+test('on a project with real users the panel\'s Approve is refused and nothing is written', inProject(async (client, p) => {
+  fs.mkdirSync(path.join(p.folder, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(p.folder, '.claude', 'wheelhouse.json'), JSON.stringify({ launched: true }));
+  const before = listEvents(stateDir(P), { report: () => {} }).length;
+  const { got, approvals } = await approveFrom(client, mergeCard());
+  assert.equal(got.ok, false);
+  assert.match(got.refused, /real users/);
+  assert.match(got.refused, /window|code host/);
+  assert.deepEqual(approvals(), []);
+  assert.equal(listEvents(stateDir(P), { report: () => {} }).filter((e) => e.kind === 'card-answer').length, 0);
+  assert.equal(listEvents(stateDir(P), { report: () => {} }).length, before + 1, 'only the card the test kept');
+}, prAt(HEAD)));
+
+test('a panel\'s Approve for a head that moved is refused, and so is one on a guardrail approval', inProject(async (client) => {
+  const moved = await approveFrom(client, mergeCard());
+  assert.equal(moved.got.ok, false);
+  assert.deepEqual(moved.approvals(), []);
+  const guardrail = await approveFrom(client, mergeCard(4));
+  assert.equal(guardrail.got.ok, false);
+  assert.match(guardrail.got.refused, /window/);
+  assert.deepEqual(guardrail.approvals(), []);
+}, prAt(`def5678${'0'.repeat(33)}`)));
+
+// doPanelApprove's own checks, reached past the desk's (which refuse most of the same first) by the helper's test seam.
+async function withPanel(fn, adapter = prAt(HEAD)) {
+  const p = await project();
+  try {
+    await as(p.home, async () => {
+      const helper = await startHelper({ run: hostGuard, address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => adapter, envFor: async () => ({}), now: at(10) });
+      try { await fn(helper.panel.approve); } finally { await helper.close(); }
+    });
+  } finally { p.cleanup(); }
+}
+const asked = (card, extra = {}) => ({ project: P, card, label: 'Approve', client: 'vscode-panel', hash: hashOf(cardTextOf(mergeCard())), ...extra });
+
+test('the panel\'s approval refuses a card that is not in this project\'s state, not a merge approval, or not the one shown', () => withPanel(async (approve) => {
+  const absent = await approve(asked(crypto.randomUUID()));
+  assert.equal(absent.ok, false);
+  assert.match(absent.refused, /not in this project's state/);
+  const guardrail = makeEvent({ kind: 'card', data: mergeCard(4), now: at(1) });
+  keep(P, guardrail);
+  const notMerge = await approve(asked(guardrail.id));
+  assert.equal(notMerge.ok, false);
+  assert.match(notMerge.refused, /window/);
+  const merge = makeEvent({ kind: 'card', data: mergeCard(), now: at(1) });
+  keep(P, merge);
+  const stale = await approve(asked(merge.id, { hash: 'stale0000000' }));
+  assert.equal(stale.ok, false);
+  assert.match(stale.refused, /hash differs/);
+  const back = await approve(asked(merge.id, { label: 'Send it back' }));
+  assert.equal(back.ok, false);
+  assert.match(back.refused, /Send it back is decided in Wheelhouse's window/);
+  assert.deepEqual(listEvents(stateDir(P), { report: () => {} }).filter((e) => e.kind === 'approval' || e.kind === 'card-answer'), []);
+}));
+
+test('All stop set while the code host is asked stops the panel\'s approval before anything is written', async () => {
+  const stopping = { defaultBranch: async () => 'main', prState: async () => { setStop({ by: 'helper', now: at(10) }); return { headSha: HEAD, mergeable: 'mergeable', state: 'open' }; } };
+  await inProject(async (client) => {
+    try {
+      const { got, approvals } = await approveFrom(client, mergeCard());
+      assert.equal(got.ok, false);
+      assert.match(got.refused, /All stop is on/);
+      assert.deepEqual(approvals(), []);
+    } finally { liftStop(); }
+  }, stopping)();
+});

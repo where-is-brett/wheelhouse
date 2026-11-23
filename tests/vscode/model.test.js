@@ -7,10 +7,12 @@ import { hashOf, cardTextOf } from '../../scripts/desk/card-text.js';
 import { signsOn } from '../../scripts/hooks/prompt-record.js';
 import { CONFIRMED_STEPS as CORE_STEPS } from '../../scripts/agents/chat-clicks.js';
 import { isOpen as coreIsOpen } from '../../scripts/desk/views.js';
+import { isMergeApproval as coreIsMergeApproval } from '../../scripts/desk/evidence.js';
 
-const { stateOf, stepWords, isOpen, CONFIRMED_STEPS, SIGNED_LABELS } = require('../../vscode/model.cjs');
+const { stateOf, stepWords, isMergeApproval, isOpen, CONFIRMED_STEPS, SIGNED_LABELS } = require('../../vscode/model.cjs');
 
-const merge = { id: 'merge-12', data: { kind: 'approval', question: 'Merge pull request 12?', options: ['Approve', 'Not now'], recommend: 'Approve', parts: { what: 'It changes a page.', header: 'Approval' } } };
+const LINE = 'Approve pull request #12 at commit aaaaaaaaaaaa';
+const merge = { id: '5b0e6f0a-1b6c-4d7e-9a53-0c2f6a4d8e11', data: { kind: 'approval', level: 3, line: LINE, question: 'Merge pull request 12?', options: ['Approve', 'Not now'], recommend: 'Approve', parts: { what: 'It changes a page.', header: 'Approval' } } };
 const lift = { id: 'lift-stop-3', data: { kind: 'approval', question: 'Lift STOP?', options: ['Lift STOP'] } };
 const decision = { id: 'd1', data: { kind: 'answer', question: 'Which way?', options: ['Left', 'Right'] } };
 
@@ -27,10 +29,20 @@ test('a card carries its hash, its flags and each option\'s signing', () => {
   assert.equal(m.header, 'Approval');
 });
 
+test('a merge approval is read from the live card, never from its id', () => {
+  const named = (data, id = 'merge-12') => stateOf({ state: 'live', waiting: waitingView([{ id, data }]) }).cards[0].merge;
+  assert.equal(named(merge.data, 'x'), true, 'a plain merge approval under any id');
+  assert.equal(named({ ...merge.data, level: 4 }), false, 'a guardrail approval is level 4');
+  assert.equal(named({ ...merge.data, kind: 'runbook' }), false);
+  assert.equal(named({ ...merge.data, line: 'Do the step' }), false, 'without the approval set line');
+  assert.equal(named({ ...merge.data, line: undefined }), false);
+  assert.equal(named({ kind: 'approval', question: 'Merge pull request 12?' }), false, 'a name alone decides nothing');
+});
+
 test('only the cards waiting are drawn, not every card event', () => {
   const answered = { id: 'gone', data: { kind: 'approval', question: 'Old?' } };
   const got = stateOf({ state: 'live', waiting: waitingView([merge], [answered]) });
-  assert.deepEqual(got.cards.map((c) => c.id), ['merge-12']);
+  assert.deepEqual(got.cards.map((c) => c.id), [merge.id]);
 });
 
 test('the copied lists match core\'s', () => {
@@ -69,4 +81,9 @@ test('the project name comes from the views, and notices are drawn', () => {
 test('a state with no views draws as little as possible', () => {
   const got = stateOf({ state: 'no-helper', says: 'x', fingerprint: 'f', glance: null, waiting: null, work: null });
   assert.deepEqual([got.cards, got.work, got.glance, got.notice], [[], [], '', 'x']);
+});
+
+test('the add-on reads a merge approval as core does', () => {
+  const cases = [merge.data, { ...merge.data, level: 4 }, { ...merge.data, kind: 'runbook' }, { ...merge.data, line: 'Do the step' }, { ...merge.data, line: undefined }, { ...merge.data, line: 'Approve pull request #0 at commit aaaaaaaaaaaa' }, null, 'x', []];
+  for (const data of cases) assert.equal(isMergeApproval(data), coreIsMergeApproval(data), JSON.stringify(data));
 });

@@ -20,8 +20,6 @@ import { isDecisionCard } from '../decisions/pending.js';
 
 export const CLIENT_WINDOW_MS = 5 * 60 * 1000;
 export const EVIDENCE_FORMS = Object.freeze(['signed', 'window', 'chat-click', 'client']);
-// The cards a click in the chat may decide, which the helper's own route checks again: a merge card.
-const CHAT_DECIDES = /^merge-/;
 const CARD_COMMANDS = ['answer', 'suggest', 'not-now'];
 // The only commands a paired app's signature carries: card answers (under clientMayAnswer), its watch, and Ask me here.
 // pair and unpair take no evidence at all, so they never reach here. Everything else (settings, safekeeping, All stop, Lift
@@ -146,6 +144,8 @@ function clientMayAnswer(command, args, views) {
   if (signs && WINDOW_KINDS.includes(data?.kind)) return no('That step is confirmed in Wheelhouse\'s window, never from the panel');
   if (signs && data?.kind === 'approval' && !isMergeApproval(data)) return no('That approval is confirmed in Wheelhouse\'s window, never from the panel');
   if (signs && !isMergeApproval(data)) return no('The panel can\'t decide that card: answer it in Wheelhouse\'s window');
+  // The panel's one deciding click on a merge approval is Approve: Send it back is the window's or a typed reply.
+  if (signs && label !== 'Approve') return no('The panel approves a merge only; Send it back is decided in Wheelhouse\'s window or by a typed reply');
   return { ok: true, decides: signs };
 }
 
@@ -174,7 +174,8 @@ export function checkEvidence(command, args, evidence, { enrolled = [], clients 
     // A click in the chat.
     if (evidence.proof !== 'chat-click') return no('A click in the chat is recorded as chat-click');
     if (!CARD_COMMANDS.includes(command)) return no('A click in the chat answers a card only');
-    if (signsOn(args.option, askedOn(views, args.card)) && !CHAT_DECIDES.test(String(args.card))) return no('A click in the chat can\'t decide that card');
+    // A click in the chat decides a plain merge approval only, read from the live card the click names, never from its id.
+    if (signsOn(args.option, askedOn(views, args.card)) && !isMergeApproval(cardOf(views, String(args.card)))) return no('A click in the chat can\'t decide that card');
     return { ok: true, records: [], chatClick: true };
   } catch (error) {
     return no(`That evidence couldn't be checked: ${error?.message || error}`);
