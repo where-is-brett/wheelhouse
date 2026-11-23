@@ -104,28 +104,55 @@ test('plan: a company list that leaves the panel out means no line on the card, 
   assert.match((await unsure.routes['/update/plan']({ folder: unsure.folder })).card.question, /Wheelhouse panel/);
 }));
 
-test('panel: a first install is its own question, Skip for now is remembered for this computer within the minor release, and a later minor asks again', () => withHome(async () => {
+test('panel: a first install is its own card, Not now is remembered for this computer until a release that adds features, and a later minor asks again', () => withHome(async () => {
   const offer = { kind: 'install', to: '0.2.7' };
-  const t = setup({ panelOffer: async () => offer });
+  const t = setup({ panelOffer: async () => offer, panelClicked: () => true });
   const asked = await t.routes['/update/panel']({ folder: t.folder });
-  assert.deepEqual(asked.card.options.map((o) => o.label), ['Install the panel', 'Skip for now']);
+  assert.deepEqual(asked.card.options.map((o) => o.label), ['Install the panel', 'Not now']);
   assert.match(asked.card.question, /your choice/);
-  const said = await t.routes['/update/panel']({ folder: t.folder, label: 'Skip for now' });
+  assert.match(asked.card.question, /Add the Wheelhouse panel 0\.2\.7 to VS Code, offer [0-9a-f]{12}/);
+  const said = await t.routes['/update/panel']({ folder: t.folder, label: 'Not now' });
   assert.equal(said.recorded, true);
+  assert.match(said.lines[0], /won't be offered again until a release that adds features/);
   assert.deepEqual(await t.routes['/update/panel']({ folder: t.folder }), { ok: true, lines: [] }, 'not asked again');
   const patch = setup({ panelOffer: async () => ({ kind: 'install', to: '0.2.9' }) });
   assert.equal((await patch.routes['/update/panel']({ folder: patch.folder })).card, undefined, 'same minor: still held');
   const minor = setup({ panelOffer: async () => ({ kind: 'install', to: '0.3.0' }) });
   assert.ok((await minor.routes['/update/panel']({ folder: minor.folder })).card, 'a later minor asks again');
-  // The director asking for it still installs it.
-  const installed = [];
-  const asks = setup({ panelOffer: async () => offer, panelInstall: async () => { installed.push(1); return { ok: true, says: 'The Wheelhouse panel is installed in VS Code. Reload VS Code to start it.' }; } });
-  const got = await asks.routes['/update/panel']({ folder: asks.folder, label: 'Install the panel' });
-  assert.equal(got.installed, true);
-  assert.equal(installed.length, 1);
 }));
 
-test('panel: no question where the panel is installed, where there is no VS Code, or where a company list blocks it', () => withHome(async () => {
+test('panel: Install the panel installs only after the director\'s signed click on the card shown; a bare label from a session installs nothing', () => withHome(async () => {
+  const offer = { kind: 'install', to: '0.2.7' };
+  const installed = [];
+  const install = async () => { installed.push(1); return { ok: true, says: 'The Wheelhouse panel is installed in VS Code. Reload VS Code to start it.' }; };
+  // With no card ever shown, and with the real check of signed clicks, a bare label does nothing.
+  const bare = setup({ panelOffer: async () => offer, panelInstall: install });
+  const none = await bare.routes['/update/panel']({ folder: bare.folder, label: 'Install the panel' });
+  assert.match(none.refused, /has not clicked/);
+  // The card shown, but no signed click: still nothing.
+  await bare.routes['/update/panel']({ folder: bare.folder });
+  assert.match((await bare.routes['/update/panel']({ folder: bare.folder, label: 'Install the panel' })).refused, /has not clicked/);
+  assert.deepEqual(installed, []);
+  // A click the check finds, made for the card shown: it installs once, and the showing is spent.
+  const asks = setup({ panelOffer: async () => offer, panelInstall: install, panelClicked: ({ shown, label }) => shown.to === '0.2.7' && label === 'Install the panel' });
+  await asks.routes['/update/panel']({ folder: asks.folder });
+  const got = await asks.routes['/update/panel']({ folder: asks.folder, label: 'Install the panel' });
+  assert.equal(got.installed, true);
+  assert.deepEqual(installed, [1]);
+  assert.match((await asks.routes['/update/panel']({ folder: asks.folder, label: 'Install the panel' })).refused, /has not clicked/, 'one click, one answer');
+  // Not now shares the check.
+  const decline = setup({ panelOffer: async () => offer });
+  await decline.routes['/update/panel']({ folder: decline.folder });
+  assert.match((await decline.routes['/update/panel']({ folder: decline.folder, label: 'Not now' })).refused, /has not clicked/);
+  // While an update is running, nothing is installed.
+  const busy = setup({ panelOffer: async () => offer, panelInstall: install, panelClicked: () => true });
+  await busy.routes['/update/panel']({ folder: busy.folder });
+  busy.hold(true);
+  assert.match((await busy.routes['/update/panel']({ folder: busy.folder, label: 'Install the panel' })).refused, /under way/);
+  assert.deepEqual(installed, [1]);
+}));
+
+test('panel: no card where the panel is installed, where there is no VS Code, or where a company list blocks it', () => withHome(async () => {
   const none = setup({ panelOffer: async () => null });
   assert.deepEqual(await none.routes['/update/panel']({ folder: none.folder }), { ok: true, lines: [] });
   const update = setup({ panelOffer: async () => ({ kind: 'update', from: '0.2.5', to: '0.2.7' }) });
@@ -134,10 +161,6 @@ test('panel: no question where the panel is installed, where there is no VS Code
   const got = await blocked.routes['/update/panel']({ folder: blocked.folder });
   assert.equal(got.card, undefined);
   assert.match(got.lines[0], /don't allow the Wheelhouse panel/);
-  const installs = [];
-  const ask = setup({ panelOffer: async () => ({ kind: 'install', to: '0.2.7' }), panelAllowed: async () => ({ allowed: false }), panelInstall: async () => { installs.push(1); return { ok: true, says: 'x' }; } });
-  await ask.routes['/update/panel']({ folder: ask.folder, label: 'Install the panel' });
-  assert.deepEqual(installs, [], 'a blocked panel is never installed');
 }));
 
 test('plan: with nothing newer it gives the one line and no card', () => withHome(async () => {

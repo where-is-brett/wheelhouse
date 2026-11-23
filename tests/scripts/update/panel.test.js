@@ -1,5 +1,5 @@
 // tests/scripts/update/panel.test.js
-// The update command's own question about the panel, and "Skip for now" kept for this computer, as the old offer's decline was kept:
+// The update command's own question about the panel, and Not now kept for this computer, as the old offer's decline was kept:
 // within the same minor release it is not asked again, and a later minor asks again.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,8 +22,8 @@ test('Not now is remembered as the old offer\'s was: kept per computer, held wit
 }));
 
 test('the question has the options, a recommendation and what happens meanwhile, and says why it is the director\'s choice', () => {
-  const card = panelCard({ to: '0.3.1' });
-  assert.deepEqual(card.options.map((o) => o.label), ['Install the panel', 'Skip for now']);
+  const card = panelCard({ to: '0.3.1', token: 'a'.repeat(64) });
+  assert.deepEqual(card.options.map((o) => o.label), ['Install the panel', 'Not now']);
   assert.match(card.question, /It adds software to VS Code on this computer, so it is your choice/);
   assert.match(card.question, /Meanwhile/);
   assert.match(card.options[0].description, /Recommended/);

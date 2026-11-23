@@ -29,7 +29,7 @@ import { readEnrolled, verify } from '../state/signing.js';
 import { claudeHome as claudeHomeDir } from '../lineage/manifest.js';
 import { retiredInstalls } from './install.js';
 import { addonOffer } from './addon.js';
-import { INSTALL_THE_PANEL, NOT_NOW_PANEL, declinePanel, panelCard, panelHeld } from './panel.js';
+import { INSTALL_THE_PANEL, NOT_NOW_PANEL, declinePanel, panelHeld, readOffer, showOffer, useOffer } from './panel.js';
 import { accountCatalogue } from './account-settings.js';
 import { runningVersion } from './board.js';
 import { releaseKind, updateMirror } from './change.js';
@@ -50,6 +50,7 @@ export const FEATURE_REFUSAL = 'Updating Wheelhouse is the director\'s own comma
 export const NOT_THE_PLAN = 'That is not the plan on the card last shown. Ask for the plan again.';
 export const NO_SUCH_CARD = 'No card of the update has that name.';
 export const NOT_CLICKED = 'The director has not clicked Update on the card for this plan, so nothing was started. Show the card and wait for the click.';
+export const NOT_CLICKED_PANEL = 'The director has not clicked on the card for adding the panel, so nothing was done. Show the card and wait for the click.';
 export const NOT_CLICKED_NOT_NOW = 'The director has not clicked Not now on the card for this plan, so nothing was recorded.';
 export const NOT_SIGNED = 'That answer was not recorded by the card\'s own click, so nothing was done. Click the option on the card itself.';
 
@@ -142,6 +143,19 @@ export function clickWasMade({ events, enrolled, stored, label }) {
     && typeof e.at === 'string' && e.at > stored.at
     && verify(e, enrolled));
 }
+// Whether the director clicked `label` on the panel card as shown: a verified action of this computer's key in the project's state,
+// naming the panel's version and the showing's token, made after the card was shown.
+export function panelClickWasMade({ events, enrolled, shown, label }) {
+  if (typeof shown?.at !== 'string' || !Array.isArray(events)) return false;
+  return events.some((e) => e?.kind === 'action'
+    && e.data?.action === 'panel-click'
+    && e.data.to === shown.to
+    && e.data.offer === shown.token
+    && e.data.label === label
+    && typeof e.at === 'string' && e.at > shown.at
+    && verify(e, enrolled));
+}
+const panelClickedByDefault = ({ project, shown, label }) => panelClickWasMade({ events: listEvents(stateDir(project), { report: () => {} }), enrolled: readEnrolled(), shown, label });
 export function clickedByDefault({ project, stored, label }) {
   return clickWasMade({ events: listEvents(stateDir(project), { report: () => {} }), enrolled: readEnrolled(), stored, label });
 }
@@ -166,7 +180,7 @@ function milestones(steps, tag) {
 export function updateRoutes({
   now = () => new Date(), stopped = () => false, updateHeld = updateLockHeld, from = runningVersion, userHome = os.homedir(),
   run = realRun, spawn = nodeSpawn, list, fetch, check, kind, locked, requirements, claudeVersion = async () => null, signed = signedByDefault, clicked = clickedByDefault,
-  startRunner, account, retired, addon, panelAllowed, panelOffer, panelInstall,
+  startRunner, account, retired, addon, panelAllowed, panelOffer, panelInstall, panelClicked,
 } = {}) {
   const listing = list ?? (() => listReleases({ run }));
   const fetching = fetch ?? ((tag) => fetchTag({ ref: tag, run, mirror: updateMirror() }));
@@ -316,31 +330,40 @@ export function updateRoutes({
     return { ok: true, recorded: true, lines: [waking ? 'Carrying on with the update.' : 'Your answer is recorded.'] };
   }
 
-  // The first install of the panel, its own question, asked once the update is done (or when there is nothing newer). Without `label` it
-  // gives the card, or the line saying why there is none. With a label it acts: Install the panel installs it; Skip for now keeps that for
-  // this computer, and the install is not offered again within this minor release.
+  // The first install of the panel, its own card, asked once the update is done (or when there is nothing newer). Without `label` it
+  // gives the card (and keeps the showing, for the click to name), or the line saying why there is none. With a label it acts, and
+  // only on the director's own signed click on the card as shown: Install the panel installs it; Not now keeps that for this
+  // computer, and the install is not offered again until a release that adds features. A bare label from a session, with no card
+  // shown and clicked, does nothing.
   async function panelRoute(body) {
     onlyFields(body, ['folder', 'label']);
-    placeProject(body.folder);
+    const { project } = placeProject(body.folder);
     if (stopped()) return { ok: true, lines: [STOP_FIRST] };
-    const now_ = from();
+    const folder = openJournal(project).folder;
     const allowedNow = async (version) => (await (panelAllowed ?? (async () => (await import('../addon/allowed.js')).addonAllowed({ version })))())?.allowed;
     let offer = null;
-    try { offer = await (panelOffer ?? (() => addonOffer({ run, pluginVersion: now_ })))(); } catch { offer = null; }
+    try { offer = await (panelOffer ?? (() => addonOffer({ run, pluginVersion: from() })))(); } catch { offer = null; }
     const blocked = offer?.kind === 'install' && (await allowedNow(offer.to)) === false;
     if (body.label === undefined) {
       if (offer?.kind !== 'install') return { ok: true, lines: [] };
       if (blocked) return { ok: true, lines: [(await import('../addon/allowed.js')).NOT_ALLOWED_LINE] };
       if (panelHeld(offer.to)) return { ok: true, lines: [] };
-      return { ok: true, card: panelCard({ to: offer.to }), lines: [] };
+      return { ok: true, card: showOffer({ folder, to: offer.to, now }), lines: [] };
     }
     if (![INSTALL_THE_PANEL, NOT_NOW_PANEL].includes(body.label)) refuse('the answer must be the label of one of the card\'s options');
+    if (starting.has(project) || updateHeld()) refuse(UNDER_WAY);
     if (offer?.kind !== 'install') return { ok: true, lines: ['There is no panel to add: it is in VS Code already, or this computer has no VS Code to add it to.'] };
+    const shown = readOffer(folder);
+    if (shown === null || shown.used === true || shown.to !== offer.to) refuse(NOT_CLICKED_PANEL);
+    if (!(panelClicked ?? panelClickedByDefault)({ project, shown, label: body.label })) refuse(NOT_CLICKED_PANEL);
     if (body.label === NOT_NOW_PANEL) {
+      useOffer(folder);
       declinePanel(offer.to);
-      return { ok: true, recorded: true, lines: [`Understood. Nothing was added, and ${offer.to}'s panel won't be offered again in this series of releases.`] };
+      return { ok: true, recorded: true, lines: [`Understood. Nothing was added, and ${offer.to}'s panel won't be offered again until a release that adds features.`] };
     }
     if (blocked) return { ok: true, lines: [(await import('../addon/allowed.js')).NOT_ALLOWED_LINE] };
+    if (panelHeld(offer.to)) refuse(NOT_CLICKED_PANEL);
+    useOffer(folder);
     const got = await (panelInstall ?? (async () => (await import('../addon/install.js')).installPanel({ run })))();
     return { ok: true, installed: got.ok === true, lines: [got.says] };
   }

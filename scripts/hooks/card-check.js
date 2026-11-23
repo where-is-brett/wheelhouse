@@ -43,7 +43,7 @@ import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT, SUGGEST, SHOW_ME, NOT_NOW, SEND_BACK, NO_RECOMMENDATION } from '../lib/calm-words.js';
 import { CARD } from '../lib/front-desk.js';
 import {
-  chatCopy, setLinesOf, setLineOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, LIFT_STOP, LIFT_LABELS, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, SEAT_TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LINE,
+  chatCopy, setLinesOf, setLineOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, LIFT_STOP, LIFT_LABELS, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, SEAT_TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE, RELEASE_LINE, UPDATE_HELPER_LINE, UPDATE_LINE, PANEL_LINE,
 } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { cardOutcomes } from '../state/views.js';
@@ -103,6 +103,7 @@ function targetOf(line) {
   if ((m = PREMIUM_LINE.exec(line))) return { kind: 'premium', target: { at: m[1] } };
   if ((m = RELEASE_LINE.exec(line))) return { kind: 'release', target: { previous: m[1], release: m[2], commit: m[3] } };
   if ((m = UPDATE_HELPER_LINE.exec(line))) return { kind: 'update-helper', target: { card: m[1] } };
+  if ((m = PANEL_LINE.exec(line))) return { kind: 'panel', target: { to: m[1], offer: m[2] } };
   if ((m = UPDATE_LINE.exec(line))) return { kind: 'update', target: { from: m[1], to: m[2], put: m[3] } };
   return null;
 }

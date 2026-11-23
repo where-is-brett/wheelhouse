@@ -22,7 +22,7 @@ import { signsOn } from '../hooks/prompt-record.js';
 import { CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { SUGGEST, NOT_NOW, SHOW_ME, WHY, SEND_BACK } from '../lib/calm-words.js';
 import { textOf } from '../cards/compose.js';
-import { setLinesOf, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LINE, RELEASE_LINE, RELEASE_LABEL, UPDATE_HELPER_LINE, UPDATE_LINE, UPDATE_LABEL } from '../state/card-lines.js';
+import { setLinesOf, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LINE, RELEASE_LINE, RELEASE_LABEL, UPDATE_HELPER_LINE, UPDATE_LINE, UPDATE_LABEL, PANEL_LINE, PANEL_LABEL } from '../state/card-lines.js';
 import { baselineWording } from '../lib/measures-clicks.js';
 import { UNATTENDED_CARD } from '../protection/windows-builds.js';
 import { heldBackWords, SHOW_THEM } from '../engine/words.js';
@@ -102,7 +102,7 @@ export function isTrustCard(card) {
 // The update's cards (the Update card, the release's approval, the old helper's), each with the set line its kind must carry.
 // A click on one is signed by the same press as any deciding card, but only from the card as the state holds it: the signing
 // (scripts/hooks/prompt-record.js's earned) checks it against the update's own records, which only Wheelhouse's processes write.
-const UPDATE_KINDS = Object.freeze({ update: UPDATE_LINE, release: RELEASE_LINE, 'update-helper': UPDATE_HELPER_LINE });
+const UPDATE_KINDS = Object.freeze({ update: UPDATE_LINE, panel: PANEL_LINE, release: RELEASE_LINE, 'update-helper': UPDATE_HELPER_LINE });
 export const isUpdateCard = (card) => Object.hasOwn(UPDATE_KINDS, card?.kind);
 
 // Whether a card is uninstall's: of kind uninstall, or carrying uninstall's set line.
@@ -177,6 +177,10 @@ function buttonsOf(card, preview) {
   // The Update card: Update starts the update, and Not now declines the release; each is signed, for the plan the card names.
   if (kind === 'update') {
     return { buttons: [...(offered(UPDATE_LABEL) ? [button(UPDATE_LABEL, 'record', 'filled')] : []), ...notNow, why], note: null };
+  }
+  // The panel's card: Install the panel is signed for the showing the card names; Not now is signed the same way.
+  if (kind === 'panel') {
+    return { buttons: [...(offered(PANEL_LABEL) ? [button(PANEL_LABEL, 'record', 'filled')] : []), ...notNow, why], note: null };
   }
   // The release's approval: Approve is signed for the move and commit the card names; Not now signs nothing.
   if (kind === 'release') {

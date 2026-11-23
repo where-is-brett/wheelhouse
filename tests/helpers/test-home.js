@@ -28,9 +28,6 @@ if (!process.env.WHEELHOUSE_TEST_REAL_LAUNCH_AGENTS) {
 process.env.WHEELHOUSE_NO_RELEASE_LOOK = '1';
 process.env.WHEELHOUSE_RUNNING_VERSION = '0.0.0';
 
-// Setup's offer of the VS Code panel looks at this computer's VS Code; a test never offers it unless it gives the offer itself.
-process.env.WHEELHOUSE_NO_PANEL_OFFER = '1';
-
 // On Windows the temporary folder can come spelt with a short name (C:\Users\RUNNER~1 on CI's
 // runner) while git and the real path give the long one, so a test's own folder and what the code
 // reads back from git would name one place two ways. Each process, and what it starts, uses the

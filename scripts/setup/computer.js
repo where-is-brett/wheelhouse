@@ -386,12 +386,6 @@ export function computerStep({
         const said = await applyAgentComputer(chosen, agentChanges, { record: ctx.record, newId, run, at: (ctx.now ?? (() => new Date()))(), env });
         if (typeof said === 'string' && said.length <= SAY_CHARS) ctx.say?.(said);
       }
-      // A company list that leaves the panel out is one line. The plan says it where the step settles (a plan's line is kept only then),
-      // so apply says it where the step has a card, and no run says it twice.
-      if (panel !== null && !changes.some((x) => x.what === 'panel')) {
-        const again = await panel.offer({ ...ctx, platform, env });
-        if (again.blocked) ctx.say?.(again.blocked);
-      }
       // The panel, installed from this release's folder. A refusal is said in a line and never stops setup; the answer is kept.
       for (const c of changes.filter((x) => x.what === 'panel')) {
         let got;

@@ -88,8 +88,14 @@ export { firstUnfinished } from '../lib/setup-run.js';
 // record works out the hash of the rules on step 5's card the same way (scripts/lib/setup-writes.js).
 export const planHash = (changes) => listHash(changes);
 
+// The VS Code panel's part of step 6: what it offers and how it installs. A test swaps these to keep a real VS Code out of it.
+export const panelPart = {
+  offer: (ctx) => realOffer({ platform: ctx.platform, env: ctx.env, home: ctx.userHome }),
+  install: (ctx) => realInstall({ platform: ctx.platform, env: ctx.env }),
+};
+
 const STEP_OF = {
-  1: installStep, 2: () => toolsStep({ webReady: webRouteReady }), 3: hostStep, 4: questionsStep, 5: rulesStep, 6: () => computerStep({ panel: { offer: (ctx) => realOffer({ platform: ctx.platform, env: ctx.env, home: ctx.userHome }), install: (ctx) => realInstall({ platform: ctx.platform, env: ctx.env }) } }), 7: projectFilesStep, 8: lockedStep, 9: notifyStep, 10: healthStep,
+  1: installStep, 2: () => toolsStep({ webReady: webRouteReady }), 3: hostStep, 4: questionsStep, 5: rulesStep, 6: () => computerStep({ panel: { offer: (ctx) => panelPart.offer(ctx), install: (ctx) => panelPart.install(ctx) } }), 7: projectFilesStep, 8: lockedStep, 9: notifyStep, 10: healthStep,
 };
 
 export const STEPS = Object.freeze(Object.keys(SETUP_TITLES).map(Number).sort((a, b) => a - b).map((n) => STEP_OF[n]()));

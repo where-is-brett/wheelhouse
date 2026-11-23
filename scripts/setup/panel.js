@@ -2,7 +2,7 @@
 // The optional offer of the Wheelhouse panel for VS Code, asked in step 6 once the coding agent is set up (design 23 November 2026,
 // section 8). It is asked only where the release carries the panel's package, VS Code is on this computer, and no company list
 // leaves the panel out. An answer of Install the panel adds one line to step 6's card and one change to its list; Skip for now is
-// a kept answer, so the offer is not asked again in this run; running setup again asks it again. (The composer refuses Not now on a question card, ruling R50, so the label is Skip for now.) The install runs
+// a kept answer, so the offer is not asked again in this run; running setup again asks it again. (The composer refuses a put-off button on a question card, scripts/cards/compose.js, so the label is Skip for now.) The install runs
 // in step 6's apply, after the director's Go ahead on the card that names it. Nothing here throws.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -66,8 +66,6 @@ export async function realOffer({
   platform = process.platform, env = process.env, run, home = os.homedir(), root = ROOT, present, listAllowed,
 } = {}) {
   try {
-    // Tests set this so a real VS Code on the computer running them is never asked.
-    if (env.WHEELHOUSE_NO_PANEL_OFFER === '1' && present === undefined) return {};
     if (!fs.existsSync(path.join(root, 'vscode', 'vsix.sha256'))) return {};
     const offer = await addonOffer({ platform, env, ...(run === undefined ? {} : { run }), ...(present === undefined ? {} : { present }), pluginVersion: ownVersion() });
     if (offer === null) return {};

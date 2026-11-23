@@ -115,17 +115,15 @@ test('the question says why it is the director\'s choice and how to get the pane
   assert.match(card.options.find((o) => o.label === 'Skip for now').says, /Run setup again to add it/);
 });
 
-test('a company list that leaves the panel out is said once where step 6 has a card (in apply), and not in its plan', async () => {
+test('a company list that leaves the panel out is said by the plan only, and apply says nothing more', async () => {
   await withProject(async ({ folder, user, config }) => {
     const said = [];
     const step = stepWith(config, offering({ blocked: NOT_ALLOWED_LINE }));
     const ctx = { ...ctxFor(folder, user), say: (l) => said.push(l) };
     const planned = await step.plan(ctx);
-    assert.ok(planned.changes.length > 0, 'a card, so the plan\'s line would not be kept');
-    // The engine keeps a plan's line only when the step settles, so the plan's say is dropped here and apply says it.
-    said.length = 0;
+    assert.deepEqual(said, [NOT_ALLOWED_LINE]);
     await step.apply({ ...ctx, applyJsonKey: () => {}, record: () => {} }, planned.changes);
-    assert.deepEqual(said.filter((l) => l === NOT_ALLOWED_LINE), [NOT_ALLOWED_LINE]);
+    assert.deepEqual(said.filter((l) => l === NOT_ALLOWED_LINE), [NOT_ALLOWED_LINE], 'still once');
   });
 });
 

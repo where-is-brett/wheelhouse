@@ -117,7 +117,7 @@ export async function main(argv, {
       json(answer);
     } else if (form === 'panel' && rest.length <= 1) {
       // The question of adding the panel to VS Code (its own, apart from Update), or the director's answer to it.
-      if (rest.length === 1 && !['Install the panel', 'Skip for now'].includes(rest[0])) throw new CliError('Give the label of one of the card\'s options: Install the panel, Skip for now');
+      if (rest.length === 1 && !['Install the panel', 'Not now'].includes(rest[0])) throw new CliError('Give the label of one of the card\'s options: Install the panel, Not now');
       const { ok, ...answer } = await ask(helper.update.panel, rest.length === 1 ? { folder, label: rest[0] } : { folder }); // eslint-disable-line no-unused-vars
       json(answer);
     } else if (form === 'bootstrap' && rest.length === 1) {
