@@ -15,7 +15,8 @@ import { LAUNCHER_COMMAND } from '../../../../scripts/lib/launchers.js';
 import { BUILDER_RULES_FILE, featureAllow, featureRules } from '../../../../adapters/copilot/sessions.js';
 import { briefFields } from '../../../helpers/foreman.js';
 
-const WORKTREE = path.resolve(os.tmpdir(), 'wt');
+// A POSIX path, to go with the 'linux' these tests pass; the 'win32' one also takes a rooted path.
+const WORKTREE = '/tmp/wt';
 const LANES = ['feature', 'small', 'bug', 'quick'];
 const BUILDS = [null, { level: 'ask', guardedCommand: null, shape: 1 }, { level: 'unattended', guardedCommand: null, shape: 1 }];
 
