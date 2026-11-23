@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { writeJsonFile, runningFile, sessionFile } from '../../../scripts/watcher/waker.js';
 import { holdFile } from '../../../scripts/crew/hold.js';
-import { markPanel, clearPanels, PANEL_LIVE_MS, ASK_HERE_MS } from '../../../scripts/desk/panel-live.js';
+import { markPanel, clearPanels, PANEL_LIVE_MS, ASK_HERE_MS, HANDED_MS } from '../../../scripts/desk/panel-live.js';
 import { runAct } from '../../../scripts/desk/acts.js';
 import { P, NOW, now, CARD, writeRecord, upClient, put, viewsDir } from './fixture.js';
 
@@ -94,9 +94,20 @@ test('ask-here marks a waiting card; only a paired app\'s signed read takes it, 
   assert.deepEqual(await look(), ['c1'], 'and takes nothing, so it is given until the card is asked');
   assert.equal((await readView('waiting', {}, source, { now })).data.askHere, undefined, 'asked for only when wanted');
   // A mark older than two minutes is not given, and the card stays waiting all the same.
-  const late = () => new Date(Date.parse(NOW) + ASK_HERE_MS + 1000);
-  assert.deepEqual(await look(late), []);
+  // A taken mark waits for the chat, which may not be spoken to for minutes: still given well after two minutes, gone past the cap.
+  const after = (ms) => () => new Date(Date.parse(NOW) + ms);
+  assert.deepEqual(await look(after(ASK_HERE_MS + 1000)), ['c1'], 'taken, then looked at more than two minutes later: still given');
+  assert.deepEqual(await look(after(HANDED_MS + 1000)), [], 'dropped past the cap, which also prunes it');
+  assert.deepEqual(await look(after(1000)), [], 'and the list has shrunk');
   assert.equal((await readView('waiting', {}, source, { now })).data.numbered.length, 1, 'asking here closes nothing');
+}));
+
+test('an ask-here mark that expires before the panel\'s read is never taken, and the card stays waiting', () => withRecord(async ({ source }) => {
+  clearPanels();
+  await runAct('ask-here', { card: 'c1' }, { ok: true, records: [], client: 'vscode-panel' }, { source, recorder: {}, now: () => new Date(Date.parse(NOW) - ASK_HERE_MS - 1000) });
+  assert.deepEqual((await readView('waiting', { askHere: true }, source, { now, client: 'vscode-panel' })).data.askHere, [], 'too old to take');
+  assert.deepEqual((await readView('waiting', { askHere: true }, source, { now })).data.askHere, [], 'and nothing was handed to the chat');
+  assert.equal((await readView('waiting', {}, source, { now })).data.numbered.length, 1);
 }));
 
 test('a mark is not given once the card has been asked since the panel took it, nor after it stops waiting', () => withRecord(async ({ source }) => {

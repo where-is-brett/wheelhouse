@@ -44,7 +44,7 @@ function askedHere(project, nowMs, waiting) {
     .map(({ id }) => id);
 }
 
-export const NO_RECORD ='This project has no record to show yet';
+export const NO_RECORD = 'This project has no record to show yet';
 
 // How far back "Decided in the last hour:" looks, its lead, and the most lines it lists.
 export const RECENT_MS = 3600000;

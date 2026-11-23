@@ -2826,6 +2826,25 @@ test('an Ask me here card is asked on pull-cards too, and a Claude Code session 
   });
 });
 
+test('a decision card is never sent to the picker by Ask me here while typed replies are on', async () => {
+  await inHome(async () => {
+    clearPanels();
+    const helper = fakeHelper({ events: [...typedOn(), questionEvent()], writeAt: (n) => inSeconds(n) });
+    markPanel('o__p', 'vscode-panel', NOW.getTime());
+    await run(helper, ['cards'], undefined, { env: {} });
+    const card = helper.held.find((e) => e.kind === 'card');
+    assert.ok(card, 'the decision was made a card');
+    const app = await addOn(helper);
+    assert.equal((await app.act('ask-here', { card: card.id })).ok, true);
+    await app.read('waiting', { askHere: true });
+    const out = await run(helper, ['cards'], undefined, { env: {} });
+    assert.equal(out.code, 0, out.err);
+    assert.deepEqual(out.json.questions ?? [], [], 'a decision is answered by a typed reply, not the picker');
+    assert.deepEqual(helper.writes().filter((w) => w.kind === 'asked'), []);
+    clearPanels();
+  });
+});
+
 test('no one but a paired app\'s signed read takes an Ask me here mark: not the front desk, an unsigned read, or an unpaired key', async () => {
   await inHome(async () => {
     clearPanels();

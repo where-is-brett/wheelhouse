@@ -400,7 +400,9 @@ function composePlain(input, words) {
 // The waiting cards the helper named as Ask me here (`ids`, taken by the panel's signed read), as questions to ask in the chat:
 // { ids, handed: [{ id, question }], questions }. A card that no longer waits is left out.
 function askedHereCards(views, ids) {
-  const waiting = (Array.isArray(views?.waiting) ? views.waiting : []).filter((c) => isPlain(c) && typeof c.data?.question === 'string');
+  // The visit's own filter: with typed replies on, a decision is never put to the question picker, which can't settle it.
+  const typed = typedRepliesIn(views.settings);
+  const waiting = (Array.isArray(views?.waiting) ? views.waiting : []).filter((c) => isPlain(c) && typeof c.data?.question === 'string' && !(typed && isDecisionCard(c.data)));
   const found = ids.map((id) => waiting.find((c) => c.id === id)).filter((c) => c !== undefined);
   return { ids: found.map((c) => c.id), handed: found.map((c) => ({ id: c.id, question: c.data.question })), questions: found.map(asQuestion) };
 }
