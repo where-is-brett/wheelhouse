@@ -1775,7 +1775,7 @@ test('in a launcher session a command that sets PATH, defines a function or alia
     try {
       const inSession = (command, tool = 'Bash') => runWithEnv(base, home, call(main, tool, { command }), { env: { WHEELHOUSE_LAUNCHER_SESSION: '1' } });
       const bad = ['export PATH=/tmp/e:$PATH', 'PATH=/tmp/e:$PATH', 'Path=/tmp/e', 'export Path=/tmp/e:$Path', 'declare -x PATH=/tmp/e', 'env PATH=/tmp/e wh-act', 'PATH+=:/tmp/e', 'export $n=/tmp/e',
-        'wh-act() { node /tmp/e.js; }', 'wh-act () { :; }', 'function wh-act { calc }', 'function wh-act() { :; }', 'alias wh-act=calc', 'alias wh-act="node /tmp/e.js"',
+        'wh-act() { node /tmp/e.js; }', 'wh-act () { :; }', 'a.wh-act() { :; }', '$f() { :; }', '${f}() { :; }', 'function wh-act { calc }', 'function wh-act() { :; }', 'alias wh-act=calc', 'alias wh-act="node /tmp/e.js"',
         '$env:PATH="C:\\e;$env:PATH"', '$env:Path = "C:\\e"', 'Set-Item env:PATH C:\\e', 'Set-Item -Path Env:Path -Value C:\\e', "[Environment]::SetEnvironmentVariable('PATH','C:\\e','Process')",
         'Set-Alias wh-act calc', 'New-Alias wh-act calc', 'sal wh-act calc', 'nal wh-act calc', 'Set-Item alias:wh-act calc', 'Set-Item function:wh-act { calc }', 'hash -p /tmp/e/wh-act wh-act', 'enable -f ./x.so y', 'builtin cd /', 'ls; builtin command wh-act',
         'source ./f.sh', '. ./f.ps1', 'ls; . ./f.sh', 'Import-Module ./x.psm1', 'ipmo ./x', 'read -r PATH', 'printf -v PATH %s /tmp/e', 'for PATH in /tmp/e; do :; done', 'hash wh-act=/tmp/e/wh-act', 'eval "ali""as wh-act=calc"'];
@@ -1787,7 +1787,7 @@ test('in a launcher session a command that sets PATH, defines a function or alia
         const out = await bare(command);
         assert.ok(!/launcher session/.test(out?.hookSpecificOutput?.permissionDecisionReason ?? ''), command);
       }
-      for (const command of ['ls -la', 'echo $PATHNAME', 'git status', 'node --version', 'wh-act note abc']) {
+      for (const command of ['ls -la', 'echo $PATHNAME', 'git status', 'node --version', 'wh-act note abc', '$l | ? {$_.Trim()} | select -First 1', '"x".ToUpper()', '$s.Length; $s.Trim( )', '[guid]::NewGuid()', '[IO.Path]::GetTempPath()', 'Select-Object -Property Path', 'Get-Content src\\source.txt', 'cat lib/source.js']) {
         const out = await inSession(command);
         assert.ok(!/launcher session/.test(out?.hookSpecificOutput?.permissionDecisionReason ?? ''), command);
       }
