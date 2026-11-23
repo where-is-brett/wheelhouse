@@ -2648,7 +2648,7 @@ export async function startHelper({
     }
     // A settings card whose settings are the confirmed ones again can no longer be answered: it is closed, and says so.
     if (deciding.length === 0 && card !== LIFT_STOP_NAME && await settingsCardSettled(project, event)) {
-      await doWrite({ project, kind: 'card-answer', data: { card, question: event.data.question, label: 'Settled', where: 'panel' } }, ctx);
+      await doWrite({ project, kind: 'card-answer', data: { card, question: event.data.question, label: 'Confirm', where: 'panel' } }, ctx); // a plain answer, signed by nothing: only an option closes a card
       refuse('this computer\'s git settings are the confirmed ones again, so that card was closed');
     }
     if (deciding.length === 0) refuse('that card is not one the window confirms: only Lift All stop, a guardrail change, Unattended, a runbook step, a CI push, an approval or an Ask allowance');
