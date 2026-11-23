@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { writeJsonFile, runningFile, sessionFile } from '../../../scripts/watcher/waker.js';
 import { holdFile } from '../../../scripts/crew/hold.js';
-import { markPanel, clearPanels, PANEL_LIVE_MS, ASK_HERE_MS, HANDED_MS } from '../../../scripts/desk/panel-live.js';
+import { markPanel, clearPanels, markAskHere, takeAskHere, PANEL_LIVE_MS, ASK_HERE_MS, HANDED_MS } from '../../../scripts/desk/panel-live.js';
 import { runAct } from '../../../scripts/desk/acts.js';
 import { P, NOW, now, CARD, writeRecord, upClient, put, viewsDir } from './fixture.js';
 
@@ -74,9 +74,9 @@ test('waiting says paneLive true while the project\'s panel is live, with no ses
 test('waiting with paneOnly says only whether a panel is live, building no views', () => withRecord(async ({ source }) => {
   clearPanels();
   const guarded = { ...source, views: async () => { throw new Error('no views are built'); } };
-  assert.deepEqual((await readView('waiting', { paneOnly: true }, guarded, { now })).data, { paneLive: false });
+  assert.deepEqual((await readView('waiting', { paneOnly: true }, guarded, { now })).data, { paneLive: false, handed: 0 });
   markPanel(P, 'vscode-panel', Date.parse(NOW));
-  assert.deepEqual((await readView('waiting', { paneOnly: true }, guarded, { now })).data, { paneLive: true });
+  assert.deepEqual((await readView('waiting', { paneOnly: true }, guarded, { now })).data, { paneLive: true, handed: 0 });
   clearPanels();
 }));
 
@@ -124,6 +124,25 @@ test('a mark is not given once the card has been asked since the panel took it, 
   assert.deepEqual(await look(asked('2026-10-29T12:00:00.000Z')), [], 'asked in the chat since: given once');
   const empty = { ...source, views: async (a) => { const got = await source.views(a); return { ...got, views: { ...got.views, waiting: [] } }; } };
   assert.deepEqual(await look(empty), [], 'a card no longer waiting is not asked');
+}));
+
+test('waiting with paneOnly says how many cards the director moved to the chat', () => withRecord(async ({ source }) => {
+  clearPanels();
+  assert.equal((await readView('waiting', { paneOnly: true }, source, { now })).data.handed, 0);
+  markAskHere(P, 'c1', Date.parse(NOW));
+  takeAskHere(P, Date.parse(NOW));
+  assert.equal((await readView('waiting', { paneOnly: true }, source, { now })).data.handed, 1);
+  clearPanels();
+}));
+
+test('waiting with paneOnly and a turn gives the session\'s last turn time and keeps this one', () => withRecord(async ({ source }) => {
+  clearPanels();
+  const first = (await readView('waiting', { paneOnly: true, turn: 's-turn' }, source, { now })).data;
+  assert.equal(first.turnAt, null, 'a first turn has none before it');
+  const later = () => new Date(Date.parse(NOW) + 60000);
+  const second = (await readView('waiting', { paneOnly: true, turn: 's-turn' }, source, { now: later })).data;
+  assert.equal(second.turnAt, now().toISOString());
+  assert.equal((await readView('waiting', { paneOnly: true, turn: 's-other' }, source, { now: later })).data.turnAt, null, 'per session');
 }));
 
 test('a paired app\'s signed paneOnly read takes the marks too, building no views; an unsigned one takes nothing', () => withRecord(async ({ source }) => {
