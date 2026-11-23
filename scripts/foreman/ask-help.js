@@ -6,6 +6,7 @@
 import { FOREMAN_QUESTIONS, questionIdOf } from '../lib/build-loop.js';
 import { questionProblem } from '../cards/compose.js';
 import { latestFor } from '../state/views.js';
+import { reviewClear } from '../lib/review-verdict.js';
 
 // A command that runs as it stands, for `work`.
 export function askExample(work = '<work>') {
@@ -69,7 +70,7 @@ export const RESTART_BUILDER = 'Restart the builder on where it left off';
 export function holdingReview(views, pr) {
   if (!Number.isSafeInteger(pr)) return null;
   const e = latestFor(views?.reviews, pr);
-  return e?.data?.verdict === 'FINDINGS' && typeof e.data.commit === 'string' ? { commit: e.data.commit } : null;
+  return e?.data?.verdict === 'FINDINGS' && !reviewClear(e.data) && typeof e.data.commit === 'string' ? { commit: e.data.commit } : null;
 }
 
 export function stuckQuestion(work, { phase = null, still = 0, findings = false } = {}) {

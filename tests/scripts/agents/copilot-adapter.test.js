@@ -138,7 +138,7 @@ test('the tools part names Copilot\'s tools from the union of checks 58, 63 and 
   assert.equal(tools.ask, 'ask_user');
   assert.deepEqual([...tools.shell], ['bash', 'powershell']);
   assert.deepEqual([...tools.notify], []);
-  assert.deepEqual([...tools.halt], ['stop_bash']);
+  assert.deepEqual([...tools.halt], ['stop_bash', 'stop_powershell']);
 });
 
 test('sql takes any statement and was seen to write, so it cannot pass STOP or the lineage hold', () => {

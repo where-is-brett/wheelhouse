@@ -40,7 +40,7 @@ test('each Superpowers sentence is quoted word for word', () => {
 
 test('rule 1 counts only BLOCKER and HIGH findings as open, as Superpowers counts Critical and Important (scenario 21)', () => {
   const rule = text.split(/^(?=\*\*\d\. )/m)[1];
-  assert.match(rule, /A finding is open when Wheelhouse's Lookout rates it BLOCKER or HIGH, as Superpowers' Critical and Important are; MEDIUM and LOW are minors: record them in the ledger as deferred, and they never extend the loop or go to the director\./);
+  assert.match(rule, /A finding is open when Wheelhouse's Lookout rates it BLOCKER or HIGH, as Superpowers' Critical and Important are; MEDIUM and LOW are minors: write each as a `Deferred:` line in the ledger and list it under concerns in report\.md \(never with the `log` command, which is for decisions and refuses a `deferred` kind\), and they never extend the loop or go to the director\./);
 });
 
 test('rule 1 defers minors on the review command\'s say-so, not a wake\'s', () => {

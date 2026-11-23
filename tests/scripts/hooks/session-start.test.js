@@ -332,7 +332,7 @@ test('the reload stays under the context limit however much there is', async () 
   });
 });
 
-test('a session in a feature worktree is pointed at its ledger', async () => {
+test('a session in a feature worktree is not pointed at a ledger file in the record', async () => {
   await withHome(async (home) => {
     const tree = path.join(home, 'tree');
     const gitdir = path.join(home, 'main', '.git', 'worktrees', 'tree');
@@ -343,7 +343,7 @@ test('a session in a feature worktree is pointed at its ledger', async () => {
     makeFeatureFolder(tree, 'gift-cards');
     const f = fake();
     const t = text(await run(f, {}, { cwd: tree }));
-    assert.match(t, /Your feature's ledger: .*features[\\/]gift-cards[\\/]ledger\.md/);
+    assert.doesNotMatch(t, /ledger/);
     fs.writeFileSync(path.join(gitdir, 'HEAD'), 'ref: refs/heads/main\n');
     assert.doesNotMatch(text(await run(f, {}, { cwd: tree })), /ledger/);
   });

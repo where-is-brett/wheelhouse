@@ -36,7 +36,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { safeGit } from '../lib/safe-git.js';
-import { QUESTION_ID, QUESTION_KINDS, appendLine, featurePaths, parseReport, questionTrail, readQuestions, reworksIn, waitingFor, waitingForPrs } from './files.js';
+import { AGENT_KINDS, DIRECTOR_KINDS } from '../decisions/line.js';
+import { QUESTION_ID, QUESTION_KINDS, appendLine, featurePaths, parseReport, reportProblems, questionTrail, readQuestions, reworksIn, waitingFor, waitingForPrs } from './files.js';
 import {
   planIn, planInside, readBrief, readCapped, readPlan, readPrRecord, safeFeatureFolder, writeWhole, SMALL_BYTES,
 } from './status.js';
@@ -85,13 +86,13 @@ const REQUIRED_FIELDS = ['v', 'work', 'status', 'tests', 'assumptions', 'concern
 
 // The flags in `argv` as `{ name: [values] }`. Every flag takes a value, and only
 // the flags in `allowed` are known.
-function flagsOf(argv, allowed) {
+function flagsOf(argv, allowed, command = null) {
   const found = {};
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     if (typeof flag !== 'string' || !flag.startsWith('--')) throw new CliError(`Unexpected "${flag}": every value comes after a flag such as --what`);
     const name = flag.slice(2);
-    if (!allowed.includes(name)) throw new CliError(`${flag} is not a flag this command takes`);
+    if (!allowed.includes(name)) throw new CliError(`${flag} is not a flag this command takes. It takes: ${allowed.map((a) => `--${a}`).join(', ')}${command !== null && HELP[command] !== undefined ? `. ${HELP[command]}` : ''}`);
     if (i + 1 >= argv.length) throw new CliError(`${flag} needs a value`);
     i += 1;
     (found[name] ??= []).push(argv[i]);
@@ -264,7 +265,7 @@ async function buildQuestion(found, { worktree, client }) {
 // (by the composer's own rules: at most four options, none a button that puts a card off but a
 // build-command question's own Not now, words that fit the card) is refused, so it never waits unasked.
 export async function ask({ worktree, argv, client }) {
-  const found = flagsOf(argv, ['kind', 'what', 'why', 'option', 'recommend', 'level', 'plan', 'command', 'about', 'cost', 'undo', 'holds', 'meanwhile', 'because']);
+  const found = flagsOf(argv, ['kind', 'what', 'why', 'option', 'recommend', 'level', 'plan', 'command', 'about', 'cost', 'undo', 'holds', 'meanwhile', 'because'], 'ask');
   const kind = single(found, 'kind') ?? 'question';
   if (!QUESTION_KINDS.includes(kind)) throw new CliError(`--kind is ${QUESTION_KINDS.join(', ')}`);
   const why = needed(found, 'why');
@@ -334,7 +335,7 @@ function readBriefOrSay(worktree) {
 // Says, once and in plain words, that the session can't get a decision into its shape. It is one line in questions.jsonl; the
 // count of failed tries starts again after it. Returns the line kept.
 export function stuck({ worktree, argv, now = () => new Date() }) {
-  const found = flagsOf(argv, ['why']);
+  const found = flagsOf(argv, ['why'], 'stuck');
   const why = needed(found, 'why');
   readBriefOrSay(worktree);
   if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
@@ -468,7 +469,7 @@ export function waitForPr({ worktree, pr, end = false, now = () => new Date() })
 // why. A director's kind is refused, with the words to ask instead, unless `--where helm` says the call was the director's, made
 // at the piece's helm. Returns the line kept.
 export function log({ worktree, argv, now }) {
-  const found = flagsOf(argv, ['decided', 'option', 'why', 'kind', 'where']);
+  const found = flagsOf(argv, ['decided', 'option', 'why', 'kind', 'where'], 'log');
   const fail = (message) => { throw new CliError(message); };
   return appendCall({
     worktree, decided: single(found, 'decided'), options: found.option, why: single(found, 'why'), kind: single(found, 'kind'), where: single(found, 'where'), fail,
@@ -486,7 +487,7 @@ const REVIEW_BYTES = 1024 * 1024;
 // and returns the next step (reviewStep). The same reply given again for the task is the same round, not a new one. A reply
 // with no finding line counts as clean only when it carries `verdict: CLEAN`; anything else with no finding line is refused.
 export function review({ worktree, argv, now = () => new Date() }) {
-  const found = flagsOf(argv, ['task', 'file']);
+  const found = flagsOf(argv, ['task', 'file'], 'review');
   const task = needed(found, 'task');
   if (!TASK_NAME.test(task)) throw new CliError('--task is a short name of letters, digits, dots, dashes and underscores, such as 3 or branch');
   const given = needed(found, 'file');
@@ -531,6 +532,17 @@ function missingFields(text) {
   }
 }
 
+// The report's fields as the first json block holds them, or null.
+function fieldsOf(text) {
+  const match = /^(?:[ \t]*\r?\n)*```json[ \t]*\r?\n([\s\S]*?)\r?\n```/.exec(text.replace(/^\uFEFF/, ''));
+  try { return match ? JSON.parse(match[1]) : null; } catch { return null; }
+}
+
+// What a report is, in one place, for a refusal to end with: every field, its kind and the values it takes.
+export const REPORT_SHAPE = 'A report is a first json block of: "v": 1, "work": "<the work\'s name>", "status": "done" | "blocked" | "partial", '
+  + '"pr": <whole number, left out when there is none>, "head": "<full hash>" (left out when none), "tests": "<one text>", '
+  + '"assumptions": [<texts>], "concerns": [<texts>], "rulings": [<texts>], and optionally "followed": [{"question": "<q-id>", "answer": "<text>"}], "rework", "data"; then the words, no more than ' + REPORT_WORDS + '.';
+
 const quoted = (text) => (text.length > 100 ? `${text.slice(0, 97)}...` : text);
 
 // What report.md lacks, as `{ missing: [text], body }`: nothing missing when it is whole, and then
@@ -546,8 +558,9 @@ function inspect(worktree) {
   } catch {
     const absent = missingFields(text);
     if (absent === null) return { missing: ['report.md must begin with a fenced json block holding the report\'s fields'] };
-    if (absent.length > 0) return { missing: [`report.md lacks the field${absent.length > 1 ? 's' : ''}: ${absent.join(', ')}`] };
-    return { missing: ['report.md has fields of the wrong kind: check status, pr, head and the lists against the brief'] };
+    if (absent.length > 0) return { missing: [`report.md lacks the field${absent.length > 1 ? 's' : ''}: ${absent.join(', ')}. ${REPORT_SHAPE}`] };
+    const named = reportProblems(fieldsOf(text));
+    return { missing: [`report.md's fields are not right: ${named.length > 0 ? named.join('; ') : 'the block holds something a report cannot'}. ${REPORT_SHAPE}`] };
   }
   const missing = [];
   const brief = readBriefOrSay(worktree);
@@ -983,7 +996,7 @@ async function followedFor({ worktree, client, fields }) {
 // through the helper, since the host opens a pull request only from a branch it holds. The
 // helper places the project from the worktree's folder.
 export async function openPr({ client, worktree, argv, dataClient = client, dataMs = DATA_CHECK_MS, localChange = localChangeOf, commitFirst = false }) {
-  const found = flagsOf(argv, ['title']);
+  const found = flagsOf(argv, ['title'], 'open-pr');
   const title = needed(found, 'title');
   if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
   const p = featurePaths(worktree);
@@ -1013,6 +1026,24 @@ export async function openPr({ client, worktree, argv, dataClient = client, data
 
 // --- The command line ---
 
+// What `help` and `<command> --help` say: each command's flags and the values they take, so one look is enough to get it right.
+const HELP = Object.freeze({
+  ask: 'ask --what <the question> --why <why it comes to the director> --option "<label>=<what it means>" (two to four) --recommend <one of the labels> --level <1 to 4>; also --kind, --plan, --command, --about <decision kind>, --cost, --undo <yes|no|partly>, --holds, --meanwhile, --because. Every flag takes a value. Prints the question id.',
+  stuck: 'stuck --why <what keeps failing>',
+  'wait-for': 'wait-for <questionId>, or wait-for --pr <number> (and --end once it has merged or closed)',
+  log: `log --decided <what you decided> --option <an option you saw> --option <another> --why <why> --kind <${AGENT_KINDS.join('|')}>. Give --option at least twice. --where helm is the director's alone. A director's kind (${DIRECTOR_KINDS.join(', ')}) is asked with ask --about, not logged. A review's deferred minor is not a call: do not log it.`,
+  review: 'review --task <a short name such as 3, or branch> --file <path in this worktree holding the Lookout\'s whole reply>',
+  answer: 'answer <questionId>, then --applied once the change the answer asks for is pushed, or --no-change when it asks for none',
+  plan: 'plan <path to the plan file inside this worktree>',
+  report: `report (no arguments) checks ${'`.wheelhouse/feature/report.md`'}. ${REPORT_SHAPE}`,
+  push: 'push (no arguments)',
+  pull: 'pull (no arguments), or pull --default to bring in the default branch',
+  'open-pr': 'open-pr --title <what the pull request does>',
+  commit: 'commit (no arguments)',
+  head: 'head (no arguments)',
+  diff: 'diff <n>, counting up from 1',
+});
+
 const COMMANDS = ['ask', 'stuck', 'wait-for', 'log', 'review', 'answer', 'plan', 'report', 'push', 'pull', 'open-pr', 'commit', 'head', 'diff'];
 
 // Runs a command and resolves with the exit code. `out` and `err` take text to show.
@@ -1021,7 +1052,16 @@ export async function main(argv, {
 } = {}) {
   try {
     const [command, ...rest] = argv;
-    if (!COMMANDS.includes(command)) throw new CliError(`Commands: ${COMMANDS.join(', ')}`);
+    // `help`, `help <command>` and `<command> --help` say what the commands take. A bare command never reads as help.
+    if (command === 'help' || command === '--help') {
+      out(`${rest[0] !== undefined && HELP[rest[0]] !== undefined ? HELP[rest[0]] : `Commands, each with its flags (wh-feature <command> --help says one):\n${COMMANDS.map((n) => `  ${HELP[n]}`).join('\n')}`}\n`);
+      return 0;
+    }
+    if (HELP[command] !== undefined && rest.length === 1 && (rest[0] === '--help' || rest[0] === '-h')) {
+      out(`${HELP[command]}\n`);
+      return 0;
+    }
+    if (!COMMANDS.includes(command)) throw new CliError(`Commands: ${COMMANDS.join(', ')}; "help" says what each takes`);
     const found = find(cwd);
     if (found === null) throw new CliError("This folder isn't a feature session's worktree: run the command from there");
     const worktree = found.root;

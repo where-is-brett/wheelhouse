@@ -10,7 +10,7 @@ import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { standInTools } from '../../helpers/host-stand-ins.js';
 import { tempFolder } from '../../helpers/homes.js';
-import translate, { TOOL_MAP, KNOWN_TOOLS, UNKNOWN_TOOL, UNSETTLED, toGuardInput, fromGuardAnswer, harnessOf, exitCodeFor, patchPaths, callsOf, upperDrive } from '../../../adapters/copilot/translate.js';
+import translate, { TOOL_MAP, KNOWN_TOOLS, UNKNOWN_TOOL, UNSETTLED, SHELL_INPUT_TOOLS, toGuardInput, fromGuardAnswer, harnessOf, exitCodeFor, patchPaths, callsOf, upperDrive } from '../../../adapters/copilot/translate.js';
 import copilot from '../../../adapters/copilot/index.js';
 import tools from '../../../adapters/copilot/tools.js';
 import { hookMain, answer, TRANSLATORS } from '../../../scripts/hooks/kit.js';
@@ -304,6 +304,24 @@ test('sql, session_store_sql and run_dynamic_workflow are refused as unsettled, 
     assert.ok(UNSETTLED.includes(name), name);
     assert.deepEqual(toGuardInput(call(name, { query: 'DELETE FROM todos' }), 'preToolUse'), { unknownTool: name }, name);
     const h = harness(call(name, {}));
+    await hookMain(() => undefined, { failClosed: true, event: 'PreToolUse' }, h.io);
+    assert.deepEqual(written(h), [copilotDeny(UNKNOWN_TOOL(name))], name);
+  }
+});
+
+test('the shell-session tools: reading and listing are known reads, stop is a halt, and writing input is refused with its own reason', async () => {
+  for (const name of ['read_powershell', 'list_powershell', 'read_bash', 'list_bash']) {
+    assert.ok(tools.read.includes(name), name);
+    assert.equal(toGuardInput(call(name, {}), 'preToolUse').unknownTool, undefined, name);
+    assert.equal(toGuardInput(call(name, {}), 'preToolUse').tool_name, name);
+  }
+  for (const name of ['stop_powershell', 'stop_bash']) assert.equal(toGuardInput(call(name, {}), 'preToolUse').tool_name, 'KillShell', name);
+  assert.deepEqual([...SHELL_INPUT_TOOLS], ['write_bash', 'write_powershell']);
+  for (const name of SHELL_INPUT_TOOLS) {
+    assert.deepEqual(toGuardInput(call(name, { input: 'y' }), 'preToolUse'), { unknownTool: name });
+    assert.match(UNKNOWN_TOOL(name), /sends input to a shell that is already running/);
+    assert.doesNotMatch(UNKNOWN_TOOL(name), /doesn't know/);
+    const h = harness(call(name, { input: 'y' }));
     await hookMain(() => undefined, { failClosed: true, event: 'PreToolUse' }, h.io);
     assert.deepEqual(written(h), [copilotDeny(UNKNOWN_TOOL(name))], name);
   }

@@ -15,9 +15,11 @@ export default Object.freeze({
   // `read_agent`, which collects a sub-agent's answer (check 63), and the listing and reading tools check 66 saw
   // switched off. `sql` is not here: it takes any SQL statement and check 63 saw it write the `todos` table, so it
   // is in `other` until a probe shows what it can reach.
-  read: freeze(['view', 'glob', 'rg', 'web_fetch', 'ask_user', 'read_agent', 'list_agents', 'list_bash', 'read_bash', 'semantic_code_search', 'fetch_copilot_cli_documentation']),
-  // The tool that stops a running shell (Claude Code's KillShell), seen in check 66.
-  halt: freeze(['stop_bash']),
+  read: freeze(['view', 'glob', 'rg', 'web_fetch', 'ask_user', 'read_agent', 'list_agents', 'list_bash', 'read_bash', 'list_powershell', 'read_powershell', 'semantic_code_search', 'fetch_copilot_cli_documentation']),
+  // The tools that stop a running shell (Claude Code's KillShell): `stop_bash` was seen in check 66, `stop_powershell` is its Windows twin.
+  // `read_bash`/`read_powershell` (the output of a shell still running) and `list_*` only read, so they are in `read`; `write_bash` and
+  // `write_powershell` send input to a running shell, so they are in `other` and refused (SHELL_INPUT_TOOLS in ./translate.js).
+  halt: freeze(['stop_bash', 'stop_powershell']),
   // Check 58 saw no notification tool.
   notify: freeze([]),
   // Never offered headless (check 58), so unproven until the first sitting.
@@ -31,5 +33,5 @@ export default Object.freeze({
   // and `run_dynamic_workflow` are refused as unsettled (UNSETTLED in ./translate.js) until a probe shows what they reach.
   // Dispatching a sub-agent (`task`), loading a skill (`skill`), the free-form `sql` tool, the wrapper that runs tools in parallel
   // (check 66; whether the hook sees each call inside it is still open), and the rest of what check 66 saw.
-  other: freeze(['task', 'skill', 'sql', 'multi_tool_use.parallel', 'write_agent', 'session_store_sql', 'dynamic_workflows_manage', 'run_dynamic_workflow', 'lsp', 'store_memory', 'vote_memory']),
+  other: freeze(['task', 'skill', 'sql', 'multi_tool_use.parallel', 'write_agent', 'session_store_sql', 'dynamic_workflows_manage', 'run_dynamic_workflow', 'lsp', 'store_memory', 'vote_memory', 'write_bash', 'write_powershell']),
 });

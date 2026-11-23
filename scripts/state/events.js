@@ -28,7 +28,7 @@ export const PLAIN_KINDS = [
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
   'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest', 'chat-steer',
-  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'brief', 'slept', 'agent-call', 'self-merged', 'watch', 'aside-overlap',
+  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'brief', 'slept', 'agent-call', 'self-merged', 'watch', 'aside-overlap', 'question-closed',
   'helm', 'helm-ended', 'helm-note',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
@@ -435,6 +435,9 @@ const PLAIN_SHAPES = {
   // Unsigned: it informs the digest and the director's pull-back, and decides nothing.
   // `key`: the call's stable key (a hash of its line), so a call sent twice is read once.
   'agent-call': { must: ['work', 'at', 'decided', 'options', 'why', 'kind'], may: ['key', 'where'] },
+  // A foreman's own question closed unanswered, because what it asked about has moved on (the work was restarted, say): the
+  // question's id and why. Only an unanswered question of the foreman's own is closed by it (the views).
+  'question-closed': { must: ['id', 'why'], may: [] },
   // The end of a red-main incident: the incident and why it ended.
   'incident-closed': { must: ['incident', 'why'], may: [] },
   // A bug's reproduction, kept once for its work: the commit that proved it red, its done check and its test files.
@@ -678,6 +681,9 @@ function checkPlain(kind, data) {
     if (data.kind !== undefined && !INCIDENT_KINDS.includes(data.kind)) bad('has a kind that is not red-main');
     if (data.suspect !== undefined && data.suspect !== null && !(Number.isInteger(data.suspect) && data.suspect >= 1)) bad('has a suspect that is not a pull request\'s number');
     if (data.work !== undefined) slug('work');
+  } else if (kind === 'question-closed') {
+    slug('id');
+    text('why');
   } else if (kind === 'incident-closed') {
     slug('incident');
     text('why');

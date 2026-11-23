@@ -9,7 +9,7 @@ import { briefStands } from './brief.js';
 import { answerLine, approvalLine, CHECK_AND_ADD, chatCopy, ciPushLine } from './card-lines.js';
 import { joinQuestions } from './joiners.js';
 import { verify, readEnrolled } from './signing.js';
-import { mayReplace } from '../lib/build-loop.js';
+import { mayReplace, questionIdOf } from '../lib/build-loop.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { SUGGEST, WHY } from '../lib/calm-words.js';
@@ -545,6 +545,18 @@ function buildLoopViews(sorted, enrolled) {
       if (questions[id].answer !== null || questions[id].byHand !== undefined || data?.engine !== undefined || data?.key !== undefined) continue;
       delete questions[id];
     }
+  }
+  // A foreman's own question closed unanswered (`question-closed`), because what it asked about has moved on, goes from the views
+  // as a replaced one does. Only an unanswered question of the foreman's own numbers is closed so: never one the director has
+  // answered, an engine question, or one of a feature's own.
+  // It closes the question as recorded before it: a question recorded under the same id afterwards stands.
+  const lastAt = new Map();
+  sorted.forEach((e, i) => { if (e.kind === 'question' && isPlainKey(e.data?.id)) lastAt.set(e.data.id, i); });
+  for (const [i, e] of sorted.entries()) {
+    if (e.kind !== 'question-closed' || !isPlainKey(e.data?.id) || !questionIdOf(e.data.id)?.foreman || (lastAt.get(e.data.id) ?? -1) > i) continue;
+    const q = questions[e.data.id];
+    if (q === undefined || q.answer !== null || q.byHand !== undefined || q.question.data?.engine !== undefined || q.question.data?.key !== undefined) continue;
+    delete questions[e.data.id];
   }
   // Work carried on from such a change needs no approval of its own: the director's signed Check and add them on that card is
   // it. Only the first work recorded for the change (its commit as pressed on, so none with later commits) is approved, and

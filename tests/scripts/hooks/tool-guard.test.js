@@ -1,4 +1,5 @@
 // tests/scripts/hooks/tool-guard.test.js
+import { stuckAskCommand, driftAskCommand } from '../../../scripts/foreman/ask-help.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -1797,6 +1798,29 @@ test('in a launcher session a command that sets PATH, defines a function or alia
   });
 });
 
+test('the commands the foreman is told to run to put a card to the director pass the launcher grammar, ; in an option included', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const generated = [
+        stuckAskCommand('readme-greeting-line', { phase: 'ready-to-build', still: 20 * 60000 }),
+        stuckAskCommand('readme-greeting-line', { phase: 'ready-to-build', still: 20 * 60000, findings: true }),
+        stuckAskCommand('readme-greeting-line'),
+        driftAskCommand('readme-greeting-line', { restorable: true }),
+        driftAskCommand('readme-greeting-line'),
+      ].map((c) => `wh-${c}`);
+      assert.ok(generated.some((c) => c.includes(';')), 'the generated text has a ; in it, which is what this guards');
+      for (const command of [...generated, "wh-feature log --kind deferred --text 'LOW: plan file at repo root is extra to the README change; deferred'"]) {
+        for (const tool of ['Bash', 'PowerShell']) {
+          const out = await run(base, home, call(main, tool, { command }), 'win32');
+          assert.ok(!/single quotes|read this command with certainty/.test(out?.hookSpecificOutput?.permissionDecisionReason ?? ''), `${tool}: ${command}`);
+        }
+      }
+      assert.ok(denied(await run(base, home, call(main, 'Bash', { command: "wh-act note 'a'; wh-act note b" }), 'win32')));
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
 test('a launcher command with a curly quote or any non-ASCII character is refused, and a redirect from /dev/ is too', async () => {
   await withHome(async (home) => {
     const { base, main } = makeProject();
@@ -1807,7 +1831,7 @@ test('a launcher command with a curly quote or any non-ASCII character is refuse
           assert.ok(denied(out), `${tool} ${q}`);
         }
       }
-      for (const command of ["wh-act note 'a;b'", "wh-act note 'a(b)'", "wh-act note 'a{b}'", 'wh-frontdesk card < /dev/stdin', 'wh-frontdesk card < //dev/stdin']) {
+      for (const command of ["wh-act note 'a(b)'", "wh-act note 'a{b}'", 'wh-frontdesk card < /dev/stdin', 'wh-frontdesk card < //dev/stdin']) {
         assert.ok(denied(await run(base, home, call(main, 'Bash', { command }), 'win32')), command);
       }
     } finally {

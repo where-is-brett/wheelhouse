@@ -27,7 +27,9 @@ function exists(file) {
 }
 
 // What `log` says to a session that tries to log a call the director decides.
-export const asDirectorsCall = (kind) => `"${kind}" is the director's to decide, not a call to log. Ask instead: \`ask --about ${kind} --level 3 …\`, with two or more options and your recommendation. A kind you can't place is the director's too. The agents' own kinds are: ${AGENT_KINDS.join(', ')}.`;
+export const asDirectorsCall = (kind) => (/^(deferred|minor|minors|deferred-minor)$/i.test(kind)
+  ? `"${kind}" is not a kind of call: a review's deferred minor isn't logged. Write it as a line starting \`Deferred:\` in your Superpowers ledger if you keep one, and list it under concerns in report.md. \`log\` is for calls you made on your side of the decision line; its kinds are: ${AGENT_KINDS.join(', ')}.`
+  : `"${kind}" is the director's to decide, not a call to log. Ask instead: \`ask --about ${kind} --level 3 …\`, with two or more options and your recommendation. A kind you can't place is the director's too. The agents' own kinds are: ${AGENT_KINDS.join(', ')}.`);
 
 // The calls the piece's log holds, oldest first, as `{ v, at, decided, options, why, kind }`. A line that is not a call is passed over.
 export function readLog(worktree) {
