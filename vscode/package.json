@@ -1,0 +1,34 @@
+{
+  "name": "wheelhouse",
+  "displayName": "Wheelhouse",
+  "description": "Wheelhouse's panel for VS Code: the cards that need you, answered as a paired app.",
+  "publisher": "wheelhouse",
+  "version": "0.3.0",
+  "license": "Apache-2.0",
+  "engines": { "vscode": "^1.100.0" },
+  "categories": ["Other"],
+  "main": "./extension.cjs",
+  "extensionKind": ["workspace"],
+  "activationEvents": ["onStartupFinished"],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Wheelhouse's panel signs what you click with its own key, so it runs only in a folder you trust."
+    }
+  },
+  "contributes": {
+    "commands": [
+      { "command": "wheelhouse.openPanel", "title": "Wheelhouse: Open the panel" }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "wheelhouse", "title": "Wheelhouse", "icon": "media/wheel.svg" }
+      ]
+    },
+    "views": {
+      "wheelhouse": [
+        { "type": "webview", "id": "wheelhouse.panel", "name": "Wheelhouse" }
+      ]
+    }
+  }
+}
