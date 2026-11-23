@@ -11,7 +11,7 @@
 // uninstall's card by the helper, for setup's playbook to ask as it is.
 import {
   approvalLine, confirmLine, confirmWords, LIFT_STOP, LIFT_LABEL, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, seatTakeOverLine, SEAT_SESSION, isSeatSince, TAKEOVER_LABEL, LEAVE_LABEL, pairLine, unpairLine, PAIR_LABEL, UNPAIR_LABEL, APP_ID, uninstallLine, keepControlLine, usageLine, premiumLine, releaseLine, updateHelperLine, updateLine, UPDATE_LABEL, panelLine, PANEL_LABEL, RELEASE_LABEL, RELEASE_TAG, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, seatTakeOverLine, SEAT_SESSION, isSeatSince, TAKEOVER_LABEL, LEAVE_LABEL, pairLine, PAIR_LABEL, APP_ID, uninstallLine, keepControlLine, usageLine, premiumLine, releaseLine, updateHelperLine, updateLine, UPDATE_LABEL, RELEASE_LABEL, RELEASE_TAG, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
   RUNBOOK_TITLES, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, TRUST_LABEL, UNINSTALL_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
@@ -43,7 +43,6 @@ export const HEADERS = Object.freeze({
   trust: 'Trust',
   'take-over': 'Take over',
   pair: 'Pair an app',
-  unpair: 'Unpair',
   uninstall: 'Uninstall',
   question: 'Question',
   'keep-control-files': 'Agent files',
@@ -52,7 +51,6 @@ export const HEADERS = Object.freeze({
   release: 'Release',
   'update-helper': 'Old helper',
   update: 'Update',
-  panel: 'Panel',
 });
 
 // The label whose click decides a kind, as the prompt record accepts it. An answer card's
@@ -73,12 +71,10 @@ export const DECIDING = Object.freeze({
   trust: TRUST_LABEL,
   'take-over': TAKEOVER_LABEL,
   pair: PAIR_LABEL,
-  unpair: UNPAIR_LABEL,
   uninstall: UNINSTALL_LABEL,
   'keep-control-files': 'Confirm',
   release: RELEASE_LABEL,
   update: UPDATE_LABEL,
-  panel: PANEL_LABEL,
 });
 
 // The kinds whose set line has no reply code (ruling R36): a setup step goes ahead only on the
@@ -91,7 +87,7 @@ export const DECIDING = Object.freeze({
 // So is a usage card (design section 14.6): its switch is the setting change and the director's confirmation of it at
 // once, so only the click on the card the session start offered counts.
 // So is the premium model's card (design section 14.6): only the click on the card the helper offered counts.
-export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair', 'unpair', 'release', 'update-helper', 'update', 'panel']);
+export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair', 'release', 'update-helper', 'update']);
 
 // The buttons a kind's card offers after its deciding label, in the order they are shown, where it
 // isn't the usual Suggest a change…, Show me and Not now (design section 23.4). All stop is lifted or it
@@ -108,14 +104,11 @@ const OFFERED_AFTER = Object.freeze({
   trust: Object.freeze([NOT_NOW]),
   'take-over': Object.freeze([LEAVE_LABEL]),
   pair: Object.freeze([NOT_NOW]),
-  unpair: Object.freeze([NOT_NOW]),
   uninstall: Object.freeze([NOT_NOW]),
   'keep-control-files': Object.freeze([SHOW_ME, NOT_NOW]),
   // The release's approval can be put off: the update then waits and nothing is installed.
   release: Object.freeze([NOT_NOW]),
   update: Object.freeze([NOT_NOW]),
-  // The panel's install can be put off: nothing is added to VS Code.
-  panel: Object.freeze([NOT_NOW]),
 });
 const USUAL_AFTER = Object.freeze([SUGGEST, SHOW_ME, NOT_NOW]);
 // A parked pull request's card (delegated decisions design, section 8.1) says no as well as yes. A card shows four options at
@@ -155,10 +148,8 @@ const ASKS = Object.freeze({
   'keep-control-files': () => 'Keep these files as they are?',
   'take-over': (t) => (t?.session !== undefined ? 'Move the First Mate to this window?' : 'Move the First Mate to this computer?'),
   pair: () => 'Pair this app?',
-  unpair: () => 'Unpair this app?',
   release: (t) => `Move this project to Wheelhouse ${t.release}?`,
   'update-helper': () => 'What should the update do about the old helper?',
-  panel: (t) => `Add the Wheelhouse panel ${t.to} to VS Code?`,
   update: (t) => (t.put === 'undo' ? `Put Wheelhouse back to ${t.to}?` : `Update Wheelhouse to ${t.to}?`),
 });
 
@@ -293,10 +284,6 @@ function lineFor(kind, target) {
     if (typeof t.client !== 'string' || !APP_ID.test(t.client) || typeof t.fingerprint !== 'string' || !/^[0-9a-f]{12}/.test(t.fingerprint)) bad('needs the app\'s id and its key\'s fingerprint');
     return pairLine(t.client, t.fingerprint);
   }
-  if (kind === 'unpair') {
-    if (typeof t.client !== 'string' || !APP_ID.test(t.client) || typeof t.fingerprint !== 'string' || !/^[0-9a-f]{12}/.test(t.fingerprint)) bad('needs the app\'s id and its key\'s fingerprint');
-    return unpairLine(t.client, t.fingerprint);
-  }
   if (kind === 'take-over' && t.session !== undefined) {
     if (typeof t.session !== 'string' || !SEAT_SESSION.test(t.session) || !isSeatSince(t.since)) bad('needs the id of the window session that holds the seat and the time it took it');
     return seatTakeOverLine(t.session, t.since);
@@ -320,12 +307,6 @@ function lineFor(kind, target) {
       bad('needs the release the computer is on, the one it moves to, whether it is an update or a put-back, and the plan\'s hash in full');
     }
     return updateLine(t.from, t.to, t.put, t.hash);
-  }
-  if (kind === 'panel') {
-    if (typeof t.to !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.]+)?$/.test(t.to) || typeof t.offer !== 'string' || !/^[0-9a-f]{64}$/.test(t.offer)) {
-      bad('needs the panel\'s version and the token of the showing in full');
-    }
-    return panelLine(t.to, t.offer);
   }
   if (kind === 'update-helper') {
     if (typeof t.card !== 'string' || !/^update-helper-[A-Za-z0-9.-]{1,80}$/.test(t.card)) bad('needs the id of the helper card');
@@ -382,10 +363,9 @@ export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
   if (kind === 'confirm-all') need = [new RegExp(`(?<![0-9])${target.count} rules?\\b`, 'i').test(what), `how many rules it lists, ${target.count}`];
   if (kind === 'trust') need = [nameId(target.computer), `the computer ${target.computer}`];
   if (kind === 'take-over') need = target.session !== undefined ? [nameId(target.session), `the window session ${target.session}`] : [nameId(target.holder), `the computer ${target.holder}`];
-  if (kind === 'pair' || kind === 'unpair') need = [nameId(target.client), `the app ${target.client}`];
+  if (kind === 'pair') need = [nameId(target.client), `the app ${target.client}`];
   if (kind === 'uninstall') need = [nameId(target.project), `the project ${target.project}`];
   if (kind === 'update') need = [nameId(target.to), `the release ${target.to}`];
-  if (kind === 'panel') need = [nameId(target.to), `the panel's version ${target.to}`];
   if (kind === 'release') need = [nameId(target.release), `the release ${target.release}`];
   if (need !== null && !need[0]) return `must name ${need[1]}, as its set line does`;
   const commit = target.sha ?? target.hash;

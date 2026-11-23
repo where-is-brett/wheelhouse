@@ -2,6 +2,8 @@
 
 # Bringing back the VS Code add-on: design (23 November 2026)
 
+> **Parked on 23 November 2026:** the director chose to work as Claude Desktop does, with question cards in the chat only and no panel, so the VS Code add-on was parked again. The build is kept at the tag `parked/vscode-addon-2`. What is parked, and how it comes back, is in `docs/parked.md`.
+
 The director unparked the VS Code add-on on 23 November 2026. This is the short design `docs/parked.md` asks for before it comes back. It builds on the old design (`docs/specs/2026-11-04-vscode-panel-design.md`, read with `git show parked/vscode-addon:<path>`) and says only what is new or different. Where this design is silent, the old one stands.
 
 The director answered its decisions on 23 November 2026 (section 11). The build plan is `docs/plans/2026-11-23-vscode-addon-return-plan.md`.

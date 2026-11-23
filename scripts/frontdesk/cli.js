@@ -52,8 +52,6 @@
 //   page <work>     "watch <work>": raises the piece to the transcript level when it is below it, writes the piece's run as a page
 //                   in .wheelhouse/watch/ (it stays on this computer), and prints one line: the page's path and the command that
 //                   follows it live. For a piece that is closed or unknown it prints a line saying so and writes nothing
-//   unpair <app id> raises the Unpair card for a paired app, and prints its id ({ card }); the director's signed Unpair
-//                   it removes the app's key. It works when the app's panel is gone or its key is in doubt
 //   similar [words] the open work, ideas and rejections that share words with a request: its
 //                   words as the arguments, or its text on standard input
 //   views <name>    one view as short lines: rulebook, waiting, ideas, glossary, settings, levels, brief or
@@ -112,7 +110,7 @@ import { checkSetting, definitionOf, SETTINGS, WINDOWS_BUILD_COMMANDS, OWN_GITHU
 import { CARD, WORK_REPORTS } from '../lib/front-desk.js';
 import { effectiveSettings, settingsText, settingWords } from '../settings/effective.js';
 import { similar as similarTo } from '../intake/similar.js';
-import { answerLine, approveWorkLine, chatCopy, ID, keepControlLine, APP_ID } from '../state/card-lines.js';
+import { answerLine, approveWorkLine, chatCopy, ID, keepControlLine } from '../state/card-lines.js';
 import { gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
 import { readSlices } from '../engine/feature.js';
@@ -124,7 +122,7 @@ import { isOpen, surveyLines, whyNext, workLines, withOpened, RECENT_MS, RECENT_
 import { answeredWords } from '../cards/answered.js';
 import { crewNow } from '../crew/runs.js';
 import { markHere } from '../lib/session-files.js';
-import { paneLine, sinceLine } from '../cards/panel-words.js';
+import { sinceLine } from '../cards/panel-words.js';
 import { SLUG, UUID } from '../lib/build-loop.js';
 
 // How far back `views waiting` looks for answers, and its lead (scripts/desk/views.js).
@@ -153,7 +151,7 @@ export const RECORD_KINDS = Object.freeze([
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey', 'brief']);
 // The commands that write a record, hand out a card or change the board: only the window that holds the First Mate's seat runs them.
 // Settings change through `record` and `suggest`, so they are covered. The rest only read, or keep a note by the session's own id.
-export const SEAT_WRITES = Object.freeze(['cards', 'pull-cards', 'again', 'card', 'record', 'confirm', 'suggest', 'pull-back', 'drop', 'ask-bosun', 'undo', 'move', 'carry-on', 'archive', 'restore', 'premium-card', 'page', 'helm', 'unpair']);
+export const SEAT_WRITES = Object.freeze(['cards', 'pull-cards', 'again', 'card', 'record', 'confirm', 'suggest', 'pull-back', 'drop', 'ask-bosun', 'undo', 'move', 'carry-on', 'archive', 'restore', 'premium-card', 'page', 'helm']);
 export const SEAT_REFUSAL = 'The First Mate is in another window, so this window can look things up but not record anything or hand out cards. The director can move the First Mate here with the take-over card in this window.';
 
 // The refusal for a seat write from a window that doesn't hold the seat; null when the command may run. A script or test
@@ -169,7 +167,7 @@ export async function seatRefusal({ command, env, cwd, client }) {
   return got?.ok === true && got.holds === false ? SEAT_REFUSAL : null;
 }
 
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts', 'page', 'helm', 'unpair'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts', 'page', 'helm'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -223,11 +221,9 @@ const deskOf = (client, cwd) => deskClient({ cwd, client, local: 'never' });
 // helper's refusal, thrown as it said it.
 // With `session`, the helper also says whether a live panel is beside that session (`paneLive`): this command is in the
 // sandbox, which can't read the session's files, so the helper, outside it, decides.
-// With `askHere`, the helper also gives the cards the director marked Ask me here in the panel that the chat is to ask (`askHere`).
-async function recordOf(client, cwd, { answers = false, since, session, askHere = false } = {}) {
+async function recordOf(client, cwd, { answers = false, since, session } = {}) {
   const got = await deskOf(client, cwd).read('waiting', {
     ...(answers ? { answers: true } : {}),
-    ...(askHere ? { askHere: true } : {}),
     ...(since === undefined ? {} : { outcomes: { since: since.toISOString() } }),
     ...(typeof session === 'string' && session !== '' ? { session } : {}),
   });
@@ -237,12 +233,12 @@ async function recordOf(client, cwd, { answers = false, since, session, askHere 
 
 // The views, whether STOP is on, with `cards` the card events the board numbers its list from, and
 // with `answers` the card-answer events.
-async function viewsOf(client, cwd, { cards = false, answers = false, since, session, askHere = false } = {}) {
-  const got = await recordOf(client, cwd, { answers, since, session, askHere });
+async function viewsOf(client, cwd, { cards = false, answers = false, since, session } = {}) {
+  const got = await recordOf(client, cwd, { answers, since, session });
   if (cards && !Array.isArray(got.cards)) throw new CliError('The host helper gave no card events');
   if (answers && !Array.isArray(got.answers)) throw new CliError('The host helper gave no card answers');
   // A helper that gives no outcomes (an older one) leaves the decided-card checks out, as they only inform.
-  return { views: got.views, stop: got.stop === true, cards: cards ? got.cards : [], answers: answers ? got.answers : [], outcomes: Array.isArray(got.outcomes) ? got.outcomes : [], names: namesIn(got), paneLive: got.paneLive === true, askHere: Array.isArray(got.askHere) ? got.askHere.filter((id) => typeof id === 'string') : [] };
+  return { views: got.views, stop: got.stop === true, cards: cards ? got.cards : [], answers: answers ? got.answers : [], outcomes: Array.isArray(got.outcomes) ? got.outcomes : [], names: namesIn(got), paneLive: got.paneLive === true };
 }
 
 // The director's own settings view, as the desk's settings view gives it; none when it can't be read.
@@ -304,15 +300,13 @@ async function markAsked(client, cwd, ids, stop) {
 }
 
 // Records, as asked, the cards handed out that the question picker can never mark: a card whose question carries no reply code
-// (no set line, or a kind of set line with none) and a card handed out for the chat (`inChat`), which no picker shows. While a live
-// panel holds the project's cards (`panel`) nothing is marked unless it is handed out for the chat: the panel shows them, and a card
-// marked asked there would show nowhere once the panel stopped, as it is offered again only while unasked. A card with a reply code is
+// (no set line, or a kind of set line with none), a card handed out for the chat (`inChat`), which no picker shows, and a card
+// handed out while a live panel is beside the session (`panel`), where no picker call is allowed. A card with a reply code is
 // not marked here otherwise: it counts as asked once the picker's hook has written the signed `shown` record for it
 // (scripts/hooks/prompt-record.js, read by the waiting view), so a card printed and never shown comes back.
 // `handed` is [{ id, question }], the card's stored question text. Resolves with the problems to report.
 async function handOut(client, cwd, handed, { stop, inChat = false, panel = false }) {
-  if (panel && !inChat) return [];
-  const ids = handed.filter(({ question }) => inChat || replyCodeOf(question) === null).map(({ id }) => id);
+  const ids = handed.filter(({ question }) => inChat || panel || replyCodeOf(question) === null).map(({ id }) => id);
   return markAsked(client, cwd, ids, stop);
 }
 
@@ -396,16 +390,6 @@ function composePlain(input, words) {
 }
 
 // --- cards ---
-
-// The waiting cards the helper named as Ask me here (`ids`, taken by the panel's signed read), as questions to ask in the chat:
-// { ids, handed: [{ id, question }], questions }. A card that no longer waits is left out.
-function askedHereCards(views, ids) {
-  // The visit's own filter: with typed replies on, a decision is never put to the question picker, which can't settle it.
-  const typed = typedRepliesIn(views.settings);
-  const waiting = (Array.isArray(views?.waiting) ? views.waiting : []).filter((c) => isPlain(c) && typeof c.data?.question === 'string' && !(typed && isDecisionCard(c.data)));
-  const found = ids.map((id) => waiting.find((c) => c.id === id)).filter((c) => c !== undefined);
-  return { ids: found.map((c) => c.id), handed: found.map((c) => ({ id: c.id, question: c.data.question })), questions: found.map(asQuestion) };
-}
 
 // What a card re-issued for the pieces behind it says changed, or for an answer it now says was given before.
 const REISSUED = 'The pieces this answer goes to.';
@@ -630,15 +614,14 @@ async function questionCards({ client, cwd, views, words, stop, problems }) {
 // question from the build that no waiting card asks gets its answer card first, and the build
 // loop's records theirs (buildLoopCards). A card the picker can mark counts as asked once the picker has shown it (its
 // `shown` record), so a card printed and never shown comes back; a card it cannot mark, a card handed out for the chat
-// (`onAsked`) are recorded as asked when printed, so they aren't offered on every turn; one handed out under a live panel is not,
-// so it comes back to the chat when the panel stops. A write the helper refuses is a problem, not a failure: the cards waiting are still given. Under STOP the visit's one card is Lift STOP:
+// (`onAsked`) and one handed out under a live panel are recorded as asked when printed, so they aren't offered on every
+// turn. A write the helper refuses is a problem, not a failure: the cards waiting are still given. Under STOP the visit's one card is Lift STOP:
 // the helper writes nothing, so no card is made, and the cards waiting stay on the board, counted
 // in `left`, for the visit after STOP is lifted.
-export async function cards({ client, cwd, now, onAsked, onHere, session }) {
+export async function cards({ client, cwd, now, onAsked, session }) {
   const problems = [];
   // `panel`: whether a live panel is beside the session, as the helper says; no picker call is allowed then, so no `shown` record can arrive.
-  // `here`: the cards the director marked Ask me here in the panel, which the chat asks even while the panel holds the rest.
-  let { views, stop, names, paneLive: panel, askHere: here } = await viewsOf(client, cwd, { session, askHere: true });
+  let { views, stop, names, paneLive: panel } = await viewsOf(client, cwd, { session });
   const words = await wordsOf(client, cwd, views, now, names);
   const lift = stop ? composePlain(LIFT_STOP_CARD, words).question : null;
   const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
@@ -658,19 +641,6 @@ export async function cards({ client, cwd, now, onAsked, onHere, session }) {
   const typed = typedRepliesIn(views.settings);
   const forVisit = withPutBack(views, again, events);
   const chosen = cardsForVisit({ ...forVisit, waiting: (Array.isArray(forVisit.waiting) ? forVisit.waiting : []).filter((c) => !typed || !isDecisionCard(c?.data)) }, { room: lift === null ? CARD.questions : 0 });
-  // While a live panel holds the project's cards, the chat is told of the panel and given only the cards the director marked
-  // Ask me here, each once: handed out as asked, so the helper stops giving it. The rest stay in the panel, unmarked.
-  if (panel && lift === null && typeof onAsked !== 'function') {
-    const marked = askedHereCards(views, here);
-    const held = chosen.ids.filter((id) => !marked.ids.includes(id)).length;
-    if (marked.ids.length > 0) {
-      problems.push(...await handOut(client, cwd, marked.handed, { stop, inChat: true, panel }));
-      if (typeof onHere === 'function') await onHere(marked.ids);
-    }
-    if (held > 0 || marked.ids.length > 0) {
-      return { ...(held > 0 ? { panel: paneLine(held, { others: marked.ids.length > 0 }) } : {}), ...(marked.ids.length > 0 ? { questions: marked.questions } : {}), left: chosen.left, ...(chosen.heldBack > 0 ? { heldBack: chosen.heldBack } : {}), ...withProblems(problems) };
-    }
-  }
   problems.push(...await handOut(client, cwd, chosen.ids.map((id, i) => ({ id, question: chosen.questions[i].question })), { stop, inChat: typeof onAsked === 'function', panel }));
   if (typeof onAsked === 'function') await onAsked(chosen.ids);
   return { questions: [...(lift === null ? [] : [lift]), ...chosen.questions], left: chosen.left, ...(chosen.heldBack > 0 ? { heldBack: chosen.heldBack } : {}), ...withProblems(problems) };
@@ -721,11 +691,11 @@ export async function decisionConfirm({ client, cwd, n }) {
 
 // The director's Show them: the cards held back are named as pulled, which spends none of the day's budget, then this
 // visit's cards come as `cards` gives them. It raises cards and decides nothing.
-export async function pullCards({ client, cwd, now, onAsked, onHere, session }) {
+export async function pullCards({ client, cwd, now, onAsked, session }) {
   const { views } = await viewsOf(client, cwd);
   const ids = Array.isArray(views.cardsWaiting?.ids) ? views.cardsWaiting.ids : [];
   if (ids.length > 0) await write(client, cwd, 'note', { about: 'cards-pulled', ids });
-  return cards({ client, cwd, now, onAsked, onHere, session });
+  return cards({ client, cwd, now, onAsked, session });
 }
 
 // --- card ---
@@ -755,7 +725,7 @@ async function refuseEventId(views, given) {
 // Composes one card and records it, unless a waiting card already carries its set line: then that
 // card comes back as it was recorded, so the director is asked the card the state holds, with
 // `alreadyAsked` when it counts as asked. A card the picker can mark counts as asked once the picker has shown it; one it cannot
-// mark is recorded as asked when printed, unless a live panel holds the cards.
+// mark, and one handed out under a live panel, is recorded as asked when printed.
 // An approval whose target names only the pull request gets its head commit from the host. A
 // topic is kept in lower case. A revised card names the
 // card it replaces by `revises`, which must wait now, or have been closed by a later head of its pull
@@ -1713,23 +1683,21 @@ export async function main(argv, {
       const stamp = (typeof now === 'function' ? now() : new Date(now ?? Date.now())).getTime();
       const session = env.CLAUDE_CODE_SESSION_ID;
       if (typeof session === 'string' && session !== '') {
-        const mark = (ids) => { if (ids.length > 0) markHere(session, ids, stamp); };
-        // `onHere`: cards the panel's Ask me here sent to the chat, which the card check lets through as it does a `--here` card.
-        return wanted ? { left, onAsked: mark } : { left, onHere: mark };
+        return wanted ? { left, onAsked: (ids) => { if (ids.length > 0) markHere(session, ids, stamp); } } : { left };
       }
       if (!wanted) return { left };
       throw new CliError('The session isn\'t known, so the cards can\'t be asked here.');
     };
     if (command === 'pull-cards') {
-      const { left, onAsked, onHere } = await hereMark(rest);
+      const { left, onAsked } = await hereMark(rest);
       only(left, 0, 'pull-cards takes no arguments');
-      json(await pullCards({ client: helper, cwd: here, now, onAsked, onHere, session: env.CLAUDE_CODE_SESSION_ID }));
+      json(await pullCards({ client: helper, cwd: here, now, onAsked, session: env.CLAUDE_CODE_SESSION_ID }));
       return 0;
     }
     if (command === 'cards') {
-      const { left, onAsked, onHere } = await hereMark(rest);
+      const { left, onAsked } = await hereMark(rest);
       only(left, 0, 'cards takes no arguments');
-      json(await cards({ client: helper, cwd: here, now, onAsked, onHere, session: env.CLAUDE_CODE_SESSION_ID }));
+      json(await cards({ client: helper, cwd: here, now, onAsked, session: env.CLAUDE_CODE_SESSION_ID }));
     } else if (command === 'decision') {
       const usage = 'Give decision list, or decision show <n> or decision confirm <n> with the decision\'s number';
       if (rest[0] === 'list' && rest.length === 1) lines(await decisionList({ client: helper, cwd: here, now }));
@@ -1771,13 +1739,6 @@ export async function main(argv, {
     } else if (command === 'page') {
       only(rest, 1, 'Give the piece to watch: page <work>');
       lines([await page({ client: helper, cwd: here, work: rest[0] })]);
-    } else if (command === 'unpair') {
-      // Raises the Unpair card for a paired app, which works when the app's panel is gone or its key is in doubt. The director's
-      // signed Unpair it, in the window or where signed clicks are made, removes the key.
-      if (rest.length !== 1 || !APP_ID.test(rest[0])) throw new CliError('Give the app\'s id: unpair <app id>');
-      const got = await deskOf(helper, here).act('unpair', { client: rest[0] });
-      if (got?.ok !== true) throw new CliError(got?.refused ?? 'The Unpair card wasn\'t raised');
-      json({ card: got.card });
     } else if (command === 'helm') {
       only(rest, 2, HELM_USAGE);
       lines(await helm({ client: helper, cwd: here, action: rest[0], work: rest[1], session: env.CLAUDE_CODE_SESSION_ID }));

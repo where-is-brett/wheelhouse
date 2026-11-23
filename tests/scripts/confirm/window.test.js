@@ -21,9 +21,6 @@ import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { dataHash, eventPath, listEvents, makeEvent } from '../../../scripts/state/events.js';
 import { answerInput, composeCard } from '../../../scripts/cards/compose.js';
 import { decisionsFrom } from '../../../scripts/decisions/pending.js';
-import crypto from 'node:crypto';
-import { canonicalJson } from '../../../scripts/lib/canonical.js';
-import { pairedClients } from '../../../scripts/desk/clients.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { approvalLine, confirmLine, runbookLine, LIFT_STOP, approveWorkLine, amendLine } from '../../../scripts/state/card-lines.js';
 import { briefHash } from '../../../scripts/feature/files.js';
@@ -590,93 +587,6 @@ test('approving a work as written, and changing it, are signed in the window, wi
     assert.equal(amended.ok, true, JSON.stringify(amended));
     assert.deepEqual([amended.recorded, amended.kind, amended.step], [true, 'action', 'approval']);
     assert.deepEqual(c.events().find((e) => e.id === amended.id).data, { action: 'amend', work: 'export-csv', hash: next, question: change.question, label: 'Change it', proof: 'window' });
-  } finally {
-    await c.close();
-  }
-});
-
-// A later app (the VS Code panel) and its key, paired through the window as a Copilot session has to.
-const DESK = 'desk/1';
-function anApp(id = 'vscode-panel') {
-  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-  const key = publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
-  const signs = (command, args, at = T0.toISOString()) => ({ form: 'client', client: id, at, sig: crypto.sign(null, Buffer.from(canonicalJson({ command, args, at })), privateKey).toString('base64') });
-  return { id, client: { id, name: 'The panel', publicKey: key }, signs };
-}
-// Raises the Pair card as the app does, and gives what /confirm needs for it.
-async function pairCard(c, app) {
-  const asked = await c.client.desk.act({ v: DESK, project: c.project, command: 'pair', args: { client: app.client } });
-  assert.equal(asked.ok, true, JSON.stringify(asked));
-  const event = c.events().find((e) => e.id === asked.card);
-  return { card: asked.card, hash: dataHash(event.data) };
-}
-async function unpairCard(c, app) {
-  const asked = await c.client.desk.act({ v: DESK, project: c.project, command: 'unpair', args: { client: app.id } });
-  assert.equal(asked.ok, true, JSON.stringify(asked));
-  const event = c.events().find((e) => e.id === asked.card);
-  return { card: asked.card, hash: dataHash(event.data), event };
-}
-const refusedAs = async (c, app) => (await c.client.desk.act({ v: DESK, project: c.project, command: 'answer', args: { card: 'merge-1', option: 'Not now' }, evidence: app.signs('answer', { card: 'merge-1', option: 'Not now' }) })).refused ?? '';
-
-test('the window\'s Pair it enrols the app\'s key, and Unpair it removes it so the app\'s next act is refused at once', async () => {
-  let reply = said('Pair it');
-  const c = await computer(() => reply);
-  try {
-    const app = anApp();
-    assert.match(await refusedAs(c, app), /never paired/);
-    const shown = await pairCard(c, app);
-    assert.deepEqual(pairedClients(), [], 'raising the card pairs nothing');
-    const got = await c.client.confirm({ project: c.project, ...shown });
-    assert.equal(got.ok, true, JSON.stringify(got));
-    assert.deepEqual([got.recorded, got.choice, got.kind, got.step], [true, 'Pair it', 'action', 'pairing']);
-    const record = c.events().find((e) => e.id === got.id);
-    assert.equal(record.data.action, 'pair-client');
-    assert.equal(record.data.proof, 'window');
-    assert.ok(verify(record, readEnrolled()), 'the helper signed it');
-    assert.deepEqual(pairedClients().map((p) => [p.id, p.publicKey]), [[app.id, app.client.publicKey]], 'the key is enrolled');
-    assert.doesNotMatch(await refusedAs(c, app), /never paired/, 'the app\'s signature now checks');
-
-    reply = said('Unpair it');
-    const off = await unpairCard(c, app);
-    assert.deepEqual(pairedClients().length, 1, 'raising the Unpair card unpairs nothing');
-    const removed = await c.client.confirm({ project: c.project, card: off.card, hash: off.hash });
-    assert.equal(removed.ok, true, JSON.stringify(removed));
-    assert.equal(c.events().find((e) => e.id === removed.id).data.action, 'unpair-client');
-    assert.deepEqual(pairedClients(), [], 'the key is removed');
-    assert.match(await refusedAs(c, app), /never paired/, 'the app\'s next act is refused at once');
-  } finally {
-    await c.close();
-  }
-});
-
-test('a window click on a Pair card whose key was asked again enrols nothing', async () => {
-  const c = await computer(() => said('Pair it'));
-  try {
-    const app = anApp();
-    const shown = await pairCard(c, app);
-    // The app asks again with another key under the same id: the card the director sees names the first key.
-    const other = anApp();
-    const again = await c.client.desk.act({ v: DESK, project: c.project, command: 'pair', args: { client: other.client } });
-    assert.equal(again.ok, true);
-    await c.client.confirm({ project: c.project, ...shown });
-    assert.deepEqual(pairedClients(), [], 'the click names the first key, which is no longer the one asked');
-  } finally {
-    await c.close();
-  }
-});
-
-test('Not now on a Pair card enrols nothing, and no chat click can pair an app', async () => {
-  const c = await computer(() => said(NOT_NOW));
-  try {
-    const app = anApp();
-    const shown = await pairCard(c, app);
-    assert.deepEqual(await c.client.confirm({ project: c.project, ...shown }), { ok: true, choice: NOT_NOW, recorded: false });
-    assert.deepEqual(pairedClients(), []);
-    const clicked = await c.client.cards.chatClick({ project: c.project, card: shown.card, label: 'Pair it', hash: shown.hash, proof: 'chat-click' });
-    assert.equal(clicked.ok, false);
-    assert.deepEqual(pairedClients(), []);
-    // A paired app can't pair itself or another by answering the card either.
-    assert.match(await refusedAs(c, app), /never paired/);
   } finally {
     await c.close();
   }

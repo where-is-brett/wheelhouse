@@ -45,7 +45,7 @@
 import { answer, runAndExit, projectOf, beingSetUp, readTailEntries } from './kit.js';
 import { stoppedQuestion } from './stopped-question.js';
 import { answeredWords, subjectOf, NOTE_LEAD } from '../cards/answered.js';
-import { SINCE_LEAD, SINCE_TAIL, paneLine } from '../cards/panel-words.js';
+import { SINCE_LEAD, SINCE_TAIL } from '../cards/panel-words.js';
 import { chatCopy, approveWorkLine } from '../state/card-lines.js';
 import { isOpen } from '../desk/views.js';
 import { readOpen, clearOpen } from '../lib/session-files.js';
@@ -405,17 +405,6 @@ async function surveyOf({ project, client, desk }) {
   }
 }
 
-// The helper's small waiting read for an agent whose hooks can't write: whether the panel is live, how many cards were moved to
-// the chat, and the session's last turn time (which this read records, in the helper). Asked of the helper alone, never run in
-// this process, so a helper that isn't running gives null and nothing is written under the Wheelhouse home.
-async function helperTurn({ cwd, client, session }) {
-  const timeout = INPUTS_WAIT_MS + helperGrace();
-  const base = client ?? helperClient({ timeout });
-  const asker = isRecord(base.desk) ? base : { ...base, desk: helperClient({ timeout }).desk };
-  const got = await deskClient({ cwd, client: asker, local: 'never', timeout }).read('waiting', { paneOnly: true, ...(session === null ? {} : { turn: session }) });
-  return got?.ok === true ? got : null;
-}
-
 // decide(input, deps) -> the context to add, or undefined.
 //
 // On an agent whose hooks only read (`writeVia: 'helper'`, ruling P5-20) nothing is written under the Wheelhouse
@@ -475,18 +464,10 @@ export async function decide(input, deps = {}) {
     }
     const desk = givenDesk ?? deskOf({ cwd: input.cwd, client, at });
     const count = (await within(() => cardsToAsk(desk, at), waitMs)) ?? 0;
-    // On an agent whose hooks can't write, no prompt time is kept here, so the helper keeps the session's last turn time and
-    // says whether the project's panel is live. While it is, the panel holds the cards: they are not asked in the chat.
-    const sessionId = typeof input.session_id === 'string' ? input.session_id : null;
-    // The read goes to the helper only (`local: 'never'`): with no helper it gives nothing, and the hook writes nothing here.
-    // A card the director moved to the chat (`handed`) is still asked here while the panel is live.
-    const turn = writes ? null : await within(() => helperTurn({ cwd: input.cwd, client, session: sessionId }), waitMs);
-    const turnAt = typeof turn?.data?.turnAt === 'string' ? turn.data.turnAt : null;
-    const inPanel = turn?.data?.paneLive === true && !(turn.data.handed > 0);
-    const cards = count > 0 ? (inPanel ? paneLine(count) : cardsLine(count)) : null;
-    const sinceAt = writes ? seen.promptAt : turnAt;
+    const cards = count > 0 ? cardsLine(count) : null;
     // What the cards just answered or left open say, ahead of the cards line. A session's open.json is read once and
     // cleared by this prompt, whatever comes of the lines.
+    const sessionId = typeof input.session_id === 'string' ? input.session_id : null;
     const open = sessionId === null ? null : attempt(() => readOpen(sessionId), null);
     if (writes && sessionId !== null) attempt(() => clearOpen(sessionId));
     // What the prompt hook makes of a reply (scripts/decisions/answer.js) it tells in its own context for this turn. Here the
@@ -500,7 +481,7 @@ export async function decide(input, deps = {}) {
     // only reads leaves it for one that can take it away.
     // A session a script started is no director arriving, so it never uses the digest up.
     const digest = writes && !startedByScript(env) ? attempt(() => readDigest(project), null) : null;
-    const notes = [decisionLine, orphans, digest?.text ?? null, stuck, helmNote, ...((await within(() => cardNotes({ project, input, since: sinceAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
+    const notes = [decisionLine, orphans, digest?.text ?? null, stuck, helmNote, ...((await within(() => cardNotes({ project, input, since: seen.promptAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
     const reserve = (cards === null ? 0 : cards.length + 2) + notes.reduce((sum, line) => sum + line.length + 2, 0);
     // A survey not worked out in time is left to the briefing view, which takes the record's latest.
     const survey = want === 'briefing' ? (await within(() => surveyOf({ project, client, desk }), learnWaitMs)) ?? undefined : null;

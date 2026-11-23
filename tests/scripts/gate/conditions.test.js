@@ -335,44 +335,6 @@ test('a signed approval naming the proof window counts for a project with real u
   assert.equal(gateDecision(input({ approvalRequired: true, approvalProofs: ['chat-click'], approval: gone })).allow, false);
 }));
 
-// The add-on's return (decision 2): a panel's Approve is signed by the helper naming the proof client, and counts only where no real
-// users are. The old add-on's proof counts nowhere.
-test('a signed approval naming the proof add-on never counts', () => withHome(() => {
-  const old = makeEvent({ kind: 'approval', data: { pr: 7, commit: SHA, proof: 'add-on' } });
-  assert.equal(gateDecision(input({ approvalRequired: true, approval: old })).allow, false);
-  assert.equal(gateDecision(input({ approvalRequired: true, realUsers: true, approval: old })).allow, false);
-  assert.deepEqual(gateDecision(input({ approvalRequired: true, approval: old })).reasons, ['no approval of abcdef1']);
-}));
-
-test('a signed approval naming the proof client counts on a project with no real users, and not on one with real users', () => withHome(() => {
-  const panel = makeEvent({ kind: 'approval', data: { pr: 7, commit: SHA, proof: 'client', by: 'vscode-panel' } });
-  assert.equal(gateDecision(input({ approvalRequired: true, approval: panel })).allow, true);
-  assert.equal(gateDecision(input({ approvalRequired: true, realUsers: false, approval: panel })).allow, true);
-  const held = gateDecision(input({ approvalRequired: true, realUsers: true, approval: panel }));
-  assert.equal(held.allow, false);
-  assert.deepEqual(held.reasons, ['no approval of abcdef1']);
-  // Another proof's signed approval still counts there, as the window's does.
-  const window = makeEvent({ kind: 'approval', data: { pr: 7, commit: SHA, proof: 'window' } });
-  assert.equal(gateDecision(input({ approvalRequired: true, realUsers: true, approval: window })).allow, true);
-}));
-
-test('a signed approval naming the proof client never counts for a change that touches guardrails, even with no real users', () => withHome(() => {
-  const panel = makeEvent({ kind: 'approval', data: { pr: 7, commit: SHA, proof: 'client', by: 'vscode-panel' } });
-  const guarded = gateDecision(input({ touchesGuardrails: true, review: review(), approval: panel, realUsers: false }));
-  assert.equal(guarded.allow, false);
-  assert.deepEqual(guarded.reasons, ['no approval of abcdef1']);
-  // The same approval on a plain change still counts, and a signed-hook approval on the guarded one still does.
-  assert.equal(gateDecision(input({ approvalRequired: true, approval: panel })).allow, true);
-  assert.equal(gateDecision(input({ touchesGuardrails: true, review: review(), approval: approval() })).allow, true);
-}));
-
-test('an unsigned card-answer naming the proof client never counts', () => withHome(() => {
-  const answer = { kind: 'card-answer', data: { label: 'Approve', commit: SHA, proof: 'client' } };
-  for (const extra of [{}, { approvalProofs: ['chat-click'] }, { approvalProofs: ['signed-hook', 'chat-click', 'client'] }, { realUsers: true }]) {
-    assert.equal(gateDecision(input({ approvalRequired: true, approval: answer, ...extra })).allow, false, JSON.stringify(extra));
-  }
-}));
-
 test('a review whose findings are all minor counts; a blocking one, or one that does not say, does not', async () => {
   await withHome(() => {
     const allowed = (r) => gateDecision(input({ reviewRequired: true, review: r })).reasons;

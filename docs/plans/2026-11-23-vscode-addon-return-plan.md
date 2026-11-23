@@ -2,6 +2,8 @@
 
 # Bringing back the VS Code add-on: build plan
 
+> **Parked on 23 November 2026:** the director chose to work as Claude Desktop does, with question cards in the chat only and no panel, so the VS Code add-on was parked again. The build is kept at the tag `parked/vscode-addon-2`. What is parked, and how it comes back, is in `docs/parked.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Bring the VS Code add-on back as a thin, paired desk/1 client: a panel beside Copilot chat in VS Code first, and Claude Code's later.
@@ -304,8 +306,6 @@ From the tag, reworked onto desk/1. Read the old files with `git show parked/vsc
 ## Part 6: One card, one answer for Copilot (group B)
 
 ### Task 6.1: Ask me here in the front desk, and the First Mate's words
-
-> **Note, 23 November 2026.** Two changes from this task as first written. (1) `again <n>` still asks its card in the chat while the panel is live: a number is the director's own request, and `--here` needs a Claude Code session id that Copilot lacks, so a panel line would leave Copilot no way through. Only `cards` and `pull-cards` print the panel line. This also stands in for design line 69. (2) The front desk's read takes no Ask me here mark: the panel's signed read takes it into a handed list (kept until the card is asked or stops waiting, at most 30 minutes from the take), and the front desk's unsigned read only looks at that list. Cards sent to the chat pass the visit's filter that keeps decision cards out while typed replies are on.
 
 **Files:**
 - Modify: `scripts/frontdesk/cli.js` (`cards`, `again`, `pull-cards` read `waiting` with `askHere: true` and hand those cards out in the chat even while the panel is live)

@@ -6,7 +6,7 @@
 // `chat-click` is the agent's own account of the click.
 export const CHAT_PROOFS = Object.freeze(['chat-click']);
 // The steps that need the director's confirmed click outside the chat (the window, Task 4): never a chat click.
-export const CONFIRMED_STEPS = Object.freeze(['lift-stop', 'guardrail-change', 'unattended', 'runbook-step', 'ci-push', 'ask-allowance', 'pairing']);
+export const CONFIRMED_STEPS = Object.freeze(['lift-stop', 'guardrail-change', 'unattended', 'runbook-step', 'ci-push', 'ask-allowance']);
 // A card's hash in a click: its sha256, in full and in lower case.
 export const CARD_HASH = /^[0-9a-f]{64}$/;
 // The helper's rule for a click's hash, as a pure check: the refusal it gives, or null when the hash is a card's sha256.

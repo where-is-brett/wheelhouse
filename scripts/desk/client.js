@@ -60,7 +60,6 @@ export function deskClient({ address, cwd, project, local = 'auto', timeout, cli
       write: async () => ({ ok: false, refused: HELPER_NOT_RUNNING }),
       chatClick: async () => ({ ok: false, refused: HELPER_NOT_RUNNING }),
       confirm: async () => ({ ok: false, refused: HELPER_NOT_RUNNING }),
-      panelApprove: async () => ({ ok: false, refused: HELPER_NOT_RUNNING }),
     };
     core = deskCore({ source: fileSource(found.project, { cwd: cwd ?? found.record?.folder, client: helper, now, waitMs }), recorder, now });
     return core;
@@ -72,9 +71,8 @@ export function deskClient({ address, cwd, project, local = 'auto', timeout, cli
   };
 
   return {
-    // `evidence` is a paired app's signature over the read, which lets it take what the view gives only a paired app.
-    async read(view, args = {}, evidence) {
-      const { got, away } = await ask('read', { view, args, ...(evidence === undefined ? {} : { evidence }) });
+    async read(view, args = {}) {
+      const { got, away } = await ask('read', { view, args });
       if (!away || localCore() === null) return got;
       return { ...(await localCore().read(view, args)), local: true };
     },
@@ -84,9 +82,8 @@ export function deskClient({ address, cwd, project, local = 'auto', timeout, cli
       if (command === 'all-stop' && localCore() !== null) return { ...(await localCore().act(command, args, evidence)), local: true };
       return { ok: false, v: DESK_VERSION, refused: HELPER_NOT_RUNNING, away: true };
     },
-    // `evidence` is a paired app's signature over the watch, which marks the project's panel live on the helper.
-    async watch(cursor = null, evidence) {
-      const { got, away } = await ask('watch', { cursor, ...(evidence === undefined ? {} : { evidence }) });
+    async watch(cursor = null) {
+      const { got, away } = await ask('watch', { cursor });
       if (!away || localCore() === null) return got;
       return { ...(await localCore().watch(cursor)), local: true };
     },

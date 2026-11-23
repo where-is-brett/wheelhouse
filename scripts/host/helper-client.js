@@ -76,7 +76,6 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       plan: post('/update/plan'), //     { folder, tag? } -> { ok, hash, card, lines } | { ok, lines }: the Update card and a hash of the plan, or the one line when there is nothing to ask; refused from a feature session
       apply: post('/update/apply'), //   { folder, hash } -> { ok, started }: only for the plan last shown, never under All stop, the job then running in its own process
       status: post('/update/status'), // { folder } -> { ok, lines, state, asks? }: how the update stands and any card the director must answer; answered while the helper makes way for an update
-      panel: post('/update/panel'), //   { folder, label? } -> { ok, card?, lines }: the card for adding the panel to VS Code, or the director's signed click on it acted on (Install the panel, Not now)
       answer: post('/update/answer'), // { folder, card, label } -> { ok, recorded?, lines }: signs nothing; Not now on the Update card is kept, and a signed answer to a raised card wakes the job
     },
     push: post('/push'), //          { project | cwd, dir, refspec }: a feature session's `cli.js push` and `open-pr` give their worktree as `cwd`, and the helper places the project
@@ -149,7 +148,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     desk: {
       read: post('/desk/read'), //   { v, project | cwd, view, args } -> { ok, v, view, data, lines }: a view, finished
       act: post('/desk/act'), //     { v, project | cwd, command, args, evidence } -> { ok, v, changed } or { ok: false, v, refused }
-      watch: post('/desk/watch'), // { v, project | cwd, cursor, evidence? } -> { ok, v, events, cursor }: the changes since the cursor
+      watch: post('/desk/watch'), // { v, project | cwd, cursor } -> { ok, v, events, cursor }: the changes since the cursor
     },
     state: {
       clone: post('/state/clone'), //   { project }: opens the project's private record, making it the first time

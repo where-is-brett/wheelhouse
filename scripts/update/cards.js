@@ -6,7 +6,7 @@
 import { composeCard } from '../cards/compose.js';
 import { NOT_NOW } from '../lib/calm-words.js';
 import { RELEASE_LABEL } from '../state/card-lines.js';
-import { panelOnCard } from './addon.js';
+import { ADDON_ON_CARD } from './addon.js';
 import { LEAVE_IT, STOP_IT, WAIT_LONGER, helperCard } from './finish.js';
 
 export const UPDATE = 'Update';
@@ -24,46 +24,34 @@ const flat = (text) => String(text).replace(/\s+/g, ' ').trim();
 // change when it is ready) and 'review' when Wheelhouse's review is enough. `put` is 'undo' for a put-back; `carryOn` for an
 // update part-way. `locked` says this computer has Locked, which shows a password window; `others` are the other projects
 // whose Locked stays on an older release. `account` is { from, to } when the account's settings name the catalogue at an old release,
-// which the update changes (one line, named on the card). `removes` names the dropped plugins installed for this project, which the update removes. `addon` is { kind: 'install' | 'update', from?, to } where the Wheelhouse panel for VS Code is to be installed or brought up to date on the director's click of this card, else null. `hash` is the full hash of the plan the card is for.
-export function updateCard({ from, to, says, approval = 'review', locked = false, others = [], put = 'release', carryOn = false, account = null, removes = [], addon = null, hash }) {
+// which the update changes (one line, named on the card). `removes` names the dropped plugins installed for this project, which the update removes. `addon` is true where VS Code lists the Wheelhouse add-on, which the update removes, on the director's click of this card. `hash` is the full hash of the plan the card is for.
+export function updateCard({ from, to, says, approval = 'review', locked = false, others = [], put = 'release', carryOn = false, account = null, removes = [], addon = false, hash }) {
   const back = put === 'undo';
   const title = carryOn ? `Carry on with the update to ${to}` : back ? `Put Wheelhouse back to ${to} \u00b7 ${from} \u2192 ${to}` : `Update Wheelhouse \u00b7 ${from} \u2192 ${to}`;
-  // The lines of what happens; `terse` says the longer ones in fewer words, for a card that holds every line at once.
-  const happensFor = (terse) => {
-    const happens = [
-      `your project gets a small reviewed change naming ${to}, then this computer installs it and hands over to the new helper.`,
-      'About five minutes. Work in progress finishes first.',
-    ];
-    if (account !== null && account !== undefined) {
-      happens.push(`Your account settings name Wheelhouse at ${account.from}; the update changes that one entry to ${account.to}.`);
-    }
-    for (const name of removes) {
-      happens.push(terse
-        ? `${name} is installed for this project; the update removes it, since Wheelhouse carries what it needs.`
-        : `${name} is installed for this project; the update removes it, since Wheelhouse carries the two skills it needs. One you installed for your whole account is left.`);
-    }
-    if (addon !== null && addon !== undefined) happens.push(panelOnCard(addon));
-    if (approval === 'card') {
-      happens.push(terse
-        ? `${to} changes more than its pins, so you approve the change once it is ready; Update only starts it.`
-        : `${to} changes more than its pins, so once the change is ready you approve it, as you approve any change to the safety rules (a card here in Claude Code, the helper's window with another agent). Update starts it; it is not that approval.`);
-    }
-    if (locked) happens.push('Locked on this computer is brought up to date too, which shows a password window.');
-    if (others.length > 0) {
-      happens.push(terse
-        ? `${list(others)} will have the newer Locked and may need updating too.`
-        : `Locked is one copy for the whole computer, so ${list(others)} will have the newer Locked and may need updating as well.`);
-    }
-    return happens;
-  };
-  const compose = (summary, terse = false) => composeCard({
+  const happens = [
+    `your project gets a small reviewed change naming ${to}, then this computer installs it and hands over to the new helper.`,
+    'About five minutes. Work in progress finishes first.',
+  ];
+  if (account !== null && account !== undefined) {
+    happens.push(`Your account settings name Wheelhouse at ${account.from}; the update changes that one entry to ${account.to}.`);
+  }
+  for (const name of removes) {
+    happens.push(`${name} is installed for this project; the update removes it, since Wheelhouse carries the two skills it needs. One you installed for your whole account is left.`);
+  }
+  if (addon === true) happens.push(ADDON_ON_CARD);
+  if (approval === 'card') {
+    happens.push(`${to} changes more than its pins, so once the change is ready you approve it, as you approve any change to the safety rules (a card here in Claude Code, the helper's window with another agent). Update starts it; it is not that approval.`);
+  }
+  if (locked) happens.push('Locked on this computer is brought up to date too, which shows a password window.');
+  if (others.length > 0) happens.push(`Locked is one copy for the whole computer, so ${list(others)} will have the newer Locked and may need updating as well.`);
+  const compose = (summary) => composeCard({
     kind: 'update',
     level: 4,
     ask: title,
     what: title,
     why: `What's new: ${summary}`,
     meanwhile: `Meanwhile: nothing stops; sessions open now keep ${from} until you start a new one.`,
-    checks: `What happens: ${happensFor(terse).join(' ')}`,
+    checks: `What happens: ${happens.join(' ')}`,
     recommend: UPDATE,
     because: 'nothing changes before you click',
     options: [
@@ -74,11 +62,7 @@ export function updateCard({ from, to, says, approval = 'review', locked = false
   }).question;
   const summary = flat(says ?? '') === '' ? NO_SUMMARY : flat(says).slice(0, 300);
   // A summary that cannot sit on a card (it holds a line the prompt record reads as a set line, or runs the card too long) is left out.
-  // A card that holds every line at once is made again with the longer lines in fewer words, and last without the summary.
-  for (const attempt of [[summary, false], [summary, true], [NO_SUMMARY, false]]) {
-    try { return compose(...attempt); } catch { /* the next form */ }
-  }
-  return compose(NO_SUMMARY, true);
+  try { return compose(summary); } catch { return compose(NO_SUMMARY); }
 }
 
 // The card that asks whether to stop an old helper that can't be asked, as AskUserQuestion takes it (section 7.3).

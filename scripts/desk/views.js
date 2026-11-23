@@ -19,8 +19,7 @@ import { callsFrom, isHelmCall } from '../decisions/calls.js';
 import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { crewNow } from '../crew/runs.js';
-import { panelLive, takeAskHere, handedAskHere, passHanded } from './panel-live.js';
-import { takeTurn } from '../lib/session-files.js';
+import { paneLive } from '../lib/session-files.js';
 import { registeredProjects } from '../lib/projects.js';
 import { computerId } from '../lib/paths.js';
 import { agentInFolder } from '../agents/names.js';
@@ -32,19 +31,6 @@ import { answeredLines, buildLines, runningLines, shippedLines } from '../engine
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const flat = (x) => (typeof x === 'string' ? x.replace(/\s+/g, ' ').trim() : x);
 const LABELS = Object.values(SETTINGS).map((setting) => setting.label);
-// The cards a paired app's read took as Ask me here that still wait and haven't been asked (in the chat, or by the picker) since
-// they were taken: what the front desk asks in the chat, once. `waiting` is the waiting view's cards, each with `asked`.
-function askedHere(project, nowMs, waiting) {
-  const cards = Array.isArray(waiting) ? waiting : [];
-  return handedAskHere(project, nowMs)
-    .filter(({ id, takenAt }) => {
-      const card = cards.find((c) => c?.id === id);
-      const asked = card?.asked?.at === undefined ? NaN : Date.parse(card.asked.at);
-      return card !== undefined && !(asked >= takenAt);
-    })
-    .map(({ id }) => id);
-}
-
 export const NO_RECORD = 'This project has no record to show yet';
 
 // How far back "Decided in the last hour:" looks, its lead, and the most lines it lists.
@@ -480,24 +466,7 @@ const VIEWS = {
   // `cards` and `answers` ask for what the helper's views give with them. The record's
   // other views come with it, for the front desk's own lists (the rulebook, ideas, glossary, levels).
   // With `outcomes: { since }` the decided cards come too (decidedOutcomes), for the front desk's `card` and `views`.
-  async waiting(args, source, { now, client = null } = {}) {
-    // `paneOnly`: with no views built, for a hook that must answer quickly, this read does three things.
-    //   - It reports whether a panel is live (`paneLive`) and how many cards the director moved to the chat that wait to be asked
-    //     there (`handed`).
-    //   - Given `passHere` (card ids), it uses up a taken mark: `passed` says whether the panel handed every one to the chat, once.
-    //   - Given `turn` (a session's id, for an agent whose hooks can't write), it records a turn time: it gives when that session's
-    //     last turn began (`turnAt`, an ISO time, or null for a first turn) and keeps this turn's time in its place.
-    if (args.paneOnly === true) {
-      const when = typeof now === 'function' ? now() : new Date();
-      // A paired app's signed read may take its Ask me here marks here too (`askHere`), with no views built.
-      const taken = args.askHere === true && client !== null && typeof source.project === 'string' ? { askHere: takeAskHere(source.project, when.getTime()) } : {};
-      // `passHere` (card ids): says whether the panel handed every one to the chat, once (panel-live.js `passHanded`), for the card-check hook.
-      const passed = Array.isArray(args.passHere) ? { passed: typeof source.project === 'string' && passHanded(source.project, args.passHere.filter((id) => typeof id === 'string'), when.getTime()) } : {};
-      const turn = typeof args.turn === 'string' && args.turn !== '' ? takeTurn(args.turn, when.getTime()) : undefined;
-      const turned = turn === undefined ? {} : { turnAt: turn === null ? null : new Date(turn).toISOString() };
-      const handedCount = typeof source.project === 'string' ? handedAskHere(source.project, when.getTime()).length : 0;
-      return { ok: true, data: { paneLive: typeof source.project === 'string' && panelLive(source.project, when.getTime()), handed: handedCount, ...taken, ...passed, ...turned }, lines: [] };
-    }
+  async waiting(args, source, { now } = {}) {
     const got = await recordOf(source, { cards: true, answers: args.answers === true });
     if (got.refused) return { ok: false, refused: got.refused };
     const numbered = numberedWaiting(got.views, got.cards ?? []);
@@ -517,17 +486,10 @@ const VIEWS = {
     const stuck = args.stuck === true && typeof source.events === 'function' ? { stuck: stuckNotes(source.events()) } : {};
     // With `helmNotes: true`, the notes a piece's crew wrote of what the director did at its helm, oldest first.
     const helmNotes = args.helmNotes === true && typeof source.events === 'function' ? { helmNotes: helmNoteEvents(source.events()) } : {};
-    // Whether a live panel is beside this project's chat now: a paired app's signed watch, no older than PANEL_LIVE_MS, as the
-    // helper keeps it (panel-live.js). Read here, outside the sandbox, for the front desk's `cards` and `card`, which can't read
-    // it themselves (it decides which cards the chat asks and which stay in the panel).
-    const pane = { paneLive: typeof source.project === 'string' && panelLive(source.project, at.getTime()) };
-    // With `askHere: true`: a read a paired app signed takes the cards the director marked Ask me here (given once, and handed to
-    // the chat); any other read gives the cards so taken that still wait and haven't been asked since (the front desk's read,
-    // which asks them in the chat), and takes no mark, so no one else can move a mark the director made. An unsigned `passHere`
-    // (paneOnly) can only use up a mark the panel has already taken; the card stays in the panel's list.
-    const here = args.askHere === true
-      ? { askHere: typeof source.project !== 'string' ? [] : client !== null ? takeAskHere(source.project, at.getTime()) : askedHere(source.project, at.getTime(), got.views?.waiting) } : {};
-    return { ok: true, data: { ...got, numbered, ...given, ...decisions, ...calls, ...stuck, ...helmNotes, ...pane, ...here }, lines };
+    // With `session`, whether a live panel is beside that session now: read here, outside the sandbox, for the front desk's
+    // `cards` and `card`, which can't read the session's files themselves (it decides which cards the picker can never mark).
+    const pane = typeof args.session === 'string' && args.session !== '' ? { paneLive: paneLive(args.session, at.getTime()) } : {};
+    return { ok: true, data: { ...got, numbered, ...given, ...decisions, ...calls, ...stuck, ...helmNotes, ...pane }, lines };
   },
 
   async card(args, source) {
@@ -593,8 +555,8 @@ const VIEWS = {
 };
 
 // readView(view, args, source, { now }) -> { ok, view, data, lines } | { ok: false, refused }.
-export async function readView(view, args, source, { now = () => new Date(), client = null } = {}) {
-  const answer = await VIEWS[view](args ?? {}, source, { now, client });
+export async function readView(view, args, source, { now = () => new Date() } = {}) {
+  const answer = await VIEWS[view](args ?? {}, source, { now });
   return answer.ok ? { ...answer, view } : answer;
 }
 

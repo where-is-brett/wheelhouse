@@ -32,7 +32,7 @@ import { NO_TERMINAL, bootstrap, terminalAsk } from './bootstrap.js';
 
 export class CliError extends Error {}
 
-export const USAGE = 'Commands: plan [<tag>], apply <hash>, status, wait, answer <card> <label>, panel [<label>], bootstrap <project folder>';
+export const USAGE = 'Commands: plan [<tag>], apply <hash>, status, wait, answer <card> <label>, bootstrap <project folder>';
 export const WAIT_MS = 90 * 1000;
 export const WAIT_EVERY_MS = 2 * 1000;
 // The update's journal may still be the last update's for a moment after apply, so a first look comes after this.
@@ -114,11 +114,6 @@ export async function main(argv, {
       if (!CARD.test(rest[0])) throw new CliError('Give the card as plan or status named it');
       if (!ANSWERS.includes(rest[1])) throw new CliError(`Give the label of one of the card's options: ${ANSWERS.join(', ')}`);
       const { ok, ...answer } = await ask(helper.update.answer, { folder, card: rest[0], label: rest[1] }); // eslint-disable-line no-unused-vars
-      json(answer);
-    } else if (form === 'panel' && rest.length <= 1) {
-      // The question of adding the panel to VS Code (its own, apart from Update), or the director's answer to it.
-      if (rest.length === 1 && !['Install the panel', 'Not now'].includes(rest[0])) throw new CliError('Give the label of one of the card\'s options: Install the panel, Not now');
-      const { ok, ...answer } = await ask(helper.update.panel, rest.length === 1 ? { folder, label: rest[0] } : { folder }); // eslint-disable-line no-unused-vars
       json(answer);
     } else if (form === 'bootstrap' && rest.length === 1) {
       // A typed answer at a real terminal stands in for the click (bootstrap.js). Without one, nothing is read or changed.

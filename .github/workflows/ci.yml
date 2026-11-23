@@ -84,27 +84,6 @@ jobs:
       - if: needs.plan.outputs.tests == 'run' && matrix.os == 'windows-latest'
         run: node --test --import ./tests/helpers/test-home.js --test-timeout=1500000 "tests/**/*.test.js"
 
-  # The VS Code add-on: it packs to the hash recorded in vscode/vsix.sha256 (a change to vscode/ needs
-  # `node scripts/addon/hash.js --write` run and committed), and the packed file holds the proof that only
-  # the panel's own buttons reach an act.
-  addon:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
-      - run: node scripts/addon/hash.js --check
-      - name: Pack the add-on and check what the packed file holds
-        run: |
-          WORK=$(mktemp -d)
-          node scripts/addon/pack.js "$WORK/panel.vsix"
-          node scripts/addon/hash.js --check "$WORK/panel.vsix"
-          unzip -q "$WORK/panel.vsix" 'extension/*' -d "$WORK/unpacked"
-          mv "$WORK/unpacked/extension" "$WORK/unpacked/vscode"
-          node scripts/addon/validate.js "$WORK/unpacked"
-
   # Fetches each upstream shallow at the manifest's commit and checks the fingerprints, the
   # register's anchors and carried text, and the marketplace's pins.
   lineage:
@@ -120,7 +99,7 @@ jobs:
   # The test jobs' names change with the number of parts, so main's rule requires this job instead.
   # always() runs it even when a job it needs failed or was skipped, so it fails rather than skips.
   all-checks:
-    needs: [plan, test, addon, lineage]
+    needs: [plan, test, lineage]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
