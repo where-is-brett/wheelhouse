@@ -16,6 +16,8 @@ import { confirmLine } from '../state/card-lines.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { signsOn } from '../hooks/prompt-record.js';
 import { computerId } from '../lib/paths.js';
+import { CONFIRMED_STEPS } from '../agents/chat-clicks.js';
+import { isDecisionCard } from '../decisions/pending.js';
 
 export const CLIENT_WINDOW_MS = 5 * 60 * 1000;
 export const EVIDENCE_FORMS = Object.freeze(['signed', 'window', 'chat-click', 'client']);
@@ -78,7 +80,7 @@ function checkSigned(command, args, records, { enrolled, views, events, computer
   return { ok: true, records: out };
 }
 
-function checkClient(command, args, { client, at, sig }, { clients, now }) {
+export function checkClient(command, args, { client, at, sig }, { clients, now }) {
   const entry = (Array.isArray(clients) ? clients : []).find((c) => c?.id === client);
   if (entry === undefined) return no('That app was never paired with Wheelhouse');
   const atMs = Date.parse(at);
@@ -95,6 +97,28 @@ function checkClient(command, args, { client, at, sig }, { clients, now }) {
   return no('That app\'s signature doesn\'t check');
 }
 
+// The waiting card `id`'s data, or null.
+function cardOf(views, id) {
+  const card = (Array.isArray(views?.waiting) ? views.waiting : []).find((c) => c?.id === id);
+  return isPlain(card?.data) ? card.data : null;
+}
+
+// What a paired app may decide, never more than a click in the chat (the helper's doChatClick): a plain option
+// on any card, and a signing option on a merge card only. Never a confirmed step, a decision, or any other
+// signing option. `decides` is true where the option signs on a merge card.
+function clientMayAnswer(command, args, views) {
+  if (!CARD_COMMANDS.includes(command)) return { ok: true, decides: false };
+  const card = String(args?.card ?? '');
+  const label = command === 'answer' ? args?.option : undefined;
+  const data = cardOf(views, card);
+  const asked = typeof data?.question === 'string' ? data.question : card;
+  const signs = typeof label === 'string' && signsOn(label, asked);
+  if (signs && CONFIRMED_STEPS.some((step) => card === step || card.startsWith(`${step}-`))) return no('That step is confirmed in Wheelhouse\'s window, never from the panel');
+  if (command === 'answer' && isDecisionCard(data)) return no('A decision is answered in Wheelhouse\'s window or by a typed reply, never from the panel');
+  if (signs && !CHAT_DECIDES.test(card)) return no('The panel can\'t decide that card: answer it in Wheelhouse\'s window');
+  return { ok: true, decides: signs };
+}
+
 // The words of the card a click names, by its id in the views, or the name as given: a click in the chat names either.
 const askedOn = (views, card) => String(views?.waiting?.find?.((c) => c?.id === card)?.data?.question ?? card);
 
@@ -104,7 +128,12 @@ export function checkEvidence(command, args, evidence, { enrolled = [], clients 
   try {
     if (!isPlain(evidence) || !EVIDENCE_FORMS.includes(evidence.form)) return no('That evidence isn\'t a form Wheelhouse takes');
     if (evidence.form === 'signed') return checkSigned(command, args, evidence.records, { enrolled, views, events, computer });
-    if (evidence.form === 'client') return checkClient(command, args, evidence, { clients, now });
+    if (evidence.form === 'client') {
+      const got = checkClient(command, args, evidence, { clients, now });
+      if (!got.ok) return got;
+      const may = clientMayAnswer(command, args, views);
+      return may.ok ? { ...got, decides: may.decides } : may;
+    }
     if (evidence.form === 'window') return command === 'answer' ? { ok: true, records: [], window: true } : no('The confirm window decides an answer only');
     // A click in the chat.
     if (evidence.proof !== 'chat-click') return no('A click in the chat is recorded as chat-click');

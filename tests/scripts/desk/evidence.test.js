@@ -21,6 +21,7 @@ function withKey(fn) {
 }
 const context = (enrolled, extra = {}) => ({ enrolled, clients: [], views, events: [], now, ...extra });
 const answer = { card: 'c1', option: 'Approve' };
+const plainAnswer = { card: 'c1', option: 'Not now' };
 
 test('a record signed by this computer for the card is accepted', () => withKey(async ({ enrolled }) => {
   const got = checkEvidence('answer', answer, { form: 'signed', records: [approve()] }, context(enrolled));
@@ -73,7 +74,7 @@ function client(id = 'app-1') {
 test('a paired client\'s signature is accepted', () => withKey(async ({ enrolled }) => {
   const app = client();
   const at = NOW;
-  const got = checkEvidence('answer', answer, { form: 'client', client: 'app-1', at, sig: app.signs('answer', answer, at) }, context(enrolled, { clients: [app.entry] }));
+  const got = checkEvidence('answer', plainAnswer, { form: 'client', client: 'app-1', at, sig: app.signs('answer', plainAnswer, at) }, context(enrolled, { clients: [app.entry] }));
   assert.equal(got.ok, true, got.refused);
 }));
 
@@ -102,4 +103,65 @@ test('a client signature over other words is refused', () => withKey(async ({ en
 test('an evidence form the desk doesn\'t know is refused', () => withKey(async ({ enrolled }) => {
   assert.equal(checkEvidence('answer', answer, { form: 'trust-me' }, context(enrolled)).ok, false);
   assert.equal(checkEvidence('answer', answer, { form: 'signed', records: [] }, context(enrolled)).ok, false);
+}));
+
+// What a paired app may decide: never more than a click in the chat.
+const SHA = 'a'.repeat(40);
+const shown = (id, data) => ({ waiting: [{ id, at: '2026-10-29T09:00:00.000Z', data }] });
+const SETTING_CARD = { kind: 'setting', question: 'Change the setting?', options: ['Confirm', 'Not now'] };
+const MERGE_CARD = { kind: 'approve-merge', question: 'Merge pull request 12?', options: ['Approve', 'Not now'] };
+const DECISION_CARD = { kind: 'answer', question: 'Which way should the export go?', options: ['Spreadsheet', 'Plain text', 'Not now'] };
+const LIFT_CARD = { kind: 'lift-stop', question: 'Lift All stop?', options: ['Lift STOP', 'Not now'] };
+function paired(args, views, command = 'answer') {
+  return withKey(async ({ enrolled }) => {
+    const app = client('vscode-panel');
+    const evidence = { form: 'client', client: 'vscode-panel', at: NOW, sig: app.signs(command, args, NOW) };
+    return checkEvidence(command, args, evidence, context(enrolled, { clients: [app.entry], views }));
+  });
+}
+
+test('a paired app\'s answer to a signing option on a non-merge card is refused, naming the window', async () => {
+  const got = await paired({ card: 'c1', option: 'Confirm' }, shown('c1', SETTING_CARD));
+  assert.equal(got.ok, false);
+  assert.match(got.refused, /window/);
+});
+
+test('a paired app\'s signing option on a non-merge card is refused for every signing label', async () => {
+  for (const option of ['Approve', 'Confirm', 'Lift All stop', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix', 'Pair it', 'Unpair it', 'Send it back']) {
+    const got = await paired({ card: 'c1', option }, shown('c1', SETTING_CARD));
+    assert.equal(got.ok, false, `${option} on a non-merge card`);
+  }
+});
+
+test('a paired app\'s answer on a confirmed step is refused', async () => {
+  const got = await paired({ card: 'lift-stop-1', option: 'Lift STOP' }, shown('lift-stop-1', LIFT_CARD));
+  assert.equal(got.ok, false);
+  assert.match(got.refused, /window/);
+  const named = await paired({ card: 'runbook-step-1', option: 'Approve' }, shown('runbook-step-1', MERGE_CARD));
+  assert.equal(named.ok, false, 'a card named for a confirmed step is never decided from the panel');
+});
+
+test('a paired app\'s answer on a decision is refused, naming the window or a typed reply', async () => {
+  const got = await paired({ card: 'c1', option: 'Spreadsheet' }, shown('c1', DECISION_CARD));
+  assert.equal(got.ok, false);
+  assert.match(got.refused, /window|reply/);
+});
+
+test('a paired app\'s Approve on a merge card passes, marked as deciding', async () => {
+  const got = await paired({ card: 'merge-12', option: 'Approve', commit: SHA }, shown('merge-12', MERGE_CARD));
+  assert.deepEqual([got.ok, got.decides, got.client], [true, true, 'vscode-panel']);
+});
+
+test('a paired app\'s plain option on any card passes, deciding nothing', async () => {
+  for (const [id, data] of [['c1', SETTING_CARD], ['merge-12', MERGE_CARD], ['lift-stop-1', LIFT_CARD]]) {
+    const got = await paired({ card: id, option: 'Not now' }, shown(id, data));
+    assert.deepEqual([got.ok, got.decides], [true, false], id);
+  }
+});
+
+test('a signature over one answer doesn\'t carry another', () => withKey(async ({ enrolled }) => {
+  const app = client('vscode-panel');
+  const sent = { card: 'c1', option: 'Confirm' };
+  const evidence = { form: 'client', client: 'vscode-panel', at: NOW, sig: app.signs('answer', { card: 'merge-12', option: 'Not now' }, NOW) };
+  assert.equal(checkEvidence('answer', sent, evidence, context(enrolled, { clients: [app.entry], views: shown('c1', SETTING_CARD) })).ok, false);
 }));
