@@ -106,7 +106,7 @@ function checkSigned(command, args, records, { enrolled, views, events, computer
 export function checkClient(command, args, { client, at, sig }, { clients, now, project }) {
   if (typeof project !== 'string' || project === '') return no('A paired app\'s signature names the project it is for');
   const entry = (Array.isArray(clients) ? clients : []).find((c) => c?.id === client);
-  if (entry === undefined) return no('That app was never paired with Wheelhouse');
+  if (entry === undefined) return no('That app isn\'t paired with Wheelhouse. It was never paired, or it was unpaired.');
   const atMs = Date.parse(at);
   const nowMs = now().getTime();
   if (!Number.isFinite(atMs) || Math.abs(nowMs - atMs) > CLIENT_WINDOW_MS) return no('That app\'s signature is more than five minutes old');

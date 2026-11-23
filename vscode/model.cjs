@@ -23,6 +23,36 @@ const str = (x) => (typeof x === 'string' ? x : '');
 const APPROVAL_SET_LINE = /^Approve pull request #[1-9][0-9]* at commit [0-9a-f]{12}$/;
 const isMergeApproval = (data) => isRecord(data) && data.kind === 'approval' && data.level === 3 && typeof data.line === 'string' && APPROVAL_SET_LINE.test(data.line);
 
+// A card's text as the director reads it, by the rule of scripts/state/card-lines.js chatCopy (a test compares the two): the last
+// two lines go only when they are a set line and the reply code made from exactly that line. The code is the proof that the line
+// is one the helper composed, so the list of set lines is not copied. The Lift All stop line and the baseline line stay, as
+// they do in core. A setup card's last line, "as listed, <hash>", is left out too, as it is for the director's reading.
+const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789';
+const LIFT_STOP_LINES = ['Lift All stop and let the agents carry on', 'Lift STOP and let the agents carry on'];
+const BASELINE_WORDS = 'Record the private note\'s figures as the baseline';
+const LISTED_LINE = /^(?:Set up step [0-9]{1,2} as listed|Confirm all [1-9][0-9]* rules? as listed), [0-9a-f]{12}$/;
+
+function replyCode(line) {
+  let n = crypto.createHash('sha256').update(String(line)).digest().readBigUInt64BE(0);
+  const base = BigInt(CODE_ALPHABET.length);
+  let code = '';
+  for (let i = 0; i < 4; i += 1) {
+    code += CODE_ALPHABET[Number(n % base)];
+    n /= base;
+  }
+  return code;
+}
+
+function readable(text) {
+  const lines = text.split('\n');
+  if (lines.length >= 3) {
+    const [line, code] = lines.slice(-2);
+    if (code === `Reply code: ${replyCode(line)}` && !line.startsWith(BASELINE_WORDS) && !LIFT_STOP_LINES.includes(line)) return lines.slice(0, -2).join('\n');
+  }
+  if (lines.length > 1 && LISTED_LINE.test(lines.at(-1))) return lines.slice(0, -1).join('\n');
+  return text;
+}
+
 function cardOf(entry) {
   const data = isRecord(entry.data) ? entry.data : {};
   const id = str(entry.id);
@@ -38,7 +68,7 @@ function cardOf(entry) {
     hash: crypto.createHash('sha256').update(question).digest('hex').slice(0, CARD_HASH_CHARS),
     kind: str(data.kind),
     header: str(parts.header),
-    question,
+    question: readable(question),
     what: str(parts.what),
     why: str(parts.why),
     meanwhile: str(parts.meanwhile),
@@ -99,13 +129,17 @@ const noticeLines = (notices) => (Array.isArray(notices) ? notices : []).flatMap
 
 // stateOf({ state, says, fingerprint, glance, waiting, work, allStop, notices, realUsers }) -> the drawing's state.
 function stateOf(model) {
-  const waiting = waitingCards(model.waiting).map(cardOf);
+  const moved = isRecord(model.moved) ? model.moved : {};
+  const waiting = waitingCards(model.waiting).map(cardOf).map((c) => (moved[c.id] === c.hash ? { ...c, moved: true } : c));
   const notices = noticeLines(model.notices);
-  const project = [model.waiting, model.work, model.glance].map((d) => (Array.isArray(d?.names) ? str(d.names[0]) : '')).find((n) => n !== '') ?? '';
+  // A name the desk gives, else the folder's name; the desk's slug ("host__name") is never shown whole.
+  const slug = [model.waiting, model.work, model.glance].map((d) => (Array.isArray(d?.names) ? str(d.names[0]) : '')).find((n) => n !== '') ?? '';
+  const project = slug !== '' && !slug.includes('__') ? slug : str(model.projectName) !== '' ? str(model.projectName) : slug.slice(slug.lastIndexOf('__') + 2);
   return {
     state: model.state,
     notice: model.says ?? (notices.length > 0 ? notices.join(' ') : undefined),
     notices,
+    ...(str(model.said) !== '' ? { answered: model.said } : {}),
     ...(project !== '' ? { project } : {}),
     fingerprint: model.fingerprint,
     glance: str(model.glance?.glance),
@@ -115,4 +149,4 @@ function stateOf(model) {
   };
 }
 
-module.exports = { stateOf, cardOf, isMergeApproval, waitingCards, isOpen, stepWords, CONFIRMED_STEPS, SIGNED_LABELS };
+module.exports = { readable, replyCode, stateOf, cardOf, isMergeApproval, waitingCards, isOpen, stepWords, CONFIRMED_STEPS, SIGNED_LABELS };

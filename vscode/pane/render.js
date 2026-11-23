@@ -9,7 +9,8 @@
 //     realUsers,                  // the project has real users: a merge is approved in the window
 //     held,                       // how many cards wait out of sight, for Pull cards
 //     cards: [{ id, hash, kind, header, question, what, why, meanwhile, recommendation, waited,
-//               merge, confirmed, decision, options: [{ label, says, recommended, signs }] }],
+//               merge, confirmed, decision, moved,  // moved: asked in the chat now
+//               options: [{ label, says, recommended, signs }] }],
 //     work: [{ title, state }] }
 //
 // The page names one nonce, in its content security policy, on its body and on every button. Its one script posts
@@ -25,6 +26,7 @@ const path = require('node:path');
 const STATES = ['no-helper', 'update', 'unpaired', 'pairing', 'live', 'stopped'];
 const NOT_NOW = 'Not now';
 const ASK_HERE = 'Ask in the chat';
+const IN_CHAT = 'Moved to the chat. Answer it there; it leaves this panel once it is answered.';
 const RECOMMENDED = 'Recommended';
 const IN_WINDOW = 'Answer this one in Wheelhouse\'s window. It can\'t be decided from here.';
 const MERGE_WINDOW = 'This project has real users, so a merge is approved in Wheelhouse\'s window or on the code host, not here.';
@@ -93,10 +95,15 @@ function answersOf(card, realUsers) {
 function drawCard(card, nonce, realUsers) {
   const id = text(card.id);
   const own = { card: id, hash: text(card.hash) };
-  const { usable, note } = answersOf(card, realUsers);
+  const moved = card.moved === true;
+  const { usable: all, note: window } = answersOf(card, realUsers);
+  const usable = moved ? [] : all;
+  const note = moved ? '' : window;
   const recommended = usable.find((o) => o.recommended === true) ?? null;
   const title = text(card.header) || text(card.kind) || 'Question';
-  const body = [text(card.question), text(card.what) !== text(card.question) ? text(card.what) : ''].filter(Boolean);
+  // The question once: the card's words already carry what it is about, so `what` is added only when they don't hold it.
+  const asked = text(card.question);
+  const body = [asked, text(card.what) !== '' && !asked.includes(text(card.what)) ? text(card.what) : ''].filter(Boolean);
   const reasons = [text(card.why), text(card.meanwhile)].filter(Boolean);
   const buttons = usable.map((o) => {
     const mark = o === recommended ? `<span class="mark">${esc(RECOMMENDED)}</span>` : '';
@@ -110,9 +117,10 @@ function drawCard(card, nonce, realUsers) {
     + body.map((p) => `<p class="body">${esc(p)}</p>`).join('')
     + (text(card.waited) ? `<p class="note">${esc(card.waited)}</p>` : '')
     + (text(card.recommendation) && recommended === null ? `<p class="band">${esc(`${RECOMMENDED}: ${card.recommendation}`)}</p>` : '')
+    + (moved ? `<p class="band" role="status">${esc(IN_CHAT)}</p>` : '')
     + (note ? `<p class="band warn" role="status">${esc(note)}</p>` : '')
     + (buttons.length > 0 ? `<div class="options">${buttons.join('')}</div>` : '')
-    + `<div class="more">${button(NOT_NOW, 'quiet', nonce, { act: 'not-now', ...own })}${button(ASK_HERE, 'quiet', nonce, { act: 'ask-here', ...own })}</div>`
+    + (moved ? '' : `<div class="more">${button(NOT_NOW, 'quiet', nonce, { act: 'not-now', ...own })}${button(ASK_HERE, 'quiet', nonce, { act: 'ask-here', ...own })}</div>`)
     + (reasons.length > 0 ? `<details class="why"><summary>Why this comes to you</summary>${reasons.map((p) => `<p>${esc(p)}</p>`).join('')}</details>` : '')
     + `</section>`;
 }

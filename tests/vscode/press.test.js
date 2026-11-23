@@ -275,8 +275,6 @@ test('the add-on hands every message of the panel to the press, with the nonce o
 test('a refusal from the helper is shown to the director in its own words', async () => {
   const ran = await wired();
   const { view, desk, vscode } = ran;
-  const shown = [];
-  vscode.window.showInformationMessage = async (words) => { shown.push(words); };
   const handlers = [];
   view.webview.onDidReceiveMessage = (fn) => { handlers.push(fn); return { dispose() {} }; };
   desk.act = async () => ({ ok: false, refused: 'This project has real users, so approve in the window' });
@@ -285,5 +283,19 @@ test('a refusal from the helper is shown to the director in its own words', asyn
   const nonce = /<p>([0-9a-f]+)<\/p>/.exec(view.html)[1];
   await handlers[0]({ type: 'press', nonce, card: MERGE.id, hash: hashOf(MERGE.data.question), option: 'Approve' });
   await settle();
-  assert.deepEqual(shown, ['This project has real users, so approve in the window']);
+  assert.equal(ran.box.last.state.answered, 'This project has real users, so approve in the window');
+});
+
+test('a card asked in the chat is marked as moved', async () => {
+  const ran = await wired();
+  const { view, vscode, box } = ran;
+  const handlers = [];
+  view.webview.onDidReceiveMessage = (fn) => { handlers.push(fn); return { dispose() {} }; };
+  vscode.seen.providers.get(require('../../vscode/extension.cjs').PANEL_ID).resolveWebviewView(view);
+  await settle();
+  const nonce = /<p>([0-9a-f]+)<\/p>/.exec(view.html)[1];
+  await handlers[0]({ type: 'ask-here', nonce, card: PLAIN.id, hash: hashOf(PLAIN.data.question) });
+  await settle();
+  assert.equal(box.last.state.cards.find((c) => c.id === PLAIN.id).moved, true);
+  assert.equal(box.last.state.cards.find((c) => c.id === MERGE.id).moved, undefined);
 });

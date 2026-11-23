@@ -49,7 +49,7 @@ export function panelCard({ to, token }) {
     what: `The panel (${to}) is a small panel beside the chat that shows your cards.`,
     why: 'It adds software to VS Code on this computer, so it is your choice. Wheelhouse works in the chat without it.',
     options: [
-      { label: INSTALL_THE_PANEL, says: 'Wheelhouse adds it to VS Code now. VS Code then needs a reload.' },
+      { label: INSTALL_THE_PANEL, says: 'Wheelhouse adds it to VS Code now. VS Code then needs a reload, and a Pair it step in Wheelhouse\'s window follows, so the panel\'s clicks count.' },
       { label: NOT_NOW_PANEL, says: 'Nothing is added, and the panel is not offered again until a release that adds features.' },
     ],
     recommend: INSTALL_THE_PANEL,

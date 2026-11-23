@@ -9,7 +9,7 @@ import { CONFIRMED_STEPS as CORE_STEPS } from '../../scripts/agents/chat-clicks.
 import { isOpen as coreIsOpen } from '../../scripts/desk/views.js';
 import { isMergeApproval as coreIsMergeApproval } from '../../scripts/desk/evidence.js';
 
-const { stateOf, stepWords, isMergeApproval, isOpen, CONFIRMED_STEPS, SIGNED_LABELS } = require('../../vscode/model.cjs');
+const { readable, stateOf, stepWords, isMergeApproval, isOpen, CONFIRMED_STEPS, SIGNED_LABELS } = require('../../vscode/model.cjs');
 
 const LINE = 'Approve pull request #12 at commit aaaaaaaaaaaa';
 const merge = { id: '5b0e6f0a-1b6c-4d7e-9a53-0c2f6a4d8e11', data: { kind: 'approval', level: 3, line: LINE, question: 'Merge pull request 12?', options: ['Approve', 'Not now'], recommend: 'Approve', parts: { what: 'It changes a page.', header: 'Approval' } } };
@@ -86,4 +86,32 @@ test('a state with no views draws as little as possible', () => {
 test('the add-on reads a merge approval as core does', () => {
   const cases = [merge.data, { ...merge.data, level: 4 }, { ...merge.data, kind: 'runbook' }, { ...merge.data, line: 'Do the step' }, { ...merge.data, line: undefined }, { ...merge.data, line: 'Approve pull request #0 at commit aaaaaaaaaaaa' }, null, 'x', []];
   for (const data of cases) assert.equal(isMergeApproval(data), coreIsMergeApproval(data), JSON.stringify(data));
+});
+
+test('a card is shown without its reply code and set line, and a project by a plain name', () => {
+  const question = 'Put pull request #1 live?\nProposed change #1 adds a shout.\nApprove pull request #1 at commit b881b780e107\nReply code: PN78';
+  const waiting = { names: ['local__vscode-part9'], views: { waiting: [{ id: 'c1', data: { question, parts: { what: 'Proposed change #1 adds a shout.' } } }] } };
+  const out = stateOf({ state: 'live', projectName: 'My shop', waiting });
+  assert.equal(out.cards[0].question, 'Put pull request #1 live?\nProposed change #1 adds a shout.');
+  assert.equal(out.project, 'My shop');
+  assert.equal(stateOf({ state: 'live', waiting }).project, 'vscode-part9');
+});
+
+test('the add-on\'s reading of a card matches core\'s chatCopy, including the Lift card', async () => {
+  const { chatCopy, replyCode: coreCode, replyCodeLine, LIFT_STOP, LIFT_STOP_EARLIER } = await import('../../scripts/state/card-lines.js');
+  const withCode = (body, line) => `${body}\n${line}\n${replyCodeLine(coreCode(line))}`;
+  const approve = 'Approve pull request #1 at commit b881b780e107';
+  const samples = [
+    withCode('Put it live?\nIt adds a shout.', approve),
+    withCode('Lift it?', LIFT_STOP),
+    withCode('Lift it?', LIFT_STOP_EARLIER),
+    'A plain card\nwith two lines',
+    'Put it live?\nReply code: ZZZZ',
+    `Put it live?\n${approve}\nReply code: ZZZZ`,
+    `Reply code: AAAA\nPut it live?\n${approve}`,
+    '',
+  ];
+  for (const card of samples) assert.equal(readable(card), chatCopy(card), JSON.stringify(card));
+  assert.equal(readable(samples[0]), 'Put it live?\nIt adds a shout.');
+  assert.equal(readable(samples[1]), samples[1]);
 });

@@ -16,6 +16,7 @@
 // visible, and stops when it hides.
 'use strict';
 
+const path = require('node:path');
 const { helperAddress, projectIdFor } = require('./resolver.cjs');
 const { deskClient } = require('./desk-client.cjs');
 const { loadKey } = require('./key.cjs');
@@ -25,8 +26,9 @@ const { press, askToPair } = require('./press.cjs');
 
 const OPEN_PANEL = 'wheelhouse.openPanel';
 const PANEL_ID = 'wheelhouse.panel';
-// The signed watch renews this often while the view is visible (the helper counts the panel live for 45 seconds).
-const WATCH_MS = 10000;
+// The signed watch renews this often while the view is visible: a new card shows within a few seconds, and well inside
+// the helper's 45 seconds (it needs a watch at least every 15).
+const WATCH_MS = 3000;
 const APP_NAME = 'Wheelhouse for VS Code';
 
 const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }[c]));
@@ -71,7 +73,7 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
   const render = deps.render ?? defaultRender();
   const projectNow = deps.project ?? (() => (typeof folder === 'string' ? projectIdFor(folder) : null));
 
-  const model = { state: 'no-helper', says: SAYS.looking, looked: false, fingerprint: key.fingerprint ?? '', glance: null, waiting: null, work: null, count: 0, allStop: false, notices: [] };
+  const model = { state: 'no-helper', says: SAYS.looking, looked: false, said: '', saidCard: '', moved: {}, projectName: typeof folder === 'string' ? path.basename(folder) : '', fingerprint: key.fingerprint ?? '', glance: null, waiting: null, work: null, count: 0, allStop: false, notices: [] };
   // `askedUp`: this helper start has been asked to pair once already, so a later tick doesn't ask again until the
   // helper has gone away and come back.
   const run = { view: null, timer: null, cursor: null, askedUp: false, pending: false, busy: false, loops: 0 };
@@ -126,6 +128,11 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
       work: work.ok ? work.data : model.work,
     });
     model.count = waitingCards(model.waiting).length;
+    // A card that has gone from the list was answered, or left, so it is no longer marked as moved.
+    const here = new Set(waitingCards(model.waiting).map((c) => c.id));
+    for (const id of Object.keys(model.moved)) if (!here.has(id)) delete model.moved[id];
+    // A refusal about a card that has gone is of no use now.
+    if (model.saidCard !== '' && !here.has(model.saidCard)) { model.said = ''; model.saidCard = ''; }
     return set(model.allStop ? 'stopped' : 'live');
   }
 
@@ -178,14 +185,21 @@ async function activate(context, { vscode = require('vscode'), deps = {} } = {})
     try {
       const project = projectNow();
       if (project === null || app === null) return;
+      model.said = '';
+      model.saidCard = typeof message?.card === 'string' ? message.card : '';
       const out = await press(message, { latestNonce: nonces.latest(), client: deskFor(project), waiting: waitingCards(model.waiting), app });
       if (out.made === 'pair' && out.got !== undefined) {
         run.askedUp = true;
         paired(out.got);
         return;
       }
-      if (typeof out.says === 'string' && out.says !== '') await vscode.window.showInformationMessage?.(out.says);
+      // What the helper says shows in the panel, in full: a toast cuts a long refusal short.
+      if (typeof out.says === 'string' && out.says !== '') model.said = out.says;
+      // A card asked in the chat stays in the list until it is answered; the panel shows it has moved.
+      if (out.ok === true && out.made === 'ask-here' && typeof message?.card === 'string') model.moved[message.card] = typeof message.hash === 'string' ? message.hash : '';
       if (out.ok === true) await tick();
+      // A message that was dropped has no words to show and changes nothing but clearing the last refusal, so it draws nothing and doesn't renew the nonce.
+      if (out.ok === true || model.said !== '') draw();
     } catch {
       // Nothing was sent that the helper didn't answer; the next look shows the panel as it is.
     }
