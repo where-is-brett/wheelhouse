@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { writeJsonFile, runningFile, sessionFile } from '../../../scripts/watcher/waker.js';
 import { holdFile } from '../../../scripts/crew/hold.js';
-import { markPanel, clearPanels, PANEL_LIVE_MS, ASK_HERE_MS } from '../../../scripts/desk/panel-live.js';
+import { markPanel, clearPanels, PANEL_LIVE_MS, ASK_HERE_MS, HANDED_MS } from '../../../scripts/desk/panel-live.js';
 import { runAct } from '../../../scripts/desk/acts.js';
 import { P, NOW, now, CARD, writeRecord, upClient, put, viewsDir } from './fixture.js';
 
@@ -80,21 +80,60 @@ test('waiting with paneOnly says only whether a panel is live, building no views
   clearPanels();
 }));
 
-test('ask-here marks a waiting card, and waiting with askHere gives it once', () => withRecord(async ({ source }) => {
+test('ask-here marks a waiting card; only a paired app\'s signed read takes it, and the front desk\'s read then gives it until it is asked', () => withRecord(async ({ source }) => {
   clearPanels();
   const marked = await runAct('ask-here', { card: 'c1' }, { ok: true, records: [], client: 'vscode-panel' }, { source, recorder: {}, now });
   assert.deepEqual([marked.ok, marked.changed], [true, ['ask-here']]);
-  const look = async () => (await readView('waiting', { askHere: true }, source, { now })).data.askHere;
-  const take = async () => (await readView('waiting', { askHere: true }, source, { now, client: 'vscode-panel' })).data.askHere;
-  assert.deepEqual(await look(), ['c1']);
-  assert.deepEqual(await look(), ['c1'], 'a read nobody signed only looks, so it clears no mark');
-  assert.deepEqual(await take(), ['c1']);
-  assert.deepEqual(await take(), [], 'a signed read takes a mark once');
+  const look = async (when = now) => (await readView('waiting', { askHere: true }, source, { now: when })).data.askHere;
+  const take = async (args = { askHere: true }) => (await readView('waiting', args, source, { now, client: 'vscode-panel' })).data.askHere;
+  assert.deepEqual(await look(), [], 'a mark nobody has taken is not the chat\'s to ask');
+  assert.deepEqual(await look(), [], 'and looking took nothing');
+  assert.deepEqual(await take(), ['c1'], 'the paired app\'s signed read takes it');
+  assert.deepEqual(await take(), [], 'a mark is taken once');
+  assert.deepEqual(await look(), ['c1'], 'the front desk\'s read gives it, with no signature');
+  assert.deepEqual(await look(), ['c1'], 'and takes nothing, so it is given until the card is asked');
   assert.equal((await readView('waiting', {}, source, { now })).data.askHere, undefined, 'asked for only when wanted');
   // A mark older than two minutes is not given, and the card stays waiting all the same.
-  await runAct('ask-here', { card: 'c1' }, { ok: true, records: [], client: 'vscode-panel' }, { source, recorder: {}, now: () => new Date(Date.parse(NOW) - ASK_HERE_MS - 1000) });
-  assert.deepEqual(await take(), []);
+  // A taken mark waits for the chat, which may not be spoken to for minutes: still given well after two minutes, gone past the cap.
+  const after = (ms) => () => new Date(Date.parse(NOW) + ms);
+  assert.deepEqual(await look(after(ASK_HERE_MS + 1000)), ['c1'], 'taken, then looked at more than two minutes later: still given');
+  assert.deepEqual(await look(after(HANDED_MS + 1000)), [], 'dropped past the cap, which also prunes it');
+  assert.deepEqual(await look(after(1000)), [], 'and the list has shrunk');
   assert.equal((await readView('waiting', {}, source, { now })).data.numbered.length, 1, 'asking here closes nothing');
+}));
+
+test('an ask-here mark that expires before the panel\'s read is never taken, and the card stays waiting', () => withRecord(async ({ source }) => {
+  clearPanels();
+  await runAct('ask-here', { card: 'c1' }, { ok: true, records: [], client: 'vscode-panel' }, { source, recorder: {}, now: () => new Date(Date.parse(NOW) - ASK_HERE_MS - 1000) });
+  assert.deepEqual((await readView('waiting', { askHere: true }, source, { now, client: 'vscode-panel' })).data.askHere, [], 'too old to take');
+  assert.deepEqual((await readView('waiting', { askHere: true }, source, { now })).data.askHere, [], 'and nothing was handed to the chat');
+  assert.equal((await readView('waiting', {}, source, { now })).data.numbered.length, 1);
+}));
+
+test('a mark is not given once the card has been asked since the panel took it, nor after it stops waiting', () => withRecord(async ({ source }) => {
+  clearPanels();
+  const take = () => readView('waiting', { askHere: true }, source, { now, client: 'vscode-panel' });
+  await runAct('ask-here', { card: 'c1' }, { ok: true, records: [], client: 'vscode-panel' }, { source, recorder: {}, now });
+  await take();
+  const asked = (at) => ({ ...source, views: async (a) => {
+    const got = await source.views(a);
+    return { ...got, views: { ...got.views, waiting: got.views.waiting.map((c) => ({ ...c, asked: { at, label: null } })) } };
+  } });
+  const look = async (from) => (await readView('waiting', { askHere: true }, from, { now })).data.askHere;
+  assert.deepEqual(await look(asked('2026-10-29T11:00:00.000Z')), ['c1'], 'asked before the panel took the mark: still the chat\'s to ask');
+  assert.deepEqual(await look(asked('2026-10-29T12:00:00.000Z')), [], 'asked in the chat since: given once');
+  const empty = { ...source, views: async (a) => { const got = await source.views(a); return { ...got, views: { ...got.views, waiting: [] } }; } };
+  assert.deepEqual(await look(empty), [], 'a card no longer waiting is not asked');
+}));
+
+test('a paired app\'s signed paneOnly read takes the marks too, building no views; an unsigned one takes nothing', () => withRecord(async ({ source }) => {
+  clearPanels();
+  const bare = { ...source, views: async () => { throw new Error('no views are built'); } };
+  await runAct('ask-here', { card: 'c1' }, { ok: true, records: [], client: 'vscode-panel' }, { source, recorder: {}, now });
+  const args = { paneOnly: true, askHere: true };
+  assert.equal((await readView('waiting', args, bare, { now })).data.askHere, undefined, 'unsigned: nothing taken, nothing said');
+  assert.deepEqual((await readView('waiting', args, bare, { now, client: 'vscode-panel' })).data.askHere, ['c1']);
+  assert.deepEqual((await readView('waiting', args, bare, { now, client: 'vscode-panel' })).data.askHere, []);
 }));
 
 test('card carries its buttons, its pane hash and its data hash', () => withRecord(async ({ source }) => {

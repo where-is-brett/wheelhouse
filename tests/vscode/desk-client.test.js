@@ -44,12 +44,23 @@ async function client(helper) {
   return { key, desk: deskClient({ address: helper.address, sign: key.sign, project: 'owner__name' }) };
 }
 
-test('read posts the view with the project and no signature', async () => {
+test('read posts the view with the project, signed over the view and its arguments', async () => {
   const helper = await standIn(() => ok({ view: 'glance', data: {} }));
-  const { desk } = await client(helper);
-  assert.equal((await desk.read('glance')).ok, true);
-  assert.deepEqual(helper.seen[0].body, { v: 'desk/1', project: 'owner__name', view: 'glance', args: {} });
+  const { desk, key } = await client(helper);
+  assert.equal((await desk.read('waiting', { askHere: true })).ok, true);
+  const { evidence, ...rest } = helper.seen[0].body;
+  assert.deepEqual(rest, { v: 'desk/1', project: 'owner__name', view: 'waiting', args: { askHere: true } });
   assert.equal(helper.seen[0].route, '/desk/read');
+  assert.deepEqual([evidence.form, evidence.client, evidence.at], ['client', key.client, NOW.toISOString()]);
+  // Core's own check takes it for this project and these arguments only, so a read of other arguments is not the panel's.
+  const { checkClient } = await import('../../scripts/desk/evidence.js');
+  const paired = [{ id: key.client, name: 'The panel', publicKey: key.publicKey }];
+  const now = () => NOW;
+  const read = { view: 'waiting', args: { askHere: true } };
+  assert.equal(checkClient('read', read, evidence, { clients: paired, now, project: 'owner__name' }).ok, true);
+  assert.equal(checkClient('read', { view: 'waiting', args: {} }, evidence, { clients: paired, now, project: 'owner__name' }).ok, false);
+  assert.equal(checkClient('read', read, evidence, { clients: paired, now, project: 'owner__other' }).ok, false);
+  assert.equal(checkClient('read', read, evidence, { clients: [], now, project: 'owner__name' }).ok, false, 'an unpaired key signs nothing the helper takes');
 });
 
 test('act signs the command, its arguments, the time and the project', async () => {

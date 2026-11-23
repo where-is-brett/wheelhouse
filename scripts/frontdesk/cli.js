@@ -124,7 +124,7 @@ import { isOpen, surveyLines, whyNext, workLines, withOpened, RECENT_MS, RECENT_
 import { answeredWords } from '../cards/answered.js';
 import { crewNow } from '../crew/runs.js';
 import { markHere } from '../lib/session-files.js';
-import { sinceLine } from '../cards/panel-words.js';
+import { paneLine, sinceLine } from '../cards/panel-words.js';
 import { SLUG, UUID } from '../lib/build-loop.js';
 
 // How far back `views waiting` looks for answers, and its lead (scripts/desk/views.js).
@@ -223,9 +223,11 @@ const deskOf = (client, cwd) => deskClient({ cwd, client, local: 'never' });
 // helper's refusal, thrown as it said it.
 // With `session`, the helper also says whether a live panel is beside that session (`paneLive`): this command is in the
 // sandbox, which can't read the session's files, so the helper, outside it, decides.
-async function recordOf(client, cwd, { answers = false, since, session } = {}) {
+// With `askHere`, the helper also gives the cards the director marked Ask me here in the panel that the chat is to ask (`askHere`).
+async function recordOf(client, cwd, { answers = false, since, session, askHere = false } = {}) {
   const got = await deskOf(client, cwd).read('waiting', {
     ...(answers ? { answers: true } : {}),
+    ...(askHere ? { askHere: true } : {}),
     ...(since === undefined ? {} : { outcomes: { since: since.toISOString() } }),
     ...(typeof session === 'string' && session !== '' ? { session } : {}),
   });
@@ -235,12 +237,12 @@ async function recordOf(client, cwd, { answers = false, since, session } = {}) {
 
 // The views, whether STOP is on, with `cards` the card events the board numbers its list from, and
 // with `answers` the card-answer events.
-async function viewsOf(client, cwd, { cards = false, answers = false, since, session } = {}) {
-  const got = await recordOf(client, cwd, { answers, since, session });
+async function viewsOf(client, cwd, { cards = false, answers = false, since, session, askHere = false } = {}) {
+  const got = await recordOf(client, cwd, { answers, since, session, askHere });
   if (cards && !Array.isArray(got.cards)) throw new CliError('The host helper gave no card events');
   if (answers && !Array.isArray(got.answers)) throw new CliError('The host helper gave no card answers');
   // A helper that gives no outcomes (an older one) leaves the decided-card checks out, as they only inform.
-  return { views: got.views, stop: got.stop === true, cards: cards ? got.cards : [], answers: answers ? got.answers : [], outcomes: Array.isArray(got.outcomes) ? got.outcomes : [], names: namesIn(got), paneLive: got.paneLive === true };
+  return { views: got.views, stop: got.stop === true, cards: cards ? got.cards : [], answers: answers ? got.answers : [], outcomes: Array.isArray(got.outcomes) ? got.outcomes : [], names: namesIn(got), paneLive: got.paneLive === true, askHere: Array.isArray(got.askHere) ? got.askHere.filter((id) => typeof id === 'string') : [] };
 }
 
 // The director's own settings view, as the desk's settings view gives it; none when it can't be read.
@@ -394,6 +396,16 @@ function composePlain(input, words) {
 }
 
 // --- cards ---
+
+// The waiting cards the helper named as Ask me here (`ids`, taken by the panel's signed read), as questions to ask in the chat:
+// { ids, handed: [{ id, question }], questions }. A card that no longer waits is left out.
+function askedHereCards(views, ids) {
+  // The visit's own filter: with typed replies on, a decision is never put to the question picker, which can't settle it.
+  const typed = typedRepliesIn(views.settings);
+  const waiting = (Array.isArray(views?.waiting) ? views.waiting : []).filter((c) => isPlain(c) && typeof c.data?.question === 'string' && !(typed && isDecisionCard(c.data)));
+  const found = ids.map((id) => waiting.find((c) => c.id === id)).filter((c) => c !== undefined);
+  return { ids: found.map((c) => c.id), handed: found.map((c) => ({ id: c.id, question: c.data.question })), questions: found.map(asQuestion) };
+}
 
 // What a card re-issued for the pieces behind it says changed, or for an answer it now says was given before.
 const REISSUED = 'The pieces this answer goes to.';
@@ -622,10 +634,11 @@ async function questionCards({ client, cwd, views, words, stop, problems }) {
 // so it comes back to the chat when the panel stops. A write the helper refuses is a problem, not a failure: the cards waiting are still given. Under STOP the visit's one card is Lift STOP:
 // the helper writes nothing, so no card is made, and the cards waiting stay on the board, counted
 // in `left`, for the visit after STOP is lifted.
-export async function cards({ client, cwd, now, onAsked, session }) {
+export async function cards({ client, cwd, now, onAsked, onHere, session }) {
   const problems = [];
   // `panel`: whether a live panel is beside the session, as the helper says; no picker call is allowed then, so no `shown` record can arrive.
-  let { views, stop, names, paneLive: panel } = await viewsOf(client, cwd, { session });
+  // `here`: the cards the director marked Ask me here in the panel, which the chat asks even while the panel holds the rest.
+  let { views, stop, names, paneLive: panel, askHere: here } = await viewsOf(client, cwd, { session, askHere: true });
   const words = await wordsOf(client, cwd, views, now, names);
   const lift = stop ? composePlain(LIFT_STOP_CARD, words).question : null;
   const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
@@ -645,6 +658,19 @@ export async function cards({ client, cwd, now, onAsked, session }) {
   const typed = typedRepliesIn(views.settings);
   const forVisit = withPutBack(views, again, events);
   const chosen = cardsForVisit({ ...forVisit, waiting: (Array.isArray(forVisit.waiting) ? forVisit.waiting : []).filter((c) => !typed || !isDecisionCard(c?.data)) }, { room: lift === null ? CARD.questions : 0 });
+  // While a live panel holds the project's cards, the chat is told of the panel and given only the cards the director marked
+  // Ask me here, each once: handed out as asked, so the helper stops giving it. The rest stay in the panel, unmarked.
+  if (panel && lift === null && typeof onAsked !== 'function') {
+    const marked = askedHereCards(views, here);
+    const held = chosen.ids.filter((id) => !marked.ids.includes(id)).length;
+    if (marked.ids.length > 0) {
+      problems.push(...await handOut(client, cwd, marked.handed, { stop, inChat: true, panel }));
+      if (typeof onHere === 'function') await onHere(marked.ids);
+    }
+    if (held > 0 || marked.ids.length > 0) {
+      return { ...(held > 0 ? { panel: paneLine(held, { others: marked.ids.length > 0 }) } : {}), ...(marked.ids.length > 0 ? { questions: marked.questions } : {}), left: chosen.left, ...(chosen.heldBack > 0 ? { heldBack: chosen.heldBack } : {}), ...withProblems(problems) };
+    }
+  }
   problems.push(...await handOut(client, cwd, chosen.ids.map((id, i) => ({ id, question: chosen.questions[i].question })), { stop, inChat: typeof onAsked === 'function', panel }));
   if (typeof onAsked === 'function') await onAsked(chosen.ids);
   return { questions: [...(lift === null ? [] : [lift]), ...chosen.questions], left: chosen.left, ...(chosen.heldBack > 0 ? { heldBack: chosen.heldBack } : {}), ...withProblems(problems) };
@@ -695,11 +721,11 @@ export async function decisionConfirm({ client, cwd, n }) {
 
 // The director's Show them: the cards held back are named as pulled, which spends none of the day's budget, then this
 // visit's cards come as `cards` gives them. It raises cards and decides nothing.
-export async function pullCards({ client, cwd, now, onAsked, session }) {
+export async function pullCards({ client, cwd, now, onAsked, onHere, session }) {
   const { views } = await viewsOf(client, cwd);
   const ids = Array.isArray(views.cardsWaiting?.ids) ? views.cardsWaiting.ids : [];
   if (ids.length > 0) await write(client, cwd, 'note', { about: 'cards-pulled', ids });
-  return cards({ client, cwd, now, onAsked, session });
+  return cards({ client, cwd, now, onAsked, onHere, session });
 }
 
 // --- card ---
@@ -1687,21 +1713,23 @@ export async function main(argv, {
       const stamp = (typeof now === 'function' ? now() : new Date(now ?? Date.now())).getTime();
       const session = env.CLAUDE_CODE_SESSION_ID;
       if (typeof session === 'string' && session !== '') {
-        return wanted ? { left, onAsked: (ids) => { if (ids.length > 0) markHere(session, ids, stamp); } } : { left };
+        const mark = (ids) => { if (ids.length > 0) markHere(session, ids, stamp); };
+        // `onHere`: cards the panel's Ask me here sent to the chat, which the card check lets through as it does a `--here` card.
+        return wanted ? { left, onAsked: mark } : { left, onHere: mark };
       }
       if (!wanted) return { left };
       throw new CliError('The session isn\'t known, so the cards can\'t be asked here.');
     };
     if (command === 'pull-cards') {
-      const { left, onAsked } = await hereMark(rest);
+      const { left, onAsked, onHere } = await hereMark(rest);
       only(left, 0, 'pull-cards takes no arguments');
-      json(await pullCards({ client: helper, cwd: here, now, onAsked, session: env.CLAUDE_CODE_SESSION_ID }));
+      json(await pullCards({ client: helper, cwd: here, now, onAsked, onHere, session: env.CLAUDE_CODE_SESSION_ID }));
       return 0;
     }
     if (command === 'cards') {
-      const { left, onAsked } = await hereMark(rest);
+      const { left, onAsked, onHere } = await hereMark(rest);
       only(left, 0, 'cards takes no arguments');
-      json(await cards({ client: helper, cwd: here, now, onAsked, session: env.CLAUDE_CODE_SESSION_ID }));
+      json(await cards({ client: helper, cwd: here, now, onAsked, onHere, session: env.CLAUDE_CODE_SESSION_ID }));
     } else if (command === 'decision') {
       const usage = 'Give decision list, or decision show <n> or decision confirm <n> with the decision\'s number';
       if (rest[0] === 'list' && rest.length === 1) lines(await decisionList({ client: helper, cwd: here, now }));

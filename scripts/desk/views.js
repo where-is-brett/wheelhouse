@@ -19,7 +19,7 @@ import { callsFrom, isHelmCall } from '../decisions/calls.js';
 import { answeredWords, askOf, subjectOf } from '../cards/answered.js';
 import { sinceLine } from '../cards/panel-words.js';
 import { crewNow } from '../crew/runs.js';
-import { panelLive, takeAskHere, peekAskHere } from './panel-live.js';
+import { panelLive, takeAskHere, handedAskHere } from './panel-live.js';
 import { registeredProjects } from '../lib/projects.js';
 import { computerId } from '../lib/paths.js';
 import { agentInFolder } from '../agents/names.js';
@@ -31,6 +31,19 @@ import { answeredLines, buildLines, runningLines, shippedLines } from '../engine
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const flat = (x) => (typeof x === 'string' ? x.replace(/\s+/g, ' ').trim() : x);
 const LABELS = Object.values(SETTINGS).map((setting) => setting.label);
+// The cards a paired app's read took as Ask me here that still wait and haven't been asked (in the chat, or by the picker) since
+// they were taken: what the front desk asks in the chat, once. `waiting` is the waiting view's cards, each with `asked`.
+function askedHere(project, nowMs, waiting) {
+  const cards = Array.isArray(waiting) ? waiting : [];
+  return handedAskHere(project, nowMs)
+    .filter(({ id, takenAt }) => {
+      const card = cards.find((c) => c?.id === id);
+      const asked = card?.asked?.at === undefined ? NaN : Date.parse(card.asked.at);
+      return card !== undefined && !(asked >= takenAt);
+    })
+    .map(({ id }) => id);
+}
+
 export const NO_RECORD = 'This project has no record to show yet';
 
 // How far back "Decided in the last hour:" looks, its lead, and the most lines it lists.
@@ -470,7 +483,9 @@ const VIEWS = {
     // `paneOnly`: just whether a panel is live, with no views built, for a hook that must answer quickly.
     if (args.paneOnly === true) {
       const when = typeof now === 'function' ? now() : new Date();
-      return { ok: true, data: { paneLive: typeof source.project === 'string' && panelLive(source.project, when.getTime()) }, lines: [] };
+      // A paired app's signed read may take its Ask me here marks here too (`askHere`), with no views built.
+      const taken = args.askHere === true && client !== null && typeof source.project === 'string' ? { askHere: takeAskHere(source.project, when.getTime()) } : {};
+      return { ok: true, data: { paneLive: typeof source.project === 'string' && panelLive(source.project, when.getTime()), ...taken }, lines: [] };
     }
     const got = await recordOf(source, { cards: true, answers: args.answers === true });
     if (got.refused) return { ok: false, refused: got.refused };
@@ -495,10 +510,11 @@ const VIEWS = {
     // helper keeps it (panel-live.js). Read here, outside the sandbox, for the front desk's `cards` and `card`, which can't read
     // it themselves (it decides which cards the chat asks and which stay in the panel).
     const pane = { paneLive: typeof source.project === 'string' && panelLive(source.project, at.getTime()) };
-    // With `askHere: true`, the cards the director marked Ask me here in the panel. A read a paired app signed takes them (given
-    // once); any other only looks, so no one else can clear a mark the director made.
+    // With `askHere: true`: a read a paired app signed takes the cards the director marked Ask me here (given once, and handed to
+    // the chat); any other read gives the cards so taken that still wait and haven't been asked since (the front desk's read,
+    // which asks them in the chat), and takes nothing, so no one else can move a mark the director made.
     const here = args.askHere === true
-      ? { askHere: typeof source.project !== 'string' ? [] : client !== null ? takeAskHere(source.project, at.getTime()) : peekAskHere(source.project, at.getTime()) } : {};
+      ? { askHere: typeof source.project !== 'string' ? [] : client !== null ? takeAskHere(source.project, at.getTime()) : askedHere(source.project, at.getTime(), got.views?.waiting) } : {};
     return { ok: true, data: { ...got, numbered, ...given, ...decisions, ...calls, ...stuck, ...helmNotes, ...pane, ...here }, lines };
   },
 

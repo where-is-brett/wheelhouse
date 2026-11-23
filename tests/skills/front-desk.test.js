@@ -117,8 +117,7 @@ test('the playbook and the intake name only commands, views, record kinds and ca
   const listed = /<command>`: (.*?)\. Type/.exec(playbook.replaceAll(ROOT_VARIABLE, '/plugin'))?.[1] ?? '';
   // All but `confirm`, which Claude Code's front desk never needs: an agent whose chat clicks can't bind is told of it
   // by its own cards line (ruling P8-7).
-  // `unpair` is not listed there until the front desk's playbook names it (the add-on's build, Part 6).
-  for (const name of known.filter((n) => n !== 'confirm' && n !== 'unpair')) assert.ok(listed.includes(`\`${name}`), `the playbook lists ${name}`);
+  for (const name of known.filter((n) => n !== 'confirm')) assert.ok(listed.includes(`\`${name}`), `the playbook lists ${name}`);
   const views = /`views <name>` \(([^)]*)\)/.exec(playbook)?.[1] ?? '';
   assert.deepEqual([...views.matchAll(/`([a-z]+)`/g)].map((m) => m[1]), VIEW_NAMES);
 });
