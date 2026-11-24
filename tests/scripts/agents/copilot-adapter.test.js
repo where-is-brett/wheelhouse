@@ -218,8 +218,16 @@ test('toolSheetLines gives an unknown agent only the command line, and Copilot i
   assert.deepEqual(sheet('copilot'), [...copilotSheet.split('\n'), launcher]);
   assert.deepEqual(sheet('copilot', '/plugin/$root'), [...copilotSheet.split('\n'), launcher]);
   // A Copilot chat the director opened has no launchers on its PATH, so it is given the front desk's node command.
-  assert.deepEqual(sheet('copilot', pluginRoot, {}), [...copilotSheet.split('\n'), command]);
-  assert.deepEqual(sheet('copilot', pluginRoot, { [LAUNCHER_SESSION]: '0' }), [...copilotSheet.split('\n'), command]);
+  // The command is given without --no-use-system-ca: the command-risk reviewer on VS Code's Assisted level blocks every
+  // command that carries it, as bypassing certificate trust. Claude Code's line keeps it where the Node.js knows it.
+  const plain = `The Wheelhouse command is ${frontDeskCommand(pluginRoot, { platform: 'darwin' })}`;
+  assert.ok(!plain.includes('--no-use-system-ca'));
+  assert.deepEqual(sheet('copilot', pluginRoot, {}), [...copilotSheet.split('\n'), plain]);
+  assert.deepEqual(sheet('copilot', pluginRoot, { [LAUNCHER_SESSION]: '0' }), [...copilotSheet.split('\n'), plain]);
+  const flagged = new Set(['--use-system-ca']);
+  assert.ok(toolSheetLines('claude-code', { pluginRoot, platform: 'darwin', allowedFlags: flagged, env: {} }).at(-1).includes('--no-use-system-ca'));
+  assert.ok(!toolSheetLines('copilot', { pluginRoot, platform: 'darwin', allowedFlags: flagged, env: {} }).at(-1).includes('--no-use-system-ca'));
+  assert.ok(!toolSheetLines('copilot', { pluginRoot: 'C:\\plugin\\root', platform: 'win32', allowedFlags: flagged, env: {} }).at(-1).includes('--no-use-system-ca'));
   // A plugin folder that can't be typed as a command gives another agent's sheet alone.
   assert.deepEqual(sheet('model-x', '/plugin/$root'), []);
 });

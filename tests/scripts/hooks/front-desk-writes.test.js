@@ -408,6 +408,14 @@ test('on an agent whose hooks only read, a seat write with no --session, or with
   }
 });
 
+test('help on a command that records needs no session, since it records nothing', () => {
+  const { folder } = project();
+  const opts = options(folder, { writeVia: 'helper' });
+  for (const command of ['wh-frontdesk card --help', `${NODE_CLI} card --help`, 'wh-frontdesk record -h', 'wh-frontdesk --help cards']) {
+    assert.equal(decide(shell(command, 's1', folder), opts), undefined, command);
+  }
+});
+
 test('a seat write that carries the chat\'s own id passes, wherever the flag stands', () => {
   const { folder } = project();
   const opts = options(folder, { writeVia: 'helper' });

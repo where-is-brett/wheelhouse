@@ -97,7 +97,8 @@ test('where every card is asked in the picker, the instructions and the agent as
   assert.match(text, /Ask every card with ask_user, a decision, a sign-off and a merge approval among them/);
   assert.match(text, /set `allowFreeformInput` to false in every ask_user call/);
   assert.doesNotMatch(text, /decision confirm|never go to ask_user|that click is not recorded/);
-  assert.match(text, /show it as text, never with ask_user,\s+and run `confirm seat-take-over`/, 'the seat card goes to the window');
+  assert.match(text, /write no question and no options of your own, and\s+never use ask_user for it: say one plain line that Wheelhouse's own window is asking[\s\S]*run `confirm seat-take-over`/, 'the seat card goes to the window, with no options of the chat\'s own');
+  assert.doesNotMatch(text, /show it as text/);
   assert.match(text, /undo on a project kept on this\s+computer/);
   const agent = picked.get(AGENT);
   assert.match(agent, /\*\*Decisions are cards\.\*\*/);

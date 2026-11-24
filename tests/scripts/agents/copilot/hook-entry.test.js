@@ -497,7 +497,9 @@ test('a session start from another window\'s seat carries the id line and the wi
     const context = said.hookSpecificOutput?.additionalContext ?? said.additionalContext ?? start.text;
     assert.match(context, /Your session id is chat-9: give it as --session chat-9/);
     assert.match(context, /isn't the First Mate: it is in another window/);
-    assert.match(context, new RegExp(`Take over the First Mate from window session a, since ${since}`));
+    assert.match(context, /write no question and no options of your own/);
+    assert.match(context, /session a, last active/);
+    assert.doesNotMatch(context, /Leave it there/);
     assert.match(context, /confirm seat-take-over --session/);
     assert.doesNotMatch(context, /AskUserQuestion/);
   });
@@ -556,4 +558,19 @@ test('the card check is told whether an ask_user call takes typed answers, whate
   }
   assert.equal(await freeOf({ allowFreeformInput: false, free_text: true }), true, 'one flag on is enough');
   assert.equal(await freeOf({ allowFreeformInput: false, requestedSchema: { properties: { note: { type: 'string' } } } }), true, 'a field of words');
+});
+
+// The CLI harness's ask_user gives its answer field as `requestedSchema` properties: free text is a string property with no
+// oneOf or enum (laptop re-check, 24 November 2026); a string property that lists its options is not free text.
+test('the CLI harness\'s free-text field is typed words, and a string field with oneOf or enum is not', async () => {
+  const freeOf = async (requestedSchema) => {
+    const r = recording();
+    await run('preToolUse', call('ask_user', { message: 'What next?', requestedSchema }), { steps: r.steps, c6: true });
+    const [question] = r.calls.find((c) => c.name === 'cardCheck').input.tool_input.questions;
+    return question.allowFreeformInput;
+  };
+  assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string', title: 'Work' } }, required: ['work'] }), true);
+  assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string' } } }), true);
+  assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string', oneOf: [{ const: 'Approve', title: 'Approve' }, { const: 'Not now', title: 'Not now' }] } } }), undefined);
+  assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string', enum: ['Approve', 'Not now'] } } }), undefined);
 });

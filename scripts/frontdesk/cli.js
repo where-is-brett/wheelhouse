@@ -1702,6 +1702,9 @@ export function inChatWords(value, whole = null) {
   return top && isPlain(out) && texts.some((t) => chatCopy(t) !== t) ? { ...out, inReply: texts } : out;
 }
 
+const HELP_FLAGS = ['--help', '-h'];
+const HELP = `Usage: cli.js <command> [arguments] [--session <id>]. Commands: ${COMMANDS.join(', ')}. A command that records or hands out cards also takes the chat's own --session <id>; --help records nothing.`;
+
 export async function main(argv, {
   cwd = process.cwd(), env = process.env, client, input, now = () => new Date(), makeId, columnsReady, ask,
   out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
@@ -1710,6 +1713,11 @@ export async function main(argv, {
     const flagged = sessionFlag(argv);
     const [command, ...rest] = flagged.argv;
     const sessionId = flagged.session ?? env?.CLAUDE_CODE_SESSION_ID;
+    // Help records nothing and asks nothing of the helper, so it needs no session and no seat.
+    if (flagged.argv.some((a) => HELP_FLAGS.includes(a))) {
+      out(`${HELP}\n`);
+      return 0;
+    }
     if (!COMMANDS.includes(command)) throw new CliError(`Commands: ${COMMANDS.join(', ')}`);
     const windowed = command === 'confirm' || (command === 'decision' && rest[0] === 'confirm');
     const helper = client ?? helperClient(windowed ? { timeout: CONFIRM_WAIT_MS } : {});

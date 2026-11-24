@@ -79,7 +79,7 @@ import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js
 import { SETUP_STEPS, firstUnfinished, journalTrouble, stepDone } from '../lib/setup-run.js';
 import { TAKEOVER_LABEL, LEAVE_LABEL } from '../state/card-lines.js';
 import { agentOfInput } from '../agents/of-input.js';
-import { BY_LAUNCHER, TOOL_SHEETS } from '../agents/tool-sheets.js';
+import { BY_LAUNCHER, TOOL_SHEETS, WITHOUT_SYSTEM_CA_FLAG } from '../agents/tool-sheets.js';
 import { frontDeskCommand, knowsNoSystemCa } from '../protection/plugin-command.js';
 
 import { LAUNCHER_SESSION } from '../lib/launchers.js';
@@ -150,14 +150,15 @@ export { TOOL_SHEETS };
 // The lines that tell a session its agent's tools and where the Wheelhouse command is: the agent's
 // tool sheet, then the command line (the front desk's command, which the playbooks' other scripts
 // are named from). The command line carries --no-use-system-ca when this Node.js knows it, so the sandbox's certificate
-// lines don't fill the output. It is left out when the plugin's folder can't be typed as a command.
+// lines don't fill the output. It is left out for an agent whose command-risk reviewer blocks the flag
+// (tool-sheets.js's WITHOUT_SYSTEM_CA_FLAG), and when the plugin's folder can't be typed as a command.
 export function toolSheetLines(agent, { pluginRoot, platform = process.platform, allowedFlags = process.allowedNodeEnvironmentFlags, env = process.env } = {}) {
   const lines = Object.hasOwn(TOOL_SHEETS, agent) && TOOL_SHEETS[agent] !== '' ? TOOL_SHEETS[agent].split('\n') : [];
   // An agent that matches a shell rule on a command's stem runs Wheelhouse's scripts by launcher (scripts/lib/launchers.js)
   // in a session Wheelhouse started, which has the launchers on its PATH and the marker set. A session opened some
   // other way (a chat the director opens in their editor) has neither, so it is given the node command.
   const launched = BY_LAUNCHER.includes(agent) && env?.[LAUNCHER_SESSION] === '1';
-  const command = launched ? LAUNCHER_COMMAND : frontDeskCommand(pluginRoot, { platform, noSystemCa: knowsNoSystemCa(allowedFlags) });
+  const command = launched ? LAUNCHER_COMMAND : frontDeskCommand(pluginRoot, { platform, noSystemCa: knowsNoSystemCa(allowedFlags) && !WITHOUT_SYSTEM_CA_FLAG.includes(agent) });
   if (command !== null) lines.push(`The Wheelhouse command is ${command}`);
   return lines;
 }
@@ -399,9 +400,10 @@ async function keepLock(project, client, left, seen = {}) {
 
 // The words before the window take-over card's AskUserQuestion input.
 export const SEAT_TAKEOVER_ASK = 'The First Mate is in another window: show the director this card with AskUserQuestion, exactly as given, as a question of its own, when they ask for Wheelhouse work: ';
-// The words before the seat card's JSON, for an agent whose chat records no click: the card is shown as text, and the
-// director's click is made in Wheelhouse's own window, which `confirm seat-take-over` opens.
-export const SEAT_TAKEOVER_WINDOW = 'The First Mate is in another window: when the director asks for Wheelhouse work, show them this card as text in the chat, not as a question with buttons, then run `confirm seat-take-over --session <your session id>` with the id from the line above. Wheelhouse\'s own window opens for the director\'s click, and records it. The card: ';
+// The words before the reason for the seat's take-over, for an agent whose chat records no click: the director's click is
+// made in Wheelhouse's own window, which `confirm seat-take-over` opens. The chat writes no question and no options of its
+// own, so the window's labels are the only ones the director meets.
+export const SEAT_TAKEOVER_WINDOW = 'The First Mate is in another window: when the director asks for Wheelhouse work, write no question and no options of your own in the chat. Say one plain line that Wheelhouse\'s own window is asking whether to move the First Mate here, and why, then run `confirm seat-take-over --session <your session id>` with the id from the line above. The window\'s buttons are the only choices, and it records the click. Why: '; 
 // The line that tells a session its own id, which its chat gives to every command that records (`--session`).
 export const sessionIdLine = (id) => `Your session id is ${id}: give it as --session ${id} to every Wheelhouse command that records.`;
 // The words before the take-over card's AskUserQuestion input, as JSON on the same line.
@@ -450,7 +452,8 @@ async function takeOverNotes({ client, left, project, now }) {
 async function seatTakeOverNotes({ seat, now, ask = SEAT_TAKEOVER_ASK }) {
   try {
     if (!seat) return [];
-    const { seatCard } = await import('../lib/seat-card.js');
+    const { seatCard, seatReason } = await import('../lib/seat-card.js');
+    if (ask === SEAT_TAKEOVER_WINDOW) return [`${ask}${seatReason({ seat, now })}`];
     const { question } = seatCard({ seat, now });
     return [`${ask}${JSON.stringify(question)}`];
   } catch {

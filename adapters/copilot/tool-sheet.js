@@ -19,4 +19,8 @@ export function readSheet(file = fileURLToPath(new URL('./tool-sheet.md', import
 // (scripts/hooks/session-start.js toolSheetLines).
 export const byLauncher = true;
 
+// Copilot's command-risk reviewer (VS Code's Assisted approvals level) blocks every command that carries
+// --no-use-system-ca, as bypassing certificate trust, so the command a Copilot session is given leaves the flag out.
+export const withoutSystemCaFlag = true;
+
 export default readSheet();

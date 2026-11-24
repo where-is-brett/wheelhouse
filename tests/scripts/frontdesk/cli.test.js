@@ -3519,3 +3519,13 @@ test('where the agent\'s hooks sign, a seat write with no --session is not refus
     assert.equal(await seatRefusal({ command: 'record', env: { CLAUDE_CODE_SESSION_ID: 'a' }, cwd: folder, client: helper.client }), SEAT_REFUSAL);
   });
 });
+
+test('--help prints the usage and needs no session, no helper and no seat', async () => {
+  const helper = fakeHelper({});
+  for (const argv of [['card', '--help'], ['record', '-h'], ['--help', 'cards']]) {
+    const out = await runWith(helper, argv, undefined, { cwd: CWD, env: {} });
+    assert.equal(out.code, 0, out.err);
+    assert.match(out.out, /^Usage: cli\.js <command>/);
+  }
+  assert.equal(helper.calls.length, 0, 'the helper was not asked');
+});

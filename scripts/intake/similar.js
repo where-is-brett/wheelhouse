@@ -2,7 +2,7 @@
 // The intake's duplicate check (build-loop design, section 3): which open work, ideas and
 // rejections share words with a request, so the front desk reads a few lines, not the lists.
 // It reads the views' work, reports (to leave out work that has ended), ideas and rejections.
-import { endedBy } from '../foreman/queue.js';
+import { endedBy, since } from '../foreman/queue.js';
 
 // Words that say nothing about what is asked for: articles, pronouns, linking words and the
 // usual ways of asking.
@@ -43,7 +43,9 @@ function itemsOf(views) {
   for (const [id, entry] of Object.entries(views?.work ?? {})) {
     if (endedBy(views?.reports, id, entry?.work)) continue;
     const data = entry?.work?.data ?? {};
-    items.push({ kind: 'work', id, title: textOf(data.title) || id, texts: [data.title, data.id] });
+    // A report that says blocked leaves the work open; the item says so, so a request is never taken for a change to work that can't go on.
+    const blocked = views?.reports?.[id]?.data?.outcome === 'blocked' && since(views.reports[id], entry?.work);
+    items.push({ kind: 'work', id, title: textOf(data.title) || id, ...(blocked ? { blocked: true } : {}), texts: [data.title, data.id] });
   }
   for (const [kind, list] of [['idea', views?.ideas], ['rejection', views?.rejections]]) {
     for (const [id, entry] of Object.entries(list ?? {})) {
@@ -71,7 +73,7 @@ export function similar(text, views, { limit = 5 } = {}) {
     let shared = 0;
     for (const w of asked) if (item.words.has(w)) shared += 1;
     if (shared === 0) continue;
-    found.push({ kind: item.kind, id: item.id, title: item.title, score: (2 * shared) / (asked.size + item.words.size) });
+    found.push({ kind: item.kind, id: item.id, title: item.title, ...(item.blocked ? { blocked: true } : {}), score: (2 * shared) / (asked.size + item.words.size) });
   }
   found.sort((a, b) => b.score - a.score || KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return found.slice(0, Math.max(0, limit));

@@ -323,6 +323,8 @@ function recordsWithoutSession(command, session, windows, required = true) {
     if (at < 0) return false;
     const { ids, command: name } = frontDeskArgs(words.slice(at + 1));
     if (!SEAT_WRITES.includes(name)) return false;
+    // Help records nothing (scripts/frontdesk/cli.js answers it before anything else).
+    if (words.slice(at + 1).some((w) => w === '--help' || w === '-h')) return false;
     if (!required && ids.length === 0) return false;
     return typeof session !== 'string' || session === '' || ids.length === 0 || ids.some((id) => id !== session);
   });

@@ -116,3 +116,14 @@ test('missing views and empty text give no lines', () => {
   assert.deepEqual(similar('', views), []);
   assert.deepEqual(similar('dark mode', { ideas: { odd: plain('odd', {}, 1) } }), []);
 });
+
+test('work whose latest report says blocked is marked blocked, and work re-queued since is not', () => {
+  const report = (id, outcome, n) => ({ key: id, id: `r${n}`, at: T(n), data: { work: id, outcome } });
+  const withReports = (reports) => ({ ...views, reports });
+  const found = similar('Export the change list as a spreadsheet', withReports({ 'csv-export': report('csv-export', 'blocked', 9) }));
+  assert.equal(found[0].id, 'csv-export');
+  assert.equal(found[0].blocked, true);
+  const queuedAgain = similar('Export the change list as a spreadsheet', withReports({ 'csv-export': report('csv-export', 'blocked', 0) }));
+  assert.equal(queuedAgain[0].blocked, undefined);
+  assert.equal(similar('Export the change list as a spreadsheet', views)[0].blocked, undefined);
+});
