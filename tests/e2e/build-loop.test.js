@@ -47,7 +47,8 @@ import { listEvents, makeEvent } from '../../scripts/state/events.js';
 import { enrol, makeSigningKey } from '../../scripts/state/signing.js';
 import { readHandled } from '../../scripts/watcher/handled.js';
 import { projectConfig, runWatcher } from '../../scripts/watcher/main.js';
-import { PROMPTS, makeWaker, readWake, sessionFile } from '../../scripts/watcher/waker.js';
+import { BUILDER_PROMPT_LEAD } from '../../scripts/foreman/prompt-lead.js';
+import { PROMPTS, makeWaker,readWake, sessionFile } from '../../scripts/watcher/waker.js';
 import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../helpers/homes.js';
 import { lineageFixture, writeFiles } from '../helpers/lineage.js';
@@ -1000,7 +1001,7 @@ test('Shape 1: the foreman\'s start, run by the helper\'s child, starts claude f
     assert.equal(after('--session-id'), sessionId);
     assert.equal(after('--permission-mode'), 'acceptEdits');
     // The brief's prompt, then the column for the subagents the session dispatches.
-    if (process.platform !== 'win32') assert.ok(after('-p').startsWith(`${PROMPTS.start}\n\nThe models and efforts for the subagents`), after('-p'));
+    if (process.platform !== 'win32') assert.ok(after('-p').startsWith(`${BUILDER_PROMPT_LEAD} ${PROMPTS.start}\n\nThe models and efforts for the subagents`), after('-p'));
     assert.equal(after('--effort'), 'high');
 
     // Claude Code's sign-in reaches the session through the helper's child; no key, no host-session

@@ -17,7 +17,7 @@ import { parseArgs } from '../../../scripts/eval/harness.js';
 import { loadScenarios } from '../../../scripts/eval/run.js';
 import { standInViews, startStandInHelper } from '../../../scripts/eval/stand-in-helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import { FRONT_DESK_LINE, toolSheetLines } from '../../../scripts/hooks/session-start.js';
+import { FRONT_DESK_LINE, cardCommandLines, toolSheetLines } from '../../../scripts/hooks/session-start.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { amendLine, approveWorkLine } from '../../../scripts/state/card-lines.js';
 import { makeScratchProject } from '../../../probes/lib/scratch.js';
@@ -139,8 +139,9 @@ test('with Wheelhouse, the scratch plugin holds the real front desk, its command
   try {
     const [plugin] = context.pluginDirs;
     assert.equal(context.appendSystemPrompt, undefined, 'no line in the system prompt stands in for the playbook');
-    // The front desk's line, then the tool sheet and the command line, as the real session start gives a Claude Code front desk.
-    const given = [FRONT_DESK_LINE, ...toolSheetLines('claude-code', { pluginRoot: plugin })].join('\n');
+    // The front desk's line, then the tool sheet, the command line and the card command lines, as the real session start gives a Claude Code front desk.
+    const sheet = toolSheetLines('claude-code', { pluginRoot: plugin });
+    const given = [FRONT_DESK_LINE, ...sheet, ...cardCommandLines(sheet)].join('\n');
     assert.ok(given.includes(`The Wheelhouse command is node ${knowsNoSystemCa() ? '--no-use-system-ca ' : ''}"${plugin.replaceAll('\\', '/')}/scripts/frontdesk/cli.js"`), 'the command line names the scratch plugin\'s cli.js');
     assert.ok(fs.existsSync(path.join(plugin, 'scripts', 'frontdesk', 'cli.js')), 'the command names a file the scratch plugin holds');
     assert.equal(context.reload, given);
