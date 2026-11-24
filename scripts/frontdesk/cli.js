@@ -1713,8 +1713,12 @@ export async function main(argv, {
     const flagged = sessionFlag(argv);
     const [command, ...rest] = flagged.argv;
     const sessionId = flagged.session ?? env?.CLAUDE_CODE_SESSION_ID;
-    // Help records nothing and asks nothing of the helper, so it needs no session and no seat.
+    // Help records nothing and asks nothing of the helper, so it needs no session and no seat. Only a pure help call is
+    // help (--help alone, or beside one command name); a help flag beside other words runs nothing, so no command that
+    // records ever runs with one in it (scripts/hooks/front-desk-writes.js lets only the pure call through without --session).
     if (flagged.argv.some((a) => HELP_FLAGS.includes(a))) {
+      const others = flagged.argv.filter((a) => !HELP_FLAGS.includes(a));
+      if (flagged.argv.length > 2 || others.some((a) => !COMMANDS.includes(a))) throw new CliError('--help goes on its own: cli.js <command> --help');
       out(`${HELP}\n`);
       return 0;
     }

@@ -3529,3 +3529,13 @@ test('--help prints the usage and needs no session, no helper and no seat', asyn
   }
   assert.equal(helper.calls.length, 0, 'the helper was not asked');
 });
+
+test('--help beside other words records nothing and is refused, so a command never runs with a help flag in it', async () => {
+  const helper = fakeHelper({});
+  for (const argv of [['record', 'work', '--title', 'x', '-h'], ['card', 'c1', '--help'], ['-h', 'record', 'work']]) {
+    const out = await runWith(helper, argv, undefined, { cwd: CWD, env: { CLAUDE_CODE_SESSION_ID: 'a' } });
+    assert.notEqual(out.code, 0, argv.join(' '));
+    assert.match(out.err, /--help goes on its own/);
+  }
+  assert.equal(helper.calls.length, 0, 'the helper was not asked');
+});

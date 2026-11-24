@@ -416,6 +416,14 @@ test('help on a command that records needs no session, since it records nothing'
   }
 });
 
+test('only a pure help call skips the session: help beside other words, or as the --session value, is held like any write', () => {
+  const { folder } = project();
+  const opts = options(folder, { writeVia: 'helper' });
+  for (const command of ['wh-frontdesk record work --title x -h', 'wh-frontdesk record -h work', 'wh-frontdesk record work --session -h', 'wh-frontdesk record work --session=-h --title x', `${NODE_CLI} card c1 --help`, 'wh-frontdesk record work -- --help']) {
+    assert.ok(denied(decide(shell(command, 's1', folder), opts)), command);
+  }
+});
+
 test('a seat write that carries the chat\'s own id passes, wherever the flag stands', () => {
   const { folder } = project();
   const opts = options(folder, { writeVia: 'helper' });

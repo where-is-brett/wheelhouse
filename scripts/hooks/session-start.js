@@ -403,7 +403,7 @@ export const SEAT_TAKEOVER_ASK = 'The First Mate is in another window: show the 
 // The words before the reason for the seat's take-over, for an agent whose chat records no click: the director's click is
 // made in Wheelhouse's own window, which `confirm seat-take-over` opens. The chat writes no question and no options of its
 // own, so the window's labels are the only ones the director meets.
-export const SEAT_TAKEOVER_WINDOW = 'The First Mate is in another window: when the director asks for Wheelhouse work, write no question and no options of your own in the chat. Say one plain line that Wheelhouse\'s own window is asking whether to move the First Mate here, and why, then run `confirm seat-take-over --session <your session id>` with the id from the line above. The window\'s buttons are the only choices, and it records the click. Why: '; 
+export const SEAT_TAKEOVER_WINDOW = 'The First Mate is in another window: when the director asks for Wheelhouse work, write no question and no options of your own in the chat. Say one plain line that Wheelhouse\'s own window is asking whether to move the First Mate here, and why, then run `confirm seat-take-over --session <your session id>` with the id from the line above. The window\'s buttons are the only choices, and it records the click. Why: ';
 // The line that tells a session its own id, which its chat gives to every command that records (`--session`).
 export const sessionIdLine = (id) => `Your session id is ${id}: give it as --session ${id} to every Wheelhouse command that records.`;
 // The words before the take-over card's AskUserQuestion input, as JSON on the same line.
