@@ -52,7 +52,7 @@ import { effectiveSettings } from '../settings/effective.js';
 import { loginEntry, installLoginStart, loginStartRecord, needsLoginStart } from '../lib/login-start.js';
 import { HELPER_START_SCRIPT } from '../agents/index.js';
 import { otherAgentsFound, agentAsk, agentChosen, otherAgentChosen, signInWait, agentComputerChanges, applyAgentComputer } from '../agents/setup-parts.js';
-import { localViews } from '../hooks/session-start.js';
+import { localViews } from '../lib/local-views.js';
 import { computerId, stateDir } from '../lib/paths.js';
 import { joinedRepo } from '../lib/setup-run.js';
 import { claudeCodeSettings } from '../protection/settings.js';

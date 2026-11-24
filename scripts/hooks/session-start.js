@@ -44,7 +44,6 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, managedMarker, readTailEntries, beingSetUp, removedFrom, isWhy } from './kit.js';
 import { keep, sendPending, withinBudget } from './pending.js';
-import { keepWatcherAlive } from '../watcher/keep-alive.js';
 import { recordClaudePath } from '../lib/claude.js';
 import { helperClient } from '../host/helper-client.js';
 import { isOlder } from '../host/retire-helper.js';
@@ -56,7 +55,7 @@ import { buildsShown, settingKey } from '../protection/windows-builds.js';
 import { listEvents, makeEvent } from '../state/events.js';
 import { buildViews } from '../state/views.js';
 import { numberedWaiting } from '../board/model.js';
-import { startBackground, startDetached } from '../lib/background.js';
+import { startDetached } from '../lib/start-detached.js';
 import { sessionRole, asideKind } from '../lib/role.js';
 import { branchOf, featureSlug, madeFeatureSlug } from '../lib/feature-slug.js';
 import { SETUP_FIRST } from '../lib/setup-first.js';
@@ -64,8 +63,7 @@ import { RECENT_MS, readSeat, takeSeat, refreshSeat, seatFree, firstMatePid } fr
 import { lockFreeNow } from '../lib/free-seat.js';
 import { startedByScript } from '../lib/started-by-script.js';
 import { asideLine } from '../lib/front-desk.js';
-import { seatCard, agoWords } from '../lib/seat-card.js';
-import { projectConfig } from '../watcher/main.js';
+import { agoWords } from '../lib/ago-words.js';
 import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
 import { readProject } from '../lib/projects.js';
 import { ensureIgnored } from '../feature/files.js';
@@ -73,21 +71,16 @@ import { run as runProgram } from '../lib/run.js';
 import {
   LOW_NODE_SCRIPT, guardedReady, lowNodeReady, needsSelfTest, selfTest, SELF_TEST_MS,
 } from '../windows/low.js';
-import { checkLineage, holdEvent, markRecorded, recordLift, warningLines, writeProvenance } from '../lineage/check.js';
-import { claudeCodeOf } from '../lineage/provenance.js';
-import { MARKETPLACE } from '../lineage/manifest.js';
-import { confirmingLine } from '../update/board.js';
+// The lineage check (scripts/lineage/check.js) is read where it runs, which is a full session start's: one that only reads never loads it.
+const lineageModule = () => import('../lineage/check.js');
+import { claudeCodeOf } from '../lineage/provenance-block.js';
+import { MARKETPLACE } from '../lineage/marketplace.js';
 import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js';
 import { SETUP_STEPS, firstUnfinished, journalTrouble, stepDone } from '../lib/setup-run.js';
-import { composeCard } from '../cards/compose.js';
 import { TAKEOVER_LABEL, LEAVE_LABEL } from '../state/card-lines.js';
 import { agentOfInput } from '../agents/of-input.js';
-import { readAllowance } from '../usage/figures.js';
-import { weeklyOf } from '../routing/nudge.js';
-import { usageOffer } from '../routing/offer.js';
-import { columnsReadyOf } from '../routing/in-force.js';
 import { BY_LAUNCHER, TOOL_SHEETS } from '../agents/tool-sheets.js';
-import { frontDeskCommand, knowsNoSystemCa } from '../protection/settings.js';
+import { frontDeskCommand, knowsNoSystemCa } from '../protection/plugin-command.js';
 
 import { LAUNCHER_SESSION } from '../lib/launchers.js';
 
@@ -95,7 +88,8 @@ const LAUNCHER_COMMAND = 'wh-frontdesk';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { keepRunningModel, modelOfInput } from '../lib/front-desk-model.js';
-import { whereDigest, resetEpisode } from './where.js';
+import { localViews } from '../lib/local-views.js';
+import { NO_HELPER } from '../lib/host-lines.js';
 import { keptRequest, clearRequest } from '../lib/kept-request.js';
 import { retiredPiece } from '../settings/catalogue.js';
 import { SETTINGS_CHANGED, settingsCardNote } from '../lib/settings-card.js';
@@ -111,7 +105,7 @@ export const MAX_CHARS = 9000;
 export const MAX_ENTRIES = 20;
 const LINE_CHARS = 200;
 
-export const NO_HELPER = 'The host helper isn\'t running, so nothing can be pushed or merged';
+export { NO_HELPER };
 export const NO_LOCK = 'The lock couldn\'t be taken this time, so pushes and merges are refused until a later session start takes it';
 export const heldElsewhere = (holder, since) => `Another computer (${oneLine(holder)}) holds this project's lock, last written ${oneLine(since)}, so pushes and merges from this computer are refused`;
 export const NO_USAGE = 'Usage counts couldn\'t start this time';
@@ -216,27 +210,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export { branchOf, featureSlug, madeFeatureSlug };
 
-// The views as the helper last wrote them on disk, when it cannot give them.
-// While views are being replaced the old ones sit in `views.old` for a moment (or for good
-// after a crash), so that folder is read when `views` is not there. `names` null reads
-// every view there (the board's inputs).
-export function localViews(project, names = ['rulebook', 'levels', 'waiting', 'unconfirmed', 'keptAsIs', 'damaged']) {
-  const base = path.join(wheelhouseHome(), 'projects', project, 'views');
-  const dir = fs.existsSync(base) ? base : `${base}.old`;
-  const out = {};
-  let wanted = names;
-  try {
-    wanted ??= fs.readdirSync(dir).filter((n) => /^[A-Za-z][A-Za-z0-9-]*\.json$/.test(n)).map((n) => n.slice(0, -'.json'.length));
-  } catch {
-    return null;
-  }
-  for (const name of wanted) {
-    try {
-      out[name] = JSON.parse(fs.readFileSync(path.join(dir, `${name}.json`), 'utf8'));
-    } catch { /* missing */ }
-  }
-  return Object.keys(out).length > 0 ? out : null;
-}
+export { localViews };
 
 // The views the session start reads when the helper can't give them: those the helper last left on
 // disk, with the settings and the unconfirmed changes built from the local events, as the waker
@@ -360,7 +334,7 @@ async function ensureHelper(client, { spawn, pluginRoot, waitMs, pause, end }) {
 // per mismatch set: while the same set stands, the hold file says it is recorded. It is kept
 // with the records a hook keeps, and sent with them below or at a later start. It informs, so
 // a failure is passed over, and the hold still stands.
-function recordHold(project, result, now) {
+function recordHold(project, result, now, { holdEvent, markRecorded }) {
   if (result.ok || result.kept !== true || result.recorded === true || typeof result.set !== 'string') return;
   try {
     keep(project, 'write', { project, kind: 'lineage-hold', data: holdEvent(now().toISOString(), result.mismatches) }, now);
@@ -372,11 +346,14 @@ function recordHold(project, result, now) {
 // a mismatch and removes it on a match, records the hold in the state, and records this
 // session's provenance. Gives the warning lines. It informs, so anything that goes wrong is
 // passed over.
-function lineageCheck(found, input, version, { check, root, claudeHome, now, pinsPending = false }) {
+async function lineageCheck(found, input, version, { check: given, root, claudeHome, now, pinsPending = false }) {
   try {
+    const lineage = await lineageModule();
+    const { writeProvenance, warningLines } = lineage;
+    const check = given ?? lineage.checkLineage;
     const folder = found.record?.folder ?? readProject(found.project)?.folder;
     const held = check({ project: found.project, projectDir: folder, root, claudeHome, now, pinsPending });
-    recordHold(found.project, held, now);
+    recordHold(found.project, held, now, lineage);
     try {
       writeProvenance({
         project: found.project, sessionId: input.session_id, root, upstreams: held.upstreams, ok: held.ok && !(held.pending?.length > 0),
@@ -439,6 +416,7 @@ async function takeOverNotes({ client, left, project, now }) {
     if (!Number.isFinite(idle)) return [];
     const ago = agoWords(idle);
     const inUse = idle < RECENT_MS;
+    const { composeCard } = await import('../cards/compose.js');
     const { question } = composeCard({
       kind: 'take-over',
       level: 3,
@@ -462,9 +440,10 @@ async function takeOverNotes({ client, left, project, now }) {
 // The seat card for an aside session in the main folder: the window that holds the First Mate's seat, as the seat names
 // it now (scripts/lib/seat-card.js). `ask` is the line that says how the chat shows it. It informs, so anything that
 // fails gives no line.
-function seatTakeOverNotes({ seat, now, ask = SEAT_TAKEOVER_ASK }) {
+async function seatTakeOverNotes({ seat, now, ask = SEAT_TAKEOVER_ASK }) {
   try {
     if (!seat) return [];
+    const { seatCard } = await import('../lib/seat-card.js');
     const { question } = seatCard({ seat, now });
     return [`${ask}${JSON.stringify(question)}`];
   } catch {
@@ -504,6 +483,7 @@ async function ensureWatcher(project, client, { spawn, pluginRoot, env = process
   // This session has the PATH that finds claude; keep the full path for a watcher that is started with a bare one.
   try { recordClaudePath({ env, inside: folder }); } catch { /* the watcher looks in the usual places */ }
   try {
+    const { keepWatcherAlive } = await import('../watcher/keep-alive.js');
     await keepWatcherAlive(project, { client, spawn, pluginRoot, env });
   } catch { /* the session carries on without it */ }
 }
@@ -596,16 +576,20 @@ async function importNotes(asks, { left, what }) {
 // The record is signed with this computer's key and sent through /state/record, so no session can write an offer. The
 // card is handed out only once the helper has taken it: the click on its switch counts only for a signed offer the
 // state holds (the prompt record), so a record not taken is not kept either, and the card is offered later.
-async function usageNotes({ client, left, up, project, views, now, allowance = () => weeklyOf(readAllowance()), timeZone, ready = columnsReadyOf }) {
+async function usageNotes({ client, left, up, project, views, now, allowance, timeZone, ready }) {
   try {
-    const reading = allowance();
+    // The usage modules are read when the card is worked out: a session start that offers none loads none of them.
+    const [{ readAllowance }, { weeklyOf }, { usageOffer }, { columnsReadyOf }] = await Promise.all([
+      import('../usage/figures.js'), import('../routing/nudge.js'), import('../routing/offer.js'), import('../routing/in-force.js'),
+    ]);
+    const reading = (allowance ?? (() => weeklyOf(readAllowance())))();
     if (reading === null || reading === undefined) return [];
     let profile = {};
     if (up && typeof client?.profile?.views === 'function') {
       const got = await left(client.profile.views({}));
       if (got?.ok === true && got.views?.settings && typeof got.views.settings === 'object') profile = got.views.settings;
     }
-    const offer = usageOffer({ views, profile, allowance: reading, ready: ready({ project }), now, timeZone });
+    const offer = usageOffer({ views, profile, allowance: reading, ready: (ready ?? columnsReadyOf)({ project }), now, timeZone });
     if (offer === null) return [];
     // Written at once, so a second session start doesn't offer it again.
     const body = { project, event: makeEvent({ kind: 'usage-card', data: offer.record, now }) };
@@ -758,7 +742,7 @@ async function seatOnReadOnlyStart({ project, input, env, now, api, left, up, fr
     if (!mine || !main || !seat || seat.session === session || (await seatFree(seat, opts))) return { aside: null, seatNotes };
     const card = up && typeof api?.session?.seat === 'function';
     const aside = asideLine({ ago: agoWords(now().getTime() - Date.parse(seat.seenAt)), kind: 'main', card });
-    if (card) seatNotes.push(...seatTakeOverNotes({ seat, now, ask: SEAT_TAKEOVER_WINDOW }));
+    if (card) seatNotes.push(...await seatTakeOverNotes({ seat, now, ask: SEAT_TAKEOVER_WINDOW }));
     return { aside, seatNotes };
   } catch {
     return { aside: null, seatNotes };
@@ -815,7 +799,7 @@ async function started(input, deps) {
     dir, projectOf: find = projectOf, client: given, spawn = nodeSpawn,
     platform = process.platform, now = () => new Date(), stopState: stopOf = stopState,
     self = SELF, pluginRoot = PLUGIN_ROOT, startWaitMs = START_WAIT_MS + helperGrace(), totalMs = TOTAL_MS + helperGrace(), pause = sleep,
-    background = startBackground, lineage: check = checkLineage, lineageRoot, claudeHome, env = process.env,
+    background = async (args) => (await import('../lib/background.js')).startBackground(args), lineage: check, lineageRoot, claudeHome, env = process.env,
     guardedSelfTest = selfTest, run = runProgram, lowNodeReady: copyReady = lowNodeReady,
   } = deps;
   // Brings this computer's settings for the project up to date, as a process of its own.
@@ -861,7 +845,7 @@ async function started(input, deps) {
   // the hold file neither written nor removed (a lift may still be recorded, elsewhere, for a hold
   // whose file is gone), no provenance rewritten, and a hold already standing stands.
   const checked = input.source !== 'compact';
-  const lineage = checked ? lineageCheck(found, input, version, { check, root: lineageRoot, claudeHome, now, pinsPending }) : [];
+  const lineage = checked ? await lineageCheck(found, input, version, { check, root: lineageRoot, claudeHome, now, pinsPending }) : [];
   const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000 + helperGrace(), totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
   // Records what this session is for and starts the usage receiver, alongside the import below.
   const usage = Promise.resolve().then(() => background({ pluginRoot, session: input.session_id, cwd: input.cwd, project, spawn, now })).catch(() => null);
@@ -912,12 +896,14 @@ async function started(input, deps) {
   // closed by one lift.
   try {
     const lineageHolds = views.lineageHolds ?? localViews(project, ['lineageHolds'])?.lineageHolds;
+    const { recordLift } = await lineageModule();
     await left(recordLift({ project, views: { lineageHolds }, computer: computerId(), now, client: clientNow(), left }));
   } catch { /* it informs */ }
   if ((await left(usage))?.receiver === 'failed') notes.push(NO_USAGE);
 
   // The first session after an update has finished says so once, naming this copy's version and the helper's.
   if (up && checked) {
+    const { confirmingLine } = await import('../update/board.js');
     const confirmed = confirmingLine({ project, sessionVersion: ownVersion(pluginRoot), helperVersion: up.version, now });
     if (confirmed !== null) notes.push(confirmed);
   }
@@ -937,7 +923,7 @@ async function started(input, deps) {
   const holder = aside && kept.seat && kept.seat.session !== input.session_id ? kept.seat : null;
   const offerSeat = holder !== null && asideWhere === 'main' && kept.chosen === false;
   const asideNote = aside ? asideLine({ ago: holder ? agoWords(now().getTime() - Date.parse(holder.seenAt)) : null, kind: asideWhere, card: offerSeat }) : null;
-  if (offerSeat) notes.push(...seatTakeOverNotes({ seat: holder, now }));
+  if (offerSeat) notes.push(...await seatTakeOverNotes({ seat: holder, now }));
   if (trouble !== null && deskSession) notes.push(trouble === 'newer' ? FOREMAN_HELD_NEWER : FOREMAN_HELD_UNREADABLE);
 
   const stateRoot = stateDir(project);
@@ -987,6 +973,7 @@ async function started(input, deps) {
   // After a compaction: where the session was, and a new episode for the context gauge.
   let where = '';
   if (input.source === 'compact') {
+    const { whereDigest, resetEpisode } = await import('./where.js');
     try {
       where = await whereDigest({ project, input, views, feature: madeFeatureSlug(input.cwd), stateRoot, env });
     } catch { /* the reload goes without it */ }

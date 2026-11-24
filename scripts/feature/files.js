@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { LANES, SLUG } from '../lib/build-loop.js';
-import { BEGIN as PROVENANCE, removeProvenance } from '../lineage/provenance.js';
+import { BEGIN as PROVENANCE, removeProvenance } from '../lineage/provenance-block.js';
 import { isBuildQuestion } from '../protection/windows-builds.js';
 import { AGENT_KINDS } from '../decisions/line.js';
 

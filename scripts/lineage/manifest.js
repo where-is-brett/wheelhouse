@@ -18,6 +18,7 @@ import { readCopies } from './copies.js';
 import { fingerprintFile, fingerprintTree } from './fingerprint.js';
 import { checkAnchors, checkCarried, readRegister } from './register.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { MARKETPLACE } from './marketplace.js';
 import { AGENT_PINS } from '../agents/pins.js';
 
 export const MANIFEST_PATH = 'lineage/manifest.json';
@@ -25,7 +26,7 @@ export const MANIFEST_PATH = 'lineage/manifest.json';
 export const NODE_FLOOR = '22.0.0';
 export const MODELS ='the routing table in .claude/wheelhouse.json';
 // The marketplace Wheelhouse installs the pinned copies through.
-export const MARKETPLACE = 'wheelhouse';
+export { MARKETPLACE };
 // Wheelhouse's own repository on GitHub, named once: the project's settings fetch the
 // marketplace from it, and the gate reads a release's tag from its https address.
 export const WHEELHOUSE_REPO = 'where-is-brett/wheelhouse';

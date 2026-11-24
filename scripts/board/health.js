@@ -14,9 +14,8 @@ import { readSmallText } from '../hooks/kit.js';
 import { WINDOWS_LINE, UNATTENDED_LINE, GUARDED_LINE, LOCKED_UNATTENDED_LINE, LOCKED_WOULD_LINE } from '../lib/platform-lines.js';
 import { HELPER_WAIT_MS, HOST_FACTS_MAX_AGE_MS } from '../lib/core-numbers.js';
 import { FREE_PLAN_LINE, fakedTestsGap } from '../host/protection.js';
-import { NO_HELPER } from '../hooks/session-start.js';
 import { helperClient } from '../host/helper-client.js';
-import { QUICK_LINE, quickLineFor, switchedLine, keyRefusedLine, keyMissingLine, wakeFailureLine } from '../lib/host-lines.js';
+import { NO_HELPER, QUICK_LINE, quickLineFor, switchedLine, keyRefusedLine, keyMissingLine, wakeFailureLine } from '../lib/host-lines.js';
 import { frontDeskModelLine } from '../lib/front-desk-model.js';
 
 // The All stop line starts with these words, alone or followed by ", since <date>". A line from

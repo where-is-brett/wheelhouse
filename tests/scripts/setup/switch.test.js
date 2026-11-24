@@ -16,7 +16,7 @@ import { engineForProject } from '../../../scripts/host/helper-main.js';
 import { settingCard } from '../../../scripts/frontdesk/cli.js';
 import { settingWords } from '../../../scripts/settings/effective.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
-import { visitLearning } from '../../../scripts/desk/visit.js';
+import { visitLearning } from '../../../scripts/desk/visit-learning.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { makeEvent, eventPath, confirmationFor } from '../../../scripts/state/events.js';

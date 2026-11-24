@@ -78,6 +78,7 @@ import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
 import { offeredFrom, premiumValueOf, PREMIUM_CARD_MS } from '../routing/premium.js';
 import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures, cardText, sweepStale, cardHash } from '../lib/measures-clicks.js';
 import { localViews, FRONT_DESK_LINE } from './session-start.js';
+import { standing } from '../cards/standing.js';
 import { takeFreeSeat } from '../lib/free-seat.js';
 import { buildViews, cardOutcomes } from '../state/views.js';
 import { clearOpen } from '../lib/session-files.js';
@@ -937,21 +938,6 @@ function withStoredText(project, input) {
 }
 
 // --- What the front desk is told about the answers ---
-
-// How the cards the clicks are on stand, from `outcomes` (cardOutcomes): for each click, the card it answers (by the
-// state's text, or by its chat copy when that is all the click names) and, when every such card was decided before
-// it, `stale`, the latest of them. A click on no card the state holds is left out.
-export function standing(out, outcomes) {
-  const found = new Map();
-  for (const click of out) {
-    const mine = outcomes.filter((o) => typeof o.card.data?.question === 'string'
-      && (o.card.data.question === click.question || chatCopy(o.card.data.question) === click.question));
-    if (mine.length === 0) continue;
-    const open = mine.filter((o) => o.decided === null);
-    found.set(click, open.length > 0 ? { card: open.at(-1).card } : { card: mine.at(-1).card, stale: mine.at(-1) });
-  }
-  return found;
-}
 
 // What the front desk is told, as one context: for a stale answer, that it changed nothing and which answer counted
 // and when; for a pick of Suggest a change… on a card still waiting, to ask what the director would change. Null when

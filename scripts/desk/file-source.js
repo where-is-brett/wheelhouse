@@ -3,7 +3,7 @@
 // director's own settings, the board's inputs, usage, STOP and an approval card's preview. Inside the
 // helper (`fresh`) the views are built again from the events first, as its /state/views route builds
 // them; the local fallback outside the sandbox reads them as the helper last left them.
-import { localViews } from '../hooks/session-start.js';
+import { localViews } from '../lib/local-views.js';
 import { listEvents } from '../state/events.js';
 import { writeViews } from '../state/views.js';
 import { readProfileViews, writeProfileViews } from '../profile/store.js';
