@@ -81,6 +81,7 @@ import { TAKEOVER_LABEL, LEAVE_LABEL } from '../state/card-lines.js';
 import { agentOfInput } from '../agents/of-input.js';
 import { BY_LAUNCHER, TOOL_SHEETS, WITHOUT_SYSTEM_CA_FLAG } from '../agents/tool-sheets.js';
 import { frontDeskCommand, knowsNoSystemCa } from '../protection/plugin-command.js';
+import { cardCommandLine } from '../lib/card-commands.js';
 
 import { LAUNCHER_SESSION } from '../lib/launchers.js';
 
@@ -505,6 +506,14 @@ const BUILDS_KEY = settingKey('');
 const isRetiredProposal = (u) => u?.kind === 'level' || (u?.kind === 'setting' && [u.key, u.data?.key].some((key) => typeof key === 'string' && retiredPiece(key) !== undefined));
 const isBuildsProposal = (u) => u?.kind === 'setting' && [u.key, u.data?.key].some((key) => typeof key === 'string' && key.startsWith(BUILDS_KEY));
 
+const COMMAND_LINE = 'The Wheelhouse command is ';
+// The First Mate's card command lines (scripts/lib/card-commands.js), from the command the sheet names. A new chat on a
+// set-up project is given them. Empty when the sheet names no command.
+export function cardCommandLines(sheet) {
+  const command = sheet.find((l) => l.startsWith(COMMAND_LINE))?.slice(COMMAND_LINE.length);
+  return command === undefined ? [] : [cardCommandLine(command)];
+}
+
 // `lineage` is the lineage check's warning lines, which come first after STOP. `windows` adds the
 // Windows line after them; `builds`, the level build commands run at on this computer, adds the
 // Unattended line after that while it is on. All come before the lists, so the cut at MAX_CHARS
@@ -523,6 +532,7 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   if (frontDesk) lines.push(FRONT_DESK_LINE);
   else if (aside !== null) lines.push(aside);
   lines.push(...sheet);
+  if (frontDesk) lines.push(...cardCommandLines(sheet));
   lines.push(...notes);
   // After a compaction: where the session was (scripts/hooks/where.js), before the lists so a cut takes them first.
   if (where !== '') lines.push(where);

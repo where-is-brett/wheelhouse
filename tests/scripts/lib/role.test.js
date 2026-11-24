@@ -217,3 +217,20 @@ test('only the aside command as a word counts: /wheelhouse:asides does not', () 
   assert.equal(asideByChoice({ prompt: `${ASIDE_COMMAND}s` }), false);
   assert.equal(asideByChoice({ prompt: `${ASIDE_COMMAND}-x` }), false);
 });
+
+test('a builder\'s first prompt starts with the builder lead, and the role is known from it', async () => {
+  const { BUILDER_PROMPT_LEAD } = await import('../../../scripts/foreman/prompt-lead.js');
+  const sessions = (await import('../../../adapters/claude-code/sessions.js')).default;
+  const call = sessions.featureStartCall({ sessionId: 's9', prompt: 'Read the brief.', claude: { kind: 'direct', file: 'claude' }, env: {} });
+  const prompt = call.args[call.args.indexOf('-p') + 1];
+  assert.ok(prompt.startsWith(BUILDER_PROMPT_LEAD));
+  assert.notEqual(BUILDER_PROMPT_LEAD, FOREMAN_PROMPT_LEAD);
+  assert.equal(sessions.featureResumeCall({ sessionId: 's9', prompt, claude: { kind: 'direct', file: 'claude' }, env: {} }).args.filter((a) => a.startsWith(BUILDER_PROMPT_LEAD)).length, 1, 'the lead is never doubled');
+  withHome((home) => {
+    assert.equal(sessionRole({ sessionId: 's9', env: {}, prompt, cwd: home }), 'feature');
+    assert.equal(sessionRole({ sessionId: 's8', env: {}, prompt: `Please explain "${BUILDER_PROMPT_LEAD}"` }), 'front-desk');
+    // Once a role is recorded, later words change nothing.
+    recordRole('s7', 'front-desk');
+    assert.equal(sessionRole({ sessionId: 's7', env: {}, prompt }), 'front-desk');
+  });
+});

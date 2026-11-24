@@ -99,6 +99,7 @@ import { decisionText } from '../decisions/message.js';
 import { isDecisionCard } from '../decisions/pending.js';
 import { askWhy } from '../decisions/why.js';
 import { typedRepliesIn } from '../decisions/switch.js';
+import { signedDecisionFor } from '../decisions/signed.js';
 import { confirmWords, replyCodeOf } from '../state/card-lines.js';
 import { joinersOf } from '../state/joiners.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
@@ -699,6 +700,16 @@ export async function decisionList({ client, cwd, now }) {
   const { pending } = await decisionsOf(client, cwd);
   const lines = pending.length === 0 ? ['No decision is waiting.'] : pending.map((d) => `${d.n}. ${d.question}${d.work === null || d.work === undefined ? '' : ` (holds up: ${d.work})`}`);
   return [...lines, ...problems];
+}
+
+// "Already approved on 17 November 2026" when the record holds a signed decision on this work and question, else
+// "No signed decision on this yet". It reads the record only, and asks no card.
+export function decisionSigned({ cwd, work, question }) {
+  const found = projectOf(cwd);
+  if (found === null) throw new CliError("This folder isn't a Wheelhouse project");
+  const signed = signedDecisionFor(found.project, work, question);
+  if (signed === null) return 'No signed decision on this yet';
+  return `Already approved on ${new Date(signed.at).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}`;
 }
 
 // One decision's message, to print word for word. Refused when none waits by that number.
@@ -1760,8 +1771,9 @@ export async function main(argv, {
       only(left, 0, 'cards takes no arguments');
       json(await cards({ client: helper, cwd: here, now, onAsked, session: sessionId }));
     } else if (command === 'decision') {
-      const usage = 'Give decision list, or decision show <n> or decision confirm <n> with the decision\'s number';
-      if (rest[0] === 'list' && rest.length === 1) lines(await decisionList({ client: helper, cwd: here, now }));
+      const usage = 'Give decision list, decision signed <work id> "<question>", or decision show <n> or decision confirm <n> with the decision\'s number';
+      if (rest[0] === 'signed' && rest.length === 3) lines([decisionSigned({ cwd: here, work: rest[1], question: rest[2] })]);
+      else if (rest[0] === 'list' && rest.length === 1) lines(await decisionList({ client: helper, cwd: here, now }));
       else if (rest[0] === 'show' && rest.length === 2 && /^[1-9][0-9]{0,2}$/.test(rest[1])) out(`${await decisionShow({ client: helper, cwd: here, n: Number(rest[1]) })}\n`);
       else if (rest[0] === 'confirm' && rest.length === 2 && /^[1-9][0-9]{0,2}$/.test(rest[1])) json(await decisionConfirm({ client: helper, cwd: here, n: Number(rest[1]) }));
       else throw new CliError(usage);

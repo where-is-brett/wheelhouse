@@ -3,7 +3,8 @@
 // what a session is shown, never what it may do.
 //
 // The foreman has WHEELHOUSE_ROLE=foreman, or a first prompt that begins with the foreman's wake
-// line (a foreman started without an environment of its own gets only that). The board-context
+// line (a foreman started without an environment of its own gets only that). A builder is known the same
+// way, by a first prompt that begins with the builder's lead line, wherever its folder is. The board-context
 // hook sees each session's first prompt and records the role it gives in
 // sessions/<sessionId>/role.json under the Wheelhouse home, once, so a later prompt with the same
 // words changes nothing, and the session start, the usage records and the mod read it back.
@@ -13,7 +14,7 @@ import { wheelhouseHome } from './paths.js';
 import { madeFeatureSlug } from './feature-slug.js';
 import { projectOf, worktreeRoot } from '../hooks/kit.js';
 import { readSeat } from './first-mate-seat.js';
-import { FOREMAN_PROMPT_LEAD } from '../foreman/prompt-lead.js';
+import { BUILDER_PROMPT_LEAD, FOREMAN_PROMPT_LEAD } from '../foreman/prompt-lead.js';
 import { ROLE_VARIABLE } from '../../adapters/claude-code/sessions.js';
 
 export const ROLES = Object.freeze(['foreman', 'front-desk', 'feature', 'why', 'aside']);
@@ -96,6 +97,7 @@ export function sessionRole({ sessionId, env = process.env, prompt, cwd, seat } 
   if (kept !== null && kept !== 'front-desk') return kept;
   // The wake line counts only while no role is recorded, so a recorded front desk is not turned foreman by later words.
   if (kept === null && typeof prompt === 'string' && prompt.startsWith(FOREMAN_PROMPT_LEAD)) return 'foreman';
+  if (kept === null && typeof prompt === 'string' && prompt.startsWith(BUILDER_PROMPT_LEAD)) return 'feature';
   if (madeFeatureSlug(cwd) !== null) return 'feature';
   if (asideByChoice({ prompt, cwd })) return 'aside';
   return seatRole({ sessionId, cwd, seat });

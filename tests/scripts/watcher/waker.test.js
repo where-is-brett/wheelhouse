@@ -57,6 +57,8 @@ const FLAT_COLUMN = [
   "reviewerCritical: model the session's own, effort high",
   "tester: model the session's own, effort medium",
 ];
+// A builder's prompt begins with the builder lead line (scripts/foreman/prompt-lead.js).
+const led = (prompt) => `Wheelhouse builder: ${prompt}`;
 const withColumn = (prompt, column = FLAT_COLUMN) => [prompt, '', ...column].join('\n');
 
 const config = (over = {}) => readConfig(JSON.stringify({
@@ -500,7 +502,7 @@ test('a feature bundle wakes only that feature\'s session, by the id the watcher
   const copy = path.join(featurePaths(login).dir, 'wakes', path.basename(record));
   assert.equal(call.cwd, login);
   assert.deepEqual(call.args, [
-    '-p', withColumn(`Wheelhouse: read ${copy}`), '--resume', SESSION,
+    '-p', withColumn(led(`Wheelhouse: read ${copy}`)), '--resume', SESSION,
     '--permission-mode', 'dontAsk', '--model', 'model-b', '--effort', 'high', '--allowedTools', ...ALLOWED, ...FILE_RULES,
   ]);
   assert.equal(fs.readFileSync(copy, 'utf8'), fs.readFileSync(record, 'utf8'));
@@ -533,7 +535,7 @@ test('a feature started before its brief named the approved document gets it on 
   assert.equal(fake.calls.length, 1);
   const copy = path.join(featurePaths(login).dir, 'wakes', path.basename(record));
   assert.equal(fs.readFileSync(path.join(featurePaths(login).dir, 'approved.md'), 'utf8'), design);
-  assert.equal(fake.calls[0].args[1], withColumn(PROMPTS.feature(copy, { approved: true })));
+  assert.equal(fake.calls[0].args[1], withColumn(led(PROMPTS.feature(copy, { approved: true }))));
   assert.match(PROMPTS.feature(copy, { approved: true }), /^Wheelhouse: read .+\. The director's approved document for this work is now at \.wheelhouse\/feature\/approved\.md: it is the spec\./);
 }));
 
@@ -554,7 +556,7 @@ test('a feature whose brief names the approved document is woken with the plain 
   await w.wakeFeature('search-box', record);
   const copy = path.join(featurePaths(search).dir, 'wakes', path.basename(record));
   assert.equal(fs.existsSync(path.join(featurePaths(search).dir, 'approved.md')), false);
-  assert.equal(fake.calls[0].args[1], withColumn(`Wheelhouse: read ${copy}`));
+  assert.equal(fake.calls[0].args[1], withColumn(led(`Wheelhouse: read ${copy}`)));
 }));
 
 test('a feature wake waits while the watcher kept no session id, and is dropped once the feature is gone', () => withHome(async () => {
@@ -617,7 +619,7 @@ test('startFeature starts a session with an id of the watcher\'s own, in the wor
   const [call] = fake.calls;
   assert.equal(call.cwd, dir);
   assert.deepEqual(call.args, [
-    '-p', withColumn('Read .wheelhouse/feature/brief.md and follow it.'), '--session-id', started.sessionId,
+    '-p', withColumn(led('Read .wheelhouse/feature/brief.md and follow it.')), '--session-id', started.sessionId,
     '--permission-mode', 'acceptEdits', '--model', 'model-b', '--effort', 'high', '--allowedTools', ...ALLOWED, ...FILE_RULES,
   ]);
   assert.deepEqual(JSON.parse(fs.readFileSync(sessionFile(P, 'login-page'), 'utf8')).sessionId, started.sessionId);

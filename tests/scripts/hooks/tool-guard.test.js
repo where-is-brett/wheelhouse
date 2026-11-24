@@ -964,7 +964,8 @@ test('Bash refuses a script a runner starts that is not there yet or the command
 
 // --- the files that steer an agent ---
 
-const REASON = (out) => out?.hookSpecificOutput?.permissionDecisionReason;
+// The refusal's own words: an aside's (a linked worktree's) carry the guards sentence and the way out around them.
+const REASON = (out) => out?.hookSpecificOutput?.permissionDecisionReason?.replace(/^This folder is run by Wheelhouse; its guards apply to every Claude session here\. /, '').replace(/\. To work outside them, use a separate copy of the project, or \/wheelhouse:aside for an ordinary session under the same guards\.$/, '');
 const WRITERS = [['Edit', 'file_path'], ['Write', 'file_path'], ['MultiEdit', 'file_path'], ['NotebookEdit', 'notebook_path']];
 const runWithEnv = (base, home, input, { platform = process.platform, env = {} } = {}) => decide(input, { dir: path.join(base, 'managed'), home, platform, pluginRoot: PLUGIN, env });
 
@@ -1890,3 +1891,41 @@ test('a launcher command with a curly quote or any non-ASCII character is refuse
   });
 });
 
+
+test('a refusal in a session with no role begins with the guards sentence and names the way out; the guard still refuses', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const { recordRole } = await import('../../../scripts/lib/role.js');
+      const { GUARDS_SENTENCE } = await import('../../../scripts/hooks/tool-guard.js');
+      assert.equal(GUARDS_SENTENCE, 'This folder is run by Wheelhouse; its guards apply to every Claude session here.');
+      const why = (out) => out?.hookSpecificOutput?.permissionDecisionReason ?? '';
+      const env = { WHEELHOUSE_HOME: path.join(home, 'wh') };
+      const aside = { ...call(main, 'Read', { file_path: path.join(main, '.env') }), session_id: 'aside-1' };
+      assert.ok(recordRole('aside-1', 'aside'));
+      const out = await runWithEnv(base, home, aside, { env });
+      assert.ok(denied(out), 'an aside is guarded as before');
+      assert.ok(why(out).startsWith(GUARDS_SENTENCE), why(out));
+      assert.match(why(out), /separate copy of the project/);
+      assert.match(why(out), /\/wheelhouse:aside/);
+      // A session that has a role (the First Mate's, a feature's) gets the plain refusal.
+      assert.ok(recordRole('desk-1', 'front-desk'));
+      const plain = why(await runWithEnv(base, home, { ...aside, session_id: 'desk-1' }, { env }));
+      assert.ok(plain !== '' && !plain.includes(GUARDS_SENTENCE), plain);
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
+test('a refused command lookup prints the First Mate\'s command lines', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const { frontDeskCommand } = await import('../../../scripts/protection/plugin-command.js');
+      const command = frontDeskCommand(PLUGIN, { platform: process.platform });
+      const out = await run(base, home, call(main, 'Bash', { command: `cat ${path.join(PLUGIN, 'scripts', 'frontdesk', 'cli.js')}` }));
+      assert.ok(denied(out));
+      const reason = out.hookSpecificOutput.permissionDecisionReason;
+      for (const line of [`\`${command} cards\``, `\`${command} card < <the card's file>\``, `\`${command} again <n>\``]) assert.ok(reason.includes(line), line);
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
