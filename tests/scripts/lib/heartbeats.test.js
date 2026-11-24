@@ -16,10 +16,13 @@ const write = (home, rel, value) => {
 };
 const now = () => new Date(NOW);
 const alive = (pids) => (pid) => pids.includes(pid);
+// The All stop now on, set at this time.
+const STOP = '2026-11-24T09:59:00.000Z';
+const stopAt = () => STOP;
 
 test('nothing recorded means nothing stopped and nothing running', () => {
   const home = tempFolder('wh-beats-');
-  assert.deepEqual(stillRunning(home, P, { now, alive: alive([]) }), { stopped: [], running: [] });
+  assert.deepEqual(stillRunning(home, P, { now, alive: alive([]), stopAt }), { stopped: [], running: [] });
 });
 
 test('the helper and a fresh watcher heartbeat are still running; a stale or dead one is not', () => {
@@ -44,11 +47,32 @@ test('a damaged heartbeat file reads as not running, never as a throw', () => {
 
 test('the builders the watcher ended are stopped; one whose process is still there is still running', () => {
   const home = tempFolder('wh-beats-');
-  writeStopped(home, P, { at: new Date(NOW).toISOString(), works: ['login-page', 'search-box', 'foreman'] });
+  writeStopped(home, P, { at: new Date(NOW).toISOString(), stop: STOP, works: ['login-page', 'search-box', 'foreman'] });
   write(home, `projects/${P}/watcher/running/feature-search-box.json`, { pid: 33 });
-  const got = stillRunning(home, P, { now, alive: alive([33]) });
+  const got = stillRunning(home, P, { now, alive: alive([33]), stopAt });
   assert.deepEqual(got.stopped, ['builder login-page', 'builder search-box', 'foreman']);
   assert.deepEqual(got.running, [{ name: 'builder search-box', why: 'still ending' }]);
+});
+
+test('a record of an earlier All stop is not read as this one\'s, and the next STOP replaces it', () => {
+  const home = tempFolder('wh-beats-');
+  writeStopped(home, P, { at: new Date(NOW).toISOString(), stop: '2026-11-20T08:00:00.000Z', works: ['login-page'] });
+  assert.deepEqual(stillRunning(home, P, { now, alive: alive([]), stopAt }).stopped, [], 'an earlier STOP\'s builders are not shown');
+  assert.deepEqual(stillRunning(home, P, { now, alive: alive([]), stopAt: () => undefined }).stopped, []);
+  writeStopped(home, P, { at: new Date(NOW).toISOString(), stop: STOP, works: [] });
+  assert.deepEqual(stillRunning(home, P, { now, alive: alive([]), stopAt }).stopped, [], 'the new STOP starts empty');
+  writeStopped(home, P, { at: new Date(NOW).toISOString(), stop: STOP, works: ['search-box'] });
+  writeStopped(home, P, { at: new Date(NOW).toISOString(), stop: STOP, works: ['foreman', 'search-box'] });
+  assert.deepEqual(stillRunning(home, P, { now, alive: alive([]), stopAt }).stopped, ['builder search-box', 'foreman'], 'the same STOP gains names');
+});
+
+test('only the foreman and work ids are shown: other words in the records never reach the card', () => {
+  const home = tempFolder('wh-beats-');
+  write(home, `projects/${P}/watcher/all-stopped.json`, { at: STOP, stop: STOP, stopped: ['login-page', '/Users/someone/secret', 'Run rm -rf', 'x'.repeat(200), 7] });
+  write(home, `projects/${P}/watcher/running/feature-..%2Fodd name.json`, { pid: 33 });
+  const got = stillRunning(home, P, { now, alive: alive([33]), stopAt });
+  assert.deepEqual(got.stopped, ['builder login-page']);
+  assert.deepEqual(got.running, []);
 });
 
 test('the All stopped card lists stopped and still-running parts from heartbeats, in the design\'s words', () => {

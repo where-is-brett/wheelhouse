@@ -235,24 +235,28 @@ export async function runWatcher({
     let pruned = null;
     let gapSent = null;
     let last = null;
-    // Holds the director left behind (no open helm in the records) are cleared once, as the watcher starts.
-    try {
-      // The views as the helper gives them, not as the foreman reads them: a reading with no `helm` in it would clear every hold.
-      const answer = await client.state.views({ project });
-      const helm = answer?.ok === true ? answer.views?.helm : undefined;
-      if (helm !== null && typeof helm === 'object' && !Array.isArray(helm)) cleanOrphans(project, answer.views, { now });
-    } catch (error) {
-      log(`Old helm holds couldn't be looked for: ${error.message}`);
-    }
-    // Pieces whose helm terminal closed while the watcher was off are handed back, once, as it starts.
-    await handBackClosed(project, {
-      configOf: async () => {
-        const read = await projectConfig(project, client);
-        if (read.config === null) throw new Error(read.why);
-        return read.config;
-      },
-      now, log, ...helm,
-    });
+    // What the watcher does once as it starts, at its first loop not under All stop (it writes, and can queue a wake).
+    let startedUp = false;
+    const startUp = async () => {
+      // Holds the director left behind (no open helm in the records) are cleared.
+      try {
+        // The views as the helper gives them, not as the foreman reads them: a reading with no `helm` in it would clear every hold.
+        const answer = await client.state.views({ project });
+        const helm = answer?.ok === true ? answer.views?.helm : undefined;
+        if (helm !== null && typeof helm === 'object' && !Array.isArray(helm)) cleanOrphans(project, answer.views, { now });
+      } catch (error) {
+        log(`Old helm holds couldn't be looked for: ${error.message}`);
+      }
+      // Pieces whose helm terminal closed while the watcher was off are handed back.
+      await handBackClosed(project, {
+        configOf: async () => {
+          const read = await projectConfig(project, client);
+          if (read.config === null) throw new Error(read.why);
+          return read.config;
+        },
+        now, log, ...helm,
+      });
+    };
     for (let n = 0; n < loops && !signal?.aborted; n += 1) {
       if (n > 0) await sleep(every.features, signal);
       if (signal?.aborted) break;
@@ -317,6 +321,10 @@ export async function runWatcher({
           fault(`The sessions couldn't all be stopped: ${error.message}`);
         }
         continue;
+      }
+      if (!startedUp) {
+        startedUp = true;
+        await startUp();
       }
       if (wake === null) continue; // nothing observed, nothing woken, the cursor kept as it is
 

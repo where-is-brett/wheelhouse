@@ -518,6 +518,29 @@ test('main: hands back a closed terminal\'s hold at start', () => registeredHome
   assert.deepEqual(woken, ['closed']);
 }));
 
+test('under STOP the start\'s hand-back and old-hold clearing wait for the lift (design 12A.6)', () => registeredHome(async () => {
+  await openTestRecord({ project: P });
+  await takeHold(P, { work: 'closed', sessionId: 's-1' });
+  markOpened(P, 'closed', { pid: 4242, startTime: 'Sun Nov  8 02:00:00 2026' });
+  const woken = [];
+  let asked = 0;
+  const helm = { alive: () => false, wakerFor: () => ({ wakeFeature: async (work) => { woken.push(work); } }) };
+  const client = { state: { views: async () => { asked += 1; return { ok: true, views: { work: {}, features: {}, helm: { closed: { since: '2026-11-08T01:00:00.000Z', fromStart: false } } } }; } } };
+  const c = clock();
+  let ticks = 0;
+  const waker = { ...fakeWaker(), stopAll: async () => { ticks += 1; if (ticks === 2) liftStop(); return []; } };
+  setStop({ by: 'prompt' });
+  await runWatcher({ project: P, client, config: config(), observe: looker([]).observe, waker, helm, loops: 1, now: c.now, sleep: c.sleep, log: quiet });
+  assert.equal(asked, 0, 'nothing is read for the start under STOP');
+  assert.equal(fs.existsSync(holdFile(P, 'closed')), true, 'the hold is not handed back under STOP');
+  assert.deepEqual(woken, []);
+  // STOP lifts during the second tick's idle: the third tick does the start's work, once.
+  await runWatcher({ project: P, client, config: config(), observe: looker([]).observe, waker, helm, loops: 4, now: c.now, sleep: c.sleep, log: quiet });
+  assert.ok(asked >= 1);
+  assert.equal(fs.existsSync(holdFile(P, 'closed')), false);
+  assert.deepEqual(woken, ['closed']);
+}));
+
 // --- One home per watcher (design 12A.1, 12A.2) ---
 
 test('a watcher\'s lock records the home it serves', () => registeredHome(async (home) => {

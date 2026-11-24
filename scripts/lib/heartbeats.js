@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pidAlive } from './process-start.js';
+import { stopState } from './stop.js';
 
 // A watcher loop is a minute; a heartbeat older than this is a watcher that has gone (the watcher's own away line is 3 minutes).
 export const HEARTBEAT_FRESH_MS = 3 * 60 * 1000;
@@ -23,18 +24,26 @@ function readJson(file) {
   }
 }
 
-// Records the builders the watcher ended when All stop came on: `{ at, stopped: [work] }`. Kept until the next All stop.
-export function writeStopped(home, project, { at, works }) {
+// A name the card may show: the foreman, or a work id as the watcher writes one.
+const NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const shown = (w) => typeof w === 'string' && (w === 'foreman' || NAME.test(w));
+
+// Records the builders the watcher ended for the All stop set at `stop` (its `at`): `{ at, stop, stopped: [work] }`. A
+// record for the same STOP gains the new names; one for an earlier STOP is replaced.
+export function writeStopped(home, project, { at, stop, works }) {
   const file = stoppedFile(home, project);
+  const kept = readJson(file);
+  const before = kept !== null && kept.stop === stop && Array.isArray(kept.stopped) ? kept.stopped.filter(shown) : [];
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify({ at, stopped: works })}\n`);
+  fs.writeFileSync(file, `${JSON.stringify({ at, stop, stopped: [...new Set([...before, ...works.filter(shown)])] })}\n`);
 }
 
 // { stopped: string[], running: { name, why }[] }, from files only (a process id is asked of the system, nothing more).
-// Part 6 adds the foreman and Desktop builders to `stopped`.
-export function stillRunning(home, project, { now = () => new Date(), alive = pidAlive } = {}) {
+// `stopped` is read only from the record for the All stop now on. Part 6 adds the foreman and Desktop builders to it.
+export function stillRunning(home, project, { now = () => new Date(), alive = pidAlive, stopAt = () => stopState().at } = {}) {
   const kept = readJson(stoppedFile(home, project));
-  const works = Array.isArray(kept?.stopped) ? kept.stopped.filter((w) => typeof w === 'string') : [];
+  const current = kept !== null && kept.stop !== undefined && kept.stop === stopAt();
+  const works = current && Array.isArray(kept.stopped) ? kept.stopped.filter(shown) : [];
   const stopped = works.map((w) => (w === 'foreman' ? 'foreman' : `builder ${w}`));
   const running = [];
 
@@ -53,7 +62,7 @@ export function stillRunning(home, project, { now = () => new Date(), alive = pi
   } catch { /* none running */ }
   for (const n of names.sort()) {
     const m = /^feature-(.+)\.json$/.exec(n);
-    if (m === null) continue;
+    if (m === null || !NAME.test(m[1])) continue;
     const run = readJson(path.join(watcherFolder(home, project), 'running', n));
     if (Number.isInteger(run?.pid) && alive(run.pid)) running.push({ name: `builder ${m[1]}`, why: 'still ending' });
   }

@@ -724,9 +724,18 @@ export function spawnDetached(file, args, { cwd, env, input = '', windowsVerbati
 export const STEER_NAMES_ITSELF = "This agent's sessions name themselves, so a piece can't be steered from its start";
 
 // Ends a recorded session's process, and the ones it started with it where the system lets us (on macOS and Linux it
-// leads its own group). Says whether the signal was sent.
-export function endProcess(pid) {
-  for (const target of process.platform === 'win32' ? [pid] : [-pid, pid]) {
+// leads its own group; on Windows the recorded pid is the hidden-start relay, so taskkill ends its tree). Says whether
+// the end was sent.
+export function endProcess(pid, { platform = process.platform, spawner = spawn } = {}) {
+  if (platform === 'win32') {
+    try {
+      const child = spawner('taskkill', ['/pid', String(pid), '/T', '/F'], { detached: true, stdio: 'ignore', windowsHide: true, shell: false });
+      child.once?.('error', () => {});
+      child.unref?.();
+      return true;
+    } catch { /* no taskkill: the process alone */ }
+  }
+  for (const target of platform === 'win32' ? [pid] : [-pid, pid]) {
     try {
       process.kill(target, 'SIGTERM');
       return true;
@@ -816,6 +825,10 @@ export function makeWaker({
   // Where `claude` is, for the calls built below: the one given, else the launch command saved for this computer (read at each
   // start, so one the director has just saved or mended counts), else none, which the adapter finds as it always has.
   let claude = givenClaude;
+  // The processes All stop ended (stopAll), so their exit is settled as All stop's even once STOP has lifted; and the
+  // STOP whose record of ended sessions this process last wrote (all-stopped.json).
+  const endedByStop = new Set();
+  let stoppedFor;
   // The configuration from the default branch, as last read: `setConfig` replaces it, so every wake after a change
   // that merged (a model, a pin, a mode) starts its session by the new one.
   let config = givenConfig;
@@ -1533,6 +1546,8 @@ export function makeWaker({
     const watch = !judged ? null : kept !== null ? { file: kept.output, from: kept.from, own: false } : own !== null ? { file: own, from: 0, own: true } : null;
     watcherFolder(project, 'running');
     const file0 = runningFile(project, target);
+    // The last word before anything is recorded or run: STOP may have come on while the start was being made.
+    if (stopped()) throw new StopNow();
     const at = now().toISOString();
     writeJsonFile(file0, { state: 'starting', at, file, entries, ...(kept ? { run: kept } : {}), ...(own !== null ? { startOutput: own, program: programOf(call) } : {}) });
     let started;
@@ -1560,8 +1575,9 @@ export function makeWaker({
         if (!mine && target !== 'foreman' && helmHeld(project, nameOf(target))) {
           return deliver();
         }
-        // The same for a run All stop ended: its record was taken and its wakes put back (stopAll).
-        if (!mine && stopped()) return deliver();
+        // The same for a run All stop ended: its record was taken and its wakes put back (stopAll), even when STOP has
+        // lifted before it exited.
+        if (!mine && (endedByStop.delete(started.pid) || stopped())) return deliver();
         if (kept?.premium === true && mine && await premiumRefused(target, kept, code, entries)) {
           // Rests the premium model, and its wake goes again on the most capable model.
         } else {
@@ -2207,20 +2223,27 @@ export function makeWaker({
           const state = await stateOf(target);
           if (state === null) continue;
           const record = state.live ?? state.ended;
+          // A start still being made (by this process or another) has no process yet: the next tick reads it again.
+          if (state.live !== undefined && record.state === 'starting') continue;
           const same = (r) => r.at === record.at && r.pid === record.pid && r.state === record.state;
           const running = state.live !== undefined || state.why === 'overran';
-          let signalled = false;
-          if (running && Number.isInteger(record.pid) && typeof record.startTime === 'string' && sameStart(await timeOf(record.pid, [], { fresh: true }), record.startTime)) {
-            signalled = kill(record.pid);
+          if (running) {
+            // Only a process whose start time is the recorded one is ended. One that can't be confirmed, or not ended,
+            // keeps its record, so nothing starts beside it once STOP lifts; the next tick tries again.
+            if (!Number.isInteger(record.pid) || typeof record.startTime !== 'string' || !sameStart(await timeOf(record.pid, [], { fresh: true }), record.startTime)) continue;
+            if (!kill(record.pid)) continue;
+            endedByStop.add(record.pid);
           }
           if (claimRecord(target, same) === null) continue;
           settle(list(record.entries).filter((x) => typeof x === 'string'), 'again');
-          if (running && signalled) ended.push(nameOf(target));
+          if (running) ended.push(nameOf(target));
         }
-        if (ended.length > 0) {
+        const stop = stopState();
+        if (ended.length > 0 || stoppedFor !== stop.at) {
+          stoppedFor = stop.at;
           const { writeStopped } = await import('../lib/heartbeats.js');
           try {
-            writeStopped(wheelhouseHome(), project, { at: now().toISOString(), works: ended });
+            writeStopped(wheelhouseHome(), project, { at: now().toISOString(), stop: stop.at, works: ended });
           } catch (error) {
             onError(`The sessions ended by All stop couldn't be recorded: ${error instanceof Error ? error.message : 'unknown error'}`);
           }
