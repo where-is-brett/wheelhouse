@@ -26,6 +26,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
+import { throwawayIdle } from '../lib/standard-env.js';
 import { computerId, helperAddress, profileDir, oldProfileDir, stateDir, oldStateDir, wheelhouseHome, engineDir, archonHome } from '../lib/paths.js';
 import { stopState, setStop, liftStop } from '../lib/stop.js';
 import { bypassActive } from '../lib/bypass.js';
@@ -1087,6 +1088,9 @@ export async function startHelper({
   // How often the card router and the dispatcher look again for each project on the engine (scripts/engine/runner.js,
   // dispatch-run.js): answers to send, caps to keep, cost records to write, and work to start.
   dispatchMs = 60 * 1000,
+  // How often a throwaway home's helper looks at whether its home has been idle for an hour, and how long it waits before
+  // the second look that confirms it. Both are for tests.
+  idleLookMs = 60 * 1000, idleConfirmMs = 2000,
   platform = process.platform,
   // Runs one check (scripts/checks/run.js); a test on a computer with no sandbox stands in for it.
   check = runCheck,
@@ -6854,6 +6858,7 @@ export async function startHelper({
       if (stopWatch) clearInterval(stopWatch);
       if (dispatchWatch) clearInterval(dispatchWatch);
       if (safekeepingWatch) clearInterval(safekeepingWatch);
+      if (idleWatch) clearInterval(idleWatch);
       await lookingAround?.catch(() => {});
       await sleeping.beat();
       await ticking?.catch(() => {});
@@ -7197,6 +7202,26 @@ export async function startHelper({
   const safekeepingWatch = setInterval(() => { safekeepingRound().catch(() => {}); moveRound().catch(() => {}); watcherRound().catch(() => {}); undoRound().catch(() => {}); }, dispatchMs);
   safekeepingWatch.unref?.();
 
+  // A throwaway home's helper stops an hour after the last session of its home (design 12A.2), by its own normal close, as
+  // the watcher does. The default home's helper never does. A missing or unreadable session time is no reason: only a time
+  // read twice, a moment apart, as older than the hour stops it. The next session's keep-alive starts a helper again. It
+  // stops only when nothing keeps it (busyWith); doubt counts as busy.
+  const servedHome = wheelhouseHome();
+  let idleLooking = false;
+  const idleRound = async () => {
+    if (idleLooking || closing || retiring) return;
+    idleLooking = true;
+    try {
+      if (!throwawayIdle(servedHome, { now })) return;
+      await new Promise((resolve) => { setTimeout(resolve, idleConfirmMs).unref?.(); });
+      if (closing || retiring || !throwawayIdle(servedHome, { now }) || busyWith() !== null) return;
+      retiring = true;
+      Promise.resolve().then(() => onStop(close)).catch(() => {});
+    } catch { /* it carries on */ } finally { idleLooking = false; }
+  };
+  const idleWatch = setInterval(() => { idleRound().catch(() => {}); }, idleLookMs);
+  idleWatch.unref?.();
+
   // `engine.start` is the helper's own way to start a run (the dispatcher's): no route starts one.
-  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() }, safekeeping: { tick: () => safekeepingRound() }, watcher: { tick: () => watcherRound() }, move: { tick: () => moveRound() }, undo: { tick: () => undoRound() } };
+  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() }, safekeeping: { tick: () => safekeepingRound() }, watcher: { tick: () => watcherRound() }, move: { tick: () => moveRound() }, undo: { tick: () => undoRound() }, idle: { tick: () => idleRound() } };
 }
