@@ -53,6 +53,10 @@ The four Copilot scenarios are in `tests/eval/copilot/` and run on Copilot alone
 
 Not run yet. T5 settles check C6: whether a hook sees the director's own click on an `ask_user` card, and whether an agent can fill one in. Until it passes, a chat click is recorded as `chat-click`, not proven (`C6_PASSED` is false), and the steps no chat click decides go to the helper's window. T6 is setup on a Windows computer, to try PowerShell, the `.cmd` launchers and the hook forms. Both need the director, so an agent prepares and then asks for the sitting.
 
+### Hook timing
+
+To see where a hook run spends its time, create the marker file `hook-timing` in the Wheelhouse home (`~/.wheelhouse/hook-timing`, or under `WHEELHOUSE_HOME`); each run then adds a line of phase timings to `logs/hook-timing.jsonl` there. Delete the marker to turn it off.
+
 ## What a trial may not do
 
 - It records its own clicks as the trial's, never the director's. A card clicked in a trial proves a flow works; it is not an approval of anything.
