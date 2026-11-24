@@ -2037,7 +2037,29 @@ export async function startHelper({
     const event = id === undefined ? made : { ...made, id };
     const result = await writeEvent({ project, event, now });
     await freshViews(() => writeViews(project, { now }));
+    if (kind === 'card-answer') signInAnswered(data).catch(() => {});
     return written({ event, result });
+  }
+
+  // The sign-in card's "I've signed in; check again" (builders design, section 10.2): the answer is recorded as any other, and
+  // then the check runs once, as builders start on this computer, taking the fact away only when it passes. Not under STOP, and
+  // only while a fact stands; a check already running (the hourly look's, or setup's) is joined, never doubled. A launch command
+  // that can't be read runs nothing and keeps the fact. Nothing waits on it: the waker sends the held wakes once the fact clears.
+  async function signInAnswered(data) {
+    const { SIGN_IN_OPTIONS } = await import('../lib/sign-in-gate.js');
+    if (data?.label !== SIGN_IN_OPTIONS.again || stopped()) return { ran: false };
+    const { readSignIn } = await import('../lib/sign-in-line.js');
+    const read = readSignIn(wheelhouseHome());
+    if (!read.ok || !Object.hasOwn(read.facts, 'claude-code:background')) return { ran: false };
+    const { recheckRoute } = await import('../setup/builder-sign-in.js');
+    const { storedLaunch } = await import('../lib/launch-stored.js');
+    let launch;
+    try {
+      launch = storedLaunch();
+    } catch {
+      return { ran: false };
+    }
+    return recheckRoute({ home: wheelhouseHome(), agent: 'claude-code', route: 'background', launch, ...(signInCheck ? { check: signInCheck } : {}) });
   }
 
   // The survey taken again (design section 15, ruling A1; plan ruling P3): only when the latest
@@ -3008,6 +3030,7 @@ export async function startHelper({
     // The director's Pair it or Unpair it on an app's card (spec 5.3) enrols the app's key, or removes it.
     if (event.kind === 'action' && event.data?.action === 'pair-client') pairClient({ id: event.data.client }, event, { now });
     if (event.kind === 'action' && event.data?.action === 'unpair-client') unpairClient(event.data.client, event);
+    if (event.kind === 'card-answer') signInAnswered(event.data).catch(() => {});
     return written({ event, result });
   }
 

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { builderSignInCheck, recheckRoute, makeHourlyRecheck, CHECK_WAIT_MS, CHECK_PROMPT } from '../../../scripts/setup/builder-sign-in.js';
+import { builderSignInCheck, recheckRoute, makeHourlyRecheck, launchFaultLine, CHECK_WAIT_MS, CHECK_PROMPT } from '../../../scripts/setup/builder-sign-in.js';
 import { writeSignInFact, readSignIn, gateFor } from '../../../scripts/lib/sign-in-gate.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -25,6 +25,8 @@ test('a fake claude that prints ready and exits 0 passes, started the way the wa
   assert.equal(CHECK_WAIT_MS, 90_000);
   assert.equal(fs.existsSync(path.join(opts.cwd, '.git')), false, 'the folder is not a repository');
   assert.equal(fs.existsSync(opts.cwd), false, 'and it is removed after');
+  assert.equal(opts.ownGroup, true, 'a wrapper\'s children are ended with it when the wait runs out');
+  assert.ok(Number.isFinite(opts.limit) && opts.limit > 0, 'and the output kept is bounded');
 });
 
 test('one that prints "Not logged in" fails as not-signed-in, and the line quotes the kind, never the raw output', async () => {
@@ -114,4 +116,60 @@ test('a launch command that cannot be read keeps the fact and runs no check', as
   assert.equal(calls, 0);
   assert.equal(got.done[0].ok, false);
   assert.equal(gateFor(home, ROUTE).open, false);
+});
+
+test('checks for one route at once share one session: a second caller joins the first', async () => {
+  const home = tempFolder('wh-bsi-');
+  writeSignInFact(home, ROUTE, fact());
+  let calls = 0;
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const slow = async () => { calls += 1; await held; return { ok: true }; };
+  const first = recheckRoute({ home, check: slow });
+  const second = recheckRoute({ home, check: slow });
+  release();
+  assert.deepEqual(await Promise.all([first, second]), [{ ok: true, cleared: true }, { ok: true, cleared: true }]);
+  assert.equal(calls, 1);
+  await recheckRoute({ home, check: slow });
+  assert.equal(calls, 2, 'once it has ended, the next caller starts its own');
+});
+
+test('an hourly look whose check hangs is not joined by another, even after the hour', async () => {
+  const home = tempFolder('wh-bsi-');
+  writeSignInFact(home, ROUTE, fact());
+  let at = new Date(2026, 10, 24, 9, 0).getTime();
+  let calls = 0;
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const tick = makeHourlyRecheck({
+    home: () => home, stopped: () => false, now: () => new Date(at), check: async () => { calls += 1; await held; return { ok: false, kind: 'other', line: 'x' }; },
+  });
+  const first = tick();
+  at += 2 * 60 * 60 * 1000;
+  assert.deepEqual(await tick(), { ran: false, why: 'running' });
+  release();
+  await first;
+  assert.equal(calls, 1);
+});
+
+test('STOP set while one check runs starts no more', async () => {
+  const home = tempFolder('wh-bsi-');
+  writeSignInFact(home, ROUTE, fact());
+  writeSignInFact(home, 'other:background', fact());
+  let stop = false;
+  let calls = 0;
+  const tick = makeHourlyRecheck({
+    home: () => home, agents: ['claude-code', 'other'], stopped: () => stop, check: async () => { calls += 1; stop = true; return { ok: false, kind: 'other', line: 'x' }; },
+  });
+  const got = await tick();
+  assert.equal(calls, 1);
+  assert.equal(got.why, 'stop');
+});
+
+test('a launch command that cannot be read is named by its fault, never by the settings file\'s path', () => {
+  const unreadable = launchFaultLine(new Error("Your settings can't be read, so the launch command is unknown (/Users/someone/.wheelhouse/settings.json, line 3, column 1)."));
+  const unusable = launchFaultLine(new Error("The launch command saved for this computer can't be used: /Users/someone/bin/wrap isn't there. Mend it in the settings."));
+  for (const line of [unreadable, unusable, launchFaultLine('odd')]) assert.doesNotMatch(line, /\/Users|someone|settings\.json/);
+  assert.match(unreadable, /can't be read/);
+  assert.match(unusable, /can't be used/);
 });

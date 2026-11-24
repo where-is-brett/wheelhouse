@@ -757,15 +757,15 @@ export function setupRoutes({
   }
 
   // The builder sign-in check step 10's health makes: the way builders start on this computer (the background route; the Desktop route's
-  // is the foreman's check-in, part 6). A launch command that can't be read fails it, naming why.
+  // is the foreman's check-in, part 6). A launch command that can't be read fails it, saying which fault it is (never the settings path).
   async function buildersCheckNow() {
-    const { builderSignInCheck } = await import('./builder-sign-in.js');
+    const { builderSignInCheck, launchFaultLine } = await import('./builder-sign-in.js');
     const { storedLaunch } = await import('../lib/launch-stored.js');
     let launch = null;
     try {
       launch = (buildersWith.launchFor ?? storedLaunch)();
     } catch (error) {
-      return { ok: false, line: error instanceof Error ? error.message : "The launch command saved for this computer can't be used" };
+      return { ok: false, kind: 'other', line: launchFaultLine(error) };
     }
     return (buildersWith.check ?? builderSignInCheck)({ home: wheelhouseHome(), route: 'background', launch });
   }
@@ -776,13 +776,13 @@ export function setupRoutes({
   async function buildersCheckRoute(body) {
     if (Object.keys(body).length > 0) refuse('Check again takes nothing: it checks the way builders start on this computer');
     if (stopped()) return stopRefusal;
-    const { recheckRoute } = await import('./builder-sign-in.js');
+    const { recheckRoute, launchFaultLine } = await import('./builder-sign-in.js');
     const { storedLaunch } = await import('../lib/launch-stored.js');
     let launch = null;
     try {
       launch = (buildersWith.launchFor ?? storedLaunch)();
     } catch (error) {
-      return { ok: false, kind: 'other', refused: error instanceof Error ? error.message : "The launch command saved for this computer can't be used" };
+      return { ok: false, kind: 'other', refused: launchFaultLine(error) };
     }
     const got = await recheckRoute({ home: wheelhouseHome(), launch, ...(buildersWith.check ? { check: buildersWith.check } : {}) });
     return got.ok ? got : { ok: false, kind: got.kind, refused: got.line };
