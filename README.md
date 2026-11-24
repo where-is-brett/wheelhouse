@@ -114,7 +114,7 @@ Run the `add` even when the first command lists `wheelhouse`: adding it again at
 
 ## On GitHub Copilot
 
-Parked from `v0.3.0`, with its lean tier (Lean) and the VS Code add-on: Wheelhouse runs on Claude Code only. What was built, and what bringing it back takes, is in [`docs/parked.md`](docs/parked.md). A project that built with Copilot is offered, on one card, to carry on with Claude Code.
+Parked from `v0.3.0`, with its lean tier (Lean) and the VS Code add-on: Wheelhouse runs on Claude Code only. What was built, and what bringing it back takes, is in [`docs/parked.md`](docs/parked.md). A project that built with Copilot is offered, on one card, to carry on with Claude Code. Where Copilot is brought back, the level to choose in VS Code's chat is Assisted, else Allow all, never Autopilot: Autopilot answers Wheelhouse's cards itself. Setup writes no permission setting; the director picks the level.
 
 ## For developers
 

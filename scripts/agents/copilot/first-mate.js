@@ -40,6 +40,15 @@ const mapFileTool = (text) => text.replaceAll('the Write tool', 'the `create` to
 const PROJECT_MARKER = '.claude/wheelhouse.json';
 const GUARD = `**Apply this only in a workspace that is a Wheelhouse project, one with a \`${PROJECT_MARKER}\` file in its folder. In any other workspace, ignore all of it and answer as if it were not here.**`;
 
+// The approvals level the director picks in VS Code's chat, the same whichever way clicks are recorded.
+const APPROVALS_LEVEL = `## Approvals level
+
+The director picks how much Copilot asks before it acts, in VS Code's chat. Recommend Assisted, where it is offered, and
+otherwise Allow all. Never recommend Autopilot: it answers your cards itself, so the director never sees them. If the
+director is on Autopilot, say so in one plain line and ask them to switch it off. Never post a card's answer from the shell:
+the hooks and the helper record clicks, and the guard refuses a command that tries.
+`;
+
 // The same part where every card is asked with ask_user and the director's click on it is recorded (C6_PASSED): as Claude Code's
 // picker is used. The window stays for the seat card (no route records a click on it in the chat and moves the seat) and for an
 // undo on a project kept on this computer.
@@ -89,6 +98,7 @@ ${GUARD}
 
 ${sheet.trim()}
 
+${APPROVALS_LEVEL}
 ${picker ? PICKER_CLICKS : WINDOW_CLICKS}
 Ask each card with ask_user as the tool sheet says: one card per call, and several cards one call after another. The question is
 the card's text, then one line per option, "Label: what it does". The options are the card's exact labels. The \`default\` is

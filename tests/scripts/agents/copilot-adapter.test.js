@@ -230,13 +230,14 @@ const lines = (options) => safetyLine(options);
 
 test('the safety lines are design section 3.6\'s items, most important first', () => {
   const darwin = lines({ platform: 'darwin' });
-  assert.equal(darwin.length, 4);
+  assert.equal(darwin.length, 5);
   assert.match(darwin[0], new RegExp(`runs past ${GUARD_TIMEOUT_SEC} seconds.*within ${GUARD_DEADLINE_MS / 1000} seconds or refuses`));
-  assert.match(darwin[1], /Approvals in Copilot's chat aren't proven until check C6 passes/);
-  assert.match(darwin[2], /Second looks .* aren't proven until the clean reviewer passes its check/);
-  assert.equal(darwin[3], 'Copilot doesn\'t offer Locked');
+  assert.equal(darwin[1], 'On Allow all, Copilot runs actions without asking; Wheelhouse\'s guards still refuse what they know');
+  assert.match(darwin[2], /Approvals in Copilot's chat aren't proven until check C6 passes/);
+  assert.match(darwin[3], /Second looks .* aren't proven until the clean reviewer passes its check/);
+  assert.equal(darwin[4], 'Copilot doesn\'t offer Locked');
   assert.deepEqual(lines({ platform: 'linux' }), darwin);
-  assert.deepEqual(lines({ platform: 'win32' }), [...darwin, 'On Windows there is no sandbox, so builds run at Standard with Guarded build commands']);
+  assert.deepEqual(lines({ platform: 'win32' }), [...darwin, 'On Windows there is no sandbox, so builds run at Standard with Guarded build commands', 'On Windows with Allow all, no sandbox stands behind those guards']);
   // No Lean, tier or level wording is left.
   for (const line of lines({ platform: 'win32' })) assert.doesNotMatch(line, /\b(Lean|Middle|Full|add-on|phone)\b/i, line);
 });
@@ -244,7 +245,7 @@ test('the safety lines are design section 3.6\'s items, most important first', (
 test('a proven item drops out of the safety lines', () => {
   assert.ok(!lines({ approvalsProven: true }).some((l) => /check C6/.test(l)));
   assert.ok(!lines({ reviewsProven: true }).some((l) => /clean reviewer/.test(l)));
-  assert.equal(lines({ approvalsProven: true, reviewsProven: true }).length, 2);
+  assert.equal(lines({ approvalsProven: true, reviewsProven: true }).length, 3);
   assert.deepEqual(lines(), lines({ platform: process.platform, approvalsProven: C6_PASSED, reviewsProven: REVIEW_SESSION_READY }));
 });
 

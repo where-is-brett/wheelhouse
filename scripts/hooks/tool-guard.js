@@ -77,6 +77,8 @@ const SHELL_STATE = [
 const SHELL_STATE_REFUSED = 'Wheelhouse does not let a launcher session change its shell\'s PATH, or define a function or an alias (or use hash -p, enable -f or builtin): a launcher\'s bare name must keep meaning Wheelhouse\'s own. Run the command as it is, with no such line before it';
 const MISSING_SCRIPT = (file) => `Wheelhouse does not run a script that is not there when the command starts (${file}). Write the file in one command and run it in the next, or ${HELPER}`;
 const refuse = (what) => answer.deny(`Wheelhouse does not let an agent ${what}: ${HELPER}`);
+// The helper's card routes, which only its own hooks and process post to.
+const CARD_ROUTES = 'Wheelhouse does not let an agent post to the helper\'s card routes: a click on a card is recorded by Wheelhouse\'s own hooks and helper, never by a command. Ask the question in the chat and wait for the director\'s answer';
 // The build engine (spec 12.2): its program and the engine room's port, and its own files.
 const ENGINE = 'Wheelhouse does not let an agent run or reach the build engine: it answers only to the helper. Say what the work needs instead';
 const ENGINE_FILES = 'Wheelhouse does not let an agent open the build engine\'s own files: only its own run\'s artefacts and its own worktree. Say what the work needs instead';
@@ -358,6 +360,32 @@ function reachesEngineRoom(command, windows) {
   const split = segmentsWithOperators(command, windows);
   if (split === null) return false;
   return split.segments.some((seg) => seg.some((w) => LOCAL_PORT.test(w)) || (seg.some((w) => LOCAL_WORD.test(w)) && seg.includes(String(ENGINE_ROOM_PORT))));
+}
+
+// Whether a command line sends a request to the helper's card routes. The hooks and the helper answer a card in their own
+// process, so no agent has a reason to post one from its shell. A segment is refused when its command is a program that sends
+// requests (curl, wget, PowerShell's web commands, nc, socat), or an interpreter (node, python, a shell and the like) given a
+// script that does, and the command text names one of the routes. A command that only reads or searches for the route's
+// name (`grep`, `cat`, `rg`) is left alone, as is any other path under `cards`.
+const CARD_ROUTE = /\/cards\/(?:chat-click|hook-[a-z]+)/i;
+const SENDERS = new Set(['curl', 'wget', 'iwr', 'irm', 'invoke-webrequest', 'invoke-restmethod', 'nc', 'ncat', 'netcat', 'socat', 'http', 'https', 'xh', 'httpie']);
+const SENDER_WORD = /(?:^|[^A-Za-z0-9_-])(?:curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod|nc|ncat|socat|http|xh)(?![A-Za-z0-9_-])/i;
+const SCRIPTERS = /^(?:node|nodejs|deno|bun|python[0-9.]*|py|ruby|perl|php)$/;
+function postsToCardRoutes(command, windows) {
+  if (!CARD_ROUTE.test(command)) return false;
+  const split = segmentsWithOperators(command, windows);
+  if (split === null) return SENDER_WORD.test(command);
+  const program = (word) => path.basename(word.replace(/\\/g, '/')).toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/, '');
+  return split.segments.some((seg) => {
+    let i = 0;
+    while (i < seg.length && (ASSIGNMENT.test(seg[i]) || OPTION.test(seg[i]) || WRAPPERS.has(program(seg[i])) || DURATION.test(seg[i]))) i += 1;
+    if (i >= seg.length) return false;
+    const name = program(seg[i]);
+    if (SENDERS.has(name)) return true;
+    if (SCRIPTERS.test(name)) return true;
+    if (SHELLS.has(name)) return seg.slice(i + 1).some((w) => SENDER_WORD.test(w));
+    return false;
+  });
 }
 
 // Whether a Glob pattern or Grep glob names a .env file.
@@ -1120,6 +1148,7 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
     if (env?.[LAUNCHER_SESSION] === '1' && SHELL_STATE.some((pattern) => pattern.test(text))) return answer.deny(SHELL_STATE_REFUSED);
     if (readsPlugin(text, { windows, fold, home, pluginRoots: [path.resolve(pluginRoot), resolveReal(pluginRoot, pluginRoot)] })) return answer.deny(PLUGIN_READ);
     if (reachesEngineRoom(text, windows)) return answer.deny(ENGINE);
+    if (postsToCardRoutes(text, windows)) return answer.deny(CARD_ROUTES);
     if (readsEngine(text, { windows, fold, home, cwd, engine: engineOf({ engineHome, env, projectDir, cwd }) })) return answer.deny(ENGINE_FILES);
     const homeReal = resolveReal(home, home);
     const settings = [home, homeReal].flatMap((h) => gitSettingsFiles({ home: h, platform, env })).flatMap((f) => spellings(f, home)).map(fold);
