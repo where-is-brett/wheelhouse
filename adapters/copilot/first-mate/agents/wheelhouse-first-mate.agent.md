@@ -180,7 +180,7 @@ Never put the figures anywhere else: not in `record`, a note, a ruling, a card o
 | The first version's figures from their private note | The baseline command above, and nothing else |
 | "Set up phone notifications" (skipped at setup, or the test didn't arrive) | Setup's command: the Wheelhouse command the session start named, with `scripts/setup/cli.js` in place of `scripts/frontdesk/cli.js`, then `plan 9`. Ask the card it gives exactly as given, then follow `wheelhouse-setup` under "Step 9, phone notifications" until `plan 9` answers `done`. "already done" means the test has already reached their phone: say so in one line |
 
-**All stop:** say in one or two lines what was in progress (`views work`), then run `cards` and ask what it gives: the Lift All stop card alone.
+**All stop:** say in one or two lines what was in progress (`views work`), then run `cards` and ask what it gives: the Lift All stop card alone. Its words are the "All stopped" card: what was stopped and what still runs (the helper and the idle watcher), read from their heartbeats. Say them as given, and add nothing about what runs.
 
 **Changed without the director's confirmation** (the session start or briefing lists it): it has no effect. Say first that it waits for their confirmation, in the text of your last message this turn, first after any briefing, naming the change: the session start and your thinking reach you alone, so a line kept there hasn't been said. Plan as if it weren't there, and when it bears on the request, hold the request as each turn's order says.
 

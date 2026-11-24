@@ -78,7 +78,7 @@ async function inHome(fn) {
 // a function read on each request) every write is refused and the views say STOP is on, as the
 // helper does under STOP. A pull request is open at `head`, unless `pr` answers for it. A write is
 // made at `writeAt(n)`, the nth write's time. The desk's reads are the real desk's, over what is held.
-function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, writeAt = T, names } = {}) {
+function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, writeAt = T, names, allStopped } = {}) {
   const held = [...events];
   const stopped = () => (typeof stop === 'function' ? stop() : stop);
   const calls = [];
@@ -97,7 +97,7 @@ function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, 
       ok: true,
       views: built,
       ...(names === undefined ? {} : { names }),
-      ...(stopped() ? { stop: true } : {}),
+      ...(stopped() ? { stop: true, ...(allStopped === undefined ? {} : { allStopped }) } : {}),
       ...(body.cards === true ? { cards: held.filter((e) => e.kind === 'card') } : {}),
       ...(body.answers === true ? { answers: held.filter((e) => e.kind === 'card-answer') } : {}),
     };
@@ -2525,6 +2525,19 @@ test('under STOP the reading commands run and record is refused', async () => {
     assert.equal(recorded.code, 1);
     assert.equal(recorded.err, 'STOP is on\n');
     assert.equal((await run(helper, ['card'], JSON.stringify(PRODUCT(2)))).code, 1);
+  });
+});
+
+test('under STOP the Lift All stop card says what was stopped and what still runs, as the helper read it from heartbeats', async () => {
+  await inHome(async () => {
+    setStop({ by: 'prompt' });
+    const allStopped = { stopped: ['builder a', 'builder b', 'foreman'], running: [{ name: 'the helper', why: 'holds your keys and refuses every change' }, { name: 'the watcher', why: 'idle, making no changes' }] };
+    const visit = await run(fakeHelper({ stop: true, events: [questionEvent()], allStopped }), ['cards']);
+    assert.equal(visit.code, 0, visit.err);
+    const [lift] = visit.json.questions;
+    assert.match(lift.question, /Stopped: 2 builders, the foreman\./);
+    assert.match(lift.question, /Still running: .*\(holds your keys and refuses every change\) and the watcher \(idle, making no changes\)\./);
+    assert.deepEqual(lift.options.map((o) => o.label), ['Lift All stop', 'Show me', 'Not now']);
   });
 });
 
