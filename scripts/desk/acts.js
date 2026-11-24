@@ -50,14 +50,10 @@ async function recordAll(recorder, records) {
 // An answer, a suggestion or a Not now on a card, by the evidence's way.
 async function onCard(command, args, checked, { source, recorder }) {
   const label = command === 'suggest' ? SUGGEST : command === 'not-now' ? NOT_NOW : args.option;
-  // A click in the chat and the confirm window go through the helper's own routes, which find and check the card themselves.
+  // A click in the chat goes through the helper's own route, which finds and checks the card itself.
   if (checked.chatClick) {
     const got = await recorder.chatClick({ card: args.card, label, hash: args.hash, proof: 'chat-click', ...(args.commit ? { commit: args.commit } : {}), ...(command === 'suggest' ? { text: args.words } : {}) });
     return got?.ok === true ? { ok: true, changed: ['card-answer'], ...got } : no(got?.refused ?? 'The click wasn\'t recorded');
-  }
-  if (checked.window) {
-    const got = await recorder.confirm({ card: args.card, hash: args.hash });
-    return got?.ok === true ? { ok: true, changed: ['confirmed'], ...got } : no(got?.refused ?? 'The window didn\'t confirm it');
   }
   const live = await liveCard(source, args.card, args.hash);
   if (live.refused) return no(live.refused);

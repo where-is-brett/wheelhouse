@@ -13,6 +13,7 @@ import { faultLine } from './read-json-named.js';
 import { KINDS, isPlain, validFact, signInFile, kindWords, readSignIn, commandName, timeWords, buildersLine, buildersHealth, GATE_LINE, gateFor, classify } from './sign-in-line.js';
 import { hide } from './clean.js';
 import { maskText } from '../state/secret-scan.js';
+import { stopState } from './stop.js';
 
 export { KINDS, signInFile, kindWords, readSignIn, commandName, timeWords, buildersLine, buildersHealth, GATE_LINE, gateFor, classify };
 export const EXCERPT_CHARS = 200;
@@ -33,6 +34,8 @@ function writeFacts(home, facts) {
 // Records `fact` for `agentRoute`. A route with a fact already keeps its first time and counts the new start on it. A file
 // that can't be read is not written over: it throws with the fault named.
 export function writeSignInFact(home, agentRoute, fact) {
+  // Frozen under All stop: nothing is recorded or counted until it lifts (section 12A.6).
+  if (stopState().on) return null;
   const read = readSignIn(home);
   if (!read.ok) throw new Error(faultLine(read.fault));
   const before = read.facts[agentRoute];
@@ -44,6 +47,7 @@ export function writeSignInFact(home, agentRoute, fact) {
 
 // Takes `agentRoute`'s fact away; nothing else. Says whether there was one.
 export function clearSignInFact(home, agentRoute) {
+  if (stopState().on) return false;
   const read = readSignIn(home);
   if (!read.ok) throw new Error(faultLine(read.fault));
   if (!Object.hasOwn(read.facts, agentRoute)) return false;

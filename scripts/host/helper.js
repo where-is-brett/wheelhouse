@@ -30,6 +30,7 @@ import { fileURLToPath } from 'node:url';
 import { throwawayIdle } from '../lib/standard-env.js';
 import { computerId, helperAddress, profileDir, oldProfileDir, stateDir, oldStateDir, wheelhouseHome, engineDir, archonHome } from '../lib/paths.js';
 import { stopState, setStop, liftStop } from '../lib/stop.js';
+import { stillRunning } from '../lib/heartbeats.js';
 import { bypassActive } from '../lib/bypass.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { approvalCounts, checkCounts, decisionsOnly, gateDecision, reviewCounts, selfMergeDecision } from '../gate/conditions.js';
@@ -85,7 +86,6 @@ import { reaching, subcommandOf } from '../setup/git.js';
 import { directorGitEnv, directorGitlabApi, hostStep, keyGitEnv, launchedIn, madeWithSetupToken, switchOnAsDirector } from '../setup/host.js';
 import { commitAuthor } from '../setup/project-files.js';
 import { readEnrolled, verify, sign, ownKey } from '../state/signing.js';
-import { windowLines } from '../lib/window-lines.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProjects } from '../lib/projects.js';
 import { findCommand, hasTestScript } from '../checks/find-command.js';
@@ -109,7 +109,7 @@ import { resumesOf, runLive, settlingResume, sleepWatch } from '../engine/recove
 import { pathsSoFar } from '../lib/branch-paths.js';
 import { dispatchRun, MERGE_WORK } from '../engine/dispatch-run.js';
 import { PARKED_SEND_BACK_SAYS } from '../engine/words.js';
-import { SEND_BACK } from '../lib/calm-words.js';
+import { SEND_BACK, NOT_NOW } from '../lib/calm-words.js';
 import { FIX_LANE, openRedMain, redMainIncident } from '../engine/fix-main.js';
 import { endedBy } from '../foreman/queue.js';
 import { packTreeDigest } from '../engine/pack-build.js';
@@ -118,12 +118,11 @@ import { fileSource } from '../desk/file-source.js';
 import { askToPair, pairClient, pairedClients, unpairClient } from '../desk/clients.js';
 import { DESK_VERSION, needsEvidence } from '../desk/vocabulary.js';
 import { helperClient } from './helper-client.js';
-import { windowClick, undoCards, undoLine, UNDO_LINE, UNDO_NEEDS_WINDOW } from './local/undo.js';
+import { chatClick, CLICK_PROOFS, undoCards, undoLine, UNDO_LINE, UNDO_NEEDS_CLICK } from './local/undo.js';
 import { UNDO_BRANCH, undoConflictCard, undoOnHost } from './undo.js';
 import { HOOK_CLICKS_LIVE } from '../agents/translators.js';
 import { CHAT_PROOFS, CONFIRMED_STEPS, HOOK_CLICK_MS, HOOK_SHOWN_MAX, hashRefusal } from '../agents/chat-clicks.js';
 import { earned, signsOn, askedUpdateCard, keepAfterClick } from '../hooks/prompt-record.js';
-import { askInWindow, NOT_NOW } from '../confirm/window.js';
 import { composeCard, questionProblem } from '../cards/compose.js';
 import { LIFT_STOP_CARD } from '../frontdesk/cli.js';
 import { matchGlob } from '../gate/glob.js';
@@ -168,7 +167,7 @@ import { FOREMAN_OUTPUT_BYTES, FOREMAN_RUNNER, FOREMAN_RUN_MS, foremanEnv, forem
 import { setupRoutes, SetupRefusal, STEPS_MODULE } from '../setup/engine.js';
 import { uninstallRoutes } from '../setup/uninstall.js';
 import { baselineRoutes } from '../measures/baseline.js';
-import { ALLOWANCE_LABELS, allowanceWindowLines, isBuildQuestion } from '../protection/windows-builds.js';
+import { ALLOWANCE_LABELS, isBuildQuestion } from '../protection/windows-builds.js';
 import { routingInForce } from '../routing/in-force.js';
 import { bindingsOf, orderStore } from '../engine/order.js';
 import { approvedDocument } from '../feature/approved.js';
@@ -185,6 +184,7 @@ import { writeInside } from '../lib/write-inside.js';
 import { tieNamesWork } from '../lib/by-hand-tie.js';
 import { holdsSeat, readSeat, takeSeat, refreshSeat, handOverSeat, seatFree, STALE_AFTER_MS } from '../lib/first-mate-seat.js';
 import { seatCard } from '../lib/seat-card.js';
+import { ALERTS_LINE, alertsCard, alertsHash } from '../lib/alerts-card.js';
 import { readTurn } from '../lib/session-files.js';
 import { lockFreeNow } from '../lib/free-seat.js';
 import { asideKind, sessionRole, recordRole } from '../lib/role.js';
@@ -930,7 +930,7 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 // ~/.wheelhouse cannot be read: like the runbook's, each may give `cwd`, a full path, and the
 // helper places the project from it.
 const PLACED_ROUTES = [
-  '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/session/note', '/session/seat', '/crew/page', '/crew/helm', '/cards/chat-click', '/cards/hook-shown', '/cards/hook-click', '/cards/hook-auto', '/confirm',
+  '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/session/note', '/session/seat', '/crew/page', '/crew/helm', '/cards/chat-click', '/cards/hook-shown', '/cards/hook-click', '/cards/hook-auto', '/cards/earnable', '/cards/apply',
   '/desk/read', '/desk/act', '/desk/watch',
   '/local/undo', '/undo', '/local/move',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
@@ -1067,9 +1067,6 @@ export async function startHelper({
   // the signed-in host account, as setup's own commit is (step 7's commitAuthor), given the
   // project's record; a test may give its own.
   authorFor = (record) => commitAuthor({ host: record.host, run, base: record.connection?.baseUrl }),
-  // How the helper's own window is opened (scripts/confirm/window.js): given { title, lines, options }, it resolves
-  // with { choice }. By default askInWindow on this system, with the helper's `run`.
-  askWindow = (card) => askInWindow({ ...card, run }),
   // What Claude Code's premium alias stands for on this computer (scripts/setup/best-model.js), asked only after the
   // director's Yes on the premium model's card allows it (/premium/check): a model name, or null. A test gives its own.
   premiumAlias = () => aliasModel(STRONGEST_ALIAS, { run }),
@@ -1442,7 +1439,7 @@ export async function startHelper({
 
   // --- the computer's git settings, confirmed again (safe-git.js, the record of the computer's settings) ---
   // A push is refused while the computer's settings differ from the ones confirmed for the project's mirror. The director confirms
-  // the new ones by a click in this helper's own window on a card the helper composes from its own read of them, which shows the
+  // the new ones by a click on a card in the chat that the helper composes from its own read of them, which shows the
   // names of settings and never a value. Nothing else records them: no route takes a confirmation.
   const settingsFile = () => path.join(wheelhouseHome(), 'host', 'git-settings.json');
   const mirrorOf = (project) => path.join(stateDir(project), '..', 'mirror.git');
@@ -1455,7 +1452,7 @@ export async function startHelper({
   }
 
   // A refused push's answer with the card that confirms the settings raised, once, while none waits: the card's id, and `needs`
-  // `window`, as an undo's answer says. The refusal stands without a card that could not be raised.
+  // `card`, as an undo's answer says. The refusal stands without a card that could not be raised.
   async function withSettingsCard(project, pushed) {
     try {
       const made = await settingsCardNow(project);
@@ -1473,7 +1470,7 @@ export async function startHelper({
           card = ours().at(-1) ?? null;
         }
       });
-      return card ? { ...pushed, needs: 'window', card: card.id } : pushed;
+      return card ? { ...pushed, needs: 'card', card: card.id } : pushed;
     } catch {
       return pushed;
     }
@@ -2530,7 +2527,7 @@ export async function startHelper({
 
   // A click in the chat (ruling P5-17): an unsigned card-answer naming its proof, never signed. A label that
   // decides a signed step is taken only on a card a chat click may decide: a merge card;
-  // never one of the confirmed steps (a card named for the step, or `<step>-…`), which need the window.
+  // never one of the confirmed steps (a card named for the step, or `<step>-…`), which need a click Wheelhouse's own hook records.
   // Suggest a change… (ruling P5-27 k) carries the director's own words as `text`, and no other click does.
   async function doChatClick({ project, card, hash, label, proof, commit, text }, ctx) {
     if (!CHAT_PROOFS.includes(proof)) refuse(`a click in the chat is recorded as ${CHAT_PROOFS.join(' or ')}`);
@@ -2543,9 +2540,9 @@ export async function startHelper({
     const confirmed = CONFIRMED_STEPS.some((step) => card === step || card.startsWith(`${step}-`));
     const shownCard = listEvents(stateDir(project), { report: () => {} }).find((e) => e.kind === 'card' && e.id === card);
     const asked = shownCard?.data?.question ?? card;
-    if (confirmed && signsOn(label, asked)) refuse('that step is confirmed outside the chat, never by a click in it');
+    if (confirmed && signsOn(label, asked)) refuse('that step is decided only by a click Wheelhouse\'s own hook records, never by an agent\'s account of one');
     // A decision answered by a click the chat can't sign would close it without the signed answer the crew acts on.
-    if (isDecisionCard(shownCard?.data)) refuse('a decision is answered in the window or by a typed reply, never by a click in the chat');
+    if (isDecisionCard(shownCard?.data)) refuse('a decision is answered only by a click Wheelhouse\'s own hook records or the director\'s own typed reply, never by an agent\'s account of a click');
     const mayDecide = /^merge-/.test(card);
     if (signsOn(label, asked) && !mayDecide) refuse('a click in the chat can\'t decide that card');
     const data = { question: card, label, hash, ...(commit === undefined ? {} : { commit }), ...(text === undefined ? {} : { text }), proof, where: 'chat' };
@@ -2585,15 +2582,39 @@ export async function startHelper({
   function hookClicksOn() {
     if (!hookClicks) refuse('clicks in the chat are not recorded on this computer yet');
   }
-  async function doHookShown({ project, session, message, options }) {
+  // The seat card, composed from the seat file for the session that is asked about it, when these words and options are it: `{ card, data,
+  // seat }`, else null. Refuses where the seat can't be offered to that session.
+  // Its words say how long ago the other window was last active, so a click that comes later is matched by the words it was shown with
+  // (`held`) and the seat's holder and `since`, never by the words composed now.
+  const seatKeyOf = (seat) => `${seat.session}|${seat.since}`;
+  async function seatCardFor(project, { message, options, session, cwd }, held) {
+    const seat = await seatToOffer({ project, session, cwd });
+    const data = seatCard({ seat, now }).card;
+    if (!sameOptions(data.options, options)) return null;
+    const sameWords = data.question === message || (held !== undefined && held.message === message && held.seatKey === seatKeyOf(seat));
+    return sameWords ? { card: SEAT_CARD_NAME, data, seat } : null;
+  }
+  // The card these words are, among the state's waiting cards and the seat card composed for the asking session.
+  async function shownCardFor(project, { message, options, session, cwd }) {
+    const got = hookCardFor(project, { message, options });
+    if (!got.refused) return got;
+    let seated = null;
+    try {
+      seated = await seatCardFor(project, { message, options, session, cwd }, hookShown.get(hookKey(project, session, SEAT_CARD_NAME)));
+    } catch {
+      // The seat can't be offered to this session: the card is not it.
+    }
+    return seated ?? got;
+  }
+  async function doHookShown({ project, session, message, options, cwd }) {
     hookClicksOn();
     hookBody({ session, message, options });
-    const got = hookCardFor(project, { message, options });
+    const got = await shownCardFor(project, { message, options, session, cwd });
     if (got.refused) refuse(got.refused);
     const at = now().getTime();
     for (const [key, held] of hookShown) if (at - held.at > HOOK_CLICK_MS || held.used) hookShown.delete(key);
     while (hookShown.size >= HOOK_SHOWN_MAX) hookShown.delete(hookShown.keys().next().value);
-    hookShown.set(hookKey(project, session, got.card), { at, hash: dataHash(got.data), used: false });
+    hookShown.set(hookKey(project, session, got.card), { at, shownAt: new Date(at).toISOString(), hash: dataHash(got.data), used: false, ...(got.seat === undefined ? {} : { message, seatKey: seatKeyOf(got.seat) }) });
     return { ok: true, card: got.card };
   }
   // A question the harness answered with no click: true the first time for a session, which is noted once, so the hook tells
@@ -2609,14 +2630,15 @@ export async function startHelper({
     if (!stopped()) await doSessionMark({ project, mark: 'auto-answer', data: {} }, ctx);
     return { ok: true, first: true };
   }
-  async function doHookClick({ project, session, message, options, label }, ctx) {
+  async function doHookClick({ project, session, message, options, label, cwd }, ctx) {
     hookClicksOn();
     hookBody({ session, message, options });
     if (typeof label !== 'string' || !options.includes(label)) refuse('the click must name one of the card\'s options');
     if (label === SUGGEST) refuse(`${SUGGEST} carries the director's own words, which a click does not`);
-    const got = hookCardFor(project, { message, options });
+    const got = await shownCardFor(project, { message, options, session, cwd });
     if (got.refused) refuse(got.refused);
-    if (stopped() && got.card !== LIFT_STOP_NAME) return STOP_REFUSAL;
+    // Under STOP only the Lift STOP card and the steps that carry on under it (an undo, the seat's move) are taken.
+    const stoppedHere = stopped() && got.card !== LIFT_STOP_NAME;
     const key = hookKey(project, session, got.card);
     const held = hookShown.get(key);
     if (held === undefined) refuse('that card was not shown to this session');
@@ -2625,11 +2647,28 @@ export async function startHelper({
       hookShown.delete(key);
       refuse('that card was shown too long ago for a click to count; it is asked again');
     }
-    if (held.hash !== dataHash(got.data)) refuse('that card is not the one shown: its words changed');
+    if (got.seat === undefined ? held.hash !== dataHash(got.data) : held.seatKey !== seatKeyOf(got.seat)) refuse('that card is not the one shown: its words changed');
+    // A card whose step the helper signs (an undo, Keep it, the computer's git settings, the seat's move) is signed here, as the
+    // helper's own record of the click: the card as it reads now must still earn the click.
+    const event = got.seat === undefined ? { id: got.card, data: got.data, at: held.shownAt } : { at: held.shownAt, data: got.data, seat: got.seat };
+    const signed = got.card === LIFT_STOP_NAME ? null : await chatEarned(project, event, label, ctx);
+    if (stoppedHere && (signed === null || servedUnderStop([signed]).length === 0)) return STOP_REFUSAL;
+    // A settings card whose settings are the confirmed ones again can no longer be answered: it is closed, and says so.
+    if (signed === null && got.seat === undefined && got.card !== LIFT_STOP_NAME && await settingsCardSettled(project, event)) {
+      await doWrite({ project, kind: 'card-answer', data: { card: got.card, question: got.data.question, label, where: 'chat' } }, ctx); // a plain answer, signed by nothing: only an option closes a card
+      refuse('this computer\'s git settings are the confirmed ones again, so that card was closed');
+    }
     held.used = true;
+    if (signed !== null) return signChatClick({ project, got: signed, event, label, session }, ctx);
+    // The seat card is composed, never in the state: a click on it that earns no move (Leave it there) records nothing.
+    if (got.seat !== undefined) return { ok: true, card: got.card, label, recorded: false };
     // The Lift STOP card is composed by the helper and never in the state, which takes no write under STOP: the click is
-    // taken here and the lift is acted on by the step that asked for it.
-    if (got.card === LIFT_STOP_NAME) return { ok: true, card: got.card, label, proof: 'hook-click' };
+    // taken here, and a Lift All stop click, on this card as it is shown after this STOP began, lifts it.
+    if (got.card === LIFT_STOP_NAME) {
+      const lifting = await helperEarned(project, { at: held.shownAt, data: got.data }, label, ctx);
+      if (lifting?.lift === true) liftStop();
+      return { ok: true, card: got.card, label, proof: 'hook-click', ...(lifting?.lift === true ? { lifted: true } : {}) };
+    }
     // An approval card names the commit it is for: the answer carries it, as the gate reads it.
     const commit = typeof got.data.sha === 'string' && /^[0-9a-f]{40}$/.test(got.data.sha) ? got.data.sha : undefined;
     const data = { question: got.card, label, hash: held.hash, ...(commit === undefined ? {} : { commit }), proof: 'hook-click', where: 'chat', source: session };
@@ -2637,9 +2676,9 @@ export async function startHelper({
     return { ...written, card: got.card };
   }
 
-  // --- the helper's own window (design section 6.3, ruling P5-23) ---
+  // --- the steps a click in the chat decides, which the helper signs or checks (design section 6.3) ---
 
-  // The step a signed record decides, when it is one the window confirms, else null: Lift STOP, a runbook step or
+  // The step a signed record decides, when it is one a click in the chat confirms, else null: Lift STOP, a runbook step or
   // a CI push (an action), Unattended (the confirmation of a level or setting proposing it), or an approval, which
   // is how a guardrail change and a real-user merge are decided.
   // Keep it, on the card about a main version moved outside the helper (ruling P5-27 f), is confirmed
@@ -2648,50 +2687,49 @@ export async function startHelper({
     'lift-stop': 'lift-stop', runbook: 'runbook-step', 'ci-push': 'ci-push', 'keep-main': 'keep-main', 'undo-merge': 'runbook-step', 'undo-main': 'runbook-step',
     'keep-control-files': 'guardrail-change', // keeping a feature's files that steer agents as they are (ruling P7-31)
     // Approving a work as written, and changing it to a proposed change: the director's approval of the work, given here
-    // on an agent whose chat records no click (its playbook sends these cards to the window).
+    // on an agent whose hooks only read (the helper signs the click it is told of).
     'approve-work': 'approval', amend: 'approval',
     // An Ask allowance (ruling P8-8): Allow this time or Allow for this feature on a build question, and only there
-    // (allowanceQuestion). An answer to a decision is DECISION_STEP; an answer to any other question is no step the window confirms.
+    // (allowanceQuestion). An answer to a decision is DECISION_STEP; an answer to any other question is no step a chat click confirms here.
     answer: 'ask-allowance',
     // The other answer of a parked pull request's approval card, confirmed as its Approve is.
     'send-back': 'approval',
-    // The card for a Wheelhouse release that is not pins-only (update design, section 6.2): confirmed in the window, as the
-    // card named `release-<commit>`, and counted only by the release's own reviewed change.
+    // The card for a Wheelhouse release that is not pins-only (update design, section 6.2): confirmed by the click on the card named
+    // `release-<commit>`, and counted only by the release's own reviewed change.
     'approve-release': 'release-approval',
-    // The answer to the card about an old helper that did not make way for an update (update design, section 7.3): confirmed in the
-    // window as the prompt record signs it, by the card's id, and read by the update's own finish.
+    // The answer to the card about an old helper that did not make way for an update (update design, section 7.3): confirmed as the prompt
+    // record signs it, by the card's id, and read by the update's own finish.
     'update-helper-answer': 'update-helper',
-    // The click on the Update card (update design, section 4): confirmed in the window for the plan the card names, and counted
-    // only by the update's apply. Its Not now is signed the same way (windowEarned).
+    // The click on the Update card (update design, section 4): confirmed for the plan the card names, and counted
+    // only by the update's apply. Its Not now is signed the same way (helperEarned).
     'update-click': 'update',
     // The director's Confirm on the card for the computer's git settings, after a push was refused because they changed: confirmed
-    // in the window, which records the settings as they read when the click is made (settingsEarned, applySettings).
+    // by the click, which records the settings as they read when it is made (settingsEarned, applyClicks).
     'confirm-settings': 'git-settings',
     // The click on the card that moves the First Mate's seat to the asking window, composed here from the seat (seatToOffer):
-    // confirmed in the window, as the click in a hook that signs is, and counted only by the seat's move (/confirm).
+    // confirmed as the click in a hook that signs is, and counted only by the seat's move (signChatClick).
     'seat-take-over': 'seat-take-over',
+    // The director's Yes on the card asking to keep or forget a phone-alert channel (alertsEarned).
+    'alerts-keep': 'alerts-keep',
   };
-  // The steps the window serves while STOP is on: Lift STOP, and an undo, as the runbook's local steps carry on.
-  // The update's steps: their window names no default button, so a stray Return or Enter chooses nothing.
-  // The seat's take-over names no default either, so a stray Return can't take the seat.
-  const NO_DEFAULT_STEPS = ['update', 'release-approval', 'update-helper', 'git-settings', 'seat-take-over'];
+  // The steps served while STOP is on: Lift STOP, and an undo, as the runbook's local steps carry on.
   // The seat moves no product file and pushes nothing, so STOP doesn't hold it back.
   const UNDER_STOP = ['lift-stop', 'undo-merge', 'undo-main', 'seat-take-over'];
   // The labels of the cards a project in git alone answers on its home. Its approval is a pull request's, as any.
   const HOME_ANSWERS = ['Keep it', 'Undo it', 'Undo'];
   const servedUnderStop = (deciding) => deciding.filter((d) => d.made.kind === 'action' && UNDER_STOP.includes(d.made.data?.action));
-  // The answer to a decision, on an agent whose hooks only read, so its chat can neither sign a click nor record a typed
-  // reply: the director picks the option here, and the signed answer wakes the crew as a click in a signing hook does.
+  // The answer to a decision, on an agent whose hooks only read: the helper signs the click it is told of, and the signed answer
+  // wakes the crew as a click in a signing hook does.
   const DECISION_STEP = 'decision-answer';
-  // What /confirm's `card` is for the Lift STOP card, which has no id in the state.
+  // What the card is named for the Lift STOP card, which has no id in the state.
   const LIFT_STOP_NAME = 'lift-stop';
-  // The same for the seat card, which the helper composes from the seat file on each look, for the window that asks.
+  // The same for the seat card, which the helper composes from the seat file on each look, for the session that asks.
   const SEAT_CARD_NAME = 'seat-take-over';
-  // The cards /confirm names rather than finds in the state: composed here, with no id and no record of their own, so no
+  // The cards named rather than found in the state: composed here, with no id and no record of their own, so no
   // card-answer follows a click and the STOP check before a card is looked up doesn't apply.
   const COMPOSED_CARDS = [LIFT_STOP_NAME, SEAT_CARD_NAME];
   const NO_PROCESS = Object.freeze({ pid: null, pidStart: null });
-  function windowStep(project, made, shownAt, shown) {
+  function helperStep(project, made, shownAt, shown) {
     if (made.kind === 'approval') return 'approval';
     if (made.kind === 'action' && made.data?.action === 'answer') {
       if (allowanceQuestion(project, made.data, shownAt) !== null) return ACTION_STEPS.answer;
@@ -2735,16 +2773,20 @@ export async function startHelper({
     return { made: { kind: 'action', data: { action: 'undo-merge', merge, question, label: 'Undo' } }, step: ACTION_STEPS['undo-merge'], lift: false };
   }
 
-  // What a click on `label` in the window would record for `card`: the signed record the same click earns in a
+  // What a click on `label` would record for `card`: the signed record the same click earns in a
   // hook that signs (prompt-record.js's earned, from the card's own question in the state), when it decides a
-  // step the window confirms; else null. A pull request's head is read through this helper's own route.
-  async function windowEarned(project, card, label, ctx) {
+  // step only a recorded click decides; else null. A pull request's head is read through this helper's own route.
+  async function helperEarned(project, card, label, ctx) {
     const question = card.data?.question;
-    // The Update card's Not now is the one put-off the window signs: a decline of that plan, earned as the panel's press earns it.
+    // The Update card's Not now is the one put-off a recorded click signs: a decline of that plan, earned as the panel's press earns it.
     // The card's own data stands for the card as asked where the helper composed it (the seat card), as the Update card's does.
     const asked = card.seat === undefined ? askedUpdateCard(question, card.data) : card.data;
     const declines = label === NOT_NOW && askedUpdateCard(question, card.data) !== undefined;
     if (typeof question !== 'string' || (PUT_OFF.includes(label) && !declines)) return null;
+    if (label === 'Yes') {
+      const alerts = alertsEarned(card.data);
+      if (alerts !== undefined) return alerts;
+    }
     if (label === 'Confirm') {
       const settings = await settingsEarned(project, card.data);
       if (settings !== undefined) return settings;
@@ -2765,11 +2807,24 @@ export async function startHelper({
       return null;
     }
     if (!got?.made || got.profile) return null;
-    const step = windowStep(project, got.made, card.at, card.data);
+    const step = helperStep(project, got.made, card.at, card.data);
     return step === null ? null : { made: got.made, step, lift: got.lift === true };
   }
 
-  // What a click in the window on a home card's Keep it, Undo it or Undo records, or null; undefined for any other label.
+  // What a click on Yes on a phone-alerts card would record, or null: the card is the helper's own, composed again from the request it
+  // holds under the hash the card's line names, word for word; a card with the line and other words, or for a request the helper
+  // does not hold, is never signed. Undefined for a card that is not this one.
+  function alertsEarned(data) {
+    const question = data?.question;
+    const lines = typeof question === 'string' ? question.split('\n').filter((l) => ALERTS_LINE.test(l)) : [];
+    if (lines.length !== 1) return undefined;
+    const [, step, short] = ALERTS_LINE.exec(lines[0]);
+    const held = [...alertsAsked].find(([hash, ask]) => hash.startsWith(short) && ask.step === step);
+    if (held === undefined || !sameCard(data, alertsCard(step, held[0], held[1].where))) return null;
+    return { made: { kind: 'action', data: { action: 'alerts-keep', step, hash: held[0], question, label: 'Yes' } }, step: ACTION_STEPS['alerts-keep'], lift: false };
+  }
+
+  // What a click on a home card's Keep it, Undo it or Undo records, or null; undefined for any other label.
   // Each card is the helper's own, word for word: its question, options and header equal the card the helper composes
   // from the line's values (ruling P5-50), so a card anyone wrote with the right line but other words is never signed.
   // Keep it and Undo it: the card names the main version's move, and the record and the home still say so. Undo: the card
@@ -2808,7 +2863,7 @@ export async function startHelper({
   const shortSession = (id) => id.slice(0, 8);
 
   // The seat the card offers to `session`, as the seat file holds it now: held by another window that is still live, and the
-  // asker a session in the project's main folder with an id a seat can name. Refuses otherwise, before any window opens.
+  // asker a session in the project's main folder with an id a seat can name. Refuses otherwise, before the card is asked.
   async function seatToOffer({ project, session, cwd }) {
     if (typeof session !== 'string' || !SEAT_SESSION.test(session)) refuse('this window has no session id to move the First Mate to');
     if (!(await inMainFolder(cwd, recordOf(project).folder))) refuse('the First Mate\'s seat moves only to a window in the project\'s main folder');
@@ -2823,131 +2878,85 @@ export async function startHelper({
     return seat;
   }
 
-  // The card the request names, as the state holds it: there once, still waiting, its data hashing to `hash` (what
-  // the caller was shown), with the options a click in the window would decide it by. Refuses otherwise. The Lift
-  // STOP card is never in the state (the front desk composes it on each visit, since under STOP nothing is written:
-  // ruling F25), so `lift-stop` names the one the helper composes itself, while STOP is on, shown at `shownAt` (now,
-  // on the first look): the look after the click passes the time the window opened, so a click on a window shown
-  // during one STOP never lifts a later one (earned()'s rule).
-  // The option the card recommends, which its `recommendation` names first ("Label, because ..."): the chat card's default, and the
-  // window's. Undefined when it names none.
-  const recommendedOf = (data) => (Array.isArray(data?.options) && typeof data.recommendation === 'string' ? data.options.find((o) => typeof o === 'string' && data.recommendation.startsWith(`${o}, because`)) : undefined);
-  async function windowCard({ project, card, hash, session, cwd }, ctx, { shownAt } = {}) {
-    let event;
-    if (card === LIFT_STOP_NAME) {
-      if (!stopped()) refuse('All stop is not on, so there is nothing to lift');
-      event = { at: shownAt ?? now().toISOString(), data: composeCard(LIFT_STOP_CARD).card };
-    } else if (card === SEAT_CARD_NAME) {
-      const seat = await seatToOffer({ project, session, cwd });
-      event = { at: shownAt ?? now().toISOString(), data: seatCard({ seat, now }).card, seat };
-    } else {
-      const found = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'card' && e.id === card);
-      if (found.length !== 1) refuse('that card is not in this project\'s state');
-      [event] = found;
-      if (dataHash(event.data) !== hash) refuse('that card is not the one shown: its hash differs');
-      const { waiting } = await writeViews(project, { now });
-      if (!(waiting ?? []).some((w) => w.id === card)) refuse('that card no longer waits for a click');
-    }
-    const options = (Array.isArray(event.data?.options) ? event.data.options : []).filter((o) => typeof o === 'string');
-    const deciding = [];
-    for (const label of options) {
-      const got = await windowEarned(project, event, label, ctx);
-      if (got) deciding.push({ label, ...got });
-    }
-    // A settings card whose settings are the confirmed ones again can no longer be answered: it is closed, and says so.
-    if (deciding.length === 0 && !COMPOSED_CARDS.includes(card) && await settingsCardSettled(project, event)) {
-      await doWrite({ project, kind: 'card-answer', data: { card, question: event.data.question, label: 'Confirm', where: 'panel' } }, ctx); // a plain answer, signed by nothing: only an option closes a card
-      refuse('this computer\'s git settings are the confirmed ones again, so that card was closed');
-    }
-    if (deciding.length === 0) refuse('that card is not one the window confirms: only Lift All stop, a guardrail change, Unattended, a runbook step, a CI push, an approval, an Ask allowance or a decision');
-    return { event, deciding };
+  // What a click on `label` records, when it is one of the steps the helper alone can check against what it holds (an undo, Keep it,
+  // the computer's git settings, the seat's move): the record and its step, else null. A click in the chat decides these two ways. A
+  // hook that signs asks /cards/earnable what the click earns and signs it itself; a hook that only reads posts the click
+  // (/cards/hook-click) and the helper signs it, naming proof `hook-click`.
+  const CHAT_SIGNED = ['undo-merge', 'undo-main', 'keep-main', 'confirm-settings', 'seat-take-over', 'alerts-keep'];
+  async function chatEarned(project, card, label, ctx) {
+    const got = await helperEarned(project, card, label, ctx);
+    // An Ask allowance is signed too, as a build command's grant is read from a signed answer naming the proof.
+    return got?.made?.kind === 'action' && (CHAT_SIGNED.includes(got.made.data?.action) || got.step === ACTION_STEPS.answer) ? got : null;
   }
 
-  // POST /confirm { project | cwd, card, hash }: the card is looked up in the state (the caller's own text is never
-  // shown), or is `lift-stop`, with no hash, for the Lift STOP card the helper composes itself; the window shows its words with its deciding options and Not now, and a deciding click is signed here,
-  // with proof `window`, as the record the step already has: an approval, a confirmation or an action. The card is
-  // looked at again after the click, so a card decided or changed meanwhile records nothing. A confirmed Lift STOP
-  // lifts STOP: the window is the one place a click lifts it on an agent whose hooks only read. Not now, or no click
-  // before the window closes, records nothing. Under STOP only the Lift STOP card and an undo are served, with only
-  // their undo offered (rulings P5-49 and P5-50). A card
-  // in the state gets the plain card-answer beside its signed record, as a hook that signs writes one, so the card
-  // no longer waits. `lift-stop` and `seat-take-over` are named, not found: the seat card is composed from the seat file for the
-  // `session` that asks (from `cwd`, in the project's main folder), and a click on Take over here signs the take-over, then moves the
-  // seat to that session with no process recorded, only while the seat still names the holder and `since` the card showed.
-  async function doConfirm({ project, card, hash, session, cwd }, ctx) {
-    const composed = COMPOSED_CARDS.includes(card);
-    if (!composed && (typeof card !== 'string' || !RANDOM_UUID.test(card))) refuse('the card must be named by its id, or be lift-stop or seat-take-over');
-    if (!composed && (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash))) refuse('the card\'s hash must be its sha256, in lower case');
-    // Under STOP a card of a project that isn't kept at home is refused before it is looked up (no read of the code host);
-    // a home card is looked at, and only its undo offered.
-    if (!composed && stopped() && readProject(project)?.host !== 'local') return STOP_REFUSAL;
-    const look = () => stateRoute((body) => windowCard(body, ctx))({ project, card, hash, session, cwd }, ctx);
-    const shown = await look();
-    if (!composed && stopped()) {
-      shown.deciding = servedUnderStop(shown.deciding);
-      if (shown.deciding.length === 0) return STOP_REFUSAL;
-    }
-    const lines = windowLines(shown.event.data.question);
-    // The seat card names the window the seat moves to, by the start of its session id.
-    if (card === SEAT_CARD_NAME) lines.push('', `Take over here moves the First Mate to the chat with session ${shortSession(session)}.`);
-    // An Ask allowance's window also says what allowing the commands means (allowanceWindowLines), from the question
-    // the state holds, never the caller's words.
-    const allowance = shown.deciding.find((d) => d.step === ACTION_STEPS.answer);
-    if (allowance) lines.push(...allowanceWindowLines(allowanceQuestion(project, allowance.made.data, shown.event.at)?.commands));
-    const header = typeof shown.event.data.header === 'string' && shown.event.data.header !== '' ? shown.event.data.header : null;
-    const { choice } = await askWindow({ title: header === null ? 'Wheelhouse' : `Wheelhouse: ${header}`, lines, options: shown.deciding.map((d) => d.label).filter((label) => label !== NOT_NOW), ...(recommendedOf(shown.event.data) === undefined ? {} : { recommend: recommendedOf(shown.event.data) }), ...(shown.deciding.some((d) => NO_DEFAULT_STEPS.includes(d.step)) ? { noDefault: true } : {}) });
-    const picked = shown.deciding.find((d) => d.label === choice);
-    if (!picked) return { ok: true, choice: choice === NOT_NOW ? NOT_NOW : null, recorded: false };
-    const answer = await stateRoute(async () => {
-      const CHANGED = 'that card changed while the window was open, so nothing was recorded';
-      let again;
-      try {
-        again = await windowCard({ project, card, hash, session, cwd }, ctx, { shownAt: shown.event.at });
-      } catch {
-        refuse(CHANGED);
+  // POST /cards/earnable { project | cwd, message, options, label }: what a click on `label` of the waiting card these words and
+  // options are would record, for a hook that signs (scripts/hooks/prompt-record.js). Read-only: nothing is written, and the record is
+  // the hook's to sign. { ok: true, made } or { ok: true, made: null } for a click that earns nothing here. The card is found among
+  // those waiting, as a click's is; the Lift STOP and seat cards are the hook's own.
+  async function doEarnable({ project, message, options, label }, ctx) {
+    hookBody({ session: 'earnable', message, options });
+    if (typeof label !== 'string' || !options.includes(label)) refuse('the click must name one of the card\'s options');
+    const got = hookCardFor(project, { message, options });
+    if (got.refused || got.card === LIFT_STOP_NAME) return { ok: true, made: null };
+    const event = listEvents(stateDir(project), { report: () => {} }).find((e) => e.kind === 'card' && e.id === got.card);
+    const earnedNow = event === undefined ? null : await chatEarned(project, event, label, ctx);
+    if (earnedNow === null || (stopped() && servedUnderStop([earnedNow]).length === 0)) return { ok: true, made: null };
+    return { ok: true, made: earnedNow.made };
+  }
+
+  // What a signed click on the computer's git settings or on Keep it does once it is sent (POST /cards/apply { project | cwd }): the
+  // latest such record the helper reads as signed on this computer, in the last HOOK_CLICK_MS, is carried out. Each is checked against what
+  // it named when it is carried out, and a second carrying out changes nothing, so the route may be asked again. A forged request
+  // can only carry out a click the director made.
+  async function doApplyClicks({ project }, ctx) {
+    const me = computerId();
+    const enrolled = readEnrolled();
+    const at = now().getTime();
+    const latest = (action) => listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'action' && e.data?.action === action
+      && e.computer === me && e.sig?.computer === me && verify(e, enrolled) && at - Date.parse(e.at) <= HOOK_CLICK_MS).at(-1) ?? null;
+    const done = {};
+    const kept = latest('keep-main');
+    if (kept !== null && readProject(project)?.host === 'local') done.kept = await localKeepMain(project, { from: kept.data.from, to: kept.data.to });
+    const settings = latest('confirm-settings');
+    if (settings !== null && !stopped()) {
+      const read = await settingsCardNow(project);
+      if (read !== null && read.same !== true && read.hash === settings.data.hash) {
+        await confirmComputerSettings({ file: settingsFile(), run, cwd: mirrorOf(project), expect: settings.data.hash });
+        done.settings = true;
+        if (readProject(project)?.host !== 'local') done.lock = await keepLockAfterConfirm(project, ctx);
       }
-      const still = again.deciding.find((d) => d.label === picked.label && d.step === picked.step && d.made.kind === picked.made.kind);
-      if (!still) refuse(CHANGED);
-      // The seat card: the click is for the seat as it was shown, so one that has changed hands since signs nothing.
-      if (card === SEAT_CARD_NAME && (again.event.seat.session !== shown.event.seat.session || again.event.seat.since !== shown.event.seat.since)) refuse(CHANGED);
-      if (!composed && stopped() && servedUnderStop([still]).length === 0) return STOP_REFUSAL;
-      // The settings are recorded as they read now, and only if they still read as the card named; the click is kept after, so one
-      // that confirmed nothing leaves no record that it did.
-      if (still.made.data?.action === 'confirm-settings') await confirmComputerSettings({ file: settingsFile(), run, cwd: mirrorOf(project), expect: still.made.data.hash });
-      const event = makeEvent({ kind: still.made.kind, data: { ...still.made.data, proof: 'window' }, now });
-      const result = await writeEvent({ project, event, now });
-      // A work's approved text is kept, and a proposed change installed, as a hook that signs the same click does.
-      keepAfterClick(project, readProject(project)?.folder, event);
-      await freshViews(() => writeViews(project, { now }));
-      if (!composed) await doWrite({ project, kind: 'card-answer', data: { card, question: again.event.data.question, label: still.label, where: 'panel' } }, ctx);
-      if (still.lift) liftStop();
-      // The seat moves to the asking session, fenced on the holder and `since` the card showed, with no process recorded.
-      if (card === SEAT_CARD_NAME) {
-        const from = { session: again.event.seat.session, since: again.event.seat.since };
-        const done = await handOverSeat(project, { session, folder: recordOf(project).folder, from }, { holder: NO_PROCESS });
-        return { ...written({ event, result }), choice: still.label, kind: event.kind, step: still.step, recorded: true, moved: done.moved, holder: done.seat?.session ?? null };
-      }
-      const action = event.kind === 'action' ? event.data?.action : null;
-      const keep = action === 'keep-main' ? { from: event.data.from, to: event.data.to } : null;
-      const undo = action === 'undo-merge' ? { merge: event.data.merge } : action === 'undo-main' ? { moved: true } : null;
-      return { ...written({ event, result }), choice: still.label, kind: event.kind, step: still.step, recorded: true, keep, undo };
-    })({ project, card, hash, session, cwd }, ctx);
-    if (card === SEAT_CARD_NAME) return answer;
-    const { keep = null, undo = null, ...said } = answer;
-    // The settings confirmed, this computer takes up the lock the refused pushes left, as a session start does (kept if it holds it
-    // already, else taken), so code pushes go on without a new session. Outside the state's queue, as the lock comes before it.
-    if (said.step === 'git-settings' && readProject(project)?.host !== 'local') return { ...said, lock: await keepLockAfterConfirm(project, ctx) };
-    // Keep it: the record's main version becomes the one the card named, if nothing moved it since. Undo and Undo it:
-    // the undo is made now, on the record just signed. Both outside the state's queue, since the project's lock is taken
-    // before it by a merge.
-    if (readProject(project)?.host === 'local') {
-      if (keep !== null) return { ...said, kept: await localKeepMain(project, keep) };
-      if (undo !== null) return { ...said, undone: await doLocalUndo({ project, ...undo }) };
-      return said;
     }
-    // On GitHub or GitLab the click is the undo's approval: the revert is made and merged through the gate now.
-    if (undo?.merge !== undefined) return { ...said, undone: await doUndo({ project, merge: undo.merge }, ctx) };
-    return said;
+    return { ok: true, ...done };
+  }
+
+  // The click a hook that only reads saw on a card whose step the helper signs (chatEarned), recorded as a signed record naming proof
+  // `hook-click`, with the click's own card-answer beside it. Runs inside the state's queue, so what must come after it, outside the
+  // queue (an undo, Keep it, the lock once the settings are confirmed), is given back as `after`, a function the route runs. The
+  // seat card moves the First Mate's seat to the asking session, only while the seat still names the holder and `since` the card showed.
+  async function signChatClick({ project, got, event, label, session }, ctx) {
+    const composed = event.seat !== undefined;
+    if (!composed && stopped() && servedUnderStop([got]).length === 0) return STOP_REFUSAL;
+    if (got.made.data?.action === 'confirm-settings') await confirmComputerSettings({ file: settingsFile(), run, cwd: mirrorOf(project), expect: got.made.data.hash });
+    const made = makeEvent({ kind: got.made.kind, data: { ...got.made.data, proof: 'hook-click' }, now });
+    const result = await writeEvent({ project, event: made, now });
+    keepAfterClick(project, readProject(project)?.folder, made);
+    await freshViews(() => writeViews(project, { now }));
+    if (composed) {
+      const from = { session: event.seat.session, since: event.seat.since };
+      const done = await handOverSeat(project, { session, folder: recordOf(project).folder, from }, { holder: NO_PROCESS });
+      return { ...written({ event: made, result }), card: SEAT_CARD_NAME, label, recorded: true, moved: done.moved, holder: done.seat?.session ?? null };
+    }
+    await doWrite({ project, kind: 'card-answer', data: { question: event.id, label, hash: dataHash(event.data), proof: 'hook-click', where: 'chat', source: session } }, ctx, { own: true });
+    const action = made.data?.action;
+    const local = readProject(project)?.host === 'local';
+    const after = async () => {
+      if (action === 'keep-main') return local ? { kept: await localKeepMain(project, { from: made.data.from, to: made.data.to }) } : {};
+      if (action === 'undo-main') return { undone: await doLocalUndo({ project, moved: true }) };
+      if (action === 'undo-merge') return { undone: await doUndo({ project, merge: made.data.merge }, ctx) };
+      if (action === 'confirm-settings' && !local) return { lock: await keepLockAfterConfirm(project, ctx) };
+      return {};
+    };
+    return { ...written({ event: made, result }), card: event.id, label, recorded: true, step: got.step, after };
   }
 
   const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
@@ -4468,32 +4477,44 @@ export async function startHelper({
     return { ok: true, ...done };
   }
 
-  // The director's click in the helper's own window, which no agent can press, before any channel is kept or forgotten. Nothing is
-  // saved without it: a refusal, no answer or a window that can't open all leave things as they were.
-  const NOT_CLICKED = 'the director did not click Yes in the helper\'s window, so nothing was changed';
-  async function clickedFor(lines) {
-    try {
-      const { choice } = await askWindow({ title: 'Wheelhouse: phone alerts', lines, options: ['Yes'] });
-      return choice === 'Yes';
-    } catch {
-      return false;
+  // The director's click on the card in the chat, which no agent can press, before any channel is kept or forgotten. The request is kept
+  // here by its hash while its card waits, and carried out only on a signed click naming that hash. Nothing is saved without it: with no
+  // click, the answer is the card that asks (`needs` `card`), and a click on Not now saves nothing.
+  const NOT_CLICKED = 'the director has not clicked Yes on the phone alerts card, so nothing was changed';
+  const alertsAsked = new Map();
+  async function clickedFor(project, step, request, where) {
+    if (typeof project !== 'string') return { ok: false, refused: 'phone alerts are set up from a project\'s front desk' };
+    const hash = alertsHash(step, request);
+    const click = chatClick(project, 'alerts-keep', (d) => d.step === step && d.hash === hash);
+    if (click !== null) {
+      await useChatClick(project, click.id, 'A phone-alert change was made on your click.');
+      alertsAsked.delete(hash);
+      return null;
     }
+    while (alertsAsked.size >= HOOK_SHOWN_MAX) alertsAsked.delete(alertsAsked.keys().next().value);
+    alertsAsked.set(hash, { step, where });
+    const composed = alertsCard(step, hash, where);
+    await raiseCard(project, composed, (p, kind, data) => engineWrite(p, kind, data));
+    const card = listEvents(stateDir(project), { report: () => {} }).find((e) => e.kind === 'card' && e.data?.line === composed.line && sameCard(e.data, composed))?.id;
+    return { ok: false, refused: NOT_CLICKED, needs: 'card', ...(card === undefined ? {} : { card }) };
   }
 
-  async function doAlertsNtfy({ topic, server }) {
+  async function doAlertsNtfy({ project, topic, server }) {
     if (!goodTopic(topic)) return { ok: false, refused: 'an ntfy topic is 1 to 64 letters, digits, dashes or underscores' };
     if (server !== undefined && !ALERT_SERVER(server)) return { ok: false, refused: 'the ntfy server must be a plain https address' };
     const where = server === undefined ? 'ntfy.sh' : new URL(server).host;
-    if (!await clickedFor([`Keep an ntfy topic for phone alerts on the server ${where}?`, 'Alerts will say only that decisions wait and in which project.'])) return { ok: false, refused: NOT_CLICKED };
+    const asked = await clickedFor(project, 'keep-ntfy', { topic, server: server ?? null }, where);
+    if (asked !== null) return asked;
     await saveKey(ALERT_KEYS.ntfy, { topic, ...(server === undefined ? {} : { server: server.replace(/\/+$/, '') }) }, keyDeps);
     return { ok: true, channel: 'ntfy' };
   }
 
   // The token is asked for here, by the system's hidden-entry dialog on the director's screen: it is never an argument, an
   // environment variable or anything an agent could type or read.
-  async function doAlertsTelegram({ chat }) {
+  async function doAlertsTelegram({ project, chat }) {
     if (!goodChat(chat)) return { ok: false, refused: 'a Telegram chat is its number, or @ and the channel\'s name' };
-    if (!await clickedFor([`Keep Telegram for phone alerts, sending to the chat ${chat}?`, 'You will be asked for the bot token next. Alerts will say only that decisions wait and in which project.'])) return { ok: false, refused: NOT_CLICKED };
+    const asked = await clickedFor(project, 'keep-telegram', { chat }, chat);
+    if (asked !== null) return asked;
     let token;
     try {
       token = await askToken({ title: 'Wheelhouse', prompt: 'Paste the Telegram bot token for phone alerts. It stays on this computer.' });
@@ -4512,9 +4533,10 @@ export async function startHelper({
     return { ok: true, setUp: ALERT_CHANNELS.filter((c) => c in kept), on: Array.isArray(on) ? on.filter((c) => ALERT_CHANNELS.includes(c)) : [] };
   }
 
-  async function doAlertsOff({ channel }) {
+  async function doAlertsOff({ project, channel }) {
     if (!ALERT_CHANNELS.includes(channel)) return { ok: false, refused: 'the channel is ntfy or telegram' };
-    if (!await clickedFor([`Forget the ${channel} channel for phone alerts? No more alerts will go through it.`])) return { ok: false, refused: NOT_CLICKED };
+    const asked = await clickedFor(project, `forget-${channel}`, { channel }, '');
+    if (asked !== null) return asked;
     await removeKey(ALERT_KEYS[channel], keyDeps);
     return { ok: true, channel };
   }
@@ -4953,8 +4975,8 @@ export async function startHelper({
     const signed = needsEvidence(command) && evidence?.form === 'signed';
     const held = () => stopped() && !DESK_STOP_ACTS.includes(command) && !signed;
     if (held()) return { ...STOP_REFUSAL, v: DESK_VERSION };
-    // All stop is never queued behind anything, and the confirm window takes the queue itself once the director has clicked.
-    if (command === 'all-stop' || (command === 'answer' && evidence?.form === 'window')) return core.act(command, args, evidence);
+    // All stop is never queued behind anything.
+    if (command === 'all-stop') return core.act(command, args, evidence);
     // STOP is checked again once the act's turn comes, as it may have been set while it waited.
     return inQueue(() => (held() ? { ...STOP_REFUSAL, v: DESK_VERSION } : core.act(command, args, evidence)));
   };
@@ -5318,10 +5340,10 @@ export async function startHelper({
     '/host/public': (body, ctx) => doHostPublic(body, ctx),
     // Answered before the project's context is made (see the handler), so it needs no host sign-in.
     '/alert': (body) => doAlert(body),
-    '/alerts/ntfy': (body) => oneAtATime('alerts-window', () => doAlertsNtfy(body)),
-    '/alerts/telegram': (body) => oneAtATime('alerts-window', () => doAlertsTelegram(body)),
+    '/alerts/ntfy': (body) => oneAtATime('alerts', () => doAlertsNtfy(body)),
+    '/alerts/telegram': (body) => oneAtATime('alerts', () => doAlertsTelegram(body)),
     '/alerts/status': () => doAlertsStatus(),
-    '/alerts/off': (body) => oneAtATime('alerts-window', () => doAlertsOff(body)),
+    '/alerts/off': (body) => oneAtATime('alerts', () => doAlertsOff(body)),
     '/engine-switch': (body, ctx) => oneAtATime(`switch:${body.project}`, () => doEngineSwitch(body, ctx)),
     '/review/run': async (body, ctx) => {
       try {
@@ -5340,10 +5362,14 @@ export async function startHelper({
     '/crew/helm': stateRoute(doCrewHelm, { clone: false, write: true }),
     '/cards/chat-click': stateRoute(doChatClick, { write: true }),
     '/cards/hook-shown': stateRoute(doHookShown),
-    '/cards/hook-click': stateRoute(doHookClick),
+    '/cards/hook-click': async (body, ctx) => {
+      const { after, ...said } = await stateRoute(doHookClick)(body, ctx);
+      // What follows the click outside the state's queue: an undo, Keep it, the lock once the settings are confirmed.
+      return typeof after === 'function' ? { ...said, ...(await after()) } : said;
+    },
+    '/cards/earnable': stateRoute(doEarnable),
+    '/cards/apply': stateRoute(doApplyClicks, { write: true }),
     '/cards/hook-auto': stateRoute(doHookAuto),
-    // One window at a time on this computer: a second request waits for the first window to close.
-    '/confirm': (body, ctx) => oneAtATime('window', () => doConfirm(body, ctx)),
     '/state/record': signedIn(stateRoute(doRecord)),
     '/desk/read': deskRoute('read'),
     '/desk/act': deskRoute('act'),
@@ -5413,7 +5439,7 @@ export async function startHelper({
         names: namesOf(project),
         // Whether the new engine can build the project (scripts/engine/switch.js), for the foreman's queue.
         engineOn: engineReady(project),
-        ...(stopped() ? { stop: true } : {}),
+        ...(stopped() ? { stop: true, allStopped: stillRunning(wheelhouseHome(), project) } : {}),
         ...(cards === true ? { cards: events.filter((e) => e.kind === 'card') } : {}),
         ...(answers === true ? { answers: events.filter((e) => e.kind === 'card-answer') } : {}),
       };
@@ -5931,7 +5957,7 @@ export async function startHelper({
 
   // POST /local/undo { project, merge } or { project, moved: true }: a merge taken back out of the main version with a new
   // commit, or what the main version gained outside the helper, each on the signed record of the director's click in the
-  // helper's window (ruling P5-50), which carries on under STOP. Nothing is deleted.
+  // chat (ruling P5-50), which carries on under STOP. Nothing is deleted.
   async function doLocalUndo({ project, merge, moved = false }) {
     if (readProject(project)?.host !== 'local') refuse('This project isn\'t kept on this computer');
     if (movingHome(project)) refuse(MOVING_LINE);
@@ -5945,16 +5971,16 @@ export async function startHelper({
       let click;
       if (moved === true) {
         if (seen === current) refuse('The main version is where the helper last moved it, so there is nothing to undo');
-        click = windowClick(project, 'undo-main', (d) => d.from === seen && d.to === current);
-        if (click === null) refuse(UNDO_NEEDS_WINDOW);
+        click = chatClick(project, 'undo-main', (d) => d.from === seen && d.to === current);
+        if (click === null) refuse(UNDO_NEEDS_CLICK);
         if (!(await homeGit(project, git).ok(['merge-base', '--is-ancestor', seen, current]))) refuse('The main version\'s history was rewritten, not added to, so it can\'t be undone here: look into it');
         commits = (await homeGit(project, git).must(['rev-list', '--first-parent', `${seen}..${current}`], 'unread')).split('\n').filter(Boolean);
       } else {
         if (typeof merge !== 'string' || !FULL_SHA.test(merge)) refuse('The merge to undo must be written in full');
         if (seen !== null && seen !== current) refuse('The main version moved outside the helper, so that comes first');
-        click = windowClick(project, 'undo-merge', (d) => d.merge === merge);
+        click = chatClick(project, 'undo-merge', (d) => d.merge === merge);
         if (click === null) {
-          return { ok: false, refused: UNDO_NEEDS_WINDOW, needs: 'window', card: await raiseCard(project, undoCards(merge)[0], (p, kind, data) => engineWrite(p, kind, data)) };
+          return { ok: false, refused: UNDO_NEEDS_CLICK, needs: 'card', card: await raiseCard(project, undoCards(merge)[0], (p, kind, data) => engineWrite(p, kind, data)) };
         }
         if (!(await homeGit(project, git).ok(['merge-base', '--is-ancestor', merge, current]))) refuse('That merge is not in the main version');
         commits = [merge];
@@ -6069,7 +6095,7 @@ export async function startHelper({
   function undoApproval(project, merge, pr) {
     const me = computerId();
     const enrolled = readEnrolled();
-    return listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'approval' && e.data?.pr === pr && e.data?.proof === 'window'
+    return listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'approval' && e.data?.pr === pr && CLICK_PROOFS.includes(e.data?.proof)
       && e.data?.question === undoLine(merge) && typeof e.data?.click === 'string' && e.computer === me && e.sig?.computer === me && verify(e, enrolled)).at(-1) ?? null;
   }
 
@@ -6082,14 +6108,15 @@ export async function startHelper({
     const ownSigned = (e) => e.computer === me && e.sig?.computer === me && verify(e, enrolled);
     const used = new Set(events.filter((e) => e.kind === 'note' && e.data?.lean === 'undo' && typeof e.data?.click === 'string' && ownSigned(e)).map((e) => e.data.click));
     const approved = new Set(events.filter((e) => e.kind === 'approval' && typeof e.data?.click === 'string' && ownSigned(e)).map((e) => e.data.click));
-    return events.filter((e) => e.kind === 'action' && e.data?.action === 'undo-merge' && e.data?.proof === 'window' && e.data?.merge === merge
+    return events.filter((e) => e.kind === 'action' && e.data?.action === 'undo-merge' && CLICK_PROOFS.includes(e.data?.proof) && e.data?.merge === merge
       && used.has(e.id) && !approved.has(e.id) && ownSigned(e)).at(-1) ?? null;
   }
 
   // The note that uses a click up, signed and naming it, written before the revert is pushed so one click makes one revert.
-  const useUndoClick = (project, click) => checkWrite(project, sign(makeEvent({ kind: 'note', data: { lean: 'undo', click, text: 'A merge was taken back out of the main version, on your click. Nothing was deleted.' }, now })));
+  const useChatClick = (project, click, text) => checkWrite(project, sign(makeEvent({ kind: 'note', data: { lean: 'undo', click, text }, now })));
+  const useUndoClick = (project, click) => useChatClick(project, click, 'A merge was taken back out of the main version, on your click. Nothing was deleted.');
 
-  // Records the director's approval of an undo's pull request head, from the signed click in the window that names the merge: the
+  // Records the director's approval of an undo's pull request head, from the signed click on the card that names the merge: the
   // helper signs it, so it exists only where the director clicked. An approval already on record for that head stands, and one on
   // record for the same pull request on an earlier head (the revert brought up to date) is carried to the new head, so an undo whose
   // merge was refused (its checks hadn't passed) is carried on without a second click.
@@ -6099,13 +6126,13 @@ export async function startHelper({
     if (approvalCounts(views.approvals?.[String(pr)]?.[head], head, enrolled)) return true;
     const click = approval?.id ?? undoApproval(project, merge, pr)?.data.click;
     if (typeof click !== 'string') return false;
-    await checkWrite(project, sign(makeEvent({ kind: 'approval', data: { pr, commit: head, words: 'Undo', question: undoLine(merge), proof: 'window', click }, now })));
+    await checkWrite(project, sign(makeEvent({ kind: 'approval', data: { pr, commit: head, words: 'Undo', question: undoLine(merge), proof: 'hook-click', click }, now })));
     return true;
   }
 
   // POST /undo { project, merge } (and /local/undo, which comes here): a merge taken back out of the main version. On a project kept on
   // this computer that is the home's own revert; on GitHub or GitLab it is a revert the helper opens as a pull request and merges
-  // through the gate like any merge. The director's click in the helper's window naming the merge is the approval; with none, the answer
+  // through the gate like any merge. The director's click on the undo card in the chat naming the merge is the approval; with none, the answer
   // is the card that asks. The caller's other fields are never read: it can't say the click was made. A revert that clashes with later
   // work pushes nothing and becomes a decision card.
   async function doUndo(body, ctx) {
@@ -6125,7 +6152,7 @@ export async function startHelper({
     const adapter = await ctx.adapter();
     const defaultBranch = await defaultBranchOf(project, adapter);
     const kept = readUndos(project).filter((u) => u.merge === merge).at(-1) ?? null;
-    const fresh = windowClick(project, 'undo-merge', (d) => d.merge === merge);
+    const fresh = chatClick(project, 'undo-merge', (d) => d.merge === merge);
     const approval = fresh ?? (kept === null ? null : spentClick(project, merge));
     // The id of the card asking, raised once: the state's own record of it, since the writer gives none back.
     const cardOf = async (data) => {
@@ -6152,7 +6179,7 @@ export async function startHelper({
       push: done.refused ?? 'The undo\'s branch could not be pushed',
       host: done.refused ?? 'The host would not open the undo',
     };
-    if (done.reason === 'needs-approval') return { ok: false, refused: UNDO_NEEDS_WINDOW, needs: 'window', card: await cardOf(undoCards(merge)[0]) };
+    if (done.reason === 'needs-approval') return { ok: false, refused: UNDO_NEEDS_CLICK, needs: 'card', card: await cardOf(undoCards(merge)[0]) };
     if (done.reason === 'conflict') {
       return { ok: false, reason: 'conflict', refused: 'The undo clashes with later work, so nothing was changed: it is now a decision for the director', card: await cardOf(undoConflictCard(merge)) };
     }
@@ -7010,7 +7037,7 @@ export async function startHelper({
   }
 
   // What still goes through while the helper makes way for an update: All stop, and lifting it.
-  const UPDATE_THROUGH = ['/stop/set', '/confirm', '/update/status', '/update/answer'];
+  const UPDATE_THROUGH = ['/stop/set', '/cards/hook-click', '/update/status', '/update/answer'];
 
   async function handle(req, res) {
     const url = new URL(req.url ?? '/', 'http://helper');
@@ -7080,7 +7107,7 @@ export async function startHelper({
       return send(res, 200, { ok: true, retired: true });
     }
     if (url.pathname === '/stop/set') {
-      // Anyone may set STOP: a false alarm costs only a pause. No route lifts it but /confirm, on the director's click in the helper's own window. `by: 'prompt'` records that
+      // Anyone may set STOP: a false alarm costs only a pause. No route lifts it but a click on its card in the chat (the prompt record's, or /cards/hook-click). `by: 'prompt'` records that
       // the director's STOP word set it, from a hook that only reads (ruling P5-18), and `by: 'runbook'` the runbook's first
       // step; anything else is the helper.
       // The engine's runs are cancelled after STOP is set, never before: by default the answer doesn't wait for it;

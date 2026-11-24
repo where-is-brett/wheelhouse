@@ -492,8 +492,8 @@ function activityFolder(project) {
 }
 
 // The proofs an answer must name for its build-command grant to count (the waker's buildGrants): no Copilot hook signs, so
-// only a click in the helper's own window counts.
-export const GRANT_PROOFS = Object.freeze(['window']);
+// only the click a hook saw on the card counts (proof `hook-click`).
+export const GRANT_PROOFS = Object.freeze(['hook-click']);
 
 // The sessions part. `ready` is the switch (BACKGROUND_SESSIONS_READY unless a test builds the part switched on); `plan`
 // is the Copilot plan (`copilotPlan`; the default passes no model); `kits` ({ manifest, fetchTo }) and `home`

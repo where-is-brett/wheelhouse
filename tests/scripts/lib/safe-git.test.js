@@ -319,7 +319,7 @@ test('a record from before the settings were kept per folder is refused when the
   const { SETTINGS_CHANGED_LINE } = await import('../../../scripts/lib/safe-git.js');
   const old = await includedPush({ before: '/a/helper', after: '/b/other', confirmed: true, asOld: true });
   assert.equal(old.code, 'git-settings-changed');
-  assert.match(SETTINGS_CHANGED_LINE, /Wheelhouse shows a card asking you to confirm the new settings in its own window/);
+  assert.match(SETTINGS_CHANGED_LINE, /Wheelhouse shows a card asking you to confirm the new settings here in the chat/);
   assert.doesNotMatch(SETTINGS_CHANGED_LINE, /run setup again/);
   assert.match(SETTINGS_CHANGED_LINE, /^Nothing was pushed/);
 });

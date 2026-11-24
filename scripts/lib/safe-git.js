@@ -17,7 +17,6 @@
 // config for `include`, `includeIf` and `filter` sections (R93, checkRepoConfig in
 // scripts/foreman/act.js) is load-bearing for its worktree and must stay.
 import { run as realRun, withoutGitVars } from './run.js';
-import { revocationFallback } from '../host/company-ca.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -512,7 +511,7 @@ function refuseFenceOverride(args) {
 export class SettingsChanged extends LookRefusal {
   code = SETTINGS_CHANGED;
 }
-export const SETTINGS_CHANGED_LINE = "Nothing was pushed: this computer's git settings (sign-in, proxy, certificate or address rewrites) differ from the ones you confirmed at setup. If you changed them yourself, or your IT team did, Wheelhouse shows a card asking you to confirm the new settings in its own window; until you do, nothing is pushed.";
+export const SETTINGS_CHANGED_LINE = "Nothing was pushed: this computer's git settings (sign-in, proxy, certificate or address rewrites) differ from the ones you confirmed at setup. If you changed them yourself, or your IT team did, Wheelhouse shows a card asking you to confirm the new settings here in the chat; until you do, nothing is pushed.";
 
 // What a push trusts: every sign-in, proxy, certificate, address-rewrite and remote setting, the ssh ones, and the includes (which
 // are resolved already, but make the settings depend on the folder). The older fingerprint named fewer; it is kept (OLD_RELEVANT) only
@@ -828,7 +827,7 @@ export function safeGit({
       const got = await run(gitPath, args, { timeoutMs, ...rest, cwd, baseEnv: withoutGitVars(), env: callEnv });
       // On Windows, a company's certificate through Windows' store, refused because the network blocks the
       // revocation check, is tried once more with the certificate file (company-ca.js, revocationFallback).
-      const fallback = got?.code !== 0 ? revocationFallback(callEnv, got?.stderr) : null;
+      const fallback = got?.code !== 0 ? (await import('../host/company-ca.js')).revocationFallback(callEnv, got?.stderr) : null;
       return fallback === null ? got : run(gitPath, args, { timeoutMs, ...rest, cwd, baseEnv: withoutGitVars(), env: fallback });
     };
     if (!pushing) return execute(null);

@@ -78,7 +78,7 @@ async function inHome(fn) {
 // a function read on each request) every write is refused and the views say STOP is on, as the
 // helper does under STOP. A pull request is open at `head`, unless `pr` answers for it. A write is
 // made at `writeAt(n)`, the nth write's time. The desk's reads are the real desk's, over what is held.
-function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, writeAt = T, names } = {}) {
+function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, writeAt = T, names, allStopped } = {}) {
   const held = [...events];
   const stopped = () => (typeof stop === 'function' ? stop() : stop);
   const calls = [];
@@ -97,7 +97,7 @@ function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, 
       ok: true,
       views: built,
       ...(names === undefined ? {} : { names }),
-      ...(stopped() ? { stop: true } : {}),
+      ...(stopped() ? { stop: true, ...(allStopped === undefined ? {} : { allStopped }) } : {}),
       ...(body.cards === true ? { cards: held.filter((e) => e.kind === 'card') } : {}),
       ...(body.answers === true ? { answers: held.filter((e) => e.kind === 'card-answer') } : {}),
     };
@@ -2528,6 +2528,19 @@ test('under STOP the reading commands run and record is refused', async () => {
   });
 });
 
+test('under STOP the Lift All stop card says what was stopped and what still runs, as the helper read it from heartbeats', async () => {
+  await inHome(async () => {
+    setStop({ by: 'prompt' });
+    const allStopped = { stopped: ['builder a', 'builder b', 'foreman'], running: [{ name: 'the helper', why: 'holds your keys and refuses every change' }, { name: 'the watcher', why: 'idle, making no changes' }] };
+    const visit = await run(fakeHelper({ stop: true, events: [questionEvent()], allStopped }), ['cards']);
+    assert.equal(visit.code, 0, visit.err);
+    const [lift] = visit.json.questions;
+    assert.match(lift.question, /Stopped: 2 builders, the foreman\./);
+    assert.match(lift.question, /Still running: .*\(holds your keys and refuses every change\) and the watcher \(idle, making no changes\)\./);
+    assert.deepEqual(lift.options.map((o) => o.label), ['Lift All stop', 'Show me', 'Not now']);
+  });
+});
+
 test('under STOP, cards gives the Lift All stop card alone, never recorded, and the director\'s click on it lifts STOP', async () => {
   await inHome(async () => {
     setStop({ by: 'prompt' });
@@ -2856,7 +2869,7 @@ test('move raises the card by the folder, and names only GitHub or GitLab', asyn
 
 test('undo asks the helper by the folder, on any host, and gives what it answers, its card included', async () => {
   const asked = [];
-  const helper = { client: { undo: async (body) => { asked.push(body); return { ok: false, refused: 'needs the window', needs: 'window', card: { id: 'c-1' } }; } } };
+  const helper = { client: { undo: async (body) => { asked.push(body); return { ok: false, refused: 'needs a click', needs: 'card', card: { id: 'c-1' } }; } } };
   const got = await run(helper, ['undo', FULL]);
   assert.equal(got.code, 0, got.err);
   assert.equal(got.json.card.id, 'c-1');
@@ -2894,7 +2907,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['frobnicate', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, show, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page, helm\n$/);
+    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, show, undo, move, carry-on, archive, restore, premium-card, premium-check, note, decision, pull-back, alerts, page, helm\n$/);
     const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -2961,7 +2974,7 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, show, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page, helm\n');
+  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, show, undo, move, carry-on, archive, restore, premium-card, premium-check, note, decision, pull-back, alerts, page, helm\n');
   assert.equal(done.stdout, '');
 });
 
@@ -3165,44 +3178,37 @@ test('a configuration that still names another agent has its cards asked in the 
   });
 });
 
-test('where the agent\'s hooks only read, a decision says to reply in Wheelhouse\'s own window and decision confirm opens it there', async () => {
+test('where the agent\'s hooks only read and its click is not recorded, a decision says it waits, and no command opens a window', async () => {
   await inHome(async () => {
     const folder = agentProject('copilot');
     await takeSeat('o__p', { session: 'chat-1', folder }, { holder: { pid: null, pidStart: null } });
     const helper = fakeHelper({ events: [...typedOn(), questionEvent()] });
-    const asked = [];
-    helper.client.confirm = async (body) => { asked.push(body); return { ok: true, step: 'decision-answer', label: 'Tab' }; };
     const opts = { cwd: folder, env: {} };
     assert.equal((await run(helper, ['cards', '--session', 'chat-1'], undefined, opts)).code, 0);
     const shown = await run(helper, ['decision', 'show', '1'], undefined, opts);
     assert.equal(shown.code, 0, shown.err);
-    assert.match(shown.out, /Reply in Wheelhouse's own window, which opens for decision 1: click the option you choose there\./);
-    assert.doesNotMatch(shown.out, /Reply 1 A, 1 B/);
-    const card = helper.held.find((e) => e.kind === 'card');
-    const opened = await run(helper, ['decision', 'confirm', '1'], undefined, opts);
-    assert.equal(opened.code, 0, opened.err);
-    assert.deepEqual(asked, [{ cwd: folder, card: card.id, hash: dataHash(card.data) }]);
-    assert.deepEqual(opened.json, { ok: true, step: 'decision-answer', label: 'Tab' });
-    const none = await run(helper, ['decision', 'confirm', '2'], undefined, opts);
-    assert.equal(none.code, 1);
-    assert.match(none.err, /Decision 2 isn't waiting/);
+    assert.match(shown.out, /This chat does not record an answer to a decision yet, so decision 1 waits\./);
+    assert.doesNotMatch(shown.out, /Reply 1 A, 1 B|window/);
+    const refused = await run(helper, ['decision', 'confirm', '1'], undefined, opts);
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /^Give decision list, decision signed <work id> "<question>", or decision show <n>/);
+    assert.equal(helper.client.confirm, undefined, 'the helper has no window route');
   });
 });
 
-test('where the agent\'s hooks sign, a decision is answered by a typed reply and decision confirm opens no window', async () => {
+test('where the agent\'s hooks sign, a decision is answered by a typed reply and no command opens a window', async () => {
   await inHome(async () => {
     const folder = agentProject('claude-code');
     const helper = fakeHelper({ events: [...typedOn(), questionEvent()] });
-    helper.client.confirm = async () => { throw new Error('no window is opened here'); };
     const opts = { cwd: folder, env: {} };
     assert.equal((await run(helper, ['cards'], undefined, opts)).code, 0);
     const shown = await run(helper, ['decision', 'show', '1'], undefined, opts);
     assert.equal(shown.code, 0, shown.err);
-    assert.doesNotMatch(shown.out, /own window/);
+    assert.doesNotMatch(shown.out, /window/);
     assert.match(shown.out, /Reply 1 A, 1 B/);
     const refused = await run(helper, ['decision', 'confirm', '1'], undefined, opts);
     assert.equal(refused.code, 1);
-    assert.equal(refused.err, 'Here the director answers a decision by typing their reply in the chat, so no window is opened.\n');
+    assert.match(refused.err, /^Give decision list, decision signed <work id> "<question>", or decision show <n>/);
   });
 });
 
@@ -3414,57 +3420,21 @@ test('cli: helm from a window without the First Mate\'s seat is refused before t
   assert.deepEqual(asked, []);
 });
 
-// --- the seat card, answered in Wheelhouse's own window (confirm seat-take-over) ---
+// --- the seat card is answered in the chat, so there is no confirm command ---
 
-test('confirm seat-take-over passes seatRefusal from an aside, and other confirms don\'t', async () => {
+test('there is no confirm command: no seat write is let through an aside by it, and the command is unknown', async () => {
   await seatHeldByB(async (folder) => {
     const { client } = fakeHelper();
     const env = { CLAUDE_CODE_SESSION_ID: 'a' };
-    assert.equal(await seatRefusal({ command: 'confirm', rest: ['seat-take-over'], env, cwd: folder, client }), null);
-    assert.equal(await seatRefusal({ command: 'confirm', rest: ['lift-stop'], env, cwd: folder, client }), SEAT_REFUSAL);
-    assert.equal(await seatRefusal({ command: 'confirm', rest: ['seat-take-over', 'x'], env, cwd: folder, client }), SEAT_REFUSAL, 'only the card by its name');
-    assert.equal(await seatRefusal({ command: 'confirm', rest: [], env, cwd: folder, client }), SEAT_REFUSAL);
+    for (const rest of [['seat-take-over'], ['lift-stop'], []]) {
+      assert.equal(await seatRefusal({ command: 'confirm', rest, env, cwd: folder, client }), null, 'confirm is no seat write now');
+    }
     assert.equal(await seatRefusal({ command: 'cards', rest: [], env, cwd: folder, client }), SEAT_REFUSAL);
-  });
-});
-
-test('confirm seat-take-over sends the session given, and says the result in one line', async () => {
-  await seatHeldByB(async (folder) => {
-    const helper = fakeHelper();
-    const sent = [];
-    const client = { ...helper.client, confirm: async (body) => { sent.push(body); return { ok: true, choice: 'Take over here', recorded: true, moved: true, holder: 'chat-1' }; } };
-    let out = '';
     let err = '';
-    const code = await main(['confirm', 'seat-take-over', '--session', 'chat-1'], { cwd: folder, client, env: { CLAUDE_CODE_SESSION_ID: 'inherited' }, now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; } });
-    assert.equal(code, 0, err);
-    assert.deepEqual(sent, [{ cwd: folder, card: 'seat-take-over', session: 'chat-1' }]);
-    assert.match(out, /this window is now the First Mate, and keeps Wheelhouse's records/i);
-    assert.equal(out.trim().split('\n').length, 1);
-  });
-});
-
-test('confirm seat-take-over with no session id refuses, and the answer when the director doesn\'t click is said plainly', async () => {
-  await seatHeldByB(async (folder) => {
-    const helper = fakeHelper();
-    const sent = [];
-    const answers = [{ ok: true, choice: null, recorded: false }, { ok: true, choice: 'Take over here', recorded: true, moved: false, holder: 'a' }];
-    const client = { ...helper.client, confirm: async (body) => { sent.push(body); return answers.shift(); } };
-    const go = async (argv, env) => {
-      let out = '';
-      let err = '';
-      const code = await main(argv, { cwd: folder, client, env, now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; } });
-      return { code, out, err };
-    };
-    const none = await go(['confirm', 'seat-take-over'], {});
-    assert.equal(none.code, 1);
-    assert.equal(none.err, 'this window has no session id to move the First Mate to\n');
-    assert.deepEqual(sent, []);
-    const quiet = await go(['confirm', 'seat-take-over'], { CLAUDE_CODE_SESSION_ID: 'chat-1' });
-    assert.equal(quiet.code, 0);
-    assert.match(quiet.out, /did not move/i);
-    const stale = await go(['confirm', 'seat-take-over', '--session=chat-1'], {});
-    assert.match(stale.out, /did not move/i);
-    assert.match(stale.out, /session a/);
+    const code = await main(['confirm', 'seat-take-over'], { cwd: folder, client, env, now: () => NOW, out: () => {}, err: (t) => { err += t; } });
+    assert.equal(code, 1);
+    assert.match(err, /^Commands: cards, /);
+    assert.doesNotMatch(err, /confirm/);
   });
 });
 
@@ -3499,7 +3469,7 @@ test('where the agent\'s hooks only read, the command refuses a seat write with 
     // The forms the hook can't read (a relative path, sh -c, node -e, a variable, a Windows path in another case) all reach this
     // command the same way: no flag, and perhaps an id the chat inherited from another session.
     for (const env of [{}, { CLAUDE_CODE_SESSION_ID: 'inherited' }]) {
-      for (const argv of [['cards'], ['record', 'idea'], ['confirm', 'lift-stop'], ['again'], ['helm', 'take', 'x']]) {
+      for (const argv of [['cards'], ['record', 'idea'], ['again'], ['helm', 'take', 'x']]) {
         const out = await go(argv, env);
         assert.equal(out.code, 1, argv.join(' '));
         assert.equal(out.err, `${SESSION_NEEDED}\n`);
@@ -3507,7 +3477,6 @@ test('where the agent\'s hooks only read, the command refuses a seat write with 
     }
     for (const argv of [['views', 'rulebook'], ['alerts']]) assert.ok(!(await go(argv, {})).err.includes(SESSION_NEEDED), 'reads need no id');
     assert.equal((await go(['cards', '--session', 'chat-1'], {})).code, 0, 'the chat names itself');
-    assert.equal(await seatRefusal({ command: 'confirm', rest: ['seat-take-over'], env: {}, cwd: folder, client: helper.client }), null, 'its own message for a take-over');
   });
 });
 

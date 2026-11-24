@@ -21,7 +21,10 @@ import { run } from '../../scripts/lib/run.js';
 import { liftStop, setStop } from '../../scripts/lib/stop.js';
 import { g } from '../helpers/git-fixture.js';
 import { tempFolder } from '../helpers/homes.js';
-import { dataHash, eventPath, listEvents, makeEvent } from '../../scripts/state/events.js';
+import { dataHash, eventPath, listEvents, makeEvent, writeEvent } from '../../scripts/state/events.js';
+import { sign } from '../../scripts/state/signing.js';
+import { decide as cardCheck } from '../../scripts/hooks/card-check.js';
+import { decide as promptRecord } from '../../scripts/hooks/prompt-record.js';
 
 waitLongerOnTheHelper();
 
@@ -204,10 +207,15 @@ async function moveOutside(home) {
   return moved;
 }
 const cardOf = (found) => records('card').find((e) => found(e.data));
-const confirm = (client, card) => client.confirm({ project: P, card: card.id, hash: dataHash(card.data) });
-const atWindow = (label) => async () => ({ choice: label });
+// The director's click on a card in the chat: a hook that only reads posts that it was shown, then that it was clicked.
+async function confirm(client, card, label) {
+  const ask = { project: P, session: 'chat-1', message: card.data.question, options: card.data.options };
+  const shown = await client.cards.hookShown(ask);
+  if (shown.ok !== true) return shown;
+  return client.cards.hookClick({ ...ask, label });
+}
 
-test('Keep it answers Main moved at the window, and the queue goes on', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
+test('Keep it answers Main moved in the chat, and the queue goes on', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
   const { helper, client, home } = world;
   await ticksUntil(helper, () => seenMain(P) !== null, 'the first look');
   const moved = await moveOutside(home);
@@ -215,12 +223,33 @@ test('Keep it answers Main moved at the window, and the queue goes on', { timeou
   const { n } = await readyChange(world, 'card-10', 'export const price = () => 10;\n');
   await ticks(helper, 3);
   assert.equal(changeOf(n).state, 'open', 'the queue holds');
-  const kept = await confirm(client, card);
+  const kept = await confirm(client, card, 'Keep it');
   assert.equal(kept.kept, true, JSON.stringify(kept));
   assert.equal(seenMain(P), moved);
   await ticksUntil(helper, () => changeOf(n).state === 'merged', 'the merge');
   assert.equal((await run('git', ['merge-base', '--is-ancestor', moved, 'refs/heads/main'], { cwd: home })).code, 0, 'what moved it stays');
-}, { check: checks(), askWindow: atWindow('Keep it') }));
+}, { check: checks() }));
+
+test('a Keep it the hook signed is carried out by /cards/apply, but not while All stop is on', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
+  const { helper, client, home } = world;
+  await ticksUntil(helper, () => seenMain(P) !== null, 'the first look');
+  const before = seenMain(P);
+  const moved = await moveOutside(home);
+  const card = await ticksUntil(helper, () => cardOf((d) => String(d.question).includes(moved)), 'the Main moved card');
+  // As Claude Code's prompt record does: the helper says what the click earns, the hook signs it, then asks the helper to carry it out.
+  const earned = await client.cards.earnable({ project: P, message: card.data.question, options: card.data.options, label: 'Keep it' });
+  assert.equal(earned.made?.data?.action, 'keep-main', JSON.stringify(earned));
+  await writeEvent({ project: P, event: sign(makeEvent(earned.made)) });
+  setStop({ by: 'helper' });
+  try {
+    assert.deepEqual(await client.cards.apply({ project: P }), { ok: false, refused: 'All stop is on' }, 'nothing is carried out under All stop');
+    assert.equal(seenMain(P), before);
+  } finally {
+    liftStop();
+  }
+  assert.equal((await client.cards.apply({ project: P })).kept, true);
+  assert.equal(seenMain(P), moved);
+}, { check: checks() }));
 
 test('Undo it takes what moved the main version back out, under All stop too, and one click does it once', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
   const { helper, client, home, worktreeWith } = world;
@@ -230,14 +259,14 @@ test('Undo it takes what moved the main version back out, under All stop too, an
   const card = await ticksUntil(helper, () => cardOf((d) => String(d.question).includes(moved)), 'the Main moved card');
   setStop({ by: 'helper' });
   try {
-    const undone = await confirm(client, card);
+    const undone = await confirm(client, card, 'Undo it');
     assert.equal(typeof undone.undone?.undo, 'string', JSON.stringify(undone));
     assert.equal(await headIn(home, 'refs/heads/main'), undone.undone.undo);
     assert.equal(seenMain(P), undone.undone.undo);
   } finally {
     liftStop();
   }
-}, { check: checks(), askWindow: atWindow('Undo it') }));
+}, { check: checks() }));
 
 test('Undo takes a merge back out on the director\'s click, and one click does it once', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
   const { helper, client, home } = world;
@@ -245,15 +274,15 @@ test('Undo takes a merge back out on the director\'s click, and one click does i
   await ticksUntil(helper, () => changeOf(n).state === 'merged', 'the merge');
   const merge = changeOf(n).mergeCommit;
   const asked = await client.local.undo({ project: P, merge });
-  assert.equal(asked.needs, 'window');
+  assert.equal(asked.needs, 'card');
   const card = cardOf((d) => String(d.question).includes(merge));
-  const undone = await confirm(client, card);
+  const undone = await confirm(client, card, 'Undo');
   assert.equal(typeof undone.undone?.undo, 'string', JSON.stringify(undone));
   assert.equal(await headIn(home, 'refs/heads/main'), undone.undone.undo);
   assert.equal(seenMain(P), undone.undone.undo);
-  assert.equal((await client.local.undo({ project: P, merge })).needs, 'window', 'the click is spent');
+  assert.equal((await client.local.undo({ project: P, merge })).needs, 'card', 'the click is spent');
   assert.equal(await headIn(home, 'refs/heads/main'), undone.undone.undo);
-}, { check: checks(), askWindow: atWindow('Undo') }));
+}, { check: checks() }));
 
 test('undo on a local home still works through the one route every host uses', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
   const { helper, client, home } = world;
@@ -261,13 +290,13 @@ test('undo on a local home still works through the one route every host uses', {
   await ticksUntil(helper, () => changeOf(n).state === 'merged', 'the merge');
   const merge = changeOf(n).mergeCommit;
   const asked = await client.undo({ project: P, merge });
-  assert.equal(asked.needs, 'window');
+  assert.equal(asked.needs, 'card');
   const card = cardOf((d) => String(d.question).includes(merge));
-  const undone = await confirm(client, card);
+  const undone = await confirm(client, card, 'Undo');
   assert.equal(typeof undone.undone?.undo, 'string', JSON.stringify(undone));
   assert.equal(await headIn(home, 'refs/heads/main'), undone.undone.undo);
-  assert.equal((await client.undo({ project: P, merge })).needs, 'window', 'the click is spent');
-}, { check: checks(), askWindow: atWindow('Undo') }));
+  assert.equal((await client.undo({ project: P, merge })).needs, 'card', 'the click is spent');
+}, { check: checks() }));
 
 test('a write beside an Undo doesn\'t cost its click: the record takes one commit at a time', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
   const { helper, client } = world;
@@ -280,24 +309,35 @@ test('a write beside an Undo doesn\'t cost its click: the record takes one commi
   const beside = (async () => {
     while (writing) await client.state.write({ project: P, kind: 'note', data: { about: 'engine', words: 'Something else happened.' } });
   })();
-  const undone = await confirm(client, card);
+  const undone = await confirm(client, card, 'Undo');
   writing = false;
   await beside;
   assert.equal(typeof undone.undone?.undo, 'string', JSON.stringify(undone));
-}, { check: checks(), askWindow: atWindow('Undo') }));
+}, { check: checks() }));
+
+// The director's click on an approval card in Claude Code's chat: the card check, then the prompt record, whose hook signs the approval.
+const NO_MANAGED = path.join(tempFolder('wh-no-managed-'), 'absent');
+async function approveInChat(world, card, label) {
+  const question = { question: card.data.question, header: card.data.header, multiSelect: false, options: card.data.options.map((o, i) => ({ label: o, description: card.data.descriptions?.[i] ?? '' })) };
+  const call = { session_id: 'chat-1', cwd: world.folder, permission_mode: 'default', tool_name: 'AskUserQuestion' };
+  assert.equal(await cardCheck({ ...call, hook_event_name: 'PreToolUse', tool_input: { questions: [question] } }, { dir: NO_MANAGED }), undefined);
+  const answers = { [question.question]: label };
+  await promptRecord({
+    ...call, hook_event_name: 'PostToolUse', tool_input: { questions: [question], answers }, tool_response: { questions: [question], answers }, tool_use_id: 'toolu_approve',
+  }, { client: world.client, dir: NO_MANAGED, env: {} });
+}
 
 test('a change that takes the director\'s say raises its card once, and goes in on their Approve', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
-  const { helper, client } = world;
+  const { helper } = world;
   const { n } = await readyChange(world, 'card-11', 'export const price = () => 11;\n', { also: '.archon/settings.yaml' });
   const card = await ticksUntil(helper, () => cardOf((d) => String(d.question).includes(`#${n}`)), 'the approval card');
   assert.match(card.data.question, new RegExp(`Pull request #${n}`));
   await ticks(helper, 3);
   assert.equal(records('card').filter((e) => e.id !== card.id && String(e.data.question).includes(`#${n}`)).length, 0);
   assert.equal(changeOf(n).state, 'open');
-  const answered = await confirm(client, card);
-  assert.equal(answered.recorded, true, JSON.stringify(answered));
+  await approveInChat(world, card, 'Approve');
   await ticksUntil(helper, () => changeOf(n).state === 'merged', 'the merge');
-}, { check: checks(), askWindow: atWindow('Approve') }));
+}, { check: checks() }));
 
 test('a change the director sends back leaves the local queue for its piece, with no host to close it on', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
   const { helper, client, home } = world;
@@ -308,16 +348,15 @@ test('a change the director sends back leaves the local queue for its piece, wit
   const card = await ticksUntil(helper, () => cardOf((d) => String(d.question).includes(`#${n}`)), 'the approval card');
   assert.deepEqual(card.data.options, ['Approve', 'Send it back', 'Suggest a change…', 'Show me']);
   assert.ok(card.data.descriptions[1].includes('reworked'));
-  const answered = await confirm(client, card);
-  assert.equal(answered.recorded, true, JSON.stringify(answered));
-  assert.equal(answered.choice, 'Send it back');
+  await approveInChat(world, card, 'Send it back');
+  assert.equal(records('approval').length + records('action').filter((e) => e.data.action === 'send-back').length > 0, true, 'the click was signed');
   const ready = () => JSON.parse(fs.readFileSync(verdictsFile(), 'utf8')).ready?.[n];
   await ticksUntil(helper, () => ready() === undefined, 'the change leaving the local queue');
   await ticks(helper, 2);
   assert.equal(records('note').filter((e) => String(e.data.words).includes(`You sent pull request #${n} back`)).length, 1);
   assert.equal(changeOf(n).state, 'open');
   assert.equal(await headIn(home, 'refs/heads/main'), main, 'nothing of it is added');
-}, { check: checks(), askWindow: atWindow('Send it back') }));
+}, { check: checks() }));
 
 test('the merge route answers to the main line and to a main version moved outside', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
   const { helper, client, home } = world;

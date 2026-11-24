@@ -1,7 +1,7 @@
 // scripts/update/cards.js
 // The update's cards (update design, sections 4 and 7.3). The first, the Update card, is asked once by the command and signs
 // nothing: its click only starts the update, and is never the approval of the reviewed change. The other two are real
-// cards the state keeps and the prompt record or the helper's window can sign: the approval of a release that is not
+// cards the state keeps and the prompt record can sign, or the helper from a click a hook saw: the approval of a release that is not
 // pins-only, and the old helper's card. Their words are composed once, here, so a card asked again reads the same.
 import { composeCard } from '../cards/compose.js';
 import { NOT_NOW } from '../lib/calm-words.js';
@@ -40,7 +40,7 @@ export function updateCard({ from, to, says, approval = 'review', locked = false
   }
   if (addon === true) happens.push(ADDON_ON_CARD);
   if (approval === 'card') {
-    happens.push(`${to} changes more than its pins, so once the change is ready you approve it, as you approve any change to the safety rules (a card here in Claude Code, the helper's window with another agent). Update starts it; it is not that approval.`);
+    happens.push(`${to} changes more than its pins, so once the change is ready you approve it, as you approve any change to the safety rules (a card here in the chat). Update starts it; it is not that approval.`);
   }
   if (locked) happens.push('Locked on this computer is brought up to date too, which shows a password window.');
   if (others.length > 0) happens.push(`Locked is one copy for the whole computer, so ${list(others)} will have the newer Locked and may need updating as well.`);
@@ -107,7 +107,7 @@ const HELPER_SAYS = Object.freeze({
 });
 
 // The old helper's card (scripts/update/finish.js's helperCard) composed as a real card: { question, card }. Every option decides;
-// a click is signed as the director's answer to this card by the prompt record or the helper's window.
+// a click is signed as the director's answer to this card by the prompt record, or by the helper from a click a hook saw.
 export function helperCardFor(given) {
   const [what, why, meanwhile] = String(given.question).split('\n');
   return composeCard({

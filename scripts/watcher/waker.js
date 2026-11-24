@@ -76,7 +76,7 @@
 //     then does a feature's prompt carry the Thoroughness column's lines, and a Shape 2 wake's copy its `column`;
 //     another agent's prompt stays one line naming its file, as a .cmd shim needs;
 //   - `grantProofs`, the proofs an answer must name for its build-command grant to count (buildGrants'
-//     `proofs`, ruling P8-8): an agent whose hooks don't sign counts only a click in the helper's own window.
+//     `proofs`, ruling P8-8): an agent whose hooks don't sign counts only the click a hook saw on the card (proof `hook-click`).
 //     Without it, every verified answer counts, as before.
 // A feature call that says the level it runs at (`level`) has it recorded as a
 // `level` record when it changes (ruling P8-5).
@@ -135,7 +135,7 @@
 // and is tried again. Once the files match again the wake goes, and `raise`
 // is given a `control-file-lift`, which closes the card. The director's Keep
 // (a signed `keep-control-files` action, from a signed click on Claude Code or
-// the helper's window, naming the finding's hash, made after the record it
+// the helper's, from a click a hook saw, naming the finding's hash, made after the record it
 // replaces) keeps the files as they were found as the new record, and the
 // wake goes; a plain record never does (ruling P7-31).
 //
@@ -149,6 +149,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DIGEST_CAP } from './core.js';
+import { watcherDir, runningFile, sessionFile } from './folders.js';
 import { WALK_CAP, checkControlFiles, markRaised, raisedOf, writeBaseline } from './control-files.js';
 import { controlFilesNamed } from '../cards/build-loop.js';
 import { keepControlLine, setLineOf } from '../state/card-lines.js';
@@ -295,9 +296,7 @@ function realOf(p) {
 
 // --- The watcher's folder, projects/<p>/watcher ---
 
-export function watcherDir(project) {
-  return path.join(path.dirname(stateDir(project)), 'watcher');
-}
+export { watcherDir, runningFile, sessionFile };
 
 export function wakesDir(project) {
   return path.join(watcherDir(project), 'wakes');
@@ -305,8 +304,6 @@ export function wakesDir(project) {
 
 export const outboxFile = (project) => path.join(watcherDir(project), 'outbox.json');
 const outboxLock = (project) => path.join(watcherDir(project), 'outbox.lock');
-export const runningFile = (project, target) => path.join(watcherDir(project), 'running', `${target}.json`);
-export const sessionFile = (project, work) => path.join(watcherDir(project), 'sessions', `${work}.json`);
 // A feature session that died without finishing its run (crash resume, resume.js): `{ at, why, code }`, where `at` is
 // when the run began.
 export const lostFile = (project, work) => path.join(watcherDir(project), 'lost', `${work}.json`);
@@ -325,6 +322,8 @@ export const startsDir = (project) => path.join(watcherDir(project), 'starts');
 // The count of a piece's failed starts in a row, all of one kind: `{ kind, count, held }`. A third failure holds the piece.
 export const failingFile = (project, work) => path.join(watcherDir(project), 'failing', `${work}.json`);
 export const START_FAILURES_HELD = 3;
+// What a start refused under All stop says.
+export const STOPPED_LINE = 'not started: All stop';
 const START_OUTPUT_DAYS_MS = 24 * 60 * 60 * 1000;
 // The kinds that shut a whole route: signing in, or the program, is wrong for every project on this computer.
 const ROUTE_KINDS = ['not-signed-in', 'blocked', 'no-program'];
@@ -722,9 +721,18 @@ export function spawnDetached(file, args, { cwd, env, input = '', windowsVerbati
 export const STEER_NAMES_ITSELF = "This agent's sessions name themselves, so a piece can't be steered from its start";
 
 // Ends a recorded session's process, and the ones it started with it where the system lets us (on macOS and Linux it
-// leads its own group). Says whether the signal was sent.
-export function endProcess(pid) {
-  for (const target of process.platform === 'win32' ? [pid] : [-pid, pid]) {
+// leads its own group; on Windows the recorded pid is the hidden-start relay, so taskkill ends its tree). Says whether
+// the end was sent.
+export function endProcess(pid, { platform = process.platform, spawner = spawn } = {}) {
+  if (platform === 'win32') {
+    try {
+      const child = spawner('taskkill', ['/pid', String(pid), '/T', '/F'], { detached: true, stdio: 'ignore', windowsHide: true, shell: false });
+      child.once?.('error', () => {});
+      child.unref?.();
+      return true;
+    } catch { /* no taskkill: the process alone */ }
+  }
+  for (const target of platform === 'win32' ? [pid] : [-pid, pid]) {
     try {
       process.kill(target, 'SIGTERM');
       return true;
@@ -814,6 +822,10 @@ export function makeWaker({
   // Where `claude` is, for the calls built below: the one given, else the launch command saved for this computer (read at each
   // start, so one the director has just saved or mended counts), else none, which the adapter finds as it always has.
   let claude = givenClaude;
+  // The processes All stop ended (stopAll), so their exit is settled as All stop's even once STOP has lifted; and the
+  // STOP whose record of ended sessions this process last wrote (all-stopped.json).
+  const endedByStop = new Set();
+  let stoppedFor;
   // The configuration from the default branch, as last read: `setConfig` replaces it, so every wake after a change
   // that merged (a model, a pin, a mode) starts its session by the new one.
   let config = givenConfig;
@@ -1077,6 +1089,8 @@ export function makeWaker({
     }
   }
   async function shutRoute(kind, program, output, error) {
+    // The gate is frozen under All stop: nothing is written, cleared or counted until it lifts.
+    if (stopped()) return;
     const home = wheelhouseHome();
     const key = routeKey();
     const before = readSignIn(home);
@@ -1114,6 +1128,7 @@ export function makeWaker({
   // The start output of a run whose end this watcher never saw (a start made by the foreman's command, or before a
   // restart), read once and classified like any other. Says whether it shut the route.
   async function classifyUnseen(ended) {
+    if (stopped()) return false;
     let output = '';
     try {
       output = readOutput(ended.startOutput, 0);
@@ -1134,6 +1149,7 @@ export function makeWaker({
   // A piece whose start failed some other way (a crash, a timeout, an unknown exit): three in a row of one kind hold it,
   // write `start-failing` on its record, and tell the First Mate.
   async function countStartFailure(work, kind) {
+    if (stopped()) return;
     const file = failingFile(project, work);
     const before = lstatOf(file) === null ? null : readJson(file);
     const count = (isPlain(before) && before.kind === kind && Number.isInteger(before.count) ? before.count : 0) + 1;
@@ -1164,6 +1180,8 @@ export function makeWaker({
       } catch { /* classified without it */ }
       if (watch.own) fs.rmSync(watch.file, { force: true });
     }
+    // A run ended by All stop, or ending while it is on, counts for nothing: no failure, no proof, no shut route.
+    if (stopped()) return { gated: false };
     if (exit.code === 0 && !exit.error) {
       if (target !== 'foreman') clearStartFailures(project, nameOf(target));
       proved = true;
@@ -1187,6 +1205,7 @@ export function makeWaker({
 
   // The start that is refused while a piece is held or the route is shut: its words, or null.
   const startRefused = (work) => {
+    if (stopped()) return STOPPED_LINE;
     const gate = gateNow();
     if (!gate.open) return gate.reason;
     if (work !== undefined && startHold(project, work) !== null) return `not started: the ${work} session failed to start ${START_FAILURES_HELD} times in a row`;
@@ -1524,6 +1543,8 @@ export function makeWaker({
     const watch = !judged ? null : kept !== null ? { file: kept.output, from: kept.from, own: false } : own !== null ? { file: own, from: 0, own: true } : null;
     watcherFolder(project, 'running');
     const file0 = runningFile(project, target);
+    // The last word before anything is recorded or run: STOP may have come on while the start was being made.
+    if (stopped()) throw new StopNow();
     const at = now().toISOString();
     writeJsonFile(file0, { state: 'starting', at, file, entries, ...(kept ? { run: kept } : {}), ...(own !== null ? { startOutput: own, program: programOf(call) } : {}) });
     let started;
@@ -1551,6 +1572,9 @@ export function makeWaker({
         if (!mine && target !== 'foreman' && helmHeld(project, nameOf(target))) {
           return deliver();
         }
+        // The same for a run All stop ended: its record was taken and its wakes put back (stopAll), even when STOP has
+        // lifted before it exited.
+        if (!mine && (endedByStop.delete(started.pid) || stopped())) return deliver();
         if (kept?.premium === true && mine && await premiumRefused(target, kept, code, entries)) {
           // Rests the premium model, and its wake goes again on the most capable model.
         } else {
@@ -2170,6 +2194,58 @@ export function makeWaker({
         if (claimRecord(target, same) === null) return { stopped: false, why: 'ended elsewhere' };
         settle(list(record.entries).filter((x) => typeof x === 'string'), 'again');
         return { stopped: true };
+      });
+    },
+    // The words a start for `work` (none for the foreman) is refused with now, or null when nothing refuses it. Under All
+    // stop it is `not started: All stop`, before the sign-in gate or a held piece is read.
+    startDecision(work) {
+      return startRefused(work);
+    },
+    // Under All stop, ends every detached session this watcher started, with the same end as the helm's stop, and records which
+    // (`all-stopped.json`). The wakes a run had taken go back to the outbox, so lifting All stop starts them again in one tick.
+    // Does nothing when All stop is off. Says the names ended: 'foreman' or a work id.
+    stopAll() {
+      return serial(async () => {
+        if (!stopped()) return [];
+        let names;
+        try {
+          names = fs.readdirSync(path.join(watcherDir(project), 'running'));
+        } catch {
+          return [];
+        }
+        const ended = [];
+        for (const n of names.filter((x) => x.endsWith('.json')).sort()) {
+          const target = n.slice(0, -'.json'.length);
+          if (target !== 'foreman' && !(target.startsWith('feature-') && SLUG.test(target.slice('feature-'.length)))) continue;
+          const state = await stateOf(target);
+          if (state === null) continue;
+          const record = state.live ?? state.ended;
+          // A start still being made (by this process or another) has no process yet: the next tick reads it again.
+          if (state.live !== undefined && record.state === 'starting') continue;
+          const same = (r) => r.at === record.at && r.pid === record.pid && r.state === record.state;
+          const running = state.live !== undefined || state.why === 'overran';
+          if (running) {
+            // Only a process whose start time is the recorded one is ended. One that can't be confirmed, or not ended,
+            // keeps its record, so nothing starts beside it once STOP lifts; the next tick tries again.
+            if (!Number.isInteger(record.pid) || typeof record.startTime !== 'string' || !sameStart(await timeOf(record.pid, [], { fresh: true }), record.startTime)) continue;
+            if (!kill(record.pid)) continue;
+            endedByStop.add(record.pid);
+          }
+          if (claimRecord(target, same) === null) continue;
+          settle(list(record.entries).filter((x) => typeof x === 'string'), 'again');
+          if (running) ended.push(nameOf(target));
+        }
+        const stop = stopState();
+        if (ended.length > 0 || stoppedFor !== stop.at) {
+          stoppedFor = stop.at;
+          const { writeStopped } = await import('../lib/heartbeats.js');
+          try {
+            writeStopped(wheelhouseHome(), project, { at: now().toISOString(), stop: stop.at, works: ended });
+          } catch (error) {
+            onError(`The sessions ended by All stop couldn't be recorded: ${error instanceof Error ? error.message : 'unknown error'}`);
+          }
+        }
+        return ended;
       });
     },
     // Delivers what has been waiting: a session has ended, STOP has lifted, a wait has passed.
