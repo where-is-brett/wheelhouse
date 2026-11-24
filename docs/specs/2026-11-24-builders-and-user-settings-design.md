@@ -181,7 +181,7 @@ Local Desktop sessions are inferred to stop when the app quits (part 0 checks th
 ### 8.1 Where it lives
 
 - Profile key `builderLaunch:<computerId>`, advanced group, `home: 'profile'`. It is per computer, because a wrapper on the work laptop means nothing on the Mac.
-- Value: an **array of words**, such as `["ug", "claude"]`. It is never one string, because a string invites shell parsing.
+- Value: an **array of words**, such as `["wrap", "claude"]`. It is never one string, because a string invites shell parsing.
 - It is used only on the `background` route. It is set by setup's advanced question (section 12.3) or the settings card.
 
 ### 8.2 How it is set safely
@@ -189,7 +189,7 @@ Local Desktop sessions are inferred to stop when the app quits (part 0 checks th
 - **Only the director sets it.** It is a typed answer on a card, through the helper's settings route, with a fresh click, like every profile setting. No session, foreman or hook can write it. The helper refuses a write without a fresh signed click, because this setting decides what program runs on every start.
 - **Splitting.** The director types the command as they would in a terminal. The helper splits it into words with a small rule of its own: spaces separate words, and double quotes group a word. It refuses anything else: `'`, `` ` ``, `$`, `;`, `|`, `&`, `<`, `>`, `(`, `)`, `%`, `!`, `^`, a line break or NUL.
 
-  The card shows the words back, one per line ("Wheelhouse will run: `ug` then `claude`"). The director confirms before it is saved. So a wrapper is passed as data, and no shell ever reads it.
+  The card shows the words back, one per line ("Wheelhouse will run: `wrap` then `claude`"). The director confirms before it is saved. So a wrapper is passed as data, and no shell ever reads it.
 - **Checks** before saving, and again on every read by `builderRoute`:
   - the first word passes `resolveCommand`'s name rule (`/^[A-Za-z0-9][A-Za-z0-9._-]*$/`) and resolves on `PATH`, or it is an absolute path to an existing executable file;
   - at most 8 words, each under 200 characters;
@@ -303,7 +303,7 @@ One card, through the First Mate, the first time the fact is written, and never 
 
 ### 10.5 The First Mate states facts
 
-- The First Mate's session-start facts and `/status` gain a **Builders** line, read from `builderRoute`, the gate and the foreman's check-in. For example: "Builders: Claude Desktop · foreman running" or "Builders: background as `ug claude` · can't sign in since 14:02 (not signed in)".
+- The First Mate's session-start facts and `/status` gain a **Builders** line, read from `builderRoute`, the gate and the foreman's check-in. For example: "Builders: Claude Desktop · foreman running" or "Builders: background as `wrap claude` · can't sign in since 14:02 (not signed in)".
 - The playbook rule: when the director asks why work isn't moving, the First Mate reads the Builders line and the board, and says only what they say. When they don't explain it, it says "I don't know yet" and offers the check-again card. It never suggests restarting a session as a fix unless a recorded fact names that as the way out.
 
 ## 11. Lifetime: moving between routes without killing anything

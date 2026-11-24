@@ -258,13 +258,13 @@ Parts 1, 2, 2a, 2b, 2c, 3 and 4 help the work laptop now: with a wrapper as the 
 
 - [ ] **Step 1: Write the failing tests**
   - `each refused character is refused at typing` (review focus 1), one assertion per character, plus `"a & b"` (a quoted `&` is still refused).
-  - `"ug claude" splits to ["ug", "claude"], and "\"C:\\Program Files\\ug.exe\" claude" to two words`.
-  - `a stored value that fails a check is named and not used` (review focus 1): a profile value `["ug;rm", "claude"]` gives `checkLaunch` `ok: false`, and the waker doesn't start.
+  - `"wrap claude" splits to ["wrap", "claude"], and "\"C:\\Program Files\\wrap.exe\" claude" to two words`.
+  - `a stored value that fails a check is named and not used` (review focus 1): a profile value `["wrap;rm", "claude"]` gives `checkLaunch` `ok: false`, and the waker doesn't start.
   - `nine words, a 200-character word, a later -p or --settings word, and a .ps1 first word are refused`.
   - `with a launch, resolveClaude runs the wrapper with shell false and Wheelhouse's arguments after its words`, on the POSIX path and the Windows path (fake `platform: 'win32'`): a `.cmd` wrapper goes through `cmd.exe /d /s /c` with every word quoted by `quoteForCmd`; a refusal there is caught and named.
   - `sessionEnv still drops ANTHROPIC_BASE_URL with a launch command`.
   - `the helper refuses a builderLaunch write without a fresh signed click`; no session, foreman or hook route can write it.
-  - `the card shows the words back one per line: "Wheelhouse will run: \`ug\` then \`claude\`"`.
+  - `the card shows the words back one per line: "Wheelhouse will run: \`wrap\` then \`claude\`"`.
 - [ ] **Step 2: Run.** Expected: FAIL.
 - [ ] **Step 3: Implement.** A fake wrapper for tests is a small Node script written to a temp folder that prints its arguments and "ready".
 - [ ] **Step 4: Run.** Expected: PASS.
