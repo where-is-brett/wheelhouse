@@ -233,7 +233,12 @@ test('the playbook shows uninstall\'s list when its card points to status, and s
 test('the README gives the Node.js line and the install commands as they are, at the plugin\'s release', () => {
   assert.ok(readme.includes(NODE_LINE), 'NODE_LINE');
   const version = JSON.parse(read('.claude-plugin/plugin.json')).version;
-  for (const command of INSTALL_COMMANDS) assert.ok(readme.includes(command.replace('<tag>', `v${version}`)), command);
+  // Until the release is tagged, the README installs from main; the tag line waits in a comment beside it.
+  const uncommented = readme.replace(/<!--[\s\S]*?-->/g, '');
+  const tagged = INSTALL_COMMANDS.every((command) => uncommented.includes(command.replace('<tag>', `v${version}`)));
+  const fromMain = INSTALL_COMMANDS.every((command) => readme.includes(command.replace('<tag>', 'main')))
+    && readme.includes(`<!-- Until v${version} is tagged, the line above installs from main. Once tagged, restore: ${INSTALL_COMMANDS[0].replace('<tag>', `v${version}`)} -->`);
+  assert.ok(tagged || fromMain, 'the install commands at the release, or at main with the release line ready');
   assert.doesNotMatch(readme, /--marketplace/);
   assert.match(readme, /\*\*this project\*\*/);
 });

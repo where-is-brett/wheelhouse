@@ -2,7 +2,7 @@
 
 # Builders in Claude Desktop, the launch command and user settings: design (24 November 2026)
 
-**Status:** draft for the director. It builds on the core cut (`docs/specs/2026-11-07-core-cut-design.md`) and changes how builder sessions are started, checked and stopped. It touches crew visibility (`docs/specs/2026-11-08-crew-visibility-design.md`) and two parked pieces (section 13). The designer settled every call it could; the calls that are the director's are cards in section 16.
+**Status:** approved, with the director's answers to the section 16 cards (24 November 2026). It builds on the core cut (`docs/specs/2026-11-07-core-cut-design.md`) and changes how builder sessions are started, checked and stopped. It touches crew visibility (`docs/specs/2026-11-08-crew-visibility-design.md`) and two parked pieces (section 13). The build plan is `docs/plans/2026-11-24-builders-and-user-settings.md`.
 
 ## 1. In plain words
 
@@ -10,7 +10,7 @@ On the work laptop, setup finished and work was approved, but nothing was built.
 
 This design does five things:
 
-1. **Builders can run as Claude Desktop sessions.** A foreman session in Desktop starts one Desktop session per piece. Each shows in the sidebar with the piece's name, signs in the way Desktop does, and can be opened. The background route stays for computers where plain `claude` signs in.
+1. **Builders can run as Claude Desktop sessions.** A foreman session in Desktop starts one Desktop session per piece. Each shows in the sidebar with the piece's name, nested under the foreman where Desktop allows it (section 7.4), signs in the way Desktop does, and can be opened. The background route stays for computers where plain `claude` signs in.
 2. **A launch command**, such as a company gateway wrapper, is an advanced setting for this computer. Wheelhouse uses it in place of `claude` for every background start.
 3. **Sign-in is proved before setup says done.** A sign-in failure stops all starts at once. It gives the director one plain card saying what's wrong and the way out. The First Mate repeats recorded facts and never guesses.
 4. **Moving from the terminal to Desktop is a setting, not a clean-up.** The helper and watcher stay running and change what they do. Nobody kills anything.
@@ -39,7 +39,7 @@ This design does five things:
 
 - No sign-in of Wheelhouse's own. Wheelhouse uses the director's Claude sign-in, wherever it lives.
 - No change to Copilot's crew (section 9.6).
-- No syncing of settings across computers in this design (card 16.2).
+- No syncing of settings across computers in this design (decision 16.2: per computer only).
 - No change to the merge gate, the keys, STOP or the record.
 
 **Anti-goals** (it fails if any of these happen, even when it works):
@@ -69,6 +69,7 @@ Sources: Claude Code's documentation, and a read-only look at the strings in the
 | Desktop sessions report `CLAUDE_CODE_ENTRYPOINT` as `claude-desktop`. | Inferred from the app's value list |
 | Local Desktop sessions stop when the app quits. | Inferred (only cloud and SSH are documented) |
 | Cross-session messages arrive only between sessions of the same mode class. Otherwise they are held, and Desktop can't show the dialog for them, so they are dropped after 5 minutes. | Confirmed (docs) |
+| A session started by another shows in the sidebar nested under the one that started it. Which `start_session` option or parent field does this, if any, is not known. | Unknown; part 0 finds out |
 | Cowork's Dispatch can start Code sessions, but not on Team or Enterprise plans. | Confirmed (docs); not used, since the work laptop's plan is unknown |
 
 What follows from this:
@@ -116,6 +117,7 @@ The route is a per-computer, per-agent setting in the profile: `builders:<comput
 
 - **Setup's last card** on the Desktop route is "Start the foreman". It finishes setup only once the foreman has checked in (section 10.1). The First Mate calls `start_session` with `initiation: user_asked`, because the director clicked a card that says, in words, "Start the foreman session". Fresh context, worktree **off** (it works in the project's main checkout, as today's foreman does), and the title "Wheelhouse · Foreman · <project>". The prompt is the foreman's brief from `scripts/foreman/start.js`, with the route marked `desktop`.
 - **Later**, the First Mate's session-start facts show "Foreman: not running" when work is waiting and no check-in is fresh (section 7.5). The First Mate offers the same card. Nothing starts the foreman without that click.
+- **Builders are the foreman's children.** The director asked (24 November 2026) that builders show in Desktop's sidebar as the foreman's child sessions, nested under its row. The foreman starts every builder itself, so that it is their parent. Part 0 finds which `start_session` option or parent field gives the nesting, and the foreman sets it on every start. If part 0 shows Desktop can't nest them, section 7.4 says what the director sees instead; nothing promises nesting that part 0 hasn't seen.
 - **One foreman per project.** It writes a check-in file with its session id and a heartbeat (section 7.2). A second "Start the foreman" for a project with a fresh check-in is refused, and the card says the foreman is already running.
 
 ### 7.2 How the watcher hands it work
@@ -138,10 +140,11 @@ Claude Code wakes the session when a background command ends. The foreman runs `
 - **Start.** For each `feature-start` wake, the foreman's `act start` prepares the record and gives back the builder's title ("Wheelhouse · <piece title>", under 60 characters) and prompt. The prompt is the feature brief as today, plus one marker line naming the project and work id. The foreman then calls `start_session` with:
   - `initiation: offer`;
   - fresh context, worktree **on**;
-  - its own permission mode, or lower;
-  - `wake_when_done: true`.
+  - its own permission mode, or lower (the foreman runs in Auto, decision 16.4);
+  - `wake_when_done: true`;
+  - the option or parent field that nests the builder under the foreman, if part 0 found one (section 7.4).
 
-  Several wakes in one turn give several offers, so the director sees one **Start all**. That is one click per batch of new pieces, and none for wakes of pieces already running (card 16.1).
+  Several wakes in one turn give several offers, so the director sees one **Start all**. That is one click per batch of new pieces, and none for wakes of pieces already running (decision 16.1).
 - **The worktree.** Desktop makes the builder's worktree and branch. The builder's `SessionStart` hook sees the marker line and its own role. It records `{ sessionId, worktree, branch }` on the piece through the helper, as a `builder-started` event. Wheelhouse adopts that worktree and branch, and does not make its own.
 
   If part 0 shows that `cwd` is accepted on an `offer` start, the foreman passes Wheelhouse's own worktree instead, and the adoption step is dropped. That is the builder's call, after the probe.
@@ -151,7 +154,12 @@ Claude Code wakes the session when a background command ends. The foreman runs `
 
 ### 7.4 Seeing builders, and the helm
 
-Each builder is a sidebar row with the piece's name. Opening it is the native way to watch or take the helm. Crew visibility's levels still choose what goes to the Logbook.
+Each builder is a sidebar row with the piece's name.
+
+- **Nested, where Desktop allows it.** Builders show as the foreman's child sessions, under the row "Wheelhouse · Foreman · <project>". This is a requirement (decision 16.1), but it rests on part 0: the design doesn't promise it until part 0 has seen Desktop nest a session the foreman started.
+- **If Desktop can't nest them,** each builder is a top-level row. Its title then carries the project, "Wheelhouse · <project> · <piece title>" (under 60 characters, the piece's title shortened first), so the rows read as one group beside the foreman's. The First Mate's Builders line (section 10.5) lists the running builders by title, so the director can find each one. Part 0 records which of the two it saw, and part 6 builds that one.
+
+Opening a row is the native way to watch or take the helm. Crew visibility's levels still choose what goes to the Logbook.
 
 Taking the helm on this route: when the director types in a builder's row, the builder's `UserPromptSubmit` hook sees a prompt that didn't come through the foreman. The foreman's messages carry a marker line the hook checks. The hook writes the helm hold file `helm/<work>.json`, as the front desk's "take the helm" does. `helmHeld` then gates every wake for that piece. "Hand back" at the front desk ends the hold as now. On this route the session stays open and is never ended by `SessionEnd`.
 
@@ -322,7 +330,7 @@ The helper and watchers are meant to outlive sessions: they hold keys, guard mer
 Three scopes were considered:
 
 - **Per user on this computer (chosen).** The profile (`~/.wheelhouse/settings`, design section 24.2) already is this. It is a private git record that is never pushed, and `effectiveSettings` already reads it below the project. The answers the director named differ by computer: the work laptop has the company GitLab and a wrapper; the Mac has GitHub and plain `claude`.
-- **Global across computers.** There is no sync today. A synced file would carry per-computer values (launch command, host) to the wrong computer and need a store outside both. This is card 16.2.
+- **Global across computers.** There is no sync today. A synced file would carry per-computer values (launch command, host) to the wrong computer and need a store outside both. The director ruled it out for now (decision 16.2).
 - **Per project.** This is the project config. It already exists and is not what was asked.
 
 ### 12.2 Where it lives and how it wins
@@ -464,7 +472,7 @@ Builders appear as sidebar rows named after the piece, so the director can open 
 
 Each part fits one fresh session and ends with the touched test files passing (`node --test <files>`).
 
-0. **Desktop probe.** A script and a short sitting on this Mac, driven from a Desktop session, with one **Start** click by the director (card 16.3). It confirms the inferred points in section 4:
+0. **Desktop probe.** A script and a short sitting on this Mac, driven from a Desktop session, with one **Start** click by the director (decision 16.3). It confirms the inferred points in section 4:
    - `cwd` on an `offer` start;
    - Desktop's worktree path and branch;
    - project hooks running in a started session;
@@ -473,7 +481,8 @@ Each part fits one fresh session and ends with the touched test files passing (`
    - `send_message` delivery between the foreman and a builder;
    - `wake_when_done`;
    - what a quit does to sessions, and what reopening does;
-   - what `claude --desktop` does.
+   - what `claude --desktop` does;
+   - **nesting** (decision 16.1): whether a session the foreman starts shows nested under the foreman in the sidebar. It tries each `start_session` option or parent field that could do this, records which one does, and records what the sidebar shows (nested under the foreman, or a top-level row), with a screenshot description in words. If none nests, it says so plainly.
 
    It writes the findings to `docs/specs/notes/`, and parts 6 and 7 follow them.
 1. **Malformed files named.** `readJsonNamed`; `settings-check.js` at the First Mate's session start and the watcher's start; the backslash hint and mend. It is independent and fixes the earlier fault.
@@ -491,49 +500,31 @@ Each part fits one fresh session and ends with the touched test files passing (`
 
 Parts 1 to 4, with 2a to 2c, help the work laptop at once, even before Desktop builders exist. With the wrapper on the background route, they may be enough to build there.
 
-## 16. Cards for the director
+## 16. Decided
 
-### 16.1 One Start click per batch of new pieces
+The director answered the four cards on 24 November 2026.
 
-**What this is:** in Desktop, a session can start another session without a click only when you asked for it in words. Wheelhouse's foreman asks Desktop to offer each new piece, and you press **Start all** once per batch. Wakes of pieces already running need no click.
-**Why it comes to you:** it adds a click to your day, and only you can say if that's acceptable.
-**Options:**
-- **Accept one click per batch** (recommended): every builder is visible and signed in by Desktop, and the rule against starting sessions you didn't ask for stays intact.
-- **Prefer the background route with a launch command on the work laptop**: no clicks and builders out of sight; it depends on the wrapper signing in for background runs.
-- **Ask Wheelhouse to look for a no-click route** after part 0 (for example `claude --desktop`); the build waits on what the probe finds.
+### 16.1 One Start click per batch of new pieces (decided 24 November 2026)
 
-**Meanwhile:** parts 1 to 5 go ahead; they're needed whichever you pick.
+**Accepted.** In Desktop, the foreman asks Desktop to offer each new piece, and the director presses **Start all** once per batch, "when sessions are ready to start". Wakes of pieces already running need no click.
 
-### 16.2 Usual answers on every computer
+The director also said the builders should be nested sessions under the foreman. That is now a requirement (sections 7.1 and 7.4): builders show in Desktop's sidebar as the foreman's child sessions. Part 0 finds which start option or parent field gives the nesting and records what the sidebar shows. If Desktop can't nest them, part 0 reports it, and the director sees top-level rows grouped by title instead (section 7.4).
 
-**What this is:** your usual answers are kept per computer. The work laptop and the Mac each have their own.
-**Why it comes to you:** you named "global" as a possible scope; it needs a place to sync through that both computers can reach.
-**Options:**
-- **Per computer only, for now** (recommended): no new store; the two computers differ in host and sign-in anyway.
-- **Add an export and import file later**: you carry a file between computers; values tied to one computer stay behind.
-- **Sync through the project's host**: needs a private place on GitHub or GitLab, and care with the company's rules.
+### 16.2 Usual answers (decided 24 November 2026)
 
-**Meanwhile:** per computer is built (part 8).
+**This computer only.** Usual answers are kept per computer, in the existing profile. No export, import or sync is built. Part 8 builds them.
 
-### 16.3 One Start click for the Desktop probe
+### 16.3 The probe's Start click (decided 24 November 2026)
 
-**What this is:** part 0 checks how Desktop treats a started session. It needs you to press **Start** once on this Mac, in a session the probe opens.
-**Why it comes to you:** only you can click inside Desktop.
-**Options:**
-- **Yes, when the probe is ready** (recommended): a few minutes; the First Mate will send the card.
-- **Not now**: parts 6 and 7 are built on the inferred points and checked later.
+**Yes, when the probe is ready.** Part 0's sitting has the director press **Start** once on the Mac; the First Mate sends the card when the probe is ready.
 
-**Meanwhile:** parts 1 to 5 go ahead.
+### 16.4 The foreman's permission mode (decided 24 November 2026)
 
-### 16.4 Which permission mode the foreman runs in
+**Auto.** The foreman runs in Auto, and builders start in Auto. Wheelhouse's hooks and settings keep guarding what builders do, as they do now.
 
-**What this is:** builders run in the foreman's mode or lower. Messages between sessions only arrive when both are in the same kind of mode.
-**Why it comes to you:** the mode decides what builders may do without asking you.
-**Options:**
-- **Auto, the same as builders today** (recommended): Wheelhouse's hooks and settings keep guarding what builders do, as they do now.
-- **Accept edits**: builders ask you in their rows for commands; slower, and their questions bypass the First Mate.
+### 16.5 The v0.3.0 tag (decided 24 November 2026)
 
-**Meanwhile:** the foreman's brief is written for Auto; changing it later is one line.
+**Tag after the director's own Claude Code run works end to end.** Until then, the README's install line installs from `main`, and the tag line waits beside it in a comment, ready to restore when the tag is cut.
 
 ## 17. Calls the designer made
 
