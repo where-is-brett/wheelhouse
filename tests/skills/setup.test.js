@@ -238,9 +238,10 @@ test('the README gives the Node.js line and the install commands as they are, at
   assert.match(readme, /\*\*this project\*\*/);
 });
 
-test('the README skips the catalogue line where the catalogue is already added, and the playbook names the project install when the helper is out of reach', () => {
-  assert.match(readme, /marketplace list/);
-  assert.match(readme, /already (?:there|listed|added)/i);
+test('the README always runs the catalogue line, so the release pin applies where the catalogue is already added, and the playbook names the project install when the helper is out of reach', () => {
+  assert.doesNotMatch(readme, /skip the first command/i);
+  assert.match(readme, /even if wheelhouse is already listed/i);
+  assert.match(readme, /never skipped/i);
   const skill = read('skills/setup/SKILL.md');
   const line = skill.split('\n').find((l) => l.includes('the host helper could not be reached'));
   assert.ok(line, 'the refusal is covered');
