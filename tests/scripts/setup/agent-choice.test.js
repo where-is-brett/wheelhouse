@@ -109,7 +109,7 @@ test('Copilot chosen and signed in: the card lists the hook file, apply writes i
 
     const written = fs.readFileSync(hook.target, 'utf8');
     const parsed = JSON.parse(written);
-    assert.deepEqual(Object.keys(parsed.hooks).sort(), ['agentStop', 'preCompact', 'preToolUse', 'sessionEnd', 'sessionStart', 'subagentStop', 'userPromptSubmitted']);
+    assert.deepEqual(Object.keys(parsed.hooks).sort(), ['agentStop', 'postToolUse', 'preCompact', 'preToolUse', 'sessionEnd', 'sessionStart', 'subagentStop', 'userPromptSubmitted']);
     assert.match(parsed.hooks.preToolUse[0].command, /scripts\/agents\/copilot\/hook-entry\.js/);
     const change = recorded.find((c) => c.target === hook.target);
     assert.equal(change.kind, 'file');
