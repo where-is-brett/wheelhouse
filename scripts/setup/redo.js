@@ -97,7 +97,7 @@ export function redoCard({ key, answers, name, record, described, count, stepRan
       typed: true,
       card: {
         level: 2,
-        what: `In a sentence, what is ${name}, and who is it for? Type it as your answer.`,
+        what: `In a sentence, what is ${name}, and who is it for? Choose Other and type it.`,
         why: 'Wheelhouse explains its work to you in terms of your product.',
         options,
         recommend: options[0].label,

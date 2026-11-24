@@ -7,7 +7,7 @@
 //           documented, so the card tells the director the days to choose.
 //   GitLab's project key page is documented without any query parameters, so it is opened as it is.
 //   GitLab's setup token (kind 'setup'): api alone, for setup to make the project and its key while it holds
-//   the token in memory; the card tells the director to set its expiry to one day.
+//   the token in memory; the card tells the director to set it to expire in one day.
 // The GitLab pages are on the project's own GitLab (`base`, from gitlabBase).
 import { DEFAULT_GITLAB } from './gitlab-base.js';
 import { KEY_SCOPES } from './gitlab-key.js';
