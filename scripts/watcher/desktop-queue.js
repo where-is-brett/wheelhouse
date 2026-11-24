@@ -25,13 +25,30 @@ const inside = (dir, file) => {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel) && !rel.includes(path.sep);
 };
 
-// A queue file's wake, or null for anything that isn't a whole wake this module wrote.
-function readWake(file) {
+// A plain file (not a link, not a folder) inside `dir`.
+const plainInside = (dir, file) => {
+  if (!inside(dir, file)) return false;
   try {
+    return fs.lstatSync(file).isFile();
+  } catch {
+    return false;
+  }
+};
+
+// Whether a wake's fields are ones queueWake accepts: the same checks, made again when it is read, so a file put in the queue
+// by anything else is passed by.
+const wakeOk = (project, { kind, work, file, sessionId }) => KINDS.includes(kind)
+  && (kind === 'foreman' ? work === undefined : typeof work === 'string' && SLUG.test(work))
+  && typeof file === 'string' && plainInside(bundleDir(project), file)
+  && (sessionId === undefined || (typeof sessionId === 'string' && SESSION_ID.test(sessionId)));
+
+// A queue file's wake, or null for anything that isn't a whole wake this module wrote. A link is not followed.
+function readWake(project, file) {
+  try {
+    if (!fs.lstatSync(file).isFile()) return null;
     const wake = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (wake === null || typeof wake !== 'object' || Array.isArray(wake) || !KINDS.includes(wake.kind)) return null;
-    if (wake.work !== undefined && !(typeof wake.work === 'string' && SLUG.test(wake.work))) return null;
-    if (typeof wake.file !== 'string' || typeof wake.at !== 'string' || Number.isNaN(Date.parse(wake.at))) return null;
+    if (wake === null || typeof wake !== 'object' || Array.isArray(wake) || !wakeOk(project, wake)) return null;
+    if (typeof wake.at !== 'string' || Number.isNaN(Date.parse(wake.at))) return null;
     return wake;
   } catch {
     return null;
@@ -48,7 +65,7 @@ export function queueWake(project, { kind, work, file, sessionId, now = () => ne
   if (kind === 'foreman' ? work !== undefined : !(typeof work === 'string' && SLUG.test(work))) {
     throw new Error(kind === 'foreman' ? 'A foreman wake names no piece' : 'A work id is lower-case letters, digits and hyphens');
   }
-  if (typeof file !== 'string' || !inside(bundleDir(project), file)) throw new Error("A queued wake's file must be in the watcher's wakes folder");
+  if (typeof file !== 'string' || !plainInside(bundleDir(project), file)) throw new Error("A queued wake's file must be in the watcher's wakes folder");
   if (sessionId !== undefined && !(typeof sessionId === 'string' && SESSION_ID.test(sessionId))) throw new Error('A session id is letters, digits and hyphens');
   const dir = queueDir(project);
   fs.mkdirSync(dir, { recursive: true });
@@ -81,7 +98,7 @@ export function takeWakes(project) {
   const out = [];
   for (const name of names.filter((n) => FILE.test(n)).sort()) {
     const file = path.join(queueDir(project), name);
-    const wake = readWake(file);
+    const wake = readWake(project, file);
     if (wake !== null) out.push({ ...wake, path: file });
   }
   return out;

@@ -80,7 +80,8 @@ import path from 'node:path';
 import { withoutBom } from '../gate/guardrails.js';
 import { fileURLToPath } from 'node:url';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
-import { wheelhouseHome, stateDir, projectSlug } from '../lib/paths.js';
+import { wheelhouseHome, stateDir, projectSlug, computerId } from '../lib/paths.js';
+import { builderChoice, saveBuilderRoute } from './builders-ask.js';
 import { toolPath, toolState } from '../lib/host-tools.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
@@ -2507,6 +2508,14 @@ export function hostStep({
   // The settings routes through the helper, for the person's own app's record: `profileRoutes`
   // stands in for them in tests; otherwise made when apply needs them.
   const profileFor = () => profileRoutes ?? helperProfile();
+  // Where builders start on this computer (scripts/setup/builders-ask.js): the last of step 3's choices, asked once per
+  // computer. `ctx.entrypoint` is where the setup command runs, as it sends it.
+  const buildersAsk = (ctx, answer) => {
+    let kept = null;
+    try { kept = views(); } catch { /* settings that can't be read keep no route: the question is asked */ }
+    const got = builderChoice({ answer, where: ctx.entrypoint, views: kept, computer: computerId() });
+    return got === null ? null : { ask: got.ask };
+  };
   // The narrow connection to `project` (repoInfo's): the app, or a GitLab key. Gives the app's installation on the project's
   // account, kept in its record (ruling R83), or null.
   async function connectNarrow({ host, narrowApp, project, projectOwner, user, platform, now, say, halt, opener, record, api }) {
@@ -2726,6 +2735,8 @@ export function hostStep({
         const machine = answer('backup') === null && (await timeMachine({ run, platform })).on;
         const backup = backupChoice({ answer, name: product.name, root: ctx.folder, machine, desktop: ctx.desktop === true });
         if (backup.ask) return { ask: backup.ask };
+        const builders = buildersAsk(ctx, answer);
+        if (builders !== null) return builders;
         if (ctx.choicesOnly === true) return { wait: 0, why: 'every choice of step 3 is made' };
         const project = localName(ctx.folder, product.name);
         const noGit = restoring === null && !fs.existsSync(path.join(ctx.folder, '.git'));
@@ -2820,6 +2831,8 @@ export function hostStep({
           }
         }
       }
+      const builders = buildersAsk(ctx, answer);
+      if (builders !== null) return builders;
       // Every choice is made: a look at the choices alone (scripts/setup/choices.js) stops here, before
       // anything is read from the host.
       if (ctx.choicesOnly === true) return { wait: 0, why: 'every choice of step 3 is made' };
@@ -2961,6 +2974,9 @@ export function hostStep({
         await recordOwnApp(shadow.accepted, { record, profile: profileFor() });
         throw new Error(ownAppProposedAgain(shadow.accepted));
       }
+      // Where builders start, as answered, saved first: it changes nothing in the project, and the rest of the step can stop.
+      await saveBuilderRoute({ answers: ctx.answers, profile: profileFor(), computer: computerId() });
+      halt();
       const connection = changes.find((c) => c.action === 'connection');
       if (!connection) throw new Error('Step 3\'s list names no connection');
       const host = connection.target;

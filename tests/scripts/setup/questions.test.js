@@ -341,14 +341,14 @@ test('the product answer writes only the phase, on every platform: setup starts 
 
 test('the builders question offers Desktop as recommended in Desktop, only background in a terminal, and all three, saying so, when unknown', () => {
   const labels = (ask) => ask.card.options.map((o) => o.label);
-  const desktop = builderRouteAsk({ entrypoint: 'claude-desktop' });
+  const desktop = builderRouteAsk({ entrypoint: 'claude-desktop', env: {} });
   assert.deepEqual(labels(desktop), [BUILDER_CHOICES.desktop, BUILDER_CHOICES.background, BUILDER_CHOICES.launch]);
   assert.equal(desktop.card.recommend, BUILDER_CHOICES.desktop);
-  const terminal = builderRouteAsk({ entrypoint: 'cli' });
+  const terminal = builderRouteAsk({ entrypoint: 'cli', env: {} });
   assert.deepEqual(labels(terminal), [BUILDER_CHOICES.background, BUILDER_CHOICES.launch]);
   assert.equal(terminal.card.recommend, BUILDER_CHOICES.background);
   for (const entrypoint of [null, '', 'sdk-ts', 'vscode', 42]) {
-    const unknown = builderRouteAsk({ entrypoint });
+    const unknown = builderRouteAsk({ entrypoint, env: {} });
     assert.equal(labels(unknown).length, 3, String(entrypoint));
     assert.match(unknown.card.what, /can't tell whether setup is running in Claude Desktop or a terminal, so all three/);
     assert.equal(unknown.card.recommend, BUILDER_CHOICES.background, 'an unknown place is not taken for Desktop');

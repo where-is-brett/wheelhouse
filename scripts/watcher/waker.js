@@ -1088,29 +1088,77 @@ export function makeWaker({
     return since.getTime();
   };
   // A detached session still running ROUTE_GRACE_MS after builders moved to Desktop is ended by the watcher that started it,
-  // with the stop STOP uses: its process is ended only when its start time matches the record's, the record goes, and the
-  // wakes it had taken are sent again (they go to the Desktop queue).
+  // with the stop STOP uses: its process is ended only when its start time matches the record's, and only once the signal
+  // is sent does the record go and the wakes it had taken are sent again (they go to the Desktop queue). A piece at the
+  // director's helm is theirs and is left alone; a session whose identity can't be confirmed, or whose end can't be
+  // signalled, keeps running with its record and wakes, and is named once.
+  const endedByRoute = new Set();
+  const leftRunning = new Set();
   async function endStaleDetached(since) {
     if (now().getTime() - since < ROUTE_GRACE_MS) return;
     for (const work of [undefined, ...runningWorks()]) {
+      if (work !== undefined && helmHeld(project, work)) continue;
       const target = targetOf(work);
       const state = await stateOf(target);
       if (!state?.live || state.live.state === 'starting' || !Number.isInteger(state.live.pid)) continue;
       const record = state.live;
-      if (typeof record.startTime === 'string' && sameStart(await timeOf(record.pid, [], { fresh: true }), record.startTime)) kill(record.pid);
+      const confirmed = typeof record.startTime === 'string' && sameStart(await timeOf(record.pid, [], { fresh: true }), record.startTime);
+      if (!confirmed || !kill(record.pid)) {
+        const key = `${target}:${record.pid}:${record.at}`;
+        if (!leftRunning.has(key)) onNote(`The ${nameOf(target)} session is still running after builders moved to Desktop, and it couldn't be confirmed as the one Wheelhouse started, so it was left running.`);
+        leftRunning.add(key);
+        continue;
+      }
+      endedByRoute.add(record.pid);
       const same = (r) => r.at === record.at && r.pid === record.pid && r.state === record.state;
       if (claimRecord(target, same) === null) continue;
       settle(list(record.entries).filter((x) => typeof x === 'string'), 'again');
       onNote(`The ${nameOf(target)} session was still running ${Math.round(ROUTE_GRACE_MS / MINUTE)} minutes after builders moved to Desktop, so it was ended.`);
     }
   }
-  // Builders moved back to the background: the wakes queued for Desktop go back to the outbox, to be started detached.
+  // Builders moved back to the background: the wakes queued for Desktop go back to the outbox, to be started detached. A
+  // wake whose file is in the outbox already is dropped, not added twice. A builder start queued for Desktop starts here,
+  // held by every rule a start here keeps (All stop, the helm, its files that steer agents, the sign-in gate, one start at a
+  // time while a start here proves): while one holds, it stays queued.
+  const requeueSaid = new Set();
   async function requeueDesktopWakes() {
     const { dropWakes, takeWakes } = await import('./desktop-queue.js');
     const wakes = takeWakes(project);
     if (wakes.length === 0) return;
-    save([...load(), ...wakes.map((w) => newEntry({ to: w.kind === 'foreman' ? 'foreman' : 'feature', ...(w.work === undefined ? {} : { work: w.work }), file: w.file }))]);
-    dropWakes(project, wakes.map((w) => w.path));
+    const there = new Set(load().map((e) => e.file));
+    const starts = wakes.filter((w) => w.kind === 'feature-start');
+    const back = wakes.filter((w) => w.kind !== 'feature-start' && !there.has(w.file));
+    if (back.length > 0) save([...load(), ...back.map((w) => newEntry({ to: w.kind === 'foreman' ? 'foreman' : 'feature', ...(w.work === undefined ? {} : { work: w.work }), file: w.file }))]);
+    dropWakes(project, wakes.filter((w) => w.kind !== 'feature-start').map((w) => w.path));
+    for (const wake of starts) {
+      if (stopped()) return;
+      const { work } = wake;
+      if (helmHeld(project, work)) continue;
+      const worktree = locate(work);
+      if (worktree === null) {
+        dropWakes(project, [wake.path]); // the feature has closed or gone
+        continue;
+      }
+      if (!featureWorktreeOk(project, worktree) || !lstatOf(featurePaths(worktree).brief)?.isFile()) {
+        dropWakes(project, [wake.path]);
+        continue;
+      }
+      if (await controlHeld(work, worktree, [])) continue;
+      const refused = startRefused(work);
+      if (refused !== null) {
+        gateHeld(refused);
+        continue;
+      }
+      if (proving()) continue;
+      try {
+        await launchFeature(work, worktree, featurePaths(worktree).brief);
+        dropWakes(project, [wake.path]);
+      } catch (error) {
+        const why = `The ${work} session couldn't be started on the background: ${error instanceof Error ? error.message : 'unknown error'}`;
+        if (!requeueSaid.has(why)) onError(why);
+        requeueSaid.add(why);
+      }
+    }
   }
   // What the gate last held back, said once until it changes.
   let heldByGate = null;
@@ -1614,7 +1662,8 @@ export function makeWaker({
         const ended = mine && judged ? await startEnded(target, adapter, call, { code }, watch) : { gated: false };
         // A run the director's "now" ended (here or in the helm's own process) has had its record taken from the held
         // piece and its wakes put back, whatever code it exits with: nothing more to settle.
-        if (!mine && target !== 'foreman' && helmHeld(project, nameOf(target))) {
+        // So has a run the route ended (endStaleDetached), whose wakes went again.
+        if (!mine && (endedByRoute.delete(started.pid) || (target !== 'foreman' && helmHeld(project, nameOf(target))))) {
           return deliver();
         }
         if (kept?.premium === true && mine && await premiumRefused(target, kept, code, entries)) {
@@ -1974,6 +2023,7 @@ export function makeWaker({
       if (typeof kept === 'string') sessionId = kept;
       if (await controlHeld(work, cwd, waiting.map((e) => e.id))) return;
     }
+    if (stopped()) return; // All stop: nothing is queued for a session either
     let gathered;
     try {
       const { queueWake } = await import('./desktop-queue.js');
@@ -1984,6 +2034,45 @@ export function makeWaker({
       return;
     }
     settle([gathered.entry.id], 'done');
+  }
+
+  // Starts a feature's first session on the background route, in `worktree`, reading `brief`: startFeature's start, and a
+  // builder start queued for Desktop once builders move back. Runs inside `serial`.
+  async function launchFeature(work, worktree, brief) {
+    const target = targetOf(work);
+    const state = await stateOf(target);
+    if (state?.live) throw new Error(`The ${work} session is already running`);
+    if (state?.ended) await endRecord(target, state);
+    // Checked before anything is written, so a refused start leaves nothing behind.
+    sessionsOf().checkFeature(config);
+    const sessionId = crypto.randomUUID();
+    if (stopped()) throw new Error('All stop is on: no session is started');
+    const feature = await levelInputs(work, worktree);
+    const column = columnNow();
+    let named = sessionId;
+    const pid = await launch({
+      target,
+      cwd: worktree,
+      check: (adapter) => adapter.checkFeature(config),
+      build: (adapter) => withPremiumOutput(adapter, work, column, adapter.featureStartCall({
+        config, project, work, sessionId, prompt: withColumn(adapter, PROMPTS.start, column), allowed: feature.allowed, env: baseEnv, claude, platform,
+        ...feature.inputs, ...roleOf(column, 'feature'),
+      })),
+      file: brief,
+      beforeRun: (call) => {
+        if (stopped()) throw new Error('All stop is on: no session is started');
+        feature.recordUsed(call);
+      },
+      // The session's id is kept before the run starts, once its record is written: the one made here, or, for
+      // an adapter whose sessions name their own (`idFromRun`), none yet, which the first run's output gives
+      // (ruling P8-3).
+      afterRecord: (call) => {
+        named = call.idFromRun === true ? null : sessionId;
+        watcherFolder(project, 'sessions');
+        writeJsonFile(sessionFile(project, work), { sessionId: named, worktree, at: now().toISOString(), ...(named === null ? { fromRun: true } : {}) });
+      },
+    });
+    return { pid, sessionId: named };
   }
 
   async function deliverByStart() {
@@ -2184,40 +2273,7 @@ export function makeWaker({
           print(`QUEUED feature-start ${work}`);
           return { printed: true, queued: true };
         }
-        const target = targetOf(work);
-        const state = await stateOf(target);
-        if (state?.live) throw new Error(`The ${work} session is already running`);
-        if (state?.ended) await endRecord(target, state);
-        // Checked before anything is written, so a refused start leaves nothing behind.
-        sessionsOf().checkFeature(config);
-        const sessionId = crypto.randomUUID();
-        if (stopped()) throw new Error('All stop is on: no session is started');
-        const feature = await levelInputs(work, worktree);
-        const column = columnNow();
-        let named = sessionId;
-        const pid = await launch({
-          target,
-          cwd: worktree,
-          check: (adapter) => adapter.checkFeature(config),
-          build: (adapter) => withPremiumOutput(adapter, work, column, adapter.featureStartCall({
-            config, project, work, sessionId, prompt: withColumn(adapter, PROMPTS.start, column), allowed: feature.allowed, env: baseEnv, claude, platform,
-            ...feature.inputs, ...roleOf(column, 'feature'),
-          })),
-          file: brief,
-          beforeRun: (call) => {
-            if (stopped()) throw new Error('All stop is on: no session is started');
-            feature.recordUsed(call);
-          },
-          // The session's id is kept before the run starts, once its record is written: the one made here, or, for
-          // an adapter whose sessions name their own (`idFromRun`), none yet, which the first run's output gives
-          // (ruling P8-3).
-          afterRecord: (call) => {
-            named = call.idFromRun === true ? null : sessionId;
-            watcherFolder(project, 'sessions');
-            writeJsonFile(sessionFile(project, work), { sessionId: named, worktree, at: now().toISOString(), ...(named === null ? { fromRun: true } : {}) });
-          },
-        });
-        return { pid, sessionId: named };
+        return launchFeature(work, worktree, brief);
       });
     },
     // Starts a lost feature session again by its kept session id, with `prompt` (crash resume, resume.js). Gives
@@ -2241,6 +2297,7 @@ export function makeWaker({
         if (route.effective === null) throw new Error(route.fault);
         if (route.effective === 'desktop') {
           if (typeof sessionId === 'string' && !UUID.test(sessionId) && !RUN_ID.test(sessionId)) throw new Error(`The ${work} session has no session id kept`);
+          if (await controlHeld(work, worktree, [])) throw new Error("the files in its folder that steer agents are new or changed, or can't be checked, so its session waits for the director's card");
           (await import('./desktop-queue.js')).queueWake(project, { kind: 'feature-wake', work, file: writeWake(project, { to: 'feature', work, events: [], digest: [], dropped: 0 }, { now }), sessionId, now });
           return { queued: true, sessionId };
         }

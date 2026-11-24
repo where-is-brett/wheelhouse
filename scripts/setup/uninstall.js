@@ -137,7 +137,7 @@ import { fileURLToPath } from 'node:url';
 import { homeBranch, homeDir } from '../host/local/home.js';
 import { run as realRun } from '../lib/run.js';
 import {
-  wheelhouseHome, jobFolder, jobsDir, keysDir, profileDir, oldProfileDir, projectsDir, stateDir, oldStateDir, computerId, engineDir, archonHome,
+  wheelhouseHome, jobFolder, jobsDir, keysDir, profileDir, profileViewsDir, oldProfileDir, projectsDir, stateDir, oldStateDir, computerId, engineDir, archonHome,
 } from '../lib/paths.js';
 import { projectForFolder, registeredProjects } from '../lib/projects.js';
 import { loginStartRecord } from '../lib/login-start.js';
@@ -980,6 +980,8 @@ export async function uninstallPlan({
     // The build engine's folder whole: its Bun, its Archon, the broker, the fetch mirrors and the merge queue folders.
     if (exists(engineDir())) remove(engineDir(), 'last');
     if (exists(profileDir())) kept(shown(profileDir(), userHome), 'your settings on this computer: yours, so they stay');
+    // The views built from those settings are Wheelhouse's own, rebuilt from the settings whenever they are read.
+    if (exists(profileViewsDir())) remove(profileViewsDir(), 'last');
     // Setup's own records are listed whether they are there yet or not: showing uninstall's card
     // and clicking it write them, and the list must be the same before and after.
     // The trust clicks and the record of the profile's enrolments last fetched (the session start's)

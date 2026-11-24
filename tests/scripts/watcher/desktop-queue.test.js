@@ -59,3 +59,35 @@ test('dropWakes removes only the named wakes in the queue, and oldestWaiting nam
   fs.writeFileSync(path.join(queueDir(P), `wake-${'0'.repeat(13)}-${'a'.repeat(12)}.json`), '{"kind":"foreman"');
   assert.deepEqual(takeWakes(P).map((w) => w.path), [b]);
 }));
+
+test('a queue file is read only as a whole wake this module could have written: no link, no file outside the bundle folder, no bad session id', () => withHome(async () => {
+  await project();
+  const file = bundle('alpha');
+  const good = queueWake(P, { kind: 'feature-wake', work: 'beta', file: bundle('beta'), now: at(1) });
+  const put = (n, wake) => {
+    const name = path.join(queueDir(P), `wake-${String(T0 + n).padStart(13, '0')}-${'b'.repeat(11)}${n}.json`);
+    fs.writeFileSync(name, `${JSON.stringify({ at: new Date(T0).toISOString(), ...wake })}\n`);
+    return name;
+  };
+  put(1, { kind: 'feature-wake', work: 'alpha', file: '/etc/passwd' });
+  put(2, { kind: 'feature-wake', work: 'alpha', file: path.join(path.dirname(file), '..', 'outbox.json') });
+  put(3, { kind: 'feature-wake', work: 'alpha', file, sessionId: 'not a session; id' });
+  put(4, { kind: 'foreman', work: 'alpha', file });
+  put(5, { kind: 'feature-start', file });
+  // A link in the queue, to a whole wake elsewhere, is not followed.
+  const elsewhere = path.join(watcherDir(P), 'planted.json');
+  fs.writeFileSync(elsewhere, `${JSON.stringify({ kind: 'feature-wake', work: 'alpha', file, at: new Date(T0).toISOString() })}\n`);
+  try {
+    fs.symlinkSync(elsewhere, path.join(queueDir(P), `wake-${String(T0 + 9).padStart(13, '0')}-${'c'.repeat(12)}.json`));
+  } catch { /* a system that makes no links here has none to follow */ }
+  // The bundle a wake names must be a plain file: a link there is refused when queued.
+  const linked = path.join(path.dirname(file), 'linked.json');
+  let made = true;
+  try {
+    fs.symlinkSync(elsewhere, linked);
+  } catch {
+    made = false; // Windows without the right to make links
+  }
+  if (made) assert.throws(() => queueWake(P, { kind: 'feature-wake', work: 'alpha', file: linked }), /wakes folder/);
+  assert.deepEqual(takeWakes(P).map((w) => w.path), [good]);
+}));

@@ -122,7 +122,7 @@ test('the Builders line states the recorded fact, and says a damaged file', () =
 test('the Builders line states the route: none chosen, desktop, or a route problem named', () => {
   const h = home();
   assert.equal(buildersLine({ home: h, route: null }), 'Builders: not chosen');
-  assert.equal(buildersLine({ home: h, route: 'desktop' }), 'Builders: desktop');
+  assert.equal(buildersLine({ home: h, route: 'desktop' }), 'Builders: Claude Desktop');
   assert.equal(buildersLine({ home: h, route: 'background', program: 'wrap' }), 'Builders: background as `wrap`');
   const fault = { file: '/h/settings.json', line: 3, column: 9, hint: 'A comma is missing.' };
   assert.match(buildersLine({ home: h, route: null, fault }), /^Builders: .*settings\.json can't be read: line 3, column 9\./);
@@ -136,7 +136,7 @@ test('the Builders line states the route: none chosen, desktop, or a route probl
   clearSignInFact(h, ROUTE);
   // A fact kept for the background route doesn't speak for Desktop.
   writeSignInFact(h, ROUTE, fact());
-  assert.equal(buildersLine({ home: h, route: 'desktop' }), 'Builders: desktop');
+  assert.equal(buildersLine({ home: h, route: 'desktop' }), 'Builders: Claude Desktop');
   assert.equal(buildersHealth({ home: h, route: 'desktop' }).level, 'ok');
 });
 

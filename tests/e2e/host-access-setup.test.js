@@ -15,7 +15,7 @@ import { toolsStep } from '../../scripts/setup/tools.js';
 import { composeCard } from '../../scripts/cards/compose.js';
 import { startRun, addChanges, findRun } from '../../scripts/setup/journal.js';
 import { readProject } from '../../scripts/lib/projects.js';
-import { wheelhouseHome, stateDir } from '../../scripts/lib/paths.js';
+import { computerId, wheelhouseHome, stateDir } from '../../scripts/lib/paths.js';
 import { run as realRun } from '../../scripts/lib/run.js';
 import { makeRoutedCurl } from '../helpers/fake-curl.js';
 import { useFileKeyStore } from '../helpers/file-key-store.js';
@@ -87,9 +87,12 @@ async function productOn(w) {
   return folder;
 }
 
+// This computer's builder route is kept already, so step 3 doesn't ask where builders start (host.test.js covers that).
+const routeKept = () => ({ settings: { [`builders:${computerId()}`]: { value: 'background' } }, unconfirmed: [] });
+
 function stepFor(w, extra = {}) {
   return hostStep({
-    run: w.run, via: w.via, findGit: async () => ({ ok: true, path: 'git' }), gitlab: async () => w.api,
+    views: routeKept, run: w.run, via: w.via, findGit: async () => ({ ok: true, path: 'git' }), gitlab: async () => w.api,
     hostUrl: ({ repo }) => path.join(tempFolder('wh-remote-'), `${repo}.git`), open: async () => {}, sleep: async () => {},
     certificateProbe: async () => 'trusted', ...extra,
   });
