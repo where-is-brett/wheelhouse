@@ -9,7 +9,7 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
   decide, toolSheetLines, NO_HELPER, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
-  importedLine, importFailedLine, keptLine, NOT_SET_UP, TITLES, sessionTitle, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, heldElsewhere, TAKEOVER_ASK, SEAT_TAKEOVER_ASK, RECENT_MS,
+  importedLine, importFailedLine, keptLine, NOT_SET_UP, TITLES, sessionTitle, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, NO_ANSWER, NO_REASON, heldElsewhere, TAKEOVER_ASK, SEAT_TAKEOVER_ASK, RECENT_MS,
 } from '../../../scripts/hooks/session-start.js';
 import { SETTINGS_CHANGED, settingsCardNote } from '../../../scripts/lib/settings-card.js';
 import { readSeat, seatFile } from '../../../scripts/lib/first-mate-seat.js';
@@ -200,6 +200,28 @@ test('a lock refused because the computer\'s git settings changed tells the Firs
       withLock(other, { touch: { ok: false, refused: 'x' }, take });
       assert.doesNotMatch(text(await run(other)), /confirm 0b7c1d1e/);
     }
+  });
+});
+
+test('a lock take that gets no answer, or an answer with no reason, still says a plain reason', async () => {
+  await withHome(async () => {
+    // The start's time ran out: the take never answered.
+    const slow = fake();
+    withLock(slow, { touch: { ok: true, result: { touched: false } }, take: null });
+    assert.ok(text(await run(slow)).includes(`${NO_LOCK} (${NO_ANSWER})`));
+
+    // The touch was refused for the settings and the take got no answer: the touch's reason and card stand.
+    const card = '0b7c1d1e-2f3a-4b5c-8d6e-7f8091a2b3c4';
+    const touchRefused = fake();
+    withLock(touchRefused, { touch: { ok: false, refused: 'Nothing was pushed: settings differ', code: SETTINGS_CHANGED, needs: 'window', card }, take: null });
+    const out = text(await run(touchRefused));
+    assert.ok(out.includes(`${NO_LOCK} (Nothing was pushed: settings differ)`));
+    assert.ok(out.includes(settingsCardNote(card)));
+
+    // An answer with no reason.
+    const bare = fake();
+    withLock(bare, { touch: { ok: true, result: { touched: false } }, take: { ok: false } });
+    assert.ok(text(await run(bare)).includes(`${NO_LOCK} (${NO_REASON})`));
   });
 });
 

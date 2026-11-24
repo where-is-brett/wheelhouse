@@ -106,6 +106,9 @@ export const MAX_ENTRIES = 20;
 const LINE_CHARS = 200;
 
 export { NO_HELPER };
+// Why there is no word on the lock when the helper gave none: the start's time ran out first, or its answer held no reason.
+export const NO_ANSWER = 'the helper did not answer in the time this start has; if the host is slow to reach, the next start tries again';
+export const NO_REASON = 'the helper gave no reason';
 export const NO_LOCK = 'The lock couldn\'t be taken this time, so pushes and merges are refused until a later session start takes it';
 export const heldElsewhere = (holder, since) => `Another computer (${oneLine(holder)}) holds this project's lock, last written ${oneLine(since)}, so pushes and merges from this computer are refused`;
 export const NO_USAGE = 'Usage counts couldn\'t start this time';
@@ -385,9 +388,13 @@ async function keepLock(project, client, left, seen = {}) {
   if (took?.ok === true && took.result?.taken === false) Object.assign(seen, { held: true, holder: took.result.holder });
   if (took?.ok === true && took.result?.taken === false) return heldElsewhere(took.result.holder ?? 'unknown', took.result.since ?? 'at an unknown time');
   // The helper's reason, when it gave one, so a push the host turned down says why. Where it says the computer's git settings
-  // changed (by its code, not its words) and raised the card that confirms them, the First Mate is told to show it.
-  const why = typeof took?.refused === 'string' && took.refused !== '' ? `${NO_LOCK} (${took.refused})` : NO_LOCK;
-  return took?.code === SETTINGS_CHANGED && typeof took.card === 'string' && took.card !== '' ? `${why}. ${settingsCardNote(took.card)}` : why;
+  // changed (by its code, not its words) and raised the card that confirms them, the First Mate is told to show it. With no answer
+  // to the take (the start's time ran out, as it can over a slow connection to the host), the touch's refusal stands in for it, and
+  // with none of that the line says the helper gave no answer in time, or gave no reason.
+  const answered = took ?? (touched?.ok === false ? touched : null);
+  const reason = typeof answered?.refused === 'string' && answered.refused !== '' ? answered.refused : took === null ? NO_ANSWER : NO_REASON;
+  const why = `${NO_LOCK} (${reason})`;
+  return answered?.code === SETTINGS_CHANGED && typeof answered.card === 'string' && answered.card !== '' ? `${why}. ${settingsCardNote(answered.card)}` : why;
 }
 
 // The words before the window take-over card's AskUserQuestion input.
