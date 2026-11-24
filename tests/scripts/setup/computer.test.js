@@ -656,8 +656,8 @@ test('step 6\'s card with Copilot chosen fits at the longest lengths, in words a
   const { agentComputerChanges } = await import('../../../scripts/agents/setup-parts.js');
   const root = path.resolve(import.meta.dirname, '..', '..', '..');
   for (const platform of ['win32', 'darwin']) {
-    const agent = agentComputerChanges('copilot', { env: {}, userHome: 'C:\\Users\\firstname.lastname-longer', platform, root });
-    assert.ok(agent.length >= 2, 'the hook file and the First Mate\'s files');
+    const agent = agentComputerChanges('copilot', { env: {}, userHome: 'C:\\Users\\firstname.lastname-longer', platform, root, brainstorming: () => [{ rel: 'SKILL.md', content: 'x' }] });
+    assert.ok(agent.length >= 3, 'the hook file, the First Mate\'s files and the brainstorming copy');
     for (const route of ['user-settings', 'launch-env']) {
       for (const kept of [[], Object.keys(telemetryEnv(47801)).map((name) => ({ name, value: 'their-own-value' }))]) {
         const changes = [
@@ -670,8 +670,9 @@ test('step 6\'s card with Copilot chosen fits at the longest lengths, in words a
         const text = composeCard({ ...card, kind: 'setup', target: { step: 6, hash: '0'.repeat(64) } }).question.question;
         const where = `${platform}, ${route}, ${kept.length} kept`;
         assert.ok(text.length <= 1200, `${where}: ${text.length} characters`);
-        assert.match(text, /Copilot's (checks before each of its actions|hook file)/, where);
+        assert.match(text, /Copilot's (checks before each of its actions|checks and|hook file)/, where);
         assert.match(text, /First Mate files/, where);
+        assert.match(text, /brainstorming skill/, where);
         assert.match(text, /Chat history kept/, where);
         assert.match(text, /well-tried updates/, where);
         assert.match(text, /Phone notifications/, where);

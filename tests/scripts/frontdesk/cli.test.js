@@ -10,7 +10,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { main, readInput, SEAT_WRITES, SEAT_REFUSAL, seatRefusal, SESSION_NEEDED, RECORD_KINDS, needsApproval, MEANWHILE, CHECKS_UNSAID, RECENT_MS, RECENT_LEAD } from '../../../scripts/frontdesk/cli.js';
+import { main, approveWorkInput, readInput, SEAT_WRITES, SEAT_REFUSAL, seatRefusal, SESSION_NEEDED, RECORD_KINDS, needsApproval, MEANWHILE, CHECKS_UNSAID, RECENT_MS, RECENT_LEAD } from '../../../scripts/frontdesk/cli.js';
 import { cardsDue } from '../../../scripts/hooks/waiting-lines.js';
 import { numberedWaiting } from '../../../scripts/board/model.js';
 import { composeCard, whatProblem } from '../../../scripts/cards/compose.js';
@@ -1038,7 +1038,7 @@ const FEATURE = { id: 'export-csv', title: 'Export a report as a spreadsheet', l
 test('record work refuses a feature design with no slices block, writing nothing', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
-    const dir = projectWithDoc('export-csv');
+    const dir = projectWithDoc('export-csv', '# Export\n\n## Summary\n\n**What you get:** a spreadsheet.\n');
     const out = await run(helper, ['record', 'work'], JSON.stringify(FEATURE), { cwd: dir });
     assert.notEqual(out.code, 0);
     assert.match(out.err, /wheelhouse-slices/);
@@ -1050,7 +1050,7 @@ test('record work refuses a feature design with no slices block, writing nothing
 test('record work names the problem in a feature design\'s broken slices block', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
-    const broken = '# Export\n\n```wheelhouse-slices\n{"goal":"Export","flag":{"name":"export"},"demo":"end","slices":[{"title":"One","goal":"One"}]}\n```\n';
+    const broken = '# Export\n\n## Summary\n\nA spreadsheet.\n\n```wheelhouse-slices\n{"goal":"Export","flag":{"name":"export"},"demo":"end","slices":[{"title":"One","goal":"One"}]}\n```\n';
     const dir = projectWithDoc('export-csv', broken);
     const out = await run(helper, ['record', 'work'], JSON.stringify(FEATURE), { cwd: dir });
     assert.notEqual(out.code, 0);
@@ -2892,9 +2892,9 @@ test('archive and restore ask the helper to make the change ready, and print the
 test('an unknown command, or a helper that can\'t be reached, is one line on standard error', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
-    const unknown = await run(helper, ['show', '7']);
+    const unknown = await run(helper, ['frobnicate', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page, helm\n$/);
+    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, show, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page, helm\n$/);
     const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -2961,7 +2961,7 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page, helm\n');
+  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, show, undo, move, carry-on, archive, restore, confirm, premium-card, premium-check, note, decision, pull-back, alerts, page, helm\n');
   assert.equal(done.stdout, '');
 });
 
@@ -3538,4 +3538,82 @@ test('--help beside other words records nothing and is refused, so a command nev
     assert.match(out.err, /--help goes on its own/);
   }
   assert.equal(helper.calls.length, 0, 'the helper was not asked');
+});
+
+test('a command that prints JSON writes ASCII only, so the "…" in a label survives a Windows code-page decode', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper({ events: [...typedOff(), questionEvent()] });
+    const result = await run(helper, ['cards']);
+    assert.equal(result.code, 0, result.err);
+    assert.match(result.out, /^[\x00-\x7f]*$/);
+    assert.deepEqual(result.json.questions[0].options.map((o) => o.label), ['Comma', 'Tab', 'Suggest a change…']);
+    const decoded = new TextDecoder('windows-1252').decode(Buffer.from(result.out, 'utf8'));
+    assert.deepEqual(JSON.parse(decoded).questions[0].options.map((o) => o.label), ['Comma', 'Tab', 'Suggest a change…']);
+  });
+});
+
+const wordsOf = (n) => Array.from({ length: n }, () => 'word').join(' ');
+
+test('record work refuses a feature design with no `## Summary`, or one over 200 words, writing nothing', async () => {
+  await inHome(async () => {
+    const slices = designWithSlices('Export a report').slice(designWithSlices('Export a report').indexOf('```wheelhouse-slices'));
+    for (const [text, pattern] of [
+      [`# Export\n\n${slices}`, /starts with a `## Summary` section/],
+      [`# Export\n\n## Summary\n\n${wordsOf(201)}\n\n${slices}`, /runs to 201 words; keep it to 200/],
+    ]) {
+      const helper = fakeHelper();
+      const dir = projectWithDoc('export-csv', text);
+      const out = await run(helper, ['record', 'work'], JSON.stringify(FEATURE), { cwd: dir });
+      assert.notEqual(out.code, 0);
+      assert.match(out.err, pattern);
+      assert.equal(helper.held.filter((e) => e.kind === 'work' || e.kind === 'card').length, 0);
+    }
+  });
+});
+
+test('record work prints the summary word for word with the link to the whole design, and show prints the same', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('export-csv', designWithSlices('Export a report'));
+    const out = await run(helper, ['record', 'work'], JSON.stringify(FEATURE), { cwd: dir });
+    assert.equal(out.code, 0, out.err);
+    assert.equal(out.json.summary, '## Summary\n\n**What you get:** Export a report.\n\nThe whole design: [export-csv.md](docs/export-csv.md)');
+    const shown = await run(helper, ['show', 'export-csv'], undefined, { cwd: dir });
+    assert.equal(shown.code, 0, shown.err);
+    assert.deepEqual(shown.json, { work: 'export-csv', summary: out.json.summary });
+    const unknown = await run(helper, ['show', 'no-such-work'], undefined, { cwd: dir });
+    assert.equal(unknown.code, 1);
+    assert.match(unknown.err, /No work no-such-work is recorded here/);
+    assert.equal((await run(helper, ['show'], undefined, { cwd: dir })).code, 1);
+  });
+});
+
+test('show gives a work with no summary its own document, without the facts block', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const dir = projectWithDoc('statement-import', 'The brief.\n\n```wheelhouse-facts\n{"addsPage":false}\n```\n');
+    const work = { id: 'statement-import', title: 'Import a statement.', lane: 'small', visible: true, dependsOn: [], doc: 'docs/statement-import.md' };
+    const recorded = await run(helper, ['record', 'work'], JSON.stringify(work), { cwd: dir });
+    assert.equal(recorded.code, 0, recorded.err);
+    assert.equal('summary' in recorded.json, false);
+    const shown = await run(helper, ['show', 'statement-import'], undefined, { cwd: dir });
+    assert.equal(shown.json.summary, 'The brief.\n\nThe whole design: [statement-import.md](docs/statement-import.md)');
+  });
+});
+
+test('an approval card asks "Approve this design?" for a feature, says "you shaped" nowhere, and says once that building waits', async () => {
+  const feature = approveWorkInput({ id: 'export-csv', title: 'Export a report', lane: 'feature', visible: true, doc: { hash: 'a'.repeat(64) } });
+  const small = approveWorkInput({ id: 'tidy', title: 'Tidy a label', lane: 'small', visible: true, doc: { hash: 'b'.repeat(64) } });
+  for (const input of [feature, small, approveWorkInput({ id: 'x', title: 'X', lane: 'bug', visible: true, doc: { hash: 'c'.repeat(64) } }), approveWorkInput({ id: 'y', title: 'Y', lane: 'quick', visible: true, doc: { hash: 'd'.repeat(64) } })]) {
+    const text = JSON.stringify(input);
+    assert.doesNotMatch(text, /you shaped/);
+    assert.equal(text.match(/waits for your approval|until you approve/g).length, 1);
+    assert.equal(input.meanwhile, 'Other work carries on.');
+    assert.equal(input.because, 'you\'ll see it working before it goes live');
+  }
+  assert.match(feature.why, /^It is a new feature, so its design comes to you first\. It is in the message above\.$/);
+  assert.equal(feature.options[0].says, 'Wheelhouse builds it in slices and tests each one, then shows you the result. Building waits for your approval.');
+  assert.match(small.options[0].says, /Building waits for your approval\.$/);
+  assert.equal(composeCard(feature).question.question.split('\n')[0].includes('Approve this design?'), true);
+  assert.equal(composeCard(small).question.question.includes('Approve this work as written?'), true);
 });

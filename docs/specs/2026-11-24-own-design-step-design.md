@@ -2,7 +2,7 @@
 
 # The feature design step, on Superpowers brainstorming: design (24 November 2026)
 
-**Status:** rewritten to the director's decisions of 24 November 2026 ("Yes use superpowers and fix this. keep to design we meticulously built."). Nothing is built yet.
+**Status:** rewritten to the director's decisions of 24 November 2026 ("Yes use superpowers and fix this. keep to design we meticulously built."). Built on branch design/own-design-step (24 November 2026); the sitting renders come next.
 
 The approved design (`docs/specs/2026-10-17-wheelhouse-design.md`, the feature route) shapes features with Superpowers brainstorming, and the core cut keeps Superpowers as the one process framework. This design keeps that and mends the faults within it. Wheelhouse has no design skill of its own.
 

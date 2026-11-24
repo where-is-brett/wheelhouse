@@ -9,6 +9,9 @@
   "homepage": "https://github.com/where-is-brett/wheelhouse",
   "repository": "https://github.com/where-is-brett/wheelhouse",
   "license": "Apache-2.0",
+  "dependencies": [
+    "superpowers"
+  ],
   "keywords": [
     "agents",
     "product-owner",
