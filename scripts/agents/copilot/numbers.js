@@ -5,6 +5,8 @@
 export const GUARD_TIMEOUT_SEC = 120;
 // Every guard answers within this, or refuses.
 export const GUARD_DEADLINE_MS = 30000;
+// The prompt hook only informs, and the model waits on it before every prompt: past this it adds nothing and the prompt goes on.
+export const PROMPT_DEADLINE_MS = 10000;
 // The three tiers a project can run at.
 export const TIERS = Object.freeze(['lean', 'middle', 'full']);
 // The permission levels a session can run at.

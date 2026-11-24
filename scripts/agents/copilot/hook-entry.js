@@ -18,6 +18,9 @@
 //   preCompact           records the compaction and answers nothing: Copilot compacts whatever a hook answers
 //                        (check 60), so nothing may rely on this hook to keep the briefing or a rule in context
 //
+// A step that can't change the answer is left unloaded (INERT_ON_HELPER, PASSES_THE_WORD_TOOLS below): the list above is what
+// runs for an agent that can write, and the steps run here are that list less those.
+//
 // Outside a Wheelhouse project it writes nothing and exits 0. In any harness but Copilot's (VS Code's Local
 // harness, or one that can't be told: translate.js's harnessOf) the session start says Wheelhouse doesn't run
 // there and only reading is let through.
@@ -27,7 +30,8 @@
 // a crash (exit 1) blocks every call and its stderr never reaches the model (check 58). The whole run, reading
 // the input included, sits under one deadline (GUARD_DEADLINE_MS, well inside the limit the registration gives,
 // GUARD_TIMEOUT_SEC, past which Copilot lets the action through): past it a guard event is refused with DEADLINE
-// and an informing event writes nothing.
+// and an informing event writes nothing. The prompt event, which the model waits on before every prompt, has the shorter
+// PROMPT_DEADLINE_MS for the steps after the stop-word step, which keeps the guards' time.
 //
 // Every step comes from `deps.steps` when given, and each step's own deps from `deps.stepDeps`.
 //
@@ -41,8 +45,8 @@
 import claudeTools from '../../../adapters/claude-code/tools.js';
 import copilotTools from '../../../adapters/copilot/tools.js';
 import { toGuardInput, fromGuardAnswer, harnessOf, exitCodeFor, patchChanges, callsOf, upperDrive, UNKNOWN_TOOL, SHELL_INPUT_TOOLS } from '../../../adapters/copilot/translate.js';
-import { readInput, answer, projectOf, registeredByPath, beingSetUp, managedDir } from '../../hooks/kit.js';
-import { C6_PASSED, GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC, HELPER_PROBE_MS } from './numbers.js';
+import { readInput, answer, projectOf, registeredByPath, beingSetUp, managedDir, isWhy } from '../../hooks/kit.js';
+import { C6_PASSED, GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC, HELPER_PROBE_MS, PROMPT_DEADLINE_MS } from './numbers.js';
 import { helperClient } from '../../host/helper-client.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
 
@@ -97,6 +101,17 @@ const TOOL_LISTS = Object.freeze({
 });
 const EXTRA_DEPS = Object.freeze({ stopGuard: TOOL_LISTS, lineageHold: TOOL_LISTS });
 
+// Steps that cannot change what Copilot is told or let do, left unloaded (each Node.js start reads every module a step
+// imports, which on Windows is most of what an event costs: about 13 ms a module on the laptop's measure).
+//   - `promptRecord` and `helmEnd` begin by returning nothing for an agent whose hooks only read (`writeVia: 'helper'`,
+//     which every step is given here): scripts/hooks/prompt-record.js's decide and scripts/hooks/helm-end.js's.
+//   - `stopGuard` and `lineageHold` let a tool that only reads, halts or notifies through whatever the STOP word, the
+//     helper or a hold say (their `readTools.includes(tool)` lines), so a call to one is never refused by either. A why
+//     session is the exception: the STOP guard refuses there what its three tools don't name.
+const INERT_ON_HELPER = Object.freeze(['promptRecord', 'helmEnd']);
+const PASSES_THE_WORD_TOOLS = Object.freeze(['stopGuard', 'lineageHold']);
+const onlyWordTools = (inputs) => inputs.every((input) => [...TOOL_LISTS.readTools, ...TOOL_LISTS.haltTools, ...TOOL_LISTS.notifyTools].includes(input.tool_name));
+
 // The tools each tool step is registered on (adapters/claude-code/hooks.js matchers), by the guards' names.
 const GUARDED = Object.freeze(['Read', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Grep', 'Glob', 'Bash', 'PowerShell', 'Monitor', 'WebFetch', 'ListMcpResourcesTool', 'ReadMcpResourceTool']);
 const WRITERS = Object.freeze(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash', 'PowerShell']);
@@ -124,13 +139,17 @@ const refusal = (event, reason) => (event === GUARD_EVENT ? answer.deny(reason) 
 // Runs the steps named, in order, each on the inputs its selector gives; the first refusal is the answer. Text for
 // the agent from more than one step is joined, so every line reaches it. A step's allow is the answer only when it
 // allows every input it is given, and nothing else answers.
-async function runSteps(steps, inputs, { event, decides, stepDeps, dir }) {
+async function runSteps(steps, inputs, { event, decides, stepDeps, dir, env, seen }) {
   const context = [];
   let other;
   let allowed;
   for (const [name, select] of steps) {
+    // The stop-word step has had its time; the prompt event's own deadline runs from here.
+    if (name !== 'stopWord') seen?.stopWordDone?.();
     const given = select(inputs);
     if (given.length === 0) continue;
+    // A why session never skips the STOP guard, whichever environment the run or the step is given.
+    if (decides?.[name] === undefined && (INERT_ON_HELPER.includes(name) || (event === GUARD_EVENT && PASSES_THE_WORD_TOOLS.includes(name) && onlyWordTools(given) && !isWhy(env) && !isWhy(stepDeps?.[name]?.env ?? process.env)))) continue;
     const decide = decides?.[name] ?? (await STEP_MODULES[name]()).decide;
     let allows = 0;
     let first;
@@ -146,6 +165,7 @@ async function runSteps(steps, inputs, { event, decides, stepDeps, dir }) {
     }
     if (allows === given.length) allowed ??= first;
   }
+  seen?.stopWordDone?.();
   if (context.length > 0) return answer.context(EVENT_NAMES[event], context.join('\n\n'));
   return other ?? allowed;
 }
@@ -275,11 +295,11 @@ async function decideEvent(event, { stdin, env, deps, seen }) {
     return undefined;
   }
   if (calls === null) return refusal(event, COULD_NOT_RUN);
-  if (calls.length === 1) return decideCall(event, calls[0], { deps, seen, dir });
+  if (calls.length === 1) return decideCall(event, calls[0], { deps, seen, dir, env });
   let passed;
   let allows = 0;
   for (const one of calls) {
-    const out = await decideCall(event, one, { deps, seen, dir });
+    const out = await decideCall(event, one, { deps, seen, dir, env });
     if (refuses(out)) return out;
     if (out?.hookSpecificOutput?.permissionDecision === 'allow') allows += 1;
     passed ??= out;
@@ -289,7 +309,7 @@ async function decideEvent(event, { stdin, env, deps, seen }) {
 }
 
 // The answer for one call, or for one input of an event that is not about a tool.
-async function decideCall(event, raw, { deps, seen, dir }) {
+async function decideCall(event, raw, { deps, seen, dir, env }) {
   // A subagent's own prompt and its own stop come through these two events too, named by `agentId` and `parentAgentId`, both present in the captured inputs (check 96). The
   // prompt is the parent's task, not the director's words, and a block at a subagent's `agentStop` is ignored:
   // the subagent is held by `subagentStop`, which the parent's run sees.
@@ -332,13 +352,14 @@ async function decideCall(event, raw, { deps, seen, dir }) {
     // not answering
   }
   const stepDeps = helperStepDeps({ writeVia: 'helper', client, helperUp, agent: 'copilot' }, deps.stepDeps, raw.cwd);
-  return runSteps(stepsFor(event, { c6: deps.c6 ?? C6_PASSED }), inputs, { event, decides: deps.steps, stepDeps, dir });
+  return runSteps(stepsFor(event, { c6: deps.c6 ?? C6_PASSED }), inputs, { event, decides: deps.steps, stepDeps, dir, env, seen });
 }
 
 // Runs the entry for `event`: `{ text, code }`, the line to write (or '') and the exit code. Never throws.
 //   deps.steps        a step's decide, by name, in place of the hook's own
 //   deps.stepDeps     extra deps for a step, by name
 //   deps.deadlineMs   the deadline over the whole run (GUARD_DEADLINE_MS)
+//   deps.promptDeadlineMs  the prompt event's deadline for the steps after the stop-word step (PROMPT_DEADLINE_MS)
 //   deps.c6           whether check C6 has passed (C6_PASSED)
 //   deps.recordCompaction(input)  records a compaction (a /session/mark compaction)
 //   deps.client       the helper's client (helper-client.js), for the probe, the steps and the marks
@@ -347,11 +368,26 @@ export async function runEntry(event, { stdin = process.stdin, env = process.env
   if (!Object.hasOwn(EVENT_NAMES, event)) return { text: '', code: 0 };
   const deadlineMs = deps.deadlineMs ?? GUARD_DEADLINE_MS;
   let timer;
+  let arm;
   const late = new Promise((resolve) => {
-    timer = setTimeout(() => resolve({ late: true }), deadlineMs);
+    arm = (ms) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => resolve({ late: true }), ms);
+    };
+    arm(deadlineMs);
   });
   let out;
   const seen = {};
+  // The prompt event, which the model waits on before every prompt, has the shorter deadline for what follows the
+  // stop-word step, so that step keeps the guards' time.
+  if (event === 'userPromptSubmitted') {
+    let started = false;
+    seen.stopWordDone = () => {
+      if (started) return;
+      started = true;
+      arm(deps.promptDeadlineMs ?? PROMPT_DEADLINE_MS);
+    };
+  }
   try {
     const settled = await Promise.race([decideEvent(event, { stdin, env, deps, seen }).then((value) => ({ value })), late]);
     out = settled.late ? refusal(event, DEADLINE) : settled.value;

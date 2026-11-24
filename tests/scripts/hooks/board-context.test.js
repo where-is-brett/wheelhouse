@@ -1408,3 +1408,35 @@ test('an agent whose hooks can\'t write keeps the turn of an aside chat too, so 
     assert.equal(asked.length, 1);
   });
 });
+
+// --- One read of the waiting view for all of a prompt's lines ---
+
+// `asHelper`'s desk with every read recorded; with `stall`, the reads of the waiting view other than the turn's never answer.
+function counting(repo, now, { stall = false } = {}) {
+  const helper = asHelper(repo, now);
+  const reads = [];
+  const read = helper.client.desk.read;
+  return {
+    reads,
+    deps: { ...helper, client: { ...helper.client, desk: { read: (body) => { reads.push(body); return stall && body.view === 'waiting' && body.args.turn === undefined ? new Promise(() => {}) : read(body); } } } },
+  };
+}
+
+test('a prompt reads the waiting view once for every line built from it, after the one read that keeps the turn time', async () => {
+  await withProject(async ({ repo }) => {
+    const { reads, deps } = counting(repo, NOW);
+    await run(repo, 'Hello', NOW, deps);
+    assert.deepEqual(reads.map((body) => body.view), ['waiting', 'waiting']);
+    assert.deepEqual(Object.keys(reads[0].args), ['turn']);
+    assert.deepEqual(Object.keys(reads[1].args).sort(), ['helmNotes', 'outcomes', 'stuck']);
+  });
+});
+
+test('a waiting view that never answers holds the prompt for one wait, not one for each line', async () => {
+  await withProject(async ({ repo }) => {
+    const { deps } = counting(repo, NOW, { stall: true });
+    const started = Date.now();
+    await run(repo, 'Hello', NOW, { ...deps, waitMs: 300 });
+    assert.ok(Date.now() - started < 900, `took ${Date.now() - started} ms`);
+  });
+});

@@ -17,7 +17,7 @@
 // write refuses a symlink. It never runs git; the root is found with fs.
 import path from 'node:path';
 import { runAndExit, worktreeRoot, isWhy } from './kit.js';
-import { featureSlug } from './session-start.js';
+import { featureSlug } from '../lib/feature-slug.js';
 import { featurePaths, readStatus, writeStatus } from '../feature/files.js';
 import {
   buildStatus, captureCalls, captureRulings, findLedger, loadFeature, planIn, readBrief, readCapped, safeFeatureFolder, writeWhole, SMALL_BYTES,

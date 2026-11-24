@@ -162,7 +162,8 @@ import { clearOtherAgentHolds, hasAgentHolds, recordLift } from '../lineage/chec
 import { agentInFolder, agentOfConfig } from '../agents/names.js';
 import { pathWithNode } from '../lib/claude.js';
 import { run as runProgram } from '../lib/run.js';
-import { PS_ENV, sameStart } from '../lib/start-time.js';
+import { sameStart } from '../lib/start-time.js';
+import { pidAlive, processStartTimes, processStartTime } from '../lib/process-start.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { stopState } from '../lib/stop.js';
 import claudeSessions, { ROLE_VARIABLE, featureModeOf, sessionEnv, sessionModeOf } from '../../adapters/claude-code/sessions.js';
@@ -234,7 +235,7 @@ export function firstPrompt(project, work, { config = {}, adapter = claudeSessio
 
 // The role variable, the modes and the session environment are the adapter's (they come with how it starts a
 // session); they stay exported here for the callers that have always taken them from the waker.
-export { ROLE_VARIABLE, featureModeOf, sessionEnv, sessionModeOf };
+export { ROLE_VARIABLE, featureModeOf, sessionEnv, sessionModeOf, pidAlive, processStartTimes, processStartTime };
 const MINUTE = 60 * 1000;
 // The longest a session's process counts as running.
 export const MAX_RUN_MS = Object.freeze({ foreman: 60 * MINUTE, feature: 8 * 60 * MINUTE });
@@ -666,16 +667,6 @@ export function spawnDetached(file, args, { cwd, env, input = '', windowsVerbati
 // session when it starts, so such a piece can't be steered from the start.
 export const STEER_NAMES_ITSELF = "This agent's sessions name themselves, so a piece can't be steered from its start";
 
-// Whether a process with this id is running. EPERM means it exists.
-export function pidAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === 'EPERM';
-  }
-}
-
 // Ends a recorded session's process, and the ones it started with it where the system lets us (on macOS and Linux it
 // leads its own group). Says whether the signal was sent.
 export function endProcess(pid) {
@@ -686,37 +677,6 @@ export function endProcess(pid) {
     } catch { /* try the process alone */ }
   }
   return false;
-}
-
-// When each of these processes started, as the system says it, in one call:
-// `ps -o pid=,lstart= -p <pids>` on macOS and Linux (in the C locale, so the
-// month comes before the day whatever the computer's own locale), Win32_Process's
-// CreationDate through one PowerShell call on Windows. A Map from pid to the
-// start time, or to null when it can't be had (the process has gone, or the
-// system won't say).
-export async function processStartTimes(pids, { platform = process.platform, run = runProgram } = {}) {
-  const wanted = [...new Set(pids)].filter((pid) => Number.isInteger(pid) && pid > 0);
-  const found = new Map(wanted.map((pid) => [pid, null]));
-  if (wanted.length === 0) return found;
-  try {
-    const filter = wanted.map((pid) => `ProcessId=${pid}`).join(' OR ');
-    const answer = platform === 'win32'
-      ? await run('powershell.exe', [
-        '-NoProfile', '-NonInteractive', '-Command',
-        `Get-CimInstance Win32_Process -Filter '${filter}' | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.CreationDate.ToUniversalTime().ToString('o') }`,
-      ], { timeoutMs: 15000 })
-      : await run('ps', ['-o', 'pid=,lstart=', '-p', wanted.join(',')], { timeoutMs: 5000, env: PS_ENV });
-    for (const line of String(answer.stdout ?? '').split(/\r?\n/)) {
-      const m = /^\s*(\d+)\s+(\S.*?)\s*$/.exec(line);
-      if (m && found.has(Number(m[1]))) found.set(Number(m[1]), m[2]);
-    }
-  } catch { /* none can be had */ }
-  return found;
-}
-
-// When one process started, or null.
-export async function processStartTime(pid, options = {}) {
-  return (await processStartTimes([pid], options)).get(pid) ?? null;
 }
 
 // Start times kept for `ttlMs`, so a watcher checking its running sessions
