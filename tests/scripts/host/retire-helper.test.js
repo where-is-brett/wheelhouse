@@ -23,3 +23,12 @@ test('isOlder follows full semantic version precedence, a pre-release being belo
   assert.equal(isOlder('v0.2.6', '0.2.7'), true);
   assert.equal(isOlder('0.3.0-rc.1', '0.3.0-rc.1'), false);
 });
+
+test('a copy from the main line counts a release\'s helper as older, and another main-line helper as not', () => {
+  assert.equal(isOlder('0.2.10', 'dev'), true);
+  assert.equal(isOlder('v0.3.0', 'dev'), true);
+  assert.equal(isOlder('dev', 'dev'), false);
+  assert.equal(isOlder('dev', '0.3.0'), false);
+  assert.equal(isOlder(undefined, 'dev'), false);
+  assert.equal(isOlder('soon', 'dev'), false);
+});

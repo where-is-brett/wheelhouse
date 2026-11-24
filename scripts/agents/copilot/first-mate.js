@@ -35,6 +35,11 @@ const q = (value) => JSON.stringify(value);
 // The playbook's own words for Claude Code's file tool, in Copilot's.
 const mapFileTool = (text) => text.replaceAll('the Write tool', 'the `create` tool').replaceAll('Write tool', '`create` tool');
 
+// Superpowers' brainstorming runs in Copilot's chat from Wheelhouse's own copy of its skill folder, which setup puts in the person's
+// Copilot skills folder under this name (scripts/agents/copilot/brainstorming-copy.js), so the playbook names that copy.
+export const BRAINSTORMING_SKILL = 'wheelhouse-brainstorming';
+const brainstormingName = (text) => text.replaceAll('superpowers:brainstorming', BRAINSTORMING_SKILL);
+
 // These files sit in the person's own Copilot folder, so Copilot offers them in every workspace on the computer. A Wheelhouse
 // project is told by its committed configuration, `.claude/wheelhouse.json` (scripts/host/gitlab-base.js reads it the same way).
 const PROJECT_MARKER = '.claude/wheelhouse.json';
@@ -51,8 +56,7 @@ the hooks and the helper record clicks, and the guard refuses a command that tri
 `;
 
 // The same part where every card is asked with ask_user and the director's click on it is recorded (C6_PASSED): as Claude Code's
-// picker is used. The window stays for the seat card (no route records a click on it in the chat and moves the seat) and for an
-// undo on a project kept on this computer.
+// picker is used. The seat card and an undo are asked the same way, and no window is ever opened.
 const PICKER_CLICKS = `## Clicks in the chat
 
 Ask every card with ask_user, a decision, a sign-off and a merge approval among them, as the tool sheet says. A card is asked
@@ -64,33 +68,32 @@ line from Wheelhouse says Copilot answered a card by itself, do as it says.
 A decision is a card like any other: \`cards\` hands it out. It is never printed as a message, and a reply typed here is not
 recorded.
 
-Two cards open Wheelhouse's own window instead, and say so in one plain line that the card is open there for the director to
-click. When the session start says the First Mate is in another window, write no question and no options of your own, and
-never use ask_user for it: say one plain line that Wheelhouse's own window is asking whether to move the First Mate here, and
-why, then run \`confirm seat-take-over\`. The window's own buttons are the only choices; it records the click and moves the First Mate. An undo on a project kept on this
-computer (\`undo <merge>\` says so with \`needs\` \`window\`) goes there too: run \`confirm <card id>\` with the card it names.
+Two more cards are asked the same way. When the session start says the First Mate is in another window and gives a card, ask
+that card exactly as given, as a question of its own, when the director asks for Wheelhouse work: their click on it records the
+move and moves the First Mate. An undo (\`undo <merge>\` says so with \`needs\` \`card\`) names a card: ask it, then run
+\`undo <merge>\` again once they click Undo.
 Every command that records takes \`--session <id>\`, the session id the session start gave you; a command without it is refused.
 `;
 
-// The part for an agent whose click is recorded only in the helper's own window (C6_PASSED false).
-const WINDOW_CLICKS = `## Clicks in the chat
+// The part for an agent whose click is not recorded yet (C6_PASSED false): no window opens, so a card that signs is a plain chat
+// message and the work waits.
+const UNRECORDED_CLICKS = `## Clicks in the chat
 
-On Copilot no hook sees the director's click on a card you asked with ask_user, so that click is not recorded. An option that
+On Copilot no hook sees the director's click on a card you asked with ask_user yet, so that click is not recorded. An option that
 signs something is never offered in the chat:
 ${SIGNED_LABELS.slice(0, -1).join(', ')} and ${SIGNED_LABELS.at(-1)}.
-For a card with one of them, run \`confirm <card id>\` instead (the id is in \`views waiting\`), and say in one plain line
-that the card is open in Wheelhouse's own window for the director to click. The window records the click and the card stops
-waiting. Lifting STOP, changing a guardrail, unattended running, a runbook step, a CI push and an allowance go the same way.
+For a card with one of them, write one plain chat message instead, with no clickable options. It says what the card is, why it comes
+to the director, the options in words with your recommendation, and what happens meanwhile, and then says in one plain line that an
+answer can't be recorded in this chat yet, so the work waits. Lifting STOP, changing a guardrail, unattended running, a runbook step,
+a CI push, an undo and an allowance go the same way. Never open a window and never ask the director to answer anywhere else.
 
 When the session start says the First Mate is in another window, write no question and no options of your own, and never use
-ask_user for it: say one plain line that Wheelhouse's own window is asking whether to move the First Mate here, and why, then
-run \`confirm seat-take-over\`. The window's own buttons are the only choices; it records the click and moves the First Mate. Every command that records takes
+ask_user for it: say one plain line, as the session start words it. Every command that records takes
 \`--session <id>\`, the session id the session start gave you; a command without it is refused.
 
 A decision is never asked with ask_user, and a reply typed here is not recorded. Print it exactly as \`decision show <n>\`
-prints it, then run \`decision confirm <n>\`: it opens the decision in Wheelhouse's own window, and the director's click there
-is their answer, which the crew acts on. When the director closes the window to say "why <n>", run \`why decision <n> <their
-words>\`, relay its answer, then run \`decision confirm <n>\` again.
+prints it: its last line says the decision waits. Say in one plain line that it waits, and take no step that waits on it. When the
+director says "why <n>", run \`why decision <n> <their words>\` and relay its answer.
 
 A click on a card with no signing option is the director's answer: act on it, and say what you did.
 `;
@@ -102,21 +105,21 @@ ${GUARD}
 ${sheet.trim()}
 
 ${APPROVALS_LEVEL}
-${picker ? PICKER_CLICKS : WINDOW_CLICKS}
+${picker ? PICKER_CLICKS : UNRECORDED_CLICKS}
 Ask each card with ask_user as the tool sheet says: one card per call, and several cards one call after another. The question is
 the card's text, then one line per option, "Label: what it does". The options are the card's exact labels. The \`default\` is
 the card's recommended option (\`recommend\`), not the first option.
 `;
 
-// The playbook's lines that say a click in the chat records itself, in Copilot's words: there a click is recorded only in the
-// helper's own window (the instructions' "Clicks in the chat").
+// The playbook's lines that say a click in the chat records itself, in the words of an agent whose click is not recorded yet
+// (the instructions' "Clicks in the chat").
 const CLICK_LINES = Object.freeze([
-  ['and a click or a typed reply records itself:', 'and a click in Wheelhouse\'s own window or a typed reply records itself (see "Clicks in the chat"):'],
-  ['- **An answer in the chat:** the click records itself.', '- **An answer in the chat:** a card with an option that signs goes to Wheelhouse\'s own window with `confirm`, whose click records itself.'],
+  ['and a click or a typed reply records itself:', 'and a click on a card with no signing option records itself, and a card that signs waits (see "Clicks in the chat"):'],
+  ['- **An answer in the chat:** the click records itself.', '- **An answer in the chat:** a card with an option that signs is a plain chat message and waits, as the instructions say, and the click on any other records itself.'],
   ['Its click records itself.', 'Its click is the director\'s answer to act on.'],
 ]);
 
-// The playbook's lines on how a decision and a card with a window are asked, in the words of an agent whose every card is asked in
+// The playbook's lines on how a decision and a card that signs are asked, in the words of an agent whose every card is asked in
 // its picker. The decision's bullet is replaced whole (it starts with its bold lead); the others by their words.
 const PICKER_LINES = Object.freeze([
   ['Every question is a card from `card` or `cards`, except a decision, which is a plain chat message (see Decisions).', 'Every question is a card from `card` or `cards`, a decision among them.'],
@@ -145,18 +148,18 @@ function clickLines(text) {
 
 function agent(root, picker) {
   const { front, body } = parse(readSource(root, SOURCE), SOURCE);
-  const rest = `${GUARD}\n\n${(picker ? pickerLines : clickLines)(renameSkills(mapFileTool(mapToolWords(withoutPathComment(body, SOURCE), SOURCE))))}`;
+  const rest = `${GUARD}\n\n${(picker ? pickerLines : clickLines)(renameSkills(brainstormingName(mapFileTool(mapToolWords(withoutPathComment(body, SOURCE), SOURCE)))))}`;
   const lines = [`name: ${q('wheelhouse-first-mate')}`, `description: ${q(front.description)}`, `tools: [${FIRST_MATE_TOOLS.map(q).join(', ')}]`];
   return `---\n${lines.join('\n')}\n---\n<!-- ${FIRST_MATE_DIR}/${AGENT_FILE} (built from ${SOURCE} by ${BUILD_COMMAND}) -->\n${rest}`;
 }
 
 // The tool sheet's line on signing options and decisions, for an agent whose every card is asked in its picker.
-const SHEET_WINDOW_WORDS = ' Signing options and decisions never go to ask_user (see "Clicks in the chat").';
-const SHEET_PICKER_WORDS = ' Every card goes to ask_user, signing options and decisions too, with `allowFreeformInput` false; the seat card and an undo on a project kept here go to the window (see "Clicks in the chat").';
+const SHEET_UNRECORDED_WORDS = ' Signing options and decisions never go to ask_user (see "Clicks in the chat").';
+const SHEET_PICKER_WORDS = ' Every card goes to ask_user, signing options and decisions too, with `allowFreeformInput` false (see "Clicks in the chat").';
 function pickerSheet(sheet, picker) {
   if (picker !== true) return sheet;
-  if (!sheet.includes(SHEET_WINDOW_WORDS)) throw new Error(`${TOOL_SHEET} no longer says "${SHEET_WINDOW_WORDS.trim()}"; update SHEET_WINDOW_WORDS in scripts/agents/copilot/first-mate.js`);
-  return sheet.replace(SHEET_WINDOW_WORDS, SHEET_PICKER_WORDS);
+  if (!sheet.includes(SHEET_UNRECORDED_WORDS)) throw new Error(`${TOOL_SHEET} no longer says "${SHEET_UNRECORDED_WORDS.trim()}"; update SHEET_UNRECORDED_WORDS in scripts/agents/copilot/first-mate.js`);
+  return sheet.replace(SHEET_UNRECORDED_WORDS, SHEET_PICKER_WORDS);
 }
 
 function instructions(root, picker) {

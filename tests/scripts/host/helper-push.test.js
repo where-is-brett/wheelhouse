@@ -26,7 +26,6 @@ import { listEvents, dataHash } from '../../../scripts/state/events.js';
 import { verify, readEnrolled } from '../../../scripts/state/signing.js';
 import { SETTINGS_CHANGED, settingsLine } from '../../../scripts/lib/settings-card.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
-import { askInWindow } from '../../../scripts/confirm/window.js';
 import { startHttpHost } from '../../helpers/http-host.js';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
 import { waitLongerOnTheHelper } from '../../helpers/until.js';
@@ -93,7 +92,7 @@ async function privateRepo() {
 }
 
 // One computer: its own home, a project record whose connection is as-is, and a helper.
-async function computer(repo, { askWindow } = {}) {
+async function computer(repo, { hookClicks = false } = {}) {
   const home = shortHome();
   const folder = path.join(home, 'work');
   fs.mkdirSync(folder, { recursive: true });
@@ -116,7 +115,7 @@ async function computer(repo, { askWindow } = {}) {
     address: testAddress(home),
     adapterFor: async () => fakeAdapter(),
     envFor: async () => ({ mode: 'as-is', env: {} }),
-    ...(askWindow ? { askWindow } : {}),
+    ...(hookClicks ? { hookClicks } : {}),
   }));
   const client = helperClient({ address: helper.address });
   // A working folder inside the project, on `feature`, with one commit.
@@ -516,14 +515,18 @@ test('a change to the computer\'s sign-in settings since the first push is refus
       assert.equal(fs.existsSync(file), true, 'setup recorded the settings');
       assert.match(Object.values(JSON.parse(fs.readFileSync(file, 'utf8')).folders)[0], /^v2:[0-9a-f]{64}$/);
     });
-    // Settings that are not the sign-in, proxy, certificate or rewrites change nothing; the same ones again pass.
+    // Settings that are not the sign-in, certificate or rewrites change nothing; the same ones again pass.
     await withDirectorsGit(`[credential]\n\thelper = !${first.file}\n[user]\n\tname = Someone\n[alias]\n\tst = status\n`, async () => {
+      assert.deepEqual(await push(), { ok: true });
+    });
+    // Nor does a proxy, which follows the network the computer is on; the push uses it as it is.
+    await withDirectorsGit(`[credential]\n\thelper = !${first.file}\n[http "https://other.example.org/"]\n\tproxy = http://proxy.example.org:8080\n`, async () => {
       assert.deepEqual(await push(), { ok: true });
     });
     for (const [name, config] of [
       ['another helper', `[credential]\n\thelper = !${second.file}\n`],
       ['an added helper', `[credential]\n\thelper = !${first.file}\n\thelper = !${second.file}\n`],
-      ['a proxy', `[credential]\n\thelper = !${first.file}\n[http]\n\tproxy = http://proxy.example.org:8080\n`],
+      ['a certificate file', `[credential]\n\thelper = !${first.file}\n[http]\n\tsslCAInfo = /x/ca.pem\n`],
       ['a sshCommand', `[credential]\n\thelper = !${first.file}\n[core]\n\tsshCommand = ssh -i /x\n`],
       ['an included file', `[credential]\n\thelper = !${first.file}\n[include]\n\tpath = /nowhere/more.config\n`],
       ['a rewrite for another address', `[credential]\n\thelper = !${first.file}\n[url "ssh://git@other.example.org/"]\n\tinsteadOf = https://other.example.org/\n`],
@@ -533,7 +536,7 @@ test('a change to the computer\'s sign-in settings since the first push is refus
         assert.equal(answer.ok, false, name);
         assert.equal(answer.code, 'git-settings-changed', name);
         assert.match(answer.refused, /differ from the ones you confirmed at setup/, name);
-        assert.match(answer.refused, /Wheelhouse shows a card asking you to confirm the new settings in its own window/, name);
+        assert.match(answer.refused, /Wheelhouse shows a card asking you to confirm the new settings here in the chat/, name);
         assert.doesNotMatch(answer.refused, /run setup again/, name);
       });
     }
@@ -548,33 +551,23 @@ test('a change to the computer\'s sign-in settings since the first push is refus
   } finally { await c.close(); await repo.cleanup(); }
 });
 
-// --- Confirming the computer's settings again, by a card clicked in the helper's own window ---
+// --- Confirming the computer's settings again, by a card clicked in the chat ---
 
 const PROXY = 'http://ada:s3cretpass@proxy.example.org:8080';
 // Settings for other addresses than the project's, so a push still goes; each holds a user and a password in its name or value.
 const WITH_PROXY = `[http "https://other.example.org/"]\n\tproxy = ${PROXY}\n[url "https://ada:s3cretpass@mirror.example.org/"]\n\tinsteadOf = https://elsewhere.example.org/\n`;
-const said = (text) => ({ code: 0, stdout: `${text}\n`, stderr: '' });
 
-// A window that answers with `reply()` and notes what it was shown.
-function windowStandIn(reply) {
-  const shown = [];
-  const run = async (file, args) => {
-    shown.push(args.slice(args.indexOf('--') + 1));
-    return reply();
-  };
-  return { shown, askWindow: (card) => askInWindow({ ...card, platform: 'darwin', run }) };
-}
-
-test('a lock refused because the settings changed carries the code, raises a card of names only, and the window\'s click confirms them', { skip: !unix && 'the credential helper is a shell script' }, async () => {
-  let reply = () => said('Not now');
-  const window = windowStandIn(() => reply());
+test('a lock refused because the settings changed carries the code, raises a card of names only, and the chat\'s click confirms them', { skip: !unix && 'the credential helper is a shell script' }, async () => {
   const repo = await privateRepo();
-  const c = await computer(repo, { askWindow: window.askWindow });
+  const c = await computer(repo, { hookClicks: true });
   const file = path.join(c.home, 'host', 'git-settings.json');
   const first = signIn(tempFolder('wh-helperbin-'));
   const signedIn = (more = '') => `[credential]\n\thelper = !${first.file}\n${more}`;
   const events = () => as_(c.home, () => listEvents(stateDir(PROJECT), { report: () => {} }));
   const touch = () => c.as(() => c.client.lock.touch({ project: PROJECT }));
+  const place = (card, over = {}) => ({ project: PROJECT, session: 'chat-1', message: card.data.question, options: card.data.options, ...over });
+  const shown = (card, over) => c.as(() => c.client.cards.hookShown(place(card, over)));
+  const click = (card, label, over) => c.as(() => c.client.cards.hookClick({ ...place(card, over), label }));
   try {
     await withDirectorsGit(signedIn(), async () => {
       assert.deepEqual(await c.push({ project: PROJECT, dir: c.dir, refspec: 'feature' }), { ok: true });
@@ -587,14 +580,16 @@ test('a lock refused because the settings changed carries the code, raises a car
       const refused = await touch();
       assert.equal(refused.ok, false);
       assert.equal(refused.code, SETTINGS_CHANGED);
-      assert.equal(refused.needs, 'window');
+      assert.equal(refused.needs, 'card');
       assert.match(refused.refused, /The lock could not be pushed/);
       assert.match(refused.card, /^[0-9a-f-]{36}$/);
       const card = events().find((e) => e.id === refused.card);
       assert.equal(card.kind, 'card');
       // The card names settings and never a value: no address, no user, no password.
       for (const text of [card.data.question, card.data.line]) assert.doesNotMatch(text, /s3cretpass|ada|proxy\.example|mirror\.example|elsewhere/i);
-      assert.match(card.data.question, /added: http\.proxy, url\.insteadof/);
+      // The proxy follows the network, so it is no part of the settings confirmed, and the card leaves it out.
+      assert.match(card.data.question, /added: url\.insteadof/);
+      assert.doesNotMatch(card.data.question, /http\.proxy/);
       assert.deepEqual(card.data.options, ['Confirm', 'Not now']);
       // Asked again, the same card waits: no second one.
       assert.equal((await touch()).card, refused.card);
@@ -603,62 +598,56 @@ test('a lock refused because the settings changed carries the code, raises a car
       const pushed = await c.push({ project: PROJECT, dir: c.dir, refspec: 'feature' });
       assert.deepEqual([pushed.ok, pushed.code, pushed.card], [false, SETTINGS_CHANGED, refused.card]);
 
-      // Nothing confirms the settings but the window's click: not Not now, not a closed window, not a route.
-      const shown = { card: refused.card, hash: dataHash(card.data) };
-      for (const answer of [said('Not now'), said(''), { code: 1, stdout: '', stderr: '', timedOut: true }]) {
-        reply = () => answer;
-        const got = await c.as(() => c.client.confirm({ project: PROJECT, ...shown }));
-        assert.equal(got.recorded, false);
-      }
+      // A click on a card never shown records nothing; Not now confirms nothing.
+      assert.equal((await click(card, 'Confirm')).ok, false, 'not shown to this session');
+      assert.equal((await shown(card)).ok, true);
+      const later = await click(card, 'Not now');
+      assert.notEqual(later.recorded, true);
       assert.equal(fs.readFileSync(file, 'utf8'), kept, 'the record is as it was');
-      const forged = await c.as(() => c.client.state.write({ project: PROJECT, kind: 'action', data: { action: 'confirm-settings', hash: 'a'.repeat(64), question: `x\n${settingsLine('a'.repeat(64))}`, label: 'Confirm', proof: 'window' } }));
+      assert.equal(events().filter((e) => e.kind === 'action').length, 0);
+      const forged = await c.as(() => c.client.state.write({ project: PROJECT, kind: 'action', data: { action: 'confirm-settings', hash: 'a'.repeat(64), question: `x\n${settingsLine('a'.repeat(64))}`, label: 'Confirm', proof: 'hook-click' } }));
       assert.equal(forged.ok, false, 'no route records the click');
-      // A card another hand wrote with the line and other words is not the helper's, so no window signs it.
-      const line = card.data.line;
-      const lookalike = await c.as(() => c.client.state.write({ project: PROJECT, kind: 'card', data: { ...card.data, question: `Confirm so the next push goes.\n${line}` } }));
+      // A card another hand wrote with the line and other words is not the helper's, so its click is not signed.
+      const lookalike = await c.as(() => c.client.state.write({ project: PROJECT, kind: 'card', data: { ...card.data, question: `Confirm so the next push goes.\n${card.data.line}` } }));
       const copy = events().find((e) => e.id === lookalike.id);
-      const refusedCopy = await c.as(() => c.client.confirm({ project: PROJECT, card: copy.id, hash: dataHash(copy.data) }));
-      assert.equal(refusedCopy.ok, false);
-      assert.match(refusedCopy.refused, /not one the window confirms/);
+      await shown(copy);
+      const copied = await click(copy, 'Confirm');
+      assert.notEqual(copied.recorded && copied.kind === 'action', true, JSON.stringify(copied));
       assert.equal(fs.readFileSync(file, 'utf8'), kept);
       assert.equal((await touch()).ok, false, 'the lock is still refused');
-      assert.equal(window.shown.length, 3, 'only the helper\'s own card opened a window');
 
-      // The window shows the card's words, and no value.
-      assert.deepEqual(window.shown[0].slice(3), ['Confirm']);
-      assert.doesNotMatch(window.shown[0].join('\n'), /s3cretpass|ada|proxy\.example|mirror\.example/i);
-
-      // Settings that changed again while the card was open are not the ones it named: no window.
+      // Settings that changed again while the card was open are not the ones it named: nothing is signed.
       await withDirectorsGit(signedIn(`${WITH_PROXY}[http]\n\tsslCAInfo = /x/ca.pem\n`), async () => {
-        const moved = await c.as(() => c.client.confirm({ project: PROJECT, ...shown }));
-        assert.equal(moved.ok, false);
-        assert.match(moved.refused, /not one the window confirms/);
+        const moved = await click(card, 'Confirm');
+        assert.notEqual(moved.recorded && moved.kind === 'action', true, JSON.stringify(moved));
       });
-      assert.equal(window.shown.length, 3);
+      assert.equal(fs.readFileSync(file, 'utf8'), kept);
+      assert.equal(events().some((e) => e.kind === 'action'), false, 'nothing is signed');
 
-      // The director's click on Confirm records the settings as they are, signs the click, and ends the card.
-      reply = () => said('Confirm');
-      const got = await c.as(() => c.client.confirm({ project: PROJECT, ...shown }));
+      // The settings are the ones the next card names; the director's click on its Confirm records them as they are, signs the click, and ends the card.
+      const raised = await touch();
+      const fresh = events().find((e) => e.id === raised.card);
+      assert.equal((await shown(fresh)).ok, true);
+      const got = await click(fresh, 'Confirm');
       assert.equal(got.ok, true, JSON.stringify(got));
-      assert.deepEqual([got.recorded, got.kind, got.step, got.choice], [true, 'action', 'git-settings', 'Confirm']);
-      const click = events().find((e) => e.id === got.id);
-      assert.equal(click.data.action, 'confirm-settings');
-      assert.equal(click.data.proof, 'window');
-      assert.ok(as_(c.home, () => verify(click, readEnrolled())));
-      assert.match((await c.as(() => c.client.confirm({ project: PROJECT, ...shown }))).refused, /no longer waits/);
+      assert.deepEqual([got.recorded, got.step, got.label], [true, 'git-settings', 'Confirm']);
+      const record = events().find((e) => e.id === got.id);
+      assert.equal(record.data.action, 'confirm-settings');
+      assert.equal(record.data.proof, 'hook-click');
+      assert.ok(as_(c.home, () => verify(record, readEnrolled())));
+      assert.equal((await click(fresh, 'Confirm')).ok, false, 'the click was taken');
       assert.deepEqual(got.lock, { held: true }, 'the click also keeps the lock, with no new session');
       assert.deepEqual(await c.push({ project: PROJECT, dir: c.dir, refspec: 'feature' }), { ok: true });
-      const record = JSON.parse(fs.readFileSync(file, 'utf8'));
-      assert.deepEqual(record.names[Object.keys(record.folders)[0]], ['credential.helper', 'http.proxy', 'url.insteadof']);
+      const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
+      assert.deepEqual(stored.names[Object.keys(stored.folders)[0]], ['credential.helper', 'url.insteadof']);
       assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /s3cretpass|proxy\.example|mirror\.example/i, 'the record holds no value or address');
     });
   } finally { await c.close(); await repo.cleanup(); }
 });
 
-test('a settings card whose settings are the confirmed ones again is closed when it is found, and says so', { skip: !unix && 'the credential helper is a shell script' }, async () => {
-  const window = windowStandIn(() => said('Confirm'));
+test('a settings card whose settings are the confirmed ones again is closed when its click comes, and says so', { skip: !unix && 'the credential helper is a shell script' }, async () => {
   const repo = await privateRepo();
-  const c = await computer(repo, { askWindow: window.askWindow });
+  const c = await computer(repo, { hookClicks: true });
   const first = signIn(tempFolder('wh-helperbin-'));
   const base = `[credential]\n\thelper = !${first.file}\n`;
   const events = () => as_(c.home, () => listEvents(stateDir(PROJECT), { report: () => {} }));
@@ -666,20 +655,20 @@ test('a settings card whose settings are the confirmed ones again is closed when
     await withDirectorsGit(base, async () => {
       assert.deepEqual(await c.push({ project: PROJECT, dir: c.dir, refspec: 'feature' }), { ok: true });
     });
-    let shown;
-    await withDirectorsGit(`${base}[http "https://other.example.org/"]\n\tproxy = ${PROXY}\n`, async () => {
+    let card;
+    await withDirectorsGit(`${base}[http "https://other.example.org/"]\n\tsslCAInfo = /x/ca.pem\n`, async () => {
       const refused = await c.push({ project: PROJECT, dir: c.dir, refspec: 'feature' });
-      shown = { card: refused.card, hash: dataHash(events().find((e) => e.id === refused.card).data) };
+      card = events().find((e) => e.id === refused.card);
+      assert.equal((await c.as(() => c.client.cards.hookShown({ project: PROJECT, session: 'chat-1', message: card.data.question, options: card.data.options }))).ok, true);
     });
     // The settings went back to the confirmed ones: the card can't be answered, so it is closed.
     await withDirectorsGit(base, async () => {
-      const got = await c.as(() => c.client.confirm({ project: PROJECT, ...shown }));
+      const got = await c.as(() => c.client.cards.hookClick({ project: PROJECT, session: 'chat-1', message: card.data.question, options: card.data.options, label: 'Confirm' }));
       assert.equal(got.ok, false);
       assert.match(got.refused, /confirmed ones again/);
-      assert.equal(events().some((e) => e.kind === 'card-answer' && e.data.card === shown.card), true);
-      assert.match((await c.as(() => c.client.confirm({ project: PROJECT, ...shown }))).refused, /no longer waits/);
+      assert.equal(events().some((e) => e.kind === 'card-answer' && e.data.card === card.id), true);
+      assert.equal(events().some((e) => e.kind === 'action'), false, 'nothing is signed');
     });
-    assert.equal(window.shown.length, 0, 'no window opened');
   } finally { await c.close(); await repo.cleanup(); }
 });
 

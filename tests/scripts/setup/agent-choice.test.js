@@ -46,7 +46,7 @@ function accountRun(stdout = ACCOUNT, code = 0) {
   return { calls, run: async (file, args) => { calls.push([file, ...args]); return { code, stdout, stderr: '' }; } };
 }
 
-const stepFor = (env, run) => computerStep({ engine: null, run, env, manifest: MANIFEST, port: 14318 });
+const stepFor = (env, run) => computerStep({ engine: null, run, env, manifest: MANIFEST, port: 14318, prepareAgent: async () => {} });
 const ctxFor = (folder, user, answers = {}) => ({ folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers });
 
 test('a computer with no other agent installed asks nothing', async () => {

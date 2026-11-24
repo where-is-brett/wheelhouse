@@ -37,7 +37,7 @@ export function agentAsk({ found, project, platform = process.platform }) {
     card: {
       level: 3,
       what: `${others} is installed on this computer as well as Claude Code. Which should build ${project ?? 'this project'} here?`,
-      why: `It is chosen for each computer, and it can be changed later from the First Mate. The chat and cards are the same either way.${platform === 'win32' ? '' : ` In projects Wheelhouse has set up, Claude Code's sandbox keeps its commands from the key behind your clicks; ${others}'s commands run without that.`}`,
+      why: `It is chosen for each computer, and it can be changed later by asking the First Mate, your assistant in this chat. The chat and cards are the same either way.${platform === 'win32' ? '' : ` In projects Wheelhouse has set up, Claude Code's sandbox keeps its commands from the key behind your clicks; ${others}'s commands run without that.`}`,
       options: names.map((name, i) => ({
         label: labels[i],
         says: name === DEFAULT ? 'Claude Code does the building on this computer, as it does by default.' : `GitHub's ${labels[i]} does the building on this computer, using your ${labels[i]} plan's monthly allowance. Setup adds its checks and reads your plan from your GitHub account.`,
@@ -95,6 +95,12 @@ export async function applyAgentComputer(name, changes, { record, newId, run, at
   return part.afterApply({ run, at, env });
 }
 
+// Before an agent's changes are planned: whatever it keeps on this computer for them is fetched where it isn't there yet.
+// Never throws: a fetch that fails leaves that part to the next setup or update.
+export async function prepareAgentComputer(name) {
+  try { await setupOf(name)?.prepare?.(); } catch { /* the next try */ }
+}
+
 // After an update: each agent's changes to this computer made to point at the new release's folder. Resolves the lines to
 // say (none where nothing changed). One that can't be written is said, never thrown: the update informs.
 export function refreshAgentComputer(options) {
@@ -108,4 +114,10 @@ export function refreshAgentComputer(options) {
     }
   }
   return lines;
+}
+
+// refreshAgentComputer, once what each agent keeps for its changes is fetched for the new release.
+export async function refreshAgentComputerAfterKits(options) {
+  for (const name of Object.keys(SETUPS)) await prepareAgentComputer(name);
+  return refreshAgentComputer(options);
 }

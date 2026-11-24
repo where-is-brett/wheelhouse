@@ -55,9 +55,11 @@ You need **Node.js** (a free program; [download the version marked LTS](https://
 
    <!-- Until v0.3.0 is tagged, the line above installs from main. Once tagged, restore: claude plugin marketplace add "where-is-brett/wheelhouse#v0.3.0" --scope project -->
 
-   Claude asks before it runs each one: allow it. The first adds Wheelhouse's own catalogue, at its main line until `v0.3.0` is tagged; a computer that already has the catalogue is moved to it by that line, so it is run every time, never skipped (it is refused only where the catalogue was added from a different address, and then it says so); the second installs Wheelhouse from that catalogue, for this project only. Both name Wheelhouse's catalogue, so nothing else with a similar name can be installed by mistake. The install writes the plugin's files into Claude Code's shared plugin folder under the release's version number, replacing what is there for that number in place. Every project on this computer that uses that version loads the new files, not only this one. (A later release, from Wheelhouse's [releases page](https://github.com/where-is-brett/wheelhouse/releases), goes in place of `v0.3.0`.) If you prefer a terminal, the same two commands work there, run in the product's folder.
+   Claude asks before it runs each one: allow it. The first adds Wheelhouse's own catalogue, at its main line until `v0.3.0` is tagged; a computer that already has the catalogue is moved to it by that line, so it is run every time, never skipped (it is refused only where the catalogue was added from a different address, and then it says so); the second installs Wheelhouse from that catalogue, for this project only. Both name Wheelhouse's catalogue, so nothing else with a similar name can be installed by mistake. The install writes the plugin's files into Claude Code's shared plugin folder: a release under its version number, and an install from the main line under the number of its commit, so installing one never changes the files another project is running. Two projects on this computer that use the same release share its folder. (A later release, from Wheelhouse's [releases page](https://github.com/where-is-brett/wheelhouse/releases), goes in place of `v0.3.0`.) If you prefer a terminal, the same two commands work there, run in the product's folder.
 4. **Open a new chat on the same folder now.** This is the only restart: this chat started before Wheelhouse was installed, so it never loads it, and a new one does. Wheelhouse loads there and setup starts by itself. Don't ask this chat for anything else first.
-5. **If the commands don't work,** use the plugin browser instead: click the **+** button beside the message box, then **Add plugins** (or **Plugins**, then **Browse plugins**). Add the catalogue `where-is-brett/wheelhouse`, choose **Wheelhouse** from it, choose **this project** when asked where, then start a new session on the folder.
+5. **If the commands don't work,** use the plugin browser instead: click the **+** button beside the message box, then **Add plugins** (or **Plugins**, then **Browse plugins**). Add the catalogue as `where-is-brett/wheelhouse#main` (the part after `#` names what you install: the main line until `v0.3.0` is tagged, then the release; without it you get whatever is newest), choose **Wheelhouse** from it, choose **this project** when asked where, then start a new session on the folder.
+
+   <!-- Until v0.3.0 is tagged, the plugin browser line installs from main. Once tagged, restore: `where-is-brett/wheelhouse#v0.3.0` -->
 
 Setup goes one step at a time. Each step shows you a card listing exactly what it will change, and nothing changes until you click **Go ahead**. You can stop at any card and carry on later: setup picks up where it left off. To take Wheelhouse out of a project again, type `/wheelhouse:uninstall` in a session on it.
 
@@ -65,11 +67,15 @@ Where your conversations, transcripts and records go, and what uninstall removes
 
 What Wheelhouse protects you from, what it doesn't, and how to report a problem are in [`SECURITY.md`](SECURITY.md). Setup switches these protections on by itself; on a Mac you can also choose **Make it stricter** when it asks how to connect to GitHub or GitLab.
 
-## A second or throwaway home
+## Your usual answers
+
+Setup keeps your usual host, GitLab address, git route and connection, once for each computer. On the next project it opens step 3 with **Use your usual setup?**: **Use my usual** takes them, and setup still reaches the host and still checks that builders can sign in; **Choose each** asks each question as before. When your answers differ from the usual, or none are kept yet, setup ends step 3 by asking whether to keep them. They live in your settings on that computer only, so nothing is exported or shared, a project's own answer wins in that project, and you change them later from the settings card.
+
+## Trying Wheelhouse without touching your usual setup
 
 Wheelhouse keeps its records on a computer in one folder, `.wheelhouse` in your home folder. To try it in a folder of its own (a rehearsal, or a second set-up that must not touch the first), give the folder to the session in one of two ways.
 
-**In the product's Claude settings.** Put this in `.claude/settings.local.json` in the product's folder, before the first Wheelhouse chat there, with a full path:
+**In the product's Claude settings.** Put this in `.claude/settings.json` in the trial project's folder (or `.claude/settings.local.json`, which stays on your computer), before the first Wheelhouse chat there, with a full path. It reaches Desktop and terminal sessions alike:
 
 ```json
 { "env": { "WHEELHOUSE_HOME": "/Users/you/wheelhouse-trial" } }
@@ -84,7 +90,7 @@ export WHEELHOUSE_HOME="$HOME/wheelhouse-trial"         # macOS
 $env:WHEELHOUSE_HOME = "$HOME\wheelhouse-trial"          # Windows PowerShell
 ```
 
-The build engine's folder moves with it, to the same name with `-engine` added. A computer with a home of its own gets no start-up entry (no Run entry on Windows, no launch agent loaded on a Mac), on purpose: that entry belongs to the real home, and a trial must never replace it. Take the home out by deleting its folder.
+Wheelhouse's own background processes (its helper and each project's watcher) start with a clean environment of their own and serve one home each, so a trial's processes never write to your usual home. A trial's processes stop an hour after the last session in that home ends. The build engine's folder moves with it, to the same name with `-engine` added. A computer with a home of its own gets no start-up entry (no Run entry on Windows, no launch agent loaded on a Mac), on purpose: that entry belongs to the real home, and a trial must never replace it. Ending a trial is All stop, then deleting the folder.
 
 ## Updating
 

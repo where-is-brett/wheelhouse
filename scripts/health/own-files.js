@@ -17,6 +17,7 @@ import { wheelhouseHome } from '../lib/paths.js';
 import { loginStartRecord } from '../lib/login-start.js';
 import { MARKETPLACE, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { fetchTag, tagTree } from '../update/release.js';
+import { pluginVersion } from '../lib/plugin-version.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Folders never walked into: a repository's history, and installed packages.
@@ -123,9 +124,9 @@ export function ownFilesChanged(baseline, now) {
 // A file's hash as the update records it for the files it wrote: the same as the look's own (null when it can't be read).
 export const fileHash = (file, read = fs.readFileSync) => hashOf(file, read);
 
-const versionOf = (root) => {
-  try { return String(JSON.parse(fs.readFileSync(path.join(root, '.claude-plugin', 'plugin.json'), 'utf8')).version); } catch { return null; }
-};
+const versionOf = pluginVersion;
+// A version that names a release, so has a tag to check against.
+const RELEASE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 const bareVersion = (v) => String(v ?? '').replace(/^v/, '');
 
@@ -166,17 +167,44 @@ export function readOwnFilesState() {
   }
 }
 
-function writeState(state) {
+// How many files outside the plugin folders a state keeps a hash for. A plugin folder's files come and go with its
+// version, so they are not counted; nor is the older flat shape ({ files }), which held the plugin folder's files too and
+// is replaced whole by the first look after an update.
+function filesKept(state) {
+  const files = state?.others?.files;
+  return files && typeof files === 'object' && !Array.isArray(files) ? Object.keys(files).length : 0;
+}
+
+// The board's words when a write was refused for shrinking the list, with the way out.
+export const SHRINK_LINE = 'Wheelhouse kept its list of the files that guard your project as it was: a change would have dropped more than half of them at once. If you removed those files yourself (an add-on\'s files, say), run Wheelhouse\'s setup again and it takes the new list. If you didn\'t, look into it before you carry on';
+
+// Writes the state whole. The list only grows during use (uninstall removes the file instead): a write that would keep
+// fewer than half the files the state held is refused, and the state it replaces is kept with a mark the board names.
+// `shrink: true` is setup's own acceptance of the files it removed, which may shrink the list. The mark stays through the
+// looks until an acceptance is written (`accept: true`). Answers true when the state was written.
+function writeState(state, { shrink = false, accept = false } = {}) {
   const file = ownFilesFile();
+  const before = readOwnFilesState();
+  const was = filesKept(before);
+  const now = filesKept(state);
+  const refused = !shrink && was > 0 && now * 2 < was;
+  const { shrinkRefused: _old, ...written } = state;
+  const mark = refused ? { at: new Date().toISOString(), from: was, to: now } : (accept ? null : before?.shrinkRefused ?? null);
+  const body = { ...(refused ? before : written), ...(mark ? { shrinkRefused: mark } : {}) };
   const temp = `${file}.${process.pid}.tmp`;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(temp, `${JSON.stringify(state)}\n`);
+    fs.writeFileSync(temp, `${JSON.stringify(body)}\n`);
     fs.renameSync(temp, file);
   } catch {
     fs.rmSync(temp, { force: true }); // the look still answers; it is made again next time
+    return false;
   }
+  return !refused;
 }
+
+// The board's words when a write was refused for shrinking the list, as part of a look's answer.
+const refusedOf = (state) => (state?.shrinkRefused ? { refused: SHRINK_LINE } : {});
 
 const updatesOf = (state) => (Array.isArray(state?.updates) ? state.updates : []);
 
@@ -200,8 +228,8 @@ function freshState({ folders, others, updates, at, read }) {
 }
 
 // Makes the baseline afresh from the files as they are now, which is what the director accepts when they know the change.
-// The update's records are kept.
-export function acceptOwnFiles({ now = () => new Date(), claudeHome, projects, root, ...where } = {}) {
+// The update's records are kept. `shrink: true` (setup's run after a refused shrink) lets the new list be the smaller one.
+export function acceptOwnFiles({ now = () => new Date(), claudeHome, projects, root, shrink = false, ...where } = {}) {
   const at = now().toISOString();
   writeState(freshState({
     folders: foldersToLook({ claudeHome, projects, root }),
@@ -209,7 +237,7 @@ export function acceptOwnFiles({ now = () => new Date(), claudeHome, projects, r
     updates: updatesOf(readOwnFilesState()),
     at,
     read: where.read,
-  }));
+  }), { shrink, accept: true });
 }
 
 // When a file, or the folder a removed file was in, last changed, or null when that folder is gone too. A time after now is
@@ -227,13 +255,19 @@ function changedAt(file) {
 
 // Accepts the changes to the files outside the plugin folders made since `since` (an ISO time: setup's start), which are setup's
 // own writes, at their hashes now; a change made before then stays in the baseline as it was, so the look still names it. The
-// plugin folders are left to the look's own check against the tag's tree. With no baseline it is made afresh, as the look would.
+// plugin folders are left to the look's own check against the tag's tree. With no baseline it is made afresh, as the look would,
+// and so it is after a refused shrink. The files setup removed may shrink the list.
 // The next look walks the files again.
 export function acceptOwnWritesSince({ since, now = () => new Date(), claudeHome, projects, root, ...where } = {}) {
   const state = readOwnFilesState();
   const from = Date.parse(since);
   if (state === null || typeof state.folders !== 'object' || state.folders === null) {
     acceptOwnFiles({ now, claudeHome, projects, root, ...where });
+    return;
+  }
+  // After a refused shrink the board told the director that running setup takes the new list: it is made afresh.
+  if (state.shrinkRefused) {
+    acceptOwnFiles({ now, claudeHome, projects, root, shrink: true, ...where });
     return;
   }
   if (Number.isNaN(from)) return;
@@ -247,7 +281,7 @@ export function acceptOwnWritesSince({ since, now = () => new Date(), claudeHome
     else next.delete(file);
   }
   const { checkedAt: _looked, changed: _named, calm: _calm, ...kept } = state;
-  writeState({ ...kept, schema: 2, others: { files: Object.fromEntries(next) } });
+  writeState({ ...kept, schema: 2, others: { files: Object.fromEntries(next) } }, { shrink: true, accept: true });
 }
 
 // Records an update for the look: { from, to, at, answer, wrote: [{ file, hash }] }, the files the update itself wrote with
@@ -330,7 +364,7 @@ export async function checkOwnFiles({ now = () => new Date(), claudeHome, projec
   });
   if (state === null || typeof state.folders !== 'object' || state.folders === null) {
     acceptOwnFiles({ now, claudeHome, projects, ...where });
-    return { changed: [], ...summary(new Map(), []) };
+    return { changed: [], ...summary(new Map(), []), ...refusedOf(readOwnFilesState()) };
   }
   const sameFolders = folders.length === Object.keys(state.folders).length
     && folders.every((f) => state.folders[f.folder]?.version === f.version);
@@ -339,7 +373,7 @@ export async function checkOwnFiles({ now = () => new Date(), claudeHome, projec
     const changed = Array.isArray(state.changed) ? state.changed : [];
     const result = { changed, ...summary(new Map(folders.map((f) => [f.folder, changed.filter((c) => c.startsWith(f.folder + path.sep))])), changed.filter((c) => !folders.some((f) => c.startsWith(f.folder + path.sep)))) };
     if (typeof state.calm === 'string') result.calm = state.calm;
-    return result;
+    return { ...result, ...refusedOf(state) };
   }
 
   const lookup = treeFor ?? defaultTreeFor({ run, mirror, url });
@@ -366,8 +400,9 @@ export async function checkOwnFiles({ now = () => new Date(), claudeHome, projec
       nextFolders[f.folder] = kept;
       continue;
     }
-    // A version move, or a folder not seen before: accepted only against the tag's tree.
-    const tree = f.version === null ? null : await treeOf(f.version);
+    // A version move, or a folder not seen before: accepted only against the tag's tree. A build from the main line
+    // (its version a commit or DEV_VERSION) has no tag, so it can't be checked and nothing is fetched for it.
+    const tree = typeof f.version === 'string' && RELEASE.test(f.version) ? await treeOf(f.version) : null;
     if (tree === null) continue; // can't be checked now: nothing accepted, nothing named, looked at again
     const verdict = matchesTree(f.folder, tree);
     if (!verdict.ok) { changedBy.set(f.folder, verdict.bad); continue; }
@@ -394,7 +429,7 @@ export async function checkOwnFiles({ now = () => new Date(), claudeHome, projec
   }
 
   const changed = [...[...changedBy.values()].flat(), ...other].sort();
-  writeState({
+  const written = writeState({
     schema: 2,
     at: state.at ?? at.toISOString(),
     checkedAt: at.toISOString(),
@@ -404,7 +439,7 @@ export async function checkOwnFiles({ now = () => new Date(), claudeHome, projec
     changed,
     ...(calm.length > 0 ? { calm: calm.join('\n') } : {}),
   });
-  return { changed, ...(calm.length > 0 ? { calm: calm.join('\n') } : {}), ...summary(changedBy, other) };
+  return { changed, ...(calm.length > 0 ? { calm: calm.join('\n') } : {}), ...summary(changedBy, other), ...refusedOf(written ? readOwnFilesState() : state) };
 }
 
 const defaultMirror = () => path.join(wheelhouseHome(), 'update', 'mirror');

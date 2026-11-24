@@ -21,6 +21,7 @@ import { run as realRun } from '../../../scripts/lib/run.js';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
 import { g } from '../../helpers/git-fixture.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
+import { computerId } from '../../../scripts/lib/paths.js';
 
 const NOW = new Date('2026-11-01T03:00:00.000Z');
 const hostLog = [];
@@ -28,7 +29,9 @@ const guarded = guardedRun(realRun, { log: hostLog });
 after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const said = (label) => ({ label, text: null, at: NOW.toISOString() });
-const stepFor = (extra = {}) => hostStep({ run: guarded, findGit: async () => ({ ok: true, path: 'git' }), open: async () => {}, sleep: async () => {}, pick: async () => null, ...extra });
+// This computer's builder route is kept already, so step 3 doesn't ask where builders start (host.test.js covers that).
+const routeKept = () => ({ settings: { [`builders:${computerId()}`]: { value: 'background' } }, unconfirmed: [] });
+const stepFor = (extra = {}) => hostStep({ views: routeKept, run: guarded, findGit: async () => ({ ok: true, path: 'git' }), open: async () => {}, sleep: async () => {}, pick: async () => null, ...extra });
 const ctxFor = (folder, extra = {}) => ({ folder, step: 3, now: () => NOW, platform: 'darwin', userHome: folder, answers: {}, desktop: true, ...extra });
 
 const folderOf = (name = 'Shop') => {

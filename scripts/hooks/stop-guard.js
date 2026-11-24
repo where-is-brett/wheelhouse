@@ -16,6 +16,8 @@ import { QUESTION_ID } from '../feature/files.js';
 import { stopState, NO_HELPER_STOP } from '../lib/stop.js';
 import { markBypass, clearBypass } from '../lib/bypass.js';
 import { releaseSeat } from '../lib/first-mate-seat.js';
+import { wheelhouseHome } from '../lib/paths.js';
+import { touchLastSession } from '../lib/standard-env.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import tools from '../../adapters/claude-code/tools.js';
@@ -125,9 +127,8 @@ function isFeatureRead(command, pluginRoots, platform) {
 
 // The front desk's commands that only read (scripts/frontdesk/cli.js), by their exact words:
 // `cards`, `decision list`, `decision show <n>`, `similar`, `similar <the request's words>` (see REQUEST), `again <n>`, `views <name>`,
-// `explain <term>` (one to four words of letters and digits, a word's parts joined by hyphens) and
-// `preview <pull request>`, and `confirm lift-stop` and `confirm seat-take-over`, which only open the helper's window on the Lift All stop
-// card or the First Mate's seat card (the director's click there signs the record; the command itself writes nothing). `cards` and `again` record which cards they handed out, and under STOP
+// `explain <term>` (one to four words of letters and digits, a word's parts joined by hyphens),
+// `preview <pull request>` and `show <work id>`. `cards` and `again` record which cards they handed out, and under STOP
 // the helper refuses that write, so the cards are still given. `card` and `record` write, so they
 // stay refused, as does every other form. The lineage hold lets the same forms through (ruling F70).
 const VIEW_NAMES = ['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey'];
@@ -159,7 +160,7 @@ export function isFrontDeskRead(command, pluginRoots, platform) {
   if (name === 'cards') return rest.length === 0;
   if (name === 'similar') return rest.length === 0 || REQUEST.test(rest.join(' '));
   if (name === 'again' || name === 'preview') return rest.length === 1 && COUNT.test(rest[0]);
-  if (name === 'confirm') return rest.length === 1 && (rest[0] === 'lift-stop' || rest[0] === 'seat-take-over');
+  if (name === 'show') return rest.length === 1 && /^[a-z0-9-]{1,40}$/.test(rest[0]);
   if (name === 'views') return rest.length === 1 && VIEW_NAMES.includes(rest[0]);
   if (name === 'decision') return (rest.length === 1 && rest[0] === 'list') || (rest.length === 2 && rest[0] === 'show' && COUNT.test(rest[1]));
   if (name === 'explain') {
@@ -254,6 +255,8 @@ export { pluginRoots };
 // would make the helper refuse every push and merge on the computer for as long as it stood. Such a call clears the
 // session's marker as a call in another mode does. STOP holds there as anywhere.
 // The session's end gives up the First Mate's seat when this session holds it. Never throws.
+// In a project, every call and the session's end keep the home's last-session time (scripts/lib/standard-env.js), at most
+// once in five minutes between calls.
 function releaseAtEnd(project, session) {
   try {
     if (typeof project === 'string' && typeof session === 'string') releaseSeat(project, session);
@@ -276,6 +279,10 @@ export async function decide(input, {
   const inProject = Boolean(found) || byPath === true || (byPath === false && beingSetUp(cwd) !== null);
   const sessionEnd = input.hook_event_name === 'SessionEnd';
   if (sessionEnd) releaseAtEnd(found?.project, input.session_id);
+  // A session of the home is running, or has just ended: a throwaway home's processes stop an hour after the last one.
+  if (inProject) {
+    try { touchLastSession(wheelhouseHome(), sessionEnd ? { gapMs: 0 } : {}); } catch { /* the watcher carries on as it was */ }
+  }
   if (inProject && bypass !== false && writeVia === 'self') {
     if (sessionEnd) {
       clearBypass(input.session_id);

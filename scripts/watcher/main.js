@@ -30,8 +30,9 @@
 // (control-files.js) is raised through the helper as a plain record, for the
 // director's card (raiseRecord).
 //
-// Under STOP it goes on observing and recording, and the waker holds every
-// wake until STOP lifts.
+// Under STOP it idles (builders and settings design, section 12A.6): it keeps its
+// lock and its heartbeat, ends the sessions it started, and observes, wakes and
+// records nothing until STOP lifts.
 //
 // The configuration is the default branch's, asked of the helper, which reads
 // it in its own mirror: never the working copy, which an agent can edit. Until
@@ -57,6 +58,7 @@ import { findLostSessions, resumeLost } from './resume.js';
 import { raiseStuckCards } from './stuck-cards.js';
 import { makeDecisionBatcher } from './decision-batch.js';
 import { makeDigestTicker } from './digest.js';
+import { stopState } from '../lib/stop.js';
 import { makeWaker, watcherDir, watcherFolder, writeJsonFile, writeWake } from './waker.js';
 import { foremanTools } from '../foreman/tools.js';
 import { cleanOrphans } from '../crew/hold.js';
@@ -64,6 +66,9 @@ import { readConfig } from '../gate/guardrails.js';
 import { helperClient } from '../host/helper-client.js';
 import { runsByLauncher } from '../lib/crew-names.js';
 import { takeStartLock } from '../lib/start-lock.js';
+import { wheelhouseHome } from '../lib/paths.js';
+import { projectHeld, projectRegistered } from '../lib/projects.js';
+import { homeLabel, throwawayIdle } from '../lib/standard-env.js';
 import { PROTECTED_KINDS, makeEvent } from '../state/events.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -138,6 +143,9 @@ const pause = (ms, signal) => new Promise((resolve) => {
 // and the start script; `handled(observation)` gives the ids the foreman
 // wrote while handling a wake, which go to the digest (cliOptions reads them
 // from handled.js).
+// How long a watcher waits before it looks again at a home or registration it found missing.
+export const RECHECK_MS = 2000;
+
 export async function runWatcher({
   project,
   client = helperClient(),
@@ -145,6 +153,7 @@ export async function runWatcher({
   observe: look = observe,
   waker = null,
   wakerOptions = {},
+  stopped = () => stopState().on,
   now = () => new Date(),
   sleep = pause,
   intervals = {},
@@ -163,13 +172,42 @@ export async function runWatcher({
 
   watcherFolder(project);
   const lock = lockFile(project);
+  // The home this watcher serves, recorded in its lock. It never writes outside it.
+  const served = wheelhouseHome();
   let release;
   try {
-    release = await takeStartLock(lock, { message: 'A watcher is already running for this project', waitMs: 0 });
+    release = await takeStartLock(lock, { message: 'A watcher is already running for this project', waitMs: 0, extra: `${homeLabel(served)}\n` });
   } catch {
     return { started: false };
   }
-  const mine = `${process.pid}\n`;
+  const mine = `${process.pid}\n${homeLabel(served)}\n`;
+  // Whether the home's folder is gone: only a look that finds nothing there says so, never one that fails another way.
+  const homeGone = () => {
+    try {
+      fs.statSync(served);
+      return false;
+    } catch (error) {
+      return error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
+    }
+  };
+  // Why this watcher has no business running, or null: its home is gone, its project isn't registered in that home, the
+  // project is held, or it is a throwaway home whose last session ended over an hour ago. A registration that can't be
+  // read, or a held mark that doesn't read, is not a reason: the watcher carries on.
+  const noBusiness = () => {
+    if (homeGone()) return 'its home is gone';
+    if (projectRegistered(project) === false) return "its project isn't registered in its home";
+    if (projectHeld(project)) return 'its project is held';
+    if (throwawayIdle(served, { now })) return 'no session of its home has run for an hour';
+    return null;
+  };
+  // A folder found missing is looked at again a moment later, so a removal and re-registration under way, or a disk that
+  // answered late, never stops the watcher on one look.
+  const settled = async () => {
+    const first = noBusiness();
+    if (first === null || (first !== 'its home is gone' && first !== "its project isn't registered in its home")) return first;
+    await sleep(RECHECK_MS, signal);
+    return noBusiness();
+  };
   const stillMine = () => {
     try {
       return fs.readFileSync(lock, 'utf8') === mine;
@@ -197,27 +235,36 @@ export async function runWatcher({
     let pruned = null;
     let gapSent = null;
     let last = null;
-    // Holds the director left behind (no open helm in the records) are cleared once, as the watcher starts.
-    try {
-      // The views as the helper gives them, not as the foreman reads them: a reading with no `helm` in it would clear every hold.
-      const answer = await client.state.views({ project });
-      const helm = answer?.ok === true ? answer.views?.helm : undefined;
-      if (helm !== null && typeof helm === 'object' && !Array.isArray(helm)) cleanOrphans(project, answer.views, { now });
-    } catch (error) {
-      log(`Old helm holds couldn't be looked for: ${error.message}`);
-    }
-    // Pieces whose helm terminal closed while the watcher was off are handed back, once, as it starts.
-    await handBackClosed(project, {
-      configOf: async () => {
-        const read = await projectConfig(project, client);
-        if (read.config === null) throw new Error(read.why);
-        return read.config;
-      },
-      now, log, ...helm,
-    });
+    // What the watcher does once as it starts, at its first loop not under All stop (it writes, and can queue a wake).
+    let startedUp = false;
+    const startUp = async () => {
+      // Holds the director left behind (no open helm in the records) are cleared.
+      try {
+        // The views as the helper gives them, not as the foreman reads them: a reading with no `helm` in it would clear every hold.
+        const answer = await client.state.views({ project });
+        const helm = answer?.ok === true ? answer.views?.helm : undefined;
+        if (helm !== null && typeof helm === 'object' && !Array.isArray(helm)) cleanOrphans(project, answer.views, { now });
+      } catch (error) {
+        log(`Old helm holds couldn't be looked for: ${error.message}`);
+      }
+      // Pieces whose helm terminal closed while the watcher was off are handed back.
+      await handBackClosed(project, {
+        configOf: async () => {
+          const read = await projectConfig(project, client);
+          if (read.config === null) throw new Error(read.why);
+          return read.config;
+        },
+        now, log, ...helm,
+      });
+    };
     for (let n = 0; n < loops && !signal?.aborted; n += 1) {
       if (n > 0) await sleep(every.features, signal);
       if (signal?.aborted) break;
+      const gone = await settled();
+      if (gone !== null) {
+        log(`This watcher stops: ${gone}.`);
+        return { started: true, loops: n, stopped: gone };
+      }
       if (!stillMine()) {
         log('Another watcher has taken over this project; this one stops.');
         return { started: true, loops: n };
@@ -257,12 +304,27 @@ export async function runWatcher({
         }
       }
 
+      // Under All stop it idles: the lock and the heartbeat only, and the detached sessions it started ended. Nothing is
+      // observed, woken, pruned, counted or written, so lifting All stop takes effect in one tick with nothing to restart.
+      const idle = stopped();
       try {
         writeJsonFile(healthFile(project), {
-          pid: process.pid, at: t.toISOString(), shape, ...(health.lastOk ? { lastOk: health.lastOk } : {}), ...(health.lastError ? { lastError: health.lastError } : {}),
+          pid: process.pid, at: t.toISOString(), shape, ...(idle ? { idle: 'All stop' } : {}), ...(health.lastOk ? { lastOk: health.lastOk } : {}), ...(health.lastError ? { lastError: health.lastError } : {}),
         });
       } catch (error) {
         log(`The watcher's health can't be written: ${error.message}`);
+      }
+      if (idle) {
+        try {
+          await wake?.stopAll?.();
+        } catch (error) {
+          fault(`The sessions couldn't all be stopped: ${error.message}`);
+        }
+        continue;
+      }
+      if (!startedUp) {
+        startedUp = true;
+        await startUp();
       }
       if (wake === null) continue; // nothing observed, nothing woken, the cursor kept as it is
 

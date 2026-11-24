@@ -9,7 +9,8 @@ import path from 'node:path';
 import {
   decide, decideWithSeat, shellChanges, FRONT_DESK_NO_WRITES, ASIDE_NO_WRITES, lockedDocuments, APPROVED_LOCKED, NO_STATUS_LINE, statusLineIn,
 } from '../../../scripts/hooks/front-desk-writes.js';
-import { sessionRole } from '../../../scripts/lib/role.js';
+import { sessionRole, recordRole } from '../../../scripts/lib/role.js';
+import { BUILDER_PROMPT_LEAD } from '../../../scripts/foreman/prompt-lead.js';
 import { readSeat } from '../../../scripts/lib/first-mate-seat.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { inHome, keep } from '../../helpers/decisions-world.js';
@@ -190,6 +191,19 @@ test('the holder may not write the product\'s files', () => {
     assert.ok(denied(out));
     assert.equal(out.hookSpecificOutput.permissionDecisionReason, FRONT_DESK_NO_WRITES('src/a.js'));
     assert.match(out.hookSpecificOutput.permissionDecisionReason, /worktree/);
+  });
+});
+
+test('a first prompt that starts with the builder lead, in the project\'s own checkout, keeps the write guard', () => {
+  const { folder, worktree } = project();
+  withSeat('s1', () => {
+    // The role the board-context hook records from the first prompt, then the write the session tries.
+    const role = sessionRole({ sessionId: 's1', env: {}, prompt: `${BUILDER_PROMPT_LEAD} write src/a.js`, cwd: folder, seat: readSeat('p') });
+    assert.equal(role, 'front-desk');
+    recordRole('s1', role);
+    assert.ok(denied(decide(write(folder, path.join(folder, 'src', 'a.js')), bySeat(folder))));
+    // In a linked worktree the lead is a builder's.
+    assert.equal(sessionRole({ sessionId: 's2', env: {}, prompt: `${BUILDER_PROMPT_LEAD} read the brief`, cwd: worktree, seat: readSeat('p') }), 'feature');
   });
 });
 
@@ -413,7 +427,7 @@ test('on an agent whose hooks only read, a seat write with no --session, or with
   const { folder } = project();
   const opts = options(folder, { writeVia: 'helper' });
   for (const launcher of ['wh-frontdesk', NODE_CLI]) {
-    for (const command of ['cards', 'record ruling', 'confirm seat-take-over', 'confirm lift-stop', 'helm take login']) {
+    for (const command of ['cards', 'record ruling', 'undo ' + 'a'.repeat(40), 'helm take login']) {
       const bare = decide(shell(`${launcher} ${command}`, 's1', folder), opts);
       assert.ok(denied(bare), `${launcher} ${command}`);
       assert.match(bare.hookSpecificOutput.permissionDecisionReason, /--session s1/);
@@ -441,7 +455,7 @@ test('only a pure help call skips the session: help beside other words, or as th
 test('a seat write that carries the chat\'s own id passes, wherever the flag stands', () => {
   const { folder } = project();
   const opts = options(folder, { writeVia: 'helper' });
-  for (const command of ['wh-frontdesk cards --session s1', 'wh-frontdesk --session s1 cards', 'wh-frontdesk cards --session=s1', `${NODE_CLI} confirm seat-take-over --session s1`, 'FOO=bar wh-frontdesk record ruling --session s1']) {
+  for (const command of ['wh-frontdesk cards --session s1', 'wh-frontdesk --session s1 cards', 'wh-frontdesk cards --session=s1', `${NODE_CLI} undo ${'a'.repeat(40)} --session s1`, 'FOO=bar wh-frontdesk record ruling --session s1']) {
     assert.equal(decide(shell(command, 's1', folder), opts), undefined, command);
   }
 });
@@ -459,7 +473,7 @@ test('every command in a chained line is checked, and a command that only reads 
 
 test('the check holds for an aside in the main folder too, and for a session with no id', () => {
   const { folder } = project();
-  assert.ok(denied(decide(shell('wh-frontdesk confirm seat-take-over', 's2', folder), options(folder, { writeVia: 'helper', role: () => 'aside' }))));
+  assert.ok(denied(decide(shell('wh-frontdesk undo ' + 'a'.repeat(40), 's2', folder), options(folder, { writeVia: 'helper', role: () => 'aside' }))));
   assert.ok(denied(decide(shell('wh-frontdesk cards', undefined, folder), options(folder, { writeVia: 'helper' }))));
 });
 
@@ -468,7 +482,7 @@ test('Claude Code is unchanged: no --session is asked of it', () => {
   for (const writeVia of [undefined, 'self']) {
     const opts = options(folder, writeVia === undefined ? {} : { writeVia });
     assert.equal(decide(shell('wh-frontdesk cards', 's1', folder), opts), undefined);
-    assert.equal(decide(shell(`${NODE_CLI} confirm seat-take-over`, 's1', folder), opts), undefined);
+    assert.equal(decide(shell(`${NODE_CLI} undo ${'a'.repeat(40)}`, 's1', folder), opts), undefined);
   }
 });
 

@@ -8,7 +8,7 @@ import { spawnSync, spawn as spawnChild } from 'node:child_process';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
-  decide, toolSheetLines, NO_HELPER, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
+  decide, toolSheetLines, cardCommandLines, NO_HELPER, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
   importedLine, importFailedLine, keptLine, NOT_SET_UP, TITLES, sessionTitle, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, NO_ANSWER, NO_REASON, heldElsewhere, TAKEOVER_ASK, SEAT_TAKEOVER_ASK, RECENT_MS,
 } from '../../../scripts/hooks/session-start.js';
 import { SETTINGS_CHANGED, settingsCardNote } from '../../../scripts/lib/settings-card.js';
@@ -29,6 +29,7 @@ import { removeFolder } from '../../helpers/remove.js';
 import { stopWatcher } from '../../../scripts/foreman/start.js';
 import { beingSetUp, removedFrom } from '../../../scripts/hooks/kit.js';
 import { addCopy, lineageFixture, SHA } from '../../helpers/lineage.js';
+import { writeSignInFact } from '../../../scripts/lib/sign-in-gate.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
 import { helperAddress, keysDir, computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { lowNodeReady, selfTestFile } from '../../../scripts/windows/low.js';
@@ -48,6 +49,7 @@ import { journalFile } from '../../../scripts/lib/setup-run.js';
 import { beforeTimer, nodeStartMs } from '../../helpers/until.js';
 import { searchPathIn } from '../../helpers/env.js';
 import { makeFeatureFolder } from '../../helpers/made-feature.js';
+import { CARD_COMMANDS_LEAD } from '../../../scripts/lib/card-commands.js';
 
 const P = 'owner__name';
 
@@ -96,7 +98,7 @@ const text = (out) => out?.hookSpecificOutput?.additionalContext ?? '';
 // The context without the tool sheet and the command line (tests/skills/tool-names.test.js pins those),
 // for the tests that pin the other lines of a short reload exactly.
 const SHEET_LINES = new Set(toolSheetLines('claude-code', { pluginRoot: PLUGIN_ROOT, platform: 'darwin' }));
-const withoutSheet = (out) => text(out).split('\n').filter((l) => !SHEET_LINES.has(l) && !l.startsWith('The Wheelhouse command is ')).join('\n');
+const withoutSheet = (out) => text(out).split('\n').filter((l) => !SHEET_LINES.has(l) && !l.startsWith('The Wheelhouse command is ') && !l.startsWith('The First Mate\'s card commands')).join('\n');
 const call = (cwd, tool) => ({ cwd, session_id: 's1', hook_event_name: 'PreToolUse', tool_name: tool, tool_input: {} });
 
 test('a helper that answers is not started again', async () => {
@@ -180,15 +182,16 @@ test('a project in git alone has no lock branch: the session start asks for no l
   });
 });
 
-test('a lock refused because the computer\'s git settings changed tells the First Mate to confirm them in the window, by the code and the card the helper raised', async () => {
+test('a lock refused because the computer\'s git settings changed tells the First Mate to ask the card the helper raised, by the code and the card', async () => {
   await withHome(async () => {
     const card = '0b7c1d1e-2f3a-4b5c-8d6e-7f8091a2b3c4';
     const said = fake();
-    withLock(said, { touch: { ok: false, refused: 'x' }, take: { ok: false, refused: 'The lock could not be pushed: Nothing was pushed: settings changed', code: SETTINGS_CHANGED, needs: 'window', card } });
+    withLock(said, { touch: { ok: false, refused: 'x' }, take: { ok: false, refused: 'The lock could not be pushed: Nothing was pushed: settings changed', code: SETTINGS_CHANGED, needs: 'card', card } });
     const out = text(await run(said));
     assert.ok(out.includes(NO_LOCK));
     assert.ok(out.includes(settingsCardNote(card)));
-    assert.match(out, new RegExp(`run the Wheelhouse command \`confirm ${card}\``));
+    assert.match(out, /run `cards` and ask what it gives/);
+    assert.doesNotMatch(out, /window|confirm 0b7c1d1e/);
 
     // The words alone, with no code, offer no card; nor does a code with no card.
     for (const take of [
@@ -198,7 +201,7 @@ test('a lock refused because the computer\'s git settings changed tells the Firs
     ]) {
       const other = fake();
       withLock(other, { touch: { ok: false, refused: 'x' }, take });
-      assert.doesNotMatch(text(await run(other)), /confirm 0b7c1d1e/);
+      assert.doesNotMatch(text(await run(other)), /ask what it gives/);
     }
   });
 });
@@ -819,6 +822,36 @@ test('the first session after an update says so once, naming its version and the
   });
 });
 
+// A copy from the main line: its plugin.json names no version.
+const mainLineRoot = (home) => {
+  const root = ownRoot(home);
+  fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'wheelhouse' }));
+  return root;
+};
+
+test('a copy from the main line retires a release\'s helper, and leaves another main-line helper alone', async () => {
+  await withHome(async (home) => {
+    const f = helperOf('0.2.10', () => ({ ok: true, retired: true }));
+    const out = text(await run(f, { pluginRoot: mainLineRoot(home) }));
+    assert.equal(f.retireCalls.retire, 1);
+    assert.equal(helperStarts(f), 1);
+    assert.doesNotMatch(out, /version dev/);
+    const same = helperOf('dev', () => ({ ok: true, retired: true }));
+    assert.doesNotMatch(text(await run(same, { pluginRoot: mainLineRoot(home) })), /The helper running is/);
+    assert.equal(same.retireCalls.retire, 0);
+  });
+});
+
+test('a main-line build is named in words, not as version dev', async () => {
+  await withHome(async (home) => {
+    const busy = helperOf('0.2.3', () => ({ ok: true, retired: false, busy: 'a setup step is running' }));
+    assert.match(text(await run(busy, { pluginRoot: mainLineRoot(home) })), /still finishing work; Wheelhouse moves to the new one \(a build from the main line\) when it is done/);
+    const f = fake();
+    f.client.health = async () => ({ ok: true, version: 'dev' });
+    assert.ok(text(await run(f, { pluginRoot: ownRoot(home, '0.3.0') })).includes('The helper running is a build from the main line; this copy is version 0.3.0'));
+  });
+});
+
 test('an older helper still at work is kept, with a plain note, and nothing is started or stopped', async () => {
   await withHome(async (home) => {
     const f = helperOf('0.2.3', () => ({ ok: true, retired: false, busy: 'a setup step is running' }));
@@ -1167,6 +1200,43 @@ test('the session start fails open when the configuration can\'t be had', async 
   });
 });
 
+test('a set-up project\'s session start holds the exact card command lines, and a session that is not the First Mate gets none', async () => {
+  await withHome(async () => {
+    const lines = text(await run(fake(), { env: {} })).split('\n');
+    const command = lines.find((l) => l.startsWith('The Wheelhouse command is ')).slice('The Wheelhouse command is '.length);
+    const card = lines.find((l) => l.startsWith('The First Mate\'s card commands'));
+    assert.ok(card, 'the card command line is given');
+    for (const word of [`\`${command} cards\``, `\`${command} card < <the card's file>\``, `\`${command} again <n>\``]) assert.ok(card.includes(word), word);
+    assert.deepEqual(cardCommandLines(['no command here']), []);
+  });
+});
+
+test('the card command lines reach the First Mate on every start: new, resumed, cleared and compacted', async () => {
+  await withHome(async () => {
+    for (const source of ['startup', 'resume', 'clear', 'compact']) {
+      const lines = text(await run(fake(), { env: {} }, { source })).split('\n');
+      assert.equal(lines.filter((l) => l.startsWith(CARD_COMMANDS_LEAD)).length, 1, source);
+    }
+  });
+});
+
+test('on an agent whose hooks only read, the First Mate gets the card command lines and an aside gets none', async () => {
+  await withHome(async () => {
+    const first = text(await readOnly(seatHelper())).split('\n');
+    const command = first.find((l) => l.startsWith('The Wheelhouse command is ')).slice('The Wheelhouse command is '.length);
+    const card = first.filter((l) => l.startsWith(CARD_COMMANDS_LEAD));
+    assert.equal(card.length, 1);
+    assert.ok(card[0].includes(`\`${command} cards\``));
+    assert.ok(first.indexOf(card[0]) === first.indexOf(`The Wheelhouse command is ${command}`) + 1, 'straight after the tool sheet');
+  });
+  await withHome(async () => {
+    putSeat(seatLine('a', 4));
+    const aside = text(await readOnly(seatHelper()));
+    assert.ok(aside.includes(asideFirst('4 minutes ago')));
+    assert.ok(!aside.includes(CARD_COMMANDS_LEAD), 'not for an aside');
+  });
+});
+
 test('in the project\'s main folder the reload names the front desk\'s playbook, after STOP and damaged state', async () => {
   await withHome(async () => {
     assert.equal(FRONT_DESK_LINE, 'This is the First Mate. Load wheelhouse:front-desk before you write anything, and never announce a skill: the director sees every line.');
@@ -1175,6 +1245,19 @@ test('in the project\'s main folder the reload names the front desk\'s playbook,
     const f = fake({ views: { ...VIEWS, damaged: ['events/bad.json could not be read'] } });
     const stopped = text(await run(f, { env: {}, stopState: () => ({ on: true, by: 'prompt', at: 'now' }) })).split('\n');
     assert.deepEqual(stopped.slice(0, 4), ['All stop is on (set by prompt at now)', 'Damaged state:', '- events/bad.json could not be read', FRONT_DESK_LINE]);
+  });
+});
+
+test('the Builders line states the recorded sign-in fact, to the First Mate only', async () => {
+  await withHome(async () => {
+    const builders = (out) => text(out).split('\n').filter((l) => l.startsWith('Builders:'));
+    assert.deepEqual(builders(await run(fake(), { env: {} })), ['Builders: not chosen · starting in the background']);
+    writeSignInFact(wheelhouseHome(), 'claude-code:background', { kind: 'not-signed-in', since: new Date(2026, 10, 24, 14, 2).toISOString(), command: 'claude', excerpt: 'Not logged in', starts: 1 });
+    assert.deepEqual(builders(await run(fake(), { env: {} })), ['Builders: not chosen · starting in the background · can\'t sign in since 14:02 (not signed in)']);
+    // A fact file that can't be read is said, never left out.
+    fs.writeFileSync(path.join(wheelhouseHome(), 'sign-in.json'), '{');
+    const [damaged] = builders(await run(fake(), { env: {} }));
+    assert.match(damaged, /^Builders: not chosen · .*sign-in\.json can't be read: line 1, column 2\./);
   });
 });
 
@@ -2479,27 +2562,28 @@ const seatHelper = () => {
 };
 const readOnly = (f, extra = {}, input = {}) => run(f, { writeVia: 'helper', agent: 'copilot', helperUp: true, env: {}, now: SOON(0), ...extra }, { session_id: 'b', ...input });
 const filesUnder = (dir) => fs.readdirSync(dir, { recursive: true }).map(String).sort();
-const WINDOW_ASK = 'The First Mate is in another window: when the director asks for Wheelhouse work, write no question and no options of your own';
-const windowRow = (out) => text(out).split('\n').find((l) => l.startsWith(WINDOW_ASK)) ?? null;
+const PLAIN_ASK = 'The First Mate is in another window: when the director asks for Wheelhouse work, write no question and no options.';
+const CARD_ASK = 'The First Mate is in another window: when the director asks for Wheelhouse work, show them this card with the question tool, exactly as given, as a question of its own: ';
+const windowRow = (out) => text(out).split('\n').find((l) => l.startsWith(PLAIN_ASK) || l.startsWith(CARD_ASK)) ?? null;
 
-test('on an agent whose hooks only read, another live holder gives the aside line and the window card before the lists, and no AskUserQuestion wording', async () => {
+test('on an agent whose click is not recorded yet, another live holder gives the aside line and a plain line before the lists, with no card and no window', async () => {
   await withHome(async (home) => {
     putSeat(seatLine('a', 4));
     const before = filesUnder(home);
     const out = await readOnly(seatHelper());
     const lines = text(out).split('\n');
     assert.ok(text(out).includes(asideFirst('4 minutes ago')));
-        const row = windowRow(out);
-    assert.ok(row !== null, 'the window line');
-    // No options are handed to the chat to write out: the window's own labels are the only ones the director meets.
+    const row = windowRow(out);
+    assert.ok(row !== null, 'the plain line');
+    assert.ok(row.startsWith(PLAIN_ASK));
+    // No options are handed to the chat to write out, and no window is named.
     assert.ok(!/Leave it there|Take over here|Not now|"options"/.test(row), 'no labels in the line');
     assert.match(row, /session a, last active 4 minutes ago/);
-    assert.ok(!text(out).includes('AskUserQuestion'), 'no click-question wording');
+    assert.doesNotMatch(text(out), /own window|confirm seat-take-over|AskUserQuestion/);
     assert.ok(!text(out).includes(SEAT_TAKEOVER_ASK));
-    assert.match(text(out), /confirm seat-take-over --session <your session id>/);
-    const at = lines.findIndex((l) => l.startsWith(WINDOW_ASK));
+    const at = lines.findIndex((l) => l.startsWith(PLAIN_ASK));
     const lists = lines.findIndex((l) => /^(Waiting on the director|Levels|Rulebook)/.test(l));
-    assert.ok(lists === -1 || at < lists, 'the card comes before the lists');
+    assert.ok(lists === -1 || at < lists, 'the line comes before the lists');
     assert.equal(readSeat(P).session, 'a');
     assert.deepEqual(filesUnder(home), before, 'nothing written under the home');
   });
@@ -2606,15 +2690,31 @@ test('on an agent whose hooks only read, a lock that could not be pushed takes t
   });
 });
 
-// The seat card has no route that records a click on it in the chat and moves the seat (the helper's hook-click route finds only
-// cards waiting in the state, and this one is composed from the seat on each look), so it goes to the window on every agent,
-// one whose picker click is recorded among them.
-test('on an agent whose picker click is recorded, the seat card is still shown as text and clicked in the window', async () => {
+// The seat card is composed from the seat on each look, and the helper's hook-click route finds it for the asking session, so an agent
+// whose picker click is recorded asks it with its question tool like any card.
+test('on an agent whose picker click is recorded, the seat card is given to ask with its question tool, exactly as composed', async () => {
   await withHome(async () => {
     putSeat(seatLine('a', 4));
     const out = await readOnly(seatHelper(), { picker: true });
-    assert.ok(windowRow(out) !== null, 'the window line');
-    assert.ok(text(out).includes('confirm seat-take-over'));
-    assert.ok(!text(out).includes('with your clickable-question tool'));
+    const row = windowRow(out);
+    assert.ok(row !== null && row.startsWith(CARD_ASK), 'the card line');
+    const card = JSON.parse(row.slice(CARD_ASK.length));
+    assert.match(card.question, /session a, last active 4 minutes ago/);
+    assert.ok(card.options.some((o) => o.label === 'Take over here'));
+    assert.doesNotMatch(text(out), /own window|confirm seat-take-over/);
+  });
+});
+
+test('the First Mate\'s start names a damaged project settings file, with its line and column', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-damaged-');
+    fs.mkdirSync(path.join(folder, '.claude'));
+    const file = path.join(folder, '.claude', 'settings.local.json');
+    fs.writeFileSync(file, '{\n "a": "C:\\Users\\x"\n}');
+    const damaged = await run(fake(), { projectOf: () => ({ project: P, record: { folder } }), claudeHome: path.join(folder, 'none') });
+    assert.ok(text(damaged).includes(`${file} can't be read: line 2, column 10. a single`), text(damaged));
+    fs.writeFileSync(file, '{}');
+    const whole = await run(fake(), { projectOf: () => ({ project: P, record: { folder } }), claudeHome: path.join(folder, 'none') });
+    assert.doesNotMatch(text(whole), /can't be read: line/);
   });
 });

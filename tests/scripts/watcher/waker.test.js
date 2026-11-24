@@ -10,7 +10,11 @@ import path from 'node:path';
 import {
   makeWaker, writeWake, readWake, wakesDir, sessionModeOf, featureModeOf, sessionEnv, spawnDetached, pidAlive, processStartTime, makeStartTimes,
   outboxFile, runningFile, sessionFile, lostFile, grantsUsedFile, watcherDir, PROMPTS, MAX_RUN_MS, STARTING_MS, windowsBuildsOf, premiumRestFile,
+  startsDir, failingFile, startHold, clearStartFailures, PROVE_MS, endProcess,
 } from '../../../scripts/watcher/waker.js';
+import { sessionsOfProject } from '../../../scripts/agents/project-agent.js';
+import { readSignIn, timeWords } from '../../../scripts/lib/sign-in-gate.js';
+import { stillRunning } from '../../../scripts/lib/heartbeats.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { briefHash, featurePaths } from '../../../scripts/feature/files.js';
 import { recordInState, briefFields, briefText } from '../../helpers/foreman.js';
@@ -24,6 +28,7 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { guardedCommand, selfTestFile } from '../../../scripts/windows/low.js';
 import { readBaseline, writeBaseline } from '../../../scripts/watcher/control-files.js';
+import { callLine, readCall } from '../../../scripts/watcher/hidden-start.js';
 import { holdFile, readHold, helmHeld } from '../../../scripts/crew/hold.js';
 import { nextWork } from '../../../scripts/foreman/queue.js';
 import { markUnopenedSteers } from '../../../scripts/foreman/wake.js';
@@ -57,6 +62,8 @@ const FLAT_COLUMN = [
   "reviewerCritical: model the session's own, effort high",
   "tester: model the session's own, effort medium",
 ];
+// A builder's prompt begins with the builder lead line (scripts/foreman/prompt-lead.js).
+const led = (prompt) => `Wheelhouse builder: ${prompt}`;
 const withColumn = (prompt, column = FLAT_COLUMN) => [prompt, '', ...column].join('\n');
 
 const config = (over = {}) => readConfig(JSON.stringify({
@@ -500,15 +507,17 @@ test('a feature bundle wakes only that feature\'s session, by the id the watcher
   const copy = path.join(featurePaths(login).dir, 'wakes', path.basename(record));
   assert.equal(call.cwd, login);
   assert.deepEqual(call.args, [
-    '-p', withColumn(`Wheelhouse: read ${copy}`), '--resume', SESSION,
+    '-p', withColumn(led(`Wheelhouse: read ${copy}`)), '--resume', SESSION,
     '--permission-mode', 'dontAsk', '--model', 'model-b', '--effort', 'high', '--allowedTools', ...ALLOWED, ...FILE_RULES,
   ]);
   assert.equal(fs.readFileSync(copy, 'utf8'), fs.readFileSync(record, 'utf8'));
   assert.equal(Object.hasOwn(call.env, 'WHEELHOUSE_ROLE'), false, 'a feature session is not the foreman, whatever the watcher inherited');
 
-  // A second wake while that session still runs waits for it; another feature does not.
+  // A second wake while that session still runs waits for it; another feature does not, once the first has run long
+  // enough to show builders sign in.
   const again = writeWake(P, featureBundle('login-page', 'f1'));
   await w.wakeFeature('login-page', again);
+  w.clock.move(PROVE_MS);
   await w.wakeFeature('search-box', writeWake(P, featureBundle('search-box', 'c1')));
   assert.equal(fake.calls.length, 2);
   assert.equal(fake.calls[1].cwd, search);
@@ -533,7 +542,7 @@ test('a feature started before its brief named the approved document gets it on 
   assert.equal(fake.calls.length, 1);
   const copy = path.join(featurePaths(login).dir, 'wakes', path.basename(record));
   assert.equal(fs.readFileSync(path.join(featurePaths(login).dir, 'approved.md'), 'utf8'), design);
-  assert.equal(fake.calls[0].args[1], withColumn(PROMPTS.feature(copy, { approved: true })));
+  assert.equal(fake.calls[0].args[1], withColumn(led(PROMPTS.feature(copy, { approved: true }))));
   assert.match(PROMPTS.feature(copy, { approved: true }), /^Wheelhouse: read .+\. The director's approved document for this work is now at \.wheelhouse\/feature\/approved\.md: it is the spec\./);
 }));
 
@@ -554,7 +563,7 @@ test('a feature whose brief names the approved document is woken with the plain 
   await w.wakeFeature('search-box', record);
   const copy = path.join(featurePaths(search).dir, 'wakes', path.basename(record));
   assert.equal(fs.existsSync(path.join(featurePaths(search).dir, 'approved.md')), false);
-  assert.equal(fake.calls[0].args[1], withColumn(`Wheelhouse: read ${copy}`));
+  assert.equal(fake.calls[0].args[1], withColumn(led(`Wheelhouse: read ${copy}`)));
 }));
 
 test('a feature wake waits while the watcher kept no session id, and is dropped once the feature is gone', () => withHome(async () => {
@@ -617,7 +626,7 @@ test('startFeature starts a session with an id of the watcher\'s own, in the wor
   const [call] = fake.calls;
   assert.equal(call.cwd, dir);
   assert.deepEqual(call.args, [
-    '-p', withColumn('Read .wheelhouse/feature/brief.md and follow it.'), '--session-id', started.sessionId,
+    '-p', withColumn(led('Read .wheelhouse/feature/brief.md and follow it.')), '--session-id', started.sessionId,
     '--permission-mode', 'acceptEdits', '--model', 'model-b', '--effort', 'high', '--allowedTools', ...ALLOWED, ...FILE_RULES,
   ]);
   assert.deepEqual(JSON.parse(fs.readFileSync(sessionFile(P, 'login-page'), 'utf8')).sessionId, started.sessionId);
@@ -1021,6 +1030,7 @@ test('the foreman, and only the foreman, is told it is the foreman; no session g
   const features = fakeRun();
   const w = waker(features, { locate: () => dir, baseEnv: { ...host, WHEELHOUSE_ROLE: 'foreman', wheelhouse_role: 'foreman' } });
   await w.startFeature({ work: 'search-box', worktree: worktree() });
+  w.clock.move(PROVE_MS); // the first start has run long enough to show builders sign in
   await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page')));
   assert.equal(features.calls.length, 2);
   for (const call of features.calls) assert.deepEqual(call.env, { PATH: BIN, CLAUDE_CONFIG_DIR: '/c', ANTHROPIC_API_KEY_HELPER: 'kept', ...FOREGROUND_ONLY });
@@ -1193,6 +1203,29 @@ test('spawnDetached starts a real process detached and gives its exit code; pidA
   assert.equal(await processStartTime(0), null);
   assert.equal(await processStartTime(1, { platform: 'win32', run: async () => ({ code: 0, stdout: '1 2026-10-19T09:00:00.0000000Z\r\n' }) }), '2026-10-19T09:00:00.0000000Z');
   assert.equal(await processStartTime(1, { run: async () => { throw new Error('no ps'); } }), null);
+});
+
+test('on Windows spawnDetached starts the program through hidden-start.js, which passes on its input, output and exit code', async (t) => {
+  const keep = setInterval(() => {}, 50);
+  t.after(() => clearInterval(keep));
+  const folder = tempFolder('wh-relay-');
+  const output = path.join(folder, 'out.log');
+  const script = 'let s="";process.stdin.on("data",(d)=>{s+=d}).on("end",()=>{process.stdout.write("got "+s);process.stderr.write("!");process.exit(s==="a b\\n\\"c\\""?4:5)})';
+  const child = await spawnDetached(process.execPath, ['-e', script], { input: 'a b\n"c"', output, platform: 'win32' });
+  assert.ok(Number.isInteger(child.pid));
+  assert.equal(await child.exited, 4, 'the input after the call line reaches the program, and its exit code comes back');
+  assert.equal(fs.readFileSync(output, 'utf8').replace('!', ''), 'got a b\n"c"');
+  assert.match(fs.readFileSync(output, 'utf8'), /!/, 'its errors are kept too');
+  const quiet = await spawnDetached(process.execPath, ['-e', 'process.exit(6)'], { platform: 'win32' });
+  assert.equal(await quiet.exited, 6, 'a program with no input is started too');
+  const missing = await spawnDetached(path.join(folder, 'no-such-program'), [], { platform: 'win32' });
+  assert.equal(await missing.exited, 1, 'a program that can\'t start ends the go-between with 1');
+});
+
+test('hidden-start reads the call line and the input after it, and nothing that is not a call', () => {
+  assert.deepEqual(readCall(`${callLine('cmd.exe', ['/d', '/c', '"x y"'], true)}rest\nof it`), { file: 'cmd.exe', args: ['/d', '/c', '"x y"'], verbatim: true, input: 'rest\nof it' });
+  assert.deepEqual(readCall(callLine('a.exe', [], undefined)), { file: 'a.exe', args: [], verbatim: false, input: '' });
+  for (const bad of ['', 'no line', '{"file":"a"}\n', '{"file":"","args":[]}\n', '{"file":"a","args":[1]}\n', 'null\n', '{\n']) assert.equal(readCall(bad), null, bad);
 });
 
 test('start times are asked for every running pid in one call, and kept a minute', async () => {
@@ -1476,7 +1509,7 @@ test('a premium wake refused for its usage limit rests the premium model and run
   const again = fake.calls[1];
   assert.ok(again.args.includes('--resume'));
   assert.deepEqual(sessionFlags(again.args), { model: 'model-top', effort: 'xhigh', fallback: 'model-mid' });
-  assert.equal(again.output, undefined, 'no premium output kept for it');
+  assert.match(again.output, /[\\/]starts[\\/]/, 'no premium output kept for it: only the start output kept to classify it');
   fake.end(again.pid, 0);
   await flush();
 
@@ -1546,7 +1579,7 @@ test('the rest holds on this computer when its record can\'t be raised, and a wa
   fake.end(fake.calls[1].pid, 0);
   await flush();
   await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page', 'n1')));
-  assert.equal(fake.calls.at(-1).output, undefined);
+  assert.match(fake.calls.at(-1).output, /[\\/]starts[\\/]/); // not the premium log
 }));
 
 test('a session is started with the running node on its PATH when the PATH has none', () => withHome(async () => {
@@ -1707,7 +1740,8 @@ test('waker: an opened steer holds its slot', () => withHome(async () => {
 }));
 
 // "Now": the held piece's current run is ended on the director's word. A feature run live for `login-page`, taking one wake.
-async function liveRun({ startTime = 'A' } = {}) {
+// `ends`: the process exits as soon as it is signalled; `sent`: what the signal says.
+async function liveRun({ startTime = 'A', ends = true, sent = true } = {}) {
   checkout();
   const dir = worktree();
   keepSession('login-page', dir, SESSION);
@@ -1715,7 +1749,7 @@ async function liveRun({ startTime = 'A' } = {}) {
   let current = startTime;
   const killed = [];
   const w = waker(fake, {
-    locate: () => dir, onError: () => {}, startTimeOf: async () => current, kill: (pid) => { killed.push(pid); fake.end(pid, 1); return true; },
+    locate: () => dir, onError: () => {}, startTimeOf: async () => current, kill: (pid) => { killed.push(pid); if (ends && sent) fake.end(pid, 1); return sent; },
   });
   const file = writeWake(P, featureBundle('login-page'));
   await w.wakeFeature('login-page', file);
@@ -1810,4 +1844,452 @@ test('waker: now ends no process whose start time can\'t be verified', () => wit
   assert.deepEqual(killed, [], 'a record with no start time names a process that can\'t be told from another');
   assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), false, 'the record is removed');
   assert.equal(w.waiting()[0].flight, null, 'the wake is back');
+}));
+
+test('the waker waits and says why when a settings file is damaged, and starts once it is mended', () => withHome(async () => {
+  const main = checkout();
+  const dir = worktree();
+  writeBaseline(P, 'login-page', dir);
+  fs.mkdirSync(path.join(main, '.claude'), { recursive: true });
+  const settings = path.join(main, '.claude', 'settings.local.json');
+  fs.writeFileSync(settings, '{\n "a": "C:\\Users\\x"\n}');
+  const fake = fakeRun();
+  const w = waker(fake, { platform: 'darwin' });
+  await assert.rejects(w.startFeature({ work: 'login-page', worktree: dir }), (error) => {
+    assert.ok(error.message.startsWith(`not started: ${settings} can't be read: line 2, column 10.`), error.message);
+    return true;
+  });
+  assert.deepEqual(await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page'))), [], 'the wake waits');
+  assert.equal(fake.calls.length, 0);
+  fs.writeFileSync(settings, '{}');
+  const started = await w.startFeature({ work: 'login-page', worktree: dir });
+  assert.match(started.sessionId, UUID);
+}));
+
+test('a damaged settings file keeps the wake waiting, says why once, and never fails the watcher\'s loop', () => withHome(async () => {
+  const main = checkout();
+  fs.mkdirSync(path.join(main, '.claude'), { recursive: true });
+  const settings = path.join(main, '.claude', 'settings.json');
+  fs.writeFileSync(settings, '{\n  "env": { "TOKEN": "sk-secret-value" },\n}');
+  const fake = fakeRun();
+  const errors = [];
+  const w = waker(fake, { onError: (m) => errors.push(m) });
+  const file = writeWake(P, bundle('e1'));
+  await w.wakeForeman(file);
+  await w.pump();
+  assert.equal(fake.calls.length, 0, 'nothing starts');
+  assert.deepEqual(w.waiting().map((e) => e.file), [file], 'the wake is kept');
+  assert.equal(errors.length, 1, 'said once');
+  assert.ok(errors[0].startsWith(`not started: ${settings} can't be read: line 2, column 40. take out the comma`), errors[0]);
+  assert.ok(!errors[0].includes('sk-secret-value'), 'no value from the file');
+  fs.writeFileSync(settings, '{}');
+  await w.pump();
+  assert.equal(fake.calls.length, 1, 'started once mended');
+}));
+
+// --- The sign-in gate and failing starts (builders design, section 10) ---
+
+const NOT_LOGGED_IN = 'Not logged in · Please run /login\n';
+const GATE = "not started: builders can't sign in";
+// A started process ends with `output` in its kept output file and `code`.
+// A wake for each of two pieces, in turn.
+async function wakeBoth(w, works) {
+  for (const work of works) await w.wakeFeature(work, writeWake(P, featureBundle(work, `${work}-1`)));
+}
+async function endWith(fake, call, output, code = 1) {
+  if (output !== null) fs.appendFileSync(call.output, output);
+  fake.end(call.pid, code);
+  await flush();
+}
+function gateSetup(over = {}) {
+  const dirA = worktree();
+  const dirB = worktree();
+  const fake = fakeRun({ exits: true });
+  const raised = [];
+  const errors = [];
+  const w = waker(fake, {
+    locate: (work) => ({ 'a-page': dirA, 'b-page': dirB })[work] ?? null,
+    raise: async (r) => { raised.push(r); },
+    onError: (e) => errors.push(e),
+    ...over,
+  });
+  const start = (work) => w.startFeature({ work, worktree: work === 'a-page' ? dirA : dirB, briefFile: featurePaths(work === 'a-page' ? dirA : dirB).brief });
+  return { w, fake, raised, errors, start, dirA, dirB };
+}
+
+test('one sign-in failure writes the fact and nothing starts on that route for any project', () => withHome(async () => {
+  const { w, fake, raised, start } = gateSetup();
+  await start('a-page');
+  await endWith(fake, fake.calls[0], NOT_LOGGED_IN);
+  const read = readSignIn(wheelhouseHome());
+  assert.equal(read.ok, true);
+  const fact = read.facts['claude-code:background'];
+  assert.equal(fact.kind, 'not-signed-in');
+  assert.equal(fact.starts, 1);
+  assert.equal(fact.command, 'claude');
+  assert.match(fact.excerpt, /Not logged in/);
+  // Another piece's start is refused, with the gate's own line; nothing is started.
+  await assert.rejects(() => start('b-page'), (error) => error.message.startsWith(GATE));
+  assert.equal(fake.calls.length, 1);
+  // One card, once, in the section 10.4 words: a question card the First Mate asks in chat, never a note.
+  const cards = raised.filter((r) => r.kind === 'card');
+  assert.equal(cards.length, 1);
+  assert.equal(raised.filter((r) => r.kind === 'note').length, 0);
+  const card = cards[0].data;
+  assert.equal(card.kind, 'question');
+  assert.deepEqual(card.question.split('\n'), [
+    "Builders can't sign in on this computer",
+    `What happened: 1 builder start failed at ${timeWords(fact.since)}. \`claude\` said it isn't logged in. Work is waiting; nothing is retrying.`,
+    'Why it comes to you: Only you can sign in, or choose how builders start.',
+    'Meanwhile: Approved work waits. Nothing is lost.',
+  ]);
+  assert.deepEqual(card.options, ['Use Claude Desktop for builders', 'Set a launch command', "I've signed in; check again"]);
+  assert.equal(card.recommend, "I've signed in; check again");
+  assert.equal(card.line, null, 'never held back by the day\'s budget of lines');
+}));
+
+test('no retry after a sign-in failure: further ticks start no process, a wake waits queued, and the card is written once', () => withHome(async () => {
+  const { w, fake, raised, errors, start } = gateSetup();
+  await start('a-page');
+  await endWith(fake, fake.calls[0], NOT_LOGGED_IN);
+  await w.wakeFeature('a-page', writeWake(P, featureBundle('a-page', 'n1')));
+  for (let i = 0; i < 10; i += 1) {
+    w.clock.move(20 * MIN);
+    await w.pump();
+  }
+  assert.equal(fake.calls.length, 1);
+  assert.equal(w.waiting().length, 1, 'the wake stays queued');
+  assert.equal(w.waiting()[0].failures ?? 0, 0, 'no failure counted against it');
+  assert.ok(errors.some((e) => e.startsWith(GATE)));
+  assert.equal(raised.filter((r) => r.kind === 'card').length, 1);
+}));
+
+test('a sign-in card that can\'t be recorded is raised at the next refused start, then never again', () => withHome(async () => {
+  let refuse = true;
+  const raised = [];
+  const { w, fake, errors, start } = gateSetup({
+    raise: async (r) => {
+      if (r.kind === 'card' && refuse) throw new Error('the helper gave no answer');
+      raised.push(r);
+    },
+  });
+  await start('a-page');
+  await endWith(fake, fake.calls[0], NOT_LOGGED_IN);
+  assert.equal(raised.filter((r) => r.kind === 'card').length, 0);
+  assert.ok(errors.some((e) => /its card couldn't be recorded/.test(e)));
+  await w.wakeFeature('a-page', writeWake(P, featureBundle('a-page', 'n1')));
+  refuse = false;
+  for (let i = 0; i < 3; i += 1) {
+    w.clock.move(20 * MIN);
+    await w.pump();
+  }
+  assert.equal(raised.filter((r) => r.kind === 'card').length, 1);
+  assert.equal(fake.calls.length, 1);
+}));
+
+test('a start whose end this watcher never saw (the foreman\'s own command) is read and shuts the route', () => withHome(async () => {
+  const dir = worktree();
+  const fake = fakeRun(); // no exit is ever seen
+  const raised = [];
+  const w = waker(fake, { locate: () => dir, raise: async (r) => { raised.push(r); } });
+  await w.startFeature({ work: 'a-page', worktree: dir, briefFile: featurePaths(dir).brief });
+  const out = fake.calls[0].output;
+  fs.appendFileSync(out, NOT_LOGGED_IN);
+  fake.live.delete(fake.calls[0].pid);
+  await w.pump();
+  assert.equal(readSignIn(wheelhouseHome()).facts['claude-code:background'].kind, 'not-signed-in');
+  assert.equal(raised.filter((r) => r.kind === 'card').length, 1);
+  assert.ok(!fs.existsSync(out), 'read once, then deleted');
+  assert.ok(fs.existsSync(lostFile(P, 'a-page')), 'resumed once builders sign in');
+}));
+
+test('until a start is known to sign in, a pass starts one builder; the rest wait queued and start once it has', () => withHome(async () => {
+  const dirA = worktree();
+  const dirB = worktree();
+  keepSession('a-page', dirA);
+  keepSession('b-page', dirB);
+  const fake = fakeRun({ exits: true });
+  const w = waker(fake, { locate: (work) => ({ 'a-page': dirA, 'b-page': dirB })[work] ?? null });
+  await wakeBoth(w, ['a-page', 'b-page']);
+  assert.equal(fake.calls.length, 1, 'one start, not one per piece');
+  // It can't sign in: the other piece never starts.
+  await endWith(fake, fake.calls[0], NOT_LOGGED_IN);
+  w.clock.move(20 * MIN);
+  await w.pump();
+  assert.equal(fake.calls.length, 1);
+  assert.deepEqual(w.waiting().map((e) => e.work).sort(), ['a-page', 'b-page']);
+}));
+
+test('a builder that still runs after PROVE_MS shows the route signs in, and the next pass starts the rest', () => withHome(async () => {
+  const dirA = worktree();
+  const dirB = worktree();
+  keepSession('a-page', dirA);
+  keepSession('b-page', dirB);
+  const fake = fakeRun({ exits: true });
+  const w = waker(fake, { locate: (work) => ({ 'a-page': dirA, 'b-page': dirB })[work] ?? null });
+  await wakeBoth(w, ['a-page', 'b-page']);
+  assert.equal(fake.calls.length, 1);
+  w.clock.move(PROVE_MS - 1);
+  await w.pump();
+  assert.equal(fake.calls.length, 1);
+  w.clock.move(1);
+  await w.pump();
+  assert.equal(fake.calls.length, 2);
+}));
+
+test('a wake whose start fails to sign in goes again with no failure counted', () => withHome(async () => {
+  const dir = worktree();
+  keepSession('a-page', dir);
+  const fake = fakeRun({ exits: true });
+  const w = waker(fake, { locate: () => dir });
+  await w.wakeFeature('a-page', writeWake(P, featureBundle('a-page', 'n1')));
+  assert.equal(fake.calls.length, 1);
+  await endWith(fake, fake.calls[0], 'Invalid API key · Please run /login\n');
+  assert.equal(w.waiting().length, 1);
+  assert.equal(w.waiting()[0].failures ?? 0, 0);
+  assert.equal(readSignIn(wheelhouseHome()).facts['claude-code:background'].kind, 'not-signed-in');
+}));
+
+test('three same-kind other failures in a row hold the piece and write start-failing; another piece still starts', () => withHome(async () => {
+  const { w, fake, raised, start } = gateSetup();
+  await start('a-page');
+  await endWith(fake, fake.calls[0], 'Error: it fell over\n');
+  for (const n of [1, 2]) {
+    await w.wakeFeature('a-page', writeWake(P, featureBundle('a-page', `n${n}`)));
+    w.clock.move(20 * MIN);
+    await w.pump();
+    assert.equal(fake.calls.length, n + 1);
+    await endWith(fake, fake.calls[n], 'Error: it fell over\n');
+  }
+  assert.deepEqual(raised.filter((r) => r.kind === 'start-failing').map((r) => r.data), [{ work: 'a-page', kind: 'other', starts: 3 }]);
+  assert.equal(readSignIn(wheelhouseHome()).facts['claude-code:background'], undefined, 'no sign-in fact for an ordinary failure');
+  // The fourth tick starts nothing for that piece.
+  w.clock.move(20 * MIN);
+  await w.pump();
+  assert.equal(fake.calls.length, 3);
+  assert.ok(startHold(P, 'a-page') !== null);
+  // Another piece still starts.
+  await start('b-page');
+  assert.equal(fake.calls.length, 4);
+  // And the held piece starts again once its hold is lifted.
+  clearStartFailures(P, 'a-page');
+  w.clock.move(20 * MIN);
+  await w.pump();
+  assert.equal(fake.calls.length, 5);
+}));
+
+test('a success in between ends the run of failures', () => withHome(async () => {
+  const { w, fake, start } = gateSetup();
+  await start('a-page');
+  await endWith(fake, fake.calls[0], 'Error: it fell over\n');
+  await w.wakeFeature('a-page', writeWake(P, featureBundle('a-page', 'n1')));
+  w.clock.move(20 * MIN);
+  await w.pump();
+  await endWith(fake, fake.calls[1], 'done\n', 0);
+  assert.equal(startHold(P, 'a-page'), null);
+  assert.ok(!fs.existsSync(failingFile(P, 'a-page')), 'the count is forgotten');
+}));
+
+test('a malformed sign-in.json holds starts and names the file (review focus 2)', () => withHome(async () => {
+  const { w, fake, errors, start } = gateSetup();
+  fs.mkdirSync(wheelhouseHome(), { recursive: true });
+  fs.writeFileSync(path.join(wheelhouseHome(), 'sign-in.json'), '{ "claude-code:background": { "kind": "other", }\n');
+  await assert.rejects(() => start('a-page'), (error) => error.message.startsWith(GATE) && error.message.includes('sign-in.json') && /line \d+, column \d+/.test(error.message));
+  await w.wakeFeature('a-page', writeWake(P, featureBundle('a-page', 'n1')));
+  await w.pump();
+  assert.equal(fake.calls.length, 0);
+  assert.ok(errors.some((e) => e.includes('sign-in.json')));
+  // A file that holds the wrong shape is no better than a damaged one.
+  fs.writeFileSync(path.join(wheelhouseHome(), 'sign-in.json'), '[]\n');
+  await assert.rejects(() => start('a-page'), (error) => error.message.includes('sign-in.json'));
+}));
+
+test('the excerpt is cleaned and at most 200 characters; command is the program\'s name only', () => withHome(async () => {
+  const { fake, start } = gateSetup({ claude: { kind: 'direct', file: '/opt/some folder/bin/claude' } });
+  await start('a-page');
+  await endWith(fake, fake.calls[0], `Not logged in\n\u0007\tvia https://user:secret@example.com/x ${'word '.repeat(80)}\n`);
+  const fact = readSignIn(wheelhouseHome()).facts['claude-code:background'];
+  assert.ok(fact.excerpt.length <= 200, String(fact.excerpt.length));
+  assert.ok(!/[\u0000-\u001F]/.test(fact.excerpt));
+  assert.ok(!fact.excerpt.includes('secret'));
+  assert.equal(fact.command, 'claude');
+}));
+
+test('the start\'s output file is deleted after classifying, and one older than 24 hours is swept', () => withHome(async () => {
+  const { w, fake, start } = gateSetup();
+  await start('a-page');
+  const out = fake.calls[0].output;
+  assert.equal(path.dirname(out), startsDir(P));
+  await endWith(fake, fake.calls[0], 'ok\n', 0);
+  assert.ok(!fs.existsSync(out), 'deleted once classified');
+  fs.mkdirSync(startsDir(P), { recursive: true });
+  const old = path.join(startsDir(P), 'old-2026-10-18T09-00-00-000Z.out');
+  const fresh = path.join(startsDir(P), 'fresh.out');
+  fs.writeFileSync(old, 'x');
+  fs.writeFileSync(fresh, 'x');
+  const long = new Date(T0 - 25 * 60 * MIN);
+  fs.utimesSync(old, long, long);
+  fs.utimesSync(fresh, new Date(T0), new Date(T0));
+  await w.prune();
+  assert.ok(!fs.existsSync(old));
+  assert.ok(fs.existsSync(fresh));
+}));
+
+test('a program that is not found shuts the route as no-program', () => withHome(async () => {
+  const { w, fake, start } = gateSetup({
+    run: () => { throw Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' }); },
+  });
+  void fake;
+  await assert.rejects(() => start('a-page'), /ENOENT/);
+  const fact = readSignIn(wheelhouseHome()).facts['claude-code:background'];
+  assert.equal(fact.kind, 'no-program');
+  assert.equal(w.waiting().length, 0);
+}));
+
+// ---- All stop reaches the background sessions (builders and settings, part 2b) ----
+
+const signedOut = () => ({ kind: 'not-signed-in', since: '2026-11-24T14:02:00.000Z', command: 'claude', excerpt: 'Please run /login', starts: 1 });
+
+test('under STOP the start decision is "not started: All stop", before the gate is read', () => withHome(async () => {
+  checkout();
+  const w = waker(fakeRun());
+  assert.equal(w.startDecision('login-page'), null);
+  setStop({ by: 'prompt' });
+  assert.equal(w.startDecision('login-page'), 'not started: All stop');
+  assert.equal(w.startDecision(), 'not started: All stop');
+}));
+
+test('under STOP every detached session the watcher started is ended with the existing stop, and the ended ones are recorded', () => withHome(async () => {
+  const { w, fake, killed, file } = await liveRun();
+  assert.deepEqual(await w.stopAll(), [], 'nothing happens while All stop is off');
+  assert.equal(killed.length, 0);
+  setStop({ by: 'prompt' });
+  assert.deepEqual(await w.stopAll(), ['login-page']);
+  await flush();
+  assert.deepEqual(killed, [fake.calls[0].pid]);
+  assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), false);
+  const [entry] = w.waiting();
+  assert.equal(entry.file, file);
+  assert.equal(entry.flight, null, 'its wake waits again, so lifting All stop picks it up');
+  assert.equal(entry.failures, 0);
+  assert.equal(fake.calls.length, 1, 'nothing is started in its place');
+  const kept = JSON.parse(fs.readFileSync(path.join(watcherDir(P), 'all-stopped.json'), 'utf8'));
+  assert.deepEqual(kept.stopped, ['login-page']);
+  assert.deepEqual(stillRunning(wheelhouseHome(), P).stopped, ['builder login-page']);
+}));
+
+test('under STOP a start still being made is left for the next tick: its record and wakes stay', () => withHome(async () => {
+  checkout();
+  const w = waker(fakeRun({ exits: true }), { onError: () => {} });
+  fs.mkdirSync(path.dirname(runningFile(P, 'feature-login-page')), { recursive: true });
+  const starting = { state: 'starting', at: new Date(T0).toISOString(), file: 'x', entries: ['e1'] };
+  fs.writeFileSync(runningFile(P, 'feature-login-page'), JSON.stringify(starting));
+  setStop({ by: 'prompt' });
+  assert.deepEqual(await w.stopAll(), []);
+  assert.deepEqual(JSON.parse(fs.readFileSync(runningFile(P, 'feature-login-page'), 'utf8')), starting);
+}));
+
+test('under STOP a run whose process can\'t be confirmed as the recorded one, or wasn\'t ended, keeps its record', async () => {
+  for (const [label, over] of [['no start time recorded', { startTime: null }], ['the signal was not sent', { sent: false }]]) {
+    await withHome(async () => {
+      const { w, fake, killed } = await liveRun(over);
+      setStop({ by: 'prompt' });
+      assert.deepEqual(await w.stopAll(), [], label);
+      await flush();
+      if (over.startTime === null) assert.deepEqual(killed, [], `${label}: nothing is signalled`);
+      assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), true, `${label}: the record stays, so nothing starts beside the process`);
+      assert.notEqual(w.waiting()[0].flight, null, `${label}: its wake stays with the run`);
+      assert.equal(fake.calls.length, 1);
+    });
+  }
+});
+
+test('a run All stop ended that exits after STOP has lifted counts no failure, and its wake goes again', () => withHome(async () => {
+  const { w, fake, killed, file } = await liveRun({ ends: false });
+  setStop({ by: 'prompt' });
+  assert.deepEqual(await w.stopAll(), ['login-page']);
+  liftStop();
+  fake.end(killed[0], 1);
+  await flush();
+  assert.equal(fs.existsSync(failingFile(P, 'login-page')), false, 'no failing start is counted');
+  const again = w.waiting().find((e) => e.file === file);
+  assert.ok(again !== undefined && again.failures === 0 && again.flight === null, 'its wake waits again, not failed');
+  w.clock.move(PROVE_MS); // past the first start's sign-in trial, as the next minute's tick is
+  await w.pump();
+  assert.equal(fake.calls.length, 2, 'lifting All stop starts it again');
+}));
+
+test('a second All stop with nothing running does not show the first one\'s builders', () => withHome(async () => {
+  const { w } = await liveRun();
+  setStop({ by: 'prompt', now: () => new Date(T0) });
+  assert.deepEqual(await w.stopAll(), ['login-page']);
+  assert.deepEqual(stillRunning(wheelhouseHome(), P).stopped, ['builder login-page']);
+  liftStop();
+  setStop({ by: 'prompt', now: () => new Date(T0 + 60 * 60 * 1000) });
+  assert.deepEqual(await w.stopAll(), []);
+  assert.deepEqual(stillRunning(wheelhouseHome(), P).stopped, []);
+}));
+
+test('STOP that comes on while a start is being made stops it before anything is recorded or run', () => withHome(async () => {
+  checkout();
+  const fake = fakeRun();
+  const base = sessionsOfProject(config());
+  // STOP comes on while the adapter prepares the start, after every earlier check has passed.
+  const sessions = { ...base, prepare: async () => { setStop({ by: 'prompt' }); return {}; } };
+  const w = waker(fake, { sessions, onError: () => {} });
+  const record = writeWake(P, bundle('e1'));
+  await w.wakeForeman(record).catch(() => {});
+  assert.equal(fake.calls.length, 0, 'nothing is run');
+  assert.equal(fs.existsSync(runningFile(P, 'foreman')), false, 'nothing is recorded');
+  const [entry] = w.waiting();
+  assert.equal(entry.flight, null, 'its wake waits for the lift');
+  assert.equal(entry.failures, 0);
+}));
+
+test('endProcess on Windows ends the relay\'s whole tree with taskkill', () => {
+  const calls = [];
+  const spawner = (file, args, options) => { calls.push({ file, args, options }); return { once: () => {}, unref: () => {} }; };
+  assert.equal(endProcess(4242, { platform: 'win32', spawner }), true);
+  assert.deepEqual(calls.map((c) => [c.file, c.args]), [['taskkill', ['/pid', '4242', '/T', '/F']]]);
+  assert.equal(calls[0].options.shell, false);
+  assert.equal(calls[0].options.windowsHide, true);
+});
+
+test('under STOP the sign-in gate and the failed-start count are frozen (review focus 3)', () => withHome(async () => {
+  const { w } = await liveRun();
+  const { writeSignInFact, clearSignInFact } = await import('../../../scripts/lib/sign-in-gate.js');
+  writeSignInFact(wheelhouseHome(), 'claude-code:background', signedOut());
+  const standing = readSignIn(wheelhouseHome());
+  setStop({ by: 'prompt' });
+  // The ended run's exit (code 1) is read while STOP is on: it counts for nothing.
+  await w.stopAll();
+  await flush();
+  assert.equal(fs.existsSync(failingFile(P, 'login-page')), false, 'a failing start count does not grow');
+  assert.deepEqual(readSignIn(wheelhouseHome()), standing, 'the standing fact is neither changed nor counted');
+  assert.equal(writeSignInFact(wheelhouseHome(), 'claude-code:background', signedOut()), null, 'no start is counted on the fact');
+  assert.equal(clearSignInFact(wheelhouseHome(), 'claude-code:background'), false, 'nothing is cleared');
+  assert.deepEqual(readSignIn(wheelhouseHome()), standing);
+}));
+
+test('lifting STOP takes effect in one tick, and the gate is read before the first start (review focus 3)', () => withHome(async () => {
+  checkout();
+  const fake = fakeRun();
+  const dir = worktree();
+  keepSession('login-page', dir);
+  const errors = [];
+  const w = waker(fake, { locate: () => dir, onError: (m) => errors.push(m) });
+  const { writeSignInFact } = await import('../../../scripts/lib/sign-in-gate.js');
+  setStop({ by: 'prompt' });
+  writeSignInFact(wheelhouseHome(), 'claude-code:background', signedOut()); // refused under STOP: no fact yet
+  assert.deepEqual(readSignIn(wheelhouseHome()).facts, {});
+  liftStop();
+  writeSignInFact(wheelhouseHome(), 'claude-code:background', signedOut());
+  setStop({ by: 'prompt' });
+  await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page')));
+  assert.equal(w.waiting().length, 1);
+  liftStop();
+  await w.pump();
+  assert.equal(fake.calls.length, 0, 'the standing fact holds the start once STOP lifts');
+  assert.match(errors.at(-1), /not started: builders can't sign in/);
+  assert.equal(w.waiting().length, 1);
 }));

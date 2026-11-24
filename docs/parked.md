@@ -12,7 +12,7 @@ Each lift-out part adds its piece's keys to those lists as it removes the piece,
 
 ## The pane, the status line and the courier (the mod)
 
-- **What it was:** the Claude Code mod: a pane beside the chat with the cards, the Logbook and the board, a status line, and the courier that woke the front desk. Also the watcher's Shape 2, which ran inside the mod's timer.
+- **What it was:** the Claude Code mod: a pane beside the chat with the cards, the Logbook and the board, a status line, and the courier that woke the front desk. Also the watcher's Shape 2, which ran inside the mod's timer. Shape 2's wake kinds live on in the Desktop route, where the watcher queues them as files (builders and settings design, section 7).
 - **Tag:** `parked/mod`
 - **Designs and plans:** `docs/specs/2026-10-31-pane-design.md`, `docs/specs/2026-11-04-one-card-design.md`; `docs/superpowers/plans/2026-10-19-wheelhouse-mod.md`, `docs/superpowers/plans/2026-10-21-wheelhouse-calm-interface.md`, `docs/superpowers/plans/2026-10-23-mod-sitting-2-fixes.md`
 - **Why parked:** the director asked on 7 November 2026 to rethink the mods and the UI-first approach and get the core right (design sections 1 and 4.2). Real use has needed the chat only.

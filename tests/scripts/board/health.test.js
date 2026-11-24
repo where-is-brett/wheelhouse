@@ -421,6 +421,7 @@ test('update lines: nothing is said without update facts', () => {
 test('update lines: the version line carries the date for a week after an update, then only the version', () => {
   assert.deepEqual(texts({ update: { version: 'v0.2.7', updatedAt: '2026-11-04T09:00:00.000Z' } }), ['Protection: Standard', 'Wheelhouse v0.2.7 (updated 4 November 2026)']);
   assert.deepEqual(texts({ update: { version: 'v0.2.7', updatedAt: null } }), ['Protection: Standard', 'Wheelhouse v0.2.7']);
+  assert.deepEqual(texts({ update: { version: null, between: true } }), ['Protection: Standard', 'Wheelhouse from its main line (a build between releases)']);
 });
 
 test('update lines: a newer release is announced in the director\'s words, and calmly', () => {
@@ -486,4 +487,16 @@ test('own files: after an approved update the explained move is a calm line and 
   assert.deepEqual(lines.at(-1), { level: 'ok', text: 'Wheelhouse moved to v0.2.7 and its files match.' });
   assert.equal(lines.some((l) => l.level === 'watch'), false);
   assert.equal(healthLines({ ...calm, ownFiles: { line: 'Files changed', calm: 'One row' } }).filter((l) => l.level === 'watch').length, 1);
+});
+
+// The Builders line (builders design, section 10.5): a status line, calm until builders can't sign in.
+test('the status lines carry the Builders line, at watch while builders can\'t sign in', () => {
+  const calm = { record: { connection: { mode: 'full' } }, locked: false, platform: 'linux' };
+  const ok = healthLines({ ...calm, builders: { level: 'ok', text: 'Builders: background as `claude`' } });
+  assert.deepEqual(ok.at(-1), { level: 'ok', text: 'Builders: background as `claude`' });
+  const watch = healthLines({ ...calm, builders: { level: 'watch', text: 'Builders: background as `claude` · can\'t sign in since 14:02 (not signed in)' } });
+  assert.equal(watch.at(-1).level, 'watch');
+  assert.match(watch.at(-1).text, /can't sign in since 14:02/);
+  // Nothing given, nothing said.
+  assert.ok(!healthLines(calm).some((l) => l.text.startsWith('Builders:')));
 });

@@ -49,8 +49,8 @@ node --test --import ./tests/helpers/test-home.js tests/github/plan.test.js
 
 Releases are tags on `main`, published on GitHub as pre-releases for now.
 
-1. Follow "Then cut a Wheelhouse release" in [`docs/lineage/upgrading.md`](docs/lineage/upgrading.md): raise the version in `.claude-plugin/plugin.json`, then write and verify the manifest. Its pull request also needs the items below.
-2. Change the release's name in `README.md`, where the install lines and the status lines give it. A test records the fingerprint of `plugin.json`: its failure names the file and gives the new value.
+1. Follow "Then cut a Wheelhouse release" in [`docs/lineage/upgrading.md`](docs/lineage/upgrading.md): add the version to `.claude-plugin/plugin.json` on the release's commit only, then write and verify the manifest. Its pull request also needs the items below.
+2. Change the release's name in `README.md`, where the install lines and the status lines give it: the install line and the plugin browser line name the tag, and the comments beside them, which wait for the tag, come out.
 3. Run CI by hand on the branch with macOS ticked (Actions, CI, Run workflow).
 4. Once it merges, tag the merged commit and publish the notes:
 
@@ -65,5 +65,7 @@ Releases are tags on `main`, published on GitHub as pre-releases for now.
    ```bash
    gh release create v0.0.0 --title v0.0.0 --prerelease --notes-file <notes file>
    ```
+
+5. Once the tag is pushed, take `version` out of `plugin.json` again on `main` and write the manifest again (`node scripts/lineage/manifest.js write`), so the main line is back to `dev`. Both files are guardrails, so this goes through the gate as its own pull request. Until it merges, every install from `main` shares the release's plugin folder.
 
 A tag can't be moved or deleted once it is pushed, because every install line pins one. A bad release gets a new release after it, not a changed tag.

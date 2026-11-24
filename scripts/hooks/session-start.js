@@ -40,14 +40,15 @@
 // On an agent whose hooks only read (`writeVia: 'helper'`) it does none of the writing above: readOnlyStart.
 import fs from 'node:fs';
 import path from 'node:path';
+import { settingsFaultLine, claudeHomeOf } from '../setup/settings-check.js';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, managedMarker, readTailEntries, beingSetUp, removedFrom, isWhy } from './kit.js';
+import { answer, cardsInPicker, runAndExit, projectOf, pluginRoots, isInside, managedDir, managedMarker, readTailEntries, beingSetUp, removedFrom, isWhy } from './kit.js';
 import { keep, sendPending, withinBudget } from './pending.js';
 import { recordClaudePath } from '../lib/claude.js';
+import { storedLaunch } from '../lib/launch-stored.js';
 import { helperClient } from '../host/helper-client.js';
 import { isOlder } from '../host/retire-helper.js';
-import { caEnv } from '../host/company-ca.js';
 import { stopState, NO_HELPER_STOP } from '../lib/stop.js';
 import { jobFolder, wheelhouseHome, stateDir, computerId } from '../lib/paths.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../lib/platform-lines.js';
@@ -68,9 +69,7 @@ import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
 import { readProject } from '../lib/projects.js';
 import { ensureIgnored } from '../feature/files.js';
 import { run as runProgram } from '../lib/run.js';
-import {
-  LOW_NODE_SCRIPT, guardedReady, lowNodeReady, needsSelfTest, selfTest, SELF_TEST_MS,
-} from '../windows/low.js';
+// The Guarded runner's copy of Node.js and its self-test (scripts/windows/low.js) are read where they run, which is Windows only.
 // The lineage check (scripts/lineage/check.js) is read where it runs, which is a full session start's: one that only reads never loads it.
 const lineageModule = () => import('../lineage/check.js');
 import { claudeCodeOf } from '../lineage/provenance-block.js';
@@ -81,6 +80,7 @@ import { TAKEOVER_LABEL, LEAVE_LABEL } from '../state/card-lines.js';
 import { agentOfInput } from '../agents/of-input.js';
 import { BY_LAUNCHER, TOOL_SHEETS, WITHOUT_SYSTEM_CA_FLAG } from '../agents/tool-sheets.js';
 import { frontDeskCommand, knowsNoSystemCa } from '../protection/plugin-command.js';
+import { cardCommandLine } from '../lib/card-commands.js';
 
 import { LAUNCHER_SESSION } from '../lib/launchers.js';
 
@@ -93,6 +93,7 @@ import { NO_HELPER } from '../lib/host-lines.js';
 import { keptRequest, clearRequest } from '../lib/kept-request.js';
 import { retiredPiece } from '../settings/catalogue.js';
 import { SETTINGS_CHANGED, settingsCardNote } from '../lib/settings-card.js';
+import { DEV_VERSION, pluginVersion } from '../lib/plugin-version.js';
 
 const SELF = fileURLToPath(import.meta.url);
 // The script that brings this computer's settings for a project up to date, run detached.
@@ -185,14 +186,9 @@ function olderThan(version, floor) {
 }
 
 // This copy's version, from its own .claude-plugin/plugin.json; null when unreadable.
-function ownVersion(pluginRoot) {
-  try {
-    const version = JSON.parse(fs.readFileSync(path.join(pluginRoot, '.claude-plugin', 'plugin.json'), 'utf8'))?.version;
-    return typeof version === 'string' && version !== '' ? version : null;
-  } catch {
-    return null;
-  }
-}
+const ownVersion = pluginVersion;
+// A version as a session line names it: a build from the main line carries no number.
+const versionWords = (version) => (version === DEV_VERSION ? 'a build from the main line' : `version ${oneLine(version)}`);
 
 const oneLine = (value) => {
   const text = String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -318,7 +314,10 @@ async function ensureHelper(client, { spawn, pluginRoot, waitMs, pause, end }) {
     // Started in Wheelhouse's own folder, never in the session's.
     const home = wheelhouseHome();
     fs.mkdirSync(home, { recursive: true });
-    const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'host', 'helper-main.js')], { cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore', env: { ...process.env, ...caEnv(home) } });
+    // Read when the helper starts, which is rare: the session start's other work doesn't need it.
+    const { standardEnv } = await import('../lib/standard-env.js');
+    const { caEnv } = await import('../host/company-ca.js');
+    const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'host', 'helper-main.js')], { cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore', env: { ...standardEnv({ home }), ...caEnv(home) } });
     child?.unref?.();
     child?.on?.('error', () => {});
   } catch {
@@ -400,10 +399,13 @@ async function keepLock(project, client, left, seen = {}) {
 
 // The words before the window take-over card's AskUserQuestion input.
 export const SEAT_TAKEOVER_ASK = 'The First Mate is in another window: show the director this card with AskUserQuestion, exactly as given, as a question of its own, when they ask for Wheelhouse work: ';
-// The words before the reason for the seat's take-over, for an agent whose chat records no click: the director's click is
-// made in Wheelhouse's own window, which `confirm seat-take-over` opens. The chat writes no question and no options of its
-// own, so the window's labels are the only ones the director meets.
-export const SEAT_TAKEOVER_WINDOW = 'The First Mate is in another window: when the director asks for Wheelhouse work, write no question and no options of your own in the chat. Say one plain line that Wheelhouse\'s own window is asking whether to move the First Mate here, and why, then run `confirm seat-take-over --session <your session id>` with the id from the line above. The window\'s buttons are the only choices, and it records the click. Why: ';
+// The words before the take-over card's own words, for an agent whose hooks only read, where its picker's click is recorded: the
+// card is asked with its question tool, as the tool sheet says.
+export const SEAT_TAKEOVER_CARD = 'The First Mate is in another window: when the director asks for Wheelhouse work, show them this card with the question tool, exactly as given, as a question of its own: ';
+// The words before the reason for the seat's take-over, for an agent whose picker's click is not recorded yet: the card cannot be
+// clicked, so no question or options are written, and the director is told in one plain line. The seat moves when the other
+// window closes or has been idle a while.
+export const SEAT_TAKEOVER_PLAIN = 'The First Mate is in another window: when the director asks for Wheelhouse work, write no question and no options. Say one plain line that the First Mate is in another window and why, and that this window reads and talks until that window is closed or has been idle a while, since a click on a card is not recorded in this chat yet. Why: ';
 // The line that tells a session its own id, which its chat gives to every command that records (`--session`).
 export const sessionIdLine = (id) => `Your session id is ${id}: give it as --session ${id} to every Wheelhouse command that records.`;
 // The words before the take-over card's AskUserQuestion input, as JSON on the same line.
@@ -453,7 +455,7 @@ async function seatTakeOverNotes({ seat, now, ask = SEAT_TAKEOVER_ASK }) {
   try {
     if (!seat) return [];
     const { seatCard, seatReason } = await import('../lib/seat-card.js');
-    if (ask === SEAT_TAKEOVER_WINDOW) return [`${ask}${seatReason({ seat, now })}`];
+    if (ask === SEAT_TAKEOVER_PLAIN) return [`${ask}${seatReason({ seat, now })}`];
     const { question } = seatCard({ seat, now });
     return [`${ask}${JSON.stringify(question)}`];
   } catch {
@@ -489,12 +491,18 @@ export async function keepSeat({ project, input, env = process.env, lockFree = t
   return { role: roleOf(after), seat: after, chosen: false };
 }
 
+// The launch command saved for this computer, for recording beside the path of claude; none when it is unset or can't be used
+// (the watcher names a fault when it starts a builder).
+function storedLaunchOrNull() {
+  try { return storedLaunch(); } catch { return null; }
+}
+
 async function ensureWatcher(project, client, { spawn, pluginRoot, env = process.env, folder = null }) {
   // This session has the PATH that finds claude; keep the full path for a watcher that is started with a bare one.
-  try { recordClaudePath({ env, inside: folder }); } catch { /* the watcher looks in the usual places */ }
+  try { recordClaudePath({ env, inside: folder, launch: storedLaunchOrNull() }); } catch { /* the watcher looks in the usual places */ }
   try {
     const { keepWatcherAlive } = await import('../watcher/keep-alive.js');
-    await keepWatcherAlive(project, { client, spawn, pluginRoot, env });
+    await keepWatcherAlive(project, { client, spawn, pluginRoot, env, session: true });
   } catch { /* the session carries on without it */ }
 }
 
@@ -505,12 +513,20 @@ const BUILDS_KEY = settingKey('');
 const isRetiredProposal = (u) => u?.kind === 'level' || (u?.kind === 'setting' && [u.key, u.data?.key].some((key) => typeof key === 'string' && retiredPiece(key) !== undefined));
 const isBuildsProposal = (u) => u?.kind === 'setting' && [u.key, u.data?.key].some((key) => typeof key === 'string' && key.startsWith(BUILDS_KEY));
 
+const COMMAND_LINE = 'The Wheelhouse command is ';
+// The First Mate's card command lines (scripts/lib/card-commands.js), from the command the sheet names. A new chat on a
+// set-up project is given them. Empty when the sheet names no command.
+export function cardCommandLines(sheet) {
+  const command = sheet.find((l) => l.startsWith(COMMAND_LINE))?.slice(COMMAND_LINE.length);
+  return command === undefined ? [] : [cardCommandLine(command)];
+}
+
 // `lineage` is the lineage check's warning lines, which come first after STOP. `windows` adds the
 // Windows line after them; `builds`, the level build commands run at on this computer, adds the
 // Unattended line after that while it is on. All come before the lists, so the cut at MAX_CHARS
 // never takes them. `sheet` (toolSheetLines) comes after the front desk's line and before the notes and the lists, so
 // a cut takes the briefing and never the tool sheet.
-export function reload({ views, stop, lineage = [], notes, feature, stateRoot, windows, builds, frontDesk = false, aside = null, sheet = [], where = '', events = [] }) {
+export function reload({ views, stop, lineage = [], notes, feature, stateRoot, windows, builds, frontDesk = false, aside = null, sheet = [], where = '', events = [], buildersFact = null }) {
   const lines = [];
   if (stop?.on) lines.push(`All stop is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
   lines.push(...lineage);
@@ -522,7 +538,11 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   lines.push(...section('Damaged state:', damaged));
   if (frontDesk) lines.push(FRONT_DESK_LINE);
   else if (aside !== null) lines.push(aside);
+  // The First Mate's Builders line, stated from the recorded facts (builders design, section 10.5); before the lists, so a cut
+  // never takes it.
+  if (buildersFact !== null) lines.push(buildersFact);
   lines.push(...sheet);
+  if (frontDesk) lines.push(...cardCommandLines(sheet));
   lines.push(...notes);
   // After a compaction: where the session was (scripts/hooks/where.js), before the lists so a cut takes them first.
   if (where !== '') lines.push(where);
@@ -683,7 +703,7 @@ function keepOutOfGit(found) {
 // under the Wheelhouse home and never opens the keys folder: no managed marker, no helper started, no watcher,
 // no usage receiver, no lineage hold, no key made, no records sent. It answers with the briefing from the
 // helper's views (the views on disk when the helper isn't answering, with NO_HELPER_STOP) and the agent's tool sheet. `helperUp` is the hook's own ask of /health, when it made one.
-async function readOnlyStart(input, { dir, find, client, helperUp, agent, pluginRoot, self, platform, stopOf, totalMs, env = process.env, now = () => new Date(), seatOptions }) {
+async function readOnlyStart(input, { dir, find, client, helperUp, agent, pluginRoot, self, platform, stopOf, totalMs, env = process.env, now = () => new Date(), seatOptions, picker = cardsInPicker(agent) }) {
   const root = commandRoot({ dir, self }, pluginRoot);
   const sheet = () => toolSheetLines(agent, { pluginRoot: root, platform });
   const end = Date.now() + totalMs;
@@ -723,7 +743,9 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
   views ??= localViews(project);
   // A lock that couldn't be kept or taken is judged again by a read, as the guard before every tool judges it: a doubt is not free.
   const free = lockLine === null || (lockSeen.held !== true && up && await lockFreeNow({ client: api, project, left, now, failClosed: true }));
-  const { aside, seatNotes } = await seatOnReadOnlyStart({ project, input, env, now, api, left, up, free, options: seatOptions });
+  const { aside, seatNotes, firstMate } = await seatOnReadOnlyStart({ project, input, env, now, api, left, up, free, picker, options: seatOptions });
+  // The First Mate's card command lines come straight after the tool sheet, as on a start that writes.
+  if (firstMate) notes.unshift(...cardCommandLines(sheet()));
   notes.push(...seatNotes);
   const text = reload({ views, events, stop: stopOf(), notes, feature: madeFeatureSlug(input.cwd), stateRoot: stateDir(project), sheet: sheet(), aside });
   return text === '' ? undefined : answer.context('SessionStart', text);
@@ -733,11 +755,12 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
 // of it fails; a lock that only couldn't be pushed (the computer's git settings wait for a click, say) leaves the seat to be
 // taken. The hook writes nothing: a free seat is taken by the helper, for the
 // session, with no process recorded (the seat is then free after it has been idle a while). Where another live window holds
-// the seat, the session is told so, and with a helper to open the window, offered the take-over card as text. A session
+// the seat, the session is told so, and with a helper to sign its click, offered the take-over card as text. A session
 // that chose to be an aside, stands in a worktree, was started by a script or has no id takes nothing and is offered no
-// card. Gives { aside, seatNotes }: the aside line (or null), and the lines for the notes. It informs, so anything that fails
-// gives no line.
-async function seatOnReadOnlyStart({ project, input, env, now, api, left, up, free, options = {} }) {
+// card. Gives { aside, seatNotes, firstMate }: the aside line (or null), the lines for the notes, and whether the session
+// is the First Mate (it stands in the main folder, chose nothing else, and no other live window holds the seat). It
+// informs, so anything that fails gives no line.
+async function seatOnReadOnlyStart({ project, input, env, now, api, left, up, free, picker, options = {} }) {
   const session = input.session_id;
   if (typeof session !== 'string' || session === '') return { aside: null, seatNotes: [] };
   const seatNotes = [sessionIdLine(session)];
@@ -749,10 +772,10 @@ async function seatOnReadOnlyStart({ project, input, env, now, api, left, up, fr
       await left(api.session.seat({ cwd: input.cwd, session, take: true }));
     }
     const seat = readSeat(project, opts);
-    if (!mine || !main || !seat || seat.session === session || (await seatFree(seat, opts))) return { aside: null, seatNotes };
+    if (!mine || !main || !seat || seat.session === session || (await seatFree(seat, opts))) return { aside: null, seatNotes, firstMate: mine && main };
     const card = up && typeof api?.session?.seat === 'function';
-    const aside = asideLine({ ago: agoWords(now().getTime() - Date.parse(seat.seenAt)), kind: 'main', card });
-    if (card) seatNotes.push(...await seatTakeOverNotes({ seat, now, ask: SEAT_TAKEOVER_WINDOW }));
+    const aside = asideLine({ ago: agoWords(now().getTime() - Date.parse(seat.seenAt)), kind: 'main', card: card && picker });
+    if (card) seatNotes.push(...await seatTakeOverNotes({ seat, now, ask: picker ? SEAT_TAKEOVER_CARD : SEAT_TAKEOVER_PLAIN }));
     return { aside, seatNotes };
   } catch {
     return { aside: null, seatNotes };
@@ -796,6 +819,8 @@ export async function decide(input, deps = {}) {
     title = sessionTitle(input, deps);
   } catch { /* the session keeps Claude Code's own title */ }
   if (title === null) return out;
+  // Kept so the first message after setup can give the bar the project's own title (scripts/hooks/board-context.js).
+  if (title === TITLES.setup && (deps.writeVia ?? 'self') === 'self') (await import('../lib/setup-title.js')).markSetupTitled(input.session_id);
   const output = out?.hookSpecificOutput ?? { hookEventName: 'SessionStart' };
   return { ...out, hookSpecificOutput: { ...output, sessionTitle: title } };
 }
@@ -803,19 +828,19 @@ export async function decide(input, deps = {}) {
 async function started(input, deps) {
   if (deps.writeVia !== undefined && deps.writeVia !== 'self') {
     const { dir, projectOf: find = projectOf, client, helperUp, agent, pluginRoot = PLUGIN_ROOT, self = SELF, platform = process.platform, stopState: stopOf = stopState, totalMs = TOTAL_MS + helperGrace(), env, now } = deps;
-    return readOnlyStart(input, { dir, find, client, helperUp, agent: agent ?? agentOfInput(input) ?? 'claude-code', pluginRoot, self, platform, stopOf, totalMs, env, now, seatOptions: deps.seatOptions });
+    return readOnlyStart(input, { dir, find, client, helperUp, agent: agent ?? agentOfInput(input) ?? 'claude-code', pluginRoot, self, platform, stopOf, totalMs, env, now, seatOptions: deps.seatOptions, ...(deps.picker === undefined ? {} : { picker: deps.picker }) });
   }
   const {
     dir, projectOf: find = projectOf, client: given, spawn = nodeSpawn,
     platform = process.platform, now = () => new Date(), stopState: stopOf = stopState,
     self = SELF, pluginRoot = PLUGIN_ROOT, startWaitMs = START_WAIT_MS + helperGrace(), totalMs = TOTAL_MS + helperGrace(), pause = sleep,
     background = async (args) => (await import('../lib/background.js')).startBackground(args), lineage: check, lineageRoot, claudeHome, env = process.env,
-    guardedSelfTest = selfTest, run = runProgram, lowNodeReady: copyReady = lowNodeReady,
+    guardedSelfTest: givenSelfTest, run = runProgram, lowNodeReady: givenCopyReady,
   } = deps;
   // Brings this computer's settings for the project up to date, as a process of its own.
   const refreshLocal = deps.refreshLocal ?? ((folder) => startDetached(spawn, path.join(pluginRoot, LOCAL_REFRESH_SCRIPT), [folder]));
   // Makes the copy of Node.js the Guarded runner starts from, detached, outside this budget.
-  const startLowNodeCopy = deps.startLowNodeCopy ?? (() => startDetached(spawn, path.join(pluginRoot, LOW_NODE_SCRIPT)));
+  const startLowNodeCopy = deps.startLowNodeCopy ?? ((script) => startDetached(spawn, path.join(pluginRoot, script)));
   const found = find(input.cwd, { dir });
   if (!found) {
     const setup = beingSetUp(input.cwd);
@@ -848,6 +873,12 @@ async function started(input, deps) {
   }
   const version = claudeCodeVersion(input.transcript_path);
   if (version !== null && olderThan(version, GUARD_FLOOR)) notes.push(OLD_CLAUDE_CODE);
+  // A settings file that can't be read is named with its line and column, at every start, so it is found before anything
+  // is started that would read it.
+  try {
+    const damaged = settingsFaultLine({ folder: typeof found.record?.folder === 'string' ? found.record.folder : input.cwd, claudeHome: claudeHome ?? claudeHomeOf(env) });
+    if (damaged !== null) notes.push(damaged);
+  } catch { /* the session goes on */ }
   // While this folder's setup run is open and has not yet installed the kits (step 7), kits not
   // installed are setup's own state, not drift, and write no hold (ruling R136).
   const pinsPending = setup?.run != null && !stepDone(setup.run, 7);
@@ -868,13 +899,13 @@ async function started(input, deps) {
   else {
     const mine = ownVersion(pluginRoot);
     if (up.busy === true) {
-      notes.push(`An older Wheelhouse helper (version ${oneLine(up.version)}) is still finishing work; Wheelhouse moves to the new one (version ${mine}) when it is done`);
+      notes.push(`An older Wheelhouse helper (version ${oneLine(up.version)}) is still finishing work; Wheelhouse moves to the new one (${versionWords(mine)}) when it is done`);
     } else if (up.noRoute === true) {
       notes.push(`An older Wheelhouse helper (version ${oneLine(up.version)}) is still running and can't be asked to stop. It is replaced when the computer restarts. To replace it sooner, ask this session to end the Node process running Wheelhouse's helper (helper-main.js), or end it yourself in Activity Monitor on a Mac or Task Manager on Windows`);
     } else if (up.slow === true) {
       notes.push(`The older Wheelhouse helper (version ${oneLine(up.version)}) is restarting; the new one starts at the next session, or ask again in a moment`);
     } else if (typeof up.version === 'string' && mine !== null && up.version !== mine) {
-      notes.push(`The helper running is version ${oneLine(up.version)}; this copy is version ${mine}`);
+      notes.push(`The helper running is ${versionWords(up.version)}; this copy is ${versionWords(mine)}`);
     }
     await left(sendPending(project, clientNow(), { until: end }));
     // v0.1.x's records, imported once, before the views are read so the briefing holds them.
@@ -946,15 +977,17 @@ async function started(input, deps) {
   let ready = false;
   if (platform === 'win32') {
     try {
+      const low = await import('../windows/low.js');
+      const guardedSelfTest = givenSelfTest ?? low.selfTest;
       const home = wheelhouseHome();
-      const copied = copyReady({ home });
-      if (!copied) startLowNodeCopy();
+      const copied = (givenCopyReady ?? low.lowNodeReady)({ home });
+      if (!copied) startLowNodeCopy(low.LOW_NODE_SCRIPT);
       const wouldGuard = buildsShown({ views, computer: computerId(), locked, guardedReady: true }).level === 'guarded';
-      const timeoutMs = Math.min(SELF_TEST_MS, end - Date.now());
-      if (copied && (wouldGuard || needsSelfTest({ home, now })) && timeoutMs > 0) {
+      const timeoutMs = Math.min(low.SELF_TEST_MS, end - Date.now());
+      if (copied && (wouldGuard || low.needsSelfTest({ home, now })) && timeoutMs > 0) {
         await guardedSelfTest({ run, home, worktree: input.cwd, now, pluginRoot, timeoutMs });
       }
-      ready = guardedReady({ home, now, platform });
+      ready = low.guardedReady({ home, now, platform });
     } catch { /* not ready */ }
   }
   // The card that offers the lock, when another computer holds it, goes to the front desk only.
@@ -991,9 +1024,24 @@ async function started(input, deps) {
   }
   const text = reload({
     views, events: cardEvents, stop: stopOf(), lineage, notes, feature: madeFeatureSlug(input.cwd), stateRoot, windows, builds, frontDesk, aside: asideNote, where,
+    buildersFact: frontDesk ? await buildersLineOf(input) : null,
     sheet: toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: commandRoot({ dir, self }, pluginRoot), platform }),
   });
   return text === '' ? undefined : answer.context('SessionStart', text);
+}
+
+// The Builders line for the front desk's session start: the recorded sign-in fact for the agent this session runs on.
+// It is read when the front desk starts, not by every session start.
+async function buildersLineOf(input) {
+  try {
+    const [{ buildersLine }, { builderRoute }, { sessionsFor }] = await Promise.all([import('../lib/sign-in-line.js'), import('../lib/route.js'), import('../agents/project-agent.js')]);
+    const agent = agentOfInput(input) ?? 'claude-code';
+    const home = wheelhouseHome();
+    const found = builderRoute({ agent, home, routes: sessionsFor(agent).routes });
+    return buildersLine({ home, agent, route: found.route, program: found.launch?.[0], fault: found.from === 'fault' ? found.fault : null });
+  } catch {
+    return null; // a line that can't be made is left out, as the other facts are
+  }
 }
 
 if (startedAsScript(import.meta.url)) {

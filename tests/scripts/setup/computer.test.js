@@ -96,8 +96,8 @@ test('the card lists each change in plain words, and nothing else changes', asyn
     assert.match(text, /this computer only/);
     assert.match(text, /never what you type or what tools return/);
     assert.match(text, new RegExp(`Chat history kept ${RETENTION_DAYS} days \\(now 7\\)`));
-    // Ruling R64: the card says what a shorter retention costs.
-    assert.match(text, new RegExp(`Chat history kept ${RETENTION_DAYS} days \\(now 7\\): older chats are deleted, and uninstall can't bring them back`));
+    // A shorter limit of the director's is raised, so nothing is deleted; only a longer one costs chats (ruling R64).
+    assert.match(text, new RegExp(`Chat history kept ${RETENTION_DAYS} days \\(now 7\\); nothing is deleted`));
     // The option that goes ahead says what uninstall puts back, and the card's options show it.
     const goesAhead = composeCard({ ...planned.card, kind: 'setup', target: { step: 6, hash: planHash(planned.changes) } }).question.options[0].description;
     assert.match(goesAhead, /Uninstall puts each setting back, but not deleted chats/);
@@ -321,6 +321,18 @@ test('a user settings file that is not a JSON object stops the plan, naming it',
     const step = computerStep({ engine: null, run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
     await assert.rejects(step.plan({ folder, step: 6, userHome: user, platform: 'darwin', answers: {} }), /settings\.json/);
     assert.equal(fs.readFileSync(file, 'utf8'), 'not json');
+  });
+});
+
+test('a user settings file with a lone backslash stops the plan, naming its line, column and the hint', async () => {
+  await withProject(async ({ folder, user, config }) => {
+    const file = path.join(config, 'settings.json');
+    fs.writeFileSync(file, '{\n "a": "C:\\Users\\x"\n}');
+    const step = computerStep({ engine: null, run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    await assert.rejects(step.plan({ folder, step: 6, userHome: user, platform: 'darwin', answers: {} }), (error) => {
+      assert.ok(error.message.includes(`${file} can't be read: line 2, column 10. a single`), error.message);
+      return true;
+    });
   });
 });
 
@@ -656,8 +668,8 @@ test('step 6\'s card with Copilot chosen fits at the longest lengths, in words a
   const { agentComputerChanges } = await import('../../../scripts/agents/setup-parts.js');
   const root = path.resolve(import.meta.dirname, '..', '..', '..');
   for (const platform of ['win32', 'darwin']) {
-    const agent = agentComputerChanges('copilot', { env: {}, userHome: 'C:\\Users\\firstname.lastname-longer', platform, root });
-    assert.ok(agent.length >= 2, 'the hook file and the First Mate\'s files');
+    const agent = agentComputerChanges('copilot', { env: {}, userHome: 'C:\\Users\\firstname.lastname-longer', platform, root, brainstorming: () => [{ rel: 'SKILL.md', content: 'x' }] });
+    assert.ok(agent.length >= 3, 'the hook file, the First Mate\'s files and the brainstorming copy');
     for (const route of ['user-settings', 'launch-env']) {
       for (const kept of [[], Object.keys(telemetryEnv(47801)).map((name) => ({ name, value: 'their-own-value' }))]) {
         const changes = [
@@ -670,8 +682,10 @@ test('step 6\'s card with Copilot chosen fits at the longest lengths, in words a
         const text = composeCard({ ...card, kind: 'setup', target: { step: 6, hash: '0'.repeat(64) } }).question.question;
         const where = `${platform}, ${route}, ${kept.length} kept`;
         assert.ok(text.length <= 1200, `${where}: ${text.length} characters`);
-        assert.match(text, /Copilot's (checks before each of its actions|hook file)/, where);
+        assert.match(text, /Copilot's (checks before each of its actions|checks,|checks and|hook file)/, where);
         assert.match(text, /First Mate files/, where);
+        assert.match(text, /brainstorming skill/, where);
+        assert.doesNotMatch(text, /checks[^,.]* and First Mate files/, `${where}: three parts read as a list`);
         assert.match(text, /Chat history kept/, where);
         assert.match(text, /well-tried updates/, where);
         assert.match(text, /Phone notifications/, where);
@@ -813,4 +827,13 @@ test('pending names what step 6 would change, and nothing once every setting is 
     assert.deepEqual(await step.pending(ctx), []);
     assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), settled);
   });
+});
+
+test('the history line says a deletion only where a longer limit of the director\'s is cut', () => {
+  const retention = [{ kind: 'json-key', what: 'retention', key: ['cleanupPeriodDays'], after: RETENTION_DAYS }];
+  const said = (userSettings) => lines({ changes: retention, userSettings, kept: [], route: 'user-settings', platform: 'win32', floor: '2.1.299' }).join('\n');
+  assert.doesNotMatch(said({}), /deleted, and|older chats are deleted/);
+  assert.match(said({}), /which Claude Code already keeps/);
+  assert.match(said({ cleanupPeriodDays: 365 }), /\(now 365\): older chats are deleted, and uninstall can't bring them back/);
+  assert.match(said({ cleanupPeriodDays: 7 }), /\(now 7\); nothing is deleted/);
 });

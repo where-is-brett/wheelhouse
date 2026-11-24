@@ -40,7 +40,7 @@ import { childEnv } from '../host/connection.js';
 import { keepingProtection, protectionLogPlace } from './protection-log.js';
 
 const LEVELS = Object.freeze(['sandbox', 'guarded', 'ask', 'unattended']);
-const PROOFS = Object.freeze(['chat-click', 'hook-click', 'policy-hook', 'window', 'add-on', 'host', 'signed-hook']);
+const PROOFS = Object.freeze(['chat-click', 'hook-click', 'policy-hook', 'add-on', 'host', 'signed-hook']);
 const REVIEW_KINDS = Object.freeze(['chat-review', 'clean-session', 'subagent']);
 
 export const GAP_KINDS = Object.freeze(['no-approval', 'approval-not-merged', 'other-commit', 'external-pipeline', 'protection-change', 'merge-not-on-host']);

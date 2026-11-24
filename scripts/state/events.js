@@ -7,7 +7,6 @@ import { sign, verify } from './signing.js';
 import { scanContent } from './secret-scan.js';
 import { briefProblem, briefWords } from './brief.js';
 import { canonicalJson } from '../lib/canonical.js';
-import { git } from './git.js';
 import { settingsLine } from '../lib/settings-card.js';
 import { RELEASE_LABEL, RELEASE_TAG, releaseLine, UPDATE_LABEL, updateLine, keepControlLine, approvalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, seatTakeOverLine, SEAT_SESSION, isSeatSince, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
@@ -29,7 +28,7 @@ export const PLAIN_KINDS = [
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
   'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest', 'chat-steer',
   'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'brief', 'slept', 'agent-call', 'self-merged', 'watch', 'aside-overlap', 'question-closed',
-  'helm', 'helm-ended', 'helm-note',
+  'helm', 'helm-ended', 'helm-note', 'start-failing',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
@@ -71,7 +70,7 @@ export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident
 export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'by-hand', 'slept', 'self-merged'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'seat-take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'approve-release', 'update-helper-answer', 'update-click', 'confirm-settings'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'seat-take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'alerts-keep', 'safekeeping', 'send-back', 'approve-release', 'update-helper-answer', 'update-click', 'confirm-settings'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -117,7 +116,7 @@ const ACTION_OWN = {
   // the list uninstall puts back. Its question is the card's set line alone. It is kept in
   // <wheelhouseHome()>/setup/clicks/, as a setup click is, where the helper reads it.
   uninstall: ['project', 'hash'],
-  // The director's Keep it, in the helper's window, on a Lean project's card about a main version moved outside the
+  // The director's Keep it, on a Lean project's card about a main version moved outside the
   // helper (ruling P5-27 f): the main version the record held and the one the store holds, each in full.
   'keep-main': ['from', 'to'],
   // The director's Send it back on a pull request left to them (delegated decisions design, section 8.1): its number and
@@ -135,20 +134,23 @@ const ACTION_OWN = {
   // The director's Confirm on the card keeping a feature's files that steer agents as they are
   // (ruling P7-31): the work, and the full hash of the watcher's finding the card's line names.
   'keep-control-files': ['work', 'hash'],
-  // The director's Confirm, in the helper's window, on the card for the computer's git settings after a push was refused because
+  // The director's Confirm on the card for the computer's git settings after a push was refused because
   // they changed: the full hash of the settings' fingerprint the card named. The helper records them as they read at the click.
   'confirm-settings': ['hash'],
-  // The director's Undo, in the helper's window, on a Lean project's card asking to undo a merge (ruling P5-50: undo
+  // The director's Undo on a Lean project's card asking to undo a merge (ruling P5-50: undo
   // is a runbook step): the merge, in full.
   'undo-merge': ['merge'],
-  // The director's Undo it, in the helper's window, on the card about a main version moved outside the helper: the
+  // The director's Undo it on the card about a main version moved outside the helper: the
   // main version the record held and the one the store holds, each in full.
   'undo-main': ['from', 'to'],
   // A button on the Safekeeping row (spec 8.2): which one, by its word. The pane's press alone makes it.
+  // The director's Yes on the card asking to keep or forget a phone-alert channel: the step and the full hash of the request the
+  // card's line names. Only the helper's own request for that step and hash is carried out on it.
+  'alerts-keep': ['step', 'hash'],
   safekeeping: ['press'],
 };
-// Every action may also name its `proof` (ruling P5-23): `window` when the helper signed it from a click in its own
-// window. Claude Code's prompt record names none. An approval and a confirmation, which have no shape of their own
+// Every action may also name its `proof` (ruling P5-23): `hook-click` when the helper signed it from a click a hook that only
+// reads saw in the chat. Claude Code's prompt record names none. An approval and a confirmation, which have no shape of their own
 // here, may name one too; the gate and the audit report judge what it names.
 const ACTION_KEYS = ['action', 'question', 'label', 'proof', ...new Set(Object.values(ACTION_OWN).flat())];
 // Labels that ask for more, put the card off or hand the front desk the director's own words: a click on one is never an answer.
@@ -289,6 +291,11 @@ function checkAction(data) {
   } else if (data.action === 'undo-merge') {
     if (typeof data.merge !== 'string' || !/^[0-9a-f]{40}$/.test(data.merge)) bad('needs the merge it undoes, in full');
     if (data.label !== 'Undo') bad('needs the Undo label');
+  } else if (data.action === 'alerts-keep') {
+    if (!['keep-ntfy', 'keep-telegram', 'forget-ntfy', 'forget-telegram'].includes(data.step)) bad('needs the step it confirms');
+    if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the request it confirms');
+    if (data.label !== 'Yes') bad('needs the Yes label');
+    if (!data.question.split('\n').includes(`Phone alerts: ${data.step} ${data.hash.slice(0, 12)}`)) bad('carries the alerts line for its step and hash in its question');
   } else if (data.action === 'undo-main') {
     if (!['from', 'to'].every((k) => typeof data[k] === 'string' && /^[0-9a-f]{40}$/.test(data[k]))) bad('needs the main version\'s commits it undoes, from and to, in full');
     if (data.label !== 'Undo it') bad('needs the Undo it label');
@@ -412,6 +419,9 @@ const PLAIN_SHAPES = {
   // watcher read its output: why (`limit` or `billing`), when, until when the premium model rests, and the feature
   // whose wake it was. Its wake runs again on the most capable model, and the board says so in one line meanwhile.
   'premium-rest': { must: ['why', 'at', 'until'], may: ['work'] },
+  // A piece whose session start failed three times in a row the same way (builders design, section 10.2): the piece, the kind
+  // of failure (a sign-in kind or `other`) and how many starts failed. The watcher holds the piece's starts until it is told.
+  'start-failing': { must: ['work', 'kind', 'starts'], may: [] },
   // The engine's records (design on Archon, sections 4.2 and 10). A run of a work on an engine: its state
   // (`started`, `paused` or `ended`), and when it ended, its branch, pull request and outcome.
   run: { must: ['work', 'lane', 'engine', 'runId', 'state'], may: ['branch', 'pr', 'outcome', 'resume', 'failure', 'step', 'level'] },
@@ -809,6 +819,10 @@ function checkPlain(kind, data) {
     if (data.why !== 'limit' && data.why !== 'billing') bad('needs why to be limit or billing');
     for (const k of ['at', 'until']) if (typeof data[k] !== 'string' || Number.isNaN(Date.parse(data[k]))) bad(`needs ${k} to be a time`);
     if (data.work !== undefined && (typeof data.work !== 'string' || !/^[a-z0-9-]{1,40}$/.test(data.work))) bad('has a work that is not a work id');
+  } else if (kind === 'start-failing') {
+    if (typeof data.work !== 'string' || !/^[a-z0-9-]{1,40}$/.test(data.work)) bad('needs work to be a work id');
+    if (!['not-signed-in', 'blocked', 'no-program', 'other'].includes(data.kind)) bad('needs kind to be not-signed-in, blocked, no-program or other');
+    if (!Number.isInteger(data.starts) || data.starts < 1) bad('needs starts to be a whole number of 1 or more');
   } else if (kind === 'column-ready') {
     if (!READY_COLUMNS.includes(data.column)) bad(`needs column to be ${listed(READY_COLUMNS.map(String))}`);
     const pins = data.pins;
@@ -1145,6 +1159,8 @@ export async function writeEvent({ project, event, env, dir = stateDir(project),
     const names = found.join(', ');
     throw new Error(`The event file ${path.basename(file)} was refused because it matched: ${names}`);
   }
+  // Read where a write commits, not when the module loads: a reader of events never runs git.
+  const { git } = await import('./git.js');
   const added = await git(dir, ['add', '--', relative], env);
   const committed = added.code === 0 && (await git(dir, ['commit', '-m', `${event.kind} ${event.id}`, '--', relative], env)).code === 0;
   if (!committed) {

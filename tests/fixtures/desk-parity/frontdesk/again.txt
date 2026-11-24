@@ -11,7 +11,7 @@ exit 0
           "description": "Recommended: It approves and goes ahead. The checks passed."
         },
         {
-          "label": "Suggest a change…",
+          "label": "Suggest a change\u2026",
           "description": "Tell me what you'd change; I'll come back with a new proposal."
         },
         {

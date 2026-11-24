@@ -74,6 +74,8 @@ async function stand() {
   await g(repo, 'tag', 'v0.2.11');
   shas['v0.3.0-rc.1'] = await put({ '.claude-plugin/plugin.json': plugin('0.3.0-rc.1') }, 'rc');
   await g(repo, 'tag', 'v0.3.0-rc.1');
+  shas['v0.2.13'] = await put({ '.claude-plugin/plugin.json': `${JSON.stringify({ name: 'wheelhouse' })}\n` }, 'main line');
+  await g(repo, 'tag', 'v0.2.13');
   await g(repo, 'checkout', '-q', '-b', 'side');
   shas['v0.4.0'] = await put({ '.claude-plugin/plugin.json': plugin('0.4.0') }, 'side');
   await g(repo, 'tag', 'v0.4.0');
@@ -120,6 +122,14 @@ test('checkTarget reads the version, the lines for the card and the floors', asy
   assert.deepEqual(got, {
     ok: true, version: '0.2.10', says: 'It can update itself.\nIt keeps your own files.', nodeFloor: '22.0.0', claudeFloor: '2.1.299',
   });
+});
+
+test('checkTarget refuses a tag cut from the main line, whose plugin.json names no version', async () => {
+  const s = await stand();
+  await fetchTag({ ref: 'v0.2.13', run: realRun, mirror: s.mirror, url: s.url });
+  const got = await checkTarget({ tag: 'v0.2.13', sha: s.shas['v0.2.13'], run: realRun, mirror: s.mirror });
+  assert.equal(got.ok, false);
+  assert.equal(got.why, "the release's .claude-plugin/plugin.json names no version");
 });
 
 test('checkTarget gives null for a release with no summary or manifest', async () => {

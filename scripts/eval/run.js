@@ -65,6 +65,7 @@ import { helperClient } from '../host/helper-client.js';
 import { DEFAULT_AGENT, DESIGNED, E2E_DIR, EVAL_ROOT, REPO, SCENARIO_FILE, coveredScenarios, declaredAgents, declaredLeg, runsOnAgent, shownPath, summarise, summaryText } from './summary.js';
 import { run as runProgram } from '../lib/run.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { pluginVersion } from '../lib/plugin-version.js';
 
 export { EVAL_ROOT };
 
@@ -199,13 +200,7 @@ export async function runEndToEnd(files, { cwd = REPO } = {}) {
 
 // ---------------------------------------------------------------- run records
 
-function pluginVersion() {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(REPO, '.claude-plugin', 'plugin.json'), 'utf8')).version ?? null;
-  } catch {
-    return null;
-  }
-}
+const ownVersion = () => pluginVersion(REPO);
 
 async function buildCommit() {
   try {
@@ -501,7 +496,7 @@ export async function main(argv, {
   e2eDir = E2E_DIR,
   now = () => new Date(),
   print = console.log,
-  version = pluginVersion(),
+  version = ownVersion(),
   commit,
   designed = DESIGNED,
   platform = process.platform,

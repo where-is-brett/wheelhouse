@@ -2,7 +2,9 @@
 // The card that asks the director to confirm this computer's git settings again, after a push was refused because they
 // differ from the ones confirmed at setup (scripts/lib/safe-git.js), and the names of settings it shows. It shows names only,
 // never values, which can carry a proxy's sign-in. The helper composes it from its own read of the settings, raises it, and
-// signs the director's click on it in its own window; nothing else confirms the settings.
+// signs the director's click on it in the chat; nothing else confirms the settings.
+import { CARD } from './front-desk.js';
+import { sayLaunch } from './launch-words.js';
 
 // The code a refused push carries when its reason is that the settings changed.
 export const SETTINGS_CHANGED = 'git-settings-changed';
@@ -64,7 +66,7 @@ export function settingsCard(hash, change) {
     question: [
       'This computer\'s git settings (sign-in, proxy, certificate and address rewrites) are not the ones you confirmed, so nothing is pushed.',
       changeLine(change),
-      'Confirm them only if you changed them yourself, or your IT team did. Confirm is clicked in Wheelhouse\'s own window, never in the chat.',
+      'Confirm them only if you changed them yourself, or your IT team did. Confirm is a click on this card in the chat, never words you type.',
       'Recommended: Not now, unless you know why they changed. Until you confirm, nothing is pushed.',
       line,
     ].join('\n'),
@@ -78,4 +80,32 @@ export function settingsCard(hash, change) {
 }
 
 // What the session start tells the First Mate when the lock could not be pushed for this reason and the helper raised the card.
-export const settingsCardNote = (card) => `This computer's git settings changed, so nothing can be pushed. Tell the director in one plain line that a card waits for them in Wheelhouse's own window, then run the Wheelhouse command \`confirm ${card}\`; its click is the only way to confirm them.`;
+export const settingsCardNote = (card) => `This computer's git settings changed, so nothing can be pushed. Tell the director in one plain line that a card waits for them, then run \`cards\` and ask what it gives; their click on Confirm is the only way to confirm them.`;
+
+// The card that shows the launch command back before it is saved (design section 8.2): the words the director typed, split by
+// scripts/lib/launch-words.js, one per line. It is asked in the chat, and its click is the director's own. `words` is the array
+// splitLaunch gave; `computerName` is this computer's name when there is one.
+export const LAUNCH_SAVE = 'Save it';
+export function launchCard(words, { computerName = 'this computer' } = {}) {
+  const line = sayLaunch(words);
+  const make = (listed) => [
+      `Builders on ${computerName} will start \`claude\` through this program.`,
+      line,
+      ...(listed ? words.map((word, i) => `${i + 1}. ${word}`) : []),
+      'Save it only if this is the program you meant. It runs on every builder start on this computer.',
+      'Recommended: Save it, if the words above are right. Until you do, builders start as they do now.',
+    ].join('\n');
+  // One word to a line when the card has room for both; the line alone otherwise, and never a card that cuts the words short.
+  let question = make(true);
+  if (question.length > CARD.chars) question = make(false);
+  if (question.length > CARD.chars) throw new Error('This launch command is too long to show whole on a card.');
+  return {
+    question,
+    header: 'Launch',
+    options: [LAUNCH_SAVE, NOT_NOW],
+    kind: 'question',
+    level: 4,
+    recommend: LAUNCH_SAVE,
+    line,
+  };
+}

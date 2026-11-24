@@ -16,7 +16,8 @@ import { effectiveSettings } from '../settings/effective.js';
 import { isOpen } from '../desk/views.js';
 import { readCapped } from '../feature/status.js';
 import { readDecisions } from '../decisions/pending.js';
-import { runningFile, sessionFile, pidAlive } from '../watcher/waker.js';
+import { runningFile, sessionFile } from '../watcher/folders.js';
+import { pidAlive } from '../lib/process-start.js';
 import { levelFor } from './level.js';
 import { LEVELS } from './levels.js';
 

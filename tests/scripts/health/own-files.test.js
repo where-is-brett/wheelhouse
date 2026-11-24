@@ -8,7 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import {
-  ownFilesBaseline, ownFilesChanged, checkOwnFiles, ownFilesLine, readOwnFilesState, pluginFoldersInUse, recordUpdate, changedForProject, fileHash,
+  ownFilesBaseline, ownFilesChanged, checkOwnFiles, ownFilesLine, readOwnFilesState, pluginFoldersInUse, recordUpdate, changedForProject, fileHash, ownFilesFile, acceptOwnFiles, acceptOwnWritesSince, SHRINK_LINE,
 } from '../../../scripts/health/own-files.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { g } from '../../helpers/git-fixture.js';
@@ -86,6 +86,78 @@ test('no baseline yet says nothing, and makes one', async () => {
   });
 });
 
+test('a write that would shrink own-files.json by more than half is refused and named; uninstall\'s removal is allowed', async () => {
+  const l = layout();
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...l, now: day(2) });
+    const before = readOwnFilesState();
+    const kept = Object.keys(before.others.files).length;
+    assert.ok(kept >= 4, 'a baseline with several files');
+    // Most of the files go: a look afterwards would write a list under half the size.
+    for (const file of [l.files.hook, l.files.agent, l.files.settings, l.files.cleanHook, l.files.cleanSettings, l.files.addon, l.files.login]) fs.rmSync(file);
+    acceptOwnFiles({ ...l, now: day(5) });
+    const named = await checkOwnFiles({ ...l, now: day(5) });
+    assert.equal(named.refused, SHRINK_LINE);
+    assert.match(named.refused, /run Wheelhouse's setup again/, 'the line gives the way out');
+    const after = readOwnFilesState();
+    assert.equal(Object.keys(after.others.files).length, kept, 'the list stays as it was');
+    assert.ok(after.shrinkRefused.to * 2 < after.shrinkRefused.from);
+    assert.equal((await checkOwnFiles({ ...l, now: day(9) })).refused, SHRINK_LINE, 'named at each look until setup runs again');
+    fs.rmSync(ownFilesFile());
+    assert.equal(readOwnFilesState(), null, 'uninstall removes the file whole');
+  });
+});
+
+test('after a refused shrink, setup run again takes the new list and the board line clears', async () => {
+  const l = layout();
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...l, now: day(2) });
+    for (const file of [l.files.hook, l.files.agent, l.files.settings, l.files.cleanHook, l.files.cleanSettings, l.files.addon, l.files.login]) fs.rmSync(file);
+    acceptOwnFiles({ ...l, now: day(5) });
+    assert.ok(readOwnFilesState().shrinkRefused);
+    acceptOwnWritesSince({ ...l, since: day(5)().toISOString(), now: day(5) });
+    const state = readOwnFilesState();
+    assert.equal(state.shrinkRefused, undefined);
+    assert.ok(Object.keys(state.others.files).length < 4, 'the smaller list is taken');
+    assert.equal((await checkOwnFiles({ ...l, now: day(9) })).refused, undefined);
+  });
+});
+
+test('setup\'s own removal of many files in one run is taken, not refused', async () => {
+  const l = layout();
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...l, now: day(2) });
+    const since = new Date(Date.now() - 1000).toISOString();
+    for (const file of [l.files.hook, l.files.agent, l.files.settings, l.files.cleanHook, l.files.cleanSettings, l.files.addon, l.files.login]) fs.rmSync(file);
+    acceptOwnWritesSince({ ...l, since });
+    assert.equal(readOwnFilesState().shrinkRefused, undefined);
+  });
+});
+
+test('a state in the old flat shape is not counted as a list to shrink from', async () => {
+  const l = layout();
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    fs.mkdirSync(path.dirname(ownFilesFile()), { recursive: true });
+    const many = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`/old/file-${i}`, 'x']));
+    fs.writeFileSync(ownFilesFile(), JSON.stringify({ at: day(1)().toISOString(), files: many }));
+    const look = await checkOwnFiles({ ...l, now: day(2) });
+    assert.equal(look.refused, undefined);
+    assert.equal(readOwnFilesState().shrinkRefused, undefined);
+  });
+});
+
+test('a small drop in the list is written', async () => {
+  const l = layout();
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...l, now: day(2) });
+    fs.rmSync(l.files.hook);
+    acceptOwnFiles({ ...l, now: day(5) });
+    const next = await checkOwnFiles({ ...l, now: day(5) });
+    assert.equal(next.refused, undefined);
+    assert.equal(readOwnFilesState().shrinkRefused, undefined);
+  });
+});
+
 // --- Plugin folders in use, the skip list, and a moved version checked against its tag ---
 
 const blob = (text) => crypto.createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex');
@@ -97,6 +169,20 @@ const treeOf = (files) => new Map(Object.entries(files).map(([rel, text]) => [re
 const day = (n) => () => new Date(Date.UTC(2026, 10, n, 3));
 
 // A Claude folder whose installed_plugins.json lists the Wheelhouse installs given: { version, scope, project }.
+test('own-files: a build from the main line has no tag, so nothing is fetched for it and nothing named', async () => {
+  const c = claudeWith([{ version: '0.2.6', scope: 'user' }]);
+  const asked = [];
+  const where = { ...bare(), claudeHome: c.claudeHome, treeFor: async (tag) => { asked.push(tag); return treeOf(release(tag.slice(1))); } };
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...where, now: day(2) });
+    c.relist([{ version: 'df5f760e1a2b', scope: 'user' }]);
+    const moved = await checkOwnFiles({ ...where, now: day(3) });
+    assert.deepEqual(moved.changed, []);
+    assert.equal(moved.calm, undefined);
+    assert.deepEqual(asked, []);
+  });
+});
+
 function claudeWith(installs) {
   const base = tempFolder('wh-own-claude-');
   const claudeHome = path.join(base, 'claude');

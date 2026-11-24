@@ -18,7 +18,8 @@ import { SIGN_IN_KEYS, readCopilotConfig } from '../../../adapters/copilot/sessi
 import { homeControlFolders } from '../../lib/agent-control.js';
 import { readJournal, addChanges, newId } from '../../setup/journal.js';
 import { accountOf, recordAccount, DEFAULT_ALLOWANCE } from './usage.js';
-import { FIRST_MATE_DIR, FIRST_MATE_FILES } from './first-mate.js';
+import { FIRST_MATE_DIR, FIRST_MATE_FILES, BRAINSTORMING_SKILL } from './first-mate.js';
+import { plannedBrainstorming, keepBrainstormingKit } from './brainstorming-copy.js';
 
 export const LABEL = 'Copilot';
 export const ACCOUNT_TIMEOUT_MS = 20 * 1000;
@@ -27,6 +28,8 @@ export const SIGN_IN_WAIT_MS = 30 * 1000;
 export const SIGN_IN_WHY = "Copilot isn't signed in on this computer. Sign in with `copilot login` (GitHub's device sign-in, which only you can finish), and setup goes on once it has.";
 export const HOOKS_LINE = "Copilot's checks before each of its actions, as one hook file in your Copilot folder";
 export const FIRST_MATE_LINE = "Wheelhouse's First Mate for Copilot's chat, as an agent file and an instructions file in your Copilot folder, which is there for every project on this computer (they say to apply only in a Wheelhouse project)";
+
+export const BRAINSTORMING_LINE = "Superpowers' brainstorming skill, as a folder in your Copilot skills folder, which is there for every project on this computer (its description says to use it only in a Wheelhouse project)";
 
 const isRecord = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
@@ -102,11 +105,16 @@ function firstMateFiles({ home, root, read }) {
   return out;
 }
 
+// The brainstorming copy's files (brainstorming-copy.js) as where they go in the Copilot home `home`: [{ target, content }].
+function brainstormingTargets({ home, brainstorming }) {
+  return brainstorming().map((f) => ({ target: path.join(home, 'skills', BRAINSTORMING_SKILL, ...f.rel.split('/')), content: f.content }));
+}
+
 // The changes setup makes on this computer for Copilot: the hook file and the First Mate's files, each unless it already
 // holds what Wheelhouse writes. `node` is the Node.js that runs setup and `root` the Wheelhouse folder. The First Mate's
 // files share one line on the plan; a file of the person's own at one of their paths is replaced, and the journal holds
 // it first (applyComputer).
-export function computerChanges({ env = process.env, userHome, platform = process.platform, node = process.execPath, root, read = textOf } = {}) {
+export function computerChanges({ env = process.env, userHome, platform = process.platform, node = process.execPath, root, read = textOf, brainstorming = plannedBrainstorming } = {}) {
   const home = copilotHome({ env, homedir: userHome });
   const out = [];
   const target = hooks.file({ home });
@@ -114,6 +122,8 @@ export function computerChanges({ env = process.env, userHome, platform = proces
   if (read(target) !== content) out.push({ kind: 'file', part: 'hooks', target, what: 'agent', label: LABEL, line: HOOKS_LINE, home, content, node, root, platform });
   const mate = firstMateFiles({ home, root, read }).filter((f) => read(f.target) !== f.content);
   mate.forEach((f, i) => out.push({ kind: 'file', part: 'first-mate', target: f.target, what: 'agent', label: LABEL, line: i === 0 ? FIRST_MATE_LINE : null, home, content: f.content }));
+  const copy = brainstormingTargets({ home, brainstorming }).filter((f) => read(f.target) !== f.content);
+  copy.forEach((f, i) => out.push({ kind: 'file', part: 'brainstorming', target: f.target, what: 'agent', label: LABEL, line: i === 0 ? BRAINSTORMING_LINE : null, home, content: f.content }));
   return out;
 }
 
@@ -134,7 +144,7 @@ function writeWhole(target, content) {
 export function applyComputer(changes, { record, newId }) {
   for (const c of changes) {
     record({ id: newId('chg'), kind: 'file', target: c.target, before: textOf(c.target), after: c.content });
-    if (c.part === 'first-mate') writeWhole(c.target, c.content);
+    if (c.part === 'first-mate' || c.part === 'brainstorming') writeWhole(c.target, c.content);
     else hooks.writeRegistration({ home: c.home, node: c.node, root: c.root, platform: c.platform });
   }
 }
@@ -155,7 +165,7 @@ function runHolding(target, journal) {
 // setup did not make, or one changed since setup, is left as it is and said so. A computer with none of the files is left
 // alone. Resolves the lines to say as one text, or null when nothing changed.
 export function refresh({
-  env = process.env, userHome, platform = process.platform, node = process.execPath, root, read = textOf, journal = readJournal, add = addChanges,
+  env = process.env, userHome, platform = process.platform, node = process.execPath, root, read = textOf, journal = readJournal, add = addChanges, brainstorming = plannedBrainstorming,
 } = {}) {
   const home = copilotHome({ env, homedir: userHome });
   const said = [];
@@ -181,6 +191,7 @@ export function refresh({
   const hookText = hooks.registrationText({ node, root, platform });
   redo(hookTarget, hookText, "Copilot's hook file", "Copilot's hook file now points at the new release.", () => hooks.writeRegistration({ home, node, root, platform }));
   for (const f of firstMateFiles({ home, root, read })) redo(f.target, f.content, `The First Mate's file ${path.basename(f.target)}`, `The First Mate's file ${path.basename(f.target)} now matches the new release.`, () => writeWhole(f.target, f.content));
+  for (const f of brainstormingTargets({ home, brainstorming })) redo(f.target, f.content, `Superpowers' brainstorming file ${path.relative(path.join(home, 'skills'), f.target)}`, `Superpowers' brainstorming file ${path.basename(f.target)} now matches the pinned release.`, () => writeWhole(f.target, f.content));
   return said.length === 0 ? null : said.join(' ');
 }
 
@@ -223,4 +234,7 @@ export async function afterApply({ run, at, env, keep = recordAccount, questions
   return chat === null ? accountLine(got) : `${accountLine(got)} ${chat}`;
 }
 
-export default Object.freeze({ label: LABEL, signedIn, computerChanges, applyComputer, afterApply, refresh, SIGN_IN_WAIT_MS, SIGN_IN_WHY });
+// Before the changes are planned or refreshed: the kits kept for Copilot are fetched if they aren't there yet.
+export const prepare = () => keepBrainstormingKit();
+
+export default Object.freeze({ label: LABEL, signedIn, computerChanges, applyComputer, afterApply, refresh, prepare, SIGN_IN_WAIT_MS, SIGN_IN_WHY });

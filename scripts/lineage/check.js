@@ -21,6 +21,7 @@ import { fingerprintTree } from './fingerprint.js';
 import { MANIFEST_PATH, UPSTREAMS, checkInstalled, claudeHome as defaultClaudeHome, locateInstalled, readManifest } from './manifest.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { keep, pendingDir, taken } from '../hooks/pending.js';
+import { DEV_VERSION, pluginVersion } from '../lib/plugin-version.js';
 
 // This copy's root, holding lineage/ beside scripts/: the plugin's folder, or Locked's managed copy.
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -180,7 +181,8 @@ const text = (value) => (typeof value === 'string' && value !== '' ? value : nul
 // This copy's Wheelhouse version: the plugin's own record, or what Locked recorded of the
 // version it copied. Null when neither can be read.
 export function wheelhouseVersion(root = ROOT) {
-  return text(readJson(path.join(root, '.claude-plugin', 'plugin.json'))?.version) ?? text(readJson(path.join(root, 'installed.json'))?.version);
+  const own = pluginVersion(root);
+  return (own === DEV_VERSION ? null : text(own)) ?? text(readJson(path.join(root, 'installed.json'))?.version) ?? text(own);
 }
 
 // The register's version, or null when it can't be read.

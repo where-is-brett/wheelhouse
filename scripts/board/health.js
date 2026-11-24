@@ -192,6 +192,7 @@ export function updateLines(update) {
   const lines = [];
   const day = dayMonthYear(update.updatedAt);
   if (typeof update.version === 'string') lines.push({ level: 'ok', text: `Wheelhouse ${update.version}${day ? ` (updated ${day})` : ''}` });
+  else if (update.between === true) lines.push({ level: 'ok', text: 'Wheelhouse from its main line (a build between releases)' });
   if (typeof update.newer === 'string') lines.push({ level: 'ok', text: `${update.newer} is out; type /wheelhouse:update when you want it` });
   const part = update.partway;
   if (part && typeof part.tag === 'string') {
@@ -214,7 +215,7 @@ export function updateLines(update) {
 // `screens` is readScreens'; only pages listed and Chrome not found bring its line. `phonePush`
 // is setup's push test as this computer's journal last recorded it, { arrived, at }
 // (scripts/lib/setup-run.js, phonePushResult); only `arrived: false` adds a line.
-export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, keyRenewal, ownFiles, hostApproval, platform = process.platform, realUsers, builds, screens, phonePush, frontDeskModel, safekeeping, agentSandbox, watcher, update, now = new Date() } = {}) {
+export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, keyRenewal, ownFiles, hostApproval, platform = process.platform, realUsers, builds, screens, phonePush, frontDeskModel, safekeeping, agentSandbox, watcher, builders, update, now = new Date() } = {}) {
   const lines = [];
   const add = (level, text) => lines.push({ level, text });
 
@@ -250,6 +251,8 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
   // Wakes that keep failing leave approved work waiting, so it is a broken thing, not a quiet one.
   const wakes = wakeFailureLine(watcher, now);
   if (wakes !== null) add('stop', wakes);
+  // How builders start here and whether they can sign in, { level, text }: the Builders line, from the recorded fact.
+  if (typeof builders?.text === 'string' && ['ok', 'watch'].includes(builders.level)) add(builders.level, builders.text);
   // The agent's sandbox on this computer, { level, text }, from the agent's adapter (sandboxLine); none for an agent without one.
   if (typeof agentSandbox?.text === 'string' && ['ok', 'watch'].includes(agentSandbox.level)) add(agentSandbox.level, agentSandbox.text);
   // The host refused the key (401), or there is none: setup's step 3 raises the key card.

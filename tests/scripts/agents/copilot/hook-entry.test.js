@@ -483,7 +483,7 @@ test('the VS Code chat\'s environment, COPILOT_CLI alone, is the Copilot harness
   assert.ok(r.calls.length > 0);
 });
 
-test('a session start from another window\'s seat carries the id line and the window card through the entry', async () => {
+test('a session start from another window\'s seat carries the id line and the plain seat line through the entry', async () => {
   await withHome(async () => {
     const { seatFile } = await import('../../../../scripts/lib/first-mate-seat.js');
     const file = seatFile('shop');
@@ -497,11 +497,10 @@ test('a session start from another window\'s seat carries the id line and the wi
     const context = said.hookSpecificOutput?.additionalContext ?? said.additionalContext ?? start.text;
     assert.match(context, /Your session id is chat-9: give it as --session chat-9/);
     assert.match(context, /isn't the First Mate: it is in another window/);
-    assert.match(context, /write no question and no options of your own/);
+    assert.match(context, /write no question and no options/);
     assert.match(context, /session a, last active/);
     assert.doesNotMatch(context, /Leave it there/);
-    assert.match(context, /confirm seat-take-over --session/);
-    assert.doesNotMatch(context, /AskUserQuestion/);
+    assert.doesNotMatch(context, /confirm seat-take-over|own window|AskUserQuestion/);
   });
 });
 
@@ -513,9 +512,9 @@ test('through the entry, a front-desk command that records is refused without th
   assert.equal(bare.code, 2);
   assert.match(bare.text, /--session chat-9/);
   assert.equal((await go('wh-frontdesk cards --session other')).code, 2);
-  assert.equal((await go('wh-frontdesk confirm seat-take-over')).code, 2);
+  assert.equal((await go(`wh-frontdesk undo ${'a'.repeat(40)}`)).code, 2);
   assert.equal((await go('wh-frontdesk cards --session chat-9')).code, 0);
-  assert.equal((await go('wh-frontdesk confirm seat-take-over --session chat-9')).code, 0);
+  assert.equal((await go(`wh-frontdesk undo ${'a'.repeat(40)} --session chat-9`)).code, 0);
   assert.equal((await go('wh-frontdesk views waiting')).code, 0, 'a read needs no id');
 });
 
@@ -571,6 +570,30 @@ test('the CLI harness\'s free-text field is typed words, and a string field with
   };
   assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string', title: 'Work' } }, required: ['work'] }), true);
   assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string' } } }), true);
-  assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string', oneOf: [{ const: 'Approve', title: 'Approve' }, { const: 'Not now', title: 'Not now' }] } } }), undefined);
-  assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string', enum: ['Approve', 'Not now'] } } }), undefined);
+  assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string', oneOf: [{ const: 'Approve', title: 'Approve' }, { const: 'Not now', title: 'Not now' }] } } }), false);
+  assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string', enum: ['Approve', 'Not now'] } } }), false);
+  // The two shapes the laptop re-run sent: only `message` and `requestedSchema` (24 November 2026), with a default as well.
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { type: 'string', oneOf: [{ const: 'Approve', title: 'Approve' }, { const: 'Not now', title: 'Not now' }], default: 'Approve' } } }), false);
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { type: 'string', enum: ['Approve', 'Not now'], default: 'Approve' } } }), false);
+  // One field with no list of options lets words be typed; a list on another field doesn't change that.
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { type: 'string', enum: ['A', 'B'] }, note: { type: 'string' } } }), true);
+  assert.equal(await freeOf({ type: 'object', properties: {} }), undefined);
+  // Shapes that look like a list and aren't: a oneOf entry with no const takes any words, an empty list, an anyOf beside the
+  // list, a number field (a typed answer even with the free-input flag off), and a field that isn't an object.
+  const listed = { type: 'string', enum: ['Approve', 'Not now'] };
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { type: 'string', oneOf: [{ const: 'Approve' }, { type: 'string' }] } } }), true);
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { oneOf: [{ const: 'Approve' }, { title: 'Other' }] } } }), true);
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { type: 'string', enum: [] } } }), true);
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { type: 'string', oneOf: [] } } }), true);
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { ...listed, anyOf: [{ type: 'string' }] } } }), true);
+  assert.equal(await freeOf({ type: 'object', properties: { answer: listed, count: { type: 'number' } } }), true);
+  assert.equal(await freeOf({ type: 'object', properties: { answer: listed, odd: 'x' } }), true);
+  assert.equal(await freeOf({ type: 'object', properties: { answer: listed, sure: { type: 'boolean' } } }), undefined, 'a yes-or-no is not typed, nor a list');
+  assert.equal(await freeOf({ type: 'object', properties: [listed] }), undefined);
+});
+
+test('the free-input flag off does not hide a schema field that takes typed words or a number', async () => {
+  const r = recording();
+  await run('preToolUse', call('ask_user', { message: 'What next?', allowFreeformInput: false, requestedSchema: { properties: { answer: { type: 'string', enum: ['A'] }, count: { type: 'integer' } } } }), { steps: r.steps, c6: true });
+  assert.equal(r.calls.find((c) => c.name === 'cardCheck').input.tool_input.questions[0].allowFreeformInput, true);
 });

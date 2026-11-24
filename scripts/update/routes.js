@@ -10,7 +10,7 @@
 //   /update/answer  relays an answer and signs nothing. Not now on the Update card keeps the declined release, but only after the
 //                   director's signed click on that card with Not now. For a card
 //                   the update raised (the approval of a release, the old helper's) it only checks that the prompt record or
-//                   the helper's window signed the director's click, and wakes the job if it has stopped.
+//                   the prompt record, or the helper from a click a hook saw, signed the director's click, and wakes the job if it has stopped.
 // Every look at the outside world is a seam, so a test starts no process and reaches no network.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -30,7 +30,7 @@ import { claudeHome as claudeHomeDir } from '../lineage/manifest.js';
 import { retiredInstalls } from './install.js';
 import { addonInstalled } from './addon.js';
 import { accountCatalogue } from './account-settings.js';
-import { runningVersion } from './board.js';
+import { runningBuild } from './board.js';
 import { releaseKind, updateMirror } from './change.js';
 import { decline } from './declined.js';
 import { signedAnswer } from './finish.js';
@@ -163,7 +163,7 @@ function milestones(steps, tag) {
 }
 
 export function updateRoutes({
-  now = () => new Date(), stopped = () => false, updateHeld = updateLockHeld, from = runningVersion, userHome = os.homedir(),
+  now = () => new Date(), stopped = () => false, updateHeld = updateLockHeld, from = runningBuild, userHome = os.homedir(),
   run = realRun, spawn = nodeSpawn, list, fetch, check, kind, locked, requirements, claudeVersion = async () => null, signed = signedByDefault, clicked = clickedByDefault,
   startRunner, account, retired, addon,
 } = {}) {
@@ -289,7 +289,7 @@ export function updateRoutes({
       if (stored.plan.put === 'release' && stored.plan.carryOn !== true) decline(project, stored.plan.to);
       return { ok: true, recorded: true, lines: [`Understood. Nothing changes, and ${stored.plan.to} won't be announced again.`] };
     }
-    // The cards the update raised: the director's click was signed by the prompt record or the window, or there is no answer.
+    // The cards the update raised: the director's click was signed by Wheelhouse's own hook, or there is no answer.
     const journal = openJournal(project).read();
     const raisedApproval = journal.steps?.change?.data?.card;
     const helper = readJson(finishFile(project))?.handover?.waiting?.card;

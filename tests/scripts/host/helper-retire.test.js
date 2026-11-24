@@ -8,6 +8,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { pluginVersion } from '../../../scripts/lib/plugin-version.js';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { startRealHelper } from '../../../scripts/host/helper-main.js';
@@ -25,7 +27,7 @@ const hostLog = [];
 const hostGuard = guardedRun(run, { log: hostLog });
 after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
-const PLUGIN = JSON.parse(fs.readFileSync(new URL('../../../.claude-plugin/plugin.json', import.meta.url), 'utf8'));
+const PLUGIN = { version: pluginVersion(fileURLToPath(new URL('../../..', import.meta.url))) };
 const unix = process.platform !== 'win32';
 const UPDATING = 'Wheelhouse is updating; try again in a minute';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -68,7 +70,7 @@ test('the record is written once the helper listens, and is gone after it closes
   const record = readHelperRecord();
   assert.deepEqual(record, {
     pid: process.pid, startTime: `start of ${process.pid}`, version: PLUGIN.version,
-    root: path.resolve(import.meta.dirname, '..', '..', '..'), address,
+    root: path.resolve(import.meta.dirname, '..', '..', '..'), address, home,
   });
   assert.equal(helperRecordFile(), path.join(home, 'helper.json'));
   assert.equal(fs.statSync(helperRecordFile()).mode & 0o077, 0, 'only the user can read it');
@@ -262,7 +264,7 @@ test('a helper that has not closed within the bound serves normally again', () =
   }, { onStop: () => { stops += 1; }, updateHeld: () => true, updateBoundMs: 300 });
 }));
 
-test('All stop, the desk\'s stopping acts and the confirm window go through while the helper makes way for an update', () => inHome(async () => {
+test('All stop and the desk\'s stopping acts go through while the helper makes way for an update', () => inHome(async () => {
   writeProject('o__p', { folder: os.tmpdir(), remoteUrl: null, host: 'local', repo: 'local/o__p', connection: { mode: 'none' } });
   await openTestRecord({ project: 'o__p' });
   const hold = { entered: false };
@@ -280,7 +282,6 @@ test('All stop, the desk\'s stopping acts and the confirm window go through whil
       assert.notEqual((await act(client, command)).refused, UPDATING, command);
     }
     assert.equal((await act(client, 'answer')).refused, UPDATING, 'other acts wait');
-    assert.notEqual((await client.confirm({ project: 'o__p', card: 'none', hash: 'a'.repeat(64) })).refused, UPDATING, '/confirm');
     release();
     await pending;
   }, { onStop: () => {}, updateHeld: () => true });

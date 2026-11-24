@@ -16,7 +16,7 @@
 //   answer <card> <label>   relays an answer. It signs nothing. For the Update card (named by the plan's hash) a Not now
 //                           is kept, so nothing asks about that release again. For the cards the update raised (the
 //                           approval of a release, the old helper's), the director's click was signed by the prompt record
-//                           or the helper's window; this tells the update to look again at once, and the helper refuses it
+//                           or the helper from a click a hook saw; this tells the update to look again at once, and the helper refuses it
 //                           when no signed answer is there.
 //   --here                  after plan, status or wait: the director wants the cards asked in the chat, so the question hook lets the
 //                           next one through even where a pane beside the chat could answer it (once, for two minutes).
@@ -29,6 +29,7 @@ import { helperClient } from '../host/helper-client.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { ANY_CARD, markHere } from '../lib/session-files.js';
 import { NO_TERMINAL, bootstrap, terminalAsk } from './bootstrap.js';
+import { asciiJson } from '../lib/ascii-json.js';
 
 export class CliError extends Error {}
 
@@ -71,7 +72,7 @@ export async function main(argv, {
     // Marked before the card is asked, so the question hook lets it through in the chat.
     const session = env.CLAUDE_CODE_SESSION_ID;
     if (here && typeof session === 'string' && session !== '') mark(session, [ANY_CARD], now());
-    const json = (value) => out(`${JSON.stringify(value, null, 2)}\n`);
+    const json = (value) => out(`${asciiJson(value, 2)}\n`);
     const folder = path.resolve(cwd);
     const helper = client ?? helperClient();
     if (form === 'plan' && rest.length <= 1) {

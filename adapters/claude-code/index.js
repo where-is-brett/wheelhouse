@@ -11,6 +11,7 @@ import sessions from './sessions.js';
 import tools from './tools.js';
 import toolSheet from './tool-sheet.js';
 import translate from './translate.js';
+import signInPatterns from './sign-in-patterns.js';
 import { runSession } from '../../scripts/eval/harness.js';
 
 export default Object.freeze({
@@ -22,6 +23,8 @@ export default Object.freeze({
   settings,
   // How sessions start (adapters/claude-code/sessions.js): the waker and the foreman's start ask for these.
   sessions,
+  // The words of a start that couldn't sign in, for the core's sign-in gate (adapters/claude-code/sign-in-patterns.js).
+  signInPatterns,
   cards: Object.freeze({ binding: Object.freeze(['signed-hook']) }),
   packaging,
   // The playbooks' general words, mapped to Claude Code's tools (tool-sheet.md); the session start hands it over.

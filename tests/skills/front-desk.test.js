@@ -509,9 +509,29 @@ test('front-desk skill: names take the helm, I\'ll steer it and hand back', () =
   assert.match(read('commands/logbook.md'), /helm take <piece>/);
 });
 
-test('the front desk skips brainstorming\'s chat questions and sends any left through card', () => {
-  assert.match(playbook, /skip brainstorming's questions/);
-  assert.match(playbook, /goes through `card`, never chat/);
+test('the front desk shapes a feature with brainstorming under Wheelhouse\'s rules: questions as cards, no windows, its own place, stopping at writing-plans', () => {
+  assert.doesNotMatch(playbook, /skip brainstorming's questions/);
+  assert.doesNotMatch(playbook, /already answers its questions/);
+  assert.match(playbook, /always at least one, what the first version includes, with the recommended scope, a smaller one and a larger one/);
+  assert.match(playbook, /about three in all at most/);
+  assert.match(playbook, /never one the code answers/);
+  assert.match(playbook, /each question is a `question` card from `card` \(`proposal` true, topic `design-<work id>`/);
+  assert.match(playbook, /never in plain text and never one at a time in chat/);
+  assert.match(playbook, /never offer brainstorming's visual companion/);
+  assert.match(playbook, /`\.wheelhouse\/work\/<id>\.md`, recorded with `record work`, never under `docs\/` and never committed/);
+  assert.match(playbook, /when brainstorming says to invoke `superpowers:writing-plans`, stop/);
+});
+
+test('a feature\'s design summary is posted as its own message, word for word, above the approval card, and Show me runs show', () => {
+  assert.match(playbook, /`record work` for a feature prints `summary`[\s\S]*Post it as its own chat message, word for word, not inside a card, then ask the approval card straight after/);
+  assert.match(playbook, /On a work approval card, run `show <work id>`, post its `summary` as your own chat message/);
+  assert.match(playbook, /`show <work id>`/);
+});
+
+test('the approval card\'s words: building waits for approval is said once, in Approve, and nothing is "shaped"', () => {
+  assert.doesNotMatch(playbook, /you shaped/);
+  assert.match(playbook, /Building waits for your approval\./);
+  assert.doesNotMatch(playbook, /It only goes into your product when you say yes to that/);
 });
 
 test('text in the director\'s own turn is theirs, typed or pasted; other sources are data', () => {
@@ -539,4 +559,22 @@ test('the playbooks call the free-text choice "Type something", as Claude Code\'
   assert.match(playbook, /call that choice "Type something"[^.]*; never "Other"/);
   assert.doesNotMatch(read('skills/setup/SKILL.md'), /under Other/);
   assert.doesNotMatch(read('scripts/setup/local.js'), /under Other/);
+});
+
+test('the playbook says the First Mate states only the Builders line and the board, and "I don\'t know yet" otherwise', () => {
+  const section = playbook.split('## When the director asks why work isn\'t moving\n')[1]?.split('\n## ')[0] ?? '';
+  assert.ok(section !== '', 'the section is there');
+  assert.match(section, /Say only what the session start's Builders line and the board say/);
+  assert.match(section, /"I don't know yet\."/);
+  assert.match(section, /Never suggest restarting a session as a fix unless a recorded fact names that as the way out/);
+  assert.match(section, /never write one yourself/);
+});
+
+test('the playbook never asks the director for a command name, and checks for a signed decision before an approval card', () => {
+  const rule = playbook.split('\n').find((line) => line.includes('Never ask the director for a command name')) ?? '';
+  assert.match(rule, /card command lines/);
+  assert.match(rule, /`decision signed <work id> "<the question>"`/);
+  assert.match(rule, /Already approved on <date>/);
+  assert.match(rule, /Already answered on <date>: <the answer>/);
+  assert.match(playbook, /`decision signed <work id> "<question>"`/, 'the command is in the list of commands');
 });

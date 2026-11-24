@@ -73,14 +73,10 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       chatClick: post('/cards/chat-click'), // { project | cwd, card, hash, label, proof, commit?, text? } -> { ok, id }: a click in the chat, as an unsigned card-answer naming its proof; never signed. `text`, the director's words, only with Suggest a change…
       hookShown: post('/cards/hook-shown'), // { project | cwd, session, message, options } -> { ok, card }: the question tool's card, as a hook saw it asked, found among the cards waiting (or the Lift STOP card while STOP is on) and kept as shown to that session
       hookAuto: post('/cards/hook-auto'), // { project | cwd, session } -> { ok, first }: the harness answered a card with no click (Autopilot); `first` is true once per session
+      earnable: post('/cards/earnable'), // { project | cwd, message, options, label } -> { ok, made }: the signed record a click on that option of the waiting card would earn, for the steps only the helper can check (an undo, Keep it, the computer's git settings); `made` is null when the click earns none. Read-only: the hook that signs makes the record.
+      apply: post('/cards/apply'), // { project | cwd } -> { ok, kept?, settings?, lock? }: carries out the latest signed click on Keep it or the computer's git settings, once it is sent; checked again as it is carried out, and a second carrying out changes nothing
       hookClick: post('/cards/hook-click'), // { project | cwd, session, message, options, label } -> { ok, id?, card }: the answer a hook saw come back, as an unsigned card-answer with proof hook-click; only for a card shown to that session, once, within HOOK_CLICK_MS
     },
-    // { project | cwd, card, hash } -> { ok, recorded, choice, id?, kind?, step? }: the card, by its id in the state and the
-    // sha256 of its data, shown in the helper's own window; a deciding click there is signed by the helper with proof
-    // `window`. One window at a time on this computer, so this may wait for a click: give the client a long timeout.
-    // `card` may also be `lift-stop`, or `seat-take-over` with `session` (the asking window's id) and `cwd`: the helper composes the card from
-    // the seat, and a click moves the seat to `session` -> { ok, recorded, choice, moved, holder }.
-    confirm: post('/confirm'),
     // Updating Wheelhouse (scripts/update/routes.js), naming the folder, a full path; `scripts/update/cli.js` calls these.
     update: {
       plan: post('/update/plan'), //     { folder, tag? } -> { ok, hash, card, lines } | { ok, lines }: the Update card and a hash of the plan, or the one line when there is nothing to ask; refused from a feature session
@@ -128,9 +124,9 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     engineSwitch: post('/engine-switch'), // { project | cwd } -> { ok, step: 'off' | 'on' | 'opened' | 'approve' | 'waiting' | 'closed', pr?, head?, why? }: the switch to the new engine's next step (part 3f)
     local: {
       move: post('/local/move'), // { project | cwd, host } -> { ok, asked }: raises the card that asks; nothing moves before the director's answer
-      undo: post('/local/undo'), // { project, merge } or { project, moved: true } -> { undo }, or { ok: false, needs: 'window' } with the card that asks; on the signed click in the helper's window
+      undo: post('/local/undo'), // { project, merge } or { project, moved: true } -> { undo }, or { ok: false, needs: 'card' } with the card that asks; on the signed click on that card in the chat
     },
-    undo: post('/undo'), //          { project | cwd, merge } -> on any host, a merge taken back out: { ok: true, pr, merged, merge?, refused? }; { ok: false, needs: 'window', card } until the director clicks Undo in the helper's window; { ok: false, reason: 'conflict', card } when later work clashes (a decision for the director, nothing forced)
+    undo: post('/undo'), //          { project | cwd, merge } -> on any host, a merge taken back out: { ok: true, pr, merged, merge?, refused? }; { ok: false, needs: 'card', card } until the director clicks Undo on that card in the chat; { ok: false, reason: 'conflict', card } when later work clashes (a decision for the director, nothing forced)
     merge: post('/merge'), //        { project, number, stop, bypass, reviewRequired?, approvalRequired?, touchesGuardrails? } -> a refusal's needs?: { approval: { pr, commit } } names the director's approval it lacks, and releaseApproval? says why a release pull request needs it (not one of the reasons)
     // The build engine's runs (scripts/engine/routes.js). A step names its run, never its project.
     engine: {
@@ -213,6 +209,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       health: post('/setup/health'), // { folder, lines } -> { ok, green, lines, board, trials, started?, briefing?, requests? }: step 10's board, answered under STOP
       choices: post('/setup/choices'), // { folder } -> { ok, choices }: every choice of the run (design section 15.1), answered under STOP
       change: post('/setup/change'), //   { folder, key } -> { ok, asks }: the card that changes one choice, answered under STOP
+      buildersCheck: post('/setup/builders/check'), //   {} -> { ok: true, cleared } | { ok: false, kind, refused }: the director's "Check again": the builder sign-in check, which clears the sign-in fact only on a pass; refused under STOP
       signIn: post('/setup/sign-in'), //   { folder } -> { ok, line } | { ok: false, refused, detail? }: git's own sign-in for the address step 3 kept on the as-is route, opened once the director chose it on its card; the helper runs git; refused under STOP (`detail` is for the agent alone). The wait is minutes: give the client no short timeout
       // Uninstall (scripts/setup/uninstall.js), naming the folder, a full path.
       uninstall: {

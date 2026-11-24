@@ -43,7 +43,8 @@ import { readSeen } from '../briefing/seen.js';
 import { readStatus } from '../safekeeping/readings.js';
 import { readFrontDeskModel } from '../lib/front-desk-model.js';
 import { agentSandboxLine } from '../agents/sandbox-line.js';
-import { readLatest, runningVersion, updateFacts } from '../update/board.js';
+import { buildersHealth } from '../lib/sign-in-line.js';
+import { readLatest, runningBuild, updateFacts } from '../update/board.js';
 
 export const NOT_A_PROJECT = 'This folder isn\'t part of a Wheelhouse project';
 // readHostFacts keeps its own limit this far inside HELPER_WAIT_MS, so it has given up, and marked
@@ -171,6 +172,16 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
   const usage = offline
     ? glanceUsage(clock, clockRead, typeof usageAgent === 'string' && usageAgent !== 'claude-code')
     : attempt(() => usageFigures({ project, now: clock, factor, agent: usageAgent, month: monthFor(usageAgent, { settings, now: clock }) }));
+  // The route builders start by, read only when the helper is (the glance, which reads nothing, keeps to the old line).
+  let builderFacts = {};
+  if (!offline) {
+    try {
+      const [{ builderRoute }, { sessionsFor }] = await Promise.all([import('../lib/route.js'), import('../agents/project-agent.js')]);
+      const agent = usageAgent ?? 'claude-code';
+      const found = builderRoute({ agent, home: wheelhouseHome(), routes: sessionsFor(agent).routes, readViews: () => profileViews });
+      builderFacts = { route: found.route, program: found.launch?.[0], fault: found.from === 'fault' ? found.fault : null };
+    } catch { /* the line is stated without the route */ }
+  }
   const sources = offline ? null : readSources();
 
   const known = await helperFacts(project, { client, address, now: clock, offline, clockRead, waitMs }).catch(() => ({}));
@@ -195,7 +206,7 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     // Wheelhouse's version and its updates, from files only: the update's journal, the weekly look's kept answer and the
     // project's settings. The glance shows none of it.
     update: offline ? null : attempt(() => updateFacts({
-      project, folder: record.folder, version: version ?? runningVersion(), latest: readLatest({ now: clock }).tag, helperVersion: known.helperVersion, now: clock,
+      project, folder: record.folder, version: version ?? runningBuild(), latest: readLatest({ now: clock }).tag, helperVersion: known.helperVersion, now: clock,
     })),
     ownFiles: offline || (typeof known.ownFilesLine !== 'string' && typeof known.ownFilesCalm !== 'string') ? null : { line: known.ownFilesLine, calm: known.ownFilesCalm },
     hostApproval: attempt(() => hostApprovalNeeded({ agent: usageAgent, realUsers: settings?.phase?.value === 'launched', host: record.host }), false),
@@ -211,6 +222,8 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     frontDeskModel: offline ? null : attempt(() => readFrontDeskModel({ project, folder: record.folder })),
     // The agent's sandbox on this computer, for an agent whose adapter says (agentSandboxLine).
     agentSandbox: !offline && typeof usageAgent === 'string' ? attempt(() => agentSandboxLine(usageAgent)) : undefined,
+    // The Builders line (builders design, section 10.5): how builders start on this computer, and the recorded sign-in fact.
+    builders: attempt(() => buildersHealth({ home: wheelhouseHome(), agent: usageAgent ?? 'claude-code', ...builderFacts })),
     // The watcher's own record of how its wakes are going (scripts/watcher/main.js); a small file, so the glance reads it too.
     watcher: attempt(() => readWatcherHealth(project)),
     now: clock(),

@@ -17,7 +17,6 @@
 // config for `include`, `includeIf` and `filter` sections (R93, checkRepoConfig in
 // scripts/foreman/act.js) is load-bearing for its worktree and must stay.
 import { run as realRun, withoutGitVars } from './run.js';
-import { revocationFallback } from '../host/company-ca.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -512,12 +511,17 @@ function refuseFenceOverride(args) {
 export class SettingsChanged extends LookRefusal {
   code = SETTINGS_CHANGED;
 }
-export const SETTINGS_CHANGED_LINE = "Nothing was pushed: this computer's git settings (sign-in, proxy, certificate or address rewrites) differ from the ones you confirmed at setup. If you changed them yourself, or your IT team did, Wheelhouse shows a card asking you to confirm the new settings in its own window; until you do, nothing is pushed.";
+export const SETTINGS_CHANGED_LINE = "Nothing was pushed: this computer's git settings (sign-in, proxy, certificate or address rewrites) differ from the ones you confirmed at setup. If you changed them yourself, or your IT team did, Wheelhouse shows a card asking you to confirm the new settings here in the chat; until you do, nothing is pushed.";
 
 // What a push trusts: every sign-in, proxy, certificate, address-rewrite and remote setting, the ssh ones, and the includes (which
 // are resolved already, but make the settings depend on the folder). The older fingerprint named fewer; it is kept (OLD_RELEVANT) only
 // to recognise a record made with it, which is then rewritten in this form.
-const RELEVANT = /^(?:credential\..+|core\.sshcommand|url\..+|http\..+|remote\..+|ssh\..+|include\.path|includeif\..+\.path)$/;
+// Left out of the fingerprint: the proxy values (`http.proxy`, a URL's own `http.<url>.proxy`, `http.proxyAuthMethod`, `http.noProxy`
+// and a remote's `proxy`), which change with the network the computer is on and so would bring the card back with nothing changed by
+// the director. A push still uses them as they are. Every other `http.` setting stays: certificates, extra headers and the rest.
+const NETWORK_ONLY = /^(?:http\.(?:.+\.)?(?:proxy|proxyauthmethod|noproxy)|remote\..+\.(?:proxy|proxyauthmethod))$/;
+const RELEVANT_WITH_PROXY = /^(?:credential\..+|core\.sshcommand|url\..+|http\..+|remote\..+|ssh\..+|include\.path|includeif\..+\.path)$/;
+const RELEVANT = { test: (key) => RELEVANT_WITH_PROXY.test(key) && !NETWORK_ONLY.test(key) };
 const OLD_RELEVANT = /^(?:credential\.(?:.+\.)?helper|core\.sshcommand|url\..+\.(?:push)?insteadof|http\.(?:.+\.)?(?:proxy|sslcainfo)|include\.path|includeif\..+\.path|remote\..+\.pushurl)$/;
 const pairsOf = (entries, pattern) => entries.filter(({ key }) => pattern.test(key.toLowerCase())).map(({ key, value }) => [key.toLowerCase(), value]);
 // The settings a push trusts, in git's order, and a fingerprint of them. The environment is not part of it: setup and the helper run in
@@ -525,6 +529,9 @@ const pairsOf = (entries, pattern) => entries.filter(({ key }) => pattern.test(k
 export const trustedSettings = (entries) => pairsOf(entries, RELEVANT);
 const hashOf = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export const settingsFingerprint = (entries) => `v2:${hashOf(trustedSettings(entries))}`;
+// The fingerprint as made before the proxy values were left out, to recognise a record made with it: still true of the settings
+// while the proxy is as it was, and then rewritten in the present form.
+export const proxiedSettingsFingerprint = (entries) => `v2:${hashOf(pairsOf(entries, RELEVANT_WITH_PROXY))}`;
 // The fingerprint as the earlier form made it, to compare with a record that holds one.
 export const legacySettingsFingerprint = (entries) => hashOf(pairsOf(entries, OLD_RELEVANT));
 
@@ -664,7 +671,7 @@ const isAsIsMirror = (key) => registeredProjects().some(({ project, record }) =>
 //   - A folder with none in any other record was never confirmed: refused.
 //   - Where there is no record at all, a push records what it finds as the first use only while no project is connected as-is: with
 //     one, setup would have recorded, so the loss is refused until the director confirms again.
-function checkTrusted(file, folder, { now, old }) {
+function checkTrusted(file, folder, { now, old, proxied }) {
   const record = readRecord(file);
   if (record === 'refused') throw new SettingsChanged(SETTINGS_CHANGED_LINE);
   const key = folderKey(folder);
@@ -683,7 +690,7 @@ function checkTrusted(file, folder, { now, old }) {
   }
   if (kept === now) return;
   // An entry made with the earlier fingerprint, still true of the settings: rewritten in the present form.
-  if (!String(kept).startsWith('v2:') && kept === old) {
+  if (kept === proxied || (!String(kept).startsWith('v2:') && kept === old)) {
     writeRecord(file, { folders: { ...record.folders, [key]: now }, legacy: record.legacy, names: record.names, marks: record.marks, check: record.check, programs: record.programs });
     return;
   }
@@ -744,7 +751,7 @@ export async function lookAtTrusted({ file, run = realRun, gitPath = 'git', cwd 
   const held = record !== null && record !== 'refused' ? record : null;
   return {
     hash: fingerprint.slice('v2:'.length),
-    same: held?.folders[key] === fingerprint,
+    same: held?.folders[key] === fingerprint || held?.folders[key] === proxiedSettingsFingerprint(entries),
     names: settingNames(trustedSettings(entries).map(([name]) => name)),
     was: held?.names[key] ?? null,
     changed: changedNames(held, key, entries, file),
@@ -820,7 +827,7 @@ export function safeGit({
       const got = await run(gitPath, args, { timeoutMs, ...rest, cwd, baseEnv: withoutGitVars(), env: callEnv });
       // On Windows, a company's certificate through Windows' store, refused because the network blocks the
       // revocation check, is tried once more with the certificate file (company-ca.js, revocationFallback).
-      const fallback = got?.code !== 0 ? revocationFallback(callEnv, got?.stderr) : null;
+      const fallback = got?.code !== 0 ? (await import('../host/company-ca.js')).revocationFallback(callEnv, got?.stderr) : null;
       return fallback === null ? got : run(gitPath, args, { timeoutMs, ...rest, cwd, baseEnv: withoutGitVars(), env: fallback });
     };
     if (!pushing) return execute(null);
@@ -832,7 +839,7 @@ export function safeGit({
     const why = settingsRefusal(entries);
     if (why !== null) throw new LookRefusal(`Git's settings on this computer ${why}, which Wheelhouse does not allow for a push. Remove that setting, then try again.`);
     // What the computer's settings were when as-is pushing was first used: a change since is the director's to confirm.
-    if (trust !== null && subcommandOf(args) === 'push') checkTrusted(trust.file, cwd, { now: settingsFingerprint(entries), old: legacySettingsFingerprint(entries) });
+    if (trust !== null && subcommandOf(args) === 'push') checkTrusted(trust.file, cwd, { now: settingsFingerprint(entries), old: legacySettingsFingerprint(entries), proxied: proxiedSettingsFingerprint(entries) });
     const extras = hookNames(entries).map((name) => [`hook.${name}.enabled`, 'false']);
     if (pushTo !== null && /^https?:\/\//i.test(pushTo.url)) extras.push([`http.${pushTo.url}.sslVerify`, 'true']);
     const count = Number.parseInt(given.GIT_CONFIG_COUNT ?? '0', 10) || 0;

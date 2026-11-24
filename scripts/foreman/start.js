@@ -32,14 +32,15 @@ import { fileURLToPath } from 'node:url';
 import { isModelName } from '../gate/guardrails.js';
 import { helperClient } from '../host/helper-client.js';
 import { FOREMAN_FALLBACK_COMPACT } from '../lib/build-loop.js';
-import { pathWithClaude, pathWithNode } from '../lib/claude.js';
+import { pathWithClaude } from '../lib/claude.js';
 import { jobFolder, stateDir, wheelhouseHome } from '../lib/paths.js';
+import { standardEnv } from '../lib/standard-env.js';
 import { readProject } from '../lib/projects.js';
 import { sessionsOfProject } from '../agents/project-agent.js';
 import { routingInForce } from '../routing/in-force.js';
 import { healthFile, lockFile, projectConfig } from '../watcher/main.js';
 import {
-  pidAlive, processStartTime, runningFile, sessionEnv, watcherFolder, writeJsonFile,
+  pidAlive, processStartTime, runningFile, watcherFolder, writeJsonFile,
 } from '../watcher/waker.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { sameStart, startSeconds } from '../lib/start-time.js';
@@ -144,15 +145,15 @@ export async function stopForeman(project, { alive = pidAlive, kill = process.ki
 
 // Starts the watcher, detached and hidden, in Wheelhouse's own folder, unless
 // it runs already: `{ started }`.
-// Its environment is this process's less the host session's variables and
-// WHEELHOUSE_ROLE, so a watcher started from a foreman or any session is no one's.
+// Its environment is the standard one of the home it serves (scripts/lib/standard-env.js), built from scratch, so a
+// watcher started from a foreman, an update or any session carries nothing of theirs.
 export function startWatcher(project, { spawn = nodeSpawn, pluginRoot = PLUGIN_ROOT, alive, now, env = process.env, exists = fs.existsSync } = {}) {
   stateDir(project); // a project name that is not a folder name throws here
   if (watcherRunning(project, { alive, now })) return { started: false };
   const home = wheelhouseHome();
   fs.mkdirSync(home, { recursive: true });
   const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'watcher', 'main.js'), project], {
-    cwd: jobFolder(), env: pathWithClaude(pathWithNode(sessionEnv(env), { exists }), { exists }), detached: true, windowsHide: true, stdio: 'ignore',
+    cwd: jobFolder(), env: pathWithClaude(standardEnv({ home, env, exists }), { exists }), detached: true, windowsHide: true, stdio: 'ignore',
   });
   child?.on?.('error', () => {});
   child?.unref?.();
@@ -188,7 +189,7 @@ export function foremanSession({
     file: call.file,
     args: call.args,
     options: {
-      cwd: checkout, env: call.env, stdio: 'inherit', windowsVerbatimArguments: call.verbatim,
+      cwd: checkout, env: call.env, stdio: 'inherit', windowsHide: true, windowsVerbatimArguments: call.verbatim,
     },
   };
 }

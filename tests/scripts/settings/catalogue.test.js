@@ -1,7 +1,7 @@
 // tests/scripts/settings/catalogue.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SETTINGS, WINDOWS_BUILD_COMMANDS, RETIRED, RETIRED_PATTERNS, checkSetting, definitionOf, isAllowed, retiredPiece } from '../../../scripts/settings/catalogue.js';
+import { BUILDERS, BUILDER_LAUNCH, USUAL, USUAL_NAMES, usualKey, SETTINGS, WINDOWS_BUILD_COMMANDS, RETIRED, RETIRED_PATTERNS, checkSetting, definitionOf, isAllowed, retiredPiece } from '../../../scripts/settings/catalogue.js';
 import { PACE, paceOf } from '../../../scripts/lib/build-loop.js';
 import { BRIEFING_GAP_HOURS, UNUSUAL } from '../../../scripts/lib/core-numbers.js';
 import { DEFAULT_SOURCES } from '../../../scripts/sources/list.js';
@@ -273,4 +273,63 @@ test('the delegation keys are retired: an old profile or record holding them sti
   }
   // A key that only looks like the pattern is still no setting.
   assert.throws(() => checkSetting('known:Bad Name', true), /no setting called known:Bad Name/);
+});
+
+test('the launch command is a setting per computer, kept in the profile, an array of words or none', () => {
+  const key = 'builderLaunch:0a1b2c3d';
+  const def = definitionOf(key);
+  assert.equal(def, BUILDER_LAUNCH);
+  assert.deepEqual([def.group, def.home, def.default], ['advanced', 'profile', null]);
+  for (const value of [['wrap', 'claude'], ['C:\\Program Files\\wrap.exe', 'claude'], null]) assert.doesNotThrow(() => checkSetting(key, value), JSON.stringify(value));
+  for (const value of ['wrap claude', [], ['wrap;rm', 'claude'], ['wrap', '$(x)'], ['wrap', '--settings'], ['x.ps1'], Array(9).fill('a'), ['wrap', 'a'.repeat(200)], [1], {}]) {
+    assert.throws(() => checkSetting(key, value), /can't be/, JSON.stringify(value));
+  }
+  assert.throws(() => checkSetting(key, ['wrap'], '2026-10-19T18:00:00.000Z'), /can't have an end time/);
+  for (const bad of ['builderLaunch', 'builderLaunch:', 'builderLaunch:0A1B2C3D', 'builderLaunch:0a1b2c3']) assert.throws(() => checkSetting(bad, ['wrap']), /no setting called/, bad);
+  assert.equal(isAllowed(key, ['wrap', 'claude']), true);
+  assert.equal(isAllowed(key, ['wrap|x']), false);
+});
+
+test('where builders start is a setting per computer, kept in the profile, desktop or background, none until chosen', () => {
+  const key = 'builders:0a1b2c3d';
+  const def = definitionOf(key);
+  assert.equal(def, BUILDERS);
+  assert.deepEqual([def.group, def.home, def.default], ['advanced', 'profile', null]);
+  for (const value of ['desktop', 'background']) assert.doesNotThrow(() => checkSetting(key, value), value);
+  for (const value of [null, 'both', 'Desktop', true, ['desktop']]) assert.throws(() => checkSetting(key, value), /can't be/, JSON.stringify(value));
+  assert.throws(() => checkSetting(key, 'desktop', '2026-11-24T18:00:00.000Z'), /can't have an end time/);
+  for (const bad of ['builders', 'builders:', 'builders:0A1B2C3D', 'builders:0a1b2c3']) assert.throws(() => checkSetting(bad, 'desktop'), /no setting called/, bad);
+});
+
+test('usual answers are four settings per computer, kept in the profile, none until saved', () => {
+  const computer = '0a1b2c3d';
+  assert.deepEqual([...USUAL_NAMES], ['host', 'gitlabBase', 'gitRoute', 'connection']);
+  for (const name of USUAL_NAMES) {
+    const key = usualKey(name, computer);
+    assert.equal(definitionOf(key), USUAL[name], key);
+    assert.equal(USUAL[name].home, 'profile');
+    assert.equal(USUAL[name].default, null);
+  }
+  assert.ok(isAllowed(usualKey('host', computer), 'gitlab'));
+  assert.ok(isAllowed(usualKey('gitRoute', computer), 'own'));
+  assert.ok(isAllowed(usualKey('connection', computer), 'own-app'));
+  assert.ok(isAllowed(usualKey('gitlabBase', computer), 'https://gitlab.example.org'));
+  assert.ok(isAllowed(usualKey('gitlabBase', computer), 'https://gitlab.example.org:8443'));
+  assert.throws(() => checkSetting(usualKey('host', computer), 'bitbucket'), /can't be/);
+  for (const bad of ['usual.host', 'usual.host:', 'usual.host:0A1B2C3D', 'usual.host:0a1b2c3']) assert.throws(() => checkSetting(bad, 'github'), /no setting called/, bad);
+});
+
+test('never usual: the product, live data, real users, signs apps, protection, Locked, or anything naming a repository', () => {
+  const computer = '0a1b2c3d';
+  for (const name of ['product', 'liveData', 'realUsers', 'signsApps', 'protection', 'locked', 'repo', 'repository', 'project', 'name']) {
+    assert.equal(definitionOf(usualKey(name, computer)), undefined, name);
+  }
+  // an address that names a repository, carries a sign-in, or isn't https is no usual address
+  for (const bad of ['https://gitlab.example.org/group/project', 'https://gitlab.example.org/group/project.git', 'https://me:secret@gitlab.example.org', 'http://gitlab.example.org', 'gitlab.example.org', 'https://gitlab.example.org/', 'https://gitlab.example.org?x=1', 'git@gitlab.example.org:group/project.git', '',
+    'https://gitlab.example.org?', 'https://gitlab.example.org#', 'https://gitlab.example.org#group/project', 'https://@gitlab.example.org', 'https://me@gitlab.example.org',
+    'https://GitLab.Example.org', 'https://gitlab.example.org:443', 'https://gitlab.example.org/.', 'https://gitlab.example.org/%2e', 'ssh://gitlab.example.org', 'file:///gitlab.example.org',
+    'javascript:alert(1)', 'https://gitlab.exаmple.org', 'https://xn--gitlab-exmple-xyz.org', ' https://gitlab.example.org', 'https://gitlab.example.org ', 'https:\\\\gitlab.example.org',
+    'https://gitlab.example.org\\group', 'https://gitlab.example.org:0', 'https://1.2.3.4.5', 'HTTPS://gitlab.example.org']) {
+    assert.equal(isAllowed(usualKey('gitlabBase', computer), bad), false, bad);
+  }
 });

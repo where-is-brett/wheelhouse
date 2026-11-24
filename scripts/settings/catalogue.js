@@ -6,10 +6,15 @@ import { BRIEFING_GAP_HOURS, UNUSUAL } from '../lib/core-numbers.js';
 import { DEFAULT_SOURCES } from '../sources/list.js';
 import { LEVELS as BUILD_LEVELS } from '../protection/windows-builds.js';
 import { LEVELS } from '../crew/levels.js';
+import { sayLaunch, wordsFault } from '../lib/launch-words.js';
 
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
 const WINDOWS_BUILDS_KEY = /^windowsBuildCommands:[0-9a-f]{8}$/;
+// One per computer: the launch command builders start through (design section 8).
+export const BUILDER_LAUNCH_KEY = /^builderLaunch:[0-9a-f]{8}$/;
+// One per computer: how this computer starts builder sessions (design section 6).
+export const BUILDERS_KEY = /^builders:[0-9a-f]{8}$/;
 const CHANNELS = ['claude', 'ntfy', 'telegram'];
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -104,6 +109,24 @@ export const SETTINGS = {
 // on Windows (design section 12.2).
 export const WINDOWS_BUILD_COMMANDS = { label: 'Build commands on Windows', group: 'everyday', levels: BUILD_LEVELS, default: 'ask', home: 'project' };
 
+// One per computer (`builderLaunch:<computer>`): the words of the program builders start `claude` through, such as
+// ["wrap", "claude"], or null for plain `claude` (design section 8). Only the director sets it, by a typed card the helper
+// signs a fresh click for. This checks the words themselves; that the program is on the computer is checked where it is
+// saved and on every read (scripts/lib/launch-words.js).
+export const BUILDER_LAUNCH = {
+  label: 'Launch command for builders', group: 'advanced', home: 'profile', default: null,
+  // Either kind of full path passes here: the key names the computer, and the program is looked for there.
+  check: (v) => v === null || (Array.isArray(v) && (wordsFault(v, { platform: 'win32' }) === null || wordsFault(v, { platform: 'linux' }) === null)),
+  say: (v) => (v === null ? 'none, plain claude' : sayLaunch(v).replace(/^Wheelhouse will run: /, '')),
+};
+
+// One per computer (`builders:<computer>`): how builders start here, `desktop` (the foreman's Claude Desktop session starts
+// them) or `background` (the watcher starts them detached). None until setup's answer or the settings card sets it: a route
+// is never guessed outside setup (design section 6, scripts/lib/route.js). An agent that supports only some routes
+// (its adapter's `sessions.routes`) runs on the first it supports when the saved one isn't among them.
+export const BUILDER_ROUTES = Object.freeze(['desktop', 'background']);
+export const BUILDERS = { label: 'Where builders start', group: 'advanced', levels: BUILDER_ROUTES, default: null, home: 'profile' };
+
 // The person's own GitHub App (setup's step 3, ruling R56): { clientId, slug, owner }, the app the
 // narrow GitHub connection signs in to in place of Wheelhouse's, on every computer of theirs; null
 // is none. Setup records it, and it counts only once the director confirms it. The client ID is
@@ -118,6 +141,35 @@ const checkOwnApp = (v) => v === null || (isObject(v) && onlyKeys(v, ['clientId'
   && typeof v.slug === 'string' && APP_SLUG.test(v.slug)
   && typeof v.owner === 'string' && LOGIN.test(v.owner));
 export const OWN_GITHUB_APP = { label: 'Your own GitHub App', group: 'advanced', check: checkOwnApp, default: null, home: 'profile' };
+
+// The director's usual answers to step 3's questions, one per computer (`usual.<name>:<computer>`, design section 12.3), kept in
+// the profile and read by setup's "Use your usual setup?" card. Only what differs by the director, never by the project: never
+// the product, live data, real users, signing apps, protection, Locked, or anything naming a repository. A project's own answer
+// wins inside that project (precedence is unchanged), and nothing is exported, imported or synced.
+export const USUAL_KEY = /^usual\.(host|gitlabBase|gitRoute|connection):[0-9a-f]{8}$/;
+// A GitLab's address alone: https, a host, no sign-in, path, query or fragment, so it can never name a repository. It must be
+// the address in its one plain form (as setup reads a typed address, scripts/lib/pasted-address.js), in plain letters with no
+// lookalike from another alphabet, written or encoded (`xn--`).
+const checkBase = (v) => {
+  if (typeof v !== 'string' || v.length > 200 || !/^https:\/\/[a-z0-9.:-]+$/.test(v)) return false;
+  try {
+    const u = new URL(v);
+    return u.origin === v && u.hostname !== '' && u.port !== '0' && !u.hostname.split('.').some((label) => label.startsWith('xn--'));
+  } catch { return false; }
+};
+const WORDS = {
+  host: { local: 'kept on this computer', github: 'GitHub', gitlab: 'GitLab' },
+  gitRoute: { own: 'your own git as it is', wheelhouse: 'Wheelhouse\'s own git' },
+  connection: { 'own-app': 'your own app', 'wheelhouse-app': 'the Wheelhouse app' },
+};
+export const USUAL = Object.freeze({
+  host: { label: 'Usual host', group: 'advanced', levels: Object.keys(WORDS.host), default: null, home: 'profile', say: (v) => WORDS.host[v] ?? String(v) },
+  gitlabBase: { label: 'Usual GitLab address', group: 'advanced', check: checkBase, default: null, home: 'profile', say: (v) => String(v) },
+  gitRoute: { label: 'Usual git route', group: 'advanced', levels: Object.keys(WORDS.gitRoute), default: null, home: 'profile', say: (v) => WORDS.gitRoute[v] ?? String(v) },
+  connection: { label: 'Usual connection', group: 'advanced', levels: Object.keys(WORDS.connection), default: null, home: 'profile', say: (v) => WORDS.connection[v] ?? String(v) },
+});
+export const USUAL_NAMES = Object.freeze(Object.keys(USUAL));
+export const usualKey = (name, computer) => `usual.${name}:${computer}`;
 
 // Retired keys: settings a parked piece owned (design section 4.1). Old records and profiles may
 // still hold them; the catalogue accepts any value for them and nothing reads them. A lift-out part
@@ -144,6 +196,9 @@ export function definitionOf(key, lists = SHIPPED) {
   if (Object.hasOwn(SETTINGS, key)) return SETTINGS[key];
   if (key === OWN_GITHUB_APP_KEY) return OWN_GITHUB_APP;
   if (WINDOWS_BUILDS_KEY.test(key)) return WINDOWS_BUILD_COMMANDS;
+  if (BUILDER_LAUNCH_KEY.test(key)) return BUILDER_LAUNCH;
+  if (BUILDERS_KEY.test(key)) return BUILDERS;
+  if (USUAL_KEY.test(key)) return USUAL[key.slice(6, key.indexOf(':'))];
   return undefined;
 }
 

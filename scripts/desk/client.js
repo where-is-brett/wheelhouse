@@ -58,7 +58,6 @@ export function deskClient({ address, cwd, project, local = 'auto', timeout, cli
       record: async () => ({ ok: false, refused: HELPER_NOT_RUNNING }),
       write: async () => ({ ok: false, refused: HELPER_NOT_RUNNING }),
       chatClick: async () => ({ ok: false, refused: HELPER_NOT_RUNNING }),
-      confirm: async () => ({ ok: false, refused: HELPER_NOT_RUNNING }),
     };
     const [{ deskCore }, { fileSource }] = await Promise.all([import('./core.js'), import('./file-source.js')]);
     core = deskCore({ source: fileSource(found.project, { cwd: cwd ?? found.record?.folder, client: helper, now, waitMs }), recorder, now });

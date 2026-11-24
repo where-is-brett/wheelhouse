@@ -5,6 +5,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { readJsonNamed } from './read-json-named.js';
+import { checkLaunch, resolveWord } from './launch-words.js';
 
 // Where the program `name` is. Elsewhere than Windows the name is enough when it is on the PATH. A
 // process started with a minimal PATH (the helper a LaunchAgent starts, a scheduled start) does not
@@ -55,15 +57,38 @@ function foundOnPosixPath(name, env, exists) {
 export function readRecordedClaude(env = process.env) {
   const home = env.WHEELHOUSE_HOME || (env.HOME ? path.join(env.HOME, '.wheelhouse') : null);
   if (home === null) return null;
+  const file = path.join(home, 'claude-path.json');
   try {
-    const file = path.join(home, 'claude-path.json');
     if (fs.statSync(file).size > 4096) return null;
-    const value = JSON.parse(fs.readFileSync(file, 'utf8'))?.path;
-    return typeof value === 'string' ? value : null;
   } catch {
     return null;
   }
+  // A file that can't be read is unknown, never a path: the fault is kept for whoever names it.
+  const read = readJsonNamed(file);
+  recordedFault = read.ok === false ? read : null;
+  const value = read.ok && !read.missing ? read.value?.path : null;
+  return typeof value === 'string' ? value : null;
 }
+
+// The launch command a session recorded with the path of `claude`, as { words, file } (the words typed, and the first one's
+// full path), or null: for the watcher and helper, which have no login shell and so can't find a wrapper by name.
+export function readRecordedLaunch(env = process.env) {
+  const home = env.WHEELHOUSE_HOME || (env.HOME ? path.join(env.HOME, '.wheelhouse') : null);
+  if (home === null) return null;
+  const file = path.join(home, 'claude-path.json');
+  try {
+    if (fs.statSync(file).size > 4096) return null;
+  } catch {
+    return null;
+  }
+  const read = readJsonNamed(file);
+  const kept = read.ok && !read.missing ? read.value?.launch : null;
+  return Array.isArray(kept?.words) && typeof kept?.file === 'string' ? { words: kept.words, file: kept.file } : null;
+}
+
+// The fault in claude-path.json at the last read, as { file, line, column, hint }; null when it read or isn't there.
+let recordedFault = null;
+export const recordedClaudeFault = () => recordedFault;
 
 function resolvePosix({ name, env, exists, recorded, inside }) {
   if (name !== 'claude' || foundOnPosixPath(name, env, exists) !== null) return { kind: 'direct', file: name };
@@ -78,18 +103,24 @@ function resolvePosix({ name, env, exists, recorded, inside }) {
 // Records the full path of `claude` as this session sees it (a Claude Code session has the right
 // PATH), for the watcher and anything else started with a bare one. Returns the path, or null when
 // it is not found on the PATH, is inside `inside` (the project folder), or this is Windows.
-export function recordClaudePath({ platform = process.platform, env = process.env, exists = fs.existsSync, inside = null } = {}) {
+export function recordClaudePath({ platform = process.platform, env = process.env, exists = fs.existsSync, inside = null, launch = null } = {}) {
   if (platform === 'win32') return null;
   const file = foundOnPosixPath('claude', env, exists);
-  if (file === null || within(file, inside)) return null;
+  // The launch command's first word, as this session finds it, goes in with the path: a wrapper may be all that is there.
+  let recordedLaunch = null;
+  if (Array.isArray(launch) && checkLaunch(launch, { platform, which: (word) => resolveWord(word, { platform, env, exists }) }).ok) {
+    const first = resolveWord(launch[0], { platform, env, exists });
+    if (first !== null && !within(first.file, inside)) recordedLaunch = { words: launch, file: first.file };
+  }
+  if ((file === null || within(file, inside)) && recordedLaunch === null) return null;
   const home = env.WHEELHOUSE_HOME || (env.HOME ? path.join(env.HOME, '.wheelhouse') : os.homedir() && path.join(os.homedir(), '.wheelhouse'));
   try {
     fs.mkdirSync(home, { recursive: true });
-    fs.writeFileSync(path.join(home, 'claude-path.json'), `${JSON.stringify({ path: file })}\n`);
+    fs.writeFileSync(path.join(home, 'claude-path.json'), `${JSON.stringify({ ...(file === null || within(file, inside) ? {} : { path: file }), ...(recordedLaunch === null ? {} : { launch: recordedLaunch }) })}\n`);
   } catch {
     return null;
   }
-  return file;
+  return file === null || within(file, inside) ? null : file;
 }
 
 // `env` with the folder of `claude` at the front of its PATH when claude is found by full path and
@@ -119,13 +150,36 @@ export function pathWithNode(env, { platform = process.platform, exists = fs.exi
 }
 
 // Where `claude` is: resolveCommand's answer for `claude`, with its own words
-// when neither claude.exe nor claude.cmd is on the PATH.
-export function resolveClaude({ platform = process.platform, env = process.env, exists = fs.existsSync, recorded = null, inside = null } = {}) {
+// when neither claude.exe nor claude.cmd is on the PATH. With a `launch` (the words of the launch command, checked here
+// as a stored value is on every read), the program is its first word, resolved as a bare name or full path is, and
+// `args` are its other words, which come before Wheelhouse's own. `recordedLaunch` ({ words, file }) stands in for a first
+// word the PATH doesn't have, when it was recorded for these same words and is still there.
+export function resolveClaude({ platform = process.platform, env = process.env, exists = fs.existsSync, recorded = null, inside = null, launch = null, recordedLaunch = null, which = null } = {}) {
+  if (launch !== null && launch !== undefined) return resolveLaunched({ launch, platform, env, exists, recordedLaunch, which, inside });
   try {
     return resolveCommand({ name: 'claude', platform, env, exists, recorded, inside });
   } catch {
     throw new Error('Cannot find claude.exe or claude.cmd on the PATH. Install Claude Code, or open a terminal where `claude` runs.');
   }
+}
+
+function resolveLaunched({ launch, platform, env, exists, recordedLaunch, which, inside }) {
+  const [first, ...rest] = Array.isArray(launch) ? launch : [];
+  const kept = (recordedLaunch ?? (() => readRecordedLaunch(env)))();
+  // The recorded file counts only as the same program by name, at a full path outside the project's folder: the record is
+  // a convenience for a missing PATH, never a way to run something the words don't name.
+  const usable = kept !== null && platform !== 'win32' && kept.words.length === launch.length && kept.words.every((word, i) => word === launch[i])
+    && path.posix.isAbsolute(kept.file) && path.posix.basename(kept.file) === first && !within(kept.file, inside) && exists(kept.file);
+  const onPath = (word) => {
+    const got = resolveWord(word, { platform, env, exists });
+    return got !== null && !within(got.file, inside) ? got : null;
+  };
+  const find = which ?? ((word) => onPath(word) ?? (usable ? { kind: 'direct', file: kept.file } : null));
+  const found = checkLaunch(launch, { platform, which: find });
+  if (!found.ok) throw new Error(`The launch command can't be used: ${found.why}`);
+  const resolved = find(first);
+  const file = typeof resolved === 'string' ? resolved : resolved.file;
+  return { kind: typeof resolved === 'string' ? 'direct' : resolved.kind, file, command: file, args: rest };
 }
 
 // An argument for a command line cmd.exe will read. Characters cmd expands even
@@ -143,10 +197,19 @@ export function quoteForCmd(arg) {
 // it there), because a prompt cannot be quoted safely on a cmd command line.
 export function invocation(resolved, lead, args, prompt) {
   const print = prompt === undefined ? [] : ['-p'];
+  // A launch command's other words come first, ahead of Wheelhouse's own.
+  const words = Array.isArray(resolved.args) ? resolved.args : [];
   if (resolved.kind !== 'cmd') {
-    return { file: resolved.file, args: [...lead, ...print, ...(prompt === undefined ? [] : [prompt]), ...args], input: '', verbatim: false };
+    return { file: resolved.file, args: [...words, ...lead, ...print, ...(prompt === undefined ? [] : [prompt]), ...args], input: '', verbatim: false };
   }
-  const line = [resolved.file, ...lead, ...print, ...args].map(quoteForCmd).join(' ');
+  let line;
+  try {
+    line = [resolved.file, ...words, ...lead, ...print, ...args].map(quoteForCmd).join(' ');
+  } catch (error) {
+    // Named, never swallowed: a launch command's word that cmd.exe can't be given safely.
+    if (words.length > 0 || resolved.command !== undefined) throw new Error(`The launch command can't be passed to cmd.exe safely. ${error.message}`);
+    throw error;
+  }
   return { file: 'cmd.exe', args: ['/d', '/s', '/c', `"${line}"`], input: prompt ?? '', verbatim: true };
 }
 

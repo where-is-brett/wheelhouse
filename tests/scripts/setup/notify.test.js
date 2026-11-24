@@ -128,7 +128,7 @@ test('with no answer, step 9 asks the card of plain steps, ending with the scree
   assert.equal(card.recommend, READY.ready);
   // The phone is optional: skipping says setup carries on, and where to set it up later.
   assert.match(card.options[1].says, /carries on without your phone/);
-  assert.match(card.options[1].says, /First Mate can set it up later/);
+  assert.match(card.options[1].says, /ask here to set it up later/);
   // The plain steps: Remote Control in Desktop, both push options, the phone's own permission for
   // Claude's notifications, then the locked screen.
   assert.match(card.what, /Remote Control/);
@@ -437,4 +437,23 @@ test('the board reads the latest settled push test of this computer\'s journal, 
   ] };
   assert.deepEqual(phonePushResult(journal), { arrived: true, at: '2026-10-20T05:00:00.000Z', run: 'r1' });
   assert.equal(phonePushResult({ v: 1, runs: [] }), null);
+});
+
+test('in a terminal the phone card says choose, never click, and a skip answered with the choices settles step 9 with nothing asked', async () => {
+  const terminal = await notifyStep().plan({ answers: {}, now: () => T0, desktop: false });
+  assert.match(terminal.ask.card.what, /Then choose Ready and lock your computer/);
+  assert.doesNotMatch(terminal.ask.card.what, /click/i);
+  const skipped = await notifyStep().plan({ answers: { '4.phone': { label: 'Skip for now', text: null, at: T0.toISOString() } }, now: () => T0, desktop: false });
+  assert.deepEqual(skipped, { settled: { record: { pushSkipped: true } } });
+  const tried = await notifyStep().plan({ answers: { '4.phone': { label: 'Try it at the end', text: null, at: T0.toISOString() } }, now: () => T0 });
+  assert.equal(tried.ask.id, READY_ID);
+});
+
+test('step 9 asks the keep-as-usual card before the phone card, and then goes on whichever way it is answered', async () => {
+  const card = { id: 'keep-usual', card: { what: 'Keep these as your usual on this computer?' } };
+  let open = true;
+  const step = notifyStep({ pushResult: () => null, keepUsual: async () => (open ? { ask: card } : null) });
+  assert.equal((await step.plan({ runId: 'run-0000000001', answers: {}, now: () => T0 })).ask.id, 'keep-usual');
+  open = false;
+  assert.equal((await step.plan({ runId: 'run-0000000001', answers: {}, now: () => T0 })).ask.id, READY_ID);
 });

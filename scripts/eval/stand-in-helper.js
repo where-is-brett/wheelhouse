@@ -49,7 +49,7 @@ function commitOf(dir, ref) {
   if (typeof dir !== 'string' || typeof ref !== 'string' || !/^[A-Za-z0-9._/-]+$/.test(ref)) return null;
   try {
     return execFileSync('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], {
-      cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+      cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true,
     }).trim() || null;
   } catch {
     return null;
@@ -212,7 +212,6 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
       setStop: async () => ({ ok: true }),
       liftStop: async () => ({ ok: true }),
       chatClick: async ({ card, label, hash, proof, text }) => routes['POST /state/write']({ kind: 'card-answer', data: { question: card, label, hash, proof, ...(text === undefined ? {} : { text }) } }),
-      confirm: async () => ({ ok: false, refused: 'the stand-in has no window' }),
     };
     const core = deskCore({ source, recorder });
     if (op === 'read') return core.read(body.view, body.args ?? {});

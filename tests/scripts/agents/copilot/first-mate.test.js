@@ -48,12 +48,14 @@ test('the agent\'s tools are Copilot\'s: it asks with ask_user and runs the Whee
   assert.doesNotMatch(built.get(AGENT), /--allow-all|--yolo/);
 });
 
-test('the instructions give the tool sheet and send every card with a signing option to the helper\'s window', () => {
+test('the instructions give the tool sheet and send every card with a signing option to a plain chat message, with no window', () => {
   const text = built.get(INSTRUCTIONS);
   assert.match(text, /^---\napplyTo: "\*\*"\n---\n<!-- /);
   assert.ok(text.includes(copilot.toolSheet.trim()), 'the adapter\'s tool sheet, whole');
   assert.match(text, /that click is not recorded/);
-  assert.match(text, /run `confirm <card id>` instead/);
+  assert.match(text, /write one plain chat message instead, with no clickable options/);
+  assert.match(text, /Never open a window/);
+  assert.doesNotMatch(text, /confirm <card id>|decision confirm|own window/, 'no route opens a window');
   for (const label of SIGNED_LABELS) assert.ok(text.includes(label), label);
   assert.doesNotMatch(text, /chat-click/, 'no route records a chat click on Copilot');
 });
@@ -61,7 +63,8 @@ test('the instructions give the tool sheet and send every card with a signing op
 test('the agent never says a click in the chat records itself', () => {
   const text = built.get(AGENT);
   assert.doesNotMatch(text, /a click or a typed reply records itself|the click records itself|Its click records itself/);
-  assert.match(text, /goes to Wheelhouse's own window with `confirm`/);
+  assert.match(text, /a card with an option that signs is a plain chat message and waits/);
+  assert.doesNotMatch(text, /own window|`confirm`/, 'no route opens a window');
 });
 
 test('no file names a Claude Code tool, a model, a personal path or an attribution line', () => {
@@ -91,19 +94,19 @@ test('the build throws when a source can\'t be read', () => {
   assert.throws(() => buildFirstMate({ root: tempFolder('wh-first-mate-empty-') }), /front-desk/);
 });
 
-test('where every card is asked in the picker, the instructions and the agent ask decisions and signing cards with ask_user and keep the window for the seat card and an undo', () => {
+test('where every card is asked in the picker, the instructions and the agent ask decisions and signing cards, the seat card and an undo with ask_user, and open no window', () => {
   const picked = buildFirstMate({ picker: true });
   const text = picked.get(INSTRUCTIONS);
   assert.match(text, /Ask every card with ask_user, a decision, a sign-off and a merge approval among them/);
   assert.match(text, /set `allowFreeformInput` to false in every ask_user call/);
   assert.doesNotMatch(text, /decision confirm|never go to ask_user|that click is not recorded/);
-  assert.match(text, /write no question and no options of your own, and\s+never use ask_user for it: say one plain line that Wheelhouse's own window is asking[\s\S]*run `confirm seat-take-over`/, 'the seat card goes to the window, with no options of the chat\'s own');
-  assert.doesNotMatch(text, /show it as text/);
-  assert.match(text, /undo on a project kept on this\s+computer/);
+  assert.match(text, /ask\s+that card exactly as given, as a question of its own/, 'the seat card is asked as given');
+  assert.match(text, /`undo <merge>` says so with `needs` `card`/);
+  assert.doesNotMatch(text, /own window|confirm seat-take-over|confirm <card id>/, 'no window');
   const agent = picked.get(AGENT);
   assert.match(agent, /\*\*Decisions are cards\.\*\*/);
   assert.doesNotMatch(agent, /Decisions are chat messages|plain chat message|their own typed reply to a decision/);
-  assert.doesNotMatch(agent, /Wheelhouse's own window with `confirm`/);
+  assert.doesNotMatch(agent, /own window|`confirm`/);
   assert.ok(text.includes('Every card goes to ask_user'), 'the tool sheet line');
 });
 
@@ -111,4 +114,19 @@ test('the committed copies and the tool sheet follow C6_PASSED, the one switch',
   assert.deepEqual(checkFirstMate(), [], 'run npm run copilot-first-mate');
   const sheet = fs.readFileSync(new URL('../../../../adapters/copilot/tool-sheet.md', import.meta.url), 'utf8');
   assert.equal(sheet.includes('Signing options and decisions never go to ask_user'), !C6_PASSED, 'tool-sheet.md line 4 changes with C6_PASSED');
+});
+
+test('the agent names wheelhouse-brainstorming, carries the same rules as the playbook, and has no line that skips its questions', () => {
+  const text = built.get(AGENT);
+  assert.match(text, /Every feature is shaped with \`wheelhouse-brainstorming\`/);
+  assert.doesNotMatch(text, /superpowers:brainstorming/);
+  assert.doesNotMatch(text, /skip brainstorming's questions|already answers its questions/);
+  const source = lf(fs.readFileSync(path.join(ROOT, 'skills', 'front-desk', 'SKILL.md'), 'utf8'));
+  const rules = source.slice(source.indexOf('Every feature is shaped'), source.indexOf('\n', source.indexOf('Every feature is shaped'))).replaceAll('superpowers:brainstorming', 'wheelhouse-brainstorming');
+  assert.ok(rules.length > 500 && text.includes(rules), 'the built agent holds the playbook\'s paragraph, with the copy\'s name');
+  assert.match(text, /a smaller one and a larger one/);
+  assert.match(text, /never offer brainstorming's visual companion/);
+  assert.match(text, /\.wheelhouse\/work\/<id>\.md/);
+  assert.match(text, /invoke \`superpowers:writing-plans\`, stop/);
+  assert.match(text, /show <work id>/);
 });

@@ -10,6 +10,9 @@
 // the first briefing (`after: [6, 8, 10]`, design section 15.1). Until all three are done, nothing
 // is asked or settled. A joining computer has no health check, so it waits for steps 6 and 8 only.
 //
+// Before any of that, step 9 asks "Keep these as your usual on this computer?" once, when the answers step 3 used differ from the
+// usual kept or none are kept (scripts/setup/usual.js, keepAtEnd). It is asked here, at the end, so no card stops setup before
+// every step has run; setup is finished whichever way it is answered, and a keep that fails is said, never an error.
 //
 // 1. With no Ready yet, it asks the card of plain steps, ending with the screen locked until the
 //    phone buzzes, or for PUSH_TEST_LOCK_MS if it doesn't (ruling R65): longer than the wait, so the
@@ -47,7 +50,12 @@
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { PHONE_REACHES } from '../lib/calm-words.js';
 import { PUSH_TEST_WAIT_MS, PUSH_TEST_LOCK_MS, CLICK_FRESH_MS } from '../lib/setup-numbers.js';
+import { PHONE } from './questions.js';
 import { PUSH_TEST_STEP, phonePushResult, phoneResults, readJournal } from '../lib/setup-run.js';
+import { keepAtEnd } from './usual.js';
+import { helperProfile } from './own-app.js';
+import { readProfileViews } from '../profile/store.js';
+import { computerId } from '../lib/paths.js';
 
 export const READY_ID = 'phone-ready';
 export const ARRIVED_ID = 'push-arrived';
@@ -87,14 +95,14 @@ function readyAsk(id, { terminal = false, round = 0 } = {}) {
       what: `Setup step ${PUSH_TEST_STEP}, your phone${tryOf(round)}. ${PHONE_REACHES} `
         + 'In Claude Desktop, switch on Remote Control and Push when actions required, '
         + 'and allow Claude\'s phone notifications. '
-        + `Then click Ready and ${LOCK}`,
+        + `Then ${terminal ? 'choose' : 'click'} Ready and ${LOCK}`,
       why: 'Only you can do these.',
       options: terminal ? [
-        { label: READY.skip, says: 'Setup carries on without your phone; the First Mate can set it up later.' },
+        { label: READY.skip, says: 'Setup carries on without your phone; ask here to set it up later.' },
         { label: READY.ready, says: `Setup sends a test ${MINUTES} later and asks if it arrived.` },
       ] : [
         { label: READY.ready, says: `Setup sends a test ${MINUTES} later and asks if it arrived.` },
-        { label: READY.skip, says: 'Setup carries on without your phone; the First Mate can set it up later.' },
+        { label: READY.skip, says: 'Setup carries on without your phone; ask here to set it up later.' },
       ],
       // Remote Control and the push options are Claude Desktop's settings, so a terminal session recommends the way it can finish.
       recommend: terminal ? READY.skip : READY.ready,
@@ -136,12 +144,20 @@ export function pushTestResult(label) {
 // Step 9. `pushResult` reads what this computer's journal last recorded of the test push, and
 // `settledBefore(runId)` how many times this run's step 9 has settled (for tests).
 const settledIn = (runId) => phoneResults(readJournal().runs.find((r) => r?.id === runId)).length;
-export function notifyStep({ pushResult = () => phonePushResult(), settledBefore = settledIn } = {}) {
+const changesOf = (runId) => typeof runId !== 'string' ? [] : readJournal().runs.find((r) => r?.id === runId)?.changes ?? [];
+export function notifyStep({
+  pushResult = () => phonePushResult(), settledBefore = settledIn,
+  // The end-of-setup offer to keep the answers step 3 used as the director's usual (scripts/setup/usual.js): stand-ins in tests.
+  keepUsual = (ctx) => keepAtEnd({ ctx, changes: changesOf(ctx.runId), views: readProfileViews, profile: () => helperProfile(), computer: computerId() }),
+} = {}) {
   return {
     n: PUSH_TEST_STEP,
     title: SETUP_TITLES[PUSH_TEST_STEP],
     after: [6, 8, 10],
     async plan(ctx) {
+      // The keep card comes first, once, beside the phone offer; setup is finished before it, and whichever way it is answered.
+      const keep = await keepUsual(ctx);
+      if (keep?.ask) return keep;
       const answers = ctx.answers ?? {};
       const round = typeof ctx.runId === 'string' ? settledBefore(ctx.runId) : 0;
       const ids = idsFor(round);
@@ -151,6 +167,8 @@ export function notifyStep({ pushResult = () => phonePushResult(), settledBefore
       // The push already reached the phone in an earlier run on this computer (ruling R75).
       const earlier = pushResult();
       if (earlier?.arrived === true && earlier.run !== ctx.runId) return { settled: { record: { pushArrived: true, from: earlier.run } } };
+      // Skipped when the choices were made: nothing is asked at the end (a later round, taken again from the front desk, asks).
+      if (round === 0 && answers['4.phone']?.label === PHONE.skip && answers[`${PUSH_TEST_STEP}.${ids.ready}`] === undefined) return { settled: { record: { ...SKIPPED } } };
       const ready = answers[`${PUSH_TEST_STEP}.${ids.ready}`];
       if (ready?.label === READY.skip) return { settled: { record: { ...SKIPPED } } };
       if (ready?.label !== READY.ready) return { ask: readyAsk(ids.ready, { terminal: ctx.desktop === false, round }) };

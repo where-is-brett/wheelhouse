@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { profileDir, profileViewsDir, wheelhouseHome } from '../lib/paths.js';
 import { writeViews } from '../state/views.js';
+import { readJsonNamed } from '../lib/read-json-named.js';
 
 // The branch v0.1.x kept the profile on: still recognised as Wheelhouse's own.
 export const PROFILE_BRANCH = 'wheelhouse-profile';
@@ -43,6 +44,10 @@ export function writeProfileViews({ now = () => new Date() } = {}) {
   return writeViews(undefined, { now, dir: profileDir(), out: profileViewsDir() });
 }
 
+// The fault in the view that couldn't be read at the last read, as { file, line, column, hint }; null when none.
+let viewsFault = null;
+export const profileViewsFault = () => viewsFault;
+
 // The views last written, read back; null when there are none or one can't be read.
 // Between the two renames of a write only the `.old` folder is there, so it is read then.
 export function readProfileViews() {
@@ -56,11 +61,17 @@ export function readProfileViews() {
     }
     if (names.length === 0) return null;
     const views = {};
-    try {
-      for (const name of names) views[name.slice(0, -'.json'.length)] = JSON.parse(fs.readFileSync(path.join(folder, name), 'utf8'));
-    } catch {
-      return null;
+    for (const name of names) {
+      const read = readJsonNamed(path.join(folder, name));
+      // A view that can't be read makes them all unknown (null), never empty; the fault is kept to be named.
+      if (read.ok === false) {
+        viewsFault = read;
+        return null;
+      }
+      if (read.missing) return null;
+      views[name.slice(0, -'.json'.length)] = read.value;
     }
+    viewsFault = null;
     return views;
   }
   return null;

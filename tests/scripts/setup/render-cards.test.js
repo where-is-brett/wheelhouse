@@ -75,7 +75,7 @@ for (const name of Object.keys(PATHS)) {
       }
     });
     // A path that asks for GitLab's tool where it can't be had hears that the fetch failed; any other plans no fetch.
-    if (p.glab === 'unavailable') assert.deepEqual(said, p.tool === 'fetch' ? ['GitLab\'s own tool could not be fetched on this computer, so Wheelhouse will work with GitLab without it'] : [], 'what step 2 said');
+    if (p.glab === 'unavailable') assert.deepEqual(said, p.tool === 'fetch' ? ['GitLab\'s own program could not be fetched on this computer, so Wheelhouse will work with GitLab without it'] : [], 'what step 2 said');
 
     // No two different cards share a question, and a card asked again opens with its own reason.
     const asked = cards.filter(question);
@@ -99,8 +99,8 @@ test('path a: with GitLab\'s tool left out, Quick is not offered, and where git 
   const { cards } = await rendered('a');
   const connection = cards.filter((c) => c.step === 3 && /^connection-/.test(c.id));
   assert.equal(connection.length, 1, 'the connection card is asked once');
-  assert.deepEqual(connection[0].card.options.map((o) => o.label), ['Narrow', 'Use my git as it is'], 'the recommended way comes first');
-  assert.equal(recommendedOf(connection[0].card), 'Narrow');
+  assert.deepEqual(connection[0].card.options.map((o) => o.label), ['A key for this project only', 'Use my git as it is'], 'the recommended way comes first');
+  assert.equal(recommendedOf(connection[0].card), 'A key for this project only');
   const own = connection[0].card.options.find((o) => o.label === 'Use my git as it is');
   assert.match(own.description, /Your git holds no GitLab key yet, so you make one on a page that opens, set to expire in 90 days\./, 'the way says the key may still be made');
   const tool = cards.find((c) => c.step === 2 && c.kind === 'question');
@@ -115,7 +115,7 @@ test('path b\': Quick, once GitLab\'s tool can\'t be fetched, is asked again wit
   const connection = cards.filter((c) => c.step === 3 && /^connection-/.test(c.id));
   assert.equal(connection.length, 2, 'the connection card is asked twice: once, and again once Quick can\'t be had');
   assert.equal(connection[0].answer.label, 'Quick');
-  assert.match(connection[1].card.question, /^How should .*\? Quick is no longer offered: it needs GitLab's own tool, which couldn't be fetched on this computer\. This changes the plan you said Go ahead to, and each option says what it brings\.\n/);
+  assert.match(connection[1].card.question, /^How should .*\? Quick is no longer offered: it needs GitLab's own program, which couldn't be fetched on this computer\. This changes the plan you said Go ahead to, and each option says what it brings\.\n/);
   assert.match(connection[1].card.question, /\nSetup waits for your answer; nothing is made on GitLab until you choose\.\n/);
   assert.equal(connection[1].card.options[0].label, connection[0].card.options[0].label, 'the first option stays first');
   assert.ok(!connection[1].card.options.some((o) => o.label === 'Quick'), 'Quick is gone');
@@ -136,8 +136,8 @@ test('path b: which GitLab and its address recommend no option, and say so on a 
 test('path b: the connection card puts Narrow, the recommended way, first', async () => {
   const { cards } = await rendered('b');
   const connection = cards.find((c) => c.step === 3 && /^connection-/.test(c.id));
-  assert.equal(connection.card.options[0].label, 'Narrow');
-  assert.equal(recommendedOf(connection.card), 'Narrow');
+  assert.equal(connection.card.options[0].label, 'A key for this project only');
+  assert.equal(recommendedOf(connection.card), 'A key for this project only');
 });
 
 test('paths b, b\' and c: step 3\'s Go-ahead card says the one-day token is used, never kept, and protects the main line now', async () => {
@@ -156,7 +156,7 @@ test('path b: Narrow stands, so the connection card is asked once', async () => 
   const { cards } = await rendered('b');
   const connection = cards.filter((c) => c.step === 3 && /^connection-/.test(c.id));
   assert.equal(connection.length, 1);
-  assert.equal(connection[0].answer.label, 'Narrow');
+  assert.equal(connection[0].answer.label, 'A key for this project only');
 });
 
 test('Quick names the host chosen, and only that one', async () => {
@@ -204,7 +204,7 @@ test('on GitLab, step 10\'s card names a merge request, never a pull request', a
 });
 
 test('each path\'s plan says what will be asked of the director', async () => {
-  const asks = { a: /a GitLab key: you make it on a page that opens, set to expire in 90 days/, b: /paste a one-day GitLab token into a box on your screen, not the chat. If GitLab won't make a key for this one project, you'll also paste a token set to expire in 30 days that can act as you in every GitLab project and group you can reach/, c: /paste a one-day GitLab token into a box on your screen, not the chat. On a free account, or wherever GitLab won't make a key for this one project, you'll also paste a token set to expire in 30 days that can act as you in every GitLab project and group you can reach/, d: /sign in on GitHub pages that open/, e: /sign in to your company's GitLab in your browser if your company has set that up, or else with a token you make on a page that opens/ };
+  const asks = { a: /a GitLab key: you make it on a page that opens, set to expire in 90 days/, b: /paste a one-day GitLab token into a box on your screen, not the chat. If GitLab won't make a key for this one project, you'll also paste a token that expires in 30 days with your full access to GitLab/, c: /paste a one-day GitLab token into a box on your screen, not the chat. On a free account, or wherever GitLab won't make a key for this one project, you'll also paste a token that expires in 30 days with your full access to GitLab/, d: /sign in on GitHub pages that open/, e: /sign in to your company's GitLab in your browser if your company has set that up, or else with a token you make on a page that opens/ };
   for (const [name, says] of Object.entries(asks)) {
     const { cards } = await rendered(name);
     const plan = cards.filter((c) => /^plan-/.test(c.id)).at(-1);
@@ -230,7 +230,7 @@ test('path g: a miss at step 3\'s apply withdraws the Go ahead, so the plan is a
     const after = cards.slice(cards.indexOf(plans[2]) + 1);
     assert.ok(after.find((c) => c.kind === 'go-ahead' && c.step === 3)?.covered, 'step 3\'s Go ahead is covered by the new plan');
     assert.match(plans[2].card.question, /^- Already done: setup's tools\.\n- Your GitLab sign-in stays on this computer for later; this project doesn't use it\.$/m);
-    assert.match(plans[2].card.options.find((o) => o.label === 'Go ahead').description, desktop ? /^Recommended: setup does all of this now\. The only thing left to ask you is a test notification on your phone near the end, which you can skip\.$/ : /^Recommended: setup does all of this now\. The only thing left to ask you is whether to skip phone notifications near the end\.$/);
+    assert.match(plans[2].card.options.find((o) => o.label === 'Go ahead').description, desktop ? /^Recommended: setup does all of this now\. The only thing left to ask you is a test notification on your phone near the end, which you can skip\.$/ : /^Recommended: setup does all of this now\. Nothing more is asked of you here\.$/);
     // Step 4's questions are asked before the plan, so nothing is asked after the Go ahead, and the plan says what they settled.
     assert.deepEqual(after.filter((c) => c.kind === 'question' && c.step !== 9).map((c) => c.id), [], 'no question card follows the second plan\'s Go ahead, bar the phone test');
     const before = cards.slice(0, cards.indexOf(plans[2]));
@@ -255,7 +255,7 @@ test('path i: Copilot chosen on the builder question, step 6\'s card names every
   assert.match(ask.card.options.find((o) => o.label === 'Copilot').description, /GitHub's Copilot does the building on this computer, using your Copilot plan's monthly allowance\. Setup adds its checks and reads your plan from your GitHub account/);
   const six = cards.find((c) => c.step === 6 && c.kind === 'go-ahead');
   assert.ok(six.card.question.length <= 1200, `step 6's card is ${six.card.question.length} characters`);
-  assert.match(six.card.question, /Copilot's checks before each of its actions and First Mate files, in your Copilot folder for every project \(the checks act only in Wheelhouse projects; the First Mate files say to apply only there\)/);
+  assert.match(six.card.question, /Copilot's checks before each of its actions, First Mate files and brainstorming skill for the First Mate, in your Copilot folder for every project \(the checks act only in Wheelhouse projects; the First Mate files say to apply only there\)/);
   assert.match(six.card.question, /Usage counting left as you set it/);
   assert.match(six.card.question, /Chat history kept 30 days/);
   assert.match(six.card.question, /Phone notifications prepared/);
@@ -298,7 +298,7 @@ test('path a: Customise groups the questions that do not depend on each other, a
   assert.deepEqual(first.map((c) => c.id), ['real-users', 'join']);
   assert.ok(first.every((c) => c.call.of === 2));
   const usersAt = cards.findIndex((c) => c.id === 'real-users');
-  for (const id of [/^product-/, /^live-data$/]) assert.ok(cards.findIndex((c) => id.test(c.id)) > usersAt, `${id} is asked after real users`);
+  for (const id of [/^product-/, /^live-data$/, /^phone$/]) assert.ok(cards.findIndex((c) => id.test(c.id)) > usersAt, `${id} is asked after real users`);
   // The project's name is asked with the connection, once the host is known.
   const named = cards.find((c) => c.id === 'project-name');
   assert.match(named.card.question, /What should the new project on GitLab be called\?/);

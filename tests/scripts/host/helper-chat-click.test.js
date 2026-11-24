@@ -1,6 +1,6 @@
 // tests/scripts/host/helper-chat-click.test.js
 // /cards/chat-click: a click in an agent's chat is recorded as the agent's own account (proof chat-click, not proven):
-// unsigned, never binding. The steps a chat click may not decide are refused, so they go to the helper's window.
+// unsigned, never binding. The steps a chat click may not decide are refused, so they go to the helper's hook-click route.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

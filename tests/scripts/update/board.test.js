@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { projectRef, updateFacts, readLatest, lookForLatest, confirmingLine } from '../../../scripts/update/board.js';
+import { projectRef, updateFacts, readLatest, lookForLatest, confirmingLine, runningBuild } from '../../../scripts/update/board.js';
 import { openJournal } from '../../../scripts/update/journal.js';
 import { decline } from '../../../scripts/update/declined.js';
 import { wheelhouseHome } from '../../../scripts/lib/paths.js';
@@ -169,3 +169,24 @@ test('confirming line: nothing without a finished update', () => withHome(() => 
   assert.equal(confirmingLine({ project: 'p', sessionVersion: '0.2.7', helperVersion: '0.2.7', now: () => NOW }), null);
   assert.equal(fs.existsSync(path.join(wheelhouseHome(), 'update', 'p', 'confirmed.json')), false);
 }));
+
+test('facts: a build from the main line names no release and announces nothing to compare', () => withHome(() => {
+  const facts = updateFacts({ project: 'p', version: 'dev', latest: 'v0.3.0', helperVersion: '0.2.10', now: () => NOW });
+  assert.equal(facts.version, null);
+  assert.equal(facts.between, true);
+  assert.equal(facts.newer, null);
+  assert.equal(facts.oldHelper, null);
+  assert.equal(updateFacts({ project: 'p', version: 'v0.2.6', now: () => NOW }).between, false);
+}));
+
+test('running build: a main-line build is dev, and a release is v-prefixed', () => {
+  const kept = process.env.WHEELHOUSE_RUNNING_VERSION;
+  try {
+    process.env.WHEELHOUSE_RUNNING_VERSION = 'dev';
+    assert.equal(runningBuild(), 'dev');
+    process.env.WHEELHOUSE_RUNNING_VERSION = '0.3.0';
+    assert.equal(runningBuild(), 'v0.3.0');
+  } finally {
+    if (kept === undefined) delete process.env.WHEELHOUSE_RUNNING_VERSION; else process.env.WHEELHOUSE_RUNNING_VERSION = kept;
+  }
+});

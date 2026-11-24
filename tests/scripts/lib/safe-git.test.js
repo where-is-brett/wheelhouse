@@ -319,7 +319,7 @@ test('a record from before the settings were kept per folder is refused when the
   const { SETTINGS_CHANGED_LINE } = await import('../../../scripts/lib/safe-git.js');
   const old = await includedPush({ before: '/a/helper', after: '/b/other', confirmed: true, asOld: true });
   assert.equal(old.code, 'git-settings-changed');
-  assert.match(SETTINGS_CHANGED_LINE, /Wheelhouse shows a card asking you to confirm the new settings in its own window/);
+  assert.match(SETTINGS_CHANGED_LINE, /Wheelhouse shows a card asking you to confirm the new settings here in the chat/);
   assert.doesNotMatch(SETTINGS_CHANGED_LINE, /run setup again/);
   assert.match(SETTINGS_CHANGED_LINE, /^Nothing was pushed/);
 });
@@ -348,15 +348,60 @@ test('the private copy a push reads holds no include of its own, only the settin
   assert.doesNotMatch(seen.copy, /work\.cfg/);
 });
 
-test('the fingerprint covers a remote\'s own proxy, every certificate and proxy setting, and ssh settings, and not the environment', async () => {
+test('the fingerprint covers every certificate and ssh setting, and not the environment or the proxy values', async () => {
   const { settingsFingerprint } = await import('../../../scripts/lib/safe-git.js');
   const base = [{ key: 'credential.helper', value: 'a' }];
   const same = settingsFingerprint(base);
   assert.match(same, /^v2:[0-9a-f]{64}$/);
-  for (const key of ['remote.origin.proxy', 'http.sslcapath', 'http.sslbackend', 'http.sslcert', 'http.sslkey', 'http.pinnedpubkey', 'http.proxysslcainfo', 'ssh.variant', 'credential.https://x.example.org.username']) {
+  for (const key of ['http.sslcapath', 'http.sslbackend', 'http.sslcert', 'http.sslkey', 'http.pinnedpubkey', 'http.proxysslcainfo', 'http.extraheader', 'http.https://x.example.org.sslcainfo', 'ssh.variant', 'credential.https://x.example.org.username']) {
+    assert.notEqual(settingsFingerprint([...base, { key, value: 'v' }]), same, key);
+  }
+  // The sign-in, rewrite, header, certificate and include settings, and names that only look like a proxy's, all count.
+  assert.notEqual(settingsFingerprint([{ key: 'credential.helper', value: 'b' }]), same, 'credential.helper, another value');
+  for (const key of ['url.https://evil.example.org/.insteadof', 'url.https://evil.example.org/.pushinsteadof', 'http.sslverify', 'http.sslcainfo', 'http.https://x.example.org/.extraheader', 'http.https://x.example.org/.sslverify', 'include.path', 'includeif.gitdir:/x/.path', 'remote.origin.url', 'remote.origin.pushurl', 'core.sshcommand', 'http.proxysslcert', 'http.proxy.sslverify', 'http.https://x.example.org/proxy.extraheader', 'remote.proxy.url']) {
     assert.notEqual(settingsFingerprint([...base, { key, value: 'v' }]), same, key);
   }
   assert.equal(settingsFingerprint([...base, { key: 'user.name', value: 'v' }]), same, 'an unrelated setting changes nothing');
+  // The proxy values follow the network the computer is on, so they are no part of it, however they are named.
+  for (const key of ['http.proxy', 'http.https://corp.example.org/.proxy', 'http.proxyauthmethod', 'http.noproxy', 'remote.origin.proxy', 'remote.origin.proxyauthmethod']) {
+    assert.equal(settingsFingerprint([...base, { key, value: 'v' }]), same, key);
+    assert.equal(settingsFingerprint([...base, { key, value: 'w' }]), same, `${key}, another value`);
+  }
+});
+
+test('a proxy-only change does not bring the card back, a record made with the proxy in it is still read, and the record holds no proxy value', async () => {
+  const { confirmComputerSettings, lookAtTrusted, proxiedSettingsFingerprint } = await import('../../../scripts/lib/safe-git.js');
+  await inFolderWith('[credential]\n\thelper = !/a/helper\n[http]\n\tproxy = http://ada:s3cretpass@p.example.org:8080\n', async ({ folder, file, change }) => {
+    await confirmComputerSettings({ file, cwd: folder });
+    assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /s3cretpass|p\.example/);
+    assert.equal((await lookAtTrusted({ file, cwd: folder })).same, true);
+    // Another network: another proxy, then none.
+    change('[credential]\n\thelper = !/a/helper\n[http]\n\tproxy = http://grace:an0therpass@q.example.org:3128\n');
+    const moved = await lookAtTrusted({ file, cwd: folder });
+    assert.equal(moved.same, true);
+    assert.deepEqual(moved.changed, []);
+    assert.doesNotMatch(JSON.stringify(moved), /an0therpass|q\.example/);
+    change('[credential]\n\thelper = !/a/helper\n');
+    assert.equal((await lookAtTrusted({ file, cwd: folder })).same, true);
+    // A setting that matters to safety still brings it back.
+    change('[credential]\n\thelper = !/a/helper\n[http]\n\tsslCAInfo = /x/ca.pem\n');
+    assert.equal((await lookAtTrusted({ file, cwd: folder })).same, false);
+  });
+  // A record made before the proxy was left out still matches while the proxy is as it was, and not once other settings differ.
+  await inFolderWith('[credential]\n\thelper = !/a/helper\n[http]\n\tproxy = http://p.example.org:8080\n', async ({ folder, file, change }) => {
+    const { readSettingsFor } = await import('../../../scripts/lib/safe-git.js');
+    await confirmComputerSettings({ file, cwd: folder });
+    const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const [folderKey] = Object.keys(record.folders);
+    record.folders[folderKey] = proxiedSettingsFingerprint(await readSettingsFor({ cwd: folder }));
+    fs.writeFileSync(file, JSON.stringify(record));
+    assert.equal((await lookAtTrusted({ file, cwd: folder })).same, true);
+    change('[credential]\n\thelper = !/b/other\n[http]\n\tproxy = http://p.example.org:8080\n');
+    assert.equal((await lookAtTrusted({ file, cwd: folder })).same, false);
+  });
+  const entries = [{ key: 'credential.helper', value: 'a' }, { key: 'http.proxy', value: 'p' }];
+  assert.match(proxiedSettingsFingerprint(entries), /^v2:[0-9a-f]{64}$/);
+  assert.notEqual(proxiedSettingsFingerprint(entries), proxiedSettingsFingerprint([entries[0]]));
 });
 
 test('a folder setup never confirmed is refused where a record exists, even one that names other folders', async () => {
@@ -392,14 +437,14 @@ test('confirming keeps the names of the settings, names only, and lookAtTrusted 
     await confirmComputerSettings({ file, cwd: folder });
     const text = fs.readFileSync(file, 'utf8');
     assert.doesNotMatch(text, /s3cretpass|corp\.example|p\.example/, 'the record holds names, never an address or a value');
-    assert.deepEqual(Object.values(JSON.parse(text).names), [['credential.helper', 'http.proxy']]);
+    assert.deepEqual(Object.values(JSON.parse(text).names), [['credential.helper']]);
     const same = await lookAtTrusted({ file, cwd: folder });
     assert.equal(same.same, true);
     // A setting added, one taken away, and a value changed on a name that stays.
     change('[credential]\n\thelper = !/b/other\n[http]\n\tsslCAInfo = /x/ca.pem\n');
     const moved = await lookAtTrusted({ file, cwd: folder });
     assert.equal(moved.same, false);
-    assert.deepEqual(settingsChange(moved), { added: ['http.sslcainfo'], removed: ['http.proxy'], changed: ['credential.helper'] });
+    assert.deepEqual(settingsChange(moved), { added: ['http.sslcainfo'], removed: [], changed: ['credential.helper'] });
     change('[credential]\n\thelper = !/b/other\n[http "https://corp.example.org/"]\n\tproxy = http://ada:s3cretpass@p.example.org:8080\n');
     const valueOnly = await lookAtTrusted({ file, cwd: folder });
     assert.deepEqual(settingsChange(valueOnly), { added: [], removed: [], changed: ['credential.helper'] }, 'a changed value is named, by name only');

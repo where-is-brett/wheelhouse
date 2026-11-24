@@ -28,6 +28,7 @@ import { makeScratchProject } from '../../../probes/lib/scratch.js';
 import { APPLIED, RULING, between as between1, judge as judge1 } from '../../eval/front-desk/01-ruling-after-compaction.js';
 import { MESSAGE as MESSAGE_2, judge as judge2 } from '../../eval/front-desk/02-musing.js';
 import { judge as judge3, seed as seed3 } from '../../eval/front-desk/03-worker-label.js';
+import { PROMPTS as PROMPTS_11, judge as judge11, moves as moves11 } from '../../eval/front-desk/11-feature-design.js';
 import { PROMPTS as PROMPTS_5, QUESTION, asksIt, judge as judge5 } from '../../eval/front-desk/05-asked-once.js';
 import scenario7, { PROMPTS as PROMPTS_7, judge as judge7 } from '../../eval/front-desk/07-visual-change.js';
 import { judge as judge8 } from '../../eval/front-desk/08-removal.js';
@@ -680,4 +681,31 @@ test('scenario 16 reads a quote of the ruling with the paragraph that leads into
   // A reply that opens with the quote, with no word of confirmation in its first 60.
   const padding = Array.from({ length: 60 }, () => 'word').join(' ');
   assert.match(judged(quote, padding, 'Please confirm it.').why, /first thing shown is not that the ruling waits/);
+});
+
+test('scenario 11 wants brainstorming loaded, a first-version card, three questions at most, and the summary posted before the approval card', () => {
+  const dir = tempFolder('eleven-');
+  const question = (what, topic = 'design-order-history') => composeCard({ kind: 'question', level: 2, what, why: 'It sets the size.', options: [{ label: 'Just the list', says: 'A page listing past orders.' }, { label: 'List and reorder', says: 'Adds the button.' }], recommend: 'Just the list', because: 'it is quickest to see', meanwhile: 'Other work carries on.', proposal: true, topic });
+  const first = question('What should the first version of order history include?');
+  const approval = composeCard({ kind: 'approve-work', level: 3, what: 'Work order-history: Past orders page.', why: 'It is a new feature, so its design comes to you first. It is in the message above.', options: [{ label: 'Approve', says: 'It goes ahead.' }], recommend: 'Approve', because: 'you\'ll see it working before it goes live', meanwhile: 'Other work carries on.', target: { work: 'order-history', lane: 'feature', hash: 'a'.repeat(64), shownFirst: true } });
+  const summary = '## Summary\n\n**What you get:** a past orders page.\n\nThe whole design: [order-history.md](.wheelhouse/work/order-history.md)';
+  const good = [['Skill', { skill: 'superpowers:brainstorming' }], ['AskUserQuestion', { questions: [first.question] }], ['say', summary], ['AskUserQuestion', { questions: [approval.question] }]];
+  const cards = [written('card', first.card), written('card', approval.card)];
+  assert.equal(PROMPTS_11.length, 3);
+  const ok = judge11({ events: events(...good), written: cards, calls: callsOf(events(...good)), dir });
+  assert.equal(ok.pass, true, ok.why);
+  assert.equal(judge11({ events: events(...good.slice(0, 1).map(() => ['Skill', { skill: 'wheelhouse-brainstorming' }]), ...good.slice(1)), written: cards, calls: callsOf(events(['Skill', { skill: 'wheelhouse-brainstorming' }])), dir }).pass, true, 'Copilot\'s copy counts');
+  const run = (steps, cardList = cards) => judge11({ events: events(...steps), written: cardList, calls: callsOf(events(...steps)), dir });
+  assert.match(run(good.slice(1)).why, /brainstorming was never loaded/);
+  assert.match(run(good, []).why, /no question card was recorded/);
+  assert.match(run(good, [written('card', question('What colour should the page be?').card), ...cards]).why, /does not ask what the first version includes/);
+  const four = [first, question('Show the dates?'), question('Show the totals?'), question('Show a reorder button?')].map((c) => written('card', c.card));
+  assert.match(run(good, four).why, /4 question cards: at most three/);
+  assert.match(run(good, [written('card', question('What should the first version include?', 'order-history').card)]).why, /not design-<work id>/);
+  assert.match(run([good[0], good[1], good[3]]).why, /summary, with the link to the whole design, was not posted as a message before the approval card/);
+  assert.match(run([good[0], good[1], good[3], good[2]]).why, /not posted as a message before the approval card/, 'after the card is too late');
+  assert.match(run([good[0], good[1], good[2]]).why, /no approval card asking "Approve this design\?"/);
+  const built = [...good, ['Edit', { file_path: path.join(dir, 'public/orders.html'), old_string: 'a', new_string: 'b' }]];
+  assert.match(run(built).why, /something was built/);
+  assert.deepEqual(moves11(events(['say', 'Hello.'], ['AskUserQuestion', { questions: [{ question: 'Q?' }] }])), [{ text: 'Hello.' }, { ask: 'Q?' }]);
 });

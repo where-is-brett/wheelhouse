@@ -27,6 +27,7 @@ import { activitySummary, finalAnswer, modelOfRun, monthRefusedIn, sessionIdOf, 
 import { commitWork } from '../../scripts/feature/commit-work.js';
 import { recordRefusal, recordRun } from '../../scripts/agents/copilot/usage.js';
 import { checkVersions, noSubsetRunner, readVersions } from '../../scripts/agents/copilot/versions.js';
+import { BUILDER_PROMPT_LEAD } from '../../scripts/foreman/prompt-lead.js';
 import { PLUGIN_ROOT, foremanCommands } from '../../scripts/foreman/tools.js';
 import { BIN_DIR, LAUNCHER_SESSION, launcherOf, pathWithLaunchers } from '../../scripts/lib/launchers.js';
 import { DEFAULT_BUILD_COMMANDS, isModelName } from '../../scripts/gate/guardrails.js';
@@ -293,17 +294,21 @@ function featureCall({ rules: _rules, allowed: _allowed, level, grants, guardedC
   return { ...sessionCall({ ...rest, ...extra, rules: feature.rules }), level: feature.level };
 }
 
+// The prompt a Copilot builder is started or resumed with: BUILDER_PROMPT_LEAD first, once, so its hooks know its role
+// (scripts/lib/role.js), as for a Claude Code builder.
+const ledPrompt = (prompt) => (typeof prompt !== 'string' || prompt.startsWith(BUILDER_PROMPT_LEAD) ? prompt : `${BUILDER_PROMPT_LEAD} ${prompt}`);
+
 // A feature's first session, run in its worktree, at the level levelAllowed lets run (`level` in the call's result). The
 // waker's `sessionId` is the session's own, given to Copilot up front (check 96), so the waker keeps it before the run.
 function buildFeatureStartCall({ project, work, ...rest }) {
-  return featureCall(rest, { project, target: `feature-${work}`, role: 'builder', agent: FEATURE_AGENT });
+  return featureCall({ ...rest, prompt: ledPrompt(rest.prompt) }, { project, target: `feature-${work}`, role: 'builder', agent: FEATURE_AGENT });
 }
 
 // A feature's session, woken: `--resume=<id>` in the feature's own home, never `--continue` (which takes the newest
 // session in the home, check 61). Its rules are worked out afresh, so a grant spent by an earlier run is not given.
 function buildFeatureResumeCall({ sessionId, project, work, ...rest }) {
   if (sessionId === undefined || sessionId === null) throw new Error('A wake needs the session id');
-  return featureCall(rest, { project, target: `feature-${work}`, role: 'builder', agent: FEATURE_AGENT, resume: sessionId });
+  return featureCall({ ...rest, prompt: ledPrompt(rest.prompt) }, { project, target: `feature-${work}`, role: 'builder', agent: FEATURE_AGENT, resume: sessionId });
 }
 
 // Why a run GitHub refused for the month settles as it does.
@@ -487,8 +492,8 @@ function activityFolder(project) {
 }
 
 // The proofs an answer must name for its build-command grant to count (the waker's buildGrants): no Copilot hook signs, so
-// only a click in the helper's own window counts.
-export const GRANT_PROOFS = Object.freeze(['window']);
+// only the click a hook saw on the card counts (proof `hook-click`).
+export const GRANT_PROOFS = Object.freeze(['hook-click']);
 
 // The sessions part. `ready` is the switch (BACKGROUND_SESSIONS_READY unless a test builds the part switched on); `plan`
 // is the Copilot plan (`copilotPlan`; the default passes no model); `kits` ({ manifest, fetchTo }) and `home`
@@ -513,6 +518,8 @@ export function sessionsPart({ ready = BACKGROUND_SESSIONS_READY, plan: given = 
     featureStartCall: switched(buildFeatureStartCall),
     featureResumeCall: switched(buildFeatureResumeCall),
     finalAnswer,
+    // Copilot's sessions start in the background only: there is no Desktop for it (builders design, section 9.6).
+    routes: Object.freeze(['background']),
     // Before every start: the versions in use read, and any CLI but the pinned one held until it passes the safety
     // subset (checkVersions fails closed: a version that can't be read isn't the pin); the pinned kits fetched once and
     // checked; the activity folder; and the session's own home written afresh. A throw refuses the start; nothing has been

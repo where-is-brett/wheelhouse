@@ -353,6 +353,8 @@ export async function copyRunRecords(runId, folder) {
 // card left, step 10's plan asks a card of its own that opens with them (pendingBriefing,
 // READY_CARD). Given as a `said` instead, they went unshown again in the run of 17 November 2026.
 const BRIEFING_TARGET = 'step 10 briefing';
+// Said once, at the end of the verdict and briefing: the guards apply to every Claude session in the folder (design 12A.3).
+export const GUARDS_LINE = 'Any Claude session in this folder now works under Wheelhouse\'s guards.';
 const SETUP_READY_ID = 'setup-ready';
 const READY_CARD = {
   level: 2,
@@ -480,6 +482,8 @@ export function setupRoutes({
   stepsModule = STEPS_MODULE, userHome = os.homedir(), platform = process.platform, spawn = nodeSpawn, mark = markStep,
   writeSurvey, health = healthCheck, finish = (args) => finishSetup({ ...args, now }),
   closeTrial = (args) => closeOpenTrial(args), copy = copyRunRecords, signInWith = {},
+  // The builder sign-in check (scripts/setup/builder-sign-in.js): `live` makes step 10 run it (the helper says so); `check` and `launchFor` are for tests.
+  buildersWith = {},
 } = {}) {
   let loaded = null;
   const steps = () => (loaded ??= loadSteps(stepsModule).catch((error) => { loaded = null; throw error; }));
@@ -545,7 +549,10 @@ export function setupRoutes({
   let sessionIsApp = false;
   // When the session asking started (the command says so, when it can tell): step 10's plan reads from it whether the session has the sandbox's limit.
   let sessionStartedAt;
-  const ctxFor = (folder, n, runId, startedAt) => ({ folder, step: n, runId, startedAt, now, userHome, platform, desktop: sessionIsApp, sessionStartedAt, answers: answersWithConsent(runId).answers });
+  // Where the session asking runs ('desktop', 'terminal' or 'unknown', as the command reads CLAUDE_CODE_ENTRYPOINT): step 3 asks
+  // where builders start from it.
+  let sessionEntry = 'unknown';
+  const ctxFor = (folder, n, runId, startedAt) => ({ folder, step: n, runId, startedAt, now, userHome, platform, desktop: sessionIsApp, entrypoint: sessionEntry, sessionStartedAt, answers: answersWithConsent(runId).answers });
 
   // ---- The one card, Customise and changing an answer (design section 15.1) ----
 
@@ -669,7 +676,13 @@ export function setupRoutes({
         computerChanging = (await (await steps()).find((x) => x.n === 6)?.pending?.({ folder: run.folder, step: 6, runId: run.id, now, userHome, platform, answers: answersWithConsent(run.id).answers })) ?? null;
       } catch { /* the card then says what step 6 does in full */ }
     }
-    const { id, card, choices, writes } = oneCard({ computerChanging, folder: run.folder, list, product, platform, toRun, count: keptAnswers(run.id).length, facts, claudeHome, desktop: sessionIsApp, done: { tools: stepDone(run, 2), signedIn: wasWithdrawn ? lastMissHost(run) : null }, pushed: phonePushResult()?.arrived === true, hosts: projectHosts({ folder: run.folder, answers: own }) });
+    let otherAgents = [];
+    if (toRun.includes(6)) {
+      try {
+        otherAgents = (await steps()).find((x) => x.n === 6)?.otherAgents?.({ folder: run.folder, platform, answers: answersWithConsent(run.id).answers }) ?? [];
+      } catch { /* none named */ }
+    }
+    const { id, card, choices, writes } = oneCard({ computerChanging, otherAgents, folder: run.folder, list, product, platform, toRun, count: keptAnswers(run.id).length, facts, claudeHome, desktop: sessionIsApp, done: { tools: stepDone(run, 2), signedIn: wasWithdrawn ? lastMissHost(run) : null }, pushed: phonePushResult()?.arrived === true, hosts: projectHosts({ folder: run.folder, answers: own }) });
     if (JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error('The one card could not be cleaned as it is sent');
     noteAsked({ runId: run.id, folder: run.folder, step: ONE_CARD_STEP, id, card, writes, choices, facts, now });
     return { ok: true, ask: { step: ONE_CARD_STEP, id, card }, progress: [`Setup · ${setupTime(toRun, list)}`, 'One card: the plan for this project.'] };
@@ -750,6 +763,38 @@ export function setupRoutes({
       },
       ...rest,
     });
+  }
+
+  // The builder sign-in check step 10's health makes: the way builders start on this computer (the background route; the Desktop route's
+  // is the foreman's check-in, part 6). A launch command that can't be read fails it, saying which fault it is (never the settings path).
+  async function buildersCheckNow() {
+    const { builderSignInCheck, launchFaultLine } = await import('./builder-sign-in.js');
+    const { storedLaunch } = await import('../lib/launch-stored.js');
+    let launch = null;
+    try {
+      launch = (buildersWith.launchFor ?? storedLaunch)();
+    } catch (error) {
+      return { ok: false, kind: 'other', line: launchFaultLine(error) };
+    }
+    return (buildersWith.check ?? builderSignInCheck)({ home: wheelhouseHome(), route: 'background', launch });
+  }
+
+  // /setup/builders/check {}: the director's "Check again" (builders design, section 10.2). Runs the builder sign-in check as builders start on
+  // this computer, with the launch command saved for it, and takes the sign-in fact away only when it passes; the waker then sends the held
+  // wakes. -> { ok: true, cleared }, or { ok: false, refused: <what happened, by kind>, kind }. Refused under STOP, which freezes every re-check.
+  async function buildersCheckRoute(body) {
+    if (Object.keys(body).length > 0) refuse('Check again takes nothing: it checks the way builders start on this computer');
+    if (stopped()) return stopRefusal;
+    const { recheckRoute, launchFaultLine } = await import('./builder-sign-in.js');
+    const { storedLaunch } = await import('../lib/launch-stored.js');
+    let launch = null;
+    try {
+      launch = (buildersWith.launchFor ?? storedLaunch)();
+    } catch (error) {
+      return { ok: false, kind: 'other', refused: launchFaultLine(error) };
+    }
+    const got = await recheckRoute({ home: wheelhouseHome(), launch, ...(buildersWith.check ? { check: buildersWith.check } : {}) });
+    return got.ok ? got : { ok: false, kind: got.kind, refused: got.line };
   }
 
   // Step 4 settled on live data or Apple signing that the answers now say differently, and step 7
@@ -1042,7 +1087,7 @@ export function setupRoutes({
     if (!onRunList(found, HEALTH_STEP)) refuse(notOnList(found, HEALTH_STEP));
     const before = healthQueue.get(found.id) ?? Promise.resolve();
     const turn = before.catch(() => {}).then(async () => {
-      const read = (run) => health({ folder: run.folder, run, reported: lines, now, desktop: sessionIsApp });
+      const read = (run) => health({ folder: run.folder, run, reported: lines, now, desktop: sessionIsApp, ...(buildersWith.live === true || buildersWith.check ? { builders: buildersCheckNow } : {}) });
       const answerOf = (got) => ({ ok: true, green: got.green, lines: got.lines, board: got.board, trials: got.trials });
       let run = runById(found.id);
       if (healthGreen(run) || stopped()) return answerOf(await read(run));
@@ -1070,7 +1115,7 @@ export function setupRoutes({
       const requests = changeRequests(run.id, answersFor(run.id));
       const ending = await finish({ project: got.project, ...(writeSurvey ? { writeSurvey } : {}) });
       // The verdict and the first briefing, kept for the next card to open with (pendingBriefing).
-      const show = [got.verdict, ending.briefing].filter((part) => typeof part === 'string' && part !== '').join('\n\n');
+      const show = [got.verdict, ending.briefing, GUARDS_LINE].filter((part) => typeof part === 'string' && part !== '').join('\n\n');
       addChanges(run.id, [{ id: newId('chg'), step: HEALTH_STEP, kind: 'answer', target: BRIEFING_TARGET, before: null, after: { briefing: show } }]);
       return { ...answerOf(got), ...ending, ...(requests.length > 0 ? { requests } : {}) };
     });
@@ -1083,14 +1128,16 @@ export function setupRoutes({
   }
 
   const aware = (route) => (body) => {
-    const { desktop, sessionStartedAt: started, ...rest } = body ?? {};
+    const { desktop, entrypoint, sessionStartedAt: started, ...rest } = body ?? {};
     sessionIsApp = desktop === true;
+    // Only the requests that build step cards say where the session runs; the others leave what was last said.
+    if (entrypoint !== undefined) sessionEntry = ['desktop', 'terminal', 'unknown'].includes(entrypoint) ? entrypoint : 'unknown';
     sessionStartedAt = typeof started === 'string' && Number.isFinite(Date.parse(started)) ? started : undefined;
     return route(rest);
   };
   const routes = Object.fromEntries(Object.entries({
     '/setup/plan': plan, '/setup/apply': apply, '/setup/status': status, '/setup/health': healthRoute, '/setup/choices': choicesRoute, '/setup/change': changeRoute,
-    '/setup/sign-in': signInRoute,
+    '/setup/sign-in': signInRoute, '/setup/builders/check': buildersCheckRoute,
   }).map(([path, route]) => [path, aware(route)]));
   // Whether a setup step is running in this helper now. Not a route, so it is left out of a spread of the routes.
   Object.defineProperty(routes, 'busy', { value: () => inHelper.size > 0, enumerable: false });

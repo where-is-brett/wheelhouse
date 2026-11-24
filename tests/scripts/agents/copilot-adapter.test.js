@@ -164,7 +164,7 @@ test('every tool seen in checks 58, 63 and 66 has a place, and none that changes
 });
 
 test('Copilot\'s cards bind only from outside the agent, and nothing is packaged into a project yet', () => {
-  assert.deepEqual(copilot.cards.binding, ['policy-hook', 'window', 'host']);
+  assert.deepEqual(copilot.cards.binding, ['policy-hook', 'host']);
   for (const proof of copilot.cards.binding) assert.ok(PROOFS.includes(proof));
   for (const proof of ['chat-click', 'hook-click', 'signed-hook']) assert.ok(!copilot.cards.binding.includes(proof), `${proof} does not bind on Copilot`);
   assert.deepEqual(copilot.packaging.files(), []);
@@ -328,4 +328,11 @@ test('none of gh, glab or copilot ran, and the real home was never touched', () 
   assert.ok(home);
   assert.ok(fs.realpathSync(home).startsWith(fs.realpathSync(os.tmpdir())), 'the test\'s home is a temporary folder');
   assert.notEqual(path.resolve(home), path.join(os.homedir(), '.wheelhouse'));
+});
+
+test("the sessions parts declare their routes: Copilot's only background, Claude Code's both", () => {
+  assert.deepEqual([...sessionsFor('copilot').routes], ['background']);
+  assert.deepEqual([...sessionsFor('claude-code').routes], ['desktop', 'background']);
+  assert.deepEqual([...adapterFor('copilot').sessions.routes], ['background']);
+  assert.deepEqual([...adapterFor('claude-code').sessions.routes], ['desktop', 'background']);
 });

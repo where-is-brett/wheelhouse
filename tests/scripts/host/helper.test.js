@@ -12,6 +12,8 @@ import path from 'node:path';
 import { makeHome } from '../../../scripts/host/local/home.js';
 import { startHelper, PUSH_REFUSALS, secretsOf, GITLAB_MAINTAINERS_ONLY } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
+import { fileURLToPath } from 'node:url';
+import { pluginVersion } from '../../../scripts/lib/plugin-version.js';
 import { helperAddress, profileDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { openSettings } from '../../../scripts/state/record.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -161,7 +163,7 @@ async function inRecordOnly(remoteUrl, ids) {
 
 // --- the address ---
 
-const PLUGIN_VERSION = JSON.parse(fs.readFileSync(new URL('../../../.claude-plugin/plugin.json', import.meta.url), 'utf8')).version;
+const PLUGIN_VERSION = pluginVersion(fileURLToPath(new URL('../../..', import.meta.url)));
 
 test('/health answers with the plugin version, read from the plugin\'s own plugin.json', async () => {
   const home = shortHome();

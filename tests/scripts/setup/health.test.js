@@ -224,7 +224,7 @@ const merges = (answer) => {
 };
 const REFUSED = { ok: false, refused: 'the lock is held; CI has not passed', reasons: ['the lock is held', 'CI has not passed'] };
 const stepWith = (adapter, client, extra = {}) => healthStep({
-  adapterFor: () => adapter, client, findGit: GIT, trySTOP: async () => ({ write: 'refused', read: 'allowed' }), checkPins: () => 'match', readProtection: async () => 'on', ...extra,
+  adapterFor: () => adapter, client, findGit: GIT, trySTOP: async () => ({ write: 'refused', read: 'allowed', start: 'refused' }), checkPins: () => 'match', readProtection: async () => 'on', ...extra,
 });
 const cleanups = (recorded) => recorded.filter((c) => c.kind === 'answer' && c.after?.cleanup).map((c) => c.after.cleanup);
 
@@ -369,6 +369,7 @@ test('the helper\'s part: an empty commit on main\'s tip, the gate refuses it, S
       ['merge without approval', 'refused', true],
       ['write under stop', 'refused', true],
       ['read under stop', 'allowed', true],
+      ['start under stop', 'refused', true],
       ['installed skills', 'match', true],
       ['host protection', 'on', true],
     ]);
@@ -520,16 +521,29 @@ test('the merge trial passes on any refusal that leaves the pull request unmerge
   assert.equal(await mergeTrial({ client: { merge: async () => { throw new Error('x'); } }, adapter: adapter('open'), project: SLUG, number: 12 }), 'could not run');
 });
 
+test('health\'s STOP trial runs the waker\'s start decision under the scratch home and expects "not started: All stop"', async () => {
+  assert.equal((await stopTrial()).start, 'refused');
+  const dir = tempFolder('wh-start-');
+  const says = (line) => {
+    const file = path.join(dir, `${Math.abs(line.length)}-${line.replace(/\W/g, '')}.js`);
+    fs.writeFileSync(file, `// ${path.basename(file)}\nprocess.stdout.write(${JSON.stringify(`${line}\n`)});\n`);
+    return file;
+  };
+  assert.equal((await stopTrial({ startScript: says('start allowed') })).start, 'allowed');
+  assert.equal((await stopTrial({ startScript: says('not started: builders can\'t sign in') })).start, 'could not run');
+  assert.equal((await stopTrial({ startScript: path.join(dir, 'missing.js') })).start, 'could not run');
+});
+
 test('STOP is tried with the real stop guard under a scratch home: a write refused, a read allowed', async () => {
-  assert.deepEqual(await stopTrial(), { write: 'refused', read: 'allowed' });
+  assert.deepEqual(await stopTrial(), { write: 'refused', read: 'allowed', start: 'refused' });
   // A guard that lets everything through, or denies everything for another reason, doesn't pass.
   const dir = tempFolder('wh-guards-');
   const open = path.join(dir, 'open.js');
   fs.writeFileSync(open, '// open.js\nprocess.stdin.resume();\nprocess.stdin.on(\'end\', () => {});\n');
-  assert.deepEqual(await stopTrial({ script: open }), { write: 'allowed', read: 'allowed' });
+  assert.deepEqual(await stopTrial({ script: open }), { write: 'allowed', read: 'allowed', start: 'refused' });
   const shut = path.join(dir, 'shut.js');
   fs.writeFileSync(shut, `// shut.js\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'Wheelhouse\'s check could not run' } }))});\n`);
-  assert.deepEqual(await stopTrial({ script: shut }), { write: 'could not run', read: 'could not run' });
+  assert.deepEqual(await stopTrial({ script: shut }), { write: 'could not run', read: 'could not run', start: 'refused' });
 });
 
 // ---- Joining the two parts ----
@@ -789,6 +803,8 @@ test('the trial stays open until the session\'s lines are in; then it is closed,
     const ready = await routes['/setup/plan']({ folder, step: 10 });
     assert.equal(ready.ask.id, 'setup-ready');
     assert.ok(ready.ask.card.question.startsWith(`${green.lines.at(-1)}\nThe briefing.\n`), ready.ask.card.question);
+    assert.ok(ready.ask.card.question.includes('Any Claude session in this folder now works under Wheelhouse\'s guards.'), 'the last card says the guards line once');
+    assert.equal(ready.ask.card.question.split('works under Wheelhouse').length, 2);
     assert.deepEqual(ready.ask.card.options.map((o) => o.label), ['Carry on', 'Show the checks']);
     assert.equal((await routes['/setup/status']({ folder })).ask, 10, 'asked again until answered');
     const greenAt = new Date(Date.parse(runOf(folder).changes.find((c) => typeof c.after?.green === 'string').after.green) + 1000);
@@ -1223,4 +1239,50 @@ test('step 10 fails closed when the engine reports telemetry on, and runs the he
       if (findings.length) assert.equal(trials.length, 0, 'no trial on an engine with findings');
     });
   }
+});
+
+// ---- The builder sign-in check and a helper that doesn't answer (builders design, section 10.1; fault 9) ----
+
+test('the Builders check is a counted line: a pass is Passed, a failure keeps the board red and says the three ways out', async () => {
+  await withProject(async ({ folder }) => {
+    const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
+    const checks = Object.keys(HELPER_CHECKS).length + Object.keys(SESSION_CHECKS).length;
+    const pass = await healthCheck({ folder, run, reported: GREEN_LINES, load: OK_BOARD, builders: async () => ({ ok: true }) });
+    assert.equal(pass.green, true, pass.lines.join('\n'));
+    assert.ok(pass.lines.some((l) => /^Passed: A builder started the way builders will start/.test(l)));
+    assert.equal(pass.verdict, `All ${checks + 1} checks passed. Wheelhouse is ready.`);
+    const fail = await healthCheck({
+      folder, run, reported: GREEN_LINES, load: OK_BOARD,
+      builders: async () => ({ ok: false, kind: 'not-signed-in', line: "A builder started as `claude` couldn't sign in: it said it isn't logged in." }),
+    });
+    assert.equal(fail.green, false);
+    const line = fail.lines.find((l) => l.startsWith('Failed: A builder started as `claude`'));
+    assert.match(line, /claude \/login/);
+    assert.match(line, /Claude Desktop/);
+    assert.match(line, /launch command/);
+    assert.equal(fail.verdict, `${checks} of ${checks + 1} checks passed. Here is what to do.`);
+  });
+});
+
+test('"All checks passed" counts only the checks that ran and names the one that did not', async () => {
+  await withProject(async ({ folder }) => {
+    const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
+    const checks = Object.keys(HELPER_CHECKS).length + Object.keys(SESSION_CHECKS).length;
+    const got = await healthCheck({ folder, run, reported: GREEN_LINES, load: OK_BOARD, builders: async () => ({ ran: false, why: 'the Desktop route is checked by the foreman' }) });
+    assert.equal(got.green, true, got.lines.join('\n'));
+    assert.equal(got.verdict, `All ${checks} checks that ran passed. Not run: Builders can sign in (the Desktop route is checked by the foreman).`);
+    assert.ok(got.lines.includes('Not run: Builders can sign in: the Desktop route is checked by the foreman.'));
+  });
+});
+
+test('a helper call that times out during health is a failed line naming the step, never dropped', async () => {
+  await withProject(async ({ folder }) => {
+    const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
+    const late = { health: async () => ({ ok: false, refused: 'the host helper did not answer in time' }) };
+    const got = await healthCheck({ folder, run, reported: GREEN_LINES, load: OK_BOARD, client: late });
+    assert.equal(got.green, false);
+    assert.ok(got.lines.some((l) => l.startsWith("Failed: The helper didn't answer within 15 seconds (step 10).")), got.lines.join('\n'));
+    const fine = await healthCheck({ folder, run, reported: GREEN_LINES, load: OK_BOARD, client: { health: async () => ({ ok: true }) } });
+    assert.equal(fine.green, true);
+  });
 });

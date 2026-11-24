@@ -19,7 +19,8 @@ import { keepClick, keepAnswer } from '../../../scripts/lib/setup-clicks.js';
 import { stepsFor, joinedRepo, firstUnfinished, healthGreen, JOINING_STEPS } from '../../../scripts/lib/setup-run.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { readProject } from '../../../scripts/lib/projects.js';
-import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { BUILDER_CHOICES } from '../../../scripts/setup/builders-ask.js';
 import { buildManifest, MARKETPLACE } from '../../../scripts/lineage/manifest.js';
 import { starterConfig } from '../../../scripts/setup/project-files.js';
 import { LIVE_DATA } from '../../../scripts/setup/questions.js';
@@ -138,9 +139,12 @@ test('a second computer runs steps 1, 2, 3, 6, 7 (this computer\'s files only), 
     // setup-quiet-steps.js, whose fake computer steps 2 and 6 run on, reads its own world as it loads.
     fs.mkdirSync(wheelhouseHome(), { recursive: true });
     fs.writeFileSync(path.join(wheelhouseHome(), 'quiet-world.json'), JSON.stringify({ pluginRoot: '/Applications/Wheel house/plugin', config, floor: '2.1.100', port: 14318 }));
+    // The profile's settings routes, keeping what step 3 writes: where builders start on this computer.
+    const written = [];
+    const profile = { views: async () => ({ settings: {}, unconfirmed: [] }), write: async (event) => { written.push(event); return { ok: true }; } };
     globalThis.wheelhouseJoiningWorld = {
       run, hostUrl, pluginRoot: '/Applications/Wheel house/plugin', config, claudeHome, manifest: k.manifest,
-      managedDir: tempFolder('wh-managed-'), address: path.join(user, 'helper.sock'),
+      managedDir: tempFolder('wh-managed-'), address: path.join(user, 'helper.sock'), profile,
     };
 
     // The helper's routes, on a clock the test moves; a long step runs here, as its own process would.
@@ -183,17 +187,18 @@ test('a second computer runs steps 1, 2, 3, 6, 7 (this computer\'s files only), 
 
     // Step 3: the join question, the host and the connection, then its Go ahead.
     assert.equal((await status()).ask, 3);
-    const answers = { join: fromOtherComputer('Cafe-Menu'), host: HOST_LABELS.github, connection: WAYS.quick };
+    const answers = { join: fromOtherComputer('Cafe-Menu'), host: HOST_LABELS.github, connection: WAYS.quick, builders: BUILDER_CHOICES.background };
     let three = await plan(3);
     const asked = [];
     while (three.ask) {
       asked.push(three.ask.id.replace(/-[0-9a-f]{10,}$/, ''));
-      assert.ok(asked.length < 6, 'step 3 asks each question once');
+      assert.ok(asked.length < 7, 'step 3 asks each question once');
       say(three.ask, answers[asked.at(-1)]);
       three = await plan(3);
     }
-    assert.deepEqual(asked, ['join', 'host', 'connection']);
+    assert.deepEqual(asked, ['join', 'host', 'connection', 'builders'], 'a joining computer is asked where its builders start');
     await goAhead(3, three);
+    assert.deepEqual(written.map((e) => [e.kind, e.data.key, e.data.value]), [['setting', `builders:${computerId()}`, 'background']]);
     order.push(3);
     assert.equal(joinedRepo(findRun(folder)), REPO);
     assert.equal(await g(folder, 'config', '--get', 'remote.origin.url'), hostUrl({ repo: REPO }));
@@ -223,7 +228,11 @@ test('a second computer runs steps 1, 2, 3, 6, 7 (this computer\'s files only), 
     // run's records are copied into the state now.
     assert.deepEqual(copied, [[findRun(folder).id, folder]], 'finished at step 8');
 
-    // Step 9: Ready, the wait while the playbook pushes, then It arrived; its answers are copied too.
+    // Step 9 first asks to keep the answers step 3 used as the usual (nothing was kept here), then Ready, the wait while the playbook
+    // pushes, then It arrived; its answers are copied too.
+    const keep = await plan(9);
+    assert.equal(keep.ask.id, 'keep-usual');
+    say(keep.ask, 'Don\'t keep them');
     const ready = await plan(9);
     assert.equal(ready.ask.id, READY_ID);
     say(ready.ask, READY.ready);

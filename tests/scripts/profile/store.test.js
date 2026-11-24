@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  profileRemote, writeProfileViews, readProfileViews,
+  profileRemote, writeProfileViews, readProfileViews, profileViewsFault,
 } from '../../../scripts/profile/store.js';
 import { profileDir, profileViewsDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { makeEvent, eventPath, confirmationFor } from '../../../scripts/state/events.js';
@@ -63,6 +63,8 @@ test('the profile views are built from the profile\'s events and read back', asy
     assert.deepEqual(readProfileViews(), JSON.parse(JSON.stringify(views)));
     fs.writeFileSync(path.join(profileViewsDir(), 'settings.json'), '{');
     assert.equal(readProfileViews(), null, 'a damaged view reads as none');
+    const fault = profileViewsFault();
+    assert.deepEqual([fault.file, fault.line, fault.column], [path.join(profileViewsDir(), 'settings.json'), 1, 2], 'and is named');
   });
 });
 

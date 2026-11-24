@@ -183,7 +183,7 @@ const click = (a, { question, options, label }) => a.act(async () => {
 const desk = (a, ...argv) => a.act(async () => {
   let out = '';
   let err = '';
-  const code = await frontDesk(argv, { client: a.client, cwd: a.folder, now: a.clock.now, out: (t) => { out += t; }, err: (t) => { err += t; } });
+  const code = await frontDesk(argv, { client: a.client, cwd: a.folder, now: a.clock.now, env: {}, out: (t) => { out += t; }, err: (t) => { err += t; } });
   if (code !== 0) throw new Error(`frontdesk cli.js ${argv.join(' ')}: ${err.trim()}`);
   return JSON.parse(out);
 });
@@ -382,7 +382,9 @@ test('a folder on a line of unfinished work: one click switches it to main, setu
     const sevens = log.filter((e) => e.step === 7 && e.goAhead);
     assert.equal(sevens.length, 2, 'the switch, then step 7\'s own list');
     assert.match(sevens[0].card.question, /^Setup step 7: your folder is on 'add-filters'\. Switch it to main to set up\? Your unfinished work stays saved on 'add-filters'\./);
-    assert.match(sevens[1].card.question, /^Setup step 7, The project's files/);
+    // The list is covered by the plan's Go ahead, so resume applies it in the same call, with no card of its own.
+    assert.equal(sevens[1].covered, true);
+    assert.equal(sevens[1].card, undefined);
     const { health } = log.at(-1);
     assert.equal(health.green, true, health.lines.join('\n'));
 

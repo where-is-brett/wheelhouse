@@ -32,7 +32,7 @@ const FAULT_LINES = {
   HOST_UNREACHABLE: 'GitHub (api.github.com) can\'t be reached from here. Work carries on here and is sent when it can be.',
   CERTIFICATE_NOT_TRUSTED: 'The certificate GitHub (api.github.com) shows isn\'t one this computer trusts, which a network filter or security software can cause. Wheelhouse never switches certificate checks off: ask whoever looks after this computer or its network.',
   PROXY_REFUSED: 'Your company\'s proxy didn\'t accept this computer\'s sign-in, so GitHub couldn\'t be reached. Work carries on here and is sent when it can be.',
-  NO_CURL: 'This computer has no curl Wheelhouse can use, so it can only reach GitHub through GitHub\'s own tool (gh). Ask IT for either.',
+  NO_CURL: 'This computer has no curl Wheelhouse can use, so it can only reach GitHub through GitHub\'s own program (gh). Ask IT for either.',
 };
 
 // The host's own `message` and its listed errors, flattened to one line, or ''. Read to tell kinds of refusal apart, never repeated.

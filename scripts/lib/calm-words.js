@@ -222,7 +222,9 @@ export const PHONE_REACHES = 'Only three things reach your phone: what needs you
 export const NEW_SESSION = 'Start a new session on this folder, then say "carry on with setup"';
 // Setup's closing verdict: how many of the health check's checks passed. `waiting`, how many of
 // those that didn't pass only need a new session: when they are all that is left, it says so.
-export const healthVerdict = (passed, total, waiting = 0) => {
+// `notRun` names the checks that couldn't be tried: they aren't counted, and "All" never claims them.
+export const healthVerdict = (passed, total, waiting = 0, notRun = []) => {
+  if (passed === total && notRun.length > 0) return `All ${total} checks that ran passed. Not run: ${notRun.join('; ')}.`;
   if (passed === total) return `All ${total} checks passed. Wheelhouse is ready.`;
   if (waiting > 0 && passed + waiting === total) return `${passed} of ${total} checks passed; the rest need one new session, as setup expects. ${NEW_SESSION}: the last checks run there.`;
   return `${passed} of ${total} checks passed. Here is what to do.`;

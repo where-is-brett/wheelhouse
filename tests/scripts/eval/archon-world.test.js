@@ -14,6 +14,7 @@ import { CHECKOUT, marketplaceOf, sweepWorldPlugins, worldPlugin } from '../../.
 import { worldPlaces } from '../../../scripts/eval/world-kits.js';
 import { CANCEL_PATCH_MARK, enginePaths, PATCH_MARK } from '../../../scripts/engine/archon/build.js';
 import { summarise, summaryText } from '../../../scripts/eval/summary.js';
+import { pluginVersion } from '../../../scripts/lib/plugin-version.js';
 
 // A built engine as buildFromSource leaves it, as far as the world and the health check read it.
 function fakeCache() {
@@ -203,7 +204,7 @@ test("the world's plugin is a copy of this checkout's own files, and its check p
       fs.writeFileSync(path.join(config, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { [plugin.id]: [{ scope: 'project', projectPath, installPath }] } }));
     };
     record(copy);
-    assert.deepEqual(plugin.check(), { ok: true, why: `the steps ran this checkout's Wheelhouse ${JSON.parse(fs.readFileSync(path.join(CHECKOUT, '.claude-plugin', 'plugin.json'), 'utf8')).version}` });
+    assert.deepEqual(plugin.check(), { ok: true, why: `the steps ran this checkout's Wheelhouse ${pluginVersion(CHECKOUT)}` });
     record(copy, path.join(root, 'elsewhere'));
     assert.equal(plugin.check().ok, false, 'installed for another folder');
     // An older release, or a copy whose files differ, isn't this checkout's.

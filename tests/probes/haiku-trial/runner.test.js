@@ -1362,7 +1362,7 @@ test('ntfy is recorded as set up only when the status afterwards names it, and r
   const cases = [
     ['Alerts will go to ntfy.', 'ntfy: on, topic kept', true],
     ['Alerts will go to ntfy.', 'no channels are set up', false],
-    ["the director did not click Yes in the helper's window, so nothing was changed", 'ntfy: not set up', false],
+    ["the director has not clicked Yes on the phone alerts card, so nothing was changed", 'ntfy: not set up', false],
   ];
   for (const [saidFirst, saidStatus, want] of cases) {
     const folder = scratch(t);
