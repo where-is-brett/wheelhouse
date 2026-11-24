@@ -789,11 +789,16 @@ export function makeWaker({
   };
   mayStart('checkForeman');
   // Settings files that can't be read are named before any session is started, since the session would read them: the
-  // wake waits, with the file and the place in the error. Not at construction, so a damaged file never stops the watcher.
-  const mayStartNow = (check) => {
+  // line naming the file and the place, or null. Not at construction, so a damaged file never stops the watcher.
+  const settingsDamaged = () => {
     const folder = readProject(project)?.folder;
     const damaged = typeof folder === 'string' ? settingsFaultLine({ folder }) : null;
-    if (damaged !== null) throw new Error(`not started: ${damaged}`);
+    return damaged === null ? null : `not started: ${damaged}`;
+  };
+  // A start asked for directly is refused with that line.
+  const mayStartNow = (check) => {
+    const damaged = settingsDamaged();
+    if (damaged !== null) throw new Error(damaged);
     mayStart(check);
   };
   if (!Array.isArray(foremanTools) || !foremanTools.every((t) => typeof t === 'string' && t !== '' && !/[\r\n]/.test(t))) {
@@ -1547,9 +1552,16 @@ export function makeWaker({
   };
 
   // Delivers what can go now and keeps the rest. Returns what was delivered.
+  // What a damaged settings file last held back, said once until it changes.
+  let heldBySettings = null;
   async function deliver() {
-    mayStartNow('checkForeman');
+    mayStart('checkForeman');
     if (stopped()) return [];
+    // The wakes wait in the outbox, and the rest of the watcher's loop goes on.
+    const damaged = settingsDamaged();
+    if (damaged !== heldBySettings && damaged !== null) onError(damaged);
+    heldBySettings = damaged;
+    if (damaged !== null) return [];
     return shape === 2 ? deliverByLine() : deliverByStart();
   }
 
@@ -1727,12 +1739,12 @@ export function makeWaker({
   const api = {
     // Wakes a fresh foreman for the wake whose record is `file`, now or once the running one ends.
     async wakeForeman(file) {
-      mayStartNow('checkForeman');
+      mayStart('checkForeman');
       return enqueue({ to: 'foreman', file });
     },
     // Wakes the feature's own session with the wake whose record is `file`.
     async wakeFeature(work, file) {
-      mayStartNow('checkFeature');
+      mayStart('checkFeature');
       if (typeof work !== 'string' || !SLUG.test(work)) throw new Error('A work id is lower-case letters, digits and hyphens');
       return enqueue({ to: 'feature', work, file });
     },

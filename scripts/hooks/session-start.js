@@ -40,7 +40,7 @@
 // On an agent whose hooks only read (`writeVia: 'helper'`) it does none of the writing above: readOnlyStart.
 import fs from 'node:fs';
 import path from 'node:path';
-import { settingsFaultLine } from '../setup/settings-check.js';
+import { settingsFaultLine, claudeHomeOf } from '../setup/settings-check.js';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, managedMarker, readTailEntries, beingSetUp, removedFrom, isWhy } from './kit.js';
@@ -852,7 +852,7 @@ async function started(input, deps) {
   // A settings file that can't be read is named with its line and column, at every start, so it is found before anything
   // is started that would read it.
   try {
-    const damaged = settingsFaultLine({ folder: typeof found.record?.folder === 'string' ? found.record.folder : input.cwd, ...(claudeHome ? { claudeHome } : {}) });
+    const damaged = settingsFaultLine({ folder: typeof found.record?.folder === 'string' ? found.record.folder : input.cwd, claudeHome: claudeHome ?? claudeHomeOf(env) });
     if (damaged !== null) notes.push(damaged);
   } catch { /* the session goes on */ }
   // While this folder's setup run is open and has not yet installed the kits (step 7), kits not

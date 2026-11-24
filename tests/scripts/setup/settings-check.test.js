@@ -127,3 +127,17 @@ test('the mend doubles each backslash that is not a valid escape, and keeps a co
   assert.deepEqual(JSON.parse(fs.readFileSync(local, 'utf8')), { a: 'C:\\Users\\x', b: 'line\nbreak' });
   assert.equal(fs.readFileSync(`${local}.broken`, 'utf8'), text);
 });
+
+test('the mend doubles a backslash-u that isn\'t followed by four hex digits, as in C:/users written with backslashes, and keeps a real one', () => {
+  const folder = folderWith({ '.claude/settings.local.json': '{"a": "C:\\users\\x", "b": "caf\\u00e9"}' });
+  const local = path.join(folder, '.claude', 'settings.local.json');
+  mend(damagedSettings({ folder, claudeHome: null }));
+  assert.deepEqual(JSON.parse(fs.readFileSync(local, 'utf8')), { a: 'C:\\users\\x', b: 'café' });
+});
+
+test('the card and the line never quote the file, only its place', () => {
+  const folder = folderWith({ '.claude/settings.local.json': '{"env": {"TOKEN": "sk-secret-1"}, "a": "C:\\x"}' });
+  const { card } = mendAsk(damagedSettings({ folder, claudeHome: null }));
+  assert.doesNotMatch(JSON.stringify(card), /secret/);
+  assert.doesNotMatch(settingsFaultLine({ folder, claudeHome: null }), /secret/);
+});

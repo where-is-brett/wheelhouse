@@ -42,7 +42,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
-import { readJsonNamed, faultLine } from '../lib/read-json-named.js';
+import { readJsonNamed, faultLine, OBJECT_HINT } from '../lib/read-json-named.js';
 import { RETENTION_DAYS, TELEMETRY_ROUTE } from '../lib/setup-numbers.js';
 import { SETUP_TITLES, SETUP_LABEL, asLine } from '../state/card-lines.js';
 import { composeCard, isTooLong } from '../cards/compose.js';
@@ -75,13 +75,13 @@ export function userSettingsFile({ userHome = os.homedir(), env = process.env } 
   return path.join(config, 'settings.json');
 }
 
-// The settings in a file as an object: {} when there is none. Anything that is not a JSON object
-// stops the step, naming the file, which is left as it was.
+// The settings in a file as an object: {} when there is none. Anything else stops the step, naming the file, the place
+// and a plain fix; the file is left as it was.
 export function readSettings(file) {
   const read = readJsonNamed(file);
   if (read.missing) return {};
-  if (read.ok === false) throw new Error(`${faultLine(read)} Setup has left it as it was`);
-  if (!isObject(read.value)) throw new Error(`${file} is not a JSON object, so setup has left it as it was`);
+  if (read.ok === false) throw new Error(`${faultLine(read)}. Setup has left it as it was`);
+  if (!isObject(read.value)) throw new Error(`${faultLine({ file, line: 1, column: 1, hint: OBJECT_HINT })}. Setup has left it as it was`);
   return read.value;
 }
 

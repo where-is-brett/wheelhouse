@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readJsonNamed, faultLine } from '../lib/read-json-named.js';
+import { readJsonNamed, faultLine, validEscapeAt, OBJECT_HINT } from '../lib/read-json-named.js';
 
 export const MEND = 'Mend it';
 export const MEND_MYSELF = 'I\'ll mend it myself';
@@ -31,9 +31,8 @@ export function doubleLoneBackslashes(text) {
       if (c === '"') inString = true;
       out += c;
     } else if (c === '\\') {
-      const next = text[i + 1];
-      if (next !== undefined && '"\\/bfnrtu'.includes(next)) {
-        out += c + next;
+      if (validEscapeAt(text, i)) {
+        out += c + text[i + 1];
         i += 1;
       } else out += '\\\\';
     } else {
@@ -119,7 +118,7 @@ export function damagedSettings({ folder, claudeHome }) {
 // The card that says which files can't be read and offers to mend them.
 export function mendAsk(damaged) {
   const many = damaged.length > 1;
-  const where = (d) => (d.fault ? ` (line ${d.fault.line}, column ${d.fault.column}${d.fault.hint ? `: ${d.fault.hint}` : ''})` : '');
+  const where = (d) => (d.fault ? ` (${Number.isInteger(d.fault.line) ? `line ${d.fault.line}, column ${d.fault.column}: ` : ''}${d.fault.hint})` : '');
   const list = damaged.map((d) => `${d.words}${where(d)}`).map((text, i) => (damaged[i].elsewhere ? `${text}, a link to a file kept elsewhere, which setup leaves for you to mend` : text)).join('; ');
   return {
     id: `mend-${damaged.map((d) => path.basename(d.file)).join('-').replace(/\.json/g, '').replace(/[^A-Za-z0-9-]/g, '-')}`,
@@ -199,7 +198,7 @@ export function settingsFault(file) {
   const read = readJsonNamed(file);
   let fault = null;
   if (read.ok === false) fault = { file: read.file, line: read.line, column: read.column, hint: read.hint };
-  else if (!read.missing && !isObject(read.value)) fault = { file, line: 1, column: 1, hint: 'the file must hold one object, written in { }' };
+  else if (!read.missing && !isObject(read.value)) fault = { file, line: 1, column: 1, hint: OBJECT_HINT };
   seen.set(file, { key, fault });
   return fault;
 }
