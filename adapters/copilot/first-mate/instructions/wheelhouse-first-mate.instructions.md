@@ -36,8 +36,9 @@ For a card with one of them, run `confirm <card id>` instead (the id is in `view
 that the card is open in Wheelhouse's own window for the director to click. The window records the click and the card stops
 waiting. Lifting STOP, changing a guardrail, unattended running, a runbook step, a CI push and an allowance go the same way.
 
-When the session start gives the card that moves the First Mate to this window, show it as text, never with ask_user, and run
-`confirm seat-take-over`: its window records the click and moves the First Mate. Every command that records takes
+When the session start says the First Mate is in another window, write no question and no options of your own, and never use
+ask_user for it: say one plain line that Wheelhouse's own window is asking whether to move the First Mate here, and why, then
+run `confirm seat-take-over`. The window's own buttons are the only choices; it records the click and moves the First Mate. Every command that records takes
 `--session <id>`, the session id the session start gave you; a command without it is refused.
 
 A decision is never asked with ask_user, and a reply typed here is not recorded. Print it exactly as `decision show <n>`

@@ -300,7 +300,7 @@ function frontDeskArgs(args) {
     if (flag === null) rest.push(args[i]);
     else ids.push(flag[1] ?? args[i += 1]);
   }
-  return { ids, command: rest[0] };
+  return { ids, command: rest[0], rest };
 }
 
 // Whether the shell command runs a front-desk command that records without naming `session` (and only it) with --session. A
@@ -321,8 +321,11 @@ function recordsWithoutSession(command, session, windows, required = true) {
   return commands.some((words) => {
     const at = words.findIndex(isFrontDeskProgram);
     if (at < 0) return false;
-    const { ids, command: name } = frontDeskArgs(words.slice(at + 1));
+    const { ids, command: name, rest } = frontDeskArgs(words.slice(at + 1));
     if (!SEAT_WRITES.includes(name)) return false;
+    // A pure help call (the command, then --help or -h, and nothing else but --session) records nothing:
+    // scripts/frontdesk/cli.js answers it before anything else, and refuses a help flag beside other words.
+    if (rest.length === 2 && (rest[1] === '--help' || rest[1] === '-h')) return false;
     if (!required && ids.length === 0) return false;
     return typeof session !== 'string' || session === '' || ids.length === 0 || ids.some((id) => id !== session);
   });

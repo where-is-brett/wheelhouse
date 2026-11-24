@@ -3438,7 +3438,7 @@ test('confirm seat-take-over sends the session given, and says the result in one
     const code = await main(['confirm', 'seat-take-over', '--session', 'chat-1'], { cwd: folder, client, env: { CLAUDE_CODE_SESSION_ID: 'inherited' }, now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; } });
     assert.equal(code, 0, err);
     assert.deepEqual(sent, [{ cwd: folder, card: 'seat-take-over', session: 'chat-1' }]);
-    assert.match(out, /this window is now the First Mate/i);
+    assert.match(out, /this window is now the First Mate, and keeps Wheelhouse's records/i);
     assert.equal(out.trim().split('\n').length, 1);
   });
 });
@@ -3518,4 +3518,24 @@ test('where the agent\'s hooks sign, a seat write with no --session is not refus
     assert.equal(await seatRefusal({ command: 'cards', env: {}, cwd: folder, client: helper.client }), null);
     assert.equal(await seatRefusal({ command: 'record', env: { CLAUDE_CODE_SESSION_ID: 'a' }, cwd: folder, client: helper.client }), SEAT_REFUSAL);
   });
+});
+
+test('--help prints the usage and needs no session, no helper and no seat', async () => {
+  const helper = fakeHelper({});
+  for (const argv of [['card', '--help'], ['record', '-h'], ['--help', 'cards']]) {
+    const out = await runWith(helper, argv, undefined, { cwd: CWD, env: {} });
+    assert.equal(out.code, 0, out.err);
+    assert.match(out.out, /^Usage: cli\.js <command>/);
+  }
+  assert.equal(helper.calls.length, 0, 'the helper was not asked');
+});
+
+test('--help beside other words records nothing and is refused, so a command never runs with a help flag in it', async () => {
+  const helper = fakeHelper({});
+  for (const argv of [['record', 'work', '--title', 'x', '-h'], ['card', 'c1', '--help'], ['-h', 'record', 'work']]) {
+    const out = await runWith(helper, argv, undefined, { cwd: CWD, env: { CLAUDE_CODE_SESSION_ID: 'a' } });
+    assert.notEqual(out.code, 0, argv.join(' '));
+    assert.match(out.err, /--help goes on its own/);
+  }
+  assert.equal(helper.calls.length, 0, 'the helper was not asked');
 });

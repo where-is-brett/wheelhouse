@@ -1565,7 +1565,7 @@ export async function confirm({ client, cwd, card, session }) {
 
 // The one line to say after the seat card's window: whether the First Mate moved to this window.
 export function seatMoved(got) {
-  if (got.moved === true) return 'This window is now the First Mate.';
+  if (got.moved === true) return 'This window is now the First Mate, and keeps Wheelhouse\'s records: it records work and hands out cards itself.';
   if (got.recorded !== true) return 'The First Mate did not move: the director did not choose Take over here.';
   const holder = typeof got.holder === 'string' && got.holder !== '' ? `Window session ${got.holder} holds it now, so this window is still an ordinary one.` : 'No window holds it now.';
   return `The First Mate did not move, because the seat changed hands after that card was shown. ${holder}`;
@@ -1702,6 +1702,9 @@ export function inChatWords(value, whole = null) {
   return top && isPlain(out) && texts.some((t) => chatCopy(t) !== t) ? { ...out, inReply: texts } : out;
 }
 
+const HELP_FLAGS = ['--help', '-h'];
+const HELP = `Usage: cli.js <command> [arguments] [--session <id>]. Commands: ${COMMANDS.join(', ')}. A command that records or hands out cards also takes the chat's own --session <id>; --help records nothing.`;
+
 export async function main(argv, {
   cwd = process.cwd(), env = process.env, client, input, now = () => new Date(), makeId, columnsReady, ask,
   out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
@@ -1710,6 +1713,15 @@ export async function main(argv, {
     const flagged = sessionFlag(argv);
     const [command, ...rest] = flagged.argv;
     const sessionId = flagged.session ?? env?.CLAUDE_CODE_SESSION_ID;
+    // Help records nothing and asks nothing of the helper, so it needs no session and no seat. Only a pure help call is
+    // help (--help alone, or beside one command name); a help flag beside other words runs nothing, so no command that
+    // records ever runs with one in it (scripts/hooks/front-desk-writes.js lets only the pure call through without --session).
+    if (flagged.argv.some((a) => HELP_FLAGS.includes(a))) {
+      const others = flagged.argv.filter((a) => !HELP_FLAGS.includes(a));
+      if (flagged.argv.length > 2 || others.some((a) => !COMMANDS.includes(a))) throw new CliError('--help goes on its own: cli.js <command> --help');
+      out(`${HELP}\n`);
+      return 0;
+    }
     if (!COMMANDS.includes(command)) throw new CliError(`Commands: ${COMMANDS.join(', ')}`);
     const windowed = command === 'confirm' || (command === 'decision' && rest[0] === 'confirm');
     const helper = client ?? helperClient(windowed ? { timeout: CONFIRM_WAIT_MS } : {});

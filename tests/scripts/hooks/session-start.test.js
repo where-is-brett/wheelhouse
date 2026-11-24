@@ -2479,11 +2479,8 @@ const seatHelper = () => {
 };
 const readOnly = (f, extra = {}, input = {}) => run(f, { writeVia: 'helper', agent: 'copilot', helperUp: true, env: {}, now: SOON(0), ...extra }, { session_id: 'b', ...input });
 const filesUnder = (dir) => fs.readdirSync(dir, { recursive: true }).map(String).sort();
-const WINDOW_ASK = 'The First Mate is in another window: when the director asks for Wheelhouse work, show them this card as text in the chat';
-const windowCard = (out) => {
-  const row = text(out).split('\n').find((l) => l.startsWith(WINDOW_ASK));
-  return row === undefined ? null : JSON.parse(row.slice(row.indexOf('{')));
-};
+const WINDOW_ASK = 'The First Mate is in another window: when the director asks for Wheelhouse work, write no question and no options of your own';
+const windowRow = (out) => text(out).split('\n').find((l) => l.startsWith(WINDOW_ASK)) ?? null;
 
 test('on an agent whose hooks only read, another live holder gives the aside line and the window card before the lists, and no AskUserQuestion wording', async () => {
   await withHome(async (home) => {
@@ -2492,10 +2489,11 @@ test('on an agent whose hooks only read, another live holder gives the aside lin
     const out = await readOnly(seatHelper());
     const lines = text(out).split('\n');
     assert.ok(text(out).includes(asideFirst('4 minutes ago')));
-    assert.ok(text(out).includes('offer this card'));
-    const card = windowCard(out);
-    assert.equal(setLineOf(card.question), `Take over the First Mate from window session a, since ${seatLine('a', 4).since}`);
-    assert.deepEqual(cardProblems(card), []);
+        const row = windowRow(out);
+    assert.ok(row !== null, 'the window line');
+    // No options are handed to the chat to write out: the window's own labels are the only ones the director meets.
+    assert.ok(!/Leave it there|Take over here|Not now|"options"/.test(row), 'no labels in the line');
+    assert.match(row, /session a, last active 4 minutes ago/);
     assert.ok(!text(out).includes('AskUserQuestion'), 'no click-question wording');
     assert.ok(!text(out).includes(SEAT_TAKEOVER_ASK));
     assert.match(text(out), /confirm seat-take-over --session <your session id>/);
@@ -2518,7 +2516,7 @@ test('on an agent whose hooks only read, a free seat is taken at the start with 
   await withHome(async () => {
     const f = seatHelper();
     const out = await readOnly(f);
-    assert.equal(windowCard(out), null);
+    assert.equal(windowRow(out), null);
     assert.ok(!text(out).includes('isn\'t the First Mate'));
     assert.equal(readSeat(P).session, 'b');
     assert.equal(readSeat(P).pid, null);
@@ -2530,7 +2528,7 @@ test('a free seat that is held by a dead window is taken too, and gives no card'
   await withHome(async () => {
     putSeat(seatLine('a', 300, { pid: 2 ** 22 }));
     const out = await readOnly(seatHelper());
-    assert.equal(windowCard(out), null);
+    assert.equal(windowRow(out), null);
     assert.equal(readSeat(P).session, 'b');
   });
 });
@@ -2538,10 +2536,10 @@ test('a free seat that is held by a dead window is taken too, and gives no card'
 test('a worktree, a chosen aside and a script-started session give no card and take no seat', async () => {
   await withHome(async (home) => {
     putSeat(seatLine('a', 4));
-    assert.equal(windowCard(await readOnly(seatHelper(), {}, { cwd: linkedTree(home) })), null, 'worktree');
+    assert.equal(windowRow(await readOnly(seatHelper(), {}, { cwd: linkedTree(home) })), null, 'worktree');
     recordRole('s-aside', 'aside');
-    assert.equal(windowCard(await readOnly(seatHelper(), {}, { session_id: 's-aside' })), null, 'chosen aside');
-    assert.equal(windowCard(await readOnly(seatHelper(), { env: { CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' } })), null, 'script');
+    assert.equal(windowRow(await readOnly(seatHelper(), {}, { session_id: 's-aside' })), null, 'chosen aside');
+    assert.equal(windowRow(await readOnly(seatHelper(), { env: { CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' } })), null, 'script');
     fs.rmSync(seatFile(P));
     const f = seatHelper();
     await readOnly(f, {}, { cwd: linkedTree(home) });
@@ -2556,7 +2554,7 @@ test('with no helper the aside line is given without the card, and nothing is ta
     const out = await readOnly(fake({ startsUp: false }), { helperUp: false });
     assert.ok(text(out).includes(asideFirst('4 minutes ago')));
     assert.ok(!text(out).includes('offer this card'));
-    assert.equal(windowCard(out), null);
+    assert.equal(windowRow(out), null);
     assert.ok(text(out).includes(NO_HELPER_STOP));
     assert.equal(readSeat(P).session, 'a');
     fs.rmSync(seatFile(P));
@@ -2569,7 +2567,7 @@ test('the holder\'s own start gives no card', async () => {
   await withHome(async () => {
     putSeat(seatLine('b', 4, { pid: null }));
     const out = await readOnly(seatHelper());
-    assert.equal(windowCard(out), null);
+    assert.equal(windowRow(out), null);
     assert.ok(!text(out).includes('isn\'t the First Mate'));
   });
 });
@@ -2615,9 +2613,7 @@ test('on an agent whose picker click is recorded, the seat card is still shown a
   await withHome(async () => {
     putSeat(seatLine('a', 4));
     const out = await readOnly(seatHelper(), { picker: true });
-    const card = windowCard(out);
-    assert.ok(card !== null, 'the window line');
-    assert.equal(setLineOf(card.question), `Take over the First Mate from window session a, since ${seatLine('a', 4).since}`);
+    assert.ok(windowRow(out) !== null, 'the window line');
     assert.ok(text(out).includes('confirm seat-take-over'));
     assert.ok(!text(out).includes('with your clickable-question tool'));
   });
