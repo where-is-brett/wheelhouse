@@ -460,7 +460,7 @@ function buildLoopViews(sorted, enrolled) {
   // one question recorded again with other words or options needs a fresh answer. It keeps the
   // computer the click was made on, where a build-command grant holds: the computer that signed
   // it, or null when that isn't the computer the answer names. An answer that names its proof
-  // (`window` for a click in the helper's own window) keeps it, so a grant can be counted only
+  // (`hook-click` for a click a hook saw, signed by the helper) keeps it, so a grant can be counted only
   // from the proofs an agent's clicks bind by (buildGrants' `proofs`, ruling P8-8).
   const questions = {};
   for (const e of sorted) {

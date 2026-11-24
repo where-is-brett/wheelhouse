@@ -1,7 +1,7 @@
 // tests/scripts/update/helper-answer.test.js
 // The director's answer to the old helper's card (update design, section 7.3) becomes a signed `update-helper-answer` action in
-// the two ways every action card is signed: by the prompt record, from a click in Claude Code, and by the helper's own window.
-// Either is earned only from the card the update's finish is waiting on, by its id and its options; and the answer is read
+// the way every action card is signed: by the prompt record, from a click in Claude Code.
+// It is earned only from the card the update's finish is waiting on, by its id and its options; and the answer is read
 // back by finish as a verified record of this computer's own key. Nothing here signs for the director.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -81,78 +81,3 @@ test('the prompt record compares the question and options with the card the help
   // The card as asked offers other options than the one raised.
   assert.equal(await click(question.question, { ...question, options: [question.options[0], { label: 'Do anything' }] }), null);
 }));
-
-// A computer with an enrolled key, a project and a helper whose window answers as the director would.
-async function computer(choose) {
-  const home = shortHome();
-  const folder = path.join(shortHome(), 'shop');
-  fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
-  fs.writeFileSync(path.join(folder, '.git', 'HEAD'), 'ref: refs/heads/main\n');
-  const before = process.env.WHEELHOUSE_HOME;
-  process.env.WHEELHOUSE_HOME = home;
-  writeProject('shop', { folder, remoteUrl: null, host: 'local', repo: 'local/shop', connection: { mode: 'none' } });
-  const own = makeSigningKey();
-  enrol({ computer: own.computer, publicKey: own.publicKey, enrolledAt: T0.toISOString() });
-  let tick = 0;
-  const helper = await startHelper({
-    run: hostGuard,
-    askWindow: async (card) => ({ choice: choose(card) }),
-    address: testAddress(home),
-    envFor: async () => ({}),
-    adapterFor: async () => ({}),
-    now: () => new Date(T0.getTime() + 1000 * (tick += 1)),
-  });
-  return {
-    client: helperClient({ address: helper.address }),
-    events: () => listEvents(stateDir('shop'), { report: () => {} }),
-    close: async () => {
-      await helper.close();
-      if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;
-    },
-  };
-}
-
-test('the helper\'s window signs the answer as an action for the card, and finish reads it back; Not now records nothing', async () => {
-  const shown = [];
-  let pick = STOP_IT;
-  const c = await computer((card) => { shown.push(card); return pick; });
-  try {
-    waiting('shop', given());
-    const { card } = helperCardFor(given());
-    const made = await c.client.state.write({ project: 'shop', kind: 'card', data: card });
-    assert.equal(made.ok, true, JSON.stringify(made));
-    const hash = dataHash(card);
-    // The window shows the card's words and its options, and only those the card is waiting on.
-    pick = 'Not now';
-    const later = await c.client.confirm({ project: 'shop', card: made.id, hash });
-    assert.equal(later.recorded, false);
-    assert.equal(c.events().filter((e) => e.kind === 'action').length, 0);
-    pick = STOP_IT;
-    const got = await c.client.confirm({ project: 'shop', card: made.id, hash });
-    assert.deepEqual([got.ok, got.recorded, got.kind, got.step, got.choice], [true, true, 'action', 'update-helper', STOP_IT]);
-    assert.deepEqual(shown[0].options, [STOP_IT, LEAVE_IT]);
-    const action = c.events().find((e) => e.kind === 'action');
-    assert.equal(action.data.action, 'update-helper-answer');
-    assert.equal(action.data.card, ID);
-    assert.equal(action.data.proof, 'window');
-    assert.equal(verify(action, readEnrolled()), true, 'signed by this computer\'s own key');
-    assert.equal(signedAnswer({ events: c.events(), enrolled: readEnrolled(), card: ID, options: [STOP_IT, LEAVE_IT] }), STOP_IT);
-    assert.equal(signedAnswer({ events: c.events(), enrolled: readEnrolled(), card: 'update-helper-9999-other', options: [STOP_IT, LEAVE_IT] }), null);
-  } finally {
-    await c.close();
-  }
-});
-
-test('a card the update is not waiting on is no card the window confirms', async () => {
-  const c = await computer(() => assert.fail('no window opens'));
-  try {
-    const { card } = helperCardFor(given());
-    const made = await c.client.state.write({ project: 'shop', kind: 'card', data: card });
-    const got = await c.client.confirm({ project: 'shop', card: made.id, hash: dataHash(card) });
-    assert.equal(got.ok, false);
-    assert.match(got.refused, /not one the window confirms/);
-    assert.equal(c.events().filter((e) => e.kind === 'action').length, 0);
-  } finally {
-    await c.close();
-  }
-});

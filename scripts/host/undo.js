@@ -1,7 +1,7 @@
 // scripts/host/undo.js
 // Undo on a project kept on GitHub or GitLab (design section 8 of the director's way of working): one reply takes a merged change
 // back out, by a revert the helper makes, opens as a pull request and merges through the same gate as any other merge. The
-// director's reply is the approval: the signed click in the helper's window that names the merge (scripts/host/local/undo.js),
+// director's reply is the approval: the signed click on its card in the chat that names the merge (scripts/host/local/undo.js),
 // which only the director's own click makes.
 //
 //   undoOnHost({ adapter, git, merge, approval, defaultBranch, kept, keep, approve, through })

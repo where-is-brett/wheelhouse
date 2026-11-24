@@ -64,9 +64,9 @@ const CONFIG = JSON.stringify({ ...readConfig(null), testCommand: LOCAL_COMMAND 
 const recordings = { 'quick-lane': loadRecordings(path.join(import.meta.dirname, '..', 'fixtures', 'engine'))['quick-lane'] };
 
 // A project with no host: a real folder and home, the real helper and adapter, and the fake engine. No host tool runs: `fn`
-// is given the calls that tried in `tools`. `check` stands in for a check, and `askWindow` for the director at the window;
+// is given the calls that tried in `tools`. `check` stands in for a check; the helper takes the clicks an agent's hook posts (`hookClicks`), as the director's clicks in the chat;
 // `files` adds to the folder, `realEngineFor` uses the real engine choice (engineForProject) in place of a stub that hands the engine over, `onHost(record)` is the adapter once the project is on a host, and `helperOptions` go to the helper.
-export async function gitAloneWorld(fn, { check, askWindow, files = {}, onHost = null, helperOptions = {}, realEngineFor = false } = {}) {
+export async function gitAloneWorld(fn, { check, files = {}, onHost = null, helperOptions = {}, realEngineFor = false } = {}) {
   const folder = fs.realpathSync.native(tempFolder('wh-shop-'));
   await g(folder, 'init', '-q', '-b', 'main');
   writeFiles(folder, { 'README.md': 'The product.\n', 'src/price.js': 'export const price = (c) => c / 100;\n', '.gitignore': '.wheelhouse/\n', '.claude/wheelhouse.json': CONFIG, ...files });
@@ -94,7 +94,7 @@ export async function gitAloneWorld(fn, { check, askWindow, files = {}, onHost =
         run: hostGuard, address: testAddress(home), adapterFor, envFor: async () => ({}), spawn: stubSpawn(),
         engineFor: realEngineFor
           ? engineForProject({ adapter: () => engine, views: () => ({ project: { engine: { key: 'engine', value: 'archon' } }, profile: {} }), platform: 'darwin' })
-          : (project) => (project === LOCAL_P ? engine : null), ...(check ? { check } : {}), ...(askWindow ? { askWindow } : {}), ...helperOptions,
+          : (project) => (project === LOCAL_P ? engine : null), ...(check ? { check } : {}), hookClicks: true, ...helperOptions,
       });
       const client = helperClient({ address: helper.address });
       await client.state.clone({ project: LOCAL_P });

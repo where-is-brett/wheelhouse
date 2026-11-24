@@ -1,6 +1,6 @@
 // tests/scripts/host/undo.test.js
 // Undo on GitHub and GitLab (design section 8 of the director's way of working): one reply takes a merged change back out, by a revert
-// the helper makes, opens as a pull request and merges through the same gate as any merge. The director's click in the helper's window
+// the helper makes, opens as a pull request and merges through the same gate as any merge. The director's click on a card in the chat
 // is the signed approval; a revert that clashes with later work forces nothing and becomes a decision.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -283,7 +283,7 @@ async function remoteWithMerge() {
   return { remote, work, base, merge, cleanup: () => { remote.cleanup(); fs.rmSync(work, { recursive: true, force: true }); } };
 }
 
-async function working(fn, { forge = 'github', choice = 'Undo', gitHook = () => undefined } = {}) {
+async function working(fn, { forge = 'github', gitHook = () => undefined } = {}) {
   const p = await remoteWithMerge();
   const home = shortHome();
   try {
@@ -306,7 +306,7 @@ async function working(fn, { forge = 'github', choice = 'Undo', gitHook = () => 
       const helper = await startHelper({
         run: guardedRun(hooked, { log: hostLog }),
         address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), mirrorAddress: () => ADDRESS,
-        askWindow: async () => ({ choice }),
+        hookClicks: true,
       });
       try {
         await fn({ client: helperClient({ address: helper.address }), helper, adapter, ...p });
@@ -320,24 +320,31 @@ async function working(fn, { forge = 'github', choice = 'Undo', gitHook = () => 
 
 const events = (kind) => listEvents(stateDir(PROJECT), { report: () => {} }).filter((e) => e.kind === kind);
 const cardById = (id) => events('card').find((e) => e.id === id);
-const confirm = (client, id) => client.confirm({ project: PROJECT, card: id, hash: dataHash(cardById(id).data) });
+// The director's click on the card in the chat: a hook that only reads posts that it was shown, then that it was clicked.
+const confirm = async (client, id, label = 'Undo') => {
+  const card = cardById(id);
+  const ask = { project: PROJECT, session: 'chat-1', message: card.data.question, options: card.data.options };
+  const shown = await client.cards.hookShown(ask);
+  if (shown.ok !== true) return shown;
+  return client.cards.hookClick({ ...ask, label });
+};
 const treeOf = (remote, rev) => g(remote.url, 'rev-parse', `${rev}^{tree}`);
 
 for (const forge of ['github', 'gitlab']) {
   test(`through the helper on ${forge}: the director's click undoes a merge by a revert that goes through the gate`, async () => {
     await working(async ({ client, adapter, remote, base, merge }) => {
       const asked = await client.undo({ project: PROJECT, merge });
-      assert.equal(asked.needs, 'window', JSON.stringify(asked));
+      assert.equal(asked.needs, 'card', JSON.stringify(asked));
       assert.equal(typeof asked.card, 'string', JSON.stringify(asked));
       assert.deepEqual(adapter.opened, [], 'no click, no pull request');
       // The caller's say makes no click: a request carrying an approval of its own is no different.
       const forged = await client.undo({ project: PROJECT, merge, approval: { id: 'x', kind: 'action' }, approvalRequired: false, click: { id: 'x' }, review: { verdict: 'CLEAN' } });
-      assert.equal(forged.needs, 'window');
+      assert.equal(forged.needs, 'card');
       assert.deepEqual(adapter.opened, []);
       // Nor can a record of the click be written through the state route.
-      const minted = await client.state.write({ project: PROJECT, kind: 'action', data: { action: 'undo-merge', merge, label: 'Undo', question: 'q', proof: 'window' } }).catch((e) => ({ ok: false, error: e.message }));
+      const minted = await client.state.write({ project: PROJECT, kind: 'action', data: { action: 'undo-merge', merge, label: 'Undo', question: 'q', proof: 'hook-click' } }).catch((e) => ({ ok: false, error: e.message }));
       assert.notEqual(minted.ok, true);
-      assert.equal((await client.undo({ project: PROJECT, merge })).needs, 'window');
+      assert.equal((await client.undo({ project: PROJECT, merge })).needs, 'card');
       assert.deepEqual(adapter.opened, []);
 
       const undone = await confirm(client, asked.card);
@@ -352,7 +359,7 @@ for (const forge of ['github', 'gitlab']) {
       // The approval is the director's click, signed by the helper; a change merged on approval is not one that merged by itself.
       const approval = events('approval').find((e) => e.data.pr === opened.number);
       assert.equal(approval.data.commit, adapter.merges[0].sha);
-      assert.equal(approval.data.proof, 'window');
+      assert.equal(approval.data.proof, 'hook-click');
       assert.equal(events('self-merged').length, 0);
       // The click is used up, and the merge is already undone: another undo says so and asks nothing.
       const twice = await client.undo({ project: PROJECT, merge });
@@ -369,7 +376,7 @@ test('an undo of an undo works', async () => {
     const afterFirst = await g(remote.url, 'rev-parse', 'refs/heads/main');
     assert.equal(first.undone.merge, afterFirst);
     const again = await client.undo({ project: PROJECT, merge: afterFirst });
-    assert.equal(again.needs, 'window', JSON.stringify(again));
+    assert.equal(again.needs, 'card', JSON.stringify(again));
     const second = await confirm(client, again.card);
     assert.equal(second.undone.ok, true, JSON.stringify(second));
     assert.equal(adapter.merges.length, 2);
@@ -403,7 +410,7 @@ test('a merge that is not in the main version is refused, and no card is asked f
   await working(async ({ client, adapter }) => {
     const answer = await client.undo({ project: PROJECT, merge: 'd'.repeat(40) });
     assert.equal(answer.ok, false);
-    assert.notEqual(answer.needs, 'window', 'no card is asked for a merge that is not there');
+    assert.notEqual(answer.needs, 'card', 'no card is asked for a merge that is not there');
     assert.deepEqual(adapter.opened, []);
   });
 });

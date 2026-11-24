@@ -134,7 +134,7 @@ export function mainMovedCard(from, to) {
   return {
     question: [
       'The main version changed without an approval: something moved it outside Wheelhouse\'s helper.',
-      'Undo it takes those changes back out with a new commit; nothing is deleted. Keep it keeps them, confirmed in Wheelhouse\'s own window.',
+      'Undo it takes those changes back out with a new commit; nothing is deleted. Keep it keeps them. Each waits for your click here.',
       'Recommended: Undo it. Until you choose, nothing is added to the main version.',
       line,
     ].join('\n'),

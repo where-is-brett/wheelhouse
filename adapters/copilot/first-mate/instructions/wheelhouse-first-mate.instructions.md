@@ -30,22 +30,21 @@ the hooks and the helper record clicks, and the guard refuses a command that tri
 
 ## Clicks in the chat
 
-On Copilot no hook sees the director's click on a card you asked with ask_user, so that click is not recorded. An option that
+On Copilot no hook sees the director's click on a card you asked with ask_user yet, so that click is not recorded. An option that
 signs something is never offered in the chat:
 Approve, Send it back, Confirm, Lift All stop, Lift STOP, Do it, Push it, Change it, End it, Merge the fix, Pair it and Unpair it.
-For a card with one of them, run `confirm <card id>` instead (the id is in `views waiting`), and say in one plain line
-that the card is open in Wheelhouse's own window for the director to click. The window records the click and the card stops
-waiting. Lifting STOP, changing a guardrail, unattended running, a runbook step, a CI push and an allowance go the same way.
+For a card with one of them, write one plain chat message instead, with no clickable options. It says what the card is, why it comes
+to the director, the options in words with your recommendation, and what happens meanwhile, and then says in one plain line that an
+answer can't be recorded in this chat yet, so the work waits. Lifting STOP, changing a guardrail, unattended running, a runbook step,
+a CI push, an undo and an allowance go the same way. Never open a window and never ask the director to answer anywhere else.
 
 When the session start says the First Mate is in another window, write no question and no options of your own, and never use
-ask_user for it: say one plain line that Wheelhouse's own window is asking whether to move the First Mate here, and why, then
-run `confirm seat-take-over`. The window's own buttons are the only choices; it records the click and moves the First Mate. Every command that records takes
+ask_user for it: say one plain line, as the session start words it. Every command that records takes
 `--session <id>`, the session id the session start gave you; a command without it is refused.
 
 A decision is never asked with ask_user, and a reply typed here is not recorded. Print it exactly as `decision show <n>`
-prints it, then run `decision confirm <n>`: it opens the decision in Wheelhouse's own window, and the director's click there
-is their answer, which the crew acts on. When the director closes the window to say "why <n>", run `why decision <n> <their
-words>`, relay its answer, then run `decision confirm <n>` again.
+prints it: its last line says the decision waits. Say in one plain line that it waits, and take no step that waits on it. When the
+director says "why <n>", run `why decision <n> <their words>` and relay its answer.
 
 A click on a card with no signing option is the director's answer: act on it, and say what you did.
 
