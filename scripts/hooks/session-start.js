@@ -59,6 +59,7 @@ import { startDetached } from '../lib/start-detached.js';
 import { sessionRole, asideKind } from '../lib/role.js';
 import { branchOf, featureSlug, madeFeatureSlug } from '../lib/feature-slug.js';
 import { SETUP_FIRST } from '../lib/setup-first.js';
+import { markSetupTitled } from '../lib/setup-title.js';
 import { RECENT_MS, readSeat, takeSeat, refreshSeat, seatFree, firstMatePid } from '../lib/first-mate-seat.js';
 import { lockFreeNow } from '../lib/free-seat.js';
 import { startedByScript } from '../lib/started-by-script.js';
@@ -796,6 +797,8 @@ export async function decide(input, deps = {}) {
     title = sessionTitle(input, deps);
   } catch { /* the session keeps Claude Code's own title */ }
   if (title === null) return out;
+  // Kept so the first message after setup can give the bar the project's own title (scripts/hooks/board-context.js).
+  if (title === TITLES.setup && (deps.writeVia ?? 'self') === 'self') markSetupTitled(input.session_id);
   const output = out?.hookSpecificOutput ?? { hookEventName: 'SessionStart' };
   return { ...out, hookSpecificOutput: { ...output, sessionTitle: title } };
 }

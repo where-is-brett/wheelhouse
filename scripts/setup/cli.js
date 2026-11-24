@@ -79,7 +79,7 @@ import { helperClient } from '../host/helper-client.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
-import { CHOICE_KEY, HEALTH_STEP } from '../lib/setup-run.js';
+import { CHOICE_KEY, HEALTH_STEP, PUSH_TEST_STEP } from '../lib/setup-run.js';
 
 // Whether this session is the Desktop app's own: CLAUDE_CODE_ENTRYPOINT is set by the app, and a terminal session has another value.
 // A terminal started from inside a Desktop session (a multiplexer such as tmux, or a remote shell) inherits the app's value, so
@@ -97,6 +97,8 @@ export const USAGE = 'Commands: plan <step>, apply <step> <hash>, status, resume
 export const WAIT_MOST_MS = 90 * 1000;
 // How often `wait` asks again while the step runs.
 export const RUNNING_POLL_MS = 3 * 1000;
+// The most covered steps one `resume` applies before it gives the next plan.
+const MOST_CHAINED = 12;
 const STEP = new RegExp(`^(?:${Object.keys(SETUP_TITLES).join('|')})$`);
 const HASH = /^[0-9a-f]{64}$/;
 const BREAKS = /\s*[\r\n\v\f\u0085\u2028\u2029]+\s*/g;
@@ -200,24 +202,43 @@ export async function main(argv, {
       out(`${(Array.isArray(got.lines) ? got.lines : []).map((l) => String(l).replace(BREAKS, ' ')).join('\n')}\n`);
     } else if (form === 'resume' && rest.length === 0) {
       const helper = client ?? helperClient();
-      let got = await ask(helper.setup.status, { folder });
-      // The one card first, while no Go ahead on it holds (design section 15.1); then the steps.
-      let planned = null;
-      if (got.oneCard === true) planned = await plan(helper, folder, 0);
-      if ((planned === null || planned.done === true) && Number.isInteger(got.ask)) planned = await plan(helper, folder, got.ask);
-      // The last step settling with no card and nothing to say (the phone's, where no phone card can
-      // be shown) finishes setup, and leaves step 10's card, which opens with the verdict and first
-      // briefing, to the status taken now: a session told setup is finished doesn't ask again.
-      if (planned?.done === true && planned.said === undefined) {
-        const after = await ask(helper.setup.status, { folder });
-        if (after.next === null && Number.isInteger(after.ask) && after.ask !== planned.step) {
-          got = after;
-          planned = await plan(helper, folder, got.ask);
+      const look = async () => {
+        let got = await ask(helper.setup.status, { folder });
+        // The one card first, while no Go ahead on it holds (design section 15.1); then the steps.
+        let planned = null;
+        if (got.oneCard === true) planned = await plan(helper, folder, 0);
+        if ((planned === null || planned.done === true) && Number.isInteger(got.ask)) planned = await plan(helper, folder, got.ask);
+        // The last step settling with no card and nothing to say (the phone's, where no phone card can
+        // be shown) finishes setup, and leaves step 10's card, which opens with the verdict and first
+        // briefing, to the status taken now: a session told setup is finished doesn't ask again.
+        if (planned?.done === true && planned.said === undefined) {
+          const after = await ask(helper.setup.status, { folder });
+          if (after.next === null && Number.isInteger(after.ask) && after.ask !== planned.step) {
+            got = after;
+            planned = await plan(helper, folder, got.ask);
+          }
         }
+        return { got, planned };
+      };
+      let { got, planned } = await look();
+      // A step the one card's Go ahead covers is applied here, as the session would at once with the plan's own hash, and
+      // the next plan taken, so a run of covered steps costs the session one call, not three each. What each step said, and its
+      // heading, come back in `applied`. A refusal ends the run of them, leaving the plan for the session to apply and see it.
+      const applied = [];
+      while (planned?.covered === true && typeof planned.hash === 'string' && applied.length < MOST_CHAINED) {
+        let done;
+        try {
+          const { ok, ...answer } = await ask(helper.setup.apply, { folder, step: planned.step, hash: planned.hash }); // eslint-disable-line no-unused-vars
+          done = answer;
+        } catch {
+          break;
+        }
+        applied.push({ step: planned.step, title: planned.title, ...(Array.isArray(planned.progress) ? { progress: planned.progress } : {}), ...(done.started === true ? { started: true } : {}), ...(done.done === true ? { done: true } : {}), ...(typeof done.said === 'string' && done.said.trim() !== '' ? { said: done.said.replace(BREAKS, ' ').trim() } : {}) });
+        ({ got, planned } = await look());
       }
       const next = Number.isInteger(got.next) ? got.next : null;
       json({
-        lines: Array.isArray(got.lines) ? got.lines : [], next, plan: planned, ...(got.setUpAgain === true ? { setUpAgain: true } : {}),
+        lines: Array.isArray(got.lines) ? got.lines : [], next, plan: planned, ...(applied.length > 0 ? { applied } : {}), ...(got.setUpAgain === true ? { setUpAgain: true } : {}),
         ...(got.filesDue === true ? { sandbox: OUTSIDE_UNTIL_FILES } : {}),
       });
     } else if (form === 'choices' && rest.length === 0) {
@@ -242,6 +263,8 @@ export async function main(argv, {
         const got = await ask(helper.setup.status, { folder });
         const running = Array.isArray(got.running) && got.running.includes(step);
         let wait = RUNNING_POLL_MS;
+        // What the plan says is left, for the answer; `wait` is how long this loop sleeps before it asks again.
+        let stated = RUNNING_POLL_MS;
         if (!running) {
           if (ran) {
             json({ step, waited: true });
@@ -252,11 +275,14 @@ export async function main(argv, {
             json({ step, waited: true });
             break;
           }
-          wait = planned.wait;
+          // A wait for another step to finish is asked again as often as a running step is, so it ends when that step does, not at the
+          // end of a fixed pause. Only a timed wait (step 9's two minutes with the screen locked) is slept through whole.
+          stated = planned.wait;
+          wait = planned.waitsFor !== undefined || step !== PUSH_TEST_STEP ? Math.min(planned.wait, RUNNING_POLL_MS) : planned.wait;
         }
         ran ||= running;
         if (left <= 0) {
-          json(running ? { step, running: true } : { step, waiting: wait });
+          json(running ? { step, running: true } : { step, waiting: stated });
           break;
         }
         await sleep(Math.max(1, Math.min(wait, left)));

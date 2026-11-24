@@ -394,3 +394,36 @@ test('a refusal, a sandbox\'s refusal or a helper that answered too slowly is no
     assert.match(r.err, new RegExp(refused.slice(0, 20)));
   }
 });
+
+test('wait <step> asks again every few seconds while the step waits for another, and is over when that one is done', async () => {
+  let clock = T0.getTime();
+  const slept = [];
+  const timing = { now: () => clock, sleep: async (ms) => { slept.push(ms); clock += ms; } };
+  const readyAt = T0.getTime() + 7000;
+  const plan = () => (clock < readyAt ? { ok: true, wait: 30000, why: 'step 2 is still running', waitsFor: 2 } : { ok: true, ask: { step: 3, id: 'x', card: {} } });
+  const got = await run(['wait', '3'], { client: fakeClient({ status: { ok: true, lines: [] }, plan }), ...timing });
+  assert.deepEqual(JSON.parse(got.out), { step: 3, waited: true });
+  assert.ok(slept.length >= 2 && slept.every((ms) => ms <= RUNNING_POLL_MS), `slept ${slept.join(', ')}`);
+  assert.ok(clock < readyAt + RUNNING_POLL_MS, 'over within one poll of the other step finishing');
+});
+
+test('resume applies the steps the one card covers, in one call, and says what each did; a refusal leaves the plan for the session', async () => {
+  const hash = 'a'.repeat(64);
+  const plans = { 2: { ok: true, hash, covered: true, card: {}, progress: ['Setup · step 2', 'Tools: fetched'] }, 3: { ok: true, hash: 'b'.repeat(64), covered: true, card: {}, progress: ['Setup · step 3', 'The host'] }, 6: { ok: true, ask: { step: 6, id: 'q', card: { question: 'Q?' } } } };
+  let at = 2;
+  const applied = [];
+  const c = fakeClient({
+    status: () => ({ ok: true, lines: [], next: at, ask: at }),
+    plan: ({ step }) => plans[step],
+    apply: ({ step }) => { applied.push(step); at = step === 2 ? 3 : 6; return step === 2 ? { ok: true, started: true, done: true, said: 'Tools are in' } : { ok: true, started: true }; },
+  });
+  const got = JSON.parse((await run(['resume'], { client: c })).out);
+  assert.deepEqual(applied, [2, 3]);
+  assert.deepEqual(got.applied.map((a) => [a.step, a.said ?? null]), [[2, 'Tools are in'], [3, null]]);
+  assert.equal(got.plan.step, 6);
+  // A refusal ends the run of them; the plan stays covered, for the session to apply and be told why.
+  const refused = fakeClient({ status: { ok: true, lines: [], next: 2, ask: 2 }, plan: plans[2], apply: { ok: false, refused: 'All stop is on' } });
+  const stuck = JSON.parse((await run(['resume'], { client: refused })).out);
+  assert.equal(stuck.plan.covered, true);
+  assert.equal(stuck.applied, undefined);
+});

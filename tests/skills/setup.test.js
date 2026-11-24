@@ -135,7 +135,8 @@ test('step 9\'s rule: a wait with waitsFor sends nothing, one without sends one 
 // are asked together; an answer is changed through `choices` and `change`, never refused flat.
 test('the playbook opens with the one card, applies what its Go ahead covers, asks Customise\'s cards together and changes any answer', () => {
   assert.match(playbook, /## The one card\n/);
-  assert.match(playbook, /\*\*`hash` and `covered: true`:\*\* the one card's Go ahead covers it\.[^\n]*then run `apply <step> <hash>` at once/);
+  assert.match(playbook, /\*\*`applied`\*\* \(beside `plan`\): `resume` has already applied the steps the one card's Go ahead covers/);
+  assert.match(playbook, /\*\*`hash` and `covered: true`\*\* still in `plan`: `resume` could not apply it[^\n]*then run `apply <step> <hash>` at once/);
   assert.match(playbook, /\*\*`asks`:\*\* ask every card in it together, in one call/);
   assert.match(playbook, /`questions: \[card, card, …\]`/);
   assert.match(playbook, /run `choices`, pick the key whose `about` matches what they said, then `change <key>`/);

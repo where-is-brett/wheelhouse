@@ -25,7 +25,7 @@ export const MERGE_SECONDS = 300;
 export const BODY_LIMIT = 1024 * 1024;
 export const ANSWER_LIMIT = 10 * 1024 * 1024;
 
-export const NO_CURL = 'This computer has no curl Wheelhouse can use, so it can only reach GitLab through GitLab\'s own tool. Ask IT for either.';
+export const NO_CURL = 'This computer has no curl Wheelhouse can use, so it can only reach GitLab through GitLab\'s own program. Ask IT for either.';
 
 // ---- Where curl is ----
 

@@ -82,7 +82,7 @@ export function aboutOf(key) {
   if (id === 'live-data') return 'live data';
   if (id === 'apple-apps') return 'signing Apple apps';
   if (id === 'phone') return 'phone notifications';
-  if (id.startsWith('host-tool-')) return `${id === 'host-tool-gh' ? 'GitHub' : 'GitLab'}'s own tool`;
+  if (id.startsWith('host-tool-')) return `${id === 'host-tool-gh' ? 'GitHub' : 'GitLab'}'s own program`;
   return id;
 }
 
@@ -108,7 +108,7 @@ export async function openChoices({ steps, run, answers, planOf }) {
   // The open steps' questions are asked afresh in the dry run; a done step's answers stand as they are.
   const taken = Object.fromEntries(Object.entries(answers).filter(([key]) => !open.some((s) => key.startsWith(`${s.n}.`))));
   // Step 2 is looked at last, as its list follows step 3's host. The director's own answers on step 2's cards, never a
-  // recommendation taken in their place, are still facts step 3's cards rest on (Quick needs the host's own tool), so the
+  // recommendation taken in their place, are still facts step 3's cards rest on (Quick needs the host's own program), so the
   // other steps read them.
   const toolsChosen = Object.fromEntries(Object.entries(answers).filter(([key]) => key.startsWith('2.')));
   const list = [];
@@ -157,7 +157,7 @@ const INDEPENDENT_ID = /^(?:real-users|live-data|phone|product-.*)$/;
 // real users. They wait for that answer, so none is asked in a form the answer beside it would change.
 const AFTER_REAL_USERS = /^(?:live-data|phone|product-.*)$/;
 // The choices a click on Put it on GitLab asks: where the project is kept, and that alone. Whether to fetch the host's
-// own tool is asked under a host- id too, but is not where the project is kept: its recommendation stands, named on the card.
+// own program is asked under a host- id too, but is not where the project is kept: its recommendation stands, named on the card.
 const WHERE_ID = /^(?:join|kept|host)(?:-(?!tool-)|$)/;
 const NOT_JOINING = [NEW_PRODUCT, KEEP_HERE, HOST_LABELS.github, HOST_LABELS.gitlab];
 // Whether the answers taken say this computer joins a product from another (the join question
@@ -248,20 +248,20 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     return join && join.label !== NEW_PRODUCT ? `Looked for on your ${host} account.` : `A new product, in a private ${host === 'GitLab' ? 'project' : 'repository'} on your ${host} account.`;
   }
   if (id.startsWith('connection')) {
-    // On Windows a narrow way still leaves the host's own tool signed in as the director, readable by any agent's command.
+    // On Windows a narrow way still leaves the host's own program signed in as the director, readable by any agent's command.
     const toolOut = choices.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
     const stays = platform !== 'win32' ? ''
       : host === 'GitLab' && toolOut ? ' On Windows it is kept here, where any agent\'s command could read it.'
         : ` ${host}'s own sign-in also stays here, where any agent's command could read it.`;
     if (label === WAYS.quick) return platform === 'darwin' ? `Agents use your ordinary ${host} sign-in, which reaches your whole account; ${macKeepsAway(host.toLowerCase())}.` : `Agents use your ordinary ${host} sign-in, which reaches your whole account${platform === 'win32' ? '; on Windows any agent\'s command could read it' : ''}.`;
-    if (label === STRICTER && host === 'GitLab') return `A GitLab key for this project only; where GitLab won't allow one, a ${PERSONAL_DAYS}-day token stands in and acts as you across GitLab.${stays}`;
+    if (label === STRICTER && host === 'GitLab') return `A GitLab key for this project only; where GitLab won't allow one, a token set to expire in ${PERSONAL_DAYS} days stands in and acts as you across GitLab.${stays}`;
     if (label === STRICTER) return `A key for this project only, made on ${host} (you'll click Authorize and install).`;
     if (label === WAYS.wheelhouse) return `A key for this project only, through the Wheelhouse app (you\'ll type a code and click Install).${stays}`;
     if (label === WAYS.own) return `A key for this project only, from an app you create on GitHub (you\'ll tick Enable Device Flow, click Create, type the code shown, then Authorize and install).${stays}`;
     if (label === WAYS.asIs) return `Agents use your own git as it is, with a ${host} key that reaches everything your account can${platform === 'win32' ? '; on Windows any agent\'s command could ask git for it' : ''}.`;
     // On GitLab the key may not be allowed (keys switched off, or a free plan on the public service), so the plan names the token that stands in.
     return host === 'GitLab'
-      ? `A GitLab key for this project only, or, where GitLab won't allow one, a ${PERSONAL_DAYS}-day token that can act as you across GitLab.${stays}`
+      ? `A GitLab key for this project only, or, where GitLab won't allow one, a token set to expire in ${PERSONAL_DAYS} days that can do anything you can do on GitLab.${stays}`
       : `A ${host} key for this project only.${stays}`;
   }
   if (id.startsWith('product-')) {
@@ -278,7 +278,7 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
   if (id.startsWith('host-tool-')) {
     const tool = id === 'host-tool-gh' ? 'gh' : 'glab';
     const name = HOST_TOOL_NAME[tool];
-    return label === hostToolLabels(tool).none ? `${name}'s own tool left out: Wheelhouse reaches ${name} without it.` : `Wheelhouse fetches ${name}'s own tool from its official release and checks it.`;
+    return label === hostToolLabels(tool).none ? `${name}'s own program left out: Wheelhouse reaches ${name} without it.` : `Wheelhouse fetches ${name}'s own program from its official release and checks it.`;
   }
   if (id === 'apple-apps') return label === SIGNS_APPS.yes ? 'Builds may use your saved passwords to sign the app.' : 'Builds can\'t reach your saved passwords.';
   return null;
@@ -317,13 +317,13 @@ function goAheadAsksHost({ keptHere, list, host, done, phone, desktop, platform 
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
   if (host === 'GitLab' && noTool && way !== null && way !== WAYS.quick && way !== WAYS.asIs) {
     const free = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.publicGitLab === true;
-    return `You'll paste a one-day GitLab token into a box on your screen, not the chat. ${free ? 'On a free account, or wherever' : 'If'} GitLab won't make a key for this one project, you'll also paste a token set to expire in ${PERSONAL_DAYS} days that can act as you in every GitLab project and group you can reach. ${maybeAsked(platform)}`;
+    return `You'll paste a one-day GitLab token into a box on your screen, not the chat. ${free ? 'On a free account, or wherever' : 'If'} GitLab won't make a key for this one project, you'll also paste a token set to expire in ${PERSONAL_DAYS} days that can do anything you can do on GitLab. ${maybeAsked(platform)}`;
   }
   const unheld = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.unheld === true;
   if (way === WAYS.asIs) return `You'll be asked for a ${host} key${unheld ? '' : ' only if your git holds none that works'}: you make it on a page that opens${host === 'GitLab' ? `, set to expire in ${KEY_DAYS_ASKED} days` : `, set to expire in ${KEY_DAYS_ASKED} days`}, and paste it into a box on your screen, not the chat. ${maybeAsked(platform)}`;
   // A narrow way on GitLab with its tool still meets GitLab's refusal of a project key the same way.
   const fallbackBox = (known) => (host === 'GitLab' && way !== null && way !== WAYS.quick
-    ? ` If GitLab won't make a key for one project, you'll also paste a ${PERSONAL_DAYS}-day token that can act as you across GitLab into ${known ? 'that box' : 'a box on your screen, not the chat'}.` : '');
+    ? ` If GitLab won't make a key for one project, you'll also paste a token set to expire in ${PERSONAL_DAYS} days that can do anything you can do on GitLab into ${known ? 'that box' : 'a box on your screen, not the chat'}.` : '');
   // A company's GitLab without a browser sign-in set up takes a token instead, which only setup's step 3 can tell.
   if (signedIn) return `You're already signed in to ${host}, so setup doesn't ask for that again.${fallbackBox(true)}`;
   if (onCompanyGitLab(list, host)) return `You'll sign in to your company's GitLab in your browser if your company has set that up, or else with a token you make on a page that opens and paste into a box on your screen, not the chat. ${maybeAsked(platform)}${fallbackBox(true)}`;

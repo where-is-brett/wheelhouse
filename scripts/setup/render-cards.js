@@ -12,7 +12,7 @@
 //
 // The paths:
 //   a   a company's GitLab, on Windows, no real users, GitLab's tool left out, git holding no key, Use my git as it is chosen
-//   b   the same, with Narrow chosen
+//   b   the same, with the key for this project only chosen
 //   b'  the same, with GitLab's tool to be fetched and Quick chosen; the fetch fails, so the connection is asked again
 //   c   the public GitLab, on Windows
 //   d   GitHub, on Windows
@@ -59,7 +59,7 @@ const COPILOT_BIN = 'C:\\Program Files\\Copilot';
 // What each path is: the computer, the host and the way the director picks, and how the cards are answered.
 export const PATHS = Object.freeze({
   a: { title: 'A company\'s GitLab on Windows, no real users, GitLab\'s tool left out, git holding no key, Use my git as it is chosen', platform: 'win32', host: 'GitLab', where: 'company', way: 'Use my git as it is', glab: 'unavailable' },
-  b: { title: 'A company\'s GitLab on Windows, no real users, GitLab\'s tool left out, Narrow chosen', platform: 'win32', host: 'GitLab', where: 'company', way: 'Narrow', glab: 'unavailable' },
+  b: { title: 'A company\'s GitLab on Windows, no real users, GitLab\'s tool left out, the key for this project only chosen', platform: 'win32', host: 'GitLab', where: 'company', way: 'A key for this project only', glab: 'unavailable' },
   'b\'': { title: 'A company\'s GitLab on Windows, no real users, GitLab\'s tool to be fetched but not to be had, Quick chosen', platform: 'win32', host: 'GitLab', where: 'company', tool: 'fetch', way: 'Quick', glab: 'unavailable' },
   c: { title: 'The public GitLab on Windows', platform: 'win32', host: 'GitLab', where: 'public', glab: 'unavailable' },
   d: { title: 'GitHub on Windows', platform: 'win32', host: 'GitHub', gh: 'in' },
@@ -517,7 +517,7 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
         cards.push({ step: n, id: `go-ahead-${n}`, kind: 'go-ahead', card: got.card, covered: got.covered === true });
         if (n === 2) {
           const w = world();
-          if (w.glab === 'unavailable' && got.changes.some((c) => c.action === 'fetch' && c.tool === 'glab')) tell('GitLab\'s own tool could not be fetched on this computer, so Wheelhouse will work with GitLab without it');
+          if (w.glab === 'unavailable' && got.changes.some((c) => c.action === 'fetch' && c.tool === 'glab')) tell('GitLab\'s own program could not be fetched on this computer, so Wheelhouse will work with GitLab without it');
         }
         if (n === 3) {
           const w = world();

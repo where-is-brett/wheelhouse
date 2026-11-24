@@ -106,7 +106,7 @@ function netrcNames(host, home) {
 const NOT_GITLAB = /^(?:(?:www\.)?github\.com|(?:www\.)?gitlab\.com|bitbucket\.org|dev\.azure\.com|ssh\.dev\.azure\.com|[^.]+\.visualstudio\.com|[^.]+\.pkg\.github\.com|gist\.github\.com)$/i;
 const HOST_NAME = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i;
 
-// The host names where this computer holds a sign-in a GitLab might use, as names alone, never a key: the hosts GitLab's own tool
+// The host names where this computer holds a sign-in a GitLab might use, as names alone, never a key: the hosts GitLab's own program
 // (glab) is set up for, those in git's `store` files and `.netrc`, and, on Windows, Credential Manager's `git:` entries (read by
 // name with `cmdkey /list`). Each is a guess at a company's GitLab, so the card that offers one names where it was found and
 // recommends none. Reads only; at most `limit` names.

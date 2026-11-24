@@ -81,7 +81,7 @@ test('the one card for a new product on a Mac says the director\'s approved word
 test('Go ahead on a narrow GitLab way with GitLab\'s tool names the token that may stand in for a project key', () => {
   const list = newProductChoices({ connection: WAYS.narrow }).map((c) => (c.id === 'host' ? { ...c, label: HOST_LABELS.gitlab } : c));
   const { card } = oneCard({ folder: '/x/tide-tables', list, product: { isNew: true, host: null, repo: null, name: 'tide-tables' }, platform: 'win32', toRun: [3, 6, 7, 10], count: 0 });
-  assert.match(card.options[0].description, /You'll sign in on GitLab pages that open and click through them\. Windows may ask you to click Yes to let an installer run, or for an administrator's password\. If GitLab won't make a key for one project, you'll also paste a 30-day token that can act as you across GitLab into a box on your screen, not the chat\. Near the end, setup offers a test notification on your phone, which you can skip\.$/);
+  assert.match(card.options[0].description, /You'll sign in on GitLab pages that open and click through them\. Windows may ask you to click Yes to let an installer run, or for an administrator's password\. If GitLab won't make a key for one project, you'll also paste a token set to expire in 30 days that can do anything you can do on GitLab into a box on your screen, not the chat\. Near the end, setup offers a test notification on your phone, which you can skip\.$/);
   assert.deepEqual(cardProblems(card), []);
 });
 
@@ -149,13 +149,13 @@ test('the plan names GitLab for a folder whose own remote is on GitLab, and for 
   const ask = (product, list) => oneCard({ folder: '/x/h', list, product, platform: 'win32', toRun: [3], count: 0 }).card.question;
   const gitlab = ask({ isNew: false, host: 'gitlab', repo: 'team/harbour', name: 'harbour' }, [c('connection-0123456789', WAYS.narrow)]);
   assert.match(gitlab, /- harbour on GitLab, as it is\./);
-  assert.match(gitlab, /- A GitLab key for this project only, or, where GitLab won't allow one, a 30-day token that can act as you across GitLab\./);
+  assert.match(gitlab, /- A GitLab key for this project only, or, where GitLab won't allow one, a token set to expire in 30 days that can do anything you can do on GitLab\./);
   assert.doesNotMatch(gitlab, /GitHub/);
   const github = ask({ isNew: false, host: 'github', repo: 'a/harbour', name: 'harbour' }, [c('connection-0123456789', WAYS.own)]);
   assert.match(github, /- A key for this project only, from an app you create on GitHub/);
   const put = ask({ isNew: false, host: 'local', repo: null, name: 'harbour' }, [c('kept', PUT_ON_GITLAB), c('connection-0123456789', WAYS.narrow)]);
   assert.match(put, /- Put on GitLab: a private project on your account/);
-  assert.match(put, /- A GitLab key for this project only, or, where GitLab won't allow one, a 30-day token that can act as you across GitLab\./);
+  assert.match(put, /- A GitLab key for this project only, or, where GitLab won't allow one, a token set to expire in 30 days that can do anything you can do on GitLab\./);
 });
 
 test('a Go ahead holds until one of its choices gets a newer, different answer of the director\'s', () => {
