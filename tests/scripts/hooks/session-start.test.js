@@ -2607,3 +2607,19 @@ test('on an agent whose hooks only read, a lock that could not be pushed takes t
     }
   });
 });
+
+const PICKER_ASK = 'The First Mate is in another window: show the director this card with your clickable-question tool, exactly as given, as a question of its own with no free-text input';
+test('on an agent whose picker click is recorded, the seat card is asked with its question tool, with no window and no AskUserQuestion wording', async () => {
+  await withHome(async () => {
+    putSeat(seatLine('a', 4));
+    const out = await readOnly(seatHelper(), { picker: true });
+    const row = text(out).split('\n').find((l) => l.startsWith(PICKER_ASK));
+    assert.ok(row !== undefined, 'the picker line');
+    const card = JSON.parse(row.slice(row.indexOf('{')));
+    assert.equal(setLineOf(card.question), `Take over the First Mate from window session a, since ${seatLine('a', 4).since}`);
+    assert.deepEqual(cardProblems(card), []);
+    assert.ok(!text(out).includes('AskUserQuestion'));
+    assert.ok(!text(out).includes('confirm seat-take-over'), 'no window');
+    assert.ok(!text(out).includes(WINDOW_ASK));
+  });
+});

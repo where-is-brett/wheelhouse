@@ -42,7 +42,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, managedMarker, readTailEntries, beingSetUp, removedFrom, isWhy } from './kit.js';
+import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, managedMarker, readTailEntries, beingSetUp, removedFrom, isWhy, cardsInPicker } from './kit.js';
 import { keep, sendPending, withinBudget } from './pending.js';
 import { recordClaudePath } from '../lib/claude.js';
 import { helperClient } from '../host/helper-client.js';
@@ -402,6 +402,12 @@ export const SEAT_TAKEOVER_ASK = 'The First Mate is in another window: show the 
 // The words before the seat card's JSON, for an agent whose chat records no click: the card is shown as text, and the
 // director's click is made in Wheelhouse's own window, which `confirm seat-take-over` opens.
 export const SEAT_TAKEOVER_WINDOW = 'The First Mate is in another window: when the director asks for Wheelhouse work, show them this card as text in the chat, not as a question with buttons, then run `confirm seat-take-over --session <your session id>` with the id from the line above. Wheelhouse\'s own window opens for the director\'s click, and records it. The card: ';
+// The same card for an agent whose question picker's click is recorded (scripts/agents/translators.js `picker`): asked with the
+// agent's own clickable-question tool, as a question of its own with no free-text input, as SEAT_TAKEOVER_ASK does.
+// SEAM: the click on this card is recorded by the helper's hook-click route like any picker click, but that route finds a card
+// among those waiting in the state, and this one is composed from the seat on each look (helper.js SEAT_CARD_NAME, as /confirm
+// serves it). Until the route also names it, and moves the seat as /confirm does (handOverSeat), its click records nothing.
+export const SEAT_TAKEOVER_PICKER = 'The First Mate is in another window: show the director this card with your clickable-question tool, exactly as given, as a question of its own with no free-text input, when they ask for Wheelhouse work: ';
 // The line that tells a session its own id, which its chat gives to every command that records (`--session`).
 export const sessionIdLine = (id) => `Your session id is ${id}: give it as --session ${id} to every Wheelhouse command that records.`;
 // The words before the take-over card's AskUserQuestion input, as JSON on the same line.
@@ -680,7 +686,7 @@ function keepOutOfGit(found) {
 // under the Wheelhouse home and never opens the keys folder: no managed marker, no helper started, no watcher,
 // no usage receiver, no lineage hold, no key made, no records sent. It answers with the briefing from the
 // helper's views (the views on disk when the helper isn't answering, with NO_HELPER_STOP) and the agent's tool sheet. `helperUp` is the hook's own ask of /health, when it made one.
-async function readOnlyStart(input, { dir, find, client, helperUp, agent, pluginRoot, self, platform, stopOf, totalMs, env = process.env, now = () => new Date(), seatOptions }) {
+async function readOnlyStart(input, { dir, find, client, helperUp, agent, pluginRoot, self, platform, stopOf, totalMs, env = process.env, now = () => new Date(), seatOptions, picker }) {
   const root = commandRoot({ dir, self }, pluginRoot);
   const sheet = () => toolSheetLines(agent, { pluginRoot: root, platform });
   const end = Date.now() + totalMs;
@@ -720,7 +726,7 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
   views ??= localViews(project);
   // A lock that couldn't be kept or taken is judged again by a read, as the guard before every tool judges it: a doubt is not free.
   const free = lockLine === null || (lockSeen.held !== true && up && await lockFreeNow({ client: api, project, left, now, failClosed: true }));
-  const { aside, seatNotes } = await seatOnReadOnlyStart({ project, input, env, now, api, left, up, free, options: seatOptions });
+  const { aside, seatNotes } = await seatOnReadOnlyStart({ project, input, env, now, api, left, up, free, options: seatOptions, picker: picker ?? cardsInPicker(agent) });
   notes.push(...seatNotes);
   const text = reload({ views, events, stop: stopOf(), notes, feature: madeFeatureSlug(input.cwd), stateRoot: stateDir(project), sheet: sheet(), aside });
   return text === '' ? undefined : answer.context('SessionStart', text);
@@ -734,7 +740,7 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
 // that chose to be an aside, stands in a worktree, was started by a script or has no id takes nothing and is offered no
 // card. Gives { aside, seatNotes }: the aside line (or null), and the lines for the notes. It informs, so anything that fails
 // gives no line.
-async function seatOnReadOnlyStart({ project, input, env, now, api, left, up, free, options = {} }) {
+async function seatOnReadOnlyStart({ project, input, env, now, api, left, up, free, options = {}, picker = false }) {
   const session = input.session_id;
   if (typeof session !== 'string' || session === '') return { aside: null, seatNotes: [] };
   const seatNotes = [sessionIdLine(session)];
@@ -749,7 +755,7 @@ async function seatOnReadOnlyStart({ project, input, env, now, api, left, up, fr
     if (!mine || !main || !seat || seat.session === session || (await seatFree(seat, opts))) return { aside: null, seatNotes };
     const card = up && typeof api?.session?.seat === 'function';
     const aside = asideLine({ ago: agoWords(now().getTime() - Date.parse(seat.seenAt)), kind: 'main', card });
-    if (card) seatNotes.push(...await seatTakeOverNotes({ seat, now, ask: SEAT_TAKEOVER_WINDOW }));
+    if (card) seatNotes.push(...await seatTakeOverNotes({ seat, now, ask: picker ? SEAT_TAKEOVER_PICKER : SEAT_TAKEOVER_WINDOW }));
     return { aside, seatNotes };
   } catch {
     return { aside: null, seatNotes };
@@ -800,7 +806,7 @@ export async function decide(input, deps = {}) {
 async function started(input, deps) {
   if (deps.writeVia !== undefined && deps.writeVia !== 'self') {
     const { dir, projectOf: find = projectOf, client, helperUp, agent, pluginRoot = PLUGIN_ROOT, self = SELF, platform = process.platform, stopState: stopOf = stopState, totalMs = TOTAL_MS + helperGrace(), env, now } = deps;
-    return readOnlyStart(input, { dir, find, client, helperUp, agent: agent ?? agentOfInput(input) ?? 'claude-code', pluginRoot, self, platform, stopOf, totalMs, env, now, seatOptions: deps.seatOptions });
+    return readOnlyStart(input, { dir, find, client, helperUp, agent: agent ?? agentOfInput(input) ?? 'claude-code', pluginRoot, self, platform, stopOf, totalMs, env, now, seatOptions: deps.seatOptions, picker: deps.picker });
   }
   const {
     dir, projectOf: find = projectOf, client: given, spawn = nodeSpawn,

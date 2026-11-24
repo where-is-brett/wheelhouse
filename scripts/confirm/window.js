@@ -81,6 +81,7 @@ export const WINDOWS_SCRIPT = [
   '$script:choice = -1',
   '$options = @($card.options)',
   '$last = $null',
+  '$recommended = $null',
   'for ($i = 0; $i -lt $options.Count; $i++) {',
   '  $button = New-Object System.Windows.Forms.Button',
   '  $button.UseMnemonic = $false',
@@ -91,10 +92,12 @@ export const WINDOWS_SCRIPT = [
   '  $button.Add_Click({ param($s, $e) $script:choice = [int]$s.Tag; $form.Close() })',
   '  $row.Controls.Add($button)',
   '  $last = $button',
+  '  if ($card.recommend -and [string]$options[$i] -eq [string]$card.recommend) { $recommended = $button }',
   '}',
   '$panel.Controls.Add($row)',
   '$form.Controls.Add($panel)',
   'if (-not $card.noDefault) { $form.ActiveControl = $last }',
+  'if ($recommended -and -not $card.noDefault) { $form.ActiveControl = $recommended }',
   '$timer = New-Object System.Windows.Forms.Timer',
   '$timer.Interval = [int]$card.waitMs',
   '$timer.Add_Tick({ $timer.Stop(); $form.Close() })',
@@ -118,9 +121,18 @@ function checkCard({ title, lines, options, timeoutMs }) {
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1000) throw new Error('The window needs a time limit of a second or more');
 }
 
+// The macOS script: with the card's recommended option, its list selects that option to begin with, as the chat card's default is
+// the recommended option. A label is put in quotes with its backslashes and quotes escaped.
+const quoted = (text) => `"${text.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
+export function macScript({ noDefault = false, recommend } = {}) {
+  if (noDefault === true) return MAC_SCRIPT_NO_DEFAULT;
+  if (recommend === undefined) return MAC_SCRIPT;
+  return MAC_SCRIPT.map((line) => line.replace('with prompt theText OK button name', `with prompt theText default items {${quoted(recommend)}} OK button name`));
+}
+
 // Shows the window and waits for a click: { choice } is the deciding option clicked, Not now, or null when the
 // window timed out, failed, or can't be shown here. `options` are the deciding options alone; Not now is added.
-export async function askInWindow({ title, lines, options, noDefault = false, platform = process.platform, timeoutMs = WINDOW_MS, run, env = process.env }) {
+export async function askInWindow({ title, lines, options, recommend, noDefault = false, platform = process.platform, timeoutMs = WINDOW_MS, run, env = process.env }) {
   checkCard({ title, lines, options, timeoutMs });
   if (typeof run !== 'function') throw new Error('The window needs a run function');
   const known = [...options, NOT_NOW];
@@ -128,14 +140,14 @@ export async function askInWindow({ title, lines, options, noDefault = false, pl
   try {
     if (platform === 'darwin') {
       const seconds = String(Math.ceil(timeoutMs / 1000));
-      const script = (noDefault === true ? MAC_SCRIPT_NO_DEFAULT : MAC_SCRIPT).flatMap((line) => ['-e', line]);
+      const script = macScript({ noDefault, recommend: options.includes(recommend) ? recommend : undefined }).flatMap((line) => ['-e', line]);
       answer = await run(MAC_OSASCRIPT, [...script, '--', title, lines.join('\n'), seconds, ...options], { timeoutMs: timeoutMs + GRACE_MS });
       if (answer.code !== 0 || answer.timedOut) return { choice: null };
       const said = String(answer.stdout).replace(/\r?\n$/, '');
       return { choice: known.includes(said) ? said : null };
     }
     if (platform === 'win32') {
-      const card = Buffer.from(JSON.stringify({ title, lines, options: known, waitMs: timeoutMs, ...(noDefault === true ? { noDefault: true } : {}) }), 'utf8').toString('base64');
+      const card = Buffer.from(JSON.stringify({ title, lines, options: known, waitMs: timeoutMs, ...(noDefault === true ? { noDefault: true } : {}), ...(options.includes(recommend) ? { recommend } : {}) }), 'utf8').toString('base64');
       answer = await run(windowsShell(env.SystemRoot ?? env.SYSTEMROOT), ['-NoProfile', '-NonInteractive', '-STA', '-EncodedCommand', WINDOWS_ENCODED], {
         // Not started hidden: a hidden start hides the form too, since it is the first window PowerShell shows.
         env: { [CARD_VARIABLE]: card }, timeoutMs: timeoutMs + GRACE_MS, windowsHide: false,

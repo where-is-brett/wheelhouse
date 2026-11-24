@@ -136,7 +136,7 @@ import { deskClient } from '../desk/client.js';
 export { surveyLines, workLines };
 import { SUGGEST, WHY, suggestedAt } from '../lib/calm-words.js';
 import { keep, taken } from '../hooks/pending.js';
-import { projectOf, writeVia } from '../hooks/kit.js';
+import { projectOf, writeVia, cardsInPicker } from '../hooks/kit.js';
 import { SEAT_WRITES } from '../lib/seat-writes.js';
 import { agentInFolder, agentsNamedAbove } from '../agents/names.js';
 import { computerId } from '../lib/paths.js';
@@ -170,7 +170,7 @@ export async function seatRefusal({ command, rest = [], env, cwd, client, sessio
   if (command === 'confirm' && rest.length === 1 && rest[0] === SEAT_CARD) return null;
   // Where the chat's environment can't name it, a command that records names the chat itself, whatever form the command took
   // to reach here: the hook holds the forms it can read, and this holds the rest.
-  if (given === undefined && answersInWindow(cwd)) return SESSION_NEEDED;
+  if (given === undefined && namesNoSession(cwd)) return SESSION_NEEDED;
   const session = given ?? env?.CLAUDE_CODE_SESSION_ID;
   if (typeof session !== 'string' || session === '') return null;
   let got;
@@ -284,7 +284,12 @@ function agentHere(cwd) {
 }
 
 // Whether the agent in `cwd` has hooks that only read, so its chat records no typed reply and a decision is answered in the window.
-const answersInWindow = (cwd) => writeVia(agentHere(cwd)) !== 'self';
+// Where its picker's click is not recorded (scripts/agents/translators.js `picker`); such an agent answers a decision in the window.
+const answersInWindow = (cwd) => !cardsInPicker(agentHere(cwd));
+// Whether the agent in `cwd` records no typed reply, so a decision is a card in its picker whatever the typed-replies switch says.
+const asksDecisionsAsCards = (cwd) => writeVia(agentHere(cwd)) !== 'self' && cardsInPicker(agentHere(cwd));
+// Whether the agent in `cwd` can't name its own session in the environment, so a command that records names it.
+const namesNoSession = (cwd) => writeVia(agentHere(cwd)) !== 'self';
 
 async function ownSettings(client, cwd) {
   try {
@@ -666,7 +671,7 @@ export async function cards({ client, cwd, now, onAsked, session }) {
   if (made > 0 || decided) ({ views, cards: events } = await viewsOf(client, cwd, { cards: decided }));
   // With typed replies on, a decision is shown as a chat message (`decision list`), never through the question picker, so no
   // visit hands one out. Off, it is a card like any other.
-  const typed = typedRepliesIn(views.settings);
+  const typed = typedRepliesIn(views.settings) && !asksDecisionsAsCards(cwd);
   const forVisit = withPutBack(views, again, events);
   const chosen = cardsForVisit({ ...forVisit, waiting: (Array.isArray(forVisit.waiting) ? forVisit.waiting : []).filter((c) => !typed || !isDecisionCard(c?.data)) }, { room: lift === null ? CARD.questions : 0 });
   problems.push(...await handOut(client, cwd, chosen.ids.map((id, i) => ({ id, question: chosen.questions[i].question })), { stop, inChat: typeof onAsked === 'function', panel }));
@@ -706,12 +711,14 @@ async function waitingDecision(client, cwd, n) {
 }
 
 export async function decisionShow({ client, cwd, n }) {
+  if (asksDecisionsAsCards(cwd)) throw new CliError('Here a decision is a card like any other: run `cards`, and ask it with the question picker.');
   return decisionText(await waitingDecision(client, cwd, n), { window: answersInWindow(cwd) });
 }
 
 // Decision n opened in the helper's own window, for an agent whose hooks only read: the director's click there is signed as
 // their answer, as a click in a hook that signs is. Where the chat records a typed reply, it is answered there instead.
 export async function decisionConfirm({ client, cwd, n }) {
+  if (asksDecisionsAsCards(cwd)) throw new CliError('Here a decision is a card like any other: run `cards`, and ask it with the question picker. No window is opened.');
   if (!answersInWindow(cwd)) throw new CliError('Here the director answers a decision by typing their reply in the chat, so no window is opened.');
   const found = await waitingDecision(client, cwd, n);
   return confirm({ client, cwd, card: found.id });

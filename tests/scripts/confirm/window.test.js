@@ -591,3 +591,14 @@ test('approving a work as written, and changing it, are signed in the window, wi
     await c.close();
   }
 });
+
+test('a window for a card that recommends an option selects it to begin with on macOS, and says so to the Windows script', async () => {
+  const { macScript, askInWindow } = await import('../../../scripts/confirm/window.js');
+  assert.match(macScript({ recommend: 'Say "hi"' }).find((l) => l.startsWith('set theChoice')), /default items \{"Say \\"hi\\""\} OK button name/);
+  assert.deepEqual(macScript({}), (await import('../../../scripts/confirm/window.js')).MAC_SCRIPT);
+  const seen = [];
+  await askInWindow({ title: 't', lines: ['x'], options: ['A', 'B'], recommend: 'B', platform: 'win32', run: async (bin, args, opts) => { seen.push(opts.env); return { code: 0, stdout: '1' }; } });
+  const card = JSON.parse(Buffer.from(seen[0].WHEELHOUSE_WINDOW, 'base64').toString('utf8'));
+  assert.equal(card.recommend, 'B');
+  assert.deepEqual(card.options, ['A', 'B', 'Not now']);
+});

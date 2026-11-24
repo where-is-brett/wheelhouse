@@ -5,7 +5,7 @@ import path from 'node:path';
 import { sessionRole } from '../../../scripts/lib/role.js';
 import { seatFile, readSeat } from '../../../scripts/lib/first-mate-seat.js';
 import assert from 'node:assert/strict';
-import { decide, checkShown, plainQuestion, DECISION_IN_CHAT, DECISION_IN_WINDOW } from '../../../scripts/hooks/card-check.js';
+import { decide, checkShown, plainQuestion, DECISION_IN_CHAT, DECISION_IN_WINDOW, NO_TYPED_ANSWER } from '../../../scripts/hooks/card-check.js';
 import { pendingDecisions } from '../../../scripts/decisions/pending.js';
 import { decisionText } from '../../../scripts/decisions/message.js';
 import { asQuestion } from '../../../scripts/cards/visit.js';
@@ -249,5 +249,36 @@ test('a card raised at a feature\'s stage is refused once the feature has moved 
     const closed = await ask();
     assert.equal(closed.hookSpecificOutput.permissionDecision, 'deny', 'a closed feature with its worktree gone: refused');
     assert.match(closed.hookSpecificOutput.permissionDecisionReason, /has closed/);
+  });
+});
+
+test('on an agent whose hooks only read but whose picker click is recorded, a decision is asked in the picker whatever the typed-replies switch says', async () => {
+  await inHomeOff(async () => {
+    const card = raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    const question = asQuestion({ data: card.data });
+    const input = { cwd: '/x', session_id: 's-desk', hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [question] } };
+    for (const turn of [turnOff, turnOn]) {
+      turn();
+      const out = await decide(input, { projectOf: () => ({ project: P }), env: {}, writeVia: 'helper', picker: true });
+      const reason = out?.hookSpecificOutput?.permissionDecisionReason;
+      assert.notEqual(reason, DECISION_IN_WINDOW);
+      assert.notEqual(reason, DECISION_IN_CHAT);
+    }
+    // Where the picker click is not recorded, the window path stands.
+    const window = await decide(input, { projectOf: () => ({ project: P }), env: {}, writeVia: 'helper', picker: false });
+    assert.equal(window.hookSpecificOutput.permissionDecisionReason, DECISION_IN_WINDOW);
+  });
+});
+
+test('a card that allows a typed answer is refused where the picker click is recorded, since a typed label looks like a click', async () => {
+  await inHomeOff(async () => {
+    turnOff();
+    const card = raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    const typed = { ...asQuestion({ data: card.data }), allowFreeformInput: true };
+    const input = (q) => ({ cwd: '/x', session_id: 's-desk', hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [q] } });
+    const refused = await decide(input(typed), { projectOf: () => ({ project: P }), env: {}, writeVia: 'helper', picker: true });
+    assert.equal(refused.hookSpecificOutput.permissionDecisionReason, NO_TYPED_ANSWER);
+    const clean = await decide(input(asQuestion({ data: card.data })), { projectOf: () => ({ project: P }), env: {}, writeVia: 'helper', picker: true });
+    assert.notEqual(clean?.hookSpecificOutput?.permissionDecisionReason, NO_TYPED_ANSWER);
   });
 });

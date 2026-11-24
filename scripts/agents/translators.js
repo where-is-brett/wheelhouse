@@ -10,8 +10,14 @@
 // only read, so every write goes through the helper (Copilot's, design section 6.3).
 import claudeCode from '../../adapters/claude-code/translate.js';
 import copilot from '../../adapters/copilot/translate.js';
+import { C6_PASSED } from './copilot/numbers.js';
 
 export const TRANSLATORS = Object.freeze({
   'claude-code': Object.freeze({ translate: claudeCode, writes: 'self' }),
-  copilot: Object.freeze({ translate: copilot, writes: 'helper' }),
+  copilot: Object.freeze({ translate: copilot, writes: 'helper', picker: C6_PASSED }),
 });
+
+// `picker` says whether a click in an agent's question picker is recorded for the helper to act on, so every card is asked
+// in the chat. It is true for an agent whose hooks sign (writes 'self'), and for one whose hooks only read once its check
+// has passed (the one switch, C6_PASSED). Until then such an agent's decisions and signing cards go to the helper's window.
+export const HOOK_CLICKS_LIVE = Object.values(TRANSLATORS).some((t) => t.writes !== 'self' && t.picker === true);

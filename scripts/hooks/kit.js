@@ -363,6 +363,13 @@ export function writeVia(agent) {
   return Object.hasOwn(TRANSLATORS, agent) && TRANSLATORS[agent].writes === 'self' ? 'self' : 'helper';
 }
 
+// Whether every card of this agent is asked in its question picker (scripts/agents/translators.js `picker`): true where the hooks
+// sign, and where they only read once the click the picker gave back is recorded. False sends decisions and signing cards to
+// the helper's window.
+export function cardsInPicker(agent) {
+  return writeVia(agent) === 'self' || (Object.hasOwn(TRANSLATORS, agent) && TRANSLATORS[agent].picker === true);
+}
+
 // What a guard answers when its check could not run, shaped for its event.
 // SessionStart and SessionEnd cannot refuse anything, so they stay silent.
 function failureAnswer(event, reason = 'Wheelhouse\'s check could not run') {

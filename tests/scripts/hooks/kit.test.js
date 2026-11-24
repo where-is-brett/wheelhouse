@@ -547,3 +547,13 @@ test('hookMain: the Copilot copy is found under ~/.copilot when COPILOT_HOME is 
     fs.rmSync(path.dirname(base), { recursive: true, force: true });
   }
 });
+
+test('every card is asked in the picker where the hooks sign, and where they only read only once their click is recorded', async () => {
+  const { cardsInPicker } = await import('../../../scripts/hooks/kit.js');
+  const { TRANSLATORS } = await import('../../../scripts/agents/translators.js');
+  const { C6_PASSED } = await import('../../../scripts/agents/copilot/numbers.js');
+  assert.equal(cardsInPicker('claude-code'), true);
+  assert.equal(cardsInPicker('copilot'), C6_PASSED, 'the one switch');
+  assert.equal(TRANSLATORS.copilot.picker, C6_PASSED);
+  assert.equal(cardsInPicker('unknown'), false);
+});

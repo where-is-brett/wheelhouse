@@ -118,6 +118,7 @@ import { DESK_VERSION, needsEvidence } from '../desk/vocabulary.js';
 import { helperClient } from './helper-client.js';
 import { windowClick, undoCards, undoLine, UNDO_LINE, UNDO_NEEDS_WINDOW } from './local/undo.js';
 import { UNDO_BRANCH, undoConflictCard, undoOnHost } from './undo.js';
+import { HOOK_CLICKS_LIVE } from '../agents/translators.js';
 import { CHAT_PROOFS, CONFIRMED_STEPS, HOOK_CLICK_MS, HOOK_SHOWN_MAX, hashRefusal } from '../agents/chat-clicks.js';
 import { earned, signsOn, askedUpdateCard, keepAfterClick } from '../hooks/prompt-record.js';
 import { askInWindow, NOT_NOW } from '../confirm/window.js';
@@ -1035,6 +1036,8 @@ export async function startHelper({
   // How the helper's own calls to GitLab are made (gitlabApi's run, curl, proxy and caFile; left out, the real ones), the
   // computer's store for keys (keys.js's seam) and the lender of the director's own key. All for tests.
   via = {}, keyDeps, borrow = borrowKey,
+  // Whether an agent's picker click is recorded as a hook-click the gate may count (scripts/agents/translators.js). For tests.
+  hookClicks = HOOK_CLICKS_LIVE,
   // How the helper asks the director for the Telegram bot token, in the system's own hidden-entry dialog, so it never passes through an
   // agent or a command argument: ({ title, prompt }) -> the text. For tests.
   askToken = (box) => askSecret(box),
@@ -2815,6 +2818,9 @@ export async function startHelper({
   // ruling F25), so `lift-stop` names the one the helper composes itself, while STOP is on, shown at `shownAt` (now,
   // on the first look): the look after the click passes the time the window opened, so a click on a window shown
   // during one STOP never lifts a later one (earned()'s rule).
+  // The option the card recommends, which its `recommendation` names first ("Label, because ..."): the chat card's default, and the
+  // window's. Undefined when it names none.
+  const recommendedOf = (data) => (Array.isArray(data?.options) && typeof data.recommendation === 'string' ? data.options.find((o) => typeof o === 'string' && data.recommendation.startsWith(`${o}, because`)) : undefined);
   async function windowCard({ project, card, hash, session, cwd }, ctx, { shownAt } = {}) {
     let event;
     if (card === LIFT_STOP_NAME) {
@@ -2878,7 +2884,7 @@ export async function startHelper({
     const allowance = shown.deciding.find((d) => d.step === ACTION_STEPS.answer);
     if (allowance) lines.push(...allowanceWindowLines(allowanceQuestion(project, allowance.made.data, shown.event.at)?.commands));
     const header = typeof shown.event.data.header === 'string' && shown.event.data.header !== '' ? shown.event.data.header : null;
-    const { choice } = await askWindow({ title: header === null ? 'Wheelhouse' : `Wheelhouse: ${header}`, lines, options: shown.deciding.map((d) => d.label).filter((label) => label !== NOT_NOW), ...(shown.deciding.some((d) => NO_DEFAULT_STEPS.includes(d.step)) ? { noDefault: true } : {}) });
+    const { choice } = await askWindow({ title: header === null ? 'Wheelhouse' : `Wheelhouse: ${header}`, lines, options: shown.deciding.map((d) => d.label).filter((label) => label !== NOT_NOW), ...(recommendedOf(shown.event.data) === undefined ? {} : { recommend: recommendedOf(shown.event.data) }), ...(shown.deciding.some((d) => NO_DEFAULT_STEPS.includes(d.step)) ? { noDefault: true } : {}) });
     const picked = shown.deciding.find((d) => d.label === choice);
     if (!picked) return { ok: true, choice: choice === NOT_NOW ? NOT_NOW : null, recorded: false };
     const answer = await stateRoute(async () => {
@@ -3381,9 +3387,16 @@ export async function startHelper({
   // stands: one for an earlier commit never carries, so after an update the director is asked again.
   // Anything the mirror can't say leaves the branch unknown (null, which the gate refuses with its
   // own reason) and nothing carried. The one rule behind /merge and /pr/carried.
+  // The approval the gate reads for a pull request: the latest verified one, or, where hook clicks are live and none names this head,
+  // the click an agent's hook saw for it (the gate's hookClickApproves counts it, by its mode).
+  function approvalFor(views, number, headSha) {
+    const signed = latestFor(views.approvals, number);
+    if (!hookClicks || signed?.data?.commit === headSha) return signed;
+    return views.hookApprovals?.[headSha] ?? signed;
+  }
   async function gateRecords({ project, number, headSha, views, adapter, withApproval = true }, ctx) {
     const review = latestFor(views.reviews, number);
-    const approval = withApproval ? latestFor(views.approvals, number) : null;
+    const approval = withApproval ? approvalFor(views, number, headSha) : null;
     const from = { review: reviewClear(review?.data) && review.data.commit !== headSha ? review.data.commit : null };
     let facts = { upToDate: null, review: false };
     try {
