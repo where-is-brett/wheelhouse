@@ -421,6 +421,7 @@ test('update lines: nothing is said without update facts', () => {
 test('update lines: the version line carries the date for a week after an update, then only the version', () => {
   assert.deepEqual(texts({ update: { version: 'v0.2.7', updatedAt: '2026-11-04T09:00:00.000Z' } }), ['Protection: Standard', 'Wheelhouse v0.2.7 (updated 4 November 2026)']);
   assert.deepEqual(texts({ update: { version: 'v0.2.7', updatedAt: null } }), ['Protection: Standard', 'Wheelhouse v0.2.7']);
+  assert.deepEqual(texts({ update: { version: null, between: true } }), ['Protection: Standard', 'Wheelhouse from its main line (a build between releases)']);
 });
 
 test('update lines: a newer release is announced in the director\'s words, and calmly', () => {

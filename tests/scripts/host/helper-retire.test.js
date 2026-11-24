@@ -8,6 +8,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { pluginVersion } from '../../../scripts/lib/plugin-version.js';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { startRealHelper } from '../../../scripts/host/helper-main.js';
@@ -25,7 +27,7 @@ const hostLog = [];
 const hostGuard = guardedRun(run, { log: hostLog });
 after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
-const PLUGIN = JSON.parse(fs.readFileSync(new URL('../../../.claude-plugin/plugin.json', import.meta.url), 'utf8'));
+const PLUGIN = { version: pluginVersion(fileURLToPath(new URL('../../..', import.meta.url))) };
 const unix = process.platform !== 'win32';
 const UPDATING = 'Wheelhouse is updating; try again in a minute';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

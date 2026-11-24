@@ -35,6 +35,11 @@ const q = (value) => JSON.stringify(value);
 // The playbook's own words for Claude Code's file tool, in Copilot's.
 const mapFileTool = (text) => text.replaceAll('the Write tool', 'the `create` tool').replaceAll('Write tool', '`create` tool');
 
+// Superpowers' brainstorming runs in Copilot's chat from Wheelhouse's own copy of its skill folder, which setup puts in the person's
+// Copilot skills folder under this name (scripts/agents/copilot/brainstorming-copy.js), so the playbook names that copy.
+export const BRAINSTORMING_SKILL = 'wheelhouse-brainstorming';
+const brainstormingName = (text) => text.replaceAll('superpowers:brainstorming', BRAINSTORMING_SKILL);
+
 // These files sit in the person's own Copilot folder, so Copilot offers them in every workspace on the computer. A Wheelhouse
 // project is told by its committed configuration, `.claude/wheelhouse.json` (scripts/host/gitlab-base.js reads it the same way).
 const PROJECT_MARKER = '.claude/wheelhouse.json';
@@ -143,7 +148,7 @@ function clickLines(text) {
 
 function agent(root, picker) {
   const { front, body } = parse(readSource(root, SOURCE), SOURCE);
-  const rest = `${GUARD}\n\n${(picker ? pickerLines : clickLines)(renameSkills(mapFileTool(mapToolWords(withoutPathComment(body, SOURCE), SOURCE))))}`;
+  const rest = `${GUARD}\n\n${(picker ? pickerLines : clickLines)(renameSkills(brainstormingName(mapFileTool(mapToolWords(withoutPathComment(body, SOURCE), SOURCE)))))}`;
   const lines = [`name: ${q('wheelhouse-first-mate')}`, `description: ${q(front.description)}`, `tools: [${FIRST_MATE_TOOLS.map(q).join(', ')}]`];
   return `---\n${lines.join('\n')}\n---\n<!-- ${FIRST_MATE_DIR}/${AGENT_FILE} (built from ${SOURCE} by ${BUILD_COMMAND}) -->\n${rest}`;
 }

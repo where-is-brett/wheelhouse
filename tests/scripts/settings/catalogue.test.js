@@ -1,7 +1,7 @@
 // tests/scripts/settings/catalogue.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SETTINGS, WINDOWS_BUILD_COMMANDS, RETIRED, RETIRED_PATTERNS, checkSetting, definitionOf, isAllowed, retiredPiece } from '../../../scripts/settings/catalogue.js';
+import { BUILDER_LAUNCH, SETTINGS, WINDOWS_BUILD_COMMANDS, RETIRED, RETIRED_PATTERNS, checkSetting, definitionOf, isAllowed, retiredPiece } from '../../../scripts/settings/catalogue.js';
 import { PACE, paceOf } from '../../../scripts/lib/build-loop.js';
 import { BRIEFING_GAP_HOURS, UNUSUAL } from '../../../scripts/lib/core-numbers.js';
 import { DEFAULT_SOURCES } from '../../../scripts/sources/list.js';
@@ -273,4 +273,19 @@ test('the delegation keys are retired: an old profile or record holding them sti
   }
   // A key that only looks like the pattern is still no setting.
   assert.throws(() => checkSetting('known:Bad Name', true), /no setting called known:Bad Name/);
+});
+
+test('the launch command is a setting per computer, kept in the profile, an array of words or none', () => {
+  const key = 'builderLaunch:0a1b2c3d';
+  const def = definitionOf(key);
+  assert.equal(def, BUILDER_LAUNCH);
+  assert.deepEqual([def.group, def.home, def.default], ['advanced', 'profile', null]);
+  for (const value of [['wrap', 'claude'], ['C:\\Program Files\\wrap.exe', 'claude'], null]) assert.doesNotThrow(() => checkSetting(key, value), JSON.stringify(value));
+  for (const value of ['wrap claude', [], ['wrap;rm', 'claude'], ['wrap', '$(x)'], ['wrap', '--settings'], ['x.ps1'], Array(9).fill('a'), ['wrap', 'a'.repeat(200)], [1], {}]) {
+    assert.throws(() => checkSetting(key, value), /can't be/, JSON.stringify(value));
+  }
+  assert.throws(() => checkSetting(key, ['wrap'], '2026-10-19T18:00:00.000Z'), /can't have an end time/);
+  for (const bad of ['builderLaunch', 'builderLaunch:', 'builderLaunch:0A1B2C3D', 'builderLaunch:0a1b2c3']) assert.throws(() => checkSetting(bad, ['wrap']), /no setting called/, bad);
+  assert.equal(isAllowed(key, ['wrap', 'claude']), true);
+  assert.equal(isAllowed(key, ['wrap|x']), false);
 });

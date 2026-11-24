@@ -29,6 +29,7 @@ import { helperClient } from '../host/helper-client.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { ANY_CARD, markHere } from '../lib/session-files.js';
 import { NO_TERMINAL, bootstrap, terminalAsk } from './bootstrap.js';
+import { asciiJson } from '../lib/ascii-json.js';
 
 export class CliError extends Error {}
 
@@ -71,7 +72,7 @@ export async function main(argv, {
     // Marked before the card is asked, so the question hook lets it through in the chat.
     const session = env.CLAUDE_CODE_SESSION_ID;
     if (here && typeof session === 'string' && session !== '') mark(session, [ANY_CARD], now());
-    const json = (value) => out(`${JSON.stringify(value, null, 2)}\n`);
+    const json = (value) => out(`${asciiJson(value, 2)}\n`);
     const folder = path.resolve(cwd);
     const helper = client ?? helperClient();
     if (form === 'plan' && rest.length <= 1) {

@@ -115,3 +115,18 @@ test('the committed copies and the tool sheet follow C6_PASSED, the one switch',
   const sheet = fs.readFileSync(new URL('../../../../adapters/copilot/tool-sheet.md', import.meta.url), 'utf8');
   assert.equal(sheet.includes('Signing options and decisions never go to ask_user'), !C6_PASSED, 'tool-sheet.md line 4 changes with C6_PASSED');
 });
+
+test('the agent names wheelhouse-brainstorming, carries the same rules as the playbook, and has no line that skips its questions', () => {
+  const text = built.get(AGENT);
+  assert.match(text, /Every feature is shaped with \`wheelhouse-brainstorming\`/);
+  assert.doesNotMatch(text, /superpowers:brainstorming/);
+  assert.doesNotMatch(text, /skip brainstorming's questions|already answers its questions/);
+  const source = lf(fs.readFileSync(path.join(ROOT, 'skills', 'front-desk', 'SKILL.md'), 'utf8'));
+  const rules = source.slice(source.indexOf('Every feature is shaped'), source.indexOf('\n', source.indexOf('Every feature is shaped'))).replaceAll('superpowers:brainstorming', 'wheelhouse-brainstorming');
+  assert.ok(rules.length > 500 && text.includes(rules), 'the built agent holds the playbook\'s paragraph, with the copy\'s name');
+  assert.match(text, /a smaller one and a larger one/);
+  assert.match(text, /never offer brainstorming's visual companion/);
+  assert.match(text, /\.wheelhouse\/work\/<id>\.md/);
+  assert.match(text, /invoke \`superpowers:writing-plans\`, stop/);
+  assert.match(text, /show <work id>/);
+});

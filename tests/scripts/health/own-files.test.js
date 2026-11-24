@@ -97,6 +97,20 @@ const treeOf = (files) => new Map(Object.entries(files).map(([rel, text]) => [re
 const day = (n) => () => new Date(Date.UTC(2026, 10, n, 3));
 
 // A Claude folder whose installed_plugins.json lists the Wheelhouse installs given: { version, scope, project }.
+test('own-files: a build from the main line has no tag, so nothing is fetched for it and nothing named', async () => {
+  const c = claudeWith([{ version: '0.2.6', scope: 'user' }]);
+  const asked = [];
+  const where = { ...bare(), claudeHome: c.claudeHome, treeFor: async (tag) => { asked.push(tag); return treeOf(release(tag.slice(1))); } };
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...where, now: day(2) });
+    c.relist([{ version: 'df5f760e1a2b', scope: 'user' }]);
+    const moved = await checkOwnFiles({ ...where, now: day(3) });
+    assert.deepEqual(moved.changed, []);
+    assert.equal(moved.calm, undefined);
+    assert.deepEqual(asked, []);
+  });
+});
+
 function claudeWith(installs) {
   const base = tempFolder('wh-own-claude-');
   const claudeHome = path.join(base, 'claude');

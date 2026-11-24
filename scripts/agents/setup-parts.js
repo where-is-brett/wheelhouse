@@ -95,6 +95,12 @@ export async function applyAgentComputer(name, changes, { record, newId, run, at
   return part.afterApply({ run, at, env });
 }
 
+// Before an agent's changes are planned: whatever it keeps on this computer for them is fetched where it isn't there yet.
+// Never throws: a fetch that fails leaves that part to the next setup or update.
+export async function prepareAgentComputer(name) {
+  try { await setupOf(name)?.prepare?.(); } catch { /* the next try */ }
+}
+
 // After an update: each agent's changes to this computer made to point at the new release's folder. Resolves the lines to
 // say (none where nothing changed). One that can't be written is said, never thrown: the update informs.
 export function refreshAgentComputer(options) {
@@ -108,4 +114,10 @@ export function refreshAgentComputer(options) {
     }
   }
   return lines;
+}
+
+// refreshAgentComputer, once what each agent keeps for its changes is fetched for the new release.
+export async function refreshAgentComputerAfterKits(options) {
+  for (const name of Object.keys(SETUPS)) await prepareAgentComputer(name);
+  return refreshAgentComputer(options);
 }

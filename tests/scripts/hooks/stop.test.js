@@ -172,6 +172,7 @@ test('under STOP, the front desk\'s reading commands run by their exact words, a
         `node "${cli}" similar "Could we export the orders, as a spreadsheet?"`,
         `node "${cli}" similar "can't sign in on the phone"`,
         `node "${cli}" preview 7`,
+        `node "${cli}" show export-csv`,
       ]) assert.equal(await guard(bash(main, ok), deps(base)), undefined, ok);
       for (const bad of [
         `node ${cli}`,
@@ -207,6 +208,9 @@ test('under STOP, the front desk\'s reading commands run by their exact words, a
         `node "${cli}" preview`,
         `node "${cli}" preview x`,
         `node "${cli}" preview 7 8`,
+        `node "${cli}" show`,
+        `node "${cli}" show export-csv extra`,
+        `node "${cli}" show ../etc`,
         `node "${cli}" cards; rm -rf x`,
         `node "${cli}" cards && ls`,
         `echo hi | node "${cli}" similar`,

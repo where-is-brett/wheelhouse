@@ -22,6 +22,7 @@ import { reachFor, safeGit } from '../lib/safe-git.js';
 import { readBrief } from './brief.js';
 import { surveyProject, upstreamsNeeded } from './survey.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { asciiJson } from '../lib/ascii-json.js';
 
 const CLONE_WAIT_MS = 5 * 60 * 1000;
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -105,7 +106,7 @@ export async function main(argv, {
     const { clones, remove } = await clone({ ...pins, upstreams: pins.upstreams.filter((u) => needed.includes(u.name)) });
     try {
       const survey = await surveyProject({ folder, manifest: pins, run, upstreams: clones, scheduled });
-      write(`${JSON.stringify(survey, null, 2)}\n`);
+      write(`${asciiJson(survey, 2)}\n`);
     } finally {
       remove();
     }
