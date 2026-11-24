@@ -6,7 +6,9 @@ import assert from 'node:assert/strict';
 import { tempFolder } from '../../helpers/homes.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import { standardEnv, homeOf, isDefaultHome, recordLastSession, throwawayIdle } from '../../../scripts/lib/standard-env.js';
+import {
+  standardEnv, homeOf, homeLabel, isDefaultHome, sameFolder, recordLastSession, touchLastSession, lastSessionAt, throwawayIdle, TOUCH_GAP_MS,
+} from '../../../scripts/lib/standard-env.js';
 
 const starting = {
   HOME: '/Users/someone', PATH: '/usr/bin:/bin', LANG: 'en_AU.UTF-8', ANTHROPIC_BASE_URL: 'https://x.invalid', CLAUDE_CODE_ENTRYPOINT: 'cli', FOO: 'bar', ANTHROPIC_API_KEY: 'k',
@@ -73,4 +75,43 @@ test('a throwaway home is idle an hour after its last session; the default home 
   assert.equal(throwawayIdle(usual, { now: () => new Date(at.getTime() + 61 * 60 * 1000), homedir: user }), false, 'the default home');
   fs.writeFileSync(path.join(home, 'last-session.json'), '{ not json');
   assert.equal(throwawayIdle(home, { now: () => new Date(at.getTime() + 9 * 3600 * 1000) }), false, 'a record that does not read');
+});
+
+test('a home under the person\'s home folder is written from ~, so a lock or record names no user, and read back whole', () => {
+  const user = path.join(path.sep, 'Users', 'someone');
+  assert.equal(homeLabel(path.join(user, '.wheelhouse'), { homedir: user }), `~${path.sep}.wheelhouse`);
+  assert.equal(homeLabel(user, { homedir: user }), '~');
+  assert.equal(homeLabel(path.join(path.sep, 'srv', 'wh'), { homedir: user }), path.join(path.sep, 'srv', 'wh'));
+  assert.equal(homeOf(`12\n${homeLabel(path.join(user, 'trial'), { homedir: user })}\n`, { homedir: user }), path.join(user, 'trial'));
+  assert.equal(homeOf({ home: '~' }, { homedir: user }), user);
+});
+
+test('the default home is the same through a link to it or in another case on macOS and Windows', () => {
+  const user = fs.realpathSync(tempFolder('wh-user-'));
+  const usual = path.join(user, '.wheelhouse');
+  fs.mkdirSync(usual);
+  const link = path.join(user, 'linked');
+  fs.symlinkSync(usual, link);
+  assert.equal(isDefaultHome(link, { homedir: user }), true, 'a link to it');
+  assert.equal(isDefaultHome(path.join(user, '.WheelHouse'), { homedir: user, platform: 'darwin' }), true);
+  assert.equal(isDefaultHome(path.join(user, '.WheelHouse'), { homedir: user, platform: 'win32' }), true);
+  assert.equal(sameFolder('/a/.WheelHouse', '/a/.wheelhouse', { platform: 'linux' }), false);
+  recordLastSession(link, { now: () => new Date('2026-11-24T00:00:00.000Z') });
+  assert.equal(throwawayIdle(link, { now: () => new Date('2026-11-25T00:00:00.000Z'), homedir: user }), false, 'never idle through a link');
+});
+
+test('a session\'s tool calls keep the last-session time, at most once in the gap, and never make a home again', () => {
+  const home = path.join(tempFolder('wh-touch-'), 'trial');
+  const t0 = new Date('2026-11-24T09:00:00.000Z').getTime();
+  assert.equal(touchLastSession(home, { now: () => new Date(t0) }), false, 'no home');
+  assert.equal(fs.existsSync(home), false);
+  fs.mkdirSync(home);
+  assert.equal(touchLastSession(home, { now: () => new Date(t0) }), true);
+  assert.equal(touchLastSession(home, { now: () => new Date(t0 + TOUCH_GAP_MS - 1) }), false, 'within the gap');
+  assert.equal(lastSessionAt(home), t0);
+  assert.equal(touchLastSession(home, { now: () => new Date(t0 + TOUCH_GAP_MS) }), true);
+  assert.equal(lastSessionAt(home), t0 + TOUCH_GAP_MS);
+  assert.equal(touchLastSession(home, { now: () => new Date(t0 + TOUCH_GAP_MS + 1), gapMs: 0 }), true, 'a session end always writes');
+  // A long session keeps a throwaway home from going idle.
+  assert.equal(throwawayIdle(home, { now: () => new Date(t0 + TOUCH_GAP_MS + 59 * 60 * 1000) }), false);
 });

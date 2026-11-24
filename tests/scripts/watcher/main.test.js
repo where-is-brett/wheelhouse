@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { runWatcher, healthFile, lockFile, projectConfig, cliOptions } from '../../../scripts/watcher/main.js';
+import { runWatcher, healthFile, lockFile, projectConfig, cliOptions, RECHECK_MS } from '../../../scripts/watcher/main.js';
 import { recordHandled } from '../../../scripts/watcher/handled.js';
 import { PLUGIN_ROOT, foremanCommands, foremanTools } from '../../../scripts/foreman/tools.js';
 import {
@@ -529,7 +529,7 @@ test('a watcher whose project isn\'t registered in its home exits on its next ti
   const before = fs.readdirSync(outside);
   const answer = await runWatcher({
     project: P, config: config(), waker: fakeWaker(), loops: 5, log: quiet, observe: looks.observe,
-    sleep: async () => { fs.rmSync(path.join(home, 'projects', P, 'project.json')); },
+    sleep: async () => { fs.rmSync(path.join(home, 'projects', P, 'project.json'), { force: true }); },
   });
   assert.equal(answer.started, true);
   assert.equal(answer.loops, 1, 'it stopped on the tick after the registration went');
@@ -582,4 +582,48 @@ test('a home with no session recorded is not stopped for idleness', () => regist
   });
   assert.equal(answer.stopped, undefined);
   assert.equal(answer.loops, 4, 'it ran every loop');
+}));
+
+test('a registration that does not read, or is gone for a moment only, never stops the watcher', () => registeredHome(async (home) => {
+  const folder = checkout();
+  const record = readProject(P);
+  const file = path.join(home, 'projects', P, 'project.json');
+  let sleeps = 0;
+  const answer = await runWatcher({
+    project: P, config: config(), waker: fakeWaker(), loops: 4, log: quiet, observe: looker([]).observe,
+    sleep: async (ms) => {
+      sleeps += 1;
+      if (sleeps === 1) fs.writeFileSync(file, '{ half written'); // caught mid-write
+      if (sleeps === 2) fs.rmSync(file); // removed and written again, as a re-registration does
+      if (ms === RECHECK_MS) writeProject(P, { ...record, folder });
+    },
+  });
+  assert.equal(answer.stopped, undefined);
+  assert.equal(answer.loops, 4);
+}));
+
+test('the default home\'s watcher is never stopped for idleness, even through a link to it', () => withHome(async (home) => {
+  // A person's home folder whose .wheelhouse is reached through a link, and the default home's session record old.
+  const user = tempFolder('wh-user-');
+  const usual = path.join(user, '.wheelhouse');
+  fs.mkdirSync(usual);
+  fs.rmSync(home, { recursive: true, force: true });
+  fs.symlinkSync(usual, home);
+  checkout();
+  const os = await import('node:os');
+  const { recordLastSession } = await import('../../../scripts/lib/standard-env.js');
+  const c = clock();
+  recordLastSession(home, { now: c.now });
+  const homedir = os.default.homedir;
+  os.default.homedir = () => user;
+  try {
+    const answer = await runWatcher({
+      project: P, config: config(), waker: fakeWaker(), loops: 5, log: quiet, observe: looker([]).observe, now: c.now, sleep: c.sleep,
+      intervals: { features: 30 * 60 * SEC },
+    });
+    assert.equal(answer.stopped, undefined);
+    assert.equal(answer.loops, 5);
+  } finally {
+    os.default.homedir = homedir;
+  }
 }));

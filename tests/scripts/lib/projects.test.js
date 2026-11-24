@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { namesOf, readProject, writeProject, projectForFolder, projectHeld } from '../../../scripts/lib/projects.js';
+import { namesOf, readProject, writeProject, projectForFolder, projectHeld, projectRegistered } from '../../../scripts/lib/projects.js';
 import { as, shortHome } from '../../helpers/homes.js';
 
 const CONNECTION = { host: 'github', mode: 'narrow', project: 'Owner/Name' };
@@ -174,5 +174,17 @@ test('held: true is kept and read, and a record without it is not held', async (
     assert.equal(projectHeld('shop'), true);
     assert.throws(() => writeProject('shop', record({ held: 'yes' })), /held mark/);
     assert.equal(projectHeld('missing'), false);
+  });
+});
+
+test('a registration is gone only when its file is not there: one that does not read or check is still registered', async () => {
+  await as(shortHome(), async () => {
+    assert.equal(projectRegistered('shop'), false);
+    writeProject('shop', record());
+    assert.equal(projectRegistered('shop'), true);
+    const file = path.join(process.env.WHEELHOUSE_HOME, 'projects', 'shop', 'project.json');
+    fs.writeFileSync(file, '{ half written');
+    assert.equal(readProject('shop'), null);
+    assert.equal(projectRegistered('shop'), true, 'a record caught mid-write is not a project removed');
   });
 });

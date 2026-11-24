@@ -90,6 +90,18 @@ export function readProject(project) {
   }
 }
 
+// Whether the project is registered in this home: true when its project.json is there, false only when the file or its
+// folder is not there at all, and null when that can't be told (a read that fails for another reason). A record that is
+// there but doesn't read is registered: a write under way or a damaged file is not the project's removal.
+export function projectRegistered(project) {
+  try {
+    fs.statSync(path.join(projectFolder(project), 'project.json'));
+    return true;
+  } catch (error) {
+    return error?.code === 'ENOENT' || error?.code === 'ENOTDIR' ? false : null;
+  }
+}
+
 // Whether the project is held: `held: true` in its registration. A project whose record can't be read is not held here
 // (it has no watcher for that other reason).
 export function projectHeld(project) {

@@ -8,7 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import {
-  ownFilesBaseline, ownFilesChanged, checkOwnFiles, ownFilesLine, readOwnFilesState, pluginFoldersInUse, recordUpdate, changedForProject, fileHash, ownFilesFile, acceptOwnFiles,
+  ownFilesBaseline, ownFilesChanged, checkOwnFiles, ownFilesLine, readOwnFilesState, pluginFoldersInUse, recordUpdate, changedForProject, fileHash, ownFilesFile, acceptOwnFiles, acceptOwnWritesSince, SHRINK_LINE,
 } from '../../../scripts/health/own-files.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { g } from '../../helpers/git-fixture.js';
@@ -97,12 +97,52 @@ test('a write that would shrink own-files.json by more than half is refused and 
     for (const file of [l.files.hook, l.files.agent, l.files.settings, l.files.cleanHook, l.files.cleanSettings, l.files.addon, l.files.login]) fs.rmSync(file);
     acceptOwnFiles({ ...l, now: day(5) });
     const named = await checkOwnFiles({ ...l, now: day(5) });
-    assert.match(named.refused, /refused to shrink/);
+    assert.equal(named.refused, SHRINK_LINE);
+    assert.match(named.refused, /run Wheelhouse's setup again/, 'the line gives the way out');
     const after = readOwnFilesState();
     assert.equal(Object.keys(after.others.files).length, kept, 'the list stays as it was');
     assert.ok(after.shrinkRefused.to * 2 < after.shrinkRefused.from);
+    assert.equal((await checkOwnFiles({ ...l, now: day(9) })).refused, SHRINK_LINE, 'named at each look until setup runs again');
     fs.rmSync(ownFilesFile());
     assert.equal(readOwnFilesState(), null, 'uninstall removes the file whole');
+  });
+});
+
+test('after a refused shrink, setup run again takes the new list and the board line clears', async () => {
+  const l = layout();
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...l, now: day(2) });
+    for (const file of [l.files.hook, l.files.agent, l.files.settings, l.files.cleanHook, l.files.cleanSettings, l.files.addon, l.files.login]) fs.rmSync(file);
+    acceptOwnFiles({ ...l, now: day(5) });
+    assert.ok(readOwnFilesState().shrinkRefused);
+    acceptOwnWritesSince({ ...l, since: day(5)().toISOString(), now: day(5) });
+    const state = readOwnFilesState();
+    assert.equal(state.shrinkRefused, undefined);
+    assert.ok(Object.keys(state.others.files).length < 4, 'the smaller list is taken');
+    assert.equal((await checkOwnFiles({ ...l, now: day(9) })).refused, undefined);
+  });
+});
+
+test('setup\'s own removal of many files in one run is taken, not refused', async () => {
+  const l = layout();
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...l, now: day(2) });
+    const since = new Date(Date.now() - 1000).toISOString();
+    for (const file of [l.files.hook, l.files.agent, l.files.settings, l.files.cleanHook, l.files.cleanSettings, l.files.addon, l.files.login]) fs.rmSync(file);
+    acceptOwnWritesSince({ ...l, since });
+    assert.equal(readOwnFilesState().shrinkRefused, undefined);
+  });
+});
+
+test('a state in the old flat shape is not counted as a list to shrink from', async () => {
+  const l = layout();
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    fs.mkdirSync(path.dirname(ownFilesFile()), { recursive: true });
+    const many = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`/old/file-${i}`, 'x']));
+    fs.writeFileSync(ownFilesFile(), JSON.stringify({ at: day(1)().toISOString(), files: many }));
+    const look = await checkOwnFiles({ ...l, now: day(2) });
+    assert.equal(look.refused, undefined);
+    assert.equal(readOwnFilesState().shrinkRefused, undefined);
   });
 });
 

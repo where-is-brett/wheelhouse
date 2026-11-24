@@ -61,23 +61,49 @@ export function standardEnv({
   return out;
 }
 
+// How a home is written in a lock or a record: under the person's home folder it is written from `~`, so the file names
+// no user. homeOf reads it back.
+export function homeLabel(home, { homedir = os.homedir() } = {}) {
+  const resolved = path.resolve(home);
+  const rel = path.relative(path.resolve(homedir), resolved);
+  if (rel === '') return '~';
+  if (!rel.startsWith('..') && !path.isAbsolute(rel)) return `~${path.sep}${rel}`;
+  return resolved;
+}
+
 // The home a lock's text or a record names, or null: a lock holds the process id on its first line and the home on its
-// second; a record (helper.json) holds `home`.
-export function homeOf(lockOrRecord) {
-  if (typeof lockOrRecord === 'string') {
-    const home = lockOrRecord.split(/\r?\n/)[1];
-    return typeof home === 'string' && home.trim() !== '' ? home.trim() : null;
-  }
-  return typeof lockOrRecord?.home === 'string' && lockOrRecord.home !== '' ? lockOrRecord.home : null;
+// second; a record (helper.json) holds `home`. One written from `~` is read against the person's home folder.
+export function homeOf(lockOrRecord, { homedir = os.homedir() } = {}) {
+  const named = typeof lockOrRecord === 'string' ? lockOrRecord.split(/\r?\n/)[1]?.trim() : lockOrRecord?.home;
+  if (typeof named !== 'string' || named === '') return null;
+  if (named === '~') return path.resolve(homedir);
+  if (/^~[\\/]/.test(named)) return path.join(path.resolve(homedir), named.slice(2));
+  return named;
 }
 
-// Whether `home` is the default Wheelhouse home, `.wheelhouse` in the person's home folder.
-export function isDefaultHome(home, { homedir = os.homedir() } = {}) {
-  return path.resolve(home) === path.resolve(path.join(homedir, '.wheelhouse'));
+// Whether two paths name the same folder: by their real paths where they resolve (a link is followed), and without
+// telling case apart on macOS and Windows, whose usual disks don't.
+export function sameFolder(a, b, { platform = process.platform } = {}) {
+  const real = (p) => {
+    try { return fs.realpathSync.native(p); } catch { return null; }
+  };
+  const fold = (p) => (platform === 'darwin' || platform === 'win32' ? p.toLowerCase() : p);
+  const ra = real(a);
+  const rb = real(b);
+  if (ra !== null && rb !== null && fold(ra) === fold(rb)) return true;
+  return fold(path.resolve(a)) === fold(path.resolve(b));
 }
 
-// A throwaway home's processes stop an hour after the last session of that home ends (design 12A.2): a session's start
-// records the time here, in the home, and the watcher reads it.
+// Whether `home` is the default Wheelhouse home, `.wheelhouse` in the person's home folder. A link to it, or the same path
+// in another case on macOS or Windows, is the default home too: a watcher of the default home never takes it for a
+// throwaway one.
+export function isDefaultHome(home, { homedir = os.homedir(), platform = process.platform } = {}) {
+  return sameFolder(home, path.join(homedir, '.wheelhouse'), { platform });
+}
+
+// A throwaway home's processes stop an hour after the last session of that home ends (design 12A.2): a session's start,
+// and its tool calls and its end (touchLastSession), record the time here, in the home, and the watcher reads it. The
+// record holds the time alone.
 export const LAST_SESSION_FILE = 'last-session.json';
 export const THROWAWAY_IDLE_MS = 60 * 60 * 1000;
 
@@ -91,7 +117,18 @@ export function recordLastSession(home, { now = () => new Date() } = {}) {
   }
 }
 
-// When a session of the home last started (ms), or null when none is recorded or the record doesn't read.
+// Records the time as recordLastSession does, unless a time under `gapMs` old is recorded already: a session's hooks call
+// it on every tool call, so a long session keeps its home's processes running without writing at each call.
+export const TOUCH_GAP_MS = 5 * 60 * 1000;
+// A home that isn't there is not made again here.
+export function touchLastSession(home, { now = () => new Date(), gapMs = TOUCH_GAP_MS } = {}) {
+  if (!fs.existsSync(home)) return false;
+  const at = lastSessionAt(home);
+  if (at !== null && now().getTime() - at >= 0 && now().getTime() - at < gapMs) return false;
+  return recordLastSession(home, { now });
+}
+
+// When a session of the home last ran (ms), or null when none is recorded or the record doesn't read.
 export function lastSessionAt(home) {
   try {
     const at = Date.parse(JSON.parse(fs.readFileSync(path.join(home, LAST_SESSION_FILE), 'utf8'))?.at);
@@ -103,8 +140,8 @@ export function lastSessionAt(home) {
 
 // Whether a throwaway home has been idle past the hour: not the default home, with a recorded session older than that.
 // A home with no record is not idle: the processes are left to end by the other rules.
-export function throwawayIdle(home, { now = () => new Date(), homedir } = {}) {
-  if (isDefaultHome(home, homedir === undefined ? {} : { homedir })) return false;
+export function throwawayIdle(home, { now = () => new Date(), homedir, platform } = {}) {
+  if (isDefaultHome(home, { ...(homedir === undefined ? {} : { homedir }), ...(platform === undefined ? {} : { platform }) })) return false;
   const at = lastSessionAt(home);
   return at !== null && now().getTime() - at > THROWAWAY_IDLE_MS;
 }

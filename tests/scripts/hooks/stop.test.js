@@ -12,6 +12,7 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { stopState, setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { seatFile, readSeat } from '../../../scripts/lib/first-mate-seat.js';
 import { bypassDir } from '../../../scripts/lib/paths.js';
+import { lastSessionAt, LAST_SESSION_FILE } from '../../../scripts/lib/standard-env.js';
 
 const temp = (prefix) => fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 
@@ -929,3 +930,24 @@ test('under STOP a launcher session runs no shell command, the bare launcher and
   });
 });
 
+
+test('a tool call in a project keeps its home\'s last-session time, and a call outside one does not', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    const stranger = temp('wh-stop-out-');
+    try {
+      await guard(call(stranger, 'Read'), deps(stranger));
+      assert.equal(fs.existsSync(path.join(home, LAST_SESSION_FILE)), false);
+      const before = Date.now();
+      await guard(call(main, 'Read'), deps(base));
+      assert.ok(lastSessionAt(home) >= before - 1000, 'the time of the call');
+      // At the session's end it is written whatever the gap.
+      fs.writeFileSync(path.join(home, LAST_SESSION_FILE), `${JSON.stringify({ at: new Date(Date.now() - 1000).toISOString() })}\n`);
+      await guard({ cwd: main, session_id: 'sess-1', hook_event_name: 'SessionEnd' }, { ...deps(base), event: 'SessionEnd' });
+      assert.ok(lastSessionAt(home) >= before, 'written at the end');
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+      fs.rmSync(stranger, { recursive: true, force: true });
+    }
+  });
+});
