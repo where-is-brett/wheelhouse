@@ -52,7 +52,6 @@ import { isOlder } from '../host/retire-helper.js';
 import { caEnv } from '../host/company-ca.js';
 import { stopState, NO_HELPER_STOP } from '../lib/stop.js';
 import { jobFolder, wheelhouseHome, stateDir, computerId } from '../lib/paths.js';
-import { standardEnv } from '../lib/standard-env.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../lib/platform-lines.js';
 import { buildsShown, settingKey } from '../protection/windows-builds.js';
 import { listEvents, makeEvent } from '../state/events.js';
@@ -318,6 +317,8 @@ async function ensureHelper(client, { spawn, pluginRoot, waitMs, pause, end }) {
     // Started in Wheelhouse's own folder, never in the session's.
     const home = wheelhouseHome();
     fs.mkdirSync(home, { recursive: true });
+    // Read when the helper starts, which is rare: the session start's other work doesn't need it.
+    const { standardEnv } = await import('../lib/standard-env.js');
     const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'host', 'helper-main.js')], { cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore', env: { ...standardEnv({ home }), ...caEnv(home) } });
     child?.unref?.();
     child?.on?.('error', () => {});
