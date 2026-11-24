@@ -64,9 +64,12 @@ export async function checkTarget({ tag, sha, run = defaultRun, mirror }) {
     const tagged = await git(['rev-parse', '--verify', '-q', `${tagRefFor(tag)}^{commit}`], { input: '' });
     if (tagged.code !== 0) return refuse(RELEASE_WHY.fetch);
     if (tagged.stdout.trim() !== sha) return refuse(RELEASE_WHY.commit);
-    let version = null;
-    try { version = JSON.parse(await readAtTag(git, tag, PLUGIN_FILE))?.version ?? null; } catch { /* unreadable */ }
-    if (typeof version !== 'string') return refuse(`the release's ${PLUGIN_FILE} can't be read`);
+    let plugin = null;
+    try { plugin = JSON.parse(await readAtTag(git, tag, PLUGIN_FILE)); } catch { /* unreadable */ }
+    const version = plugin?.version ?? null;
+    if (plugin === null || typeof plugin !== 'object') return refuse(`the release's ${PLUGIN_FILE} can't be read`);
+    // A tag cut from the main line, whose plugin.json names no version, is not a release.
+    if (typeof version !== 'string') return refuse(`the release's ${PLUGIN_FILE} names no version`);
     if (version !== tag.slice(1)) return { ...refuse(`the tag ${tag} holds a plugin that says it is version ${version}`), version };
     let manifest = null;
     try { manifest = JSON.parse(await readAtTag(git, tag, MANIFEST_PATH)); } catch { /* an old release may have none */ }

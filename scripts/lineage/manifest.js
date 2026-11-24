@@ -317,6 +317,10 @@ export async function verifyManifest({ root = repoRoot(), fetchTo = fetchUpstrea
   if (named(upstreams) !== named(manifest.upstreams)) breaks(`the pins in scripts/lineage/manifest.js are not the manifest's: write the manifest again`);
   if (JSON.stringify(manifest.agents ?? null) !== JSON.stringify(agentPins(pins))) breaks(`the agents' pins in scripts/agents/pins.js are not the manifest's: write the manifest again`);
   if (manifest.engine !== undefined) breaks('the manifest still carries the build engine\'s pins: write the manifest again');
+  // The gate stamps provenance with plugin.json's version and compares it with the manifest's, so the two must agree: a
+  // release commit names its release in both, the main line 'dev' in both. A root with no plugin.json has nothing to compare.
+  const own = pluginVersion(root);
+  if (own !== null && own !== manifest.wheelhouse.version) breaks(`the manifest names Wheelhouse ${manifest.wheelhouse.version} but plugin.json makes it ${own}: write the manifest again`);
   say(broken.length === 0 ? 'lineage ok' : `lineage broken: ${broken.length}`);
   return { ok: broken.length === 0, broken };
 }

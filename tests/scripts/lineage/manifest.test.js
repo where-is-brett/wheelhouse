@@ -350,6 +350,21 @@ test('the manifest carries no build engine pins, and verifyManifest catches one 
   ]);
 });
 
+test('verifyManifest breaks when the manifest\'s Wheelhouse version is not plugin.json\'s, release or main line', async () => {
+  const { dir, root } = verifiable();
+  const copy = async (upstream, into) => fs.cpSync(dir, into, { recursive: true });
+  const version = readManifest(root).wheelhouse.version;
+  write(root, { '.claude-plugin/plugin.json': JSON.stringify({ name: 'wheelhouse', version }) });
+  assert.deepEqual((await verifyManifest({ root, fetchTo: copy, upstreams: [TINY] })).broken, []);
+  write(root, { '.claude-plugin/plugin.json': JSON.stringify({ name: 'wheelhouse' }) });
+  assert.deepEqual((await verifyManifest({ root, fetchTo: copy, upstreams: [TINY] })).broken, [
+    `the manifest names Wheelhouse ${version} but plugin.json makes it dev: write the manifest again`,
+  ]);
+  const file = path.join(root, 'lineage', 'manifest.json');
+  fs.writeFileSync(file, `${JSON.stringify({ ...readManifest(root), wheelhouse: { version: 'dev' } }, null, 2)}\n`);
+  assert.deepEqual((await verifyManifest({ root, fetchTo: copy, upstreams: [TINY] })).broken, []);
+});
+
 test('the manifest in the repository carries no build engine pins', () => {
   assert.equal(readManifest().engine, undefined);
 });

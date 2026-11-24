@@ -232,10 +232,14 @@ test('the playbook shows uninstall\'s list when its card points to status, and s
 
 test('the README gives the Node.js line and the install commands as they are, at the plugin\'s release', () => {
   assert.ok(readme.includes(NODE_LINE), 'NODE_LINE');
-  // The main line names no version; the README's own comment names the release being prepared.
-  const version = JSON.parse(read('.claude-plugin/plugin.json')).version ?? /Until v(\d+\.\d+\.\d+) is tagged/.exec(readme)?.[1];
-  // Until the release is tagged, the README installs from main; the tag line waits in a comment beside it.
+  // The main line names no version: the README's own comment names the release being prepared, or, once it is tagged,
+  // the install line names it.
   const uncommented = readme.replace(/<!--[\s\S]*?-->/g, '');
+  const version = JSON.parse(read('.claude-plugin/plugin.json')).version
+    ?? /Until v(\d+\.\d+\.\d+) is tagged/.exec(readme)?.[1]
+    ?? /wheelhouse#v(\d+\.\d+\.\d+)"/.exec(uncommented)?.[1];
+  assert.ok(version, 'the README names the release it installs or is preparing');
+  // Until the release is tagged, the README installs from main; the tag line waits in a comment beside it.
   const tagged = INSTALL_COMMANDS.every((command) => uncommented.includes(command.replace('<tag>', `v${version}`)));
   const fromMain = INSTALL_COMMANDS.every((command) => readme.includes(command.replace('<tag>', 'main')))
     && readme.includes(`<!-- Until v${version} is tagged, the line above installs from main. Once tagged, restore: ${INSTALL_COMMANDS[0].replace('<tag>', `v${version}`)} -->`);

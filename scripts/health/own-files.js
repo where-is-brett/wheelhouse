@@ -125,6 +125,8 @@ export function ownFilesChanged(baseline, now) {
 export const fileHash = (file, read = fs.readFileSync) => hashOf(file, read);
 
 const versionOf = pluginVersion;
+// A version that names a release, so has a tag to check against.
+const RELEASE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 const bareVersion = (v) => String(v ?? '').replace(/^v/, '');
 
@@ -365,8 +367,9 @@ export async function checkOwnFiles({ now = () => new Date(), claudeHome, projec
       nextFolders[f.folder] = kept;
       continue;
     }
-    // A version move, or a folder not seen before: accepted only against the tag's tree.
-    const tree = f.version === null ? null : await treeOf(f.version);
+    // A version move, or a folder not seen before: accepted only against the tag's tree. A build from the main line
+    // (its version a commit or DEV_VERSION) has no tag, so it can't be checked and nothing is fetched for it.
+    const tree = typeof f.version === 'string' && RELEASE.test(f.version) ? await treeOf(f.version) : null;
     if (tree === null) continue; // can't be checked now: nothing accepted, nothing named, looked at again
     const verdict = matchesTree(f.folder, tree);
     if (!verdict.ok) { changedBy.set(f.folder, verdict.bad); continue; }
