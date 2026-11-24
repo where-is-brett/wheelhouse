@@ -7,6 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { invocation, resolveClaude, resolveCommand, recordClaudePath, pathWithClaude, readRecordedClaude, readRecordedLaunch, recordedClaudeFault } from '../../../scripts/lib/claude.js';
 import { featureStartCall } from '../../../adapters/claude-code/sessions.js';
+import { BUILDER_PROMPT_LEAD } from '../../../scripts/foreman/prompt-lead.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 const has = (...files) => (file) => files.includes(file);
@@ -185,5 +186,5 @@ test('sessionEnv still drops ANTHROPIC_BASE_URL with a launch command (review fo
   assert.equal(call.env.CLAUDE_CODE_ENTRYPOINT, undefined);
   assert.equal(call.env.ANTHROPIC_API_KEY, 'k');
   assert.equal(call.args[0], 'claude');
-  assert.deepEqual(call.args.slice(1, 5), ['-p', 'p', '--session-id', 'abc']);
+  assert.deepEqual(call.args.slice(1, 5), ['-p', `${BUILDER_PROMPT_LEAD} p`, '--session-id', 'abc']);
 });

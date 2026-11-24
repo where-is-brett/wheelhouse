@@ -8,7 +8,7 @@ import { spawnSync, spawn as spawnChild } from 'node:child_process';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
-  decide, toolSheetLines, NO_HELPER, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
+  decide, toolSheetLines, cardCommandLines, NO_HELPER, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
   importedLine, importFailedLine, keptLine, NOT_SET_UP, TITLES, sessionTitle, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, NO_ANSWER, NO_REASON, heldElsewhere, TAKEOVER_ASK, SEAT_TAKEOVER_ASK, RECENT_MS,
 } from '../../../scripts/hooks/session-start.js';
 import { SETTINGS_CHANGED, settingsCardNote } from '../../../scripts/lib/settings-card.js';
@@ -48,6 +48,7 @@ import { journalFile } from '../../../scripts/lib/setup-run.js';
 import { beforeTimer, nodeStartMs } from '../../helpers/until.js';
 import { searchPathIn } from '../../helpers/env.js';
 import { makeFeatureFolder } from '../../helpers/made-feature.js';
+import { CARD_COMMANDS_LEAD } from '../../../scripts/lib/card-commands.js';
 
 const P = 'owner__name';
 
@@ -96,7 +97,7 @@ const text = (out) => out?.hookSpecificOutput?.additionalContext ?? '';
 // The context without the tool sheet and the command line (tests/skills/tool-names.test.js pins those),
 // for the tests that pin the other lines of a short reload exactly.
 const SHEET_LINES = new Set(toolSheetLines('claude-code', { pluginRoot: PLUGIN_ROOT, platform: 'darwin' }));
-const withoutSheet = (out) => text(out).split('\n').filter((l) => !SHEET_LINES.has(l) && !l.startsWith('The Wheelhouse command is ')).join('\n');
+const withoutSheet = (out) => text(out).split('\n').filter((l) => !SHEET_LINES.has(l) && !l.startsWith('The Wheelhouse command is ') && !l.startsWith('The First Mate\'s card commands')).join('\n');
 const call = (cwd, tool) => ({ cwd, session_id: 's1', hook_event_name: 'PreToolUse', tool_name: tool, tool_input: {} });
 
 test('a helper that answers is not started again', async () => {
@@ -1164,6 +1165,43 @@ test('the session start fails open when the configuration can\'t be had', async 
     f.client.config = async () => shapeConfig(1);
     await run(f);
     assert.equal(watcherStarts(f).length, 0);
+  });
+});
+
+test('a set-up project\'s session start holds the exact card command lines, and a session that is not the First Mate gets none', async () => {
+  await withHome(async () => {
+    const lines = text(await run(fake(), { env: {} })).split('\n');
+    const command = lines.find((l) => l.startsWith('The Wheelhouse command is ')).slice('The Wheelhouse command is '.length);
+    const card = lines.find((l) => l.startsWith('The First Mate\'s card commands'));
+    assert.ok(card, 'the card command line is given');
+    for (const word of [`\`${command} cards\``, `\`${command} card < <the card's file>\``, `\`${command} again <n>\``]) assert.ok(card.includes(word), word);
+    assert.deepEqual(cardCommandLines(['no command here']), []);
+  });
+});
+
+test('the card command lines reach the First Mate on every start: new, resumed, cleared and compacted', async () => {
+  await withHome(async () => {
+    for (const source of ['startup', 'resume', 'clear', 'compact']) {
+      const lines = text(await run(fake(), { env: {} }, { source })).split('\n');
+      assert.equal(lines.filter((l) => l.startsWith(CARD_COMMANDS_LEAD)).length, 1, source);
+    }
+  });
+});
+
+test('on an agent whose hooks only read, the First Mate gets the card command lines and an aside gets none', async () => {
+  await withHome(async () => {
+    const first = text(await readOnly(seatHelper())).split('\n');
+    const command = first.find((l) => l.startsWith('The Wheelhouse command is ')).slice('The Wheelhouse command is '.length);
+    const card = first.filter((l) => l.startsWith(CARD_COMMANDS_LEAD));
+    assert.equal(card.length, 1);
+    assert.ok(card[0].includes(`\`${command} cards\``));
+    assert.ok(first.indexOf(card[0]) === first.indexOf(`The Wheelhouse command is ${command}`) + 1, 'straight after the tool sheet');
+  });
+  await withHome(async () => {
+    putSeat(seatLine('a', 4));
+    const aside = text(await readOnly(seatHelper()));
+    assert.ok(aside.includes(asideFirst('4 minutes ago')));
+    assert.ok(!aside.includes(CARD_COMMANDS_LEAD), 'not for an aside');
   });
 });
 

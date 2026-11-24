@@ -27,6 +27,7 @@ import { isHeld, provenanceFile, readAgentHold } from '../../../../scripts/linea
 import { makeEvent } from '../../../../scripts/state/events.js';
 import { makeWaker } from '../../../../scripts/watcher/waker.js';
 import { readBaseline, writeBaseline } from '../../../../scripts/watcher/control-files.js';
+import { BUILDER_PROMPT_LEAD } from '../../../../scripts/foreman/prompt-lead.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const NODE = process.execPath;
@@ -154,6 +155,20 @@ test("on a plan with model choice the Copilot column's model is passed, and one 
   assert.throws(() => on.checkFeature({ agentRouting: { copilot: { builder: '--yolo' } } }), /can't be passed to copilot/);
   assert.throws(() => on.checkForeman({ agentRouting: { copilot: { foreman: 'a model' } } }), /can't be passed to copilot/);
   assert.doesNotThrow(() => part().checkFeature({ agentRouting: { copilot: { builder: '--yolo' } } }), 'nothing is read on an Auto-only plan');
+}));
+
+test('a Copilot builder is started and woken with the builder lead first, once, so its hooks know its role', () => withHome(async () => {
+  const on = part();
+  await on.prepare({ project: P, target: 'feature-login' });
+  const id = 'a1b2c3d4-0000-4000-8000-000000000009';
+  const shared = { config: CONFIG, project: P, work: 'login', env: { PATH: '/bin' }, copilot: { kind: 'direct', file: '/bin/copilot' }, ...LEVEL_INPUTS() };
+  for (const call of [on.featureStartCall({ ...shared, prompt: 'Go.', sessionId: id }), on.featureResumeCall({ ...shared, prompt: 'Go.', sessionId: id })]) {
+    assert.equal(valueOf(call.args, '-p'), `${BUILDER_PROMPT_LEAD} Go.`);
+  }
+  const led = on.featureStartCall({ ...shared, prompt: `${BUILDER_PROMPT_LEAD} Go.`, sessionId: id });
+  assert.equal(valueOf(led.args, '-p'), `${BUILDER_PROMPT_LEAD} Go.`, 'never doubled');
+  await on.prepare({ project: P, target: 'foreman' });
+  assert.equal(valueOf(on.foremanCall({ config: CONFIG, project: P, prompt: 'Go.', env: { PATH: '/bin' }, copilot: { kind: 'direct', file: '/bin/copilot' } }).args, '-p'), 'Go.', 'not the foreman');
 }));
 
 test('no argument starts a session trusted or with every permission, whatever a caller passes', () => {
@@ -410,7 +425,7 @@ test('the waker starts a Copilot foreman and a feature, and resumes a feature th
   assert.equal(second.args.includes('--session-id'), false);
   assert.equal(second.args.includes('--model'), false);
   assert.equal(second.env.COPILOT_HOME, first.env.COPILOT_HOME);
-  assert.equal(valueOf(second.args, '-p'), "Carry on from what's there.");
+  assert.equal(valueOf(second.args, '-p'), `${BUILDER_PROMPT_LEAD} Carry on from what's there.`);
   assert.equal(resumed.sessionId, started.sessionId);
   assert.equal(second.output, first.output);
 }));

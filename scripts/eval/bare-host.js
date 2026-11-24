@@ -46,7 +46,7 @@ export async function startBareHost({ root, number = 1, baseFiles = { 'README.md
   const head = await git(work, 'rev-parse', 'HEAD');
   // Read at once, not waited for, so a scenario's pass (which runs at once) can read it.
   const refs = () => {
-    const out = execFileSync('git', ['for-each-ref', '--format=%(refname) %(objectname)'], { cwd: bare, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    const out = execFileSync('git', ['for-each-ref', '--format=%(refname) %(objectname)'], { cwd: bare, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }).trim();
     return Object.fromEntries(out.split('\n').filter(Boolean).map((line) => line.split(' ')));
   };
   return { url: bare, head, refs };

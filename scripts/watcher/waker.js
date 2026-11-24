@@ -147,6 +147,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { DIGEST_CAP } from './core.js';
 import { WALK_CAP, checkControlFiles, markRaised, raisedOf, writeBaseline } from './control-files.js';
 import { controlFilesNamed } from '../cards/build-loop.js';
@@ -163,6 +164,7 @@ import { clearOtherAgentHolds, hasAgentHolds, recordLift } from '../lineage/chec
 import { agentInFolder, agentOfConfig } from '../agents/names.js';
 import { pathWithNode, resolveClaude } from '../lib/claude.js';
 import { storedLaunch } from '../lib/launch-stored.js';
+import { callLine } from './hidden-start.js';
 import { run as runProgram } from '../lib/run.js';
 import { sameStart } from '../lib/start-time.js';
 import { pidAlive, processStartTimes, processStartTime } from '../lib/process-start.js';
@@ -632,18 +634,23 @@ function openOutput(file) {
 }
 
 // Starts `file` with `args` detached from the watcher, with no window; `input`,
-// when given, is written to its stdin. Its output is kept only when `output`
+// when given, is written to its stdin. On Windows it goes through hidden-start.js, started detached: a detached process there
+// has no console, so a console program it started (the cmd.exe a .cmd shim runs through, a hook, a shell) would open a window
+// in view, and one not detached is ended with the watcher (Node's job for its children). Its output is kept only when `output`
 // names a file: its stdout and stderr are appended there (ruling P8-2), and
 // otherwise thrown away. Resolves once the process has started, with its pid
 // and a promise of its exit code.
-export function spawnDetached(file, args, { cwd, env, input = '', windowsVerbatimArguments = false, output = null } = {}) {
+const HIDDEN_START = fileURLToPath(new URL('./hidden-start.js', import.meta.url));
+export function spawnDetached(file, args, { cwd, env, input = '', windowsVerbatimArguments = false, output = null, platform = process.platform } = {}) {
+  const relay = platform === 'win32';
+  const fed = relay ? `${callLine(file, args, windowsVerbatimArguments)}${input}` : input;
   return new Promise((resolve, reject) => {
     let child;
     let fd = null;
     try {
       if (typeof output === 'string') fd = openOutput(output);
-      child = spawn(file, args, {
-        cwd, env, detached: true, windowsHide: true, shell: false, windowsVerbatimArguments, stdio: [input ? 'pipe' : 'ignore', fd ?? 'ignore', fd ?? 'ignore'],
+      child = spawn(relay ? process.execPath : file, relay ? [HIDDEN_START] : args, {
+        cwd, env, detached: true, windowsHide: true, shell: false, windowsVerbatimArguments: relay ? false : windowsVerbatimArguments, stdio: [fed ? 'pipe' : 'ignore', fd ?? 'ignore', fd ?? 'ignore'],
       });
     } catch (error) {
       reject(error);
@@ -655,9 +662,9 @@ export function spawnDetached(file, args, { cwd, env, input = '', windowsVerbati
     const exited = new Promise((done) => { child.once('exit', (code) => done(Number.isInteger(code) ? code : 1)); });
     child.once('error', reject);
     child.once('spawn', () => {
-      if (input) {
+      if (fed) {
         child.stdin.on('error', () => {});
-        child.stdin.end(input);
+        child.stdin.end(fed);
       }
       child.unref();
       resolve({ pid: child.pid, exited });

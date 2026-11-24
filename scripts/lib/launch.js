@@ -23,7 +23,7 @@ export function launch(name, args = process.argv.slice(2), { exit = process.exit
     return exit(2);
   }
   const flags = process.allowedNodeEnvironmentFlags.has('--use-system-ca') ? ['--no-use-system-ca'] : [];
-  const child = spawn(process.execPath, [...flags, path.join(ROOT, LAUNCHERS[name]), ...args], { stdio: 'inherit', env: { ...process.env, [LAUNCHED]: '1' } });
+  const child = spawn(process.execPath, [...flags, path.join(ROOT, LAUNCHERS[name]), ...args], { stdio: 'inherit', windowsHide: true, env: { ...process.env, [LAUNCHED]: '1' } });
   child.on('error', (error) => {
     process.stderr.write(`${name} could not start: ${error.message}\n`);
     exit(1);
