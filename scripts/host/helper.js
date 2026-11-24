@@ -1097,6 +1097,8 @@ export async function startHelper({
   // The folder the merge queue runs in, Wheelhouse's own checkout of the project's fetch mirror (queue-folder.js),
   // unless a test whose engine reads no mirror gives its own: (project) -> { ok, folder } or { ok: false, refused }.
   queueFolder = null,
+  // The check the hourly sign-in look runs while a sign-in fact stands (scripts/setup/builder-sign-in.js); a test gives its own.
+  signInCheck = null,
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -4885,7 +4887,7 @@ export async function startHelper({
   // status answer under STOP; apply is refused. Plan writes under STOP (ruling R19), but only
   // setup's own records: it starts the folder's run when there is none, stamps the card's shownAt
   // and keeps the shown card in setup/shown/. It changes nothing a step lists.
-  const setup = setupRoutes({ now, stopped, stopRefusal: STOP_REFUSAL, stepsModule: setupSteps, userHome, spawn, writeSurvey: writeSetupSurvey });
+  const setup = setupRoutes({ now, stopped, stopRefusal: STOP_REFUSAL, stepsModule: setupSteps, userHome, spawn, writeSurvey: writeSetupSurvey, buildersWith: { live: true, ...(signInCheck ? { check: signInCheck } : {}) } });
   // The baseline from the private note (scripts/measures/baseline.js): per computer, no project.
   // Under STOP, in a project's folder the STOP guard refuses scripts/measures/cli.js, so the front
   // desk can't reach it; a request that arrives all the same may get its card, but nothing is
@@ -7208,9 +7210,21 @@ export async function startHelper({
       pluginRoot,
     });
   }
-  const safekeepingWatch = setInterval(() => { safekeepingRound().catch(() => {}); moveRound().catch(() => {}); watcherRound().catch(() => {}); undoRound().catch(() => {}); }, dispatchMs);
+  // The hourly sign-in look (builders design, section 10.2): while a fact stands, one tiny session a hour checks again, because the
+  // director may sign in without telling Wheelhouse. A passing check clears the fact; the waker sends the held wakes on its next tick.
+  // Loaded when first needed, so a helper with no fact never reads it.
+  let signInLook = null;
+  async function signInRound() {
+    if (signInLook === null) {
+      const { makeHourlyRecheck } = await import('../setup/builder-sign-in.js');
+      const { storedLaunch } = await import('../lib/launch-stored.js');
+      signInLook = makeHourlyRecheck({ home: wheelhouseHome, now, launchFor: () => storedLaunch(), ...(signInCheck ? { check: signInCheck } : {}) });
+    }
+    return signInLook();
+  }
+  const safekeepingWatch = setInterval(() => { safekeepingRound().catch(() => {}); moveRound().catch(() => {}); watcherRound().catch(() => {}); undoRound().catch(() => {}); signInRound().catch(() => {}); }, dispatchMs);
   safekeepingWatch.unref?.();
 
   // `engine.start` is the helper's own way to start a run (the dispatcher's): no route starts one.
-  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() }, safekeeping: { tick: () => safekeepingRound() }, watcher: { tick: () => watcherRound() }, move: { tick: () => moveRound() }, undo: { tick: () => undoRound() } };
+  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() }, safekeeping: { tick: () => safekeepingRound() }, watcher: { tick: () => watcherRound() }, move: { tick: () => moveRound() }, undo: { tick: () => undoRound() }, signIn: { tick: () => signInRound() } };
 }

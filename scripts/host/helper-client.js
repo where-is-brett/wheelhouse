@@ -213,6 +213,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       health: post('/setup/health'), // { folder, lines } -> { ok, green, lines, board, trials, started?, briefing?, requests? }: step 10's board, answered under STOP
       choices: post('/setup/choices'), // { folder } -> { ok, choices }: every choice of the run (design section 15.1), answered under STOP
       change: post('/setup/change'), //   { folder, key } -> { ok, asks }: the card that changes one choice, answered under STOP
+      buildersCheck: post('/setup/builders/check'), //   {} -> { ok: true, cleared } | { ok: false, kind, refused }: the director's "Check again": the builder sign-in check, which clears the sign-in fact only on a pass; refused under STOP
       signIn: post('/setup/sign-in'), //   { folder } -> { ok, line } | { ok: false, refused, detail? }: git's own sign-in for the address step 3 kept on the as-is route, opened once the director chose it on its card; the helper runs git; refused under STOP (`detail` is for the agent alone). The wait is minutes: give the client no short timeout
       // Uninstall (scripts/setup/uninstall.js), naming the folder, a full path.
       uninstall: {
