@@ -337,7 +337,7 @@ test('an existing project with rules: step 5 asks nothing and follows them as th
       [0, 'plan'],
       [1, 'settled'], [2, 'covered'], [3, 'covered'], [4, 'settled'], [5, 'settled'],
     ]);
-    assert.deepEqual(log.filter((e) => e.together).map((e) => e.together), [3, 3, 3, 3, 3, 3], 'asked together on two cards');
+    assert.deepEqual(log.filter((e) => e.together).map((e) => e.together), [4, 4, 4, 4, 3, 3, 3], 'asked together on two cards');
     assert.match(log.find((e) => e.step === 0).card.question, /- Harbour-Log on GitHub, as it is\./);
     assert.ok(!a.calls.some((call) => call[1] === 'repo' && call[2] === 'create' && call[3] === repo));
 
