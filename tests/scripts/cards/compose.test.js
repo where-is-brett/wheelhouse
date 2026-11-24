@@ -227,7 +227,7 @@ test('the default ask for each kind is one line ending in a question mark, or th
     'lift-stop': 'Lift All stop?',
     'ci-push': 'Push this change to the checks?',
     runbook: 'Put the product back to an earlier release?',
-    'approve-work': 'Approve this work as written?',
+    'approve-work': 'Approve this design?',
     amend: 'Change the approved work to this?',
     'lift-incident': 'End the incident?',
     'incident-fix': 'Merge this fix?',
@@ -248,6 +248,10 @@ test('the default ask for each kind is one line ending in a question mark, or th
     }
     assert.equal(card.parts.ask, asks[kind], kind);
     assert.ok(!/[\r\n]/.test(card.parts.ask) && card.parts.ask.endsWith('?'), kind);
+  }
+  // A feature's approval asks about its design; the other lanes ask about the work as written.
+  for (const lane of ['small', 'bug', 'quick']) {
+    assert.equal(composeCard(input('approve-work', { target: { work: 'export-csv', lane, hash: DOC } })).card.parts.ask, 'Approve this work as written?', lane);
   }
   // A runbook step asks its title, whichever step.
   const one = composeCard(input('runbook', { what: 'The emergency steps start with: turn STOP on.', target: { step: 1 } }));

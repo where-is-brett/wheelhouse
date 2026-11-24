@@ -35,6 +35,7 @@ import { accountCatalogue } from './account-settings.js';
 import { runJob } from './job.js';
 import { startFresh, updateSteps } from './run.js';
 import { checkTarget, fetchTag } from './release.js';
+import { releaseVersion } from '../lib/plugin-version.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const ASK_TRIES = 5;
@@ -53,7 +54,7 @@ const readJson = (file) => {
 
 // What the folder this script runs from is: the tag (plugin.json's version) and its commit.
 async function cloneTag({ root, run }) {
-  const version = readJson(path.join(root, '.claude-plugin', 'plugin.json'))?.version;
+  const version = releaseVersion(root);
   // Through the fenced route, never reading the clone's own configuration (it is only the folder the paste fetched).
   const fenced = safeGit({ run, cwd: root, look: 'never' });
   const got = await fenced(['rev-parse', 'HEAD'], { input: '' });

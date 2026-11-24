@@ -1,7 +1,7 @@
 {
   "v": 1,
   "wheelhouse": {
-    "version": "0.3.0"
+    "version": "dev"
   },
   "upstreams": [
     {
