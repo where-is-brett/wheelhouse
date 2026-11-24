@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { readJsonNamed } from './read-json-named.js';
 
 // Where the program `name` is. Elsewhere than Windows the name is enough when it is on the PATH. A
 // process started with a minimal PATH (the helper a LaunchAgent starts, a scheduled start) does not
@@ -55,15 +56,22 @@ function foundOnPosixPath(name, env, exists) {
 export function readRecordedClaude(env = process.env) {
   const home = env.WHEELHOUSE_HOME || (env.HOME ? path.join(env.HOME, '.wheelhouse') : null);
   if (home === null) return null;
+  const file = path.join(home, 'claude-path.json');
   try {
-    const file = path.join(home, 'claude-path.json');
     if (fs.statSync(file).size > 4096) return null;
-    const value = JSON.parse(fs.readFileSync(file, 'utf8'))?.path;
-    return typeof value === 'string' ? value : null;
   } catch {
     return null;
   }
+  // A file that can't be read is unknown, never a path: the fault is kept for whoever names it.
+  const read = readJsonNamed(file);
+  recordedFault = read.ok === false ? read : null;
+  const value = read.ok && !read.missing ? read.value?.path : null;
+  return typeof value === 'string' ? value : null;
 }
+
+// The fault in claude-path.json at the last read, as { file, line, column, hint }; null when it read or isn't there.
+let recordedFault = null;
+export const recordedClaudeFault = () => recordedFault;
 
 function resolvePosix({ name, env, exists, recorded, inside }) {
   if (name !== 'claude' || foundOnPosixPath(name, env, exists) !== null) return { kind: 'direct', file: name };
