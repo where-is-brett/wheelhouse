@@ -183,7 +183,7 @@ const click = (a, { question, options, label }) => a.act(async () => {
 const desk = (a, ...argv) => a.act(async () => {
   let out = '';
   let err = '';
-  const code = await frontDesk(argv, { client: a.client, cwd: a.folder, now: a.clock.now, out: (t) => { out += t; }, err: (t) => { err += t; } });
+  const code = await frontDesk(argv, { client: a.client, cwd: a.folder, now: a.clock.now, env: {}, out: (t) => { out += t; }, err: (t) => { err += t; } });
   if (code !== 0) throw new Error(`frontdesk cli.js ${argv.join(' ')}: ${err.trim()}`);
   return JSON.parse(out);
 });
