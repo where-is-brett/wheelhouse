@@ -184,13 +184,16 @@ export function refresh({
   return said.length === 0 ? null : said.join(' ');
 }
 
+// Nothing stored: the level picked in the chat's own picker is per chat, and every new chat starts on Manual.
+const PICK_LEVEL = "Each new Copilot chat starts on Manual approvals: in the chat's approvals picker choose Assisted, or Allow all if Assisted isn't offered, and never Autopilot.";
+
 // What VS Code's user settings say about the chat's questions and approvals, in one plain line, or null when they are as Wheelhouse
 // needs. Assisted is the level Wheelhouse recommends, else Allow all, never Autopilot; setup writes no permission setting itself.
 // `chat.autoReply` answers every question with no click, and Copilot's askUser setting off means no question is shown. The
 // settings file may hold comments; a file that can't be read or understood says nothing.
 export function questionSettingsLine({ env = process.env, userHome = os.homedir(), platform = process.platform, read = textOf } = {}) {
   const text = read(path.join(homeControlFolders({ home: userHome, platform, env }).at(-1), 'settings.json'));
-  if (text === null) return null;
+  if (text === null) return PICK_LEVEL;
   let settings;
   try {
     settings = JSON.parse(text.replace(/^\s*\/\/.*$/gm, '').replace(/,(\s*[}\]])/g, '$1'));
@@ -206,7 +209,7 @@ export function questionSettingsLine({ env = process.env, userHome = os.homedir(
   if (level === 'allowall' || level === 'bypass' || settings['chat.tools.global.autoApprove'] === true) {
     return 'Your VS Code approvals level is Allow all, so Copilot runs actions without asking; Wheelhouse\'s guards still refuse what they know. Assisted is the better level where VS Code offers it.';
   }
-  return off ? "Your Copilot askUser setting in VS Code is off, so Copilot's questions are not shown to you." : null;
+  return off ? "Your Copilot askUser setting in VS Code is off, so Copilot's questions are not shown to you." : PICK_LEVEL;
 }
 
 // After the hook file: reads the account and keeps the reading. Resolves the line to say. Keeping the reading is the one
