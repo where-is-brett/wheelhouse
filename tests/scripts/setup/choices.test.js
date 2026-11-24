@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import {
-  openChoices, oneCard, setupTime, consentHolds, consentWithdrawn, customiseBatch, aboutOf, actedBy, GO_AHEAD, CUSTOMISE, PER_CARD, USE_GITLAB, gitlabSince, gitlabBatch,
+  openChoices, oneCard, setupTime, consentHolds, consentWithdrawn, customiseBatch, aboutOf, actedBy, GO_AHEAD, CUSTOMISE, PER_CARD, USE_GITLAB, gitlabSince, gitlabBatch, gitlabCard,
 } from '../../../scripts/setup/choices.js';
 import { stepFourDrift, choiceList } from '../../../scripts/setup/redo.js';
 import { COMPANY_GITLAB, NEW_PRODUCT, HOST_LABELS, WAYS, REAL_USERS, STRICTER } from '../../../scripts/setup/host.js';
@@ -363,6 +363,18 @@ test('a click on Put it on GitLab asks where the project is kept alone, until it
   assert.equal(gitlabSince({ '0.plan-0123456789ab': { label: GO_AHEAD, at } }), null);
 });
 
+test('a click on Put it on GitLab asks the where question recommending GitLab, with no word for keeping it here', () => {
+  const entry = { ...keptHereChoice(), card: { what: 'Where?', why: 'It needs no account here.', options: [{ label: KEEP_HERE, says: 'Nothing goes online.' }, { label: 'GitLab', says: 'A private project.' }], recommend: KEEP_HERE, because: 'it is the simplest start' } };
+  const { card } = gitlabCard(entry);
+  assert.equal(card.recommend, 'GitLab');
+  assert.doesNotMatch(JSON.stringify({ why: card.why, because: card.because }), /simplest|no account/);
+  assert.deepEqual(card.options, entry.card.options);
+  assert.equal(entry.card.recommend, KEEP_HERE, 'the entry is not changed');
+  // A card with no GitLab option is as it was.
+  const none = { ...entry, card: { ...entry.card, options: [entry.card.options[0]] } };
+  assert.equal(gitlabCard(none), none);
+});
+
 test('the chat history line says the setting changes, and that older history goes, only where that is true', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-card-history-'));
   try {
@@ -375,6 +387,12 @@ test('the chat history line says the setting changes, and that older history goe
     assert.doesNotMatch(line({ cleanupPeriodDays: 30 }), /deleted|changes/);
     assert.doesNotMatch(line('not json'), /deleted|changes/);
     assert.match(line({ cleanupPeriodDays: 90 }), /30 days of chat history kept \(your Claude Code setting is 90 days, so this changes it, and chats older than 30 days are deleted\)/);
+    // Text that is a number counts as that number; 0 or less is a limit step 6 changes.
+    assert.match(line({ cleanupPeriodDays: '90' }), /setting is 90 days, so this changes it, and chats older than 30 days are deleted/);
+    assert.doesNotMatch(line({ cleanupPeriodDays: '30' }), /deleted|changes|raises/);
+    assert.match(line({ cleanupPeriodDays: 0 }), /setting is 0 days, so this changes it\)/);
+    assert.match(line({ cleanupPeriodDays: -1 }), /setting is -1 days, so this changes it\)/);
+    assert.doesNotMatch(line({ cleanupPeriodDays: 'ninety' }), /deleted|changes|raises/);
     const raised = line({ cleanupPeriodDays: 7 });
     assert.match(raised, /setting is 7 days, so this raises it; nothing is deleted/);
     // With no Claude Code folder given, nothing is read: a settings.json in the folder this runs from is not the director's.
