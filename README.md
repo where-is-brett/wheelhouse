@@ -47,13 +47,13 @@ You need **Node.js** (a free program; [download the version marked LTS](https://
 3. **Install Wheelhouse.** Paste this message into the session and press Enter:
 
    ```text
-   Please run these two commands in this folder, one after the other. First run `claude plugin marketplace list`: if wheelhouse is already listed, skip the first command and run only the second.
+   Please run these two commands in this folder, one after the other, even if wheelhouse is already listed by `claude plugin marketplace list`.
    claude plugin marketplace add "where-is-brett/wheelhouse#v0.3.0" --scope project
    claude plugin install wheelhouse@wheelhouse --scope project
    When both have finished, say only this, and do nothing else in this chat: "Wheelhouse is installed. Open a new chat on this folder now, and setup starts there."
    ```
 
-   Claude asks before it runs each one: allow it. The first adds Wheelhouse's own catalogue, at release `v0.3.0` (a Mac that already has it, from an earlier setup or install, lists it, and the first command is skipped: adding it again under another address is refused); the second installs Wheelhouse from that catalogue, for this project only. Both name Wheelhouse's catalogue, so nothing else with a similar name can be installed by mistake. (A later release, from Wheelhouse's [releases page](https://github.com/where-is-brett/wheelhouse/releases), goes in place of `v0.3.0`.) If you prefer a terminal, the same two commands work there, run in the product's folder.
+   Claude asks before it runs each one: allow it. The first adds Wheelhouse's own catalogue, at release `v0.3.0`; a computer that already has the catalogue is moved to that release by it, so it is run every time, never skipped (it is refused only where the catalogue was added from a different address, and then it says so); the second installs Wheelhouse from that catalogue, for this project only. Both name Wheelhouse's catalogue, so nothing else with a similar name can be installed by mistake. (A later release, from Wheelhouse's [releases page](https://github.com/where-is-brett/wheelhouse/releases), goes in place of `v0.3.0`.) If you prefer a terminal, the same two commands work there, run in the product's folder.
 4. **Open a new chat on the same folder now.** This is the only restart: this chat started before Wheelhouse was installed, so it never loads it, and a new one does. Wheelhouse loads there and setup starts by itself. Don't ask this chat for anything else first.
 5. **If the commands don't work,** use the plugin browser instead: click the **+** button beside the message box, then **Add plugins** (or **Plugins**, then **Browse plugins**). Add the catalogue `where-is-brett/wheelhouse`, choose **Wheelhouse** from it, choose **this project** when asked where, then start a new session on the folder.
 
@@ -62,6 +62,18 @@ Setup goes one step at a time. Each step shows you a card listing exactly what i
 Where your conversations, transcripts and records go, and what uninstall removes and keeps, is in [`docs/data.md`](docs/data.md).
 
 What Wheelhouse protects you from, what it doesn't, and how to report a problem are in [`SECURITY.md`](SECURITY.md). Setup switches these protections on by itself; on a Mac you can also choose **Make it stricter** when it asks how to connect to GitHub or GitLab.
+
+## A second or throwaway home
+
+Wheelhouse keeps its records on a computer in one folder, `.wheelhouse` in your home folder. To try it in a folder of its own (a rehearsal, a second set-up that must not touch the first), name the folder in the product's own Claude settings file, `.claude/settings.local.json`, before the first Wheelhouse chat there, with a full path (the example is a Mac's; on Windows, write the folder as `C:/Users/you/wheelhouse-trial`):
+
+```json
+{ "env": { "WHEELHOUSE_HOME": "/Users/you/wheelhouse-trial" } }
+```
+
+Wheelhouse's hooks and scripts read it from that file when Claude doesn't pass it on. A terminal can set `WHEELHOUSE_HOME` in its own environment instead, and that wins. Only that file counts: a `WHEELHOUSE_HOME` in the shared `.claude/settings.json` is ignored. The build engine's folder moves with it, to the same name with `-engine` added.
+
+A computer with a home of its own gets no start-up entry (no Run entry on Windows, no launch agent loaded on a Mac), on purpose: that start-up entry belongs to the real home, and a trial must never replace it. Take the home out by deleting its folder.
 
 ## Updating
 

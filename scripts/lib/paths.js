@@ -3,12 +3,49 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { readSmallText } from './small-file.js';
 
 const SAFE_PART = /^[A-Za-z0-9._-]+$/;
 
+// The project's own `env.WHEELHOUSE_HOME`, from its `.claude/settings.local.json`, for a process of a Claude Code
+// session that did not get the variable (Claude Desktop on Windows may not pass a project's settings env to
+// every script it starts). Only the local settings file, which belongs to this computer and which the guard keeps
+// agents from writing; only a full path; only the session's own project folder (CLAUDE_PROJECT_DIR, or the
+// working folder of a process Claude Code started), never a folder above it. Null when it names none.
+const settingsHomes = new Map();
+function settingsHome() {
+  const dir = process.env.CLAUDE_PROJECT_DIR || (process.env.CLAUDECODE ? process.cwd() : '');
+  if (!dir || !path.isAbsolute(dir)) return null;
+  const file = path.join(dir, '.claude', 'settings.local.json');
+  let stamp;
+  try {
+    const stat = fs.statSync(file);
+    stamp = `${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return null;
+  }
+  const kept = settingsHomes.get(file);
+  if (kept?.stamp === stamp) return kept.home;
+  let home = null;
+  try {
+    const given = JSON.parse(readSmallText(file) ?? 'null')?.env?.WHEELHOUSE_HOME;
+    if (typeof given === 'string' && path.isAbsolute(given)) home = given;
+  } catch {
+    // Not JSON: no home from it.
+  }
+  settingsHomes.set(file, { stamp, home });
+  return home;
+}
+
+// The Wheelhouse home this process was given, if any: WHEELHOUSE_HOME in its environment, else the project's own
+// settings (above). Null for the default home.
+export function givenHome() {
+  return process.env.WHEELHOUSE_HOME || settingsHome();
+}
+
 // The folder holding everything Wheelhouse keeps on this computer.
 export function wheelhouseHome() {
-  return process.env.WHEELHOUSE_HOME || path.join(os.homedir(), '.wheelhouse');
+  return givenHome() || path.join(os.homedir(), '.wheelhouse');
 }
 
 // Where the build engine's own programs live: its Archon binary, the pinned Bun and the gh broker.
@@ -21,8 +58,9 @@ export function engineDir() {
 // WHEELHOUSE_HOME is given (an evaluation run, a test) it is a sibling of that home, so such a run never
 // reaches the real one.
 export function archonHome() {
-  return process.env.WHEELHOUSE_HOME
-    ? `${path.resolve(process.env.WHEELHOUSE_HOME)}-engine`
+  const given = givenHome();
+  return given
+    ? `${path.resolve(given)}-engine`
     : path.join(os.homedir(), '.wheelhouse-engine');
 }
 

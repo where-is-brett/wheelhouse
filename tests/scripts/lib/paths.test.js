@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   wheelhouseHome, computerId, stateDir, keysDir, profileDir, helperAddress, projectSlug,
-  usageDir, sourcesDir, jobsDir, profileViewsDir,
+  usageDir, sourcesDir, jobsDir, profileViewsDir, archonHome,
 } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -108,5 +108,75 @@ test('the new folders sit under WHEELHOUSE_HOME', () => {
     }
     assert.equal(new Set(folders).size, 4);
     assert.ok(!folders.includes(profileDir()));
+  });
+});
+
+// Runs fn with WHEELHOUSE_HOME unset and the session markers given, restoring them after.
+function withSession(env, fn) {
+  const keys = ['WHEELHOUSE_HOME', 'CLAUDE_PROJECT_DIR', 'CLAUDECODE'];
+  const before = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  for (const k of keys) delete process.env[k];
+  Object.assign(process.env, env);
+  try {
+    return fn();
+  } finally {
+    for (const k of keys) {
+      if (before[k] === undefined) delete process.env[k];
+      else process.env[k] = before[k];
+    }
+  }
+}
+
+function projectWith(settings) {
+  const dir = tempFolder('wh-paths-project-');
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+  for (const [name, body] of Object.entries(settings)) fs.writeFileSync(path.join(dir, '.claude', name), typeof body === 'string' ? body : JSON.stringify(body));
+  return dir;
+}
+
+test('wheelhouseHome falls back to the project\'s local settings env where the process was not given the variable', () => {
+  const home = path.join(tempFolder('wh-paths-'), 'second');
+  const dir = projectWith({ 'settings.local.json': { env: { WHEELHOUSE_HOME: home } } });
+  withSession({ CLAUDE_PROJECT_DIR: dir }, () => {
+    assert.equal(wheelhouseHome(), home);
+    assert.equal(archonHome(), `${home}-engine`);
+  });
+});
+
+test('the process environment wins over the project settings', () => {
+  const dir = projectWith({ 'settings.local.json': { env: { WHEELHOUSE_HOME: path.join(tempFolder('wh-paths-'), 'from-settings') } } });
+  const given = path.join(tempFolder('wh-paths-'), 'from-env');
+  withSession({ CLAUDE_PROJECT_DIR: dir, WHEELHOUSE_HOME: given }, () => assert.equal(wheelhouseHome(), given));
+});
+
+test('the settings fallback reads only the local file, only a full path, and only the session\'s own project', () => {
+  const home = path.join(tempFolder('wh-paths-'), 'x');
+  const committed = projectWith({ 'settings.json': { env: { WHEELHOUSE_HOME: home } } });
+  const relative = projectWith({ 'settings.local.json': { env: { WHEELHOUSE_HOME: 'relative/home' } } });
+  const broken = projectWith({ 'settings.local.json': '{ not json' });
+  const local = projectWith({ 'settings.local.json': { env: { WHEELHOUSE_HOME: home } } });
+  const inner = path.join(local, 'sub');
+  fs.mkdirSync(inner);
+  const fallback = path.join(os.homedir(), '.wheelhouse');
+  for (const dir of [committed, relative, broken, inner]) withSession({ CLAUDE_PROJECT_DIR: dir }, () => assert.equal(wheelhouseHome(), fallback));
+  // No session marker: a process Claude Code didn't start reads no project settings, whatever its working folder.
+  const was = process.cwd();
+  process.chdir(local);
+  try {
+    withSession({}, () => assert.equal(wheelhouseHome(), fallback));
+    withSession({ CLAUDECODE: '1' }, () => assert.equal(wheelhouseHome(), home));
+  } finally {
+    process.chdir(was);
+  }
+});
+
+test('a changed settings file is read again', () => {
+  const first = path.join(tempFolder('wh-paths-'), 'first');
+  const second = path.join(tempFolder('wh-paths-'), 'second-home');
+  const dir = projectWith({ 'settings.local.json': { env: { WHEELHOUSE_HOME: first } } });
+  withSession({ CLAUDE_PROJECT_DIR: dir }, () => {
+    assert.equal(wheelhouseHome(), first);
+    fs.writeFileSync(path.join(dir, '.claude', 'settings.local.json'), JSON.stringify({ env: { WHEELHOUSE_HOME: second, PAD: 'x' } }));
+    assert.equal(wheelhouseHome(), second);
   });
 });
