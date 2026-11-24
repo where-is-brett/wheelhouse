@@ -128,7 +128,7 @@ export async function openHelm(project, work, {
       why = 'interrupted';
     } else {
       child = spawn(call.file, call.args, {
-        cwd: worktree, env: call.env, stdio: 'inherit', windowsVerbatimArguments: call.verbatim === true,
+        cwd: worktree, env: call.env, stdio: 'inherit', windowsHide: true, windowsVerbatimArguments: call.verbatim === true,
       });
       opened = true;
       const ended = new Promise((resolve) => {

@@ -221,13 +221,16 @@ function withText(input) {
 // Nothing for any other tool, or a call with no message.
 // Whether the call lets the person type an answer: true when a field named for free input (any spelling with "free" in it) is
 // anything but false, or a `requestedSchema` field is words and no list of options; false when such a field is false and none
-// says otherwise; undefined when the call says nothing, which the card check takes as allowing it for a card that decides.
+// says otherwise, or when every `requestedSchema` field lists its options (`enum` or `oneOf`), so nothing can be typed;
+// undefined when the call says nothing, which the card check takes as allowing it for a card that decides.
 const FREE_FLAG = /free/i;
 const typesWords = (input) => {
   const flags = Object.keys(input).filter((key) => FREE_FLAG.test(key));
   const schemaWords = isObject(input.requestedSchema?.properties) && Object.values(input.requestedSchema.properties).some((p) => isObject(p) && p.type === 'string' && !Array.isArray(p.enum) && !Array.isArray(p.oneOf));
+  const fields = isObject(input.requestedSchema?.properties) ? Object.values(input.requestedSchema.properties) : [];
+  const schemaListed = fields.length > 0 && fields.every((p) => isObject(p) && (Array.isArray(p.enum) || Array.isArray(p.oneOf)));
   if (schemaWords || flags.some((key) => input[key] !== false)) return true;
-  return flags.length > 0 ? false : undefined;
+  return flags.length > 0 || schemaListed ? false : undefined;
 };
 const freeOf = (input) => {
   const free = typesWords(input);

@@ -49,7 +49,7 @@ function commitOf(dir, ref) {
   if (typeof dir !== 'string' || typeof ref !== 'string' || !/^[A-Za-z0-9._/-]+$/.test(ref)) return null;
   try {
     return execFileSync('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], {
-      cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+      cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true,
     }).trim() || null;
   } catch {
     return null;

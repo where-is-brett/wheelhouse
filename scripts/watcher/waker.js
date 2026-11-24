@@ -629,7 +629,8 @@ function openOutput(file) {
   return fs.openSync(file, O_WRONLY | O_CREAT | O_APPEND | (O_NOFOLLOW ?? 0), 0o600);
 }
 
-// Starts `file` with `args` detached from the watcher, with no window; `input`,
+// Starts `file` with `args` apart from the watcher, with no window (on Windows not as a detached process, which has no console, so
+// a program the child starts, such as the cmd.exe a .cmd shim runs through, would open a console window of its own); `input`,
 // when given, is written to its stdin. Its output is kept only when `output`
 // names a file: its stdout and stderr are appended there (ruling P8-2), and
 // otherwise thrown away. Resolves once the process has started, with its pid
@@ -641,7 +642,7 @@ export function spawnDetached(file, args, { cwd, env, input = '', windowsVerbati
     try {
       if (typeof output === 'string') fd = openOutput(output);
       child = spawn(file, args, {
-        cwd, env, detached: true, windowsHide: true, shell: false, windowsVerbatimArguments, stdio: [input ? 'pipe' : 'ignore', fd ?? 'ignore', fd ?? 'ignore'],
+        cwd, env, detached: process.platform !== 'win32', windowsHide: true, shell: false, windowsVerbatimArguments, stdio: [input ? 'pipe' : 'ignore', fd ?? 'ignore', fd ?? 'ignore'],
       });
     } catch (error) {
       reject(error);

@@ -571,6 +571,12 @@ test('the CLI harness\'s free-text field is typed words, and a string field with
   };
   assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string', title: 'Work' } }, required: ['work'] }), true);
   assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string' } } }), true);
-  assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string', oneOf: [{ const: 'Approve', title: 'Approve' }, { const: 'Not now', title: 'Not now' }] } } }), undefined);
-  assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string', enum: ['Approve', 'Not now'] } } }), undefined);
+  assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string', oneOf: [{ const: 'Approve', title: 'Approve' }, { const: 'Not now', title: 'Not now' }] } } }), false);
+  assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string', enum: ['Approve', 'Not now'] } } }), false);
+  // The two shapes the laptop re-run sent: only `message` and `requestedSchema` (24 November 2026), with a default as well.
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { type: 'string', oneOf: [{ const: 'Approve', title: 'Approve' }, { const: 'Not now', title: 'Not now' }], default: 'Approve' } } }), false);
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { type: 'string', enum: ['Approve', 'Not now'], default: 'Approve' } } }), false);
+  // One field with no list of options lets words be typed; a list on another field doesn't change that.
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { type: 'string', enum: ['A', 'B'] }, note: { type: 'string' } } }), true);
+  assert.equal(await freeOf({ type: 'object', properties: {} }), undefined);
 });

@@ -114,7 +114,7 @@ function jailed({ sandbox, profile, command, cwd, env, spawn, untilMs, graceMs, 
       lastWait = setTimeout(() => finish({ code: null }), graceMs);
     };
     try {
-      child = spawn(sandbox, ['-p', profile, file, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+      child = spawn(sandbox, ['-p', profile, file, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true, windowsHide: true });
     } catch {
       finish({ code: null, unstarted: true });
       return;
