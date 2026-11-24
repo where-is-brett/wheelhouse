@@ -27,7 +27,8 @@ const sources = (folder) => {
   });
 };
 
-const escape = (name) => name.replace(/[$]/g, '\\$');
+// A name as a pattern that matches it exactly: every character with a meaning in a pattern, the backslash among them, escaped.
+const escape = (name) => name.replace(/[\\^$.*+?()[\]{}|/]/g, '\\$&');
 // The names under which `text` can call a starter: the starters' own names (a parameter named `spawn` is taken as one), the
 // names it imports them under, `<module>.<starter>` for the module imported or required whole, and a parameter or variable
 // defaulted to any of those (`{ spawn: run = nodeSpawn }`). A name the file binds again to its own wrapper, made with
@@ -52,7 +53,7 @@ function startersIn(text) {
   ].map(([, name]) => name);
   for (const module of whole) for (const starter of STARTERS) names.add(`${module}.${starter}`);
   for (const name of [...names]) {
-    for (const [, local] of text.matchAll(new RegExp(`([A-Za-z_$][\\w$]*)\\s*=\\s*${escape(name).replace('.', '\\.')}\\s*[,)};]`, 'g'))) names.add(local);
+    for (const [, local] of text.matchAll(new RegExp(`([A-Za-z_$][\\w$]*)\\s*=\\s*${escape(name)}\\s*[,)};]`, 'g'))) names.add(local);
   }
   return [...names].filter((name) => {
     const bound = new RegExp(`(?:const|let|var)\\s+${escape(name)}\\s*=([^;]*)`).exec(text);
@@ -62,7 +63,7 @@ function startersIn(text) {
 
 // Each call in `text` to one of `names`: its line and its text, from the name to the closing bracket.
 function callsIn(text, names) {
-  const call = new RegExp(`(?<![.\\w$])(?:${names.map((n) => escape(n).replace('.', '\\s*\\.\\s*')).join('|')})\\(`, 'g');
+  const call = new RegExp(`(?<![.\\w$])(?:${names.map((n) => n.split('.').map(escape).join('\\s*\\.\\s*')).join('|')})\\(`, 'g');
   const found = [];
   for (const match of text.matchAll(call)) {
     let depth = 1;
