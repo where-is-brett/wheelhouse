@@ -11,7 +11,7 @@ import { RELEASE_BRANCH } from '../lineage/release.js';
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
 
-// The card's name. A step the window confirms is named for it (`release-<commit>`).
+// The card's name. A step only a recorded click decides is named for it (`release-<commit>`).
 export const releaseCardName = (commit) => `release-${commit}`;
 
 // What the recorded provenance of a branch says of an update. { matched: false } for any record that is not an update's;

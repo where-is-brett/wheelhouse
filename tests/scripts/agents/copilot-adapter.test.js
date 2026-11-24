@@ -164,7 +164,7 @@ test('every tool seen in checks 58, 63 and 66 has a place, and none that changes
 });
 
 test('Copilot\'s cards bind only from outside the agent, and nothing is packaged into a project yet', () => {
-  assert.deepEqual(copilot.cards.binding, ['policy-hook', 'window', 'host']);
+  assert.deepEqual(copilot.cards.binding, ['policy-hook', 'host']);
   for (const proof of copilot.cards.binding) assert.ok(PROOFS.includes(proof));
   for (const proof of ['chat-click', 'hook-click', 'signed-hook']) assert.ok(!copilot.cards.binding.includes(proof), `${proof} does not bind on Copilot`);
   assert.deepEqual(copilot.packaging.files(), []);

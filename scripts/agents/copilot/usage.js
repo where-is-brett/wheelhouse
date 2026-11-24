@@ -296,7 +296,7 @@ function cardInput(card, state) {
     ],
     recommend: WAIT_FOR,
     because: 'nothing is lost by waiting and nothing is charged: extra use is off on your plan',
-    meanwhile: 'STOP, the cards and the helper carry on. The First Mate\'s chat in VS Code stops too, so the helper\'s window shows this card as well.',
+    meanwhile: 'STOP, the cards and the helper carry on. The First Mate\'s chat in VS Code stops too, so the board shows this card as well.',
   };
 }
 

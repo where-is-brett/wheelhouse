@@ -369,7 +369,7 @@ function reachesEngineRoom(command, windows) {
 // requests (curl, wget, PowerShell's web commands, nc, socat), or an interpreter (node, python, a shell and the like) given a
 // script that does, and the command text names one of the routes. A command that only reads or searches for the route's
 // name (`grep`, `cat`, `rg`) is left alone, as is any other path under `cards`.
-const CARD_ROUTE = /\/cards\/(?:chat-click|hook-[a-z]+)/i;
+const CARD_ROUTE = /\/cards\/(?:chat-click|hook-[a-z]+|earnable|apply)(?![a-z-])/i;
 const SENDERS = new Set(['curl', 'wget', 'iwr', 'irm', 'invoke-webrequest', 'invoke-restmethod', 'nc', 'ncat', 'netcat', 'socat', 'http', 'https', 'xh', 'httpie']);
 const SENDER_WORD = /(?:^|[^A-Za-z0-9_-])(?:curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod|nc|ncat|socat|http|xh)(?![A-Za-z0-9_-])/i;
 const SCRIPTERS = /^(?:node|nodejs|deno|bun|python[0-9.]*|py|ruby|perl|php)$/;

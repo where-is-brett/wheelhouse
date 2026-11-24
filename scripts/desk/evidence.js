@@ -1,11 +1,10 @@
 // scripts/desk/evidence.js
-// Whether an act's evidence shows the director made the decision (spec 5.3). Four forms, and only these:
+// Whether an act's evidence shows the director made the decision (spec 5.3). Three forms, and only these:
 // - `{ form: 'signed', records }`: records made and signed with this computer's key, as the
 //   prompt-record hook and the pane make them (earned, keepEarned). Each is checked as the helper's
 //   /state/record checks it (checkRecord: signed here, of a kind a caller may send, its id not held),
 //   and must be for the act's card and option. A record is an event, or `{ event, target, profile }`
 //   as the pane keeps one (a confirmation with the event it confirms, or a record for the settings).
-// - `{ form: 'window' }`: the helper's confirm window, which signs after the director's click.
 // - `{ form: 'chat-click', proof: 'chat-click' }`: an unsigned click in an agent's chat, for an option
 //   that signs nothing on its card (signsOn), as /cards/chat-click accepts it.
 // - `{ form: 'client', client, at, sig }`: a paired app's ed25519 signature over
@@ -18,7 +17,7 @@ import { signsOn } from '../hooks/prompt-record.js';
 import { computerId } from '../lib/paths.js';
 
 export const CLIENT_WINDOW_MS = 5 * 60 * 1000;
-export const EVIDENCE_FORMS = Object.freeze(['signed', 'window', 'chat-click', 'client']);
+export const EVIDENCE_FORMS = Object.freeze(['signed', 'chat-click', 'client']);
 // The cards a click in the chat may decide, which the helper's own route checks again: a merge card.
 const CHAT_DECIDES = /^merge-/;
 const CARD_COMMANDS = ['answer', 'suggest', 'not-now'];
@@ -105,7 +104,6 @@ export function checkEvidence(command, args, evidence, { enrolled = [], clients 
     if (!isPlain(evidence) || !EVIDENCE_FORMS.includes(evidence.form)) return no('That evidence isn\'t a form Wheelhouse takes');
     if (evidence.form === 'signed') return checkSigned(command, args, evidence.records, { enrolled, views, events, computer });
     if (evidence.form === 'client') return checkClient(command, args, evidence, { clients, now });
-    if (evidence.form === 'window') return command === 'answer' ? { ok: true, records: [], window: true } : no('The confirm window decides an answer only');
     // A click in the chat.
     if (evidence.proof !== 'chat-click') return no('A click in the chat is recorded as chat-click');
     if (!CARD_COMMANDS.includes(command)) return no('A click in the chat answers a card only');

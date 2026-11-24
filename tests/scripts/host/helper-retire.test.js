@@ -264,7 +264,7 @@ test('a helper that has not closed within the bound serves normally again', () =
   }, { onStop: () => { stops += 1; }, updateHeld: () => true, updateBoundMs: 300 });
 }));
 
-test('All stop, the desk\'s stopping acts and the confirm window go through while the helper makes way for an update', () => inHome(async () => {
+test('All stop and the desk\'s stopping acts go through while the helper makes way for an update', () => inHome(async () => {
   writeProject('o__p', { folder: os.tmpdir(), remoteUrl: null, host: 'local', repo: 'local/o__p', connection: { mode: 'none' } });
   await openTestRecord({ project: 'o__p' });
   const hold = { entered: false };
@@ -282,7 +282,6 @@ test('All stop, the desk\'s stopping acts and the confirm window go through whil
       assert.notEqual((await act(client, command)).refused, UPDATING, command);
     }
     assert.equal((await act(client, 'answer')).refused, UPDATING, 'other acts wait');
-    assert.notEqual((await client.confirm({ project: 'o__p', card: 'none', hash: 'a'.repeat(64) })).refused, UPDATING, '/confirm');
     release();
     await pending;
   }, { onStop: () => {}, updateHeld: () => true });

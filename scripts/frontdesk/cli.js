@@ -12,8 +12,7 @@
 //   decision list   the decisions waiting for the director, by number and question, after making a card of each open question from the
 //                   build that has none; decision show <n> prints decision n as the chat message it is, to copy word for word. A decision
 //                   is shown in the chat and answered by the director's typed reply, never through the question picker. On an agent whose
-//                   hooks only read, which records no typed reply, decision confirm <n> opens decision n in the helper's own window, where
-//                   the director's click is signed as the answer, and decision show says so in its reply line
+//                   hooks only read, a decision is a card like any other, asked with its question tool once its click is recorded
 //   card            composes one card from the composer's input and records it ({ question, id });
 //                   with `revises`, the id of a card of its kind waiting now or closed by a later
 //                   head, and `changed`, one line saying what changed, it is a revised card that
@@ -70,12 +69,6 @@
 //   archive         makes ready the change that moves another agent setup's instructions into
 //                   .wheelhouse-archive/ (A4), and `restore` the one that puts them back; each prints
 //                   the work id, the `from` and the files it moves
-//   confirm <card>  shows the card (its id in the state, or lift-stop) in the helper's own window,
-//                   where the director's click is the binding one, and waits for it; prints the
-//                   helper's answer, `"recorded":true` when the click was recorded (ruling P8-7). For
-//                   an agent whose chat clicks can't bind, and for an undo that answers `needs` `window`.
-//                   `confirm seat-take-over` shows the card that moves the First Mate's seat to this window, composed by the helper from
-//                   the seat; it needs this window's session id (`--session <id>`, else CLAUDE_CODE_SESSION_ID) and any window may run it
 //   --session <id>  anywhere in a command: the session id of the chat that runs it, which wins over CLAUDE_CODE_SESSION_ID
 // The front desk runs in the sandbox, which can't read ~/.wheelhouse/, so every read and write is
 // a request to the helper, naming this folder for the helper to place the project: it reads through
@@ -92,7 +85,6 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
-import { WINDOW_MS } from '../confirm/window.js';
 import { dataHash } from '../state/events.js';
 import { composeCard, answerInput, whatProblem } from '../cards/compose.js';
 import { decisionText } from '../decisions/message.js';
@@ -164,13 +156,10 @@ export const SEAT_REFUSAL = 'The First Mate is in another window, so this window
 // (no session id) and a folder in no project are never refused. The seat is read through the host helper, since this
 // command runs in the project's sandbox, which cannot read the Wheelhouse home; refused only on its plain answer that
 // another window holds the seat. `session` is the id given with --session, which wins over CLAUDE_CODE_SESSION_ID: on an
-// agent whose chat doesn't carry its own id in the environment, the chat names itself. `confirm seat-take-over` is the
-// one write an aside may run: the card that moves the seat here is answered in Wheelhouse's own window.
-export const SEAT_CARD = 'seat-take-over';
+// agent whose chat doesn't carry its own id in the environment, the chat names itself.
 export const SESSION_NEEDED = 'This command records, so it must name this chat\'s own session: add --session <id> to it (the id this chat was given at its start).';
 export async function seatRefusal({ command, rest = [], env, cwd, client, session: given }) {
   if (!SEAT_WRITES.includes(command)) return null;
-  if (command === 'confirm' && rest.length === 1 && rest[0] === SEAT_CARD) return null;
   // Where the chat's environment can't name it, a command that records names the chat itself, whatever form the command took
   // to reach here: the hook holds the forms it can read, and this holds the rest.
   if (given === undefined && namesNoSession(cwd)) return SESSION_NEEDED;
@@ -198,14 +187,12 @@ export function sessionFlag(argv) {
   return { argv: left, session };
 }
 
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'show', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts', 'page', 'helm'];
-// How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
-const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'show', 'undo', 'move', 'carry-on', 'archive', 'restore', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts', 'page', 'helm'];
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
 // The Lift STOP card, which `cards` puts first under STOP. It is composed on each visit and never
 // recorded as a card, since under STOP the helper writes nothing; the click on it is signed by the
-// prompt record from its set line, and only while STOP is on (ruling F25). The helper's own window composes
-// the same card for a Lift STOP confirmed there (scripts/host/helper.js, /confirm).
+// prompt record from its set line, and only while STOP is on (ruling F25). The helper composes the same card to
+// check a click a hook that only reads saw on it (scripts/host/helper.js, /cards/hook-click).
 export const LIFT_STOP_CARD = Object.freeze({
   kind: 'lift-stop',
   level: 3,
@@ -296,9 +283,9 @@ function agentHere(cwd) {
   }
 }
 
-// Whether the agent in `cwd` has hooks that only read, so its chat records no typed reply and a decision is answered in the window.
-// Where its picker's click is not recorded (scripts/agents/translators.js `picker`); such an agent answers a decision in the window.
-const answersInWindow = (cwd) => !cardsInPicker(agentHere(cwd));
+// Whether the agent in `cwd` has hooks that only read and a picker click that is not recorded yet (scripts/agents/translators.js
+// `picker`): its chat records no answer to a decision, so the decision waits.
+const recordsNoAnswer = (cwd) => !cardsInPicker(agentHere(cwd));
 // Whether the agent in `cwd` records no typed reply, so a decision is a card in its picker whatever the typed-replies switch says.
 const asksDecisionsAsCards = (cwd) => writeVia(agentHere(cwd)) !== 'self' && cardsInPicker(agentHere(cwd));
 // Whether the agent in `cwd` can't name its own session in the environment, so a command that records names it.
@@ -724,7 +711,7 @@ export function decisionSigned({ cwd, work, question }) {
 }
 
 // One decision's message, to print word for word. Refused when none waits by that number.
-// On an agent whose hooks only read, its reply line says the director answers in the window.
+// Where the chat records no answer yet, its reply line says the decision waits.
 async function waitingDecision(client, cwd, n) {
   const { pending } = await decisionsOf(client, cwd);
   const found = pending.find((d) => d.n === n);
@@ -734,16 +721,7 @@ async function waitingDecision(client, cwd, n) {
 
 export async function decisionShow({ client, cwd, n }) {
   if (asksDecisionsAsCards(cwd)) throw new CliError('Here a decision is a card like any other: run `cards`, and ask it with the question picker.');
-  return decisionText(await waitingDecision(client, cwd, n), { window: answersInWindow(cwd) });
-}
-
-// Decision n opened in the helper's own window, for an agent whose hooks only read: the director's click there is signed as
-// their answer, as a click in a hook that signs is. Where the chat records a typed reply, it is answered there instead.
-export async function decisionConfirm({ client, cwd, n }) {
-  if (asksDecisionsAsCards(cwd)) throw new CliError('Here a decision is a card like any other: run `cards`, and ask it with the question picker. No window is opened.');
-  if (!answersInWindow(cwd)) throw new CliError('Here the director answers a decision by typing their reply in the chat, so no window is opened.');
-  const found = await waitingDecision(client, cwd, n);
-  return confirm({ client, cwd, card: found.id });
+  return decisionText(await waitingDecision(client, cwd, n), { unrecorded: recordsNoAnswer(cwd) });
 }
 
 // The director's Show them: the cards held back are named as pulled, which spends none of the day's budget, then this
@@ -1606,38 +1584,6 @@ export async function preview({ client, cwd, n }) {
   return [`Pull request #${n} has no preview to show: it isn't open, or the host has no finished preview of its latest commit.`];
 }
 
-// --- The helper's own window ---
-
-// What the helper's window answers for `card`: `lift-stop` for the Lift STOP card the helper composes itself, or a
-// card's id in the state, named with the hash of its data as the state holds it, so the window shows that card and
-// no other (the caller's own text is never shown). Posts /confirm; a refusal is said as is.
-export async function confirm({ client, cwd, card, session }) {
-  if (typeof card !== 'string' || card === '') throw new CliError('Give the card\'s id, or lift-stop: confirm <card>');
-  let got;
-  if (card === 'lift-stop') {
-    got = await client.confirm({ cwd, card });
-  } else if (card === SEAT_CARD) {
-    // The seat card isn't in the state: the helper composes it from the seat as it stands, for the session named here.
-    if (typeof session !== 'string' || session === '') throw new CliError('this window has no session id to move the First Mate to');
-    got = await client.confirm({ cwd, card, session });
-  } else {
-    const { cards } = await viewsOf(client, cwd, { cards: true });
-    const found = cards.filter((e) => isPlain(e) && e.id === card);
-    if (found.length !== 1) throw new CliError('That card is not in this project\'s state');
-    got = await client.confirm({ cwd, card, hash: dataHash(found[0].data) });
-  }
-  if (got?.ok !== true) throw new CliError(said(got, 'The host helper gave no answer from its window'));
-  return got;
-}
-
-// The one line to say after the seat card's window: whether the First Mate moved to this window.
-export function seatMoved(got) {
-  if (got.moved === true) return 'This window is now the First Mate, and keeps Wheelhouse\'s records: it records work and hands out cards itself.';
-  if (got.recorded !== true) return 'The First Mate did not move: the director did not choose Take over here.';
-  const holder = typeof got.holder === 'string' && got.holder !== '' ? `Window session ${got.holder} holds it now, so this window is still an ordinary one.` : 'No window holds it now.';
-  return `The First Mate did not move, because the seat changed hands after that card was shown. ${holder}`;
-}
-
 // --- The premium model's opt-in (design section 14.6) ---
 
 // The premium model's card, when the director asks for it or presses Change… on its row: the line that gives the card
@@ -1674,22 +1620,27 @@ async function ready(ask, body, what) {
 
 // --- Phone alerts ---
 
+const ALERTS_WAIT = 'Nothing was changed yet: phone alerts wait for the director\'s click on their card. Run `cards`, ask what it gives, and run this command again once they click Yes.';
 const ALERTS_USAGE = 'Give alerts ntfy <topic>, alerts telegram <chat>, alerts status, or alerts off <ntfy|telegram>';
 
 // `alerts ntfy <topic>` keeps an ntfy topic with the helper; `alerts telegram <chat>` has the helper ask the director for the bot token in
-// the system's own hidden-entry dialog, which is never a command argument; `alerts status` says which channels are set up and which are on;
+// the system's own hidden-entry box, which is never a command argument; `alerts status` says which channels are set up and which are on;
 // `alerts off <channel>` forgets one. What comes back never holds a topic or a token. An alert says only that decisions wait and in which
 // project, and goes only through a channel the director has also switched on in Notifications.
 export async function alerts({ client, cwd, args }) {
   const [what, value, ...extra] = args;
   const refuse = (got, fallback) => { throw new CliError(said(got, fallback)); };
+  // A change waits for the director's click on its card in the chat: nothing was changed, and the card is handed out by `cards`.
+  const waits = (got) => (got?.needs === 'card' ? [ALERTS_WAIT] : null);
   if (what === 'ntfy' && typeof value === 'string' && extra.length === 0) {
     const got = await client.alerts.ntfy({ cwd, topic: value });
+    if (waits(got)) return waits(got);
     if (got?.ok !== true) refuse(got, 'The host helper did not keep the topic');
     return ['The ntfy topic is kept by the helper. Switch ntfy on under Notifications for alerts to go through it.'];
   }
   if (what === 'telegram' && typeof value === 'string' && extra.length === 0) {
     const got = await client.alerts.telegram({ cwd, chat: value });
+    if (waits(got)) return waits(got);
     if (got?.ok !== true) refuse(got, 'The host helper did not keep the Telegram details');
     return ['The Telegram bot token and chat are kept by the helper. Switch Telegram on under Notifications for alerts to go through it.'];
   }
@@ -1701,6 +1652,7 @@ export async function alerts({ client, cwd, args }) {
   }
   if (what === 'off' && ['ntfy', 'telegram'].includes(value) && extra.length === 0) {
     const got = await client.alerts.off({ cwd, channel: value });
+    if (waits(got)) return waits(got);
     if (got?.ok !== true) refuse(got, 'The host helper did not forget the channel');
     return [`The ${value} channel is forgotten.`];
   }
@@ -1790,8 +1742,7 @@ export async function main(argv, {
       return 0;
     }
     if (!COMMANDS.includes(command)) throw new CliError(`Commands: ${COMMANDS.join(', ')}`);
-    const windowed = command === 'confirm' || (command === 'decision' && rest[0] === 'confirm');
-    const helper = client ?? helperClient(windowed ? { timeout: CONFIRM_WAIT_MS } : {});
+    const helper = client ?? helperClient();
     const refused = await seatRefusal({ command, rest, env, cwd, client: helper, session: flagged.session });
     if (refused !== null) throw new CliError(refused);
     const here = path.resolve(cwd);
@@ -1827,11 +1778,10 @@ export async function main(argv, {
       only(left, 0, 'cards takes no arguments');
       json(await cards({ client: helper, cwd: here, now, onAsked, session: sessionId }));
     } else if (command === 'decision') {
-      const usage = 'Give decision list, decision signed <work id> "<question>", or decision show <n> or decision confirm <n> with the decision\'s number';
+      const usage = 'Give decision list, decision signed <work id> "<question>", or decision show <n> with the decision\'s number';
       if (rest[0] === 'signed' && rest.length === 3) lines([decisionSigned({ cwd: here, work: rest[1], question: rest[2] })]);
       else if (rest[0] === 'list' && rest.length === 1) lines(await decisionList({ client: helper, cwd: here, now }));
       else if (rest[0] === 'show' && rest.length === 2 && /^[1-9][0-9]{0,2}$/.test(rest[1])) out(`${await decisionShow({ client: helper, cwd: here, n: Number(rest[1]) })}\n`);
-      else if (rest[0] === 'confirm' && rest.length === 2 && /^[1-9][0-9]{0,2}$/.test(rest[1])) json(await decisionConfirm({ client: helper, cwd: here, n: Number(rest[1]) }));
       else throw new CliError(usage);
     } else if (command === 'alerts') {
       lines(await alerts({ client: helper, cwd: here, args: rest }));
@@ -1897,11 +1847,6 @@ export async function main(argv, {
     } else if (command === 'archive' || command === 'restore') {
       only(rest, 0, `${command} takes no arguments`);
       json(await ready(helper.survey[command], { cwd: here }, command === 'archive' ? 'archive' : 'putting back'));
-    } else if (command === 'confirm') {
-      only(rest, 1, 'Give the card\'s id, lift-stop or seat-take-over: confirm <card>');
-      const done = await confirm({ client: helper, cwd: here, card: rest[0], session: sessionId });
-      if (rest[0] === SEAT_CARD) lines([seatMoved(done)]);
-      else json(done);
     } else if (command === 'premium-card' || command === 'premium-check') {
       only(rest, 0, `${command} takes no arguments`);
       lines([await (command === 'premium-card' ? premiumCard : premiumCheck)({ client: helper, cwd: here })]);

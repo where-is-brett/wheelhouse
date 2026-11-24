@@ -512,7 +512,7 @@ function refuseFenceOverride(args) {
 export class SettingsChanged extends LookRefusal {
   code = SETTINGS_CHANGED;
 }
-export const SETTINGS_CHANGED_LINE = "Nothing was pushed: this computer's git settings (sign-in, proxy, certificate or address rewrites) differ from the ones you confirmed at setup. If you changed them yourself, or your IT team did, Wheelhouse shows a card asking you to confirm the new settings in its own window; until you do, nothing is pushed.";
+export const SETTINGS_CHANGED_LINE = "Nothing was pushed: this computer's git settings (sign-in, proxy, certificate or address rewrites) differ from the ones you confirmed at setup. If you changed them yourself, or your IT team did, Wheelhouse shows a card asking you to confirm the new settings here in the chat; until you do, nothing is pushed.";
 
 // What a push trusts: every sign-in, proxy, certificate, address-rewrite and remote setting, the ssh ones, and the includes (which
 // are resolved already, but make the settings depend on the folder). The older fingerprint named fewer; it is kept (OLD_RELEVANT) only

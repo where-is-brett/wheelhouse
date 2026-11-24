@@ -148,9 +148,9 @@ function runbookOf(question) {
   return null;
 }
 
-// The card a press or the helper's window gives `earned` as the card that was asked, which only the Update card is judged by: the
+// The card a press or the helper gives `earned` as the card that was asked, which only the Update card is judged by: the
 // card the state holds, when `question` carries the Update card's set line, else nothing. `earned` still checks it against the plan
-// the helper kept, word for word, and a press or a window click is the director's own, so it counts as the card's click.
+// the helper kept, word for word, and a press is the director's own, so it counts as the card's click.
 export const askedUpdateCard = (question, data) => (typeof question === 'string' && setLinesOf(question).some((line) => UPDATE_LINE.test(line)) ? data : undefined);
 
 // The only match of a global pattern, or null when there are none or several.
@@ -365,6 +365,23 @@ async function openHead(match, question, { project, client, left }) {
 const sameLabels = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length
   && a.every((o, i) => (typeof o === 'string' ? o : o?.label) === (typeof b[i] === 'string' ? b[i] : b[i]?.label));
 
+// The labels of the steps only the helper can check against what it holds: an undo, Keep it, the computer's git settings, the
+// phone alerts. The helper reads the waiting card these words and options are and says what the click earns (/cards/earnable); the
+// record is signed here, as every other is. Null where the helper isn't asked, doesn't answer or says the click earns nothing.
+const HELPER_LABELS = Object.freeze(['Undo', 'Undo it', 'Keep it', 'Confirm', 'Yes']);
+export const HELPER_APPLIES = Object.freeze(['keep-main', 'confirm-settings']);
+async function helperEarned({ project, question, label, card, client, left }) {
+  if (!HELPER_LABELS.includes(label) || typeof client?.cards?.earnable !== 'function' || !Array.isArray(card?.options)) return null;
+  const options = card.options.map((o) => (typeof o === 'string' ? o : o?.label));
+  if (!options.every((o) => typeof o === 'string' && o !== '')) return null;
+  try {
+    const got = await left(client.cards.earnable({ project, message: question, options, label }));
+    return got?.ok === true && got.made && typeof got.made === 'object' && got.made.kind === 'action' ? { made: got.made } : null;
+  } catch {
+    return null;
+  }
+}
+
 // Works out the signed record a click earns, if any. May ask the helper for a
 // pull request's head. Returns { made, profile?, lift? } or null. A Lift STOP earns nothing
 // while STOP is off, so an old card's click or reply code can't stand for a later STOP. A reply
@@ -466,7 +483,7 @@ export async function earned({ project, question, label, card, client, now, left
       .filter((e) => CONFIRMABLE_KINDS.includes(e.kind) && question.includes(confirmLine(e)));
     const found = named(stateDir(project));
     const inProfile = named(profileDir());
-    if (found.length + inProfile.length !== 1) return null;
+    if (found.length + inProfile.length !== 1) return found.length + inProfile.length === 0 ? helperEarned({ project, question, label, card, client, left }) : null;
     return found.length === 1 ? { made: confirmationFor(found[0]) } : { made: confirmationFor(inProfile[0]), profile: true };
   }
   if (label === 'Turn on (dangerous)') {
@@ -526,7 +543,7 @@ export async function earned({ project, question, label, card, client, now, left
     if (!m || !question.includes(incidentFixLine(m[2], m[1])) || !declared(project, m[2])) return null;
     return action({ action: 'incident-fix', incident: m[2], pr: Number(m[1]) });
   }
-  return null;
+  return helperEarned({ project, question, label, card, client, left });
 }
 
 // Keeping the approved text, and installing an amendment's text, happen after the click's record is built and never
@@ -1138,6 +1155,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   const queued = [];
   const takeOvers = [];
   const seatMoves = [];
+  const applies = [];
   const clock = () => at;
   const shownAt = new Date(at.getTime() - 1);
   const dropped = new Map();
@@ -1166,6 +1184,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
       if (got) {
         queued.push(keepEarned(project, got, { now: clock, liftStop, proof }));
         keepAfterClick(project, found.record?.folder, got.made);
+        if (HELPER_APPLIES.includes(got.made.data?.action)) applies.push(queued.at(-1));
         if (got.takeOver) takeOvers.push(queued.at(-1));
         if (got.seatTakeOver) seatMoves.push({ kept: queued.at(-1), from: { session: got.made.data.session, since: got.made.data.since } });
       }
@@ -1177,6 +1196,8 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   for (const kept of queued) sent.set(kept, await sendKept(api, left, kept));
   // A Take over here the helper has the record of: it takes the lock, if the lock still stands as the card named it.
   if (takeOvers.some((kept) => sent.get(kept) === true)) await left(api.lock.takeOver({ project }));
+  // A signed click on Keep it or the computer's git settings, once sent: the helper carries it out, checking it again as it does.
+  if (applies.some((kept) => sent.get(kept) === true) && typeof api?.cards?.apply === 'function') await left(api.cards.apply({ project })).catch(() => {});
   // A Take over here on the First Mate's seat, once its record is sent: the seat moves here while it still stands as the card showed it.
   const moved = [];
   for (const { kept, from } of seatMoves) {
