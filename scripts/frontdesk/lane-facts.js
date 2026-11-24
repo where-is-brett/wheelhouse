@@ -10,14 +10,16 @@ export const FACTS = Object.freeze({
   touchesMoreThanOneArea: 'it touches more than one area',
 });
 const EXAMPLE = '{"addsPage": false, "storesData": false, "parsesInput": false, "touchesMoreThanOneArea": false}';
-export const MISSING = `This brief has no facts block. End it with this, each answer true or false, then record it again:\n\`\`\`${FACTS_FENCE}\n${EXAMPLE}\n\`\`\``;
+export const MISSING = `This brief has no facts block. End it with this, each answer true or false, then record it again. The fence is three lines: the opening \`\`\`${FACTS_FENCE} on a line of its own, the JSON on the next line, and the closing \`\`\` on a line of its own:\n\`\`\`${FACTS_FENCE}\n${EXAMPLE}\n\`\`\``;
 
 const FENCE = new RegExp(`^\`\`\`${FACTS_FENCE}[ \\t]*\\r?\\n([\\s\\S]*?)\\r?\\n\`\`\`[ \\t]*$`, 'm');
+// The same block flattened to one line, as a chat shows a brief: the JSON object between the fence words.
+const ONE_LINE_FENCE = new RegExp(`\`\`\`${FACTS_FENCE}[ \\t]*(\\{[^\`]*\\})[ \\t]*\`\`\``);
 const NEEDS = `The brief's \`${FACTS_FENCE}\` block needs addsPage, storesData, parsesInput and touchesMoreThanOneArea, each true or false`;
 const SMALL_LANES = new Set(['small', 'quick']);
 
 export function readFacts(text) {
-  const found = FENCE.exec(String(text ?? ''));
+  const found = FENCE.exec(String(text ?? '')) ?? ONE_LINE_FENCE.exec(String(text ?? ''));
   if (!found) return null;
   let value;
   try { value = JSON.parse(found[1]); } catch { return { problem: `${NEEDS}: it isn't JSON` }; }

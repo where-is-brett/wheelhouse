@@ -28,6 +28,19 @@ test('a block gives its facts, whatever the line endings or prose above, and the
   assert.deepEqual(readFacts(brief({ addsPage: true }) + brief({ storesData: true })), want);
 });
 
+test('the block flattened to one line is read the same way, with the same checks', () => {
+  const one = (body) => '```wheelhouse-facts ' + body + '```';
+  assert.deepEqual(readFacts('prose ' + one(JSON.stringify({ ...NO, addsPage: true })) + ' more'), { facts: { ...NO, addsPage: true } });
+  assert.ok(readFacts(one('{not json}')).problem.endsWith(": it isn't JSON"));
+  assert.ok(readFacts(one(JSON.stringify({ addsPage: true }))).problem.includes('true or false'));
+  assert.equal(readFacts('```wheelhouse-facts [] ```'), null);
+});
+
+test('the refusal shows the three-line shape', () => {
+  assert.ok(MISSING.includes('three lines'));
+  assert.ok(MISSING.includes('```wheelhouse-facts\n{'));
+});
+
 test('a malformed block gives a problem naming the fence', () => {
   const cases = [
     block('not json'),

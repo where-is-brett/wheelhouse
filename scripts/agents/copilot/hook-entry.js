@@ -49,8 +49,7 @@ import { toGuardInput, fromGuardAnswer, harnessOf, exitCodeFor, patchChanges, ca
 import { readInput, answer, projectOf, registeredByPath, beingSetUp, managedDir, isWhy } from '../../hooks/kit.js';
 import { C6_PASSED, GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC, HELPER_PROBE_MS, PROMPT_DEADLINE_MS } from './numbers.js';
 import { helperClient } from '../../host/helper-client.js';
-import { recordShown, recordAnswer } from './hook-click.js';
-import { labelsIn } from './ask-click.js';
+import { labelsIn, VSCODE_ASK } from './ask-click.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
 
 export const LOCAL_HARNESS = 'Wheelhouse doesn\'t run in this kind of chat. Switch the chat to Copilot in the chat\'s agent picker.';
@@ -378,9 +377,11 @@ async function decideCall(event, raw, { deps, seen, dir, env }) {
   if ((deps.c6 ?? C6_PASSED) !== true || refuses(out)) return out;
   // Once check C6 has passed: the question tool's card is posted as shown when it is asked, and its answer is recorded when it
   // comes back. The answer's text for the First Mate (Copilot answered by itself) joins what the steps gave.
-  if (event === GUARD_EVENT && inputs.length === 1) await bounded(recordShown(inputs[0], { client }));
-  if (event === 'postToolUse' && inputs.length === 1) {
-    const told = await recordAnswer(inputs[0], { client });
+  // Only the question tool has a card, so no other tool loads the click recording.
+  if (inputs.length !== 1 || ![copilotTools.ask, VSCODE_ASK].includes(inputs[0].tool_name)) return out;
+  if (event === GUARD_EVENT) await bounded((await import('./hook-click.js')).recordShown(inputs[0], { client }));
+  if (event === 'postToolUse') {
+    const told = await (await import('./hook-click.js')).recordAnswer(inputs[0], { client });
     if (typeof told === 'string') {
       const held = out?.hookSpecificOutput?.additionalContext;
       return answer.context(EVENT_NAMES[event], typeof held === 'string' && held !== '' ? `${held}\n\n${told}` : told);

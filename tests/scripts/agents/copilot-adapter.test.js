@@ -240,7 +240,7 @@ test('the safety lines are design section 3.6\'s items, most important first', (
   const darwin = lines({ platform: 'darwin' });
   assert.equal(darwin.length, 5);
   assert.match(darwin[0], new RegExp(`runs past ${GUARD_TIMEOUT_SEC} seconds.*within ${GUARD_DEADLINE_MS / 1000} seconds or refuses`));
-  assert.equal(darwin[1], 'On Allow all, Copilot runs actions without asking; Wheelhouse\'s guards still refuse what they know');
+  assert.equal(darwin[1], 'On Allow all, Copilot runs actions without asking; Wheelhouse\'s guards still refuse pushes, secret reads, forged card answers and carrying on past STOP');
   assert.match(darwin[2], /Approvals in Copilot's chat aren't proven until check C6 passes/);
   assert.match(darwin[3], /Second looks .* aren't proven until the clean reviewer passes its check/);
   assert.equal(darwin[4], 'Copilot doesn\'t offer Locked');

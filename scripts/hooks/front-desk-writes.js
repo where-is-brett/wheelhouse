@@ -53,6 +53,11 @@ export const APPROVED_LOCKED = (work, file) => `${file} is the approved document
   + `such as ${OWN_FOLDER}/work/${work}.change.md, and run \`record amendment\` naming it as doc. `
   + 'The director\'s click on the change card puts it in place.';
 
+export const NO_RECORD_FILES = (file) => `Wheelhouse does not let the front desk write its own record files by hand (${file}). `
+  + 'A card, a plan and a piece of work come from the Wheelhouse command, which writes the record. '
+  + 'Ask the card from the last command\'s `inReply`, word for word as it printed; if none printed, run the command again. '
+  + `Only ${OWN_FOLDER}/front-desk.json (the JSON you hand to the command) and your briefs, ${OWN_FOLDER}/work/<id>.md, are yours to write.`;
+
 export const NO_STATUS_LINE = 'Where work stands is kept in the Logbook (`views work`), not in the document: '
   + 'a status line in a design goes out of date and an edit to an approved document breaks its approval. Leave the status line out.';
 
@@ -384,6 +389,11 @@ export function decide(input, { env = process.env, find = projectOf, setUp = bei
     const work = path.join(folder, OWN_FOLDER, 'work');
     if (inside(work, targets[0]) && targets[0].endsWith('.md') && writtenText(input, targets[0]).some(statusLineIn)) return answer.deny(NO_STATUS_LINE);
   }
+  // The JSON in the folder is Wheelhouse's own records (`work/<item>.json` and the like): the one file the front desk hands to its
+  // command is `front-desk.json`, and its briefs are markdown.
+  const own = path.join(folder, OWN_FOLDER);
+  const record = targets.find((t) => inside(own, t) && /\.json$/i.test(t) && path.basename(t).toLowerCase() !== 'front-desk.json');
+  if (record !== undefined) return answer.deny(NO_RECORD_FILES(named(record)));
   const first = targets.find(refused);
   return first === undefined ? undefined : answer.deny(noWrites(named(first)));
 }

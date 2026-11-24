@@ -53,6 +53,20 @@ test('the front desk\'s own folder, and files outside the project, are allowed',
   assert.ok(denied(decide(write(folder, path.join(folder, '.wheelhouse', '..', 'notes.js')), options(folder))), 'a path that climbs out of it');
 });
 
+test('the front desk may not write a record file in its own folder, by a file tool or the shell, but may write its hand-off JSON and briefs', () => {
+  const { folder } = project();
+  const record = path.join(folder, '.wheelhouse', 'work', 'item-1.json');
+  const denial = decide(write(folder, record), options(folder));
+  assert.ok(denied(denial));
+  assert.match(denial.hookSpecificOutput.permissionDecisionReason, /inReply/);
+  assert.ok(denied(decide(write(folder, path.join(folder, '.wheelhouse', 'x.JSON')), options(folder))));
+  for (const command of ['echo \'{"kind":"approve-work"}\' > .wheelhouse/work/item-1.json', 'cat > .wheelhouse/work/item-1.json <<EOF\n{}\nEOF', 'tee .wheelhouse/work/item-1.json']) {
+    assert.ok(denied(decide(bash(folder, command), options(folder))), command);
+  }
+  assert.equal(decide(write(folder, path.join(folder, '.wheelhouse', 'front-desk.json')), options(folder)), undefined);
+  assert.equal(decide(write(folder, path.join(folder, '.wheelhouse', 'work', 'item-1.md')), options(folder)), undefined);
+});
+
 test('an engine worktree or job folder inside the project is allowed', () => {
   const { folder, worktree } = project();
   assert.equal(decide(write(worktree, path.join(worktree, 'notes.js')), options(folder)), undefined);
@@ -148,7 +162,7 @@ test('a heredoc fed to an interpreter is read, and one fed to anything else is n
   assert.equal(decide(bash(folder, "python3 - <<'EOF'\nprint(1)\nEOF"), options(folder)), undefined);
   assert.equal(decide(bash(folder, 'bash <<EOF\nls\nEOF'), options(folder)), undefined);
   assert.equal(decide(bash(folder, 'cat <<EOF | node cli.js card\nwriteFileSync touch a\nEOF'), options(folder)), undefined);
-  assert.equal(decide(bash(folder, 'cat > .wheelhouse/f.json <<EOF\nwriteFileSync\nEOF'), options(folder)), undefined);
+  assert.equal(decide(bash(folder, 'cat > .wheelhouse/f.txt <<EOF\nwriteFileSync\nEOF'), options(folder)), undefined);
 });
 
 // ---- The seat decides who is the front desk ----
@@ -370,7 +384,7 @@ test('a front-desk session in a set-up project takes a free seat before the guar
   const out = await decideWithSeat(write(folder, path.join(folder, 'src', 'a.js')), { ...options(folder), take, client: {} });
   assert.deepEqual(taken, ['p']);
   assert.ok(denied(out), 'the guard still answers');
-  assert.equal(await decideWithSeat(write(folder, path.join(folder, '.wheelhouse', 'x.json')), { ...options(folder), take, client: {} }), undefined);
+  assert.equal(await decideWithSeat(write(folder, path.join(folder, '.wheelhouse', 'x.txt')), { ...options(folder), take, client: {} }), undefined);
 });
 
 test('no seat is taken for an aside, a folder that is not set up, or an engine step', async () => {
