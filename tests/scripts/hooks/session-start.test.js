@@ -181,15 +181,16 @@ test('a project in git alone has no lock branch: the session start asks for no l
   });
 });
 
-test('a lock refused because the computer\'s git settings changed tells the First Mate to confirm them in the window, by the code and the card the helper raised', async () => {
+test('a lock refused because the computer\'s git settings changed tells the First Mate to ask the card the helper raised, by the code and the card', async () => {
   await withHome(async () => {
     const card = '0b7c1d1e-2f3a-4b5c-8d6e-7f8091a2b3c4';
     const said = fake();
-    withLock(said, { touch: { ok: false, refused: 'x' }, take: { ok: false, refused: 'The lock could not be pushed: Nothing was pushed: settings changed', code: SETTINGS_CHANGED, needs: 'window', card } });
+    withLock(said, { touch: { ok: false, refused: 'x' }, take: { ok: false, refused: 'The lock could not be pushed: Nothing was pushed: settings changed', code: SETTINGS_CHANGED, needs: 'card', card } });
     const out = text(await run(said));
     assert.ok(out.includes(NO_LOCK));
     assert.ok(out.includes(settingsCardNote(card)));
-    assert.match(out, new RegExp(`run the Wheelhouse command \`confirm ${card}\``));
+    assert.match(out, /run `cards` and ask what it gives/);
+    assert.doesNotMatch(out, /window|confirm 0b7c1d1e/);
 
     // The words alone, with no code, offer no card; nor does a code with no card.
     for (const take of [
@@ -199,7 +200,7 @@ test('a lock refused because the computer\'s git settings changed tells the Firs
     ]) {
       const other = fake();
       withLock(other, { touch: { ok: false, refused: 'x' }, take });
-      assert.doesNotMatch(text(await run(other)), /confirm 0b7c1d1e/);
+      assert.doesNotMatch(text(await run(other)), /ask what it gives/);
     }
   });
 });
@@ -2517,27 +2518,28 @@ const seatHelper = () => {
 };
 const readOnly = (f, extra = {}, input = {}) => run(f, { writeVia: 'helper', agent: 'copilot', helperUp: true, env: {}, now: SOON(0), ...extra }, { session_id: 'b', ...input });
 const filesUnder = (dir) => fs.readdirSync(dir, { recursive: true }).map(String).sort();
-const WINDOW_ASK = 'The First Mate is in another window: when the director asks for Wheelhouse work, write no question and no options of your own';
-const windowRow = (out) => text(out).split('\n').find((l) => l.startsWith(WINDOW_ASK)) ?? null;
+const PLAIN_ASK = 'The First Mate is in another window: when the director asks for Wheelhouse work, write no question and no options.';
+const CARD_ASK = 'The First Mate is in another window: when the director asks for Wheelhouse work, show them this card with the question tool, exactly as given, as a question of its own: ';
+const windowRow = (out) => text(out).split('\n').find((l) => l.startsWith(PLAIN_ASK) || l.startsWith(CARD_ASK)) ?? null;
 
-test('on an agent whose hooks only read, another live holder gives the aside line and the window card before the lists, and no AskUserQuestion wording', async () => {
+test('on an agent whose click is not recorded yet, another live holder gives the aside line and a plain line before the lists, with no card and no window', async () => {
   await withHome(async (home) => {
     putSeat(seatLine('a', 4));
     const before = filesUnder(home);
     const out = await readOnly(seatHelper());
     const lines = text(out).split('\n');
     assert.ok(text(out).includes(asideFirst('4 minutes ago')));
-        const row = windowRow(out);
-    assert.ok(row !== null, 'the window line');
-    // No options are handed to the chat to write out: the window's own labels are the only ones the director meets.
+    const row = windowRow(out);
+    assert.ok(row !== null, 'the plain line');
+    assert.ok(row.startsWith(PLAIN_ASK));
+    // No options are handed to the chat to write out, and no window is named.
     assert.ok(!/Leave it there|Take over here|Not now|"options"/.test(row), 'no labels in the line');
     assert.match(row, /session a, last active 4 minutes ago/);
-    assert.ok(!text(out).includes('AskUserQuestion'), 'no click-question wording');
+    assert.doesNotMatch(text(out), /own window|confirm seat-take-over|AskUserQuestion/);
     assert.ok(!text(out).includes(SEAT_TAKEOVER_ASK));
-    assert.match(text(out), /confirm seat-take-over --session <your session id>/);
-    const at = lines.findIndex((l) => l.startsWith(WINDOW_ASK));
+    const at = lines.findIndex((l) => l.startsWith(PLAIN_ASK));
     const lists = lines.findIndex((l) => /^(Waiting on the director|Levels|Rulebook)/.test(l));
-    assert.ok(lists === -1 || at < lists, 'the card comes before the lists');
+    assert.ok(lists === -1 || at < lists, 'the line comes before the lists');
     assert.equal(readSeat(P).session, 'a');
     assert.deepEqual(filesUnder(home), before, 'nothing written under the home');
   });
@@ -2644,16 +2646,18 @@ test('on an agent whose hooks only read, a lock that could not be pushed takes t
   });
 });
 
-// The seat card has no route that records a click on it in the chat and moves the seat (the helper's hook-click route finds only
-// cards waiting in the state, and this one is composed from the seat on each look), so it goes to the window on every agent,
-// one whose picker click is recorded among them.
-test('on an agent whose picker click is recorded, the seat card is still shown as text and clicked in the window', async () => {
+// The seat card is composed from the seat on each look, and the helper's hook-click route finds it for the asking session, so an agent
+// whose picker click is recorded asks it with its question tool like any card.
+test('on an agent whose picker click is recorded, the seat card is given to ask with its question tool, exactly as composed', async () => {
   await withHome(async () => {
     putSeat(seatLine('a', 4));
     const out = await readOnly(seatHelper(), { picker: true });
-    assert.ok(windowRow(out) !== null, 'the window line');
-    assert.ok(text(out).includes('confirm seat-take-over'));
-    assert.ok(!text(out).includes('with your clickable-question tool'));
+    const row = windowRow(out);
+    assert.ok(row !== null && row.startsWith(CARD_ASK), 'the card line');
+    const card = JSON.parse(row.slice(CARD_ASK.length));
+    assert.match(card.question, /session a, last active 4 minutes ago/);
+    assert.ok(card.options.some((o) => o.label === 'Take over here'));
+    assert.doesNotMatch(text(out), /own window|confirm seat-take-over/);
   });
 });
 

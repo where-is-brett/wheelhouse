@@ -71,7 +71,7 @@ export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident
 export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced', 'check', 'checks-state', 'checks-found', 'change', 'by-hand', 'slept', 'self-merged'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'seat-take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'safekeeping', 'send-back', 'approve-release', 'update-helper-answer', 'update-click', 'confirm-settings'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'seat-take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main', 'alerts-keep', 'safekeeping', 'send-back', 'approve-release', 'update-helper-answer', 'update-click', 'confirm-settings'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -117,7 +117,7 @@ const ACTION_OWN = {
   // the list uninstall puts back. Its question is the card's set line alone. It is kept in
   // <wheelhouseHome()>/setup/clicks/, as a setup click is, where the helper reads it.
   uninstall: ['project', 'hash'],
-  // The director's Keep it, in the helper's window, on a Lean project's card about a main version moved outside the
+  // The director's Keep it, on a Lean project's card about a main version moved outside the
   // helper (ruling P5-27 f): the main version the record held and the one the store holds, each in full.
   'keep-main': ['from', 'to'],
   // The director's Send it back on a pull request left to them (delegated decisions design, section 8.1): its number and
@@ -135,20 +135,23 @@ const ACTION_OWN = {
   // The director's Confirm on the card keeping a feature's files that steer agents as they are
   // (ruling P7-31): the work, and the full hash of the watcher's finding the card's line names.
   'keep-control-files': ['work', 'hash'],
-  // The director's Confirm, in the helper's window, on the card for the computer's git settings after a push was refused because
+  // The director's Confirm on the card for the computer's git settings after a push was refused because
   // they changed: the full hash of the settings' fingerprint the card named. The helper records them as they read at the click.
   'confirm-settings': ['hash'],
-  // The director's Undo, in the helper's window, on a Lean project's card asking to undo a merge (ruling P5-50: undo
+  // The director's Undo on a Lean project's card asking to undo a merge (ruling P5-50: undo
   // is a runbook step): the merge, in full.
   'undo-merge': ['merge'],
-  // The director's Undo it, in the helper's window, on the card about a main version moved outside the helper: the
+  // The director's Undo it on the card about a main version moved outside the helper: the
   // main version the record held and the one the store holds, each in full.
   'undo-main': ['from', 'to'],
   // A button on the Safekeeping row (spec 8.2): which one, by its word. The pane's press alone makes it.
+  // The director's Yes on the card asking to keep or forget a phone-alert channel: the step and the full hash of the request the
+  // card's line names. Only the helper's own request for that step and hash is carried out on it.
+  'alerts-keep': ['step', 'hash'],
   safekeeping: ['press'],
 };
-// Every action may also name its `proof` (ruling P5-23): `window` when the helper signed it from a click in its own
-// window. Claude Code's prompt record names none. An approval and a confirmation, which have no shape of their own
+// Every action may also name its `proof` (ruling P5-23): `hook-click` when the helper signed it from a click a hook that only
+// reads saw in the chat. Claude Code's prompt record names none. An approval and a confirmation, which have no shape of their own
 // here, may name one too; the gate and the audit report judge what it names.
 const ACTION_KEYS = ['action', 'question', 'label', 'proof', ...new Set(Object.values(ACTION_OWN).flat())];
 // Labels that ask for more, put the card off or hand the front desk the director's own words: a click on one is never an answer.
@@ -289,6 +292,11 @@ function checkAction(data) {
   } else if (data.action === 'undo-merge') {
     if (typeof data.merge !== 'string' || !/^[0-9a-f]{40}$/.test(data.merge)) bad('needs the merge it undoes, in full');
     if (data.label !== 'Undo') bad('needs the Undo label');
+  } else if (data.action === 'alerts-keep') {
+    if (!['keep-ntfy', 'keep-telegram', 'forget-ntfy', 'forget-telegram'].includes(data.step)) bad('needs the step it confirms');
+    if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the request it confirms');
+    if (data.label !== 'Yes') bad('needs the Yes label');
+    if (!data.question.split('\n').includes(`Phone alerts: ${data.step} ${data.hash.slice(0, 12)}`)) bad('carries the alerts line for its step and hash in its question');
   } else if (data.action === 'undo-main') {
     if (!['from', 'to'].every((k) => typeof data[k] === 'string' && /^[0-9a-f]{40}$/.test(data[k]))) bad('needs the main version\'s commits it undoes, from and to, in full');
     if (data.label !== 'Undo it') bad('needs the Undo it label');

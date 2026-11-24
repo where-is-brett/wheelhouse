@@ -116,7 +116,7 @@ test('a test month walks through the three steps with the right cards, each once
   assert.equal(waiting.card.card, 'waiting');
   assert.deepEqual(waiting.card.input.options.map((o) => o.label), [WAIT_FOR, WAIT_MOVE]);
   assert.match(waiting.card.input.what, /carries on from what's there on 1 December 2026/);
-  assert.match(waiting.card.input.meanwhile, /helper's window/);
+  assert.match(waiting.card.input.meanwhile, /the board shows this card/);
   assert.equal(walk(205).card, null);
   assert.deepEqual(offers.map((o) => o.card), ['nudge', 'hold', 'waiting']);
 

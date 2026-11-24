@@ -5,7 +5,7 @@ import path from 'node:path';
 import { sessionRole } from '../../../scripts/lib/role.js';
 import { seatFile, readSeat } from '../../../scripts/lib/first-mate-seat.js';
 import assert from 'node:assert/strict';
-import { decide, checkShown, plainQuestion, DECISION_IN_CHAT, DECISION_IN_WINDOW, NO_TYPED_ANSWER } from '../../../scripts/hooks/card-check.js';
+import { decide, checkShown, plainQuestion, DECISION_IN_CHAT, DECISION_UNRECORDED, NO_TYPED_ANSWER } from '../../../scripts/hooks/card-check.js';
 import { pendingDecisions } from '../../../scripts/decisions/pending.js';
 import { decisionText } from '../../../scripts/decisions/message.js';
 import { asQuestion } from '../../../scripts/cards/visit.js';
@@ -169,22 +169,23 @@ test('on an agent whose hooks only read, the picker is refused for a decision wh
       turn();
       const out = await decide(input, { projectOf: () => ({ project: P }), env: {}, writeVia: 'helper' });
       assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
-      assert.equal(out.hookSpecificOutput.permissionDecisionReason, DECISION_IN_WINDOW);
-      assert.match(DECISION_IN_WINDOW, /`decision confirm <n>`/);
+      assert.equal(out.hookSpecificOutput.permissionDecisionReason, DECISION_UNRECORDED);
+      assert.match(DECISION_UNRECORDED, /does not record an answer to a decision yet/);
+      assert.doesNotMatch(DECISION_UNRECORDED, /window|confirm/);
       // An agent whose hooks sign keeps the picker it had: allowed while typed replies are off, refused for the chat while on.
       const own = await decide(input, { projectOf: () => ({ project: P }), env: {}, writeVia: 'self' });
-      assert.notEqual(own?.hookSpecificOutput?.permissionDecisionReason, DECISION_IN_WINDOW);
+      assert.notEqual(own?.hookSpecificOutput?.permissionDecisionReason, DECISION_UNRECORDED);
     }
   });
 });
 
-test('the decision as printed for the window passes the Stop check, as the typed form does', async () => {
+test('the decision as printed where no answer is recorded yet passes the Stop check, as the typed form does', async () => {
   await inHome(async () => {
     raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
     const [one] = pendingDecisions(P);
-    const windowed = decisionText(one, { window: true });
+    const windowed = decisionText(one, { unrecorded: true });
     assert.notEqual(windowed, decisionText(one));
-    assert.match(windowed.split('\n').at(-1), /^Reply in Wheelhouse's own window, which opens for decision 1/);
+    assert.match(windowed.split('\n').at(-1), /^This chat does not record an answer to a decision yet, so decision 1 waits/);
     assert.equal(await decide(stop(`Decision 1:\n\n${windowed}\n`), deps), undefined);
     assert.equal(await decide(stop(decisionText(one)), deps), undefined);
   });
@@ -261,12 +262,12 @@ test('on an agent whose hooks only read but whose picker click is recorded, a de
       turn();
       const out = await decide(input, { projectOf: () => ({ project: P }), env: {}, writeVia: 'helper', picker: true });
       const reason = out?.hookSpecificOutput?.permissionDecisionReason;
-      assert.notEqual(reason, DECISION_IN_WINDOW);
+      assert.notEqual(reason, DECISION_UNRECORDED);
       assert.notEqual(reason, DECISION_IN_CHAT);
     }
     // Where the picker click is not recorded, the window path stands.
     const window = await decide(input, { projectOf: () => ({ project: P }), env: {}, writeVia: 'helper', picker: false });
-    assert.equal(window.hookSpecificOutput.permissionDecisionReason, DECISION_IN_WINDOW);
+    assert.equal(window.hookSpecificOutput.permissionDecisionReason, DECISION_UNRECORDED);
   });
 });
 

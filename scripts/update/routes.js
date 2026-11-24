@@ -10,7 +10,7 @@
 //   /update/answer  relays an answer and signs nothing. Not now on the Update card keeps the declined release, but only after the
 //                   director's signed click on that card with Not now. For a card
 //                   the update raised (the approval of a release, the old helper's) it only checks that the prompt record or
-//                   the helper's window signed the director's click, and wakes the job if it has stopped.
+//                   the prompt record, or the helper from a click a hook saw, signed the director's click, and wakes the job if it has stopped.
 // Every look at the outside world is a seam, so a test starts no process and reaches no network.
 import crypto from 'node:crypto';
 import fs from 'node:fs';

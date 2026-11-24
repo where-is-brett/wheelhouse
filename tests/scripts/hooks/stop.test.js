@@ -172,8 +172,6 @@ test('under STOP, the front desk\'s reading commands run by their exact words, a
         `node "${cli}" similar "Could we export the orders, as a spreadsheet?"`,
         `node "${cli}" similar "can't sign in on the phone"`,
         `node "${cli}" preview 7`,
-        // Only the window on the Lift All stop card: the director's click there lifts it.
-        `node "${cli}" confirm lift-stop`,
       ]) assert.equal(await guard(bash(main, ok), deps(base)), undefined, ok);
       for (const bad of [
         `node ${cli}`,
@@ -205,9 +203,7 @@ test('under STOP, the front desk\'s reading commands run by their exact words, a
         `node "${cli}" similar fix #12 now`,
         `node "${cli}" similar "a [b]"`,
         `node "${cli}" confirm`,
-        `node "${cli}" confirm 3f2a1c9e-1111-4222-8333-444455556666`,
-        `node "${cli}" confirm lift-stop extra`,
-        `node "${cli}" confirm lift-stop; ls`,
+        `node "${cli}" confirm lift-stop`,
         `node "${cli}" preview`,
         `node "${cli}" preview x`,
         `node "${cli}" preview 7 8`,
@@ -231,28 +227,26 @@ test('under STOP, the front desk\'s reading commands run by their exact words, a
   });
 });
 
-test('under STOP, a front-desk command may carry the chat\'s own --session, and the window commands for Lift All stop and the seat run', async () => {
+test('under STOP, a front-desk command may carry the chat\'s own --session, and no confirm command runs', async () => {
   await withHome(async () => {
     const { base, main } = makeProject();
     try {
       setStop({ by: 'prompt' });
       const cli = `${PLUGIN}/scripts/frontdesk/cli.js`;
       for (const ok of [
-        `node "${cli}" confirm lift-stop --session chat-1`,
-        `node "${cli}" confirm seat-take-over --session chat-1`,
-        `node "${cli}" --session chat-1 confirm seat-take-over`,
-        `node "${cli}" confirm seat-take-over --session=chat-1`,
         `node "${cli}" cards --session chat-1`,
+        `node "${cli}" --session chat-1 cards`,
+        `node "${cli}" cards --session=chat-1`,
         `node "${cli}" views waiting --session chat-1`,
       ]) assert.equal(await guard(bash(main, ok), deps(base)), undefined, ok);
       for (const bad of [
-        `node "${cli}" confirm seat-take-over --session`,
-        `node "${cli}" confirm seat-take-over --session a --session b`,
-        `node "${cli}" confirm seat-take-over --session "a b"`,
-        `node "${cli}" confirm seat-take-over --session $ID`,
+        `node "${cli}" cards --session`,
+        `node "${cli}" cards --session a --session b`,
+        `node "${cli}" cards --session "a b"`,
+        `node "${cli}" cards --session $ID`,
         `node "${cli}" record ruling --session chat-1`,
-        `node "${cli}" confirm 3f2a1c9e-1111-4222-8333-444455556666 --session chat-1`,
-        `node "${cli}" confirm seat-take-over extra --session chat-1`,
+        `node "${cli}" confirm lift-stop --session chat-1`,
+        `node "${cli}" confirm seat-take-over --session chat-1`,
       ]) assert.ok(denied(await guard(bash(main, bad), deps(base))), bad);
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
