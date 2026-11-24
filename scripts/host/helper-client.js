@@ -11,8 +11,13 @@ import { helperAddress } from '../lib/paths.js';
 // the sandbox reaches it. Each answer keeps "could not be reached", which callers match on.
 export const SANDBOXED = 'the host helper could not be reached: this command\'s sandbox kept it from the helper; run the same command again outside the sandbox';
 
+// A socket or pipe that is not there, or that nothing listens on, refuses before anything is sent: such an answer
+// carries `unsent: true`, so a caller may ask again. Any other error may come after the helper took the request.
+const NOTHING_SENT = new Set(['ENOENT', 'ECONNREFUSED']);
+
 function unreached(error) {
-  return error?.code === 'EPERM' || error?.code === 'EACCES' ? SANDBOXED : 'the host helper could not be reached: is it running?';
+  if (error?.code === 'EPERM' || error?.code === 'EACCES') return { ok: false, refused: SANDBOXED };
+  return { ok: false, refused: 'the host helper could not be reached: is it running?', ...(NOTHING_SENT.has(error?.code) ? { unsent: true } : {}) };
 }
 
 function ask(address, method, path, body, timeout) {
@@ -37,7 +42,7 @@ function ask(address, method, path, body, timeout) {
       });
       res.on('error', () => resolve({ ok: false, refused: 'the host helper\'s answer was cut off' }));
     });
-    req.on('error', (error) => resolve({ ok: false, refused: unreached(error) }));
+    req.on('error', (error) => resolve(unreached(error)));
     if (timeout !== undefined) {
       // A helper that does not answer in time is an answer too.
       req.setTimeout(timeout, () => {

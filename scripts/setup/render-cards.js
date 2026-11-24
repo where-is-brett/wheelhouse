@@ -20,6 +20,7 @@
 //   f   a project on a company's GitLab, pasted by its address on the join question, on a Mac: the address names the host, so no GitLab card is asked
 //   g   the same address, for a project with no Wheelhouse settings in it: the question is asked again saying so and what to do, and a new product on the company's GitLab is chosen
 //   h   an address pasted with a sign-in name and password in it: not kept, asked again saying so, then kept on this computer
+//   j   the public GitLab on Windows, reached by the first card's own Put it on GitLab click instead of Customise
 //   i   path a with a long user name and project name, and Copilot's command line installed: Copilot is chosen on the builder question and is signed in
 // --desktop answers as the Desktop app can: a card whose question is the same as an earlier card's shows the
 // earlier one, so the answer that comes back is the one given there. It also asks each card with its first line reworded, as a
@@ -64,6 +65,7 @@ export const PATHS = Object.freeze({
   f: { title: 'A project on a company\'s GitLab pasted by its address on the join question, on a Mac', platform: 'darwin', host: 'GitLab', where: 'pasted', glab: 'in', join: PASTED_ADDRESS },
   g: { title: 'The same address for a project with no Wheelhouse settings: found missing at step 3\'s apply, asked again, GitLab chosen and refused for the name, then kept on this computer', platform: 'darwin', host: 'GitLab', where: 'company', glab: 'in', join: PASTED_ADDRESS, miss: true, missAtApply: true, reask: ['GitLab', 'Keep it on this computer'] },
   h: { title: 'An address pasted with a sign-in name and password in it: not kept, asked again saying so, then kept on this computer', platform: 'darwin', host: 'Keep it on this computer', glab: 'in', join: HELD_ADDRESS, miss: true, reask: ['Keep it on this computer'] },
+  j: { title: 'The public GitLab on Windows, reached by the first card\'s Put it on GitLab click', platform: 'win32', host: 'GitLab', where: 'public', glab: 'unavailable', gitlabClick: true },
   i: { title: 'A company\'s GitLab on Windows with a long user name and project name, Use my git as it is chosen, Copilot\'s command line installed and chosen on the builder question, and Copilot signed in', platform: 'win32', host: 'GitLab', where: 'company', way: 'Use my git as it is', glab: 'unavailable', agent: 'Copilot', folderName: 'wheelhouse-t6-17-11-2026', userName: 'firstname.lastname-longer' },
 });
 
@@ -331,7 +333,14 @@ function choose(p, { id, card }, { stepTwoDone }) {
   const labels = card.options.map((o) => o.label);
   const recommended = recommendedOf(card) ?? labels[0];
   const pick = (want) => labels.find((l) => l === want) ?? null;
-  if (id === 'one-card' || /^plan-/.test(id)) return { label: stepTwoDone.customised ? 'Go ahead' : 'Customise' };
+  // The first card's own GitLab click, where the path takes it, and Customise otherwise; Go ahead once either was clicked.
+  if (id === 'one-card' || /^plan-/.test(id)) {
+    if (p.gitlabClick === true && !stepTwoDone.customised && labels.includes('Put it on GitLab')) {
+      stepTwoDone.customised = true;
+      return { label: 'Put it on GitLab' };
+    }
+    return { label: stepTwoDone.customised ? 'Go ahead' : 'Customise' };
+  }
   // The builder question, where another agent's command line is installed: the path's agent.
   if (id === 'agent' && p.agent !== undefined) return { label: pick(p.agent) };
   if (id === 'real-users') return { label: pick('Not yet') };

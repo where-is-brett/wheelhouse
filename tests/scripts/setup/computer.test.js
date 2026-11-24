@@ -798,3 +798,19 @@ test('the why line names only the parts of another agent\'s files the card chang
   assert.match(why(agent.filter((c) => c.part === 'first-mate')), /, and Copilot's First Mate files\.$/);
   assert.match(why(agent.filter((c) => c.part === 'hooks')), /, and Copilot's checks\.$/);
 });
+
+test('pending names what step 6 would change, and nothing once every setting is already as it needs', async () => {
+  await withProject(async ({ folder, user, config }) => {
+    const file = path.join(config, 'settings.json');
+    fs.writeFileSync(file, `${JSON.stringify({ cleanupPeriodDays: 90 }, null, 2)}\n`);
+    const step = computerStep({ engine: null, run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    const ctx = { folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} };
+    assert.deepEqual((await step.pending(ctx)).sort(), ['push', 'retention', 'telemetry', 'updates']);
+    // Every value already as setup sets it: nothing is pending, and nothing was written by asking.
+    const ours = telemetryEnv(PORT);
+    const settled = { cleanupPeriodDays: RETENTION_DAYS, env: ours, autoUpdatesChannel: 'stable', minimumVersion: '2.1.100', agentPushNotifEnabled: true };
+    fs.writeFileSync(file, `${JSON.stringify(settled, null, 2)}\n`);
+    assert.deepEqual(await step.pending(ctx), []);
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), settled);
+  });
+});

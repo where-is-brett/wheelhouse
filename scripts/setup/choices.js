@@ -29,6 +29,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { RETENTION_DAYS } from '../lib/setup-numbers.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { PERSONAL_DAYS } from '../host/gitlab-key.js';
 import { KEY_DAYS_ASKED } from './host-access.js';
@@ -49,6 +50,9 @@ export const GO_AHEAD = 'Go ahead';
 export const CUSTOMISE = 'Customise';
 // The same click on a plan that already holds the director's own choices, so the card does not offer Customise twice.
 export const CHANGE_CHOICE = 'Change a choice';
+// Offered while where the project is kept is still the recommendation (kept on this computer): the click asks that one
+// choice, so a director whose project is on GitLab need not go through Customise's whole list.
+export const USE_GITLAB = 'Put it on GitLab';
 // The steps whose questions are setup's choices.
 // Step 2's is whether to fetch a missing host tool (scripts/setup/tools.js); it is found last, since which tool is
 // missing depends on the host that steps 3 and 4's answers name.
@@ -145,6 +149,9 @@ export async function openChoices({ steps, run, answers, planOf }) {
 
 const KEPT_ID = /^(?:join|kept|host)(?:-|$)/;
 const BACKUP_ID = /^backup(?:-|$)/;
+// The choices a click on Put it on GitLab asks: where the project is kept, and that alone. Whether to fetch the host's
+// own tool is asked under a host- id too, but is not where the project is kept: its recommendation stands, named on the card.
+const WHERE_ID = /^(?:join|kept|host)(?:-(?!tool-)|$)/;
 const NOT_JOINING = [NEW_PRODUCT, KEEP_HERE, HOST_LABELS.github, HOST_LABELS.gitlab];
 // Whether the answers taken say this computer joins a product from another (the join question
 // answered with anything but a new product).
@@ -277,32 +284,70 @@ function describedBy(choice) {
 // project kept here; on GitLab without its tool, with a key for this project only, the one-day setup token (host.js);
 // with their git as it is, a key only where git holds none that works; on a company's GitLab, a sign-in in the browser or
 // by token; else a sign-in.
-function goAheadAsks({ keptHere, list, host, phone = false, done = { tools: false, signedIn: null } }) {
-  const text = goAheadAsksHost({ keptHere, list, host, done, phone });
+function goAheadAsks({ keptHere, list, host, phone = false, done = { tools: false, signedIn: null }, platform }) {
+  const text = goAheadAsksHost({ keptHere, list, host, done, phone, platform });
   // Step 9 asks the director to try a notification on their phone, unless an earlier setup's test already reached it.
   if (!phone || (keptHere && done.tools)) return text;
   return `${text} Near the end, setup offers a test notification on your phone, which you can skip.`;
 }
 
-function goAheadAsksHost({ keptHere, list, host, done, phone }) {
+// What may be asked of the director by the system itself: on a Mac, the computer's password; on Windows, Yes when it asks to
+// allow an installer (or an administrator's password), as step 2 words it (scripts/setup/tools.js).
+const maybeAsked = (platform) => (platform === 'win32'
+  ? 'Windows may ask you to click Yes to let an installer run, or for an administrator\'s password.'
+  : 'You may be asked for your computer\'s password.');
+
+function goAheadAsksHost({ keptHere, list, host, done, phone, platform }) {
   // Setup's tools are done, so the request to allow its command and the password they could need are behind it.
-  if (keptHere) return done.tools ? (phone ? 'The only thing left to ask you is a test notification on your phone near the end, which you can skip.' : 'Nothing more is asked of you here.') : 'Apart from Claude Code\'s own request to allow setup\'s command, you may be asked for your computer\'s password.';
+  if (keptHere) return done.tools ? (phone ? 'The only thing left to ask you is a test notification on your phone near the end, which you can skip.' : 'Nothing more is asked of you here.') : `Apart from Claude Code's own request to allow setup's command, ${platform === 'win32' ? maybeAsked(platform) : 'you may be asked for your computer\'s password.'}`;
   const signedIn = done.signedIn !== null && host === (done.signedIn === 'gitlab' ? 'GitLab' : 'GitHub');
   const way = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.label ?? null;
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
   if (host === 'GitLab' && noTool && way !== null && way !== WAYS.quick && way !== WAYS.asIs) {
     const free = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.publicGitLab === true;
-    return `You'll paste a one-day GitLab token into a box on your screen, not the chat. ${free ? 'On a free account, or wherever' : 'If'} GitLab won't make a key for this one project, you'll also paste a token set to end ${PERSONAL_DAYS} days ahead that can act as you in every GitLab project and group you can reach. You may be asked for your computer's password.`;
+    return `You'll paste a one-day GitLab token into a box on your screen, not the chat. ${free ? 'On a free account, or wherever' : 'If'} GitLab won't make a key for this one project, you'll also paste a token set to end ${PERSONAL_DAYS} days ahead that can act as you in every GitLab project and group you can reach. ${maybeAsked(platform)}`;
   }
   const unheld = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.unheld === true;
-  if (way === WAYS.asIs) return `You'll be asked for a ${host} key${unheld ? '' : ' only if your git holds none that works'}: you make it on a page that opens${host === 'GitLab' ? ` and set its expiry date ${KEY_DAYS_ASKED} days ahead` : `, set to last ${KEY_DAYS_ASKED} days`}, and paste it into a box on your screen, not the chat. You may be asked for your computer's password.`;
+  if (way === WAYS.asIs) return `You'll be asked for a ${host} key${unheld ? '' : ' only if your git holds none that works'}: you make it on a page that opens${host === 'GitLab' ? ` and set its expiry date ${KEY_DAYS_ASKED} days ahead` : `, set to last ${KEY_DAYS_ASKED} days`}, and paste it into a box on your screen, not the chat. ${maybeAsked(platform)}`;
   // A narrow way on GitLab with its tool still meets GitLab's refusal of a project key the same way.
   const fallbackBox = (known) => (host === 'GitLab' && way !== null && way !== WAYS.quick
     ? ` If GitLab won't make a key for one project, you'll also paste a ${PERSONAL_DAYS}-day token that can act as you across GitLab into ${known ? 'that box' : 'a box on your screen, not the chat'}.` : '');
   // A company's GitLab without a browser sign-in set up takes a token instead, which only setup's step 3 can tell.
   if (signedIn) return `You're already signed in to ${host}, so setup doesn't ask for that again.${fallbackBox(true)}`;
-  if (onCompanyGitLab(list, host)) return `You'll sign in to your company's GitLab in your browser if your company has set that up, or else with a token you make on a page that opens and paste into a box on your screen, not the chat. You may be asked for your computer's password.${fallbackBox(true)}`;
-  return `You'll sign in on ${host} pages that open and click through them. You may be asked for your computer's password.${fallbackBox(false)}`;
+  if (onCompanyGitLab(list, host)) return `You'll sign in to your company's GitLab in your browser if your company has set that up, or else with a token you make on a page that opens and paste into a box on your screen, not the chat. ${maybeAsked(platform)}${fallbackBox(true)}`;
+  return `You'll sign in on ${host} pages that open and click through them. ${maybeAsked(platform)}${fallbackBox(false)}`;
+}
+
+// What step 6 does about chat history, as true of this computer: Claude Code's own limit is RETENTION_DAYS, so a limit
+// of the director's that is longer is cut to it (older chats go) and a shorter one is raised to it; only a limit that
+// is already there and different is a change worth saying. Said plainly when none is set or when it can't be read.
+function historyLine(claudeHome) {
+  const plain = `${RETENTION_DAYS} days of chat history kept`;
+  if (typeof claudeHome !== 'string' || claudeHome === '') return plain;
+  let now;
+  try {
+    now = JSON.parse(fs.readFileSync(path.join(claudeHome, 'settings.json'), 'utf8').replace(/^\uFEFF/, '')).cleanupPeriodDays;
+  } catch {
+    return plain;
+  }
+  if (typeof now !== 'number' || !Number.isFinite(now) || now === RETENTION_DAYS) return plain;
+  return now > RETENTION_DAYS ? `${plain} (your Claude Code setting is ${now} days, so this changes it, and chats older than ${RETENTION_DAYS} days are deleted)` : `${plain} (your Claude Code setting is ${now} days, so this raises it; nothing is deleted)`;
+}
+
+// The card's line of what step 6 does to this computer, naming only what would change (`changing`, the `what` of each change
+// step 6 would make, or null where that can't be told, which names everything); null when nothing changes and step 9 asks
+// nothing. A phone fact comes from Wheelhouse's own records, and says so.
+function computerLine({ changing, claudeHome, pushed, desktop }) {
+  const on = (what) => changing === null || changing.includes(what);
+  const parts = [];
+  if (on('telemetry')) parts.push('usage counted here only');
+  if (on('retention')) parts.push(historyLine(claudeHome));
+  if (on('updates')) parts.push('Claude Code takes only its well-tried updates');
+  if (pushed) parts.push('phone notifications on, since Wheelhouse\'s records show an earlier setup on this computer reached your phone');
+  else if (desktop === false) parts.push('a question about phone notifications, where setup suggests skipping them since they need Claude Desktop');
+  else if (on('push')) parts.push('Claude Code allowed to send phone notifications, which you finish near the end');
+  if (parts.length === 0) return null;
+  return `On this computer: ${parts.slice(0, -1).join('; ')}${parts.length > 1 ? '; and ' : ''}${parts.at(-1)}.`;
 }
 
 // The one card for a run: { id, card, choices, writes }. `list` is openChoices'; `product` is
@@ -319,7 +364,7 @@ export function setupTime(toRun, list = []) {
 
 // `done` is what an earlier pass of this run has already done, when the card is asked again after step 3 stopped: { tools, signedIn },
 // `signedIn` the host ('github' or 'gitlab') setup signed in to, or null.
-export function oneCard({ folder, list, product, platform, toRun, count, facts = null, claudeHome = null, hosts, desktop, pushed = false, done = { tools: false, signedIn: null } }) {
+export function oneCard({ computerChanging = null, folder, list, product, platform, toRun, count, facts = null, claudeHome = null, hosts, desktop, pushed = false, done = { tools: false, signedIn: null } }) {
   const name = product?.name ?? productName(folder);
   // Only the health check left, nothing to choose: a run parked near its end (one v0.1.1 left at
   // its phone card, carried on after the update), whose card names what is left.
@@ -356,7 +401,10 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
   // The plugin's update is step 6's, so the line names it only while step 6 is still to run.
   if (toRun.includes(2) && engineWanted({ platform, hosts })) lines.push(engineLine(undefined, { claudeHome: toRun.includes(6) ? claudeHome : null }));
   // Step 9 asks nothing where an earlier setup's test push reached the phone (`pushed`), so the line doesn't promise a question.
-  if (toRun.includes(6)) lines.push(`On this computer: usage counted here only; 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted); Claude Code takes only its well-tried updates; and ${pushed ? 'phone notifications on, as an earlier setup on this computer showed they reach your phone' : desktop === false ? 'a question about phone notifications, where setup suggests skipping them since they need Claude Desktop' : 'Claude Code allowed to send phone notifications, which you finish near the end'}.`);
+  if (toRun.includes(6)) {
+    const line = computerLine({ changing: computerChanging, claudeHome, pushed, desktop });
+    if (line !== null) lines.push(line);
+  }
   if (toRun.includes(7)) {
     const kept = compactionLine(compactionRules({ claudeHome, projectDir: folder }));
     if (kept !== null) lines.push(kept);
@@ -392,11 +440,14 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     return labels && Object.hasOwn(labels, c.label) ? labels[c.label] : [];
   });
   const id = `plan-${hash({ choices, count, facts }).slice(0, 12)}`;
+  // Where the project is kept is open and recommended as kept here: GitLab is one click from the card.
+  const gitlabOffered = !yours && list.some((c) => WHERE_ID.test(c.id) && c.chosen === null && c.label === KEEP_HERE);
   const card = {
     question,
     header: 'Setup',
     options: [
-      { label: GO_AHEAD, description: `Recommended: setup does all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list), phone: toRun.includes(6) && !pushed, done })}` },
+      { label: GO_AHEAD, description: `Recommended: setup does all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list), phone: toRun.includes(6) && !pushed, done, platform })}` },
+      ...(gitlabOffered ? [{ label: USE_GITLAB, description: 'Keep the project on GitLab instead of this computer. You are asked just that next, and nothing runs until you say Go ahead.' }] : []),
       yours
         ? { label: CHANGE_CHOICE, description: 'See every choice again, and change any before anything runs.' }
         : { label: CUSTOMISE, description: 'See every choice, and change any before anything runs.' },
@@ -430,6 +481,17 @@ export function consentIn(runId, answers) {
 export function customisingSince(answers) {
   const last = stepZero(answers).filter((a) => ONE_CARD_ID.test(a.id)).at(-1);
   return last?.label === CUSTOMISE || last?.label === CHANGE_CHOICE ? last.at : null;
+}
+
+// When Put it on GitLab was the last click on a one card of the run, or null.
+export function gitlabSince(answers) {
+  const last = stepZero(answers).filter((a) => ONE_CARD_ID.test(a.id)).at(-1);
+  return last?.label === USE_GITLAB ? last.at : null;
+}
+
+// The choices that click asks: where the project is kept, until it has been answered since.
+export function gitlabBatch(list, since) {
+  return list.filter((c) => WHERE_ID.test(c.id) && !(c.chosen && newer(c.chosen.at, since)));
 }
 
 // Whether a Go ahead is one a miss of the join question names as the one it stood on (its id and its time, as written), or one whose

@@ -107,7 +107,7 @@ import {
 } from '../lib/setup-run.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 import {
-  ONE_CARD_STEP, CHOICE_STEPS, openChoices, oneCard, setupTime, answersWithConsent, customisingSince, customiseBatch, consentIn, consentHolds, consentWithdrawn,
+  ONE_CARD_STEP, CHOICE_STEPS, openChoices, oneCard, setupTime, answersWithConsent, customisingSince, customiseBatch, gitlabSince, gitlabBatch, consentIn, consentHolds, consentWithdrawn,
 } from './choices.js';
 import { redoCard, choiceList, changeRequests, setUpAgainAsked, stepFourDrift } from './redo.js';
 import { productOf, asIsReachEnv, guardAsIsReach } from './host.js';
@@ -622,6 +622,12 @@ export function setupRoutes({
     run ??= startRun({ folder, now });
     const since = customisingSince(own);
     const consent = consentIn(run.id, own);
+    // Put it on GitLab: where the project is kept is asked alone, then the one card comes back with the answer on it.
+    const toGitLab = gitlabSince(own);
+    if (toGitLab !== null && !(consent !== null && Date.parse(consent.at) > Date.parse(toGitLab))) {
+      const where = gitlabBatch(list, toGitLab);
+      if (where.length > 0) return { ok: true, asks: where.map((c) => askChoice(run, c)), progress: ['Setup · where it is kept', 'Choose where the project is kept; nothing runs until you say Go ahead.'] };
+    }
     if (since !== null && !(consent !== null && Date.parse(consent.at) > Date.parse(since))) {
       const batch = customiseBatch(list, since);
       if (batch.length > 0) return { ok: true, asks: batch.map((c) => askChoice(run, c)), progress: ['Setup · your choices', 'Change any of these; nothing runs until you say Go ahead.'] };
@@ -638,7 +644,14 @@ export function setupRoutes({
     // Step 2 is there for the engine's line (scripts/setup/engine-parts.js), which names the plugin's scope as step 6 finds it.
     const toRun = [2, 3, 6, 7, HEALTH_STEP].filter((n) => onRunList(run, n) && !stepDone(run, n));
     const claudeHome = process.env.CLAUDE_CONFIG_DIR || path.join(userHome, '.claude');
-    const { id, card, choices, writes } = oneCard({ folder: run.folder, list, product, platform, toRun, count: keptAnswers(run.id).length, facts, claudeHome, desktop: sessionIsApp, done: { tools: stepDone(run, 2), signedIn: wasWithdrawn ? lastMissHost(run) : null }, pushed: phonePushResult()?.arrived === true, hosts: projectHosts({ folder: run.folder, answers: own }) });
+    // What step 6 would change on this computer now, so the card names only that; null when it can't be told.
+    let computerChanging = null;
+    if (toRun.includes(6)) {
+      try {
+        computerChanging = (await (await steps()).find((x) => x.n === 6)?.pending?.({ folder: run.folder, step: 6, runId: run.id, now, userHome, platform, answers: answersWithConsent(run.id).answers })) ?? null;
+      } catch { /* the card then says what step 6 does in full */ }
+    }
+    const { id, card, choices, writes } = oneCard({ computerChanging, folder: run.folder, list, product, platform, toRun, count: keptAnswers(run.id).length, facts, claudeHome, desktop: sessionIsApp, done: { tools: stepDone(run, 2), signedIn: wasWithdrawn ? lastMissHost(run) : null }, pushed: phonePushResult()?.arrived === true, hosts: projectHosts({ folder: run.folder, answers: own }) });
     if (JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error('The one card could not be cleaned as it is sent');
     noteAsked({ runId: run.id, folder: run.folder, step: ONE_CARD_STEP, id, card, writes, choices, facts, now });
     return { ok: true, ask: { step: ONE_CARD_STEP, id, card }, progress: [`Setup · ${setupTime(toRun, list)}`, 'One card: the plan for this project.'] };

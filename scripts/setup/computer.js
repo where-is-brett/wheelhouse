@@ -338,6 +338,12 @@ export function computerStep({
   return {
     n: 6,
     title: SETUP_TITLES[6],
+    // What this computer's settings would change now, as the `what` of each change (telemetry, retention, updates, push, ...),
+    // for the one card to name only what changes. Reads, and changes nothing; an unreadable settings file throws.
+    async pending(ctx) {
+      const { changes } = await world(ctx);
+      return [...new Set(changes.map((c) => c.what))];
+    },
     async plan(ctx) {
       // Where another agent's command line is installed, which agent builds here is asked first, on every setup run
       // (scripts/agents/setup-parts.js); a computer with none asks nothing. A chosen agent that is not signed in waits.
