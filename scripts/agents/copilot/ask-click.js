@@ -9,8 +9,9 @@
 //   - the CLI harness, `ask_user`: the answer is only the text "User responded: <label>" in `textResultForLlm`.
 // A click is an answer naming exactly one of the card's own options. Anything else is no click: free text (a click and
 // typed text look alike in the CLI, so a binding card allows none), a closed card, and an answer the harness gave by
-// itself. The last kind (Autopilot, `chat.autoReply`: checks 59 and 97) is told apart as `auto`, so the First Mate can
-// be told to ask no more and the director to switch it off.
+// itself. A closed card is told apart as `closed`, so the First Mate hears one line. The harness's own answer (Autopilot,
+// `chat.autoReply`: checks 59 and 97) is told apart as `auto`, so the First Mate can be told to ask no more and the
+// director to switch it off.
 import copilotTools from '../../../adapters/copilot/tools.js';
 
 export const VSCODE_ASK = 'vscode_askQuestions';
@@ -18,15 +19,19 @@ export const AUTO_LINE = 'Copilot\'s Autopilot is answering your cards for you; 
 // What the hook tells the First Mate on the first auto-answer.
 export const AUTO_TELL = `Copilot answered a card by itself, with no click from the director, so that answer counts for nothing. Stop: ask no more cards, take no step that waited on it, and say this one line to the director, in plain words: "${AUTO_LINE}"`;
 
+// What the hook tells the First Mate when the director closed the card without choosing.
+export const CLOSED_LINE = 'The director closed the card without choosing an option, so nothing was recorded.';
+
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const RESPONDED = /^User responded: ([\s\S]+)$/;
-// The harness's own answers: "The user is not available…" (CLI, both checks) and, closing a card, "User cancelled the request."
+// The harness's own answer: "The user is not available…" (CLI, both checks; VS Code's words are alike). A person closing
+// the CLI's card: "User cancelled the request." (check 59).
 const NOT_AVAILABLE = /not available/i;
 const CANCELLED = /^User cancelled/i;
 
 // The labels a card offers, from the call's input: `choices` or `options` (words or `{ label }`), or the CLI's
 // `requestedSchema` (an `enum`, or `oneOf` entries with a `const` or `title`).
-function labelsIn(input) {
+export function labelsIn(input) {
   const given = input?.choices ?? input?.options;
   if (Array.isArray(given)) return given.map((o) => (isObject(o) ? o.label : o)).filter((l) => typeof l === 'string' && l !== '');
   const properties = input?.requestedSchema?.properties;
@@ -54,7 +59,8 @@ export function askOf(input) {
   return null;
 }
 
-// What came back: `{ kind: 'click', label }`, `{ kind: 'auto' }` (the harness answered by itself) or `{ kind: 'none' }`.
+// What came back: `{ kind: 'click', label }`, `{ kind: 'closed' }` (the person closed the card), `{ kind: 'auto' }`
+// (the harness answered by itself) or `{ kind: 'none' }`.
 export function answerOf(input) {
   const ask = askOf(input);
   const none = { kind: 'none' };
@@ -68,16 +74,17 @@ export function answerOf(input) {
     }
     const answer = response?.answers?.[ask.header];
     if (!isObject(answer) || !Array.isArray(answer.selected)) return none;
-    if (answer.skipped === true) return none;
-    if (answer.selected.length === 0) return { kind: 'auto' };
+    if (answer.skipped === true) return { kind: 'closed' };
     const hasWords = typeof answer.freeText === 'string' && answer.freeText.trim() !== '';
+    // VS Code's own answer chooses nothing, with its "not available" words or none; words of any other kind are typed.
+    if (answer.selected.length === 0) return !hasWords || NOT_AVAILABLE.test(answer.freeText) ? { kind: 'auto' } : none;
     if (ask.free || hasWords || answer.selected.length !== 1 || !ask.options.includes(answer.selected[0])) return none;
     return { kind: 'click', label: answer.selected[0] };
   }
   const result = input.tool_response;
   const text = isObject(result) && typeof result.textResultForLlm === 'string' ? result.textResultForLlm : null;
   if (text === null || (result.resultType !== undefined && result.resultType !== 'success')) return none;
-  if (CANCELLED.test(text)) return { kind: 'auto' };
+  if (CANCELLED.test(text)) return { kind: 'closed' };
   const said = RESPONDED.exec(text.trim());
   if (said === null) return none;
   if (NOT_AVAILABLE.test(said[1]) && !ask.options.includes(said[1])) return { kind: 'auto' };

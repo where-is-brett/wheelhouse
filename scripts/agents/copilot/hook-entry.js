@@ -50,6 +50,7 @@ import { readInput, answer, projectOf, registeredByPath, beingSetUp, managedDir,
 import { C6_PASSED, GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC, HELPER_PROBE_MS, PROMPT_DEADLINE_MS } from './numbers.js';
 import { helperClient } from '../../host/helper-client.js';
 import { recordShown, recordAnswer } from './hook-click.js';
+import { labelsIn } from './ask-click.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
 
 export const LOCAL_HARNESS = 'Wheelhouse doesn\'t run in this kind of chat. Switch the chat to Copilot in the chat\'s agent picker.';
@@ -215,11 +216,14 @@ function withText(input) {
   return { ...input, tool_input: text };
 }
 // The question tool's input as card-check reads it (check 59: `toolArgs.message` holds the card, and the answer comes
-// back only as text): the message as one question, with the choices as its options when the call gives them. Nothing
-// for any other tool, or a call with no message.
+// back only as text): the message as one question, with the choices as its options when the call gives them, or else
+// the labels of its `requestedSchema`, so the guards see the options the card shows (and the click route posts).
+// Nothing for any other tool, or a call with no message.
 const cardOf = (input) => {
   if (input?.tool_name !== copilotTools.ask || typeof input.tool_input?.message !== 'string') return [];
-  const choices = input.tool_input.choices ?? input.tool_input.options;
+  const given = input.tool_input.choices ?? input.tool_input.options;
+  const schema = Array.isArray(given) ? [] : labelsIn(input.tool_input);
+  const choices = Array.isArray(given) ? given : schema.length > 0 ? schema : null;
   const question = { question: input.tool_input.message, ...(Array.isArray(choices) ? { options: choices.map((label) => (isObject(label) ? label : { label })) } : {}) };
   return [{ ...input, tool_name: claudeTools.ask, tool_input: { questions: [question] } }];
 };

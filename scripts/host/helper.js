@@ -2585,12 +2585,13 @@ export async function startHelper({
     return { ok: true, card: got.card };
   }
   // A question the harness answered with no click: true the first time for a session, which is noted once, so the hook tells
-  // the First Mate once and the board can say the same line.
+  // the First Mate once and the board can say the same line. Held for the latest HOOK_SHOWN_MAX sessions.
   const autoAnswered = new Set();
   async function doHookAuto({ project, session }, ctx) {
     if (typeof session !== 'string' || session === '' || session.length > CHAT_TEXT_CHARS) refuse('this session has no id to name its cards by');
     const key = `${project}\n${session}`;
     if (autoAnswered.has(key)) return { ok: true, first: false };
+    while (autoAnswered.size >= HOOK_SHOWN_MAX) autoAnswered.delete(autoAnswered.values().next().value);
     autoAnswered.add(key);
     if (!stopped()) await doSessionMark({ project, mark: 'auto-answer', data: {} }, ctx);
     return { ok: true, first: true };

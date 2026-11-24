@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
-import { askOf, answerOf, AUTO_TELL, AUTO_LINE, VSCODE_ASK } from '../../../../scripts/agents/copilot/ask-click.js';
+import { askOf, answerOf, labelsIn, AUTO_TELL, AUTO_LINE, CLOSED_LINE, VSCODE_ASK } from '../../../../scripts/agents/copilot/ask-click.js';
 import { runEntry } from '../../../../scripts/agents/copilot/hook-entry.js';
 
 const PROJECT = '/work/shop';
@@ -40,28 +40,40 @@ test('free text is not a click, on a binding card', () => {
   assert.equal(answerOf(cli('User responded: Approve, but only the first half')).kind, 'none');
   assert.equal(answerOf(cli('User responded: approve')).kind, 'none');
   assert.equal(answerOf(vscode({ selected: ['Approve'], freeText: 'and also this', skipped: false })).kind, 'none');
-  assert.equal(answerOf(vscode({ selected: [], freeText: 'something else', skipped: false })).kind, 'auto');
+  // Words typed with no option chosen are the person's own, not Autopilot's.
+  assert.equal(answerOf(vscode({ selected: [], freeText: 'something else', skipped: false })).kind, 'none');
   assert.equal(answerOf(vscode({ selected: ['Elsewhere'], freeText: null, skipped: false })).kind, 'none');
   assert.equal(answerOf(vscode({ selected: ['Approve', 'Not now'], freeText: null, skipped: false })).kind, 'none');
   // A card that allows typed answers takes none as a click: a typed label looks like a click (check 59).
   assert.equal(answerOf(vscode({ selected: ['Approve'], freeText: null, skipped: false }, { question: { allowFreeformInput: true } })).kind, 'none');
 });
 
-test('Autopilot\'s answers are not clicks: "not available", an empty selection, and a cancelled card', () => {
+test('Autopilot\'s answers are not clicks: "not available" and an empty selection with its words', () => {
   // Check 59 (CLI, chat.autoReply) and check 97 (Autopilot).
   const sentence = 'User responded: The user is not available to answer your question. Choose a pragmatic option best aligned with the context of the request.';
   assert.equal(answerOf(cli(sentence)).kind, 'auto');
-  assert.equal(answerOf(cli('User cancelled the request.')).kind, 'auto');
   // VS Code's own auto-answer: no option, not skipped, with the auto-reply words.
   const auto = { selected: [], freeText: 'The user is not available to respond and will review your work later. Work autonomously and make good decisions.', skipped: false };
   assert.equal(answerOf(vscode(auto)).kind, 'auto');
-  // A person closing the card is skipped: no click, and not Autopilot.
-  assert.equal(answerOf(vscode({ selected: [], freeText: null, skipped: true })).kind, 'none');
+  assert.equal(answerOf(vscode({ selected: [], freeText: null, skipped: false })).kind, 'auto');
   // Nothing else is a click: an error result, an unreadable response, another tool.
   assert.equal(answerOf(cli('User responded: Approve', { resultType: 'failure' })).kind, 'none');
   assert.equal(answerOf({ ...vscode({ selected: ['Approve'] }), tool_response: '{not json' }).kind, 'none');
   assert.equal(answerOf({ tool_name: 'bash', tool_input: { command: 'ls' }, tool_response: { textResultForLlm: 'User responded: Approve' } }).kind, 'none');
   assert.equal(answerOf({ ...cli('User responded: Approve'), tool_input: { message: MESSAGE } }).kind, 'none');
+});
+
+test('a card the person closed is no click and not Autopilot, in both shapes', () => {
+  // Check 59: closing the CLI card came back "User cancelled the request."; VS Code marks it skipped.
+  assert.deepEqual(answerOf(cli('User cancelled the request.')), { kind: 'closed' });
+  assert.deepEqual(answerOf(vscode({ selected: [], freeText: null, skipped: true })), { kind: 'closed' });
+  assert.ok(!CLOSED_LINE.includes('\n'));
+});
+
+test('the labels are read from the CLI\'s requestedSchema as well as from choices', () => {
+  assert.deepEqual(labelsIn({ requestedSchema: { properties: { choice: { enum: OPTIONS } } } }), OPTIONS);
+  assert.deepEqual(labelsIn({ choices: [{ label: 'Approve' }, 'Not now'] }), OPTIONS);
+  assert.deepEqual(labelsIn({}), []);
 });
 
 // The entry: a fake helper client records what it is asked.
@@ -113,5 +125,23 @@ test('the first auto-answer in a session tells the First Mate to stop and say on
   assert.ok(AUTO_TELL.includes(AUTO_LINE));
   assert.equal(JSON.parse(told.text).additionalContext?.includes(AUTO_LINE) ?? JSON.stringify(JSON.parse(told.text)).includes(AUTO_LINE), true);
   const later = world({ first: false });
-  assert.equal((await entry('postToolUse', raw({ resultType: 'success', textResultForLlm: 'User cancelled the request.' }), later)).text, '');
+  assert.equal((await entry('postToolUse', raw({ resultType: 'success', textResultForLlm: sentence }), later)).text, '');
+});
+
+test('a closed card posts nothing and gives the First Mate one line, not the Autopilot stop', async () => {
+  const w = world();
+  const told = await entry('postToolUse', raw({ resultType: 'success', textResultForLlm: 'User cancelled the request.' }), w);
+  assert.deepEqual(w.posts, []);
+  const context = JSON.parse(told.text).hookSpecificOutput?.additionalContext ?? JSON.parse(told.text).additionalContext;
+  assert.equal(context, CLOSED_LINE);
+  assert.ok(!told.text.includes(AUTO_LINE));
+});
+
+test('the guards see the options the CLI\'s requestedSchema offers', async () => {
+  const w = world();
+  let seen;
+  const schemaRaw = { ...raw(), toolArgs: { message: MESSAGE, requestedSchema: { properties: { choice: { enum: OPTIONS, default: 'Approve' } } } } };
+  await entry('preToolUse', schemaRaw, { ...w, steps: { cardCheck: async (input) => { seen = input; return undefined; } } });
+  assert.deepEqual(seen?.tool_input?.questions?.[0]?.options, OPTIONS.map((label) => ({ label })));
+  assert.deepEqual(w.posts, [['hookShown', { cwd: PROJECT, session: 's1', message: MESSAGE, options: OPTIONS }]]);
 });
