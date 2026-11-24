@@ -42,6 +42,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
+import { readJsonNamed, faultLine } from '../lib/read-json-named.js';
 import { RETENTION_DAYS, TELEMETRY_ROUTE } from '../lib/setup-numbers.js';
 import { SETUP_TITLES, SETUP_LABEL, asLine } from '../state/card-lines.js';
 import { composeCard, isTooLong } from '../cards/compose.js';
@@ -77,14 +78,11 @@ export function userSettingsFile({ userHome = os.homedir(), env = process.env } 
 // The settings in a file as an object: {} when there is none. Anything that is not a JSON object
 // stops the step, naming the file, which is left as it was.
 export function readSettings(file) {
-  const text = readText(file);
-  if (text === null) return {};
-  let data = null;
-  try {
-    data = JSON.parse(text.replace(/^﻿/, ''));
-  } catch { /* named below */ }
-  if (!isObject(data)) throw new Error(`${file} is not a JSON object, so setup has left it as it was`);
-  return data;
+  const read = readJsonNamed(file);
+  if (read.missing) return {};
+  if (read.ok === false) throw new Error(`${faultLine(read)} Setup has left it as it was`);
+  if (!isObject(read.value)) throw new Error(`${file} is not a JSON object, so setup has left it as it was`);
+  return read.value;
 }
 
 // Wheelhouse's own plugins and marketplace, which never count as weakening Standard.

@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveClaude, resolveCommand, recordClaudePath, pathWithClaude } from '../../../scripts/lib/claude.js';
+import { resolveClaude, resolveCommand, recordClaudePath, pathWithClaude, readRecordedClaude, recordedClaudeFault } from '../../../scripts/lib/claude.js';
+import { tempFolder } from '../../helpers/homes.js';
 
 const has = (...files) => (file) => files.includes(file);
 
@@ -69,4 +70,15 @@ test('pathWithClaude puts the folder of a found claude on the PATH, and leaves t
   const onPath = { PATH: '/opt/bin:/usr/bin', HOME: '/Users/x' };
   assert.deepEqual(pathWithClaude(onPath, { platform: 'darwin', exists: has('/opt/bin/claude') }), onPath);
   assert.deepEqual(pathWithClaude(env, { platform: 'win32', exists: () => true }), env);
+});
+
+test('a damaged claude-path.json reads as unknown and is named, never as a path (review focus 2)', () => {
+  const home = tempFolder('wh-claude-path-');
+  fs.writeFileSync(path.join(home, 'claude-path.json'), '{\n "path": "C:\\Users\\x\\claude"\n}');
+  assert.equal(readRecordedClaude({ WHEELHOUSE_HOME: home }), null);
+  const fault = recordedClaudeFault();
+  assert.deepEqual([fault.line, fault.column], [2, 13]);
+  fs.writeFileSync(path.join(home, 'claude-path.json'), '{"path":"/a/claude"}');
+  assert.equal(readRecordedClaude({ WHEELHOUSE_HOME: home }), '/a/claude');
+  assert.equal(recordedClaudeFault(), null);
 });

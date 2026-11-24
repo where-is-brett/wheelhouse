@@ -1811,3 +1811,23 @@ test('waker: now ends no process whose start time can\'t be verified', () => wit
   assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), false, 'the record is removed');
   assert.equal(w.waiting()[0].flight, null, 'the wake is back');
 }));
+
+test('the waker waits and says why when a settings file is damaged, and starts once it is mended', () => withHome(async () => {
+  const main = checkout();
+  const dir = worktree();
+  writeBaseline(P, 'login-page', dir);
+  fs.mkdirSync(path.join(main, '.claude'), { recursive: true });
+  const settings = path.join(main, '.claude', 'settings.local.json');
+  fs.writeFileSync(settings, '{\n "a": "C:\\Users\\x"\n}');
+  const fake = fakeRun();
+  const w = waker(fake, { platform: 'darwin' });
+  await assert.rejects(w.startFeature({ work: 'login-page', worktree: dir }), (error) => {
+    assert.ok(error.message.startsWith(`not started: ${settings} can't be read: line 2, column 10.`), error.message);
+    return true;
+  });
+  await assert.rejects(w.wakeFeature('login-page', writeWake(P, featureBundle('login-page'))), /not started: .*settings\.local\.json can't be read/);
+  assert.equal(fake.calls.length, 0);
+  fs.writeFileSync(settings, '{}');
+  const started = await w.startFeature({ work: 'login-page', worktree: dir });
+  assert.match(started.sessionId, UUID);
+}));

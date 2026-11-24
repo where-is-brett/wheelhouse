@@ -158,6 +158,7 @@ import { readCapped, safeFeatureFolder } from '../feature/status.js';
 import { SLUG } from '../lib/build-loop.js';
 import { computerId, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
+import { settingsFaultLine } from '../setup/settings-check.js';
 import { clearOtherAgentHolds, hasAgentHolds, recordLift } from '../lineage/check.js';
 import { agentInFolder, agentOfConfig } from '../agents/names.js';
 import { pathWithNode } from '../lib/claude.js';
@@ -787,6 +788,14 @@ export function makeWaker({
     adapter[check](config);
   };
   mayStart('checkForeman');
+  // Settings files that can't be read are named before any session is started, since the session would read them: the
+  // wake waits, with the file and the place in the error. Not at construction, so a damaged file never stops the watcher.
+  const mayStartNow = (check) => {
+    const folder = readProject(project)?.folder;
+    const damaged = typeof folder === 'string' ? settingsFaultLine({ folder }) : null;
+    if (damaged !== null) throw new Error(`not started: ${damaged}`);
+    mayStart(check);
+  };
   if (!Array.isArray(foremanTools) || !foremanTools.every((t) => typeof t === 'string' && t !== '' && !/[\r\n]/.test(t))) {
     throw new Error("The Bosun's tools are a list of tool rules");
   }
@@ -1539,7 +1548,7 @@ export function makeWaker({
 
   // Delivers what can go now and keeps the rest. Returns what was delivered.
   async function deliver() {
-    mayStart('checkForeman');
+    mayStartNow('checkForeman');
     if (stopped()) return [];
     return shape === 2 ? deliverByLine() : deliverByStart();
   }
@@ -1718,18 +1727,18 @@ export function makeWaker({
   const api = {
     // Wakes a fresh foreman for the wake whose record is `file`, now or once the running one ends.
     async wakeForeman(file) {
-      mayStart('checkForeman');
+      mayStartNow('checkForeman');
       return enqueue({ to: 'foreman', file });
     },
     // Wakes the feature's own session with the wake whose record is `file`.
     async wakeFeature(work, file) {
-      mayStart('checkFeature');
+      mayStartNow('checkFeature');
       if (typeof work !== 'string' || !SLUG.test(work)) throw new Error('A work id is lower-case letters, digits and hyphens');
       return enqueue({ to: 'feature', work, file });
     },
     // Starts the feature's session in its worktree, reading its brief.
     async startFeature({ work, worktree, briefFile } = {}) {
-      mayStart('checkFeature');
+      mayStartNow('checkFeature');
       if (typeof work !== 'string' || !SLUG.test(work)) throw new Error('A work id is lower-case letters, digits and hyphens');
       if (!featureWorktreeOk(project, worktree)) throw new Error("This isn't a feature worktree of the project");
       // A piece the director chose to steer from the start is held with no session yet: it is made like any start, and not launched.
@@ -1816,7 +1825,7 @@ export function makeWaker({
     // a project whose sessions the watcher does not start. Throws when it can't be started now (STOP, no session id
     // kept, a worktree that isn't the feature's, or files that steer agents waiting for the director's card).
     async resumeFeature({ work, prompt } = {}) {
-      mayStart('checkFeature');
+      mayStartNow('checkFeature');
       if (typeof work !== 'string' || !SLUG.test(work)) throw new Error('A work id is lower-case letters, digits and hyphens');
       if (typeof prompt !== 'string' || prompt.trim() === '') throw new Error('A resume needs its prompt');
       return serial(async () => {

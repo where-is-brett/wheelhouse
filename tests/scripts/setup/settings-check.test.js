@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { damagedSettings, mendAsk, mend, MEND, MEND_MYSELF } from '../../../scripts/setup/settings-check.js';
+import { damagedSettings, mendAsk, mend, settingsFault, settingsFaultLine, MEND, MEND_MYSELF } from '../../../scripts/setup/settings-check.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -99,4 +99,31 @@ test('the copy keeps the file\'s own permissions', { skip: process.platform === 
   mend(damagedSettings({ folder, claudeHome: null }));
   assert.equal(fs.statSync(`${file}.broken`).mode & 0o777, 0o600);
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+});
+
+test('a lone backslash in a path is named with its place and the hint, in the card and by settingsFault', () => {
+  const folder = folderWith({ '.claude/settings.local.json': '{\n "a": "C:\\Users\\x"\n}' });
+  const file = path.join(folder, '.claude', 'settings.local.json');
+  assert.deepEqual(settingsFault(file), { file, line: 2, column: 10, hint: 'a single `\\` inside a path must be written `\\\\`, or use `/`' });
+  const { card } = mendAsk(damagedSettings({ folder, claudeHome: null }));
+  assert.match(card.what, /line 2, column 10: a single `\\` inside a path/);
+  assert.equal(settingsFault(path.join(folder, 'none.json')), null);
+  assert.match(settingsFaultLine({ folder, claudeHome: null }), /settings\.local\.json can't be read: line 2, column 10\. a single/);
+});
+
+test('the fault is read again once the file changes', () => {
+  const folder = folderWith({ '.claude/settings.local.json': '{ nope' });
+  const file = path.join(folder, '.claude', 'settings.local.json');
+  assert.notEqual(settingsFault(file), null);
+  fs.writeFileSync(file, '{ "a": "a longer, valid file" }');
+  assert.equal(settingsFault(file), null);
+});
+
+test('the mend doubles each backslash that is not a valid escape, and keeps a copy (review focus 2)', () => {
+  const text = '{\n "a": "C:\\Users\\x",\n "b": "line\\nbreak"\n}';
+  const folder = folderWith({ '.claude/settings.local.json': text });
+  const local = path.join(folder, '.claude', 'settings.local.json');
+  mend(damagedSettings({ folder, claudeHome: null }));
+  assert.deepEqual(JSON.parse(fs.readFileSync(local, 'utf8')), { a: 'C:\\Users\\x', b: 'line\nbreak' });
+  assert.equal(fs.readFileSync(`${local}.broken`, 'utf8'), text);
 });

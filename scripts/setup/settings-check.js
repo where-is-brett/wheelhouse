@@ -5,7 +5,9 @@
 // the file is kept beside itself under a new name, then written again with whatever can be read (a stray comma or a
 // comment is dropped), or empty where nothing can.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { readJsonNamed, faultLine } from '../lib/read-json-named.js';
 
 export const MEND = 'Mend it';
 export const MEND_MYSELF = 'I\'ll mend it myself';
@@ -18,6 +20,29 @@ const parse = (text) => {
     return undefined;
   }
 };
+
+// The text with each `\` that does not start a valid JSON escape doubled, inside strings: the usual Windows path fault.
+export function doubleLoneBackslashes(text) {
+  let out = '';
+  let inString = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (!inString) {
+      if (c === '"') inString = true;
+      out += c;
+    } else if (c === '\\') {
+      const next = text[i + 1];
+      if (next !== undefined && '"\\/bfnrtu'.includes(next)) {
+        out += c + next;
+        i += 1;
+      } else out += '\\\\';
+    } else {
+      if (c === '"') inString = false;
+      out += c;
+    }
+  }
+  return out;
+}
 
 // The text with its comments and trailing commas taken out, outside strings: what is inside a string is kept as written.
 function lenient(text) {
@@ -88,13 +113,14 @@ export function damagedSettings({ folder, claudeHome }) {
       return false;
     }
     return !isObject(parse(text));
-  }).map(({ base, file, words }) => ({ file, words, elsewhere: elsewhere(file, base) }));
+  }).map(({ base, file, words }) => ({ file, words, elsewhere: elsewhere(file, base), fault: settingsFault(file) }));
 }
 
 // The card that says which files can't be read and offers to mend them.
 export function mendAsk(damaged) {
   const many = damaged.length > 1;
-  const list = damaged.map((d) => (d.elsewhere ? `${d.words}, a link to a file kept elsewhere, which setup leaves for you to mend` : d.words)).join('; ');
+  const where = (d) => (d.fault ? ` (line ${d.fault.line}, column ${d.fault.column}${d.fault.hint ? `: ${d.fault.hint}` : ''})` : '');
+  const list = damaged.map((d) => `${d.words}${where(d)}`).map((text, i) => (damaged[i].elsewhere ? `${text}, a link to a file kept elsewhere, which setup leaves for you to mend` : text)).join('; ');
   return {
     id: `mend-${damaged.map((d) => path.basename(d.file)).join('-').replace(/\.json/g, '').replace(/[^A-Za-z0-9-]/g, '-')}`,
     card: {
@@ -134,7 +160,7 @@ export function mend(damaged) {
     }
     // Read again, so a file mended meanwhile is never touched.
     if (isObject(parse(text))) return { file, mended: false };
-    const read = parse(lenient(text));
+    const read = parse(lenient(doubleLoneBackslashes(text)));
     const data = isObject(read) ? read : {};
     const copy = copyName(file);
     let made = false;
@@ -149,4 +175,40 @@ export function mend(damaged) {
     }
     return { file, mended: true, copy, kept: Object.keys(data).length > 0 };
   });
+}
+
+// The Claude Code folder: CLAUDE_CONFIG_DIR's when it is set, else the home's .claude.
+export function claudeHomeOf(env = process.env) {
+  return typeof env.CLAUDE_CONFIG_DIR === 'string' && env.CLAUDE_CONFIG_DIR !== '' ? env.CLAUDE_CONFIG_DIR : path.join(os.homedir(), '.claude');
+}
+
+// The fault in a settings file that is there and can't be read as a JSON object, as { file, line, column, hint }; null
+// when it reads or is not there. Kept by the file's modification time and size, so a check at every start is one stat.
+const seen = new Map();
+export function settingsFault(file) {
+  let key;
+  try {
+    const stat = fs.statSync(file);
+    key = `${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    seen.delete(file);
+    return null;
+  }
+  const kept = seen.get(file);
+  if (kept?.key === key) return kept.fault;
+  const read = readJsonNamed(file);
+  let fault = null;
+  if (read.ok === false) fault = { file: read.file, line: read.line, column: read.column, hint: read.hint };
+  else if (!read.missing && !isObject(read.value)) fault = { file, line: 1, column: 1, hint: 'the file must hold one object, written in { }' };
+  seen.set(file, { key, fault });
+  return fault;
+}
+
+// The first fault among the project's settings files and the director's own, as the health line for it; null when none.
+export function settingsFaultLine({ folder, claudeHome = claudeHomeOf() }) {
+  for (const { file } of filesOf({ folder, claudeHome })) {
+    const fault = settingsFault(file);
+    if (fault !== null) return faultLine(fault);
+  }
+  return null;
 }
