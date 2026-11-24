@@ -41,23 +41,24 @@ const PROJECT_MARKER = '.claude/wheelhouse.json';
 const GUARD = `**Apply this only in a workspace that is a Wheelhouse project, one with a \`${PROJECT_MARKER}\` file in its folder. In any other workspace, ignore all of it and answer as if it were not here.**`;
 
 // The same part where every card is asked with ask_user and the director's click on it is recorded (C6_PASSED): as Claude Code's
-// picker is used. The window stays only for an undo on a project kept on this computer.
+// picker is used. The window stays for the seat card (no route records a click on it in the chat and moves the seat) and for an
+// undo on a project kept on this computer.
 const PICKER_CLICKS = `## Clicks in the chat
 
 Ask every card with ask_user, a decision, a sign-off and a merge approval among them, as the tool sheet says. A card is asked
-with no free-text input, so the director answers it by clicking one of its options: Wheelhouse records that click and the crew
-acts on it. Say what you did. If the director closes a card without choosing, nothing is recorded: say so in one plain line and
-ask it again later. If a line from Wheelhouse says Copilot answered a card by itself, do as it says.
+with no free-text input: set \`allowFreeformInput\` to false in every ask_user call (a card that decides is refused without it),
+so the director answers it by clicking one of its options. Wheelhouse records that click and the crew acts on it. Say what you
+did. If the director closes a card without choosing, nothing is recorded: say so in one plain line and ask it again later. If a
+line from Wheelhouse says Copilot answered a card by itself, do as it says.
 
 A decision is a card like any other: \`cards\` hands it out. It is never printed as a message, and a reply typed here is not
 recorded.
 
-When the session start gives the card that moves the First Mate to this window, ask it with ask_user exactly as given. Every
-command that records takes \`--session <id>\`, the session id the session start gave you; a command without it is refused.
-
-The one card that opens Wheelhouse's own window is an undo on a project kept on this computer (\`undo <merge>\` says so with
-\`needs\` \`window\`): run \`confirm <card id>\` with the card it names, and say in one plain line that the card is open in the
-window for the director to click.
+Two cards open Wheelhouse's own window instead, and say so in one plain line that the card is open there for the director to
+click. When the session start gives the card that moves the First Mate to this window, show it as text, never with ask_user,
+and run \`confirm seat-take-over\`: its window records the click and moves the First Mate. An undo on a project kept on this
+computer (\`undo <merge>\` says so with \`needs\` \`window\`) goes there too: run \`confirm <card id>\` with the card it names.
+Every command that records takes \`--session <id>\`, the session id the session start gave you; a command without it is refused.
 `;
 
 // The part for an agent whose click is recorded only in the helper's own window (C6_PASSED false).
@@ -138,7 +139,7 @@ function agent(root, picker) {
 
 // The tool sheet's line on signing options and decisions, for an agent whose every card is asked in its picker.
 const SHEET_WINDOW_WORDS = ' Signing options and decisions never go to ask_user (see "Clicks in the chat").';
-const SHEET_PICKER_WORDS = ' Every card goes to ask_user, signing options and decisions too, with no free-text input.';
+const SHEET_PICKER_WORDS = ' Every card goes to ask_user, signing options and decisions too, with `allowFreeformInput` false; the seat card and an undo on a project kept here go to the window (see "Clicks in the chat").';
 function pickerSheet(sheet, picker) {
   if (picker !== true) return sheet;
   if (!sheet.includes(SHEET_WINDOW_WORDS)) throw new Error(`${TOOL_SHEET} no longer says "${SHEET_WINDOW_WORDS.trim()}"; update SHEET_WINDOW_WORDS in scripts/agents/copilot/first-mate.js`);

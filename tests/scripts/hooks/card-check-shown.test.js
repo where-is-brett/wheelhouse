@@ -163,7 +163,7 @@ test('typed replies switched off: the question picker is allowed for a decision,
 test('on an agent whose hooks only read, the picker is refused for a decision whatever the switch, and it is answered in the window', async () => {
   await inHomeOff(async () => {
     const card = raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
-    const question = asQuestion({ data: card.data });
+    const question = { ...asQuestion({ data: card.data }), allowFreeformInput: false };
     const input = { cwd: '/x', session_id: 's-desk', hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [question] } };
     for (const turn of [turnOff, turnOn]) {
       turn();
@@ -255,7 +255,7 @@ test('a card raised at a feature\'s stage is refused once the feature has moved 
 test('on an agent whose hooks only read but whose picker click is recorded, a decision is asked in the picker whatever the typed-replies switch says', async () => {
   await inHomeOff(async () => {
     const card = raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
-    const question = asQuestion({ data: card.data });
+    const question = { ...asQuestion({ data: card.data }), allowFreeformInput: false };
     const input = { cwd: '/x', session_id: 's-desk', hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [question] } };
     for (const turn of [turnOff, turnOn]) {
       turn();
@@ -278,7 +278,26 @@ test('a card that allows a typed answer is refused where the picker click is rec
     const input = (q) => ({ cwd: '/x', session_id: 's-desk', hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [q] } });
     const refused = await decide(input(typed), { projectOf: () => ({ project: P }), env: {}, writeVia: 'helper', picker: true });
     assert.equal(refused.hookSpecificOutput.permissionDecisionReason, NO_TYPED_ANSWER);
-    const clean = await decide(input(asQuestion({ data: card.data })), { projectOf: () => ({ project: P }), env: {}, writeVia: 'helper', picker: true });
+    const clean = await decide(input({ ...asQuestion({ data: card.data }), allowFreeformInput: false }), { projectOf: () => ({ project: P }), env: {}, writeVia: 'helper', picker: true });
     assert.notEqual(clean?.hookSpecificOutput?.permissionDecisionReason, NO_TYPED_ANSWER);
+  });
+});
+
+test('where the picker click is recorded, a card that decides is refused unless the call turns typed answers off; an ordinary card is not', async () => {
+  await inHomeOff(async () => {
+    turnOff();
+    const card = raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
+    const input = (q) => ({ cwd: '/x', session_id: 's-desk', hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [q] } });
+    const reasonOf = async (q, picker = true) => (await decide(input(q), { projectOf: () => ({ project: P }), env: {}, writeVia: 'helper', picker }))?.hookSpecificOutput?.permissionDecisionReason;
+    // A decision, and a card with an option that signs, asked with nothing said about typed answers: refused.
+    assert.equal(await reasonOf(asQuestion({ data: card.data })), NO_TYPED_ANSWER);
+    const approval = { question: 'Pull request #4 waits for your approval.', header: 'Approve', options: [{ label: 'Approve', description: 'It merges.' }, { label: 'Not now', description: 'It waits.' }] };
+    assert.equal(await reasonOf(approval), NO_TYPED_ANSWER);
+    assert.notEqual(await reasonOf({ ...approval, allowFreeformInput: false }), NO_TYPED_ANSWER);
+    // An ordinary card with nothing said is asked.
+    const ordinary = { question: 'Which colour should the button be?', header: 'Colour', options: [{ label: 'Blue', description: 'Blue.' }, { label: 'Green', description: 'Green.' }] };
+    assert.notEqual(await reasonOf(ordinary), NO_TYPED_ANSWER);
+    // Where the picker click is not recorded, none of this applies.
+    assert.notEqual(await reasonOf(approval, false), NO_TYPED_ANSWER);
   });
 });

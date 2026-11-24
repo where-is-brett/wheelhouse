@@ -1840,17 +1840,26 @@ test('views: a hand-back says whether a note followed the helm', () => {
   assert.equal(build(events.slice(0, 2)).helmBacks.a.noted, false);
 });
 
-test('an approval click an agent\'s hook saw is kept by head commit apart from the verified approvals, and only an Approve with a whole commit counts', async () => {
+test('a click an agent\'s hook saw is kept by the whole head commit it names, apart from the verified approvals', async () => {
   await withHome(async () => {
     const head = 'a'.repeat(40);
     const click = (n, data) => ev('card-answer', n, { question: 'c-1', hash: 'h', proof: 'hook-click', where: 'chat', source: 's', ...data });
     const views = buildViews([
       click(1, { label: 'Approve', commit: head }),
       click(2, { label: 'Approve', commit: 'short' }),
-      click(3, { label: 'Send it back', commit: 'b'.repeat(40) }),
-      click(4, { label: 'Approve', commit: 'c'.repeat(40), proof: 'chat-click' }),
+      click(3, { label: 'Approve', commit: 'c'.repeat(40), proof: 'chat-click' }),
     ], readEnrolled(), { now });
     assert.deepEqual(Object.keys(views.hookApprovals), [head]);
+    assert.equal(views.hookApprovals[head].data.label, 'Approve');
     assert.deepEqual(views.approvals, {});
+  });
+});
+
+test('a later hook click on the same commit stands in place of an earlier Approve, so the gate no longer reads one', async () => {
+  await withHome(async () => {
+    const head = 'a'.repeat(40);
+    const click = (n, data) => ev('card-answer', n, { question: 'c-1', hash: 'h', proof: 'hook-click', where: 'chat', source: 's', commit: head, ...data });
+    const views = buildViews([click(1, { label: 'Approve' }), click(2, { label: 'Send it back' })], readEnrolled(), { now });
+    assert.equal(views.hookApprovals[head].data.label, 'Send it back');
   });
 });

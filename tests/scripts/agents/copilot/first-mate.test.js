@@ -91,13 +91,14 @@ test('the build throws when a source can\'t be read', () => {
   assert.throws(() => buildFirstMate({ root: tempFolder('wh-first-mate-empty-') }), /front-desk/);
 });
 
-test('where every card is asked in the picker, the instructions and the agent ask decisions and signing cards with ask_user and keep the window for an undo only', () => {
+test('where every card is asked in the picker, the instructions and the agent ask decisions and signing cards with ask_user and keep the window for the seat card and an undo', () => {
   const picked = buildFirstMate({ picker: true });
   const text = picked.get(INSTRUCTIONS);
   assert.match(text, /Ask every card with ask_user, a decision, a sign-off and a merge approval among them/);
-  assert.match(text, /no free-text input/);
-  assert.doesNotMatch(text, /decision confirm|confirm seat-take-over|never go to ask_user|that click is not recorded/);
-  assert.match(text, /undo on a project kept on this computer/);
+  assert.match(text, /set `allowFreeformInput` to false in every ask_user call/);
+  assert.doesNotMatch(text, /decision confirm|never go to ask_user|that click is not recorded/);
+  assert.match(text, /show it as text, never with ask_user,\s+and run `confirm seat-take-over`/, 'the seat card goes to the window');
+  assert.match(text, /undo on a project kept on this\s+computer/);
   const agent = picked.get(AGENT);
   assert.match(agent, /\*\*Decisions are cards\.\*\*/);
   assert.doesNotMatch(agent, /Decisions are chat messages|plain chat message|their own typed reply to a decision/);

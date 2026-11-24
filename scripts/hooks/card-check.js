@@ -62,6 +62,7 @@ import { checkShown, plainQuestion, decideStop } from './card-check-stop.js';
 
 export { checkShown, plainQuestion, decideStop };
 import { isDecisionCard } from '../decisions/pending.js';
+import { signsOn } from '../lib/signed-labels.js';
 import { typedRepliesOn } from '../decisions/answer.js';
 
 const SHA12 = '([0-9a-f]{12})';
@@ -321,6 +322,9 @@ async function movedOnDeny(project, cards) {
 // The id the Lift All stop question goes by in the hold, since it is not a card in the state.
 const LIFT_ID = 'lift-stop';
 const isLiftQuestion = (q) => typeof q?.question === 'string' && isLiftStopLine(setLineOf(q.question));
+// Whether a question decides something: a decision card, a card with an option that signs, or Lift All stop.
+const decides = (q, m) => (m != null && !m.setup && isDecisionCard(m.card.data)) || isLiftQuestion(q)
+  || (Array.isArray(q?.options) && q.options.some((o) => signsOn(typeof o === 'string' ? o : o?.label)));
 // The Lift All stop question keeps its set line and reply code in the chat: the prompt record signs its pick from them
 // (scripts/hooks/prompt-record.js). A copy asked without them, an option Lift All stop and no set line, signs nothing,
 // so while STOP is on its last two lines are put back.
@@ -383,6 +387,10 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
   // window; one whose picker click is recorded asks it there as any card, and records no typed reply, so no switch sends it to the chat.
   const decisionAsked = matched.some((m) => m && !m.setup && isDecisionCard(m.card.data));
   if (decisionAsked && !picker.recorded) return { deny: DECISION_IN_WINDOW };
+  // On an agent whose click is recorded by a hook that reads it, a typed answer reads as a click. A card that decides (a decision,
+  // a card with an option that signs, or Lift All stop) is asked only when the call turns typed answers off in words the hook
+  // reads (`allowFreeformInput` false): a call that says nothing about them may well allow them.
+  if (!picker.own && picker.recorded && questions.some((q, i) => q?.allowFreeformInput !== false && decides(q, matched[i]))) return { deny: NO_TYPED_ANSWER };
   if (decisionAsked && picker.own && typedRepliesOn(project)) return { deny: DECISION_IN_CHAT };
   // The Lift All stop question is composed on each visit and never recorded as a card, so the state can't say it is
   // decided: STOP being off is what says so.

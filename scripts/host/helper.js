@@ -2577,7 +2577,13 @@ export async function startHelper({
     return { card: found[0].id, data: found[0].data };
   }
   const hookKey = (project, session, card) => `${project}\n${session}\n${card}`;
+  // The hook routes take nothing until an agent's clicks are recorded (`hookClicks`): before then no hook posts them, and a post
+  // from anything else must not record a click.
+  function hookClicksOn() {
+    if (!hookClicks) refuse('clicks in the chat are not recorded on this computer yet');
+  }
   async function doHookShown({ project, session, message, options }) {
+    hookClicksOn();
     hookBody({ session, message, options });
     const got = hookCardFor(project, { message, options });
     if (got.refused) refuse(got.refused);
@@ -2591,6 +2597,7 @@ export async function startHelper({
   // the First Mate once and the board can say the same line. Held for the latest HOOK_SHOWN_MAX sessions.
   const autoAnswered = new Set();
   async function doHookAuto({ project, session }, ctx) {
+    hookClicksOn();
     if (typeof session !== 'string' || session === '' || session.length > CHAT_TEXT_CHARS) refuse('this session has no id to name its cards by');
     const key = `${project}\n${session}`;
     if (autoAnswered.has(key)) return { ok: true, first: false };
@@ -2600,6 +2607,7 @@ export async function startHelper({
     return { ok: true, first: true };
   }
   async function doHookClick({ project, session, message, options, label }, ctx) {
+    hookClicksOn();
     hookBody({ session, message, options });
     if (typeof label !== 'string' || !options.includes(label)) refuse('the click must name one of the card\'s options');
     if (label === SUGGEST) refuse(`${SUGGEST} carries the director's own words, which a click does not`);
