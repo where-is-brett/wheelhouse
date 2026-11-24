@@ -448,3 +448,12 @@ test('in a terminal the phone card says choose, never click, and a skip answered
   const tried = await notifyStep().plan({ answers: { '4.phone': { label: 'Try it at the end', text: null, at: T0.toISOString() } }, now: () => T0 });
   assert.equal(tried.ask.id, READY_ID);
 });
+
+test('step 9 asks the keep-as-usual card before the phone card, and then goes on whichever way it is answered', async () => {
+  const card = { id: 'keep-usual', card: { what: 'Keep these as your usual on this computer?' } };
+  let open = true;
+  const step = notifyStep({ pushResult: () => null, keepUsual: async () => (open ? { ask: card } : null) });
+  assert.equal((await step.plan({ runId: 'run-0000000001', answers: {}, now: () => T0 })).ask.id, 'keep-usual');
+  open = false;
+  assert.equal((await step.plan({ runId: 'run-0000000001', answers: {}, now: () => T0 })).ask.id, READY_ID);
+});

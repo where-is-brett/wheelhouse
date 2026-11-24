@@ -175,7 +175,6 @@ test('a new product: one card, its Go ahead, every step with no more cards, a gr
       [0, 'plan'],
       [1, 'settled'],
       [2, 'covered'],
-      [3, 'keep-usual'],
       [3, 'covered'],
       [4, 'settled'],
       [5, 'settled'],
@@ -184,7 +183,7 @@ test('a new product: one card, its Go ahead, every step with no more cards, a gr
       [8, 'settled'],
       [10, 'covered'],
       [10, 'health'],
-      [9, 'phone-ready'], [9, 'push-arrived'], [9, 'settled'],
+      [9, 'keep-usual'], [9, 'phone-ready'], [9, 'push-arrived'], [9, 'settled'],
     ]);
     // The one card: a plain line each, and two options, Go ahead recommended.
     const one = log[0];
@@ -336,7 +335,7 @@ test('an existing project with rules: step 5 asks nothing and follows them as th
       [3, 'real-users'], [3, 'connection'], [3, 'builders'], [2, 'host-tool-gh'],
       [4, 'product-before-launch'], [4, 'live-data'], [4, 'phone'],
       [0, 'plan'],
-      [1, 'settled'], [2, 'covered'], [3, 'keep-usual'], [3, 'covered'], [4, 'settled'], [5, 'settled'],
+      [1, 'settled'], [2, 'covered'], [3, 'covered'], [4, 'settled'], [5, 'settled'],
     ]);
     assert.deepEqual(log.filter((e) => e.together).map((e) => e.together), [4, 4, 4, 4, 3, 3, 3], 'asked together on two cards');
     assert.match(log.find((e) => e.step === 0).card.question, /- Harbour-Log on GitHub, as it is\./);
@@ -394,7 +393,7 @@ test('setup stopped after Customise\'s cards resumes at the one card in the next
     assert.match(card.ask.card.question, /Described as: "Tide tables for sailors, used by the harbour's skippers\."/);
 
     const log = await follow(a, { answer: byId(NEW_ANSWERS), through: 3 });
-    assert.deepEqual(shape(log), [[0, 'plan'], [1, 'settled'], [2, 'covered'], [3, 'keep-usual'], [3, 'covered']]);
+    assert.deepEqual(shape(log), [[0, 'plan'], [1, 'settled'], [2, 'covered'], [3, 'covered']]);
     const now = await a.setupRun();
     assert.equal(now.id, stopped.id, 'the same run, carried on');
     assert.equal(typeof now.steps[3].doneAt, 'string');

@@ -261,9 +261,7 @@ const NO_APP = path.join(os.tmpdir(), 'wh-no-such-app.json');
 // ---- The step, driven ----
 
 const said = (label) => (typeof label === 'object' ? { label: null, text: label.text, at: NOW.toISOString() } : { label, text: null, at: NOW.toISOString() });
-// The keep-as-usual question (scripts/setup/usual.js) is answered "Don't keep them" unless a test says otherwise, so a plan that
-// lists its changes does so; usual.test.js covers the question itself.
-const ctxFor = (folder, extra = {}) => ({ folder, step: 3, now: () => NOW, platform: 'darwin', userHome: folder, ...extra, answers: { '3.keep-usual': said('Don\'t keep them'), ...(extra.answers ?? {}) } });
+const ctxFor = (folder, extra = {}) => ({ folder, step: 3, now: () => NOW, platform: 'darwin', userHome: folder, ...extra, answers: extra.answers ?? {} });
 
 // Plans the step, answering each question with the label `pick(id, card)` gives, until it lists its
 // changes. Gives the list, the answers and the questions asked, in order.
@@ -286,7 +284,6 @@ const choose = ({ realUsers = REAL_USERS.no, locked = LEVELS.standard, host = HO
   if (id === 'gitlab-where') return GITLAB_COM;
   if (id === 'project-name') return card?.recommend ?? 'Shop';
   if (id === 'builders') return card.recommend;
-  if (id === 'keep-usual') return 'Don\'t keep them';
   // On the Mac's card a narrow way sits behind Make it stricter.
   if (id.startsWith('connection-')) return card?.options && !card.options.some((o) => o.label === way) && card.options.some((o) => o.label === STRICTER) ? STRICTER : way;
   throw new Error(`asked ${id}`);
@@ -603,7 +600,9 @@ test('a new product gets a private repository; an existing one gets none', async
       ['folder', path.join('<folder>', '.git')],
       ['file', path.join('~', 'projects', slug, 'project.json')],
       ['folder', path.join('~', 'projects', slug, 'record')],
+      ['answer', 'step 3'],
     ]);
+    assert.deepEqual(run.changes.at(-1).after, { host: 'github', gitRoute: 'wheelhouse' });
     assert.deepEqual(run.changes[0].after, { repository: `${USER}/Shop`, private: true, made: true });
     assert.match(lines.at(-1), /Connected: a-director\/Shop on GitHub, Quick/);
     // Applied again (a retry), nothing new is made.

@@ -187,7 +187,7 @@ test('a second computer runs steps 1, 2, 3, 6, 7 (this computer\'s files only), 
 
     // Step 3: the join question, the host and the connection, then its Go ahead.
     assert.equal((await status()).ask, 3);
-    const answers = { join: fromOtherComputer('Cafe-Menu'), host: HOST_LABELS.github, connection: WAYS.quick, builders: BUILDER_CHOICES.background, 'keep-usual': 'Don\'t keep them' };
+    const answers = { join: fromOtherComputer('Cafe-Menu'), host: HOST_LABELS.github, connection: WAYS.quick, builders: BUILDER_CHOICES.background };
     let three = await plan(3);
     const asked = [];
     while (three.ask) {
@@ -196,7 +196,7 @@ test('a second computer runs steps 1, 2, 3, 6, 7 (this computer\'s files only), 
       say(three.ask, answers[asked.at(-1)]);
       three = await plan(3);
     }
-    assert.deepEqual(asked, ['join', 'host', 'connection', 'builders', 'keep-usual'], 'a joining computer is asked where its builders start');
+    assert.deepEqual(asked, ['join', 'host', 'connection', 'builders'], 'a joining computer is asked where its builders start');
     await goAhead(3, three);
     assert.deepEqual(written.map((e) => [e.kind, e.data.key, e.data.value]), [['setting', `builders:${computerId()}`, 'background']]);
     order.push(3);
@@ -228,7 +228,11 @@ test('a second computer runs steps 1, 2, 3, 6, 7 (this computer\'s files only), 
     // run's records are copied into the state now.
     assert.deepEqual(copied, [[findRun(folder).id, folder]], 'finished at step 8');
 
-    // Step 9: Ready, the wait while the playbook pushes, then It arrived; its answers are copied too.
+    // Step 9 first asks to keep the answers step 3 used as the usual (nothing was kept here), then Ready, the wait while the playbook
+    // pushes, then It arrived; its answers are copied too.
+    const keep = await plan(9);
+    assert.equal(keep.ask.id, 'keep-usual');
+    say(keep.ask, 'Don\'t keep them');
     const ready = await plan(9);
     assert.equal(ready.ask.id, READY_ID);
     say(ready.ask, READY.ready);

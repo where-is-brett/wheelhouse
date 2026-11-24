@@ -1,8 +1,9 @@
 // scripts/setup/usual.js
 // The director's usual answers (builders and settings design, section 12): step 3's host, GitLab address, git route and
 // connection, kept once per computer as profile settings (`usual.<name>:<computer>`, scripts/settings/catalogue.js) and
-// offered when setup runs again. Two cards: "Use your usual setup?" first, and "Keep these as your usual on this computer?"
-// once step 3's list is made, only when the answers differ from the usual or none are kept.
+// offered when setup runs again. Two cards: "Use your usual setup?" first, in step 3, and "Keep these as your usual on this
+// computer?" at the end of setup, beside the phone offer (step 9), only when the answers step 3 used differ from the usual or
+// none are kept. Setup is finished whichever way it is answered, and a keep that fails never fails a step.
 //
 // "Use my usual" takes each question the usual answers as chosen, marked `from: 'usual'`; the checks still run, since the host
 // is still reached and the builders' sign-in is still proved. "Choose each" asks as before, with the usual answer recommended.
@@ -143,12 +144,9 @@ export function keepAsk(names, now) {
   };
 }
 
-// The usual answers saved, through `profile` (own-app.js's helperProfile, a signed event the director confirms), when the
-// director chose to keep them. Nothing is written for an answer already kept or already waiting for its Confirm. Gives the
-// settings written.
-export async function saveUsual({ answers, changes, profile, computer, defaultBase }) {
-  if (answers?.[`3.${KEEP_ID}`]?.label !== KEEP_THEM) return [];
-  const now = usualFromChanges(changes, defaultBase);
+// The usual answers `now` saved, through `profile` (own-app.js's helperProfile, a signed event the director confirms). Nothing is
+// written for an answer already kept or already waiting for its Confirm. Gives the settings written.
+export async function saveUsual({ now, profile, computer }) {
   const views = await profile.views();
   const waiting = Array.isArray(views?.unconfirmed) ? views.unconfirmed : [];
   const written = [];
@@ -165,11 +163,40 @@ export async function saveUsual({ answers, changes, profile, computer, defaultBa
   return written;
 }
 
+// The answers step 3 used, as its apply recorded them (an `answer` change with the host named), the newest; {} when none.
+export function usedAnswers(changes) {
+  const c = (Array.isArray(changes) ? changes : []).filter((x) => x?.step === 3 && x.kind === 'answer' && typeof x.after?.host === 'string').at(-1);
+  if (!c) return {};
+  const { from, ...used } = c.after; // eslint-disable-line no-unused-vars
+  return used;
+}
+
+// The end of setup (step 9's plan asks it before the phone card). `run` is the run's changes; `views` reads the settings; `profile()`
+// gives the profile to save through. Gives { ask } while the keep card is open (the answers step 3 used differ from the usual
+// kept, or none are kept), else null. Once "Keep them" is answered the usual is saved, and a refusal is said (`say`, kept
+// with the step's settling) and never stops setup: keeping is optional. "Don't keep them" saves nothing.
+export async function keepAtEnd({ ctx, changes, views, profile, computer }) {
+  if (ctx.choicesOnly === true) return null;
+  const now = usedAnswers(changes);
+  let kept = null;
+  try { kept = views(); } catch { /* settings that can't be read keep no usual */ }
+  const names = differs(now, usualOf(kept, computer));
+  if (names.length === 0) return null;
+  const said = ctx.answers?.[`9.${KEEP_ID}`]?.label;
+  if (said === DONT_KEEP) return null;
+  if (said !== KEEP_THEM) return { ask: keepAsk(names, now) };
+  try {
+    await saveUsual({ now, profile: profile(), computer });
+  } catch (error) {
+    ctx.say?.(`Your usual answers were not kept: ${error.message}`);
+  }
+  return null;
+}
+
 // Step 3's plan with the usual answers laid over it. `plan(ctx)` is the step's own plan. Returns what it returns, with: the
 // "Use your usual setup?" card first when a usual is kept; each question the usual answers taken as chosen while "Use my usual"
-// stands, marked `from: 'usual'` in the answers the plan reads; the usual recommended on each card after "Choose each"; and
-// the keep card once the list is made and its answers differ from the usual.
-export async function planWithUsual({ plan, ctx, views, computer, labels, defaultBase }) {
+// stands, marked `from: 'usual'` in the answers the plan reads; and the usual recommended on each card after "Choose each".
+export async function planWithUsual({ plan, ctx, views, computer, labels }) {
   let kept = null;
   try { kept = views(); } catch { /* settings that can't be read keep no usual: step 3 asks as it does for a first project */ }
   const usual = usualOf(kept, computer);
@@ -201,12 +228,6 @@ export async function planWithUsual({ plan, ctx, views, computer, labels, defaul
         }
       }
       return got;
-    }
-    if (Array.isArray(got?.changes) && ctx.choicesOnly !== true) {
-      const now = usualFromChanges(got.changes, defaultBase);
-      const names = differs(now, usual);
-      const said = answers[`3.${KEEP_ID}`] ?? null;
-      if (names.length > 0 && (said === null || ![KEEP_THEM, DONT_KEEP].includes(said.label))) return { ask: keepAsk(names, now) };
     }
     return got;
   }

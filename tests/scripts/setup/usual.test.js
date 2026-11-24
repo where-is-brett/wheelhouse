@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  CHOOSE_EACH, KEEP_ID, KEEP_THEM, DONT_KEEP, USE_USUAL, USUAL_ID, differs, hasUsual, planWithUsual, saveUsual, usualAnswerFor, usualFromChanges, usualOf, usualWords,
+  CHOOSE_EACH, KEEP_ID, KEEP_THEM, DONT_KEEP, USE_USUAL, USUAL_ID, differs, hasUsual, keepAtEnd, planWithUsual, saveUsual, usedAnswers, usualAnswerFor, usualFromChanges, usualOf, usualWords,
 } from '../../../scripts/setup/usual.js';
 import { effectiveSettings, settingsText } from '../../../scripts/settings/effective.js';
 import { usualKey } from '../../../scripts/settings/catalogue.js';
@@ -120,24 +120,11 @@ test('"Choose each" asks as today, with the usual answer recommended', async () 
   assert.equal(got.ask.card.recommend, labels.github);
 });
 
-test('the keep card is offered when the answers differ or none are kept, and not when they match', async () => {
+test('step 3 never asks the keep card: the end of setup does', async () => {
   const answers = { '3.host': { label: 'GitHub', text: null, at: AT }, '3.connection-abc': { label: labels.own, text: null, at: AT } };
-  const first = await run({ answers }, {});
-  assert.equal(first.ask.id, KEEP_ID);
-  assert.deepEqual(first.ask.card.options.map((o) => o.label), [KEEP_THEM, DONT_KEEP]);
-  assert.equal(first.ask.card.recommend, KEEP_THEM);
-  const differing = await run({ answers }, { host: 'gitlab' });
-  assert.equal(differing.ask.id, USUAL_ID);
-  const same = await run({ answers: { ...answers, [`3.${USUAL_ID}`]: { label: CHOOSE_EACH, text: null, at: AT } } }, { host: 'github', gitRoute: 'wheelhouse', connection: 'own-app' });
-  assert.equal(same.ask, undefined);
-  assert.ok(same.changes);
-  const answered = await run({ answers: { ...answers, [`3.${KEEP_ID}`]: { label: DONT_KEEP, text: null, at: AT } } }, {});
-  assert.equal(answered.ask, undefined);
-});
-
-test('a look at the choices alone never asks the keep card', async () => {
-  const got = await run({ choicesOnly: true, answers: { '3.host': { label: 'Keep it here', text: null, at: AT } } }, {});
+  const got = await run({ answers }, {});
   assert.equal(got.ask, undefined);
+  assert.ok(got.changes);
 });
 
 test('settings that cannot be read keep no usual', async () => {
@@ -145,21 +132,41 @@ test('settings that cannot be read keep no usual', async () => {
   assert.equal(got.ask.id, 'host');
 });
 
-test('saving is a signed profile change, written once and only for what changed', async () => {
+const gitlabUsed = { step: 3, kind: 'answer', after: { host: 'gitlab', gitlabBase: 'https://gitlab.example.org', gitRoute: 'own' } };
+const endCtx = (answers = {}, say = () => {}) => ({ answers, say });
+
+test('the end of setup offers to keep what step 3 used, when it differs from the usual or none are kept', async () => {
+  const ask = await keepAtEnd({ ctx: endCtx(), changes: [gitlabUsed], views: () => viewsWith({}), profile: () => ({}), computer: COMPUTER });
+  assert.equal(ask.ask.id, KEEP_ID);
+  assert.deepEqual(ask.ask.card.options.map((o) => o.label), [KEEP_THEM, DONT_KEEP]);
+  assert.equal(ask.ask.card.recommend, KEEP_THEM);
+  const same = await keepAtEnd({ ctx: endCtx(), changes: [gitlabUsed], views: () => viewsWith({ host: 'gitlab', gitlabBase: 'https://gitlab.example.org', gitRoute: 'own' }), profile: () => ({}), computer: COMPUTER });
+  assert.equal(same, null);
+  assert.equal(await keepAtEnd({ ctx: endCtx(), changes: [], views: () => viewsWith({}), profile: () => ({}), computer: COMPUTER }), null, 'nothing used, nothing to keep');
+  assert.equal(await keepAtEnd({ ctx: { answers: {}, choicesOnly: true }, changes: [gitlabUsed], views: () => viewsWith({}), profile: () => ({}), computer: COMPUTER }), null);
+});
+
+test('saving is a signed profile change, written once and only for what changed; "Don\'t keep them" saves nothing', async () => {
   const writes = [];
   const profile = { views: async () => viewsWith({ host: 'github' }), write: async (e) => { writes.push(e); return { ok: true }; } };
-  const changes = [{ kind: 'host', target: 'gitlab', action: 'connection', mode: 'as-is', base: 'https://gitlab.example.org' }];
-  assert.deepEqual(await saveUsual({ answers: {}, changes, profile, computer: COMPUTER, defaultBase: BASE }), []);
-  assert.deepEqual(await saveUsual({ answers: { [`3.${KEEP_ID}`]: { label: DONT_KEEP } }, changes, profile, computer: COMPUTER, defaultBase: BASE }), []);
-  const saved = await saveUsual({ answers: { [`3.${KEEP_ID}`]: { label: KEEP_THEM } }, changes, profile, computer: COMPUTER, defaultBase: BASE });
-  assert.deepEqual(saved.map((s) => s.key), [usualKey('host', COMPUTER), usualKey('gitlabBase', COMPUTER), usualKey('gitRoute', COMPUTER)]);
-  assert.equal(writes.length, 3);
+  const kept = { [`9.${KEEP_ID}`]: { label: DONT_KEEP } };
+  assert.equal(await keepAtEnd({ ctx: endCtx(kept), changes: [gitlabUsed], views: () => viewsWith({}), profile: () => profile, computer: COMPUTER }), null);
+  assert.equal(writes.length, 0);
+  const keep = endCtx({ [`9.${KEEP_ID}`]: { label: KEEP_THEM } });
+  assert.equal(await keepAtEnd({ ctx: keep, changes: [gitlabUsed], views: () => viewsWith({}), profile: () => profile, computer: COMPUTER }), null);
+  assert.deepEqual(writes.map((w) => w.data.key), [usualKey('host', COMPUTER), usualKey('gitlabBase', COMPUTER), usualKey('gitRoute', COMPUTER)]);
   for (const w of writes) {
     assert.equal(w.kind, 'setting');
     assert.match(w.data.words, /^Usual /);
   }
-  const refused = { views: profile.views, write: async () => ({ ok: false, why: 'no' }) };
-  await assert.rejects(saveUsual({ answers: { [`3.${KEEP_ID}`]: { label: KEEP_THEM } }, changes, profile: refused, computer: COMPUTER, defaultBase: BASE }), /could not be saved.*no/);
+});
+
+test('a keep the helper refuses is said and never stops setup', async () => {
+  const said = [];
+  const refused = { views: async () => viewsWith({}), write: async () => ({ ok: false, why: 'no' }) };
+  const ctx = endCtx({ [`9.${KEEP_ID}`]: { label: KEEP_THEM } }, (line) => said.push(line));
+  assert.equal(await keepAtEnd({ ctx, changes: [gitlabUsed], views: () => viewsWith({}), profile: () => refused, computer: COMPUTER }), null);
+  assert.match(said.join(' '), /not kept.*could not be saved.*no/);
 });
 
 test('an answer waiting for its Confirm counts as kept', async () => {
@@ -168,8 +175,13 @@ test('an answer waiting for its Confirm counts as kept', async () => {
     views: async () => ({ settings: {}, unconfirmed: [{ kind: 'setting', data: { key: usualKey('host', COMPUTER), value: 'github' } }] }),
     write: async (e) => { writes.push(e); return { ok: true }; },
   };
-  await saveUsual({ answers: { [`3.${KEEP_ID}`]: { label: KEEP_THEM } }, changes: [{ kind: 'host', target: 'github', action: 'connection', mode: 'quick' }], profile, computer: COMPUTER, defaultBase: BASE });
+  await saveUsual({ now: usualFromChanges([{ kind: 'host', target: 'github', action: 'connection', mode: 'quick' }], BASE), profile, computer: COMPUTER });
   assert.deepEqual(writes.map((w) => w.data.key), [usualKey('gitRoute', COMPUTER)]);
+});
+
+test('step 3 keeps what it used in setup\'s record, without the usual\'s mark', () => {
+  assert.deepEqual(usedAnswers([{ step: 3, kind: 'answer', after: { from: 'usual', host: 'github' } }]), { host: 'github' });
+  assert.deepEqual(usedAnswers([{ step: 3, kind: 'answer', after: { joined: 'a/b' } }]), {});
 });
 
 test('usual answers are per computer: another computer\'s are not read', () => {
