@@ -19,10 +19,11 @@
 //                        together; { done: true } once its Go ahead holds. A step's Go-ahead plan
 //                        that Go ahead covers says `covered: true`: apply it with no card
 //   status               where setup stands in this folder, as plain lines
-//   resume               where setup stands, and the plan of what comes next: the one card while no
+//   resume [<last step>] where setup stands, and the plan of what comes next: the one card while no
 //                        Go ahead on it holds, else the first step neither done nor running:
 //                        { lines, next, plan }, with plan null when there is none, and
-//                        `setUpAgain: true` once the director asked to set up again on a redo card
+//                        `setUpAgain: true` once the director asked to set up again on a redo card.
+//                        Covered steps are applied for the session in the same call (`applied`), up to the last step if one is given
 //   wait <step>          waits, up to WAIT_MOST_MS a call, while the step runs or its plan is a
 //                        wait: { step, waited: true } once it is over (step 10: once its own checks
 //                        are done); else { step, running: true }, or { step, waiting } with the
@@ -91,7 +92,7 @@ export const inDesktopApp = (entrypoint, env = process.env) => (entrypoint === '
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
 
-export const USAGE = 'Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, choices, change <key>, health [<trial line> ...], sign-in, uninstall plan, uninstall apply <hash>, uninstall status';
+export const USAGE = 'Commands: plan <step>, apply <step> <hash>, status, resume [<last step>], wait <step>, choices, change <key>, health [<trial line> ...], sign-in, uninstall plan, uninstall apply <hash>, uninstall status';
 // The longest `wait <step>` waits in one call, well within the two minutes a command may run by
 // default; a longer wait is asked again.
 export const WAIT_MOST_MS = 90 * 1000;
@@ -200,7 +201,9 @@ export async function main(argv, {
     } else if (form === 'status' && rest.length === 0) {
       const got = await ask((client ?? helperClient()).setup.status, { folder });
       out(`${(Array.isArray(got.lines) ? got.lines : []).map((l) => String(l).replace(BREAKS, ' ')).join('\n')}\n`);
-    } else if (form === 'resume' && rest.length === 0) {
+    } else if (form === 'resume' && rest.length <= 1) {
+      // With a step given, covered steps are applied only up to it; the plan after that is left as it comes.
+      const last = rest.length === 1 ? stepOf(rest[0]) : Infinity;
       const helper = client ?? helperClient();
       const look = async () => {
         let got = await ask(helper.setup.status, { folder });
@@ -225,7 +228,7 @@ export async function main(argv, {
       // the next plan taken, so a run of covered steps costs the session one call, not three each. What each step said, and its
       // heading, come back in `applied`. A refusal ends the run of them, leaving the plan for the session to apply and see it.
       const applied = [];
-      while (planned?.covered === true && typeof planned.hash === 'string' && applied.length < MOST_CHAINED) {
+      while (planned?.covered === true && typeof planned.hash === 'string' && planned.step <= last && applied.length < MOST_CHAINED) {
         let done;
         try {
           const { ok, ...answer } = await ask(helper.setup.apply, { folder, step: planned.step, hash: planned.hash }); // eslint-disable-line no-unused-vars

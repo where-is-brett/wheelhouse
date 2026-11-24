@@ -166,7 +166,7 @@ test('health hands the trial lines to the helper, as they are, and gives back th
 test('a wrong form, a step out of range, a short hash or a refusal is one line on standard error', async () => {
   const c = fakeClient({ apply: { ok: false, refused: 'All stop is on' }, plan: { ok: false, refused: 'step 1, Install is already done' } });
   for (const argv of [[], ['go'], ['plan'], ['plan', '11'], ['plan', '1', '2'], ['plan', 'x'], ['apply', '1'], ['apply', '1', H.slice(0, 12)],
-    ['apply', '1', H.toUpperCase()], ['apply', '1', H, 'more'], ['status', 'now'], ['resume', '3']]) {
+    ['apply', '1', H.toUpperCase()], ['apply', '1', H, 'more'], ['status', 'now'], ['resume', 'x'], ['resume', '3', '4']]) {
     const got = await run(argv, { client: c });
     assert.equal(got.code, 1, argv.join(' '));
     assert.equal(got.out, '');
@@ -234,7 +234,7 @@ test('run as a script, a wrong form says how the command is used', () => {
   const got = spawnSync(process.execPath, [SCRIPT, 'go'], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: shortHome() } });
   assert.equal(got.status, 1);
   assert.equal(got.stdout, '');
-  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, choices, change <key>, health \[<trial line> ...\], sign-in, uninstall plan, uninstall apply <hash>, uninstall status\n$/);
+  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume \[<last step>\], wait <step>, choices, change <key>, health \[<trial line> ...\], sign-in, uninstall plan, uninstall apply <hash>, uninstall status\n$/);
 });
 
 test('run as a script through a linked plugin folder, it still runs', () => {
@@ -243,7 +243,7 @@ test('run as a script through a linked plugin folder, it still runs', () => {
   fs.symlinkSync(path.resolve(path.dirname(SCRIPT), '..', '..'), linked, process.platform === 'win32' ? 'junction' : 'dir');
   const got = spawnSync(process.execPath, [path.join(linked, 'scripts', 'setup', 'cli.js'), 'go'], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: shortHome() } });
   assert.equal(got.status, 1);
-  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, choices, change <key>, health \[<trial line> ...\], sign-in, uninstall plan, uninstall apply <hash>, uninstall status\n$/);
+  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume \[<last step>\], wait <step>, choices, change <key>, health \[<trial line> ...\], sign-in, uninstall plan, uninstall apply <hash>, uninstall status\n$/);
 });
 
 test('the uninstall forms ask the helper\'s uninstall routes for this folder, apply with the full hash only', async () => {
@@ -421,6 +421,12 @@ test('resume applies the steps the one card covers, in one call, and says what e
   assert.deepEqual(applied, [2, 3]);
   assert.deepEqual(got.applied.map((a) => [a.step, a.said ?? null]), [[2, 'Tools are in'], [3, null]]);
   assert.equal(got.plan.step, 6);
+  // Given a last step, the covered steps after it are left as the plan.
+  at = 2;
+  applied.length = 0;
+  const limited = JSON.parse((await run(['resume', '2'], { client: c })).out);
+  assert.deepEqual(applied, [2]);
+  assert.deepEqual([limited.plan.step, limited.plan.covered], [3, true]);
   // A refusal ends the run of them; the plan stays covered, for the session to apply and be told why.
   const refused = fakeClient({ status: { ok: true, lines: [], next: 2, ask: 2 }, plan: plans[2], apply: { ok: false, refused: 'All stop is on' } });
   const stuck = JSON.parse((await run(['resume'], { client: refused })).out);

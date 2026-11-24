@@ -27,7 +27,7 @@ The director's first message is often about their product ("I want to build a to
 
 ## The command
 
-The Wheelhouse command the session start named, with `scripts/setup/cli.js` in place of `scripts/frontdesk/cli.js` (the setup command that started this session names that path too), then `<form>`, run in the folder being set up, one form per call, typed exactly so. Its forms: `plan <step>` (step 0 is the one card), `apply <step> <hash>`, `status`, `resume`, `wait <step>`, `choices`, `change <key>`, `health [<trial line> ...]`, `sign-in`, `uninstall plan`, `uninstall apply <hash>`, `uninstall status`.
+The Wheelhouse command the session start named, with `scripts/setup/cli.js` in place of `scripts/frontdesk/cli.js` (the setup command that started this session names that path too), then `<form>`, run in the folder being set up, one form per call, typed exactly so. Its forms: `plan <step>` (step 0 is the one card), `apply <step> <hash>`, `status`, `resume [<last step>]`, `wait <step>`, `choices`, `change <key>`, `health [<trial line> ...]`, `sign-in`, `uninstall plan`, `uninstall apply <hash>`, `uninstall status`.
 
 ## Asking a card
 
