@@ -103,7 +103,7 @@ test('a session is never started in bypass mode, a feature never in auto mode, a
   assert.throws(() => sessions.foremanCall({ ...base, config: { routing: { foreman: '--dangerously-skip-permissions' } } }), /model can't be passed/);
   assert.throws(() => sessions.featureStartCall({ ...base, sessionId: 'x', config: { routing: { builder: 'a b' } } }), /model can't be passed/);
   // With no configuration at all, the default mode and model are still given in words.
-  assert.deepEqual(sessions.featureStartCall({ ...base, sessionId: 'x' }).args, ['-p', 'go', '--session-id', 'x', '--permission-mode', 'acceptEdits', '--model', 'default']);
+  assert.deepEqual(sessions.featureStartCall({ ...base, sessionId: 'x' }).args, ['-p', 'Wheelhouse builder: go', '--session-id', 'x', '--permission-mode', 'acceptEdits', '--model', 'default']);
 });
 
 test('the foreman and feature sessions, which read the main folder\'s local settings, always name their model, so they never take the front desk\'s', () => {
@@ -133,9 +133,9 @@ test('a call given the column in force passes its model, --effort and --fallback
   const long = sessions.foremanCall({ config, prompt: 'go', claude, long: true, settings: '/s.json', tools: ['Read'], ...given });
   assert.deepEqual(long.args.slice(long.args.indexOf('--model')), ['--model', 'model-top', '--effort', 'xhigh', '--fallback-model', 'model-mid', '--allowedTools', 'Read']);
   const start = sessions.featureStartCall({ config, prompt: 'go', claude, sessionId: 's', allowed: ['Read'], ...given });
-  assert.deepEqual(start.args, ['-p', 'go', '--session-id', 's', '--permission-mode', 'acceptEdits', '--model', 'model-top', '--effort', 'xhigh', '--fallback-model', 'model-mid', '--allowedTools', 'Read']);
+  assert.deepEqual(start.args, ['-p', 'Wheelhouse builder: go', '--session-id', 's', '--permission-mode', 'acceptEdits', '--model', 'model-top', '--effort', 'xhigh', '--fallback-model', 'model-mid', '--allowedTools', 'Read']);
   const resume = sessions.featureResumeCall({ config, prompt: 'go', claude, sessionId: 's', ...given, fallback: null });
-  assert.deepEqual(resume.args, ['-p', 'go', '--resume', 's', '--permission-mode', 'acceptEdits', '--model', 'model-top', '--effort', 'xhigh']);
+  assert.deepEqual(resume.args, ['-p', 'Wheelhouse builder: go', '--resume', 's', '--permission-mode', 'acceptEdits', '--model', 'model-top', '--effort', 'xhigh']);
   // The environment never carries an effort for every subagent.
   for (const call of [wake, long, start, resume]) assert.ok(!Object.keys(call.env).some((k) => /EFFORT/i.test(k)));
   // No model given (null or left out): the flat table's, as before; a feature's own role first, then the builder's.

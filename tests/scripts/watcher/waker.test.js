@@ -26,6 +26,7 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { guardedCommand, selfTestFile } from '../../../scripts/windows/low.js';
 import { readBaseline, writeBaseline } from '../../../scripts/watcher/control-files.js';
+import { callLine, readCall } from '../../../scripts/watcher/hidden-start.js';
 import { holdFile, readHold, helmHeld } from '../../../scripts/crew/hold.js';
 import { nextWork } from '../../../scripts/foreman/queue.js';
 import { markUnopenedSteers } from '../../../scripts/foreman/wake.js';
@@ -59,6 +60,8 @@ const FLAT_COLUMN = [
   "reviewerCritical: model the session's own, effort high",
   "tester: model the session's own, effort medium",
 ];
+// A builder's prompt begins with the builder lead line (scripts/foreman/prompt-lead.js).
+const led = (prompt) => `Wheelhouse builder: ${prompt}`;
 const withColumn = (prompt, column = FLAT_COLUMN) => [prompt, '', ...column].join('\n');
 
 const config = (over = {}) => readConfig(JSON.stringify({
@@ -502,7 +505,7 @@ test('a feature bundle wakes only that feature\'s session, by the id the watcher
   const copy = path.join(featurePaths(login).dir, 'wakes', path.basename(record));
   assert.equal(call.cwd, login);
   assert.deepEqual(call.args, [
-    '-p', withColumn(`Wheelhouse: read ${copy}`), '--resume', SESSION,
+    '-p', withColumn(led(`Wheelhouse: read ${copy}`)), '--resume', SESSION,
     '--permission-mode', 'dontAsk', '--model', 'model-b', '--effort', 'high', '--allowedTools', ...ALLOWED, ...FILE_RULES,
   ]);
   assert.equal(fs.readFileSync(copy, 'utf8'), fs.readFileSync(record, 'utf8'));
@@ -537,7 +540,7 @@ test('a feature started before its brief named the approved document gets it on 
   assert.equal(fake.calls.length, 1);
   const copy = path.join(featurePaths(login).dir, 'wakes', path.basename(record));
   assert.equal(fs.readFileSync(path.join(featurePaths(login).dir, 'approved.md'), 'utf8'), design);
-  assert.equal(fake.calls[0].args[1], withColumn(PROMPTS.feature(copy, { approved: true })));
+  assert.equal(fake.calls[0].args[1], withColumn(led(PROMPTS.feature(copy, { approved: true }))));
   assert.match(PROMPTS.feature(copy, { approved: true }), /^Wheelhouse: read .+\. The director's approved document for this work is now at \.wheelhouse\/feature\/approved\.md: it is the spec\./);
 }));
 
@@ -558,7 +561,7 @@ test('a feature whose brief names the approved document is woken with the plain 
   await w.wakeFeature('search-box', record);
   const copy = path.join(featurePaths(search).dir, 'wakes', path.basename(record));
   assert.equal(fs.existsSync(path.join(featurePaths(search).dir, 'approved.md')), false);
-  assert.equal(fake.calls[0].args[1], withColumn(`Wheelhouse: read ${copy}`));
+  assert.equal(fake.calls[0].args[1], withColumn(led(`Wheelhouse: read ${copy}`)));
 }));
 
 test('a feature wake waits while the watcher kept no session id, and is dropped once the feature is gone', () => withHome(async () => {
@@ -621,7 +624,7 @@ test('startFeature starts a session with an id of the watcher\'s own, in the wor
   const [call] = fake.calls;
   assert.equal(call.cwd, dir);
   assert.deepEqual(call.args, [
-    '-p', withColumn('Read .wheelhouse/feature/brief.md and follow it.'), '--session-id', started.sessionId,
+    '-p', withColumn(led('Read .wheelhouse/feature/brief.md and follow it.')), '--session-id', started.sessionId,
     '--permission-mode', 'acceptEdits', '--model', 'model-b', '--effort', 'high', '--allowedTools', ...ALLOWED, ...FILE_RULES,
   ]);
   assert.deepEqual(JSON.parse(fs.readFileSync(sessionFile(P, 'login-page'), 'utf8')).sessionId, started.sessionId);
@@ -1198,6 +1201,29 @@ test('spawnDetached starts a real process detached and gives its exit code; pidA
   assert.equal(await processStartTime(0), null);
   assert.equal(await processStartTime(1, { platform: 'win32', run: async () => ({ code: 0, stdout: '1 2026-10-19T09:00:00.0000000Z\r\n' }) }), '2026-10-19T09:00:00.0000000Z');
   assert.equal(await processStartTime(1, { run: async () => { throw new Error('no ps'); } }), null);
+});
+
+test('on Windows spawnDetached starts the program through hidden-start.js, which passes on its input, output and exit code', async (t) => {
+  const keep = setInterval(() => {}, 50);
+  t.after(() => clearInterval(keep));
+  const folder = tempFolder('wh-relay-');
+  const output = path.join(folder, 'out.log');
+  const script = 'let s="";process.stdin.on("data",(d)=>{s+=d}).on("end",()=>{process.stdout.write("got "+s);process.stderr.write("!");process.exit(s==="a b\\n\\"c\\""?4:5)})';
+  const child = await spawnDetached(process.execPath, ['-e', script], { input: 'a b\n"c"', output, platform: 'win32' });
+  assert.ok(Number.isInteger(child.pid));
+  assert.equal(await child.exited, 4, 'the input after the call line reaches the program, and its exit code comes back');
+  assert.equal(fs.readFileSync(output, 'utf8').replace('!', ''), 'got a b\n"c"');
+  assert.match(fs.readFileSync(output, 'utf8'), /!/, 'its errors are kept too');
+  const quiet = await spawnDetached(process.execPath, ['-e', 'process.exit(6)'], { platform: 'win32' });
+  assert.equal(await quiet.exited, 6, 'a program with no input is started too');
+  const missing = await spawnDetached(path.join(folder, 'no-such-program'), [], { platform: 'win32' });
+  assert.equal(await missing.exited, 1, 'a program that can\'t start ends the go-between with 1');
+});
+
+test('hidden-start reads the call line and the input after it, and nothing that is not a call', () => {
+  assert.deepEqual(readCall(`${callLine('cmd.exe', ['/d', '/c', '"x y"'], true)}rest\nof it`), { file: 'cmd.exe', args: ['/d', '/c', '"x y"'], verbatim: true, input: 'rest\nof it' });
+  assert.deepEqual(readCall(callLine('a.exe', [], undefined)), { file: 'a.exe', args: [], verbatim: false, input: '' });
+  for (const bad of ['', 'no line', '{"file":"a"}\n', '{"file":"","args":[]}\n', '{"file":"a","args":[1]}\n', 'null\n', '{\n']) assert.equal(readCall(bad), null, bad);
 });
 
 test('start times are asked for every running pid in one call, and kept a minute', async () => {

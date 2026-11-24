@@ -789,6 +789,8 @@ test('the trial stays open until the session\'s lines are in; then it is closed,
     const ready = await routes['/setup/plan']({ folder, step: 10 });
     assert.equal(ready.ask.id, 'setup-ready');
     assert.ok(ready.ask.card.question.startsWith(`${green.lines.at(-1)}\nThe briefing.\n`), ready.ask.card.question);
+    assert.ok(ready.ask.card.question.includes('Any Claude session in this folder now works under Wheelhouse\'s guards.'), 'the last card says the guards line once');
+    assert.equal(ready.ask.card.question.split('works under Wheelhouse').length, 2);
     assert.deepEqual(ready.ask.card.options.map((o) => o.label), ['Carry on', 'Show the checks']);
     assert.equal((await routes['/setup/status']({ folder })).ask, 10, 'asked again until answered');
     const greenAt = new Date(Date.parse(runOf(folder).changes.find((c) => typeof c.after?.green === 'string').after.green) + 1000);
