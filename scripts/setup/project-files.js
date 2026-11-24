@@ -1200,7 +1200,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
     meanwhile: 'Setup waits here; nothing changes.',
   });
   // One thing to a line, as step 3's card lists its own, under a title that says whose sign-in does it.
-  const by = local || joining ? '' : pasted ? ', sent with the ' + PERSONAL_DAYS + '-day token you pasted at step 3, which can act as you across GitLab' : keyed ? (pasted === null ? ', sent with the project\'s own key where GitLab allows one, or else the ' + PERSONAL_DAYS + '-day token you pasted at step 3, which can act as you across GitLab' : ', sent with the project\'s own key, not your account') : `, acting as you on ${company ? 'your company\'s GitLab' : NAME[host]}`;
+  const by = local || joining ? '' : pasted ? ', sent with the token you pasted at step 3 (set to expire in ' + PERSONAL_DAYS + ' days), which can do anything you can do on GitLab' : keyed ? (pasted === null ? ', sent with the project\'s own key where GitLab allows one, or else the token you pasted at step 3 (set to expire in ' + PERSONAL_DAYS + ' days), which can do anything you can do on GitLab' : ', sent with the project\'s own key, not your account') : `, acting as you on ${company ? 'your company\'s GitLab' : NAME[host]}`;
   const full = card([`Setup step 7, ${titleOf7(local || joining, keyed)}${joining ? ', for this computer' : by}:`, ...[...parts, ...pinned].map(asLine)].join('\n'));
   const fits = (c) => composeCard({ ...c, target: { step: 7, hash: '0'.repeat(64) } }).question.question.length <= CARD.chars;
   try {

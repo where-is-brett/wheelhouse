@@ -135,7 +135,8 @@ test('step 9\'s rule: a wait with waitsFor sends nothing, one without sends one 
 // are asked together; an answer is changed through `choices` and `change`, never refused flat.
 test('the playbook opens with the one card, applies what its Go ahead covers, asks Customise\'s cards together and changes any answer', () => {
   assert.match(playbook, /## The one card\n/);
-  assert.match(playbook, /\*\*`hash` and `covered: true`:\*\* the one card's Go ahead covers it\.[^\n]*then run `apply <step> <hash>` at once/);
+  assert.match(playbook, /\*\*`applied`\*\* \(beside `plan`\): `resume` has already applied the steps the one card's Go ahead covers/);
+  assert.match(playbook, /\*\*`hash` and `covered: true`\*\* still in `plan`: `resume` did not apply it[^\n]*then run `apply <step> <hash>` at once/);
   assert.match(playbook, /\*\*`asks`:\*\* ask every card in it together, in one call/);
   assert.match(playbook, /`questions: \[card, card, …\]`/);
   assert.match(playbook, /run `choices`, pick the key whose `about` matches what they said, then `change <key>`/);
@@ -252,6 +253,16 @@ test('the README always runs the catalogue line, so the release pin applies wher
   assert.doesNotMatch(readme, /skip the first command/i);
   assert.match(readme, /even if wheelhouse is already listed/i);
   assert.match(readme, /never skipped/i);
+  const version = JSON.parse(read('.claude-plugin/plugin.json')).version ?? /Until v(\d+\.\d+\.\d+) is tagged/.exec(readme)?.[1];
+  assert.ok(version, 'the README names the release it installs or is preparing');
+  // The plugin browser path pins the release once it is tagged; until then it names main, as the install line does, with the
+  // release's pin waiting in a comment beside it, so the README never names a tag that is not there yet.
+  const browser = readme.split('\n').find((l) => l.includes('plugin browser instead'));
+  const pinned = browser?.includes(`where-is-brett/wheelhouse#v${version}\``) && !readme.includes('Until v');
+  const waiting = browser?.includes('where-is-brett/wheelhouse#main`')
+    && readme.includes(`<!-- Until v${version} is tagged, the plugin browser line installs from main. Once tagged, restore: \`where-is-brett/wheelhouse#v${version}\` -->`);
+  assert.ok(pinned || waiting, 'the plugin browser path pins the release, or main with the release pin ready');
+  assert.doesNotMatch(readme.replace(/where-is-brett\/wheelhouse#(?:v[\d.]+|main)/g, ''), /Add the catalogue as `where-is-brett\/wheelhouse`/);
   const skill = read('skills/setup/SKILL.md');
   const line = skill.split('\n').find((l) => l.includes('the host helper could not be reached'));
   assert.ok(line, 'the refusal is covered');

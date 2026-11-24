@@ -206,6 +206,16 @@ export const LIFT_STOP_CARD = Object.freeze({
   because: 'All stop is the safe side: lift it once you are sure what was in progress can carry on',
   meanwhile: 'Everything stays halted; reading and reporting carry on.',
 });
+// The Lift STOP card with the "All stopped" lines of builders and settings design 12A.6 added to what it says: what was stopped
+// and what still runs, as the helper read them from the processes' own heartbeats (this command can't read the Wheelhouse home).
+// Without them it is the card as it was.
+async function liftCardFor(allStopped) {
+  const ok = isPlain(allStopped) && Array.isArray(allStopped.stopped) && Array.isArray(allStopped.running);
+  if (!ok) return LIFT_STOP_CARD;
+  const { allStoppedWords } = await import('../lib/heartbeats.js');
+  const lines = allStoppedWords(allStopped).split('\n').slice(0, 2);
+  return { ...LIFT_STOP_CARD, what: `${LIFT_STOP_CARD.what} ${lines.join(' ')}` };
+}
 const INPUT_BYTES = 1024 * 1024;
 const BREAK = /[\r\n\v\f\u0085\u2028\u2029]/;
 // Every run of line breaks, to put each answered line on one line.
@@ -256,7 +266,7 @@ async function viewsOf(client, cwd, { cards = false, answers = false, since, ses
   if (cards && !Array.isArray(got.cards)) throw new CliError('The host helper gave no card events');
   if (answers && !Array.isArray(got.answers)) throw new CliError('The host helper gave no card answers');
   // A helper that gives no outcomes (an older one) leaves the decided-card checks out, as they only inform.
-  return { views: got.views, stop: got.stop === true, cards: cards ? got.cards : [], answers: answers ? got.answers : [], outcomes: Array.isArray(got.outcomes) ? got.outcomes : [], names: namesIn(got), paneLive: got.paneLive === true };
+  return { views: got.views, stop: got.stop === true, cards: cards ? got.cards : [], answers: answers ? got.answers : [], outcomes: Array.isArray(got.outcomes) ? got.outcomes : [], names: namesIn(got), paneLive: got.paneLive === true, allStopped: got.allStopped };
 }
 
 // The director's own settings view, as the desk's settings view gives it; none when it can't be read.
@@ -644,9 +654,9 @@ async function questionCards({ client, cwd, views, words, stop, problems }) {
 export async function cards({ client, cwd, now, onAsked, session }) {
   const problems = [];
   // `panel`: whether a live panel is beside the session, as the helper says; no picker call is allowed then, so no `shown` record can arrive.
-  let { views, stop, names, paneLive: panel } = await viewsOf(client, cwd, { session });
+  let { views, stop, names, paneLive: panel, allStopped } = await viewsOf(client, cwd, { session });
   const words = await wordsOf(client, cwd, views, now, names);
-  const lift = stop ? composePlain(LIFT_STOP_CARD, words).question : null;
+  const lift = stop ? composePlain(await liftCardFor(allStopped), words).question : null;
   const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
   let made = await questionCards({ client, cwd, views, words, stop, problems });
   let again = new Set();

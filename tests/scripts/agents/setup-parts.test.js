@@ -6,7 +6,7 @@ import { COPILOT_SANDBOX_CHECKED } from '../../../scripts/agents/copilot/numbers
 
 test('the builder question says what the choice covers, and on a Mac or Linux what Claude Code\'s sandbox keeps its commands from', () => {
   const { card } = agentAsk({ found: [{ name: 'copilot', label: 'Copilot' }], project: 'Shop', platform: 'darwin' });
-  assert.match(card.why, /chosen for each computer, and it can be changed later from the First Mate/);
+  assert.match(card.why, /chosen for each computer, and it can be changed later by asking the First Mate, your assistant in this chat/);
   assert.match(card.why, /The chat and cards are the same either way\. In projects Wheelhouse has set up, Claude Code's sandbox keeps its commands from the key behind your clicks; Copilot's commands run without that\./);
   assert.doesNotMatch(card.why, /checks apply either way/);
   const copilot = card.options.find((o) => o.label === 'Copilot');
@@ -15,7 +15,7 @@ test('the builder question says what the choice covers, and on a Mac or Linux wh
 
 test('the builder question says nothing of a sandbox on Windows, which has none', () => {
   const { card } = agentAsk({ found: [{ name: 'copilot', label: 'Copilot' }], project: 'Shop', platform: 'win32' });
-  assert.equal(card.why, 'It is chosen for each computer, and it can be changed later from the First Mate. The chat and cards are the same either way.');
+  assert.equal(card.why, 'It is chosen for each computer, and it can be changed later by asking the First Mate, your assistant in this chat. The chat and cards are the same either way.');
 });
 
 test('the builder question says the same of the sandbox on Linux, as on a Mac', () => {

@@ -142,7 +142,7 @@ export function archWord(arch) {
 // links). Installers and packages (.msi, .pkg, .exe) never match. Throws unless exactly one does.
 export function pickArchive(tool, names, platform, arch) {
   const def = ARCHIVES[tool];
-  if (!def) throw new Error(`Unknown tool ${tool}`);
+  if (!def) throw new Error(`Unknown program ${tool}`);
   const osWord = def.os[platform];
   if (!osWord) throw new Error(`No archive for system "${platform}"`);
   const wanted = def.pattern(osWord, archWord(arch));
@@ -297,7 +297,7 @@ export function hostToolCard(tool, { recommend: given, platform = process.platfo
       : 'it is the usual route, and it is checked against the published checksums';
   return {
     level: 2,
-    what: `${name}'s own tool isn't on this computer. Should Wheelhouse fetch it, or reach ${name} without it?`,
+    what: `${name}'s own program isn't on this computer. Should Wheelhouse fetch it, or reach ${name} without it?`,
     why: `If you'd rather not install ${name}'s tool, or your company's rules don't allow it, Wheelhouse can work without it, using a key you make on ${name}, or the one your git already uses.`,
     options: [
       { label: labels.fetch, says: `Wheelhouse fetches ${name}'s tool from its official release into its own tools folder, and checks it.${win ? ` It signs in as you, with the reach of your whole ${name} account.` : tool !== 'glab' ? '' : ' Only with it can agents use your ordinary GitLab sign-in.'}` },
@@ -877,7 +877,7 @@ function hostWhy(hostTools, leftOut) {
   if (hostTools.length === 0) return 'Wheelhouse works on the project through these tools.';
   const names = hostTools.map((tool) => HOST_TOOL_NAME[tool]).join(' and ');
   const used = hostTools.filter((tool) => !leftOut.includes(tool));
-  const tools = used.length === 0 ? '' : used.length === 1 ? ` and ${HOST_TOOL_NAME[used[0]]}'s own tool` : ' and their own tools';
+  const tools = used.length === 0 ? '' : used.length === 1 ? ` and ${HOST_TOOL_NAME[used[0]]}'s own program` : ' and their own tools';
   return `Wheelhouse keeps the project on ${names} through Git${tools}.`;
 }
 
@@ -899,19 +899,19 @@ function cardFor(changes, status, platform, leftOut = [], hostTools = []) {
   const fetches = changes.filter((c) => c.action === 'fetch');
   const official = fetches.filter((c) => c.from !== 'company').map((c) => c.tool);
   // A host tool by the host's name first, so no line starts with a lower-case command name.
-  const toolName = (tool) => `${HOST_TOOL_NAME[tool]}'s own tool`;
+  const toolName = (tool) => `${HOST_TOOL_NAME[tool]}'s own program`;
   const company = fetches.filter((x) => x.from === 'company');
   // How many allow rules the change adds: one or both forms of setup's command.
   const rules = changes.find((c) => c.kind === 'json-key')?.added ?? 0;
   const rule = rules > 0;
   const ruleWords = rules === 1 ? 'one permission rule' : 'two permission rules';
   // Said by name in plain words, with no version number: the director has no use for one.
-  const here = Object.entries(status).filter(([, s]) => s.ok).map(([tool]) => (tool === 'node' ? 'Node.js' : tool === 'git' ? 'Git' : HOST_TOOL_NAME[tool] ? `${HOST_TOOL_NAME[tool]}'s own tool` : tool));
+  const here = Object.entries(status).filter(([, s]) => s.ok).map(([tool]) => (tool === 'node' ? 'Node.js' : tool === 'git' ? 'Git' : HOST_TOOL_NAME[tool] ? `${HOST_TOOL_NAME[tool]}'s own program` : tool));
   const full = [];
   for (const c of processes) full.push(c.action === 'wait' ? 'Git: waiting for the git installer already open, which setup leaves to finish' : installLine(platform));
   if (official.length > 0) {
     const one = official.length === 1;
-    full.push(`${one ? `${HOST_TOOL_NAME[official[0]]}'s own tool` : official.map(toolName).join(' and ')}: fetched from ${one ? `${HOST_TOOL_NAME[official[0]]}'s official release` : 'their official releases'} into Wheelhouse's tools folder, and checked that ${one ? 'it is' : 'each is'} the genuine file; a few seconds, nothing for you to do`);
+    full.push(`${one ? `${HOST_TOOL_NAME[official[0]]}'s own program` : official.map(toolName).join(' and ')}: fetched from ${one ? `${HOST_TOOL_NAME[official[0]]}'s official release` : 'their official releases'} into Wheelhouse's tools folder, and checked that ${one ? 'it is' : 'each is'} the genuine file; a few seconds, nothing for you to do`);
   }
   for (const c of company) {
     full.push(`A ${HOST_TOOL_NAME[c.tool]} tool from your company's list at ${c.source} (version ${c.version}); ${c.checksum === 'listed'
@@ -923,7 +923,7 @@ function cardFor(changes, status, platform, leftOut = [], hostTools = []) {
   }
   if (changes.some((c) => c.action === 'archon-settings')) full.push('The build engine set to run its steps with Claude');
   if (changes.some((c) => c.action === 'broker')) full.push('The engine\'s broker, so the engine reaches GitHub only through Wheelhouse\'s helper and never holds a key');
-  for (const tool of leftOut) full.push(`${HOST_TOOL_NAME[tool]}'s own tool: not fetched, so Wheelhouse reaches ${HOST_TOOL_NAME[tool]} without it`);
+  for (const tool of leftOut) full.push(`${HOST_TOOL_NAME[tool]}'s own program: not fetched, so Wheelhouse reaches ${HOST_TOOL_NAME[tool]} without it`);
   if (rule) full.push(`${ruleWords[0].toUpperCase()}${ruleWords.slice(1)} in this computer's settings for the project, so setup's own command is not asked about each time`);
   const terse = [];
   for (const c of processes) terse.push(c.action === 'wait' ? 'Git: waiting for its installer' : 'Git: its installer');
@@ -1085,7 +1085,7 @@ export function toolsStep({
       // copy that will not run) settles the project on the host's web API with no second question: it is said, and the
       // step goes on. A copy from the company's own list the director chose is not settled quietly: its failure stops the step.
       const settle = (c) => (fetched) => (c.from === 'company' ? fetched : fetched.catch(() => {
-        if (typeof ctx.say === 'function') ctx.say(`${HOST_TOOL_NAME[c.tool]}'s own tool could not be fetched on this computer, so Wheelhouse will work with ${HOST_TOOL_NAME[c.tool]} without it`);
+        if (typeof ctx.say === 'function') ctx.say(`${HOST_TOOL_NAME[c.tool]}'s own program could not be fetched on this computer, so Wheelhouse will work with ${HOST_TOOL_NAME[c.tool]} without it`);
       }));
       const fetches = changes.filter((c) => c.action === 'fetch').map((c) => settle(c)(c.from === 'company'
         // What the card said: the list it named, the version it gave, and whether it gave a checksum.

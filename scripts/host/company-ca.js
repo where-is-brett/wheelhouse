@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome } from '../lib/paths.js';
 import { DEFAULT_GITLAB } from './gitlab-base.js';
+import { HOST_UNREACHABLE, isPublic } from './unreachable-line.js';
 import { request, curlPath } from './curl.js';
 import { directorProxy } from './director-git.js';
 
@@ -218,11 +219,7 @@ export function withGitConfig(env, pairs) {
 
 // ---- Two failures, two cards ----
 
-// Whether the address is the public service's: its lines carry no "company" wording.
-const isPublic = (base) => String(base ?? '').replace(/\/+$/, '') === DEFAULT_GITLAB;
-export const HOST_UNREACHABLE = (base) => (isPublic(base)
-  ? `GitLab (${new URL(DEFAULT_GITLAB).host}) can't be reached from here. Work carries on here and is sent when it can be.`
-  : `Your company's GitLab, ${base}, can't be reached from here, perhaps off the company network. Work carries on here and is sent when it can be.`);
+export { HOST_UNREACHABLE };
 // Said when the certificates this computer's store holds do not cover the company's GitLab, so the file setup
 // would keep is of no use: someone who looks after the computers adds the company's authority to the store.
 export const CERTIFICATE_NOT_IN_STORE = `Your company's certificate isn't in this computer's system store, so Wheelhouse can't use it yet. Ask whoever looks after your computers to add it to the System keychain (Mac) or the Local Machine store (Windows), then ask for step 3's card again.`;

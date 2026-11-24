@@ -30,6 +30,7 @@ import { fileURLToPath } from 'node:url';
 import { throwawayIdle } from '../lib/standard-env.js';
 import { computerId, helperAddress, profileDir, oldProfileDir, stateDir, oldStateDir, wheelhouseHome, engineDir, archonHome } from '../lib/paths.js';
 import { stopState, setStop, liftStop } from '../lib/stop.js';
+import { stillRunning } from '../lib/heartbeats.js';
 import { bypassActive } from '../lib/bypass.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { approvalCounts, checkCounts, decisionsOnly, gateDecision, reviewCounts, selfMergeDecision } from '../gate/conditions.js';
@@ -5463,7 +5464,7 @@ export async function startHelper({
         names: namesOf(project),
         // Whether the new engine can build the project (scripts/engine/switch.js), for the foreman's queue.
         engineOn: engineReady(project),
-        ...(stopped() ? { stop: true } : {}),
+        ...(stopped() ? { stop: true, allStopped: stillRunning(wheelhouseHome(), project) } : {}),
         ...(cards === true ? { cards: events.filter((e) => e.kind === 'card') } : {}),
         ...(answers === true ? { answers: events.filter((e) => e.kind === 'card-answer') } : {}),
       };

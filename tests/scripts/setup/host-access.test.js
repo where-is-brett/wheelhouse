@@ -302,8 +302,8 @@ test('the key card\'s words never say REST or curl, for any state, host or reaso
 });
 
 test('a computer with neither a tool nor curl is told so in the design\'s own line, as a wait and not on a card', () => {
-  assert.equal(noRoadLine('gitlab'), 'This computer has no curl Wheelhouse can use, so it can only reach GitLab through GitLab\'s own tool. Ask IT for either.');
-  assert.match(noRoadLine('github'), /through GitHub's own tool/);
+  assert.equal(noRoadLine('gitlab'), 'This computer has no curl Wheelhouse can use, so it can only reach GitLab through GitLab\'s own program. Ask IT for either.');
+  assert.match(noRoadLine('github'), /through GitHub's own program/);
 });
 
 test('a folder whose own git settings could rewrite an address keeps the director\'s token variables out, and git is never run in it', async () => {

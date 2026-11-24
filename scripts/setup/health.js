@@ -97,6 +97,7 @@ const GUARD_WAIT_MS = 30 * 1000;
 // How long the first briefing's reading waits for the helper's answers.
 const BRIEFING_WAIT_MS = 1500;
 const STOP_GUARD = fileURLToPath(new URL('../hooks/stop-guard.js', import.meta.url));
+const START_DECISION = fileURLToPath(new URL('../watcher/start-decision.js', import.meta.url));
 // The empty commit's author: the trial's own, not the director's, since it never lands.
 const TRIAL_AUTHOR = ['-c', 'user.name=Wheelhouse setup', '-c', 'user.email=setup@wheelhouse.invalid'];
 const TRIAL_MESSAGE = 'Wheelhouse health check: an empty commit, never merged';
@@ -127,6 +128,13 @@ export const HELPER_CHECKS = Object.freeze({
     passed: 'With All stop on, an agent could still read and report',
     failed: 'With All stop on, an agent could not even read',
     todo: 'Reload this project in Claude Desktop, then run step 10 again',
+    what: 'All stop',
+  },
+  'start under stop': {
+    expected: 'refused',
+    passed: 'With All stop on, the watcher refused to start a waiting builder',
+    failed: 'With All stop on, the watcher would still start a waiting builder',
+    todo: 'Type "all stop", so no Crew member works, and report it to Wheelhouse before going on: the watcher must start nothing under All stop',
     what: 'All stop',
   },
   'installed skills': {
@@ -485,8 +493,9 @@ function guardAnswer(got) {
 
 // STOP tried with the real stop guard, as a child, under a scratch Wheelhouse home holding STOP and
 // a scratch project, so nothing of the director's is touched: a Write must be refused with STOP's
-// reason and a Read let through. { write, read }.
-export async function stopTrial({ script = STOP_GUARD, run = realRun, nodePath = process.execPath, now = () => new Date() } = {}) {
+// reason and a Read let through, and the waker's start decision for a waiting piece must be `not started: All stop`.
+// { write, read, start }.
+export async function stopTrial({ script = STOP_GUARD, startScript = START_DECISION, run = realRun, nodePath = process.execPath, now = () => new Date() } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-stop-trial-'));
   try {
     const home = path.join(base, 'home');
@@ -508,7 +517,12 @@ export async function stopTrial({ script = STOP_GUARD, run = realRun, nodePath =
     }).catch(() => null);
     const write = guardAnswer(await ask('Write', { file_path: path.join(real, 'trial.txt'), content: 'trial\n' }));
     const read = guardAnswer(await ask('Read', { file_path: path.join(real, 'README.md') }));
-    return { write, read };
+    // The second half: the waker's start decision for a waiting piece, run under the same scratch home, must say it is refused.
+    const decided = await run(nodePath, [startScript, 'wheelhouse-trial__stop', 'waiting-piece'], {
+      cwd: real, env: { WHEELHOUSE_HOME: home }, timeoutMs: GUARD_WAIT_MS,
+    }).catch(() => null);
+    const start = decided?.code !== 0 ? 'could not run' : String(decided.stdout ?? '').trim() === 'not started: All stop' ? 'refused' : String(decided.stdout ?? '').trim() === 'start allowed' ? 'allowed' : 'could not run';
+    return { write, read, start };
   } finally {
     fs.rmSync(base, { recursive: true, force: true });
   }
@@ -668,6 +682,7 @@ export function healthStep({
         } catch { /* could not run */ }
         add('write under stop', stop.write);
         add('read under stop', stop.read);
+        if (stop.start !== undefined) add('start under stop', stop.start);
         let pins = 'could not run';
         try {
           pins = await checkPins({ folder: record.folder });

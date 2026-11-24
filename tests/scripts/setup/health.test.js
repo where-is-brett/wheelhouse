@@ -224,7 +224,7 @@ const merges = (answer) => {
 };
 const REFUSED = { ok: false, refused: 'the lock is held; CI has not passed', reasons: ['the lock is held', 'CI has not passed'] };
 const stepWith = (adapter, client, extra = {}) => healthStep({
-  adapterFor: () => adapter, client, findGit: GIT, trySTOP: async () => ({ write: 'refused', read: 'allowed' }), checkPins: () => 'match', readProtection: async () => 'on', ...extra,
+  adapterFor: () => adapter, client, findGit: GIT, trySTOP: async () => ({ write: 'refused', read: 'allowed', start: 'refused' }), checkPins: () => 'match', readProtection: async () => 'on', ...extra,
 });
 const cleanups = (recorded) => recorded.filter((c) => c.kind === 'answer' && c.after?.cleanup).map((c) => c.after.cleanup);
 
@@ -369,6 +369,7 @@ test('the helper\'s part: an empty commit on main\'s tip, the gate refuses it, S
       ['merge without approval', 'refused', true],
       ['write under stop', 'refused', true],
       ['read under stop', 'allowed', true],
+      ['start under stop', 'refused', true],
       ['installed skills', 'match', true],
       ['host protection', 'on', true],
     ]);
@@ -520,16 +521,29 @@ test('the merge trial passes on any refusal that leaves the pull request unmerge
   assert.equal(await mergeTrial({ client: { merge: async () => { throw new Error('x'); } }, adapter: adapter('open'), project: SLUG, number: 12 }), 'could not run');
 });
 
+test('health\'s STOP trial runs the waker\'s start decision under the scratch home and expects "not started: All stop"', async () => {
+  assert.equal((await stopTrial()).start, 'refused');
+  const dir = tempFolder('wh-start-');
+  const says = (line) => {
+    const file = path.join(dir, `${Math.abs(line.length)}-${line.replace(/\W/g, '')}.js`);
+    fs.writeFileSync(file, `// ${path.basename(file)}\nprocess.stdout.write(${JSON.stringify(`${line}\n`)});\n`);
+    return file;
+  };
+  assert.equal((await stopTrial({ startScript: says('start allowed') })).start, 'allowed');
+  assert.equal((await stopTrial({ startScript: says('not started: builders can\'t sign in') })).start, 'could not run');
+  assert.equal((await stopTrial({ startScript: path.join(dir, 'missing.js') })).start, 'could not run');
+});
+
 test('STOP is tried with the real stop guard under a scratch home: a write refused, a read allowed', async () => {
-  assert.deepEqual(await stopTrial(), { write: 'refused', read: 'allowed' });
+  assert.deepEqual(await stopTrial(), { write: 'refused', read: 'allowed', start: 'refused' });
   // A guard that lets everything through, or denies everything for another reason, doesn't pass.
   const dir = tempFolder('wh-guards-');
   const open = path.join(dir, 'open.js');
   fs.writeFileSync(open, '// open.js\nprocess.stdin.resume();\nprocess.stdin.on(\'end\', () => {});\n');
-  assert.deepEqual(await stopTrial({ script: open }), { write: 'allowed', read: 'allowed' });
+  assert.deepEqual(await stopTrial({ script: open }), { write: 'allowed', read: 'allowed', start: 'refused' });
   const shut = path.join(dir, 'shut.js');
   fs.writeFileSync(shut, `// shut.js\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'Wheelhouse\'s check could not run' } }))});\n`);
-  assert.deepEqual(await stopTrial({ script: shut }), { write: 'could not run', read: 'could not run' });
+  assert.deepEqual(await stopTrial({ script: shut }), { write: 'could not run', read: 'could not run', start: 'refused' });
 });
 
 // ---- Joining the two parts ----
