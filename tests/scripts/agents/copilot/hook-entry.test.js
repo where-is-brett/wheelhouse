@@ -540,3 +540,20 @@ test('the prompt deadline starts after the stop-word step, which keeps the guard
   const hung = await give({ promptDeadlineMs: 80, steps: { ...r.steps, stopWord: slowWord, boardContext: () => new Promise(() => {}) } });
   assert.deepEqual(hung, { text: '', code: 0 });
 });
+
+test('the card check is told whether an ask_user call takes typed answers, whatever the flag is spelt, and nothing when the call says nothing', async () => {
+  const freeOf = async (args) => {
+    const r = recording();
+    await run('preToolUse', call('ask_user', { message: 'Ship it?', choices: ['Approve', 'Not now'], ...args }), { steps: r.steps, c6: true });
+    const [question] = r.calls.find((c) => c.name === 'cardCheck').input.tool_input.questions;
+    return question.allowFreeformInput;
+  };
+  assert.equal(await freeOf({}), undefined, 'nothing said: the card check takes it as allowing typed answers on a card that decides');
+  for (const flag of ['allowFreeformInput', 'allow_freeform_input', 'allowFreeform', 'freeform', 'allowFreeText', 'free_text']) {
+    assert.equal(await freeOf({ [flag]: true }), true, `${flag} true`);
+    assert.equal(await freeOf({ [flag]: 'yes' }), true, `${flag} anything but false`);
+    assert.equal(await freeOf({ [flag]: false }), false, `${flag} false`);
+  }
+  assert.equal(await freeOf({ allowFreeformInput: false, free_text: true }), true, 'one flag on is enough');
+  assert.equal(await freeOf({ allowFreeformInput: false, requestedSchema: { properties: { note: { type: 'string' } } } }), true, 'a field of words');
+});

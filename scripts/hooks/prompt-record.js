@@ -84,7 +84,7 @@ import { buildViews, cardOutcomes } from '../state/views.js';
 import { clearOpen } from '../lib/session-files.js';
 import { cardProblems } from './card-check.js';
 import { openJournal } from '../update/journal.js';
-import { SUGGEST, WHAT_WOULD_YOU_CHANGE, SEND_BACK, CLOSED_IN_PANEL } from '../lib/calm-words.js';
+import { SUGGEST, WHAT_WOULD_YOU_CHANGE, CLOSED_IN_PANEL } from '../lib/calm-words.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
 import { whenSaid, askOf, countedOf } from '../cards/answered.js';
@@ -159,13 +159,8 @@ function only(pattern, text) {
   return all.length === 1 ? all[0] : null;
 }
 
-// The deciding labels a reply code can answer with. A reply to an answer card may also use any
-// of the question's own options, which earned checks against the question.
-// Turn on (dangerous) and Use Guarded earn a record from a click alone, by design.
-export const SIGNED_LABELS = ['Approve', SEND_BACK, 'Confirm', 'Lift All stop', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix', 'Pair it', 'Unpair it'];
-
-// Whether a click on `label` stands to sign something on a card.
-export const signsOn = (label) => SIGNED_LABELS.includes(label);
+// The deciding labels and whether a click on one stands to sign (lib/signed-labels.js), named here for the scripts that read them with the record.
+export { SIGNED_LABELS, signsOn } from '../lib/signed-labels.js';
 
 // The events of one kind that the state holds, oldest first.
 function held(project, kind) {

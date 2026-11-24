@@ -108,11 +108,11 @@ function fakeAdapter(head, overrides = {}) {
 
 // Takes the lock once, then runs each step in turn against one helper: a step
 // may record events first, asks for the merge with `body`, and checks the answer.
-async function merging(pr, adapter, steps) {
+async function merging(pr, adapter, steps, helperOptions = {}) {
   const home = await project(pr.remote);
   try {
     await as(home, async () => {
-      const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}) });
+      const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), ...helperOptions });
       try {
         const client = helperClient({ address: helper.address });
         for (const step of steps) {
@@ -293,4 +293,28 @@ test('changedPaths reads GitLab\'s merge request ref, and finds the paths from t
     await assert.rejects(changedPaths({ mirror, host: 'github', number: 7, headSha: pr.head, defaultBranch: 'main', run: git }), /fetching the pull request failed/);
     await assert.rejects(changedPaths({ mirror, host: 'gitlab', number: 7, headSha: 'a'.repeat(40), defaultBranch: 'main', run: git }), /fetched head is not the head the host reported/);
   } finally { pr.cleanup(); fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+// An Approve the helper took from an agent's hook (the question tool's own answer): an unsigned card-answer naming the head.
+const hookApproved = (head) => record('card-answer', { question: '3f2a9c1e-0000-4000-8000-000000000000', label: 'Approve', hash: 'a'.repeat(64), commit: head, proof: 'hook-click', where: 'chat', source: 's1' });
+
+test('/merge counts an approval click an agent\'s hook saw only where hook clicks are live, and only for the head it names', async () => {
+  const caller = { approvalRequired: false, touchesGuardrails: false };
+  for (const live of [false, true]) {
+    const pr = await remoteWithPr({ change: (w) => write(w, { '.claude/settings.json': '{}\n', 'src/a.js': 'export const a = 1;\n' }) });
+    try {
+      const adapter = fakeAdapter(pr.head);
+      await merging(pr, adapter, [
+        { before: () => { reviewed(pr.head); hookApproved('b'.repeat(40)); }, body: caller, after: async (a) => assert.deepEqual(a.reasons, [`no approval of ${pr.head.slice(0, 7)}`]) },
+        {
+          before: () => hookApproved(pr.head),
+          body: caller,
+          async after(answer) {
+            if (live) assert.equal(answer.merged, true, JSON.stringify(answer));
+            else assert.deepEqual(answer.reasons, [`no approval of ${pr.head.slice(0, 7)}`]);
+          },
+        },
+      ], { hookClicks: live });
+    } finally { pr.cleanup(); }
+  }
 });

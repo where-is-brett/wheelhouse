@@ -2607,3 +2607,18 @@ test('on an agent whose hooks only read, a lock that could not be pushed takes t
     }
   });
 });
+
+// The seat card has no route that records a click on it in the chat and moves the seat (the helper's hook-click route finds only
+// cards waiting in the state, and this one is composed from the seat on each look), so it goes to the window on every agent,
+// one whose picker click is recorded among them.
+test('on an agent whose picker click is recorded, the seat card is still shown as text and clicked in the window', async () => {
+  await withHome(async () => {
+    putSeat(seatLine('a', 4));
+    const out = await readOnly(seatHelper(), { picker: true });
+    const card = windowCard(out);
+    assert.ok(card !== null, 'the window line');
+    assert.equal(setLineOf(card.question), `Take over the First Mate from window session a, since ${seatLine('a', 4).since}`);
+    assert.ok(text(out).includes('confirm seat-take-over'));
+    assert.ok(!text(out).includes('with your clickable-question tool'));
+  });
+});

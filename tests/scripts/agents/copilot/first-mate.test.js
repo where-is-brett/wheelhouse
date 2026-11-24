@@ -12,6 +12,7 @@ import copilot from '../../../../adapters/copilot/index.js';
 import { buildFirstMate, checkFirstMate, FIRST_MATE_DIR, writeFirstMate } from '../../../../scripts/agents/copilot/first-mate.js';
 import { buildHome } from '../../../../scripts/agents/copilot/home.js';
 import { SIGNED_LABELS } from '../../../../scripts/hooks/prompt-record.js';
+import { C6_PASSED } from '../../../../scripts/agents/copilot/numbers.js';
 import { tempFolder } from '../../../helpers/homes.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
@@ -88,4 +89,25 @@ test('the committed copy is what the build gives, and --write replaces a stale o
 
 test('the build throws when a source can\'t be read', () => {
   assert.throws(() => buildFirstMate({ root: tempFolder('wh-first-mate-empty-') }), /front-desk/);
+});
+
+test('where every card is asked in the picker, the instructions and the agent ask decisions and signing cards with ask_user and keep the window for the seat card and an undo', () => {
+  const picked = buildFirstMate({ picker: true });
+  const text = picked.get(INSTRUCTIONS);
+  assert.match(text, /Ask every card with ask_user, a decision, a sign-off and a merge approval among them/);
+  assert.match(text, /set `allowFreeformInput` to false in every ask_user call/);
+  assert.doesNotMatch(text, /decision confirm|never go to ask_user|that click is not recorded/);
+  assert.match(text, /show it as text, never with ask_user,\s+and run `confirm seat-take-over`/, 'the seat card goes to the window');
+  assert.match(text, /undo on a project kept on this\s+computer/);
+  const agent = picked.get(AGENT);
+  assert.match(agent, /\*\*Decisions are cards\.\*\*/);
+  assert.doesNotMatch(agent, /Decisions are chat messages|plain chat message|their own typed reply to a decision/);
+  assert.doesNotMatch(agent, /Wheelhouse's own window with `confirm`/);
+  assert.ok(text.includes('Every card goes to ask_user'), 'the tool sheet line');
+});
+
+test('the committed copies and the tool sheet follow C6_PASSED, the one switch', () => {
+  assert.deepEqual(checkFirstMate(), [], 'run npm run copilot-first-mate');
+  const sheet = fs.readFileSync(new URL('../../../../adapters/copilot/tool-sheet.md', import.meta.url), 'utf8');
+  assert.equal(sheet.includes('Signing options and decisions never go to ask_user'), !C6_PASSED, 'tool-sheet.md line 4 changes with C6_PASSED');
 });

@@ -219,12 +219,26 @@ function withText(input) {
 // back only as text): the message as one question, with the choices as its options when the call gives them, or else
 // the labels of its `requestedSchema`, so the guards see the options the card shows (and the click route posts).
 // Nothing for any other tool, or a call with no message.
+// Whether the call lets the person type an answer: true when a field named for free input (any spelling with "free" in it) is
+// anything but false, or a `requestedSchema` field is words and no list of options; false when such a field is false and none
+// says otherwise; undefined when the call says nothing, which the card check takes as allowing it for a card that decides.
+const FREE_FLAG = /free/i;
+const typesWords = (input) => {
+  const flags = Object.keys(input).filter((key) => FREE_FLAG.test(key));
+  const schemaWords = isObject(input.requestedSchema?.properties) && Object.values(input.requestedSchema.properties).some((p) => isObject(p) && p.type === 'string' && !Array.isArray(p.enum) && !Array.isArray(p.oneOf));
+  if (schemaWords || flags.some((key) => input[key] !== false)) return true;
+  return flags.length > 0 ? false : undefined;
+};
+const freeOf = (input) => {
+  const free = typesWords(input);
+  return free === undefined ? {} : { allowFreeformInput: free };
+};
 const cardOf = (input) => {
   if (input?.tool_name !== copilotTools.ask || typeof input.tool_input?.message !== 'string') return [];
   const given = input.tool_input.choices ?? input.tool_input.options;
   const schema = Array.isArray(given) ? [] : labelsIn(input.tool_input);
   const choices = Array.isArray(given) ? given : schema.length > 0 ? schema : null;
-  const question = { question: input.tool_input.message, ...(Array.isArray(choices) ? { options: choices.map((label) => (isObject(label) ? label : { label })) } : {}) };
+  const question = { question: input.tool_input.message, ...freeOf(input.tool_input), ...(Array.isArray(choices) ? { options: choices.map((label) => (isObject(label) ? label : { label })) } : {}) };
   return [{ ...input, tool_name: claudeTools.ask, tool_input: { questions: [question] } }];
 };
 const cards = (inputs) => inputs.slice(0, 1).flatMap(cardOf);
@@ -278,8 +292,8 @@ function stopClient(client, cwd) {
 // Each step's deps on Copilot: every write through the helper, and the STOP guard marks no bypass. The card check
 // notes no open card (that note is kept under the Wheelhouse home). A builder's report names no commit: Wheelhouse
 // commits its work after the run (scripts/feature/commit-work.js).
-function helperStepDeps(shared, given, cwd) {
-  const own = { stopGuard: { bypass: false }, stopWord: { client: stopClient(shared.client, cwd) }, cardCheck: { markOpen: () => {} }, reportCheck: { commitNamed: false } };
+function helperStepDeps(shared, given, cwd, c6) {
+  const own = { stopGuard: { bypass: false }, stopWord: { client: stopClient(shared.client, cwd) }, cardCheck: { markOpen: () => {}, picker: c6 === true }, reportCheck: { commitNamed: false } };
   return Object.fromEntries(Object.keys(STEP_MODULES).map((name) => [name, { ...shared, ...own[name], ...given?.[name] }]));
 }
 
@@ -359,7 +373,7 @@ async function decideCall(event, raw, { deps, seen, dir, env }) {
   } catch {
     // not answering
   }
-  const stepDeps = helperStepDeps({ writeVia: 'helper', client, helperUp, agent: 'copilot' }, deps.stepDeps, raw.cwd);
+  const stepDeps = helperStepDeps({ writeVia: 'helper', client, helperUp, agent: 'copilot' }, deps.stepDeps, raw.cwd, deps.c6 ?? C6_PASSED);
   const out = await runSteps(stepsFor(event), inputs, { event, decides: deps.steps, stepDeps, dir, env, seen });
   if ((deps.c6 ?? C6_PASSED) !== true || refuses(out)) return out;
   // Once check C6 has passed: the question tool's card is posted as shown when it is asked, and its answer is recorded when it

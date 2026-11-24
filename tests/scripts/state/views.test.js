@@ -17,7 +17,7 @@ import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'brief', 'sendBacks', 'slept', 'watch', 'helm', 'helmNotes', 'helmBacks'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'hookApprovals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons', 'engineNotes', 'cardsWaiting', 'brief', 'sendBacks', 'slept', 'watch', 'helm', 'helmNotes', 'helmBacks'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -1838,4 +1838,28 @@ test('views: a hand-back says whether a note followed the helm', () => {
   assert.equal(v.helmBacks.b.noted, true);
   assert.equal(v.helmBacks.c.noted, true);
   assert.equal(build(events.slice(0, 2)).helmBacks.a.noted, false);
+});
+
+test('a click an agent\'s hook saw is kept by the whole head commit it names, apart from the verified approvals', async () => {
+  await withHome(async () => {
+    const head = 'a'.repeat(40);
+    const click = (n, data) => ev('card-answer', n, { question: 'c-1', hash: 'h', proof: 'hook-click', where: 'chat', source: 's', ...data });
+    const views = buildViews([
+      click(1, { label: 'Approve', commit: head }),
+      click(2, { label: 'Approve', commit: 'short' }),
+      click(3, { label: 'Approve', commit: 'c'.repeat(40), proof: 'chat-click' }),
+    ], readEnrolled(), { now });
+    assert.deepEqual(Object.keys(views.hookApprovals), [head]);
+    assert.equal(views.hookApprovals[head].data.label, 'Approve');
+    assert.deepEqual(views.approvals, {});
+  });
+});
+
+test('a later hook click on the same commit stands in place of an earlier Approve, so the gate no longer reads one', async () => {
+  await withHome(async () => {
+    const head = 'a'.repeat(40);
+    const click = (n, data) => ev('card-answer', n, { question: 'c-1', hash: 'h', proof: 'hook-click', where: 'chat', source: 's', commit: head, ...data });
+    const views = buildViews([click(1, { label: 'Approve' }), click(2, { label: 'Send it back' })], readEnrolled(), { now });
+    assert.equal(views.hookApprovals[head].data.label, 'Send it back');
+  });
 });

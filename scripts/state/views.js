@@ -748,6 +748,14 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
 
   const approvals = recordsByPr(sorted, 'approval', enrolled);
   const reviews = recordsByPr(sorted, 'review', enrolled);
+  // An approval click an agent's hook saw come back from the question tool (the helper's /cards/hook-click), by the head commit it
+  // names: the latest unsigned card-answer of proof hook-click for that commit, whatever its label, so a later answer other than
+  // Approve stands in its place. It is no verified record, so it is kept apart from `approvals`, and only the gate's own rule
+  // (gate/conditions.js hookClickApproves), which takes an Approve only, counts it.
+  const hookApprovals = {};
+  for (const e of sorted) {
+    if (e.kind === 'card-answer' && e.data?.proof === 'hook-click' && typeof e.data.label === 'string' && /^[0-9a-f]{40}$/.test(String(e.data.commit ?? ''))) hookApprovals[e.data.commit] = e;
+  }
   // What built each branch's pull requests, the latest verified provenance record of each (the helper's, at /pr/open).
   const provenance = {};
   for (const e of sorted) {
@@ -861,6 +869,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     waiting,
     outdated: outdatedCards,
     approvals,
+    hookApprovals,
     reviews,
     provenance,
     ...loop,

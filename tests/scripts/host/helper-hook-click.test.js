@@ -53,12 +53,12 @@ function keep(event) {
   fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
 }
 
-const inProject = (fn) => async () => {
+const inProject = (fn, { hookClicks = true } = {}) => async () => {
   clock = T0.getTime();
   const p = await project();
   try {
     await as(p.home, async () => {
-      const helper = await startHelper({ run: hostGuard, address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => ({ defaultBranch: async () => 'main' }), envFor: async () => ({}), now });
+      const helper = await startHelper({ run: hostGuard, address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => ({ defaultBranch: async () => 'main' }), envFor: async () => ({}), now, hookClicks });
       try { await fn(helperClient({ address: helper.address })); } finally { await helper.close(); }
     });
   } finally { p.cleanup(); }
@@ -84,6 +84,19 @@ test('a click on a card shown to the session is recorded as hook-click, unsigned
   assert.equal(record.data.source, 's1');
   assert.equal(record.sig, undefined, 'a hook click is never signed');
 }));
+
+test('until an agent\'s clicks are recorded the hook routes take nothing: a post from any process records no click', inProject(async (client) => {
+  keep(card());
+  const shown = await client.cards.hookShown(ask());
+  assert.equal(shown.ok, false);
+  assert.match(shown.refused, /not recorded/);
+  const got = await client.cards.hookClick(ask({ label: 'Approve' }));
+  assert.equal(got.ok, false);
+  assert.equal((await client.cards.hookAuto({ project: P, session: 's1' })).ok, false);
+  assert.deepEqual(answers(), []);
+  const notes = listEvents(stateDir(P), { report: () => {} }).filter((e) => e.kind === 'note');
+  assert.deepEqual(notes, []);
+}, { hookClicks: false }));
 
 test('a click for a card never shown is refused, and so is one for a card shown to another session', inProject(async (client) => {
   keep(card());

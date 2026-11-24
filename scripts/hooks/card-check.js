@@ -62,6 +62,7 @@ import { checkShown, plainQuestion, decideStop } from './card-check-stop.js';
 
 export { checkShown, plainQuestion, decideStop };
 import { isDecisionCard } from '../decisions/pending.js';
+import { signsOn } from '../lib/signed-labels.js';
 import { typedRepliesOn } from '../decisions/answer.js';
 
 const SHA12 = '([0-9a-f]{12})';
@@ -190,6 +191,9 @@ export const DECISION_IN_CHAT = 'A decision is shown as a message in the chat, n
 // An agent whose hooks only read can neither sign a click in its picker nor record a typed reply, so the director answers a
 // decision in Wheelhouse's own window, which signs their click as a hook that signs does.
 export const DECISION_IN_WINDOW = 'A decision is shown as a message in the chat, not through the question picker. Run `decision list`, then print each decision exactly as `decision show <n>` prints it, and ask nothing else for it. Then run `decision confirm <n>`: it opens the decision in Wheelhouse\'s own window, where the director clicks their answer.';
+// A card on an agent whose picker click is recorded must take no typed answer: a typed label looks like a click (check 59), and
+// words in a card's place are no click.
+export const NO_TYPED_ANSWER = 'A card is asked with no free-text input: the director answers it by clicking one of its options. Ask it again with typed answers off.';
 export { PANE_LEAD };
 
 // The cards the questions are, as `standing` matches them: for each question, { card } while it waits or
@@ -318,6 +322,9 @@ async function movedOnDeny(project, cards) {
 // The id the Lift All stop question goes by in the hold, since it is not a card in the state.
 const LIFT_ID = 'lift-stop';
 const isLiftQuestion = (q) => typeof q?.question === 'string' && isLiftStopLine(setLineOf(q.question));
+// Whether a question decides something: a decision card, a card with an option that signs, or Lift All stop.
+const decides = (q, m) => (m != null && !m.setup && isDecisionCard(m.card.data)) || isLiftQuestion(q)
+  || (Array.isArray(q?.options) && q.options.some((o) => signsOn(typeof o === 'string' ? o : o?.label)));
 // The Lift All stop question keeps its set line and reply code in the chat: the prompt record signs its pick from them
 // (scripts/hooks/prompt-record.js). A copy asked without them, an option Lift All stop and no set line, signs nothing,
 // so while STOP is on its last two lines are put back.
@@ -351,8 +358,9 @@ function swapQuestions(questions, matched) {
   return { questions: next, swapped, origins, changed };
 }
 
-function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop, writeVia }) {
+function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop, picker }) {
   const asked = input.tool_input.questions;
+  if (!picker.own && picker.recorded && asked.some((q) => q?.allowFreeformInput === true)) return { deny: NO_TYPED_ANSWER };
   const questions = stop().on ? asked.map(wholeLift) : asked;
   const restored = questions.some((q, i) => q !== asked[i]);
   const at = now();
@@ -375,10 +383,15 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
     return swap === null ? null : { card: swap.card, setup: swap.setup === true };
   });
   // The picker is for a decision only while typed replies are off, so on it a decision is answered by typing instead. On an
-  // agent whose hooks only read, a click in its picker would close the decision unsigned, so it is answered in the window.
+  // agent whose picker's click is not recorded (`picker` false), it would close the decision unsigned, so it is answered in the
+  // window; one whose picker click is recorded asks it there as any card, and records no typed reply, so no switch sends it to the chat.
   const decisionAsked = matched.some((m) => m && !m.setup && isDecisionCard(m.card.data));
-  if (decisionAsked && writeVia !== 'self') return { deny: DECISION_IN_WINDOW };
-  if (decisionAsked && typedRepliesOn(project)) return { deny: DECISION_IN_CHAT };
+  if (decisionAsked && !picker.recorded) return { deny: DECISION_IN_WINDOW };
+  // On an agent whose click is recorded by a hook that reads it, a typed answer reads as a click. A card that decides (a decision,
+  // a card with an option that signs, or Lift All stop) is asked only when the call turns typed answers off in words the hook
+  // reads (`allowFreeformInput` false): a call that says nothing about them may well allow them.
+  if (!picker.own && picker.recorded && questions.some((q, i) => q?.allowFreeformInput !== false && decides(q, matched[i]))) return { deny: NO_TYPED_ANSWER };
+  if (decisionAsked && picker.own && typedRepliesOn(project)) return { deny: DECISION_IN_CHAT };
   // The Lift All stop question is composed on each visit and never recorded as a card, so the state can't say it is
   // decided: STOP being off is what says so.
   const lifts = questions.map(isLiftQuestion);
@@ -462,7 +475,7 @@ function swapSetupCards(input, questions) {
 export async function decide(input, {
   projectOf: find = projectOf, dir, now = () => new Date(), outcomes, paneLive: live = paneLive, takeHere: take = takeHere,
   markOpen: open = markOpen, holdForPane = HOLD_FOR_PANE, role = sessionRole, stop = stopState, env = process.env, decisions,
-  writeVia = 'self',
+  writeVia = 'self', picker = writeVia === 'self',
 } = {}) {
   if (input.hook_event_name === 'Stop') return decideStop(input, { projectOf: find, dir, role, env, decisions });
   if (input.tool_name !== tools.ask) return undefined;
@@ -476,7 +489,7 @@ export async function decide(input, {
   let open_ = null;
   let checked_ = null;
   try {
-    const checked = oneCardCheck(input, find(input.cwd, { dir }).project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop, writeVia });
+    const checked = oneCardCheck(input, find(input.cwd, { dir }).project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop, picker: { recorded: picker === true, own: writeVia === 'self' } });
     if (checked.deny !== undefined) return answer.deny(checked.deny);
     const moved = await movedOnDeny(find(input.cwd, { dir }).project, checked.cards ?? []);
     if (moved !== undefined) return answer.deny(moved);
