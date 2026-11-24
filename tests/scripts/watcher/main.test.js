@@ -294,27 +294,38 @@ test('a long gap while the watcher runs (a computer asleep for over a week) wake
   assert.equal(wake.events[0].detail.since, new Date(T0 + 15 * SEC).toISOString());
 }));
 
-test('under STOP the loop observes and records, but starts and wakes nothing until it lifts', () => withHome(async () => {
+test('under STOP the watcher starts nothing, writes no wake and no record, and keeps its heartbeat; lifting it works in one tick', () => withHome(async () => {
   checkout();
   const { calls, wakerOptions } = starter({ alive: () => false });
   const c = clock();
   setStop({ by: 'prompt' });
   const seen = looker([INCIDENT], { stop: true });
   await runWatcher({ project: P, config: config(), observe: seen.observe, wakerOptions, loops: 6, now: c.now, sleep: c.sleep, log: quiet });
-  assert.equal(seen.calls.length, 6, 'it kept observing');
+  assert.equal(seen.calls.length, 0, 'it observed nothing');
   assert.equal(calls.length, 0, 'nothing started');
-  assert.ok(readCursor(P).seen.includes('ev-1'), 'and recorded');
-  const waiting = JSON.parse(fs.readFileSync(outboxFile(P), 'utf8')).entries;
-  assert.equal(waiting.length, 1);
-  assert.deepEqual(readWake(waiting[0].file).events.map((e) => e.id), ['ev-1', 'stop:0'], 'STOP itself waits for the foreman too');
+  assert.equal(fs.existsSync(outboxFile(P)), false, 'no wake was queued');
+  assert.equal(fs.existsSync(wakesDir(P)), false, 'no wake file was written');
+  assert.deepEqual(readCursor(P).seen ?? [], [], 'no record was kept');
+  const beat = JSON.parse(fs.readFileSync(healthFile(P), 'utf8'));
+  assert.equal(beat.pid, process.pid, 'the heartbeat is kept');
+  assert.equal(beat.idle, 'All stop');
 
   liftStop();
-  await runWatcher({ project: P, config: config(), observe: looker([]).observe, wakerOptions, loops: 1, now: c.now, sleep: c.sleep, log: quiet });
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].args[0], '--session-id');
-  assert.match(calls[0].args[1], /^[0-9a-f-]{36}$/);
-  assert.deepEqual(calls[0].args.slice(2, 4), ['-p', PROMPTS.foreman(copyOf(waiting[0].file), foremanCommands(PLUGIN_ROOT).wake)]);
-  assert.equal(calls[0].env.WHEELHOUSE_ROLE, 'foreman');
+  const after = looker([INCIDENT]);
+  await runWatcher({ project: P, config: config(), observe: after.observe, wakerOptions, loops: 1, now: c.now, sleep: c.sleep, log: quiet });
+  assert.equal(after.calls.length, 1, 'the first tick after the lift observes');
+  assert.ok(readCursor(P).seen.includes('ev-1'));
+}));
+
+test('under STOP the idle watcher has its waker end the sessions it started, each tick', () => withHome(async () => {
+  checkout();
+  const c = clock();
+  let ended = 0;
+  const waker = { ...fakeWaker(), stopAll: async () => { ended += 1; return []; } };
+  setStop({ by: 'prompt' });
+  await runWatcher({ project: P, config: config(), observe: looker().observe, waker, loops: 3, now: c.now, sleep: c.sleep, log: quiet });
+  assert.equal(ended, 3);
+  assert.deepEqual(waker.wakes, []);
 }));
 
 test('a foreman is started for a due bundle, and a configuration that says Shape 2 starts it the same', () => withHome(async () => {

@@ -30,8 +30,9 @@
 // (control-files.js) is raised through the helper as a plain record, for the
 // director's card (raiseRecord).
 //
-// Under STOP it goes on observing and recording, and the waker holds every
-// wake until STOP lifts.
+// Under STOP it idles (builders and settings design, section 12A.6): it keeps its
+// lock and its heartbeat, ends the sessions it started, and observes, wakes and
+// records nothing until STOP lifts.
 //
 // The configuration is the default branch's, asked of the helper, which reads
 // it in its own mirror: never the working copy, which an agent can edit. Until
@@ -57,6 +58,7 @@ import { findLostSessions, resumeLost } from './resume.js';
 import { raiseStuckCards } from './stuck-cards.js';
 import { makeDecisionBatcher } from './decision-batch.js';
 import { makeDigestTicker } from './digest.js';
+import { stopState } from '../lib/stop.js';
 import { makeWaker, watcherDir, watcherFolder, writeJsonFile, writeWake } from './waker.js';
 import { foremanTools } from '../foreman/tools.js';
 import { cleanOrphans } from '../crew/hold.js';
@@ -145,6 +147,7 @@ export async function runWatcher({
   observe: look = observe,
   waker = null,
   wakerOptions = {},
+  stopped = () => stopState().on,
   now = () => new Date(),
   sleep = pause,
   intervals = {},
@@ -257,12 +260,23 @@ export async function runWatcher({
         }
       }
 
+      // Under All stop it idles: the lock and the heartbeat only, and the detached sessions it started ended. Nothing is
+      // observed, woken, pruned, counted or written, so lifting All stop takes effect in one tick with nothing to restart.
+      const idle = stopped();
       try {
         writeJsonFile(healthFile(project), {
-          pid: process.pid, at: t.toISOString(), shape, ...(health.lastOk ? { lastOk: health.lastOk } : {}), ...(health.lastError ? { lastError: health.lastError } : {}),
+          pid: process.pid, at: t.toISOString(), shape, ...(idle ? { idle: 'All stop' } : {}), ...(health.lastOk ? { lastOk: health.lastOk } : {}), ...(health.lastError ? { lastError: health.lastError } : {}),
         });
       } catch (error) {
         log(`The watcher's health can't be written: ${error.message}`);
+      }
+      if (idle) {
+        try {
+          await wake?.stopAll?.();
+        } catch (error) {
+          fault(`The sessions couldn't all be stopped: ${error.message}`);
+        }
+        continue;
       }
       if (wake === null) continue; // nothing observed, nothing woken, the cursor kept as it is
 

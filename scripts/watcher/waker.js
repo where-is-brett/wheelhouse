@@ -325,6 +325,8 @@ export const startsDir = (project) => path.join(watcherDir(project), 'starts');
 // The count of a piece's failed starts in a row, all of one kind: `{ kind, count, held }`. A third failure holds the piece.
 export const failingFile = (project, work) => path.join(watcherDir(project), 'failing', `${work}.json`);
 export const START_FAILURES_HELD = 3;
+// What a start refused under All stop says.
+export const STOPPED_LINE = 'not started: All stop';
 const START_OUTPUT_DAYS_MS = 24 * 60 * 60 * 1000;
 // The kinds that shut a whole route: signing in, or the program, is wrong for every project on this computer.
 const ROUTE_KINDS = ['not-signed-in', 'blocked', 'no-program'];
@@ -1077,6 +1079,8 @@ export function makeWaker({
     }
   }
   async function shutRoute(kind, program, output, error) {
+    // The gate is frozen under All stop: nothing is written, cleared or counted until it lifts.
+    if (stopped()) return;
     const home = wheelhouseHome();
     const key = routeKey();
     const before = readSignIn(home);
@@ -1114,6 +1118,7 @@ export function makeWaker({
   // The start output of a run whose end this watcher never saw (a start made by the foreman's command, or before a
   // restart), read once and classified like any other. Says whether it shut the route.
   async function classifyUnseen(ended) {
+    if (stopped()) return false;
     let output = '';
     try {
       output = readOutput(ended.startOutput, 0);
@@ -1134,6 +1139,7 @@ export function makeWaker({
   // A piece whose start failed some other way (a crash, a timeout, an unknown exit): three in a row of one kind hold it,
   // write `start-failing` on its record, and tell the First Mate.
   async function countStartFailure(work, kind) {
+    if (stopped()) return;
     const file = failingFile(project, work);
     const before = lstatOf(file) === null ? null : readJson(file);
     const count = (isPlain(before) && before.kind === kind && Number.isInteger(before.count) ? before.count : 0) + 1;
@@ -1164,6 +1170,8 @@ export function makeWaker({
       } catch { /* classified without it */ }
       if (watch.own) fs.rmSync(watch.file, { force: true });
     }
+    // A run ended by All stop, or ending while it is on, counts for nothing: no failure, no proof, no shut route.
+    if (stopped()) return { gated: false };
     if (exit.code === 0 && !exit.error) {
       if (target !== 'foreman') clearStartFailures(project, nameOf(target));
       proved = true;
@@ -1187,6 +1195,7 @@ export function makeWaker({
 
   // The start that is refused while a piece is held or the route is shut: its words, or null.
   const startRefused = (work) => {
+    if (stopped()) return STOPPED_LINE;
     const gate = gateNow();
     if (!gate.open) return gate.reason;
     if (work !== undefined && startHold(project, work) !== null) return `not started: the ${work} session failed to start ${START_FAILURES_HELD} times in a row`;
@@ -1551,6 +1560,8 @@ export function makeWaker({
         if (!mine && target !== 'foreman' && helmHeld(project, nameOf(target))) {
           return deliver();
         }
+        // The same for a run All stop ended: its record was taken and its wakes put back (stopAll).
+        if (!mine && stopped()) return deliver();
         if (kept?.premium === true && mine && await premiumRefused(target, kept, code, entries)) {
           // Rests the premium model, and its wake goes again on the most capable model.
         } else {
@@ -2170,6 +2181,51 @@ export function makeWaker({
         if (claimRecord(target, same) === null) return { stopped: false, why: 'ended elsewhere' };
         settle(list(record.entries).filter((x) => typeof x === 'string'), 'again');
         return { stopped: true };
+      });
+    },
+    // The words a start for `work` (none for the foreman) is refused with now, or null when nothing refuses it. Under All
+    // stop it is `not started: All stop`, before the sign-in gate or a held piece is read.
+    startDecision(work) {
+      return startRefused(work);
+    },
+    // Under All stop, ends every detached session this watcher started, with the same end as the helm's stop, and records which
+    // (`all-stopped.json`). The wakes a run had taken go back to the outbox, so lifting All stop starts them again in one tick.
+    // Does nothing when All stop is off. Says the names ended: 'foreman' or a work id.
+    stopAll() {
+      return serial(async () => {
+        if (!stopped()) return [];
+        let names;
+        try {
+          names = fs.readdirSync(path.join(watcherDir(project), 'running'));
+        } catch {
+          return [];
+        }
+        const ended = [];
+        for (const n of names.filter((x) => x.endsWith('.json')).sort()) {
+          const target = n.slice(0, -'.json'.length);
+          if (target !== 'foreman' && !(target.startsWith('feature-') && SLUG.test(target.slice('feature-'.length)))) continue;
+          const state = await stateOf(target);
+          if (state === null) continue;
+          const record = state.live ?? state.ended;
+          const same = (r) => r.at === record.at && r.pid === record.pid && r.state === record.state;
+          const running = state.live !== undefined || state.why === 'overran';
+          let signalled = false;
+          if (running && Number.isInteger(record.pid) && typeof record.startTime === 'string' && sameStart(await timeOf(record.pid, [], { fresh: true }), record.startTime)) {
+            signalled = kill(record.pid);
+          }
+          if (claimRecord(target, same) === null) continue;
+          settle(list(record.entries).filter((x) => typeof x === 'string'), 'again');
+          if (running && signalled) ended.push(nameOf(target));
+        }
+        if (ended.length > 0) {
+          const { writeStopped } = await import('../lib/heartbeats.js');
+          try {
+            writeStopped(wheelhouseHome(), project, { at: now().toISOString(), works: ended });
+          } catch (error) {
+            onError(`The sessions ended by All stop couldn't be recorded: ${error instanceof Error ? error.message : 'unknown error'}`);
+          }
+        }
+        return ended;
       });
     },
     // Delivers what has been waiting: a session has ended, STOP has lifted, a wait has passed.

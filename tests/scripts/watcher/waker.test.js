@@ -13,6 +13,7 @@ import {
   startsDir, failingFile, startHold, clearStartFailures, PROVE_MS,
 } from '../../../scripts/watcher/waker.js';
 import { readSignIn, timeWords } from '../../../scripts/lib/sign-in-gate.js';
+import { stillRunning } from '../../../scripts/lib/heartbeats.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { briefHash, featurePaths } from '../../../scripts/feature/files.js';
 import { recordInState, briefFields, briefText } from '../../helpers/foreman.js';
@@ -2141,4 +2142,75 @@ test('a program that is not found shuts the route as no-program', () => withHome
   const fact = readSignIn(wheelhouseHome()).facts['claude-code:background'];
   assert.equal(fact.kind, 'no-program');
   assert.equal(w.waiting().length, 0);
+}));
+
+// ---- All stop reaches the background sessions (builders and settings, part 2b) ----
+
+const signedOut = () => ({ kind: 'not-signed-in', since: '2026-11-24T14:02:00.000Z', command: 'claude', excerpt: 'Please run /login', starts: 1 });
+
+test('under STOP the start decision is "not started: All stop", before the gate is read', () => withHome(async () => {
+  checkout();
+  const w = waker(fakeRun());
+  assert.equal(w.startDecision('login-page'), null);
+  setStop({ by: 'prompt' });
+  assert.equal(w.startDecision('login-page'), 'not started: All stop');
+  assert.equal(w.startDecision(), 'not started: All stop');
+}));
+
+test('under STOP every detached session the watcher started is ended with the existing stop, and the ended ones are recorded', () => withHome(async () => {
+  const { w, fake, killed, file } = await liveRun();
+  assert.deepEqual(await w.stopAll(), [], 'nothing happens while All stop is off');
+  assert.equal(killed.length, 0);
+  setStop({ by: 'prompt' });
+  assert.deepEqual(await w.stopAll(), ['login-page']);
+  await flush();
+  assert.deepEqual(killed, [fake.calls[0].pid]);
+  assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), false);
+  const [entry] = w.waiting();
+  assert.equal(entry.file, file);
+  assert.equal(entry.flight, null, 'its wake waits again, so lifting All stop picks it up');
+  assert.equal(entry.failures, 0);
+  assert.equal(fake.calls.length, 1, 'nothing is started in its place');
+  const kept = JSON.parse(fs.readFileSync(path.join(watcherDir(P), 'all-stopped.json'), 'utf8'));
+  assert.deepEqual(kept.stopped, ['login-page']);
+  assert.deepEqual(stillRunning(wheelhouseHome(), P).stopped, ['builder login-page']);
+}));
+
+test('under STOP the sign-in gate and the failed-start count are frozen (review focus 3)', () => withHome(async () => {
+  const { w } = await liveRun();
+  const { writeSignInFact, clearSignInFact } = await import('../../../scripts/lib/sign-in-gate.js');
+  writeSignInFact(wheelhouseHome(), 'claude-code:background', signedOut());
+  const standing = readSignIn(wheelhouseHome());
+  setStop({ by: 'prompt' });
+  // The ended run's exit (code 1) is read while STOP is on: it counts for nothing.
+  await w.stopAll();
+  await flush();
+  assert.equal(fs.existsSync(failingFile(P, 'login-page')), false, 'a failing start count does not grow');
+  assert.deepEqual(readSignIn(wheelhouseHome()), standing, 'the standing fact is neither changed nor counted');
+  assert.equal(writeSignInFact(wheelhouseHome(), 'claude-code:background', signedOut()), null, 'no start is counted on the fact');
+  assert.equal(clearSignInFact(wheelhouseHome(), 'claude-code:background'), false, 'nothing is cleared');
+  assert.deepEqual(readSignIn(wheelhouseHome()), standing);
+}));
+
+test('lifting STOP takes effect in one tick, and the gate is read before the first start (review focus 3)', () => withHome(async () => {
+  checkout();
+  const fake = fakeRun();
+  const dir = worktree();
+  keepSession('login-page', dir);
+  const errors = [];
+  const w = waker(fake, { locate: () => dir, onError: (m) => errors.push(m) });
+  const { writeSignInFact } = await import('../../../scripts/lib/sign-in-gate.js');
+  setStop({ by: 'prompt' });
+  writeSignInFact(wheelhouseHome(), 'claude-code:background', signedOut()); // refused under STOP: no fact yet
+  assert.deepEqual(readSignIn(wheelhouseHome()).facts, {});
+  liftStop();
+  writeSignInFact(wheelhouseHome(), 'claude-code:background', signedOut());
+  setStop({ by: 'prompt' });
+  await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page')));
+  assert.equal(w.waiting().length, 1);
+  liftStop();
+  await w.pump();
+  assert.equal(fake.calls.length, 0, 'the standing fact holds the start once STOP lifts');
+  assert.match(errors.at(-1), /not started: builders can't sign in/);
+  assert.equal(w.waiting().length, 1);
 }));
