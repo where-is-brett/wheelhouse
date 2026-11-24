@@ -516,14 +516,18 @@ test('a change to the computer\'s sign-in settings since the first push is refus
       assert.equal(fs.existsSync(file), true, 'setup recorded the settings');
       assert.match(Object.values(JSON.parse(fs.readFileSync(file, 'utf8')).folders)[0], /^v2:[0-9a-f]{64}$/);
     });
-    // Settings that are not the sign-in, proxy, certificate or rewrites change nothing; the same ones again pass.
+    // Settings that are not the sign-in, certificate or rewrites change nothing; the same ones again pass.
     await withDirectorsGit(`[credential]\n\thelper = !${first.file}\n[user]\n\tname = Someone\n[alias]\n\tst = status\n`, async () => {
+      assert.deepEqual(await push(), { ok: true });
+    });
+    // Nor does a proxy, which follows the network the computer is on; the push uses it as it is.
+    await withDirectorsGit(`[credential]\n\thelper = !${first.file}\n[http "https://other.example.org/"]\n\tproxy = http://proxy.example.org:8080\n`, async () => {
       assert.deepEqual(await push(), { ok: true });
     });
     for (const [name, config] of [
       ['another helper', `[credential]\n\thelper = !${second.file}\n`],
       ['an added helper', `[credential]\n\thelper = !${first.file}\n\thelper = !${second.file}\n`],
-      ['a proxy', `[credential]\n\thelper = !${first.file}\n[http]\n\tproxy = http://proxy.example.org:8080\n`],
+      ['a certificate file', `[credential]\n\thelper = !${first.file}\n[http]\n\tsslCAInfo = /x/ca.pem\n`],
       ['a sshCommand', `[credential]\n\thelper = !${first.file}\n[core]\n\tsshCommand = ssh -i /x\n`],
       ['an included file', `[credential]\n\thelper = !${first.file}\n[include]\n\tpath = /nowhere/more.config\n`],
       ['a rewrite for another address', `[credential]\n\thelper = !${first.file}\n[url "ssh://git@other.example.org/"]\n\tinsteadOf = https://other.example.org/\n`],
@@ -594,7 +598,9 @@ test('a lock refused because the settings changed carries the code, raises a car
       assert.equal(card.kind, 'card');
       // The card names settings and never a value: no address, no user, no password.
       for (const text of [card.data.question, card.data.line]) assert.doesNotMatch(text, /s3cretpass|ada|proxy\.example|mirror\.example|elsewhere/i);
-      assert.match(card.data.question, /added: http\.proxy, url\.insteadof/);
+      // The proxy follows the network, so it is no part of the settings confirmed, and the card leaves it out.
+      assert.match(card.data.question, /added: url\.insteadof/);
+      assert.doesNotMatch(card.data.question, /http\.proxy/);
       assert.deepEqual(card.data.options, ['Confirm', 'Not now']);
       // Asked again, the same card waits: no second one.
       assert.equal((await touch()).card, refused.card);
@@ -649,7 +655,7 @@ test('a lock refused because the settings changed carries the code, raises a car
       assert.deepEqual(got.lock, { held: true }, 'the click also keeps the lock, with no new session');
       assert.deepEqual(await c.push({ project: PROJECT, dir: c.dir, refspec: 'feature' }), { ok: true });
       const record = JSON.parse(fs.readFileSync(file, 'utf8'));
-      assert.deepEqual(record.names[Object.keys(record.folders)[0]], ['credential.helper', 'http.proxy', 'url.insteadof']);
+      assert.deepEqual(record.names[Object.keys(record.folders)[0]], ['credential.helper', 'url.insteadof']);
       assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /s3cretpass|proxy\.example|mirror\.example/i, 'the record holds no value or address');
     });
   } finally { await c.close(); await repo.cleanup(); }
@@ -667,7 +673,7 @@ test('a settings card whose settings are the confirmed ones again is closed when
       assert.deepEqual(await c.push({ project: PROJECT, dir: c.dir, refspec: 'feature' }), { ok: true });
     });
     let shown;
-    await withDirectorsGit(`${base}[http "https://other.example.org/"]\n\tproxy = ${PROXY}\n`, async () => {
+    await withDirectorsGit(`${base}[http "https://other.example.org/"]\n\tsslCAInfo = /x/ca.pem\n`, async () => {
       const refused = await c.push({ project: PROJECT, dir: c.dir, refspec: 'feature' });
       shown = { card: refused.card, hash: dataHash(events().find((e) => e.id === refused.card).data) };
     });

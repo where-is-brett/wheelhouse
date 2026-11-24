@@ -17,6 +17,7 @@ import { wheelhouseHome } from '../lib/paths.js';
 import { loginStartRecord } from '../lib/login-start.js';
 import { MARKETPLACE, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { fetchTag, tagTree } from '../update/release.js';
+import { pluginVersion } from '../lib/plugin-version.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Folders never walked into: a repository's history, and installed packages.
@@ -123,9 +124,9 @@ export function ownFilesChanged(baseline, now) {
 // A file's hash as the update records it for the files it wrote: the same as the look's own (null when it can't be read).
 export const fileHash = (file, read = fs.readFileSync) => hashOf(file, read);
 
-const versionOf = (root) => {
-  try { return String(JSON.parse(fs.readFileSync(path.join(root, '.claude-plugin', 'plugin.json'), 'utf8')).version); } catch { return null; }
-};
+const versionOf = pluginVersion;
+// A version that names a release, so has a tag to check against.
+const RELEASE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 const bareVersion = (v) => String(v ?? '').replace(/^v/, '');
 
@@ -366,8 +367,9 @@ export async function checkOwnFiles({ now = () => new Date(), claudeHome, projec
       nextFolders[f.folder] = kept;
       continue;
     }
-    // A version move, or a folder not seen before: accepted only against the tag's tree.
-    const tree = f.version === null ? null : await treeOf(f.version);
+    // A version move, or a folder not seen before: accepted only against the tag's tree. A build from the main line
+    // (its version a commit or DEV_VERSION) has no tag, so it can't be checked and nothing is fetched for it.
+    const tree = typeof f.version === 'string' && RELEASE.test(f.version) ? await treeOf(f.version) : null;
     if (tree === null) continue; // can't be checked now: nothing accepted, nothing named, looked at again
     const verdict = matchesTree(f.folder, tree);
     if (!verdict.ok) { changedBy.set(f.folder, verdict.bad); continue; }

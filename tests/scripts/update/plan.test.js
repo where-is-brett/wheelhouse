@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { makePlan, partWay } from '../../../scripts/update/plan.js';
+import { makePlan, partWay, mainLineLine } from '../../../scripts/update/plan.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 const SHA = 'a'.repeat(40);
@@ -33,4 +33,12 @@ test('plan: the release the checks step recorded comes first, and the installed 
   recorded.steps.checks = done({ tag: 'v0.2.7', sha: SHA, from: 'v0.2.6', put: 'release' });
   assert.equal((await carryOn(recorded)).plan.from, 'v0.2.6');
   assert.equal((await carryOn(journal({}, tempFolder('wh-jour-')))).plan.from, 'v0.2.7');
+});
+
+test('plan: a build from the main line is told so plainly and offered nothing, without a look at the releases', async () => {
+  let looked = false;
+  const out = await makePlan({ from: 'dev', list: async () => { looked = true; return []; } });
+  assert.deepEqual(out.lines, [mainLineLine]);
+  assert.match(mainLineLine, /main line, between releases/);
+  assert.equal(looked, false);
 });

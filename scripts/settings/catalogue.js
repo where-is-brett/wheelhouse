@@ -6,10 +6,13 @@ import { BRIEFING_GAP_HOURS, UNUSUAL } from '../lib/core-numbers.js';
 import { DEFAULT_SOURCES } from '../sources/list.js';
 import { LEVELS as BUILD_LEVELS } from '../protection/windows-builds.js';
 import { LEVELS } from '../crew/levels.js';
+import { sayLaunch, wordsFault } from '../lib/launch-words.js';
 
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
 const WINDOWS_BUILDS_KEY = /^windowsBuildCommands:[0-9a-f]{8}$/;
+// One per computer: the launch command builders start through (design section 8).
+export const BUILDER_LAUNCH_KEY = /^builderLaunch:[0-9a-f]{8}$/;
 const CHANNELS = ['claude', 'ntfy', 'telegram'];
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -104,6 +107,17 @@ export const SETTINGS = {
 // on Windows (design section 12.2).
 export const WINDOWS_BUILD_COMMANDS = { label: 'Build commands on Windows', group: 'everyday', levels: BUILD_LEVELS, default: 'ask', home: 'project' };
 
+// One per computer (`builderLaunch:<computer>`): the words of the program builders start `claude` through, such as
+// ["wrap", "claude"], or null for plain `claude` (design section 8). Only the director sets it, by a typed card the helper
+// signs a fresh click for. This checks the words themselves; that the program is on the computer is checked where it is
+// saved and on every read (scripts/lib/launch-words.js).
+export const BUILDER_LAUNCH = {
+  label: 'Launch command for builders', group: 'advanced', home: 'profile', default: null,
+  // Either kind of full path passes here: the key names the computer, and the program is looked for there.
+  check: (v) => v === null || (Array.isArray(v) && (wordsFault(v, { platform: 'win32' }) === null || wordsFault(v, { platform: 'linux' }) === null)),
+  say: (v) => (v === null ? 'none, plain claude' : sayLaunch(v).replace(/^Wheelhouse will run: /, '')),
+};
+
 // The person's own GitHub App (setup's step 3, ruling R56): { clientId, slug, owner }, the app the
 // narrow GitHub connection signs in to in place of Wheelhouse's, on every computer of theirs; null
 // is none. Setup records it, and it counts only once the director confirms it. The client ID is
@@ -144,6 +158,7 @@ export function definitionOf(key, lists = SHIPPED) {
   if (Object.hasOwn(SETTINGS, key)) return SETTINGS[key];
   if (key === OWN_GITHUB_APP_KEY) return OWN_GITHUB_APP;
   if (WINDOWS_BUILDS_KEY.test(key)) return WINDOWS_BUILD_COMMANDS;
+  if (BUILDER_LAUNCH_KEY.test(key)) return BUILDER_LAUNCH;
   return undefined;
 }
 

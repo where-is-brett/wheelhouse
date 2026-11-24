@@ -12,7 +12,7 @@ import { caEnv } from '../host/company-ca.js';
 import { helperClient } from '../host/helper-client.js';
 import { readHelperRecord } from '../host/helper-record.js';
 import { MARKETPLACE, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
-import { refreshAgentComputer } from '../agents/setup-parts.js';
+import { refreshAgentComputerAfterKits } from '../agents/setup-parts.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { compareVersions } from '../lib/versions.js';
 import { computerId, helperAddress, jobFolder, stateDir, wheelhouseHome } from '../lib/paths.js';
@@ -30,6 +30,7 @@ import { listEvents } from '../state/events.js';
 import { startWatcher, stopWatcher, watcherRunning } from '../foreman/start.js';
 import { processStartTime } from '../watcher/waker.js';
 import { projectConfig } from '../watcher/main.js';
+import { releaseVersion } from '../lib/plugin-version.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -77,10 +78,7 @@ export function rootIsCacheFor({ newRoot, claudeHome, tag }) {
   }
 }
 
-export function versionOf(root) {
-  const found = readJson(path.join(root, '.claude-plugin', 'plugin.json'));
-  return typeof found?.version === 'string' ? found.version : null;
-}
+export const versionOf = releaseVersion;
 
 // The card that asks about an old helper that did not make way. Plain card data: part 9 raises it. `kind` is 'busy' (a
 // v0.2.5 or v0.2.6 helper still busy after two minutes), 'unknown' (one that does not know the request) or 'hung' (one that
@@ -239,7 +237,7 @@ export async function finish({
   project, journal, answer = null, events, enrolled, newRoot = PLUGIN_ROOT, folder, claudeHome = defaultClaudeHome(), platform = process.platform,
   to, from, client = helperClient(), refresh, old, say = () => {}, now = Date.now, sleep = pause, startHelper, hash = fileHash, record = recordUpdate,
   readRecord = readHelperRecord, startTimeOf = processStartTime, alive = pidAlive, address = helperAddress({ platform }), run = defaultRun,
-  user, cacheRoot = defaultCacheRoot(), kill, watcher, heldNow = updateLockHeld, move = realMove, addon = realAddon, agentHooks = refreshAgentComputer, statusLine = statusLineStep,
+  user, cacheRoot = defaultCacheRoot(), kill, watcher, heldNow = updateLockHeld, move = realMove, addon = realAddon, agentHooks = refreshAgentComputerAfterKits, statusLine = statusLineStep,
 }) {
   // Only the job's own step runs this: the update lock is held and the journal has the finish step running. It never takes
   // the lock itself, and it runs only from the plugin cache folder of the tag the journal names.
@@ -326,7 +324,7 @@ export async function finish({
         try { said.push(...((await step({ project, folder: dir, journal, progress, save, client, run, platform }))?.lines ?? [])); } catch { /* it informs */ }
       }
       // Another agent's hook file on this computer, made to name the new release's folder.
-      try { said.push(...agentHooks({ root: newRoot, platform })); } catch { /* it informs */ }
+      try { said.push(...(await agentHooks({ root: newRoot, platform }))); } catch { /* it informs */ }
     }
 
     // 4. The watcher, restarted from the new folder, only through stopWatcher and startWatcher.

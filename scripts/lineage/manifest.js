@@ -20,6 +20,7 @@ import { checkAnchors, checkCarried, readRegister } from './register.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { MARKETPLACE } from './marketplace.js';
 import { AGENT_PINS } from '../agents/pins.js';
+import { pluginVersion } from '../lib/plugin-version.js';
 
 export const MANIFEST_PATH = 'lineage/manifest.json';
 // The oldest Node.js a Wheelhouse release runs on (package.json's engines).
@@ -220,7 +221,8 @@ export function buildManifest({ roots, version, upstreams = UPSTREAMS, pins = AG
 // Fetches every upstream afresh and writes lineage/manifest.json under `root`. Returns
 // the manifest. Each fetch goes into its own new folder under the temporary folder, removed after.
 export async function writeManifest({ root = repoRoot(), fetchTo = fetchUpstream, log = () => {} } = {}) {
-  const version = JSON.parse(fs.readFileSync(path.join(root, '.claude-plugin', 'plugin.json'), 'utf8')).version;
+  const version = pluginVersion(root);
+  if (version === null) throw new Error('The plugin.json in the repository can\'t be read');
   const made = [];
   try {
     const roots = {};
@@ -315,6 +317,10 @@ export async function verifyManifest({ root = repoRoot(), fetchTo = fetchUpstrea
   if (named(upstreams) !== named(manifest.upstreams)) breaks(`the pins in scripts/lineage/manifest.js are not the manifest's: write the manifest again`);
   if (JSON.stringify(manifest.agents ?? null) !== JSON.stringify(agentPins(pins))) breaks(`the agents' pins in scripts/agents/pins.js are not the manifest's: write the manifest again`);
   if (manifest.engine !== undefined) breaks('the manifest still carries the build engine\'s pins: write the manifest again');
+  // The gate stamps provenance with plugin.json's version and compares it with the manifest's, so the two must agree: a
+  // release commit names its release in both, the main line 'dev' in both. A root with no plugin.json has nothing to compare.
+  const own = pluginVersion(root);
+  if (own !== null && own !== manifest.wheelhouse.version) breaks(`the manifest names Wheelhouse ${manifest.wheelhouse.version} but plugin.json makes it ${own}: write the manifest again`);
   say(broken.length === 0 ? 'lineage ok' : `lineage broken: ${broken.length}`);
   return { ok: broken.length === 0, broken };
 }

@@ -188,7 +188,7 @@ export function foremanSession({
     file: call.file,
     args: call.args,
     options: {
-      cwd: checkout, env: call.env, stdio: 'inherit', windowsVerbatimArguments: call.verbatim,
+      cwd: checkout, env: call.env, stdio: 'inherit', windowsHide: true, windowsVerbatimArguments: call.verbatim,
     },
   };
 }

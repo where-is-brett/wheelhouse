@@ -81,6 +81,7 @@ import { SETUP_TITLES } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 import { CHOICE_KEY, HEALTH_STEP, PUSH_TEST_STEP } from '../lib/setup-run.js';
+import { asciiJson } from '../lib/ascii-json.js';
 
 // Whether this session is the Desktop app's own: CLAUDE_CODE_ENTRYPOINT is set by the app, and a terminal session has another value.
 // A terminal started from inside a Desktop session (a multiplexer such as tmux, or a remote shell) inherits the app's value, so
@@ -188,7 +189,7 @@ export async function main(argv, {
   pause = sleep;
   try {
     const [form, ...rest] = argv;
-    const json = (value) => out(`${JSON.stringify(value, null, 2)}\n`);
+    const json = (value) => out(`${asciiJson(value, 2)}\n`);
     const folder = path.resolve(cwd);
     if (form === 'plan' && rest.length === 1) {
       const step = stepOf(rest[0], { oneCard: true });

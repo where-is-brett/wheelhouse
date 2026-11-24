@@ -7,6 +7,7 @@ import { DEFAULT_SESSION_MODE, SESSION_MODES, isModelName } from '../../scripts/
 import { FOREGROUND_ONLY, invocation, isClaudeSignIn, resolveClaude, withoutHostVariables } from '../../scripts/lib/claude.js';
 import { PLUGIN_ROOT, foremanTools } from '../../scripts/foreman/tools.js';
 import { EFFORTS } from '../../scripts/routing/thoroughness.js';
+import { BUILDER_PROMPT_LEAD } from '../../scripts/foreman/prompt-lead.js';
 
 // The variable that tells a hook the session is the foreman's.
 export const ROLE_VARIABLE = 'WHEELHOUSE_ROLE';
@@ -135,14 +136,17 @@ function featureCall({
   return { ...call, env: { ...sessionEnv(env), ...FOREGROUND_ONLY } };
 }
 
+// The prompt a builder is started or resumed with: BUILDER_PROMPT_LEAD first, once, so its hooks know its role.
+const ledPrompt = (prompt) => (typeof prompt !== 'string' || prompt.startsWith(BUILDER_PROMPT_LEAD) ? prompt : `${BUILDER_PROMPT_LEAD} ${prompt}`);
+
 // A new feature session, which takes `sessionId` as its own. Returns { file, args, env, input, verbatim }.
-export function featureStartCall({ sessionId, ...rest }) {
-  return featureCall({ ...rest, lead: ['--session-id', sessionId] });
+export function featureStartCall({ sessionId, prompt, ...rest }) {
+  return featureCall({ ...rest, prompt: ledPrompt(prompt), lead: ['--session-id', sessionId] });
 }
 
 // The feature session with id `sessionId`, resumed. The mode and model are given again: `--resume` needs them.
-export function featureResumeCall({ sessionId, ...rest }) {
-  return featureCall({ ...rest, lead: ['--resume', sessionId] });
+export function featureResumeCall({ sessionId, prompt, ...rest }) {
+  return featureCall({ ...rest, prompt: ledPrompt(prompt), lead: ['--resume', sessionId] });
 }
 
 // The feature session with id `sessionId`, opened for the director to work in (the helm): its own mode, model, effort and
@@ -205,5 +209,7 @@ export function finalAnswer(stdout) {
 // The waker puts the Thoroughness column for a feature's subagents into its prompt only for an adapter that says it
 // takes it (scripts/watcher/waker.js): Claude Code's sessions pass each subagent its model and effort.
 export const takesColumn = true;
+// Its sessions start through the launch command saved for the computer, when there is one (scripts/lib/launch-words.js).
+export const takesLaunch = true;
 
-export default Object.freeze({ checkForeman, checkFeature, foremanCall, featureStartCall, featureResumeCall, featureHelmCall, whyCall, finalAnswer, takesColumn });
+export default Object.freeze({ checkForeman, checkFeature, foremanCall, featureStartCall, featureResumeCall, featureHelmCall, whyCall, finalAnswer, takesColumn, takesLaunch });

@@ -30,7 +30,7 @@ import { claudeHome as claudeHomeDir } from '../lineage/manifest.js';
 import { retiredInstalls } from './install.js';
 import { addonInstalled } from './addon.js';
 import { accountCatalogue } from './account-settings.js';
-import { runningVersion } from './board.js';
+import { runningBuild } from './board.js';
 import { releaseKind, updateMirror } from './change.js';
 import { decline } from './declined.js';
 import { signedAnswer } from './finish.js';
@@ -163,7 +163,7 @@ function milestones(steps, tag) {
 }
 
 export function updateRoutes({
-  now = () => new Date(), stopped = () => false, updateHeld = updateLockHeld, from = runningVersion, userHome = os.homedir(),
+  now = () => new Date(), stopped = () => false, updateHeld = updateLockHeld, from = runningBuild, userHome = os.homedir(),
   run = realRun, spawn = nodeSpawn, list, fetch, check, kind, locked, requirements, claudeVersion = async () => null, signed = signedByDefault, clicked = clickedByDefault,
   startRunner, account, retired, addon,
 } = {}) {

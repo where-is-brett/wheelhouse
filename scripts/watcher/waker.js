@@ -147,6 +147,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { DIGEST_CAP } from './core.js';
 import { WALK_CAP, checkControlFiles, markRaised, raisedOf, writeBaseline } from './control-files.js';
 import { controlFilesNamed } from '../cards/build-loop.js';
@@ -158,9 +159,12 @@ import { readCapped, safeFeatureFolder } from '../feature/status.js';
 import { SLUG } from '../lib/build-loop.js';
 import { computerId, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
+import { settingsFaultLine } from '../setup/settings-check.js';
 import { clearOtherAgentHolds, hasAgentHolds, recordLift } from '../lineage/check.js';
 import { agentInFolder, agentOfConfig } from '../agents/names.js';
-import { pathWithNode } from '../lib/claude.js';
+import { pathWithNode, resolveClaude } from '../lib/claude.js';
+import { storedLaunch } from '../lib/launch-stored.js';
+import { callLine } from './hidden-start.js';
 import { run as runProgram } from '../lib/run.js';
 import { sameStart } from '../lib/start-time.js';
 import { pidAlive, processStartTimes, processStartTime } from '../lib/process-start.js';
@@ -630,18 +634,23 @@ function openOutput(file) {
 }
 
 // Starts `file` with `args` detached from the watcher, with no window; `input`,
-// when given, is written to its stdin. Its output is kept only when `output`
+// when given, is written to its stdin. On Windows it goes through hidden-start.js, started detached: a detached process there
+// has no console, so a console program it started (the cmd.exe a .cmd shim runs through, a hook, a shell) would open a window
+// in view, and one not detached is ended with the watcher (Node's job for its children). Its output is kept only when `output`
 // names a file: its stdout and stderr are appended there (ruling P8-2), and
 // otherwise thrown away. Resolves once the process has started, with its pid
 // and a promise of its exit code.
-export function spawnDetached(file, args, { cwd, env, input = '', windowsVerbatimArguments = false, output = null } = {}) {
+const HIDDEN_START = fileURLToPath(new URL('./hidden-start.js', import.meta.url));
+export function spawnDetached(file, args, { cwd, env, input = '', windowsVerbatimArguments = false, output = null, platform = process.platform } = {}) {
+  const relay = platform === 'win32';
+  const fed = relay ? `${callLine(file, args, windowsVerbatimArguments)}${input}` : input;
   return new Promise((resolve, reject) => {
     let child;
     let fd = null;
     try {
       if (typeof output === 'string') fd = openOutput(output);
-      child = spawn(file, args, {
-        cwd, env, detached: true, windowsHide: true, shell: false, windowsVerbatimArguments, stdio: [input ? 'pipe' : 'ignore', fd ?? 'ignore', fd ?? 'ignore'],
+      child = spawn(relay ? process.execPath : file, relay ? [HIDDEN_START] : args, {
+        cwd, env, detached: true, windowsHide: true, shell: false, windowsVerbatimArguments: relay ? false : windowsVerbatimArguments, stdio: [fed ? 'pipe' : 'ignore', fd ?? 'ignore', fd ?? 'ignore'],
       });
     } catch (error) {
       reject(error);
@@ -653,9 +662,9 @@ export function spawnDetached(file, args, { cwd, env, input = '', windowsVerbati
     const exited = new Promise((done) => { child.once('exit', (code) => done(Number.isInteger(code) ? code : 1)); });
     child.once('error', reject);
     child.once('spawn', () => {
-      if (input) {
+      if (fed) {
         child.stdin.on('error', () => {});
-        child.stdin.end(input);
+        child.stdin.end(fed);
       }
       child.unref();
       resolve({ pid: child.pid, exited });
@@ -743,7 +752,8 @@ export function makeWaker({
   locate = locateFeature(project),
   windowsBuilds = null,
   labelGuarded = null,
-  claude = null,
+  claude: givenClaude = null,
+  launchWords = storedLaunch,
   sessions = null,
   baseEnv: givenEnv = process.env,
   platform = process.platform,
@@ -756,6 +766,9 @@ export function makeWaker({
   beforeCopy = () => {},
 }) {
   if (shape !== 1 && shape !== 2) throw new Error('The watcher shape is 1 or 2');
+  // Where `claude` is, for the calls built below: the one given, else the launch command saved for this computer (read at each
+  // start, so one the director has just saved or mended counts), else none, which the adapter finds as it always has.
+  let claude = givenClaude;
   // The configuration from the default branch, as last read: `setConfig` replaces it, so every wake after a change
   // that merged (a model, a pin, a mode) starts its session by the new one.
   let config = givenConfig;
@@ -787,6 +800,19 @@ export function makeWaker({
     adapter[check](config);
   };
   mayStart('checkForeman');
+  // Settings files that can't be read are named before any session is started, since the session would read them: the
+  // line naming the file and the place, or null. Not at construction, so a damaged file never stops the watcher.
+  const settingsDamaged = () => {
+    const folder = readProject(project)?.folder;
+    const damaged = typeof folder === 'string' ? settingsFaultLine({ folder }) : null;
+    return damaged === null ? null : `not started: ${damaged}`;
+  };
+  // A start asked for directly is refused with that line.
+  const mayStartNow = (check) => {
+    const damaged = settingsDamaged();
+    if (damaged !== null) throw new Error(damaged);
+    mayStart(check);
+  };
   if (!Array.isArray(foremanTools) || !foremanTools.every((t) => typeof t === 'string' && t !== '' && !/[\r\n]/.test(t))) {
     throw new Error("The Bosun's tools are a list of tool rules");
   }
@@ -1210,6 +1236,12 @@ export function makeWaker({
   async function launch({ target, cwd, check, build, file, entries = [], sessionId = null, beforeRun = () => {}, afterRecord = () => {} }) {
     const adapter = sessionsOf();
     check(adapter);
+    // A launch command that fails a check is named and no session starts; none saved leaves the start as it was. A program in
+    // the project's folder, which an agent can write to, is never the launch command.
+    if (givenClaude === null && adapter.takesLaunch === true) {
+      const words = launchWords();
+      claude = words === null ? null : resolveClaude({ platform, env: baseEnv, launch: words, inside: readProject(project)?.folder ?? null });
+    }
     if (typeof adapter.prepare === 'function') {
       let prepared;
       try {
@@ -1538,9 +1570,16 @@ export function makeWaker({
   };
 
   // Delivers what can go now and keeps the rest. Returns what was delivered.
+  // What a damaged settings file last held back, said once until it changes.
+  let heldBySettings = null;
   async function deliver() {
     mayStart('checkForeman');
     if (stopped()) return [];
+    // The wakes wait in the outbox, and the rest of the watcher's loop goes on.
+    const damaged = settingsDamaged();
+    if (damaged !== heldBySettings && damaged !== null) onError(damaged);
+    heldBySettings = damaged;
+    if (damaged !== null) return [];
     return shape === 2 ? deliverByLine() : deliverByStart();
   }
 
@@ -1729,7 +1768,7 @@ export function makeWaker({
     },
     // Starts the feature's session in its worktree, reading its brief.
     async startFeature({ work, worktree, briefFile } = {}) {
-      mayStart('checkFeature');
+      mayStartNow('checkFeature');
       if (typeof work !== 'string' || !SLUG.test(work)) throw new Error('A work id is lower-case letters, digits and hyphens');
       if (!featureWorktreeOk(project, worktree)) throw new Error("This isn't a feature worktree of the project");
       // A piece the director chose to steer from the start is held with no session yet: it is made like any start, and not launched.
@@ -1816,7 +1855,7 @@ export function makeWaker({
     // a project whose sessions the watcher does not start. Throws when it can't be started now (STOP, no session id
     // kept, a worktree that isn't the feature's, or files that steer agents waiting for the director's card).
     async resumeFeature({ work, prompt } = {}) {
-      mayStart('checkFeature');
+      mayStartNow('checkFeature');
       if (typeof work !== 'string' || !SLUG.test(work)) throw new Error('A work id is lower-case letters, digits and hyphens');
       if (typeof prompt !== 'string' || prompt.trim() === '') throw new Error('A resume needs its prompt');
       return serial(async () => {

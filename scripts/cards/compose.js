@@ -141,7 +141,7 @@ const ASKS = Object.freeze({
   'lift-stop': () => 'Lift All stop?',
   'ci-push': () => 'Push this change to the checks?',
   runbook: (t) => `${RUNBOOK_TITLES[t.step]}?`,
-  'approve-work': () => 'Approve this work as written?',
+  'approve-work': (t) => (t?.lane === 'feature' ? 'Approve this design?' : 'Approve this work as written?'),
   amend: () => 'Change the approved work to this?',
   'lift-incident': () => 'End the incident?',
   'incident-fix': () => 'Merge this fix?',

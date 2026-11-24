@@ -99,6 +99,7 @@ import { decisionText } from '../decisions/message.js';
 import { isDecisionCard } from '../decisions/pending.js';
 import { askWhy } from '../decisions/why.js';
 import { typedRepliesIn } from '../decisions/switch.js';
+import { signedDecisionFor, signedLine } from '../decisions/signed.js';
 import { confirmWords, replyCodeOf } from '../state/card-lines.js';
 import { joinersOf } from '../state/joiners.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
@@ -142,6 +143,8 @@ import { agentInFolder, agentsNamedAbove } from '../agents/names.js';
 import { computerId } from '../lib/paths.js';
 import { noteProblem } from '../lib/session-note.js';
 import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
+import { asciiJson } from '../lib/ascii-json.js';
+import { checkSummary, summarySection, summaryText } from './design-summary.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
@@ -195,7 +198,7 @@ export function sessionFlag(argv) {
   return { argv: left, session };
 }
 
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts', 'page', 'helm'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'show', 'undo', 'move', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts', 'page', 'helm'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -699,6 +702,15 @@ export async function decisionList({ client, cwd, now }) {
   const { pending } = await decisionsOf(client, cwd);
   const lines = pending.length === 0 ? ['No decision is waiting.'] : pending.map((d) => `${d.n}. ${d.question}${d.work === null || d.work === undefined ? '' : ` (holds up: ${d.work})`}`);
   return [...lines, ...problems];
+}
+
+// "Already approved on 17 November 2026" when the record holds a signed decision on this work and question, else
+// "No signed decision on this yet". It reads the record only, and asks no card.
+export function decisionSigned({ cwd, work, question }) {
+  const found = projectOf(cwd);
+  if (found === null) throw new CliError("This folder isn't a Wheelhouse project");
+  const signed = signedDecisionFor(found.project, work, question);
+  return signed === null ? 'No signed decision on this yet' : signedLine(signed);
 }
 
 // One decision's message, to print word for word. Refused when none waits by that number.
@@ -1208,7 +1220,24 @@ function readBackLine(readBack) {
 // (`from`) has no design of its own here, and only the feature lane is checked.
 function refuseFeatureWithoutSlices(cwd, data) {
   if (data.lane !== 'feature' || data.from !== undefined || typeof data.doc?.path !== 'string') return;
+  const problem = checkSummary(readDesign(cwd, data.doc.path), data.doc.path).problem;
+  if (problem !== undefined) throw new CliError(problem);
   checkSlices(cwd, data.doc.path);
+}
+
+// A design's text, for its summary; an unreadable file reads as empty, which the summary check refuses in its own words.
+function readDesign(cwd, file) {
+  try {
+    return fs.readFileSync(path.resolve(cwd, file), 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+// The summary of a recorded feature design, as `record work` and `show` print it, or null when the design has none to show.
+function summaryOf(cwd, file) {
+  const section = summarySection(readDesign(cwd, file));
+  return section === null ? null : summaryText(section, path.relative(cwd, path.resolve(cwd, file)));
 }
 
 function checkSlices(cwd, file) {
@@ -1283,10 +1312,10 @@ export { needsApproval };
 const TITLED_MOST = 200;
 
 const APPROVE_WHY = {
-  small: 'It is a small change people will see, so it comes to you before it is built.',
-  feature: 'It is built from the design you shaped, so it starts only once you approve it.',
-  bug: 'People will see the fix, so it comes to you before it is built.',
-  quick: 'People will see this change, so it comes to you before it is built.',
+  small: 'It is a small change people will see, so it comes to you first.',
+  feature: 'It is a new feature, so its design comes to you first. It is in the message above.',
+  bug: 'People will see the fix, so it comes to you first.',
+  quick: 'People will see this change, so it comes to you first.',
 };
 
 // The composer's input for the approve-work card of a recorded work `data`, with the words in `override`
@@ -1307,12 +1336,12 @@ export function approveWorkInput(data, override) {
     what: titled.length <= TITLED_MOST && whatProblem('approve-work', titled, target) === null ? titled : `Work ${data.id}, as its document describes.`,
     why: APPROVE_WHY[data.lane] ?? APPROVE_WHY.quick,
     options: [
-      { label: 'Approve', says: 'Wheelhouse builds it and tests it, then shows you the result. It only goes into your product when you say yes to that.' },
+      { label: 'Approve', says: data.lane === 'feature' ? 'Wheelhouse builds it in slices and tests each one, then shows you the result. Building waits for your approval.' : 'Wheelhouse builds it and tests it, then shows you the result. Building waits for your approval.' },
       { label: 'Not now' },
     ],
     recommend: 'Approve',
-    because: data.lane === 'feature' ? 'it is the design you shaped, and you\'ll see the result before it goes live' : 'you\'ll see it before it goes live',
-    meanwhile: 'Nothing is built until you approve.',
+    because: 'you\'ll see it working before it goes live',
+    meanwhile: 'Other work carries on.',
     ...words,
     target,
   };
@@ -1374,6 +1403,8 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     const hash = data.doc?.hash;
     const written = await write(client, cwd, kind, data);
     const out = { work: data.id, eventId: written.id, pushed: written.pushed === true, ...(typeof hash === 'string' ? { hash } : {}), recordHash: dataHash(data) };
+    const summary = data.lane === 'feature' && data.from === undefined && typeof data.doc?.path === 'string' ? summaryOf(cwd, data.doc.path) : null;
+    if (summary !== null) out.summary = summary;
     if (!needsApproval(data)) return out;
     const { views } = await viewsOf(client, cwd);
     const approvedNow = () => {
@@ -1413,6 +1444,32 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     throw new CliError(`The ${kind} was recorded as ${id}, but its confirm card wasn't: ${error.message}`);
   }
   return { ...answered(got), card: { question, id: made.id }, ...withProblems(await markAsked(client, cwd, [made.id], false)) };
+}
+
+// --- show ---
+
+// Whether `file` is in the project's folder, read where its links lead, so a work's document can't print a file elsewhere.
+function insideProject(cwd, file) {
+  try {
+    const rel = path.relative(fs.realpathSync(cwd), fs.realpathSync(path.resolve(cwd, file)));
+    return rel !== '' && !path.isAbsolute(rel) && rel.split(path.sep)[0] !== '..';
+  } catch {
+    return true; // not there: read as empty, and refused in its own words
+  }
+}
+
+// The design summary of a recorded work, as `record work` prints it, for the Show me button on its approval card. A work whose
+// document has no `## Summary` gives the document itself. Resolves with { work, summary }.
+export async function show({ client, cwd, work }) {
+  const { views } = await viewsOf(client, cwd);
+  const file = isPlain(views.work) && Object.hasOwn(views.work, work) ? views.work[work]?.work?.data?.doc?.path : undefined;
+  if (typeof file !== 'string') throw new CliError(`No work ${work} is recorded here`);
+  if (!insideProject(cwd, file)) throw new CliError(`The document for work ${work} is outside this project, so it isn't shown`);
+  const summary = summaryOf(cwd, file);
+  if (summary !== null) return { work, summary };
+  const text = readDesign(cwd, file).replace(/```wheelhouse-facts[\s\S]*?```/g, '').trim();
+  if (text === '') throw new CliError(`The document ${file} for work ${work} can't be read`);
+  return { work, summary: summaryText(text, path.relative(cwd, path.resolve(cwd, file))) };
 }
 
 // --- page ---
@@ -1729,7 +1786,7 @@ export async function main(argv, {
     if (refused !== null) throw new CliError(refused);
     const here = path.resolve(cwd);
     const stdin = async () => (input === undefined ? readInput() : input);
-    const json = (value) => out(`${JSON.stringify(inChatWords(value), null, 2)}\n`);
+    const json = (value) => out(`${asciiJson(inChatWords(value), 2)}\n`);
     const lines = (list) => out(`${list.map((l) => l.replace(BREAKS, ' ')).join('\n')}\n`);
 
     if (command === 'note') {
@@ -1760,8 +1817,9 @@ export async function main(argv, {
       only(left, 0, 'cards takes no arguments');
       json(await cards({ client: helper, cwd: here, now, onAsked, session: sessionId }));
     } else if (command === 'decision') {
-      const usage = 'Give decision list, or decision show <n> or decision confirm <n> with the decision\'s number';
-      if (rest[0] === 'list' && rest.length === 1) lines(await decisionList({ client: helper, cwd: here, now }));
+      const usage = 'Give decision list, decision signed <work id> "<question>", or decision show <n> or decision confirm <n> with the decision\'s number';
+      if (rest[0] === 'signed' && rest.length === 3) lines([decisionSigned({ cwd: here, work: rest[1], question: rest[2] })]);
+      else if (rest[0] === 'list' && rest.length === 1) lines(await decisionList({ client: helper, cwd: here, now }));
       else if (rest[0] === 'show' && rest.length === 2 && /^[1-9][0-9]{0,2}$/.test(rest[1])) out(`${await decisionShow({ client: helper, cwd: here, n: Number(rest[1]) })}\n`);
       else if (rest[0] === 'confirm' && rest.length === 2 && /^[1-9][0-9]{0,2}$/.test(rest[1])) json(await decisionConfirm({ client: helper, cwd: here, n: Number(rest[1]) }));
       else throw new CliError(usage);
@@ -1806,6 +1864,9 @@ export async function main(argv, {
     } else if (command === 'similar') {
       // The request's words as the arguments, which STOP lets through, or its text on standard input.
       json(await similar({ client: helper, cwd: here, text: rest.length > 0 ? rest.join(' ') : await stdin() }));
+    } else if (command === 'show') {
+      if (rest.length !== 1 || !/^[a-z0-9-]{1,40}$/.test(rest[0])) throw new CliError('Give the work\'s id: show <work id>');
+      json(await show({ client: helper, cwd: here, work: rest[0] }));
     } else if (command === 'preview') {
       if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the pull request\'s number: preview <n>');
       lines(await preview({ client: helper, cwd: here, n: Number(rest[0]) }));

@@ -40,11 +40,13 @@
 // On an agent whose hooks only read (`writeVia: 'helper'`) it does none of the writing above: readOnlyStart.
 import fs from 'node:fs';
 import path from 'node:path';
+import { settingsFaultLine, claudeHomeOf } from '../setup/settings-check.js';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, managedMarker, readTailEntries, beingSetUp, removedFrom, isWhy } from './kit.js';
 import { keep, sendPending, withinBudget } from './pending.js';
 import { recordClaudePath } from '../lib/claude.js';
+import { storedLaunch } from '../lib/launch-stored.js';
 import { helperClient } from '../host/helper-client.js';
 import { isOlder } from '../host/retire-helper.js';
 import { caEnv } from '../host/company-ca.js';
@@ -82,6 +84,7 @@ import { TAKEOVER_LABEL, LEAVE_LABEL } from '../state/card-lines.js';
 import { agentOfInput } from '../agents/of-input.js';
 import { BY_LAUNCHER, TOOL_SHEETS, WITHOUT_SYSTEM_CA_FLAG } from '../agents/tool-sheets.js';
 import { frontDeskCommand, knowsNoSystemCa } from '../protection/plugin-command.js';
+import { cardCommandLine } from '../lib/card-commands.js';
 
 import { LAUNCHER_SESSION } from '../lib/launchers.js';
 
@@ -94,6 +97,7 @@ import { NO_HELPER } from '../lib/host-lines.js';
 import { keptRequest, clearRequest } from '../lib/kept-request.js';
 import { retiredPiece } from '../settings/catalogue.js';
 import { SETTINGS_CHANGED, settingsCardNote } from '../lib/settings-card.js';
+import { DEV_VERSION, pluginVersion } from '../lib/plugin-version.js';
 
 const SELF = fileURLToPath(import.meta.url);
 // The script that brings this computer's settings for a project up to date, run detached.
@@ -186,14 +190,9 @@ function olderThan(version, floor) {
 }
 
 // This copy's version, from its own .claude-plugin/plugin.json; null when unreadable.
-function ownVersion(pluginRoot) {
-  try {
-    const version = JSON.parse(fs.readFileSync(path.join(pluginRoot, '.claude-plugin', 'plugin.json'), 'utf8'))?.version;
-    return typeof version === 'string' && version !== '' ? version : null;
-  } catch {
-    return null;
-  }
-}
+const ownVersion = pluginVersion;
+// A version as a session line names it: a build from the main line carries no number.
+const versionWords = (version) => (version === DEV_VERSION ? 'a build from the main line' : `version ${oneLine(version)}`);
 
 const oneLine = (value) => {
   const text = String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -490,9 +489,15 @@ export async function keepSeat({ project, input, env = process.env, lockFree = t
   return { role: roleOf(after), seat: after, chosen: false };
 }
 
+// The launch command saved for this computer, for recording beside the path of claude; none when it is unset or can't be used
+// (the watcher names a fault when it starts a builder).
+function storedLaunchOrNull() {
+  try { return storedLaunch(); } catch { return null; }
+}
+
 async function ensureWatcher(project, client, { spawn, pluginRoot, env = process.env, folder = null }) {
   // This session has the PATH that finds claude; keep the full path for a watcher that is started with a bare one.
-  try { recordClaudePath({ env, inside: folder }); } catch { /* the watcher looks in the usual places */ }
+  try { recordClaudePath({ env, inside: folder, launch: storedLaunchOrNull() }); } catch { /* the watcher looks in the usual places */ }
   try {
     const { keepWatcherAlive } = await import('../watcher/keep-alive.js');
     await keepWatcherAlive(project, { client, spawn, pluginRoot, env });
@@ -505,6 +510,14 @@ const BUILDS_KEY = settingKey('');
 // A proposal an earlier version made and nothing now acts on: a level from the delegation review, or a retired setting.
 const isRetiredProposal = (u) => u?.kind === 'level' || (u?.kind === 'setting' && [u.key, u.data?.key].some((key) => typeof key === 'string' && retiredPiece(key) !== undefined));
 const isBuildsProposal = (u) => u?.kind === 'setting' && [u.key, u.data?.key].some((key) => typeof key === 'string' && key.startsWith(BUILDS_KEY));
+
+const COMMAND_LINE = 'The Wheelhouse command is ';
+// The First Mate's card command lines (scripts/lib/card-commands.js), from the command the sheet names. A new chat on a
+// set-up project is given them. Empty when the sheet names no command.
+export function cardCommandLines(sheet) {
+  const command = sheet.find((l) => l.startsWith(COMMAND_LINE))?.slice(COMMAND_LINE.length);
+  return command === undefined ? [] : [cardCommandLine(command)];
+}
 
 // `lineage` is the lineage check's warning lines, which come first after STOP. `windows` adds the
 // Windows line after them; `builds`, the level build commands run at on this computer, adds the
@@ -524,6 +537,7 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   if (frontDesk) lines.push(FRONT_DESK_LINE);
   else if (aside !== null) lines.push(aside);
   lines.push(...sheet);
+  if (frontDesk) lines.push(...cardCommandLines(sheet));
   lines.push(...notes);
   // After a compaction: where the session was (scripts/hooks/where.js), before the lists so a cut takes them first.
   if (where !== '') lines.push(where);
@@ -724,7 +738,9 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
   views ??= localViews(project);
   // A lock that couldn't be kept or taken is judged again by a read, as the guard before every tool judges it: a doubt is not free.
   const free = lockLine === null || (lockSeen.held !== true && up && await lockFreeNow({ client: api, project, left, now, failClosed: true }));
-  const { aside, seatNotes } = await seatOnReadOnlyStart({ project, input, env, now, api, left, up, free, options: seatOptions });
+  const { aside, seatNotes, firstMate } = await seatOnReadOnlyStart({ project, input, env, now, api, left, up, free, options: seatOptions });
+  // The First Mate's card command lines come straight after the tool sheet, as on a start that writes.
+  if (firstMate) notes.unshift(...cardCommandLines(sheet()));
   notes.push(...seatNotes);
   const text = reload({ views, events, stop: stopOf(), notes, feature: madeFeatureSlug(input.cwd), stateRoot: stateDir(project), sheet: sheet(), aside });
   return text === '' ? undefined : answer.context('SessionStart', text);
@@ -736,8 +752,9 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
 // session, with no process recorded (the seat is then free after it has been idle a while). Where another live window holds
 // the seat, the session is told so, and with a helper to open the window, offered the take-over card as text. A session
 // that chose to be an aside, stands in a worktree, was started by a script or has no id takes nothing and is offered no
-// card. Gives { aside, seatNotes }: the aside line (or null), and the lines for the notes. It informs, so anything that fails
-// gives no line.
+// card. Gives { aside, seatNotes, firstMate }: the aside line (or null), the lines for the notes, and whether the session
+// is the First Mate (it stands in the main folder, chose nothing else, and no other live window holds the seat). It
+// informs, so anything that fails gives no line.
 async function seatOnReadOnlyStart({ project, input, env, now, api, left, up, free, options = {} }) {
   const session = input.session_id;
   if (typeof session !== 'string' || session === '') return { aside: null, seatNotes: [] };
@@ -750,7 +767,7 @@ async function seatOnReadOnlyStart({ project, input, env, now, api, left, up, fr
       await left(api.session.seat({ cwd: input.cwd, session, take: true }));
     }
     const seat = readSeat(project, opts);
-    if (!mine || !main || !seat || seat.session === session || (await seatFree(seat, opts))) return { aside: null, seatNotes };
+    if (!mine || !main || !seat || seat.session === session || (await seatFree(seat, opts))) return { aside: null, seatNotes, firstMate: mine && main };
     const card = up && typeof api?.session?.seat === 'function';
     const aside = asideLine({ ago: agoWords(now().getTime() - Date.parse(seat.seenAt)), kind: 'main', card });
     if (card) seatNotes.push(...await seatTakeOverNotes({ seat, now, ask: SEAT_TAKEOVER_WINDOW }));
@@ -851,6 +868,12 @@ async function started(input, deps) {
   }
   const version = claudeCodeVersion(input.transcript_path);
   if (version !== null && olderThan(version, GUARD_FLOOR)) notes.push(OLD_CLAUDE_CODE);
+  // A settings file that can't be read is named with its line and column, at every start, so it is found before anything
+  // is started that would read it.
+  try {
+    const damaged = settingsFaultLine({ folder: typeof found.record?.folder === 'string' ? found.record.folder : input.cwd, claudeHome: claudeHome ?? claudeHomeOf(env) });
+    if (damaged !== null) notes.push(damaged);
+  } catch { /* the session goes on */ }
   // While this folder's setup run is open and has not yet installed the kits (step 7), kits not
   // installed are setup's own state, not drift, and write no hold (ruling R136).
   const pinsPending = setup?.run != null && !stepDone(setup.run, 7);
@@ -871,13 +894,13 @@ async function started(input, deps) {
   else {
     const mine = ownVersion(pluginRoot);
     if (up.busy === true) {
-      notes.push(`An older Wheelhouse helper (version ${oneLine(up.version)}) is still finishing work; Wheelhouse moves to the new one (version ${mine}) when it is done`);
+      notes.push(`An older Wheelhouse helper (version ${oneLine(up.version)}) is still finishing work; Wheelhouse moves to the new one (${versionWords(mine)}) when it is done`);
     } else if (up.noRoute === true) {
       notes.push(`An older Wheelhouse helper (version ${oneLine(up.version)}) is still running and can't be asked to stop. It is replaced when the computer restarts. To replace it sooner, ask this session to end the Node process running Wheelhouse's helper (helper-main.js), or end it yourself in Activity Monitor on a Mac or Task Manager on Windows`);
     } else if (up.slow === true) {
       notes.push(`The older Wheelhouse helper (version ${oneLine(up.version)}) is restarting; the new one starts at the next session, or ask again in a moment`);
     } else if (typeof up.version === 'string' && mine !== null && up.version !== mine) {
-      notes.push(`The helper running is version ${oneLine(up.version)}; this copy is version ${mine}`);
+      notes.push(`The helper running is ${versionWords(up.version)}; this copy is ${versionWords(mine)}`);
     }
     await left(sendPending(project, clientNow(), { until: end }));
     // v0.1.x's records, imported once, before the views are read so the briefing holds them.

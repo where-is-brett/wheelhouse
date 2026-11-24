@@ -18,6 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
+import { pluginVersion } from '../lib/plugin-version.js';
 
 export const CHECKOUT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 // A world's own marketplace, by name.
@@ -29,7 +30,7 @@ const MARKED = ['.claude-plugin/plugin.json', 'hooks', 'scripts', 'adapters'];
 
 const defaultConfig = () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
-const versionOf = (dir) => readJson(path.join(dir, '.claude-plugin', 'plugin.json'))?.version ?? null;
+const versionOf = pluginVersion;
 const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
 
 // The digest of the plugin's marked files under `dir`, by relative path and content, links followed; null when one

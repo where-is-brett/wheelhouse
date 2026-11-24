@@ -4,9 +4,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { COPILOT_VERSION } from '../../../scripts/agents/copilot/numbers.js';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
+import { pluginVersion } from '../../../scripts/lib/plugin-version.js';
 import { skillCopyNames } from '../../../scripts/lineage/copies.js';
 import {
   MANIFEST_PATH, MODELS, UPSTREAMS, buildManifest, checkInstalled, claudeHome, fetchUpstream, locateInstalled, readManifest, verifyManifest, writeManifest,
@@ -187,7 +188,7 @@ test('the Claude folder is CLAUDE_CONFIG_DIR when it is set, else .claude in the
 
 test('the manifest in the repository lists Superpowers alone at check 24\'s commit', () => {
   const manifest = readManifest();
-  assert.equal(manifest.wheelhouse.version, JSON.parse(fs.readFileSync(new URL('../../../.claude-plugin/plugin.json', import.meta.url), 'utf8')).version);
+  assert.equal(manifest.wheelhouse.version, pluginVersion(fileURLToPath(new URL('../../..', import.meta.url))));
   assert.deepEqual(manifest.claudeCode, { floor: '2.1.299' });
   assert.deepEqual(manifest.node, { floor: '22.0.0' });
   assert.equal(manifest.models, MODELS);
@@ -347,6 +348,21 @@ test('the manifest carries no build engine pins, and verifyManifest catches one 
   assert.deepEqual((await verifyManifest({ root, fetchTo: copy, upstreams: [TINY] })).broken, [
     'the manifest still carries the build engine\'s pins: write the manifest again',
   ]);
+});
+
+test('verifyManifest breaks when the manifest\'s Wheelhouse version is not plugin.json\'s, release or main line', async () => {
+  const { dir, root } = verifiable();
+  const copy = async (upstream, into) => fs.cpSync(dir, into, { recursive: true });
+  const version = readManifest(root).wheelhouse.version;
+  write(root, { '.claude-plugin/plugin.json': JSON.stringify({ name: 'wheelhouse', version }) });
+  assert.deepEqual((await verifyManifest({ root, fetchTo: copy, upstreams: [TINY] })).broken, []);
+  write(root, { '.claude-plugin/plugin.json': JSON.stringify({ name: 'wheelhouse' }) });
+  assert.deepEqual((await verifyManifest({ root, fetchTo: copy, upstreams: [TINY] })).broken, [
+    `the manifest names Wheelhouse ${version} but plugin.json makes it dev: write the manifest again`,
+  ]);
+  const file = path.join(root, 'lineage', 'manifest.json');
+  fs.writeFileSync(file, `${JSON.stringify({ ...readManifest(root), wheelhouse: { version: 'dev' } }, null, 2)}\n`);
+  assert.deepEqual((await verifyManifest({ root, fetchTo: copy, upstreams: [TINY] })).broken, []);
 });
 
 test('the manifest in the repository carries no build engine pins', () => {
