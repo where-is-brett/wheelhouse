@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { composeCard, whatProblem, answerInput, questionProblem, textOf, DECIDING, HEADERS, MEANWHILE, CHECKS_UNSAID, NO_REPLY_CODE } from '../../../scripts/cards/compose.js';
+import { recommendedSays, composeCard, whatProblem, answerInput, questionProblem, textOf, DECIDING, HEADERS, MEANWHILE, CHECKS_UNSAID, NO_REPLY_CODE } from '../../../scripts/cards/compose.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
@@ -1023,4 +1023,11 @@ test('the commit scan removes only whole-word occurrences of the work id, so a o
   const problem = whatProblem('approve-work', 'Work a: x, deadbeef1234', target);
   assert.match(problem, /^names commit deadbeef1234, /);
   assert.equal(whatProblem('approve-work', 'Work a: a small change.', target), null);
+});
+
+test('a recommended option whose words are only its label reads the recommendation once', () => {
+  const label = 'Restart the builder on where it left off';
+  assert.equal(recommendedSays(label, 'the agent that runs the building recommends it for Add a greeting line', label),
+    'Recommended: The agent that runs the building recommends it for Add a greeting line.');
+  assert.equal(recommendedSays('Stops the old helper.', 'it is safe', 'Stop it'), 'Recommended: Stops the old helper. It is safe.');
 });

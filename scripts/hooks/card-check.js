@@ -34,6 +34,7 @@
 // the figures waiting for the click is refused too, saying to leave them out; elsewhere no record of
 // an answer is written, so that is let be. A card merely headed Baseline is not refused.
 import tools from '../../adapters/claude-code/tools.js';
+import path from 'node:path';
 import { asQuestion } from '../cards/visit.js';
 import { runAndExit, answer, projectOf, beingSetUp, readTailEntries } from './kit.js';
 import { setupCardsFor, bareLabel } from '../lib/setup-clicks.js';
@@ -284,6 +285,36 @@ function decidedDeny(found, at) {
   return `${DECIDED_LEAD}${lines.join('; ')}. Ask none of them again, and say so in one plain line. Ask the cards still waiting with \`again <n>\`.`;
 }
 
+// The deny for a card raised about a feature's stage, when the feature's session has moved past that stage: the card's own
+// question names the stage it was raised at (`stage`), and the feature's status file says where it is now. Asking it would
+// offer the director a step the work no longer needs; so would a card about work that has closed since. Fails open: any
+// record or file that can't be read lets the card through.
+const QUESTION_LINE = /^Answer question (q-[a-z0-9-]+-[0-9]+)$/;
+async function movedOnDeny(project, cards) {
+  try {
+    const ids = cards.map((c) => QUESTION_LINE.exec(String(c?.data?.line ?? ''))?.[1]).filter((id) => id !== undefined);
+    if (ids.length === 0) return undefined;
+    const events = listEvents(stateDir(project), { report: () => {} });
+    const { featurePaths, readStatus } = await import('../feature/files.js');
+    const { safeFeatureFolder } = await import('../feature/status.js');
+    for (const id of ids) {
+      const asked = events.filter((e) => e.kind === 'question' && e.data?.id === id).at(-1)?.data;
+      if (typeof asked?.stage !== 'string' || typeof asked.work !== 'string') continue;
+      const feature = events.filter((e) => e.kind === 'feature' && e.data?.work === asked.work).at(-1)?.data;
+      if (feature?.step === 'closed') {
+        return `${asked.work} has closed since this card was raised at the step called ${asked.stage}, so the card no longer fits. Don't ask it, and say in one plain line that the work has ended.`;
+      }
+      const worktree = feature?.worktree;
+      if (typeof worktree !== 'string' || !path.isAbsolute(worktree) || !safeFeatureFolder(worktree)) continue;
+      const now = readStatus(featurePaths(worktree).status)?.phase;
+      if (typeof now === 'string' && now !== asked.stage) {
+        return `${asked.work} was at the step called ${asked.stage} when this card was raised, and it is at ${now} now, so the card no longer fits. Don't ask it, and say in one plain line that it has moved on.`;
+      }
+    }
+  } catch { /* the card goes through */ }
+  return undefined;
+}
+
 // The id the Lift All stop question goes by in the hold, since it is not a card in the state.
 const LIFT_ID = 'lift-stop';
 const isLiftQuestion = (q) => typeof q?.question === 'string' && isLiftStopLine(setLineOf(q.question));
@@ -366,7 +397,7 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
     return { deny: paneLine(held.length, { others: heldAt.includes(false) }) };
   }
   const { questions: next, swapped, origins, changed } = swapQuestions(questions, matched);
-  return { open: waiting.filter((f) => !f.setup).map((f) => f.card.id), questions: changed || restored ? next : null, swapped, origins };
+  return { open: waiting.filter((f) => !f.setup).map((f) => f.card.id), cards: waiting.filter((f) => !f.setup).map((f) => f.card), questions: changed || restored ? next : null, swapped, origins };
 }
 
 // Only the repeat refusal, for an agent whose question tool the form check and the pane hold don't apply to: a
@@ -512,6 +543,8 @@ export async function decide(input, {
   try {
     const checked = oneCardCheck(input, find(input.cwd, { dir }).project, { now, outcomes, paneLive: live, takeHere: take, holdForPane, role, stop, writeVia });
     if (checked.deny !== undefined) return answer.deny(checked.deny);
+    const moved = await movedOnDeny(find(input.cwd, { dir }).project, checked.cards ?? []);
+    if (moved !== undefined) return answer.deny(moved);
     open_ = checked.open;
     checked_ = checked;
   } catch {

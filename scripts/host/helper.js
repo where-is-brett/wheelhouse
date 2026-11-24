@@ -83,6 +83,7 @@ import { reaching, subcommandOf } from '../setup/git.js';
 import { directorGitEnv, directorGitlabApi, hostStep, keyGitEnv, launchedIn, madeWithSetupToken, switchOnAsDirector } from '../setup/host.js';
 import { commitAuthor } from '../setup/project-files.js';
 import { readEnrolled, verify, sign, ownKey } from '../state/signing.js';
+import { windowLines } from '../lib/window-lines.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProjects } from '../lib/projects.js';
 import { findCommand, hasTestScript } from '../checks/find-command.js';
@@ -2787,7 +2788,7 @@ export async function startHelper({
       shown.deciding = servedUnderStop(shown.deciding);
       if (shown.deciding.length === 0) return STOP_REFUSAL;
     }
-    const lines = String(shown.event.data.question).split(/\r?\n/);
+    const lines = windowLines(shown.event.data.question);
     // The seat card names the window the seat moves to, by the start of its session id.
     if (card === SEAT_CARD_NAME) lines.push('', `Take over here moves the First Mate to the chat with session ${shortSession(session)}.`);
     // An Ask allowance's window also says what allowing the commands means (allowanceWindowLines), from the question

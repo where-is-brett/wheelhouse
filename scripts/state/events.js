@@ -330,7 +330,7 @@ const PLAIN_SHAPES = {
   feature: { must: ['work', 'step'], may: ['worktree', 'branch', 'session', 'plan', 'files', 'brief', 'slice', 'pausedFor'] },
   // `checks`: what answering it does to the checks, one line, for a level 4 question's card.
   // `joins`: the open question whose card answers this one too (scripts/state/joiners.js).
-  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks', 'engine', 'joins', 'about', 'replaces', 'because', 'holds', 'meanwhile'] },
+  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks', 'engine', 'joins', 'about', 'replaces', 'because', 'holds', 'meanwhile', 'stage'] },
   report: { must: ['work', 'outcome', 'summary', 'rulings'], may: ['pr', 'provenance'] },
   // A red-main incident (design on Archon, section 7.7) names its kind, the pull request the merge queue suspects
   // (or null) and the fix's work; the helper opens and closes it, and the director never needs to.
@@ -647,7 +647,7 @@ function checkPlain(kind, data) {
       && isText(o.label) && typeof o.says === 'string' && ['cost', 'undo'].every((k) => o[k] === undefined || isText(o[k])))) {
       bad('needs options, each with a label and what it says');
     }
-    for (const k of ['because', 'holds', 'meanwhile']) if (data[k] !== undefined && !isText(data[k])) bad(`has a ${k} that is not text`);
+    for (const k of ['because', 'holds', 'meanwhile', 'stage']) if (data[k] !== undefined && !isText(data[k])) bad(`has a ${k} that is not text`);
     if (![1, 2, 3, 4].includes(data.level)) bad('needs its level to be 1, 2, 3 or 4');
     // A build-command question names the commands it asks for.
     if (data.commands !== undefined && !(Array.isArray(data.commands) && data.commands.length > 0 && data.commands.every(isText))) {
