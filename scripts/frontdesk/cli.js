@@ -1438,12 +1438,23 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
 
 // --- show ---
 
+// Whether `file` is in the project's folder, read where its links lead, so a work's document can't print a file elsewhere.
+function insideProject(cwd, file) {
+  try {
+    const rel = path.relative(fs.realpathSync(cwd), fs.realpathSync(path.resolve(cwd, file)));
+    return rel !== '' && !path.isAbsolute(rel) && rel.split(path.sep)[0] !== '..';
+  } catch {
+    return true; // not there: read as empty, and refused in its own words
+  }
+}
+
 // The design summary of a recorded work, as `record work` prints it, for the Show me button on its approval card. A work whose
 // document has no `## Summary` gives the document itself. Resolves with { work, summary }.
 export async function show({ client, cwd, work }) {
   const { views } = await viewsOf(client, cwd);
-  const file = views.work?.[work]?.work?.data?.doc?.path;
+  const file = isPlain(views.work) && Object.hasOwn(views.work, work) ? views.work[work]?.work?.data?.doc?.path : undefined;
   if (typeof file !== 'string') throw new CliError(`No work ${work} is recorded here`);
+  if (!insideProject(cwd, file)) throw new CliError(`The document for work ${work} is outside this project, so it isn't shown`);
   const summary = summaryOf(cwd, file);
   if (summary !== null) return { work, summary };
   const text = readDesign(cwd, file).replace(/```wheelhouse-facts[\s\S]*?```/g, '').trim();

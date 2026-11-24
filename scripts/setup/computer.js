@@ -67,6 +67,11 @@ import { newId, SAY_CHARS, readJournal } from './journal.js';
 import { projectHosts } from './tools.js';
 import { engineWanted, pluginScopeChanges, applyPluginScope, PLUGIN_SCOPE_LINE, pluginUpdateLine } from './engine-parts.js';
 
+// Names as a plain list: "a", "a and b", "a, b and c".
+function asList(items) {
+  return items.length < 3 ? items.join(' and ') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
+}
+
 // ---- Step 6 ----
 
 // The user's Claude settings file: CLAUDE_CONFIG_DIR's when it is set, else the home's.
@@ -205,7 +210,8 @@ export function lines({ changes, userSettings, kept, route, platform, floor, ter
       const mate = own.some((x) => x.part === 'first-mate');
       const hook = own.some((x) => x.part === 'hooks');
       const skill = own.some((x) => x.part === 'brainstorming');
-      const what = [...(hook ? [terse >= 3 ? 'checks' : 'checks before each of its actions'] : []), ...(mate ? ['First Mate files'] : []), ...(skill ? [terse >= 3 ? 'brainstorming skill' : 'brainstorming skill for the First Mate'] : [])].join(' and ');
+      const whatParts = [...(hook ? [terse >= 3 ? 'checks' : 'checks before each of its actions'] : []), ...(mate ? ['First Mate files'] : []), ...(skill ? [terse >= 3 ? 'brainstorming skill' : 'brainstorming skill for the First Mate'] : [])];
+      const what = asList(whatParts);
       out.push(`${label}'s ${what}, in your ${label} folder for every project${hook && (mate || skill) ? (terse >= 3 ? ' (checks act only in Wheelhouse projects; files say to apply only there)' : ' (the checks act only in Wheelhouse projects; the First Mate files say to apply only there)') : hook ? ' (they act only in Wheelhouse projects)' : ' (they say to apply only in Wheelhouse projects)'}`);
     }
   } else {
@@ -278,7 +284,7 @@ function composeFor({ changes, userSettings = {}, kept = [], route = TELEMETRY_R
   const variables = route === 'launch-env' && changes.some((c) => c.what === 'telemetry' && (c.kind === 'env' || c.kind === 'file'));
   const agents = [...new Set(changes.filter((c) => c.what === 'agent').map((c) => c.label))];
   const parts = (p) => changes.some((c) => c.what === 'agent' && c.part === p);
-  const agentParts = [...(parts('hooks') ? ['checks'] : []), ...(parts('first-mate') ? ['First Mate files'] : []), ...(parts('brainstorming') ? ['brainstorming skill'] : [])].join(' and ');
+  const agentParts = asList([...(parts('hooks') ? ['checks'] : []), ...(parts('first-mate') ? ['First Mate files'] : []), ...(parts('brainstorming') ? ['brainstorming skill'] : [])]);
   const alongside = agents.length > 0 ? `, and ${agents.join(' and ')}'s ${agentParts}` : '';
   const why = variables
     ? `These are settings on this computer, mostly Claude Code's, and variables for your account${platform === 'darwin' ? ' and a login item' : ''}${alongside}.`

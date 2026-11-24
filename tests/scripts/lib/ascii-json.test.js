@@ -26,3 +26,12 @@ test('a Windows code-page decode of the bytes reads the same', () => {
 test('undefined gives an empty string, as JSON.stringify gives undefined', () => {
   assert.equal(asciiJson(undefined), '');
 });
+
+test('every UTF-16 code unit, astral characters and lone surrogates round-trip', () => {
+  const units = Array.from({ length: 0x10000 }, (_, i) => String.fromCharCode(i)).join('');
+  const astral = ['\u{1F600}', '\u{10FFFF}', '\u{10000}', '\u{1D11E}'].join('');
+  const value = { units, astral, lone: '\ud800x\udfff', key: { 'é ': ' ' } };
+  const text = asciiJson(value);
+  assert.match(text, /^[\x00-\x7f]*$/);
+  assert.deepEqual(JSON.parse(text), value);
+});

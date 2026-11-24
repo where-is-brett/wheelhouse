@@ -682,9 +682,10 @@ test('step 6\'s card with Copilot chosen fits at the longest lengths, in words a
         const text = composeCard({ ...card, kind: 'setup', target: { step: 6, hash: '0'.repeat(64) } }).question.question;
         const where = `${platform}, ${route}, ${kept.length} kept`;
         assert.ok(text.length <= 1200, `${where}: ${text.length} characters`);
-        assert.match(text, /Copilot's (checks before each of its actions|checks and|hook file)/, where);
+        assert.match(text, /Copilot's (checks before each of its actions|checks,|checks and|hook file)/, where);
         assert.match(text, /First Mate files/, where);
         assert.match(text, /brainstorming skill/, where);
+        assert.doesNotMatch(text, /checks[^,.]* and First Mate files/, `${where}: three parts read as a list`);
         assert.match(text, /Chat history kept/, where);
         assert.match(text, /well-tried updates/, where);
         assert.match(text, /Phone notifications/, where);

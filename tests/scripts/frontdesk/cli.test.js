@@ -3601,6 +3601,26 @@ test('show gives a work with no summary its own document, without the facts bloc
   });
 });
 
+test('show reads only a document inside the project: one recorded outside it, or a name that is no work, is refused unread', async () => {
+  await inHome(async () => {
+    const dir = projectWithDoc('inside');
+    const outside = path.join(tempFolder('wh-frontdesk-outside-'), 'secret.md');
+    fs.writeFileSync(outside, '## Summary\n\nnot for the chat\n');
+    fs.symlinkSync(outside, path.join(dir, 'docs', 'linked.md'));
+    const work = (id, doc) => makeEvent({ kind: 'work', data: { id, title: 'A work', lane: 'feature', visible: true, dependsOn: [], doc: { path: doc, hash: 'a'.repeat(64) } }, now: () => T(1) });
+    const helper = fakeHelper({ events: [work('far', outside), work('up', path.relative(dir, outside)), work('linked', 'docs/linked.md')] });
+    for (const id of ['far', 'up', 'linked']) {
+      const shown = await run(helper, ['show', id], undefined, { cwd: dir });
+      assert.equal(shown.code, 1, id);
+      assert.match(shown.err, /outside this project/);
+      assert.doesNotMatch(`${shown.out}${shown.err}`, /not for the chat/);
+    }
+    const proto = await run(helper, ['show', 'constructor'], undefined, { cwd: dir });
+    assert.equal(proto.code, 1);
+    assert.match(proto.err, /No work constructor is recorded here/);
+  });
+});
+
 test('an approval card asks "Approve this design?" for a feature, says "you shaped" nowhere, and says once that building waits', async () => {
   const feature = approveWorkInput({ id: 'export-csv', title: 'Export a report', lane: 'feature', visible: true, doc: { hash: 'a'.repeat(64) } });
   const small = approveWorkInput({ id: 'tidy', title: 'Tidy a label', lane: 'small', visible: true, doc: { hash: 'b'.repeat(64) } });
