@@ -440,7 +440,8 @@ export function makeComputer(host, clock, { name = 'Café Menu' } = {}) {
       address: testAddress(home), adapterFor: async (project) => adapterOf(readProject(project) ?? {}),
       envFor: envForConnection((project) => readProject(project)?.connection), profileEnvFor: async () => ({ mode: 'quick', env: {} }),
       now: clock.now, run: c.run, fetch: noFetch, setupSteps: STEPS_MODULE, userHome: user, spawn: c.spawn,
-      onStop: (close) => { c.helper = null; return close(); },
+      // A computer where builders sign in: the check starts no `claude` of the machine running the tests.
+      signInCheck: async () => ({ ok: true }),      onStop: (close) => { c.helper = null; return close(); },
     });
     c.client = helperClient({ address: c.helper.address });
     return c.helper;

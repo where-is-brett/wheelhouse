@@ -28,7 +28,7 @@ const fact = () => ({ kind: 'not-signed-in', since: new Date(2026, 10, 24, 14, 2
 
 async function withHelper(signInCheck, fn) {
   const helper = await startHelper({
-    address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => ({}), envFor: async () => ({}), signInCheck, dispatchMs: 3600 * 1000,
+    run: hostGuard, address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => ({}), envFor: async () => ({}), signInCheck, dispatchMs: 3600 * 1000,
   });
   try {
     return await fn(helperClient({ address: helper.address }), helper);
