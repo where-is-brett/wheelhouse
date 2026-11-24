@@ -220,15 +220,19 @@ function withText(input) {
 // the labels of its `requestedSchema`, so the guards see the options the card shows (and the click route posts).
 // Nothing for any other tool, or a call with no message.
 // Whether the call lets the person type an answer: true when a field named for free input (any spelling with "free" in it) is
-// anything but false, or a `requestedSchema` field is words and no list of options; false when such a field is false and none
-// says otherwise, or when every `requestedSchema` field lists its options (`enum` or `oneOf`), so nothing can be typed;
-// undefined when the call says nothing, which the card check takes as allowing it for a card that decides.
+// anything but false, or a `requestedSchema` field takes what is typed (words, a number: any field but a list of options or a
+// yes-or-no); false when such a field is false and none
+// says otherwise, or when every `requestedSchema` field lists its options, so nothing can be typed; undefined when the call says
+// nothing, which the card check takes as allowing it for a card that decides. A field lists its options when it has a non-empty
+// `enum`, or a non-empty `oneOf` whose every entry is a `const`, and no `anyOf`; a `oneOf` entry without one (`{ type: 'string' }`)
+// takes any words.
 const FREE_FLAG = /free/i;
+const listsOptions = (p) => isObject(p) && !('anyOf' in p) && (Array.isArray(p.enum) ? p.enum.length > 0 : Array.isArray(p.oneOf) && p.oneOf.length > 0 && p.oneOf.every((o) => isObject(o) && 'const' in o));
 const typesWords = (input) => {
   const flags = Object.keys(input).filter((key) => FREE_FLAG.test(key));
-  const schemaWords = isObject(input.requestedSchema?.properties) && Object.values(input.requestedSchema.properties).some((p) => isObject(p) && p.type === 'string' && !Array.isArray(p.enum) && !Array.isArray(p.oneOf));
   const fields = isObject(input.requestedSchema?.properties) ? Object.values(input.requestedSchema.properties) : [];
-  const schemaListed = fields.length > 0 && fields.every((p) => isObject(p) && (Array.isArray(p.enum) || Array.isArray(p.oneOf)));
+  const schemaWords = fields.some((p) => !listsOptions(p) && !(isObject(p) && p.type === 'boolean'));
+  const schemaListed = fields.length > 0 && fields.every(listsOptions);
   if (schemaWords || flags.some((key) => input[key] !== false)) return true;
   return flags.length > 0 || schemaListed ? false : undefined;
 };

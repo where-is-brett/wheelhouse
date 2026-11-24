@@ -356,6 +356,11 @@ test('the fingerprint covers every certificate and ssh setting, and not the envi
   for (const key of ['http.sslcapath', 'http.sslbackend', 'http.sslcert', 'http.sslkey', 'http.pinnedpubkey', 'http.proxysslcainfo', 'http.extraheader', 'http.https://x.example.org.sslcainfo', 'ssh.variant', 'credential.https://x.example.org.username']) {
     assert.notEqual(settingsFingerprint([...base, { key, value: 'v' }]), same, key);
   }
+  // The sign-in, rewrite, header, certificate and include settings, and names that only look like a proxy's, all count.
+  assert.notEqual(settingsFingerprint([{ key: 'credential.helper', value: 'b' }]), same, 'credential.helper, another value');
+  for (const key of ['url.https://evil.example.org/.insteadof', 'url.https://evil.example.org/.pushinsteadof', 'http.sslverify', 'http.sslcainfo', 'http.https://x.example.org/.extraheader', 'http.https://x.example.org/.sslverify', 'include.path', 'includeif.gitdir:/x/.path', 'remote.origin.url', 'remote.origin.pushurl', 'core.sshcommand', 'http.proxysslcert', 'http.proxy.sslverify', 'http.https://x.example.org/proxy.extraheader', 'remote.proxy.url']) {
+    assert.notEqual(settingsFingerprint([...base, { key, value: 'v' }]), same, key);
+  }
   assert.equal(settingsFingerprint([...base, { key: 'user.name', value: 'v' }]), same, 'an unrelated setting changes nothing');
   // The proxy values follow the network the computer is on, so they are no part of it, however they are named.
   for (const key of ['http.proxy', 'http.https://corp.example.org/.proxy', 'http.proxyauthmethod', 'http.noproxy', 'remote.origin.proxy', 'remote.origin.proxyauthmethod']) {
