@@ -2551,3 +2551,18 @@ test('the holder\'s own start gives no card', async () => {
     assert.ok(!text(out).includes('isn\'t the First Mate'));
   });
 });
+
+test('on an agent whose hooks only read, a lock that could not be pushed still lets a free seat be taken, and another computer\'s lock does not', async () => {
+  await withHome(async () => {
+    const f = seatHelper();
+    f.client.lock = { touch: async () => ({ ok: false }), take: async () => ({ ok: false, refused: 'the computer\'s git settings changed' }) };
+    const out = await readOnly(f);
+    assert.ok(text(out).includes('The lock couldn\'t be taken'));
+    assert.equal(readSeat(P).session, 'b', 'the seat is taken');
+    fs.rmSync(seatFile(P));
+    const g = seatHelper();
+    g.client.lock = { touch: async () => ({ ok: true, result: { touched: false } }), take: async () => ({ ok: true, result: { taken: false, holder: 'other-computer', since: '2026-10-27T01:00:00.000Z' } }) };
+    await readOnly(g);
+    assert.equal(readSeat(P), null, 'no seat taken while another computer holds the lock');
+  });
+});

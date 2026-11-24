@@ -182,10 +182,12 @@ const NAMES = /^(Windows|Mac|macOS|GitHub|GitLab|Wheelhouse|Claude|Git)\b/;
 const clause = (text) => (NAMES.test(bare(text)) ? bare(text) : bare(text).replace(/^([A-Z])(?=[a-z])/, (c) => c.toLowerCase()));
 
 // The recommended option's words: what it does, then the reason as a sentence of its own, so neither is a clause glued to
-// the other. A reason the option's words already give is not said twice.
+// the other. A reason the option's words already give is not said twice, and nor are the option's own words when they are
+// only its label (the foreman's options say nothing more), which the card shows beside the description.
 const asSentence = (text) => `${bare(text).replace(/^([a-z])/, (c) => c.toUpperCase())}.`;
 const squash = (text) => bare(text).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-export function recommendedSays(says, because) {
+export function recommendedSays(says, because, label) {
+  if (typeof label === 'string' && squash(says) === squash(label)) return `Recommended: ${asSentence(because)}`;
   const own = asSentence(says);
   return squash(says).includes(squash(because)) ? `Recommended: ${own}` : `Recommended: ${own} ${asSentence(because)}`;
 }
@@ -577,7 +579,7 @@ export function composeCard(input) {
   const text = textOf(parts);
   if (text.length > CARD.chars) fail(kind, 'text', `would pass ${CARD.chars} characters (it is ${text.length})`);
   if (setLineOf(text) !== line) fail(kind, 'target', 'does not give a set line the prompt record reads');
-  const descriptions = buttons.map((b) => (b.label === recommend ? recommendedSays(b.says, because) : b.says));
+  const descriptions = buttons.map((b) => (b.label === recommend ? recommendedSays(b.says, because, b.label) : b.says));
   // The baseline card's own words belong to it alone: on another card they would read as the
   // private note's figures, and the card check and the prompt record would treat it as one.
   if (kind !== 'baseline' && baselineWording([text, ...descriptions].join('\n'))) fail(kind, 'text', 'must not use the baseline card\'s words');

@@ -713,10 +713,11 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
   let views = null;
   let events = [];
   let lockLine = null;
+  const lockSeen = {};
   if (!up) notes.push(NO_HELPER_STOP);
   else {
     // The helper keeps or takes the lock: a request, so this start still writes nothing itself.
-    lockLine = await keepLock(project, api, left);
+    lockLine = await keepLock(project, api, left, lockSeen);
     if (lockLine !== null) notes.push(lockLine);
     const got = await left(api.state.views({ project, cards: true }));
     if (got?.ok === true && got.views && typeof got.views === 'object') {
@@ -725,13 +726,14 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
     }
   }
   views ??= localViews(project);
-  const { aside, seatNotes } = await seatOnReadOnlyStart({ project, input, env, now, api, left, up, free: lockLine === null, options: seatOptions });
+  const { aside, seatNotes } = await seatOnReadOnlyStart({ project, input, env, now, api, left, up, free: lockSeen.holder === undefined, options: seatOptions });
   notes.push(...seatNotes);
   const text = reload({ views, events, stop: stopOf(), notes, feature: madeFeatureSlug(input.cwd), stateRoot: stateDir(project), sheet: sheet(), aside });
   return text === '' ? undefined : answer.context('SessionStart', text);
 }
 
-// The First Mate's seat for a session whose hooks only read. The hook writes nothing: a free seat is taken by the helper, for the
+// The First Mate's seat for a session whose hooks only read. `free` is false only while another computer holds the lock; a lock
+// that couldn't be pushed (the computer's git settings wait for a click, say) leaves the seat to be taken. The hook writes nothing: a free seat is taken by the helper, for the
 // session, with no process recorded (the seat is then free after it has been idle a while). Where another live window holds
 // the seat, the session is told so, and with a helper to open the window, offered the take-over card as text. A session
 // that chose to be an aside, stands in a worktree, was started by a script or has no id takes nothing and is offered no
