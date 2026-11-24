@@ -2522,7 +2522,7 @@ export async function startHelper({
 
   // A click in the chat (ruling P5-17): an unsigned card-answer naming its proof, never signed. A label that
   // decides a signed step is taken only on a card a chat click may decide: a merge card;
-  // never one of the confirmed steps (a card named for the step, or `<step>-…`), which need the window.
+  // never one of the confirmed steps (a card named for the step, or `<step>-…`), which need a click Wheelhouse's own hook records.
   // Suggest a change… (ruling P5-27 k) carries the director's own words as `text`, and no other click does.
   async function doChatClick({ project, card, hash, label, proof, commit, text }, ctx) {
     if (!CHAT_PROOFS.includes(proof)) refuse(`a click in the chat is recorded as ${CHAT_PROOFS.join(' or ')}`);
@@ -6111,7 +6111,7 @@ export async function startHelper({
   const useChatClick = (project, click, text) => checkWrite(project, sign(makeEvent({ kind: 'note', data: { lean: 'undo', click, text }, now })));
   const useUndoClick = (project, click) => useChatClick(project, click, 'A merge was taken back out of the main version, on your click. Nothing was deleted.');
 
-  // Records the director's approval of an undo's pull request head, from the signed click in the window that names the merge: the
+  // Records the director's approval of an undo's pull request head, from the signed click on the card that names the merge: the
   // helper signs it, so it exists only where the director clicked. An approval already on record for that head stands, and one on
   // record for the same pull request on an earlier head (the revert brought up to date) is carried to the new head, so an undo whose
   // merge was refused (its checks hadn't passed) is carried on without a second click.

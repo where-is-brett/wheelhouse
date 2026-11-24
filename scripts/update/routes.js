@@ -289,7 +289,7 @@ export function updateRoutes({
       if (stored.plan.put === 'release' && stored.plan.carryOn !== true) decline(project, stored.plan.to);
       return { ok: true, recorded: true, lines: [`Understood. Nothing changes, and ${stored.plan.to} won't be announced again.`] };
     }
-    // The cards the update raised: the director's click was signed by the prompt record or the window, or there is no answer.
+    // The cards the update raised: the director's click was signed by Wheelhouse's own hook, or there is no answer.
     const journal = openJournal(project).read();
     const raisedApproval = journal.steps?.change?.data?.card;
     const helper = readJson(finishFile(project))?.handover?.waiting?.card;
