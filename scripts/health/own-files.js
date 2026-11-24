@@ -176,7 +176,7 @@ function filesKept(state) {
 }
 
 // The board's words when a write was refused for shrinking the list, with the way out.
-export const SHRINK_LINE = 'Wheelhouse kept its list of the files that guard your project as it was: a change would have dropped more than half of them at once. If you removed those files yourself (the VS Code add-on or Copilot\'s files, say), run Wheelhouse\'s setup again and it takes the new list. If you didn\'t, look into it before you carry on';
+export const SHRINK_LINE = 'Wheelhouse kept its list of the files that guard your project as it was: a change would have dropped more than half of them at once. If you removed those files yourself (an add-on\'s files, say), run Wheelhouse\'s setup again and it takes the new list. If you didn\'t, look into it before you carry on';
 
 // Writes the state whole. The list only grows during use (uninstall removes the file instead): a write that would keep
 // fewer than half the files the state held is refused, and the state it replaces is kept with a mark the board names.
