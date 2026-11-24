@@ -75,7 +75,13 @@ export function readRecordedClaude(env = process.env) {
 export function readRecordedLaunch(env = process.env) {
   const home = env.WHEELHOUSE_HOME || (env.HOME ? path.join(env.HOME, '.wheelhouse') : null);
   if (home === null) return null;
-  const read = readJsonNamed(path.join(home, 'claude-path.json'));
+  const file = path.join(home, 'claude-path.json');
+  try {
+    if (fs.statSync(file).size > 4096) return null;
+  } catch {
+    return null;
+  }
+  const read = readJsonNamed(file);
   const kept = read.ok && !read.missing ? read.value?.launch : null;
   return Array.isArray(kept?.words) && typeof kept?.file === 'string' ? { words: kept.words, file: kept.file } : null;
 }
@@ -160,8 +166,15 @@ export function resolveClaude({ platform = process.platform, env = process.env, 
 function resolveLaunched({ launch, platform, env, exists, recordedLaunch, which, inside }) {
   const [first, ...rest] = Array.isArray(launch) ? launch : [];
   const kept = (recordedLaunch ?? (() => readRecordedLaunch(env)))();
-  const usable = kept !== null && kept.words.length === launch.length && kept.words.every((word, i) => word === launch[i]) && !within(kept.file, inside) && exists(kept.file);
-  const find = which ?? ((word) => resolveWord(word, { platform, env, exists }) ?? (usable ? { kind: platform === 'win32' && /\.(cmd|bat)$/i.test(kept.file) ? 'cmd' : 'direct', file: kept.file } : null));
+  // The recorded file counts only as the same program by name, at a full path outside the project's folder: the record is
+  // a convenience for a missing PATH, never a way to run something the words don't name.
+  const usable = kept !== null && platform !== 'win32' && kept.words.length === launch.length && kept.words.every((word, i) => word === launch[i])
+    && path.posix.isAbsolute(kept.file) && path.posix.basename(kept.file) === first && !within(kept.file, inside) && exists(kept.file);
+  const onPath = (word) => {
+    const got = resolveWord(word, { platform, env, exists });
+    return got !== null && !within(got.file, inside) ? got : null;
+  };
+  const find = which ?? ((word) => onPath(word) ?? (usable ? { kind: 'direct', file: kept.file } : null));
   const found = checkLaunch(launch, { platform, which: find });
   if (!found.ok) throw new Error(`The launch command can't be used: ${found.why}`);
   const resolved = find(first);

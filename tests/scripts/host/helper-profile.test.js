@@ -294,6 +294,9 @@ test('the launch command is kept for this computer, checked, and set only by the
       await refused(write({ key, value: ['no-such-program-here', 'claude'] }), /isn't on this computer's PATH/);
       // No session, foreman or hook route writes it: the project's record refuses it.
       await refused(c.client.state.write({ project: PROJECT, kind: 'setting', data: { key, value: [process.execPath] } }), /only the director's own click/);
+      // Nor does a setup card's click that brings its setting with it into the project's record.
+      const carried = makeEvent({ kind: 'setting', data: { key, value: [process.execPath] }, now: c.now });
+      await refused(c.client.state.record({ project: PROJECT, event: makeEvent({ ...confirmationFor(carried), now: c.now }), target: carried }), /only the director's own click/);
 
       // Written, it does nothing until the director's click confirms it.
       const wrote = await write({ key, value: [process.execPath, 'claude'] });

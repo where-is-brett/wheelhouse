@@ -147,6 +147,18 @@ test('without a launch the arguments are as they were, and recorded launch words
   assert.throws(() => resolveClaude({ platform: 'darwin', env, exists: has('/opt/w/wrap'), launch: ['wrap', 'other'], recordedLaunch: () => kept }), /isn't on this computer's PATH/);
 });
 
+test('a recorded launch stands in only for a program of the first word\'s own name, outside the project\'s folder', () => {
+  const env = { PATH: '/usr/bin', HOME: '/Users/x' };
+  const other = { words: ['wrap', 'claude'], file: '/opt/w/evil' };
+  assert.throws(() => resolveClaude({ platform: 'darwin', env, exists: has('/opt/w/evil'), launch: ['wrap', 'claude'], recordedLaunch: () => other }), /isn't on this computer's PATH/);
+  const relative = { words: ['wrap', 'claude'], file: 'w/wrap' };
+  assert.throws(() => resolveClaude({ platform: 'darwin', env, exists: has('w/wrap'), launch: ['wrap', 'claude'], recordedLaunch: () => relative }), /isn't on this computer's PATH/);
+  const inProject = { words: ['wrap', 'claude'], file: '/work/p/bin/wrap' };
+  assert.throws(() => resolveClaude({ platform: 'darwin', env, exists: has('/work/p/bin/wrap'), inside: '/work/p', launch: ['wrap', 'claude'], recordedLaunch: () => inProject }), /isn't on this computer's PATH/);
+  // A first word found on the PATH inside the project's folder is not used either.
+  assert.throws(() => resolveClaude({ platform: 'darwin', env: { PATH: '/work/p/bin' }, exists: has('/work/p/bin/wrap'), inside: '/work/p', launch: ['wrap', 'claude'], recordedLaunch: () => null }), /isn't on this computer's PATH/);
+});
+
 test('recordClaudePath records the resolved launch with the path, and readRecordedLaunch reads it back', () => {
   const { dir, file } = fakeWrapper();
   const home = tempFolder('wh-launch-home-');

@@ -16,8 +16,11 @@ const NAMES = { "'": "a single quote `'`", '`': 'a backtick', $: '`$`', ';': '`;
 // Other control characters (a tab, an escape) separate nothing and are never part of a word.
 const CONTROL = /[\u0001-\u001f\u007f]/;
 const PROGRAM_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-// What Wheelhouse sets itself, so no later word may begin like one.
-const OWN_FLAGS = /^(-p|--print|--resume|--session-id|--settings|--permission-mode)/;
+// What Wheelhouse sets itself (the mode, the permissions, the tools, the settings and the session), so no later word may
+// begin like one.
+const OWN_FLAGS = /^(-p|--print|--resume|--session-id|--settings|--setting-sources|--permission-mode|--dangerously-skip-permissions|--allow-dangerously-skip-permissions|--allowedTools|--allowed-tools|--disallowedTools|--disallowed-tools)/;
+// cmd.exe reads a backslash just before a word's closing quote as escaping it, so no word may end in one (quoteForCmd).
+const TRAILING_BACKSLASH = /\\$/;
 const WINDOWS_EXTENSIONS = ['.exe', '.cmd', '.bat'];
 const USE_CMD_OR_EXE = 'use the wrapper\'s `.cmd` or `.exe`';
 
@@ -54,6 +57,7 @@ export function splitLaunch(typed) {
     words.push(word);
   }
   if (words.length === 0) return { ok: false, refused: 'Type the command as you would in a terminal.' };
+  if (words.some((w) => TRAILING_BACKSLASH.test(w))) return { ok: false, refused: 'Wheelhouse can\'t run a command with a word that ends in a backslash. Name the program itself, not its folder.' };
   return { ok: true, words };
 }
 
@@ -68,7 +72,7 @@ export function wordsFault(words, { platform = process.platform } = {}) {
   for (const word of words) {
     if (typeof word !== 'string' || word === '') return 'Every word of the launch command is text.';
     if (word.length >= MAX_WORD_LENGTH) return `Every word of the launch command is under ${MAX_WORD_LENGTH} characters.`;
-    if (REFUSED.test(word) || word.includes('"') || CONTROL.test(word)) return 'A word of the launch command holds a character Wheelhouse never passes on.';
+    if (REFUSED.test(word) || word.includes('"') || CONTROL.test(word) || TRAILING_BACKSLASH.test(word)) return 'A word of the launch command holds a character Wheelhouse never passes on.';
   }
   const [first, ...rest] = words;
   if (extensionOf(first) === '.ps1') return `A PowerShell script can't be the launch command: ${USE_CMD_OR_EXE}.`;

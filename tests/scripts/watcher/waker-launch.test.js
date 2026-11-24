@@ -66,6 +66,19 @@ test('a working launch command is passed to the adapter\'s call', () => withHome
   assert.deepEqual(launched.seen[0].args, ['claude']);
 }));
 
+test('a launch command found only inside the project\'s folder is not used, as an agent can write there', () => withHome(async () => {
+  const checkout = await project();
+  const dir = path.join(checkout, 'bin');
+  fs.mkdirSync(dir);
+  const file = path.join(dir, 'wrap');
+  fs.writeFileSync(file, `#!${process.execPath}\n`);
+  fs.chmodSync(file, 0o755);
+  const inside = setUp({ words: ['wrap', 'claude'], path: `${dir}:/bin` });
+  await inside.w.wakeForeman(foremanWake());
+  assert.equal(inside.calls.length, 0);
+  assert.match(inside.w.waiting()[0].lastError, /isn't on this computer's PATH/);
+}));
+
 test('with no launch command saved, the start is as it was', () => withHome(async () => {
   await project();
   const plain = setUp({ words: null });

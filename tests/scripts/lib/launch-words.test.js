@@ -88,3 +88,20 @@ test('a bare name is found in the PATH\'s full folders, and a full path must be 
 test('the words are said back as the card says them', () => {
   assert.equal(sayLaunch(['wrap', 'claude']), 'Wheelhouse will run: `wrap` then `claude`');
 });
+
+test('a word that ends in a backslash is refused at typing and on every read, as cmd.exe can\'t be given one safely', () => {
+  const split = splitLaunch('"C:\\tools\\" claude');
+  assert.equal(split.ok, false);
+  assert.match(split.refused, /backslash/);
+  assert.equal(splitLaunch('wrap claude\\').ok, false);
+  assert.equal(checkLaunch(['wrap', 'x\\'], { which: onPath('wrap') }).ok, false);
+  assert.equal(checkLaunch(['C:\\tools\\', 'claude'], { platform: 'win32', which: found }).ok, false);
+  assert.deepEqual(splitLaunch('C:\\tools\\wrap.exe claude'), { ok: true, words: ['C:\\tools\\wrap.exe', 'claude'] });
+});
+
+test('a later word that sets the permission mode or the allowed tools is refused, as Wheelhouse sets those itself', () => {
+  const which = onPath('wrap');
+  for (const flag of ['--dangerously-skip-permissions', '--allow-dangerously-skip-permissions', '--allowedTools', '--allowed-tools', '--disallowedTools', '--disallowed-tools', '--setting-sources']) {
+    assert.equal(checkLaunch(['wrap', 'claude', flag], { which }).ok, false, flag);
+  }
+});

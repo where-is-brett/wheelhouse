@@ -1229,10 +1229,11 @@ export function makeWaker({
   async function launch({ target, cwd, check, build, file, entries = [], sessionId = null, beforeRun = () => {}, afterRecord = () => {} }) {
     const adapter = sessionsOf();
     check(adapter);
-    // A launch command that fails a check is named and no session starts; none saved leaves the start as it was.
+    // A launch command that fails a check is named and no session starts; none saved leaves the start as it was. A program in
+    // the project's folder, which an agent can write to, is never the launch command.
     if (givenClaude === null && adapter.takesLaunch === true) {
       const words = launchWords();
-      claude = words === null ? null : resolveClaude({ platform, env: baseEnv, launch: words });
+      claude = words === null ? null : resolveClaude({ platform, env: baseEnv, launch: words, inside: readProject(project)?.folder ?? null });
     }
     if (typeof adapter.prepare === 'function') {
       let prepared;

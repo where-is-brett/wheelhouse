@@ -232,9 +232,9 @@ function readMark(file) {
   }
 }
 const EVENT_FILE = /^events\/\d{4}\/\d{2}\/[A-Za-z0-9._-]+\.json$/;
-// A version 4 UUID as crypto.randomUUID writes it.
 // The refusal for the launch command set any way but the director's own, fresh click on the card that shows its words.
 const LAUNCH_OWN_CLICK = 'the launch command decides what program runs on every start, so only the director\'s own click, made within ten minutes of the card that shows its words, sets it';
+// A version 4 UUID as crypto.randomUUID writes it.
 const RANDOM_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 // The most of one kept record that is read: a signed click is a few kilobytes.
