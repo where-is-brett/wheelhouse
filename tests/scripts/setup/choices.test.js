@@ -46,7 +46,7 @@ test('the one card names the phone setting as Claude Desktop\'s alone when the s
   assert.match(ask(false), /and a question about phone notifications, where setup suggests skipping them since they need Claude Desktop\./);
   assert.doesNotMatch(ask(false), /allowed to send phone notifications/);
   const pushed = oneCard({ folder: '/x/t', list: newProductChoices(), product: { isNew: true, host: null, repo: null, name: 't' }, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0, desktop: false, pushed: true }).card.question;
-  assert.match(pushed, /and phone notifications on, as Wheelhouse's records of an earlier setup on this computer show they reach your phone\./);
+  assert.match(pushed, /and phone notifications on, since Wheelhouse's records show an earlier setup on this computer reached your phone\./);
   assert.doesNotMatch(pushed, /a question about phone notifications/);
 });
 
@@ -354,6 +354,10 @@ test('a click on Put it on GitLab asks where the project is kept alone, until it
   const list = [keptHereChoice(), { ...keptHereChoice(), id: 'real-users', key: '3.real-users' }];
   assert.deepEqual(gitlabBatch(list, at).map((c) => c.id), ['join']);
   assert.deepEqual(gitlabBatch([{ ...keptHereChoice(), chosen: { label: 'GitLab', at: '2026-11-24T02:00:00.000Z' } }], at), []);
+  // Which GitLab is asked once GitLab is chosen; whether to fetch GitLab's tool is not where the project is kept, so its
+  // recommendation stands and the card names it.
+  const after = [{ ...keptHereChoice(), chosen: { label: 'GitLab', at: '2026-11-24T02:00:00.000Z' } }, { ...keptHereChoice(), id: 'host-tool-glab', key: '2.host-tool-glab' }, { ...keptHereChoice(), id: 'host', key: '3.host' }];
+  assert.deepEqual(gitlabBatch(after, at).map((c) => c.id), ['host']);
   const answers = { '0.plan-0123456789ab': { label: USE_GITLAB, at } };
   assert.equal(gitlabSince(answers), at);
   assert.equal(gitlabSince({ '0.plan-0123456789ab': { label: GO_AHEAD, at } }), null);
@@ -373,6 +377,14 @@ test('the chat history line says the setting changes, and that older history goe
     assert.match(line({ cleanupPeriodDays: 90 }), /30 days of chat history kept \(your Claude Code setting is 90 days, so this changes it, and chats older than 30 days are deleted\)/);
     const raised = line({ cleanupPeriodDays: 7 });
     assert.match(raised, /setting is 7 days, so this raises it; nothing is deleted/);
+    // With no Claude Code folder given, nothing is read: a settings.json in the folder this runs from is not the director's.
+    const was = process.cwd();
+    process.chdir(home);
+    try {
+      fs.writeFileSync(path.join(home, 'settings.json'), JSON.stringify({ cleanupPeriodDays: 90 }));
+      const plain = oneCard({ folder: '/x/t', list: [], product: localProduct, platform: 'darwin', toRun: [6], count: 0 }).card.question.split('\n').find((l) => /chat history/.test(l));
+      assert.doesNotMatch(plain, /deleted|changes|90/);
+    } finally { process.chdir(was); }
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -394,6 +406,6 @@ test('the computer line names only what step 6 would change, and is left out whe
   assert.match(ask(['push']), /^- On this computer: Claude Code allowed to send phone notifications, which you finish near the end\.$/);
   assert.match(ask(null), /usage counted here only; 30 days of chat history kept; Claude Code takes only its well-tried updates; and Claude Code allowed to send phone/);
   // A phone fact is Wheelhouse's own record, said so; a terminal's question is kept though nothing else changes.
-  assert.equal(ask([], { pushed: true }), '- On this computer: phone notifications on, as Wheelhouse\'s records of an earlier setup on this computer show they reach your phone.');
+  assert.equal(ask([], { pushed: true }), '- On this computer: phone notifications on, since Wheelhouse\'s records show an earlier setup on this computer reached your phone.');
   assert.match(ask([], { desktop: false }), /a question about phone notifications/);
 });

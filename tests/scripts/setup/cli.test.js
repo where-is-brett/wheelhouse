@@ -358,7 +358,7 @@ test('wait 10 is over once step 10\'s own checks are done', async () => {
   assert.deepEqual(JSON.parse(waiting.out), { step: 10, waiting: 5000 });
 });
 
-const NOT_LISTENING = { ok: false, refused: 'the host helper could not be reached: is it running?' };
+const NOT_LISTENING = { ok: false, refused: 'the host helper could not be reached: is it running?', unsent: true };
 
 test('a helper that is still starting on the first run is asked again, and the command then goes through', async () => {
   let asked = 0;
@@ -383,7 +383,8 @@ test('a helper that never answers is said to be starting, with what to do, after
 });
 
 test('a refusal, a sandbox\'s refusal or a helper that answered too slowly is not asked again', async () => {
-  for (const refused of ['not expected', 'the host helper could not be reached: this command\'s sandbox kept it from the helper', 'the host helper did not answer in time']) {
+  // The last is a connection dropped after the request went (no `unsent`): the helper may have acted on it.
+  for (const refused of ['not expected', 'the host helper could not be reached: this command\'s sandbox kept it from the helper', 'the host helper did not answer in time', 'the host helper could not be reached: is it running?']) {
     const c = fakeClient({ apply: { ok: false, refused } });
     let pauses = 0;
     const r = await run(['apply', '2', H], { client: c, sleep: async () => { pauses += 1; } });

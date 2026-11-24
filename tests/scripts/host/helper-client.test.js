@@ -15,7 +15,26 @@ test('a socket nothing listens on is a helper that is not running', async () => 
     const got = await helperClient({ address: path.join(dir, 'helper.sock') }).health();
     assert.equal(got.ok, false);
     assert.equal(got.refused, 'the host helper could not be reached: is it running?');
+    // Nothing was sent, so the same request can be asked again safely.
+    assert.equal(got.unsent, true);
   } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A helper that took the request and then dropped the connection may have acted on it, so it is not said to be unsent.
+test('a connection dropped after the request went is not said to be unsent', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-client-'));
+  const address = path.join(dir, 'helper.sock');
+  const server = net.createServer((s) => s.once('data', () => s.destroy()));
+  await new Promise((resolve) => server.listen(address, resolve));
+  try {
+    const got = await helperClient({ address }).setup.apply({ folder: dir });
+    assert.equal(got.ok, false);
+    assert.match(got.refused, /could not be reached/);
+    assert.equal(got.unsent, undefined);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

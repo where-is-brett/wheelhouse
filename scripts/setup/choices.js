@@ -149,8 +149,9 @@ export async function openChoices({ steps, run, answers, planOf }) {
 
 const KEPT_ID = /^(?:join|kept|host)(?:-|$)/;
 const BACKUP_ID = /^backup(?:-|$)/;
-// The choices a click on Put it on GitLab asks: where the project is kept, and that alone.
-const WHERE_ID = KEPT_ID;
+// The choices a click on Put it on GitLab asks: where the project is kept, and that alone. Whether to fetch the host's
+// own tool is asked under a host- id too, but is not where the project is kept: its recommendation stands, named on the card.
+const WHERE_ID = /^(?:join|kept|host)(?:-(?!tool-)|$)/;
 const NOT_JOINING = [NEW_PRODUCT, KEEP_HERE, HOST_LABELS.github, HOST_LABELS.gitlab];
 // Whether the answers taken say this computer joins a product from another (the join question
 // answered with anything but a new product).
@@ -322,9 +323,10 @@ function goAheadAsksHost({ keptHere, list, host, done, phone, platform }) {
 // is already there and different is a change worth saying. Said plainly when none is set or when it can't be read.
 function historyLine(claudeHome) {
   const plain = `${RETENTION_DAYS} days of chat history kept`;
+  if (typeof claudeHome !== 'string' || claudeHome === '') return plain;
   let now;
   try {
-    now = JSON.parse(fs.readFileSync(path.join(claudeHome ?? '', 'settings.json'), 'utf8').replace(/^\uFEFF/, '')).cleanupPeriodDays;
+    now = JSON.parse(fs.readFileSync(path.join(claudeHome, 'settings.json'), 'utf8').replace(/^\uFEFF/, '')).cleanupPeriodDays;
   } catch {
     return plain;
   }
@@ -341,7 +343,7 @@ function computerLine({ changing, claudeHome, pushed, desktop }) {
   if (on('telemetry')) parts.push('usage counted here only');
   if (on('retention')) parts.push(historyLine(claudeHome));
   if (on('updates')) parts.push('Claude Code takes only its well-tried updates');
-  if (pushed) parts.push('phone notifications on, as Wheelhouse\'s records of an earlier setup on this computer show they reach your phone');
+  if (pushed) parts.push('phone notifications on, since Wheelhouse\'s records show an earlier setup on this computer reached your phone');
   else if (desktop === false) parts.push('a question about phone notifications, where setup suggests skipping them since they need Claude Desktop');
   else if (on('push')) parts.push('Claude Code allowed to send phone notifications, which you finish near the end');
   if (parts.length === 0) return null;
