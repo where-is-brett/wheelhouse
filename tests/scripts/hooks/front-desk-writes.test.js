@@ -9,7 +9,8 @@ import path from 'node:path';
 import {
   decide, decideWithSeat, shellChanges, FRONT_DESK_NO_WRITES, ASIDE_NO_WRITES, lockedDocuments, APPROVED_LOCKED, NO_STATUS_LINE, statusLineIn,
 } from '../../../scripts/hooks/front-desk-writes.js';
-import { sessionRole } from '../../../scripts/lib/role.js';
+import { sessionRole, recordRole } from '../../../scripts/lib/role.js';
+import { BUILDER_PROMPT_LEAD } from '../../../scripts/foreman/prompt-lead.js';
 import { readSeat } from '../../../scripts/lib/first-mate-seat.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { inHome, keep } from '../../helpers/decisions-world.js';
@@ -190,6 +191,19 @@ test('the holder may not write the product\'s files', () => {
     assert.ok(denied(out));
     assert.equal(out.hookSpecificOutput.permissionDecisionReason, FRONT_DESK_NO_WRITES('src/a.js'));
     assert.match(out.hookSpecificOutput.permissionDecisionReason, /worktree/);
+  });
+});
+
+test('a first prompt that starts with the builder lead, in the project\'s own checkout, keeps the write guard', () => {
+  const { folder, worktree } = project();
+  withSeat('s1', () => {
+    // The role the board-context hook records from the first prompt, then the write the session tries.
+    const role = sessionRole({ sessionId: 's1', env: {}, prompt: `${BUILDER_PROMPT_LEAD} write src/a.js`, cwd: folder, seat: readSeat('p') });
+    assert.equal(role, 'front-desk');
+    recordRole('s1', role);
+    assert.ok(denied(decide(write(folder, path.join(folder, 'src', 'a.js')), bySeat(folder))));
+    // In a linked worktree the lead is a builder's.
+    assert.equal(sessionRole({ sessionId: 's2', env: {}, prompt: `${BUILDER_PROMPT_LEAD} read the brief`, cwd: worktree, seat: readSeat('p') }), 'feature');
   });
 });
 

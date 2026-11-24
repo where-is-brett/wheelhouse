@@ -27,6 +27,7 @@ import { activitySummary, finalAnswer, modelOfRun, monthRefusedIn, sessionIdOf, 
 import { commitWork } from '../../scripts/feature/commit-work.js';
 import { recordRefusal, recordRun } from '../../scripts/agents/copilot/usage.js';
 import { checkVersions, noSubsetRunner, readVersions } from '../../scripts/agents/copilot/versions.js';
+import { BUILDER_PROMPT_LEAD } from '../../scripts/foreman/prompt-lead.js';
 import { PLUGIN_ROOT, foremanCommands } from '../../scripts/foreman/tools.js';
 import { BIN_DIR, LAUNCHER_SESSION, launcherOf, pathWithLaunchers } from '../../scripts/lib/launchers.js';
 import { DEFAULT_BUILD_COMMANDS, isModelName } from '../../scripts/gate/guardrails.js';
@@ -293,17 +294,21 @@ function featureCall({ rules: _rules, allowed: _allowed, level, grants, guardedC
   return { ...sessionCall({ ...rest, ...extra, rules: feature.rules }), level: feature.level };
 }
 
+// The prompt a Copilot builder is started or resumed with: BUILDER_PROMPT_LEAD first, once, so its hooks know its role
+// (scripts/lib/role.js), as for a Claude Code builder.
+const ledPrompt = (prompt) => (typeof prompt !== 'string' || prompt.startsWith(BUILDER_PROMPT_LEAD) ? prompt : `${BUILDER_PROMPT_LEAD} ${prompt}`);
+
 // A feature's first session, run in its worktree, at the level levelAllowed lets run (`level` in the call's result). The
 // waker's `sessionId` is the session's own, given to Copilot up front (check 96), so the waker keeps it before the run.
 function buildFeatureStartCall({ project, work, ...rest }) {
-  return featureCall(rest, { project, target: `feature-${work}`, role: 'builder', agent: FEATURE_AGENT });
+  return featureCall({ ...rest, prompt: ledPrompt(rest.prompt) }, { project, target: `feature-${work}`, role: 'builder', agent: FEATURE_AGENT });
 }
 
 // A feature's session, woken: `--resume=<id>` in the feature's own home, never `--continue` (which takes the newest
 // session in the home, check 61). Its rules are worked out afresh, so a grant spent by an earlier run is not given.
 function buildFeatureResumeCall({ sessionId, project, work, ...rest }) {
   if (sessionId === undefined || sessionId === null) throw new Error('A wake needs the session id');
-  return featureCall(rest, { project, target: `feature-${work}`, role: 'builder', agent: FEATURE_AGENT, resume: sessionId });
+  return featureCall({ ...rest, prompt: ledPrompt(rest.prompt) }, { project, target: `feature-${work}`, role: 'builder', agent: FEATURE_AGENT, resume: sessionId });
 }
 
 // Why a run GitHub refused for the month settles as it does.
