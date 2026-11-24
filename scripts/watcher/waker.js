@@ -1053,7 +1053,7 @@ export function makeWaker({
   // --- The route (builders design, sections 6 and 11) ---
   // Read at every tick, before any start, so a change takes effect within one tick. `effective` is the route a start
   // follows: the saved one, or `background` where none was ever chosen (an install that predates the setting starts
-  // builders as it always has; the facts say "Builders: not chosen"). A saved value or settings file that can't be read
+  // builders as it always has; the facts say "Builders: not chosen · starting in the background"). A saved value or settings file that can't be read
   // starts nothing and is named (`fault`).
   const routeNow = async () => {
     let agent = 'claude-code';

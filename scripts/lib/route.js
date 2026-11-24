@@ -2,8 +2,8 @@
 // How this computer starts builder sessions (builders and settings design, section 6): the one reader of the `builders:` and
 // `builderLaunch:` settings. The waker (every tick), the helper's foreman run, health and the First Mate's facts all ask here.
 //
-// A route is never guessed outside setup: no saved route is `route: null`, which starts nothing and states "Builders: not
-// chosen". A saved value that can't be read or isn't a route is `from: 'fault'`, naming the file or the value, never skipped.
+// A route is never guessed outside setup: no saved route is `route: null`, which the facts state as "Builders: not
+// chosen · starting in the background" (builders start in the background, as the director ruled on 24 November 2026). A saved value that can't be read or isn't a route is `from: 'fault'`, naming the file or the value, never skipped.
 import { computerId } from './paths.js';
 import { checkLaunch } from './launch-words.js';
 import { faultLine } from './read-json-named.js';

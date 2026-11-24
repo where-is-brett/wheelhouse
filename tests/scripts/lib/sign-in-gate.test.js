@@ -121,7 +121,7 @@ test('the Builders line states the recorded fact, and says a damaged file', () =
 
 test('the Builders line states the route: none chosen, desktop, or a route problem named', () => {
   const h = home();
-  assert.equal(buildersLine({ home: h, route: null }), 'Builders: not chosen');
+  assert.equal(buildersLine({ home: h, route: null }), 'Builders: not chosen · starting in the background');
   assert.equal(buildersLine({ home: h, route: 'desktop' }), 'Builders: Claude Desktop');
   assert.equal(buildersLine({ home: h, route: 'background', program: 'wrap' }), 'Builders: background as `wrap`');
   const fault = { file: '/h/settings.json', line: 3, column: 9, hint: 'A comma is missing.' };
@@ -131,7 +131,7 @@ test('the Builders line states the route: none chosen, desktop, or a route probl
   assert.equal(buildersHealth({ home: h, route: null, fault }).level, 'watch');
   // With none chosen, a fact kept for the background route is still said, and the board watches it.
   writeSignInFact(h, ROUTE, fact());
-  assert.equal(buildersLine({ home: h, route: null }), "Builders: not chosen · background can't sign in since 14:02 (not signed in)");
+  assert.equal(buildersLine({ home: h, route: null }), "Builders: not chosen · starting in the background · can't sign in since 14:02 (not signed in)");
   assert.equal(buildersHealth({ home: h, route: null }).level, 'watch');
   clearSignInFact(h, ROUTE);
   // A fact kept for the background route doesn't speak for Desktop.

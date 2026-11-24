@@ -61,8 +61,8 @@ export function timeWords(iso) {
 // The First Mate's Builders line, stated from the recorded facts and nothing else (section 10.5):
 //   Builders: background as `claude` · can't sign in since 14:02 (not signed in)
 //   Builders: Claude Desktop
-//   Builders: not chosen
-// `route` is what scripts/lib/route.js read: 'desktop', 'background', or null where none is saved (no route is guessed). A
+//   Builders: not chosen · starting in the background
+// `route` is what scripts/lib/route.js read: 'desktop', 'background', or null where none is saved (builders start in the background, and the line says so). A
 // settings problem the route reader named (`fault`, as faultLine takes it) and a fact file that can't be read are said so,
 // never left out.
 export function buildersLine({ home, agent = 'claude-code', route = 'background', program = 'claude', fault = null } = {}) {
@@ -72,9 +72,10 @@ export function buildersLine({ home, agent = 'claude-code', route = 'background'
   // that route is still said.
   if (route === null) {
     const kept = readSignIn(home);
-    if (!kept.ok) return `Builders: not chosen · ${faultLine(kept.fault)}`;
+    const none = 'Builders: not chosen · starting in the background';
+    if (!kept.ok) return `${none} · ${faultLine(kept.fault)}`;
     const old = kept.facts[`${agent}:background`];
-    return old === undefined ? 'Builders: not chosen' : `Builders: not chosen · background can't sign in since ${timeWords(old.since)} (${kindWords(old.kind)})`;
+    return old === undefined ? none : `${none} · can't sign in since ${timeWords(old.since)} (${kindWords(old.kind)})`;
   }
   const as = `${route} as \`${commandName(program)}\``;
   const read = readSignIn(home);
