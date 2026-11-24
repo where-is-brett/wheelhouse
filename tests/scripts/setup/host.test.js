@@ -265,7 +265,7 @@ const said = (label) => (typeof label === 'object' ? { label: null, text: label.
 async function answerAll(step, ctx, pick) {
   const answers = { ...(ctx.answers ?? {}) };
   const asked = [];
-  for (let i = 0; i < 8; i += 1) {
+  for (let i = 0; i < 12; i += 1) {
     const got = await step.plan({ ...ctx, answers });
     if (!got.ask) return { ...got, answers, asked };
     asked.push(got.ask);
@@ -279,6 +279,7 @@ const choose = ({ realUsers = REAL_USERS.no, locked = LEVELS.standard, host = HO
   if (id === 'locked') return locked;
   if (id === 'host') return host;
   if (id === 'gitlab-where') return GITLAB_COM;
+  if (id === 'project-name') return card?.recommend ?? 'Shop';
   // On the Mac's card a narrow way sits behind Make it stricter.
   if (id.startsWith('connection-')) return card?.options && !card.options.some((o) => o.label === way) && card.options.some((o) => o.label === STRICTER) ? STRICTER : way;
   throw new Error(`asked ${id}`);
@@ -343,7 +344,7 @@ test('the plan asks about real users, then Locked on a Mac only, then the host, 
     const mac = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.locked, way: WAYS.own }));
     // Locked takes Quick away, and with no Wheelhouse app their own app is the one way left, so
     // the connection is not asked.
-    assert.deepEqual(mac.asked.map((a) => a.id.replace(/-[0-9a-f]{10,}$/, '')), ['real-users', 'locked', 'host']);
+    assert.deepEqual(mac.asked.map((a) => a.id.replace(/-[0-9a-f]{10,}$/, '')), ['real-users', 'locked', 'host', 'project-name']);
     assert.match(mac.asked[0].card.what, /Does Zoe-app have real users/);
     assert.deepEqual(mac.changes.find((c) => c.action === 'connection'), { kind: 'host', target: 'github', action: 'connection', mode: 'narrow', locked: true, backend: 'cli', app: { account: USER, name: `Wheelhouse ${USER}`, own: true } });
     assert.equal(mac.answers['3.real-users'].label, REAL_USERS.yes, 'step 4 reads this answer');
@@ -355,15 +356,15 @@ test('the plan asks about real users, then Locked on a Mac only, then the host, 
     }
     // On Windows, Locked is not offered: the connection comes after the host.
     const win = await answerAll(step, ctxFor(folder, { platform: 'win32' }), choose({ realUsers: REAL_USERS.yes }));
-    assert.deepEqual(win.asked.map((a) => a.id.replace(/-[0-9a-f]{10,}$/, '')), ['real-users', 'host', 'connection']);
-    assert.ok(win.asked[2].card.options.some((o) => o.label === WAYS.quick));
+    assert.deepEqual(win.asked.map((a) => a.id.replace(/-[0-9a-f]{10,}$/, '')), ['real-users', 'host', 'project-name', 'connection']);
+    assert.ok(win.asked[3].card.options.some((o) => o.label === WAYS.quick));
     // Standard is what Windows gets even from an old Locked answer: the connection is never made for Locked there.
     const stale = await answerAll(step, ctxFor(folder, { platform: 'win32' }), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.locked, way: WAYS.own }));
     assert.ok(!stale.asked.some((x) => x.id.startsWith('locked')));
     assert.notEqual(stale.changes.find((c) => c.action === 'connection')?.locked, true);
     // Standard on a Mac keeps Quick.
     const standard = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard }));
-    assert.ok(standard.asked[3].card.options.some((o) => o.label === WAYS.quick));
+    assert.ok(standard.asked[4].card.options.some((o) => o.label === WAYS.quick));
     assert.equal(repoName(folder), 'Zoe-app');
   });
 });
@@ -2396,6 +2397,7 @@ const joining = ({ join = fromOtherComputer('Cafe-Menu'), typed = null, way = WA
   if (id === 'join' || id.startsWith('join-')) return typed ?? join;
   if (id === 'host') return host;
   if (id === 'gitlab-where') return GITLAB_COM;
+  if (id === 'project-name') return card?.recommend ?? 'Shop';
   if (id.startsWith('connection-')) return card?.options && !card.options.some((o) => o.label === way) && card.options.some((o) => o.label === STRICTER) ? STRICTER : way;
   throw new Error(`asked ${id}`);
 };
@@ -2439,7 +2441,7 @@ test('step 3 asks whether this computer is joining only in a folder holding noth
     assert.equal(first.typed, true, 'an owner/name may be typed');
     assert.deepEqual(first.card.options.map((o) => o.label), [KEEP_HERE, HOST_LABELS.github, HOST_LABELS.gitlab, 'Cafe-Menu, already set up on another computer']);
     assert.equal(first.card.recommend, KEEP_HERE, 'an empty folder is most often a new product, and one kept here needs no account');
-    assert.match(`${first.card.what} ${first.card.why}`, /owner\/name, like ann\/cafe-menu/);
+    assert.match(`${first.card.what} ${first.card.why}`, /owner\/name \(like ann\/cafe-menu\)/);
     composeCard({ ...first.card, kind: 'question' });
     // With profile.json on this computer, it is still asked, with the same recommendation.
     const profileJson = path.join(wheelhouseHome(), 'profile.json');
@@ -2449,7 +2451,7 @@ test('step 3 asks whether this computer is joining only in a folder holding noth
     fs.rmSync(profileJson);
     // A new product on GitHub: the usual questions follow, and a repository is made.
     const fresh = await answerJoin(step, ctxFor(folder), (id) => (id === 'join' ? HOST_LABELS.github : choose()(id)));
-    assert.deepEqual(fresh.asked.map((a) => a.id.replace(/-[0-9a-f]{10,}$/, '')), ['join', 'real-users', 'connection']);
+    assert.deepEqual(fresh.asked.map((a) => a.id.replace(/-[0-9a-f]{10,}$/, '')), ['join', 'real-users', 'project-name', 'connection']);
     assert.ok(fresh.changes.some((c) => c.action === 'repository'));
     assert.ok(!fresh.changes.some((c) => c.action === 'join'));
     // A folder with any other file in it, or with an origin, is an existing product: not asked.
@@ -2606,7 +2608,7 @@ test('the join card ends its why line with the address, and says groups after a 
     const ctx = ctxFor(folder, { runId: run.id });
     // Item 9.
     const first = (await step.plan(ctx)).ask;
-    assert.equal(first.card.why.endsWith('Type its owner/name, like ann/cafe-menu, or paste its address.'), true, first.card.why);
+    assert.equal(first.card.why.endsWith('its owner/name (like ann/cafe-menu), its address or its backup file.'), true, first.card.why);
     // Item 11: the miss is recorded with its host.
     for (const [host, words] of [['gitlab', 'groups'], ['github', 'organisations']]) {
       const other = startRun({ folder: emptyFolder(), now: () => NOW });
@@ -3620,7 +3622,7 @@ test('a typed GitLab address that is not one asks again under a new id, saying w
     const answers = { '3.real-users': said(REAL_USERS.no), '3.host': said(HOST_LABELS.gitlab), '3.gitlab-where': said(COMPANY_GITLAB) };
     const got = await stepFor(standIn()).plan(ctxFor(folder, { answers }));
     assert.equal(got.ask.id, 'gitlab-address-1');
-    assert.match(got.ask.card.what, /What is your company's GitLab address, such as https:\/\/gitlab\.example\.org\? Type it as your answer/);
+    assert.match(got.ask.card.what, /What is your company's GitLab address, such as https:\/\/gitlab\.example\.org\? Choose Other and type it/);
     composeCard({ ...got.ask.card, kind: 'question', suggest: false });
     // An address typed there is taken directly; a bad one asks again, saying why; Go back returns to the first card.
     const typed = (text) => ({ label: null, text, at: NOW.toISOString() });

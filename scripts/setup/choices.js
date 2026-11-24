@@ -37,7 +37,7 @@ import { engineWanted, engineLine } from './engine-parts.js';
 import { HEALTH_STEP, onRunList, stepDone } from '../lib/setup-run.js';
 import { askedRecord, answersFor } from './clicks.js';
 import { macKeepsAway } from '../lib/host-lines.js';
-import { COMPANY_GITLAB, GITLAB_COM, companyAddress, HOST_LABELS, pinOf, repoNamed, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
+import { GITLAB_COM, companyAddress, HOST_LABELS, pinOf, repoNamed, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
 import { LIVE_DATA, PRODUCT, SIGNS_APPS, productName } from './questions.js';
 import { FIRST_CHECK_LINE, KEEP_HERE, KEPT_LINE, ONLY_HERE_AFTER, ONLY_HERE_LINE, PUT_ON_GITLAB, STARTED_LINE } from './local.js';
 import { backupNamed } from '../host/local/restore.js';
@@ -71,6 +71,7 @@ export function aboutOf(key) {
   const id = key.slice(key.indexOf('.') + 1);
   if (id === 'join' || id.startsWith('join-')) return 'new, or already set up on another computer';
   if (id === 'real-users') return 'real users';
+  if (id === 'project-name' || id.startsWith('project-name-')) return 'the project\'s name';
   if (id === 'locked') return 'Locked';
   if (id === 'host') return 'where the project is kept';
   if (id === 'kept') return 'where the project is kept';
@@ -149,6 +150,11 @@ export async function openChoices({ steps, run, answers, planOf }) {
 
 const KEPT_ID = /^(?:join|kept|host)(?:-|$)/;
 const BACKUP_ID = /^backup(?:-|$)/;
+// Questions whose card reads the same whatever the director says of where the project is kept.
+const INDEPENDENT_ID = /^(?:real-users|live-data|product-.*)$/;
+// Questions that follow the real-users answer: the description card names it, and live data is not asked of a product with
+// real users. They wait for that answer, so none is asked in a form the answer beside it would change.
+const AFTER_REAL_USERS = /^(?:live-data|product-.*)$/;
 // The choices a click on Put it on GitLab asks: where the project is kept, and that alone. Whether to fetch the host's
 // own tool is asked under a host- id too, but is not where the project is kept: its recommendation stands, named on the card.
 const WHERE_ID = /^(?:join|kept|host)(?:-(?!tool-)|$)/;
@@ -191,7 +197,7 @@ function hostOf(product, choices) {
 }
 
 // A company's own GitLab, chosen on the which-GitLab card and not taken back on the address card.
-const onCompanyGitLab = (choices, host) => host === 'GitLab' && (addressHostName(choices)?.startsWith('your company') || choices.some((c) => c.id.startsWith('gitlab-where') && c.label === COMPANY_GITLAB) && !choices.some((c) => c.id.startsWith('gitlab-address') && c.label === GITLAB_COM));
+const onCompanyGitLab = (choices, host) => host === 'GitLab' && (addressHostName(choices)?.startsWith('your company') || choices.some((c) => c.id.startsWith('gitlab-where') && typeof c.label === 'string' && c.label !== GITLAB_COM) && !choices.some((c) => c.id.startsWith('gitlab-address') && c.label === GITLAB_COM));
 
 // The company GitLab's host name the director typed on step 3's address question, or null while none is read.
 const typedCompanyHost = (choices) => {
@@ -211,6 +217,7 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
   if (id === 'backup' || id.startsWith('backup-')) return line;
   if (id === 'kept') return label === KEEP_HERE ? line : `Put on ${host}: a private ${host === 'GitLab' ? 'project' : 'repository'} on your account, with your project's history sent to it.`;
   if (id.startsWith('branch-')) return `Finished work goes on ${label}, the main version.`;
+  if (id === 'project-name' || id.startsWith('project-name-')) return `Called ${typeof text === 'string' && text.trim() !== '' ? text.trim() : name} on ${host}.`;
   if (label === KEEP_HERE && (id === 'host' || id === 'join' || id.startsWith('join-'))) return KEPT_LINE;
   if (label === HOST_LABELS.github || label === HOST_LABELS.gitlab) {
     const company = onCompanyGitLab(choices, host);
@@ -231,7 +238,8 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
   if (id === 'real-users') {
     const live = choices.find((c) => c.id === 'live-data')?.label;
     if (label === REAL_USERS.no) return live === LIVE_DATA.no ? 'Before launch: no real users and no live data yet.' : 'Before launch: no real users yet.';
-    return 'Launched: it has real users.';
+    // A product with real users is taken to hold live data (scripts/setup/questions.js), so the line says what that means.
+    return 'Launched: it has real users, so agents are told to use test data only.';
   }
   if (id === 'locked') return label === LEVELS.locked ? 'Locked: you type your computer password once, at its step.' : null;
   if (id === 'host') {
@@ -260,6 +268,8 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     return null;
   }
   if (id === 'live-data') {
+    // An answer left from before real-users was yes no longer counts: the real-users line says it.
+    if (choices.find((c) => c.id === 'real-users')?.label === REAL_USERS.yes) return null;
     const before = choices.find((c) => c.id === 'real-users')?.label === REAL_USERS.no;
     if (label === LIVE_DATA.no) return before && choices.some((c) => c.id === 'real-users') ? null : 'No live data yet.';
     return 'Agents are told to use test data only, to be safe.';
@@ -284,11 +294,12 @@ function describedBy(choice) {
 // project kept here; on GitLab without its tool, with a key for this project only, the one-day setup token (host.js);
 // with their git as it is, a key only where git holds none that works; on a company's GitLab, a sign-in in the browser or
 // by token; else a sign-in.
-function goAheadAsks({ keptHere, list, host, phone = false, done = { tools: false, signedIn: null }, platform }) {
-  const text = goAheadAsksHost({ keptHere, list, host, done, phone, platform });
-  // Step 9 asks the director to try a notification on their phone, unless an earlier setup's test already reached it.
+function goAheadAsks({ keptHere, list, host, phone = false, desktop, done = { tools: false, signedIn: null }, platform }) {
+  const text = goAheadAsksHost({ keptHere, list, host, done, phone, desktop, platform });
+  // Step 9 asks the director to try a notification on their phone, unless an earlier setup's test already reached it; away from
+  // Claude Desktop it only asks whether to skip phone notifications, which need it.
   if (!phone || (keptHere && done.tools)) return text;
-  return `${text} Near the end, setup offers a test notification on your phone, which you can skip.`;
+  return desktop === false ? `${text} Near the end, setup asks whether to skip phone notifications, which need Claude Desktop.` : `${text} Near the end, setup offers a test notification on your phone, which you can skip.`;
 }
 
 // What may be asked of the director by the system itself: on a Mac, the computer's password; on Windows, Yes when it asks to
@@ -297,18 +308,18 @@ const maybeAsked = (platform) => (platform === 'win32'
   ? 'Windows may ask you to click Yes to let an installer run, or for an administrator\'s password.'
   : 'You may be asked for your computer\'s password.');
 
-function goAheadAsksHost({ keptHere, list, host, done, phone, platform }) {
+function goAheadAsksHost({ keptHere, list, host, done, phone, desktop, platform }) {
   // Setup's tools are done, so the request to allow its command and the password they could need are behind it.
-  if (keptHere) return done.tools ? (phone ? 'The only thing left to ask you is a test notification on your phone near the end, which you can skip.' : 'Nothing more is asked of you here.') : `Apart from Claude Code's own request to allow setup's command, ${platform === 'win32' ? maybeAsked(platform) : 'you may be asked for your computer\'s password.'}`;
+  if (keptHere) return done.tools ? (phone ? (desktop === false ? 'The only thing left to ask you is whether to skip phone notifications near the end.' : 'The only thing left to ask you is a test notification on your phone near the end, which you can skip.') : 'Nothing more is asked of you here.') : `Apart from Claude Code's own request to allow setup's command, ${platform === 'win32' ? maybeAsked(platform) : 'you may be asked for your computer\'s password.'}`;
   const signedIn = done.signedIn !== null && host === (done.signedIn === 'gitlab' ? 'GitLab' : 'GitHub');
   const way = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.label ?? null;
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
   if (host === 'GitLab' && noTool && way !== null && way !== WAYS.quick && way !== WAYS.asIs) {
     const free = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.publicGitLab === true;
-    return `You'll paste a one-day GitLab token into a box on your screen, not the chat. ${free ? 'On a free account, or wherever' : 'If'} GitLab won't make a key for this one project, you'll also paste a token set to end ${PERSONAL_DAYS} days ahead that can act as you in every GitLab project and group you can reach. ${maybeAsked(platform)}`;
+    return `You'll paste a one-day GitLab token into a box on your screen, not the chat. ${free ? 'On a free account, or wherever' : 'If'} GitLab won't make a key for this one project, you'll also paste a token set to expire in ${PERSONAL_DAYS} days that can act as you in every GitLab project and group you can reach. ${maybeAsked(platform)}`;
   }
   const unheld = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.unheld === true;
-  if (way === WAYS.asIs) return `You'll be asked for a ${host} key${unheld ? '' : ' only if your git holds none that works'}: you make it on a page that opens${host === 'GitLab' ? ` and set its expiry date ${KEY_DAYS_ASKED} days ahead` : `, set to last ${KEY_DAYS_ASKED} days`}, and paste it into a box on your screen, not the chat. ${maybeAsked(platform)}`;
+  if (way === WAYS.asIs) return `You'll be asked for a ${host} key${unheld ? '' : ' only if your git holds none that works'}: you make it on a page that opens${host === 'GitLab' ? `, set to expire in ${KEY_DAYS_ASKED} days` : `, set to expire in ${KEY_DAYS_ASKED} days`}, and paste it into a box on your screen, not the chat. ${maybeAsked(platform)}`;
   // A narrow way on GitLab with its tool still meets GitLab's refusal of a project key the same way.
   const fallbackBox = (known) => (host === 'GitLab' && way !== null && way !== WAYS.quick
     ? ` If GitLab won't make a key for one project, you'll also paste a ${PERSONAL_DAYS}-day token that can act as you across GitLab into ${known ? 'that box' : 'a box on your screen, not the chat'}.` : '');
@@ -386,7 +397,7 @@ export function oneCard({ computerChanging = null, folder, list, product, platfo
   if (toRun.includes(3) && product && product.isNew === false && product.host !== 'local') lines.push(`${name} on ${product.host === 'gitlab' ? 'GitLab' : 'GitHub'}, as it is.`);
   // In the card's order: where it is kept, how agents reach it, its phase and data, Locked, the
   // description, then Apple signing.
-  const rank = ({ id }) => ['join', 'host', 'kept', 'branch-', 'connection', 'host-tool-', 'real-users', 'live-data', 'locked', 'product-', 'apple-apps']
+  const rank = ({ id }) => ['join', 'host', 'kept', 'branch-', 'project-name', 'connection', 'host-tool-', 'real-users', 'live-data', 'locked', 'product-', 'apple-apps']
     .findIndex((p) => id === p || id.startsWith(p.endsWith('-') ? p : `${p}-`));
   for (const c of [...list].sort((x, y) => rank(x) - rank(y))) {
     const readme = describedBy(c);
@@ -449,7 +460,7 @@ export function oneCard({ computerChanging = null, folder, list, product, platfo
     question,
     header: 'Setup',
     options: [
-      { label: GO_AHEAD, description: `Recommended: setup does all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list), phone: toRun.includes(6) && !pushed, done, platform })}` },
+      { label: GO_AHEAD, description: `Recommended: setup does all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list), phone: toRun.includes(6) && !pushed, desktop, done, platform })}` },
       ...(gitlabOffered ? [{ label: USE_GITLAB, description: 'Keep the project on GitLab instead of this computer. You are asked just that next, and nothing runs until you say Go ahead.' }] : []),
       yours
         ? { label: CHANGE_CHOICE, description: 'See every choice again, and change any before anything runs.' }
@@ -563,7 +574,12 @@ export function answersWithConsent(runId, { read = answersFor } = {}) {
 export function customiseBatch(list, since) {
   const open = list.filter((c) => !(c.chosen && newer(c.chosen.at, since)));
   const unsaid = open.some((c) => KEPT_ID.test(c.id));
-  const batch = open.filter((c) => !(unsaid && BACKUP_ID.test(c.id))).slice(0, PER_CARD);
+  const usersOpen = open.some((c) => c.id === 'real-users');
+  // Questions that don't depend on where the project is kept come first, so one card holds as many as it can; Apple signing,
+  // which few projects are asked, comes last.
+  const rank = (c) => (INDEPENDENT_ID.test(c.id) ? 0 : c.id === 'apple-apps' ? 2 : 1);
+  const ordered = open.map((c, i) => ({ c, i })).sort((x, y) => rank(x.c) - rank(y.c) || x.i - y.i).map(({ c }) => c);
+  const batch = ordered.filter((c) => !(unsaid && BACKUP_ID.test(c.id)) && !(usersOpen && AFTER_REAL_USERS.test(c.id))).slice(0, PER_CARD);
   const ends = batch.findIndex((c) => c.endsBatch === true);
   return ends === -1 ? batch : batch.slice(0, ends + 1);
 }

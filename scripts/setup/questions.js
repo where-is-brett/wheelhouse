@@ -31,6 +31,12 @@ import { REAL_USERS, LEVELS, productOf, repoName } from './host.js';
 import { readJournal } from './journal.js';
 
 export const LIVE_DATA = Object.freeze({ yes: 'Yes, live data', no: 'No live data' });
+
+// The live-data answer step 4 and step 7 go by: a product with real users holds live data by being relied on, so it is
+// taken as yes and never asked; otherwise the director's answer, or undefined while it is not given.
+export function liveDataAnswer(answers = {}) {
+  return answers['3.real-users']?.label === REAL_USERS.yes ? { label: LIVE_DATA.yes } : answers['4.live-data'];
+}
 export const SIGNS_APPS = Object.freeze({ no: 'No', yes: 'Yes, it signs apps' });
 export const PRODUCT = Object.freeze({ readme: 'The README\'s words', shaping: 'Still taking shape', later: 'Describe it later' });
 // How long a step whose answers write to the project's records waits for step 3 to set them up.
@@ -194,7 +200,7 @@ function productAsk(name, { described, realUsers }) {
     typed: true,
     card: {
       level: 2,
-      what: `${realUsers ? `${name} has real users.` : `${name} has no real users yet.`} In a sentence, what is ${name}, and who is it for? ${described === null ? 'Type it' : 'Choose the README\'s words, or type your own'} as your answer.`,
+      what: `${realUsers ? `${name} has real users.` : `${name} has no real users yet.`} In a sentence, what is ${name}, and who is it for? ${described === null ? 'Choose Other and type it' : 'Choose the README\'s words, or choose Other and type your own'}.`,
       why: 'Wheelhouse explains its work to you in terms of your product.',
       options,
       recommend: options[0].label,
@@ -213,16 +219,13 @@ function productAsk(name, { described, realUsers }) {
 
 // The second question: whether the product has live data. A new product has none yet, so no is
 // recommended for it; for a project already under way, yes, which is the safe side (design section 15.1).
-function liveDataAsk(name, { isNew = false, platform = process.platform } = {}) {
+function liveDataAsk(name, { isNew = false } = {}) {
   return {
     id: 'live-data',
     card: {
       level: 3,
       what: `Does ${name} hold live data, such as real people's accounts, orders or messages?`,
-      // Windows runs no sandbox, so there the rule binds only Claude Code's own tools and an agent's command can still read the files.
-      why: platform === 'win32'
-        ? 'Agents are told not to open the project\'s secret files, but on Windows nothing stops their commands reading them.'
-        : 'Agents are kept from opening the project\'s secret files themselves, though the product\'s own code they run can still use them.',
+      why: 'Agents are told to keep to test data where they can. Yes tells them to leave live data alone.',
       options: [
         { label: LIVE_DATA.yes, says: 'Agents are told to use test data only, and to leave the live data alone.' },
         { label: LIVE_DATA.no, says: 'Agents work with the product\'s data as it is, as in a throwaway or test project.' },
@@ -275,8 +278,9 @@ export function questionsStep() {
       const other = `product-${realUsers ? PHASE.before : PHASE.launched}`;
       const product = answers[`4.${asked.id}`] ?? answers[`4.${other}`];
       if (!product) return { ask: asked };
-      const live = answers['4.live-data'];
-      if (!live) return { ask: liveDataAsk(name, { isNew: newProduct(ctx, project), platform: ctx.platform ?? process.platform }) };
+      // A product with real users holds live data by being relied on, so it is not asked again.
+      const live = liveDataAnswer(answers);
+      if (!live) return { ask: liveDataAsk(name, { isNew: newProduct(ctx, project) }) };
       const apple = signsAppleApps(ctx.folder) ? answers['4.apple-apps'] : null;
       if (apple === undefined) return { ask: appleAppsAsk(name) };
       if (project === null) return ctx.choicesOnly === true ? { wait: 0, why: 'every choice of step 4 is made' } : waitForProject(4);

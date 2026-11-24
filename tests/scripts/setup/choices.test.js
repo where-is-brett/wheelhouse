@@ -36,7 +36,7 @@ test('the one card says a compaction rule found is kept, and nothing is said whe
     const ask = () => oneCard({ folder, list: [], product: { isNew: false, host: 'local', repo: null, name: 'tides' }, platform: 'darwin', toRun: [7], count: 1, claudeHome: path.join(folder, 'none') }).card.question;
     assert.doesNotMatch(ask(), /compact/);
     fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), JSON.stringify({ env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: 35 } }));
-    assert.match(ask(), /- You already set compacting at 35% in the project's settings: I keep it and add no second rule, so compaction never stacks\./);
+    assert.match(ask(), /- You already set Claude Code to tidy a long chat at 35% full in the project's settings: I keep it and add nothing of my own\./);
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });
 
@@ -170,9 +170,15 @@ test('Customise asks the choices not yet answered since it was clicked, four at 
   const since = '2026-10-26T10:00:00.000Z';
   const list = newProductChoices();
   assert.equal(PER_CARD, 4);
-  assert.deepEqual(customiseBatch(list, since).map((c) => c.id), ['join', 'real-users', 'host', 'connection-0123456789']);
-  const answered = list.map((c, i) => (i < 4 ? { ...c, chosen: { label: c.label, text: null, at: '2026-10-26T10:05:00.000Z' } } : c));
-  assert.deepEqual(customiseBatch(answered, since).map((c) => c.id), ['product-before-launch', 'live-data']);
+  // The description and live data wait for the real-users answer, which decides which description is asked and whether
+  // live data is.
+  const first = customiseBatch(list, since).map((c) => c.id);
+  assert.equal(first[0], 'real-users');
+  assert.equal(first.length, 4);
+  assert.equal(first.some((id) => /^(?:product-|live-data$)/.test(id)), false);
+  const answered = list.map((c) => (first.includes(c.id) ? { ...c, chosen: { label: c.label, text: null, at: '2026-10-26T10:05:00.000Z' } } : c));
+  const second = customiseBatch(answered, since).map((c) => c.id);
+  assert.ok(second.includes('product-before-launch') && second.includes('live-data'));
   // An answer from before Customise was clicked is asked again, for the director to see.
   const before = list.map((c) => ({ ...c, chosen: { label: c.label, text: null, at: '2026-10-26T09:00:00.000Z' } }));
   assert.equal(customiseBatch(before, since).length, 4);
@@ -216,7 +222,8 @@ test('the backup question waits for where the project is kept, and comes once a 
   const open = (id, chosen = null) => ({ id, chosen });
   const said = { label: 'x', at: '2026-10-02T00:00:00.000Z' };
   const ids = (list) => customiseBatch(list, since).map((c) => c.id);
-  assert.deepEqual(ids([open('join'), open('real-users'), open('backup'), open('product-before-launch')]), ['join', 'real-users', 'product-before-launch']);
+  assert.deepEqual(ids([open('join'), open('real-users'), open('backup'), open('product-before-launch')]), ['real-users', 'join']);
+  assert.deepEqual(ids([open('join', said), open('real-users', said), open('backup'), open('product-before-launch')]), ['product-before-launch', 'backup']);
   assert.deepEqual(ids([open('kept'), open('backup')]), ['kept']);
   assert.deepEqual(ids([open('join', said), open('real-users', said), open('backup'), open('product-before-launch', said)]), ['backup']);
   assert.deepEqual(ids([open('real-users'), open('connection')]), ['real-users', 'connection'], 'a hosted project\'s list is as it was');

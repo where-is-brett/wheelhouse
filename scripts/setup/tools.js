@@ -300,8 +300,8 @@ export function hostToolCard(tool, { recommend: given, platform = process.platfo
     what: `${name}'s own tool isn't on this computer. Should Wheelhouse fetch it, or reach ${name} without it?`,
     why: `If you'd rather not install ${name}'s tool, or your company's rules don't allow it, Wheelhouse can work without it, using a key you make on ${name}, or the one your git already uses.`,
     options: [
-      { label: labels.fetch, says: `Wheelhouse fetches ${name}'s tool from its official release into its own tools folder, and checks it.${win ? ` It is signed in as you, to your whole ${name} account, and on Windows any agent's command could read that sign-in, whichever way you choose next.` : tool !== 'glab' ? '' : ' Only with it can agents use your ordinary GitLab sign-in.'}` },
-      { label: labels.none, says: `Nothing is fetched, and Wheelhouse never runs ${name}'s tool.${tool === 'glab' && win ? ' Nothing signs GitLab\'s tool in as you on this computer, where agents\' commands could read it.' : ''}` },
+      { label: labels.fetch, says: `Wheelhouse fetches ${name}'s tool from its official release into its own tools folder, and checks it.${win ? ` It signs in as you, with the reach of your whole ${name} account.` : tool !== 'glab' ? '' : ' Only with it can agents use your ordinary GitLab sign-in.'}` },
+      { label: labels.none, says: `Nothing is fetched, and Wheelhouse never runs ${name}'s tool.${tool === 'glab' && win ? ' Nothing on this computer is signed in to GitLab as you.' : ''}` },
     ],
     recommend: recommend === 'none' ? labels.none : labels.fetch,
     because,

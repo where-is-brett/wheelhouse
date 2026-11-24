@@ -133,7 +133,7 @@ export function keptAsk(name, others) {
     card: {
       level: 2,
       what: `Keep ${name} on this computer, or put it on GitHub or GitLab too?`,
-      why: 'It needs no account here, and it can move later in one click.',
+      why: 'It needs no account here, and it can move later.',
       options: [
         { label: KEEP_HERE, says: 'Nothing goes online.' },
         { label: PUT_ON_GITHUB, says: 'Setup makes a private repository on your GitHub account, and sends your project there.' },

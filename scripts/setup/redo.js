@@ -21,7 +21,7 @@
 // (stepFourDrift).
 import { askedRecord } from './clicks.js';
 import { REAL_USERS } from './host.js';
-import { LIVE_DATA, PRODUCT, SIGNS_APPS, MEANWHILE } from './questions.js';
+import { LIVE_DATA, PRODUCT, SIGNS_APPS, MEANWHILE, liveDataAnswer } from './questions.js';
 import { ONE_CARD_STEP, aboutOf, actedBy } from './choices.js';
 
 export const CHANGE_AFTER = 'Change it after setup';
@@ -97,7 +97,7 @@ export function redoCard({ key, answers, name, record, described, count, stepRan
       typed: true,
       card: {
         level: 2,
-        what: `In a sentence, what is ${name}, and who is it for? Type it as your answer.`,
+        what: `In a sentence, what is ${name}, and who is it for? Choose Other and type it.`,
         why: 'Wheelhouse explains its work to you in terms of your product.',
         options,
         recommend: options[0].label,
@@ -181,7 +181,7 @@ export function setUpAgainAsked(answers) {
 // so it is to settle again before step 7 uses them. `settled` is step 4's newest settled record.
 export function stepFourDrift(settled, answers) {
   if (!settled || typeof settled !== 'object') return false;
-  const live = answers['4.live-data'];
+  const live = liveDataAnswer(answers);
   if (live && (live.label === LIVE_DATA.yes) !== (settled.liveData === true)) return true;
   const apple = answers['4.apple-apps'];
   return Boolean(apple) && (apple.label === SIGNS_APPS.yes) !== (settled.signsApps === true);

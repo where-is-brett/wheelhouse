@@ -567,7 +567,7 @@ test('a compaction rule the director already has is found in the project, local 
     ['this computer\'s settings for the project', 'window', '200000'],
     ['your own Claude Code settings', 'percentage', '60'],
   ]);
-  assert.equal(compactionLine(found), 'You already set compacting at 35% in the project\'s settings, a 200,000-token window in this computer\'s settings for the project and compacting at 60% in your own Claude Code settings: I keep it and add no second rule, so compaction never stacks.');
+  assert.equal(compactionLine(found), 'You already set Claude Code to tidy a long chat at 35% full in the project\'s settings, your own limit on how long a chat can grow in this computer\'s settings for the project and Claude Code to tidy a long chat at 60% full in your own Claude Code settings: I keep it and add nothing of my own.');
   assert.equal(compactionLine([]), null);
 });
 

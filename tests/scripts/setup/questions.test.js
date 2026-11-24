@@ -110,19 +110,22 @@ test('each answer writes its setting or configuration key, checked by the catalo
       const runId = findRun(folder).id;
       assert.deepEqual(answersFor(runId)[`4.product-${phase}`].text, 'A menu for a small café, read by its regulars.');
 
-      // Then live data, which records nothing in the state: step 7 writes liveData from it.
+      // Then live data, which records nothing in the state: step 7 writes liveData from it. A product with real users holds
+      // live data by being relied on, so it is not asked there.
       const live = await plan(4);
-      assert.equal(live.ask.id, 'live-data');
-      assert.deepEqual(live.ask.card.options.map((o) => o.label), [LIVE_DATA.yes, LIVE_DATA.no]);
-      assert.match(live.ask.card.options[0].description, /test data only/);
-      // The card and its recommendation say the same thing, with one reason: setup makes no practice copy.
-      assert.ok(!/practice copy/.test(JSON.stringify(live.ask.card)), 'no practice copy is promised or mentioned');
-      assert.ok(!/\bsince\b[^.]*\bbecause\b/.test(live.ask.card.options[0].description), 'one reason, not two run together');
-      assert.deepEqual(await answer(live.ask.card, LIVE_DATA.yes), []);
-      assert.equal(answersFor(runId)['4.live-data'].label, LIVE_DATA.yes);
+      if (phase === 'launched') assert.equal(live.ask, undefined, 'real users: live data is not asked again');
+      else {
+        assert.deepEqual(live.ask.card.options.map((o) => o.label), [LIVE_DATA.yes, LIVE_DATA.no]);
+        assert.match(live.ask.card.options[0].description, /test data only/);
+        // The card and its recommendation say the same thing, with one reason: setup makes no practice copy.
+        assert.ok(!/practice copy/.test(JSON.stringify(live.ask.card)), 'no practice copy is promised or mentioned');
+        assert.ok(!/\bsince\b[^.]*\bbecause\b/.test(live.ask.card.options[0].description), 'one reason, not two run together');
+        assert.deepEqual(await answer(live.ask.card, LIVE_DATA.yes), []);
+        assert.equal(answersFor(runId)['4.live-data'].label, LIVE_DATA.yes);
+      }
 
       // Every answer in: the step settles, with no Go ahead, its record in the journal.
-      const done = await plan(4);
+      const done = phase === 'launched' ? live : await plan(4);
       assert.deepEqual(done, { ok: true, done: true });
       const settled = readJournal().runs.find((r) => r.id === runId);
       assert.equal(typeof settled.steps[4].doneAt, 'string');
@@ -233,7 +236,7 @@ test('a real-users answer given again keeps the description, and the phase it re
     // Step 3's question answered again, the other way, a minute later: the description stands and no card asks it again.
     answerStep3(folder, { realUsers: REAL_USERS.yes, at: new Date(T0.getTime() + 60 * 1000) });
     const next = await plan(4);
-    assert.equal(next.ask.id, 'live-data');
+    assert.equal(next.ask, undefined, 'real users now: live data is not asked');
     assert.equal(findRun(folder).id !== undefined, true);
     assert.equal(answersFor(findRun(folder).id)['4.product-launched'], undefined);
   });
@@ -312,7 +315,7 @@ test('every card step 4 can ask, in every state it is built in, offers two to fo
             cards.push(got.ask);
             answers[`4.${got.ask.id}`] = { label: got.ask.card.options[0].label, text: null };
           }
-          assert.deepEqual(cards.map((a) => a.id.replace(/^product-.*/, 'product')), ['product', 'live-data', ...(apple ? ['apple-apps'] : [])]);
+          assert.deepEqual(cards.map((a) => a.id.replace(/^product-.*/, 'product')), ['product', ...(realUsers === REAL_USERS.yes ? [] : ['live-data']), ...(apple ? ['apple-apps'] : [])]);
           for (const a of cards) {
             const { question } = composeCard({ ...a.card, kind: 'question', suggest: false });
             assert.ok(question.options.length >= 2 && question.options.length <= 4, `${a.id} offers ${question.options.map((o) => o.label).join(', ')}`);
