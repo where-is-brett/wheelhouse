@@ -546,5 +546,6 @@ test('the playbook never asks the director for a command name, and checks for a 
   assert.match(rule, /card command lines/);
   assert.match(rule, /`decision signed <work id> "<the question>"`/);
   assert.match(rule, /Already approved on <date>/);
+  assert.match(rule, /Already answered on <date>: <the answer>/);
   assert.match(playbook, /`decision signed <work id> "<question>"`/, 'the command is in the list of commands');
 });

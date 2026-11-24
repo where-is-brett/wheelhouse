@@ -99,7 +99,7 @@ import { decisionText } from '../decisions/message.js';
 import { isDecisionCard } from '../decisions/pending.js';
 import { askWhy } from '../decisions/why.js';
 import { typedRepliesIn } from '../decisions/switch.js';
-import { signedDecisionFor } from '../decisions/signed.js';
+import { signedDecisionFor, signedLine } from '../decisions/signed.js';
 import { confirmWords, replyCodeOf } from '../state/card-lines.js';
 import { joinersOf } from '../state/joiners.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
@@ -708,8 +708,7 @@ export function decisionSigned({ cwd, work, question }) {
   const found = projectOf(cwd);
   if (found === null) throw new CliError("This folder isn't a Wheelhouse project");
   const signed = signedDecisionFor(found.project, work, question);
-  if (signed === null) return 'No signed decision on this yet';
-  return `Already approved on ${new Date(signed.at).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}`;
+  return signed === null ? 'No signed decision on this yet' : signedLine(signed);
 }
 
 // One decision's message, to print word for word. Refused when none waits by that number.

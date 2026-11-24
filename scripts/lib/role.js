@@ -4,7 +4,9 @@
 //
 // The foreman has WHEELHOUSE_ROLE=foreman, or a first prompt that begins with the foreman's wake
 // line (a foreman started without an environment of its own gets only that). A builder is known the same
-// way, by a first prompt that begins with the builder's lead line, wherever its folder is. The board-context
+// way, by a first prompt that begins with the builder's lead line, but only in a linked worktree: a builder always
+// stands in one (Wheelhouse's or Desktop's), and in the project's own checkout the words are anyone's to type, so they
+// give nothing and the First Mate's guards stay. The board-context
 // hook sees each session's first prompt and records the role it gives in
 // sessions/<sessionId>/role.json under the Wheelhouse home, once, so a later prompt with the same
 // words changes nothing, and the session start, the usage records and the mod read it back.
@@ -97,7 +99,8 @@ export function sessionRole({ sessionId, env = process.env, prompt, cwd, seat } 
   if (kept !== null && kept !== 'front-desk') return kept;
   // The wake line counts only while no role is recorded, so a recorded front desk is not turned foreman by later words.
   if (kept === null && typeof prompt === 'string' && prompt.startsWith(FOREMAN_PROMPT_LEAD)) return 'foreman';
-  if (kept === null && typeof prompt === 'string' && prompt.startsWith(BUILDER_PROMPT_LEAD)) return 'feature';
+  // The builder lead counts only in a linked worktree: typed in the main checkout it would drop the First Mate's write guards.
+  if (kept === null && typeof prompt === 'string' && prompt.startsWith(BUILDER_PROMPT_LEAD) && inLinkedWorktree(cwd)) return 'feature';
   if (madeFeatureSlug(cwd) !== null) return 'feature';
   if (asideByChoice({ prompt, cwd })) return 'aside';
   return seatRole({ sessionId, cwd, seat });

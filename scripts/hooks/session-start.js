@@ -733,7 +733,9 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
   views ??= localViews(project);
   // A lock that couldn't be kept or taken is judged again by a read, as the guard before every tool judges it: a doubt is not free.
   const free = lockLine === null || (lockSeen.held !== true && up && await lockFreeNow({ client: api, project, left, now, failClosed: true }));
-  const { aside, seatNotes } = await seatOnReadOnlyStart({ project, input, env, now, api, left, up, free, options: seatOptions });
+  const { aside, seatNotes, firstMate } = await seatOnReadOnlyStart({ project, input, env, now, api, left, up, free, options: seatOptions });
+  // The First Mate's card command lines come straight after the tool sheet, as on a start that writes.
+  if (firstMate) notes.unshift(...cardCommandLines(sheet()));
   notes.push(...seatNotes);
   const text = reload({ views, events, stop: stopOf(), notes, feature: madeFeatureSlug(input.cwd), stateRoot: stateDir(project), sheet: sheet(), aside });
   return text === '' ? undefined : answer.context('SessionStart', text);
@@ -745,8 +747,9 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
 // session, with no process recorded (the seat is then free after it has been idle a while). Where another live window holds
 // the seat, the session is told so, and with a helper to open the window, offered the take-over card as text. A session
 // that chose to be an aside, stands in a worktree, was started by a script or has no id takes nothing and is offered no
-// card. Gives { aside, seatNotes }: the aside line (or null), and the lines for the notes. It informs, so anything that fails
-// gives no line.
+// card. Gives { aside, seatNotes, firstMate }: the aside line (or null), the lines for the notes, and whether the session
+// is the First Mate (it stands in the main folder, chose nothing else, and no other live window holds the seat). It
+// informs, so anything that fails gives no line.
 async function seatOnReadOnlyStart({ project, input, env, now, api, left, up, free, options = {} }) {
   const session = input.session_id;
   if (typeof session !== 'string' || session === '') return { aside: null, seatNotes: [] };
@@ -759,7 +762,7 @@ async function seatOnReadOnlyStart({ project, input, env, now, api, left, up, fr
       await left(api.session.seat({ cwd: input.cwd, session, take: true }));
     }
     const seat = readSeat(project, opts);
-    if (!mine || !main || !seat || seat.session === session || (await seatFree(seat, opts))) return { aside: null, seatNotes };
+    if (!mine || !main || !seat || seat.session === session || (await seatFree(seat, opts))) return { aside: null, seatNotes, firstMate: mine && main };
     const card = up && typeof api?.session?.seat === 'function';
     const aside = asideLine({ ago: agoWords(now().getTime() - Date.parse(seat.seenAt)), kind: 'main', card });
     if (card) seatNotes.push(...await seatTakeOverNotes({ seat, now, ask: SEAT_TAKEOVER_WINDOW }));

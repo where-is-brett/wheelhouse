@@ -48,6 +48,7 @@ import { journalFile } from '../../../scripts/lib/setup-run.js';
 import { beforeTimer, nodeStartMs } from '../../helpers/until.js';
 import { searchPathIn } from '../../helpers/env.js';
 import { makeFeatureFolder } from '../../helpers/made-feature.js';
+import { CARD_COMMANDS_LEAD } from '../../../scripts/lib/card-commands.js';
 
 const P = 'owner__name';
 
@@ -1175,6 +1176,32 @@ test('a set-up project\'s session start holds the exact card command lines, and 
     assert.ok(card, 'the card command line is given');
     for (const word of [`\`${command} cards\``, `\`${command} card < <the card's file>\``, `\`${command} again <n>\``]) assert.ok(card.includes(word), word);
     assert.deepEqual(cardCommandLines(['no command here']), []);
+  });
+});
+
+test('the card command lines reach the First Mate on every start: new, resumed, cleared and compacted', async () => {
+  await withHome(async () => {
+    for (const source of ['startup', 'resume', 'clear', 'compact']) {
+      const lines = text(await run(fake(), { env: {} }, { source })).split('\n');
+      assert.equal(lines.filter((l) => l.startsWith(CARD_COMMANDS_LEAD)).length, 1, source);
+    }
+  });
+});
+
+test('on an agent whose hooks only read, the First Mate gets the card command lines and an aside gets none', async () => {
+  await withHome(async () => {
+    const first = text(await readOnly(seatHelper())).split('\n');
+    const command = first.find((l) => l.startsWith('The Wheelhouse command is ')).slice('The Wheelhouse command is '.length);
+    const card = first.filter((l) => l.startsWith(CARD_COMMANDS_LEAD));
+    assert.equal(card.length, 1);
+    assert.ok(card[0].includes(`\`${command} cards\``));
+    assert.ok(first.indexOf(card[0]) === first.indexOf(`The Wheelhouse command is ${command}`) + 1, 'straight after the tool sheet');
+  });
+  await withHome(async () => {
+    putSeat(seatLine('a', 4));
+    const aside = text(await readOnly(seatHelper()));
+    assert.ok(aside.includes(asideFirst('4 minutes ago')));
+    assert.ok(!aside.includes(CARD_COMMANDS_LEAD), 'not for an aside');
   });
 });
 
