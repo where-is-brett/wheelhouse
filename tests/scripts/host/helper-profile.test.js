@@ -10,7 +10,7 @@ import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { profileDir, profileViewsDir, oldProfileDir, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { computerId, profileDir, profileViewsDir, oldProfileDir, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { run } from '../../../scripts/lib/run.js';
 import { readProfileViews } from '../../../scripts/profile/store.js';
 import { listEvents, makeEvent, confirmationFor, writeEvent } from '../../../scripts/state/events.js';
@@ -274,6 +274,40 @@ test('a damaged v0.1.x state clone is marked as failed once, saying why, and the
       const wrote = await c.client.state.write({ project: PROJECT, kind: 'note', data: { text: 'after the failed import' } });
       assert.equal(wrote.ok, true, JSON.stringify(wrote));
       assert.equal((await c.client.state.views({ project: PROJECT })).ok, true);
+    });
+  } finally { await c.close(); }
+});
+
+test('the launch command is kept for this computer, checked, and set only by the director\'s own fresh click (review focus 1)', async () => {
+  const c = await computer();
+  try {
+    await c.as(async () => {
+      const refused = async (answer, pattern) => {
+        const got = await answer;
+        assert.equal(got.ok, false, JSON.stringify(got));
+        assert.match(got.refused, pattern);
+      };
+      const key = `builderLaunch:${computerId()}`;
+      const write = (data) => c.client.profile.write({ kind: 'setting', data });
+      await refused(write({ key: 'builderLaunch:ffffffff', value: [process.execPath] }), /this computer only/);
+      await refused(write({ key, value: ['wrap;rm', 'claude'] }), /can't be/);
+      await refused(write({ key, value: ['no-such-program-here', 'claude'] }), /isn't on this computer's PATH/);
+      // No session, foreman or hook route writes it: the project's record refuses it.
+      await refused(c.client.state.write({ project: PROJECT, kind: 'setting', data: { key, value: [process.execPath] } }), /only the director's own click/);
+
+      // Written, it does nothing until the director's click confirms it.
+      const wrote = await write({ key, value: [process.execPath, 'claude'] });
+      assert.equal(wrote.ok, true, JSON.stringify(wrote));
+      assert.equal((await c.client.profile.views({})).views.settings[key], undefined);
+      const setting = listEvents(profileDir(), { report: () => {} }).find((e) => e.id === wrote.id);
+      assert.equal((await c.client.profile.record({ event: makeEvent({ ...confirmationFor(setting), now: c.now }) })).ok, true);
+      assert.deepEqual((await c.client.profile.views({})).views.settings[key].value, [process.execPath, 'claude']);
+
+      // A write left standing for an hour is not confirmed by a click made now.
+      const old = makeEvent({ kind: 'setting', data: { key, value: [process.execPath, 'claude', '--model', 'x'] }, now: () => new Date(T0.getTime() - 60 * 60 * 1000) });
+      await writeEvent({ event: old, dir: profileDir(), now: c.now });
+      await refused(c.client.profile.record({ event: makeEvent({ ...confirmationFor(old), now: c.now }) }), /only the director's own click/);
+      assert.deepEqual((await c.client.profile.views({})).views.settings[key].value, [process.execPath, 'claude']);
     });
   } finally { await c.close(); }
 });

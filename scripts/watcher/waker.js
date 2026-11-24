@@ -161,7 +161,8 @@ import { readProject } from '../lib/projects.js';
 import { settingsFaultLine } from '../setup/settings-check.js';
 import { clearOtherAgentHolds, hasAgentHolds, recordLift } from '../lineage/check.js';
 import { agentInFolder, agentOfConfig } from '../agents/names.js';
-import { pathWithNode } from '../lib/claude.js';
+import { pathWithNode, resolveClaude } from '../lib/claude.js';
+import { storedLaunch } from '../lib/launch-stored.js';
 import { run as runProgram } from '../lib/run.js';
 import { sameStart } from '../lib/start-time.js';
 import { pidAlive, processStartTimes, processStartTime } from '../lib/process-start.js';
@@ -744,7 +745,8 @@ export function makeWaker({
   locate = locateFeature(project),
   windowsBuilds = null,
   labelGuarded = null,
-  claude = null,
+  claude: givenClaude = null,
+  launchWords = storedLaunch,
   sessions = null,
   baseEnv: givenEnv = process.env,
   platform = process.platform,
@@ -757,6 +759,9 @@ export function makeWaker({
   beforeCopy = () => {},
 }) {
   if (shape !== 1 && shape !== 2) throw new Error('The watcher shape is 1 or 2');
+  // Where `claude` is, for the calls built below: the one given, else the launch command saved for this computer (read at each
+  // start, so one the director has just saved or mended counts), else none, which the adapter finds as it always has.
+  let claude = givenClaude;
   // The configuration from the default branch, as last read: `setConfig` replaces it, so every wake after a change
   // that merged (a model, a pin, a mode) starts its session by the new one.
   let config = givenConfig;
@@ -1224,6 +1229,11 @@ export function makeWaker({
   async function launch({ target, cwd, check, build, file, entries = [], sessionId = null, beforeRun = () => {}, afterRecord = () => {} }) {
     const adapter = sessionsOf();
     check(adapter);
+    // A launch command that fails a check is named and no session starts; none saved leaves the start as it was.
+    if (givenClaude === null && adapter.takesLaunch === true) {
+      const words = launchWords();
+      claude = words === null ? null : resolveClaude({ platform, env: baseEnv, launch: words });
+    }
     if (typeof adapter.prepare === 'function') {
       let prepared;
       try {

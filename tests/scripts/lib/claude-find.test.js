@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveClaude, resolveCommand, recordClaudePath, pathWithClaude, readRecordedClaude, recordedClaudeFault } from '../../../scripts/lib/claude.js';
+import { spawnSync } from 'node:child_process';
+import { invocation, resolveClaude, resolveCommand, recordClaudePath, pathWithClaude, readRecordedClaude, readRecordedLaunch, recordedClaudeFault } from '../../../scripts/lib/claude.js';
+import { featureStartCall } from '../../../adapters/claude-code/sessions.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 const has = (...files) => (file) => files.includes(file);
@@ -81,4 +83,95 @@ test('a damaged claude-path.json reads as unknown and is named, never as a path 
   fs.writeFileSync(path.join(home, 'claude-path.json'), '{"path":"/a/claude"}');
   assert.equal(readRecordedClaude({ WHEELHOUSE_HOME: home }), '/a/claude');
   assert.equal(recordedClaudeFault(), null);
+});
+
+// A fake wrapper: a small Node script in a temp folder that prints its arguments and "ready".
+function fakeWrapper() {
+  const dir = tempFolder('wh-wrapper-');
+  const file = path.join(dir, 'wrap');
+  fs.writeFileSync(file, `#!${process.execPath}\nconsole.log(JSON.stringify(process.argv.slice(2)));\nconsole.log('ready');\n`);
+  fs.chmodSync(file, 0o755);
+  return { dir, file };
+}
+
+test('with a launch, resolveClaude runs the wrapper with shell false and Wheelhouse\'s arguments after its words', () => {
+  const { dir, file } = fakeWrapper();
+  const resolved = resolveClaude({ platform: process.platform, env: { PATH: `${dir}:/usr/bin`, HOME: '/Users/x' }, launch: ['wrap', 'claude', '--model', 'x'], recordedLaunch: () => null });
+  assert.deepEqual(resolved, { kind: 'direct', file, command: file, args: ['claude', '--model', 'x'] });
+  const call = invocation(resolved, ['--session-id', 'abc'], ['--permission-mode', 'auto'], 'do the work');
+  assert.equal(call.file, file);
+  assert.deepEqual(call.args, ['claude', '--model', 'x', '--session-id', 'abc', '-p', 'do the work', '--permission-mode', 'auto']);
+  assert.equal(call.verbatim, false);
+  const ran = spawnSync(call.file, call.args, { shell: false, encoding: 'utf8' });
+  assert.equal(ran.status, 0, ran.stderr);
+  const [printed, ready] = ran.stdout.trim().split('\n');
+  assert.deepEqual(JSON.parse(printed), call.args);
+  assert.equal(ready, 'ready');
+});
+
+test('a full path as the first word needs no PATH, and a first word that is not there is named', () => {
+  const { file } = fakeWrapper();
+  assert.equal(resolveClaude({ platform: 'darwin', env: { PATH: '/usr/bin' }, launch: [file, 'claude'], recordedLaunch: () => null }).file, file);
+  assert.throws(() => resolveClaude({ platform: 'darwin', env: { PATH: '/usr/bin' }, launch: ['nowrap', 'claude'], recordedLaunch: () => null }), /launch command can't be used.*isn't on this computer's PATH/);
+  assert.throws(() => resolveClaude({ platform: 'darwin', env: { PATH: '/usr/bin' }, launch: ['wrap;rm', 'claude'], recordedLaunch: () => null }), /launch command can't be used/);
+});
+
+test('a .cmd wrapper on Windows goes through cmd.exe /d /s /c with every word quoted by quoteForCmd', () => {
+  const exists = has('C:\\bin\\wrap.cmd');
+  const resolved = resolveClaude({ platform: 'win32', env: { Path: 'C:\\bin' }, exists, launch: ['wrap', 'claude', 'my words'], recordedLaunch: () => null });
+  assert.deepEqual(resolved, { kind: 'cmd', file: 'C:\\bin\\wrap.cmd', command: 'C:\\bin\\wrap.cmd', args: ['claude', 'my words'] });
+  const call = invocation(resolved, [], ['--permission-mode', 'auto'], 'the prompt');
+  assert.equal(call.file, 'cmd.exe');
+  assert.deepEqual(call.args, ['/d', '/s', '/c', '"C:\\bin\\wrap.cmd claude "my words" -p --permission-mode auto"']);
+  assert.equal(call.input, 'the prompt');
+  assert.equal(call.verbatim, true);
+  // A word cmd.exe can't be given safely is named, never swallowed, even when it got past the split.
+  const refused = { ...resolved, args: ['claude', 'a%PATH%'] };
+  assert.throws(() => invocation(refused, [], [], 'p'), /launch command can't be passed to cmd\.exe safely/);
+  assert.throws(() => invocation({ ...resolved, args: ['C:\\dir\\ '.trimEnd() + ' x\\'] }, [], [], 'p'), /launch command can't be passed to cmd\.exe safely/);
+});
+
+test('a .exe wrapper on Windows is started directly, and a .ps1 one is refused', () => {
+  const exists = has('C:\\Program Files\\wrap\\wrap.exe');
+  const resolved = resolveClaude({ platform: 'win32', env: { Path: 'C:\\x' }, exists, launch: ['C:\\Program Files\\wrap\\wrap.exe', 'claude'], recordedLaunch: () => null });
+  assert.equal(resolved.kind, 'direct');
+  assert.deepEqual(invocation(resolved, [], [], 'p').args, ['claude', '-p', 'p']);
+  assert.throws(() => resolveClaude({ platform: 'win32', env: { Path: 'C:\\x' }, exists: () => true, launch: ['C:\\w\\wrap.ps1'], recordedLaunch: () => null }), /`\.cmd` or `\.exe`/);
+});
+
+test('without a launch the arguments are as they were, and recorded launch words stand in only for the same words', () => {
+  assert.deepEqual(invocation({ kind: 'direct', file: 'claude' }, ['--a'], ['--b'], 'p').args, ['--a', '-p', 'p', '--b']);
+  const env = { PATH: '/usr/bin', HOME: '/Users/x' };
+  const kept = { words: ['wrap', 'claude'], file: '/opt/w/wrap' };
+  assert.equal(resolveClaude({ platform: 'darwin', env, exists: has('/opt/w/wrap'), launch: ['wrap', 'claude'], recordedLaunch: () => kept }).file, '/opt/w/wrap');
+  assert.throws(() => resolveClaude({ platform: 'darwin', env, exists: has('/opt/w/wrap'), launch: ['wrap', 'other'], recordedLaunch: () => kept }), /isn't on this computer's PATH/);
+});
+
+test('recordClaudePath records the resolved launch with the path, and readRecordedLaunch reads it back', () => {
+  const { dir, file } = fakeWrapper();
+  const home = tempFolder('wh-launch-home-');
+  const env = { PATH: `${dir}:/usr/bin`, HOME: home, WHEELHOUSE_HOME: home };
+  assert.equal(recordClaudePath({ platform: 'darwin', env, exists: (f) => f === file || f === '/usr/bin/claude', launch: ['wrap', 'claude'] }), '/usr/bin/claude');
+  assert.deepEqual(readRecordedLaunch(env), { words: ['wrap', 'claude'], file });
+  assert.equal(readRecordedClaude(env), '/usr/bin/claude');
+  // A launch that fails a check is not recorded.
+  recordClaudePath({ platform: 'darwin', env, exists: (f) => f === file || f === '/usr/bin/claude', launch: ['wrap;x'] });
+  assert.equal(readRecordedLaunch(env), null);
+  // With no claude on the PATH, the wrapper alone is recorded.
+  assert.equal(recordClaudePath({ platform: 'darwin', env, exists: (f) => f === file, launch: ['wrap', 'claude'] }), null);
+  assert.deepEqual(readRecordedLaunch(env), { words: ['wrap', 'claude'], file });
+});
+
+test('sessionEnv still drops ANTHROPIC_BASE_URL with a launch command (review focus 1)', () => {
+  const env = { PATH: '/usr/bin', ANTHROPIC_BASE_URL: 'https://gateway.example', CLAUDE_CODE_ENTRYPOINT: 'cli', ANTHROPIC_API_KEY: 'k' };
+  const { dir } = fakeWrapper();
+  const call = featureStartCall({
+    sessionId: 'abc', config: null, prompt: 'p', platform: 'darwin', env: { ...env, PATH: `${dir}:/usr/bin` },
+    claude: resolveClaude({ platform: 'darwin', env: { PATH: `${dir}:/usr/bin` }, launch: ['wrap', 'claude'], recordedLaunch: () => null }),
+  });
+  assert.equal(call.env.ANTHROPIC_BASE_URL, undefined);
+  assert.equal(call.env.CLAUDE_CODE_ENTRYPOINT, undefined);
+  assert.equal(call.env.ANTHROPIC_API_KEY, 'k');
+  assert.equal(call.args[0], 'claude');
+  assert.deepEqual(call.args.slice(1, 5), ['-p', 'p', '--session-id', 'abc']);
 });
