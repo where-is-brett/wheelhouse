@@ -597,6 +597,8 @@ function gitlabWhereAsk(name, { id, refused, remote, known = [], signedIn = [], 
     id,
     typed: true,
     endsBatch: true,
+    // Where the folder already sends its work is the project's own answer, so the director's usual GitLab takes no part in it.
+    ...(remote !== null ? { fromFolder: true } : {}),
     card: {
       level: 2,
       what: `${refused === null ? '' : `${refused}. `}Which GitLab should ${name} go on?`,
@@ -3232,7 +3234,7 @@ export function hostStep({
     },
   };
   // The director's usual answers laid over the step's own plan (scripts/setup/usual.js), and kept at apply.
-  const usualLabels = { keepHere: KEEP_HERE, github: HOST_LABELS.github, gitlab: HOST_LABELS.gitlab, gitlabCom: GITLAB_COM, gitlabComBase: DEFAULT_GITLAB, own: WAYS.own, wheelhouse: WAYS.wheelhouse, asIs: WAYS.asIs };
+  const usualLabels = { keepHere: KEEP_HERE, github: HOST_LABELS.github, gitlab: HOST_LABELS.gitlab, gitlabCom: GITLAB_COM, gitlabComBase: DEFAULT_GITLAB, company: COMPANY_GITLAB, own: WAYS.own, wheelhouse: WAYS.wheelhouse, asIs: WAYS.asIs };
   return {
     ...step,
     plan: (ctx) => planWithUsual({ plan: (c) => step.plan(c), ctx, views, computer: computerId(), labels: usualLabels, defaultBase: DEFAULT_GITLAB }),

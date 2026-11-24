@@ -6,16 +6,20 @@ import {
 } from '../../../scripts/setup/usual.js';
 import { effectiveSettings, settingsText } from '../../../scripts/settings/effective.js';
 import { usualKey } from '../../../scripts/settings/catalogue.js';
+import { openChoices } from '../../../scripts/setup/choices.js';
 
 const COMPUTER = '0a1b2c3d';
 const BASE = 'https://gitlab.com';
-const labels = { keepHere: 'Keep it here', github: 'GitHub', gitlab: 'GitLab', gitlabCom: 'gitlab.com', gitlabComBase: BASE, own: 'My own app', wheelhouse: 'The Wheelhouse app', asIs: 'Use my git as it is' };
+const COMPANY = 'My company\'s GitLab';
+const labels = { keepHere: 'Keep it here', github: 'GitHub', gitlab: 'GitLab', gitlabCom: 'gitlab.com', gitlabComBase: BASE, company: COMPANY, own: 'My own app', wheelhouse: 'The Wheelhouse app', asIs: 'Use my git as it is' };
 const AT = '2026-11-24T10:00:00.000Z';
 const viewsWith = (values, extra = {}) => ({ settings: { ...Object.fromEntries(Object.entries(values).map(([k, v]) => [usualKey(k, COMPUTER), { key: usualKey(k, COMPUTER), value: v }])), ...extra }, unconfirmed: [] });
 const card = (labelsList, recommend = null) => ({ level: 2, what: 'q', why: 'w', options: labelsList.map((label) => ({ label, says: 's' })), recommend, because: 'b', meanwhile: 'm' });
 
-// A step 3 stand-in: host, then GitLab's address, then the connection, then a list.
-function stepThree({ asked = [] } = {}) {
+// A step 3 stand-in, asking as host.js does: host, then which GitLab (a company's asks its address next, as gitlab-address-1,
+// which waits for the director's own answer), then the connection, then a list. `remote`: the folder already sends its work
+// to that GitLab, which the which-GitLab card recommends.
+function stepThree({ asked = [], remote = null } = {}) {
   return async (ctx) => {
     const answer = (id) => ctx.answers[`3.${id}`] ?? null;
     asked.push({ answers: Object.keys(ctx.answers) });
@@ -24,8 +28,12 @@ function stepThree({ asked = [] } = {}) {
     let base;
     if (host === 'gitlab') {
       const where = answer('gitlab-where');
-      if (where === null) return { ask: { id: 'gitlab-where', typed: true, card: card([labels.gitlabCom, 'My company\'s GitLab']) } };
-      base = where.label === labels.gitlabCom ? BASE : where.text;
+      if (where === null) return { ask: { id: 'gitlab-where', typed: true, ...(remote ? { fromFolder: true } : {}), card: card([...(remote ? [remote] : []), labels.gitlabCom, COMPANY], remote) } };
+      if (where.label === COMPANY) {
+        const typed = answer('gitlab-address-1');
+        if (typed === null) return { ask: { id: 'gitlab-address-1', typed: true, waits: true, card: card([labels.gitlabCom, 'Go back']) } };
+        base = typed.text;
+      } else base = where.label === labels.gitlabCom ? BASE : where.label === remote ? `https://${remote}` : where.text;
     }
     if (host === 'local') return { changes: [{ kind: 'host', target: 'local', action: 'connection', mode: 'none' }] };
     const way = answer('connection-abc');
@@ -57,7 +65,40 @@ test('"Use my usual" records each answer as chosen, marked from usual, and skips
   assert.equal(got.ask, undefined);
   assert.deepEqual(got.changes, [{ kind: 'host', target: 'gitlab', action: 'connection', mode: 'as-is', base: 'https://gitlab.example.org' }]);
   const last = seen.at(-1).answers;
-  assert.deepEqual(last.sort(), ['3.connection-abc', '3.gitlab-where', '3.host', `3.${USUAL_ID}`].sort());
+  assert.deepEqual(last.sort(), ['3.connection-abc', '3.gitlab-address-1', '3.gitlab-where', '3.host', `3.${USUAL_ID}`].sort());
+});
+
+test('a company\'s GitLab is taken as host.js asks it: My company\'s GitLab, then its address typed', async () => {
+  const usual = { host: 'gitlab', gitlabBase: 'https://gitlab.example.org', gitRoute: 'own' };
+  const seen = [];
+  await run({ answers: { [`3.${USUAL_ID}`]: { label: USE_USUAL, text: null, at: AT } } }, usual, async (ctx) => { seen.push(ctx.answers); return stepThree()(ctx); });
+  const last = seen.at(-1);
+  assert.equal(last['3.gitlab-where'].label, COMPANY);
+  assert.deepEqual([last['3.gitlab-address-1'].label, last['3.gitlab-address-1'].text, last['3.gitlab-address-1'].from], [null, 'https://gitlab.example.org', 'usual']);
+});
+
+test('the folder\'s own GitLab wins over the usual one: the which-GitLab card is asked', async () => {
+  const usual = { host: 'gitlab', gitlabBase: BASE };
+  const got = await run({ answers: { [`3.${USUAL_ID}`]: { label: USE_USUAL, text: null, at: AT }, '3.host': { label: 'GitLab', text: null, at: AT } } }, usual, stepThree({ remote: 'git.example.org' }));
+  assert.equal(got.ask.id, 'gitlab-where');
+  assert.equal(got.ask.card.recommend, 'git.example.org');
+});
+
+test('the one card lists the usual answers as its choices: host, address and connection each have a line to stand for', async () => {
+  const usual = { host: 'gitlab', gitlabBase: 'https://gitlab.example.org', gitRoute: 'own' };
+  const step = { n: 3 };
+  const planOf = (s, answers) => planWithUsual({ plan: stepThree(), ctx: { answers, choicesOnly: true }, views: () => viewsWith(usual), computer: COMPUTER, labels, defaultBase: BASE });
+  const list = await openChoices({ steps: [step], run: null, answers: {}, planOf });
+  assert.deepEqual(list.map((c) => [c.id, c.label, c.text ?? null]), [
+    [USUAL_ID, USE_USUAL, null],
+    ['host', 'GitLab', null],
+    ['gitlab-where', COMPANY, null],
+    ['gitlab-address-1', null, 'https://gitlab.example.org'],
+    ['connection-abc', labels.asIs, null],
+  ]);
+  // Customise's own answer wins over the usual one.
+  const mine = await openChoices({ steps: [step], run: null, answers: { [`3.${USUAL_ID}`]: { label: USE_USUAL, text: null, at: AT }, '3.host': { label: 'GitHub', text: null, at: AT } }, planOf });
+  assert.deepEqual(mine.map((c) => [c.id, c.label]), [[USUAL_ID, USE_USUAL], ['host', 'GitHub'], ['connection-abc', labels.asIs]]);
 });
 
 test('"Use my usual" still asks what the usual does not answer', async () => {

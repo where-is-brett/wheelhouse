@@ -76,7 +76,10 @@ export function usualAsk(words) {
 
 // What a question's card takes from the usual answers, given the labels step 3's cards use: { label } or { label: null, text } for
 // a typed answer, or null where the usual says nothing about this question or the card lacks that way. `labels` is
-// { keepHere, github, gitlab, gitlabCom, own, wheelhouse, asIs }.
+// { keepHere, github, gitlab, gitlabCom, gitlabComBase, company, own, wheelhouse, asIs }. A company's GitLab is taken as
+// host.js asks it: "My company's GitLab" on the which-GitLab card, then its address typed on the address card after it. Where the
+// folder already sends its work to a GitLab (`fromFolder` on the card), that is the project's own answer, so the usual takes no
+// part in it.
 export function usualAnswerFor(ask, usual, labels) {
   const id = ask?.id;
   const options = ask?.card?.options;
@@ -87,9 +90,12 @@ export function usualAnswerFor(ask, usual, labels) {
     return label !== undefined && has(label) ? { label } : null;
   }
   if (id === 'gitlab-where') {
-    if (usual.gitlabBase === undefined) return null;
-    if (usual.gitlabBase === labels.gitlabComBase) return has(labels.gitlabCom) ? { label: labels.gitlabCom } : null;
-    return { label: null, text: usual.gitlabBase };
+    if (usual.gitlabBase === undefined || ask.fromFolder === true) return null;
+    const label = usual.gitlabBase === labels.gitlabComBase ? labels.gitlabCom : labels.company;
+    return has(label) ? { label } : null;
+  }
+  if (id === 'gitlab-address-1') {
+    return usual.gitlabBase === undefined || usual.gitlabBase === labels.gitlabComBase ? null : { label: null, text: usual.gitlabBase };
   }
   if (id.startsWith('connection-') && !id.startsWith('connection-stricter-')) {
     // The git route first: "Use my git as it is" is the usual only where the card offers it; Wheelhouse's own route takes the
@@ -177,6 +183,12 @@ export async function planWithUsual({ plan, ctx, views, computer, labels, defaul
     const got = await plan({ ...ctx, answers: current });
     if (got?.ask) {
       const taken = taking && current[`3.${got.ask.id}`] === undefined ? usualAnswerFor(got.ask, usual, labels) : null;
+      // A look at the choices (the one card, Customise) lists each question the usual answers, as the usual answers it, so the
+      // one card has a line for each and its Go ahead stands for them; the run then reads them as given.
+      if (taken !== null && ctx.choicesOnly === true) {
+        const card = typeof taken.label === 'string' ? { ...got.ask.card, recommend: taken.label, because: 'it is your usual on this computer' } : got.ask.card;
+        return { ...got, ask: { ...got.ask, usual: { label: taken.label, text: taken.text ?? null }, card } };
+      }
       if (taken !== null && n < MOST_TAKEN) {
         current = { ...current, [`3.${got.ask.id}`]: { label: taken.label, text: taken.text ?? null, at: chose.at, from: 'usual' } };
         continue;

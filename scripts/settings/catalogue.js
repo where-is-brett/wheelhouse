@@ -147,12 +147,14 @@ export const OWN_GITHUB_APP = { label: 'Your own GitHub App', group: 'advanced',
 // the product, live data, real users, signing apps, protection, Locked, or anything naming a repository. A project's own answer
 // wins inside that project (precedence is unchanged), and nothing is exported, imported or synced.
 export const USUAL_KEY = /^usual\.(host|gitlabBase|gitRoute|connection):[0-9a-f]{8}$/;
-// A GitLab's address alone: https, a host, no sign-in, path, query or fragment, so it can never name a repository.
+// A GitLab's address alone: https, a host, no sign-in, path, query or fragment, so it can never name a repository. It must be
+// the address in its one plain form (as setup reads a typed address, scripts/lib/pasted-address.js), in plain letters with no
+// lookalike from another alphabet, written or encoded (`xn--`).
 const checkBase = (v) => {
-  if (typeof v !== 'string' || v.length > 200) return false;
+  if (typeof v !== 'string' || v.length > 200 || !/^https:\/\/[a-z0-9.:-]+$/.test(v)) return false;
   try {
     const u = new URL(v);
-    return u.protocol === 'https:' && u.host !== '' && u.username === '' && u.password === '' && u.pathname === '/' && u.search === '' && u.hash === '' && !v.endsWith('/');
+    return u.origin === v && u.hostname !== '' && u.port !== '0' && !u.hostname.split('.').some((label) => label.startsWith('xn--'));
   } catch { return false; }
 };
 const WORDS = {

@@ -325,7 +325,11 @@ test('never usual: the product, live data, real users, signs apps, protection, L
     assert.equal(definitionOf(usualKey(name, computer)), undefined, name);
   }
   // an address that names a repository, carries a sign-in, or isn't https is no usual address
-  for (const bad of ['https://gitlab.example.org/group/project', 'https://gitlab.example.org/group/project.git', 'https://me:secret@gitlab.example.org', 'http://gitlab.example.org', 'gitlab.example.org', 'https://gitlab.example.org/', 'https://gitlab.example.org?x=1', 'git@gitlab.example.org:group/project.git', '']) {
+  for (const bad of ['https://gitlab.example.org/group/project', 'https://gitlab.example.org/group/project.git', 'https://me:secret@gitlab.example.org', 'http://gitlab.example.org', 'gitlab.example.org', 'https://gitlab.example.org/', 'https://gitlab.example.org?x=1', 'git@gitlab.example.org:group/project.git', '',
+    'https://gitlab.example.org?', 'https://gitlab.example.org#', 'https://gitlab.example.org#group/project', 'https://@gitlab.example.org', 'https://me@gitlab.example.org',
+    'https://GitLab.Example.org', 'https://gitlab.example.org:443', 'https://gitlab.example.org/.', 'https://gitlab.example.org/%2e', 'ssh://gitlab.example.org', 'file:///gitlab.example.org',
+    'javascript:alert(1)', 'https://gitlab.exаmple.org', 'https://xn--gitlab-exmple-xyz.org', ' https://gitlab.example.org', 'https://gitlab.example.org ', 'https:\\\\gitlab.example.org',
+    'https://gitlab.example.org\\group', 'https://gitlab.example.org:0', 'https://1.2.3.4.5', 'HTTPS://gitlab.example.org']) {
     assert.equal(isAllowed(usualKey('gitlabBase', computer), bad), false, bad);
   }
 });
