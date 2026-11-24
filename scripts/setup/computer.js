@@ -195,7 +195,7 @@ export function lines({ changes, userSettings, kept, route, platform, floor, ter
     out.push(longer
       ? `chat history kept ${RETENTION_DAYS} days${terse >= 3 ? '' : shown(now)}: older chats are deleted${terse >= 3 ? '' : ", and uninstall can't bring them back"}`
       : now === undefined
-        ? `chat history kept ${RETENTION_DAYS} days, as Claude Code already keeps it, written down so it stays; no chats are deleted that weren't going to be`
+        ? `chat history kept ${RETENTION_DAYS} days, which Claude Code already keeps; setup writes it down so it stays`
         : `chat history kept ${RETENTION_DAYS} days${terse >= 3 ? '' : shown(now)}; nothing is deleted`);
   }
   if (has('updates')) {

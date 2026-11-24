@@ -38,7 +38,7 @@ import { HEALTH_STEP, onRunList, stepDone } from '../lib/setup-run.js';
 import { askedRecord, answersFor } from './clicks.js';
 import { macKeepsAway } from '../lib/host-lines.js';
 import { GITLAB_COM, companyAddress, HOST_LABELS, pinOf, repoNamed, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
-import { LIVE_DATA, PRODUCT, SIGNS_APPS, productName } from './questions.js';
+import { LIVE_DATA, PHONE, PRODUCT, SIGNS_APPS, productName } from './questions.js';
 import { FIRST_CHECK_LINE, KEEP_HERE, KEPT_LINE, ONLY_HERE_AFTER, ONLY_HERE_LINE, PUT_ON_GITLAB, STARTED_LINE } from './local.js';
 import { backupNamed } from '../host/local/restore.js';
 import { compactionLine, compactionRules } from '../protection/settings.js';
@@ -81,6 +81,7 @@ export function aboutOf(key) {
   if (id.startsWith('product-')) return 'the description';
   if (id === 'live-data') return 'live data';
   if (id === 'apple-apps') return 'signing Apple apps';
+  if (id === 'phone') return 'phone notifications';
   if (id.startsWith('host-tool-')) return `${id === 'host-tool-gh' ? 'GitHub' : 'GitLab'}'s own tool`;
   return id;
 }
@@ -151,10 +152,10 @@ export async function openChoices({ steps, run, answers, planOf }) {
 const KEPT_ID = /^(?:join|kept|host)(?:-|$)/;
 const BACKUP_ID = /^backup(?:-|$)/;
 // Questions whose card reads the same whatever the director says of where the project is kept.
-const INDEPENDENT_ID = /^(?:real-users|live-data|product-.*)$/;
+const INDEPENDENT_ID = /^(?:real-users|live-data|phone|product-.*)$/;
 // Questions that follow the real-users answer: the description card names it, and live data is not asked of a product with
 // real users. They wait for that answer, so none is asked in a form the answer beside it would change.
-const AFTER_REAL_USERS = /^(?:live-data|product-.*)$/;
+const AFTER_REAL_USERS = /^(?:live-data|phone|product-.*)$/;
 // The choices a click on Put it on GitLab asks: where the project is kept, and that alone. Whether to fetch the host's
 // own tool is asked under a host- id too, but is not where the project is kept: its recommendation stands, named on the card.
 const WHERE_ID = /^(?:join|kept|host)(?:-(?!tool-)|$)/;
@@ -296,10 +297,10 @@ function describedBy(choice) {
 // by token; else a sign-in.
 function goAheadAsks({ keptHere, list, host, phone = false, desktop, done = { tools: false, signedIn: null }, platform }) {
   const text = goAheadAsksHost({ keptHere, list, host, done, phone, desktop, platform });
-  // Step 9 asks the director to try a notification on their phone, unless an earlier setup's test already reached it; away from
-  // Claude Desktop it only asks whether to skip phone notifications, which need it.
+  // Step 9 asks the director to try a notification on their phone only when the phone question was answered to try it (and an
+  // earlier setup's test hasn't already reached it); away from Claude Desktop that takes switches made there.
   if (!phone || (keptHere && done.tools)) return text;
-  return desktop === false ? `${text} Near the end, setup asks whether to skip phone notifications, which need Claude Desktop.` : `${text} Near the end, setup offers a test notification on your phone, which you can skip.`;
+  return desktop === false ? `${text} Near the end, setup tells you what to switch on in Claude Desktop, then sends a test notification.` : `${text} Near the end, setup offers a test notification on your phone, which you can skip.`;
 }
 
 // What may be asked of the director by the system itself: on a Mac, the computer's password; on Windows, Yes when it asks to
@@ -310,7 +311,7 @@ const maybeAsked = (platform) => (platform === 'win32'
 
 function goAheadAsksHost({ keptHere, list, host, done, phone, desktop, platform }) {
   // Setup's tools are done, so the request to allow its command and the password they could need are behind it.
-  if (keptHere) return done.tools ? (phone ? (desktop === false ? 'The only thing left to ask you is whether to skip phone notifications near the end.' : 'The only thing left to ask you is a test notification on your phone near the end, which you can skip.') : 'Nothing more is asked of you here.') : `Apart from Claude Code's own request to allow setup's command, ${platform === 'win32' ? maybeAsked(platform) : 'you may be asked for your computer\'s password.'}`;
+  if (keptHere) return done.tools ? (phone ? (desktop === false ? 'The only thing left to ask you is a test notification on your phone near the end, which needs Claude Desktop.' : 'The only thing left to ask you is a test notification on your phone near the end, which you can skip.') : 'Nothing more is asked of you here.') : `Apart from Claude Code's own request to allow setup's command, ${platform === 'win32' ? maybeAsked(platform) : 'you may be asked for your computer\'s password.'}`;
   const signedIn = done.signedIn !== null && host === (done.signedIn === 'gitlab' ? 'GitLab' : 'GitHub');
   const way = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.label ?? null;
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
@@ -351,15 +352,14 @@ function historyLine(claudeHome) {
 // The card's line of what step 6 does to this computer, naming only what would change (`changing`, the `what` of each change
 // step 6 would make, or null where that can't be told, which names everything); null when nothing changes and step 9 asks
 // nothing. A phone fact comes from Wheelhouse's own records, and says so.
-function computerLine({ changing, claudeHome, pushed, desktop }) {
+function computerLine({ changing, claudeHome, pushed, skipPhone }) {
   const on = (what) => changing === null || changing.includes(what);
   const parts = [];
   if (on('telemetry')) parts.push('usage counted here only');
   if (on('retention')) parts.push(historyLine(claudeHome));
   if (on('updates')) parts.push('Claude Code takes only its well-tried updates');
   if (pushed) parts.push('phone notifications on, since Wheelhouse\'s records show an earlier setup on this computer reached your phone');
-  else if (desktop === false) parts.push('a question about phone notifications, where setup suggests skipping them since they need Claude Desktop');
-  else if (on('push')) parts.push('Claude Code allowed to send phone notifications, which you finish near the end');
+  else if (on('push')) parts.push(skipPhone ? 'Claude Code allowed to send phone notifications, with no phone test now' : 'Claude Code allowed to send phone notifications, which you finish near the end');
   if (parts.length === 0) return null;
   return `On this computer: ${parts.slice(0, -1).join('; ')}${parts.length > 1 ? '; and ' : ''}${parts.at(-1)}.`;
 }
@@ -397,7 +397,7 @@ export function oneCard({ computerChanging = null, folder, list, product, platfo
   if (toRun.includes(3) && product && product.isNew === false && product.host !== 'local') lines.push(`${name} on ${product.host === 'gitlab' ? 'GitLab' : 'GitHub'}, as it is.`);
   // In the card's order: where it is kept, how agents reach it, its phase and data, Locked, the
   // description, then Apple signing.
-  const rank = ({ id }) => ['join', 'host', 'kept', 'branch-', 'project-name', 'connection', 'host-tool-', 'real-users', 'live-data', 'locked', 'product-', 'apple-apps']
+  const rank = ({ id }) => ['join', 'host', 'kept', 'branch-', 'project-name', 'connection', 'host-tool-', 'real-users', 'live-data', 'locked', 'product-', 'apple-apps', 'phone']
     .findIndex((p) => id === p || id.startsWith(p.endsWith('-') ? p : `${p}-`));
   for (const c of [...list].sort((x, y) => rank(x) - rank(y))) {
     const readme = describedBy(c);
@@ -416,7 +416,7 @@ export function oneCard({ computerChanging = null, folder, list, product, platfo
   if (toRun.includes(2) && engineWanted({ platform, hosts })) lines.push(engineLine(undefined, { claudeHome: toRun.includes(6) ? claudeHome : null }));
   // Step 9 asks nothing where an earlier setup's test push reached the phone (`pushed`), so the line doesn't promise a question.
   if (toRun.includes(6)) {
-    const line = computerLine({ changing: computerChanging, claudeHome, pushed, desktop });
+    const line = computerLine({ changing: computerChanging, claudeHome, pushed, skipPhone: list.find((c) => c.id === 'phone')?.label === PHONE.skip });
     if (line !== null) lines.push(line);
   }
   if (toRun.includes(7)) {
@@ -460,7 +460,7 @@ export function oneCard({ computerChanging = null, folder, list, product, platfo
     question,
     header: 'Setup',
     options: [
-      { label: GO_AHEAD, description: `Recommended: setup does all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list), phone: toRun.includes(6) && !pushed, desktop, done, platform })}` },
+      { label: GO_AHEAD, description: `Recommended: setup does all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list), phone: toRun.includes(6) && !pushed && list.find((c) => c.id === 'phone')?.label !== PHONE.skip, desktop, done, platform })}` },
       ...(gitlabOffered ? [{ label: USE_GITLAB, description: 'Keep the project on GitLab instead of this computer. You are asked just that next, and nothing runs until you say Go ahead.' }] : []),
       yours
         ? { label: CHANGE_CHOICE, description: 'See every choice again, and change any before anything runs.' }

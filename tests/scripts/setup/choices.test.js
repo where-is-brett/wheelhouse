@@ -11,7 +11,7 @@ import {
 } from '../../../scripts/setup/choices.js';
 import { stepFourDrift, choiceList } from '../../../scripts/setup/redo.js';
 import { COMPANY_GITLAB, NEW_PRODUCT, HOST_LABELS, WAYS, REAL_USERS, STRICTER } from '../../../scripts/setup/host.js';
-import { LIVE_DATA, PRODUCT } from '../../../scripts/setup/questions.js';
+import { LIVE_DATA, PHONE, PRODUCT } from '../../../scripts/setup/questions.js';
 import { PUT_ON_GITLAB, KEEP_HERE } from '../../../scripts/setup/local.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 
@@ -43,11 +43,14 @@ test('the one card says a compaction rule found is kept, and nothing is said whe
 test('the one card names the phone setting as Claude Desktop\'s alone when the session is a terminal', () => {
   const ask = (desktop) => oneCard({ folder: '/x/t', list: newProductChoices(), product: { isNew: true, host: null, repo: null, name: 't' }, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0, desktop }).card.question;
   assert.match(ask(true), /and Claude Code allowed to send phone notifications, which you finish near the end\./);
-  assert.match(ask(false), /and a question about phone notifications, where setup suggests skipping them since they need Claude Desktop\./);
-  assert.doesNotMatch(ask(false), /allowed to send phone notifications/);
+  // The phone question's answer is on the list: skipped in a terminal (its recommendation), and the plan says no test is run now.
+  const phoneSkipped = [...newProductChoices(), { step: 4, id: 'phone', key: '4.phone', card: { recommend: PHONE.skip, options: [] }, typed: false, writes: undefined, chosen: null, label: PHONE.skip, text: null }];
+  const skipped = oneCard({ folder: '/x/t', list: phoneSkipped, product: { isNew: true, host: null, repo: null, name: 't' }, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0, desktop: false });
+  assert.match(skipped.card.question, /and Claude Code allowed to send phone notifications, with no phone test now\./);
+  assert.doesNotMatch(skipped.card.options[0].description, /phone/);
   const pushed = oneCard({ folder: '/x/t', list: newProductChoices(), product: { isNew: true, host: null, repo: null, name: 't' }, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0, desktop: false, pushed: true }).card.question;
   assert.match(pushed, /and phone notifications on, since Wheelhouse's records show an earlier setup on this computer reached your phone\./);
-  assert.doesNotMatch(pushed, /a question about phone notifications/);
+  assert.doesNotMatch(pushed, /with no phone test now/);
 });
 
 test('the one card for a new product on a Mac says the director\'s approved words, a plain line each', () => {
@@ -432,5 +435,5 @@ test('the computer line names only what step 6 would change, and is left out whe
   assert.match(ask(null), /usage counted here only; 30 days of chat history kept; Claude Code takes only its well-tried updates; and Claude Code allowed to send phone/);
   // A phone fact is Wheelhouse's own record, said so; a terminal's question is kept though nothing else changes.
   assert.equal(ask([], { pushed: true }), '- On this computer: phone notifications on, since Wheelhouse\'s records show an earlier setup on this computer reached your phone.');
-  assert.match(ask([], { desktop: false }), /a question about phone notifications/);
+  assert.match(ask(['push'], { list: [{ step: 4, id: 'phone', key: '4.phone', card: { recommend: PHONE.skip, options: [] }, typed: false, chosen: null, label: PHONE.skip, text: null }] }), /with no phone test now/);
 });

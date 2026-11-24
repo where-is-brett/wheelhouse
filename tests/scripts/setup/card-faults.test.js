@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { projectName, keepName, OTHER_NAME, knownCompanyHosts, gitlabWhere, sameSays, COMPANY_GITLAB, GITLAB_COM, connectionCard, WAYS, REAL_USERS } from '../../../scripts/setup/host.js';
-import { LIVE_DATA, liveDataAnswer } from '../../../scripts/setup/questions.js';
+import { LIVE_DATA, PHONE, liveDataAnswer } from '../../../scripts/setup/questions.js';
 import { starterConfig } from '../../../scripts/setup/project-files.js';
 import { oneCard, aboutOf } from '../../../scripts/setup/choices.js';
 import { KEEP_HERE } from '../../../scripts/setup/local.js';
@@ -80,13 +80,15 @@ test('an answer on the connection card stands whether or not git turned out to h
   assert.equal(sameSays(says(held, WAYS.asIs), says(held, WAYS.narrow)), false);
 });
 
-test('the first card promises no test notification where it says phone notifications are suggested for skipping', () => {
-  const card = (desktop) => oneCard({ folder: tempFolder('wh-phone-'), list: [{ step: 3, id: 'host', key: '3.host', card: { options: [] }, chosen: null, label: KEEP_HERE, text: null }], product: { isNew: true, host: null, name: 'Tides' }, platform: 'win32', toRun: [3, 6], count: 0, desktop, computerChanging: ['push'] }).card;
-  const noDesktop = card(false);
-  assert.match(noDesktop.question, /where setup suggests skipping them since they need Claude Desktop/);
-  assert.doesNotMatch(noDesktop.options[0].description, /test notification/);
-  assert.match(noDesktop.options[0].description, /setup asks whether to skip phone notifications, which need Claude Desktop/);
-  assert.match(card(true).options[0].description, /test notification on your phone/);
+test('the first card promises no test notification where the phone question was answered skip', () => {
+  const phone = (label) => ({ step: 4, id: 'phone', key: '4.phone', card: { options: [] }, chosen: null, label, text: null });
+  const card = (desktop, label) => oneCard({ folder: tempFolder('wh-phone-'), list: [{ step: 3, id: 'host', key: '3.host', card: { options: [] }, chosen: null, label: KEEP_HERE, text: null }, phone(label)], product: { isNew: true, host: null, name: 'Tides' }, platform: 'win32', toRun: [3, 6], count: 0, desktop, computerChanging: ['push'] }).card;
+  const skipped = card(false, PHONE.skip);
+  assert.match(skipped.question, /with no phone test now/);
+  assert.doesNotMatch(skipped.options[0].description, /test notification/);
+  // Tried in a terminal: the end says what to switch on in Claude Desktop, and a test follows.
+  assert.match(card(false, PHONE.try).options[0].description, /what to switch on in Claude Desktop, then sends a test notification/);
+  assert.match(card(true, PHONE.try).options[0].description, /test notification on your phone/);
 });
 
 test('the line before setup is said once, and the first card is its own', () => {

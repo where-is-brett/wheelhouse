@@ -29,6 +29,8 @@ import { scanContent } from '../state/secret-scan.js';
 import { hide } from '../lib/clean.js';
 import { REAL_USERS, LEVELS, productOf, repoName } from './host.js';
 import { readJournal } from './journal.js';
+import { phonePushResult } from '../lib/setup-run.js';
+import { PHONE_REACHES } from '../lib/calm-words.js';
 
 export const LIVE_DATA = Object.freeze({ yes: 'Yes, live data', no: 'No live data' });
 
@@ -37,6 +39,8 @@ export const LIVE_DATA = Object.freeze({ yes: 'Yes, live data', no: 'No live dat
 export function liveDataAnswer(answers = {}) {
   return answers['3.real-users']?.label === REAL_USERS.yes ? { label: LIVE_DATA.yes } : answers['4.live-data'];
 }
+// The phone question, asked with the other choices so the test at the end is only for a director who wants it.
+export const PHONE = Object.freeze({ try: 'Try it at the end', skip: 'Skip for now' });
 export const SIGNS_APPS = Object.freeze({ no: 'No', yes: 'Yes, it signs apps' });
 export const PRODUCT = Object.freeze({ readme: 'The README\'s words', shaping: 'Still taking shape', later: 'Describe it later' });
 // How long a step whose answers write to the project's records waits for step 3 to set them up.
@@ -256,6 +260,27 @@ function appleAppsAsk(name) {
   };
 }
 
+// The fourth question: whether to set up phone notifications. Remote Control and the push options are Claude Desktop's, so a
+// terminal session recommends skipping; the First Mate sets the phone up whenever the director asks. The test itself, which
+// needs the screen locked for a few minutes, is at the very end of setup (step 9), and only when this answer is to try it.
+function phoneAsk(name, { terminal }) {
+  return {
+    id: 'phone',
+    card: {
+      level: 3,
+      what: `Do you want ${name}'s agents to reach your phone? ${PHONE_REACHES} ${terminal ? 'Switching it on needs Claude Desktop.' : 'It takes a few switches in Claude Desktop, then a test with your screen locked for three minutes.'}`,
+      why: 'Without it, you only see what needs you when you look at the chat.',
+      options: [
+        { label: PHONE.try, says: terminal ? 'At the very end setup tells you what to switch on in Claude Desktop, then sends a test.' : 'At the very end, once everything else is done, setup guides you through the switches and sends a test.' },
+        { label: PHONE.skip, says: 'Nothing about your phone is asked at the end. The First Mate sets it up whenever you ask.' },
+      ],
+      recommend: terminal ? PHONE.skip : PHONE.try,
+      because: terminal ? 'phone notifications need Claude Desktop, and this session runs in a terminal' : 'a test is the only way to know it works',
+      meanwhile: MEANWHILE,
+    },
+  };
+}
+
 export function questionsStep() {
   return {
     n: 4,
@@ -283,6 +308,8 @@ export function questionsStep() {
       if (!live) return { ask: liveDataAsk(name, { isNew: newProduct(ctx, project) }) };
       const apple = signsAppleApps(ctx.folder) ? answers['4.apple-apps'] : null;
       if (apple === undefined) return { ask: appleAppsAsk(name) };
+      // Where an earlier setup's test already reached the phone, step 9 settles on that and nothing is asked.
+      if (answers['4.phone'] === undefined && phonePushResult()?.arrived !== true) return { ask: phoneAsk(name, { terminal: ctx.desktop === false }) };
       if (project === null) return ctx.choicesOnly === true ? { wait: 0, why: 'every choice of step 4 is made' } : waitForProject(4);
       return {
         settled: {

@@ -230,7 +230,7 @@ test('path g: a miss at step 3\'s apply withdraws the Go ahead, so the plan is a
     const after = cards.slice(cards.indexOf(plans[2]) + 1);
     assert.ok(after.find((c) => c.kind === 'go-ahead' && c.step === 3)?.covered, 'step 3\'s Go ahead is covered by the new plan');
     assert.match(plans[2].card.question, /^- Already done: setup's tools\.\n- Your GitLab sign-in stays on this computer for later; this project doesn't use it\.$/m);
-    assert.match(plans[2].card.options.find((o) => o.label === 'Go ahead').description, desktop ? /^Recommended: setup does all of this now\. The only thing left to ask you is a test notification on your phone near the end, which you can skip\.$/ : /^Recommended: setup does all of this now\. The only thing left to ask you is whether to skip phone notifications near the end\.$/);
+    assert.match(plans[2].card.options.find((o) => o.label === 'Go ahead').description, desktop ? /^Recommended: setup does all of this now\. The only thing left to ask you is a test notification on your phone near the end, which you can skip\.$/ : /^Recommended: setup does all of this now\. Nothing more is asked of you here\.$/);
     // Step 4's questions are asked before the plan, so nothing is asked after the Go ahead, and the plan says what they settled.
     assert.deepEqual(after.filter((c) => c.kind === 'question' && c.step !== 9).map((c) => c.id), [], 'no question card follows the second plan\'s Go ahead, bar the phone test');
     const before = cards.slice(0, cards.indexOf(plans[2]));
@@ -298,7 +298,7 @@ test('path a: Customise groups the questions that do not depend on each other, a
   assert.deepEqual(first.map((c) => c.id), ['real-users', 'join']);
   assert.ok(first.every((c) => c.call.of === 2));
   const usersAt = cards.findIndex((c) => c.id === 'real-users');
-  for (const id of [/^product-/, /^live-data$/]) assert.ok(cards.findIndex((c) => id.test(c.id)) > usersAt, `${id} is asked after real users`);
+  for (const id of [/^product-/, /^live-data$/, /^phone$/]) assert.ok(cards.findIndex((c) => id.test(c.id)) > usersAt, `${id} is asked after real users`);
   // The project's name is asked with the connection, once the host is known.
   const named = cards.find((c) => c.id === 'project-name');
   assert.match(named.card.question, /What should the new project on GitLab be called\?/);

@@ -819,7 +819,7 @@ test('the history line says a deletion only where a longer limit of the director
   const retention = [{ kind: 'json-key', what: 'retention', key: ['cleanupPeriodDays'], after: RETENTION_DAYS }];
   const said = (userSettings) => lines({ changes: retention, userSettings, kept: [], route: 'user-settings', platform: 'win32', floor: '2.1.299' }).join('\n');
   assert.doesNotMatch(said({}), /deleted, and|older chats are deleted/);
-  assert.match(said({}), /as Claude Code already keeps it/);
+  assert.match(said({}), /which Claude Code already keeps/);
   assert.match(said({ cleanupPeriodDays: 365 }), /\(now 365\): older chats are deleted, and uninstall can't bring them back/);
   assert.match(said({ cleanupPeriodDays: 7 }), /\(now 7\); nothing is deleted/);
 });
