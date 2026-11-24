@@ -196,8 +196,8 @@ function productAsk(name, { described, realUsers }) {
   const entry = (plain) => ({ kind: 'glossary', data: { term: name, plain } });
   const shaping = 'A new product, still taking shape.';
   const options = [
-    described === null ? { label: PRODUCT.shaping, says: `Setup records "${shaping}" as its description, so agents know it is new. You can replace it by telling the First Mate, any time.` } : { label: PRODUCT.readme, says: `"${described}"` },
-    { label: PRODUCT.later, says: 'Setup records no description at all, not even that it is new. You can give one to the First Mate any time.' },
+    described === null ? { label: PRODUCT.shaping, says: `Setup records "${shaping}" as its description, so agents know it is new. You can replace it by telling the First Mate, your assistant in this chat, any time.` } : { label: PRODUCT.readme, says: `"${described}"` },
+    { label: PRODUCT.later, says: 'Setup records no description at all, not even that it is new. You can give one to the First Mate, your assistant in this chat, any time.' },
   ];
   return {
     id: `product-${phase}`,
@@ -272,7 +272,7 @@ function phoneAsk(name, { terminal }) {
       why: 'Without it, you only see what needs you when you look at the chat.',
       options: [
         { label: PHONE.try, says: terminal ? 'At the very end setup tells you what to switch on in Claude Desktop, then sends a test.' : 'At the very end, once everything else is done, setup guides you through the switches and sends a test.' },
-        { label: PHONE.skip, says: 'Nothing about your phone is asked at the end. The First Mate sets it up whenever you ask.' },
+        { label: PHONE.skip, says: 'Nothing about your phone is asked at the end. Your assistant in this chat, the First Mate, sets it up whenever you ask.' },
       ],
       recommend: terminal ? PHONE.skip : PHONE.try,
       because: terminal ? 'phone notifications need Claude Desktop, and this session runs in a terminal' : 'a test is the only way to know it works',

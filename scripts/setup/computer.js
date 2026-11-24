@@ -351,6 +351,12 @@ export function computerStep({
       const { changes } = await world(ctx);
       return [...new Set(changes.map((c) => c.what))];
     },
+    // The other coding agents installed on this computer whose question step 6 has still to ask (their labels), so the one card can say
+    // the question is coming and the director's Go ahead is not taken to cover it.
+    otherAgents(ctx) {
+      if (agentChosen(ctx.answers) !== null) return [];
+      return otherAgentsFound({ platform: ctx.platform ?? process.platform, env, ...(exists === undefined ? {} : { exists }) }).map((f) => f.label);
+    },
     async plan(ctx) {
       // Where another agent's command line is installed, which agent builds here is asked first, on every setup run
       // (scripts/agents/setup-parts.js); a computer with none asks nothing. A chosen agent that is not signed in waits.

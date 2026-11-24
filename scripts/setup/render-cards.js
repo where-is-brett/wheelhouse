@@ -293,6 +293,7 @@ async function realSteps() {
   const fresh = (made, n) => ({
     n, title: SETUP_TITLES[n], long: made().long, after: made().after, asksDuring: made().asksDuring,
     plan: (ctx) => made().plan(ctx), apply: (ctx, changes) => made().apply(ctx, changes),
+    ...(made().otherAgents === undefined ? {} : { otherAgents: (ctx) => made().otherAgents(ctx) }),
   });
   const git = () => ({ ok: true, found: true, path: world().platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : '/usr/bin/git' });
   const via = () => ({ run: fakeRun(world()), curl: 'curl', proxy: null, caFile: null, platform: world().platform });

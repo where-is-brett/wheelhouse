@@ -378,7 +378,7 @@ export function setupTime(toRun, list = []) {
 
 // `done` is what an earlier pass of this run has already done, when the card is asked again after step 3 stopped: { tools, signedIn },
 // `signedIn` the host ('github' or 'gitlab') setup signed in to, or null.
-export function oneCard({ computerChanging = null, folder, list, product, platform, toRun, count, facts = null, claudeHome = null, hosts, desktop, pushed = false, done = { tools: false, signedIn: null } }) {
+export function oneCard({ computerChanging = null, otherAgents = [], folder, list, product, platform, toRun, count, facts = null, claudeHome = null, hosts, desktop, pushed = false, done = { tools: false, signedIn: null } }) {
   const name = product?.name ?? productName(folder);
   // Only the health check left, nothing to choose: a run parked near its end (one v0.1.1 left at
   // its phone card, carried on after the update), whose card names what is left.
@@ -414,6 +414,8 @@ export function oneCard({ computerChanging = null, folder, list, product, platfo
   if (keptHere && toRun.includes(3) && !fs.existsSync(path.join(folder, '.git'))) lines.push(STARTED_LINE('main'));
   // The plugin's update is step 6's, so the line names it only while step 6 is still to run.
   if (toRun.includes(2) && engineWanted({ platform, hosts })) lines.push(engineLine(undefined, { claudeHome: toRun.includes(6) ? claudeHome : null }));
+  // Another coding agent installed here is asked about at step 6, which the Go ahead does not cover, so the plan says so.
+  if (toRun.includes(6) && otherAgents.length > 0) lines.push(`${otherAgents.join(' and ')} ${otherAgents.length === 1 ? 'is' : 'are'} installed here as well as Claude Code. Setup asks which should do the building (Claude Code is the default), as one question at step 6.`);
   // Step 9 asks nothing where an earlier setup's test push reached the phone (`pushed`), so the line doesn't promise a question.
   if (toRun.includes(6)) {
     const line = computerLine({ changing: computerChanging, claudeHome, pushed, skipPhone: list.find((c) => c.id === 'phone')?.label === PHONE.skip });

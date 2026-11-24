@@ -91,11 +91,11 @@ function readyAsk(id, { terminal = false, round = 0 } = {}) {
         + `Then ${terminal ? 'choose' : 'click'} Ready and ${LOCK}`,
       why: 'Only you can do these.',
       options: terminal ? [
-        { label: READY.skip, says: 'Setup carries on without your phone; the First Mate can set it up later.' },
+        { label: READY.skip, says: 'Setup carries on without your phone; ask here to set it up later.' },
         { label: READY.ready, says: `Setup sends a test ${MINUTES} later and asks if it arrived.` },
       ] : [
         { label: READY.ready, says: `Setup sends a test ${MINUTES} later and asks if it arrived.` },
-        { label: READY.skip, says: 'Setup carries on without your phone; the First Mate can set it up later.' },
+        { label: READY.skip, says: 'Setup carries on without your phone; ask here to set it up later.' },
       ],
       // Remote Control and the push options are Claude Desktop's settings, so a terminal session recommends the way it can finish.
       recommend: terminal ? READY.skip : READY.ready,
