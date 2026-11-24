@@ -60,6 +60,8 @@ A card's JSON is `kind`, `level`, `what`, `why`, `options` (each `label` and `sa
 
 After a commit, an answered card, the end of a step, or the context warning, keep your session note: four lines (the task, what is done, what is next, the decisions open) under 1,200 characters, written with the Write tool to `session-note.txt` in your scratchpad folder, then `<the Wheelhouse command> note < "<your scratchpad>/session-note.txt"`.
 
+**Ask a card exactly as the command printed it.** Never write a card, or any `.json` file in `.wheelhouse/work/`, yourself: the hook refuses it, and a card of your own is refused by the command. Ask the `questions` it printed; where your clickable-question tool can't be loaded, put its `inReply` text in your reply, word for word. If nothing printed, run the command again.
+
 An approval already waiting is asked with `cards` or `again <n>`, never composed afresh. What it prints is the answer: give your clickable-question tool the `questions` it prints, or the one `question` as `questions: [question]`, as they are. When your clickable-question tool can't be loaded (your tool-search tool, if you have one, finds none), put each card in your reply as it was printed, word for word, taking its text from `inReply` where that is printed, set line and reply code with it, so the director can answer by the code; never in your own words. `alreadyAsked` means the director has had that card: don't ask it again. A refusal names what is missing; give it, or say in one plain line what couldn't be done. `problems` are for you: when one says a question from the build couldn't be made a card, tell the director in one plain line that a question from the build couldn't be shown as a card.
 
 ## Each turn, in order
