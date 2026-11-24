@@ -49,7 +49,6 @@ import { recordClaudePath } from '../lib/claude.js';
 import { storedLaunch } from '../lib/launch-stored.js';
 import { helperClient } from '../host/helper-client.js';
 import { isOlder } from '../host/retire-helper.js';
-import { caEnv } from '../host/company-ca.js';
 import { stopState, NO_HELPER_STOP } from '../lib/stop.js';
 import { jobFolder, wheelhouseHome, stateDir, computerId } from '../lib/paths.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../lib/platform-lines.js';
@@ -70,9 +69,7 @@ import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
 import { readProject } from '../lib/projects.js';
 import { ensureIgnored } from '../feature/files.js';
 import { run as runProgram } from '../lib/run.js';
-import {
-  LOW_NODE_SCRIPT, guardedReady, lowNodeReady, needsSelfTest, selfTest, SELF_TEST_MS,
-} from '../windows/low.js';
+// The Guarded runner's copy of Node.js and its self-test (scripts/windows/low.js) are read where they run, which is Windows only.
 // The lineage check (scripts/lineage/check.js) is read where it runs, which is a full session start's: one that only reads never loads it.
 const lineageModule = () => import('../lineage/check.js');
 import { claudeCodeOf } from '../lineage/provenance-block.js';
@@ -319,6 +316,7 @@ async function ensureHelper(client, { spawn, pluginRoot, waitMs, pause, end }) {
     fs.mkdirSync(home, { recursive: true });
     // Read when the helper starts, which is rare: the session start's other work doesn't need it.
     const { standardEnv } = await import('../lib/standard-env.js');
+    const { caEnv } = await import('../host/company-ca.js');
     const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'host', 'helper-main.js')], { cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore', env: { ...standardEnv({ home }), ...caEnv(home) } });
     child?.unref?.();
     child?.on?.('error', () => {});
@@ -832,12 +830,12 @@ async function started(input, deps) {
     platform = process.platform, now = () => new Date(), stopState: stopOf = stopState,
     self = SELF, pluginRoot = PLUGIN_ROOT, startWaitMs = START_WAIT_MS + helperGrace(), totalMs = TOTAL_MS + helperGrace(), pause = sleep,
     background = async (args) => (await import('../lib/background.js')).startBackground(args), lineage: check, lineageRoot, claudeHome, env = process.env,
-    guardedSelfTest = selfTest, run = runProgram, lowNodeReady: copyReady = lowNodeReady,
+    guardedSelfTest: givenSelfTest, run = runProgram, lowNodeReady: givenCopyReady,
   } = deps;
   // Brings this computer's settings for the project up to date, as a process of its own.
   const refreshLocal = deps.refreshLocal ?? ((folder) => startDetached(spawn, path.join(pluginRoot, LOCAL_REFRESH_SCRIPT), [folder]));
   // Makes the copy of Node.js the Guarded runner starts from, detached, outside this budget.
-  const startLowNodeCopy = deps.startLowNodeCopy ?? (() => startDetached(spawn, path.join(pluginRoot, LOW_NODE_SCRIPT)));
+  const startLowNodeCopy = deps.startLowNodeCopy ?? ((script) => startDetached(spawn, path.join(pluginRoot, script)));
   const found = find(input.cwd, { dir });
   if (!found) {
     const setup = beingSetUp(input.cwd);
@@ -974,15 +972,17 @@ async function started(input, deps) {
   let ready = false;
   if (platform === 'win32') {
     try {
+      const low = await import('../windows/low.js');
+      const guardedSelfTest = givenSelfTest ?? low.selfTest;
       const home = wheelhouseHome();
-      const copied = copyReady({ home });
-      if (!copied) startLowNodeCopy();
+      const copied = (givenCopyReady ?? low.lowNodeReady)({ home });
+      if (!copied) startLowNodeCopy(low.LOW_NODE_SCRIPT);
       const wouldGuard = buildsShown({ views, computer: computerId(), locked, guardedReady: true }).level === 'guarded';
-      const timeoutMs = Math.min(SELF_TEST_MS, end - Date.now());
-      if (copied && (wouldGuard || needsSelfTest({ home, now })) && timeoutMs > 0) {
+      const timeoutMs = Math.min(low.SELF_TEST_MS, end - Date.now());
+      if (copied && (wouldGuard || low.needsSelfTest({ home, now })) && timeoutMs > 0) {
         await guardedSelfTest({ run, home, worktree: input.cwd, now, pluginRoot, timeoutMs });
       }
-      ready = guardedReady({ home, now, platform });
+      ready = low.guardedReady({ home, now, platform });
     } catch { /* not ready */ }
   }
   // The card that offers the lock, when another computer holds it, goes to the front desk only.

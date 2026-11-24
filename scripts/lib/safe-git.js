@@ -17,7 +17,6 @@
 // config for `include`, `includeIf` and `filter` sections (R93, checkRepoConfig in
 // scripts/foreman/act.js) is load-bearing for its worktree and must stay.
 import { run as realRun, withoutGitVars } from './run.js';
-import { revocationFallback } from '../host/company-ca.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -828,7 +827,7 @@ export function safeGit({
       const got = await run(gitPath, args, { timeoutMs, ...rest, cwd, baseEnv: withoutGitVars(), env: callEnv });
       // On Windows, a company's certificate through Windows' store, refused because the network blocks the
       // revocation check, is tried once more with the certificate file (company-ca.js, revocationFallback).
-      const fallback = got?.code !== 0 ? revocationFallback(callEnv, got?.stderr) : null;
+      const fallback = got?.code !== 0 ? (await import('../host/company-ca.js')).revocationFallback(callEnv, got?.stderr) : null;
       return fallback === null ? got : run(gitPath, args, { timeoutMs, ...rest, cwd, baseEnv: withoutGitVars(), env: fallback });
     };
     if (!pushing) return execute(null);
