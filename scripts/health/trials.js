@@ -81,7 +81,7 @@ export async function runTrials(deps = {}) {
   const cwd = deps.cwd ?? process.cwd();
   const home = deps.home ?? os.homedir();
   const fs = deps.fs ?? nodeFs;
-  const spawn = deps.spawn ?? ((file, args) => spawnSync(file, args, { encoding: 'utf8', timeout: 15000 }));
+  const spawn = deps.spawn ?? ((file, args) => spawnSync(file, args, { encoding: 'utf8', timeout: 15000, windowsHide: true }));
   const client = deps.client;
   const mergeClient = deps.mergeClient ?? client;
   const lines = [];

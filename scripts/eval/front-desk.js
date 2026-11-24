@@ -50,7 +50,7 @@ export { briefHash };
 
 function git(dir, ...args) {
   return execFileSync('git', ['-c', 'user.name=Wheelhouse eval', '-c', 'user.email=eval@wheelhouse.invalid', ...args], {
-    cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
   }).trim();
 }
 

@@ -571,6 +571,30 @@ test('the CLI harness\'s free-text field is typed words, and a string field with
   };
   assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string', title: 'Work' } }, required: ['work'] }), true);
   assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string' } } }), true);
-  assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string', oneOf: [{ const: 'Approve', title: 'Approve' }, { const: 'Not now', title: 'Not now' }] } } }), undefined);
-  assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string', enum: ['Approve', 'Not now'] } } }), undefined);
+  assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string', oneOf: [{ const: 'Approve', title: 'Approve' }, { const: 'Not now', title: 'Not now' }] } } }), false);
+  assert.equal(await freeOf({ type: 'object', properties: { work: { type: 'string', enum: ['Approve', 'Not now'] } } }), false);
+  // The two shapes the laptop re-run sent: only `message` and `requestedSchema` (24 November 2026), with a default as well.
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { type: 'string', oneOf: [{ const: 'Approve', title: 'Approve' }, { const: 'Not now', title: 'Not now' }], default: 'Approve' } } }), false);
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { type: 'string', enum: ['Approve', 'Not now'], default: 'Approve' } } }), false);
+  // One field with no list of options lets words be typed; a list on another field doesn't change that.
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { type: 'string', enum: ['A', 'B'] }, note: { type: 'string' } } }), true);
+  assert.equal(await freeOf({ type: 'object', properties: {} }), undefined);
+  // Shapes that look like a list and aren't: a oneOf entry with no const takes any words, an empty list, an anyOf beside the
+  // list, a number field (a typed answer even with the free-input flag off), and a field that isn't an object.
+  const listed = { type: 'string', enum: ['Approve', 'Not now'] };
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { type: 'string', oneOf: [{ const: 'Approve' }, { type: 'string' }] } } }), true);
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { oneOf: [{ const: 'Approve' }, { title: 'Other' }] } } }), true);
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { type: 'string', enum: [] } } }), true);
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { type: 'string', oneOf: [] } } }), true);
+  assert.equal(await freeOf({ type: 'object', properties: { answer: { ...listed, anyOf: [{ type: 'string' }] } } }), true);
+  assert.equal(await freeOf({ type: 'object', properties: { answer: listed, count: { type: 'number' } } }), true);
+  assert.equal(await freeOf({ type: 'object', properties: { answer: listed, odd: 'x' } }), true);
+  assert.equal(await freeOf({ type: 'object', properties: { answer: listed, sure: { type: 'boolean' } } }), undefined, 'a yes-or-no is not typed, nor a list');
+  assert.equal(await freeOf({ type: 'object', properties: [listed] }), undefined);
+});
+
+test('the free-input flag off does not hide a schema field that takes typed words or a number', async () => {
+  const r = recording();
+  await run('preToolUse', call('ask_user', { message: 'What next?', allowFreeformInput: false, requestedSchema: { properties: { answer: { type: 'string', enum: ['A'] }, count: { type: 'integer' } } } }), { steps: r.steps, c6: true });
+  assert.equal(r.calls.find((c) => c.name === 'cardCheck').input.tool_input.questions[0].allowFreeformInput, true);
 });
