@@ -6,7 +6,7 @@
 // commands, and the briefing on the first prompt after a gap of `briefingGapHours`. The briefing says
 // when the delegation review is due, worked out by the desk from the project's events, since the
 // front desk can't. What it judges about the visit itself (the gap, learning, a second look at the
-// survey) is in scripts/desk/visit.js.
+// survey) is in scripts/desk/visit.js; learning, which only a visit's first prompt runs, is loaded then (scripts/desk/visit-learning.js).
 //
 // In a folder whose setup isn't finished (beingSetUp), outside a feature worktree, each of the
 // director's prompts gets one line instead of anything else, SETUP_FIRST: setup comes first,
@@ -42,45 +42,28 @@
 // A command is matched as typed, in any case, with white space around it ignored:
 // /wheelhouse:logbook or /wheelhouse:board (optionally "build" or "director"), /wheelhouse:briefing,
 // /wheelhouse:settings and /wheelhouse:sources. The short forms (/board) are left to whoever owns them.
-import { answer, runAndExit, projectOf, beingSetUp, readTailEntries } from './kit.js';
-import { stoppedQuestion } from './stopped-question.js';
-import { answeredWords, subjectOf, NOTE_LEAD } from '../cards/answered.js';
-import { SINCE_LEAD, SINCE_TAIL } from '../cards/panel-words.js';
-import { chatCopy, approveWorkLine } from '../state/card-lines.js';
-import { isOpen } from '../desk/is-open.js';
+import { answer, runAndExit, projectOf, beingSetUp } from './kit.js';
+import { SINCE_LEAD } from '../cards/panel-words.js';
 import { readOpen, clearOpen } from '../lib/session-files.js';
 import { featureSlug, madeFeatureSlug } from '../lib/feature-slug.js';
 import { SETUP_FIRST } from '../lib/setup-first.js';
 import { keepRequest } from '../lib/kept-request.js';
-import { briefingModel as realBriefingModel } from '../briefing/model.js';
-import { heldBackLine } from '../board/model.js';
 import { readSeen, readSurveyAt, markSeen, readVisits } from '../briefing/seen.js';
 import { readDigest, clearDigest } from '../digest/due.js';
 import { takeFailures } from '../alerts/tick.js';
-import { markRaised as realMarkRaised } from '../usage/figures.js';
 import { sessionRole, recordRole, recordAside, asideByChoice } from '../lib/role.js';
 import { refreshSeat, movedAway, releaseSeat } from '../lib/first-mate-seat.js';
 import { SEAT_MOVED_LINE } from '../lib/front-desk.js';
-import { existingCard } from '../cards/visit.js';
-import { approvalCandidates, controlFilesDue, gateAsksDue, holdsDue, premiumFailuresDue } from '../cards/build-loop.js';
-import { questionProblem } from '../cards/compose.js';
-import { answerLine } from '../state/card-lines.js';
 import { helperClient } from '../host/helper-client.js';
 import { stopState } from '../lib/stop.js';
-import { CARD } from '../lib/front-desk.js';
 import { HELPER_WAIT_MS } from '../lib/core-numbers.js';
 import { startedAsScript } from '../lib/started-as-script.js';
-import { HEADINGS, NOT_CHECKED, NONE_CHANGED, briefingIn } from '../desk/context.js';
+import { HEADINGS, NOT_CHECKED, NONE_CHANGED } from '../desk/context-words.js';
 import { deskClient, unreached } from '../desk/client.js';
-import { isDecisionCard } from '../decisions/pending.js';
 import { startedByScript } from '../lib/started-by-script.js';
-import { typedRepliesIn } from '../decisions/switch.js';
-import { parseReply } from '../decisions/reply.js';
 import { ownWords } from '../lib/own-words.js';
-import { isBuildQuestion } from '../protection/windows-builds.js';
-import { gapHours, visitLearning, earlierSurvey, offerAgainDue, OFFER_AGAIN_MS } from '../desk/visit.js';
 
-export { HEADINGS, NOT_CHECKED, NONE_CHANGED, briefingIn, OFFER_AGAIN_MS };
+export { HEADINGS, NOT_CHECKED, NONE_CHANGED };
 import { helperGrace } from '../lib/helper-grace.js';
 
 export const WAIT_MS = 2000;
@@ -126,41 +109,11 @@ function clockOf(now) {
 
 // Whether the gap since `since` (a time, or null) has passed. None (or one after now) counts as a
 // gap; with a clock that can't be read, none can be measured.
-function gapPassed(project, since, at) {
+function gapPassed(project, since, at, gapHours) {
   const nowMs = at.getTime();
   if (!Number.isFinite(nowMs)) return false;
   if (since === null) return true;
   return nowMs - Date.parse(since) >= gapHours(project, at) * HOUR_MS;
-}
-
-// How many cards `cli.js cards` would hand out now, from the views the desk's waiting view gives: the waiting cards no
-// visit has handed out, and the open questions from the build that no waiting card asks yet and
-// that the composer can make a card of, which it makes cards of first; then the cards the build
-// loop's records call for (scripts/cards/build-loop.js): each click the merge gate waits for whose
-// card is to be made or asked again, each lineage hold with no card, and each control-file
-// record with no card. Whether a pull request
-// has moved on is the host's to say, which `cli.js cards` asks and this doesn't, so until the
-// gate's next record this may count a gate card that `cards` then doesn't give. At most one call's worth. Under STOP,
-// the one Lift STOP card.
-async function cardsToAsk(desk, at) {
-  if (stopState().on) return 1;
-  const got = await desk.read('waiting');
-  return got?.ok === true && isRecord(got.data?.views) ? cardsDue(got.data.views, at) : 0;
-}
-
-// The count cardsToAsk gives, from the views given (with STOP off).
-export function cardsDue(views, at) {
-  const waiting = Array.isArray(views.waiting) ? views.waiting.filter(isRecord) : [];
-  // With typed replies on, a decision is shown as a chat message, so it is no card to ask (see decisionsLine); off, it is a card.
-  const typed = typedRepliesIn(views.settings);
-  const fresh = new Set(waiting.filter((card) => (card.asked === null || card.asked === undefined) && !heldBackLine(card.data?.line, views) && !(typed && isDecisionCard(card.data))).map((card) => card.id));
-  const questions = Object.entries(isRecord(views.questions) ? views.questions : {})
-    .filter(([id, entry]) => isRecord(entry) && !entry.answer && entry.joins === undefined && existingCard({ waiting }, answerLine(id)) === null && !heldBackLine(answerLine(id), views)
-      && (!typed || isBuildQuestion(entry.question?.data)) && questionProblem(entry.question?.data, { recorded: true }) === null).length;
-  const gate = gateAsksDue(views, at);
-  for (const due of gate) if (due.again !== undefined) fresh.add(due.again);
-  const made = gate.filter((due) => due.make).length + holdsDue(views).length + controlFilesDue(views).length + premiumFailuresDue(views).length;
-  return Math.min(CARD.questions, fresh.size + questions + made);
 }
 
 // The line for the decisions waiting, which are shown as chat messages and never through the question picker: each by its number and
@@ -169,108 +122,13 @@ export function cardsDue(views, at) {
 export const decisionsLead = (waiting) => `Decisions waiting for the director: ${waiting}.`;
 export const DECISIONS_TAIL = 'Run `decision list`, then print each one exactly as `decision show <n>` prints it, in a message of its own. The director answers by typing a reply, and only their typed reply decides: never answer for them.';
 export const DECISIONS_TAIL_OFF = 'Typed replies are switched off: run `decision list`, print each one exactly as `decision show <n>` prints it, then ask it through the question picker (`cards` hands it out). A typed reply decides nothing: never answer for them.';
-export function decisionsLine(views, pending) {
-  const typed = typedRepliesIn(isRecord(views) ? views.settings : undefined);
-  const listed = (Array.isArray(pending) ? pending : []).filter(isRecord);
-  const waiting = isRecord(views) ? views.waiting : [];
-  const cards = Array.isArray(waiting) ? waiting.filter(isRecord) : [];
-  // Off, a question with no card yet is counted by the cards line instead, as it always was.
-  const toCome = !typed ? 0 : Object.entries(isRecord(views?.questions) ? views.questions : {})
-    .filter(([id, entry]) => isRecord(entry) && !entry.answer && entry.joins === undefined && existingCard({ waiting: cards }, answerLine(id)) === null
-      && !isBuildQuestion(entry.question?.data) && questionProblem(entry.question?.data, { recorded: true }) === null).length;
-  if (listed.length === 0 && toCome === 0) return null;
-  const said = listed.map((d) => `${d.n}. ${d.question}`).join('; ');
-  return [listed.length === 0 ? null : decisionsLead(said), toCome === 0 ? null : `Decisions not shown yet: ${toCome}.`, typed ? DECISIONS_TAIL : DECISIONS_TAIL_OFF].filter(Boolean).join(' ');
-}
-
-// `typed` is the director's own words in this prompt. A decision that reply answers is left out, as the prompt hook records it
-// beside this hook in the same turn, and the line would otherwise show it as waiting.
-async function decisionLineOf(desk, typed) {
-  const got = await desk.read('waiting');
-  if (got?.ok !== true || !isRecord(got.data?.views)) return null;
-  const pending = Array.isArray(got.data.decisions?.pending) ? got.data.decisions.pending : [];
-  const reply = typeof typed === 'string' && typedRepliesIn(got.data.views.settings) ? parseReply(typed, pending) : { kind: 'none' };
-  return decisionsLine(got.data.views, reply.kind === 'answer' ? pending.filter((d) => d.n !== reply.n) : pending);
-}
-
-// The most stuck messages one line names.
-const STUCK_NOTES = 3;
-
-// A feature session's own plain message that it is stuck (the note `act stuck-note` records), told once: those recorded since the
-// First Mate's last turn began, or in the last day when there was none. Null when there are none.
-export async function stuckLine(desk, since, at) {
-  const from = Number.isFinite(Date.parse(since)) ? Date.parse(since) : at.getTime() - 24 * HOUR_MS;
-  const got = await desk.read('waiting', { stuck: true });
-  const notes = (Array.isArray(got?.data?.stuck) ? got.data.stuck : [])
-    .filter((e) => isRecord(e) && typeof e.work === 'string' && typeof e.words === 'string' && Date.parse(e.recorded) > from)
-    .slice(0, STUCK_NOTES);
-  if (notes.length === 0) return null;
-  return notes.map((e) => `${e.work} is stuck: its session says "${e.words.replace(/\s+/g, ' ').trim()}" (sent ${e.at}).`).join(' ');
-}
-
-// The most works the approval line names.
-const ORPHAN_NAMED = 3;
-
-// The works `cli.js cards` would make an approval card for (scripts/cards/build-loop.js: approvalCandidates) that no card in the
-// waiting view asks about, in the view's order. A card counts whether or not it was asked, but only for the work's current
-// document: its line is matched whole, in both wordings (with the show-first tail and plain), as `cards` matches it. A view it
-// can't read gives none.
-export function orphanedApprovals(views) {
-  if (!isRecord(views) || !isRecord(views.work)) return [];
-  const cards = Array.isArray(views.waiting) ? views.waiting.filter(isRecord) : [];
-  const lines = new Set(cards.map((c) => c.data?.line).filter((l) => typeof l === 'string'));
-  try {
-    return approvalCandidates(views, isOpen)
-      .filter(({ id, data }) => !lines.has(approveWorkLine(id, data.lane, data.doc.hash, { shownFirst: true })) && !lines.has(approveWorkLine(id, data.lane, data.doc.hash)))
-      .map(({ id }) => id);
-  } catch {
-    return [];
-  }
-}
-
-// The line that tells the desk to make the approval cards those works lack. `cli.js cards` makes a missing approval card and hands it out.
-export function orphanLine(works) {
-  if (!Array.isArray(works) || works.length === 0) return null;
-  const named = works.slice(0, ORPHAN_NAMED).join(', ');
-  const rest = works.length - ORPHAN_NAMED;
-  return `Waiting for the director's approval with no card: ${named}${rest > 0 ? ` and ${rest} more` : ''}. Run \`cli.js cards\`: it makes each one's approval card. Ask the cards it hands out this turn.`;
-}
-
-async function orphanLineOf(desk) {
-  if (stopState().on) return null;
-  const got = await desk.read('waiting');
-  if (got?.ok !== true || !isRecord(got.data?.views)) return null;
-  return orphanLine(orphanedApprovals(got.data.views));
-}
-
-// The most helm notes one line names: the newest, since the oldest were recorded first.
-const HELM_NOTES = 5;
-
-// The notes a piece's crew left of what the director did at its helm, told once: those recorded since the First Mate's last turn
-// began, or in the last day when there was none. Each is a record's text and so data, kept to one line with its control
-// characters taken out. Null when there are none.
-export async function helmNoteLine(desk, since, at) {
-  const from = Number.isFinite(Date.parse(since)) ? Date.parse(since) : at.getTime() - 24 * HOUR_MS;
-  const got = await desk.read('waiting', { helmNotes: true });
-  const notes = (Array.isArray(got?.data?.helmNotes) ? got.data.helmNotes : [])
-    .filter((e) => isRecord(e) && typeof e.work === 'string' && typeof e.text === 'string' && Date.parse(e.recorded) > from)
-    .map((e) => ({ work: e.work, text: e.text.replace(/[\p{Cc}\p{Cf}\u2028\u2029]+/gu, ' ').replace(/\s+/g, ' ').trim() }))
-    .filter((e) => e.text !== '')
-    .slice(-HELM_NOTES);
-  if (notes.length === 0) return null;
-  return notes.map((e) => `While you had the helm of ${e.work}: ${e.text}`).join('\n');
-}
-
 // What the director answered since the First Mate's last turn, and how the cards of a question that was stopped stand now.
 // Neither names a card's id: a card goes by its subject.
 export { SINCE_LEAD };
 export const STOPPED_LEAD = 'The last card question was stopped, which records nothing and is no answer. As each card stands now: ';
-const STOPPED_TAIL = 'Never say a card was closed without an answer.';
-// The most cards one line names; the rest are on the board.
-const NOTE_CARDS = 6;
 
 // How far back the decided cards are read: an hour before the First Mate's last turn began, or before now when none is known.
-function outcomesSince(since, at) {
+export function outcomesSince(since, at) {
   const from = Date.parse(since);
   return new Date((Number.isFinite(from) ? from : at.getTime()) - 3600000).toISOString();
 }
@@ -281,59 +139,6 @@ function outcomesSince(since, at) {
 function sharedWaiting(desk, { since, at }) {
   let once;
   return { ...desk, read: (view, args) => (view === 'waiting' ? (once ??= desk.read('waiting', { stuck: true, helmNotes: true, outcomes: { since: outcomesSince(since, at) } })) : desk.read(view, args)) };
-}
-
-// The two lines, in the order they go into the context: [since, stopped], each a string or null. `since` is when the
-// First Mate's last turn began (the prompt before this one); `open` is what the session's open.json held. A card the
-// stopped line names is left out of the since line.
-async function cardNotes({ project, input, since, at, desk, open }) {
-  // The decided cards, the card events and the board's numbers all come through the desk (design section 4.4): the hook
-  // reads neither the state nor the keys itself.
-  const from = Date.parse(since);
-  const got = await desk.read('waiting', { outcomes: { since: outcomesSince(since, at) } });
-  const data = isRecord(got?.data) ? got.data : {};
-  const decided = Array.isArray(data.outcomes) ? data.outcomes.filter((o) => isRecord(o) && isRecord(o.card) && isRecord(o.decided)) : [];
-  const events = Array.isArray(data.cards) ? data.cards.filter((e) => isRecord(e) && typeof e.id === 'string') : [];
-  const numbers = new Map();
-  for (const item of Array.isArray(data.numbered) ? data.numbered : []) if (typeof item.card === 'string') numbers.set(item.card, item.n);
-  const outcomes = [
-    ...decided,
-    ...events.filter((e) => numbers.has(e.id) && !decided.some((o) => o.card.id === e.id)).map((card) => ({ card, decided: null })),
-  ];
-  const firstLine = (text) => String(text ?? '').split('\n')[0];
-  const tail = readTailEntries(input.transcript_path);
-  const questions = stoppedQuestion(tail, { prompt: input.prompt });
-  // The cards whose hidden line the mod appended is already in the transcript's tail: the chat said them.
-  const tailText = Array.isArray(tail) ? JSON.stringify(tail) : '';
-  const noted = (id) => tailText.includes(NOTE_LEAD) && tailText.includes(`(card ${id})`);
-  const named = new Map();
-  if (questions !== null) {
-    for (const text of questions) {
-      const lines = [firstLine(text), firstLine(chatCopy(text))];
-      const mine = outcomes.filter((o) => typeof o.card.data?.question === 'string' && lines.some((l) => l === firstLine(o.card.data.question) || l === firstLine(chatCopy(o.card.data.question))));
-      const found = mine.filter((o) => o.decided === null).at(-1) ?? mine.at(-1);
-      if (found !== undefined) named.set(found.card.id, found);
-    }
-    for (const id of open?.cards ?? []) {
-      const found = outcomes.find((o) => o.card.id === id);
-      if (found !== undefined) named.set(id, found);
-    }
-  }
-  let stopped = null;
-  if (named.size > 0) {
-    const parts = [...named.values()].slice(0, NOTE_CARDS).map((o) => {
-      if (o.decided !== null) return `${subjectOf(o.card)}: ${answeredWords(o, at)}`;
-      const n = numbers.get(o.card.id);
-      return `${subjectOf(o.card)}: still waiting${n === undefined ? '' : `, card ${n}`}`;
-    });
-    stopped = `${STOPPED_LEAD}${parts.join('; ')}. ${STOPPED_TAIL}`;
-  }
-  const fresh = Number.isFinite(from)
-    ? outcomes.filter((o) => o.decided !== null && o.decided.where !== 'chat' && Date.parse(o.decided.at) > from && !named.has(o.card.id) && !noted(o.card.id))
-      .sort((a, b) => Date.parse(a.decided.at) - Date.parse(b.decided.at)).slice(0, NOTE_CARDS)
-    : [];
-  const told = fresh.length === 0 ? null : `${SINCE_LEAD}${fresh.map((o) => `${subjectOf(o.card)}: ${answeredWords(o, at)}`).join('; ')}. ${SINCE_TAIL}`;
-  return [told, stopped];
 }
 
 // What `start` gives within `ms`, or null when it throws or is late.
@@ -386,7 +191,7 @@ async function build(want, { desk, at, command, reserve, briefingModel, ...rest 
   if (want === 'briefing') {
     got = await desk.read('briefing', {
       reserve, ...rest, ...(Number.isFinite(at.getTime()) ? { at: at.toISOString() } : {}),
-      ...(briefingModel === realBriefingModel ? {} : { briefingModel }),
+      ...(briefingModel === undefined ? {} : { briefingModel }),
     });
   } else if (want === 'board') {
     got = await desk.read('logbook', { context: true, tab: command?.tab, reserve });
@@ -430,6 +235,33 @@ async function helperTurnAt({ cwd, client, session }) {
   return got?.ok === true && typeof got.data?.turnAt === 'string' ? got.data.turnAt : null;
 }
 
+// Whether `value` holds nothing: no entry, no text, nothing under any key.
+const hollow = (value) => value === null || value === undefined || value === ''
+  || (Array.isArray(value) ? value.every(hollow) : isRecord(value) && Object.values(value).every(hollow));
+
+// The lines the waiting view gives, [cards due, decisions, stuck, helm notes, approvals with no card, the cards decided since]
+// (scripts/hooks/waiting-lines.js), each within its own wait: together they wait no longer than one does. That module is read only
+// when the view holds something: one that can't be read, or holds nothing but settings, gives none of them. STOP, whose
+// one card is counted without the view, always reads it.
+async function waitingLines(waiting, { project, input, since, promptAt, at, open, typed, waitMs }) {
+  const none = [null, null, null, null, null, null];
+  if (!stopState().on) {
+    const got = await within(() => waiting.read('waiting'), waitMs);
+    const { views, ...others } = isRecord(got?.data) ? got.data : {};
+    const { settings, ...otherViews } = isRecord(views) ? views : {};
+    if (got?.ok !== true || (hollow(isRecord(views) ? otherViews : views) && hollow(others))) return none;
+  }
+  const lines = await import('./waiting-lines.js');
+  return Promise.all([
+    within(() => lines.cardsToAsk(waiting, at), waitMs),
+    within(() => lines.decisionLineOf(waiting, typed), waitMs),
+    within(() => lines.stuckLine(waiting, promptAt, at), waitMs),
+    within(() => lines.helmNoteLine(waiting, promptAt, at), waitMs),
+    within(() => lines.orphanLineOf(waiting), waitMs),
+    within(() => lines.cardNotes({ project, input, since, at, desk: waiting, open }), waitMs),
+  ]);
+}
+
 // decide(input, deps) -> the context to add, or undefined.
 //
 // On an agent whose hooks only read (`writeVia: 'helper'`, ruling P5-20) nothing is written under the Wheelhouse
@@ -440,11 +272,12 @@ export async function decide(input, deps = {}) {
   try {
     const {
       dir, now = () => new Date(), env = process.env, client, desk: givenDesk, waitMs = WAIT_MS + helperGrace(), learnWaitMs = LEARN_WAIT_MS + helperGrace(),
-      briefingModel = realBriefingModel, markRaised: raiseMarked = realMarkRaised, writeVia = 'self',
+      briefingModel, markRaised: raiseMarked, writeVia = 'self',
     } = deps;
     const writes = writeVia === 'self';
     const markSeenHere = writes ? markSeen : () => {};
-    const markRaised = writes ? raiseMarked : () => {};
+    // The usage module is read only when a briefing raised something to mark.
+    const markRaised = writes ? raiseMarked ?? (async (...args) => (await import('../usage/figures.js')).markRaised(...args)) : () => {};
     if (!isRecord(input) || typeof input.cwd !== 'string' || typeof input.prompt !== 'string') return undefined;
     // While setup is unfinished here, setup comes first, whatever the prompt asks. A step the build engine started is
     // not the director arriving, so setup never comes first for it (the health trial runs in an unfinished folder).
@@ -479,22 +312,26 @@ export async function decide(input, deps = {}) {
     const { project } = found;
     if (writes) attempt(() => refreshSeat(project, input.session_id));
     const at = clockOf(now);
+    // What the visit's gap is made of (scripts/desk/visit.js) is read only where it is used: a hook that can't write keeps no
+    // visit and gives no briefing on a gap, and a briefing is the one thing that asks for the survey's second look.
+    const visitMod = () => import('../desk/visit.js');
+    const gapOf = writes ? (await visitMod()).gapHours : null;
     const seen = readSeen(project, { now: at });
     const visits = attempt(() => readVisits(project, { now: at }), { visitAt: null, boardAsks: [] });
     const command = commandOf(input.prompt);
     // The gap runs from the director's last prompt or the last briefing given, whichever is later,
     // so a briefing /wheelhouse-digest gave counts as given: a prompt soon after it brings none.
-    const due = gapPassed(project, [seen.promptAt, seen.briefedAt].filter((t) => typeof t === 'string').sort().at(-1) ?? null, at);
+    const due = writes && gapPassed(project, [seen.promptAt, seen.briefedAt].filter((t) => typeof t === 'string').sort().at(-1) ?? null, at, gapOf);
     const want = command?.watch ? null : command?.name ?? (due && writes ? 'briefing' : null);
     // A visit begins with the first prompt of any kind after a gap since the last one seen: the last
     // message, the last board command or the visit's own start.
     const lastSeen = [seen.promptAt, visits.visitAt, visits.boardAsks.at(-1)?.at].filter((t) => typeof t === 'string').sort().at(-1) ?? null;
-    const visit = gapPassed(project, lastSeen, at) ? at : visits.visitAt;
+    const visit = writes && gapPassed(project, lastSeen, at, gapOf) ? at : visits.visitAt;
     if (visit === at) attempt(() => markSeenHere(project, { visitAt: at }));
     if (command?.name === 'board' && !command.watch) attempt(() => markSeenHere(project, { boardAsk: { at, tab: command.tab ?? null, visit } }));
     if (!command && due && writes && !attempt(() => stopState().on, true)) {
       const asker = client ?? helperClient({ timeout: LEARN_WAIT_MS + helperGrace() });
-      await within(() => visitLearning({ project, cwd: input.cwd, client: asker, at, boardAsks: visits.boardAsks }), learnWaitMs);
+      await within(async () => (await import('../desk/visit-learning.js')).visitLearning({ project, cwd: input.cwd, client: asker, at, boardAsks: visits.boardAsks }), learnWaitMs);
     }
     const desk = givenDesk ?? deskOf({ cwd: input.cwd, client, at });
     const sessionId = typeof input.session_id === 'string' ? input.session_id : null;
@@ -510,14 +347,7 @@ export async function decide(input, deps = {}) {
     const typed = !writes || startedByScript(env) ? null : attempt(() => ownWords(input.prompt), null);
     // Every line the waiting view gives, from one read, each within its own wait: together they wait no longer than one does.
     const waiting = sharedWaiting(desk, { since: sinceAt, at });
-    const [counted, decisionLine, stuck, helmNote, orphans, noted] = await Promise.all([
-      within(() => cardsToAsk(waiting, at), waitMs),
-      within(() => decisionLineOf(waiting, typed), waitMs),
-      within(() => stuckLine(waiting, seen.promptAt, at), waitMs),
-      within(() => helmNoteLine(waiting, seen.promptAt, at), waitMs),
-      within(() => orphanLineOf(waiting), waitMs),
-      within(() => cardNotes({ project, input, since: sinceAt, at, desk: waiting, open }), waitMs),
-    ]);
+    const [counted, decisionLine, stuck, helmNote, orphans, noted] = await waitingLines(waiting, { project, input, since: sinceAt, promptAt: seen.promptAt, at, open, typed, waitMs });
     const count = counted ?? 0;
     const cards = count > 0 ? cardsLine(count) : null;
     // The daily digest the watcher made waits for the director's next message and is shown once, here (scripts/digest/due.js). A hook that
@@ -529,6 +359,7 @@ export async function decide(input, deps = {}) {
     // A survey not worked out in time is left to the briefing view, which takes the record's latest.
     const survey = want === 'briefing' ? (await within(() => surveyOf({ project, client, desk }), learnWaitMs)) ?? undefined : null;
     // Offered once more, the survey's line about work in flight is said again, alone.
+    const { earlierSurvey, offerAgainDue } = want === 'briefing' ? await visitMod() : {};
     const again = want === 'briefing' && attempt(() => offerAgainDue(project, at), false);
     const built = want
       ? await within(() => build(want, {
@@ -543,7 +374,13 @@ export async function decide(input, deps = {}) {
     if (built && want === 'briefing') {
       // The weekly lines count as given only when the text showed them, and so does the survey.
       attempt(() => markSeenHere(project, { briefedAt: at, ...(built.weeklyShown ? { weeklyAt: at } : {}), ...(built.surveyShown ? { surveyAt: built.surveyShown } : {}), ...(again && built.surveyShown ? { surveyAgainAt: at } : {}), ...(built.safekeeping ? { safekeepingLevel: built.safekeeping, safekeepingAt: at } : {}) }));
-      if (built.raise.length > 0 && Number.isFinite(at.getTime())) attempt(() => markRaised(built.raise, { now: at }));
+      if (built.raise.length > 0 && Number.isFinite(at.getTime())) {
+        try {
+          await markRaised(built.raise, { now: at });
+        } catch {
+          // Raised again at the next briefing.
+        }
+      }
     }
     const text = [...notes, cards, built?.text].filter((part) => typeof part === 'string').join('\n\n');
     // Shown now, so it is not shown again: the time is kept for the next digest's "since", and the file taken away.

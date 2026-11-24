@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runEntry } from '../../../../scripts/agents/copilot/hook-entry.js';
@@ -57,6 +57,27 @@ function start(w, event, input, env = {}) {
   return { ...ran, loaded };
 }
 const loadedAny = (loaded, ...names) => names.some((name) => loaded.includes(name));
+
+// A helper that answers the desk with nothing waiting, in a process of its own (the entry is started with spawnSync, which holds
+// this process's loop), listening where the entry looks for the helper. Resolves with a stop function once it listens.
+async function helperUp(w) {
+  const socket = path.join(w.home, 'helper.sock');
+  const script = path.join(path.dirname(w.log), 'helper-stand-in.mjs');
+  fs.writeFileSync(script, `import http from 'node:http';
+http.createServer((req, res) => {
+  req.resume();
+  req.on('end', () => {
+    res.setHeader('content-type', 'application/json');
+    const empty = { views: { waiting: [], settings: {} }, decisions: { pending: [] }, outcomes: [], cards: [], numbered: [], stuck: [], helmNotes: [] };
+    res.end(JSON.stringify(req.url.startsWith('/desk/read') ? { ok: true, v: 'desk/1', data: empty } : { ok: true }));
+  });
+}).listen(${JSON.stringify(socket)});
+`);
+  const child = spawn(process.execPath, [script], { stdio: 'ignore' });
+  for (let i = 0; i < 100 && !fs.existsSync(socket); i += 1) await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(fs.existsSync(socket), 'the stand-in helper listens');
+  return () => child.kill();
+}
 
 test('a tool that only reads is checked by the tool guard alone: the STOP guard and the lineage hold are never loaded', () => {
   const w = world();
@@ -121,4 +142,43 @@ test('the prompt event, which the model waits on before every prompt, has a dead
     deps: { client: { health: async () => ({ ok: true }), session: { mark: async () => ({ ok: true }) } }, projectOf: () => ({ project: 'shop' }), dir: '/nowhere', deadlineMs: 60, steps: { stopWord: hung } },
   });
   assert.deepEqual(got, { text: '', code: 0 });
+});
+
+// Module-count ceilings: on Windows each module read costs about 13 ms, so a regression that puts a heavy import back on an event's
+// path shows here, as a count, before it shows as seconds. The counts at the time of writing are in each message's comment.
+test('the prompt event, with the helper answering, loads under 80 modules (66 when written)', async () => {
+  const w = world();
+  const stop = await helperUp(w);
+  try {
+    const { status, loaded } = start(w, 'userPromptSubmitted', { prompt: 'hello' });
+    assert.equal(status, 0);
+    assert.equal(loadedAny(loaded, 'scripts/hooks/prompt-record.js', 'scripts/hooks/card-check.js', 'scripts/desk/core.js', 'scripts/desk/file-source.js', 'scripts/desk/context.js', 'scripts/briefing/model.js', 'scripts/hooks/waiting-lines.js', 'scripts/desk/visit-learning.js'), false);
+    assert.ok(loaded.length < 80, `${loaded.length} modules`);
+  } finally {
+    stop();
+  }
+});
+
+test('the prompt event with no helper reads the desk in process and loads under 240 modules (227 when written)', () => {
+  const w = world();
+  const { status, loaded } = start(w, 'userPromptSubmitted', { prompt: 'hello' });
+  assert.equal(status, 0);
+  assert.ok(loaded.length < 240, `${loaded.length} modules`);
+});
+
+test('the session start loads under 120 modules (108 when written): the lineage check, the usage card and the seat card are read when they run', () => {
+  const w = world();
+  const { status, loaded } = start(w, 'sessionStart', {});
+  assert.equal(status, 0);
+  assert.equal(loadedAny(loaded, 'scripts/lineage/check.js', 'scripts/lib/background.js', 'scripts/watcher/main.js', 'scripts/routing/offer.js', 'scripts/lib/seat-card.js'), false);
+  assert.ok(loaded.length < 120, `${loaded.length} modules`);
+});
+
+test('the agent stop loads under 70 modules (58 when written): the question card\'s checks and the aside overlap\'s crew files are not read', () => {
+  const w = world();
+  const { status, loaded } = start(w, 'agentStop', {});
+  assert.equal(status, 0);
+  assert.ok(loaded.includes('scripts/hooks/card-check-stop.js'));
+  assert.equal(loadedAny(loaded, 'scripts/hooks/card-check.js', 'scripts/hooks/prompt-record.js', 'scripts/cards/buttons.js', 'scripts/foreman/wake.js', 'scripts/engine/dispatcher.js'), false);
+  assert.ok(loaded.length < 70, `${loaded.length} modules`);
 });

@@ -92,6 +92,10 @@ const STEP_MODULES = Object.freeze({
   helmEnd: () => import('../../hooks/helm-end.js'),
 });
 
+// A step's module for `event`. The card check's Stop half is a module of its own (scripts/hooks/card-check-stop.js), whose
+// `decide` is what card-check.js's gives a Stop input, so a stop loads none of the question card's checks.
+const loadStep = (name, event) => (name === 'cardCheck' && event === 'agentStop' ? import('../../hooks/card-check-stop.js') : STEP_MODULES[name]());
+
 // The tools that only read, halt or notify, by both agents' names: a translated name is Claude Code's, and a tool
 // the translation keeps under its own name is Copilot's.
 const TOOL_LISTS = Object.freeze({
@@ -150,7 +154,7 @@ async function runSteps(steps, inputs, { event, decides, stepDeps, dir, env, see
     if (given.length === 0) continue;
     // A why session never skips the STOP guard, whichever environment the run or the step is given.
     if (decides?.[name] === undefined && (INERT_ON_HELPER.includes(name) || (event === GUARD_EVENT && PASSES_THE_WORD_TOOLS.includes(name) && onlyWordTools(given) && !isWhy(env) && !isWhy(stepDeps?.[name]?.env ?? process.env)))) continue;
-    const decide = decides?.[name] ?? (await STEP_MODULES[name]()).decide;
+    const decide = decides?.[name] ?? (await loadStep(name, event)).decide;
     let allows = 0;
     let first;
     for (const input of given) {

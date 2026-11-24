@@ -22,7 +22,7 @@ import path from 'node:path';
 import { boardModel } from './model.js';
 import { healthLines, readHostFacts, readScreens } from './health.js';
 import { projectOf } from '../hooks/kit.js';
-import { localViews } from '../hooks/session-start.js';
+import { localViews } from '../lib/local-views.js';
 import { listEvents } from '../state/events.js';
 import { usageFigures, weeklyShare } from '../usage/figures.js';
 import { monthFor } from '../agents/usage-month.js';

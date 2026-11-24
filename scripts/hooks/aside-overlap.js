@@ -14,14 +14,7 @@ import path from 'node:path';
 import { runAndExit, worktreeRoot } from './kit.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { sessionRole, asideKind } from '../lib/role.js';
-import { clashCheck } from '../foreman/queue.js';
-import { crewRunning } from '../engine/dispatcher.js';
-import { runningFiles } from '../foreman/wake.js';
-import { effectiveSettings } from '../settings/effective.js';
-import { deskClient, unreached } from '../desk/client.js';
-import { helperClient } from '../host/helper-client.js';
 import { withinBudget } from './pending.js';
-import { safeGit } from '../lib/safe-git.js';
 import { readCapped, writeWhole } from '../feature/status.js';
 
 // How many of the aside's files are read; more than this are left out.
@@ -39,6 +32,7 @@ const isText = (x) => typeof x === 'string' && x !== '';
 // git in `cwd` by the repository's git route (scripts/lib/safe-git.js): the fence alone, as these calls only read. Its output,
 // or a throw when git fails. `run` is the route's runner or a stand-in.
 async function git(run, cwd, args) {
+  const { safeGit } = await import('../lib/safe-git.js');
   const got = await safeGit({ ...(run ? { run } : {}), cwd, list: 'project', look: 'never', timeoutMs: GIT_TIMEOUT_MS })(args);
   if (got?.code !== 0 || typeof got.stdout !== 'string') throw new Error(`git ${args[0]} failed`);
   return got.stdout;
@@ -140,7 +134,7 @@ function waitingPieces(views) {
 
 // The settings in force as the dispatcher reads them: each key's value. A key the catalogue doesn't hold (`hotFiles`) is
 // taken as the project's view gives it.
-function flatSettings(views, now) {
+function flatSettings(views, now, effectiveSettings) {
   const given = isPlain(views?.settings) ? views.settings : {};
   const raw = Object.fromEntries(Object.entries(given).map(([key, entry]) => [key, valueOf(entry)]));
   const effective = Object.fromEntries(Object.entries(effectiveSettings({ project: given, now })).map(([key, entry]) => [key, entry.value]));
@@ -148,7 +142,7 @@ function flatSettings(views, now) {
 }
 
 // The desk as the hook uses it: `read(view)` through the desk client and `write(kind, data)` to the project's record.
-function deskOf(cwd) {
+function deskOf(cwd, { deskClient, helperClient }) {
   const client = deskClient({ cwd, timeout: CALL_BUDGET_MS });
   return {
     read: (view, args) => client.read(view, args),
@@ -164,7 +158,11 @@ export async function decide(input, {
   try {
     if (input?.stop_hook_active === true || typeof cwd !== 'string') return undefined;
     if (role({ sessionId: input?.session_id, env, cwd }) !== 'aside' || kind({ cwd }) !== 'worktree') return undefined;
-    const where = desk ?? deskOf(cwd);
+    // What the rest needs is read only for an aside in a worktree: any other session's stop has been answered above.
+    const [{ clashCheck }, { crewRunning }, { runningFiles }, { effectiveSettings }, { deskClient, unreached }, { helperClient }] = await Promise.all([
+      import('../foreman/queue.js'), import('../engine/dispatcher.js'), import('../foreman/wake.js'), import('../settings/effective.js'), import('../desk/client.js'), import('../host/helper-client.js'),
+    ]);
+    const where = desk ?? deskOf(cwd, { deskClient, helperClient });
     const got = await where.read('waiting');
     if (unreached(got) || got?.ok !== true || !isPlain(got.data?.views)) return undefined;
     const { views } = got.data;
@@ -176,7 +174,7 @@ export async function decide(input, {
     const branch = (await git(run, cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
     if (branch === '') return undefined;
 
-    const settings = flatSettings(views, clock);
+    const settings = flatSettings(views, clock, effectiveSettings);
     // Reservations, pieces on their way back and admitted ones live in the dispatcher's own process, so they are empty here.
     const engine = crewRunning({
       work: views.work, runs: views.runs, reports: views.reports, features: views.features, settings,

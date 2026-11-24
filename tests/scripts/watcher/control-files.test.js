@@ -20,7 +20,7 @@ import { controlFileCard } from '../../../scripts/frontdesk/cli.js';
 import { glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
-import { cardsDue } from '../../../scripts/hooks/board-context.js';
+import { cardsDue } from '../../../scripts/hooks/waiting-lines.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { featurePaths } from '../../../scripts/feature/files.js';
 import { readProject, writeProject } from '../../../scripts/lib/projects.js';

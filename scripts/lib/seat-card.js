@@ -5,15 +5,9 @@
 import { composeCard } from '../cards/compose.js';
 import { TAKEOVER_LABEL, LEAVE_LABEL } from '../state/card-lines.js';
 import { seatInUse } from './first-mate-seat.js';
+import { agoWords } from './ago-words.js';
 
-// A span of time in the director's words: just now, 5 minutes ago, 1 hour 20 minutes ago.
-export const agoWords = (ms) => {
-  const minutes = Math.max(0, Math.floor(ms / 60000));
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
-  const [hours, rest] = [Math.floor(minutes / 60), minutes % 60];
-  return `${hours} ${hours === 1 ? 'hour' : 'hours'}${rest === 0 ? '' : ` ${rest} ${rest === 1 ? 'minute' : 'minutes'}`} ago`;
-};
+export { agoWords };
 
 // { question, card } for the seat `seat` names, as of `now` (a function returning a Date).
 export function seatCard({ seat, now }) {

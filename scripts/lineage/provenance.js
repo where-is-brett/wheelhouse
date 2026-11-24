@@ -12,9 +12,9 @@ import { readTailEntries } from '../hooks/kit.js';
 import { provenanceFile } from './check.js';
 import { readManifest } from './manifest.js';
 import { ARCHON_SOURCE } from '../engine/archon/build.js';
+import { BEGIN, END, BLOCK, removeProvenance, claudeCodeOf } from './provenance-block.js';
 
-export const BEGIN = '<!-- wheelhouse-provenance -->';
-export const END = '<!-- /wheelhouse-provenance -->';
+export { BEGIN, END, removeProvenance, claudeCodeOf };
 // How much of the end of a session's transcript is read for the models and Claude Code version it used.
 const TRANSCRIPT_BYTES = 8 * 1024 * 1024;
 // The most a provenance.json may be.
@@ -58,19 +58,6 @@ export function modelsOf(entries) {
     models.push(model);
   }
   return models;
-}
-
-// Claude Code's version as the newest transcript entry that carries one gives it ('2.1.300'), or
-// null when none does or that one can't be read.
-export function claudeCodeOf(entries) {
-  const list = Array.isArray(entries) ? entries : [];
-  for (let i = list.length - 1; i >= 0; i -= 1) {
-    const version = list[i]?.version;
-    if (typeof version !== 'string') continue;
-    const m = /^(\d+)\.(\d+)\.(\d+)(?![0-9])/.exec(version);
-    return m ? m.slice(1, 4).join('.') : null;
-  }
-  return null;
 }
 
 // The provenance of `sessionId` in `project`, from its provenance.json on this computer, with
@@ -137,20 +124,6 @@ export function provenanceBlock(provenance) {
     `- Fingerprints: ${FINGERPRINTS.includes(p.fingerprints) ? p.fingerprints : 'mismatch'}`,
     END,
   ].join('\n');
-}
-
-const BLOCK = () => new RegExp(`${BEGIN}[\\s\\S]*?${END}`, 'g');
-
-// `body` with every block, and any marker left on its own, taken out, again and again until
-// nothing changes: a marker split around another (`<!-- wheel<!-- /wheelhouse-provenance -->house-provenance -->`)
-// is whole once the inner one is gone.
-export function removeProvenance(body) {
-  let text = typeof body === 'string' ? body : '';
-  for (;;) {
-    const next = text.replace(BLOCK(), '').replaceAll(BEGIN, '').replaceAll(END, '');
-    if (next === text) return text.trimEnd();
-    text = next;
-  }
 }
 
 // `body` with `block` (one provenanceBlock made) in place of any it had, at the end.

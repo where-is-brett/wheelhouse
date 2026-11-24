@@ -10,8 +10,6 @@ import { helperClient } from '../host/helper-client.js';
 import { projectOf } from '../hooks/kit.js';
 import { wheelhouseHome } from '../lib/paths.js';
 import { setStop } from '../lib/stop.js';
-import { deskCore } from './core.js';
-import { fileSource } from './file-source.js';
 import { DESK_VERSION } from './vocabulary.js';
 
 export const HELPER_NOT_RUNNING = 'Wheelhouse\'s helper isn\'t running; this is kept and sent when it is';
@@ -40,9 +38,10 @@ export function deskClient({ address, cwd, project, local = 'auto', timeout, cli
   const helper = client ?? helperClient({ ...(address ? { address } : {}), ...(timeout ? { timeout } : {}) });
   const where = project ? { project } : { cwd };
 
-  // The core in process, over the files, or null when it may not run here.
+  // The core in process, over the files, or null when it may not run here. Its modules are read only when the helper
+  // wasn't reached, so a call the helper answers loads none of them.
   let core;
-  const localCore = () => {
+  const localCore = async () => {
     if (core !== undefined) return core;
     core = null;
     if (local !== 'auto' || !homeReadable()) return core;
@@ -61,6 +60,7 @@ export function deskClient({ address, cwd, project, local = 'auto', timeout, cli
       chatClick: async () => ({ ok: false, refused: HELPER_NOT_RUNNING }),
       confirm: async () => ({ ok: false, refused: HELPER_NOT_RUNNING }),
     };
+    const [{ deskCore }, { fileSource }] = await Promise.all([import('./core.js'), import('./file-source.js')]);
     core = deskCore({ source: fileSource(found.project, { cwd: cwd ?? found.record?.folder, client: helper, now, waitMs }), recorder, now });
     return core;
   };
@@ -73,19 +73,20 @@ export function deskClient({ address, cwd, project, local = 'auto', timeout, cli
   return {
     async read(view, args = {}) {
       const { got, away } = await ask('read', { view, args });
-      if (!away || localCore() === null) return got;
-      return { ...(await localCore().read(view, args)), local: true };
+      const local = away ? await localCore() : null;
+      return local === null ? got : { ...(await local.read(view, args)), local: true };
     },
     async act(command, args = {}, evidence) {
       const { got, away } = await ask('act', { command, args, ...(evidence === undefined ? {} : { evidence }) });
       if (!away) return got;
-      if (command === 'all-stop' && localCore() !== null) return { ...(await localCore().act(command, args, evidence)), local: true };
+      const local = command === 'all-stop' ? await localCore() : null;
+      if (local !== null) return { ...(await local.act(command, args, evidence)), local: true };
       return { ok: false, v: DESK_VERSION, refused: HELPER_NOT_RUNNING, away: true };
     },
     async watch(cursor = null) {
       const { got, away } = await ask('watch', { cursor });
-      if (!away || localCore() === null) return got;
-      return { ...(await localCore().watch(cursor)), local: true };
+      const local = away ? await localCore() : null;
+      return local === null ? got : { ...(await local.watch(cursor)), local: true };
     },
   };
 }

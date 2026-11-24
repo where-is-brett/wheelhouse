@@ -2,24 +2,24 @@
 // What a session start does besides the host helper: records what the session is for, makes
 // sure the usage receiver is running, and starts the weekly job when it is due. All of it
 // fits in one second of the session start's budget, and none of it throws.
-import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
-import { madeFeatureSlug } from '../hooks/session-start.js';
+import { madeFeatureSlug } from './feature-slug.js';
+import { startDetached } from './start-detached.js';
 import { receiverPort } from '../telemetry/main.js';
 import { recordSession } from '../usage/store.js';
 import { weeklyDue } from '../jobs/weekly.js';
 import { takeStartLock } from './start-lock.js';
 import { sessionRole } from './role.js';
-import { jobFolder, usageDir, wheelhouseHome } from './paths.js';
+import { usageDir } from './paths.js';
 
 export const BACKGROUND_MS = 1000;
 const HEALTH_MS = 300;
 const POLL_MS = 50;
 
 // Whether the weekly job is due is answered by the job's own module.
-export { weeklyDue };
+export { weeklyDue, startDetached };
 
 // Whether something answers /health on the port as the receiver does.
 export function askHealth(port, timeoutMs = HEALTH_MS) {
@@ -60,21 +60,6 @@ function recordPart({ session, project, cwd, env, now }) {
     const kept = role === 'aside' ? 'front-desk' : role;
     recordSession({ session, project, role: feature ? 'feature' : kept, ...(feature ? { work: feature } : {}), at: now() });
   } catch { /* a session that can't be recorded is still a session */ }
-}
-
-// Starts `node <script> [args]` detached in Wheelhouse's home, with no window and no output kept; true
-// when it started.
-export function startDetached(spawn, script, args = []) {
-  try {
-    const home = wheelhouseHome();
-    fs.mkdirSync(home, { recursive: true });
-    const child = spawn(process.execPath, [script, ...args], { cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore' });
-    child?.unref?.();
-    child?.on?.('error', () => {});
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function ensureReceiver({ spawn, pluginRoot, health, end }) {

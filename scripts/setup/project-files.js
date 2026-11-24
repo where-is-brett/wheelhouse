@@ -145,7 +145,7 @@ import { toolsStatus, PLUGIN_ROOT } from './tools.js';
 import { agentEntries } from '../agents/setup-parts.js';
 import { LIVE_DATA, SIGNS_APPS } from './questions.js';
 import { newId, readJournal, SAY_CHARS } from './journal.js';
-import { localViews } from '../hooks/session-start.js';
+import { localViews } from '../lib/local-views.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { ENGINE_FILES, engineFileTexts, mirrorRulesFile, engineWanted } from './engine-parts.js';
 

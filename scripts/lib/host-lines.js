@@ -1,6 +1,7 @@
 // scripts/lib/host-lines.js
 // Lines about the host connection that the board and setup both say, kept in a module of their own
 // so that setup's steps don't load the board (and through it the session start) to say them.
+export const NO_HELPER = 'The host helper isn\'t running, so nothing can be pushed or merged';
 export const QUICK_LINE = 'Agents act with your full GitHub or GitLab access, across all your projects.';
 // The same line for a card about one host, naming only that one.
 export const quickLineFor = (host) => (host === 'github'

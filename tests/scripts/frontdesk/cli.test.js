@@ -11,7 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { main, readInput, SEAT_WRITES, SEAT_REFUSAL, seatRefusal, SESSION_NEEDED, RECORD_KINDS, needsApproval, MEANWHILE, CHECKS_UNSAID, RECENT_MS, RECENT_LEAD } from '../../../scripts/frontdesk/cli.js';
-import { cardsDue } from '../../../scripts/hooks/board-context.js';
+import { cardsDue } from '../../../scripts/hooks/waiting-lines.js';
 import { numberedWaiting } from '../../../scripts/board/model.js';
 import { composeCard, whatProblem } from '../../../scripts/cards/compose.js';
 import { buildViews } from '../../../scripts/state/views.js';

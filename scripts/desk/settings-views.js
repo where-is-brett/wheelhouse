@@ -1,6 +1,6 @@
 // scripts/desk/settings-views.js
 // The settings views as the last sync left them, read from this computer's files in process.
-import { localViews } from '../hooks/session-start.js';
+import { localViews } from '../lib/local-views.js';
 import { readProfileViews } from '../profile/store.js';
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
