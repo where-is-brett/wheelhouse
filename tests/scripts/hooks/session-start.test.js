@@ -2656,3 +2656,17 @@ test('on an agent whose picker click is recorded, the seat card is still shown a
     assert.ok(!text(out).includes('with your clickable-question tool'));
   });
 });
+
+test('the First Mate\'s start names a damaged project settings file, with its line and column', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-damaged-');
+    fs.mkdirSync(path.join(folder, '.claude'));
+    const file = path.join(folder, '.claude', 'settings.local.json');
+    fs.writeFileSync(file, '{\n "a": "C:\\Users\\x"\n}');
+    const damaged = await run(fake(), { projectOf: () => ({ project: P, record: { folder } }), claudeHome: path.join(folder, 'none') });
+    assert.ok(text(damaged).includes(`${file} can't be read: line 2, column 10. a single`), text(damaged));
+    fs.writeFileSync(file, '{}');
+    const whole = await run(fake(), { projectOf: () => ({ project: P, record: { folder } }), claudeHome: path.join(folder, 'none') });
+    assert.doesNotMatch(text(whole), /can't be read: line/);
+  });
+});
