@@ -324,6 +324,18 @@ test('a user settings file that is not a JSON object stops the plan, naming it',
   });
 });
 
+test('a user settings file with a lone backslash stops the plan, naming its line, column and the hint', async () => {
+  await withProject(async ({ folder, user, config }) => {
+    const file = path.join(config, 'settings.json');
+    fs.writeFileSync(file, '{\n "a": "C:\\Users\\x"\n}');
+    const step = computerStep({ engine: null, run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    await assert.rejects(step.plan({ folder, step: 6, userHome: user, platform: 'darwin', answers: {} }), (error) => {
+      assert.ok(error.message.includes(`${file} can't be read: line 2, column 10. a single`), error.message);
+      return true;
+    });
+  });
+});
+
 // Step 3's Locked answer, as the director gave it on step 3's card, kept for the folder's run.
 function answerLocked(folder, label) {
   const run = findRun(folder) ?? startRun({ folder, now: () => T0 });

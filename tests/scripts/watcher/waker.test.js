@@ -1811,3 +1811,44 @@ test('waker: now ends no process whose start time can\'t be verified', () => wit
   assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), false, 'the record is removed');
   assert.equal(w.waiting()[0].flight, null, 'the wake is back');
 }));
+
+test('the waker waits and says why when a settings file is damaged, and starts once it is mended', () => withHome(async () => {
+  const main = checkout();
+  const dir = worktree();
+  writeBaseline(P, 'login-page', dir);
+  fs.mkdirSync(path.join(main, '.claude'), { recursive: true });
+  const settings = path.join(main, '.claude', 'settings.local.json');
+  fs.writeFileSync(settings, '{\n "a": "C:\\Users\\x"\n}');
+  const fake = fakeRun();
+  const w = waker(fake, { platform: 'darwin' });
+  await assert.rejects(w.startFeature({ work: 'login-page', worktree: dir }), (error) => {
+    assert.ok(error.message.startsWith(`not started: ${settings} can't be read: line 2, column 10.`), error.message);
+    return true;
+  });
+  assert.deepEqual(await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page'))), [], 'the wake waits');
+  assert.equal(fake.calls.length, 0);
+  fs.writeFileSync(settings, '{}');
+  const started = await w.startFeature({ work: 'login-page', worktree: dir });
+  assert.match(started.sessionId, UUID);
+}));
+
+test('a damaged settings file keeps the wake waiting, says why once, and never fails the watcher\'s loop', () => withHome(async () => {
+  const main = checkout();
+  fs.mkdirSync(path.join(main, '.claude'), { recursive: true });
+  const settings = path.join(main, '.claude', 'settings.json');
+  fs.writeFileSync(settings, '{\n  "env": { "TOKEN": "sk-secret-value" },\n}');
+  const fake = fakeRun();
+  const errors = [];
+  const w = waker(fake, { onError: (m) => errors.push(m) });
+  const file = writeWake(P, bundle('e1'));
+  await w.wakeForeman(file);
+  await w.pump();
+  assert.equal(fake.calls.length, 0, 'nothing starts');
+  assert.deepEqual(w.waiting().map((e) => e.file), [file], 'the wake is kept');
+  assert.equal(errors.length, 1, 'said once');
+  assert.ok(errors[0].startsWith(`not started: ${settings} can't be read: line 2, column 40. take out the comma`), errors[0]);
+  assert.ok(!errors[0].includes('sk-secret-value'), 'no value from the file');
+  fs.writeFileSync(settings, '{}');
+  await w.pump();
+  assert.equal(fake.calls.length, 1, 'started once mended');
+}));

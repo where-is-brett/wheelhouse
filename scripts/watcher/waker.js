@@ -158,6 +158,7 @@ import { readCapped, safeFeatureFolder } from '../feature/status.js';
 import { SLUG } from '../lib/build-loop.js';
 import { computerId, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
+import { settingsFaultLine } from '../setup/settings-check.js';
 import { clearOtherAgentHolds, hasAgentHolds, recordLift } from '../lineage/check.js';
 import { agentInFolder, agentOfConfig } from '../agents/names.js';
 import { pathWithNode } from '../lib/claude.js';
@@ -787,6 +788,19 @@ export function makeWaker({
     adapter[check](config);
   };
   mayStart('checkForeman');
+  // Settings files that can't be read are named before any session is started, since the session would read them: the
+  // line naming the file and the place, or null. Not at construction, so a damaged file never stops the watcher.
+  const settingsDamaged = () => {
+    const folder = readProject(project)?.folder;
+    const damaged = typeof folder === 'string' ? settingsFaultLine({ folder }) : null;
+    return damaged === null ? null : `not started: ${damaged}`;
+  };
+  // A start asked for directly is refused with that line.
+  const mayStartNow = (check) => {
+    const damaged = settingsDamaged();
+    if (damaged !== null) throw new Error(damaged);
+    mayStart(check);
+  };
   if (!Array.isArray(foremanTools) || !foremanTools.every((t) => typeof t === 'string' && t !== '' && !/[\r\n]/.test(t))) {
     throw new Error("The Bosun's tools are a list of tool rules");
   }
@@ -1538,9 +1552,16 @@ export function makeWaker({
   };
 
   // Delivers what can go now and keeps the rest. Returns what was delivered.
+  // What a damaged settings file last held back, said once until it changes.
+  let heldBySettings = null;
   async function deliver() {
     mayStart('checkForeman');
     if (stopped()) return [];
+    // The wakes wait in the outbox, and the rest of the watcher's loop goes on.
+    const damaged = settingsDamaged();
+    if (damaged !== heldBySettings && damaged !== null) onError(damaged);
+    heldBySettings = damaged;
+    if (damaged !== null) return [];
     return shape === 2 ? deliverByLine() : deliverByStart();
   }
 
@@ -1729,7 +1750,7 @@ export function makeWaker({
     },
     // Starts the feature's session in its worktree, reading its brief.
     async startFeature({ work, worktree, briefFile } = {}) {
-      mayStart('checkFeature');
+      mayStartNow('checkFeature');
       if (typeof work !== 'string' || !SLUG.test(work)) throw new Error('A work id is lower-case letters, digits and hyphens');
       if (!featureWorktreeOk(project, worktree)) throw new Error("This isn't a feature worktree of the project");
       // A piece the director chose to steer from the start is held with no session yet: it is made like any start, and not launched.
@@ -1816,7 +1837,7 @@ export function makeWaker({
     // a project whose sessions the watcher does not start. Throws when it can't be started now (STOP, no session id
     // kept, a worktree that isn't the feature's, or files that steer agents waiting for the director's card).
     async resumeFeature({ work, prompt } = {}) {
-      mayStart('checkFeature');
+      mayStartNow('checkFeature');
       if (typeof work !== 'string' || !SLUG.test(work)) throw new Error('A work id is lower-case letters, digits and hyphens');
       if (typeof prompt !== 'string' || prompt.trim() === '') throw new Error('A resume needs its prompt');
       return serial(async () => {
