@@ -244,7 +244,7 @@ export async function runKeyCard({
   // A product with no repository yet has none to pick, so its key is made for all repositories.
   const repos = host === 'github' && owner && name ? [name] : [];
   if (host === 'github') say(repos.length > 0 ? `On the page, choose "Only select repositories", then ${name}${state === 'none' ? '' : ' and every other repository you push to from this computer'}, and click Generate token` : 'On the page, choose "All repositories" (the new project does not exist yet), then click Generate token');
-  else say(`The page asks for api and write_repository only; set its expiry to ${days} days`);
+  else say(`The page asks for api and write_repository only; set it to expire in ${days} days`);
   await open(host === 'github'
     ? tokenUrl({ host: 'github', owner: owner ?? '', repos, name: keyName, days })
     : tokenUrl({ host: 'gitlab', owner: owner ?? '', repos: owner && name ? [`${owner}/${name}`] : [], name: keyName, base: address }));

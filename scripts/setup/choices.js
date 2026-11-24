@@ -149,6 +149,8 @@ export async function openChoices({ steps, run, answers, planOf }) {
 
 const KEPT_ID = /^(?:join|kept|host)(?:-|$)/;
 const BACKUP_ID = /^backup(?:-|$)/;
+// Questions whose card reads the same whatever the director says of where the project is kept.
+const INDEPENDENT_ID = /^(?:real-users|live-data|product-.*)$/;
 // The choices a click on Put it on GitLab asks: where the project is kept, and that alone. Whether to fetch the host's
 // own tool is asked under a host- id too, but is not where the project is kept: its recommendation stands, named on the card.
 const WHERE_ID = /^(?:join|kept|host)(?:-(?!tool-)|$)/;
@@ -305,10 +307,10 @@ function goAheadAsksHost({ keptHere, list, host, done, phone, platform }) {
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
   if (host === 'GitLab' && noTool && way !== null && way !== WAYS.quick && way !== WAYS.asIs) {
     const free = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.publicGitLab === true;
-    return `You'll paste a one-day GitLab token into a box on your screen, not the chat. ${free ? 'On a free account, or wherever' : 'If'} GitLab won't make a key for this one project, you'll also paste a token set to end ${PERSONAL_DAYS} days ahead that can act as you in every GitLab project and group you can reach. ${maybeAsked(platform)}`;
+    return `You'll paste a one-day GitLab token into a box on your screen, not the chat. ${free ? 'On a free account, or wherever' : 'If'} GitLab won't make a key for this one project, you'll also paste a token set to expire in ${PERSONAL_DAYS} days that can act as you in every GitLab project and group you can reach. ${maybeAsked(platform)}`;
   }
   const unheld = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.unheld === true;
-  if (way === WAYS.asIs) return `You'll be asked for a ${host} key${unheld ? '' : ' only if your git holds none that works'}: you make it on a page that opens${host === 'GitLab' ? ` and set its expiry date ${KEY_DAYS_ASKED} days ahead` : `, set to last ${KEY_DAYS_ASKED} days`}, and paste it into a box on your screen, not the chat. ${maybeAsked(platform)}`;
+  if (way === WAYS.asIs) return `You'll be asked for a ${host} key${unheld ? '' : ' only if your git holds none that works'}: you make it on a page that opens${host === 'GitLab' ? `, set to expire in ${KEY_DAYS_ASKED} days` : `, set to expire in ${KEY_DAYS_ASKED} days`}, and paste it into a box on your screen, not the chat. ${maybeAsked(platform)}`;
   // A narrow way on GitLab with its tool still meets GitLab's refusal of a project key the same way.
   const fallbackBox = (known) => (host === 'GitLab' && way !== null && way !== WAYS.quick
     ? ` If GitLab won't make a key for one project, you'll also paste a ${PERSONAL_DAYS}-day token that can act as you across GitLab into ${known ? 'that box' : 'a box on your screen, not the chat'}.` : '');
@@ -449,7 +451,7 @@ export function oneCard({ computerChanging = null, folder, list, product, platfo
     question,
     header: 'Setup',
     options: [
-      { label: GO_AHEAD, description: `Recommended: setup does all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list), phone: toRun.includes(6) && !pushed, done, platform })}` },
+      { label: GO_AHEAD, description: `Recommended: setup does all of this now. ${goAheadAsks({ keptHere, list, host: hostOf(product, list), phone: toRun.includes(6) && !pushed && desktop !== false, done, platform })}` },
       ...(gitlabOffered ? [{ label: USE_GITLAB, description: 'Keep the project on GitLab instead of this computer. You are asked just that next, and nothing runs until you say Go ahead.' }] : []),
       yours
         ? { label: CHANGE_CHOICE, description: 'See every choice again, and change any before anything runs.' }
@@ -563,7 +565,11 @@ export function answersWithConsent(runId, { read = answersFor } = {}) {
 export function customiseBatch(list, since) {
   const open = list.filter((c) => !(c.chosen && newer(c.chosen.at, since)));
   const unsaid = open.some((c) => KEPT_ID.test(c.id));
-  const batch = open.filter((c) => !(unsaid && BACKUP_ID.test(c.id))).slice(0, PER_CARD);
+  // Questions that don't depend on where the project is kept come first, so one card holds as many as it can; Apple signing,
+  // which few projects are asked, comes last.
+  const rank = (c) => (INDEPENDENT_ID.test(c.id) ? 0 : c.id === 'apple-apps' ? 2 : 1);
+  const ordered = open.map((c, i) => ({ c, i })).sort((x, y) => rank(x.c) - rank(y.c) || x.i - y.i).map(({ c }) => c);
+  const batch = ordered.filter((c) => !(unsaid && BACKUP_ID.test(c.id))).slice(0, PER_CARD);
   const ends = batch.findIndex((c) => c.endsBatch === true);
   return ends === -1 ? batch : batch.slice(0, ends + 1);
 }

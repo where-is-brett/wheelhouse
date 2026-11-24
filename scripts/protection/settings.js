@@ -426,10 +426,10 @@ export function compactionRules({ claudeHome, projectDir }) {
 // What the one card says of the compaction rules found: they are kept, and Wheelhouse sets none beside them.
 export function compactionLine(rules) {
   if (rules.length === 0) return null;
-  const says = (r) => (r.kind === 'percentage' ? `compacting at ${r.value}%` : `a ${Number(r.value).toLocaleString('en-AU')}-token window`);
+  const says = (r) => (r.kind === 'percentage' ? `Claude Code to tidy a long chat at ${r.value}% full` : 'your own limit on how long a chat can grow');
   const found = rules.map((r) => `${says(r)} in ${r.label}`);
   const list = found.length === 1 ? found[0] : `${found.slice(0, -1).join(', ')} and ${found.at(-1)}`;
-  return `You already set ${list}: I keep it and add no second rule, so compaction never stacks.`;
+  return `You already set ${list}: I keep it and add nothing of my own.`;
 }
 
 // The settings with the keychain left open: `settings` (a project's, perhaps merged with the
