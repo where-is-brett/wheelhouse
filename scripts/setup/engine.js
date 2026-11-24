@@ -671,7 +671,13 @@ export function setupRoutes({
         computerChanging = (await (await steps()).find((x) => x.n === 6)?.pending?.({ folder: run.folder, step: 6, runId: run.id, now, userHome, platform, answers: answersWithConsent(run.id).answers })) ?? null;
       } catch { /* the card then says what step 6 does in full */ }
     }
-    const { id, card, choices, writes } = oneCard({ computerChanging, folder: run.folder, list, product, platform, toRun, count: keptAnswers(run.id).length, facts, claudeHome, desktop: sessionIsApp, done: { tools: stepDone(run, 2), signedIn: wasWithdrawn ? lastMissHost(run) : null }, pushed: phonePushResult()?.arrived === true, hosts: projectHosts({ folder: run.folder, answers: own }) });
+    let otherAgents = [];
+    if (toRun.includes(6)) {
+      try {
+        otherAgents = (await steps()).find((x) => x.n === 6)?.otherAgents?.({ folder: run.folder, platform, answers: answersWithConsent(run.id).answers }) ?? [];
+      } catch { /* none named */ }
+    }
+    const { id, card, choices, writes } = oneCard({ computerChanging, otherAgents, folder: run.folder, list, product, platform, toRun, count: keptAnswers(run.id).length, facts, claudeHome, desktop: sessionIsApp, done: { tools: stepDone(run, 2), signedIn: wasWithdrawn ? lastMissHost(run) : null }, pushed: phonePushResult()?.arrived === true, hosts: projectHosts({ folder: run.folder, answers: own }) });
     if (JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error('The one card could not be cleaned as it is sent');
     noteAsked({ runId: run.id, folder: run.folder, step: ONE_CARD_STEP, id, card, writes, choices, facts, now });
     return { ok: true, ask: { step: ONE_CARD_STEP, id, card }, progress: [`Setup · ${setupTime(toRun, list)}`, 'One card: the plan for this project.'] };

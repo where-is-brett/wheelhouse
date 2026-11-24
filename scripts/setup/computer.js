@@ -192,7 +192,14 @@ export function lines({ changes, userSettings, kept, route, platform, floor, ter
   }
   // Ruling R64: the limit holds even over a longer one of the director's, and the card says what it costs.
   if (has('retention')) {
-    out.push(`chat history kept ${RETENTION_DAYS} days${terse >= 3 ? '' : shown(userSettings.cleanupPeriodDays)}: older chats are deleted${terse >= 3 ? '' : ", and uninstall can't bring them back"}`);
+    // Claude Code's own limit is already RETENTION_DAYS, so only a longer limit of the director's costs them chats.
+    const now = userSettings.cleanupPeriodDays;
+    const longer = typeof now === 'number' && now > RETENTION_DAYS;
+    out.push(longer
+      ? `chat history kept ${RETENTION_DAYS} days${terse >= 3 ? '' : shown(now)}: older chats are deleted${terse >= 3 ? '' : ", and uninstall can't bring them back"}`
+      : now === undefined
+        ? `chat history kept ${RETENTION_DAYS} days, which Claude Code already keeps; setup writes it down so it stays`
+        : `chat history kept ${RETENTION_DAYS} days${terse >= 3 ? '' : shown(now)}; nothing is deleted`);
   }
   if (has('updates')) {
     const own = ownMinimum(userSettings, floor);
@@ -350,6 +357,12 @@ export function computerStep({
     async pending(ctx) {
       const { changes } = await world(ctx);
       return [...new Set(changes.map((c) => c.what))];
+    },
+    // The other coding agents installed on this computer whose question step 6 has still to ask (their labels), so the one card can say
+    // the question is coming and the director's Go ahead is not taken to cover it.
+    otherAgents(ctx) {
+      if (agentChosen(ctx.answers) !== null) return [];
+      return otherAgentsFound({ platform: ctx.platform ?? process.platform, env, ...(exists === undefined ? {} : { exists }) }).map((f) => f.label);
     },
     async plan(ctx) {
       // Where another agent's command line is installed, which agent builds here is asked first, on every setup run

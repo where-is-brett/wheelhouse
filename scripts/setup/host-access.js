@@ -121,7 +121,7 @@ function gitHostOf(remoteUrl) {
   return scp ? scp[1].toLowerCase() : null;
 }
 
-// The address the director's own tool would use for a remote once its url.<base>.insteadOf settings have been applied (it
+// The address the director's own program would use for a remote once its url.<base>.insteadOf settings have been applied (it
 // rewrites addresses before it reaches them); null when it cannot say, which keeps the token variables out.
 async function resolvedRemote({ remoteUrl, run, gitPath, env }) {
   if (transportOf(remoteUrl) === null) return null;

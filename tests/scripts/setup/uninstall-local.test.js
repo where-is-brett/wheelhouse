@@ -29,7 +29,7 @@ const SKIP = process.platform === 'win32' ? 'the session start and setup\'s endi
 const PROJECT = 'Cafe-Menu';
 const ANSWERS = {
   'real-users': REAL_USERS.no, product: 'Tide tables for sailors, used by the harbour\'s skippers.', 'live-data': LIVE_DATA.no,
-  'phone-ready': READY.ready, 'push-arrived': ARRIVED.yes,
+  'phone-ready': READY.ready, 'push-arrived': ARRIVED.yes, 'setup-ready': 'Carry on',
 };
 
 let shims;

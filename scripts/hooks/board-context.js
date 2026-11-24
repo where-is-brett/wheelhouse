@@ -262,6 +262,8 @@ async function waitingLines(waiting, { project, input, since, promptAt, at, open
   ]);
 }
 
+const FIRST_MATE_TITLE = 'Wheelhouse · First Mate';
+
 // decide(input, deps) -> the context to add, or undefined.
 //
 // On an agent whose hooks only read (`writeVia: 'helper'`, ruling P5-20) nothing is written under the Wheelhouse
@@ -269,6 +271,19 @@ async function waitingLines(waiting, { project, input, since, promptAt, at, open
 // so it adds no briefing and runs no learning: that agent's briefing comes with its session start. The board
 // commands and the cards line are added as for any agent, read through the helper.
 export async function decide(input, deps = {}) {
+  const out = await context(input, deps);
+  // A session that began as setup carries its title until setup is finished here; the first message after that gives the bar the
+  // First Mate's, once (scripts/lib/setup-title.js).
+  let retitle = false;
+  try {
+    retitle = (deps.writeVia ?? 'self') === 'self' && isRecord(input) && featureSlug(input.cwd) === null && beingSetUp(input.cwd) === null && projectOf(input.cwd, { dir: deps.dir }) !== null && (await import('../lib/setup-title.js')).takeSetupTitled(input.session_id);
+  } catch { /* the title stays */ }
+  if (!retitle) return out;
+  const output = out?.hookSpecificOutput ?? { hookEventName: 'UserPromptSubmit' };
+  return { ...out, hookSpecificOutput: { ...output, sessionTitle: FIRST_MATE_TITLE } };
+}
+
+async function context(input, deps = {}) {
   try {
     const {
       dir, now = () => new Date(), env = process.env, client, desk: givenDesk, waitMs = WAIT_MS + helperGrace(), learnWaitMs = LEARN_WAIT_MS + helperGrace(),

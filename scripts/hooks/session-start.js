@@ -819,6 +819,8 @@ export async function decide(input, deps = {}) {
     title = sessionTitle(input, deps);
   } catch { /* the session keeps Claude Code's own title */ }
   if (title === null) return out;
+  // Kept so the first message after setup can give the bar the project's own title (scripts/hooks/board-context.js).
+  if (title === TITLES.setup && (deps.writeVia ?? 'self') === 'self') (await import('../lib/setup-title.js')).markSetupTitled(input.session_id);
   const output = out?.hookSpecificOutput ?? { hookEventName: 'SessionStart' };
   return { ...out, hookSpecificOutput: { ...output, sessionTitle: title } };
 }
