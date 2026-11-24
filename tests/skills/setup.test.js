@@ -242,6 +242,10 @@ test('the README always runs the catalogue line, so the release pin applies wher
   assert.doesNotMatch(readme, /skip the first command/i);
   assert.match(readme, /even if wheelhouse is already listed/i);
   assert.match(readme, /never skipped/i);
+  const version = JSON.parse(read('.claude-plugin/plugin.json')).version;
+  const browser = readme.split('\n').find((l) => l.includes('plugin browser instead'));
+  assert.ok(browser && browser.includes(`where-is-brett/wheelhouse#v${version}`), 'the plugin browser path pins the release too');
+  assert.doesNotMatch(readme.replace(/where-is-brett\/wheelhouse#v[\d.]+/g, ''), /Add the catalogue `where-is-brett\/wheelhouse`/);
   const skill = read('skills/setup/SKILL.md');
   const line = skill.split('\n').find((l) => l.includes('the host helper could not be reached'));
   assert.ok(line, 'the refusal is covered');
