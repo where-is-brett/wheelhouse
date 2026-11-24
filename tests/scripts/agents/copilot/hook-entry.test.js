@@ -482,3 +482,37 @@ test('the VS Code chat\'s environment, COPILOT_CLI alone, is the Copilot harness
   assert.deepEqual(got, { text: '', code: 0 });
   assert.ok(r.calls.length > 0);
 });
+
+test('a session start from another window\'s seat carries the id line and the window card through the entry', async () => {
+  await withHome(async () => {
+    const { seatFile } = await import('../../../../scripts/lib/first-mate-seat.js');
+    const file = seatFile('shop');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const since = '2026-11-24T00:00:00.000Z';
+    fs.writeFileSync(file, JSON.stringify({ session: 'a', pid: process.pid, pidStart: null, folder: PROJECT, since, seenAt: new Date().toISOString() }));
+    const client = { ...up, state: { views: async () => ({ ok: true, views: {} }) }, session: { mark: async () => ({ ok: true }), seat: async () => ({ ok: true, holds: false }) } };
+    const start = await run('sessionStart', { sessionId: 'chat-9', cwd: PROJECT }, { client, stepDeps: { sessionStart: { env: {}, projectOf: () => ({ project: 'shop' }) } } });
+    assert.equal(start.code, 0);
+    const said = JSON.parse(start.text);
+    const context = said.hookSpecificOutput?.additionalContext ?? said.additionalContext ?? start.text;
+    assert.match(context, /Your session id is chat-9: give it as --session chat-9/);
+    assert.match(context, /isn't the First Mate: it is in another window/);
+    assert.match(context, new RegExp(`Take over the First Mate from window session a, since ${since}`));
+    assert.match(context, /confirm seat-take-over --session/);
+    assert.doesNotMatch(context, /AskUserQuestion/);
+  });
+});
+
+test('through the entry, a front-desk command that records is refused without the chat\'s own --session, and passes with it', async () => {
+  const { frontDeskWrites, ...others } = recording().steps;
+  const stepDeps = { frontDeskWrites: { env: {}, find: () => ({ project: 'shop', record: { folder: PROJECT } }), setUp: () => null, role: () => 'front-desk' } };
+  const go = (command, extra = {}) => run('preToolUse', call('bash', { command }, { sessionId: 'chat-9', ...extra }), { steps: others, stepDeps });
+  const bare = await go('wh-frontdesk cards');
+  assert.equal(bare.code, 2);
+  assert.match(bare.text, /--session chat-9/);
+  assert.equal((await go('wh-frontdesk cards --session other')).code, 2);
+  assert.equal((await go('wh-frontdesk confirm seat-take-over')).code, 2);
+  assert.equal((await go('wh-frontdesk cards --session chat-9')).code, 0);
+  assert.equal((await go('wh-frontdesk confirm seat-take-over --session chat-9')).code, 0);
+  assert.equal((await go('wh-frontdesk views waiting')).code, 0, 'a read needs no id');
+});

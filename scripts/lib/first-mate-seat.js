@@ -6,6 +6,8 @@
 //   home        the Wheelhouse home (default: wheelhouseHome())
 //   alive       (pid) => boolean, whether a process is running (default: pidAlive)
 //   startTime   async (pid) => string | null, when a process started (default: processStartTime)
+//   holder      { pid, pidStart } to record as the holder's process, for a seat moved on a caller's word (the helper's
+//               own ancestor isn't the holder's window); { pid: null, pidStart: null } leaves it to the idle rule
 //   ancestor    { pid, table }: the process to start the climb from (default: this process) and the
 //               process table [{ pid, ppid, command }] (default: listProcesses())
 //   now         () => Date (default: the clock)
@@ -144,7 +146,7 @@ function replace(file, judged, seat, options) {
 }
 
 const newSeat = async ({ session, folder }, options, since) => {
-  const { pid, pidStart } = await firstMatePid(options);
+  const { pid, pidStart } = options.holder ?? await firstMatePid(options);
   const now = clock(options).toISOString();
   return { session, pid, pidStart, folder, since: since ?? now, seenAt: now };
 };

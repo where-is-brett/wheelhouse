@@ -18,6 +18,8 @@ import path from 'node:path';
 import { answer, runAndExit, projectOf, beingSetUp, worktreeRoot, sameFolder } from './kit.js';
 import { segmentsWithOperators } from './shell-words.js';
 import { sessionRole, asideKind } from '../lib/role.js';
+import { SEAT_WRITES } from '../lib/seat-writes.js';
+import { LAUNCHERS } from '../lib/launchers.js';
 import { refreshSeat } from '../lib/first-mate-seat.js';
 import { takeSeatIfFree } from '../lib/free-seat.js';
 import { helperClient } from '../host/helper-client.js';
@@ -272,11 +274,65 @@ export function shellChanges(command, cwd, { windows = false, home = os.homedir(
   return { paths, here: here ? at : null };
 }
 
+// ---- The seat's writes, on an agent whose hooks only read ----
+
+// What the refusal says for a front-desk command that records, given without the chat's own session id. The flag is spelled out,
+// so the next call is right. On such an agent the environment can't name the chat (the id it holds may be an inherited one), so
+// the chat names itself, and the hook holds it to its own id: a chat can't pass another session's, nor go without.
+export const SESSION_FLAG_NEEDED = (id) => (typeof id === 'string' && id !== ''
+  ? `This command records, so it must name this chat's own session: add --session ${id} to it (the id this chat was given at its start).`
+  : 'This command records, but this chat has no session id to name, so it can\'t run it.');
+
+const FRONT_DESK_LAUNCHER = Object.entries(LAUNCHERS).find(([, script]) => script === 'scripts/frontdesk/cli.js')?.[0];
+const isFrontDeskProgram = (word) => {
+  // Compared without regard to case (a Windows path), and the script by its own folder, so a relative path reads too.
+  const slashed = String(word).replaceAll('\\', '/').toLowerCase();
+  const base = path.basename(slashed).replace(/\.(exe|cmd)$/, '');
+  return base === FRONT_DESK_LAUNCHER?.toLowerCase() || /(^|\/)frontdesk\/cli\.js$/.test(slashed);
+};
+
+// The ids given with --session and the command named, in the arguments after the front desk's program.
+function frontDeskArgs(args) {
+  const ids = [];
+  const rest = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const flag = /^--session(?:=(.*))?$/.exec(args[i]);
+    if (flag === null) rest.push(args[i]);
+    else ids.push(flag[1] ?? args[i += 1]);
+  }
+  return { ids, command: rest[0] };
+}
+
+// Whether the shell command runs a front-desk command that records without naming `session` (and only it) with --session. A
+// command that can't be read, and names the front desk's program, is held to the same rule: a missing id never falls through.
+// With `required` false (an agent whose environment names the chat), a command with no --session passes, and one that names
+// another session doesn't: the flag wins over the environment, so it may only name the chat's own.
+function recordsWithoutSession(command, session, windows, required = true) {
+  const { text } = withoutHeredocs(command);
+  // A redirect of a stream onto another (`2>&1`) is no redirect to a file, and no part of the command.
+  const read = segmentsWithOperators(text.replace(/\d*>&(\d+|-)(?=$|[\s;|&)])/g, ' '), windows);
+  if (read === null) return required && /wh-frontdesk|frontdesk[\\/]cli\.js/i.test(command);
+  // A segment a redirect opened holds the file first, then more of the same command's words (`card < in.json --session x`).
+  const commands = [];
+  read.segments.forEach((words, i) => {
+    if (read.operators[i] === '>' || read.operators[i] === '<') commands.at(-1)?.push(...words.slice(1));
+    else commands.push([...words]);
+  });
+  return commands.some((words) => {
+    const at = words.findIndex(isFrontDeskProgram);
+    if (at < 0) return false;
+    const { ids, command: name } = frontDeskArgs(words.slice(at + 1));
+    if (!SEAT_WRITES.includes(name)) return false;
+    if (!required && ids.length === 0) return false;
+    return typeof session !== 'string' || session === '' || ids.length === 0 || ids.some((id) => id !== session);
+  });
+}
+
 // The holder's hook keeps the seat's `seenAt` fresh. Never throws.
 const refreshHeld = (project, session) => refreshSeat(project, session);
 
 // The hook's answer: undefined to let the tool run.
-export function decide(input, { env = process.env, find = projectOf, setUp = beingSetUp, role = sessionRole, now = Date.now, locked = lockedNow } = {}) {
+export function decide(input, { env = process.env, find = projectOf, setUp = beingSetUp, role = sessionRole, now = Date.now, locked = lockedNow, writeVia = 'self' } = {}) {
   const tool = input?.tool_name;
   const field = WRITING[tool];
   if ((field === undefined && !SHELL.includes(tool)) || typeof input.cwd !== 'string' || !path.isAbsolute(input.cwd)) return undefined;
@@ -284,6 +340,10 @@ export function decide(input, { env = process.env, find = projectOf, setUp = bei
   const found = find(input.cwd);
   const folder = found?.record?.folder;
   if (!folder) return undefined;
+  // On an agent whose hooks only read, a front-desk command that records names the chat's own session; elsewhere it may name no other.
+  if (SHELL.includes(tool) && typeof input.tool_input?.command === 'string' && recordsWithoutSession(input.tool_input.command, input.session_id, tool === 'PowerShell', writeVia !== 'self')) {
+    return answer.deny(SESSION_FLAG_NEEDED(input.session_id));
+  }
   const running = setUp(input.cwd);
   if (running !== null && setupLive(running.run, now())) return undefined;
   const kind = role({ sessionId: input.session_id, env, cwd: input.cwd });
@@ -330,14 +390,14 @@ const SEAT_BUDGET_MS = 3000;
 // Before the guard: a front-desk session in a set-up project that holds no seat takes it while it is free. The session that ran
 // setup began before the project existed, so neither the session start nor a prompt has taken it, and its first card after
 // setup would otherwise be refused. The seat is taken here, in Claude Code's own hook, where the window's process can be found.
-export async function decideWithSeat(input, { env = process.env, find = projectOf, role = sessionRole, take = takeSeatIfFree, client, now = () => new Date() } = {}) {
+export async function decideWithSeat(input, { env = process.env, find = projectOf, role = sessionRole, take = takeSeatIfFree, client, now = () => new Date(), writeVia = 'self' } = {}) {
   try {
     const found = typeof input?.cwd === 'string' && path.isAbsolute(input.cwd) && ownRun(env) === null ? find(input.cwd) : null;
     if (found?.record?.folder && role({ sessionId: input.session_id, env, cwd: input.cwd, seat: null }) === 'front-desk') {
       await take({ project: found.project, input, env, now, client: client ?? helperClient({ timeout: SEAT_BUDGET_MS }), left: withinBudget(Date.now() + SEAT_BUDGET_MS) });
     }
   } catch { /* the seat is taken at a later hook */ }
-  return decide(input, { env, find, role });
+  return decide(input, { env, find, role, writeVia });
 }
 
 if (startedAsScript(import.meta.url)) await runAndExit(decideWithSeat, { failClosed: false, event: 'PreToolUse' });

@@ -5,6 +5,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { startHelper } from '../../../scripts/host/helper.js';
@@ -88,5 +89,21 @@ test('/state/write refuses to record a click\'s proof, so no caller can forge on
   await withProject(async (client) => {
     const got = await client.state.write({ project: 'o__p', kind: 'card-answer', data: { question: 'merge-12', label: 'Approve', hash: HASH, proof: 'chat-click' } });
     assert.equal(got.ok, false);
+  });
+});
+
+test('a chat click on the seat card never moves the seat, and signs nothing', async () => {
+  await withProject(async (client) => {
+    const { seatFile } = await import('../../../scripts/lib/first-mate-seat.js');
+    const file = seatFile('o__p');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const seat = JSON.stringify({ session: 'a', pid: process.pid, pidStart: null, folder: '/x', since: '2026-11-24T00:00:00.000Z', seenAt: '2026-11-24T00:00:00.000Z' });
+    fs.writeFileSync(file, seat);
+    for (const card of ['seat-take-over', 'seat-take-over-1']) {
+      await client.cards.chatClick({ project: 'o__p', card, label: 'Take over here', hash: HASH, proof: 'chat-click' });
+    }
+    assert.equal(fs.readFileSync(file, 'utf8'), seat, 'the seat file is as it was');
+    const events = listEvents(stateDir('o__p'), { report: () => {} });
+    assert.ok(events.every((e) => e.kind !== 'action' && e.sig === undefined), 'no signed record');
   });
 });

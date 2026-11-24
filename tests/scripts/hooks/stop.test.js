@@ -231,6 +231,35 @@ test('under STOP, the front desk\'s reading commands run by their exact words, a
   });
 });
 
+test('under STOP, a front-desk command may carry the chat\'s own --session, and the window commands for Lift All stop and the seat run', async () => {
+  await withHome(async () => {
+    const { base, main } = makeProject();
+    try {
+      setStop({ by: 'prompt' });
+      const cli = `${PLUGIN}/scripts/frontdesk/cli.js`;
+      for (const ok of [
+        `node "${cli}" confirm lift-stop --session chat-1`,
+        `node "${cli}" confirm seat-take-over --session chat-1`,
+        `node "${cli}" --session chat-1 confirm seat-take-over`,
+        `node "${cli}" confirm seat-take-over --session=chat-1`,
+        `node "${cli}" cards --session chat-1`,
+        `node "${cli}" views waiting --session chat-1`,
+      ]) assert.equal(await guard(bash(main, ok), deps(base)), undefined, ok);
+      for (const bad of [
+        `node "${cli}" confirm seat-take-over --session`,
+        `node "${cli}" confirm seat-take-over --session a --session b`,
+        `node "${cli}" confirm seat-take-over --session "a b"`,
+        `node "${cli}" confirm seat-take-over --session $ID`,
+        `node "${cli}" record ruling --session chat-1`,
+        `node "${cli}" confirm 3f2a1c9e-1111-4222-8333-444455556666 --session chat-1`,
+        `node "${cli}" confirm seat-take-over extra --session chat-1`,
+      ]) assert.ok(denied(await guard(bash(main, bad), deps(base))), bad);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
 test('under STOP, the foreman may read a wake and record it done, and nothing more of its commands', async () => {
   await withHome(async () => {
     const { base, main } = makeProject();

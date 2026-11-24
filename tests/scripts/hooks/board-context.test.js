@@ -29,7 +29,7 @@ import { keptRequest } from '../../../scripts/lib/kept-request.js';
 import { deskCore } from '../../../scripts/desk/core.js';
 import { fileSource } from '../../../scripts/desk/file-source.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
-import { markOpen, readOpen } from '../../../scripts/lib/session-files.js';
+import { markOpen, readOpen, readTurn } from '../../../scripts/lib/session-files.js';
 import { seatFile, readSeat, handOverSeat } from '../../../scripts/lib/first-mate-seat.js';
 import { SEAT_MOVED_LINE } from '../../../scripts/lib/front-desk.js';
 import { makeFeatureFolder } from '../../helpers/made-feature.js';
@@ -1377,5 +1377,34 @@ test('Claude Code\'s since line still comes from seen.json, and needs no turn ti
     seenAt();
     store(stateDir(P), [askedCard(QUESTION_A, '30'), answeredCard(QUESTION_A, '34', 'panel')]);
     assert.ok(contextOf(await hook(prompt(repo, 'Done?', SESSION))).startsWith(SINCE_LEAD));
+  });
+});
+
+test('an agent whose hooks can\'t write tells the helper that a chat which typed the aside command is an aside, and an ordinary prompt tells it nothing', async () => {
+  await withProject(async ({ repo }) => {
+    const asked = [];
+    const helper = { writeVia: 'helper', client: { ...client, session: { seat: async (body) => { asked.push(body); return { ok: true, holds: false }; } }, desk: { read: async () => ({ ok: false, refused: 'down' }) } } };
+    await decide(prompt(repo, 'Hello', 's1'), { now: at(NOW), env: {}, ...helper });
+    assert.deepEqual(asked, []);
+    await decide(prompt(repo, ASIDE_COMMAND, 's1'), { now: at(NOW), env: {}, ...helper });
+    assert.deepEqual(asked, [{ cwd: repo, session: 's1', aside: true }]);
+    // A hook that writes records the choice itself and asks nothing.
+    await decide(prompt(repo, ASIDE_COMMAND, 's2'), { now: at(NOW), env: {}, client: helper.client });
+    assert.equal(asked.length, 1);
+  });
+});
+
+test('an agent whose hooks can\'t write keeps the turn of an aside chat too, so the take-over card can find a live chat to move to', async () => {
+  await withProject(async ({ repo }) => {
+    put(seatFile(P), { session: 'other', pid: null, pidStart: null, folder: repo, since: NOW, seenAt: NOW });
+    const t1 = '2026-10-19T10:20:00.000Z';
+    assert.equal(await decide(prompt(repo, 'Hello', 's1'), { now: at(t1), env: {}, ...asHelper(repo, t1) }), undefined);
+    assert.equal(readTurn('s1'), Date.parse(t1));
+    // An aside by choice too, and the helper is still told of the choice.
+    const asked = [];
+    const base = asHelper(repo, t1);
+    await decide(prompt(repo, ASIDE_COMMAND, 's3'), { now: at(t1), env: {}, ...base, client: { ...base.client, session: { seat: async (body) => { asked.push(body); return { ok: true, holds: false }; } } } });
+    assert.equal(readTurn('s3'), Date.parse(t1));
+    assert.equal(asked.length, 1);
   });
 });

@@ -448,10 +448,19 @@ export async function decide(input, deps = {}) {
       attempt(() => recordAside(input.session_id));
       attempt(() => releaseSeat(found.project, input.session_id));
     }
+    // Where hooks can't write, the helper records the choice, so a chat that chose to be an aside never takes a free seat.
+    if (!writes && role === 'aside' && keep && typeof input.session_id === 'string' && input.session_id !== '') {
+      const asker = client ?? helperClient({ timeout: WAIT_MS + helperGrace() });
+      await within(() => asker.session.seat({ cwd: input.cwd, session: input.session_id, aside: true }), waitMs);
+    }
     // A foreman known only from its first prompt was pointed at the front desk by the session start.
     if (role === 'foreman' && first && env?.WHEELHOUSE_ROLE !== 'foreman') return answer.context('UserPromptSubmit', FOREMAN_LINE);
     if (setup !== null && role === 'front-desk') return answer.context('UserPromptSubmit', SETUP_FIRST);
     if (writes && role === 'aside' && attempt(() => movedAway(found.project, input.session_id), false)) return answer.context('UserPromptSubmit', SEAT_MOVED_LINE);
+    // Where hooks can't write, the helper keeps an aside chat's turn as well, so the take-over card finds a live chat to move the First Mate to.
+    if (!writes && role === 'aside' && typeof input.session_id === 'string' && input.session_id !== '') {
+      await within(() => helperTurnAt({ cwd: input.cwd, client, session: input.session_id }), waitMs);
+    }
     if (role !== 'front-desk' || madeFeatureSlug(input.cwd) !== null) return undefined;
     const { project } = found;
     if (writes) attempt(() => refreshSeat(project, input.session_id));

@@ -1735,7 +1735,7 @@ test('a launcher given a quote, %, ^, &, |, < or > or a line break in an argumen
         assert.ok(denied(out), command);
         assert.match(out.hookSpecificOutput.permissionDecisionReason, /launcher/, command);
       }
-      for (const command of ['wh-frontdesk cards', "wh-frontdesk similar 'Could we export the orders?'", 'wh-frontdesk card < .wheelhouse/front-desk.json', 'wh-wake read /tmp/x.json']) {
+      for (const command of ['wh-frontdesk cards', 'wh-frontdesk cards --session chat-1', 'wh-frontdesk confirm seat-take-over --session chat-1', 'wh-frontdesk confirm lift-stop --session chat-1', "wh-frontdesk similar 'Could we export the orders?'", 'wh-frontdesk card < .wheelhouse/front-desk.json', 'wh-wake read /tmp/x.json']) {
         const out = await bash(command);
         assert.ok(!/launcher/.test(out?.hookSpecificOutput?.permissionDecisionReason ?? ''), command);
       }
