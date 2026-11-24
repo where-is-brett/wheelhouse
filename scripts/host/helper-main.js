@@ -22,18 +22,12 @@ import { engineReady } from '../engine/switch.js';
 import { engineWanted } from '../engine/parts.js';
 import { processStartTime } from '../watcher/waker.js';
 import { writeHelperRecord, removeHelperRecord } from './helper-record.js';
+import { pluginVersion } from '../lib/plugin-version.js';
 
 const OWN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-// The version in a plugin folder's .claude-plugin/plugin.json, or null.
-function versionOf(root) {
-  try {
-    const version = JSON.parse(fs.readFileSync(path.join(root, '.claude-plugin', 'plugin.json'), 'utf8'))?.version;
-    return typeof version === 'string' && version !== '' ? version : null;
-  } catch {
-    return null;
-  }
-}
+// The version of a plugin folder (scripts/lib/plugin-version.js), or null.
+const versionOf = pluginVersion;
 
 function recordOf(project) {
   const record = readProject(project);

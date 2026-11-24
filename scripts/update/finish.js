@@ -30,6 +30,7 @@ import { listEvents } from '../state/events.js';
 import { startWatcher, stopWatcher, watcherRunning } from '../foreman/start.js';
 import { processStartTime } from '../watcher/waker.js';
 import { projectConfig } from '../watcher/main.js';
+import { releaseVersion } from '../lib/plugin-version.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -77,10 +78,7 @@ export function rootIsCacheFor({ newRoot, claudeHome, tag }) {
   }
 }
 
-export function versionOf(root) {
-  const found = readJson(path.join(root, '.claude-plugin', 'plugin.json'));
-  return typeof found?.version === 'string' ? found.version : null;
-}
+export const versionOf = releaseVersion;
 
 // The card that asks about an old helper that did not make way. Plain card data: part 9 raises it. `kind` is 'busy' (a
 // v0.2.5 or v0.2.6 helper still busy after two minutes), 'unknown' (one that does not know the request) or 'hung' (one that

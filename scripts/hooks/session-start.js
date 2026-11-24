@@ -96,6 +96,7 @@ import { NO_HELPER } from '../lib/host-lines.js';
 import { keptRequest, clearRequest } from '../lib/kept-request.js';
 import { retiredPiece } from '../settings/catalogue.js';
 import { SETTINGS_CHANGED, settingsCardNote } from '../lib/settings-card.js';
+import { DEV_VERSION, pluginVersion } from '../lib/plugin-version.js';
 
 const SELF = fileURLToPath(import.meta.url);
 // The script that brings this computer's settings for a project up to date, run detached.
@@ -188,14 +189,9 @@ function olderThan(version, floor) {
 }
 
 // This copy's version, from its own .claude-plugin/plugin.json; null when unreadable.
-function ownVersion(pluginRoot) {
-  try {
-    const version = JSON.parse(fs.readFileSync(path.join(pluginRoot, '.claude-plugin', 'plugin.json'), 'utf8'))?.version;
-    return typeof version === 'string' && version !== '' ? version : null;
-  } catch {
-    return null;
-  }
-}
+const ownVersion = pluginVersion;
+// A version as a session line names it: a build from the main line carries no number.
+const versionWords = (version) => (version === DEV_VERSION ? 'a build from the main line' : `version ${oneLine(version)}`);
 
 const oneLine = (value) => {
   const text = String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -895,13 +891,13 @@ async function started(input, deps) {
   else {
     const mine = ownVersion(pluginRoot);
     if (up.busy === true) {
-      notes.push(`An older Wheelhouse helper (version ${oneLine(up.version)}) is still finishing work; Wheelhouse moves to the new one (version ${mine}) when it is done`);
+      notes.push(`An older Wheelhouse helper (version ${oneLine(up.version)}) is still finishing work; Wheelhouse moves to the new one (${versionWords(mine)}) when it is done`);
     } else if (up.noRoute === true) {
       notes.push(`An older Wheelhouse helper (version ${oneLine(up.version)}) is still running and can't be asked to stop. It is replaced when the computer restarts. To replace it sooner, ask this session to end the Node process running Wheelhouse's helper (helper-main.js), or end it yourself in Activity Monitor on a Mac or Task Manager on Windows`);
     } else if (up.slow === true) {
       notes.push(`The older Wheelhouse helper (version ${oneLine(up.version)}) is restarting; the new one starts at the next session, or ask again in a moment`);
     } else if (typeof up.version === 'string' && mine !== null && up.version !== mine) {
-      notes.push(`The helper running is version ${oneLine(up.version)}; this copy is version ${mine}`);
+      notes.push(`The helper running is ${versionWords(up.version)}; this copy is ${versionWords(mine)}`);
     }
     await left(sendPending(project, clientNow(), { until: end }));
     // v0.1.x's records, imported once, before the views are read so the briefing holds them.

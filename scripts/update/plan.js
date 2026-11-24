@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { compareVersions } from '../lib/versions.js';
+import { DEV_VERSION } from '../lib/plugin-version.js';
 import { latestRelease } from './release.js';
 
 // The earliest release that can finish an update: a put-back to anything before it is refused (design 9.3).
@@ -14,6 +15,7 @@ export const NO_RELEASES = "Wheelhouse's releases couldn't be read just now. Not
 export const latestLine = (version) => `You have the latest Wheelhouse, ${version}.`;
 export const checksOutLine = (tag) => `Release ${tag} doesn't check out, so it won't be installed.`;
 export const noPutBackLine = (tag) => `Wheelhouse ${tag} can't be put back by this command: that release can't finish an update.`;
+export const mainLineLine = 'This computer runs a build of Wheelhouse from its main line, between releases, so there is no release to update from. To move to a release, install it as Wheelhouse\'s README says.';
 export const installedLine = (version) => `Wheelhouse ${version} is already installed.`;
 
 // The release the project had before the update, from the journal: the one its checks step recorded, else the one the
@@ -61,6 +63,7 @@ export async function makePlan({
     const plan = { from: part.from ?? from, to: part.tag, sha: part.sha, put: part.put, approval: 'review', says: null, locked: false, others: [], carryOn: true };
     return { lines: [], plan };
   }
+  if (from === DEV_VERSION) return said(mainLineLine);
 
   let releases;
   try {

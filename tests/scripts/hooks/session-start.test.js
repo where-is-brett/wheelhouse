@@ -820,6 +820,36 @@ test('the first session after an update says so once, naming its version and the
   });
 });
 
+// A copy from the main line: its plugin.json names no version.
+const mainLineRoot = (home) => {
+  const root = ownRoot(home);
+  fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'wheelhouse' }));
+  return root;
+};
+
+test('a copy from the main line retires a release\'s helper, and leaves another main-line helper alone', async () => {
+  await withHome(async (home) => {
+    const f = helperOf('0.2.10', () => ({ ok: true, retired: true }));
+    const out = text(await run(f, { pluginRoot: mainLineRoot(home) }));
+    assert.equal(f.retireCalls.retire, 1);
+    assert.equal(helperStarts(f), 1);
+    assert.doesNotMatch(out, /version dev/);
+    const same = helperOf('dev', () => ({ ok: true, retired: true }));
+    assert.doesNotMatch(text(await run(same, { pluginRoot: mainLineRoot(home) })), /The helper running is/);
+    assert.equal(same.retireCalls.retire, 0);
+  });
+});
+
+test('a main-line build is named in words, not as version dev', async () => {
+  await withHome(async (home) => {
+    const busy = helperOf('0.2.3', () => ({ ok: true, retired: false, busy: 'a setup step is running' }));
+    assert.match(text(await run(busy, { pluginRoot: mainLineRoot(home) })), /still finishing work; Wheelhouse moves to the new one \(a build from the main line\) when it is done/);
+    const f = fake();
+    f.client.health = async () => ({ ok: true, version: 'dev' });
+    assert.ok(text(await run(f, { pluginRoot: ownRoot(home, '0.3.0') })).includes('The helper running is a build from the main line; this copy is version 0.3.0'));
+  });
+});
+
 test('an older helper still at work is kept, with a plain note, and nothing is started or stopped', async () => {
   await withHome(async (home) => {
     const f = helperOf('0.2.3', () => ({ ok: true, retired: false, busy: 'a setup step is running' }));

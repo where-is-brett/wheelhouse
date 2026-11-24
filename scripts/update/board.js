@@ -6,11 +6,13 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { wheelhouseHome } from '../lib/paths.js';
 import { compareVersions } from '../lib/versions.js';
 import { WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { declined } from './declined.js';
 import { openJournal, updateLockHeld } from './journal.js';
+import { DEV_VERSION, pluginVersion } from '../lib/plugin-version.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LOOK_EVERY_MS = 7 * DAY_MS;
@@ -47,12 +49,17 @@ export function projectRef(folder) {
   return null;
 }
 
-// This copy of Wheelhouse's version, v-prefixed, from the plugin.json beside these scripts; null when unreadable.
-// The test suite sets WHEELHOUSE_RUNNING_VERSION, so a board read in a test doesn't change with each release.
-export function runningVersion() {
-  if (process.env.WHEELHOUSE_RUNNING_VERSION) return withV(process.env.WHEELHOUSE_RUNNING_VERSION);
+// What this copy of Wheelhouse is, from the plugin.json beside these scripts: its release, v-prefixed, or DEV_VERSION for a
+// build from the main line between releases; null when unreadable. The test suite sets WHEELHOUSE_RUNNING_VERSION, so a
+// board read in a test doesn't change with each release.
+export function runningBuild() {
+  if (process.env.WHEELHOUSE_RUNNING_VERSION) {
+    const named = process.env.WHEELHOUSE_RUNNING_VERSION;
+    return named === DEV_VERSION ? DEV_VERSION : withV(named);
+  }
   try {
-    return withV(JSON.parse(fs.readFileSync(new URL('../../.claude-plugin/plugin.json', import.meta.url), 'utf8'))?.version);
+    const version = pluginVersion(fileURLToPath(new URL('../..', import.meta.url)));
+    return version === DEV_VERSION ? DEV_VERSION : withV(version);
   } catch {
     return null;
   }
@@ -130,11 +137,13 @@ function journalFacts(project) {
 const started = (steps) => Object.values(steps).some((s) => s.state !== 'todo');
 
 // What the board needs to say about updates for one project. `version` is the running copy's
-// (v-prefixed or not), `latest` the weekly look's tag, `helperVersion` what the helper answers.
+// (v-prefixed or not, or DEV_VERSION for a build from the main line, which sets `between` and has no release to
+// compare), `latest` the weekly look's tag, `helperVersion` what the helper answers.
 // Each part is null when there is nothing to say. Reads files only.
 export function updateFacts({ project, folder, version, latest = null, helperVersion = null, now = () => new Date() } = {}) {
-  const has = withV(version);
-  const facts = { version: has, updatedAt: null, newer: null, partway: null, refresh: null, mismatch: null, oldHelper: null };
+  const between = version === DEV_VERSION;
+  const has = between ? null : withV(version);
+  const facts = { version: has, between, updatedAt: null, newer: null, partway: null, refresh: null, mismatch: null, oldHelper: null };
   const at = now().getTime();
   const journal = journalFacts(project);
   if (journal !== null && journal.tag !== null) {
