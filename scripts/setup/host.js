@@ -105,6 +105,7 @@ import { listEvents } from '../state/events.js';
 import { joinedRepo, runClosed, stepDone, JOIN_STEP } from '../lib/setup-run.js';
 import { PROXY_HAS_PASSWORD } from '../host/proxy.js';
 import { askDirectorGit, directorProxy } from '../host/director-git.js';
+import { gitHoldsKey } from './git-held.js';
 import { readProfileViews, PROFILE_BRANCH } from '../profile/store.js';
 import { toolsStatus, originUrl, applyCompanyCa, curlStatus, toolsLeftOut, hostToolChoice, hostToolId, hostToolCard, NEW_PRODUCT } from './tools.js';
 import {
@@ -905,11 +906,17 @@ const quickSays = (host, platform) => `${quickLineFor(host)} If that sign-in lea
 // "Use my git as it is" in a few plain words, and what it reaches (design section 4.4). On Windows nothing keeps an agent's
 // command from asking git for the key, so the option's words say so.
 // Where git holds no key for the host yet (`held` false), the key is one the director makes on a page, and the words say so.
-const asIsSays = (host, held = true) => `${held ? 'Your own git and the key it already uses' : 'Your own git and its key'}, for pushes and ${host === 'github' ? 'pull' : 'merge'} requests, reaching everything your account can.${held ? '' : ` Your git holds no ${NAME[host]} key yet, so you make one on a page that opens${host === 'gitlab' ? `, set to expire in ${KEY_DAYS_ASKED} days` : `, set to expire in ${KEY_DAYS_ASKED} days`}.`}`;
+const asIsSays = (host, held = true) => {
+  const reach = `for pushes and ${host === 'github' ? 'pull' : 'merge'} requests, reaching everything your account can.`;
+  const page = `you make one on a page that opens, set to expire in ${KEY_DAYS_ASKED} days`;
+  // `held` null: the look at git's store could not tell, so the words are true whether or not it holds one.
+  if (held === null) return `Your own git and its key, ${reach} If git holds no ${NAME[host]} key, ${page}.`;
+  return `${held ? 'Your own git and the key it already uses' : 'Your own git and its key'}, ${reach}${held ? '' : ` Your git holds no ${NAME[host]} key yet, so ${page}.`}`;
+};
 // Whether two readings of an option say the same, the director's own git's words counted alike whether or not git holds a key
 // yet: that is a fact found only when the plan runs, and an answer given before it stands rather than being asked again.
 const withoutHeld = (text) => (typeof text === 'string'
-  ? text.replace('Your own git and the key it already uses', 'Your own git and its key').replace(/ Your git holds no \w+ key yet, so you make one[^.]*\./, '')
+  ? text.replace('Your own git and the key it already uses', 'Your own git and its key').replace(/ Your git holds no \w+ key yet, so you make one[^.]*\./, '').replace(/ If git holds no \w+ key, you make one[^.]*\./, '')
   : text);
 export const sameSays = (a, b) => withoutHeld(a) === withoutHeld(b);
 const AS_IS_WINDOWS = 'On Windows any agent\'s command could ask git for that key.';
@@ -2575,14 +2582,22 @@ export function hostStep({
     const remoteUrl = ctx.choicesOnly === true ? null : originUrl(ctx.folder) ?? (repo === null ? null : hostUrl({ host, repo, base }));
     // A look at the choices makes no request of the host: it only asks whether git holds a key, which is all the card's
     // wording depends on, so the question keeps the same id as in the real plan.
+    // Whether git holds a sign-in for the host, by a look that stays on this computer (scripts/setup/git-held.js): it asks the
+    // helper's store for the entry's name and never contacts the host. Both the look at the choices and the plan read it, so the
+    // card's wording and recommendation are the same in each.
+    let look = 'unknown';
+    try {
+      look = await gitHoldsKey({ address: hostAddress(host, base), run, platform, ask: (args) => askDirectorGit(args, { run, gitPath, cwd: outsideAny(), env: directorAskEnv({ ...process.env, ...withoutTokens() }) }) });
+    } catch { /* not told */ }
     let found;
     if (ctx.choicesOnly === true) {
       let held = null;
-      // A pasted or company host is not asked what key the computer holds for it: the store may contact it.
+      // A pasted or company host is not asked what key the computer holds for it: the store may contact it. The look above stands in.
       try {
         if (!quiet) held = await directorKey.borrow({ host: new URL(hostAddress(host, base)).host, base: hostAddress(host, base), repoPath: repo ?? undefined });
       } catch { /* none to lend */ }
-      found = { transport: null, helper: null, gitReaches: null, key: typeof held?.key === 'string' && held.key !== '' ? 'unchecked' : 'none', user: null, username: null };
+      const has = quiet ? look !== 'none' : typeof held?.key === 'string' && held.key !== '';
+      found = { transport: null, helper: null, gitReaches: null, key: has ? 'unchecked' : 'none', user: null, username: null };
     } else {
       found = await findAccess({ host, base, repo, remoteUrl, folder: ctx.folder, run, gitPath, borrow: directorKey.borrow, via });
     }
@@ -2598,7 +2613,7 @@ export function hostStep({
     const sshWorks = found.transport === 'ssh' && found.gitReaches === true && cliSigned;
     const noTool = tool !== 'works';
     const offered = (lent || sshWorks || noTool) && (cliSigned || curl);
-    return { tool, cliSigned, found, curl, offered, gitPath, proxied: proxy !== null, proxyPassword, noRoad: noTool && !curl };
+    return { tool, cliSigned, found, curl, offered, gitPath, look, proxied: proxy !== null, proxyPassword, noRoad: noTool && !curl };
   }
 
   return {
@@ -2769,9 +2784,11 @@ export function hostStep({
       }
       const toolOut = host === 'gitlab' && (hostToolLeftOut(ctx, host) || glabState !== 'works');
       const asked = { host, locked, launched, realUsers: realUsers || launched || product.joining === true, unsureOf: product.joining === true && !launched ? product.name : null, platform, where };
-      const held = reach === null || reach.found.key !== 'none' || reach.cliSigned === true;
+      // Whether git holds a key, for the card's words: the look at git's own store, the same whenever the card is made; where the
+      // look can't tell (null), the card claims nothing either way, so it never changes between the choices and the plan.
+      const held = reach === null || reach.cliSigned === true ? true : reach.look === 'held' ? true : reach.look === 'none' ? false : null;
       // What the plan card needs of this one: that git holds no key, and that the host is the public GitLab.
-      const askFlags = { ...(held ? {} : { unheld: true }), ...(host === 'gitlab' && base === DEFAULT_GITLAB ? { publicGitLab: true } : {}) };
+      const askFlags = { ...(held === false ? { unheld: true } : {}), ...(host === 'gitlab' && base === DEFAULT_GITLAB ? { publicGitLab: true } : {}) };
       let card = connectionCard({ ...asked, appFile, asIs: reach?.offered === true && !declinedAsIs, held, toolOut, publicGitLab: base === DEFAULT_GITLAB });
       let way = card.options[0].label;
       if (card.options.length > 1) {
@@ -2788,7 +2805,7 @@ export function hostStep({
             .filter(([key, a]) => key.startsWith(`3.${own}`) && /^[0-9a-f]{10}$/.test(key.slice(`3.${own}`.length)) && Number.isFinite(Date.parse(a?.at)))
             .sort(([, a], [, b]) => Date.parse(a.at) - Date.parse(b.at)).at(-1) ?? [null, null];
           // The card the director answered, whose words the answer's key names.
-          const readings = [false, true].flatMap((a) => [true, false].flatMap((h) => [false, true].map((t) => connectionCard({ ...asked, appFile, asIs: a, held: h, toolOut: t, publicGitLab: base === DEFAULT_GITLAB }))));
+          const readings = [false, true].flatMap((a) => [true, false, null].flatMap((h) => [false, true].map((t) => connectionCard({ ...asked, appFile, asIs: a, held: h, toolOut: t, publicGitLab: base === DEFAULT_GITLAB }))));
           const was = earlier === null ? null : answeredCard(readings, host, (c) => `3.${own}${digest(c)}` === earlierKey);
           const says = (c, label) => c?.options.find((o) => o.label === label)?.says;
           // The way chosen stands while it is still one of the card's and says what it said when chosen; it is never taken as
