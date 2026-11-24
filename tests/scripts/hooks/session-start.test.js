@@ -2566,3 +2566,22 @@ test('on an agent whose hooks only read, a lock that could not be pushed still l
     assert.equal(readSeat(P), null, 'no seat taken while another computer holds the lock');
   });
 });
+
+test('on an agent whose hooks only read, a lock that could not be pushed takes the seat only when a read of the lock shows no other computer live', async () => {
+  await withHome(async () => {
+    const refused = async () => ({ ok: false, refused: 'the computer\'s git settings changed' });
+    const cases = [
+      { name: 'another computer live', read: async () => ({ ok: true, result: { computer: 'abcdef12', counter: 3, lastWriteAt: '2026-10-27T02:55:00.000Z' } }), take: refused, seat: false },
+      { name: 'the read failed', read: async () => ({ ok: false }), take: refused, seat: false },
+      { name: 'the take named no holder', read: async () => ({ ok: true, result: null }), take: async () => ({ ok: true, result: { taken: false } }), seat: false },
+      { name: 'nothing holds it', read: async () => ({ ok: true, result: null }), take: refused, seat: true },
+    ];
+    for (const c of cases) {
+      const f = seatHelper();
+      f.client.lock = { touch: async () => ({ ok: false }), take: c.take, read: c.read };
+      await readOnly(f);
+      assert.equal(readSeat(P)?.session === 'b', c.seat, c.name);
+      fs.rmSync(seatFile(P), { force: true });
+    }
+  });
+});

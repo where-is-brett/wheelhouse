@@ -61,6 +61,7 @@ import { sessionRole, asideKind } from '../lib/role.js';
 import { branchOf, featureSlug, madeFeatureSlug } from '../lib/feature-slug.js';
 import { SETUP_FIRST } from '../lib/setup-first.js';
 import { RECENT_MS, readSeat, takeSeat, refreshSeat, seatFree, firstMatePid } from '../lib/first-mate-seat.js';
+import { lockFreeNow } from '../lib/free-seat.js';
 import { startedByScript } from '../lib/started-by-script.js';
 import { asideLine } from '../lib/front-desk.js';
 import { seatCard, agoWords } from '../lib/seat-card.js';
@@ -404,7 +405,7 @@ async function keepLock(project, client, left, seen = {}) {
   if (touched?.ok === true && touched.result?.touched === true) return null;
   const took = await left(client.lock.take({ project }));
   if (took?.ok === true && took.result?.taken === true) return null;
-  if (took?.ok === true && took.result?.taken === false) seen.holder = took.result.holder;
+  if (took?.ok === true && took.result?.taken === false) Object.assign(seen, { held: true, holder: took.result.holder });
   if (took?.ok === true && took.result?.taken === false) return heldElsewhere(took.result.holder ?? 'unknown', took.result.since ?? 'at an unknown time');
   // The helper's reason, when it gave one, so a push the host turned down says why. Where it says the computer's git settings
   // changed (by its code, not its words) and raised the card that confirms them, the First Mate is told to show it.
@@ -726,14 +727,17 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
     }
   }
   views ??= localViews(project);
-  const { aside, seatNotes } = await seatOnReadOnlyStart({ project, input, env, now, api, left, up, free: lockSeen.holder === undefined, options: seatOptions });
+  // A lock that couldn't be kept or taken is judged again by a read, as the guard before every tool judges it: a doubt is not free.
+  const free = lockLine === null || (lockSeen.held !== true && up && await lockFreeNow({ client: api, project, left, now, failClosed: true }));
+  const { aside, seatNotes } = await seatOnReadOnlyStart({ project, input, env, now, api, left, up, free, options: seatOptions });
   notes.push(...seatNotes);
   const text = reload({ views, events, stop: stopOf(), notes, feature: madeFeatureSlug(input.cwd), stateRoot: stateDir(project), sheet: sheet(), aside });
   return text === '' ? undefined : answer.context('SessionStart', text);
 }
 
-// The First Mate's seat for a session whose hooks only read. `free` is false only while another computer holds the lock; a lock
-// that couldn't be pushed (the computer's git settings wait for a click, say) leaves the seat to be taken. The hook writes nothing: a free seat is taken by the helper, for the
+// The First Mate's seat for a session whose hooks only read. `free` is false while another computer holds the lock or a read
+// of it fails; a lock that only couldn't be pushed (the computer's git settings wait for a click, say) leaves the seat to be
+// taken. The hook writes nothing: a free seat is taken by the helper, for the
 // session, with no process recorded (the seat is then free after it has been idle a while). Where another live window holds
 // the seat, the session is told so, and with a helper to open the window, offered the take-over card as text. A session
 // that chose to be an aside, stands in a worktree, was started by a script or has no id takes nothing and is offered no

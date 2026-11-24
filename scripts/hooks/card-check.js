@@ -287,7 +287,8 @@ function decidedDeny(found, at) {
 
 // The deny for a card raised about a feature's stage, when the feature's session has moved past that stage: the card's own
 // question names the stage it was raised at (`stage`), and the feature's status file says where it is now. Asking it would
-// offer the director a step the work no longer needs. Fails open: any record or file that can't be read lets the card through.
+// offer the director a step the work no longer needs; so would a card about work that has closed since. Fails open: any
+// record or file that can't be read lets the card through.
 const QUESTION_LINE = /^Answer question (q-[a-z0-9-]+-[0-9]+)$/;
 async function movedOnDeny(project, cards) {
   try {
@@ -299,7 +300,11 @@ async function movedOnDeny(project, cards) {
     for (const id of ids) {
       const asked = events.filter((e) => e.kind === 'question' && e.data?.id === id).at(-1)?.data;
       if (typeof asked?.stage !== 'string' || typeof asked.work !== 'string') continue;
-      const worktree = events.filter((e) => e.kind === 'feature' && e.data?.work === asked.work).at(-1)?.data?.worktree;
+      const feature = events.filter((e) => e.kind === 'feature' && e.data?.work === asked.work).at(-1)?.data;
+      if (feature?.step === 'closed') {
+        return `${asked.work} has closed since this card was raised at the step called ${asked.stage}, so the card no longer fits. Don't ask it, and say in one plain line that the work has ended.`;
+      }
+      const worktree = feature?.worktree;
       if (typeof worktree !== 'string' || !path.isAbsolute(worktree) || !safeFeatureFolder(worktree)) continue;
       const now = readStatus(featurePaths(worktree).status)?.phase;
       if (typeof now === 'string' && now !== asked.stage) {

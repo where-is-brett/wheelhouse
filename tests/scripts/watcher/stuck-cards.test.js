@@ -56,6 +56,7 @@ test('the helper makes no card when the Bosun asked already or the work has ende
   assert.equal(stuckCardFor(base, { work: 'todo-cli', phase: 'x"; act close' }).data.what.includes('step called'), false);
   assert.equal(stuckCardFor(base, { work: 'todo-cli', phase: 'pr-open', still: 1 }).data.stage, 'pr-open', 'the card keeps the stage it was raised at');
   assert.equal(stuckCardFor(base, { work: 'todo-cli' }).data.stage, undefined);
+  assert.equal(stuckCardFor(base, { work: 'todo-cli', phase: 'x"; act close' }).data.stage, undefined, 'only a known phase is kept');
   assert.ok(stuckCardFor({ features: { 'todo-cli': { data: { step: 'closed' } } } }, { work: 'todo-cli' }).skip);
 });
 

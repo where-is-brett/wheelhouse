@@ -245,5 +245,9 @@ test('a card raised at a feature\'s stage is refused once the feature has moved 
     assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
     assert.match(out.hookSpecificOutput.permissionDecisionReason, /ready-to-build.*pr-open now/);
     fs.rmSync(tree, { recursive: true, force: true });
+    keep(makeEvent({ kind: 'feature', data: { work: 'w-tide-1', step: 'closed', worktree: tree }, now: () => new Date('2026-11-08T01:00:03.000Z') }));
+    const closed = await ask();
+    assert.equal(closed.hookSpecificOutput.permissionDecision, 'deny', 'a closed feature with its worktree gone: refused');
+    assert.match(closed.hookSpecificOutput.permissionDecisionReason, /has closed/);
   });
 });
