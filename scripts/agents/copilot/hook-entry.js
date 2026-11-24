@@ -43,6 +43,7 @@
 // steps that sign or keep records send them to the helper or leave them. The entry's own records go to the helper
 // as session marks (/session/mark): a tool Wheelhouse doesn't know, a compaction, and a run past its deadline. A
 // mark that can't be sent is lost; nothing is kept to send later.
+import { startTiming } from './hook-timing.js';
 import claudeTools from '../../../adapters/claude-code/tools.js';
 import copilotTools from '../../../adapters/copilot/tools.js';
 import { toGuardInput, fromGuardAnswer, harnessOf, exitCodeFor, patchChanges, callsOf, upperDrive, UNKNOWN_TOOL, SHELL_INPUT_TOOLS } from '../../../adapters/copilot/translate.js';
@@ -304,11 +305,18 @@ function helperStepDeps(shared, given, cwd, c6) {
 // one deny with exit 2 that Copilot applies to the whole batch, and a call that can't be read refuses it. A folder's
 // drive letter is read in capitals, as Copilot spells it so on some events and not on others.
 async function decideEvent(event, { stdin, env, deps, seen }) {
-  const given = await readInput(stdin);
+  const timing = seen.timing;
+  timing?.mark('stdinBegun');
+  timing?.note('stdinTty', stdin?.isTTY === true);
+  const given = await readInput(timing ? timing.counted(stdin) : stdin);
+  timing?.mark('stdinEnded');
+  if (event === GUARD_EVENT || event === 'postToolUse') timing?.note('tool', given?.toolName);
   const raw = isObject(given) && typeof given.cwd === 'string' ? { ...given, cwd: upperDrive(given.cwd) } : given;
   const dir = deps.dir ?? managedDir();
   if (typeof raw.cwd !== 'string' || raw.cwd === '') return refusal(event, COULD_NOT_RUN);
-  if (!inWheelhouse(raw.cwd, { find: deps.projectOf ?? projectOf, dir })) return undefined;
+  const inProject = inWheelhouse(raw.cwd, { find: deps.projectOf ?? projectOf, dir });
+  timing?.mark('projectRead');
+  if (!inProject) return undefined;
   const calls = event === GUARD_EVENT ? callsOf(raw) : [raw];
   if ((deps.harnessOf ?? harnessOf)(raw, env) !== 'copilot') {
     if (event === 'sessionStart') return answer.context('SessionStart', LOCAL_HARNESS);
@@ -367,11 +375,14 @@ async function decideCall(event, raw, { deps, seen, dir, env }) {
   if (event === GUARD_EVENT && writers(inputs).some(unreadable)) return refusal(event, NO_TEXT);
   // Once per event, inside the deadline: no answer means the helper isn't running.
   let helperUp = false;
+  seen.timing?.mark('helperBegun');
   try {
     helperUp = (await bounded(client.health()))?.ok === true;
   } catch {
     // not answering
   }
+  seen.timing?.mark('helperEnded');
+  seen.timing?.note('helper', helperUp ? 'ok' : 'failed');
   const stepDeps = helperStepDeps({ writeVia: 'helper', client, helperUp, agent: 'copilot' }, deps.stepDeps, raw.cwd, deps.c6 ?? C6_PASSED);
   const out = await runSteps(stepsFor(event), inputs, { event, decides: deps.steps, stepDeps, dir, env, seen });
   if ((deps.c6 ?? C6_PASSED) !== true || refuses(out)) return out;
@@ -399,6 +410,7 @@ async function decideCall(event, raw, { deps, seen, dir, env }) {
 //   deps.recordCompaction(input)  records a compaction (a /session/mark compaction)
 //   deps.client       the helper's client (helper-client.js), for the probe, the steps and the marks
 //   deps.dir, deps.projectOf, deps.harnessOf  as the hooks take them
+//   deps.timing       the phase recorder (hook-timing.js's startTiming), when timing is on
 export async function runEntry(event, { stdin = process.stdin, env = process.env, deps = {} } = {}) {
   if (!Object.hasOwn(EVENT_NAMES, event)) return { text: '', code: 0 };
   const deadlineMs = deps.deadlineMs ?? GUARD_DEADLINE_MS;
@@ -412,7 +424,7 @@ export async function runEntry(event, { stdin = process.stdin, env = process.env
     arm(deadlineMs);
   });
   let out;
-  const seen = {};
+  const seen = { timing: deps.timing };
   // The prompt event, which the model waits on before every prompt, has the shorter deadline for what follows the
   // stop-word step, so that step keeps the guards' time.
   if (event === 'userPromptSubmitted') {
@@ -442,9 +454,14 @@ export async function runEntry(event, { stdin = process.stdin, env = process.env
 }
 
 if (startedAsScript(import.meta.url)) {
-  const { text, code } = await runEntry(process.argv[2], { stdin: process.stdin });
+  const timing = startTiming(process.argv[2]);
+  timing.mark('modulesLoaded');
+  const { text, code } = await runEntry(process.argv[2], { stdin: process.stdin, deps: { timing } });
   // Waits for the write to be taken (a Windows pipe takes it asynchronously), then exits: a guard still running
   // past the deadline, or a timer it left, must not hold the process.
   if (text !== '') await new Promise((resolve) => process.stdout.write(text, () => resolve()));
+  timing.mark('answerWritten');
+  timing.mark('exit');
+  timing.flush();
   process.exit(code);
 }
