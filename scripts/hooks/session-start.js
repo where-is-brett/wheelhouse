@@ -46,6 +46,7 @@ import { fileURLToPath } from 'node:url';
 import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, managedMarker, readTailEntries, beingSetUp, removedFrom, isWhy } from './kit.js';
 import { keep, sendPending, withinBudget } from './pending.js';
 import { recordClaudePath } from '../lib/claude.js';
+import { storedLaunch } from '../lib/launch-stored.js';
 import { helperClient } from '../host/helper-client.js';
 import { isOlder } from '../host/retire-helper.js';
 import { caEnv } from '../host/company-ca.js';
@@ -491,9 +492,15 @@ export async function keepSeat({ project, input, env = process.env, lockFree = t
   return { role: roleOf(after), seat: after, chosen: false };
 }
 
+// The launch command saved for this computer, for recording beside the path of claude; none when it is unset or can't be used
+// (the watcher names a fault when it starts a builder).
+function storedLaunchOrNull() {
+  try { return storedLaunch(); } catch { return null; }
+}
+
 async function ensureWatcher(project, client, { spawn, pluginRoot, env = process.env, folder = null }) {
   // This session has the PATH that finds claude; keep the full path for a watcher that is started with a bare one.
-  try { recordClaudePath({ env, inside: folder }); } catch { /* the watcher looks in the usual places */ }
+  try { recordClaudePath({ env, inside: folder, launch: storedLaunchOrNull() }); } catch { /* the watcher looks in the usual places */ }
   try {
     const { keepWatcherAlive } = await import('../watcher/keep-alive.js');
     await keepWatcherAlive(project, { client, spawn, pluginRoot, env });
