@@ -21,6 +21,7 @@
 //   g   the same address, for a project with no Wheelhouse settings in it: the question is asked again saying so and what to do, and a new product on the company's GitLab is chosen
 //   h   an address pasted with a sign-in name and password in it: not kept, asked again saying so, then kept on this computer
 //   j   the public GitLab on Windows, reached by the first card's own Put it on GitLab click instead of Customise
+//   k   GitHub on a Mac, with the project's settings.local.json not readable: mended before the first card
 //   i   path a with a long user name and project name, and Copilot's command line installed: Copilot is chosen on the builder question and is signed in
 // --desktop answers as the Desktop app can: a card whose question is the same as an earlier card's shows the
 // earlier one, so the answer that comes back is the one given there. It also asks each card with its first line reworded, as a
@@ -66,6 +67,7 @@ export const PATHS = Object.freeze({
   g: { title: 'The same address for a project with no Wheelhouse settings: found missing at step 3\'s apply, asked again, GitLab chosen and refused for the name, then kept on this computer', platform: 'darwin', host: 'GitLab', where: 'company', glab: 'in', join: PASTED_ADDRESS, miss: true, missAtApply: true, reask: ['GitLab', 'Keep it on this computer'] },
   h: { title: 'An address pasted with a sign-in name and password in it: not kept, asked again saying so, then kept on this computer', platform: 'darwin', host: 'Keep it on this computer', glab: 'in', join: HELD_ADDRESS, miss: true, reask: ['Keep it on this computer'] },
   j: { title: 'The public GitLab on Windows, reached by the first card\'s Put it on GitLab click', platform: 'win32', host: 'GitLab', where: 'public', glab: 'unavailable', gitlabClick: true },
+  k: { title: 'GitHub on a Mac, with this computer\'s settings for the project not readable, mended before the first card', platform: 'darwin', host: 'GitHub', gh: 'in', damaged: true },
   i: { title: 'A company\'s GitLab on Windows with a long user name and project name, Use my git as it is chosen, Copilot\'s command line installed and chosen on the builder question, and Copilot signed in', platform: 'win32', host: 'GitLab', where: 'company', way: 'Use my git as it is', glab: 'unavailable', agent: 'Copilot', folderName: 'wheelhouse-t6-17-11-2026', userName: 'firstname.lastname-longer' },
 });
 
@@ -343,6 +345,7 @@ function choose(p, { id, card }, { stepTwoDone }) {
   }
   // The builder question, where another agent's command line is installed: the path's agent.
   if (id === 'agent' && p.agent !== undefined) return { label: pick(p.agent) };
+  if (/^mend-/.test(id)) return { label: pick('Mend it') };
   if (id === 'real-users') return { label: pick('Not yet') };
   // A project kept on this computer: no backup folder is named, so no window or typed path is asked for.
   if (/^backup/.test(id)) return { label: pick('Not now, keep building') };
@@ -381,6 +384,11 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
   const config = path.join(user, 'claude config');
   const folder = path.join(user, 'Projects', p.folderName ?? 'Cafe Menu');
   for (const dir of [home, config, folder]) fs.mkdirSync(dir, { recursive: true });
+  // A settings file that is there and can't be read, as a stray comma leaves it.
+  if (p.damaged === true) {
+    fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(folder, '.claude', 'settings.local.json'), '{ "env": { "WHEELHOUSE_HOME": "/elsewhere" }, ');
+  }
   // A computer with Copilot signed in: its home holds a config with a signed-in user (only the key names are read).
   if (p.agent !== undefined) {
     fs.mkdirSync(path.join(user, '.copilot'), { recursive: true });
@@ -427,6 +435,8 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
     const state = { customised: false, reasked: 0, missed: false };
     // What the director's click returns: on the Desktop app, a card whose question an earlier card had shows that earlier
     // card, so the answer is the one given there.
+    // Which call to the director each card came in, and how many questions that call held.
+    let call = { n: 0, of: 1, at: 1 };
     const answer = async (step, ask) => {
       const { id, card } = ask;
       if (desktop) {
@@ -449,7 +459,7 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
         }
       }
       if (id.startsWith('plan-') && (got.label === 'Customise' || got.label === 'Change a choice')) state.customised = true;
-      cards.push({ step, id, kind: 'question', card, answer: got, ...(stale ? { stale: true } : {}) });
+      cards.push({ step, id, kind: 'question', card, answer: got, call: { ...call }, ...(stale ? { stale: true } : {}) });
       const value = got.text ?? card.options.find((o) => bareLabel(o.label) === got.label)?.label ?? got.label;
       clock += 1000;
       await decide({
@@ -465,8 +475,16 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
         if (turn > 20) { end = { step: 0, how: 'loop', why: 'the one card kept coming back' }; return false; }
         const got = await plan(0);
         if (got.done) return true;
-        if (got.ask) await answer(0, got.ask);
-        else if (got.asks) for (const ask of got.asks) await answer(ask.step, ask);
+        if (got.ask) {
+          call = { n: call.n + 1, of: 1, at: 1 };
+          await answer(0, got.ask);
+        } else if (got.asks) {
+          call = { n: call.n + 1, of: got.asks.length, at: 0 };
+          for (const ask of got.asks) {
+            call.at += 1;
+            await answer(ask.step, ask);
+          }
+        }
       }
     };
     if (!(await oneCard())) return { cards, end, said, heard };
@@ -556,7 +574,8 @@ export function printCards(name, { cards, end, said, heard = [] }) {
   sayAfter(0);
   cards.forEach((c, i) => {
     const recommended = recommendedOf(c.card);
-    lines.push(`### Card ${i + 1} (step ${c.step}${c.kind === 'go-ahead' ? ', Go-ahead card' : ''}${c.covered ? ', covered by the Go ahead' : ''})`);
+    const together = c.call && c.call.of > 1 ? `, question ${c.call.at} of ${c.call.of} asked together` : '';
+    lines.push(`### Card ${i + 1} (step ${c.step}${together}${c.kind === 'go-ahead' ? ', Go-ahead card' : ''}${c.covered ? ', covered by the Go ahead' : ''})`);
     lines.push(`Header: ${c.card.header}`);
     lines.push(...c.card.question.split('\n'));
     for (const o of c.card.options) lines.push(`- ${o.label}: ${o.description}`);

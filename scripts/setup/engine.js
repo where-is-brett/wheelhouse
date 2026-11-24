@@ -117,6 +117,7 @@ import { chosenHost } from './local.js';
 import { readGitlabHosts } from '../host/gitlab-base.js';
 import { readmeDescription, productName } from './questions.js';
 import { READY_ID } from './notify.js';
+import { damagedSettings, mendAsk, mend, MEND, MEND_MYSELF } from './settings-check.js';
 
 export const STEPS_MODULE = fileURLToPath(new URL('./steps.js', import.meta.url));
 export const RUN_STEP = fileURLToPath(new URL('./run-step.js', import.meta.url));
@@ -617,6 +618,17 @@ export function setupRoutes({
     const folder = admitFolder(body.folder, { userHome });
     let run = runFor(folder, userHome);
     if (!oneCardNext(run)) return { ok: true, done: true };
+    // A settings file setup can't read is said before the first card, with an offer to mend it.
+    const claudeHome = process.env.CLAUDE_CONFIG_DIR || path.join(userHome, '.claude');
+    const damaged = damagedSettings({ folder, claudeHome });
+    if (damaged.length > 0) {
+      run ??= startRun({ folder, now });
+      const asked = mendAsk(damaged);
+      const said = answersFor(run.id)[`${ONE_CARD_STEP}.${asked.id}`];
+      if (said?.label === MEND) mend(damaged);
+      else if (said?.label === MEND_MYSELF) return { ok: true, wait: 0, why: `${damaged.map((d) => d.words).join('; ')} can't be read; setup carries on once ${damaged.length > 1 ? 'they are' : 'it is'} mended` };
+      else return { ok: true, ask: askChoice(run, { step: ONE_CARD_STEP, ...asked }), progress: ['Setup · a settings file', 'One of your settings files can\'t be read; nothing runs until you choose.'] };
+    }
     const own = run ? answersFor(run.id) : {};
     const list = await openNow(run, folder);
     run ??= startRun({ folder, now });
@@ -643,7 +655,6 @@ export function setupRoutes({
     const product = facts.refused === undefined ? { ...facts, name: facts.repo?.split('/').at(-1) ?? productName(run.folder) } : null;
     // Step 2 is there for the engine's line (scripts/setup/engine-parts.js), which names the plugin's scope as step 6 finds it.
     const toRun = [2, 3, 6, 7, HEALTH_STEP].filter((n) => onRunList(run, n) && !stepDone(run, n));
-    const claudeHome = process.env.CLAUDE_CONFIG_DIR || path.join(userHome, '.claude');
     // What step 6 would change on this computer now, so the card names only that; null when it can't be told.
     let computerChanging = null;
     if (toRun.includes(6)) {

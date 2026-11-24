@@ -102,7 +102,7 @@ test('path a: with GitLab\'s tool left out, Quick is not offered, and where git 
   assert.deepEqual(connection[0].card.options.map((o) => o.label), ['Narrow', 'Use my git as it is'], 'the recommended way comes first');
   assert.equal(recommendedOf(connection[0].card), 'Narrow');
   const own = connection[0].card.options.find((o) => o.label === 'Use my git as it is');
-  assert.match(own.description, /Your git holds no GitLab key yet, so you make one on a page that opens and set its expiry date 90 days ahead\./, 'the way says the key may still be made');
+  assert.match(own.description, /Your git holds no GitLab key yet, so you make one on a page that opens, set to expire in 90 days\./, 'the way says the key may still be made');
   const tool = cards.find((c) => c.step === 2 && c.kind === 'question');
   assert.equal(recommendedOf(tool.card), 'Don\'t use GitLab\'s tool');
   assert.ok(cards.findIndex((c) => c === tool) < cards.findIndex((c) => c === connection[0]), 'GitLab\'s tool is asked before the connection');
@@ -145,7 +145,7 @@ test('paths b, b\' and c: step 3\'s Go-ahead card says the one-day token is used
     const { cards } = await rendered(name);
     const go = cards.find((c) => c.kind === 'go-ahead' && c.step === 3);
     assert.ok(go, `path ${name} shows step 3's Go-ahead card`);
-    assert.match(go.card.question, /one-day GitLab token on a page that opens, setting its expiry date to tomorrow, and paste it into a box on your screen/, `path ${name}`);
+    assert.match(go.card.question, /GitLab token on a page that opens, set to expire in one day, and paste it into a box on your screen/, `path ${name}`);
     assert.match(go.card.question, /then cancels it/, `path ${name}`);
     assert.match(go.card.question, /Setup protects the main line now, while it holds that token/, `path ${name}`);
     assert.doesNotMatch(go.card.question, /sign in in your browser/i, `path ${name} asks for no browser sign-in`);
@@ -204,7 +204,7 @@ test('on GitLab, step 10\'s card names a merge request, never a pull request', a
 });
 
 test('each path\'s plan says what will be asked of the director', async () => {
-  const asks = { a: /a GitLab key: you make it on a page that opens and set its expiry date 90 days ahead/, b: /paste a one-day GitLab token into a box on your screen, not the chat. If GitLab won't make a key for this one project, you'll also paste a token set to end 30 days ahead that can act as you in every GitLab project and group you can reach/, c: /paste a one-day GitLab token into a box on your screen, not the chat. On a free account, or wherever GitLab won't make a key for this one project, you'll also paste a token set to end 30 days ahead that can act as you in every GitLab project and group you can reach/, d: /sign in on GitHub pages that open/, e: /sign in to your company's GitLab in your browser if your company has set that up, or else with a token you make on a page that opens/ };
+  const asks = { a: /a GitLab key: you make it on a page that opens, set to expire in 90 days/, b: /paste a one-day GitLab token into a box on your screen, not the chat. If GitLab won't make a key for this one project, you'll also paste a token set to expire in 30 days that can act as you in every GitLab project and group you can reach/, c: /paste a one-day GitLab token into a box on your screen, not the chat. On a free account, or wherever GitLab won't make a key for this one project, you'll also paste a token set to expire in 30 days that can act as you in every GitLab project and group you can reach/, d: /sign in on GitHub pages that open/, e: /sign in to your company's GitLab in your browser if your company has set that up, or else with a token you make on a page that opens/ };
   for (const [name, says] of Object.entries(asks)) {
     const { cards } = await rendered(name);
     const plan = cards.filter((c) => /^plan-/.test(c.id)).at(-1);
@@ -230,7 +230,7 @@ test('path g: a miss at step 3\'s apply withdraws the Go ahead, so the plan is a
     const after = cards.slice(cards.indexOf(plans[2]) + 1);
     assert.ok(after.find((c) => c.kind === 'go-ahead' && c.step === 3)?.covered, 'step 3\'s Go ahead is covered by the new plan');
     assert.match(plans[2].card.question, /^- Already done: setup's tools\.\n- Your GitLab sign-in stays on this computer for later; this project doesn't use it\.$/m);
-    assert.match(plans[2].card.options.find((o) => o.label === 'Go ahead').description, /^Recommended: setup does all of this now\. The only thing left to ask you is a test notification on your phone near the end, which you can skip\.$/);
+    assert.match(plans[2].card.options.find((o) => o.label === 'Go ahead').description, desktop ? /^Recommended: setup does all of this now\. The only thing left to ask you is a test notification on your phone near the end, which you can skip\.$/ : /^Recommended: setup does all of this now\. The only thing left to ask you is whether to skip phone notifications near the end\.$/);
     // Step 4's questions are asked before the plan, so nothing is asked after the Go ahead, and the plan says what they settled.
     assert.deepEqual(after.filter((c) => c.kind === 'question' && c.step !== 9).map((c) => c.id), [], 'no question card follows the second plan\'s Go ahead, bar the phone test');
     const before = cards.slice(0, cards.indexOf(plans[2]));
@@ -276,4 +276,28 @@ test('path j: the first card\'s Put it on GitLab click asks where it is kept alo
   assert.match(cards.find((c) => c.step === 0 && c.card.question.includes('with your choices')).card.question, /private project on your GitLab account/);
   // Windows never says "computer's password".
   for (const c of cards) assert.doesNotMatch(JSON.stringify(c.card), /computer's password|computer password/);
+});
+
+test('path k: a settings file setup can\'t read is said before the first card, mended with a copy kept, and the plan follows', async () => {
+  const { cards, end } = await rendered('k');
+  assert.match(cards[0].id, /^mend-/);
+  assert.match(cards[0].card.question, /^Setup can't read one of your settings files: this computer's settings for the project \(\.claude\/settings\.local\.json in this folder\)/);
+  assert.equal(recommendedOf(cards[0].card), 'Mend it');
+  assert.match(cards[1].id, /^plan-/);
+  assert.equal(end.how, 'finished');
+});
+
+test('path a: Customise groups the questions that do not depend on each other, and asks fewer calls than questions', async () => {
+  const { cards } = await rendered('a');
+  const calls = new Set(cards.map((c) => c.call?.n));
+  const customise = cards.filter((c) => c.call !== undefined && c.call.n > 1 && c.step !== 0);
+  assert.ok(customise.length > calls.size - 2, 'some call held several questions');
+  // The first call after Customise holds the questions that read the same whatever the host is: real users, the description, live data, where it is kept.
+  const first = cards.filter((c) => c.call?.n === cards.find((x) => x.call?.n > 1)?.call.n);
+  assert.deepEqual(first.map((c) => c.id.replace(/-before-launch|-launched/, '')), ['real-users', 'product', 'live-data', 'join']);
+  assert.ok(first.every((c) => c.call.of === 4));
+  // The project's name is asked with the connection, once the host is known.
+  const named = cards.find((c) => c.id === 'project-name');
+  assert.match(named.card.question, /What should the new project on GitLab be called\?/);
+  assert.equal(recommendedOf(named.card), 'Name it Cafe-Menu');
 });
