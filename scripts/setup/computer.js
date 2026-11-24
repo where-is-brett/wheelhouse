@@ -189,7 +189,14 @@ export function lines({ changes, userSettings, kept, route, platform, floor, ter
   }
   // Ruling R64: the limit holds even over a longer one of the director's, and the card says what it costs.
   if (has('retention')) {
-    out.push(`chat history kept ${RETENTION_DAYS} days${terse >= 3 ? '' : shown(userSettings.cleanupPeriodDays)}: older chats are deleted${terse >= 3 ? '' : ", and uninstall can't bring them back"}`);
+    // Claude Code's own limit is already RETENTION_DAYS, so only a longer limit of the director's costs them chats.
+    const now = userSettings.cleanupPeriodDays;
+    const longer = typeof now === 'number' && now > RETENTION_DAYS;
+    out.push(longer
+      ? `chat history kept ${RETENTION_DAYS} days${terse >= 3 ? '' : shown(now)}: older chats are deleted${terse >= 3 ? '' : ", and uninstall can't bring them back"}`
+      : now === undefined
+        ? `chat history kept ${RETENTION_DAYS} days, as Claude Code already keeps it, written down so it stays; no chats are deleted that weren't going to be`
+        : `chat history kept ${RETENTION_DAYS} days${terse >= 3 ? '' : shown(now)}; nothing is deleted`);
   }
   if (has('updates')) {
     const own = ownMinimum(userSettings, floor);

@@ -96,8 +96,8 @@ test('the card lists each change in plain words, and nothing else changes', asyn
     assert.match(text, /this computer only/);
     assert.match(text, /never what you type or what tools return/);
     assert.match(text, new RegExp(`Chat history kept ${RETENTION_DAYS} days \\(now 7\\)`));
-    // Ruling R64: the card says what a shorter retention costs.
-    assert.match(text, new RegExp(`Chat history kept ${RETENTION_DAYS} days \\(now 7\\): older chats are deleted, and uninstall can't bring them back`));
+    // A shorter limit of the director's is raised, so nothing is deleted; only a longer one costs chats (ruling R64).
+    assert.match(text, new RegExp(`Chat history kept ${RETENTION_DAYS} days \\(now 7\\); nothing is deleted`));
     // The option that goes ahead says what uninstall puts back, and the card's options show it.
     const goesAhead = composeCard({ ...planned.card, kind: 'setup', target: { step: 6, hash: planHash(planned.changes) } }).question.options[0].description;
     assert.match(goesAhead, /Uninstall puts each setting back, but not deleted chats/);
@@ -813,4 +813,13 @@ test('pending names what step 6 would change, and nothing once every setting is 
     assert.deepEqual(await step.pending(ctx), []);
     assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), settled);
   });
+});
+
+test('the history line says a deletion only where a longer limit of the director\'s is cut', () => {
+  const retention = [{ kind: 'json-key', what: 'retention', key: ['cleanupPeriodDays'], after: RETENTION_DAYS }];
+  const said = (userSettings) => lines({ changes: retention, userSettings, kept: [], route: 'user-settings', platform: 'win32', floor: '2.1.299' }).join('\n');
+  assert.doesNotMatch(said({}), /deleted, and|older chats are deleted/);
+  assert.match(said({}), /as Claude Code already keeps it/);
+  assert.match(said({ cleanupPeriodDays: 365 }), /\(now 365\): older chats are deleted, and uninstall can't bring them back/);
+  assert.match(said({ cleanupPeriodDays: 7 }), /\(now 7\); nothing is deleted/);
 });
