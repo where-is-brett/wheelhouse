@@ -7,7 +7,6 @@ import { sign, verify } from './signing.js';
 import { scanContent } from './secret-scan.js';
 import { briefProblem, briefWords } from './brief.js';
 import { canonicalJson } from '../lib/canonical.js';
-import { git } from './git.js';
 import { settingsLine } from '../lib/settings-card.js';
 import { RELEASE_LABEL, RELEASE_TAG, releaseLine, UPDATE_LABEL, updateLine, keepControlLine, approvalLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, seatTakeOverLine, SEAT_SESSION, isSeatSince, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
@@ -1160,6 +1159,8 @@ export async function writeEvent({ project, event, env, dir = stateDir(project),
     const names = found.join(', ');
     throw new Error(`The event file ${path.basename(file)} was refused because it matched: ${names}`);
   }
+  // Read where a write commits, not when the module loads: a reader of events never runs git.
+  const { git } = await import('./git.js');
   const added = await git(dir, ['add', '--', relative], env);
   const committed = added.code === 0 && (await git(dir, ['commit', '-m', `${event.kind} ${event.id}`, '--', relative], env)).code === 0;
   if (!committed) {

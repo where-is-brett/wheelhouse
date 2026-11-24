@@ -4,7 +4,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { watcherDir, locateFeature } from '../watcher/waker.js';
+import { watcherDir } from '../watcher/folders.js';
 import { makeEvent, writeEvent } from '../state/events.js';
 import { SLUG } from '../lib/build-loop.js';
 import { appendHelm } from '../decisions/log.js';
@@ -155,7 +155,7 @@ export async function releaseHold(project, work, { why, now = () => new Date(), 
   const event = makeEvent({ kind: 'helm-ended', data, now });
   fs.rmSync(file, { force: true });
   try {
-    const folder = worktree ?? locateFeature(project)(work);
+    const folder = worktree ?? (await import('../watcher/waker.js')).locateFeature(project)(work);
     if (typeof folder === 'string' && folder !== '' && typeof from === 'string') appendHelm({ worktree: folder, from, to: data.at, now });
   } catch { /* the log line is not worth keeping the piece held */ }
   await writeEvent({ project, event, now });
