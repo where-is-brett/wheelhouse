@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { namesOf, readProject, writeProject, projectForFolder } from '../../../scripts/lib/projects.js';
+import { namesOf, readProject, writeProject, projectForFolder, projectHeld, projectRegistered } from '../../../scripts/lib/projects.js';
 import { as, shortHome } from '../../helpers/homes.js';
 
 const CONNECTION = { host: 'github', mode: 'narrow', project: 'Owner/Name' };
@@ -162,5 +162,29 @@ test('a record kept before an address that reads as an option was refused reads 
       fs.writeFileSync(file, JSON.stringify(record({ remoteUrl })));
       assert.equal(readProject('shop'), null, remoteUrl);
     }
+  });
+});
+
+test('held: true is kept and read, and a record without it is not held', async () => {
+  await as(shortHome(), async () => {
+    writeProject('shop', record());
+    assert.equal(projectHeld('shop'), false);
+    assert.equal('held' in readProject('shop'), false);
+    writeProject('shop', record({ held: true }));
+    assert.equal(projectHeld('shop'), true);
+    assert.throws(() => writeProject('shop', record({ held: 'yes' })), /held mark/);
+    assert.equal(projectHeld('missing'), false);
+  });
+});
+
+test('a registration is gone only when its file is not there: one that does not read or check is still registered', async () => {
+  await as(shortHome(), async () => {
+    assert.equal(projectRegistered('shop'), false);
+    writeProject('shop', record());
+    assert.equal(projectRegistered('shop'), true);
+    const file = path.join(process.env.WHEELHOUSE_HOME, 'projects', 'shop', 'project.json');
+    fs.writeFileSync(file, '{ half written');
+    assert.equal(readProject('shop'), null);
+    assert.equal(projectRegistered('shop'), true, 'a record caught mid-write is not a project removed');
   });
 });

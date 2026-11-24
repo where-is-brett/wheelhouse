@@ -16,6 +16,8 @@ import { QUESTION_ID } from '../feature/files.js';
 import { stopState, NO_HELPER_STOP } from '../lib/stop.js';
 import { markBypass, clearBypass } from '../lib/bypass.js';
 import { releaseSeat } from '../lib/first-mate-seat.js';
+import { wheelhouseHome } from '../lib/paths.js';
+import { touchLastSession } from '../lib/standard-env.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import tools from '../../adapters/claude-code/tools.js';
@@ -253,6 +255,8 @@ export { pluginRoots };
 // would make the helper refuse every push and merge on the computer for as long as it stood. Such a call clears the
 // session's marker as a call in another mode does. STOP holds there as anywhere.
 // The session's end gives up the First Mate's seat when this session holds it. Never throws.
+// In a project, every call and the session's end keep the home's last-session time (scripts/lib/standard-env.js), at most
+// once in five minutes between calls.
 function releaseAtEnd(project, session) {
   try {
     if (typeof project === 'string' && typeof session === 'string') releaseSeat(project, session);
@@ -275,6 +279,10 @@ export async function decide(input, {
   const inProject = Boolean(found) || byPath === true || (byPath === false && beingSetUp(cwd) !== null);
   const sessionEnd = input.hook_event_name === 'SessionEnd';
   if (sessionEnd) releaseAtEnd(found?.project, input.session_id);
+  // A session of the home is running, or has just ended: a throwaway home's processes stop an hour after the last one.
+  if (inProject) {
+    try { touchLastSession(wheelhouseHome(), sessionEnd ? { gapMs: 0 } : {}); } catch { /* the watcher carries on as it was */ }
+  }
   if (inProject && bypass !== false && writeVia === 'self') {
     if (sessionEnd) {
       clearBypass(input.session_id);

@@ -7,6 +7,7 @@ import { DEFAULT_SESSION_MODE, SESSION_MODES, isModelName } from '../../scripts/
 import { FOREGROUND_ONLY, invocation, isClaudeSignIn, resolveClaude, withoutHostVariables } from '../../scripts/lib/claude.js';
 import { PLUGIN_ROOT, foremanTools } from '../../scripts/foreman/tools.js';
 import { EFFORTS } from '../../scripts/routing/thoroughness.js';
+import signInPatterns from './sign-in-patterns.js';
 import { BUILDER_PROMPT_LEAD } from '../../scripts/foreman/prompt-lead.js';
 
 // The variable that tells a hook the session is the foreman's.
@@ -212,4 +213,4 @@ export const takesColumn = true;
 // Its sessions start through the launch command saved for the computer, when there is one (scripts/lib/launch-words.js).
 export const takesLaunch = true;
 
-export default Object.freeze({ checkForeman, checkFeature, foremanCall, featureStartCall, featureResumeCall, featureHelmCall, whyCall, finalAnswer, takesColumn, takesLaunch });
+export default Object.freeze({ checkForeman, checkFeature, foremanCall, featureStartCall, featureResumeCall, featureHelmCall, whyCall, finalAnswer, takesColumn, takesLaunch, signInPatterns });

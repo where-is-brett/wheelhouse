@@ -4,20 +4,30 @@
 // starts again without waiting for the next session. Every project is Shape 1: a `watcherShape` of
 // 2 in an older record is read as 1 (scripts/gate/guardrails.js).
 //
+// The watcher starts with the standard environment (scripts/lib/standard-env.js), never the starting session's. A held
+// project has no watcher. A session's start (`session: true`) records its time in the home, for a throwaway home's hour.
+//
 // keepWatcherAlive never throws. It answers 'running', 'started', 'failed' (the start threw or
-// started nothing) or 'unread' (the project's configuration can't be read, so nothing is started).
+// started nothing), 'unread' (the project's configuration can't be read, so nothing is started) or
+// 'held' (the project is set aside, so nothing is started).
 import { startWatcher, watcherRunning } from '../foreman/start.js';
+import { wheelhouseHome } from '../lib/paths.js';
+import { projectHeld } from '../lib/projects.js';
+import { recordLastSession, standardEnv } from '../lib/standard-env.js';
 import { projectConfig } from './main.js';
 
 export async function keepWatcherAlive(project, {
-  client, spawn, pluginRoot, env = process.env, running = watcherRunning, start = startWatcher,
+  client, spawn, pluginRoot, env = process.env, running = watcherRunning, start = startWatcher, held = projectHeld, session = false,
 } = {}) {
   try {
+    const home = wheelhouseHome();
+    if (session) recordLastSession(home);
+    if (held(project)) return 'held';
     if (running(project)) return 'running';
     if (typeof client?.config !== 'function') return 'unread';
     const read = await projectConfig(project, client);
     if (read.config === null) return 'unread';
-    start(project, { spawn, pluginRoot, env });
+    start(project, { spawn, pluginRoot, env: standardEnv({ home, env }) });
     return 'started';
   } catch {
     return 'failed';

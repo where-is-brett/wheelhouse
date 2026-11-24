@@ -7,9 +7,9 @@ import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { pathWithNode } from '../lib/claude.js';
 import { jobFolder, wheelhouseHome } from '../lib/paths.js';
 import { registeredProjects } from '../lib/projects.js';
+import { standardEnv } from '../lib/standard-env.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { helperClient } from './helper-client.js';
 import { caEnv } from './company-ca.js';
@@ -47,6 +47,8 @@ export async function startAll({
   receiverUp = () => askHealth(receiverPort()),
 } = {}) {
   const api = client ?? helperClient({ timeout: 2000 });
+  // The helper and the watchers start with the standard environment of the home they serve, never this process's own.
+  const standard = () => standardEnv({ home: wheelhouseHome(), env });
   let up = (await answerOf(api.health()))?.ok === true;
   if (!up) {
     try {
@@ -54,7 +56,7 @@ export async function startAll({
       fs.mkdirSync(home, { recursive: true });
       // Started in Wheelhouse's own folder, never the project's.
       const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'host', 'helper-main.js')], {
-        cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore', env: pathWithNode({ ...env, ...caEnv(home) }),
+        cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore', env: { ...standard(), ...caEnv(home) },
       });
       child?.on?.('error', () => {});
       child?.unref?.();
@@ -71,6 +73,8 @@ export async function startAll({
   // The watcher for each project whose configuration the foreman's check accepts.
   const watchers = [];
   for (const { project, record } of registeredProjects()) {
+    // A project set aside has no watcher, and the sign-in start leaves it so.
+    if (record?.held === true) continue;
     // The launch agent runs this every minute: an uninstall under way has stopped this watcher and means it to stay so.
     if (readProgress(record?.folder)?.state === 'running') continue;
     const read = await answerOf(projectConfig(project, api));
@@ -88,7 +92,7 @@ export async function startAll({
       continue;
     }
     try {
-      startWatcher(project, { spawn, pluginRoot, env });
+      startWatcher(project, { spawn, pluginRoot, env: standard() });
       watchers.push(project);
     } catch { /* that project's watcher is started by its own session start */ }
   }

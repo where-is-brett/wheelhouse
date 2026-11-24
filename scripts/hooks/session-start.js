@@ -317,7 +317,9 @@ async function ensureHelper(client, { spawn, pluginRoot, waitMs, pause, end }) {
     // Started in Wheelhouse's own folder, never in the session's.
     const home = wheelhouseHome();
     fs.mkdirSync(home, { recursive: true });
-    const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'host', 'helper-main.js')], { cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore', env: { ...process.env, ...caEnv(home) } });
+    // Read when the helper starts, which is rare: the session start's other work doesn't need it.
+    const { standardEnv } = await import('../lib/standard-env.js');
+    const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'host', 'helper-main.js')], { cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore', env: { ...standardEnv({ home }), ...caEnv(home) } });
     child?.unref?.();
     child?.on?.('error', () => {});
   } catch {
@@ -502,7 +504,7 @@ async function ensureWatcher(project, client, { spawn, pluginRoot, env = process
   try { recordClaudePath({ env, inside: folder, launch: storedLaunchOrNull() }); } catch { /* the watcher looks in the usual places */ }
   try {
     const { keepWatcherAlive } = await import('../watcher/keep-alive.js');
-    await keepWatcherAlive(project, { client, spawn, pluginRoot, env });
+    await keepWatcherAlive(project, { client, spawn, pluginRoot, env, session: true });
   } catch { /* the session carries on without it */ }
 }
 
@@ -526,7 +528,7 @@ export function cardCommandLines(sheet) {
 // Unattended line after that while it is on. All come before the lists, so the cut at MAX_CHARS
 // never takes them. `sheet` (toolSheetLines) comes after the front desk's line and before the notes and the lists, so
 // a cut takes the briefing and never the tool sheet.
-export function reload({ views, stop, lineage = [], notes, feature, stateRoot, windows, builds, frontDesk = false, aside = null, sheet = [], where = '', events = [] }) {
+export function reload({ views, stop, lineage = [], notes, feature, stateRoot, windows, builds, frontDesk = false, aside = null, sheet = [], where = '', events = [], buildersFact = null }) {
   const lines = [];
   if (stop?.on) lines.push(`All stop is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
   lines.push(...lineage);
@@ -538,6 +540,9 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   lines.push(...section('Damaged state:', damaged));
   if (frontDesk) lines.push(FRONT_DESK_LINE);
   else if (aside !== null) lines.push(aside);
+  // The First Mate's Builders line, stated from the recorded facts (builders design, section 10.5); before the lists, so a cut
+  // never takes it.
+  if (buildersFact !== null) lines.push(buildersFact);
   lines.push(...sheet);
   if (frontDesk) lines.push(...cardCommandLines(sheet));
   lines.push(...notes);
@@ -1017,9 +1022,21 @@ async function started(input, deps) {
   }
   const text = reload({
     views, events: cardEvents, stop: stopOf(), lineage, notes, feature: madeFeatureSlug(input.cwd), stateRoot, windows, builds, frontDesk, aside: asideNote, where,
+    buildersFact: frontDesk ? await buildersLineOf(input) : null,
     sheet: toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: commandRoot({ dir, self }, pluginRoot), platform }),
   });
   return text === '' ? undefined : answer.context('SessionStart', text);
+}
+
+// The Builders line for the front desk's session start: the recorded sign-in fact for the agent this session runs on.
+// It is read when the front desk starts, not by every session start.
+async function buildersLineOf(input) {
+  try {
+    const { buildersLine } = await import('../lib/sign-in-line.js');
+    return buildersLine({ home: wheelhouseHome(), agent: agentOfInput(input) ?? 'claude-code' });
+  } catch {
+    return null; // a line that can't be made is left out, as the other facts are
+  }
 }
 
 if (startedAsScript(import.meta.url)) {

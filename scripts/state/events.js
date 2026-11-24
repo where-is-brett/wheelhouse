@@ -29,7 +29,7 @@ export const PLAIN_KINDS = [
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
   'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest', 'chat-steer',
   'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed', 'reproduced', 'brief', 'slept', 'agent-call', 'self-merged', 'watch', 'aside-overlap', 'question-closed',
-  'helm', 'helm-ended', 'helm-note',
+  'helm', 'helm-ended', 'helm-note', 'start-failing',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
@@ -420,6 +420,9 @@ const PLAIN_SHAPES = {
   // watcher read its output: why (`limit` or `billing`), when, until when the premium model rests, and the feature
   // whose wake it was. Its wake runs again on the most capable model, and the board says so in one line meanwhile.
   'premium-rest': { must: ['why', 'at', 'until'], may: ['work'] },
+  // A piece whose session start failed three times in a row the same way (builders design, section 10.2): the piece, the kind
+  // of failure (a sign-in kind or `other`) and how many starts failed. The watcher holds the piece's starts until it is told.
+  'start-failing': { must: ['work', 'kind', 'starts'], may: [] },
   // The engine's records (design on Archon, sections 4.2 and 10). A run of a work on an engine: its state
   // (`started`, `paused` or `ended`), and when it ended, its branch, pull request and outcome.
   run: { must: ['work', 'lane', 'engine', 'runId', 'state'], may: ['branch', 'pr', 'outcome', 'resume', 'failure', 'step', 'level'] },
@@ -817,6 +820,10 @@ function checkPlain(kind, data) {
     if (data.why !== 'limit' && data.why !== 'billing') bad('needs why to be limit or billing');
     for (const k of ['at', 'until']) if (typeof data[k] !== 'string' || Number.isNaN(Date.parse(data[k]))) bad(`needs ${k} to be a time`);
     if (data.work !== undefined && (typeof data.work !== 'string' || !/^[a-z0-9-]{1,40}$/.test(data.work))) bad('has a work that is not a work id');
+  } else if (kind === 'start-failing') {
+    if (typeof data.work !== 'string' || !/^[a-z0-9-]{1,40}$/.test(data.work)) bad('needs work to be a work id');
+    if (!['not-signed-in', 'blocked', 'no-program', 'other'].includes(data.kind)) bad('needs kind to be not-signed-in, blocked, no-program or other');
+    if (!Number.isInteger(data.starts) || data.starts < 1) bad('needs starts to be a whole number of 1 or more');
   } else if (kind === 'column-ready') {
     if (!READY_COLUMNS.includes(data.column)) bad(`needs column to be ${listed(READY_COLUMNS.map(String))}`);
     const pins = data.pins;

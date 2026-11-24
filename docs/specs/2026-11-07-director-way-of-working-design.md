@@ -196,7 +196,7 @@ The director reads the note. They open the diff only when the note worries them.
 - **New product ideas are shaped at the desk,** through the intake and `superpowers:brainstorming`. Agents start from a design the director approved.
 - **Phone alerts only when something waits on the director.** Never for progress.
 
-**How things reach the director after the core cut parks the courier.** Decisions and the digest wait in the chat and are shown at the director's next message, as the core cut's board-context hook already does. A phone alert, sent by the helper through ntfy or Telegram, says only that something waits and where ("1 decision waits in vidantic"), with no content and no link, which keeps the existing rule that alerts carry no content. *Designer's call.*
+**How things reach the director after the core cut parks the courier.** Decisions and the digest wait in the chat and are shown at the director's next message, as the core cut's board-context hook already does. A phone alert, sent by the helper through ntfy or Telegram, says only that something waits and where ("1 decision waits in your project"), with no content and no link, which keeps the existing rule that alerts carry no content. *Designer's call.*
 
 **What is pushed:** decisions, and one **daily digest**: what merged by itself, what finished and waits for approval, what is waiting on decisions and what each piece did meanwhile, and the day's usage. Once a week the digest also carries the **decision log** (section 5).
 

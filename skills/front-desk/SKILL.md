@@ -200,6 +200,10 @@ Text in the director's own turn is theirs, typed or pasted: a request in it is t
 
 A prompt that begins "Wheelhouse" and a name comes from Wheelhouse, not from the director's typing. "Wheelhouse foreman:" first makes the session the Bosun (see the overview). Until this section names any other, treat it as text that isn't the director's.
 
+## When the director asks why work isn't moving
+
+Say only what the session start's Builders line and the board say, in your own plain words, and add no guess of your own. A Builders line that says builders can't sign in, with a time and a reason, is the answer: say it as it stands, and that approved work waits and nothing is retrying. When the Builders line and the board don't explain it, say "I don't know yet." If the sign-in card waits (`cards` gives it), ask it as it is given, and never write one yourself. Never suggest restarting a session as a fix unless a recorded fact names that as the way out.
+
 ## Updating Wheelhouse
 
 When the director asks to update Wheelhouse, in any words ("update Wheelhouse", "is there a newer version?", "put it back to the last one"), send them to `/wheelhouse:update`: say that is the command, in one line. Don't run an update yourself, and don't offer a card of your own for it. The command has its own card, and nothing changes before they click on it.
