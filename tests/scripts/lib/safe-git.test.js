@@ -404,12 +404,80 @@ test('confirming keeps the names of the settings, names only, and lookAtTrusted 
     const valueOnly = await lookAtTrusted({ file, cwd: folder });
     assert.deepEqual(settingsChange(valueOnly), { added: [], removed: [], changed: ['credential.helper'] }, 'a changed value is named, by name only');
     assert.doesNotMatch(JSON.stringify(valueOnly), /\/b\/other|s3cretpass|corp\.example/, 'no value is in what is read back');
-    assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /\/a\/helper|\/b\/other/, 'the record holds digests, never a value');
+    assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /\/a\/helper|\/b\/other/, 'the record holds marks, never a value');
     // Confirming only what the card named: other settings now are not confirmed.
     await assert.rejects(confirmComputerSettings({ file, cwd: folder, expect: moved.hash.slice(0, 12) }), /changed while the card was open/);
     const now = await lookAtTrusted({ file, cwd: folder });
     await confirmComputerSettings({ file, cwd: folder, expect: now.hash.slice(0, 12) });
     assert.equal((await lookAtTrusted({ file, cwd: folder })).same, true);
+  });
+});
+
+test('the value marks are keyed with a random key kept in a file of its own, so the record alone can\'t be used to guess a value', async () => {
+  const { confirmComputerSettings, lookAtTrusted } = await import('../../../scripts/lib/safe-git.js');
+  const crypto = await import('node:crypto');
+  await inFolderWith('[credential]\n\thelper = !/a/helper\n', async ({ folder, file, change }) => {
+    await confirmComputerSettings({ file, cwd: folder });
+    const keyFile = path.join(path.dirname(file), 'git-settings.key');
+    assert.equal(fs.readFileSync(keyFile).length, 32, 'the key is 32 random bytes');
+    if (process.platform !== 'win32') assert.equal(fs.statSync(keyFile).mode & 0o777, 0o600);
+    const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.equal(record.digests, undefined, 'no unkeyed digests are kept');
+    const [mark] = Object.values(record.marks);
+    // The unkeyed hash of the very value it stands for is not what is kept.
+    const pairs = [['credential.helper', '!/a/helper']];
+    const plain = crypto.createHash('sha256').update(JSON.stringify(pairs)).digest('hex').slice(0, 16);
+    assert.match(mark['credential.helper'], /^[0-9a-f]{16}$/);
+    assert.notEqual(mark['credential.helper'], plain);
+    // Without the key (removed, or a new one made), nothing is named: a mark made with another key says nothing about the value.
+    change('[credential]\n\thelper = !/b/other\n');
+    assert.deepEqual((await lookAtTrusted({ file, cwd: folder })).changed, ['credential.helper']);
+    fs.writeFileSync(keyFile, crypto.randomBytes(32));
+    assert.deepEqual((await lookAtTrusted({ file, cwd: folder })).changed, [], 'a key that is not the one the marks were made with names nothing');
+    fs.rmSync(keyFile);
+    assert.deepEqual((await lookAtTrusted({ file, cwd: folder })).changed, [], 'no key names nothing');
+    assert.equal(fs.existsSync(keyFile), false, 'a look makes no key');
+    // Confirming again makes a new key and marks made with it; the other folders' marks, made with the old key, are let go.
+    fs.writeFileSync(file, JSON.stringify({ ...record, marks: { ...record.marks, '/elsewhere': { 'http.proxy': 'a'.repeat(16) } }, digests: { '/old': { 'http.proxy': 'b'.repeat(16) } } }));
+    await confirmComputerSettings({ file, cwd: folder });
+    const again = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.deepEqual(Object.keys(again.marks).length, 1, 'only the folder confirmed with the new key keeps marks');
+    assert.equal(again.digests, undefined, 'unkeyed digests from before are dropped when the record is written');
+    change('[credential]\n\thelper = !/c/third\n');
+    assert.deepEqual((await lookAtTrusted({ file, cwd: folder })).changed, ['credential.helper']);
+  });
+});
+
+test('confirming keeps which git program read the settings, and a look by another program says so, with no path', async () => {
+  const { confirmComputerSettings, lookAtTrusted } = await import('../../../scripts/lib/safe-git.js');
+  const { settingsChange } = await import('../../../scripts/lib/settings-card.js');
+  await inFolderWith('[credential]\n\thelper = !/a/helper\n', async ({ folder, file }) => {
+    let program = '/opt/one/libexec/git-core';
+    const asked = [];
+    const stand = (file_, args, options) => {
+      if (args[0] === '--exec-path') {
+        asked.push(options?.baseEnv !== undefined && !('GIT_EXEC_PATH' in options.baseEnv));
+        return Promise.resolve({ code: 0, stdout: `${program}\n`, stderr: '' });
+      }
+      return run(file_, args, options);
+    };
+    await confirmComputerSettings({ file, run: stand, cwd: folder });
+    assert.equal(fs.readFileSync(file, 'utf8').includes('/opt/one'), true, 'the program is kept in the private record');
+    assert.deepEqual(asked, [true], 'GIT_EXEC_PATH is not let in, so it is the program\'s own folder');
+    const same = await lookAtTrusted({ file, run: stand, cwd: folder });
+    assert.equal(same.otherGit, false);
+    program = '/opt/two/libexec/git-core';
+    const other = await lookAtTrusted({ file, run: stand, cwd: folder });
+    assert.equal(other.otherGit, true);
+    assert.equal(settingsChange(other).otherGit, true);
+    assert.doesNotMatch(JSON.stringify(other), /\/opt\//, 'no path is in what is read back');
+    // A program that can't be told (an old git, a failed call) says nothing either way.
+    const unknown = (file_, args, options) => (args[0] === '--exec-path' ? Promise.resolve({ code: 1, stdout: '', stderr: '' }) : run(file_, args, options));
+    assert.equal((await lookAtTrusted({ file, run: unknown, cwd: folder })).otherGit, false);
+    // Confirming with the other program keeps it in place of the first.
+    await confirmComputerSettings({ file, run: stand, cwd: folder });
+    assert.equal((await lookAtTrusted({ file, run: stand, cwd: folder })).otherGit, false);
+    assert.equal(fs.readFileSync(file, 'utf8').includes('/opt/one'), false);
   });
 });
 
