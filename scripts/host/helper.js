@@ -126,7 +126,8 @@ import { composeCard, questionProblem } from '../cards/compose.js';
 import { LIFT_STOP_CARD } from '../frontdesk/cli.js';
 import { matchGlob } from '../gate/glob.js';
 import { answerLine, SEAT_SESSION } from '../state/card-lines.js';
-import { checkSetting, definitionOf } from '../settings/catalogue.js';
+import { BUILDER_LAUNCH_KEY, checkSetting, definitionOf } from '../settings/catalogue.js';
+import { checkLaunch } from '../lib/launch-words.js';
 import { READY_LEVELS, PREMIUM_LEVEL, barFailures, readiness, samePins } from '../routing/column-ready.js';
 import { PREMIUM_ASK, PREMIUM_DO, checkRefusal, foundPremium, offeredFrom, premiumInput, premiumRefusal, premiumPinOf } from '../routing/premium.js';
 import { levelOf } from '../routing/thoroughness.js';
@@ -231,6 +232,8 @@ function readMark(file) {
   }
 }
 const EVENT_FILE = /^events\/\d{4}\/\d{2}\/[A-Za-z0-9._-]+\.json$/;
+// The refusal for the launch command set any way but the director's own, fresh click on the card that shows its words.
+const LAUNCH_OWN_CLICK = 'the launch command decides what program runs on every start, so only the director\'s own click, made within ten minutes of the card that shows its words, sets it';
 // A version 4 UUID as crypto.randomUUID writes it.
 const RANDOM_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -2023,6 +2026,7 @@ export async function startHelper({
     }
     if (kind === 'setting') {
       try { checkSetting(data.key, data.value, data.until); } catch (error) { refuse(error.message); }
+      if (BUILDER_LAUNCH_KEY.test(data.key)) refuse(LAUNCH_OWN_CLICK);
       // The premium model is allowed only by a click on its own card (design section 14.6), whose setting comes with
       // its confirmation through /state/record; here it can only be set back to off.
       if (data.key === 'premium' && data.value !== 'off') refuse(PREMIUM_OWN_CARD);
@@ -2964,6 +2968,7 @@ export async function startHelper({
     if (event.data?.confirms !== target.id || event.data?.confirmsHash !== eventHash(target)) refuse('the confirmation does not name the event it carries');
     if (target.kind === 'setting') {
       try { checkSetting(target.data.key, target.data.value, target.data.until); } catch (error) { refuse(error.message); }
+      if (BUILDER_LAUNCH_KEY.test(target.data.key)) refuse(LAUNCH_OWN_CLICK);
     }
   }
 
@@ -3042,6 +3047,15 @@ export async function startHelper({
     if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the event\'s data must be an object');
     try { checkSetting(data.key, data.value, data.until); } catch (error) { refuse(error.message); }
     if (definitionOf(data.key)?.home !== 'profile') refuse(`${data.key} is kept in each project, not in your settings`);
+    if (BUILDER_LAUNCH_KEY.test(data.key)) {
+      // What program runs on every start: kept for this computer only, and only a program that is on it. Written, it does
+      // nothing until the director's own click confirms it, within ten minutes (doProfileRecord).
+      if (data.key !== `builderLaunch:${computerId()}`) refuse('the launch command is kept for this computer only');
+      if (data.value !== null) {
+        const checked = checkLaunch(data.value);
+        if (!checked.ok) refuse(checked.why);
+      }
+    }
     const event = makeEvent({ kind, data, now });
     const result = await writeEvent({ event, dir: profileDir(), now });
     await freshViews(() => writeProfileViews({ now }));
@@ -3059,6 +3073,12 @@ export async function startHelper({
     const target = events.find((e) => e.id === event.data?.confirms);
     if (target?.kind !== 'setting' || eventHash(target) !== event.data?.confirmsHash) {
       refuse('the confirmation names something that is not one of your settings');
+    }
+    // The launch command decides what program runs on every start, so a click confirms it only while the card it was asked on is
+    // fresh: a write left standing, or one a session made, is never confirmed by a click made long after.
+    if (BUILDER_LAUNCH_KEY.test(target.data?.key ?? '')) {
+      const asked = now().getTime() - Date.parse(target.at);
+      if (!(asked <= CLICK_MS && asked >= -60 * 1000)) refuse(LAUNCH_OWN_CLICK);
     }
     const result = await writeEvent({ event, dir: profileDir(), now });
     await freshViews(() => writeProfileViews({ now }));

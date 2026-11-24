@@ -210,5 +210,7 @@ export function finalAnswer(stdout) {
 // The waker puts the Thoroughness column for a feature's subagents into its prompt only for an adapter that says it
 // takes it (scripts/watcher/waker.js): Claude Code's sessions pass each subagent its model and effort.
 export const takesColumn = true;
+// Its sessions start through the launch command saved for the computer, when there is one (scripts/lib/launch-words.js).
+export const takesLaunch = true;
 
-export default Object.freeze({ checkForeman, checkFeature, foremanCall, featureStartCall, featureResumeCall, featureHelmCall, whyCall, finalAnswer, takesColumn, signInPatterns });
+export default Object.freeze({ checkForeman, checkFeature, foremanCall, featureStartCall, featureResumeCall, featureHelmCall, whyCall, finalAnswer, takesColumn, takesLaunch, signInPatterns });

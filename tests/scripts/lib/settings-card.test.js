@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { CARD } from '../../../scripts/lib/front-desk.js';
 import { setLinesOf } from '../../../scripts/state/card-lines.js';
-import { settingName, settingNames, settingsChange, settingsCard, settingsLine, SETTINGS_LINE, settingsCardNote } from '../../../scripts/lib/settings-card.js';
+import { launchCard, LAUNCH_SAVE, settingName, settingNames, settingsChange, settingsCard, settingsLine, SETTINGS_LINE, settingsCardNote } from '../../../scripts/lib/settings-card.js';
 
 const HASH = 'ab12'.repeat(16);
 
@@ -57,4 +57,22 @@ test('a long list of names is cut short, and a value that got into a name is cut
 
 test('the note to the First Mate names the card and the command', () => {
   assert.match(settingsCardNote('c1'), /`confirm c1`/);
+});
+
+test('the launch card shows the words back one per line, within the First Mate\'s limits, and signs no click itself', () => {
+  const card = launchCard(['wrap', 'claude']);
+  assert.match(card.question, /Wheelhouse will run: `wrap` then `claude`/);
+  assert.deepEqual(card.question.split('\n').filter((l) => /^\d\. /.test(l)), ['1. wrap', '2. claude']);
+  assert.deepEqual(card.options, [LAUNCH_SAVE, 'Not now']);
+  assert.equal(card.recommend, LAUNCH_SAVE);
+  assert.ok(card.header.length <= CARD.header);
+  assert.ok(card.question.length <= CARD.chars);
+  assert.doesNotMatch(card.question, /window/i, 'it is asked in the chat');
+  assert.deepEqual(setLinesOf(card.question), []);
+  // Eight long words: the line alone fits, the list is left out, and nothing is cut short.
+  const long = ['wrap', ...Array.from({ length: 5 }, (_, i) => `${String(i).repeat(150)}`)];
+  assert.ok(launchCard(long).question.includes(long[5]));
+  assert.ok(launchCard(long).question.split('\n').every((l) => !/^\d\. /.test(l)));
+  assert.ok(launchCard(long).question.length <= CARD.chars);
+  assert.throws(() => launchCard(Array.from({ length: 8 }, () => 'a'.repeat(199))), /too long to show whole/);
 });
