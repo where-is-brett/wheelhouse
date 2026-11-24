@@ -516,3 +516,27 @@ test('through the entry, a front-desk command that records is refused without th
   assert.equal((await go('wh-frontdesk confirm seat-take-over --session chat-9')).code, 0);
   assert.equal((await go('wh-frontdesk views waiting')).code, 0, 'a read needs no id');
 });
+
+test('a why session never skips the STOP guard on a read tool, whichever environment the run or the step is given', async () => {
+  const read = call('list_agents', {});
+  const why = { WHEELHOUSE_ROLE: 'why' };
+  assert.deepEqual(await run('preToolUse', read, { env: ENV }), { text: '', code: 0 });
+  assert.equal((await run('preToolUse', read, { env: ENV, stepDeps: { stopGuard: { env: why } } })).code, 2);
+});
+
+test('the prompt deadline starts after the stop-word step, which keeps the guards\' time', async () => {
+  const slowWord = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    return { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'STOP is on' } };
+  };
+  const r = recording();
+  const give = (extra) => runEntry('userPromptSubmitted', {
+    stdin: Readable.from([JSON.stringify({ sessionId: 's1', cwd: PROJECT, prompt: 'STOP' })]),
+    env: ENV,
+    deps: { client: up, steps: { ...r.steps, stopWord: slowWord }, projectOf: () => ({ project: 'shop' }), dir: '/nowhere', deadlineMs: 2000, ...extra },
+  });
+  assert.match((await give({ promptDeadlineMs: 80 })).text, /STOP is on/);
+  // The later steps are still held to the prompt deadline.
+  const hung = await give({ promptDeadlineMs: 80, steps: { ...r.steps, stopWord: slowWord, boardContext: () => new Promise(() => {}) } });
+  assert.deepEqual(hung, { text: '', code: 0 });
+});

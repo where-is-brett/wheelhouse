@@ -679,7 +679,6 @@ export function endProcess(pid) {
   return false;
 }
 
-
 // Start times kept for `ttlMs`, so a watcher checking its running sessions
 // every loop asks the system at most once a minute, and for every pid at
 // once. `get(pid, others)` asks for `pid` and every one of `others` not

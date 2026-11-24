@@ -31,7 +31,7 @@
 // the input included, sits under one deadline (GUARD_DEADLINE_MS, well inside the limit the registration gives,
 // GUARD_TIMEOUT_SEC, past which Copilot lets the action through): past it a guard event is refused with DEADLINE
 // and an informing event writes nothing. The prompt event, which the model waits on before every prompt, has the shorter
-// PROMPT_DEADLINE_MS.
+// PROMPT_DEADLINE_MS for the steps after the stop-word step, which keeps the guards' time.
 //
 // Every step comes from `deps.steps` when given, and each step's own deps from `deps.stepDeps`.
 //
@@ -139,14 +139,17 @@ const refusal = (event, reason) => (event === GUARD_EVENT ? answer.deny(reason) 
 // Runs the steps named, in order, each on the inputs its selector gives; the first refusal is the answer. Text for
 // the agent from more than one step is joined, so every line reaches it. A step's allow is the answer only when it
 // allows every input it is given, and nothing else answers.
-async function runSteps(steps, inputs, { event, decides, stepDeps, dir, env }) {
+async function runSteps(steps, inputs, { event, decides, stepDeps, dir, env, seen }) {
   const context = [];
   let other;
   let allowed;
   for (const [name, select] of steps) {
+    // The stop-word step has had its time; the prompt event's own deadline runs from here.
+    if (name !== 'stopWord') seen?.stopWordDone?.();
     const given = select(inputs);
     if (given.length === 0) continue;
-    if (decides?.[name] === undefined && (INERT_ON_HELPER.includes(name) || (event === GUARD_EVENT && PASSES_THE_WORD_TOOLS.includes(name) && onlyWordTools(given) && !isWhy(env)))) continue;
+    // A why session never skips the STOP guard, whichever environment the run or the step is given.
+    if (decides?.[name] === undefined && (INERT_ON_HELPER.includes(name) || (event === GUARD_EVENT && PASSES_THE_WORD_TOOLS.includes(name) && onlyWordTools(given) && !isWhy(env) && !isWhy(stepDeps?.[name]?.env ?? process.env)))) continue;
     const decide = decides?.[name] ?? (await STEP_MODULES[name]()).decide;
     let allows = 0;
     let first;
@@ -162,6 +165,7 @@ async function runSteps(steps, inputs, { event, decides, stepDeps, dir, env }) {
     }
     if (allows === given.length) allowed ??= first;
   }
+  seen?.stopWordDone?.();
   if (context.length > 0) return answer.context(EVENT_NAMES[event], context.join('\n\n'));
   return other ?? allowed;
 }
@@ -348,26 +352,42 @@ async function decideCall(event, raw, { deps, seen, dir, env }) {
     // not answering
   }
   const stepDeps = helperStepDeps({ writeVia: 'helper', client, helperUp, agent: 'copilot' }, deps.stepDeps, raw.cwd);
-  return runSteps(stepsFor(event, { c6: deps.c6 ?? C6_PASSED }), inputs, { event, decides: deps.steps, stepDeps, dir, env });
+  return runSteps(stepsFor(event, { c6: deps.c6 ?? C6_PASSED }), inputs, { event, decides: deps.steps, stepDeps, dir, env, seen });
 }
 
 // Runs the entry for `event`: `{ text, code }`, the line to write (or '') and the exit code. Never throws.
 //   deps.steps        a step's decide, by name, in place of the hook's own
 //   deps.stepDeps     extra deps for a step, by name
-//   deps.deadlineMs   the deadline over the whole run (GUARD_DEADLINE_MS; PROMPT_DEADLINE_MS for the prompt event)
+//   deps.deadlineMs   the deadline over the whole run (GUARD_DEADLINE_MS)
+//   deps.promptDeadlineMs  the prompt event's deadline for the steps after the stop-word step (PROMPT_DEADLINE_MS)
 //   deps.c6           whether check C6 has passed (C6_PASSED)
 //   deps.recordCompaction(input)  records a compaction (a /session/mark compaction)
 //   deps.client       the helper's client (helper-client.js), for the probe, the steps and the marks
 //   deps.dir, deps.projectOf, deps.harnessOf  as the hooks take them
 export async function runEntry(event, { stdin = process.stdin, env = process.env, deps = {} } = {}) {
   if (!Object.hasOwn(EVENT_NAMES, event)) return { text: '', code: 0 };
-  const deadlineMs = deps.deadlineMs ?? (event === 'userPromptSubmitted' ? PROMPT_DEADLINE_MS : GUARD_DEADLINE_MS);
+  const deadlineMs = deps.deadlineMs ?? GUARD_DEADLINE_MS;
   let timer;
+  let arm;
   const late = new Promise((resolve) => {
-    timer = setTimeout(() => resolve({ late: true }), deadlineMs);
+    arm = (ms) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => resolve({ late: true }), ms);
+    };
+    arm(deadlineMs);
   });
   let out;
   const seen = {};
+  // The prompt event, which the model waits on before every prompt, has the shorter deadline for what follows the
+  // stop-word step, so that step keeps the guards' time.
+  if (event === 'userPromptSubmitted') {
+    let started = false;
+    seen.stopWordDone = () => {
+      if (started) return;
+      started = true;
+      arm(deps.promptDeadlineMs ?? PROMPT_DEADLINE_MS);
+    };
+  }
   try {
     const settled = await Promise.race([decideEvent(event, { stdin, env, deps, seen }).then((value) => ({ value })), late]);
     out = settled.late ? refusal(event, DEADLINE) : settled.value;
