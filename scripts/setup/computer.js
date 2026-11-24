@@ -284,7 +284,8 @@ function composeFor({ changes, userSettings = {}, kept = [], route = TELEMETRY_R
   const variables = route === 'launch-env' && changes.some((c) => c.what === 'telemetry' && (c.kind === 'env' || c.kind === 'file'));
   const agents = [...new Set(changes.filter((c) => c.what === 'agent').map((c) => c.label))];
   const parts = (p) => changes.some((c) => c.what === 'agent' && c.part === p);
-  const agentParts = asList([...(parts('hooks') ? ['checks'] : []), ...(parts('first-mate') ? ['First Mate files'] : []), ...(parts('brainstorming') ? ['brainstorming skill'] : [])]);
+  // "a brainstorming skill" with its article, so the line beside the card's own "First Mate files and brainstorming skill" is not that line again.
+  const agentParts = asList([...(parts('hooks') ? ['checks'] : []), ...(parts('first-mate') ? ['First Mate files'] : []), ...(parts('brainstorming') ? ['a brainstorming skill'] : [])]);
   const alongside = agents.length > 0 ? `, and ${agents.join(' and ')}'s ${agentParts}` : '';
   const why = variables
     ? `These are settings on this computer, mostly Claude Code's, and variables for your account${platform === 'darwin' ? ' and a login item' : ''}${alongside}.`
