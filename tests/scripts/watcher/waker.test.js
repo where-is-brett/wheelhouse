@@ -10,9 +10,11 @@ import path from 'node:path';
 import {
   makeWaker, writeWake, readWake, wakesDir, sessionModeOf, featureModeOf, sessionEnv, spawnDetached, pidAlive, processStartTime, makeStartTimes,
   outboxFile, runningFile, sessionFile, lostFile, grantsUsedFile, watcherDir, PROMPTS, MAX_RUN_MS, STARTING_MS, windowsBuildsOf, premiumRestFile,
-  startsDir, failingFile, startHold, clearStartFailures, PROVE_MS,
+  startsDir, failingFile, startHold, clearStartFailures, PROVE_MS, endProcess,
 } from '../../../scripts/watcher/waker.js';
+import { sessionsOfProject } from '../../../scripts/agents/project-agent.js';
 import { readSignIn, timeWords } from '../../../scripts/lib/sign-in-gate.js';
+import { stillRunning } from '../../../scripts/lib/heartbeats.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { briefHash, featurePaths } from '../../../scripts/feature/files.js';
 import { recordInState, briefFields, briefText } from '../../helpers/foreman.js';
@@ -1738,7 +1740,8 @@ test('waker: an opened steer holds its slot', () => withHome(async () => {
 }));
 
 // "Now": the held piece's current run is ended on the director's word. A feature run live for `login-page`, taking one wake.
-async function liveRun({ startTime = 'A' } = {}) {
+// `ends`: the process exits as soon as it is signalled; `sent`: what the signal says.
+async function liveRun({ startTime = 'A', ends = true, sent = true } = {}) {
   checkout();
   const dir = worktree();
   keepSession('login-page', dir, SESSION);
@@ -1746,7 +1749,7 @@ async function liveRun({ startTime = 'A' } = {}) {
   let current = startTime;
   const killed = [];
   const w = waker(fake, {
-    locate: () => dir, onError: () => {}, startTimeOf: async () => current, kill: (pid) => { killed.push(pid); fake.end(pid, 1); return true; },
+    locate: () => dir, onError: () => {}, startTimeOf: async () => current, kill: (pid) => { killed.push(pid); if (ends && sent) fake.end(pid, 1); return sent; },
   });
   const file = writeWake(P, featureBundle('login-page'));
   await w.wakeFeature('login-page', file);
@@ -2141,4 +2144,152 @@ test('a program that is not found shuts the route as no-program', () => withHome
   const fact = readSignIn(wheelhouseHome()).facts['claude-code:background'];
   assert.equal(fact.kind, 'no-program');
   assert.equal(w.waiting().length, 0);
+}));
+
+// ---- All stop reaches the background sessions (builders and settings, part 2b) ----
+
+const signedOut = () => ({ kind: 'not-signed-in', since: '2026-11-24T14:02:00.000Z', command: 'claude', excerpt: 'Please run /login', starts: 1 });
+
+test('under STOP the start decision is "not started: All stop", before the gate is read', () => withHome(async () => {
+  checkout();
+  const w = waker(fakeRun());
+  assert.equal(w.startDecision('login-page'), null);
+  setStop({ by: 'prompt' });
+  assert.equal(w.startDecision('login-page'), 'not started: All stop');
+  assert.equal(w.startDecision(), 'not started: All stop');
+}));
+
+test('under STOP every detached session the watcher started is ended with the existing stop, and the ended ones are recorded', () => withHome(async () => {
+  const { w, fake, killed, file } = await liveRun();
+  assert.deepEqual(await w.stopAll(), [], 'nothing happens while All stop is off');
+  assert.equal(killed.length, 0);
+  setStop({ by: 'prompt' });
+  assert.deepEqual(await w.stopAll(), ['login-page']);
+  await flush();
+  assert.deepEqual(killed, [fake.calls[0].pid]);
+  assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), false);
+  const [entry] = w.waiting();
+  assert.equal(entry.file, file);
+  assert.equal(entry.flight, null, 'its wake waits again, so lifting All stop picks it up');
+  assert.equal(entry.failures, 0);
+  assert.equal(fake.calls.length, 1, 'nothing is started in its place');
+  const kept = JSON.parse(fs.readFileSync(path.join(watcherDir(P), 'all-stopped.json'), 'utf8'));
+  assert.deepEqual(kept.stopped, ['login-page']);
+  assert.deepEqual(stillRunning(wheelhouseHome(), P).stopped, ['builder login-page']);
+}));
+
+test('under STOP a start still being made is left for the next tick: its record and wakes stay', () => withHome(async () => {
+  checkout();
+  const w = waker(fakeRun({ exits: true }), { onError: () => {} });
+  fs.mkdirSync(path.dirname(runningFile(P, 'feature-login-page')), { recursive: true });
+  const starting = { state: 'starting', at: new Date(T0).toISOString(), file: 'x', entries: ['e1'] };
+  fs.writeFileSync(runningFile(P, 'feature-login-page'), JSON.stringify(starting));
+  setStop({ by: 'prompt' });
+  assert.deepEqual(await w.stopAll(), []);
+  assert.deepEqual(JSON.parse(fs.readFileSync(runningFile(P, 'feature-login-page'), 'utf8')), starting);
+}));
+
+test('under STOP a run whose process can\'t be confirmed as the recorded one, or wasn\'t ended, keeps its record', async () => {
+  for (const [label, over] of [['no start time recorded', { startTime: null }], ['the signal was not sent', { sent: false }]]) {
+    await withHome(async () => {
+      const { w, fake, killed } = await liveRun(over);
+      setStop({ by: 'prompt' });
+      assert.deepEqual(await w.stopAll(), [], label);
+      await flush();
+      if (over.startTime === null) assert.deepEqual(killed, [], `${label}: nothing is signalled`);
+      assert.equal(fs.existsSync(runningFile(P, 'feature-login-page')), true, `${label}: the record stays, so nothing starts beside the process`);
+      assert.notEqual(w.waiting()[0].flight, null, `${label}: its wake stays with the run`);
+      assert.equal(fake.calls.length, 1);
+    });
+  }
+});
+
+test('a run All stop ended that exits after STOP has lifted counts no failure, and its wake goes again', () => withHome(async () => {
+  const { w, fake, killed, file } = await liveRun({ ends: false });
+  setStop({ by: 'prompt' });
+  assert.deepEqual(await w.stopAll(), ['login-page']);
+  liftStop();
+  fake.end(killed[0], 1);
+  await flush();
+  assert.equal(fs.existsSync(failingFile(P, 'login-page')), false, 'no failing start is counted');
+  const again = w.waiting().find((e) => e.file === file);
+  assert.ok(again !== undefined && again.failures === 0 && again.flight === null, 'its wake waits again, not failed');
+  w.clock.move(PROVE_MS); // past the first start's sign-in trial, as the next minute's tick is
+  await w.pump();
+  assert.equal(fake.calls.length, 2, 'lifting All stop starts it again');
+}));
+
+test('a second All stop with nothing running does not show the first one\'s builders', () => withHome(async () => {
+  const { w } = await liveRun();
+  setStop({ by: 'prompt', now: () => new Date(T0) });
+  assert.deepEqual(await w.stopAll(), ['login-page']);
+  assert.deepEqual(stillRunning(wheelhouseHome(), P).stopped, ['builder login-page']);
+  liftStop();
+  setStop({ by: 'prompt', now: () => new Date(T0 + 60 * 60 * 1000) });
+  assert.deepEqual(await w.stopAll(), []);
+  assert.deepEqual(stillRunning(wheelhouseHome(), P).stopped, []);
+}));
+
+test('STOP that comes on while a start is being made stops it before anything is recorded or run', () => withHome(async () => {
+  checkout();
+  const fake = fakeRun();
+  const base = sessionsOfProject(config());
+  // STOP comes on while the adapter prepares the start, after every earlier check has passed.
+  const sessions = { ...base, prepare: async () => { setStop({ by: 'prompt' }); return {}; } };
+  const w = waker(fake, { sessions, onError: () => {} });
+  const record = writeWake(P, bundle('e1'));
+  await w.wakeForeman(record).catch(() => {});
+  assert.equal(fake.calls.length, 0, 'nothing is run');
+  assert.equal(fs.existsSync(runningFile(P, 'foreman')), false, 'nothing is recorded');
+  const [entry] = w.waiting();
+  assert.equal(entry.flight, null, 'its wake waits for the lift');
+  assert.equal(entry.failures, 0);
+}));
+
+test('endProcess on Windows ends the relay\'s whole tree with taskkill', () => {
+  const calls = [];
+  const spawner = (file, args, options) => { calls.push({ file, args, options }); return { once: () => {}, unref: () => {} }; };
+  assert.equal(endProcess(4242, { platform: 'win32', spawner }), true);
+  assert.deepEqual(calls.map((c) => [c.file, c.args]), [['taskkill', ['/pid', '4242', '/T', '/F']]]);
+  assert.equal(calls[0].options.shell, false);
+  assert.equal(calls[0].options.windowsHide, true);
+});
+
+test('under STOP the sign-in gate and the failed-start count are frozen (review focus 3)', () => withHome(async () => {
+  const { w } = await liveRun();
+  const { writeSignInFact, clearSignInFact } = await import('../../../scripts/lib/sign-in-gate.js');
+  writeSignInFact(wheelhouseHome(), 'claude-code:background', signedOut());
+  const standing = readSignIn(wheelhouseHome());
+  setStop({ by: 'prompt' });
+  // The ended run's exit (code 1) is read while STOP is on: it counts for nothing.
+  await w.stopAll();
+  await flush();
+  assert.equal(fs.existsSync(failingFile(P, 'login-page')), false, 'a failing start count does not grow');
+  assert.deepEqual(readSignIn(wheelhouseHome()), standing, 'the standing fact is neither changed nor counted');
+  assert.equal(writeSignInFact(wheelhouseHome(), 'claude-code:background', signedOut()), null, 'no start is counted on the fact');
+  assert.equal(clearSignInFact(wheelhouseHome(), 'claude-code:background'), false, 'nothing is cleared');
+  assert.deepEqual(readSignIn(wheelhouseHome()), standing);
+}));
+
+test('lifting STOP takes effect in one tick, and the gate is read before the first start (review focus 3)', () => withHome(async () => {
+  checkout();
+  const fake = fakeRun();
+  const dir = worktree();
+  keepSession('login-page', dir);
+  const errors = [];
+  const w = waker(fake, { locate: () => dir, onError: (m) => errors.push(m) });
+  const { writeSignInFact } = await import('../../../scripts/lib/sign-in-gate.js');
+  setStop({ by: 'prompt' });
+  writeSignInFact(wheelhouseHome(), 'claude-code:background', signedOut()); // refused under STOP: no fact yet
+  assert.deepEqual(readSignIn(wheelhouseHome()).facts, {});
+  liftStop();
+  writeSignInFact(wheelhouseHome(), 'claude-code:background', signedOut());
+  setStop({ by: 'prompt' });
+  await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page')));
+  assert.equal(w.waiting().length, 1);
+  liftStop();
+  await w.pump();
+  assert.equal(fake.calls.length, 0, 'the standing fact holds the start once STOP lifts');
+  assert.match(errors.at(-1), /not started: builders can't sign in/);
+  assert.equal(w.waiting().length, 1);
 }));

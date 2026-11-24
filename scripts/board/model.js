@@ -9,7 +9,7 @@ import { LINE_CHARS, WEEK_MS } from '../lib/core-numbers.js';
 import { latestFor } from '../state/views.js';
 import { answerLine, approvalLine } from '../state/card-lines.js';
 import { SAFETY_LINES } from '../agents/safety-lines.js';
-import { HOST_UNREACHABLE } from '../host/company-ca.js';
+import { HOST_UNREACHABLE } from '../host/unreachable-line.js';
 import { localWords } from '../lib/host-lines.js';
 import { BUILD_QUESTION_LABELS, isBuildQuestion, settingKey } from '../protection/windows-builds.js';
 import { SEE_BEFORE_MERGE, SEE_IN_BRIEFING } from '../lib/calm-words.js';

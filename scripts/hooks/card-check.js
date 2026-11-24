@@ -188,9 +188,9 @@ function baselineFaults(questions, now, { figures = true } = {}) {
 
 export const DECIDED_LEAD = 'The director has already answered: ';
 export const DECISION_IN_CHAT = 'A decision is shown as a message in the chat, not through the question picker. Run `decision list`, then print each decision exactly as `decision show <n>` prints it, and ask nothing else for it. The director answers by typing.';
-// An agent whose hooks only read can neither sign a click in its picker nor record a typed reply, so the director answers a
-// decision in Wheelhouse's own window, which signs their click as a hook that signs does.
-export const DECISION_IN_WINDOW = 'A decision is shown as a message in the chat, not through the question picker. Run `decision list`, then print each decision exactly as `decision show <n>` prints it, and ask nothing else for it. Then run `decision confirm <n>`: it opens the decision in Wheelhouse\'s own window, where the director clicks their answer.';
+// An agent whose hooks only read can neither sign a click in its picker nor record a typed reply until its picker's click is
+// recorded, so a decision is shown as a plain message and waits.
+export const DECISION_UNRECORDED = 'A decision is shown as a message in the chat, not through the question picker. Run `decision list`, then print each decision exactly as `decision show <n>` prints it, and ask nothing else for it. This chat does not record an answer to a decision yet: say in one plain line that the decision waits, and take no step that waits on it.';
 // A card on an agent whose picker click is recorded must take no typed answer: a typed label looks like a click (check 59), and
 // words in a card's place are no click.
 export const NO_TYPED_ANSWER = 'A card is asked with no free-text input: the director answers it by clicking one of its options. Ask it again with typed answers off.';
@@ -383,10 +383,10 @@ function oneCardCheck(input, project, { now, outcomes, paneLive: live, takeHere:
     return swap === null ? null : { card: swap.card, setup: swap.setup === true };
   });
   // The picker is for a decision only while typed replies are off, so on it a decision is answered by typing instead. On an
-  // agent whose picker's click is not recorded (`picker` false), it would close the decision unsigned, so it is answered in the
-  // window; one whose picker click is recorded asks it there as any card, and records no typed reply, so no switch sends it to the chat.
+  // agent whose picker's click is not recorded (`picker` false), it would close the decision unsigned, so it is shown as a plain
+  // message and waits; one whose picker click is recorded asks it there as any card, and records no typed reply, so no switch sends it to the chat.
   const decisionAsked = matched.some((m) => m && !m.setup && isDecisionCard(m.card.data));
-  if (decisionAsked && !picker.recorded) return { deny: DECISION_IN_WINDOW };
+  if (decisionAsked && !picker.recorded) return { deny: DECISION_UNRECORDED };
   // On an agent whose click is recorded by a hook that reads it, a typed answer reads as a click. A card that decides (a decision,
   // a card with an option that signs, or Lift All stop) is asked only when the call turns typed answers off in words the hook
   // reads (`allowFreeformInput` false): a call that says nothing about them may well allow them.

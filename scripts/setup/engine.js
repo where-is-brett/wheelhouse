@@ -482,6 +482,8 @@ export function setupRoutes({
   stepsModule = STEPS_MODULE, userHome = os.homedir(), platform = process.platform, spawn = nodeSpawn, mark = markStep,
   writeSurvey, health = healthCheck, finish = (args) => finishSetup({ ...args, now }),
   closeTrial = (args) => closeOpenTrial(args), copy = copyRunRecords, signInWith = {},
+  // The builder sign-in check (scripts/setup/builder-sign-in.js): `live` makes step 10 run it (the helper says so); `check` and `launchFor` are for tests.
+  buildersWith = {},
 } = {}) {
   let loaded = null;
   const steps = () => (loaded ??= loadSteps(stepsModule).catch((error) => { loaded = null; throw error; }));
@@ -674,7 +676,13 @@ export function setupRoutes({
         computerChanging = (await (await steps()).find((x) => x.n === 6)?.pending?.({ folder: run.folder, step: 6, runId: run.id, now, userHome, platform, answers: answersWithConsent(run.id).answers })) ?? null;
       } catch { /* the card then says what step 6 does in full */ }
     }
-    const { id, card, choices, writes } = oneCard({ computerChanging, folder: run.folder, list, product, platform, toRun, count: keptAnswers(run.id).length, facts, claudeHome, desktop: sessionIsApp, done: { tools: stepDone(run, 2), signedIn: wasWithdrawn ? lastMissHost(run) : null }, pushed: phonePushResult()?.arrived === true, hosts: projectHosts({ folder: run.folder, answers: own }) });
+    let otherAgents = [];
+    if (toRun.includes(6)) {
+      try {
+        otherAgents = (await steps()).find((x) => x.n === 6)?.otherAgents?.({ folder: run.folder, platform, answers: answersWithConsent(run.id).answers }) ?? [];
+      } catch { /* none named */ }
+    }
+    const { id, card, choices, writes } = oneCard({ computerChanging, otherAgents, folder: run.folder, list, product, platform, toRun, count: keptAnswers(run.id).length, facts, claudeHome, desktop: sessionIsApp, done: { tools: stepDone(run, 2), signedIn: wasWithdrawn ? lastMissHost(run) : null }, pushed: phonePushResult()?.arrived === true, hosts: projectHosts({ folder: run.folder, answers: own }) });
     if (JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error('The one card could not be cleaned as it is sent');
     noteAsked({ runId: run.id, folder: run.folder, step: ONE_CARD_STEP, id, card, writes, choices, facts, now });
     return { ok: true, ask: { step: ONE_CARD_STEP, id, card }, progress: [`Setup · ${setupTime(toRun, list)}`, 'One card: the plan for this project.'] };
@@ -755,6 +763,38 @@ export function setupRoutes({
       },
       ...rest,
     });
+  }
+
+  // The builder sign-in check step 10's health makes: the way builders start on this computer (the background route; the Desktop route's
+  // is the foreman's check-in, part 6). A launch command that can't be read fails it, saying which fault it is (never the settings path).
+  async function buildersCheckNow() {
+    const { builderSignInCheck, launchFaultLine } = await import('./builder-sign-in.js');
+    const { storedLaunch } = await import('../lib/launch-stored.js');
+    let launch = null;
+    try {
+      launch = (buildersWith.launchFor ?? storedLaunch)();
+    } catch (error) {
+      return { ok: false, kind: 'other', line: launchFaultLine(error) };
+    }
+    return (buildersWith.check ?? builderSignInCheck)({ home: wheelhouseHome(), route: 'background', launch });
+  }
+
+  // /setup/builders/check {}: the director's "Check again" (builders design, section 10.2). Runs the builder sign-in check as builders start on
+  // this computer, with the launch command saved for it, and takes the sign-in fact away only when it passes; the waker then sends the held
+  // wakes. -> { ok: true, cleared }, or { ok: false, refused: <what happened, by kind>, kind }. Refused under STOP, which freezes every re-check.
+  async function buildersCheckRoute(body) {
+    if (Object.keys(body).length > 0) refuse('Check again takes nothing: it checks the way builders start on this computer');
+    if (stopped()) return stopRefusal;
+    const { recheckRoute, launchFaultLine } = await import('./builder-sign-in.js');
+    const { storedLaunch } = await import('../lib/launch-stored.js');
+    let launch = null;
+    try {
+      launch = (buildersWith.launchFor ?? storedLaunch)();
+    } catch (error) {
+      return { ok: false, kind: 'other', refused: launchFaultLine(error) };
+    }
+    const got = await recheckRoute({ home: wheelhouseHome(), launch, ...(buildersWith.check ? { check: buildersWith.check } : {}) });
+    return got.ok ? got : { ok: false, kind: got.kind, refused: got.line };
   }
 
   // Step 4 settled on live data or Apple signing that the answers now say differently, and step 7
@@ -1047,7 +1087,7 @@ export function setupRoutes({
     if (!onRunList(found, HEALTH_STEP)) refuse(notOnList(found, HEALTH_STEP));
     const before = healthQueue.get(found.id) ?? Promise.resolve();
     const turn = before.catch(() => {}).then(async () => {
-      const read = (run) => health({ folder: run.folder, run, reported: lines, now, desktop: sessionIsApp });
+      const read = (run) => health({ folder: run.folder, run, reported: lines, now, desktop: sessionIsApp, ...(buildersWith.live === true || buildersWith.check ? { builders: buildersCheckNow } : {}) });
       const answerOf = (got) => ({ ok: true, green: got.green, lines: got.lines, board: got.board, trials: got.trials });
       let run = runById(found.id);
       if (healthGreen(run) || stopped()) return answerOf(await read(run));
@@ -1097,7 +1137,7 @@ export function setupRoutes({
   };
   const routes = Object.fromEntries(Object.entries({
     '/setup/plan': plan, '/setup/apply': apply, '/setup/status': status, '/setup/health': healthRoute, '/setup/choices': choicesRoute, '/setup/change': changeRoute,
-    '/setup/sign-in': signInRoute,
+    '/setup/sign-in': signInRoute, '/setup/builders/check': buildersCheckRoute,
   }).map(([path, route]) => [path, aware(route)]));
   // Whether a setup step is running in this helper now. Not a route, so it is left out of a spread of the routes.
   Object.defineProperty(routes, 'busy', { value: () => inHelper.size > 0, enumerable: false });

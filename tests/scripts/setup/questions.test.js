@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { questionsStep, readmeDescription, signsAppleApps, builderRouteAsk, builderRouteSetting, entrypointKind, BUILDER_CHOICES, LIVE_DATA, PRODUCT, SIGNS_APPS, PROJECT_WAIT_MS } from '../../../scripts/setup/questions.js';
+import { questionsStep, readmeDescription, signsAppleApps, builderRouteAsk, builderRouteSetting, entrypointKind, BUILDER_CHOICES, LIVE_DATA, PHONE, PRODUCT, SIGNS_APPS, PROJECT_WAIT_MS } from '../../../scripts/setup/questions.js';
 import { REAL_USERS, LEVELS } from '../../../scripts/setup/host.js';
 import { noteAsked, answersFor } from '../../../scripts/setup/clicks.js';
 import { keepAnswer } from '../../../scripts/lib/setup-clicks.js';
@@ -113,7 +113,7 @@ test('each answer writes its setting or configuration key, checked by the catalo
       // Then live data, which records nothing in the state: step 7 writes liveData from it. A product with real users holds
       // live data by being relied on, so it is not asked there.
       const live = await plan(4);
-      if (phase === 'launched') assert.equal(live.ask, undefined, 'real users: live data is not asked again');
+      if (phase === 'launched') assert.equal(live.ask.id, 'phone', 'real users: live data is not asked again, so the phone question is next');
       else {
         assert.deepEqual(live.ask.card.options.map((o) => o.label), [LIVE_DATA.yes, LIVE_DATA.no]);
         assert.match(live.ask.card.options[0].description, /test data only/);
@@ -124,8 +124,13 @@ test('each answer writes its setting or configuration key, checked by the catalo
         assert.equal(answersFor(runId)['4.live-data'].label, LIVE_DATA.yes);
       }
 
+      // The phone question, last; recorded nowhere, step 9 goes by it.
+      const phone = phase === 'launched' ? live : await plan(4);
+      assert.equal(phone.ask.id, 'phone');
+      assert.deepEqual(phone.ask.card.options.map((o) => o.label), [PHONE.try, PHONE.skip]);
+      assert.deepEqual(await answer(phone.ask.card, PHONE.skip), []);
       // Every answer in: the step settles, with no Go ahead, its record in the journal.
-      const done = phase === 'launched' ? live : await plan(4);
+      const done = await plan(4);
       assert.deepEqual(done, { ok: true, done: true });
       const settled = readJournal().runs.find((r) => r.id === runId);
       assert.equal(typeof settled.steps[4].doneAt, 'string');
@@ -236,7 +241,7 @@ test('a real-users answer given again keeps the description, and the phase it re
     // Step 3's question answered again, the other way, a minute later: the description stands and no card asks it again.
     answerStep3(folder, { realUsers: REAL_USERS.yes, at: new Date(T0.getTime() + 60 * 1000) });
     const next = await plan(4);
-    assert.equal(next.ask, undefined, 'real users now: live data is not asked');
+    assert.equal(next.ask.id, 'phone', 'real users now: live data is not asked, the phone question is next');
     assert.equal(findRun(folder).id !== undefined, true);
     assert.equal(answersFor(findRun(folder).id)['4.product-launched'], undefined);
   });
@@ -284,6 +289,7 @@ test('step 4 asks whether the project signs Apple apps only when it looks like i
     assert.match(apple.ask.card.question, /sign/i);
     assert.doesNotMatch(apple.ask.card.question, /keychain/i, 'plain words: no jargon on the card');
     await answer(apple.ask.card, SIGNS_APPS.yes);
+    await answer((await plan(4)).ask.card, PHONE.skip);
     const done = await plan(4);
     assert.deepEqual(done, { ok: true, done: true });
   }, { files: { 'README.md': README, 'Cafe.xcodeproj/project.pbxproj': '' } });
@@ -294,6 +300,7 @@ test('a project that doesn\'t look like it signs Apple apps is never asked', asy
     answerStep3(folder, { realUsers: REAL_USERS.no });
     await answer((await plan(4)).ask.card, PRODUCT.readme);
     await answer((await plan(4)).ask.card, LIVE_DATA.no);
+    await answer((await plan(4)).ask.card, PHONE.try);
     assert.deepEqual(await plan(4), { ok: true, done: true });
   }, { files: { 'README.md': README } });
 });
@@ -309,13 +316,13 @@ test('every card step 4 can ask, in every state it is built in, offers two to fo
           const step = questionsStep();
           const answers = answerStep3(folder, { realUsers });
           const cards = [];
-          for (let i = 0; i < 4; i += 1) {
+          for (let i = 0; i < 5; i += 1) {
             const got = await step.plan({ folder, answers });
             if (!got.ask) break;
             cards.push(got.ask);
             answers[`4.${got.ask.id}`] = { label: got.ask.card.options[0].label, text: null };
           }
-          assert.deepEqual(cards.map((a) => a.id.replace(/^product-.*/, 'product')), ['product', ...(realUsers === REAL_USERS.yes ? [] : ['live-data']), ...(apple ? ['apple-apps'] : [])]);
+          assert.deepEqual(cards.map((a) => a.id.replace(/^product-.*/, 'product')), ['product', ...(realUsers === REAL_USERS.yes ? [] : ['live-data']), ...(apple ? ['apple-apps'] : []), 'phone']);
           for (const a of cards) {
             const { question } = composeCard({ ...a.card, kind: 'question', suggest: false });
             assert.ok(question.options.length >= 2 && question.options.length <= 4, `${a.id} offers ${question.options.map((o) => o.label).join(', ')}`);

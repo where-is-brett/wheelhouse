@@ -47,6 +47,7 @@
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { PHONE_REACHES } from '../lib/calm-words.js';
 import { PUSH_TEST_WAIT_MS, PUSH_TEST_LOCK_MS, CLICK_FRESH_MS } from '../lib/setup-numbers.js';
+import { PHONE } from './questions.js';
 import { PUSH_TEST_STEP, phonePushResult, phoneResults, readJournal } from '../lib/setup-run.js';
 
 export const READY_ID = 'phone-ready';
@@ -87,14 +88,14 @@ function readyAsk(id, { terminal = false, round = 0 } = {}) {
       what: `Setup step ${PUSH_TEST_STEP}, your phone${tryOf(round)}. ${PHONE_REACHES} `
         + 'In Claude Desktop, switch on Remote Control and Push when actions required, '
         + 'and allow Claude\'s phone notifications. '
-        + `Then click Ready and ${LOCK}`,
+        + `Then ${terminal ? 'choose' : 'click'} Ready and ${LOCK}`,
       why: 'Only you can do these.',
       options: terminal ? [
-        { label: READY.skip, says: 'Setup carries on without your phone; the First Mate can set it up later.' },
+        { label: READY.skip, says: 'Setup carries on without your phone; ask here to set it up later.' },
         { label: READY.ready, says: `Setup sends a test ${MINUTES} later and asks if it arrived.` },
       ] : [
         { label: READY.ready, says: `Setup sends a test ${MINUTES} later and asks if it arrived.` },
-        { label: READY.skip, says: 'Setup carries on without your phone; the First Mate can set it up later.' },
+        { label: READY.skip, says: 'Setup carries on without your phone; ask here to set it up later.' },
       ],
       // Remote Control and the push options are Claude Desktop's settings, so a terminal session recommends the way it can finish.
       recommend: terminal ? READY.skip : READY.ready,
@@ -151,6 +152,8 @@ export function notifyStep({ pushResult = () => phonePushResult(), settledBefore
       // The push already reached the phone in an earlier run on this computer (ruling R75).
       const earlier = pushResult();
       if (earlier?.arrived === true && earlier.run !== ctx.runId) return { settled: { record: { pushArrived: true, from: earlier.run } } };
+      // Skipped when the choices were made: nothing is asked at the end (a later round, taken again from the front desk, asks).
+      if (round === 0 && answers['4.phone']?.label === PHONE.skip && answers[`${PUSH_TEST_STEP}.${ids.ready}`] === undefined) return { settled: { record: { ...SKIPPED } } };
       const ready = answers[`${PUSH_TEST_STEP}.${ids.ready}`];
       if (ready?.label === READY.skip) return { settled: { record: { ...SKIPPED } } };
       if (ready?.label !== READY.ready) return { ask: readyAsk(ids.ready, { terminal: ctx.desktop === false, round }) };

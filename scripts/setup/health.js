@@ -97,6 +97,7 @@ const GUARD_WAIT_MS = 30 * 1000;
 // How long the first briefing's reading waits for the helper's answers.
 const BRIEFING_WAIT_MS = 1500;
 const STOP_GUARD = fileURLToPath(new URL('../hooks/stop-guard.js', import.meta.url));
+const START_DECISION = fileURLToPath(new URL('../watcher/start-decision.js', import.meta.url));
 // The empty commit's author: the trial's own, not the director's, since it never lands.
 const TRIAL_AUTHOR = ['-c', 'user.name=Wheelhouse setup', '-c', 'user.email=setup@wheelhouse.invalid'];
 const TRIAL_MESSAGE = 'Wheelhouse health check: an empty commit, never merged';
@@ -127,6 +128,13 @@ export const HELPER_CHECKS = Object.freeze({
     passed: 'With All stop on, an agent could still read and report',
     failed: 'With All stop on, an agent could not even read',
     todo: 'Reload this project in Claude Desktop, then run step 10 again',
+    what: 'All stop',
+  },
+  'start under stop': {
+    expected: 'refused',
+    passed: 'With All stop on, the watcher refused to start a waiting builder',
+    failed: 'With All stop on, the watcher would still start a waiting builder',
+    todo: 'Type "all stop", so no Crew member works, and report it to Wheelhouse before going on: the watcher must start nothing under All stop',
     what: 'All stop',
   },
   'installed skills': {
@@ -282,6 +290,14 @@ function checkLine(check, result, { session = false, host, desktop = false } = {
   const [failed, todo] = check.results?.[result] ?? [check.failed, check.todo];
   return `${check.watch ? 'Watch' : 'Failed'}: ${failed} (${check.expected} was expected, ${result} came back). ${todo}.${by}`;
 }
+
+// The builder sign-in check's words (design section 10.1).
+export const BUILDERS_CHECK = 'Builders can sign in';
+const BUILDERS_PASSED = 'A builder started the way builders will start on this computer could sign in';
+const BUILDERS_TODO = 'Sign in to Claude in a terminal (`claude /login`), then check again; or use Claude Desktop for builders; or set a launch command';
+// How long a helper call is waited for in setup and health, and the line for one that doesn't answer in that time.
+export const HELPER_WAIT_SECONDS = 15;
+export const helperLateLine = (step) => `Failed: The helper didn't answer within ${HELPER_WAIT_SECONDS} seconds (step ${step}). ${RERUN}; if it can't again, quit and reopen Claude Desktop, which starts the helper.`;
 
 // ---- The helper's part ----
 
@@ -477,8 +493,9 @@ function guardAnswer(got) {
 
 // STOP tried with the real stop guard, as a child, under a scratch Wheelhouse home holding STOP and
 // a scratch project, so nothing of the director's is touched: a Write must be refused with STOP's
-// reason and a Read let through. { write, read }.
-export async function stopTrial({ script = STOP_GUARD, run = realRun, nodePath = process.execPath, now = () => new Date() } = {}) {
+// reason and a Read let through, and the waker's start decision for a waiting piece must be `not started: All stop`.
+// { write, read, start }.
+export async function stopTrial({ script = STOP_GUARD, startScript = START_DECISION, run = realRun, nodePath = process.execPath, now = () => new Date() } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-stop-trial-'));
   try {
     const home = path.join(base, 'home');
@@ -500,7 +517,12 @@ export async function stopTrial({ script = STOP_GUARD, run = realRun, nodePath =
     }).catch(() => null);
     const write = guardAnswer(await ask('Write', { file_path: path.join(real, 'trial.txt'), content: 'trial\n' }));
     const read = guardAnswer(await ask('Read', { file_path: path.join(real, 'README.md') }));
-    return { write, read };
+    // The second half: the waker's start decision for a waiting piece, run under the same scratch home, must say it is refused.
+    const decided = await run(nodePath, [startScript, 'wheelhouse-trial__stop', 'waiting-piece'], {
+      cwd: real, env: { WHEELHOUSE_HOME: home }, timeoutMs: GUARD_WAIT_MS,
+    }).catch(() => null);
+    const start = decided?.code !== 0 ? 'could not run' : String(decided.stdout ?? '').trim() === 'not started: All stop' ? 'refused' : String(decided.stdout ?? '').trim() === 'start allowed' ? 'allowed' : 'could not run';
+    return { write, read, start };
   } finally {
     fs.rmSync(base, { recursive: true, force: true });
   }
@@ -660,6 +682,7 @@ export function healthStep({
         } catch { /* could not run */ }
         add('write under stop', stop.write);
         add('read under stop', stop.read);
+        if (stop.start !== undefined) add('start under stop', stop.start);
         let pins = 'could not run';
         try {
           pins = await checkPins({ folder: record.folder });
@@ -732,8 +755,8 @@ function runIn(folder) {
 // health lines, each said plainly, a failed one with what to do. `trials` names the pull request and
 // project the session's trials take, or is null before step 10 has opened one. `desktop` says the session is in the Desktop app, the only place a line may tell the director to check it is open. `platform` is the computer's system, as unsandboxed's. `run` (the folder's
 // run), `load` (loadBoardInputs), `client` (the helper's, for the board) and `now` are for the
-// engine and tests.
-export async function healthCheck({ folder, reported = [], run, load = loadBoardInputs, client, now = () => new Date(), desktop = false, platform = process.platform } = {}) {
+// engine and tests. `builders` is the builder sign-in check, run the way builders start on this computer: () -> { ok } | { ok: false, line } | { ran: false, why }; left out, no such check is made.
+export async function healthCheck({ folder, reported = [], run, load = loadBoardInputs, client, now = () => new Date(), desktop = false, platform = process.platform, builders } = {}) {
   const here = run ?? runIn(folder);
   const lines = [];
   let green = true;
@@ -815,6 +838,40 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
     lines.push(checkLine(check, result, { session: true, host, desktop }));
   }
   if (unreadable > 0) lines.push(`Left out: ${unreadable} ${unreadable === 1 ? 'line' : 'lines'} the session handed in that ${unreadable === 1 ? 'isn\'t a trial\'s' : 'aren\'t trials\''}.`);
+  // The builder sign-in check (design section 10.1): setup isn't done until builders can sign in the way they will start. A check
+  // that couldn't be tried is named in the verdict and not counted.
+  const notRun = [];
+  if (typeof builders === 'function') {
+    let got;
+    try {
+      got = await builders();
+    } catch {
+      got = { ok: false, line: 'The check could not be run' };
+    }
+    if (got?.ran === false) {
+      notRun.push(`${BUILDERS_CHECK} (${got.why})`);
+      lines.push(`Not run: ${BUILDERS_CHECK}: ${got.why}.`);
+    } else {
+      count(got?.ok === true);
+      if (got?.ok === true) lines.push(`Passed: ${BUILDERS_PASSED}.`);
+      else {
+        green = false;
+        lines.push(`Failed: ${got?.line ?? BUILDERS_CHECK}. ${BUILDERS_TODO}.`);
+      }
+    }
+  }
+  // A helper that doesn't answer is a failed line, never a dropped one (fault 9).
+  if (client?.health) {
+    let answer = null;
+    try {
+      answer = await client.health();
+    } catch { /* an error is not a late answer */ }
+    if (/did not answer in time/.test(String(answer?.refused ?? ''))) {
+      count(false);
+      green = false;
+      lines.push(helperLateLine(HEALTH_STEP));
+    }
+  }
   // The board's health lines, and the board itself.
   const inputs = found === null ? { none: 'This folder isn\'t a registered project yet' } : await load({ cwd: found.record.folder, now, client });
   const health = Array.isArray(inputs?.model?.director?.health) ? inputs.model.director.health : null;
@@ -832,7 +889,7 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
     }
   }
   // One verdict ends the lines.
-  const verdict = healthVerdict(passed, total, waiting);
+  const verdict = healthVerdict(passed, total, waiting, notRun);
   lines.push(verdict);
   if (host === 'local') lines.splice(0, lines.length, ...lines.map(localWords));
   const board = inputs?.model ? renderBoard(inputs.model) : null;

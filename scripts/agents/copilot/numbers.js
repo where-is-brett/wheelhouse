@@ -12,7 +12,7 @@ export const TIERS = Object.freeze(['lean', 'middle', 'full']);
 // The permission levels a session can run at.
 export const LEVELS = Object.freeze(['sandbox', 'guarded', 'ask', 'unattended']);
 // What a record of a click can name as its proof. `signed-hook` is Claude Code's existing record.
-export const PROOFS = Object.freeze(['chat-click', 'hook-click', 'policy-hook', 'window', 'add-on', 'host', 'signed-hook']);
+export const PROOFS = Object.freeze(['chat-click', 'hook-click', 'policy-hook', 'add-on', 'host', 'signed-hook']);
 // The kinds of review a record can name.
 export const REVIEW_KINDS = Object.freeze(['chat-review', 'clean-session', 'subagent']);
 // How many days a session's activity is kept.

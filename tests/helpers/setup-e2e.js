@@ -440,7 +440,8 @@ export function makeComputer(host, clock, { name = 'Café Menu' } = {}) {
       address: testAddress(home), adapterFor: async (project) => adapterOf(readProject(project) ?? {}),
       envFor: envForConnection((project) => readProject(project)?.connection), profileEnvFor: async () => ({ mode: 'quick', env: {} }),
       now: clock.now, run: c.run, fetch: noFetch, setupSteps: STEPS_MODULE, userHome: user, spawn: c.spawn,
-      onStop: (close) => { c.helper = null; return close(); },
+      // A computer where builders sign in: the check starts no `claude` of the machine running the tests.
+      signInCheck: async () => ({ ok: true }),      onStop: (close) => { c.helper = null; return close(); },
     });
     c.client = helperClient({ address: c.helper.address });
     return c.helper;
@@ -576,7 +577,13 @@ export async function follow(c, { answer, through = 10, lines = GREEN_LINES, mos
   const log = [];
   const done = async (n) => typeof (await c.setupRun())?.steps?.[n]?.doneAt === 'string';
   for (let i = 0; i < most; i += 1) {
-    const resumed = await c.cli('resume');
+    const resumed = await c.cli('resume', String(through));
+    // The steps the one card covers are applied by resume itself, in order, ahead of the plan it gives.
+    for (const applied of resumed.applied ?? []) {
+      log.push({ step: applied.step, goAhead: true, covered: true });
+      const entry = (await c.setupRun())?.steps?.[applied.step] ?? {};
+      if (!(await done(applied.step)) && (entry.failed || entry.clickedAt)) throw new Error(`step ${applied.step} did not finish: ${entry.failed}`);
+    }
     const plan = resumed.plan;
     if (process.env.SETUP_E2E_DEBUG) process.stderr.write(`PLAN ${JSON.stringify({ step: plan?.step, ask: plan?.ask?.id, asks: plan?.asks?.map((x) => x.id), done: plan?.done, wait: plan?.why, covered: plan?.covered, hash: Boolean(plan?.hash) })}\n`);
     if (plan === null) return log;
@@ -593,7 +600,7 @@ export async function follow(c, { answer, through = 10, lines = GREEN_LINES, mos
       // The one card is answered Go ahead unless `answer` says otherwise.
       const label = answer(plan.ask.id, plan) ?? (plan.step === 0 ? 'Go ahead' : undefined);
       if (label === undefined) throw new Error(`no answer for step ${plan.step}'s question ${plan.ask.id}`);
-      log.push({ step: plan.step, ask: plan.ask.id, label, ...(plan.unanswered ? { unanswered: plan.unanswered } : {}) });
+      log.push({ step: plan.step, ask: plan.ask.id, label, card: plan.ask.card, ...(plan.unanswered ? { unanswered: plan.unanswered } : {}) });
       await c.click(plan.ask.card, label);
     } else if (plan.done) {
       log.push({ step: plan.step, settled: true, ...(plan.said ? { said: plan.said } : {}) });

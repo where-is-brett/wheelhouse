@@ -36,6 +36,8 @@ import { run as realRun } from '../../../scripts/lib/run.js';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
 import { makeFakeCurl, makeRoutedCurl, parseConfig } from '../../helpers/fake-curl.js';
 
+// The look at the director's credential helpers (scripts/setup/git-held.js): every helper setting, listed.
+const directorHelperList = (args) => args[1] === '--null' && args[2] === '--get-regexp' && /^\^credential/.test(String(args[3]));
 // Setup's own runs: git and what the test fakes; any other host tool is refused and noted here.
 const hostLog = [];
 const hostGuard = guardedRun(realRun, { log: hostLog });
@@ -106,6 +108,7 @@ function standIn(state = {}) {
     // The director's own git settings and a look at a remote through it: stand-ins, so no test reads the developer's own
     // git settings or reaches a real host.
     if (name === 'git' && args[0] === 'config' && args[1] === '--get-urlmatch') return w.directorConfig?.(args) ?? answer('', 1);
+    if (name === 'git' && args[0] === 'config' && directorHelperList(args)) return w.directorConfig?.(args) ?? answer('', 1);
     if (name === 'git' && args[0] === 'ls-remote' && args.at(-1) === 'HEAD') return w.lsRemote?.(args) ?? answer('', 128);
     if (name !== 'gh' && name !== 'glab') return hostGuard(file, args, options);
     const host = name === 'gh' ? 'github' : 'gitlab';
@@ -398,7 +401,7 @@ test('on a Mac Quick is the default and the narrow ways sit behind Make it stric
     assert.match(card.options[0].says, /ordinary .* sign-in/);
     assert.doesNotMatch(card.options[0].says, /full .* access|leaked/, 'no alarm on the default');
     assert.match(card.options[1].says, /^A key to this one project only, instead of your whole account; recommended for teams and products with real users\./);
-    assert.equal(/30-day token you paste stands in, and it can act as you across GitLab\.$/.test(card.options[1].says), host === 'gitlab');
+    assert.equal(/you paste a token set to expire in 30 days instead, which can do anything you can do on GitLab\.$/.test(card.options[1].says), host === 'gitlab');
     assert.equal(connectionCard({ host, where, platform: 'darwin', realUsers: true }).recommend, STRICTER);
     composeCard({ ...card, kind: 'question' });
   }
@@ -420,12 +423,12 @@ test('on Windows a narrow way is recommended, with one plain line on why, and Qu
   for (const host of ['github', 'gitlab']) {
     const card = connectionCard({ host, where, platform: 'win32' });
     assert.equal(card.recommend, host === 'github' ? WAYS.own : WAYS.narrow);
-    assert.match(card.because, host === 'github' ? /if it leaked, the rest of your account would stay out of reach/ : /if it leaked, only this project would be open\. If GitLab can't make a project key \(some companies switch them off\), a 30-day token stands in instead, and it can act as you in every GitLab project and group you can reach/);
+    assert.match(card.because, host === 'github' ? /if it were stolen, the rest of your account could not be reached/ : /if it were stolen, only this project could be reached\. If GitLab can't make a project key \(some companies switch them off\), a token that expires in 30 days stands in instead; it can do anything you can do on GitLab, so paste it only into the box on your screen/);
     assert.doesNotMatch(card.because, /Windows/);
     const quick = card.options.find((o) => o.label === WAYS.quick).says;
     assert.ok(quick.startsWith(quickLineFor(host)));
-    assert.match(quick, /If that sign-in leaked, it would open all of them\. On Windows any agent's command could read it\.$/);
-    assert.doesNotMatch(quick, /own tool/, 'Quick does not say it works only through the host\'s tool');
+    assert.match(quick, /If that sign-in were stolen, it could reach all of them\. On Windows an agent's commands could read it; if that worries you, choose the key for this project only\.$/);
+    assert.doesNotMatch(quick, /own program/, 'Quick does not say it works only through the host\'s tool');
     composeCard({ ...card, kind: 'question' });
   }
   assert.doesNotMatch(connectionCard({ host: 'github', where, platform: 'win32', locked: true }).because, /Quick/);
@@ -732,9 +735,9 @@ test('a hook declared in the product folder\'s git config stops step 3, named, b
     assert.equal(fs.existsSync(mark), false);
     assert.equal((await realRun('git', ['config', '--get', 'remote.origin.url'], { cwd: folder })).code !== 0, true, 'nothing was done in the folder');
     // Every git call step 3 made shut out git's global and system config, with hooks off. The one exception is the plan's
-    // read of the director's own settings (the credential helper and proxy for the host's address), which is the
+    // read of the director's own settings (the credential helpers and the proxy for the host's address), which is the
     // director's git as it is and writes nothing.
-    const fenced = gits.filter((c) => !(c.args[0] === 'config' && c.args[1] === '--get-urlmatch'));
+    const fenced = gits.filter((c) => !(c.args[0] === 'config' && (c.args[1] === '--get-urlmatch' || directorHelperList(c.args))));
     assert.ok(fenced.length > 0);
     for (const c of fenced) {
       assert.equal(c.env.GIT_CONFIG_NOSYSTEM, '1', c.args.join(' '));
@@ -929,7 +932,7 @@ test('a made project key says what it reaches, word for word', async () => {
 test('reach lines match the design word for word', () => {
   assert.equal(reachLine({ kind: 'github', repo: 'jo/shop' }), "This key reaches only jo/shop: its code, pull requests and issues. Not your other repositories, and not the repository's settings.");
   assert.equal(reachLine({ kind: 'gitlab-project', repo: 'grp/shop' }), "This key reaches only grp/shop: its code, merge requests and settings API. It can't change the project's protection.");
-  assert.equal(reachLine({ kind: 'gitlab-personal' }), "GitLab won't make a key for one project here, so this is a personal key. It can act as you in every GitLab project and group you can reach, until it expires in 30 days.");
+  assert.equal(reachLine({ kind: 'gitlab-personal' }), "GitLab won't make a key for one project here, so this is a personal key. It can do anything you can do on GitLab, until it expires in 30 days.");
   assert.throws(() => reachLine({ kind: 'other' }));
 });
 
@@ -2881,7 +2884,7 @@ test('a launched project refuses Quick at apply, before anything is connected or
       // not asked (a card needs two options) and the Go-ahead card lists it.
       const card = connectionCard({ host: 'github', launched: true, realUsers: true, where: `${USER}/Cafe-Menu on GitHub` });
       assert.deepEqual(card.options.map((o) => o.label), [WAYS.own]);
-      assert.match(card.what, /It is launched, and a launched product needs a narrow connection, so Quick is not offered/);
+      assert.match(card.what, /It is launched, and a launched product needs a key for this project only, so Quick is not offered/);
       const again = await step.plan({ ...ctx, answers: planned.answers });
       assert.equal(again.ask, undefined);
       assert.equal(again.changes.find((c) => c.action === 'connection').mode, 'narrow');
@@ -3628,7 +3631,7 @@ test('a typed GitLab address that is not one asks again under a new id, saying w
     const answers = { '3.real-users': said(REAL_USERS.no), '3.host': said(HOST_LABELS.gitlab), '3.gitlab-where': said(COMPANY_GITLAB) };
     const got = await stepFor(standIn()).plan(ctxFor(folder, { answers }));
     assert.equal(got.ask.id, 'gitlab-address-1');
-    assert.match(got.ask.card.what, /What is your company's GitLab address, such as https:\/\/gitlab\.example\.org\? Choose Other and type it/);
+    assert.match(got.ask.card.what, /What is your company's GitLab address, such as https:\/\/gitlab\.example\.org\? Type it in the box under the options \(marked Other, or Type something\)/);
     composeCard({ ...got.ask.card, kind: 'question', suggest: false });
     // An address typed there is taken directly; a bad one asks again, saying why; Go back returns to the first card.
     const typed = (text) => ({ label: null, text, at: NOW.toISOString() });
@@ -3881,7 +3884,7 @@ test('a tool that starts and is signed in carries the project on its own backend
       assert.equal(planned.changes.find((c) => c.action === 'connection').backend, 'cli');
       assert.ok(!planned.changes.some((c) => c.action === 'key-card'));
       assert.doesNotMatch(planned.card.what, /web API/);
-      assert.match(planned.card.what, /GitLab's own tool, signed in already/);
+      assert.match(planned.card.what, /GitLab's own program, signed in already/);
     } finally {
       held.restore();
     }
@@ -3916,10 +3919,10 @@ test('a Locked or launched project is never offered the director\'s own git, onl
   assert.equal(windows.options[0].label, WAYS.asIs);
   assert.equal(windows.recommend, WAYS.asIs);
   // Recommended, its cost on Windows is said once, in the option, and the reason does not repeat it.
-  assert.match(windows.options[0].says, /On Windows any agent's command could ask git for that key/);
+  assert.match(windows.options[0].says, /On Windows an agent's commands could ask git for that key; if that worries you, choose the key for this project only/);
   assert.doesNotMatch(windows.because, /Windows/);
   const launched = connectionCard({ host: 'gitlab', platform: 'win32', asIs: true, realUsers: true });
-  assert.match(launched.options.find((o) => o.label === WAYS.asIs).says, /On Windows any agent's command could ask git for that key/);
+  assert.match(launched.options.find((o) => o.label === WAYS.asIs).says, /On Windows an agent's commands could ask git for that key; if that worries you, choose the key for this project only/);
   assert.equal(launched.recommend, WAYS.narrow, 'real users keep the narrow key recommended');
   assert.equal(launched.options[0].label, WAYS.narrow, 'the recommended way comes first');
 });
@@ -3931,7 +3934,7 @@ test('a computer with no tool that starts and no curl is told so, as a wait; a p
     const held = holdsKey(null);
     try {
       const noCurl = await stepFor(w).plan({ ...ctxFor(folder, { platform: 'win32' }), answers: { '3.real-users': said(REAL_USERS.no) } });
-      assert.equal(noCurl.why, 'This computer has no curl Wheelhouse can use, so it can only reach GitLab through GitLab\'s own tool. Ask IT for either.');
+      assert.equal(noCurl.why, 'This computer has no curl Wheelhouse can use, so it can only reach GitLab through GitLab\'s own program. Ask IT for either.');
       w.directorConfig = (args) => (args[2] === 'http.proxy' ? { code: 0, stdout: 'http://dir:hunter2@proxy.example.org:8080\n', stderr: '' } : { code: 1, stdout: '', stderr: '' });
       const planned = await stepFor(w).plan({ ...ctxFor(folder), answers: { '3.real-users': said(REAL_USERS.no) } });
       assert.ok(planned.ask, 'the connection card is still asked first');

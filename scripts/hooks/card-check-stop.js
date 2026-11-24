@@ -25,8 +25,8 @@ const trimmed = (text) => text.split(/\r\n|[\n\r]/).map((l) => l.trimEnd()).join
 export function checkShown(lastMessage, pending) {
   const waiting = Array.isArray(pending) ? pending : [];
   for (const block of blocksIn(lastMessage)) {
-    // Either form `decision show` prints: the typed reply's, or the window's on an agent whose hooks only read.
-    if (waiting.some((d) => [decisionText(d), decisionText(d, { window: true })].some((text) => trimmed(block) === trimmed(text)))) continue;
+    // Either form `decision show` prints: the typed reply's, or the one where this chat records no answer yet.
+    if (waiting.some((d) => [decisionText(d), decisionText(d, { unrecorded: true })].some((text) => trimmed(block) === trimmed(text)))) continue;
     const named = Number(/^Decision needed \(([1-9][0-9]*)\)/.exec(block)?.[1]);
     const meant = waiting.find((d) => d.n === named) ?? (waiting.length === 1 ? waiting[0] : undefined);
     if (meant !== undefined) return { ok: false, reason: `Show decision ${meant.n} exactly as printed: run \`decision show ${meant.n}\` and copy its text word for word, with nothing added inside it.` };

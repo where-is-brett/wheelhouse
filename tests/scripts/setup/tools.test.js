@@ -532,7 +532,7 @@ test('the longest list\'s card composes within the card\'s length, on a Mac and 
       const planned = await toolsStep({ engine: null, run: m.run, fetch: noFetch, pluginRoot, env: {} }).plan(ctxFor(folder, { platform }));
       assert.deepEqual(planned.changes.map((c) => c.action ?? c.kind), ['install', 'fetch', 'fetch', 'json-key'], platform);
       const { question } = composeCard({ ...planned.card, target: { step: 2, hash: planHash(planned.changes) } });
-      assert.ok(question.question.includes("GitHub's own tool and GitLab's own tool"), question.question);
+      assert.ok(question.question.includes("GitHub's own program and GitLab's own program"), question.question);
       assert.match(question.question, platform === 'darwin' ? /Apple's own window/ : /Windows asks you to allow it/);
     }
   });
@@ -751,7 +751,7 @@ test('a refused download of the official release settles the project on the host
     const said = [];
     const done = await step.apply({ ...ctxFor(folder), record: () => {}, applyJsonKey: () => {}, stopped: () => false, say: (line) => said.push(line) }, planned.changes);
     assert.deepEqual(done, []);
-    assert.deepEqual(said, ['GitLab\'s own tool could not be fetched on this computer, so Wheelhouse will work with GitLab without it']);
+    assert.deepEqual(said, ['GitLab\'s own program could not be fetched on this computer, so Wheelhouse will work with GitLab without it']);
     assert.equal(fs.existsSync(toolFolder('glab')), false);
     assert.ok(!said.join(' ').match(/REST|curl/));
   });
@@ -793,7 +793,7 @@ test('the project\'s committed settings can leave glab or gh out, and say so on 
     fs.writeFileSync(path.join(folder, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { allow: [] } }));
     const planned = await step.plan(ctxFor(folder));
     assert.deepEqual(planned.changes.map((c) => c.kind), ['json-key']);
-    assert.match(planned.card.what, /GitLab's own tool: not fetched, so Wheelhouse reaches GitLab without it/);
+    assert.match(planned.card.what, /GitLab's own program: not fetched, so Wheelhouse reaches GitLab without it/);
     assert.doesNotMatch(JSON.stringify(planned.card), /\bREST\b|\bcurl\b|\bAPI\b/);
     // gh, for a GitHub project.
     const hub = fs.realpathSync.native(tempFolder('wh-hub '));
@@ -862,14 +862,14 @@ test('Customise reaches the tool question: found last, with its line on the one 
     assert.equal(list[1].label, NONE_GLAB);
     assert.equal(list[1].chosen, null);
     const card = oneCard({ folder, list, product: { isNew: false, host: 'gitlab', repo: 'team/product', name: 'product' }, platform: 'darwin', toRun: [2, 3], count: 0 }).card;
-    assert.match(card.question, /- GitLab's own tool left out: Wheelhouse reaches GitLab without it\./);
+    assert.match(card.question, /- GitLab's own program left out: Wheelhouse reaches GitLab without it\./);
     assert.deepEqual(cardProblems(card), []);
     // The director's own answer replaces the recommendation; the paused plan takes it without starting over.
     const chosen = await openChoices({ steps: [step, other], run: null, answers: { '2.host-tool-glab': said("Fetch GitLab's tool") }, planOf });
     assert.equal(chosen.find((c) => c.id === 'host-tool-glab').label, "Fetch GitLab's tool");
-    assert.equal(aboutOf('2.host-tool-glab'), "GitLab's own tool");
+    assert.equal(aboutOf('2.host-tool-glab'), "GitLab's own program");
     assert.equal(actedBy('2.host-tool-glab'), 2);
     const shown = choiceList({ open: [], answers: { '2.host-tool-glab': said(NONE_GLAB) }, doneOrRunning: (n) => n === 2 });
-    assert.deepEqual(shown, [{ key: '2.host-tool-glab', about: "GitLab's own tool", chosen: NONE_GLAB, acted: true }]);
+    assert.deepEqual(shown, [{ key: '2.host-tool-glab', about: "GitLab's own program", chosen: NONE_GLAB, acted: true }]);
   });
 });

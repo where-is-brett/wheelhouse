@@ -166,7 +166,7 @@ test('health hands the trial lines to the helper, as they are, and gives back th
 test('a wrong form, a step out of range, a short hash or a refusal is one line on standard error', async () => {
   const c = fakeClient({ apply: { ok: false, refused: 'All stop is on' }, plan: { ok: false, refused: 'step 1, Install is already done' } });
   for (const argv of [[], ['go'], ['plan'], ['plan', '11'], ['plan', '1', '2'], ['plan', 'x'], ['apply', '1'], ['apply', '1', H.slice(0, 12)],
-    ['apply', '1', H.toUpperCase()], ['apply', '1', H, 'more'], ['status', 'now'], ['resume', '3']]) {
+    ['apply', '1', H.toUpperCase()], ['apply', '1', H, 'more'], ['status', 'now'], ['resume', 'x'], ['resume', '3', '4']]) {
     const got = await run(argv, { client: c });
     assert.equal(got.code, 1, argv.join(' '));
     assert.equal(got.out, '');
@@ -234,7 +234,7 @@ test('run as a script, a wrong form says how the command is used', () => {
   const got = spawnSync(process.execPath, [SCRIPT, 'go'], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: shortHome() } });
   assert.equal(got.status, 1);
   assert.equal(got.stdout, '');
-  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, choices, change <key>, health \[<trial line> ...\], sign-in, uninstall plan, uninstall apply <hash>, uninstall status\n$/);
+  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume \[<last step>\], wait <step>, choices, change <key>, health \[<trial line> ...\], sign-in, uninstall plan, uninstall apply <hash>, uninstall status\n$/);
 });
 
 test('run as a script through a linked plugin folder, it still runs', () => {
@@ -243,7 +243,7 @@ test('run as a script through a linked plugin folder, it still runs', () => {
   fs.symlinkSync(path.resolve(path.dirname(SCRIPT), '..', '..'), linked, process.platform === 'win32' ? 'junction' : 'dir');
   const got = spawnSync(process.execPath, [path.join(linked, 'scripts', 'setup', 'cli.js'), 'go'], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: shortHome() } });
   assert.equal(got.status, 1);
-  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, choices, change <key>, health \[<trial line> ...\], sign-in, uninstall plan, uninstall apply <hash>, uninstall status\n$/);
+  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume \[<last step>\], wait <step>, choices, change <key>, health \[<trial line> ...\], sign-in, uninstall plan, uninstall apply <hash>, uninstall status\n$/);
 });
 
 test('the uninstall forms ask the helper\'s uninstall routes for this folder, apply with the full hash only', async () => {
@@ -393,4 +393,49 @@ test('a refusal, a sandbox\'s refusal or a helper that answered too slowly is no
     assert.equal(c.calls.length, 1);
     assert.match(r.err, new RegExp(refused.slice(0, 20)));
   }
+});
+
+test('wait <step> asks again every few seconds while the step waits for another, and is over when that one is done', async () => {
+  let clock = T0.getTime();
+  const slept = [];
+  const timing = { now: () => clock, sleep: async (ms) => { slept.push(ms); clock += ms; } };
+  const readyAt = T0.getTime() + 7000;
+  const plan = () => (clock < readyAt ? { ok: true, wait: 30000, why: 'step 2 is still running', waitsFor: 2 } : { ok: true, ask: { step: 3, id: 'x', card: {} } });
+  const got = await run(['wait', '3'], { client: fakeClient({ status: { ok: true, lines: [] }, plan }), ...timing });
+  assert.deepEqual(JSON.parse(got.out), { step: 3, waited: true });
+  assert.ok(slept.length >= 2 && slept.every((ms) => ms <= RUNNING_POLL_MS), `slept ${slept.join(', ')}`);
+  assert.ok(clock < readyAt + RUNNING_POLL_MS, 'over within one poll of the other step finishing');
+});
+
+test('resume applies the steps the one card covers, in one call, and says what each did; a refusal leaves the plan for the session', async () => {
+  const hash = 'a'.repeat(64);
+  const plans = { 2: { ok: true, hash, covered: true, card: {}, progress: ['Setup · step 2', 'Tools: fetched'] }, 3: { ok: true, hash: 'b'.repeat(64), covered: true, card: {}, progress: ['Setup · step 3', 'The host'] }, 6: { ok: true, ask: { step: 6, id: 'q', card: { question: 'Q?' } } } };
+  let at = 2;
+  const applied = [];
+  const c = fakeClient({
+    status: () => ({ ok: true, lines: [], next: at, ask: at }),
+    plan: ({ step }) => plans[step],
+    apply: ({ step }) => { applied.push(step); at = step === 2 ? 3 : 6; return step === 2 ? { ok: true, started: true, done: true, said: 'Tools are in' } : { ok: true, started: true }; },
+  });
+  const got = JSON.parse((await run(['resume'], { client: c })).out);
+  assert.deepEqual(applied, [2, 3]);
+  assert.deepEqual(got.applied.map((a) => [a.step, a.said ?? null]), [[2, 'Tools are in'], [3, null]]);
+  assert.equal(got.plan.step, 6);
+  // Given a last step, the covered steps after it are left as the plan.
+  at = 2;
+  applied.length = 0;
+  const limited = JSON.parse((await run(['resume', '2'], { client: c })).out);
+  assert.deepEqual(applied, [2]);
+  assert.deepEqual([limited.plan.step, limited.plan.covered], [3, true]);
+  // A refusal ends the run of them; the plan stays covered, for the session to apply and be told why.
+  const refused = fakeClient({ status: { ok: true, lines: [], next: 2, ask: 2 }, plan: plans[2], apply: { ok: false, refused: 'All stop is on' } });
+  const stuck = JSON.parse((await run(['resume'], { client: refused })).out);
+  assert.equal(stuck.plan.covered, true);
+  assert.equal(stuck.applied, undefined);
+  // A step planned again, still covered, after its own apply is not applied a second time in the same call.
+  const again = [];
+  const twice = fakeClient({ status: { ok: true, lines: [], next: 2, ask: 2 }, plan: plans[2], apply: ({ step }) => { again.push(step); return { ok: true }; } });
+  const once = JSON.parse((await run(['resume'], { client: twice })).out);
+  assert.deepEqual(again, [2]);
+  assert.deepEqual([once.plan.step, once.plan.covered], [2, true]);
 });

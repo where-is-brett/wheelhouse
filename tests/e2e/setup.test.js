@@ -19,7 +19,7 @@ import {
 } from '../helpers/setup-e2e.js';
 import { HOST_LABELS, WAYS, REAL_USERS } from '../../scripts/setup/host.js';
 import { BUILDER_CHOICES } from '../../scripts/setup/builders-ask.js';
-import { LIVE_DATA, PRODUCT } from '../../scripts/setup/questions.js';
+import { LIVE_DATA, PHONE, PRODUCT } from '../../scripts/setup/questions.js';
 import { rulesOf } from '../../scripts/setup/rules.js';
 import { READY, ARRIVED } from '../../scripts/setup/notify.js';
 import { SETUP_FILES, COMMIT_MESSAGE } from '../../scripts/setup/project-files.js';
@@ -95,7 +95,7 @@ function fresh() {
 const NEW_ANSWERS = {
   join: HOST_LABELS.github, 'real-users': REAL_USERS.no, connection: WAYS.quick, builders: BUILDER_CHOICES.background,
   product: 'Tide tables for sailors, used by the harbour\'s skippers.', 'live-data': LIVE_DATA.no,
-  'phone-ready': READY.ready, 'push-arrived': ARRIVED.yes,
+  'phone-ready': READY.ready, phone: PHONE.try, 'push-arrived': ARRIVED.yes, 'setup-ready': 'Carry on',
   // Step 2's choice about gh, which this computer lacks: fetched, as these tests follow.
   'host-tool-gh': 'Fetch GitHub\'s tool',
   // Step 3's name for the new repository: the folder's own, its first option, as the card recommends.
@@ -110,7 +110,8 @@ const customiseOnce = (answers) => {
   return (id, plan, ask) => (id.startsWith('plan-') ? (cards++ === 0 ? 'Customise' : 'Go ahead') : byId(answers)(id, plan, ask));
 };
 // A log as [step, what] pairs: a question by its id without its digest, else what happened.
-const shape = (log) => log.map((e) => [e.step, e.ask?.replace(/-[0-9a-f]{10,}$/, '') ?? (e.covered ? 'covered' : e.goAhead ? 'go ahead' : e.settled ? 'settled' : e.health ? 'health' : 'wait')]);
+// A wait on a running step's end is left out: it is no decision, and how many there are depends on timing.
+const shape = (log) => log.filter((e) => !(e.step !== undefined && !e.ask && !e.covered && !e.goAhead && !e.settled && !e.health)).map((e) => [e.step, e.ask?.replace(/-[0-9a-f]{10,}$/, '') ?? (e.covered ? 'covered' : e.goAhead ? 'go ahead' : e.settled ? 'settled' : e.health ? 'health' : 'wait')]);
 const byId = (answers) => (id, plan, ask) => {
   const answer = answers[Object.keys(answers).find((k) => id === k || id.startsWith(`${k}-`))];
   return typeof answer === 'function' ? answer(ask ?? plan?.ask) : answer;
@@ -164,13 +165,13 @@ test('a new product: one card, its Go ahead, every step with no more cards, a gr
     // The phone card as the session asks it, to read what it opens with.
     const phoneCards = [];
     const answers = customiseOnce(NEW_ANSWERS);
-    const whole = await follow(a, { answer: (id, plan, ask) => { if (id.startsWith('phone')) phoneCards.push(plan.ask.card); return answers(id, plan, ask); }, phone: true });
+    const whole = await follow(a, { answer: (id, plan, ask) => { if (id.startsWith('phone-')) phoneCards.push(plan.ask.card); return answers(id, plan, ask); }, phone: true });
 
     // The one card first, its Go ahead, then every step in order with no card: each list the Go
     // ahead covers is applied as it comes, and the steps with nothing to click settle on their own.
     // The phone comes last, once the board is green (design section 15.1).
     const log = whole.slice(whole.findLastIndex((e) => e.ask?.startsWith('plan-')));
-    assert.deepEqual(log.map((e) => [e.step, e.ask?.replace(/-[0-9a-f]{10,}$/, '') ?? (e.covered ? 'covered' : e.goAhead ? 'go ahead' : e.settled ? 'settled' : e.health ? 'health' : 'wait')]), [
+    assert.deepEqual(shape(log), [
       [0, 'plan'],
       [1, 'settled'],
       [2, 'covered'],
@@ -182,7 +183,7 @@ test('a new product: one card, its Go ahead, every step with no more cards, a gr
       [8, 'settled'],
       [10, 'covered'],
       [10, 'health'],
-      [9, 'phone-ready'], [9, 'wait'], [9, 'push-arrived'], [9, 'settled'],
+      [9, 'phone-ready'], [9, 'push-arrived'], [9, 'settled'],
     ]);
     // The one card: a plain line each, and two options, Go ahead recommended.
     const one = log[0];
@@ -194,7 +195,7 @@ test('a new product: one card, its Go ahead, every step with no more cards, a gr
     assert.deepEqual(consent.map((e) => e.data.label), ['Customise', 'Go ahead']);
     assert.equal(await a.act(() => verify(consent[1], readEnrolled())), true);
 
-    // Step 2 fetched gh, missing here, into Wheelhouse's own tools folder, from its release page
+    // Step 2 fetched gh, missing here, into Wheelhouse's own programs folder, from its release page
     // as tools.js checks it, and every later gh call ran that copy.
     const two = await a.setupRun();
     assert.deepEqual(two.changes.filter((ch) => ch.step === 2).map((ch) => [ch.kind, ch.after?.tool ?? ch.key?.join('.')]), [['folder', 'gh'], ['json-key', 'permissions.allow']]);
@@ -332,12 +333,12 @@ test('an existing project with rules: step 5 asks nothing and follows them as th
       [0, 'plan'],
       // This computer has no gh, so step 2's choice about fetching it joins the first card.
       [3, 'real-users'], [3, 'connection'], [3, 'builders'], [2, 'host-tool-gh'],
-      [4, 'product-before-launch'], [4, 'live-data'],
+      [4, 'product-before-launch'], [4, 'live-data'], [4, 'phone'],
       [0, 'plan'],
       [1, 'settled'], [2, 'covered'], [3, 'covered'], [4, 'settled'], [5, 'settled'],
     ]);
-    assert.deepEqual(log.filter((e) => e.together).map((e) => e.together), [4, 4, 4, 4, 2, 2], 'asked together on two cards');
-    assert.match(log.find((e) => e.step === 3 && e.goAhead).card.question, /a-director\/Harbour-Log on GitHub, kept as it is/);
+    assert.deepEqual(log.filter((e) => e.together).map((e) => e.together), [3, 3, 3, 3, 3, 3], 'asked together on two cards');
+    assert.match(log.find((e) => e.step === 0).card.question, /- Harbour-Log on GitHub, as it is\./);
     assert.ok(!a.calls.some((call) => call[1] === 'repo' && call[2] === 'create' && call[3] === repo));
 
     // The count is recorded, and nothing is a ruling yet: the survey holds the rules for the intake.
@@ -381,11 +382,11 @@ test('setup stopped after Customise\'s cards resumes at the one card in the next
     // The rest of the choices (step 4's, the new repository's name and the connection, then where builders run and GitHub's tool once
     // GitHub is chosen), then the one card with the director's choices on it.
     const next = (await a.cli('resume')).plan;
-    assert.deepEqual(next.asks.map((x) => x.id.replace(/-[0-9a-f]{10,}$/, '')), ['product-before-launch', 'live-data', 'project-name', 'connection'], 'the join and real-users answered are not asked again');
+    assert.deepEqual(next.asks.map((x) => x.id.replace(/-[0-9a-f]{10,}$/, '')), ['product-before-launch', 'live-data', 'phone', 'project-name'], 'the name card ends its batch; the join and real-users answered are not asked again');
     await a.clickAll(next.asks.map((x) => x.card), next.asks.map((x) => byId(NEW_ANSWERS)(x.id, undefined, x)));
-    const tool = (await a.cli('resume')).plan;
-    assert.deepEqual(tool.asks.map((x) => x.id), ['builders', 'host-tool-gh']);
-    await a.clickAll(tool.asks.map((x) => x.card), tool.asks.map((x) => byId(NEW_ANSWERS)(x.id, undefined, x)));
+    const how = (await a.cli('resume')).plan;
+    assert.deepEqual(how.asks.map((x) => x.id.replace(/-[0-9a-f]{10,}$/, '')), ['connection', 'builders', 'host-tool-gh']);
+    await a.clickAll(how.asks.map((x) => x.card), how.asks.map((x) => byId(NEW_ANSWERS)(x.id, undefined, x)));
     const card = (await a.cli('resume')).plan;
     assert.equal(card.step, 0);
     assert.match(card.ask.card.question, /Here's the plan, with your choices\./);
@@ -501,13 +502,13 @@ test('a setup paused before step 2 takes the answer to leave gh out, and step 2 
     assert.ok(planCard);
     const { choices } = await a.cli('choices');
     const tool = choices.find((c) => c.key === '2.host-tool-gh');
-    assert.deepEqual([tool.about, tool.acted], ['GitHub\'s own tool', false]);
+    assert.deepEqual([tool.about, tool.acted], ['GitHub\'s own program', false]);
     const { asks } = await a.cli('change', '2.host-tool-gh');
     assert.deepEqual(asks.map((x) => x.id), ['host-tool-gh']);
     await a.click(asks[0].card, 'Don\'t use GitHub\'s tool');
     const again = (await a.cli('resume')).plan;
     assert.equal(again.step, 0);
-    assert.match(again.ask.card.question, /GitHub's own tool left out: Wheelhouse reaches GitHub without it\./);
+    assert.match(again.ask.card.question, /GitHub's own program left out: Wheelhouse reaches GitHub without it\./);
     await a.click(again.ask.card, 'Go ahead');
     const log = await follow(a, { answer: byId(NEW_ANSWERS), through: 2 });
     assert.ok(log.some((e) => e.step === 2), 'step 2 ran');
@@ -685,7 +686,8 @@ test('uninstall after setup leaves the home folder as it was, but for what the d
     assert.equal(fs.readFileSync(path.join(a.folder, '.git', 'info', 'exclude'), 'utf8').includes('.wheelhouse'), false, 'no .wheelhouse/ folder, so its line went too (ruling R131)');
 
     assert.deepEqual(a.refused, []);
-    assert.deepEqual(a.launchd.map(([verb]) => verb), process.platform === 'darwin' ? ['bootout'] : [], 'the last uninstall unloads the agent');
+    // Setup makes no sign-in start (the own engine needs none), so there is no agent for uninstall to unload.
+    assert.deepEqual(a.launchd.map(([verb]) => verb), [], 'setup made no sign-in start, so uninstall unloads none');
     assert.deepEqual(shims.calls(), [`gh pr close 12 --repo ${REPO}`, ...SURVEY_CALLS]);
   } finally {
     await a.cleanup();

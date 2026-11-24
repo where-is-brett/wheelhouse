@@ -30,7 +30,7 @@ test('the change is what was added and taken away, and none when no names were k
   assert.doesNotMatch(settingsCard(HASH, settingsChange({ names: ['a.b'], was: ['a.b'] })).question, /another git program/);
 });
 
-test('the card is a question of the First Mate\'s limits, with one line that names the settings by a hash, and says the click is in the window', () => {
+test('the card is a question of the First Mate\'s limits, with one line that names the settings by a hash, and says the click is in the chat', () => {
   for (const change of [{ added: ['http.proxy'], removed: ['url.insteadof'] }, { added: [], removed: [] }, null]) {
     const card = settingsCard(HASH, change);
     assert.ok(card.question.length <= CARD.chars);
@@ -40,7 +40,8 @@ test('the card is a question of the First Mate\'s limits, with one line that nam
     assert.equal(lines.at(-1), settingsLine(HASH));
     assert.equal(SETTINGS_LINE.exec(lines.at(-1))[1], HASH.slice(0, 12));
     assert.equal(card.line, lines.at(-1));
-    assert.match(card.question, /never in the chat/);
+    assert.match(card.question, /click on this card in the chat, never words you type/);
+    assert.doesNotMatch(card.question, /window/i, 'it is asked in the chat');
     assert.deepEqual(setLinesOf(card.question), [], 'it is no set line the prompt record reads, so no chat click signs it');
   }
   assert.match(settingsCard(HASH, { added: ['http.proxy'], removed: ['url.insteadof'] }).question, /Settings added: http\.proxy; taken away: url\.insteadof\./);
@@ -55,8 +56,11 @@ test('a long list of names is cut short, and a value that got into a name is cut
   assert.doesNotMatch(odd.question, /s3cretpass|example/);
 });
 
-test('the note to the First Mate names the card and the command', () => {
-  assert.match(settingsCardNote('c1'), /`confirm c1`/);
+test('the note to the First Mate sends it to the cards and leaves the confirming to the director\'s click', () => {
+  const note = settingsCardNote('c1');
+  assert.match(note, /run `cards`/);
+  assert.match(note, /their click on Confirm is the only way to confirm them/);
+  assert.doesNotMatch(note, /`confirm /);
 });
 
 test('the launch card shows the words back one per line, within the First Mate\'s limits, and signs no click itself', () => {

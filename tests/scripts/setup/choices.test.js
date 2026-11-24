@@ -11,7 +11,7 @@ import {
 } from '../../../scripts/setup/choices.js';
 import { stepFourDrift, choiceList } from '../../../scripts/setup/redo.js';
 import { COMPANY_GITLAB, NEW_PRODUCT, HOST_LABELS, WAYS, REAL_USERS, STRICTER } from '../../../scripts/setup/host.js';
-import { LIVE_DATA, PRODUCT } from '../../../scripts/setup/questions.js';
+import { LIVE_DATA, PHONE, PRODUCT } from '../../../scripts/setup/questions.js';
 import { PUT_ON_GITLAB, KEEP_HERE } from '../../../scripts/setup/local.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 
@@ -43,11 +43,14 @@ test('the one card says a compaction rule found is kept, and nothing is said whe
 test('the one card names the phone setting as Claude Desktop\'s alone when the session is a terminal', () => {
   const ask = (desktop) => oneCard({ folder: '/x/t', list: newProductChoices(), product: { isNew: true, host: null, repo: null, name: 't' }, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0, desktop }).card.question;
   assert.match(ask(true), /and Claude Code allowed to send phone notifications, which you finish near the end\./);
-  assert.match(ask(false), /and a question about phone notifications, where setup suggests skipping them since they need Claude Desktop\./);
-  assert.doesNotMatch(ask(false), /allowed to send phone notifications/);
+  // The phone question's answer is on the list: skipped in a terminal (its recommendation), and the plan says no test is run now.
+  const phoneSkipped = [...newProductChoices(), { step: 4, id: 'phone', key: '4.phone', card: { recommend: PHONE.skip, options: [] }, typed: false, writes: undefined, chosen: null, label: PHONE.skip, text: null }];
+  const skipped = oneCard({ folder: '/x/t', list: phoneSkipped, product: { isNew: true, host: null, repo: null, name: 't' }, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0, desktop: false });
+  assert.match(skipped.card.question, /and Claude Code allowed to send phone notifications, with no phone test now\./);
+  assert.doesNotMatch(skipped.card.options[0].description, /phone/);
   const pushed = oneCard({ folder: '/x/t', list: newProductChoices(), product: { isNew: true, host: null, repo: null, name: 't' }, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0, desktop: false, pushed: true }).card.question;
   assert.match(pushed, /and phone notifications on, since Wheelhouse's records show an earlier setup on this computer reached your phone\./);
-  assert.doesNotMatch(pushed, /a question about phone notifications/);
+  assert.doesNotMatch(pushed, /with no phone test now/);
 });
 
 test('the one card for a new product on a Mac says the director\'s approved words, a plain line each', () => {
@@ -78,7 +81,7 @@ test('the one card for a new product on a Mac says the director\'s approved word
 test('Go ahead on a narrow GitLab way with GitLab\'s tool names the token that may stand in for a project key', () => {
   const list = newProductChoices({ connection: WAYS.narrow }).map((c) => (c.id === 'host' ? { ...c, label: HOST_LABELS.gitlab } : c));
   const { card } = oneCard({ folder: '/x/tide-tables', list, product: { isNew: true, host: null, repo: null, name: 'tide-tables' }, platform: 'win32', toRun: [3, 6, 7, 10], count: 0 });
-  assert.match(card.options[0].description, /You'll sign in on GitLab pages that open and click through them\. Windows may ask you to click Yes to let an installer run, or for an administrator's password\. If GitLab won't make a key for one project, you'll also paste a 30-day token that can act as you across GitLab into a box on your screen, not the chat\. Near the end, setup offers a test notification on your phone, which you can skip\.$/);
+  assert.match(card.options[0].description, /You'll sign in on GitLab pages that open and click through them\. Windows may ask you to click Yes to let an installer run, or for an administrator's password\. If GitLab won't make a key for one project, you'll also paste a token that expires in 30 days with your full access to GitLab into a box on your screen, not the chat\. Near the end, setup offers a test notification on your phone, which you can skip\.$/);
   assert.deepEqual(cardProblems(card), []);
 });
 
@@ -146,13 +149,13 @@ test('the plan names GitLab for a folder whose own remote is on GitLab, and for 
   const ask = (product, list) => oneCard({ folder: '/x/h', list, product, platform: 'win32', toRun: [3], count: 0 }).card.question;
   const gitlab = ask({ isNew: false, host: 'gitlab', repo: 'team/harbour', name: 'harbour' }, [c('connection-0123456789', WAYS.narrow)]);
   assert.match(gitlab, /- harbour on GitLab, as it is\./);
-  assert.match(gitlab, /- A GitLab key for this project only, or, where GitLab won't allow one, a 30-day token that can act as you across GitLab\./);
+  assert.match(gitlab, /- A GitLab key for this project only, or, where GitLab won't allow one, a token set to expire in 30 days that can do anything you can do on GitLab\./);
   assert.doesNotMatch(gitlab, /GitHub/);
   const github = ask({ isNew: false, host: 'github', repo: 'a/harbour', name: 'harbour' }, [c('connection-0123456789', WAYS.own)]);
   assert.match(github, /- A key for this project only, from an app you create on GitHub/);
   const put = ask({ isNew: false, host: 'local', repo: null, name: 'harbour' }, [c('kept', PUT_ON_GITLAB), c('connection-0123456789', WAYS.narrow)]);
   assert.match(put, /- Put on GitLab: a private project on your account/);
-  assert.match(put, /- A GitLab key for this project only, or, where GitLab won't allow one, a 30-day token that can act as you across GitLab\./);
+  assert.match(put, /- A GitLab key for this project only, or, where GitLab won't allow one, a token set to expire in 30 days that can do anything you can do on GitLab\./);
 });
 
 test('a Go ahead holds until one of its choices gets a newer, different answer of the director\'s', () => {
@@ -432,5 +435,5 @@ test('the computer line names only what step 6 would change, and is left out whe
   assert.match(ask(null), /usage counted here only; 30 days of chat history kept; Claude Code takes only its well-tried updates; and Claude Code allowed to send phone/);
   // A phone fact is Wheelhouse's own record, said so; a terminal's question is kept though nothing else changes.
   assert.equal(ask([], { pushed: true }), '- On this computer: phone notifications on, since Wheelhouse\'s records show an earlier setup on this computer reached your phone.');
-  assert.match(ask([], { desktop: false }), /a question about phone notifications/);
+  assert.match(ask(['push'], { list: [{ step: 4, id: 'phone', key: '4.phone', card: { recommend: PHONE.skip, options: [] }, typed: false, chosen: null, label: PHONE.skip, text: null }] }), /with no phone test now/);
 });

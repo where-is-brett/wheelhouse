@@ -70,13 +70,13 @@ const CHAT_PROOFS = ['chat-click'];
 const HOOK_PROOF = 'hook-click';
 export const HOOK_CLICK_APPROVAL = 'counts';
 export const HOOK_CLICK_MODES = Object.freeze(['counts', 'with-host', 'off']);
-// What a project with real users takes, the strongest first: the host's approval, the window.
-const REAL_USER_PROOFS = ['host', 'window'];
-const NEEDS_WORDS = { host: 'the director\'s approval on the code host', window: 'the director\'s click in Wheelhouse\'s window' };
+// What a project with real users takes, the strongest first: the host's approval, the click a hook saw on the card.
+const REAL_USER_PROOFS = ['host', 'hook-click'];
+const NEEDS_WORDS = { host: 'the director\'s approval on the code host', 'hook-click': 'the director\'s click on the card, recorded by the agent\'s hook' };
 
 // An unsigned approval (ruling P5-21): a card-answer labelled Approve naming the head commit, whose proof is a chat click the caller takes, on a project with no real users. Only the chat proofs
 // count unsigned (ruling P5-48): the helper alone writes a card-answer naming a proof, but an unsigned record
-// proves nothing more than a chat click, so a window's or the host's proof counts only signed.
+// proves nothing more than a chat click, so a hook's or the host's proof counts only signed.
 function clickApproves(entry, headSha, proofs, realUsers) {
   const proof = entry?.data?.proof;
   return !realUsers
@@ -107,7 +107,7 @@ function approvalOf(i, headSha) {
     && ((signedTaken && approvalCounts(i.approval, headSha, i.enrolled)) || clickApproves(i.approval, headSha, proofs, realUsers) || hookClickApproves(i.approval, headSha, i));
   if (counts) return { counts: true };
   if (!realUsers || !proofs.some((p) => CHAT_PROOFS.includes(p))) return { counts: false };
-  return { counts: false, needs: REAL_USER_PROOFS.find((p) => proofs.includes(p)) ?? 'window' };
+  return { counts: false, needs: REAL_USER_PROOFS.find((p) => proofs.includes(p)) ?? 'hook-click' };
 }
 
 // The refusal's one sentence for an approval that is missing.
@@ -190,7 +190,7 @@ export function selfMergeDecision(input) {
 // `approvalProofs` (ruling P5-21) names the proofs an approval may carry, ['signed-hook'] when not given, which is
 // today's rule: only a signed approval counts. With 'chat-click' among them, an unsigned
 // card-answer labelled Approve naming the head counts too, unless `realUsers` is true: then only a signed
-// approval naming a 'window' or 'host' proof counts, and the answer's `needs` names which one.
+// approval naming a 'hook-click' or 'host' proof counts, and the answer's `needs` names which one.
 //
 // A `hook-click` approval (an agent's hook saw the click) counts on any project, by `hookClickApproval` (HOOK_CLICK_APPROVAL).
 //
