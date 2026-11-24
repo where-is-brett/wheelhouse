@@ -64,6 +64,9 @@ import { readConfig } from '../gate/guardrails.js';
 import { helperClient } from '../host/helper-client.js';
 import { runsByLauncher } from '../lib/crew-names.js';
 import { takeStartLock } from '../lib/start-lock.js';
+import { wheelhouseHome } from '../lib/paths.js';
+import { projectHeld, projectRegistered } from '../lib/projects.js';
+import { homeLabel, throwawayIdle } from '../lib/standard-env.js';
 import { PROTECTED_KINDS, makeEvent } from '../state/events.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -138,6 +141,9 @@ const pause = (ms, signal) => new Promise((resolve) => {
 // and the start script; `handled(observation)` gives the ids the foreman
 // wrote while handling a wake, which go to the digest (cliOptions reads them
 // from handled.js).
+// How long a watcher waits before it looks again at a home or registration it found missing.
+export const RECHECK_MS = 2000;
+
 export async function runWatcher({
   project,
   client = helperClient(),
@@ -163,13 +169,42 @@ export async function runWatcher({
 
   watcherFolder(project);
   const lock = lockFile(project);
+  // The home this watcher serves, recorded in its lock. It never writes outside it.
+  const served = wheelhouseHome();
   let release;
   try {
-    release = await takeStartLock(lock, { message: 'A watcher is already running for this project', waitMs: 0 });
+    release = await takeStartLock(lock, { message: 'A watcher is already running for this project', waitMs: 0, extra: `${homeLabel(served)}\n` });
   } catch {
     return { started: false };
   }
-  const mine = `${process.pid}\n`;
+  const mine = `${process.pid}\n${homeLabel(served)}\n`;
+  // Whether the home's folder is gone: only a look that finds nothing there says so, never one that fails another way.
+  const homeGone = () => {
+    try {
+      fs.statSync(served);
+      return false;
+    } catch (error) {
+      return error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
+    }
+  };
+  // Why this watcher has no business running, or null: its home is gone, its project isn't registered in that home, the
+  // project is held, or it is a throwaway home whose last session ended over an hour ago. A registration that can't be
+  // read, or a held mark that doesn't read, is not a reason: the watcher carries on.
+  const noBusiness = () => {
+    if (homeGone()) return 'its home is gone';
+    if (projectRegistered(project) === false) return "its project isn't registered in its home";
+    if (projectHeld(project)) return 'its project is held';
+    if (throwawayIdle(served, { now })) return 'no session of its home has run for an hour';
+    return null;
+  };
+  // A folder found missing is looked at again a moment later, so a removal and re-registration under way, or a disk that
+  // answered late, never stops the watcher on one look.
+  const settled = async () => {
+    const first = noBusiness();
+    if (first === null || (first !== 'its home is gone' && first !== "its project isn't registered in its home")) return first;
+    await sleep(RECHECK_MS, signal);
+    return noBusiness();
+  };
   const stillMine = () => {
     try {
       return fs.readFileSync(lock, 'utf8') === mine;
@@ -218,6 +253,11 @@ export async function runWatcher({
     for (let n = 0; n < loops && !signal?.aborted; n += 1) {
       if (n > 0) await sleep(every.features, signal);
       if (signal?.aborted) break;
+      const gone = await settled();
+      if (gone !== null) {
+        log(`This watcher stops: ${gone}.`);
+        return { started: true, loops: n, stopped: gone };
+      }
       if (!stillMine()) {
         log('Another watcher has taken over this project; this one stops.');
         return { started: true, loops: n };

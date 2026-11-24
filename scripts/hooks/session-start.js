@@ -317,7 +317,9 @@ async function ensureHelper(client, { spawn, pluginRoot, waitMs, pause, end }) {
     // Started in Wheelhouse's own folder, never in the session's.
     const home = wheelhouseHome();
     fs.mkdirSync(home, { recursive: true });
-    const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'host', 'helper-main.js')], { cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore', env: { ...process.env, ...caEnv(home) } });
+    // Read when the helper starts, which is rare: the session start's other work doesn't need it.
+    const { standardEnv } = await import('../lib/standard-env.js');
+    const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'host', 'helper-main.js')], { cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore', env: { ...standardEnv({ home }), ...caEnv(home) } });
     child?.unref?.();
     child?.on?.('error', () => {});
   } catch {
@@ -499,7 +501,7 @@ async function ensureWatcher(project, client, { spawn, pluginRoot, env = process
   try { recordClaudePath({ env, inside: folder, launch: storedLaunchOrNull() }); } catch { /* the watcher looks in the usual places */ }
   try {
     const { keepWatcherAlive } = await import('../watcher/keep-alive.js');
-    await keepWatcherAlive(project, { client, spawn, pluginRoot, env });
+    await keepWatcherAlive(project, { client, spawn, pluginRoot, env, session: true });
   } catch { /* the session carries on without it */ }
 }
 
