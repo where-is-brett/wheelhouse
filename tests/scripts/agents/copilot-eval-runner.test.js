@@ -206,7 +206,7 @@ test('an evaluation session is started as the watcher starts the same role\'s: t
     return args.map((a) => swapped.get(a) ?? a.replaceAll(project, '<WORKTREE>').replaceAll(root, '<HOME>'));
   };
   const slashed = (p) => p.split(path.sep).join('/');
-  const watcherArgs = plain(waker.args, { prompt: 'The watcher\'s prompt.', project: slashed(worktree), root: slashed(wakerHome) });
+  const watcherArgs = plain(waker.args, { prompt: valueAfter(waker.args, '-p'), project: slashed(worktree), root: slashed(wakerHome) });
   const evalArgs = plain(saw.args, { prompt: 'Say hello.', project: slashed(dir), root: slashed(home) });
   assert.deepEqual(evalArgs, watcherArgs);
   assert.equal(valueAfter(evalArgs, '--agent'), 'wheelhouse-feature');

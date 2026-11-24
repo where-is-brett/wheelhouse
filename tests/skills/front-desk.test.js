@@ -560,3 +560,12 @@ test('the playbooks call the free-text choice "Type something", as Claude Code\'
   assert.doesNotMatch(read('skills/setup/SKILL.md'), /under Other/);
   assert.doesNotMatch(read('scripts/setup/local.js'), /under Other/);
 });
+
+test('the playbook never asks the director for a command name, and checks for a signed decision before an approval card', () => {
+  const rule = playbook.split('\n').find((line) => line.includes('Never ask the director for a command name')) ?? '';
+  assert.match(rule, /card command lines/);
+  assert.match(rule, /`decision signed <work id> "<the question>"`/);
+  assert.match(rule, /Already approved on <date>/);
+  assert.match(rule, /Already answered on <date>: <the answer>/);
+  assert.match(playbook, /`decision signed <work id> "<question>"`/, 'the command is in the list of commands');
+});

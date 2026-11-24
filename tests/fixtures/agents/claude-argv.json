@@ -58,7 +58,7 @@
       "file": "claude",
       "args": [
         "-p",
-        "Read .wheelhouse/feature/brief.md and follow it.",
+        "Wheelhouse builder: Read .wheelhouse/feature/brief.md and follow it.",
         "--session-id",
         "a1b2c3d4-e5f6-4789-8abc-def012345678",
         "--permission-mode",
@@ -112,7 +112,7 @@
       "file": "claude",
       "args": [
         "-p",
-        "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+        "Wheelhouse builder: Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
         "--resume",
         "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
         "--permission-mode",
@@ -366,7 +366,7 @@
       "file": "claude",
       "args": [
         "-p",
-        "Read .wheelhouse/feature/brief.md and follow it.",
+        "Wheelhouse builder: Read .wheelhouse/feature/brief.md and follow it.",
         "--session-id",
         "a1b2c3d4-e5f6-4789-8abc-def012345678",
         "--permission-mode",
@@ -420,7 +420,7 @@
       "file": "claude",
       "args": [
         "-p",
-        "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+        "Wheelhouse builder: Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
         "--resume",
         "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
         "--permission-mode",
@@ -576,7 +576,7 @@
       "file": "claude",
       "args": [
         "-p",
-        "Read .wheelhouse/feature/brief.md and follow it.",
+        "Wheelhouse builder: Read .wheelhouse/feature/brief.md and follow it.",
         "--session-id",
         "a1b2c3d4-e5f6-4789-8abc-def012345678",
         "--permission-mode",
@@ -627,7 +627,7 @@
       "file": "claude",
       "args": [
         "-p",
-        "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+        "Wheelhouse builder: Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
         "--resume",
         "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
         "--permission-mode",
@@ -780,7 +780,7 @@
       "file": "claude",
       "args": [
         "-p",
-        "Read .wheelhouse/feature/brief.md and follow it.",
+        "Wheelhouse builder: Read .wheelhouse/feature/brief.md and follow it.",
         "--session-id",
         "a1b2c3d4-e5f6-4789-8abc-def012345678",
         "--permission-mode",
@@ -826,7 +826,7 @@
       "file": "claude",
       "args": [
         "-p",
-        "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+        "Wheelhouse builder: Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
         "--resume",
         "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
         "--permission-mode",
@@ -978,7 +978,7 @@
         "/c",
         "\"C:\\npm\\claude.cmd -p --session-id a1b2c3d4-e5f6-4789-8abc-def012345678 --permission-mode acceptEdits --model model-b\""
       ],
-      "input": "Read .wheelhouse/feature/brief.md and follow it.",
+      "input": "Wheelhouse builder: Read .wheelhouse/feature/brief.md and follow it.",
       "verbatim": true,
       "env": {
         "PATH": "/bin"
@@ -1020,7 +1020,7 @@
         "/c",
         "\"C:\\npm\\claude.cmd -p --resume 0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0 --permission-mode acceptEdits --model model-b\""
       ],
-      "input": "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+      "input": "Wheelhouse builder: Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
       "verbatim": true,
       "env": {
         "PATH": "/bin"
@@ -1240,7 +1240,7 @@
         "/c",
         "\"C:\\npm\\claude.cmd -p --session-id a1b2c3d4-e5f6-4789-8abc-def012345678 --permission-mode dontAsk --model model-b\""
       ],
-      "input": "Read .wheelhouse/feature/brief.md and follow it.",
+      "input": "Wheelhouse builder: Read .wheelhouse/feature/brief.md and follow it.",
       "verbatim": true,
       "env": {
         "PATH": "/bin"
@@ -1282,7 +1282,7 @@
         "/c",
         "\"C:\\npm\\claude.cmd -p --resume 0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0 --permission-mode dontAsk --model model-b\""
       ],
-      "input": "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+      "input": "Wheelhouse builder: Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
       "verbatim": true,
       "env": {
         "PATH": "/bin"
@@ -1417,7 +1417,7 @@
         "/c",
         "\"C:\\npm\\claude.cmd -p --session-id a1b2c3d4-e5f6-4789-8abc-def012345678 --permission-mode acceptEdits --model model-b --allowedTools \"Bash(npm test:*)\" \"Bash(npm run:*)\" \"Bash(node:*)\" \"Bash(git status:*)\" \"Bash(git diff:*)\" \"Bash(git log:*)\" \"Bash(git show:*)\" \"Bash(git add:*)\" \"Bash(git commit:*)\" \"Bash(git restore:*)\" \"Bash(git rm:*)\" \"Bash(git mv:*)\"\""
       ],
-      "input": "Read .wheelhouse/feature/brief.md and follow it.",
+      "input": "Wheelhouse builder: Read .wheelhouse/feature/brief.md and follow it.",
       "verbatim": true,
       "env": {
         "PATH": "/bin"
@@ -1472,7 +1472,7 @@
         "/c",
         "\"C:\\npm\\claude.cmd -p --resume 0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0 --permission-mode acceptEdits --model model-b --allowedTools \"Bash(npm test:*)\" \"Bash(npm run:*)\" \"Bash(node:*)\" \"Bash(git status:*)\" \"Bash(git diff:*)\" \"Bash(git log:*)\" \"Bash(git show:*)\" \"Bash(git add:*)\" \"Bash(git commit:*)\" \"Bash(git restore:*)\" \"Bash(git rm:*)\" \"Bash(git mv:*)\"\""
       ],
-      "input": "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+      "input": "Wheelhouse builder: Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
       "verbatim": true,
       "env": {
         "PATH": "/bin"
@@ -1617,7 +1617,7 @@
         "/c",
         "\"C:\\npm\\claude.cmd -p --session-id a1b2c3d4-e5f6-4789-8abc-def012345678 --permission-mode acceptEdits --model default\""
       ],
-      "input": "Read .wheelhouse/feature/brief.md and follow it.",
+      "input": "Wheelhouse builder: Read .wheelhouse/feature/brief.md and follow it.",
       "verbatim": true,
       "env": {
         "PATH": "/bin"
@@ -1656,7 +1656,7 @@
         "/c",
         "\"C:\\npm\\claude.cmd -p --resume 0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0 --permission-mode acceptEdits --model default\""
       ],
-      "input": "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+      "input": "Wheelhouse builder: Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
       "verbatim": true,
       "env": {
         "PATH": "/bin"
@@ -1785,7 +1785,7 @@
         "/c",
         "\"C:\\npm\\claude.cmd -p --session-id a1b2c3d4-e5f6-4789-8abc-def012345678 --permission-mode acceptEdits --model model-b\""
       ],
-      "input": "Read .wheelhouse/feature/brief.md and follow it.",
+      "input": "Wheelhouse builder: Read .wheelhouse/feature/brief.md and follow it.",
       "verbatim": true,
       "env": {
         "PATH": "/bin"
@@ -1827,7 +1827,7 @@
         "/c",
         "\"C:\\npm\\claude.cmd -p --resume 0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0 --permission-mode acceptEdits --model model-b\""
       ],
-      "input": "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+      "input": "Wheelhouse builder: Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
       "verbatim": true,
       "env": {
         "PATH": "/bin"
@@ -1964,7 +1964,7 @@
       "file": "C:\\npm\\claude.exe",
       "args": [
         "-p",
-        "Read .wheelhouse/feature/brief.md and follow it.",
+        "Wheelhouse builder: Read .wheelhouse/feature/brief.md and follow it.",
         "--session-id",
         "a1b2c3d4-e5f6-4789-8abc-def012345678",
         "--permission-mode",
@@ -2010,7 +2010,7 @@
       "file": "C:\\npm\\claude.exe",
       "args": [
         "-p",
-        "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+        "Wheelhouse builder: Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
         "--resume",
         "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
         "--permission-mode",
@@ -2256,7 +2256,7 @@
       "file": "C:\\npm\\claude.exe",
       "args": [
         "-p",
-        "Read .wheelhouse/feature/brief.md and follow it.",
+        "Wheelhouse builder: Read .wheelhouse/feature/brief.md and follow it.",
         "--session-id",
         "a1b2c3d4-e5f6-4789-8abc-def012345678",
         "--permission-mode",
@@ -2302,7 +2302,7 @@
       "file": "C:\\npm\\claude.exe",
       "args": [
         "-p",
-        "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+        "Wheelhouse builder: Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
         "--resume",
         "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
         "--permission-mode",
@@ -2453,7 +2453,7 @@
       "file": "C:\\npm\\claude.exe",
       "args": [
         "-p",
-        "Read .wheelhouse/feature/brief.md and follow it.",
+        "Wheelhouse builder: Read .wheelhouse/feature/brief.md and follow it.",
         "--session-id",
         "a1b2c3d4-e5f6-4789-8abc-def012345678",
         "--permission-mode",
@@ -2525,7 +2525,7 @@
       "file": "C:\\npm\\claude.exe",
       "args": [
         "-p",
-        "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+        "Wheelhouse builder: Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
         "--resume",
         "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
         "--permission-mode",
@@ -2699,7 +2699,7 @@
       "file": "C:\\npm\\claude.exe",
       "args": [
         "-p",
-        "Read .wheelhouse/feature/brief.md and follow it.",
+        "Wheelhouse builder: Read .wheelhouse/feature/brief.md and follow it.",
         "--session-id",
         "a1b2c3d4-e5f6-4789-8abc-def012345678",
         "--permission-mode",
@@ -2742,7 +2742,7 @@
       "file": "C:\\npm\\claude.exe",
       "args": [
         "-p",
-        "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+        "Wheelhouse builder: Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
         "--resume",
         "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
         "--permission-mode",
@@ -2887,7 +2887,7 @@
       "file": "C:\\npm\\claude.exe",
       "args": [
         "-p",
-        "Read .wheelhouse/feature/brief.md and follow it.",
+        "Wheelhouse builder: Read .wheelhouse/feature/brief.md and follow it.",
         "--session-id",
         "a1b2c3d4-e5f6-4789-8abc-def012345678",
         "--permission-mode",
@@ -2933,7 +2933,7 @@
       "file": "C:\\npm\\claude.exe",
       "args": [
         "-p",
-        "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+        "Wheelhouse builder: Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
         "--resume",
         "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
         "--permission-mode",

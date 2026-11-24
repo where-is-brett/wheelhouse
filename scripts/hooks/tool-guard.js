@@ -32,6 +32,8 @@ import { LAUNCHERS, LAUNCHER_COMMAND, LAUNCHER_SESSION, LAUNCHER_GRAMMAR_HELP } 
 import { NESTED_PACKAGES, NESTED_REFUSED } from '../agents/programs.js';
 import { ARCHON_PROGRAMS, ENGINE_ROOM_PORT, ownRun, placeInHome } from '../protection/archon.js';
 import { readOnlyStep, shellWrite } from './read-only-shell.js';
+import { frontDeskCommand } from '../protection/plugin-command.js';
+import { cardCommandLine } from '../lib/card-commands.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -1100,7 +1102,38 @@ function queuePlace(cwd) {
   }
 }
 
-export async function decide(input, { dir, projectOf: find = projectOf, home = os.homedir(), platform = process.platform, pluginRoot = PLUGIN_ROOT, entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, projectDir = process.env.CLAUDE_PROJECT_DIR, env = process.env, engineHome = archonHome() } = {}) {
+// What a refusal begins with in a session that has no Wheelhouse role (an aside, or a chat in the folder that is not the
+// First Mate's), and the way out. The guards apply to every session here; only these words differ.
+export const GUARDS_SENTENCE = 'This folder is run by Wheelhouse; its guards apply to every Claude session here.';
+const WAY_OUT = 'To work outside them, use a separate copy of the project, or /wheelhouse:aside for an ordinary session under the same guards.';
+
+const denial = (out) => (out?.hookSpecificOutput?.permissionDecision === 'deny' ? out.hookSpecificOutput.permissionDecisionReason : null);
+
+// A refusal as the session should read it: a refused command lookup (PLUGIN_READ) also prints the First Mate's card command
+// lines, and a session with no role is told first that the guards apply to it and how to work outside them. Guards never
+// change, only the words; where the role can't be told, the refusal stays as it was.
+async function wordedRefusal(out, input, { env, pluginRoot, platform }) {
+  const reason = denial(out);
+  if (reason === null) return out;
+  let words = reason;
+  if (reason.startsWith(PLUGIN_READ)) {
+    try {
+      words = `${reason}. ${cardCommandLine(frontDeskCommand(pluginRoot, { platform }))}`;
+    } catch { /* the refusal stands without them */ }
+  }
+  try {
+    const { sessionRole } = await import('../lib/role.js');
+    if (sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'aside') words = `${GUARDS_SENTENCE} ${words.replace(/[.\s]+$/, '')}. ${WAY_OUT}`;
+  } catch { /* the role can't be told */ }
+  return answer.deny(words);
+}
+
+export async function decide(input, options = {}) {
+  const out = await decideTool(input, options);
+  return out === undefined ? out : wordedRefusal(out, input, { env: options.env ?? process.env, pluginRoot: options.pluginRoot ?? PLUGIN_ROOT, platform: options.platform ?? process.platform });
+}
+
+async function decideTool(input, { dir, projectOf: find = projectOf, home = os.homedir(), platform = process.platform, pluginRoot = PLUGIN_ROOT, entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, projectDir = process.env.CLAUDE_PROJECT_DIR, env = process.env, engineHome = archonHome() } = {}) {
   const tool = input.tool_name;
   // A why session is read-only: every tool but reading and searching is refused, wherever it runs.
   if (isWhy(env) && !WHY_TOOLS.includes(tool)) return answer.deny(`A why session only explains: it reads and searches, and ${tool} is not one of those. Say what you found instead.`);
