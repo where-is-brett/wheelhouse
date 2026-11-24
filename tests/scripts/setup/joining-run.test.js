@@ -192,7 +192,7 @@ test('a second computer runs steps 1, 2, 3, 6, 7 (this computer\'s files only), 
     const asked = [];
     while (three.ask) {
       asked.push(three.ask.id.replace(/-[0-9a-f]{10,}$/, ''));
-      assert.ok(asked.length < 6, 'step 3 asks each question once');
+      assert.ok(asked.length < 7, 'step 3 asks each question once');
       say(three.ask, answers[asked.at(-1)]);
       three = await plan(3);
     }
@@ -228,7 +228,11 @@ test('a second computer runs steps 1, 2, 3, 6, 7 (this computer\'s files only), 
     // run's records are copied into the state now.
     assert.deepEqual(copied, [[findRun(folder).id, folder]], 'finished at step 8');
 
-    // Step 9: Ready, the wait while the playbook pushes, then It arrived; its answers are copied too.
+    // Step 9 first asks to keep the answers step 3 used as the usual (nothing was kept here), then Ready, the wait while the playbook
+    // pushes, then It arrived; its answers are copied too.
+    const keep = await plan(9);
+    assert.equal(keep.ask.id, 'keep-usual');
+    say(keep.ask, 'Don\'t keep them');
     const ready = await plan(9);
     assert.equal(ready.ask.id, READY_ID);
     say(ready.ask, READY.ready);

@@ -260,8 +260,8 @@ const NO_APP = path.join(os.tmpdir(), 'wh-no-such-app.json');
 
 // ---- The step, driven ----
 
-const ctxFor = (folder, extra = {}) => ({ folder, step: 3, now: () => NOW, platform: 'darwin', userHome: folder, answers: {}, ...extra });
 const said = (label) => (typeof label === 'object' ? { label: null, text: label.text, at: NOW.toISOString() } : { label, text: null, at: NOW.toISOString() });
+const ctxFor = (folder, extra = {}) => ({ folder, step: 3, now: () => NOW, platform: 'darwin', userHome: folder, ...extra, answers: extra.answers ?? {} });
 
 // Plans the step, answering each question with the label `pick(id, card)` gives, until it lists its
 // changes. Gives the list, the answers and the questions asked, in order.
@@ -600,7 +600,9 @@ test('a new product gets a private repository; an existing one gets none', async
       ['folder', path.join('<folder>', '.git')],
       ['file', path.join('~', 'projects', slug, 'project.json')],
       ['folder', path.join('~', 'projects', slug, 'record')],
+      ['answer', 'step 3'],
     ]);
+    assert.deepEqual(run.changes.at(-1).after, { host: 'github', gitRoute: 'wheelhouse' });
     assert.deepEqual(run.changes[0].after, { repository: `${USER}/Shop`, private: true, made: true });
     assert.match(lines.at(-1), /Connected: a-director\/Shop on GitHub, Quick/);
     // Applied again (a retry), nothing new is made.
@@ -2998,7 +3000,7 @@ test('a folder checked out to a joined repository can never become a full run, i
     // Every join answer saying A new product changes nothing: the question isn't asked, and the
     // list joins the repository the folder is checked out to.
     const fresh = Object.fromEntries(['join', ...planned.asked.map((a) => a.id)].map((id) => [`3.${id}`, said(id.startsWith('join') ? NEW_PRODUCT : planned.answers[`3.${id}`].label)]));
-    const replanned = await answerJoin(step, { ...ctx, answers: fresh }, joining());
+    const replanned = await answerJoin(step, { ...ctx, answers: { '3.keep-usual': said('Don\'t keep them'), ...fresh } }, joining());
     assert.equal(replanned.changes.find((c) => c.action === 'join').name, `${USER}/Cafe-Menu`);
     assert.ok(!replanned.changes.some((c) => c.action === 'repository'));
     // A list of a product of its own (as an old card might hold) is refused, and records nothing.

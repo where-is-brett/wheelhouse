@@ -10,6 +10,9 @@
 // the first briefing (`after: [6, 8, 10]`, design section 15.1). Until all three are done, nothing
 // is asked or settled. A joining computer has no health check, so it waits for steps 6 and 8 only.
 //
+// Before any of that, step 9 asks "Keep these as your usual on this computer?" once, when the answers step 3 used differ from the
+// usual kept or none are kept (scripts/setup/usual.js, keepAtEnd). It is asked here, at the end, so no card stops setup before
+// every step has run; setup is finished whichever way it is answered, and a keep that fails is said, never an error.
 //
 // 1. With no Ready yet, it asks the card of plain steps, ending with the screen locked until the
 //    phone buzzes, or for PUSH_TEST_LOCK_MS if it doesn't (ruling R65): longer than the wait, so the
@@ -49,6 +52,10 @@ import { PHONE_REACHES } from '../lib/calm-words.js';
 import { PUSH_TEST_WAIT_MS, PUSH_TEST_LOCK_MS, CLICK_FRESH_MS } from '../lib/setup-numbers.js';
 import { PHONE } from './questions.js';
 import { PUSH_TEST_STEP, phonePushResult, phoneResults, readJournal } from '../lib/setup-run.js';
+import { keepAtEnd } from './usual.js';
+import { helperProfile } from './own-app.js';
+import { readProfileViews } from '../profile/store.js';
+import { computerId } from '../lib/paths.js';
 
 export const READY_ID = 'phone-ready';
 export const ARRIVED_ID = 'push-arrived';
@@ -137,12 +144,20 @@ export function pushTestResult(label) {
 // Step 9. `pushResult` reads what this computer's journal last recorded of the test push, and
 // `settledBefore(runId)` how many times this run's step 9 has settled (for tests).
 const settledIn = (runId) => phoneResults(readJournal().runs.find((r) => r?.id === runId)).length;
-export function notifyStep({ pushResult = () => phonePushResult(), settledBefore = settledIn } = {}) {
+const changesOf = (runId) => typeof runId !== 'string' ? [] : readJournal().runs.find((r) => r?.id === runId)?.changes ?? [];
+export function notifyStep({
+  pushResult = () => phonePushResult(), settledBefore = settledIn,
+  // The end-of-setup offer to keep the answers step 3 used as the director's usual (scripts/setup/usual.js): stand-ins in tests.
+  keepUsual = (ctx) => keepAtEnd({ ctx, changes: changesOf(ctx.runId), views: readProfileViews, profile: () => helperProfile(), computer: computerId() }),
+} = {}) {
   return {
     n: PUSH_TEST_STEP,
     title: SETUP_TITLES[PUSH_TEST_STEP],
     after: [6, 8, 10],
     async plan(ctx) {
+      // The keep card comes first, once, beside the phone offer; setup is finished before it, and whichever way it is answered.
+      const keep = await keepUsual(ctx);
+      if (keep?.ask) return keep;
       const answers = ctx.answers ?? {};
       const round = typeof ctx.runId === 'string' ? settledBefore(ctx.runId) : 0;
       const ids = idsFor(round);

@@ -93,7 +93,7 @@ function fresh() {
 // The director's answers to a new product's questions, by the question's id (an id may carry a
 // digest after its name).
 const NEW_ANSWERS = {
-  join: HOST_LABELS.github, 'real-users': REAL_USERS.no, connection: WAYS.quick, builders: BUILDER_CHOICES.background,
+  join: HOST_LABELS.github, 'real-users': REAL_USERS.no, connection: WAYS.quick, builders: BUILDER_CHOICES.background, 'keep-usual': 'Don\'t keep them',
   product: 'Tide tables for sailors, used by the harbour\'s skippers.', 'live-data': LIVE_DATA.no,
   'phone-ready': READY.ready, phone: PHONE.try, 'push-arrived': ARRIVED.yes, 'setup-ready': 'Carry on',
   // Step 2's choice about gh, which this computer lacks: fetched, as these tests follow.
@@ -183,7 +183,7 @@ test('a new product: one card, its Go ahead, every step with no more cards, a gr
       [8, 'settled'],
       [10, 'covered'],
       [10, 'health'],
-      [9, 'phone-ready'], [9, 'push-arrived'], [9, 'settled'],
+      [9, 'keep-usual'], [9, 'phone-ready'], [9, 'push-arrived'], [9, 'settled'],
     ]);
     // The one card: a plain line each, and two options, Go ahead recommended.
     const one = log[0];

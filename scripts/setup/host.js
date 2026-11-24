@@ -82,6 +82,7 @@ import { fileURLToPath } from 'node:url';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { wheelhouseHome, stateDir, projectSlug, computerId } from '../lib/paths.js';
 import { builderChoice, saveBuilderRoute } from './builders-ask.js';
+import { planWithUsual, usualFromChanges, USE_USUAL, USUAL_ID } from './usual.js';
 import { toolPath, toolState } from '../lib/host-tools.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
@@ -596,6 +597,8 @@ function gitlabWhereAsk(name, { id, refused, remote, known = [], signedIn = [], 
     id,
     typed: true,
     endsBatch: true,
+    // Where the folder already sends its work is the project's own answer, so the director's usual GitLab takes no part in it.
+    ...(remote !== null ? { fromFolder: true } : {}),
     card: {
       level: 2,
       what: `${refused === null ? '' : `${refused}. `}Which GitLab should ${name} go on?`,
@@ -2629,7 +2632,7 @@ export function hostStep({
     return { tool, cliSigned, found, curl, offered, gitPath, look, proxied: proxy !== null, proxyPassword, noRoad: noTool && !curl };
   }
 
-  return {
+  const step = {
     n: 3,
     title: SETUP_TITLES[3],
     long: true,
@@ -3218,11 +3221,20 @@ export function hostStep({
         writeProject(slug, kept);
         if (joined === null) await openRecords();
         say(`Connected: ${project.repo} on ${NAME[host]}, ${connection.mode === 'quick' ? 'Quick' : connection.mode === 'as-is' ? 'your own git as it is' : 'narrow'}`);
+      // The answers this step used are kept in setup's record, marked `from: 'usual'` when "Use my usual" stood for them; the end of
+      // setup offers to keep them (scripts/setup/usual.js, keepAtEnd), so nothing here is saved.
+      record({ id: newId('chg'), kind: 'answer', target: `step ${JOIN_STEP}`, before: null, after: { ...(ctx.answers?.[`3.${USUAL_ID}`]?.label === USE_USUAL ? { from: 'usual' } : {}), ...usualFromChanges(changes, DEFAULT_GITLAB) } });
         return [];
       } finally {
         // The setup token is cancelled and dropped however the step ends: done, refused or stopped.
         if (held !== null) await held.end();
       }
     },
+  };
+  // The director's usual answers laid over the step's own plan (scripts/setup/usual.js), and kept at apply.
+  const usualLabels = { keepHere: KEEP_HERE, github: HOST_LABELS.github, gitlab: HOST_LABELS.gitlab, gitlabCom: GITLAB_COM, gitlabComBase: DEFAULT_GITLAB, company: COMPANY_GITLAB, own: WAYS.own, wheelhouse: WAYS.wheelhouse, asIs: WAYS.asIs };
+  return {
+    ...step,
+    plan: (ctx) => planWithUsual({ plan: (c) => step.plan(c), ctx, views, computer: computerId(), labels: usualLabels }),
   };
 }

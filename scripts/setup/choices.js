@@ -82,6 +82,8 @@ export function aboutOf(key) {
   if (id === 'live-data') return 'live data';
   if (id === 'apple-apps') return 'signing Apple apps';
   if (id === 'builders') return 'where builders start';
+  if (id === 'usual') return 'your usual setup';
+  if (id === 'keep-usual') return 'keeping your answers as your usual';
   if (id === 'phone') return 'phone notifications';
   if (id.startsWith('host-tool-')) return `${id === 'host-tool-gh' ? 'GitHub' : 'GitLab'}'s own program`;
   return id;
@@ -134,12 +136,15 @@ export async function openChoices({ steps, run, answers, planOf }) {
       const kept = typeof got.ask.carried === 'string' && got.ask.carried.startsWith(`${at}.`) ? answers[got.ask.carried] ?? null : null;
       const carried = kept !== null && card.options.some((o) => o.label === kept.label) ? kept : null;
       const chosen = answers[key] ?? carried;
-      const answer = chosen ?? { label: card.recommend, text: null, at: null };
+      // The director's usual answer on this computer (scripts/setup/usual.js), where "Use my usual" stands: taken in place of the
+      // card's recommendation, and typed text too (a company GitLab's address).
+      const usual = got.ask.usual?.label !== undefined ? { ...got.ask.usual, at: null } : null;
+      const answer = chosen ?? usual ?? { label: card.recommend, text: null, at: null };
       list.push({ step: at, id, key, card, typed: typed === true, writes, chosen, label: answer.label, text: answer.text, ...(got.ask.line ? { line: got.ask.line } : {}), ...(got.ask.unheld === true ? { unheld: true } : {}), ...(got.ask.publicGitLab === true ? { publicGitLab: true } : {}), ...(got.ask.endsBatch === true ? { endsBatch: true } : {}) });
       taken[key] = answer;
       // A card that waits for the director's own answer (a company's GitLab address), or that recommends nothing for a
       // look to take in its place (which GitLab), ends the look at this step until it has one.
-      if (chosen === null && (got.ask.waits === true || card.recommend === null)) break;
+      if (chosen === null && usual === null && (got.ask.waits === true || card.recommend === null)) break;
     }
   }
   // The join question is asked again, under a new id, after each answer refused (typed text that names no
