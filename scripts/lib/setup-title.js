@@ -3,11 +3,12 @@
 // first message after setup has finished takes the mark away and gives the title the project's own session carries, so the bar
 // stops saying Setup. A title the director gave the session is never replaced: only a session the mark was made for is retitled.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { wheelhouseHome } from './paths.js';
 
 const SAFE = /^[A-Za-z0-9_-]{1,128}$/;
-const folder = () => path.join(wheelhouseHome(), 'setup-titles');
+// In the system's temporary folder, not Wheelhouse's home: a mark outlives nothing that matters, and uninstall has nothing of it to remove.
+const folder = () => path.join(os.tmpdir(), 'wheelhouse-setup-titles');
 
 // Marks a session as titled Setup.
 export function markSetupTitled(sessionId) {

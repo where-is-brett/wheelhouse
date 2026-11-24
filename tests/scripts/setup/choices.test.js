@@ -81,7 +81,7 @@ test('the one card for a new product on a Mac says the director\'s approved word
 test('Go ahead on a narrow GitLab way with GitLab\'s tool names the token that may stand in for a project key', () => {
   const list = newProductChoices({ connection: WAYS.narrow }).map((c) => (c.id === 'host' ? { ...c, label: HOST_LABELS.gitlab } : c));
   const { card } = oneCard({ folder: '/x/tide-tables', list, product: { isNew: true, host: null, repo: null, name: 'tide-tables' }, platform: 'win32', toRun: [3, 6, 7, 10], count: 0 });
-  assert.match(card.options[0].description, /You'll sign in on GitLab pages that open and click through them\. Windows may ask you to click Yes to let an installer run, or for an administrator's password\. If GitLab won't make a key for one project, you'll also paste a token set to expire in 30 days that can do anything you can do on GitLab into a box on your screen, not the chat\. Near the end, setup offers a test notification on your phone, which you can skip\.$/);
+  assert.match(card.options[0].description, /You'll sign in on GitLab pages that open and click through them\. Windows may ask you to click Yes to let an installer run, or for an administrator's password\. If GitLab won't make a key for one project, you'll also paste a token that expires in 30 days with your full access to GitLab into a box on your screen, not the chat\. Near the end, setup offers a test notification on your phone, which you can skip\.$/);
   assert.deepEqual(cardProblems(card), []);
 });
 

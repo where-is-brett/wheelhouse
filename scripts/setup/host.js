@@ -2430,7 +2430,7 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     parts.push('Your git settings on this computer are recorded as they are now; if they change, pushes wait until you confirm them by running setup again.');
   } else if (way === WAYS.quick) parts.push(`Quick: your own ${name} sign-in, which reaches your whole account${platform === 'win32' ? '; on Windows any agent\'s command could read it' : ''}.`);
   else if (host === 'gitlab') {
-    parts.push(tight ? `A key to this project only; if GitLab won't allow one, a token set to expire in ${PERSONAL_DAYS} days that can do anything you can do on GitLab.` : `A key to this project only, with the rights agents need there. If GitLab won't allow one, a token set to expire in ${PERSONAL_DAYS} days that can do anything you can do on GitLab, pasted into ${['setup-token', 'token', 'narrow-key'].includes(signing?.via) ? 'that box' : 'a box on your screen'}.`);
+    parts.push(tight ? `A key to this project only; if GitLab won't allow one, a token (${PERSONAL_DAYS} days) with your full access to GitLab.` : `A key to this project only, with the rights agents need there. If GitLab won't allow one, a token (${PERSONAL_DAYS} days) with your full access to GitLab, pasted into ${['setup-token', 'token', 'narrow-key'].includes(signing?.via) ? 'that box' : 'a box on your screen'}.`);
     // A project with real users is merged by Maintainers only, which a Developer key is not (GITLAB_MAINTAINERS_ONLY, helper.js).
     if (realUsers) parts.push(REAL_USERS_MERGE_LINE);
   }

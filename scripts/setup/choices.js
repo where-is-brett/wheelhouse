@@ -317,13 +317,13 @@ function goAheadAsksHost({ keptHere, list, host, done, phone, desktop, platform 
   const noTool = list.find((c) => c.id === 'host-tool-glab')?.label === hostToolLabels('glab').none;
   if (host === 'GitLab' && noTool && way !== null && way !== WAYS.quick && way !== WAYS.asIs) {
     const free = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.publicGitLab === true;
-    return `You'll paste a one-day GitLab token into a box on your screen, not the chat. ${free ? 'On a free account, or wherever' : 'If'} GitLab won't make a key for this one project, you'll also paste a token set to expire in ${PERSONAL_DAYS} days that can do anything you can do on GitLab. ${maybeAsked(platform)}`;
+    return `You'll paste a one-day GitLab token into a box on your screen, not the chat. ${free ? 'On a free account, or wherever' : 'If'} GitLab won't make a key for this one project, you'll also paste a token that expires in ${PERSONAL_DAYS} days with your full access to GitLab. ${maybeAsked(platform)}`;
   }
   const unheld = list.find((c) => c.id === 'connection' || c.id.startsWith('connection-'))?.unheld === true;
   if (way === WAYS.asIs) return `You'll be asked for a ${host} key${unheld ? '' : ' only if your git holds none that works'}: you make it on a page that opens${host === 'GitLab' ? `, set to expire in ${KEY_DAYS_ASKED} days` : `, set to expire in ${KEY_DAYS_ASKED} days`}, and paste it into a box on your screen, not the chat. ${maybeAsked(platform)}`;
   // A narrow way on GitLab with its tool still meets GitLab's refusal of a project key the same way.
   const fallbackBox = (known) => (host === 'GitLab' && way !== null && way !== WAYS.quick
-    ? ` If GitLab won't make a key for one project, you'll also paste a token set to expire in ${PERSONAL_DAYS} days that can do anything you can do on GitLab into ${known ? 'that box' : 'a box on your screen, not the chat'}.` : '');
+    ? ` If GitLab won't make a key for one project, you'll also paste a token that expires in ${PERSONAL_DAYS} days with your full access to GitLab into ${known ? 'that box' : 'a box on your screen, not the chat'}.` : '');
   // A company's GitLab without a browser sign-in set up takes a token instead, which only setup's step 3 can tell.
   if (signedIn) return `You're already signed in to ${host}, so setup doesn't ask for that again.${fallbackBox(true)}`;
   if (onCompanyGitLab(list, host)) return `You'll sign in to your company's GitLab in your browser if your company has set that up, or else with a token you make on a page that opens and paste into a box on your screen, not the chat. ${maybeAsked(platform)}${fallbackBox(true)}`;
