@@ -54,9 +54,9 @@ test('start starts the watcher once', () => withHome(async (home) => {
   const [call] = fake.calls;
   assert.equal(call.file, process.execPath);
   assert.deepEqual(call.args, [path.join(ROOT, 'scripts', 'watcher', 'main.js'), P]);
-  // No role and no host session's variables: the watcher is no one's session.
-  // ... but with the running node's folder on its PATH, which the hooks of the sessions it starts need.
-  assert.deepEqual(call.opts.env, { PATH: `${path.dirname(process.execPath)}:/bin` });
+  // The standard environment of its home: no role and no host session's variables, the watcher is no one's session;
+  // the running node's folder on its PATH, which the hooks of the sessions it starts need.
+  assert.deepEqual(call.opts.env, { HOME: os.homedir(), PATH: `${path.dirname(process.execPath)}:/bin`, WHEELHOUSE_HOME: home });
   assert.equal(call.opts.detached, true);
   assert.equal(call.opts.windowsHide, true);
   assert.equal(call.opts.stdio, 'ignore');
@@ -111,7 +111,9 @@ test('startWatcher starts the watcher with the folder of claude on its PATH when
     fs.mkdirSync(home, { recursive: true });
     fs.writeFileSync(path.join(home, 'claude-path.json'), JSON.stringify({ path: path.join(bin, 'claude') }));
     startWatcher(P, { spawn: fake.spawn, pluginRoot: ROOT, env: { PATH: '/usr/bin', HOME: '/nowhere', WHEELHOUSE_HOME: home } });
-    assert.equal(fake.calls[0].opts.env.PATH.split(':')[0], bin);
+    assert.ok(fake.calls[0].opts.env.PATH.split(':').includes(bin));
+    assert.equal(fake.calls[0].opts.env.HOME, '/nowhere');
+    assert.equal(fake.calls[0].opts.env.WHEELHOUSE_HOME, home);
   } finally {
     fs.rmSync(bin, { recursive: true, force: true });
   }

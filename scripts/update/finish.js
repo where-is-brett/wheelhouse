@@ -16,6 +16,7 @@ import { refreshAgentComputerAfterKits } from '../agents/setup-parts.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { compareVersions } from '../lib/versions.js';
 import { computerId, helperAddress, jobFolder, stateDir, wheelhouseHome } from '../lib/paths.js';
+import { standardEnv } from '../lib/standard-env.js';
 import { registeredProjects } from '../lib/projects.js';
 import { run as defaultRun } from '../lib/run.js';
 import { fileHash, recordUpdate } from '../health/own-files.js';
@@ -386,7 +387,7 @@ async function realStartHelper(root) {
   const home = wheelhouseHome();
   fs.mkdirSync(home, { recursive: true });
   const child = spawn(process.execPath, [path.join(root, 'scripts', 'host', 'helper-main.js')], {
-    cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore', env: { ...process.env, ...caEnv(home) },
+    cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore', env: { ...standardEnv({ home }), ...caEnv(home) },
   });
   child?.on?.('error', () => {});
   child?.unref?.();
