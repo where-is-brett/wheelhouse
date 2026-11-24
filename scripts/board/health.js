@@ -192,6 +192,7 @@ export function updateLines(update) {
   const lines = [];
   const day = dayMonthYear(update.updatedAt);
   if (typeof update.version === 'string') lines.push({ level: 'ok', text: `Wheelhouse ${update.version}${day ? ` (updated ${day})` : ''}` });
+  else if (update.between === true) lines.push({ level: 'ok', text: 'Wheelhouse from its main line (a build between releases)' });
   if (typeof update.newer === 'string') lines.push({ level: 'ok', text: `${update.newer} is out; type /wheelhouse:update when you want it` });
   const part = update.partway;
   if (part && typeof part.tag === 'string') {

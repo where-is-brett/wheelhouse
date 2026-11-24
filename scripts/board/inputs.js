@@ -44,7 +44,7 @@ import { readStatus } from '../safekeeping/readings.js';
 import { readFrontDeskModel } from '../lib/front-desk-model.js';
 import { agentSandboxLine } from '../agents/sandbox-line.js';
 import { buildersHealth } from '../lib/sign-in-gate.js';
-import { readLatest, runningVersion, updateFacts } from '../update/board.js';
+import { readLatest, runningBuild, updateFacts } from '../update/board.js';
 
 export const NOT_A_PROJECT = 'This folder isn\'t part of a Wheelhouse project';
 // readHostFacts keeps its own limit this far inside HELPER_WAIT_MS, so it has given up, and marked
@@ -196,7 +196,7 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     // Wheelhouse's version and its updates, from files only: the update's journal, the weekly look's kept answer and the
     // project's settings. The glance shows none of it.
     update: offline ? null : attempt(() => updateFacts({
-      project, folder: record.folder, version: version ?? runningVersion(), latest: readLatest({ now: clock }).tag, helperVersion: known.helperVersion, now: clock,
+      project, folder: record.folder, version: version ?? runningBuild(), latest: readLatest({ now: clock }).tag, helperVersion: known.helperVersion, now: clock,
     })),
     ownFiles: offline || (typeof known.ownFilesLine !== 'string' && typeof known.ownFilesCalm !== 'string') ? null : { line: known.ownFilesLine, calm: known.ownFilesCalm },
     hostApproval: attempt(() => hostApprovalNeeded({ agent: usageAgent, realUsers: settings?.phase?.value === 'launched', host: record.host }), false),

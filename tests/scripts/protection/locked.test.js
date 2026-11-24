@@ -7,6 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { managedSettings, installLocked, updateLocked, leaveLocked } from '../../../scripts/protection/locked.js';
+import { pluginVersion } from '../../../scripts/lib/plugin-version.js';
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 
@@ -169,7 +170,7 @@ test('installLocked stages under the Wheelhouse home, and asks once with every p
       assert.ok(call.stage.startsWith(home), 'staged under the Wheelhouse home, not the temporary folder');
       assert.equal(fs.existsSync(call.stage), false, 'the staging folder is removed');
       assert.deepEqual(call.staged.list, [b.folder, a.folder], 'added once, not twice');
-      const version = JSON.parse(fs.readFileSync(path.join(ROOT, '.claude-plugin', 'plugin.json'), 'utf8')).version;
+      const version = pluginVersion(ROOT);
       assert.deepEqual(call.staged.installed, { version, at: '2026-10-18T01:02:03.000Z', pluginRoot: fs.realpathSync(ROOT) });
       assert.ok(call.staged.hasScripts);
       assert.ok(call.staged.hasLineage, 'the manifest and the register go with the scripts');
