@@ -216,6 +216,7 @@ async function frontDesk(world, argv, input) {
     cwd: world.checkout,
     client: world.client,
     now: world.now,
+    env: {}, // no session of the computer running the test: process.env names this chat's own
     ...(input === undefined ? {} : { input: JSON.stringify(input) }),
     out: (t) => { said.out += t; },
     err: (t) => { said.err += t; },
@@ -604,7 +605,7 @@ test('an approval card steered with Suggest a change… is revised once the chan
     const revision = { ...approvalCard(7, 'changes the banner on the shop\'s home page, in bigger type.'), revises: id, changed: 'The banner is in bigger type.' };
     const said = { err: '' };
     const refused = await sandboxed(world, () => cli(['card'], {
-      cwd: world.checkout, client: world.client, now: world.now, input: JSON.stringify(revision), out: () => {}, err: (t) => { said.err += t; },
+      cwd: world.checkout, client: world.client, now: world.now, env: {}, input: JSON.stringify(revision), out: () => {}, err: (t) => { said.err += t; },
     }));
     assert.notEqual(refused, 0);
     assert.match(said.err, /a revised approval needs the change committed first/);
