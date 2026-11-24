@@ -1036,7 +1036,7 @@ async function moveSeat({ project, input, from }) {
   try {
     if (readSeat(project)?.session === input.session_id) return null;
     const done = await handOverSeat(project, { session: input.session_id, folder: input.cwd, from });
-    if (done.moved) return `Wheelhouse: this window is now the First Mate, and keeps Wheelhouse's records: it records work and hands out cards itself. The take-over text about leaving records alone no longer applies. ${FRONT_DESK_LINE}`;
+    if (done.moved) return `Wheelhouse: this window is now the First Mate, and keeps Wheelhouse's records: it records work and hands out cards itself. ${FRONT_DESK_LINE}`;
     const holder = done.seat?.session;
     return typeof holder === 'string' && holder !== ''
       ? `Wheelhouse: the First Mate did not move, because the seat changed hands after that card was shown. Window session ${holder} holds it now, so this window is still an ordinary one. Tell the director in one plain line.`
