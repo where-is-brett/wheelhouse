@@ -29,13 +29,14 @@ export function settingName(key) {
 // The names of the settings a push trusts, once each, in order.
 export const settingNames = (keys) => [...new Set(keys.map(settingName).filter((n) => n !== ''))].sort();
 
-// What changed in the names: { added, removed } from the names kept at confirmation and the names now, or null when none were kept
-// (a record from before names were kept, or a folder never confirmed).
-export function settingsChange({ names, was }) {
+// What changed in the names: { added, removed, changed } from the names kept at confirmation and the names now, and `changed`, the
+// names whose value differs (named by `changed`, names only), or null when no names were kept (a record from before names were
+// kept, or a folder never confirmed).
+export function settingsChange({ names, was, changed = [] }) {
   if (!Array.isArray(was)) return null;
   const before = new Set(was);
   const now = new Set(names);
-  return { added: names.filter((n) => !before.has(n)), removed: was.filter((n) => !now.has(n)) };
+  return { added: names.filter((n) => !before.has(n)), removed: was.filter((n) => !now.has(n)), changed };
 }
 
 const listed = (names) => {
@@ -48,6 +49,7 @@ function changeLine(change) {
   const parts = [];
   if (change.added.length > 0) parts.push(`added: ${listed(change.added)}`);
   if (change.removed.length > 0) parts.push(`taken away: ${listed(change.removed)}`);
+  if (change.changed?.length > 0) parts.push(`value differs: ${listed(change.changed)}`);
   return parts.length > 0 ? `Settings ${parts.join('; ')}.` : 'No setting was added or taken away, so one of them has a different value.';
 }
 

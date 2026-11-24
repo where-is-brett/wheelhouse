@@ -399,9 +399,12 @@ test('confirming keeps the names of the settings, names only, and lookAtTrusted 
     change('[credential]\n\thelper = !/b/other\n[http]\n\tsslCAInfo = /x/ca.pem\n');
     const moved = await lookAtTrusted({ file, cwd: folder });
     assert.equal(moved.same, false);
-    assert.deepEqual(settingsChange(moved), { added: ['http.sslcainfo'], removed: ['http.proxy'] });
+    assert.deepEqual(settingsChange(moved), { added: ['http.sslcainfo'], removed: ['http.proxy'], changed: ['credential.helper'] });
     change('[credential]\n\thelper = !/b/other\n[http "https://corp.example.org/"]\n\tproxy = http://ada:s3cretpass@p.example.org:8080\n');
-    assert.deepEqual(settingsChange(await lookAtTrusted({ file, cwd: folder })), { added: [], removed: [] }, 'a changed value can\'t be named');
+    const valueOnly = await lookAtTrusted({ file, cwd: folder });
+    assert.deepEqual(settingsChange(valueOnly), { added: [], removed: [], changed: ['credential.helper'] }, 'a changed value is named, by name only');
+    assert.doesNotMatch(JSON.stringify(valueOnly), /\/b\/other|s3cretpass|corp\.example/, 'no value is in what is read back');
+    assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /\/a\/helper|\/b\/other/, 'the record holds digests, never a value');
     // Confirming only what the card named: other settings now are not confirmed.
     await assert.rejects(confirmComputerSettings({ file, cwd: folder, expect: moved.hash.slice(0, 12) }), /changed while the card was open/);
     const now = await lookAtTrusted({ file, cwd: folder });
@@ -417,7 +420,7 @@ test('a record kept before names were recorded is read as it was, and confirming
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify({ folders: { '/elsewhere': `v2:${'a'.repeat(64)}` }, legacy: 'b'.repeat(64) }));
     const before = await lookAtTrusted({ file, cwd: folder });
-    assert.deepEqual([before.same, before.was, settingsChange(before)], [false, null, null]);
+    assert.deepEqual([before.same, before.was, before.changed, settingsChange(before)], [false, null, [], null]);
     await confirmComputerSettings({ file, cwd: folder });
     const record = JSON.parse(fs.readFileSync(file, 'utf8'));
     assert.equal(record.legacy, 'b'.repeat(64));

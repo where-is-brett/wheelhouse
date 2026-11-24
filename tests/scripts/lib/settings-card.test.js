@@ -18,8 +18,10 @@ test('a setting is named by its first and last parts, so an address or a sign-in
 });
 
 test('the change is what was added and taken away, and none when no names were kept', () => {
-  assert.deepEqual(settingsChange({ names: ['a.b', 'c.d'], was: ['a.b', 'e.f'] }), { added: ['c.d'], removed: ['e.f'] });
+  assert.deepEqual(settingsChange({ names: ['a.b', 'c.d'], was: ['a.b', 'e.f'] }), { added: ['c.d'], removed: ['e.f'], changed: [] });
+  assert.deepEqual(settingsChange({ names: ['a.b'], was: ['a.b'], changed: ['a.b'] }), { added: [], removed: [], changed: ['a.b'] });
   assert.equal(settingsChange({ names: ['a.b'], was: null }), null);
+  assert.match(settingsCard(HASH, settingsChange({ names: ['a.b'], was: ['a.b'], changed: ['http.sslcainfo'] })).question, /value differs: http\.sslcainfo/);
 });
 
 test('the card is a question of the First Mate\'s limits, with one line that names the settings by a hash, and says the click is in the window', () => {

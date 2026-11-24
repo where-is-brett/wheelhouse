@@ -23,7 +23,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { wheelhouseHome, stateDir } from './paths.js';
 import { registeredProjects } from './projects.js';
-import { SETTINGS_CHANGED, settingNames } from './settings-card.js';
+import { SETTINGS_CHANGED, settingName, settingNames } from './settings-card.js';
 import {
   isolated, refuseUnlistedSettings, setupGitEnv, subcommandOf, allowedSetting, unlistedSettingsLine, CONFIG_UNREAD, FENCE, NULL_FILE,
 } from '../setup/git.js';
@@ -528,7 +528,18 @@ export const settingsFingerprint = (entries) => `v2:${hashOf(trustedSettings(ent
 // The fingerprint as the earlier form made it, to compare with a record that holds one.
 export const legacySettingsFingerprint = (entries) => hashOf(pairsOf(entries, OLD_RELEVANT));
 
-// What the record holds: { folders: { <folder>: <fingerprint> }, legacy?, names? }. Includes (includeIf gitdir:, onbranch:, hasconfig:) make the
+// For each setting name, a short digest of the values the settings under it hold, so a later refusal can name the settings whose value
+// differs (a name alone can't say). Kept in the private record beside the names; never shown, and not a value.
+export function valueDigests(entries) {
+  const grouped = new Map();
+  for (const [key, value] of trustedSettings(entries)) {
+    const name = settingName(key);
+    if (name !== '') grouped.set(name, [...(grouped.get(name) ?? []), [key, value]]);
+  }
+  return Object.fromEntries([...grouped].sort(([a], [b]) => (a < b ? -1 : 1)).map(([name, pairs]) => [name, hashOf(pairs).slice(0, 16)]));
+}
+
+// What the record holds: { folders: { <folder>: <fingerprint> }, legacy?, names?, digests? }. Includes (includeIf gitdir:, onbranch:, hasconfig:) make the
 // settings depend on the folder git runs in, so each folder has its own fingerprint, of the very settings read there. A record from
 // before that held one `fingerprint` for all; it is kept as `legacy`, and a folder with no entry takes the settings as they are
 // now only if they still equal it (see checkTrusted).
@@ -558,18 +569,20 @@ function readRecord(file) {
     // The names of the settings at each folder's confirmation (names only), kept so a later refusal can say which were added or taken away.
     const names = Object.fromEntries(Object.entries(record.names !== null && typeof record.names === 'object' && !Array.isArray(record.names) ? record.names : {})
       .filter(([, list]) => Array.isArray(list) && list.every((n) => typeof n === 'string')));
-    return { folders, legacy, names };
+    const digests = Object.fromEntries(Object.entries(record.digests !== null && typeof record.digests === 'object' && !Array.isArray(record.digests) ? record.digests : {})
+      .filter(([, list]) => list !== null && typeof list === 'object' && !Array.isArray(list) && Object.values(list).every((d) => typeof d === 'string' && /^[0-9a-f]{16}$/.test(d))));
+    return { folders, legacy, names, digests };
   } catch (error) {
     return error?.code === 'ENOENT' ? null : 'refused';
   }
 }
 
 // Written to a file of its own and renamed over the record, so a stop part way leaves the old record whole.
-function writeRecord(file, { folders, legacy = null, names = {} }) {
+function writeRecord(file, { folders, legacy = null, names = {}, digests = {} }) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const temp = `${file}.${process.pid}.tmp`;
   try {
-    fs.writeFileSync(temp, `${JSON.stringify({ folders, ...(legacy === null ? {} : { legacy }), ...(Object.keys(names).length === 0 ? {} : { names }) }, null, 2)}\n`, { mode: 0o600 });
+    fs.writeFileSync(temp, `${JSON.stringify({ folders, ...(legacy === null ? {} : { legacy }), ...(Object.keys(names).length === 0 ? {} : { names }), ...(Object.keys(digests).length === 0 ? {} : { digests }) }, null, 2)}\n`, { mode: 0o600 });
     fs.renameSync(temp, file);
   } catch (error) {
     fs.rmSync(temp, { force: true });
@@ -611,7 +624,7 @@ function checkTrusted(file, folder, { now, old }) {
   const kept = record.folders[key];
   if (kept === undefined) {
     if (record.legacy !== null && record.legacy === old && isAsIsMirror(key)) {
-      writeRecord(file, { folders: { ...record.folders, [key]: now }, legacy: record.legacy, names: record.names });
+      writeRecord(file, { folders: { ...record.folders, [key]: now }, legacy: record.legacy, names: record.names, digests: record.digests });
       return;
     }
     throw new SettingsChanged(SETTINGS_CHANGED_LINE);
@@ -619,7 +632,7 @@ function checkTrusted(file, folder, { now, old }) {
   if (kept === now) return;
   // An entry made with the earlier fingerprint, still true of the settings: rewritten in the present form.
   if (!String(kept).startsWith('v2:') && kept === old) {
-    writeRecord(file, { folders: { ...record.folders, [key]: now }, legacy: record.legacy, names: record.names });
+    writeRecord(file, { folders: { ...record.folders, [key]: now }, legacy: record.legacy, names: record.names, digests: record.digests });
     return;
   }
   throw new SettingsChanged(SETTINGS_CHANGED_LINE);
@@ -635,14 +648,17 @@ export async function confirmComputerSettings({ file, run = realRun, gitPath = '
   const fingerprint = settingsFingerprint(entries);
   if (expect !== undefined && !fingerprint.startsWith(`v2:${expect}`)) throw new Error("Git's settings on this computer changed while the card was open, so nothing was confirmed");
   const record = readRecord(file);
-  const kept = record === null || record === 'refused' ? { folders: {}, legacy: null, names: {} } : record;
+  const kept = record === null || record === 'refused' ? { folders: {}, legacy: null, names: {}, digests: {} } : record;
   const key = folderKey(cwd);
-  writeRecord(file, { folders: { ...kept.folders, [key]: fingerprint }, legacy: kept.legacy, names: { ...kept.names, [key]: settingNames(trustedSettings(entries).map(([name]) => name)) } });
+  writeRecord(file, { folders: { ...kept.folders, [key]: fingerprint }, legacy: kept.legacy, names: { ...kept.names, [key]: settingNames(trustedSettings(entries).map(([name]) => name)) }, digests: { ...kept.digests, [key]: valueDigests(entries) } });
 }
 
 // The settings in `cwd` as a push reads them now, against what was confirmed for that folder: { hash (the fingerprint's own hash),
-// same (it is the confirmed one), names (the settings' names, names only), was (the names kept at confirmation, or null) }, or null
+// same (it is the confirmed one), names (the settings' names, names only), was (the names kept at confirmation, or null), changed (the names
+// whose value digest differs from the one kept, names only; empty when none were kept) }, or null
 // when the settings can't be read. It reads and writes nothing else.
+const changedNames = (kept, now) => (kept === undefined ? [] : Object.keys(now).filter((name) => kept[name] !== undefined && kept[name] !== now[name]));
+
 export async function lookAtTrusted({ file, run = realRun, gitPath = 'git', cwd }) {
   const entries = await readSettingsFor({ run, gitPath, cwd });
   if (entries === null) return null;
@@ -655,6 +671,7 @@ export async function lookAtTrusted({ file, run = realRun, gitPath = 'git', cwd 
     same: held?.folders[key] === fingerprint,
     names: settingNames(trustedSettings(entries).map(([name]) => name)),
     was: held?.names[key] ?? null,
+    changed: changedNames(held?.digests[key], valueDigests(entries)),
   };
 }
 
