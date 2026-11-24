@@ -77,8 +77,9 @@ const SHELL_STATE = [
 const SHELL_STATE_REFUSED = 'Wheelhouse does not let a launcher session change its shell\'s PATH, or define a function or an alias (or use hash -p, enable -f or builtin): a launcher\'s bare name must keep meaning Wheelhouse\'s own. Run the command as it is, with no such line before it';
 const MISSING_SCRIPT = (file) => `Wheelhouse does not run a script that is not there when the command starts (${file}). Write the file in one command and run it in the next, or ${HELPER}`;
 const refuse = (what) => answer.deny(`Wheelhouse does not let an agent ${what}: ${HELPER}`);
-// The build engine (spec 12.2): its program and the engine room's port, and its own files.
+// The helper's card routes, which only its own hooks and process post to.
 const CARD_ROUTES = 'Wheelhouse does not let an agent post to the helper\'s card routes: a click on a card is recorded by Wheelhouse\'s own hooks and helper, never by a command. Ask the question in the chat and wait for the director\'s answer';
+// The build engine (spec 12.2): its program and the engine room's port, and its own files.
 const ENGINE = 'Wheelhouse does not let an agent run or reach the build engine: it answers only to the helper. Say what the work needs instead';
 const ENGINE_FILES = 'Wheelhouse does not let an agent open the build engine\'s own files: only its own run\'s artefacts and its own worktree. Say what the work needs instead';
 const OWN_ARTEFACTS = 'The step\'s own run\'s artefacts';
