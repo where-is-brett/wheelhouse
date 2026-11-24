@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { run as realRun } from './run.js';
-import { givenHome, wheelhouseHome } from './paths.js';
+import { wheelhouseHome } from './paths.js';
 
 export const LAUNCH_AGENT_LABEL = 'dev.wheelhouse.helper';
 export const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
@@ -88,7 +88,7 @@ const agentsFolder = (home) => path.join(home, 'Library', 'LaunchAgents');
 // Whether this process runs with a Wheelhouse home of its own (an evaluation run, a trial, a test) rather than the
 // default `.wheelhouse` in the person's home folder.
 function isolatedHome() {
-  const given = givenHome();
+  const given = process.env.WHEELHOUSE_HOME;
   if (!given) return false;
   return path.resolve(given) !== path.resolve(path.join(os.homedir(), '.wheelhouse'));
 }
