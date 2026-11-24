@@ -149,6 +149,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DIGEST_CAP } from './core.js';
+import { watcherDir, runningFile, sessionFile } from './folders.js';
 import { WALK_CAP, checkControlFiles, markRaised, raisedOf, writeBaseline } from './control-files.js';
 import { controlFilesNamed } from '../cards/build-loop.js';
 import { keepControlLine, setLineOf } from '../state/card-lines.js';
@@ -295,9 +296,7 @@ function realOf(p) {
 
 // --- The watcher's folder, projects/<p>/watcher ---
 
-export function watcherDir(project) {
-  return path.join(path.dirname(stateDir(project)), 'watcher');
-}
+export { watcherDir, runningFile, sessionFile };
 
 export function wakesDir(project) {
   return path.join(watcherDir(project), 'wakes');
@@ -305,8 +304,6 @@ export function wakesDir(project) {
 
 export const outboxFile = (project) => path.join(watcherDir(project), 'outbox.json');
 const outboxLock = (project) => path.join(watcherDir(project), 'outbox.lock');
-export const runningFile = (project, target) => path.join(watcherDir(project), 'running', `${target}.json`);
-export const sessionFile = (project, work) => path.join(watcherDir(project), 'sessions', `${work}.json`);
 // A feature session that died without finishing its run (crash resume, resume.js): `{ at, why, code }`, where `at` is
 // when the run began.
 export const lostFile = (project, work) => path.join(watcherDir(project), 'lost', `${work}.json`);
