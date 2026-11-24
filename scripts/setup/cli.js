@@ -119,14 +119,30 @@ export async function sessionStartedAt() {
   }
 }
 
+// A helper that was started a moment ago, by the session start on the first run, may not be listening yet (its first start
+// loads every module cold, slowest on Windows). A request it never received is asked again, every HELPER_RETRY_MS for up to
+// HELPER_RETRIES times, before the director is told. Only "is it running?" is asked again: a sandbox's refusal and a helper
+// that took too long (which may have done the work) are not.
+export const HELPER_RETRY_MS = 2 * 1000;
+export const HELPER_RETRIES = 10;
+export const HELPER_NOT_UP = 'The host helper isn\'t answering yet. It may still be starting: run the same command again in a few seconds. If it still fails, start a new session in this folder, which starts the helper again.';
+const NOT_LISTENING = /could not be reached: is it running\?/;
+let pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
 // Asks one route and gives its answer when it is ok; otherwise the helper's own words.
 async function ask(route, body) {
   let got;
+  const sent = { ...body, ...(inApp ? { desktop: true } : {}), ...(sessionStart === null ? {} : { sessionStartedAt: sessionStart }) };
   try {
-    got = await route({ ...body, ...(inApp ? { desktop: true } : {}), ...(sessionStart === null ? {} : { sessionStartedAt: sessionStart }) });
+    got = await route(sent);
+    for (let tries = 0; tries < HELPER_RETRIES && got?.ok !== true && NOT_LISTENING.test(String(got?.refused)); tries += 1) {
+      await pause(HELPER_RETRY_MS);
+      got = await route(sent);
+    }
   } catch (error) {
     throw new CliError(`The host helper didn't answer: ${error instanceof Error ? error.message : 'unknown error'}`);
   }
+  if (got?.ok !== true && NOT_LISTENING.test(String(got?.refused))) throw new CliError(HELPER_NOT_UP);
   if (got?.ok !== true) {
     const error = new CliError(got?.refused ?? got?.why ?? 'The host helper refused the request');
     // For the agent alone (a refusal's exact names), said on a line of its own after the refusal.
@@ -165,6 +181,7 @@ export async function main(argv, {
 } = {}) {
   inApp = inDesktopApp(entrypoint, env);
   sessionStart = started;
+  pause = sleep;
   try {
     const [form, ...rest] = argv;
     const json = (value) => out(`${JSON.stringify(value, null, 2)}\n`);

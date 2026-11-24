@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import {
-  openChoices, oneCard, setupTime, consentHolds, consentWithdrawn, customiseBatch, aboutOf, actedBy, GO_AHEAD, CUSTOMISE, PER_CARD,
+  openChoices, oneCard, setupTime, consentHolds, consentWithdrawn, customiseBatch, aboutOf, actedBy, GO_AHEAD, CUSTOMISE, PER_CARD, USE_GITLAB, gitlabSince, gitlabBatch,
 } from '../../../scripts/setup/choices.js';
 import { stepFourDrift, choiceList } from '../../../scripts/setup/redo.js';
 import { COMPANY_GITLAB, NEW_PRODUCT, HOST_LABELS, WAYS, REAL_USERS, STRICTER } from '../../../scripts/setup/host.js';
@@ -60,7 +60,7 @@ test('the one card for a new product on a Mac says the director\'s approved word
     '- A new product, in a private repository on your GitHub account.',
     '- Agents use your ordinary GitHub sign-in, which reaches your whole account; on this Mac the sandbox keeps agents\' commands away from your Mac\'s saved passwords, where that sign-in is kept, unless this project is an iPhone or Mac app (making those needs your saved passwords, so agents\' commands can reach them).',
     '- Before launch: no real users and no live data yet.',
-    '- On this computer: usage counted here only; 30 days of chat history kept (this changes a Claude Code setting, and older history is deleted); Claude Code takes only its well-tried updates; and Claude Code allowed to send phone notifications, which you finish near the end.',
+    '- On this computer: usage counted here only; 30 days of chat history kept; Claude Code takes only its well-tried updates; and Claude Code allowed to send phone notifications, which you finish near the end.',
     '- Wheelhouse\'s settings saved to the project, and its main line protected if your GitHub plan allows it (the free plan doesn\'t for a private repository).',
     'Nothing runs until you choose.',
     'To know more, just ask.',
@@ -78,7 +78,7 @@ test('the one card for a new product on a Mac says the director\'s approved word
 test('Go ahead on a narrow GitLab way with GitLab\'s tool names the token that may stand in for a project key', () => {
   const list = newProductChoices({ connection: WAYS.narrow }).map((c) => (c.id === 'host' ? { ...c, label: HOST_LABELS.gitlab } : c));
   const { card } = oneCard({ folder: '/x/tide-tables', list, product: { isNew: true, host: null, repo: null, name: 'tide-tables' }, platform: 'win32', toRun: [3, 6, 7, 10], count: 0 });
-  assert.match(card.options[0].description, /You'll sign in on GitLab pages that open and click through them\. You may be asked for your computer\'s password\. If GitLab won't make a key for one project, you'll also paste a 30-day token that can act as you across GitLab into a box on your screen, not the chat\. Near the end, setup offers a test notification on your phone, which you can skip\.$/);
+  assert.match(card.options[0].description, /You'll sign in on GitLab pages that open and click through them\. Windows may ask you to click Yes to let an installer run, or for an administrator's password\. If GitLab won't make a key for one project, you'll also paste a 30-day token that can act as you across GitLab into a box on your screen, not the chat\. Near the end, setup offers a test notification on your phone, which you can skip\.$/);
   assert.deepEqual(cardProblems(card), []);
 });
 
@@ -332,4 +332,56 @@ test('a plan asked again after step 3 stopped says its tools and sign-in are don
   // Where setup will not ask about the phone, nothing is left to ask.
   assert.match(oneCard({ folder: '/x/tide-tables', list: newProductChoices().map((c) => (c.id === 'join' ? { ...c, label: KEEP_HERE } : c)), product: { isNew: true, host: null, repo: null, name: 'tide-tables' }, platform: 'darwin', count: 1, toRun: [3, 7, 10], done: { tools: true, signedIn: 'gitlab' } }).card.options[0].description, /Nothing more is asked of you here\.$/);
   assert.deepEqual(cardProblems(again.card), []);
+});
+
+// ---- The first card's start: GitLab, chat history and the system's own prompt ----
+
+const keptHereChoice = () => ({ step: 3, id: 'join', key: '3.join', card: { recommend: KEEP_HERE, options: [] }, typed: false, writes: undefined, chosen: null, label: KEEP_HERE, text: null });
+const localProduct = { isNew: true, host: null, repo: null, name: 't' };
+
+test('the one card offers GitLab as a click of its own while where the project is kept is the recommendation', () => {
+  const options = (list, over = {}) => oneCard({ folder: '/x/t', list, product: localProduct, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0, ...over }).card.options.map((o) => o.label);
+  assert.deepEqual(options([keptHereChoice()]), [GO_AHEAD, USE_GITLAB, CUSTOMISE]);
+  // Not offered once the director has answered where, or when a host is chosen already.
+  assert.deepEqual(options([{ ...keptHereChoice(), chosen: { label: KEEP_HERE, at: '2026-11-24T01:00:00.000Z' } }]), [GO_AHEAD, 'Change a choice']);
+  assert.deepEqual(options(newProductChoices()), [GO_AHEAD, CUSTOMISE]);
+  const card = oneCard({ folder: '/x/t', list: [keptHereChoice()], product: localProduct, platform: 'win32', toRun: [3, 6, 7, 10], count: 0 }).card;
+  assert.deepEqual(cardProblems(card), []);
+});
+
+test('a click on Put it on GitLab asks where the project is kept alone, until it is answered', () => {
+  const at = '2026-11-24T01:00:00.000Z';
+  const list = [keptHereChoice(), { ...keptHereChoice(), id: 'real-users', key: '3.real-users' }];
+  assert.deepEqual(gitlabBatch(list, at).map((c) => c.id), ['join']);
+  assert.deepEqual(gitlabBatch([{ ...keptHereChoice(), chosen: { label: 'GitLab', at: '2026-11-24T02:00:00.000Z' } }], at), []);
+  const answers = { '0.plan-0123456789ab': { label: USE_GITLAB, at } };
+  assert.equal(gitlabSince(answers), at);
+  assert.equal(gitlabSince({ '0.plan-0123456789ab': { label: GO_AHEAD, at } }), null);
+});
+
+test('the chat history line says the setting changes, and that older history goes, only where that is true', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-card-history-'));
+  try {
+    const line = (settings) => {
+      if (settings !== undefined) fs.writeFileSync(path.join(home, 'settings.json'), typeof settings === 'string' ? settings : JSON.stringify(settings));
+      return oneCard({ folder: '/x/t', list: [], product: localProduct, platform: 'darwin', toRun: [6], count: 0, claudeHome: home }).card.question.split('\n').find((l) => /chat history/.test(l));
+    };
+    assert.match(line(), /; 30 days of chat history kept; Claude Code/);
+    assert.doesNotMatch(line({}), /deleted|changes/);
+    assert.doesNotMatch(line({ cleanupPeriodDays: 30 }), /deleted|changes/);
+    assert.doesNotMatch(line('not json'), /deleted|changes/);
+    assert.match(line({ cleanupPeriodDays: 90 }), /30 days of chat history kept \(your Claude Code setting is 90 days, so this changes it, and chats older than 30 days are deleted\)/);
+    const raised = line({ cleanupPeriodDays: 7 });
+    assert.match(raised, /setting is 7 days, so this raises it; nothing is deleted/);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('Go ahead names what the system itself asks in the words of the computer: a password on a Mac, the installer\'s Yes on Windows', () => {
+  const says = (platform, list) => oneCard({ folder: '/x/t', list, product: localProduct, platform, toRun: [2, 3, 6, 7, 10], count: 0 }).card.options[0].description;
+  for (const list of [[], newProductChoices(), newProductChoices().map((c) => (c.id === 'host' ? { ...c, label: HOST_LABELS.gitlab } : c))]) {
+    assert.match(says('darwin', list), /computer's password/);
+    const win = says('win32', list);
+    assert.doesNotMatch(win, /computer's password|computer password/);
+  }
+  assert.match(says('win32', []), /Windows may ask you to click Yes to let an installer run, or for an administrator's password\./);
 });

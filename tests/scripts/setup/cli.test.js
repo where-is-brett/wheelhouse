@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { main, USAGE, WAIT_MOST_MS, RUNNING_POLL_MS } from '../../../scripts/setup/cli.js';
+import { main, USAGE, WAIT_MOST_MS, RUNNING_POLL_MS, HELPER_RETRIES, HELPER_RETRY_MS, HELPER_NOT_UP } from '../../../scripts/setup/cli.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
@@ -356,4 +356,40 @@ test('wait 10 is over once step 10\'s own checks are done', async () => {
   const before = fakeClient({ status: { ok: true, lines: [] }, plan: { ok: true, wait: 5000, why: 'step 8 is still running', waitsFor: 8 } });
   const waiting = await run(['wait', '10'], { client: before, ...timing });
   assert.deepEqual(JSON.parse(waiting.out), { step: 10, waiting: 5000 });
+});
+
+const NOT_LISTENING = { ok: false, refused: 'the host helper could not be reached: is it running?' };
+
+test('a helper that is still starting on the first run is asked again, and the command then goes through', async () => {
+  let asked = 0;
+  const c = fakeClient({ status: () => { asked += 1; return asked < 4 ? NOT_LISTENING : { ok: true, lines: ['Setup has not started in this folder.'], next: 2 }; } });
+  const pauses = [];
+  const r = await run(['status'], { client: c, sleep: async (ms) => { pauses.push(ms); } });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.out, 'Setup has not started in this folder.\n');
+  assert.deepEqual(pauses, [HELPER_RETRY_MS, HELPER_RETRY_MS, HELPER_RETRY_MS]);
+});
+
+test('a helper that never answers is said to be starting, with what to do, after the retries', async () => {
+  const c = fakeClient({ apply: NOT_LISTENING });
+  let pauses = 0;
+  const r = await run(['apply', '2', H], { client: c, sleep: async () => { pauses += 1; } });
+  assert.equal(r.code, 1);
+  assert.equal(pauses, HELPER_RETRIES);
+  assert.equal(c.calls.length, HELPER_RETRIES + 1);
+  assert.match(r.err, new RegExp(HELPER_NOT_UP.slice(0, 40).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(HELPER_NOT_UP, /run the same command again in a few seconds/);
+  assert.match(HELPER_NOT_UP, /start a new session in this folder/);
+});
+
+test('a refusal, a sandbox\'s refusal or a helper that answered too slowly is not asked again', async () => {
+  for (const refused of ['not expected', 'the host helper could not be reached: this command\'s sandbox kept it from the helper', 'the host helper did not answer in time']) {
+    const c = fakeClient({ apply: { ok: false, refused } });
+    let pauses = 0;
+    const r = await run(['apply', '2', H], { client: c, sleep: async () => { pauses += 1; } });
+    assert.equal(r.code, 1);
+    assert.equal(pauses, 0);
+    assert.equal(c.calls.length, 1);
+    assert.match(r.err, new RegExp(refused.slice(0, 20)));
+  }
 });
