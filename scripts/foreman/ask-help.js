@@ -102,7 +102,7 @@ export function stuckCardFor(views, { work, phase = null, still = 0, pr = null }
   const own = Object.values(views?.questions ?? {}).filter((q) => questionIdOf(q?.question?.data?.id)?.work === work && questionIdOf(q.question.data.id).foreman);
   if (own.some((q) => q.answer === null)) return { skip: 'the Bosun has asked already' };
   const n = Math.max(FOREMAN_QUESTIONS, ...own.map((q) => questionIdOf(q.question.data.id).n)) + 1;
-  const data = { id: `q-${work}-${n}`, work, ...stuckQuestion(work, { phase, still, findings: holdingReview(views, pr) !== null }) };
+  const data = { id: `q-${work}-${n}`, work, ...(phase === null ? {} : { stage: phase }), ...stuckQuestion(work, { phase, still, findings: holdingReview(views, pr) !== null }) };
   const problem = questionProblem(data);
   return problem === null ? { data } : { skip: `the card can't be composed: ${problem}` };
 }

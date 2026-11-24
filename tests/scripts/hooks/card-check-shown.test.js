@@ -215,3 +215,35 @@ test('the holder\'s Stop refreshes the seat', async () => {
     assert.ok(Date.parse(readSeat(P).seenAt) > Date.parse(old));
   });
 });
+
+test('a card raised at a feature\'s stage is refused once the feature has moved past that stage', async () => {
+  const os = await import('node:os');
+  const { keep } = await import('../../helpers/decisions-world.js');
+  const { makeEvent } = await import('../../../scripts/state/events.js');
+  const { composeCard, answerInput } = await import('../../../scripts/cards/compose.js');
+  const { featurePaths, writeStatus } = await import('../../../scripts/feature/files.js');
+  await inHomeOff(async () => {
+    turnOff();
+    const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-tree-'));
+    fs.mkdirSync(path.join(tree, '.wheelhouse', 'feature'), { recursive: true });
+    const status = (phase) => writeStatus(featurePaths(tree).status, { v: 1, work: 'w-tide-1', lane: 'quick', phase, task: null, fixRound: null, waitingOn: null, head: null, pr: null, slice: null, tokens: null, updatedAt: '2026-11-08T01:00:00.000Z' });
+    const data = {
+      id: 'q-w-tide-1-901', work: 'w-tide-1', stage: 'ready-to-build', what: 'Add a greeting line has not moved for 20 minutes. What should happen?',
+      why: 'Nothing has moved it on.', options: [{ label: 'Restart the builder', says: 'act restart w-tide-1' }, { label: 'Wait', says: 'Nothing to do now' }],
+      recommendation: 'Restart the builder', level: 2,
+    };
+    keep(makeEvent({ kind: 'question', data, now: () => new Date('2026-11-08T01:00:00.000Z') }));
+    keep(makeEvent({ kind: 'feature', data: { work: 'w-tide-1', step: 'building', worktree: tree }, now: () => new Date('2026-11-08T01:00:01.000Z') }));
+    const { card } = composeCard(answerInput(data, data.work));
+    keep(makeEvent({ kind: 'card', data: card, now: () => new Date('2026-11-08T01:00:02.000Z') }));
+    const input = { cwd: '/x', session_id: 's-desk', hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: [asQuestion({ data: card })] } };
+    const ask = () => decide(input, { projectOf: () => ({ project: P }), env: {}, writeVia: 'self' });
+    status('ready-to-build');
+    assert.equal((await ask())?.hookSpecificOutput?.permissionDecision, undefined, 'still at its stage: asked');
+    status('pr-open');
+    const out = await ask();
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
+    assert.match(out.hookSpecificOutput.permissionDecisionReason, /ready-to-build.*pr-open now/);
+    fs.rmSync(tree, { recursive: true, force: true });
+  });
+});
