@@ -29,6 +29,7 @@ import { removeFolder } from '../../helpers/remove.js';
 import { stopWatcher } from '../../../scripts/foreman/start.js';
 import { beingSetUp, removedFrom } from '../../../scripts/hooks/kit.js';
 import { addCopy, lineageFixture, SHA } from '../../helpers/lineage.js';
+import { writeSignInFact } from '../../../scripts/lib/sign-in-gate.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
 import { helperAddress, keysDir, computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { lowNodeReady, selfTestFile } from '../../../scripts/windows/low.js';
@@ -1175,6 +1176,19 @@ test('in the project\'s main folder the reload names the front desk\'s playbook,
     const f = fake({ views: { ...VIEWS, damaged: ['events/bad.json could not be read'] } });
     const stopped = text(await run(f, { env: {}, stopState: () => ({ on: true, by: 'prompt', at: 'now' }) })).split('\n');
     assert.deepEqual(stopped.slice(0, 4), ['All stop is on (set by prompt at now)', 'Damaged state:', '- events/bad.json could not be read', FRONT_DESK_LINE]);
+  });
+});
+
+test('the Builders line states the recorded sign-in fact, to the First Mate only', async () => {
+  await withHome(async () => {
+    const builders = (out) => text(out).split('\n').filter((l) => l.startsWith('Builders:'));
+    assert.deepEqual(builders(await run(fake(), { env: {} })), ['Builders: background as `claude`']);
+    writeSignInFact(wheelhouseHome(), 'claude-code:background', { kind: 'not-signed-in', since: new Date(2026, 10, 24, 14, 2).toISOString(), command: 'claude', excerpt: 'Not logged in', starts: 1 });
+    assert.deepEqual(builders(await run(fake(), { env: {} })), ['Builders: background as `claude` · can\'t sign in since 14:02 (not signed in)']);
+    // A fact file that can't be read is said, never left out.
+    fs.writeFileSync(path.join(wheelhouseHome(), 'sign-in.json'), '{');
+    const [damaged] = builders(await run(fake(), { env: {} }));
+    assert.match(damaged, /^Builders: background as `claude` · .*sign-in\.json can't be read: line 1, column 2\./);
   });
 });
 

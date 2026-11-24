@@ -10,7 +10,9 @@ import path from 'node:path';
 import {
   makeWaker, writeWake, readWake, wakesDir, sessionModeOf, featureModeOf, sessionEnv, spawnDetached, pidAlive, processStartTime, makeStartTimes,
   outboxFile, runningFile, sessionFile, lostFile, grantsUsedFile, watcherDir, PROMPTS, MAX_RUN_MS, STARTING_MS, windowsBuildsOf, premiumRestFile,
+  startsDir, failingFile, startHold, clearStartFailures,
 } from '../../../scripts/watcher/waker.js';
+import { readSignIn } from '../../../scripts/lib/sign-in-gate.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { briefHash, featurePaths } from '../../../scripts/feature/files.js';
 import { recordInState, briefFields, briefText } from '../../helpers/foreman.js';
@@ -1476,7 +1478,7 @@ test('a premium wake refused for its usage limit rests the premium model and run
   const again = fake.calls[1];
   assert.ok(again.args.includes('--resume'));
   assert.deepEqual(sessionFlags(again.args), { model: 'model-top', effort: 'xhigh', fallback: 'model-mid' });
-  assert.equal(again.output, undefined, 'no premium output kept for it');
+  assert.match(again.output, /[\\/]starts[\\/]/, 'no premium output kept for it: only the start output kept to classify it');
   fake.end(again.pid, 0);
   await flush();
 
@@ -1546,7 +1548,7 @@ test('the rest holds on this computer when its record can\'t be raised, and a wa
   fake.end(fake.calls[1].pid, 0);
   await flush();
   await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page', 'n1')));
-  assert.equal(fake.calls.at(-1).output, undefined);
+  assert.match(fake.calls.at(-1).output, /[\\/]starts[\\/]/); // not the premium log
 }));
 
 test('a session is started with the running node on its PATH when the PATH has none', () => withHome(async () => {
@@ -1851,4 +1853,175 @@ test('a damaged settings file keeps the wake waiting, says why once, and never f
   fs.writeFileSync(settings, '{}');
   await w.pump();
   assert.equal(fake.calls.length, 1, 'started once mended');
+}));
+
+// --- The sign-in gate and failing starts (builders design, section 10) ---
+
+const NOT_LOGGED_IN = 'Not logged in · Please run /login\n';
+const GATE = "not started: builders can't sign in";
+// A started process ends with `output` in its kept output file and `code`.
+async function endWith(fake, call, output, code = 1) {
+  if (output !== null) fs.appendFileSync(call.output, output);
+  fake.end(call.pid, code);
+  await flush();
+}
+function gateSetup(over = {}) {
+  const dirA = worktree();
+  const dirB = worktree();
+  const fake = fakeRun({ exits: true });
+  const raised = [];
+  const errors = [];
+  const w = waker(fake, {
+    locate: (work) => ({ 'a-page': dirA, 'b-page': dirB })[work] ?? null,
+    raise: async (r) => { raised.push(r); },
+    onError: (e) => errors.push(e),
+    ...over,
+  });
+  const start = (work) => w.startFeature({ work, worktree: work === 'a-page' ? dirA : dirB, briefFile: featurePaths(work === 'a-page' ? dirA : dirB).brief });
+  return { w, fake, raised, errors, start, dirA, dirB };
+}
+
+test('one sign-in failure writes the fact and nothing starts on that route for any project', () => withHome(async () => {
+  const { w, fake, raised, start } = gateSetup();
+  await start('a-page');
+  await endWith(fake, fake.calls[0], NOT_LOGGED_IN);
+  const read = readSignIn(wheelhouseHome());
+  assert.equal(read.ok, true);
+  const fact = read.facts['claude-code:background'];
+  assert.equal(fact.kind, 'not-signed-in');
+  assert.equal(fact.starts, 1);
+  assert.equal(fact.command, 'claude');
+  assert.match(fact.excerpt, /Not logged in/);
+  // Another piece's start is refused, with the gate's own line; nothing is started.
+  await assert.rejects(() => start('b-page'), (error) => error.message.startsWith(GATE));
+  assert.equal(fake.calls.length, 1);
+  // One card, once, in the section 10.4 words.
+  const cards = raised.filter((r) => r.kind === 'note' && /Builders can't sign in on this computer/.test(r.data.words));
+  assert.equal(cards.length, 1);
+  assert.match(cards[0].data.words, /1 builder start failed at \d\d:\d\d\. `claude` said it isn't logged in\. Work is waiting; nothing is retrying\./);
+}));
+
+test('no retry after a sign-in failure: further ticks start no process, a wake waits queued, and the card is written once', () => withHome(async () => {
+  const { w, fake, raised, errors, start } = gateSetup();
+  await start('a-page');
+  await endWith(fake, fake.calls[0], NOT_LOGGED_IN);
+  await w.wakeFeature('a-page', writeWake(P, featureBundle('a-page', 'n1')));
+  for (let i = 0; i < 10; i += 1) {
+    w.clock.move(20 * MIN);
+    await w.pump();
+  }
+  assert.equal(fake.calls.length, 1);
+  assert.equal(w.waiting().length, 1, 'the wake stays queued');
+  assert.equal(w.waiting()[0].failures ?? 0, 0, 'no failure counted against it');
+  assert.ok(errors.some((e) => e.startsWith(GATE)));
+  assert.equal(raised.filter((r) => r.kind === 'note' && /can't sign in/.test(r.data.words)).length, 1);
+}));
+
+test('a wake whose start fails to sign in goes again with no failure counted', () => withHome(async () => {
+  const dir = worktree();
+  keepSession('a-page', dir);
+  const fake = fakeRun({ exits: true });
+  const w = waker(fake, { locate: () => dir });
+  await w.wakeFeature('a-page', writeWake(P, featureBundle('a-page', 'n1')));
+  assert.equal(fake.calls.length, 1);
+  await endWith(fake, fake.calls[0], 'Invalid API key · Please run /login\n');
+  assert.equal(w.waiting().length, 1);
+  assert.equal(w.waiting()[0].failures ?? 0, 0);
+  assert.equal(readSignIn(wheelhouseHome()).facts['claude-code:background'].kind, 'not-signed-in');
+}));
+
+test('three same-kind other failures in a row hold the piece and write start-failing; another piece still starts', () => withHome(async () => {
+  const { w, fake, raised, start } = gateSetup();
+  await start('a-page');
+  await endWith(fake, fake.calls[0], 'Error: it fell over\n');
+  for (const n of [1, 2]) {
+    await w.wakeFeature('a-page', writeWake(P, featureBundle('a-page', `n${n}`)));
+    w.clock.move(20 * MIN);
+    await w.pump();
+    assert.equal(fake.calls.length, n + 1);
+    await endWith(fake, fake.calls[n], 'Error: it fell over\n');
+  }
+  assert.deepEqual(raised.filter((r) => r.kind === 'start-failing').map((r) => r.data), [{ work: 'a-page', kind: 'other', starts: 3 }]);
+  assert.equal(readSignIn(wheelhouseHome()).facts['claude-code:background'], undefined, 'no sign-in fact for an ordinary failure');
+  // The fourth tick starts nothing for that piece.
+  w.clock.move(20 * MIN);
+  await w.pump();
+  assert.equal(fake.calls.length, 3);
+  assert.ok(startHold(P, 'a-page') !== null);
+  // Another piece still starts.
+  await start('b-page');
+  assert.equal(fake.calls.length, 4);
+  // And the held piece starts again once its hold is lifted.
+  clearStartFailures(P, 'a-page');
+  w.clock.move(20 * MIN);
+  await w.pump();
+  assert.equal(fake.calls.length, 5);
+}));
+
+test('a success in between ends the run of failures', () => withHome(async () => {
+  const { w, fake, start } = gateSetup();
+  await start('a-page');
+  await endWith(fake, fake.calls[0], 'Error: it fell over\n');
+  await w.wakeFeature('a-page', writeWake(P, featureBundle('a-page', 'n1')));
+  w.clock.move(20 * MIN);
+  await w.pump();
+  await endWith(fake, fake.calls[1], 'done\n', 0);
+  assert.equal(startHold(P, 'a-page'), null);
+  assert.ok(!fs.existsSync(failingFile(P, 'a-page')), 'the count is forgotten');
+}));
+
+test('a malformed sign-in.json holds starts and names the file (review focus 2)', () => withHome(async () => {
+  const { w, fake, errors, start } = gateSetup();
+  fs.mkdirSync(wheelhouseHome(), { recursive: true });
+  fs.writeFileSync(path.join(wheelhouseHome(), 'sign-in.json'), '{ "claude-code:background": { "kind": "other", }\n');
+  await assert.rejects(() => start('a-page'), (error) => error.message.startsWith(GATE) && error.message.includes('sign-in.json') && /line \d+, column \d+/.test(error.message));
+  await w.wakeFeature('a-page', writeWake(P, featureBundle('a-page', 'n1')));
+  await w.pump();
+  assert.equal(fake.calls.length, 0);
+  assert.ok(errors.some((e) => e.includes('sign-in.json')));
+  // A file that holds the wrong shape is no better than a damaged one.
+  fs.writeFileSync(path.join(wheelhouseHome(), 'sign-in.json'), '[]\n');
+  await assert.rejects(() => start('a-page'), (error) => error.message.includes('sign-in.json'));
+}));
+
+test('the excerpt is cleaned and at most 200 characters; command is the program\'s name only', () => withHome(async () => {
+  const { fake, start } = gateSetup({ claude: { kind: 'direct', file: '/opt/some folder/bin/claude' } });
+  await start('a-page');
+  await endWith(fake, fake.calls[0], `Not logged in\n\u0007\tvia https://user:secret@example.com/x ${'word '.repeat(80)}\n`);
+  const fact = readSignIn(wheelhouseHome()).facts['claude-code:background'];
+  assert.ok(fact.excerpt.length <= 200, String(fact.excerpt.length));
+  assert.ok(!/[\u0000-\u001F]/.test(fact.excerpt));
+  assert.ok(!fact.excerpt.includes('secret'));
+  assert.equal(fact.command, 'claude');
+}));
+
+test('the start\'s output file is deleted after classifying, and one older than 24 hours is swept', () => withHome(async () => {
+  const { w, fake, start } = gateSetup();
+  await start('a-page');
+  const out = fake.calls[0].output;
+  assert.equal(path.dirname(out), startsDir(P));
+  await endWith(fake, fake.calls[0], 'ok\n', 0);
+  assert.ok(!fs.existsSync(out), 'deleted once classified');
+  fs.mkdirSync(startsDir(P), { recursive: true });
+  const old = path.join(startsDir(P), 'old-2026-10-18T09-00-00-000Z.out');
+  const fresh = path.join(startsDir(P), 'fresh.out');
+  fs.writeFileSync(old, 'x');
+  fs.writeFileSync(fresh, 'x');
+  const long = new Date(T0 - 25 * 60 * MIN);
+  fs.utimesSync(old, long, long);
+  fs.utimesSync(fresh, new Date(T0), new Date(T0));
+  await w.prune();
+  assert.ok(!fs.existsSync(old));
+  assert.ok(fs.existsSync(fresh));
+}));
+
+test('a program that is not found shuts the route as no-program', () => withHome(async () => {
+  const { w, fake, start } = gateSetup({
+    run: () => { throw Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' }); },
+  });
+  void fake;
+  await assert.rejects(() => start('a-page'), /ENOENT/);
+  const fact = readSignIn(wheelhouseHome()).facts['claude-code:background'];
+  assert.equal(fact.kind, 'no-program');
+  assert.equal(w.waiting().length, 0);
 }));

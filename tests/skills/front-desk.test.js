@@ -540,3 +540,12 @@ test('the playbooks call the free-text choice "Type something", as Claude Code\'
   assert.doesNotMatch(read('skills/setup/SKILL.md'), /under Other/);
   assert.doesNotMatch(read('scripts/setup/local.js'), /under Other/);
 });
+
+test('the playbook says the First Mate states only the Builders line and the board, and "I don\'t know yet" otherwise', () => {
+  const section = playbook.split('## When the director asks why work isn\'t moving\n')[1]?.split('\n## ')[0] ?? '';
+  assert.ok(section !== '', 'the section is there');
+  assert.match(section, /Say only what the session start's Builders line and the board say/);
+  assert.match(section, /"I don't know yet\."/);
+  assert.match(section, /Never suggest restarting a session as a fix unless a recorded fact names that as the way out/);
+  assert.match(section, /never write one yourself/);
+});

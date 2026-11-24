@@ -7,6 +7,7 @@ import { DEFAULT_SESSION_MODE, SESSION_MODES, isModelName } from '../../scripts/
 import { FOREGROUND_ONLY, invocation, isClaudeSignIn, resolveClaude, withoutHostVariables } from '../../scripts/lib/claude.js';
 import { PLUGIN_ROOT, foremanTools } from '../../scripts/foreman/tools.js';
 import { EFFORTS } from '../../scripts/routing/thoroughness.js';
+import signInPatterns from './sign-in-patterns.js';
 
 // The variable that tells a hook the session is the foreman's.
 export const ROLE_VARIABLE = 'WHEELHOUSE_ROLE';
@@ -206,4 +207,4 @@ export function finalAnswer(stdout) {
 // takes it (scripts/watcher/waker.js): Claude Code's sessions pass each subagent its model and effort.
 export const takesColumn = true;
 
-export default Object.freeze({ checkForeman, checkFeature, foremanCall, featureStartCall, featureResumeCall, featureHelmCall, whyCall, finalAnswer, takesColumn });
+export default Object.freeze({ checkForeman, checkFeature, foremanCall, featureStartCall, featureResumeCall, featureHelmCall, whyCall, finalAnswer, takesColumn, signInPatterns });

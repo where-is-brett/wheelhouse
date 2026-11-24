@@ -43,6 +43,7 @@ import { readSeen } from '../briefing/seen.js';
 import { readStatus } from '../safekeeping/readings.js';
 import { readFrontDeskModel } from '../lib/front-desk-model.js';
 import { agentSandboxLine } from '../agents/sandbox-line.js';
+import { buildersHealth } from '../lib/sign-in-gate.js';
 import { readLatest, runningVersion, updateFacts } from '../update/board.js';
 
 export const NOT_A_PROJECT = 'This folder isn\'t part of a Wheelhouse project';
@@ -211,6 +212,8 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     frontDeskModel: offline ? null : attempt(() => readFrontDeskModel({ project, folder: record.folder })),
     // The agent's sandbox on this computer, for an agent whose adapter says (agentSandboxLine).
     agentSandbox: !offline && typeof usageAgent === 'string' ? attempt(() => agentSandboxLine(usageAgent)) : undefined,
+    // The Builders line (builders design, section 10.5): how builders start on this computer, and the recorded sign-in fact.
+    builders: attempt(() => buildersHealth({ home: wheelhouseHome(), agent: usageAgent ?? 'claude-code' })),
     // The watcher's own record of how its wakes are going (scripts/watcher/main.js); a small file, so the glance reads it too.
     watcher: attempt(() => readWatcherHealth(project)),
     now: clock(),

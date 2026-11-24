@@ -94,6 +94,7 @@ import { NO_HELPER } from '../lib/host-lines.js';
 import { keptRequest, clearRequest } from '../lib/kept-request.js';
 import { retiredPiece } from '../settings/catalogue.js';
 import { SETTINGS_CHANGED, settingsCardNote } from '../lib/settings-card.js';
+import { buildersLine } from '../lib/sign-in-gate.js';
 
 const SELF = fileURLToPath(import.meta.url);
 // The script that brings this computer's settings for a project up to date, run detached.
@@ -511,7 +512,7 @@ const isBuildsProposal = (u) => u?.kind === 'setting' && [u.key, u.data?.key].so
 // Unattended line after that while it is on. All come before the lists, so the cut at MAX_CHARS
 // never takes them. `sheet` (toolSheetLines) comes after the front desk's line and before the notes and the lists, so
 // a cut takes the briefing and never the tool sheet.
-export function reload({ views, stop, lineage = [], notes, feature, stateRoot, windows, builds, frontDesk = false, aside = null, sheet = [], where = '', events = [] }) {
+export function reload({ views, stop, lineage = [], notes, feature, stateRoot, windows, builds, frontDesk = false, aside = null, sheet = [], where = '', events = [], buildersFact = null }) {
   const lines = [];
   if (stop?.on) lines.push(`All stop is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
   lines.push(...lineage);
@@ -523,6 +524,9 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   lines.push(...section('Damaged state:', damaged));
   if (frontDesk) lines.push(FRONT_DESK_LINE);
   else if (aside !== null) lines.push(aside);
+  // The First Mate's Builders line, stated from the recorded facts (builders design, section 10.5); before the lists, so a cut
+  // never takes it.
+  if (buildersFact !== null) lines.push(buildersFact);
   lines.push(...sheet);
   lines.push(...notes);
   // After a compaction: where the session was (scripts/hooks/where.js), before the lists so a cut takes them first.
@@ -998,9 +1002,19 @@ async function started(input, deps) {
   }
   const text = reload({
     views, events: cardEvents, stop: stopOf(), lineage, notes, feature: madeFeatureSlug(input.cwd), stateRoot, windows, builds, frontDesk, aside: asideNote, where,
+    buildersFact: frontDesk ? buildersLineOf(input) : null,
     sheet: toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: commandRoot({ dir, self }, pluginRoot), platform }),
   });
   return text === '' ? undefined : answer.context('SessionStart', text);
+}
+
+// The Builders line for the front desk's session start: the recorded sign-in fact for the agent this session runs on.
+function buildersLineOf(input) {
+  try {
+    return buildersLine({ home: wheelhouseHome(), agent: agentOfInput(input) ?? 'claude-code' });
+  } catch {
+    return null; // a line that can't be made is left out, as the other facts are
+  }
 }
 
 if (startedAsScript(import.meta.url)) {
