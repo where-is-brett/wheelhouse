@@ -1,7 +1,7 @@
 // probes/97-desktop-builders/run.js
 // Check 97 (builders part 0): what Claude Desktop does with sessions the foreman starts. The pure parts are exported and
 // tested; the rest only runs when the file is started directly:
-//   node probes/97-desktop-builders/run.js prepare <dir>        make the scratch project the sitting runs in
+//   node probes/97-desktop-builders/run.js prepare [dir]       make the scratch project the sitting runs in (default: ~/.wheelhouse-trials/desktop-probe)
 //   node probes/97-desktop-builders/run.js report <try> [dir]   a started session records what it sees of itself
 //   node probes/97-desktop-builders/run.js note <key> <json>    record one finding the foreman read for itself
 //   node probes/97-desktop-builders/run.js scan <title>         look in Desktop's own files for a parent field on a session
@@ -38,7 +38,7 @@ export function notesFor(findings = {}) {
     '<!-- docs/specs/notes/2026-11-24-desktop-probe.md -->',
     '# Desktop probe findings',
     '',
-    'Recorded on 24 November 2026 on the Mac, by the sitting in `probes/97-desktop-builders/README.md`. Parts 6 and 7 of the builders plan follow these.',
+    'Recorded on 24 November 2026 by the sitting in `probes/97-desktop-builders/README.md`. Parts 6 and 7 of the builders plan follow these.',
     '',
   ];
   for (const key of FINDINGS) {
@@ -75,19 +75,57 @@ export function selfReport({ cwd = process.cwd(), env = process.env } = {}) {
   };
 }
 
+// The folder prepare uses when none is given. PowerShell does not expand `~` for node, so the home is read here.
+export const defaultScratch = (homedir = os.homedir()) => path.join(homedir, '.wheelhouse-trials', 'desktop-probe');
+
+// What the hook runs: a node script beside the settings file, its path quoted and written with forward slashes so the
+// same text works in a POSIX shell and on Windows.
+export function hookCommand(dir, platform = process.platform) {
+  const join = platform === 'win32' ? path.win32.join : path.posix.join;
+  return `node "${join(dir, '.claude', 'probe-hook.js').replaceAll('\\', '/')}"`;
+}
+
+const HOOK_SCRIPT = `// .claude/probe-hook.js
+const fs = require('node:fs');
+const path = require('node:path');
+const dir = path.join(__dirname, '..', '.probe');
+fs.mkdirSync(dir, { recursive: true });
+fs.appendFileSync(path.join(dir, 'hook-ran.txt'), \`\${new Date().toISOString()}\\n\`);
+`;
+
 // The scratch project: a git repository with a session-start hook that leaves a marker, so a started session can say
 // whether the project's own hooks ran.
 export function prepareScratch(dir) {
   fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
   fs.mkdirSync(path.join(dir, '.probe'), { recursive: true });
-  const hook = 'node -e "require(\'fs\').appendFileSync(\'.probe/hook-ran.txt\', new Date().toISOString() + \'\\n\')"';
-  fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), `${JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: hook }] }] } }, null, 2)}\n`);
+  fs.writeFileSync(path.join(dir, '.claude', 'probe-hook.js'), HOOK_SCRIPT);
+  fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), `${JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: hookCommand(dir) }] }] } }, null, 2)}\n`);
   fs.writeFileSync(path.join(dir, '.gitignore'), '.probe/\n');
   fs.writeFileSync(path.join(dir, 'README.md'), '# Probe scratch project\n');
   const git = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
   if (!fs.existsSync(path.join(dir, '.git'))) git('init', '-q', '-b', 'main');
   git('add', '-A');
   git('-c', 'user.name=probe', '-c', 'user.email=probe@example.invalid', 'commit', '-q', '-m', 'Probe scratch project', '--allow-empty');
+}
+
+// Where Desktop keeps its own files. The Mac has one folder; Windows has the installer's folder under %APPDATA% and, for a
+// Microsoft Store install, a copy under the package's local cache.
+export function desktopRoots({ platform = process.platform, homedir = os.homedir(), env = process.env } = {}) {
+  if (platform === 'darwin') return [path.join(homedir, 'Library', 'Application Support', 'Claude')];
+  if (platform !== 'win32') return [path.join(homedir, '.config', 'Claude')];
+  const roaming = env.APPDATA ?? path.join(homedir, 'AppData', 'Roaming');
+  const local = env.LOCALAPPDATA ?? path.join(homedir, 'AppData', 'Local');
+  const roots = [path.join(roaming, 'Claude')];
+  let packages = [];
+  try {
+    packages = fs.readdirSync(path.join(local, 'Packages'), { withFileTypes: true });
+  } catch {
+    // no Packages folder: no Store install
+  }
+  for (const entry of packages) {
+    if (entry.isDirectory() && entry.name.startsWith('Claude')) roots.push(path.join(local, 'Packages', entry.name, 'LocalCache', 'Roaming', 'Claude'));
+  }
+  return roots;
 }
 
 // Fields on a record that names the title and look like a parent link. Only the record's own top level is read.
@@ -140,8 +178,9 @@ function* sessionFiles(root, depth = 4) {
 function main(argv) {
   const [command, ...args] = argv;
   if (command === 'prepare') {
-    prepareScratch(path.resolve(args[0]));
-    console.log(`scratch project ready: ${path.resolve(args[0])}`);
+    const dir = path.resolve(args[0] ?? defaultScratch());
+    prepareScratch(dir);
+    console.log(`scratch project ready: ${dir}`);
   } else if (command === 'report') {
     const report = selfReport({ cwd: args[1] ?? process.cwd() });
     const dir = path.join(home(), 'reports');
@@ -152,8 +191,8 @@ function main(argv) {
     save(mergeFindings(readFindings(), { [args[0]]: JSON.parse(args[1]) }));
   } else if (command === 'scan') {
     const found = [];
-    const root = path.join(os.homedir(), 'Library', 'Application Support', 'Claude');
-    for (const file of sessionFiles(root)) {
+    const files = desktopRoots().flatMap((root) => [...sessionFiles(root)]);
+    for (const file of files) {
       let data;
       try {
         data = JSON.parse(fs.readFileSync(file, 'utf8'));
