@@ -77,3 +77,10 @@ export function scanFiles(paths) {
   }
   return hits;
 }
+
+// The text with every likely secret the patterns above find replaced by [hidden].
+export function maskText(text) {
+  let out = String(text);
+  for (const { re } of PATTERNS) out = out.replace(new RegExp(re.source, `${re.flags.replace('g', '')}g`), '[hidden]');
+  return out;
+}
