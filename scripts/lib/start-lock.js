@@ -28,13 +28,14 @@ function holderAlive(file) {
 // Takes the lock and resolves with a function that releases it. One whose process has gone,
 // or that is `staleMs` old, is taken over: renamed to a name of its own and then removed, so
 // a waiter never deletes a lock that someone else has just made in its place. After `waitMs`
-// it rejects with `message`.
-export async function takeStartLock(file, { message, waitMs, staleMs = STALE_MS }) {
+// it rejects with `message`. `extra` is text kept after the process id, on the lines below it (the watcher's lock names
+// its home there); a reader of the process id reads the first line only.
+export async function takeStartLock(file, { message, waitMs, staleMs = STALE_MS, extra = '' }) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const until = Date.now() + waitMs;
   for (;;) {
     try {
-      fs.writeFileSync(file, `${process.pid}\n`, { flag: 'wx' });
+      fs.writeFileSync(file, `${process.pid}\n${extra}`, { flag: 'wx' });
       return () => fs.rmSync(file, { force: true });
     } catch (error) {
       if (error.code !== 'EEXIST' && error.code !== 'EPERM' && error.code !== 'EACCES') throw error;
