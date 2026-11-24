@@ -8,7 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import {
-  ownFilesBaseline, ownFilesChanged, checkOwnFiles, ownFilesLine, readOwnFilesState, pluginFoldersInUse, recordUpdate, changedForProject, fileHash,
+  ownFilesBaseline, ownFilesChanged, checkOwnFiles, ownFilesLine, readOwnFilesState, pluginFoldersInUse, recordUpdate, changedForProject, fileHash, ownFilesFile, acceptOwnFiles,
 } from '../../../scripts/health/own-files.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { g } from '../../helpers/git-fixture.js';
@@ -83,6 +83,38 @@ test('no baseline yet says nothing, and makes one', async () => {
     assert.deepEqual((await checkOwnFiles({ ...l, now: () => new Date('2026-11-02T06:00:00.000Z') })).changed, []);
     assert.deepEqual((await checkOwnFiles({ ...l, now: () => new Date('2026-11-03T06:00:00.000Z') })).changed, [l.files.hook]);
     assert.deepEqual((await checkOwnFiles({ ...l, now: () => new Date('2026-11-05T06:00:00.000Z') })).changed, [l.files.hook], 'still named until the files are accepted');
+  });
+});
+
+test('a write that would shrink own-files.json by more than half is refused and named; uninstall\'s removal is allowed', async () => {
+  const l = layout();
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...l, now: day(2) });
+    const before = readOwnFilesState();
+    const kept = Object.keys(before.others.files).length;
+    assert.ok(kept >= 4, 'a baseline with several files');
+    // Most of the files go: a look afterwards would write a list under half the size.
+    for (const file of [l.files.hook, l.files.agent, l.files.settings, l.files.cleanHook, l.files.cleanSettings, l.files.addon, l.files.login]) fs.rmSync(file);
+    acceptOwnFiles({ ...l, now: day(5) });
+    const named = await checkOwnFiles({ ...l, now: day(5) });
+    assert.match(named.refused, /refused to shrink/);
+    const after = readOwnFilesState();
+    assert.equal(Object.keys(after.others.files).length, kept, 'the list stays as it was');
+    assert.ok(after.shrinkRefused.to * 2 < after.shrinkRefused.from);
+    fs.rmSync(ownFilesFile());
+    assert.equal(readOwnFilesState(), null, 'uninstall removes the file whole');
+  });
+});
+
+test('a small drop in the list is written', async () => {
+  const l = layout();
+  await as(path.join(tempFolder('wh-own-home-'), 'wh'), async () => {
+    await checkOwnFiles({ ...l, now: day(2) });
+    fs.rmSync(l.files.hook);
+    acceptOwnFiles({ ...l, now: day(5) });
+    const next = await checkOwnFiles({ ...l, now: day(5) });
+    assert.equal(next.refused, undefined);
+    assert.equal(readOwnFilesState().shrinkRefused, undefined);
   });
 });
 

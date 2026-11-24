@@ -22,6 +22,7 @@ import { main as cli } from '../../scripts/frontdesk/cli.js';
 import { decide as cardCheck } from '../../scripts/hooks/card-check.js';
 import { decide as promptRecord } from '../../scripts/hooks/prompt-record.js';
 import { runWatcher, projectConfig, lockFile } from '../../scripts/watcher/main.js';
+import { readProject, writeProject } from '../../scripts/lib/projects.js';
 import { makeWaker } from '../../scripts/watcher/waker.js';
 import { readHandled } from '../../scripts/watcher/handled.js';
 import { BUNDLE_MS } from '../../scripts/lib/build-loop.js';
@@ -130,6 +131,12 @@ export async function openDirectorWorld({ recordings = {}, says, lanes = ['quick
       const read = await projectConfig(PROJECT, client);
       if (read.config === null) throw new Error(`no configuration for the watcher: ${read.why}`);
       const config = { ...read.config, watcherShape: 1 };
+      // A watcher serves a project registered in its home.
+      if (readProject(PROJECT) === null) {
+        writeProject(PROJECT, {
+          folder: world.folder, remoteUrl: 'https://github.com/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
+        });
+      }
       const waker = makeWaker({ shape: 2, project: PROJECT, config, print: (line) => lines.push(line), now });
       const result = await runWatcher({
         project: PROJECT, client, config, waker, now,

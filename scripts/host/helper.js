@@ -6922,7 +6922,8 @@ export async function startHelper({
           };
           const result = await checkOwnFiles(where);
           const line = ownFilesLine(result.changed, { ...where, folders: result.folders.map((f) => f.folder) });
-          if (line !== null) lines.ownFilesLine = line;
+          const named = [line, result.refused].filter((l) => typeof l === 'string');
+          if (named.length > 0) lines.ownFilesLine = named.join('. ');
           if (typeof result.calm === 'string') lines.ownFilesCalm = result.calm;
         } catch { /* the look is made again next time */ }
         ownKept = { at: now().getTime(), lines, baseline: baselineTime() };

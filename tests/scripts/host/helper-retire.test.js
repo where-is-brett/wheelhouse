@@ -68,7 +68,7 @@ test('the record is written once the helper listens, and is gone after it closes
   const record = readHelperRecord();
   assert.deepEqual(record, {
     pid: process.pid, startTime: `start of ${process.pid}`, version: PLUGIN.version,
-    root: path.resolve(import.meta.dirname, '..', '..', '..'), address,
+    root: path.resolve(import.meta.dirname, '..', '..', '..'), address, home,
   });
   assert.equal(helperRecordFile(), path.join(home, 'helper.json'));
   assert.equal(fs.statSync(helperRecordFile()).mode & 0o077, 0, 'only the user can read it');

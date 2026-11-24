@@ -166,17 +166,39 @@ export function readOwnFilesState() {
   }
 }
 
+// How many files outside the plugin folders a state keeps a hash for (the older flat shape counts its own). A plugin
+// folder's files come and go with its version, so they are not counted.
+function filesKept(state) {
+  const count = (files) => (files && typeof files === 'object' && !Array.isArray(files) ? Object.keys(files).length : 0);
+  return count(state?.others?.files) + count(state?.files);
+}
+
+export const SHRINK_LINE = 'Wheelhouse refused to shrink the list of files it keeps watch on by more than half. The list stays as it was until you look into why files went missing';
+
+// Writes the state whole. The list only grows during use (uninstall removes the file instead): a write that would keep
+// fewer than half the files the state held is refused, and the state it replaces is kept with a mark the board names.
+// Answers true when the state was written.
 function writeState(state) {
   const file = ownFilesFile();
+  const before = readOwnFilesState();
+  const was = filesKept(before);
+  const now = filesKept(state);
+  const refused = was > 0 && now * 2 < was;
+  const body = refused ? { ...before, shrinkRefused: { at: new Date().toISOString(), from: was, to: now } } : state;
   const temp = `${file}.${process.pid}.tmp`;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(temp, `${JSON.stringify(state)}\n`);
+    fs.writeFileSync(temp, `${JSON.stringify(body)}\n`);
     fs.renameSync(temp, file);
   } catch {
     fs.rmSync(temp, { force: true }); // the look still answers; it is made again next time
+    return false;
   }
+  return !refused;
 }
+
+// The board's words when a write was refused for shrinking the list, as part of a look's answer.
+const refusedOf = (state) => (state?.shrinkRefused ? { refused: SHRINK_LINE } : {});
 
 const updatesOf = (state) => (Array.isArray(state?.updates) ? state.updates : []);
 
@@ -330,7 +352,7 @@ export async function checkOwnFiles({ now = () => new Date(), claudeHome, projec
   });
   if (state === null || typeof state.folders !== 'object' || state.folders === null) {
     acceptOwnFiles({ now, claudeHome, projects, ...where });
-    return { changed: [], ...summary(new Map(), []) };
+    return { changed: [], ...summary(new Map(), []), ...refusedOf(readOwnFilesState()) };
   }
   const sameFolders = folders.length === Object.keys(state.folders).length
     && folders.every((f) => state.folders[f.folder]?.version === f.version);
@@ -339,7 +361,7 @@ export async function checkOwnFiles({ now = () => new Date(), claudeHome, projec
     const changed = Array.isArray(state.changed) ? state.changed : [];
     const result = { changed, ...summary(new Map(folders.map((f) => [f.folder, changed.filter((c) => c.startsWith(f.folder + path.sep))])), changed.filter((c) => !folders.some((f) => c.startsWith(f.folder + path.sep)))) };
     if (typeof state.calm === 'string') result.calm = state.calm;
-    return result;
+    return { ...result, ...refusedOf(state) };
   }
 
   const lookup = treeFor ?? defaultTreeFor({ run, mirror, url });
@@ -394,7 +416,7 @@ export async function checkOwnFiles({ now = () => new Date(), claudeHome, projec
   }
 
   const changed = [...[...changedBy.values()].flat(), ...other].sort();
-  writeState({
+  const written = writeState({
     schema: 2,
     at: state.at ?? at.toISOString(),
     checkedAt: at.toISOString(),
@@ -402,9 +424,10 @@ export async function checkOwnFiles({ now = () => new Date(), claudeHome, projec
     others: { files: Object.fromEntries(nextOthers) },
     updates,
     changed,
+    ...(state.shrinkRefused ? { shrinkRefused: state.shrinkRefused } : {}),
     ...(calm.length > 0 ? { calm: calm.join('\n') } : {}),
   });
-  return { changed, ...(calm.length > 0 ? { calm: calm.join('\n') } : {}), ...summary(changedBy, other) };
+  return { changed, ...(calm.length > 0 ? { calm: calm.join('\n') } : {}), ...summary(changedBy, other), ...(written && !state.shrinkRefused ? {} : { refused: SHRINK_LINE }) };
 }
 
 const defaultMirror = () => path.join(wheelhouseHome(), 'update', 'mirror');

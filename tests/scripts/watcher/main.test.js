@@ -99,12 +99,15 @@ function starter({ alive = () => true } = {}) {
   return { calls, wakerOptions };
 }
 
+// A watcher serves a project registered in its home, so each test's home has the project registered.
+const registeredHome = (fn) => withHome(async (home) => { checkout(); return fn(home); });
+
 const quiet = () => {};
 const copyOf = (record) => path.join(checkout(), '.wheelhouse', 'foreman', 'wakes', path.basename(record));
 // The file a foreman prompt names: after its lead, before its first command.
 const fileIn = (prompt) => prompt.slice(PROMPTS.foreman('').length).replace(/\. First run: [\s\S]*$/, '');
 
-test('a second watcher for the same project does not start', () => withHome(async () => {
+test('a second watcher for the same project does not start', () => registeredHome(async () => {
   let open;
   const gate = new Promise((resolve) => { open = resolve; });
   const first = looker([]);
@@ -125,7 +128,7 @@ test('a second watcher for the same project does not start', () => withHome(asyn
   assert.equal(third.started, true);
 }));
 
-test('a watcher lock left by a process that has gone, or untouched for too long, is taken over', (t) => withHome(async () => {
+test('a watcher lock left by a process that has gone, or untouched for too long, is taken over', (t) => registeredHome(async () => {
   const keep = setInterval(() => {}, 50);
   t.after(() => clearInterval(keep));
   const gone = await spawnDetached(process.execPath, ['-e', '0']);
@@ -143,7 +146,7 @@ test('a watcher lock left by a process that has gone, or untouched for too long,
   assert.equal(b.started, true);
 }));
 
-test('a lock held by another watcher stops this one at its next loop, and is left alone', () => withHome(async () => {
+test('a lock held by another watcher stops this one at its next loop, and is left alone', () => registeredHome(async () => {
   const c = clock();
   const seen = looker([]);
   const result = await runWatcher({
@@ -164,7 +167,7 @@ test('a lock held by another watcher stops this one at its next loop, and is lef
   assert.equal(fs.readFileSync(lockFile(P), 'utf8'), '999999\n');
 }));
 
-test('the cursor is written after each wake, so a crash mid-loop wakes again, not never', () => withHome(async () => {
+test('the cursor is written after each wake, so a crash mid-loop wakes again, not never', () => registeredHome(async () => {
   const c = clock();
   // The bundle falls due on the fifth loop (BUNDLE_MS after the first), and its wake fails there.
   const crashing = fakeWaker({ onForeman: () => { throw new Error('the watcher stopped here'); } });
@@ -192,7 +195,7 @@ test('the cursor is written after each wake, so a crash mid-loop wakes again, no
   assert.deepEqual(later.wakes, []);
 }));
 
-test('a crash after the outbox is saved but before the cursor is written repeats the wake, which then goes once', () => withHome(async () => {
+test('a crash after the outbox is saved but before the cursor is written repeats the wake, which then goes once', () => registeredHome(async () => {
   checkout();
   const c = clock();
   const live = new Set();
@@ -220,7 +223,7 @@ test('a crash after the outbox is saved but before the cursor is written repeats
   assert.deepEqual(readWake(merged).events.map((e) => e.id), ['ev-1']);
 }));
 
-test('a bundle whose wake can never be written is reported and dropped, and the rest go on', () => withHome(async () => {
+test('a bundle whose wake can never be written is reported and dropped, and the rest go on', () => registeredHome(async () => {
   const c = clock();
   const waker = fakeWaker();
   const prs = { 7: { work: 'Not A Slug', head: 'h1', ci: 'failure', mergeable: 'yes', review: 'none' } };
@@ -233,7 +236,7 @@ test('a bundle whose wake can never be written is reported and dropped, and the 
   assert.match(health.lastError.message, /Not A Slug couldn't be written and was dropped/);
 }));
 
-test('each loop writes health.json with the pid, the time, the shape, and the last good loop and error', () => withHome(async () => {
+test('each loop writes health.json with the pid, the time, the shape, and the last good loop and error', () => registeredHome(async () => {
   const c = clock();
   await runWatcher({ project: P, config: config({ watcherShape: 2 }), observe: looker([]).observe, waker: fakeWaker(), loops: 3, now: c.now, sleep: c.sleep, log: quiet });
   const health = JSON.parse(fs.readFileSync(healthFile(P), 'utf8'));
@@ -249,14 +252,14 @@ test('each loop writes health.json with the pid, the time, the shape, and the la
   assert.equal(after.lastOk, new Date(T0 + 30 * SEC).toISOString(), 'written at the next loop: the last good one before it');
 }));
 
-test('awake time counts a sleep of the computer as at most one loop', () => withHome(async () => {
+test('awake time counts a sleep of the computer as at most one loop', () => registeredHome(async () => {
   const c = clock({ 2: 10 * HOUR });
   const seen = looker([]);
   await runWatcher({ project: P, config: config(), observe: seen.observe, waker: fakeWaker(), loops: 4, now: c.now, sleep: c.sleep, log: quiet });
   assert.deepEqual(seen.calls.map((x) => x.awake), [0, 15 * SEC, 30 * SEC, 15 * SEC]);
 }));
 
-test('a watcher off for over a week wakes the foreman once, to read the views', () => withHome(async () => {
+test('a watcher off for over a week wakes the foreman once, to read the views', () => registeredHome(async () => {
   const old = new Date(T0 - LOOKBACK_MS - SEC).toISOString();
   writeCursor(P, { seen: [], prev: { at: old, seq: 3, features: {}, prs: {}, testMerges: [], stop: false }, held: null });
   const c = clock();
@@ -284,7 +287,7 @@ test('a watcher off for over a week wakes the foreman once, to read the views', 
   assert.deepEqual(quietWaker.wakes, []);
 }));
 
-test('a long gap while the watcher runs (a computer asleep for over a week) wakes the foreman at the next loop', () => withHome(async () => {
+test('a long gap while the watcher runs (a computer asleep for over a week) wakes the foreman at the next loop', () => registeredHome(async () => {
   const c = clock({ 2: 8 * DAY });
   const waker = fakeWaker();
   await runWatcher({ project: P, config: config(), observe: looker([]).observe, waker, loops: 4, now: c.now, sleep: c.sleep, log: quiet });
@@ -294,7 +297,7 @@ test('a long gap while the watcher runs (a computer asleep for over a week) wake
   assert.equal(wake.events[0].detail.since, new Date(T0 + 15 * SEC).toISOString());
 }));
 
-test('under STOP the loop observes and records, but starts and wakes nothing until it lifts', () => withHome(async () => {
+test('under STOP the loop observes and records, but starts and wakes nothing until it lifts', () => registeredHome(async () => {
   checkout();
   const { calls, wakerOptions } = starter({ alive: () => false });
   const c = clock();
@@ -317,7 +320,7 @@ test('under STOP the loop observes and records, but starts and wakes nothing unt
   assert.equal(calls[0].env.WHEELHOUSE_ROLE, 'foreman');
 }));
 
-test('a foreman is started for a due bundle, and a configuration that says Shape 2 starts it the same', () => withHome(async () => {
+test('a foreman is started for a due bundle, and a configuration that says Shape 2 starts it the same', () => registeredHome(async () => {
   checkout();
   const { calls, wakerOptions } = starter();
   const lines = [];
@@ -334,7 +337,7 @@ test('a foreman is started for a due bundle, and a configuration that says Shape
   assert.deepEqual(lines, []);
 }));
 
-test('the configuration comes from the default branch through the helper, never the working copy', () => withHome(async () => {
+test('the configuration comes from the default branch through the helper, never the working copy', () => registeredHome(async () => {
   const main = checkout();
   // The working copy says Shape 2 and bypass: an agent could have written it. It is never read.
   fs.mkdirSync(path.join(main, '.claude'), { recursive: true });
@@ -359,7 +362,7 @@ test('the configuration comes from the default branch through the helper, never 
   assert.equal(fs.existsSync(lockFile(P)), false);
 }));
 
-test('until the configuration is read, the watcher wakes and starts nothing, asks again each loop, and says why', () => withHome(async () => {
+test('until the configuration is read, the watcher wakes and starts nothing, asks again each loop, and says why', () => registeredHome(async () => {
   checkout();
   let answer = { ok: false, refused: 'the helper is not running' };
   let asks = 0;
@@ -385,7 +388,7 @@ test('until the configuration is read, the watcher wakes and starts nothing, ask
   assert.equal(JSON.parse(fs.readFileSync(healthFile(P), 'utf8')).shape, 1);
 }));
 
-test('the command line gives the watcher the handled ids and the foreman its tools', () => withHome(async () => {
+test('the command line gives the watcher the handled ids and the foreman its tools', () => registeredHome(async () => {
   const options = cliOptions(P);
   assert.equal(options.project, P);
   assert.deepEqual(options.wakerOptions, { foremanTools: foremanTools() });
@@ -414,7 +417,7 @@ test('the command line gives the watcher the handled ids and the foreman its too
   assert.deepEqual(calls[0].args.slice(4), ['--permission-mode', 'acceptEdits', '--model', 'model-a', '--effort', 'medium', '--allowedTools', ...foremanTools()]);
 }));
 
-test('approved work whose wake was lost is raised again to the Bosun by the recovery', () => withHome(async () => {
+test('approved work whose wake was lost is raised again to the Bosun by the recovery', () => registeredHome(async () => {
   checkout();
   const c = clock();
   const fake = fakeWaker();
@@ -428,7 +431,7 @@ test('approved work whose wake was lost is raised again to the Bosun by the reco
   assert.deepEqual(readWake(fake.wakes[0][1]).events.map((e) => e.work), ['w1']);
 }));
 
-test('the watcher reads the configuration again each loop; one that cannot be read keeps the last good one', () => withHome(async () => {
+test('the watcher reads the configuration again each loop; one that cannot be read keeps the last good one', () => registeredHome(async () => {
   checkout();
   const c = clock();
   const given = [];
@@ -444,7 +447,7 @@ test('the watcher reads the configuration again each loop; one that cannot be re
   assert.deepEqual(given, ['model-b'], 'taken once; the unreadable answers change nothing');
 }));
 
-test('the routine takes what it can make by script, and the foreman is woken only for what is left, with its reason', () => withHome(async () => {
+test('the routine takes what it can make by script, and the foreman is woken only for what is left, with its reason', () => registeredHome(async () => {
   const a = { id: 'ev-a', kind: 'incident', data: { id: 'outage-a', what: 'Down' } };
   const b = { id: 'ev-b', kind: 'incident', data: { id: 'outage-b', what: 'Down again' } };
   const seen = [];
@@ -470,7 +473,7 @@ test('the routine takes what it can make by script, and the foreman is woken onl
   assert.deepEqual(wake.digest.map((e) => [e.id, e.handled]), [['ev-a', true]], 'the handled event goes to the digest');
 }));
 
-test('main: removes orphan holds at start', () => withHome(async () => {
+test('main: removes orphan holds at start', () => registeredHome(async () => {
   const mk = (work) => {
     fs.mkdirSync(path.dirname(holdFile(P, work)), { recursive: true });
     fs.writeFileSync(holdFile(P, work), '{}\n');
@@ -491,7 +494,7 @@ test('main: removes orphan holds at start', () => withHome(async () => {
   assert.equal(fs.existsSync(holdFile(P, 'orphan')), true);
 }));
 
-test('main: hands back a closed terminal\'s hold at start', () => withHome(async () => {
+test('main: hands back a closed terminal\'s hold at start', () => registeredHome(async () => {
   await openTestRecord({ project: P });
   await takeHold(P, { work: 'closed', sessionId: 's-1' });
   markOpened(P, 'closed', { pid: 4242, startTime: 'Sun Nov  8 02:00:00 2026' });
@@ -502,4 +505,81 @@ test('main: hands back a closed terminal\'s hold at start', () => withHome(async
   await runWatcher({ project: P, client, config: config(), observe: looker([]).observe, waker: fakeWaker(), helm, loops: 1, sleep: async () => {}, log: quiet });
   assert.equal(fs.existsSync(holdFile(P, 'closed')), false);
   assert.deepEqual(woken, ['closed']);
+}));
+
+// --- One home per watcher (design 12A.1, 12A.2) ---
+
+test('a watcher\'s lock records the home it serves', () => registeredHome(async (home) => {
+  checkout();
+  let seen = null;
+  const first = looker([]);
+  await runWatcher({
+    project: P, config: config(), waker: fakeWaker(), loops: 2, log: quiet, sleep: async () => {},
+    observe: async (args) => { seen ??= fs.readFileSync(lockFile(P), 'utf8'); return first.observe(args); },
+  });
+  const { homeOf } = await import('../../../scripts/lib/standard-env.js');
+  assert.equal(seen.split('\n')[0], String(process.pid));
+  assert.equal(homeOf(seen), home);
+}));
+
+test('a watcher whose project isn\'t registered in its home exits on its next tick and writes nothing outside it', () => registeredHome(async (home) => {
+  checkout();
+  const looks = looker([]);
+  const outside = tempFolder('wh-outside-');
+  const before = fs.readdirSync(outside);
+  const answer = await runWatcher({
+    project: P, config: config(), waker: fakeWaker(), loops: 5, log: quiet, observe: looks.observe,
+    sleep: async () => { fs.rmSync(path.join(home, 'projects', P, 'project.json')); },
+  });
+  assert.equal(answer.started, true);
+  assert.equal(answer.loops, 1, 'it stopped on the tick after the registration went');
+  assert.match(answer.stopped, /isn't registered/);
+  assert.equal(looks.calls.length, 1);
+  assert.deepEqual(fs.readdirSync(outside), before);
+}));
+
+test('a watcher whose home is gone exits on its next tick', () => registeredHome(async (home) => {
+  checkout();
+  const answer = await runWatcher({
+    project: P, config: config(), waker: fakeWaker(), loops: 5, log: quiet, observe: looker([]).observe,
+    sleep: async () => { fs.rmSync(home, { recursive: true, force: true }); },
+  });
+  assert.equal(answer.loops, 1);
+  assert.match(answer.stopped, /home is gone/);
+  assert.equal(fs.existsSync(home), false, 'nothing is written back into it');
+}));
+
+test('a held project\'s watcher exits on its next tick', () => registeredHome(async () => {
+  const folder = checkout();
+  const record = readProject(P);
+  const answer = await runWatcher({
+    project: P, config: config(), waker: fakeWaker(), loops: 5, log: quiet, observe: looker([]).observe,
+    sleep: async () => { writeProject(P, { ...record, folder, held: true }); },
+  });
+  assert.equal(answer.loops, 1);
+  assert.match(answer.stopped, /held/);
+}));
+
+test('a throwaway home\'s watcher stops an hour after the last session there', () => registeredHome(async (home) => {
+  checkout();
+  const { recordLastSession } = await import('../../../scripts/lib/standard-env.js');
+  const c = clock();
+  recordLastSession(home, { now: c.now });
+  const answer = await runWatcher({
+    project: P, config: config(), waker: fakeWaker(), loops: 10, log: quiet, observe: looker([]).observe, now: c.now, sleep: c.sleep,
+    intervals: { features: 30 * 60 * SEC },
+  });
+  assert.equal(answer.loops, 3, 'it ran at 0, 30 and 60 minutes, and stopped at 90');
+  assert.match(answer.stopped, /for an hour/);
+}));
+
+test('a home with no session recorded is not stopped for idleness', () => registeredHome(async () => {
+  checkout();
+  const c = clock();
+  const answer = await runWatcher({
+    project: P, config: config(), waker: fakeWaker(), loops: 4, log: quiet, observe: looker([]).observe, now: c.now, sleep: c.sleep,
+    intervals: { features: 30 * 60 * SEC },
+  });
+  assert.equal(answer.stopped, undefined);
+  assert.equal(answer.loops, 4, 'it ran every loop');
 }));

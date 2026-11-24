@@ -65,11 +65,11 @@ Where your conversations, transcripts and records go, and what uninstall removes
 
 What Wheelhouse protects you from, what it doesn't, and how to report a problem are in [`SECURITY.md`](SECURITY.md). Setup switches these protections on by itself; on a Mac you can also choose **Make it stricter** when it asks how to connect to GitHub or GitLab.
 
-## A second or throwaway home
+## Trying Wheelhouse without touching your usual setup
 
 Wheelhouse keeps its records on a computer in one folder, `.wheelhouse` in your home folder. To try it in a folder of its own (a rehearsal, or a second set-up that must not touch the first), give the folder to the session in one of two ways.
 
-**In the product's Claude settings.** Put this in `.claude/settings.local.json` in the product's folder, before the first Wheelhouse chat there, with a full path:
+**In the product's Claude settings.** Put this in `.claude/settings.json` in the trial project's folder (or `.claude/settings.local.json`, which stays on your computer), before the first Wheelhouse chat there, with a full path. It reaches Desktop and terminal sessions alike:
 
 ```json
 { "env": { "WHEELHOUSE_HOME": "/Users/you/wheelhouse-trial" } }
@@ -84,7 +84,7 @@ export WHEELHOUSE_HOME="$HOME/wheelhouse-trial"         # macOS
 $env:WHEELHOUSE_HOME = "$HOME\wheelhouse-trial"          # Windows PowerShell
 ```
 
-The build engine's folder moves with it, to the same name with `-engine` added. A computer with a home of its own gets no start-up entry (no Run entry on Windows, no launch agent loaded on a Mac), on purpose: that entry belongs to the real home, and a trial must never replace it. Take the home out by deleting its folder.
+Wheelhouse's own background processes (its helper and each project's watcher) start with a clean environment of their own and serve one home each, so a trial's processes never write to your usual home. A trial's processes stop an hour after the last session in that home ends. The build engine's folder moves with it, to the same name with `-engine` added. A computer with a home of its own gets no start-up entry (no Run entry on Windows, no launch agent loaded on a Mac), on purpose: that entry belongs to the real home, and a trial must never replace it. Ending a trial is All stop, then deleting the folder.
 
 ## Updating
 

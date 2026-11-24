@@ -64,6 +64,9 @@ import { readConfig } from '../gate/guardrails.js';
 import { helperClient } from '../host/helper-client.js';
 import { runsByLauncher } from '../lib/crew-names.js';
 import { takeStartLock } from '../lib/start-lock.js';
+import { wheelhouseHome } from '../lib/paths.js';
+import { projectHeld, readProject } from '../lib/projects.js';
+import { throwawayIdle } from '../lib/standard-env.js';
 import { PROTECTED_KINDS, makeEvent } from '../state/events.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -163,13 +166,24 @@ export async function runWatcher({
 
   watcherFolder(project);
   const lock = lockFile(project);
+  // The home this watcher serves, recorded in its lock. It never writes outside it.
+  const served = wheelhouseHome();
   let release;
   try {
-    release = await takeStartLock(lock, { message: 'A watcher is already running for this project', waitMs: 0 });
+    release = await takeStartLock(lock, { message: 'A watcher is already running for this project', waitMs: 0, extra: `${served}\n` });
   } catch {
     return { started: false };
   }
-  const mine = `${process.pid}\n`;
+  const mine = `${process.pid}\n${served}\n`;
+  // Why this watcher has no business running, or null: its home is gone, its project isn't registered in that home, the
+  // project is held, or it is a throwaway home whose last session ended over an hour ago.
+  const noBusiness = () => {
+    if (!fs.existsSync(served)) return 'its home is gone';
+    if (readProject(project) === null) return "its project isn't registered in its home";
+    if (projectHeld(project)) return 'its project is held';
+    if (throwawayIdle(served, { now })) return 'no session of its home has run for an hour';
+    return null;
+  };
   const stillMine = () => {
     try {
       return fs.readFileSync(lock, 'utf8') === mine;
@@ -218,6 +232,11 @@ export async function runWatcher({
     for (let n = 0; n < loops && !signal?.aborted; n += 1) {
       if (n > 0) await sleep(every.features, signal);
       if (signal?.aborted) break;
+      const gone = noBusiness();
+      if (gone !== null) {
+        log(`This watcher stops: ${gone}.`);
+        return { started: true, loops: n, stopped: gone };
+      }
       if (!stillMine()) {
         log('Another watcher has taken over this project; this one stops.');
         return { started: true, loops: n };

@@ -8,6 +8,7 @@
 //     host: 'github' | 'gitlab' | 'local',   'local' keeps the project in git alone, with no code host
 //     repo: string,        owner/name (GitLab: group/subgroup/name; git alone: local/<project>)
 //     connection: Connection,   see scripts/host/connection.js; holds no secret
+//     held?: true,         the director has set the project aside (the trial hold sets it): it has no watcher
 //   }
 //
 // A project that moves from git alone to a host (scripts/host/local/move.js) keeps its folder name here, so its name need
@@ -76,6 +77,7 @@ function checkRecord(record, project) {
   if (!record.connection || typeof record.connection !== 'object' || Array.isArray(record.connection)) {
     throw new Error('The project needs a connection');
   }
+  if (record.held !== undefined && typeof record.held !== 'boolean') throw new Error('The project\'s held mark must be true or false');
   return record;
 }
 
@@ -86,6 +88,12 @@ export function readProject(project) {
   } catch {
     return null;
   }
+}
+
+// Whether the project is held: `held: true` in its registration. A project whose record can't be read is not held here
+// (it has no watcher for that other reason).
+export function projectHeld(project) {
+  return readProject(project)?.held === true;
 }
 
 // The names a project goes by, as the director may write them: its repository's own name and its folder's, each
@@ -136,6 +144,7 @@ export function writeProject(project, record) {
   const file = path.join(folder, 'project.json');
   const kept = {
     folder: record.folder, remoteUrl: record.remoteUrl, host: record.host, repo: record.repo, connection: record.connection,
+    ...(record.held === true ? { held: true } : {}),
   };
   fs.mkdirSync(folder, { recursive: true });
   const temp = `${file}.${process.pid}.tmp`;

@@ -495,7 +495,7 @@ async function ensureWatcher(project, client, { spawn, pluginRoot, env = process
   try { recordClaudePath({ env, inside: folder }); } catch { /* the watcher looks in the usual places */ }
   try {
     const { keepWatcherAlive } = await import('../watcher/keep-alive.js');
-    await keepWatcherAlive(project, { client, spawn, pluginRoot, env });
+    await keepWatcherAlive(project, { client, spawn, pluginRoot, env, session: true });
   } catch { /* the session carries on without it */ }
 }
 
