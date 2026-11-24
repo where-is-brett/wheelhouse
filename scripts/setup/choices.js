@@ -332,6 +332,22 @@ function historyLine(claudeHome) {
   return now > RETENTION_DAYS ? `${plain} (your Claude Code setting is ${now} days, so this changes it, and chats older than ${RETENTION_DAYS} days are deleted)` : `${plain} (your Claude Code setting is ${now} days, so this raises it; nothing is deleted)`;
 }
 
+// The card's line of what step 6 does to this computer, naming only what would change (`changing`, the `what` of each change
+// step 6 would make, or null where that can't be told, which names everything); null when nothing changes and step 9 asks
+// nothing. A phone fact comes from Wheelhouse's own records, and says so.
+function computerLine({ changing, claudeHome, pushed, desktop }) {
+  const on = (what) => changing === null || changing.includes(what);
+  const parts = [];
+  if (on('telemetry')) parts.push('usage counted here only');
+  if (on('retention')) parts.push(historyLine(claudeHome));
+  if (on('updates')) parts.push('Claude Code takes only its well-tried updates');
+  if (pushed) parts.push('phone notifications on, as Wheelhouse\'s records of an earlier setup on this computer show they reach your phone');
+  else if (desktop === false) parts.push('a question about phone notifications, where setup suggests skipping them since they need Claude Desktop');
+  else if (on('push')) parts.push('Claude Code allowed to send phone notifications, which you finish near the end');
+  if (parts.length === 0) return null;
+  return `On this computer: ${parts.slice(0, -1).join('; ')}${parts.length > 1 ? '; and ' : ''}${parts.at(-1)}.`;
+}
+
 // The one card for a run: { id, card, choices, writes }. `list` is openChoices'; `product` is
 // productOf's for the folder (or null); `toRun` which of steps 2, 3, 6, 7 and the health check are still to run; `count`
 // how many answers the run holds; `hosts` the hosts of the projects on this computer, for the engine's line
@@ -346,7 +362,7 @@ export function setupTime(toRun, list = []) {
 
 // `done` is what an earlier pass of this run has already done, when the card is asked again after step 3 stopped: { tools, signedIn },
 // `signedIn` the host ('github' or 'gitlab') setup signed in to, or null.
-export function oneCard({ folder, list, product, platform, toRun, count, facts = null, claudeHome = null, hosts, desktop, pushed = false, done = { tools: false, signedIn: null } }) {
+export function oneCard({ computerChanging = null, folder, list, product, platform, toRun, count, facts = null, claudeHome = null, hosts, desktop, pushed = false, done = { tools: false, signedIn: null } }) {
   const name = product?.name ?? productName(folder);
   // Only the health check left, nothing to choose: a run parked near its end (one v0.1.1 left at
   // its phone card, carried on after the update), whose card names what is left.
@@ -383,7 +399,10 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
   // The plugin's update is step 6's, so the line names it only while step 6 is still to run.
   if (toRun.includes(2) && engineWanted({ platform, hosts })) lines.push(engineLine(undefined, { claudeHome: toRun.includes(6) ? claudeHome : null }));
   // Step 9 asks nothing where an earlier setup's test push reached the phone (`pushed`), so the line doesn't promise a question.
-  if (toRun.includes(6)) lines.push(`On this computer: usage counted here only; ${historyLine(claudeHome)}; Claude Code takes only its well-tried updates; and ${pushed ? 'phone notifications on, as an earlier setup on this computer showed they reach your phone' : desktop === false ? 'a question about phone notifications, where setup suggests skipping them since they need Claude Desktop' : 'Claude Code allowed to send phone notifications, which you finish near the end'}.`);
+  if (toRun.includes(6)) {
+    const line = computerLine({ changing: computerChanging, claudeHome, pushed, desktop });
+    if (line !== null) lines.push(line);
+  }
   if (toRun.includes(7)) {
     const kept = compactionLine(compactionRules({ claudeHome, projectDir: folder }));
     if (kept !== null) lines.push(kept);

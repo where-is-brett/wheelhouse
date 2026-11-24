@@ -46,7 +46,7 @@ test('the one card names the phone setting as Claude Desktop\'s alone when the s
   assert.match(ask(false), /and a question about phone notifications, where setup suggests skipping them since they need Claude Desktop\./);
   assert.doesNotMatch(ask(false), /allowed to send phone notifications/);
   const pushed = oneCard({ folder: '/x/t', list: newProductChoices(), product: { isNew: true, host: null, repo: null, name: 't' }, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0, desktop: false, pushed: true }).card.question;
-  assert.match(pushed, /and phone notifications on, as an earlier setup on this computer showed they reach your phone\./);
+  assert.match(pushed, /and phone notifications on, as Wheelhouse's records of an earlier setup on this computer show they reach your phone\./);
   assert.doesNotMatch(pushed, /a question about phone notifications/);
 });
 
@@ -384,4 +384,16 @@ test('Go ahead names what the system itself asks in the words of the computer: a
     assert.doesNotMatch(win, /computer's password|computer password/);
   }
   assert.match(says('win32', []), /Windows may ask you to click Yes to let an installer run, or for an administrator's password\./);
+});
+
+test('the computer line names only what step 6 would change, and is left out when nothing changes', () => {
+  const ask = (computerChanging, over = {}) => oneCard({ folder: '/x/t', list: [], product: localProduct, platform: 'darwin', toRun: [6], count: 0, desktop: true, computerChanging, ...over }).card.question.split('\n').find((l) => l.startsWith('- On this computer')) ?? null;
+  assert.equal(ask([]), null);
+  assert.equal(ask(['retention'], { claudeHome: '/x/none' }), '- On this computer: 30 days of chat history kept.');
+  assert.equal(ask(['telemetry', 'updates']), '- On this computer: usage counted here only; and Claude Code takes only its well-tried updates.');
+  assert.match(ask(['push']), /^- On this computer: Claude Code allowed to send phone notifications, which you finish near the end\.$/);
+  assert.match(ask(null), /usage counted here only; 30 days of chat history kept; Claude Code takes only its well-tried updates; and Claude Code allowed to send phone/);
+  // A phone fact is Wheelhouse's own record, said so; a terminal's question is kept though nothing else changes.
+  assert.equal(ask([], { pushed: true }), '- On this computer: phone notifications on, as Wheelhouse\'s records of an earlier setup on this computer show they reach your phone.');
+  assert.match(ask([], { desktop: false }), /a question about phone notifications/);
 });
