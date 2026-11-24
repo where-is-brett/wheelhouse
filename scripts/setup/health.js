@@ -291,6 +291,14 @@ function checkLine(check, result, { session = false, host, desktop = false } = {
   return `${check.watch ? 'Watch' : 'Failed'}: ${failed} (${check.expected} was expected, ${result} came back). ${todo}.${by}`;
 }
 
+// The builder sign-in check's words (design section 10.1).
+export const BUILDERS_CHECK = 'Builders can sign in';
+const BUILDERS_PASSED = 'A builder started the way builders will start on this computer could sign in';
+const BUILDERS_TODO = 'Sign in to Claude in a terminal (`claude /login`), then check again; or use Claude Desktop for builders; or set a launch command';
+// How long a helper call is waited for in setup and health, and the line for one that doesn't answer in that time.
+export const HELPER_WAIT_SECONDS = 15;
+export const helperLateLine = (step) => `Failed: The helper didn't answer within ${HELPER_WAIT_SECONDS} seconds (step ${step}). ${RERUN}; if it can't again, quit and reopen Claude Desktop, which starts the helper.`;
+
 // ---- The helper's part ----
 
 // The project the step works on: the folder's registered record.
@@ -747,8 +755,8 @@ function runIn(folder) {
 // health lines, each said plainly, a failed one with what to do. `trials` names the pull request and
 // project the session's trials take, or is null before step 10 has opened one. `desktop` says the session is in the Desktop app, the only place a line may tell the director to check it is open. `platform` is the computer's system, as unsandboxed's. `run` (the folder's
 // run), `load` (loadBoardInputs), `client` (the helper's, for the board) and `now` are for the
-// engine and tests.
-export async function healthCheck({ folder, reported = [], run, load = loadBoardInputs, client, now = () => new Date(), desktop = false, platform = process.platform } = {}) {
+// engine and tests. `builders` is the builder sign-in check, run the way builders start on this computer: () -> { ok } | { ok: false, line } | { ran: false, why }; left out, no such check is made.
+export async function healthCheck({ folder, reported = [], run, load = loadBoardInputs, client, now = () => new Date(), desktop = false, platform = process.platform, builders } = {}) {
   const here = run ?? runIn(folder);
   const lines = [];
   let green = true;
@@ -830,6 +838,40 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
     lines.push(checkLine(check, result, { session: true, host, desktop }));
   }
   if (unreadable > 0) lines.push(`Left out: ${unreadable} ${unreadable === 1 ? 'line' : 'lines'} the session handed in that ${unreadable === 1 ? 'isn\'t a trial\'s' : 'aren\'t trials\''}.`);
+  // The builder sign-in check (design section 10.1): setup isn't done until builders can sign in the way they will start. A check
+  // that couldn't be tried is named in the verdict and not counted.
+  const notRun = [];
+  if (typeof builders === 'function') {
+    let got;
+    try {
+      got = await builders();
+    } catch {
+      got = { ok: false, line: 'The check could not be run' };
+    }
+    if (got?.ran === false) {
+      notRun.push(`${BUILDERS_CHECK} (${got.why})`);
+      lines.push(`Not run: ${BUILDERS_CHECK}: ${got.why}.`);
+    } else {
+      count(got?.ok === true);
+      if (got?.ok === true) lines.push(`Passed: ${BUILDERS_PASSED}.`);
+      else {
+        green = false;
+        lines.push(`Failed: ${got?.line ?? BUILDERS_CHECK}. ${BUILDERS_TODO}.`);
+      }
+    }
+  }
+  // A helper that doesn't answer is a failed line, never a dropped one (fault 9).
+  if (client?.health) {
+    let answer = null;
+    try {
+      answer = await client.health();
+    } catch { /* an error is not a late answer */ }
+    if (/did not answer in time/.test(String(answer?.refused ?? ''))) {
+      count(false);
+      green = false;
+      lines.push(helperLateLine(HEALTH_STEP));
+    }
+  }
   // The board's health lines, and the board itself.
   const inputs = found === null ? { none: 'This folder isn\'t a registered project yet' } : await load({ cwd: found.record.folder, now, client });
   const health = Array.isArray(inputs?.model?.director?.health) ? inputs.model.director.health : null;
@@ -847,7 +889,7 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
     }
   }
   // One verdict ends the lines.
-  const verdict = healthVerdict(passed, total, waiting);
+  const verdict = healthVerdict(passed, total, waiting, notRun);
   lines.push(verdict);
   if (host === 'local') lines.splice(0, lines.length, ...lines.map(localWords));
   const board = inputs?.model ? renderBoard(inputs.model) : null;

@@ -1098,6 +1098,8 @@ export async function startHelper({
   // The folder the merge queue runs in, Wheelhouse's own checkout of the project's fetch mirror (queue-folder.js),
   // unless a test whose engine reads no mirror gives its own: (project) -> { ok, folder } or { ok: false, refused }.
   queueFolder = null,
+  // The check the hourly sign-in look runs while a sign-in fact stands (scripts/setup/builder-sign-in.js); a test gives its own.
+  signInCheck = null,
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -2032,7 +2034,29 @@ export async function startHelper({
     const event = id === undefined ? made : { ...made, id };
     const result = await writeEvent({ project, event, now });
     await freshViews(() => writeViews(project, { now }));
+    if (kind === 'card-answer') signInAnswered(data).catch(() => {});
     return written({ event, result });
+  }
+
+  // The sign-in card's "I've signed in; check again" (builders design, section 10.2): the answer is recorded as any other, and
+  // then the check runs once, as builders start on this computer, taking the fact away only when it passes. Not under STOP, and
+  // only while a fact stands; a check already running (the hourly look's, or setup's) is joined, never doubled. A launch command
+  // that can't be read runs nothing and keeps the fact. Nothing waits on it: the waker sends the held wakes once the fact clears.
+  async function signInAnswered(data) {
+    const { SIGN_IN_OPTIONS } = await import('../lib/sign-in-gate.js');
+    if (data?.label !== SIGN_IN_OPTIONS.again || stopped()) return { ran: false };
+    const { readSignIn } = await import('../lib/sign-in-line.js');
+    const read = readSignIn(wheelhouseHome());
+    if (!read.ok || !Object.hasOwn(read.facts, 'claude-code:background')) return { ran: false };
+    const { recheckRoute } = await import('../setup/builder-sign-in.js');
+    const { storedLaunch } = await import('../lib/launch-stored.js');
+    let launch;
+    try {
+      launch = storedLaunch();
+    } catch {
+      return { ran: false };
+    }
+    return recheckRoute({ home: wheelhouseHome(), agent: 'claude-code', route: 'background', launch, ...(signInCheck ? { check: signInCheck } : {}) });
   }
 
   // The survey taken again (design section 15, ruling A1; plan ruling P3): only when the latest
@@ -3015,6 +3039,7 @@ export async function startHelper({
     // The director's Pair it or Unpair it on an app's card (spec 5.3) enrols the app's key, or removes it.
     if (event.kind === 'action' && event.data?.action === 'pair-client') pairClient({ id: event.data.client }, event, { now });
     if (event.kind === 'action' && event.data?.action === 'unpair-client') unpairClient(event.data.client, event);
+    if (event.kind === 'card-answer') signInAnswered(event.data).catch(() => {});
     return written({ event, result });
   }
 
@@ -4911,7 +4936,7 @@ export async function startHelper({
   // status answer under STOP; apply is refused. Plan writes under STOP (ruling R19), but only
   // setup's own records: it starts the folder's run when there is none, stamps the card's shownAt
   // and keeps the shown card in setup/shown/. It changes nothing a step lists.
-  const setup = setupRoutes({ now, stopped, stopRefusal: STOP_REFUSAL, stepsModule: setupSteps, userHome, spawn, writeSurvey: writeSetupSurvey });
+  const setup = setupRoutes({ now, stopped, stopRefusal: STOP_REFUSAL, stepsModule: setupSteps, userHome, spawn, writeSurvey: writeSetupSurvey, buildersWith: { live: true, ...(signInCheck ? { check: signInCheck } : {}) } });
   // The baseline from the private note (scripts/measures/baseline.js): per computer, no project.
   // Under STOP, in a project's folder the STOP guard refuses scripts/measures/cli.js, so the front
   // desk can't reach it; a request that arrives all the same may get its card, but nothing is
@@ -7241,7 +7266,19 @@ export async function startHelper({
       pluginRoot,
     });
   }
-  const safekeepingWatch = setInterval(() => { safekeepingRound().catch(() => {}); moveRound().catch(() => {}); watcherRound().catch(() => {}); undoRound().catch(() => {}); }, dispatchMs);
+  // The hourly sign-in look (builders design, section 10.2): while a fact stands, one tiny session a hour checks again, because the
+  // director may sign in without telling Wheelhouse. A passing check clears the fact; the waker sends the held wakes on its next tick.
+  // Loaded when first needed, so a helper with no fact never reads it.
+  let signInLook = null;
+  async function signInRound() {
+    if (signInLook === null) {
+      const { makeHourlyRecheck } = await import('../setup/builder-sign-in.js');
+      const { storedLaunch } = await import('../lib/launch-stored.js');
+      signInLook = makeHourlyRecheck({ home: wheelhouseHome, now, launchFor: () => storedLaunch(), ...(signInCheck ? { check: signInCheck } : {}) });
+    }
+    return signInLook();
+  }
+  const safekeepingWatch = setInterval(() => { safekeepingRound().catch(() => {}); moveRound().catch(() => {}); watcherRound().catch(() => {}); undoRound().catch(() => {}); signInRound().catch(() => {}); }, dispatchMs);
   safekeepingWatch.unref?.();
 
   // A throwaway home's helper stops an hour after the last session of its home (design 12A.2), by its own normal close, as
@@ -7265,5 +7302,5 @@ export async function startHelper({
   idleWatch.unref?.();
 
   // `engine.start` is the helper's own way to start a run (the dispatcher's): no route starts one.
-  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() }, safekeeping: { tick: () => safekeepingRound() }, watcher: { tick: () => watcherRound() }, move: { tick: () => moveRound() }, undo: { tick: () => undoRound() }, idle: { tick: () => idleRound() } };
+  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() }, safekeeping: { tick: () => safekeepingRound() }, watcher: { tick: () => watcherRound() }, move: { tick: () => moveRound() }, undo: { tick: () => undoRound() }, signIn: { tick: () => signInRound() }, idle: { tick: () => idleRound() } };
 }

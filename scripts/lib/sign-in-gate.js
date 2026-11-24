@@ -87,7 +87,7 @@ export const SIGN_IN_OPTIONS = Object.freeze({
   launch: 'Set a launch command',
   again: "I've signed in; check again",
 });
-const SAID = Object.freeze({
+export const SAID = Object.freeze({
   'not-signed-in': "it isn't logged in",
   blocked: 'its sign-in was refused for an organisation or a policy',
   'no-program': "it couldn't be found or run",

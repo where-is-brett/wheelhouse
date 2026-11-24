@@ -1240,3 +1240,49 @@ test('step 10 fails closed when the engine reports telemetry on, and runs the he
     });
   }
 });
+
+// ---- The builder sign-in check and a helper that doesn't answer (builders design, section 10.1; fault 9) ----
+
+test('the Builders check is a counted line: a pass is Passed, a failure keeps the board red and says the three ways out', async () => {
+  await withProject(async ({ folder }) => {
+    const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
+    const checks = Object.keys(HELPER_CHECKS).length + Object.keys(SESSION_CHECKS).length;
+    const pass = await healthCheck({ folder, run, reported: GREEN_LINES, load: OK_BOARD, builders: async () => ({ ok: true }) });
+    assert.equal(pass.green, true, pass.lines.join('\n'));
+    assert.ok(pass.lines.some((l) => /^Passed: A builder started the way builders will start/.test(l)));
+    assert.equal(pass.verdict, `All ${checks + 1} checks passed. Wheelhouse is ready.`);
+    const fail = await healthCheck({
+      folder, run, reported: GREEN_LINES, load: OK_BOARD,
+      builders: async () => ({ ok: false, kind: 'not-signed-in', line: "A builder started as `claude` couldn't sign in: it said it isn't logged in." }),
+    });
+    assert.equal(fail.green, false);
+    const line = fail.lines.find((l) => l.startsWith('Failed: A builder started as `claude`'));
+    assert.match(line, /claude \/login/);
+    assert.match(line, /Claude Desktop/);
+    assert.match(line, /launch command/);
+    assert.equal(fail.verdict, `${checks} of ${checks + 1} checks passed. Here is what to do.`);
+  });
+});
+
+test('"All checks passed" counts only the checks that ran and names the one that did not', async () => {
+  await withProject(async ({ folder }) => {
+    const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
+    const checks = Object.keys(HELPER_CHECKS).length + Object.keys(SESSION_CHECKS).length;
+    const got = await healthCheck({ folder, run, reported: GREEN_LINES, load: OK_BOARD, builders: async () => ({ ran: false, why: 'the Desktop route is checked by the foreman' }) });
+    assert.equal(got.green, true, got.lines.join('\n'));
+    assert.equal(got.verdict, `All ${checks} checks that ran passed. Not run: Builders can sign in (the Desktop route is checked by the foreman).`);
+    assert.ok(got.lines.includes('Not run: Builders can sign in: the Desktop route is checked by the foreman.'));
+  });
+});
+
+test('a helper call that times out during health is a failed line naming the step, never dropped', async () => {
+  await withProject(async ({ folder }) => {
+    const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
+    const late = { health: async () => ({ ok: false, refused: 'the host helper did not answer in time' }) };
+    const got = await healthCheck({ folder, run, reported: GREEN_LINES, load: OK_BOARD, client: late });
+    assert.equal(got.green, false);
+    assert.ok(got.lines.some((l) => l.startsWith("Failed: The helper didn't answer within 15 seconds (step 10).")), got.lines.join('\n'));
+    const fine = await healthCheck({ folder, run, reported: GREEN_LINES, load: OK_BOARD, client: { health: async () => ({ ok: true }) } });
+    assert.equal(fine.green, true);
+  });
+});
