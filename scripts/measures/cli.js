@@ -14,6 +14,7 @@
 import { helperClient } from '../host/helper-client.js';
 import { noteBaseline } from './baseline.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { asciiJson } from '../lib/ascii-json.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
@@ -67,7 +68,7 @@ export async function main(argv, {
 } = {}) {
   try {
     const [form, ...rest] = argv;
-    const json = (value) => out(`${JSON.stringify(value, null, 2)}\n`);
+    const json = (value) => out(`${asciiJson(value, 2)}\n`);
     if (form !== 'baseline') throw new CliError(USAGE);
     if (rest[0] === '--confirm') {
       if (rest.length !== 2) throw new CliError(USAGE);
