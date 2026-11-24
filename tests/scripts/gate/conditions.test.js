@@ -332,7 +332,25 @@ test('a signed approval naming the proof window counts for a project with real u
   assert.equal(gateDecision(input({ ...taken, approval: click })).allow, false);
   // A click recorded under a proof no longer taken counts for nothing.
   const gone = { kind: 'card-answer', data: { label: 'Approve', commit: SHA, proof: 'hook-click' } };
-  assert.equal(gateDecision(input({ approvalRequired: true, approvalProofs: ['chat-click'], approval: gone })).allow, false);
+  assert.equal(gateDecision(input({ approvalRequired: true, approvalProofs: ['chat-click'], hookClickApproval: 'off', approval: gone })).allow, false);
+}));
+
+// A click an agent's hook saw (the helper's /cards/hook-click) counts like a signed one, by the configured mode.
+test('a hook-click approval of the head counts on any project, and the mode can require the host\'s approval too or switch it off', () => withHome(() => {
+  const click = (extra = {}) => ({ kind: 'card-answer', data: { label: 'Approve', commit: SHA, proof: 'hook-click', ...extra } });
+  const base = { approvalRequired: true };
+  assert.equal(gateDecision(input({ ...base, approval: click() })).allow, true);
+  assert.equal(gateDecision(input({ ...base, realUsers: true, approval: click() })).allow, true);
+  // Only the head, only Approve, only the proof hook-click.
+  assert.equal(gateDecision(input({ ...base, approval: click({ commit: 'f'.repeat(40) }) })).allow, false);
+  assert.equal(gateDecision(input({ ...base, approval: click({ label: 'Not now' }) })).allow, false);
+  assert.equal(gateDecision(input({ ...base, approval: click({ proof: 'made-up' }) })).allow, false);
+  // 'with-host': the click counts only with the host's approval given as well.
+  assert.equal(gateDecision(input({ ...base, hookClickApproval: 'with-host', approval: click() })).allow, false);
+  assert.equal(gateDecision(input({ ...base, hookClickApproval: 'with-host', hostApproval: true, approval: click() })).allow, true);
+  assert.equal(gateDecision(input({ ...base, hookClickApproval: 'off', hostApproval: true, approval: click() })).allow, false);
+  // A mode that isn't one falls back to the default.
+  assert.equal(gateDecision(input({ ...base, hookClickApproval: 'whatever', approval: click() })).allow, true);
 }));
 
 test('a review whose findings are all minor counts; a blocking one, or one that does not say, does not', async () => {

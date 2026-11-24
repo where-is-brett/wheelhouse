@@ -118,7 +118,7 @@ import { DESK_VERSION, needsEvidence } from '../desk/vocabulary.js';
 import { helperClient } from './helper-client.js';
 import { windowClick, undoCards, undoLine, UNDO_LINE, UNDO_NEEDS_WINDOW } from './local/undo.js';
 import { UNDO_BRANCH, undoConflictCard, undoOnHost } from './undo.js';
-import { CHAT_PROOFS, CONFIRMED_STEPS, hashRefusal } from '../agents/chat-clicks.js';
+import { CHAT_PROOFS, CONFIRMED_STEPS, HOOK_CLICK_MS, HOOK_SHOWN_MAX, hashRefusal } from '../agents/chat-clicks.js';
 import { earned, signsOn, askedUpdateCard, keepAfterClick } from '../hooks/prompt-record.js';
 import { askInWindow, NOT_NOW } from '../confirm/window.js';
 import { composeCard, questionProblem } from '../cards/compose.js';
@@ -930,7 +930,7 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 // ~/.wheelhouse cannot be read: like the runbook's, each may give `cwd`, a full path, and the
 // helper places the project from it.
 const PLACED_ROUTES = [
-  '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/session/note', '/session/seat', '/crew/page', '/crew/helm', '/cards/chat-click', '/confirm',
+  '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/session/note', '/session/seat', '/crew/page', '/crew/helm', '/cards/chat-click', '/cards/hook-shown', '/cards/hook-click', '/cards/hook-auto', '/confirm',
   '/desk/read', '/desk/act', '/desk/watch',
   '/local/undo', '/undo', '/local/move',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
@@ -945,10 +945,15 @@ const SESSION_MARKS = Object.freeze({
   'unknown-tool': { name: markText },
   compaction: { trigger: (v) => v === undefined || markText(v) },
   deadline: { event: markText },
+  // A question the harness answered by itself (Autopilot): the director's session is told once to switch it off.
+  'auto-answer': {},
 });
 // The longest card name or label a chat click carries, and the longest of the director's own words with one.
 const CHAT_TEXT_CHARS = 500;
 const CHAT_WORDS_CHARS = 4000;
+// The longest card words and the most options a hook's click names.
+const HOOK_CARD_CHARS = 20000;
+const HOOK_OPTIONS_MAX = 12;
 // The option that hands the builder the director's own words (ruling P5-27 k): the only click that carries them.
 const SUGGEST = 'Suggest a change…';
 // The fields of a card-answer that only the helper's click routes write.
@@ -2539,6 +2544,82 @@ export async function startHelper({
     if (signsOn(label, asked) && !mayDecide) refuse('a click in the chat can\'t decide that card');
     const data = { question: card, label, hash, ...(commit === undefined ? {} : { commit }), ...(text === undefined ? {} : { text }), proof, where: 'chat' };
     return doWrite({ project, kind: 'card-answer', data }, ctx, { own: true });
+  }
+
+  // --- clicks an agent's hook saw (/cards/hook-shown, /cards/hook-click) ---
+  // A hook that only reads sees the question tool's card asked (hook-shown) and its answer come back (hook-click). The helper
+  // takes the answer only as the click on a card it kept as shown to that session: the card found among those waiting by its
+  // words and options, the session that asked it, and the time. One shown card takes one click, within HOOK_CLICK_MS, and a
+  // card never shown, shown to another session, changed since, or already answered is refused. The record is an unsigned
+  // card-answer naming proof `hook-click`, so the audit tells it from Claude Code's signed click. Anything that reaches the
+  // helper can post these routes, so this narrows what a forged click can do and does not close it.
+  const hookShown = new Map();
+  const sameOptions = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((label, i) => label === b[i]);
+  function hookBody({ session, message, options }) {
+    if (typeof session !== 'string' || session === '' || session.length > CHAT_TEXT_CHARS) refuse('this session has no id to name its cards by');
+    if (typeof message !== 'string' || message === '' || message.length > HOOK_CARD_CHARS) refuse('the card\'s words must be text');
+    if (!Array.isArray(options) || options.length === 0 || options.length > HOOK_OPTIONS_MAX || options.some((o) => typeof o !== 'string' || o === '' || o.length > CHAT_TEXT_CHARS)) refuse('the card\'s options must be a list of words');
+  }
+  // The card these words and options are: a card waiting in the state (one only), or the Lift STOP card while STOP is on.
+  // `{ card, data }`, `{ card }` naming none, or a refusal.
+  function hookCardFor(project, { message, options }) {
+    if (stopped()) {
+      const lift = composeCard(LIFT_STOP_CARD).card;
+      if (lift.question === message && sameOptions(lift.options, options)) return { card: LIFT_STOP_NAME, data: lift };
+    }
+    const waiting = buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now }).waiting ?? [];
+    const found = waiting.filter((w) => w.data?.question === message && sameOptions(w.data?.options, options));
+    if (found.length === 0) return { refused: 'no card waiting reads like that, so nothing was recorded for it' };
+    if (found.length > 1) return { refused: 'more than one waiting card reads like that, so none can be named' };
+    return { card: found[0].id, data: found[0].data };
+  }
+  const hookKey = (project, session, card) => `${project}\n${session}\n${card}`;
+  async function doHookShown({ project, session, message, options }) {
+    hookBody({ session, message, options });
+    const got = hookCardFor(project, { message, options });
+    if (got.refused) refuse(got.refused);
+    const at = now().getTime();
+    for (const [key, held] of hookShown) if (at - held.at > HOOK_CLICK_MS || held.used) hookShown.delete(key);
+    while (hookShown.size >= HOOK_SHOWN_MAX) hookShown.delete(hookShown.keys().next().value);
+    hookShown.set(hookKey(project, session, got.card), { at, hash: dataHash(got.data), used: false });
+    return { ok: true, card: got.card };
+  }
+  // A question the harness answered with no click: true the first time for a session, which is noted once, so the hook tells
+  // the First Mate once and the board can say the same line.
+  const autoAnswered = new Set();
+  async function doHookAuto({ project, session }, ctx) {
+    if (typeof session !== 'string' || session === '' || session.length > CHAT_TEXT_CHARS) refuse('this session has no id to name its cards by');
+    const key = `${project}\n${session}`;
+    if (autoAnswered.has(key)) return { ok: true, first: false };
+    autoAnswered.add(key);
+    if (!stopped()) await doSessionMark({ project, mark: 'auto-answer', data: {} }, ctx);
+    return { ok: true, first: true };
+  }
+  async function doHookClick({ project, session, message, options, label }, ctx) {
+    hookBody({ session, message, options });
+    if (typeof label !== 'string' || !options.includes(label)) refuse('the click must name one of the card\'s options');
+    if (label === SUGGEST) refuse(`${SUGGEST} carries the director's own words, which a click does not`);
+    const got = hookCardFor(project, { message, options });
+    if (got.refused) refuse(got.refused);
+    if (stopped() && got.card !== LIFT_STOP_NAME) return STOP_REFUSAL;
+    const key = hookKey(project, session, got.card);
+    const held = hookShown.get(key);
+    if (held === undefined) refuse('that card was not shown to this session');
+    if (held.used) refuse('that card\'s click was taken already');
+    if (now().getTime() - held.at > HOOK_CLICK_MS) {
+      hookShown.delete(key);
+      refuse('that card was shown too long ago for a click to count; it is asked again');
+    }
+    if (held.hash !== dataHash(got.data)) refuse('that card is not the one shown: its words changed');
+    held.used = true;
+    // The Lift STOP card is composed by the helper and never in the state, which takes no write under STOP: the click is
+    // taken here and the lift is acted on by the step that asked for it.
+    if (got.card === LIFT_STOP_NAME) return { ok: true, card: got.card, label, proof: 'hook-click' };
+    // An approval card names the commit it is for: the answer carries it, as the gate reads it.
+    const commit = typeof got.data.sha === 'string' && /^[0-9a-f]{40}$/.test(got.data.sha) ? got.data.sha : undefined;
+    const data = { question: got.card, label, hash: held.hash, ...(commit === undefined ? {} : { commit }), proof: 'hook-click', where: 'chat', source: session };
+    const written = await doWrite({ project, kind: 'card-answer', data }, ctx, { own: true });
+    return { ...written, card: got.card };
   }
 
   // --- the helper's own window (design section 6.3, ruling P5-23) ---
@@ -5217,6 +5298,9 @@ export async function startHelper({
     '/crew/page': stateRoute(doCrewPage, { clone: false }),
     '/crew/helm': stateRoute(doCrewHelm, { clone: false, write: true }),
     '/cards/chat-click': stateRoute(doChatClick, { write: true }),
+    '/cards/hook-shown': stateRoute(doHookShown),
+    '/cards/hook-click': stateRoute(doHookClick),
+    '/cards/hook-auto': stateRoute(doHookAuto),
     // One window at a time on this computer: a second request waits for the first window to close.
     '/confirm': (body, ctx) => oneAtATime('window', () => doConfirm(body, ctx)),
     '/state/record': signedIn(stateRoute(doRecord)),

@@ -55,14 +55,14 @@ test('each event runs the step list of adapters/claude-code/hooks.js, in order',
   assert.deepEqual(await order('preToolUse', call('task', { prompt: 'x' })), ['stopGuard', 'lineageHold']);
   assert.deepEqual(await order('preToolUse', call('ask_user', { message: 'Ship it?' })), ['stopGuard', 'lineageHold', 'cardCheck']);
   assert.deepEqual(await order('postToolUse', call('bash', { command: 'ls' }, { toolResult: {} })), ['featureStatus']);
-  assert.deepEqual(await order('postToolUse', call('ask_user', { message: 'Ship it?' }, { toolResult: {} })), ['promptRecord', 'featureStatus']);
+  assert.deepEqual(await order('postToolUse', call('ask_user', { message: 'Ship it?' }, { toolResult: {} })), ['featureStatus']);
   assert.deepEqual(await order('subagentStop', { sessionId: 's1', cwd: PROJECT, agentType: 'wheelhouse-builder', response: 'ok' }), ['reportCheck', 'featureStatus']);
   assert.deepEqual(await order('agentStop', { sessionId: 's1', cwd: PROJECT }), ['cardCheck', 'featureStatus', 'asideOverlap']);
   assert.deepEqual(await order('sessionEnd', { sessionId: 's1', cwd: PROJECT }), ['stopGuard', 'helmEnd']);
   assert.deepEqual(Object.values(EVENT_NAMES).sort(), ['PostToolUse', 'PreCompact', 'PreToolUse', 'SessionEnd', 'SessionStart', 'Stop', 'SubagentStop', 'UserPromptSubmit']);
 });
 
-test('the chat-click record waits for check C6', async () => {
+test('the click record waits for check C6, and no longer runs the prompt-record step', async () => {
   const r = recording();
   await run('postToolUse', call('ask_user', { message: 'Ship it?' }, { toolResult: { answers: { a: 'Yes' } } }), { steps: r.steps, c6: false });
   assert.deepEqual(names(r.calls), ['featureStatus']);

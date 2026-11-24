@@ -10,7 +10,8 @@
 //                        protected-tests and front-desk-writes on edits and the shell; card-check on the ask tool.
 //                        A tool the translation gives several inputs for (an apply_patch's files, an rg's paths)
 //                        is checked once for each; the first refusal wins
-//   postToolUse          prompt-record on the ask tool (once check C6 passes), feature-status on every tool
+//   postToolUse          feature-status on every tool; and, once check C6 passes, the ask tool's answer recorded as a click
+//                        (hook-click.js), and the First Mate told when Copilot answered a card itself
 //   subagentStop         report-check, feature-status
 //   agentStop            card-check, feature-status, aside-overlap. A block here sends the reason back as a new prompt
 //                        (check 96), so the entry answers it with exit 0 and the body
@@ -48,6 +49,7 @@ import { toGuardInput, fromGuardAnswer, harnessOf, exitCodeFor, patchChanges, ca
 import { readInput, answer, projectOf, registeredByPath, beingSetUp, managedDir, isWhy } from '../../hooks/kit.js';
 import { C6_PASSED, GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC, HELPER_PROBE_MS, PROMPT_DEADLINE_MS } from './numbers.js';
 import { helperClient } from '../../host/helper-client.js';
+import { recordShown, recordAnswer } from './hook-click.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
 
 export const LOCAL_HARNESS = 'Wheelhouse doesn\'t run in this kind of chat. Switch the chat to Copilot in the chat\'s agent picker.';
@@ -222,19 +224,17 @@ const cardOf = (input) => {
   return [{ ...input, tool_name: claudeTools.ask, tool_input: { questions: [question] } }];
 };
 const cards = (inputs) => inputs.slice(0, 1).flatMap(cardOf);
-// A click, from the tool's own response and never the model's input, once check C6 shows a hook sees one.
-const clicks = (c6) => (inputs) => (c6 === true ? inputs.slice(0, 1).flatMap(cardOf).map((card, i) => ({ ...card, tool_response: { answers: inputs[i]?.tool_response?.answers } })) : []);
 // A subagent's name as Claude Code's reviewer and builder carry it: `wheelhouse-builder` is `wheelhouse:builder`.
 const subagent = (inputs) => inputs.slice(0, 1).map((input) => {
   const named = /^wheelhouse[-:](builder|reviewer)$/.exec(String(input.agent_type ?? input.agent_name ?? ''));
   return named ? { ...input, agent_type: `wheelhouse:${named[1]}` } : input;
 });
 
-const stepsFor = (event, { c6 }) => ({
+const stepsFor = (event) => ({
   sessionStart: [['sessionStart', first]],
   userPromptSubmitted: [['stopWord', first], ['contextGauge', first], ['promptRecord', first], ['boardContext', first]],
   preToolUse: [['stopGuard', first], ['lineageHold', first], ['toolGuard', guarded], ['protectedTests', writers], ['frontDeskWrites', writers], ['cardCheck', cards]],
-  postToolUse: [['promptRecord', clicks(c6)], ['featureStatus', first]],
+  postToolUse: [['featureStatus', first]],
   subagentStop: [['reportCheck', subagent], ['featureStatus', first]],
   agentStop: [['cardCheck', first], ['featureStatus', first], ['asideOverlap', first]],
   sessionEnd: [['stopGuard', first], ['helmEnd', first]],
@@ -356,7 +356,19 @@ async function decideCall(event, raw, { deps, seen, dir, env }) {
     // not answering
   }
   const stepDeps = helperStepDeps({ writeVia: 'helper', client, helperUp, agent: 'copilot' }, deps.stepDeps, raw.cwd);
-  return runSteps(stepsFor(event, { c6: deps.c6 ?? C6_PASSED }), inputs, { event, decides: deps.steps, stepDeps, dir, env, seen });
+  const out = await runSteps(stepsFor(event), inputs, { event, decides: deps.steps, stepDeps, dir, env, seen });
+  if ((deps.c6 ?? C6_PASSED) !== true || refuses(out)) return out;
+  // Once check C6 has passed: the question tool's card is posted as shown when it is asked, and its answer is recorded when it
+  // comes back. The answer's text for the First Mate (Copilot answered by itself) joins what the steps gave.
+  if (event === GUARD_EVENT && inputs.length === 1) await bounded(recordShown(inputs[0], { client }));
+  if (event === 'postToolUse' && inputs.length === 1) {
+    const told = await recordAnswer(inputs[0], { client });
+    if (typeof told === 'string') {
+      const held = out?.hookSpecificOutput?.additionalContext;
+      return answer.context(EVENT_NAMES[event], typeof held === 'string' && held !== '' ? `${held}\n\n${told}` : told);
+    }
+  }
+  return out;
 }
 
 // Runs the entry for `event`: `{ text, code }`, the line to write (or '') and the exit code. Never throws.
