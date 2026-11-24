@@ -353,6 +353,8 @@ export async function copyRunRecords(runId, folder) {
 // card left, step 10's plan asks a card of its own that opens with them (pendingBriefing,
 // READY_CARD). Given as a `said` instead, they went unshown again in the run of 17 November 2026.
 const BRIEFING_TARGET = 'step 10 briefing';
+// Said once, at the end of the verdict and briefing: the guards apply to every Claude session in the folder (design 12A.3).
+export const GUARDS_LINE = 'Any Claude session in this folder now works under Wheelhouse\'s guards.';
 const SETUP_READY_ID = 'setup-ready';
 const READY_CARD = {
   level: 2,
@@ -1070,7 +1072,7 @@ export function setupRoutes({
       const requests = changeRequests(run.id, answersFor(run.id));
       const ending = await finish({ project: got.project, ...(writeSurvey ? { writeSurvey } : {}) });
       // The verdict and the first briefing, kept for the next card to open with (pendingBriefing).
-      const show = [got.verdict, ending.briefing].filter((part) => typeof part === 'string' && part !== '').join('\n\n');
+      const show = [got.verdict, ending.briefing, GUARDS_LINE].filter((part) => typeof part === 'string' && part !== '').join('\n\n');
       addChanges(run.id, [{ id: newId('chg'), step: HEALTH_STEP, kind: 'answer', target: BRIEFING_TARGET, before: null, after: { briefing: show } }]);
       return { ...answerOf(got), ...ending, ...(requests.length > 0 ? { requests } : {}) };
     });
