@@ -47,7 +47,6 @@ import { SINCE_LEAD } from '../cards/panel-words.js';
 import { readOpen, clearOpen } from '../lib/session-files.js';
 import { featureSlug, madeFeatureSlug } from '../lib/feature-slug.js';
 import { SETUP_FIRST } from '../lib/setup-first.js';
-import { takeSetupTitled } from '../lib/setup-title.js';
 import { keepRequest } from '../lib/kept-request.js';
 import { readSeen, readSurveyAt, markSeen, readVisits } from '../briefing/seen.js';
 import { readDigest, clearDigest } from '../digest/due.js';
@@ -277,7 +276,7 @@ export async function decide(input, deps = {}) {
   // First Mate's, once (scripts/lib/setup-title.js).
   let retitle = false;
   try {
-    retitle = (deps.writeVia ?? 'self') === 'self' && isRecord(input) && featureSlug(input.cwd) === null && beingSetUp(input.cwd) === null && projectOf(input.cwd, { dir: deps.dir }) !== null && takeSetupTitled(input.session_id);
+    retitle = (deps.writeVia ?? 'self') === 'self' && isRecord(input) && featureSlug(input.cwd) === null && beingSetUp(input.cwd) === null && projectOf(input.cwd, { dir: deps.dir }) !== null && (await import('../lib/setup-title.js')).takeSetupTitled(input.session_id);
   } catch { /* the title stays */ }
   if (!retitle) return out;
   const output = out?.hookSpecificOutput ?? { hookEventName: 'UserPromptSubmit' };
