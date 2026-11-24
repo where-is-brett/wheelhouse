@@ -71,6 +71,9 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     },
     cards: {
       chatClick: post('/cards/chat-click'), // { project | cwd, card, hash, label, proof, commit?, text? } -> { ok, id }: a click in the chat, as an unsigned card-answer naming its proof; never signed. `text`, the director's words, only with Suggest a change…
+      hookShown: post('/cards/hook-shown'), // { project | cwd, session, message, options } -> { ok, card }: the question tool's card, as a hook saw it asked, found among the cards waiting (or the Lift STOP card while STOP is on) and kept as shown to that session
+      hookAuto: post('/cards/hook-auto'), // { project | cwd, session } -> { ok, first }: the harness answered a card with no click (Autopilot); `first` is true once per session
+      hookClick: post('/cards/hook-click'), // { project | cwd, session, message, options, label } -> { ok, id?, card }: the answer a hook saw come back, as an unsigned card-answer with proof hook-click; only for a card shown to that session, once, within HOOK_CLICK_MS
     },
     // { project | cwd, card, hash } -> { ok, recorded, choice, id?, kind?, step? }: the card, by its id in the state and the
     // sha256 of its data, shown in the helper's own window; a deciding click there is signed by the helper with proof

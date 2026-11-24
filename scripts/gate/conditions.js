@@ -63,6 +63,13 @@ export function approvalCounts(entry, headSha, enrolled) {
 const SIGNED_PROOF = 'signed-hook';
 // Clicks in an agent's chat, which a project with real users never takes as an approval.
 const CHAT_PROOFS = ['chat-click'];
+// A click an agent's hook saw come back from the question tool (the helper's /cards/hook-click): an unsigned card-answer, but
+// one the helper took only for a card it showed that session, once, in time. It counts as a signed approval does, on any
+// project, according to HOOK_CLICK_APPROVAL: 'counts' (the default), 'with-host' (it counts only where the person's approval on
+// the host is also given, `hostApproval` true) or 'off'. The caller may give `hookClickApproval` in its place.
+const HOOK_PROOF = 'hook-click';
+export const HOOK_CLICK_APPROVAL = 'counts';
+export const HOOK_CLICK_MODES = Object.freeze(['counts', 'with-host', 'off']);
 // What a project with real users takes, the strongest first: the host's approval, the window.
 const REAL_USER_PROOFS = ['host', 'window'];
 const NEEDS_WORDS = { host: 'the director\'s approval on the code host', window: 'the director\'s click in Wheelhouse\'s window' };
@@ -79,6 +86,16 @@ function clickApproves(entry, headSha, proofs, realUsers) {
     && CHAT_PROOFS.includes(proof) && proofs.includes(proof);
 }
 
+function hookClickApproves(entry, headSha, i) {
+  const mode = HOOK_CLICK_MODES.includes(i.hookClickApproval) ? i.hookClickApproval : HOOK_CLICK_APPROVAL;
+  return mode !== 'off'
+    && (mode === 'counts' || i.hostApproval === true)
+    && entry?.kind === 'card-answer'
+    && entry.data?.proof === HOOK_PROOF
+    && entry.data?.label === 'Approve'
+    && entry.data?.commit === headSha;
+}
+
 // Whether the approval given counts, and, when it doesn't on a project with real users, the proof it needs.
 function approvalOf(i, headSha) {
   const proofs = Array.isArray(i.approvalProofs) ? i.approvalProofs : [SIGNED_PROOF];
@@ -87,7 +104,7 @@ function approvalOf(i, headSha) {
   const signedProof = i.approval?.data?.proof;
   const signedTaken = proofs.includes(SIGNED_PROOF) || (typeof signedProof === 'string' && proofs.includes(signedProof) && !(realUsers && CHAT_PROOFS.includes(signedProof)));
   const counts = headSha !== ''
-    && ((signedTaken && approvalCounts(i.approval, headSha, i.enrolled)) || clickApproves(i.approval, headSha, proofs, realUsers));
+    && ((signedTaken && approvalCounts(i.approval, headSha, i.enrolled)) || clickApproves(i.approval, headSha, proofs, realUsers) || hookClickApproves(i.approval, headSha, i));
   if (counts) return { counts: true };
   if (!realUsers || !proofs.some((p) => CHAT_PROOFS.includes(p))) return { counts: false };
   return { counts: false, needs: REAL_USER_PROOFS.find((p) => proofs.includes(p)) ?? 'window' };
@@ -174,6 +191,8 @@ export function selfMergeDecision(input) {
 // today's rule: only a signed approval counts. With 'chat-click' among them, an unsigned
 // card-answer labelled Approve naming the head counts too, unless `realUsers` is true: then only a signed
 // approval naming a 'window' or 'host' proof counts, and the answer's `needs` names which one.
+//
+// A `hook-click` approval (an agent's hook saw the click) counts on any project, by `hookClickApproval` (HOOK_CLICK_APPROVAL).
 //
 // `batch` (true only for the helper's own decision-records change, which it has verified) with `changedPaths` all decision records
 // (decisionsOnly) lowers the approval condition and nothing else.
