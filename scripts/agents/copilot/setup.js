@@ -184,7 +184,8 @@ export function refresh({
   return said.length === 0 ? null : said.join(' ');
 }
 
-// What VS Code's user settings say about the chat's questions, in one plain line, or null when they are as Wheelhouse needs.
+// What VS Code's user settings say about the chat's questions and approvals, in one plain line, or null when they are as Wheelhouse
+// needs. Assisted is the level Wheelhouse recommends, else Allow all, never Autopilot; setup writes no permission setting itself.
 // `chat.autoReply` answers every question with no click, and Copilot's askUser setting off means no question is shown. The
 // settings file may hold comments; a file that can't be read or understood says nothing.
 export function questionSettingsLine({ env = process.env, userHome = os.homedir(), platform = process.platform, read = textOf } = {}) {
@@ -199,6 +200,12 @@ export function questionSettingsLine({ env = process.env, userHome = os.homedir(
   if (!isRecord(settings)) return null;
   const off = Object.entries(settings).some(([key, value]) => /(^|\.)askUser$/.test(key) && value === false);
   if (settings['chat.autoReply'] === true) return "Your VS Code setting chat.autoReply is on, so Copilot's questions are answered with no click from you.";
+  const level = String(isRecord(settings['chat.defaultConfiguration']) ? settings['chat.defaultConfiguration'].approvals ?? '' : '').toLowerCase().replace(/[^a-z]/g, '');
+  if (level === 'autopilot') return "Your VS Code approvals level is Autopilot, so Copilot answers its own questions with no click from you; choose Assisted, or Allow all if that isn't offered.";
+  if (level === 'assisted') return 'Your VS Code approvals level is Assisted, the one Wheelhouse recommends: a reviewer checks each action before it runs, and Wheelhouse\'s guards still apply.';
+  if (level === 'allowall' || level === 'bypass' || settings['chat.tools.global.autoApprove'] === true) {
+    return 'Your VS Code approvals level is Allow all, so Copilot runs actions without asking; Wheelhouse\'s guards still refuse what they know. Assisted is the better level where VS Code offers it.';
+  }
   return off ? "Your Copilot askUser setting in VS Code is off, so Copilot's questions are not shown to you." : null;
 }
 

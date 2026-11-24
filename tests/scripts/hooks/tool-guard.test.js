@@ -1598,6 +1598,56 @@ test('the engine room\'s port is refused to the shell; other local ports are not
   });
 });
 
+const CARD_ROUTES = /does not let an agent post to the helper's card routes/;
+
+test('a shell command that posts to the helper\'s card routes is refused, however it is spelt; commands that only mention cards pass', async () => {
+  await inProject(async (ctx) => {
+    for (const command of [
+      'curl -X POST http://localhost/cards/chat-click -d x',
+      'curl --unix-socket ~/.wheelhouse/helper.sock http://h/cards/chat-click',
+      "curl   -s  'http://h/cards/hook-click'",
+      'curl "http://h/cards/hook-auto"',
+      'wget --post-data=x http://127.0.0.1:9/cards/chat-click',
+      'Invoke-WebRequest -Uri http://h/cards/chat-click',
+      "iwr 'http://h/cards/hook-shown' -Method Post",
+      'Invoke-RestMethod http://h/cards/hook-click',
+      `node -e "fetch('http://h/cards/chat-click',{method:'POST'})"`,
+      `python3 -c "import urllib.request as u; u.urlopen('http://h/cards/chat-click')"`,
+      `FOO=1 env curl http://h/cards/chat-click`,
+      `sudo curl http://h/cards/chat-click`,
+      `echo hi && curl http://h/cards/chat-click`,
+      `bash -c 'curl http://h/cards/chat-click'`,
+      `powershell -Command "irm http://h/cards/chat-click"`,
+      `/usr/bin/curl http://h/cards/chat-click`,
+      `python - <<'EOF'\nimport requests\nrequests.post('http://h/cards/chat-click')\nEOF`,
+    ]) {
+      const out = await bash(ctx, command);
+      assert.ok(denied(out), command);
+      assert.match(REASON(out), CARD_ROUTES, command);
+    }
+    for (const command of [
+      'ls cards', 'echo "cards are shown"', 'grep -rn "/cards/chat-click" scripts', 'cat docs/cards/notes.md', 'curl http://localhost:3000/cards',
+      'curl https://example.com/api', 'node scripts/x.js', 'git log --oneline -- cards/', 'rg chat-click',
+    ]) {
+      assert.equal(await bash(ctx, command), undefined, command);
+    }
+  });
+});
+
+test('the hooks and the helper reach the card routes in their own process, not by a shell command the guard would refuse', async () => {
+  const repo = path.resolve(import.meta.dirname, '..', '..', '..');
+  const roots = ['scripts', 'adapters'].map((d) => path.join(repo, d));
+  const files = roots.flatMap((dir) => fs.readdirSync(dir, { recursive: true }).filter((f) => f.endsWith('.js')).map((f) => path.join(dir, f)));
+  const lines = files.flatMap((f) => fs.readFileSync(f, 'utf8').split('\n').map((text, i) => ({ f, i, text })));
+  const naming = lines.filter(({ text }) => /\/cards\/(?:chat-click|hook-[a-z]+)/.test(text) && /\b(?:curl|wget|Invoke-WebRequest|Invoke-RestMethod|iwr|irm)\b/.test(text));
+  assert.deepEqual(naming.map(({ f, i }) => `${f}:${i + 1}`), [], 'no source builds a shell command to a card route');
+  await inProject(async (ctx) => {
+    for (const command of ['node scripts/frontdesk/cli.js desk act --card c1', 'node "$CLAUDE_PLUGIN_ROOT/scripts/hooks/prompt-record.js"']) {
+      assert.equal(await bash(ctx, command), undefined, command);
+    }
+  });
+});
+
 // A step that reads only (Archon design, section 7.5): its shell is held to reading commands, wherever it runs, and a
 // building step's is not.
 test('in a review step the shell may only read: a write is refused, a read passes, and a building step is left alone', async () => {

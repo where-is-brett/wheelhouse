@@ -20,6 +20,13 @@ The Wheelhouse playbooks name your tools in general words. In Copilot:
 - Run the Wheelhouse command exactly as the session start names it. When it is a launcher, `wh-<name>`, Wheelhouse's commands are launchers on your PATH, typed alone with no `node` and no path. Where a playbook says to use the Wheelhouse command with another script in place of `scripts/frontdesk/cli.js`, run that script's launcher instead: `scripts/setup/cli.js` is `wh-setup`, `scripts/update/cli.js` is `wh-update`, `scripts/health/trials.js` is `wh-trials`, `scripts/feature/cli.js` is `wh-feature`. Where a playbook shows text in double quotes after a launcher, give it in single quotes instead, with no `'`, `"`, `%`, `^`, `&`, `|`, `<`, `>`, `$`, `!` or backtick in it, and run one launcher command alone on the line (no `;`, pipe, `&&`, `$variable`, brackets or backtick); a command that doesn't fit is refused. A file's text goes in a file the command reads with `< path`.
 - When the Wheelhouse command is `node` with a path, run it as given and put the other script's path in place of `scripts/frontdesk/cli.js` where a playbook says to. A `wh-` launcher is not on your PATH then.
 
+## Approvals level
+
+The director picks how much Copilot asks before it acts, in VS Code's chat. Recommend Assisted, where it is offered, and
+otherwise Allow all. Never recommend Autopilot: it answers your cards itself, so the director never sees them. If the
+director is on Autopilot, say so in one plain line and ask them to switch it off. Never post a card's answer from the shell:
+the hooks and the helper record clicks, and the guard refuses a command that tries.
+
 ## Clicks in the chat
 
 On Copilot no hook sees the director's click on a card you asked with ask_user, so that click is not recorded. An option that

@@ -461,6 +461,15 @@ test('setup says so when VS Code would answer Copilot\'s questions with no click
   assert.match(line('{\n // mine\n "chat.autoReply": true,\n}'), /chat\.autoReply is on.*no click/);
   assert.match(line('{"github.copilot.chat.cli.askUser": false}'), /askUser setting.*off/);
   assert.equal(line('{"chat.autoReply": false, "github.copilot.chat.cli.askUser": true}'), null);
+  // The approvals level: Assisted and Allow all are named and what each means; Autopilot keeps its warning.
+  assert.match(line('{"chat.defaultConfiguration": {"approvals": "assisted"}}'), /Assisted.*a reviewer.*each action/s);
+  assert.match(line('{"chat.defaultConfiguration": {"approvals": "allowAll"}}'), /Allow all.*without asking/s);
+  assert.match(line('{"chat.tools.global.autoApprove": true}'), /Allow all.*without asking/s);
+  assert.match(line('{"chat.defaultConfiguration": {"approvals": "autopilot"}}'), /Autopilot.*answers.*no click/s);
+  assert.match(line('{"chat.defaultConfiguration": {"approvals": "autopilot"}, "chat.autoReply": true}'), /chat\.autoReply is on/);
+  assert.equal(line('{"chat.defaultConfiguration": {"approvals": "manual"}}'), null);
+  assert.equal(line('{"chat.tools.global.autoApprove": false}'), null);
+  for (const text of ['{"chat.defaultConfiguration": {"approvals": "assisted"}}', '{"chat.tools.global.autoApprove": true}']) assert.doesNotMatch(line(text), /[\r\n]/);
   assert.equal(line('not json'), null);
   assert.equal(line(null), null);
 });

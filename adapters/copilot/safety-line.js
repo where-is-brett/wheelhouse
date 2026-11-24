@@ -6,10 +6,12 @@ import { C6_PASSED, GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC, REVIEW_SESSION_READY }
 
 // Copilot lets one action through when its guard runs past the time-out, which is why every guard answers sooner.
 const GUARD_HANG = `Copilot lets an action through if its guard runs past ${GUARD_TIMEOUT_SEC} seconds, so every guard answers within ${GUARD_DEADLINE_MS / 1000} seconds or refuses`;
+const ALLOW_ALL = 'On Allow all, Copilot runs actions without asking; Wheelhouse\'s guards still refuse what they know';
 const APPROVALS = 'Approvals in Copilot\'s chat aren\'t proven until check C6 passes; the steps that matter most are confirmed in Wheelhouse\'s own window';
 const REVIEWS = 'Second looks at a change by Copilot aren\'t proven until the clean reviewer passes its check; until then they go to Claude Code\'s reviewer';
 const LOCKED = 'Copilot doesn\'t offer Locked';
 const WINDOWS = 'On Windows there is no sandbox, so builds run at Standard with Guarded build commands';
+const WINDOWS_ALLOW_ALL = 'On Windows with Allow all, no sandbox stands behind those guards';
 
 // safetyLine({ platform, approvalsProven, reviewsProven }) -> string[]
 //   platform         the system, as process.platform names it
@@ -19,10 +21,11 @@ const WINDOWS = 'On Windows there is no sandbox, so builds run at Standard with 
 export default function safetyLine({ platform = process.platform, approvalsProven = C6_PASSED, reviewsProven = REVIEW_SESSION_READY } = {}) {
   return [
     GUARD_HANG,
+    ALLOW_ALL,
     ...(approvalsProven === true ? [] : [APPROVALS]),
     ...(reviewsProven === true ? [] : [REVIEWS]),
     LOCKED,
-    ...(platform === 'win32' ? [WINDOWS] : []),
+    ...(platform === 'win32' ? [WINDOWS, WINDOWS_ALLOW_ALL] : []),
   ];
 }
 
