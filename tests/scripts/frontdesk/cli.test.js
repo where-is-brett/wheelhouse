@@ -3438,7 +3438,7 @@ test('confirm seat-take-over sends the session given, and says the result in one
     const code = await main(['confirm', 'seat-take-over', '--session', 'chat-1'], { cwd: folder, client, env: { CLAUDE_CODE_SESSION_ID: 'inherited' }, now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; } });
     assert.equal(code, 0, err);
     assert.deepEqual(sent, [{ cwd: folder, card: 'seat-take-over', session: 'chat-1' }]);
-    assert.match(out, /this window is now the First Mate/i);
+    assert.match(out, /this window is now the First Mate, and keeps Wheelhouse's records/i);
     assert.equal(out.trim().split('\n').length, 1);
   });
 });
