@@ -256,6 +256,57 @@ function appleAppsAsk(name) {
   };
 }
 
+// --- Where builders start (builders and settings design, sections 6 and 10.1) ---
+// The advanced question of step 3: how builder sessions start on this computer. What it offers follows where setup runs, read
+// from CLAUDE_CODE_ENTRYPOINT: Desktop's value recommends Desktop; the terminal's offers the background only (a session in a
+// terminal can't start Desktop sessions); any other value, or none, offers all three and says it can't tell.
+export const BUILDER_CHOICES = Object.freeze({
+  desktop: 'Claude Desktop',
+  background: 'In the background',
+  launch: 'In the background, with a launch command',
+});
+const ENTRYPOINTS = Object.freeze({ 'claude-desktop': 'desktop', cli: 'terminal' });
+
+// 'desktop', 'terminal' or 'unknown'.
+export function entrypointKind(value) {
+  return typeof value === 'string' && Object.hasOwn(ENTRYPOINTS, value) ? ENTRYPOINTS[value] : 'unknown';
+}
+
+export function builderRouteAsk({ entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT } = {}) {
+  const where = entrypointKind(entrypoint);
+  const says = {
+    [BUILDER_CHOICES.desktop]: 'The foreman\'s Claude Desktop session starts builders, signed in as Desktop is. They show in Desktop\'s sidebar.',
+    [BUILDER_CHOICES.background]: 'Wheelhouse starts builders itself, with plain `claude`. It needs `claude` to be signed in on this computer.',
+    [BUILDER_CHOICES.launch]: 'Wheelhouse starts builders through a command you give, such as a wrapper that sets a gateway.',
+  };
+  const labels = where === 'desktop' ? [BUILDER_CHOICES.desktop, BUILDER_CHOICES.background, BUILDER_CHOICES.launch]
+    : where === 'terminal' ? [BUILDER_CHOICES.background, BUILDER_CHOICES.launch]
+      : [BUILDER_CHOICES.background, BUILDER_CHOICES.desktop, BUILDER_CHOICES.launch];
+  const recommend = where === 'desktop' ? BUILDER_CHOICES.desktop : BUILDER_CHOICES.background;
+  const found = where === 'desktop' ? 'Setup is running in Claude Desktop.' : where === 'terminal' ? 'Setup is running in a terminal.'
+    : "Wheelhouse can't tell whether setup is running in Claude Desktop or a terminal, so all three ways are offered.";
+  return {
+    id: 'builders',
+    card: {
+      level: 2,
+      what: `How should builders start on this computer? ${found}`,
+      why: 'Builders are the sessions that do the work, and they must be signed in. Where they start decides whose sign-in they use.',
+      options: labels.map((label) => ({ label, says: says[label] })),
+      recommend,
+      because: where === 'desktop' ? 'Desktop is already signed in and shows each builder' : 'plain `claude` is the one way every computer supports',
+      meanwhile: MEANWHILE,
+    },
+  };
+}
+
+// The route setting an answer to that question saves for this computer, as the settings card saves it (a signed profile
+// event): { key, value }. The launch command is its own key, asked next; the answer names only the route.
+export function builderRouteSetting(label, computer) {
+  const value = label === BUILDER_CHOICES.desktop ? 'desktop' : label === BUILDER_CHOICES.background || label === BUILDER_CHOICES.launch ? 'background' : null;
+  if (value === null) throw new Error(`This isn't an answer to where builders start: ${JSON.stringify(label)}`);
+  return { key: `builders:${computer}`, value };
+}
+
 export function questionsStep() {
   return {
     n: 4,

@@ -518,6 +518,8 @@ export function sessionsPart({ ready = BACKGROUND_SESSIONS_READY, plan: given = 
     featureStartCall: switched(buildFeatureStartCall),
     featureResumeCall: switched(buildFeatureResumeCall),
     finalAnswer,
+    // Copilot's sessions start in the background only: there is no Desktop for it (builders design, section 9.6).
+    routes: Object.freeze(['background']),
     // Before every start: the versions in use read, and any CLI but the pinned one held until it passes the safety
     // subset (checkVersions fails closed: a version that can't be read isn't the pin); the pinned kits fetched once and
     // checked; the activity folder; and the session's own home written afresh. A throw refuses the start; nothing has been

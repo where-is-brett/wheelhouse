@@ -213,4 +213,7 @@ export const takesColumn = true;
 // Its sessions start through the launch command saved for the computer, when there is one (scripts/lib/launch-words.js).
 export const takesLaunch = true;
 
-export default Object.freeze({ checkForeman, checkFeature, foremanCall, featureStartCall, featureResumeCall, featureHelmCall, whyCall, finalAnswer, takesColumn, takesLaunch, signInPatterns });
+// The routes builders can start by: through Claude Desktop (the foreman's session) or detached in the background.
+export const routes = Object.freeze(['desktop', 'background']);
+
+export default Object.freeze({ routes, checkForeman, checkFeature, foremanCall, featureStartCall, featureResumeCall, featureHelmCall, whyCall, finalAnswer, takesColumn, takesLaunch, signInPatterns });

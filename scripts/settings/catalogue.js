@@ -13,6 +13,8 @@ const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
 const WINDOWS_BUILDS_KEY = /^windowsBuildCommands:[0-9a-f]{8}$/;
 // One per computer: the launch command builders start through (design section 8).
 export const BUILDER_LAUNCH_KEY = /^builderLaunch:[0-9a-f]{8}$/;
+// One per computer: how this computer starts builder sessions (design section 6).
+export const BUILDERS_KEY = /^builders:[0-9a-f]{8}$/;
 const CHANNELS = ['claude', 'ntfy', 'telegram'];
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -118,6 +120,13 @@ export const BUILDER_LAUNCH = {
   say: (v) => (v === null ? 'none, plain claude' : sayLaunch(v).replace(/^Wheelhouse will run: /, '')),
 };
 
+// One per computer (`builders:<computer>`): how builders start here, `desktop` (the foreman's Claude Desktop session starts
+// them) or `background` (the watcher starts them detached). None until setup's answer or the settings card sets it: a route
+// is never guessed outside setup (design section 6, scripts/lib/route.js). An agent that supports only some routes
+// (its adapter's `sessions.routes`) runs on the first it supports when the saved one isn't among them.
+export const BUILDER_ROUTES = Object.freeze(['desktop', 'background']);
+export const BUILDERS = { label: 'Where builders start', group: 'advanced', levels: BUILDER_ROUTES, default: null, home: 'profile' };
+
 // The person's own GitHub App (setup's step 3, ruling R56): { clientId, slug, owner }, the app the
 // narrow GitHub connection signs in to in place of Wheelhouse's, on every computer of theirs; null
 // is none. Setup records it, and it counts only once the director confirms it. The client ID is
@@ -159,6 +168,7 @@ export function definitionOf(key, lists = SHIPPED) {
   if (key === OWN_GITHUB_APP_KEY) return OWN_GITHUB_APP;
   if (WINDOWS_BUILDS_KEY.test(key)) return WINDOWS_BUILD_COMMANDS;
   if (BUILDER_LAUNCH_KEY.test(key)) return BUILDER_LAUNCH;
+  if (BUILDERS_KEY.test(key)) return BUILDERS;
   return undefined;
 }
 

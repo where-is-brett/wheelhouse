@@ -329,3 +329,10 @@ test('none of gh, glab or copilot ran, and the real home was never touched', () 
   assert.ok(fs.realpathSync(home).startsWith(fs.realpathSync(os.tmpdir())), 'the test\'s home is a temporary folder');
   assert.notEqual(path.resolve(home), path.join(os.homedir(), '.wheelhouse'));
 });
+
+test("the sessions parts declare their routes: Copilot's only background, Claude Code's both", () => {
+  assert.deepEqual([...sessionsFor('copilot').routes], ['background']);
+  assert.deepEqual([...sessionsFor('claude-code').routes], ['desktop', 'background']);
+  assert.deepEqual([...adapterFor('copilot').sessions.routes], ['background']);
+  assert.deepEqual([...adapterFor('claude-code').sessions.routes], ['desktop', 'background']);
+});

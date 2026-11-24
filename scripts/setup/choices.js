@@ -81,6 +81,7 @@ export function aboutOf(key) {
   if (id.startsWith('product-')) return 'the description';
   if (id === 'live-data') return 'live data';
   if (id === 'apple-apps') return 'signing Apple apps';
+  if (id === 'builders') return 'where builders start';
   if (id.startsWith('host-tool-')) return `${id === 'host-tool-gh' ? 'GitHub' : 'GitLab'}'s own tool`;
   return id;
 }

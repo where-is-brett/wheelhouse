@@ -330,6 +330,8 @@ const START_OUTPUT_DAYS_MS = 24 * 60 * 60 * 1000;
 const ROUTE_KINDS = ['not-signed-in', 'blocked', 'no-program'];
 // How long a session must run before its route counts as signing in, when it hasn't ended yet.
 export const PROVE_MS = 30 * 1000;
+// How long a detached session may run on after builders move to Desktop before the watcher ends it (design section 11).
+export const ROUTE_GRACE_MS = 30 * MINUTE;
 
 // The piece's hold for failing starts, or null. A record that is there and can't be read holds too, never "no hold".
 export function startHold(project, work) {
@@ -799,6 +801,7 @@ export function makeWaker({
   labelGuarded = null,
   claude: givenClaude = null,
   launchWords = storedLaunch,
+  route: givenRoute = null,
   sessions = null,
   baseEnv: givenEnv = process.env,
   platform = process.platform,
@@ -1046,6 +1049,69 @@ export function makeWaker({
     return `${agent}:background`;
   };
   const gateNow = () => gateFor(wheelhouseHome(), routeKey());
+
+  // --- The route (builders design, sections 6 and 11) ---
+  // Read at every tick, before any start, so a change takes effect within one tick. `effective` is the route a start
+  // follows: the saved one, or `background` where none was ever chosen (an install that predates the setting starts
+  // builders as it always has; the facts say "Builders: not chosen"). A saved value or settings file that can't be read
+  // starts nothing and is named (`fault`).
+  const routeNow = async () => {
+    let agent = 'claude-code';
+    let routes;
+    try {
+      agent = agentOfConfig(config, { computerId: computerId() });
+    } catch { /* the id can't be read: the start's own check refuses */ }
+    try {
+      routes = sessionsOf().routes;
+    } catch { /* no adapter to ask: both routes */ }
+    let got;
+    try {
+      got = (givenRoute ?? (await import('../lib/route.js')).builderRoute)({ agent, computer: computerId(), home: wheelhouseHome(), ...(Array.isArray(routes) ? { routes } : {}) });
+    } catch (error) {
+      return { effective: null, fault: `not started: the builders' route can't be read: ${error instanceof Error ? error.message : 'unknown error'}` };
+    }
+    if (got.from === 'fault') return { effective: null, fault: got.signIn?.reason ?? "not started: the builders' route setting is damaged" };
+    return { effective: got.route ?? 'background', fault: null };
+  };
+  // When the route last changed, kept beside the wakes so a restarted watcher still knows. The first sight is no change.
+  const routeSeenFile = () => path.join(watcherDir(project), 'route-seen.json');
+  const noteRoute = (effective) => {
+    const seen = readJson(routeSeenFile());
+    if (isPlain(seen) && seen.route === effective && Number.isFinite(Date.parse(seen.since))) return Date.parse(seen.since);
+    const since = now();
+    try {
+      watcherFolder(project);
+      writeJsonFile(routeSeenFile(), { route: effective, since: since.toISOString() });
+    } catch (error) {
+      onError(`The route's change couldn't be noted: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+    return since.getTime();
+  };
+  // A detached session still running ROUTE_GRACE_MS after builders moved to Desktop is ended by the watcher that started it,
+  // with the stop STOP uses: its process is ended only when its start time matches the record's, the record goes, and the
+  // wakes it had taken are sent again (they go to the Desktop queue).
+  async function endStaleDetached(since) {
+    if (now().getTime() - since < ROUTE_GRACE_MS) return;
+    for (const work of [undefined, ...runningWorks()]) {
+      const target = targetOf(work);
+      const state = await stateOf(target);
+      if (!state?.live || state.live.state === 'starting' || !Number.isInteger(state.live.pid)) continue;
+      const record = state.live;
+      if (typeof record.startTime === 'string' && sameStart(await timeOf(record.pid, [], { fresh: true }), record.startTime)) kill(record.pid);
+      const same = (r) => r.at === record.at && r.pid === record.pid && r.state === record.state;
+      if (claimRecord(target, same) === null) continue;
+      settle(list(record.entries).filter((x) => typeof x === 'string'), 'again');
+      onNote(`The ${nameOf(target)} session was still running ${Math.round(ROUTE_GRACE_MS / MINUTE)} minutes after builders moved to Desktop, so it was ended.`);
+    }
+  }
+  // Builders moved back to the background: the wakes queued for Desktop go back to the outbox, to be started detached.
+  async function requeueDesktopWakes() {
+    const { dropWakes, takeWakes } = await import('./desktop-queue.js');
+    const wakes = takeWakes(project);
+    if (wakes.length === 0) return;
+    save([...load(), ...wakes.map((w) => newEntry({ to: w.kind === 'foreman' ? 'foreman' : 'feature', ...(w.work === undefined ? {} : { work: w.work }), file: w.file }))]);
+    dropWakes(project, wakes.map((w) => w.path));
+  }
   // What the gate last held back, said once until it changes.
   let heldByGate = null;
   const gateHeld = (reason) => {
@@ -1893,8 +1959,44 @@ export function makeWaker({
     }
   }
 
+  // Queues the waiting wakes of one target, as one, for the foreman's Desktop session. A piece whose folder has gone is
+  // settled as ever; a wake carries the piece's session id when one is kept (a resume).
+  async function queueForDesktop(work, entries, waiting) {
+    let cwd = null;
+    let sessionId;
+    if (work !== undefined) {
+      cwd = locate(work);
+      if (cwd === null) {
+        settle(waiting.map((e) => e.id), 'done'); // the feature has closed or gone
+        return;
+      }
+      const kept = keptSession(work, cwd);
+      if (typeof kept === 'string') sessionId = kept;
+      if (await controlHeld(work, cwd, waiting.map((e) => e.id))) return;
+    }
+    let gathered;
+    try {
+      const { queueWake } = await import('./desktop-queue.js');
+      gathered = gather(entries, waiting, work === undefined ? 'foreman' : 'feature', work);
+      queueWake(project, { kind: work === undefined ? 'foreman' : 'feature-wake', work, file: gathered.entry.file, sessionId, now });
+    } catch (error) {
+      settle(gathered ? [gathered.entry.id] : waiting.map((e) => e.id), 'failed', error instanceof Error ? error.message : 'unknown error');
+      return;
+    }
+    settle([gathered.entry.id], 'done');
+  }
+
   async function deliverByStart() {
     const delivered = [];
+    const route = await routeNow();
+    if (route.effective === null) {
+      gateHeld(route.fault);
+      return delivered;
+    }
+    const moved = noteRoute(route.effective);
+    const toDesktop = route.effective === 'desktop';
+    if (toDesktop) await endStaleDetached(moved);
+    else await requeueDesktopWakes();
     const works = [...new Set([...load().filter((e) => e.to === 'feature').map((e) => e.work), ...runningWorks()])];
     for (const work of [undefined, ...works]) {
       const target = targetOf(work);
@@ -1913,6 +2015,12 @@ export function makeWaker({
       if (waiting.length === 0) continue;
       // The director has the piece at its helm: its wakes stay queued, and nothing starts or wakes its session.
       if (work !== undefined && helmHeld(project, work)) continue;
+      // On the Desktop route nothing is started here: the wake is queued for the foreman's Desktop session, and a piece's
+      // wakes are held by the same rules (its files that steer agents), but never by the background route's gate.
+      if (toDesktop) {
+        await queueForDesktop(work, entries, waiting);
+        continue;
+      }
       // The route can't sign in, or this piece's starts keep failing: its wakes stay queued, and nothing is retried.
       const refused = startRefused(work);
       if (refused !== null) {
@@ -2068,6 +2176,14 @@ export function makeWaker({
           print(`START feature ${work} ${worktree}`);
           return { printed: true };
         }
+        const route = await routeNow();
+        if (route.effective === null) throw new Error(route.fault);
+        // On the Desktop route the foreman's session starts it: a wake of its own is queued, naming no free text.
+        if (route.effective === 'desktop') {
+          (await import('./desktop-queue.js')).queueWake(project, { kind: 'feature-start', work, file: writeWake(project, { to: 'feature', work, events: [], digest: [], dropped: 0 }, { now }), now });
+          print(`QUEUED feature-start ${work}`);
+          return { printed: true, queued: true };
+        }
         const target = targetOf(work);
         const state = await stateOf(target);
         if (state?.live) throw new Error(`The ${work} session is already running`);
@@ -2121,6 +2237,13 @@ export function makeWaker({
         if (helmHeld(project, work)) throw new Error(`${work} is with the director at the helm. It waits until they hand it back.`);
         const worktree = kept.worktree;
         if (!featureWorktreeOk(project, worktree)) throw new Error("This isn't a feature worktree of the project");
+        const route = await routeNow();
+        if (route.effective === null) throw new Error(route.fault);
+        if (route.effective === 'desktop') {
+          if (typeof sessionId === 'string' && !UUID.test(sessionId) && !RUN_ID.test(sessionId)) throw new Error(`The ${work} session has no session id kept`);
+          (await import('./desktop-queue.js')).queueWake(project, { kind: 'feature-wake', work, file: writeWake(project, { to: 'feature', work, events: [], digest: [], dropped: 0 }, { now }), sessionId, now });
+          return { queued: true, sessionId };
+        }
         const target = targetOf(work);
         const state = await stateOf(target);
         if (state?.live) return { live: true };

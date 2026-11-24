@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { questionsStep, readmeDescription, signsAppleApps, LIVE_DATA, PRODUCT, SIGNS_APPS, PROJECT_WAIT_MS } from '../../../scripts/setup/questions.js';
+import { questionsStep, readmeDescription, signsAppleApps, builderRouteAsk, builderRouteSetting, entrypointKind, BUILDER_CHOICES, LIVE_DATA, PRODUCT, SIGNS_APPS, PROJECT_WAIT_MS } from '../../../scripts/setup/questions.js';
 import { REAL_USERS, LEVELS } from '../../../scripts/setup/host.js';
 import { noteAsked, answersFor } from '../../../scripts/setup/clicks.js';
 import { keepAnswer } from '../../../scripts/lib/setup-clicks.js';
@@ -337,4 +337,36 @@ test('the product answer writes only the phase, on every platform: setup starts 
       for (const keys of settings) assert.deepEqual(keys, ['phase'], platform);
     }
   });
+});
+
+test('the builders question offers Desktop as recommended in Desktop, only background in a terminal, and all three, saying so, when unknown', () => {
+  const labels = (ask) => ask.card.options.map((o) => o.label);
+  const desktop = builderRouteAsk({ entrypoint: 'claude-desktop' });
+  assert.deepEqual(labels(desktop), [BUILDER_CHOICES.desktop, BUILDER_CHOICES.background, BUILDER_CHOICES.launch]);
+  assert.equal(desktop.card.recommend, BUILDER_CHOICES.desktop);
+  const terminal = builderRouteAsk({ entrypoint: 'cli' });
+  assert.deepEqual(labels(terminal), [BUILDER_CHOICES.background, BUILDER_CHOICES.launch]);
+  assert.equal(terminal.card.recommend, BUILDER_CHOICES.background);
+  for (const entrypoint of [null, '', 'sdk-ts', 'vscode', 42]) {
+    const unknown = builderRouteAsk({ entrypoint });
+    assert.equal(labels(unknown).length, 3, String(entrypoint));
+    assert.match(unknown.card.what, /can't tell whether setup is running in Claude Desktop or a terminal, so all three/);
+    assert.equal(unknown.card.recommend, BUILDER_CHOICES.background, 'an unknown place is not taken for Desktop');
+  }
+  assert.equal(entrypointKind('claude-desktop'), 'desktop');
+  assert.equal(entrypointKind('toString'), 'unknown');
+  for (const ask of [desktop, terminal]) {
+    assert.ok(ask.card.options.every((o) => typeof o.says === 'string' && o.says !== ''));
+    assert.ok(labels(ask).includes(ask.card.recommend));
+  }
+});
+
+test('the answer to the builders question is the per-computer route setting, and the catalogue accepts it', () => {
+  assert.deepEqual(builderRouteSetting(BUILDER_CHOICES.desktop, '0a1b2c3d'), { key: 'builders:0a1b2c3d', value: 'desktop' });
+  for (const label of [BUILDER_CHOICES.background, BUILDER_CHOICES.launch]) {
+    const { key, value } = builderRouteSetting(label, '0a1b2c3d');
+    assert.equal(value, 'background');
+    assert.doesNotThrow(() => checkSetting(key, value));
+  }
+  assert.throws(() => builderRouteSetting('Somewhere else', '0a1b2c3d'), /isn't an answer/);
 });

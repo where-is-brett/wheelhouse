@@ -1027,8 +1027,11 @@ async function started(input, deps) {
 // It is read when the front desk starts, not by every session start.
 async function buildersLineOf(input) {
   try {
-    const { buildersLine } = await import('../lib/sign-in-line.js');
-    return buildersLine({ home: wheelhouseHome(), agent: agentOfInput(input) ?? 'claude-code' });
+    const [{ buildersLine }, { builderRoute }, { sessionsFor }] = await Promise.all([import('../lib/sign-in-line.js'), import('../lib/route.js'), import('../agents/project-agent.js')]);
+    const agent = agentOfInput(input) ?? 'claude-code';
+    const home = wheelhouseHome();
+    const found = builderRoute({ agent, home, routes: sessionsFor(agent).routes });
+    return buildersLine({ home, agent, route: found.route, program: found.launch?.[0], fault: found.from === 'fault' ? found.fault : null });
   } catch {
     return null; // a line that can't be made is left out, as the other facts are
   }
