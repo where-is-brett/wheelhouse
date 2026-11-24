@@ -10,11 +10,12 @@ import { tempFolder } from '../../helpers/homes.js';
 
 const ADDRESS = 'https://gitlab.example.com';
 // A git that names these helpers for the address, and programs that answer as given; every call is kept.
-function seam({ helpers = [], programs = {} } = {}) {
+// `helpers` are values of credential.helper; `settings` are [key, value] pairs, as `git config --null --get-regexp` lists them.
+function seam({ helpers = [], settings = helpers.map((value) => ['credential.helper', value]), programs = {} } = {}) {
   const calls = [];
   const ask = async (args) => {
     calls.push(['git', ...args]);
-    return helpers.length === 0 ? { code: 1, stdout: '' } : { code: 0, stdout: `${helpers.join('\n')}\n` };
+    return settings.length === 0 ? { code: 1, stdout: '' } : { code: 0, stdout: settings.map(([key, value]) => `${key}\n${value}\0`).join('') };
   };
   const run = async (file, args) => {
     calls.push([file, ...args]);
@@ -109,4 +110,52 @@ test('the which-GitLab and address cards offer a host this computer holds a sign
   assert.match(address.what, /type it in the box under the options \(marked Other, or Type something\)/);
   const picked = gitlabWhere({ answer: (id) => (id === 'gitlab-where' ? { label: 'git.acme.example', text: null } : null), name: 'Cafe-Menu', others: [], signedIn: () => ['git.acme.example'] });
   assert.equal(picked.host, 'git.acme.example');
+});
+
+test('every helper git is given counts, not only the last: a keychain entry is found behind a store without the host', async () => {
+  const home = tempFolder('wh-held-');
+  const file = path.join(home, 'creds');
+  fs.writeFileSync(file, 'https://ann:pw@github.com\n');
+  const keychain = { security: async () => ({ code: 0, stdout: '' }) };
+  const both = await look({ helpers: ['osxkeychain', `store --file ${file}`], programs: keychain }, { platform: 'darwin', home });
+  assert.equal(both.said, 'held');
+  assert.deepEqual(both.calls[0], ['git', 'config', '--null', '--get-regexp', '^credential\\..*helper$']);
+  // An empty value clears the helpers before it.
+  const cleared = await look({ helpers: ['osxkeychain', '', `store --file ${file}`], programs: keychain }, { platform: 'darwin', home });
+  assert.equal(cleared.said, 'none');
+});
+
+test('a helper set for this address counts, one for another host does not, and one this cannot match leaves it unknown', async () => {
+  const keychain = { security: async () => ({ code: 0, stdout: '' }) };
+  const here = await look({ settings: [['credential.helper', ''], ['credential.https://gitlab.example.com.helper', 'osxkeychain']], programs: keychain }, { platform: 'darwin' });
+  assert.equal(here.said, 'held');
+  const other = await look({ settings: [['credential.https://git.other.example.helper', 'osxkeychain']], programs: keychain }, { platform: 'darwin' });
+  assert.equal(other.said, 'none');
+  const wild = await look({ settings: [['credential.https://*.example.com.helper', 'osxkeychain']], programs: keychain }, { platform: 'darwin' });
+  assert.equal(wild.said, 'unknown');
+});
+
+test('.netrc is read for machine names alone, whatever the helpers, and a password is never taken for a name', async () => {
+  const home = tempFolder('wh-held-');
+  fs.writeFileSync(path.join(home, '.netrc'), 'machine other.example login ann password machine\n');
+  assert.equal((await look({ helpers: [] }, { home })).said, 'none');
+  fs.writeFileSync(path.join(home, '.netrc'), 'machine gitlab.example.com login ann password x\n');
+  assert.equal((await look({ helpers: ['cache'] }, { home })).said, 'held');
+  fs.writeFileSync(path.join(home, '.netrc'), 'default login ann password x\n');
+  assert.equal((await look({ helpers: [] }, { home })).said, 'held');
+});
+
+test('a store line naming the host only in its password is not counted, and the keychain and Credential Manager are given a time limit', async () => {
+  const home = tempFolder('wh-held-');
+  const file = path.join(home, 'creds');
+  fs.writeFileSync(file, 'https://ann:gitlab.example.com@github.com\n');
+  assert.equal((await look({ helpers: [`store --file ${file}`] }, { home })).said, 'none');
+  const options = [];
+  const run = async (file2, args, given) => {
+    options.push(given);
+    return { code: 44, stdout: '' };
+  };
+  const { ask } = seam({ helpers: ['osxkeychain'] });
+  await gitHoldsKey({ address: ADDRESS, ask, run, platform: 'darwin', home });
+  assert.ok(options[0]?.timeoutMs > 0);
 });

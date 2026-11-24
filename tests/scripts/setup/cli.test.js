@@ -432,4 +432,10 @@ test('resume applies the steps the one card covers, in one call, and says what e
   const stuck = JSON.parse((await run(['resume'], { client: refused })).out);
   assert.equal(stuck.plan.covered, true);
   assert.equal(stuck.applied, undefined);
+  // A step planned again, still covered, after its own apply is not applied a second time in the same call.
+  const again = [];
+  const twice = fakeClient({ status: { ok: true, lines: [], next: 2, ask: 2 }, plan: plans[2], apply: ({ step }) => { again.push(step); return { ok: true }; } });
+  const once = JSON.parse((await run(['resume'], { client: twice })).out);
+  assert.deepEqual(again, [2]);
+  assert.deepEqual([once.plan.step, once.plan.covered], [2, true]);
 });

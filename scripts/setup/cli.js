@@ -227,9 +227,10 @@ export async function main(argv, {
       let { got, planned } = await look();
       // A step the one card's Go ahead covers is applied here, as the session would at once with the plan's own hash, and
       // the next plan taken, so a run of covered steps costs the session one call, not three each. What each step said, and its
-      // heading, come back in `applied`. A refusal ends the run of them, leaving the plan for the session to apply and see it.
+      // heading, come back in `applied`. A refusal ends the run of them, leaving the plan for the session to apply and see it, and
+      // so does a step planned again after its own apply: no step is applied twice in one call.
       const applied = [];
-      while (planned?.covered === true && typeof planned.hash === 'string' && planned.step <= last && applied.length < MOST_CHAINED) {
+      while (planned?.covered === true && typeof planned.hash === 'string' && planned.step <= last && applied.length < MOST_CHAINED && !applied.some((a) => a.step === planned.step)) {
         let done;
         try {
           const { ok, ...answer } = await ask(helper.setup.apply, { folder, step: planned.step, hash: planned.hash }); // eslint-disable-line no-unused-vars
@@ -280,7 +281,7 @@ export async function main(argv, {
             break;
           }
           // A wait for another step to finish is asked again as often as a running step is, so it ends when that step does, not at the
-          // end of a fixed pause. Only a timed wait (step 9's two minutes with the screen locked) is slept through whole.
+          // end of a set pause. Only a timed wait (step 9's two minutes with the screen locked) is slept through whole.
           stated = planned.wait;
           wait = planned.waitsFor !== undefined || step !== PUSH_TEST_STEP ? Math.min(planned.wait, RUNNING_POLL_MS) : planned.wait;
         }

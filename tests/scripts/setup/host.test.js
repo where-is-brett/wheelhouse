@@ -36,6 +36,8 @@ import { run as realRun } from '../../../scripts/lib/run.js';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
 import { makeFakeCurl, makeRoutedCurl, parseConfig } from '../../helpers/fake-curl.js';
 
+// The look at the director's credential helpers (scripts/setup/git-held.js): every helper setting, listed.
+const directorHelperList = (args) => args[1] === '--null' && args[2] === '--get-regexp' && /^\^credential/.test(String(args[3]));
 // Setup's own runs: git and what the test fakes; any other host tool is refused and noted here.
 const hostLog = [];
 const hostGuard = guardedRun(realRun, { log: hostLog });
@@ -106,6 +108,7 @@ function standIn(state = {}) {
     // The director's own git settings and a look at a remote through it: stand-ins, so no test reads the developer's own
     // git settings or reaches a real host.
     if (name === 'git' && args[0] === 'config' && args[1] === '--get-urlmatch') return w.directorConfig?.(args) ?? answer('', 1);
+    if (name === 'git' && args[0] === 'config' && directorHelperList(args)) return w.directorConfig?.(args) ?? answer('', 1);
     if (name === 'git' && args[0] === 'ls-remote' && args.at(-1) === 'HEAD') return w.lsRemote?.(args) ?? answer('', 128);
     if (name !== 'gh' && name !== 'glab') return hostGuard(file, args, options);
     const host = name === 'gh' ? 'github' : 'gitlab';
@@ -726,9 +729,9 @@ test('a hook declared in the product folder\'s git config stops step 3, named, b
     assert.equal(fs.existsSync(mark), false);
     assert.equal((await realRun('git', ['config', '--get', 'remote.origin.url'], { cwd: folder })).code !== 0, true, 'nothing was done in the folder');
     // Every git call step 3 made shut out git's global and system config, with hooks off. The one exception is the plan's
-    // read of the director's own settings (the credential helper and proxy for the host's address), which is the
+    // read of the director's own settings (the credential helpers and the proxy for the host's address), which is the
     // director's git as it is and writes nothing.
-    const fenced = gits.filter((c) => !(c.args[0] === 'config' && c.args[1] === '--get-urlmatch'));
+    const fenced = gits.filter((c) => !(c.args[0] === 'config' && (c.args[1] === '--get-urlmatch' || directorHelperList(c.args))));
     assert.ok(fenced.length > 0);
     for (const c of fenced) {
       assert.equal(c.env.GIT_CONFIG_NOSYSTEM, '1', c.args.join(' '));
