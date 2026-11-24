@@ -18,6 +18,7 @@ import {
   standInHost, makeClock, makeComputer, shimTools, shutOutGitConfig, follow, listing, differences,
 } from '../helpers/setup-e2e.js';
 import { HOST_LABELS, WAYS, REAL_USERS } from '../../scripts/setup/host.js';
+import { BUILDER_CHOICES } from '../../scripts/setup/builders-ask.js';
 import { LIVE_DATA, PHONE, PRODUCT } from '../../scripts/setup/questions.js';
 import { rulesOf } from '../../scripts/setup/rules.js';
 import { READY, ARRIVED } from '../../scripts/setup/notify.js';
@@ -92,7 +93,7 @@ function fresh() {
 // The director's answers to a new product's questions, by the question's id (an id may carry a
 // digest after its name).
 const NEW_ANSWERS = {
-  join: HOST_LABELS.github, 'real-users': REAL_USERS.no, connection: WAYS.quick,
+  join: HOST_LABELS.github, 'real-users': REAL_USERS.no, connection: WAYS.quick, builders: BUILDER_CHOICES.background,
   product: 'Tide tables for sailors, used by the harbour\'s skippers.', 'live-data': LIVE_DATA.no,
   'phone-ready': READY.ready, phone: PHONE.try, 'push-arrived': ARRIVED.yes, 'setup-ready': 'Carry on',
   // Step 2's choice about gh, which this computer lacks: fetched, as these tests follow.
@@ -331,12 +332,12 @@ test('an existing project with rules: step 5 asks nothing and follows them as th
     assert.deepEqual(shape(log), [
       [0, 'plan'],
       // This computer has no gh, so step 2's choice about fetching it joins the first card.
-      [3, 'real-users'], [3, 'connection'], [2, 'host-tool-gh'],
+      [3, 'real-users'], [3, 'connection'], [3, 'builders'], [2, 'host-tool-gh'],
       [4, 'product-before-launch'], [4, 'live-data'], [4, 'phone'],
       [0, 'plan'],
       [1, 'settled'], [2, 'covered'], [3, 'covered'], [4, 'settled'], [5, 'settled'],
     ]);
-    assert.deepEqual(log.filter((e) => e.together).map((e) => e.together), [3, 3, 3, 3, 3, 3], 'asked together on two cards');
+    assert.deepEqual(log.filter((e) => e.together).map((e) => e.together), [4, 4, 4, 4, 3, 3, 3], 'asked together on two cards');
     assert.match(log.find((e) => e.step === 0).card.question, /- Harbour-Log on GitHub, as it is\./);
     assert.ok(!a.calls.some((call) => call[1] === 'repo' && call[2] === 'create' && call[3] === repo));
 
@@ -378,13 +379,13 @@ test('setup stopped after Customise\'s cards resumes at the one card in the next
     // The next session: a helper started afresh, and the session start's reload.
     await a.start();
     await a.sessionStart();
-    // The rest of the choices (step 4's, the new repository's name and the connection, then GitHub's tool once GitHub is chosen), then the one
-    // card with the director's choices on it.
+    // The rest of the choices (step 4's, the new repository's name and the connection, then where builders run and GitHub's tool once
+    // GitHub is chosen), then the one card with the director's choices on it.
     const next = (await a.cli('resume')).plan;
     assert.deepEqual(next.asks.map((x) => x.id.replace(/-[0-9a-f]{10,}$/, '')), ['product-before-launch', 'live-data', 'phone', 'project-name'], 'the name card ends its batch; the join and real-users answered are not asked again');
     await a.clickAll(next.asks.map((x) => x.card), next.asks.map((x) => byId(NEW_ANSWERS)(x.id, undefined, x)));
     const how = (await a.cli('resume')).plan;
-    assert.deepEqual(how.asks.map((x) => x.id.replace(/-[0-9a-f]{10,}$/, '')), ['connection', 'host-tool-gh']);
+    assert.deepEqual(how.asks.map((x) => x.id.replace(/-[0-9a-f]{10,}$/, '')), ['connection', 'builders', 'host-tool-gh']);
     await a.clickAll(how.asks.map((x) => x.card), how.asks.map((x) => byId(NEW_ANSWERS)(x.id, undefined, x)));
     const card = (await a.cli('resume')).plan;
     assert.equal(card.step, 0);

@@ -119,6 +119,27 @@ test('the Builders line states the recorded fact, and says a damaged file', () =
   assert.equal(buildersHealth({ home: h }).level, 'watch');
 });
 
+test('the Builders line states the route: none chosen, desktop, or a route problem named', () => {
+  const h = home();
+  assert.equal(buildersLine({ home: h, route: null }), 'Builders: not chosen · starting in the background');
+  assert.equal(buildersLine({ home: h, route: 'desktop' }), 'Builders: Claude Desktop');
+  assert.equal(buildersLine({ home: h, route: 'background', program: 'wrap' }), 'Builders: background as `wrap`');
+  const fault = { file: '/h/settings.json', line: 3, column: 9, hint: 'A comma is missing.' };
+  assert.match(buildersLine({ home: h, route: null, fault }), /^Builders: .*settings\.json can't be read: line 3, column 9\./);
+  assert.equal(buildersHealth({ home: h, route: null }).level, 'ok');
+  assert.equal(buildersHealth({ home: h, route: 'desktop' }).level, 'ok');
+  assert.equal(buildersHealth({ home: h, route: null, fault }).level, 'watch');
+  // With none chosen, a fact kept for the background route is still said, and the board watches it.
+  writeSignInFact(h, ROUTE, fact());
+  assert.equal(buildersLine({ home: h, route: null }), "Builders: not chosen · starting in the background · can't sign in since 14:02 (not signed in)");
+  assert.equal(buildersHealth({ home: h, route: null }).level, 'watch');
+  clearSignInFact(h, ROUTE);
+  // A fact kept for the background route doesn't speak for Desktop.
+  writeSignInFact(h, ROUTE, fact());
+  assert.equal(buildersLine({ home: h, route: 'desktop' }), 'Builders: Claude Desktop');
+  assert.equal(buildersHealth({ home: h, route: 'desktop' }).level, 'ok');
+});
+
 test('the excerpt hides keys, tokens and a home folder that carries a user\'s name', () => {
   const key = `sk-ant-api03-${'a1B2'.repeat(10)}`;
   const github = `ghp_${'x'.repeat(36)}`;

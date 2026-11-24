@@ -55,7 +55,7 @@ function fakeClient(answers = {}) {
   };
 }
 
-test('each form asks the helper for this folder, and only with the folder, the step and the hash', async () => {
+test('each form asks the helper for this folder, and only with the folder, the step, the hash and, for a step\'s card, where the session runs', async () => {
   const card = { question: `Setup step 2.\n${setupLine(2, H)}`, header: 'Setup', options: [{ label: 'Go ahead' }], multiSelect: false };
   const c = fakeClient({
     plan: { ok: true, changes: [{ kind: 'json-key', target: '/t', key: ['a'], after: 1 }], hash: H, card, director: 'One click' },
@@ -72,7 +72,7 @@ test('each form asks the helper for this folder, and only with the folder, the s
   assert.equal(status.code, 0, status.err);
   assert.equal(status.out, 'Setup of /x/Projects/shop, started 2026-10-19T03:00:00.000Z.\nNext: step 2, Tools.\n');
   const folder = path.resolve('/x/Projects/shop');
-  assert.deepEqual(c.calls, [['plan', { folder, step: 2 }], ['apply', { folder, step: 2, hash: H }], ['status', { folder }]]);
+  assert.deepEqual(c.calls, [['plan', { folder, step: 2, entrypoint: 'terminal' }], ['apply', { folder, step: 2, hash: H, entrypoint: 'terminal' }], ['status', { folder }]]);
 });
 
 test('resume gives where setup stands and the card of the first step neither done nor running', async () => {

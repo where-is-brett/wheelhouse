@@ -172,6 +172,16 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
   const usage = offline
     ? glanceUsage(clock, clockRead, typeof usageAgent === 'string' && usageAgent !== 'claude-code')
     : attempt(() => usageFigures({ project, now: clock, factor, agent: usageAgent, month: monthFor(usageAgent, { settings, now: clock }) }));
+  // The route builders start by, read only when the helper is (the glance, which reads nothing, keeps to the old line).
+  let builderFacts = {};
+  if (!offline) {
+    try {
+      const [{ builderRoute }, { sessionsFor }] = await Promise.all([import('../lib/route.js'), import('../agents/project-agent.js')]);
+      const agent = usageAgent ?? 'claude-code';
+      const found = builderRoute({ agent, home: wheelhouseHome(), routes: sessionsFor(agent).routes, readViews: () => profileViews });
+      builderFacts = { route: found.route, program: found.launch?.[0], fault: found.from === 'fault' ? found.fault : null };
+    } catch { /* the line is stated without the route */ }
+  }
   const sources = offline ? null : readSources();
 
   const known = await helperFacts(project, { client, address, now: clock, offline, clockRead, waitMs }).catch(() => ({}));
@@ -213,7 +223,7 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     // The agent's sandbox on this computer, for an agent whose adapter says (agentSandboxLine).
     agentSandbox: !offline && typeof usageAgent === 'string' ? attempt(() => agentSandboxLine(usageAgent)) : undefined,
     // The Builders line (builders design, section 10.5): how builders start on this computer, and the recorded sign-in fact.
-    builders: attempt(() => buildersHealth({ home: wheelhouseHome(), agent: usageAgent ?? 'claude-code' })),
+    builders: attempt(() => buildersHealth({ home: wheelhouseHome(), agent: usageAgent ?? 'claude-code', ...builderFacts })),
     // The watcher's own record of how its wakes are going (scripts/watcher/main.js); a small file, so the glance reads it too.
     watcher: attempt(() => readWatcherHealth(project)),
     now: clock(),

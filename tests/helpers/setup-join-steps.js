@@ -2,7 +2,7 @@
 // Setup's real steps for a computer joining a project, for the engine's routes in one test process
 // (tests/scripts/setup/joining-run.test.js), each made afresh from the test's world, which the test
 // puts on globalThis.wheelhouseJoiningWorld before the routes load this module:
-//   { run, hostUrl, pluginRoot, config, claudeHome, manifest, managedDir, address }
+//   { run, hostUrl, pluginRoot, config, claudeHome, manifest, managedDir, address, profile }
 // `run` stands in for `gh`, `claude` and git (git runs for real against bare remotes in temporary
 // folders); step 2 and step 6 run on the fake computer where every tool is in (quiet-run.js).
 // Steps 4, 5 and 10, which a joining run never has, are the engine tests' own.
@@ -34,6 +34,8 @@ const MAKE = {
   3: () => hostStep({
     run: world().run, appFile: noApp, hostUrl: world().hostUrl, findGit: async () => ({ ok: true, path: 'git' }), gitlab: nothing,
     open: async () => {}, sleep: async () => {},
+    // The profile's settings routes: the world's stand-in, which keeps what is written (where builders start).
+    profileRoutes: world().profile,
   }),
   6: () => computerStep({ engine: null, run: quietRun, env: { CLAUDE_CONFIG_DIR: world().config }, manifest: { claudeCode: { floor: '2.1.100' } }, port: 14318 }),
   7: () => projectFilesStep({

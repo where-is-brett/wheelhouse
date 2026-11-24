@@ -1,7 +1,7 @@
 // tests/scripts/settings/catalogue.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BUILDER_LAUNCH, SETTINGS, WINDOWS_BUILD_COMMANDS, RETIRED, RETIRED_PATTERNS, checkSetting, definitionOf, isAllowed, retiredPiece } from '../../../scripts/settings/catalogue.js';
+import { BUILDERS, BUILDER_LAUNCH, SETTINGS, WINDOWS_BUILD_COMMANDS, RETIRED, RETIRED_PATTERNS, checkSetting, definitionOf, isAllowed, retiredPiece } from '../../../scripts/settings/catalogue.js';
 import { PACE, paceOf } from '../../../scripts/lib/build-loop.js';
 import { BRIEFING_GAP_HOURS, UNUSUAL } from '../../../scripts/lib/core-numbers.js';
 import { DEFAULT_SOURCES } from '../../../scripts/sources/list.js';
@@ -288,4 +288,15 @@ test('the launch command is a setting per computer, kept in the profile, an arra
   for (const bad of ['builderLaunch', 'builderLaunch:', 'builderLaunch:0A1B2C3D', 'builderLaunch:0a1b2c3']) assert.throws(() => checkSetting(bad, ['wrap']), /no setting called/, bad);
   assert.equal(isAllowed(key, ['wrap', 'claude']), true);
   assert.equal(isAllowed(key, ['wrap|x']), false);
+});
+
+test('where builders start is a setting per computer, kept in the profile, desktop or background, none until chosen', () => {
+  const key = 'builders:0a1b2c3d';
+  const def = definitionOf(key);
+  assert.equal(def, BUILDERS);
+  assert.deepEqual([def.group, def.home, def.default], ['advanced', 'profile', null]);
+  for (const value of ['desktop', 'background']) assert.doesNotThrow(() => checkSetting(key, value), value);
+  for (const value of [null, 'both', 'Desktop', true, ['desktop']]) assert.throws(() => checkSetting(key, value), /can't be/, JSON.stringify(value));
+  assert.throws(() => checkSetting(key, 'desktop', '2026-11-24T18:00:00.000Z'), /can't have an end time/);
+  for (const bad of ['builders', 'builders:', 'builders:0A1B2C3D', 'builders:0a1b2c3']) assert.throws(() => checkSetting(bad, 'desktop'), /no setting called/, bad);
 });

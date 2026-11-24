@@ -310,7 +310,7 @@ Parts 1, 2, 2a, 2b, 2c, 3 and 4 help the work laptop now: with a wrapper as the 
 
 **Interfaces:**
 - Consumes: `readJsonNamed`, `checkLaunch`, `gateFor`.
-- Produces: `builderRoute({ agent, computer, home, project? }) -> { route: 'desktop' | 'background' | null, launch?: string[], from: 'profile' | 'project' | 'unset' | 'fault', fault? }`. The only reader of `builders:` and `builderLaunch:`. `null` outside setup means nothing starts and the facts say "Builders: not chosen".
+- Produces: `builderRoute({ agent, computer, home, project? }) -> { route: 'desktop' | 'background' | null, launch?: string[], from: 'profile' | 'project' | 'unset' | 'fault', fault? }`. The only reader of `builders:` and `builderLaunch:`. `null` outside setup means builders start in the background, as built, and the facts say "Builders: not chosen · starting in the background" (the director's ruling, 24 November 2026).
 - Produces, in `desktop-queue.js` (the spec's "wake file"; its folder is `projects/<p>/watcher/desktop-queue/`, apart from the existing bundle folder `watcher/wakes/`, which keeps holding what the session reads):
   - `queueWake(project, { kind: 'foreman' | 'feature-start' | 'feature-wake', work?, file }) -> path`; atomic; a wake for a piece with one waiting replaces it.
   - `takeWakes(project) -> Wake[]`, `dropWakes(project, paths)`, `oldestWaiting(project) -> ISO | null`.

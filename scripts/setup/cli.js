@@ -82,6 +82,7 @@ import { startedAsScript } from '../lib/started-as-script.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 import { CHOICE_KEY, HEALTH_STEP, PUSH_TEST_STEP } from '../lib/setup-run.js';
 import { asciiJson } from '../lib/ascii-json.js';
+import { entrypointKind } from './builders-ask.js';
 
 // Whether this session is the Desktop app's own: CLAUDE_CODE_ENTRYPOINT is set by the app, and a terminal session has another value.
 // A terminal started from inside a Desktop session (a multiplexer such as tmux, or a remote shell) inherits the app's value, so
@@ -107,6 +108,8 @@ const BREAKS = /\s*[\r\n\v\f\u0085\u2028\u2029]+\s*/g;
 
 // Whether the form being run is in the Desktop app's session; every request says so, for the cards that differ there.
 let inApp = false;
+// Where the session runs, for step 3's question on where builders start: 'desktop', 'terminal' or 'unknown'.
+let entry = 'unknown';
 // When this session started, as an ISO time, or null when it can't be told.
 let sessionStart = null;
 
@@ -135,9 +138,11 @@ const notListening = (got) => got?.ok !== true && got?.unsent === true;
 let pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 // Asks one route and gives its answer when it is ok; otherwise the helper's own words.
-async function ask(route, body) {
+async function ask(route, body, { cards = false } = {}) {
   let got;
-  const sent = { ...body, ...(inApp ? { desktop: true } : {}), ...(sessionStart === null ? {} : { sessionStartedAt: sessionStart }) };
+  // Where the session runs goes only with the requests that build step cards (plan, apply, choices and change): step 3 asks
+  // where builders start from it.
+  const sent = { ...body, ...(inApp ? { desktop: true } : {}), ...(cards ? { entrypoint: entry } : {}), ...(sessionStart === null ? {} : { sessionStartedAt: sessionStart }) };
   try {
     got = await route(sent);
     for (let tries = 0; tries < HELPER_RETRIES && notListening(got); tries += 1) {
@@ -167,7 +172,7 @@ function stepOf(text, { oneCard = false } = {}) {
 const OUTSIDE_UNTIL_FILES = 'Step 7 is not applied yet: try the sandbox first, and if a setup command (scripts/setup/cli.js) has been refused there, run it outside.';
 
 async function plan(client, folder, step) {
-  const got = await ask(client.setup.plan, { folder, step });
+  const got = await ask(client.setup.plan, { folder, step }, { cards: true });
   const named = { step, title: SETUP_TITLES[step] ?? 'The plan', ...(Array.isArray(got.progress) ? { progress: got.progress } : {}) };
   // Customise's cards (step 0): up to four questions, asked together.
   if (Array.isArray(got.asks)) return { ...named, asks: got.asks };
@@ -185,6 +190,7 @@ export async function main(argv, {
   entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, env = process.env, started = null,
 } = {}) {
   inApp = inDesktopApp(entrypoint, env);
+  entry = entrypointKind(entrypoint, env);
   sessionStart = started;
   pause = sleep;
   try {
@@ -197,7 +203,7 @@ export async function main(argv, {
     } else if (form === 'apply' && rest.length === 2) {
       const step = stepOf(rest[0]);
       if (!HASH.test(rest[1])) throw new CliError('Give the full hash of the list on the card, as plan gave it');
-      const { ok, ...answer } = await ask((client ?? helperClient()).setup.apply, { folder, step, hash: rest[1] }); // eslint-disable-line no-unused-vars
+      const { ok, ...answer } = await ask((client ?? helperClient()).setup.apply, { folder, step, hash: rest[1] }, { cards: true }); // eslint-disable-line no-unused-vars
       json(answer);
     } else if (form === 'status' && rest.length === 0) {
       const got = await ask((client ?? helperClient()).setup.status, { folder });
@@ -247,11 +253,11 @@ export async function main(argv, {
         ...(got.filesDue === true ? { sandbox: OUTSIDE_UNTIL_FILES } : {}),
       });
     } else if (form === 'choices' && rest.length === 0) {
-      const { ok, ...answer } = await ask((client ?? helperClient()).setup.choices, { folder }); // eslint-disable-line no-unused-vars
+      const { ok, ...answer } = await ask((client ?? helperClient()).setup.choices, { folder }, { cards: true }); // eslint-disable-line no-unused-vars
       json(answer);
     } else if (form === 'change' && rest.length === 1) {
       if (!CHOICE_KEY.test(rest[0])) throw new CliError('Give the choice\'s key, as choices lists it');
-      const got = await ask((client ?? helperClient()).setup.change, { folder, key: rest[0] });
+      const got = await ask((client ?? helperClient()).setup.change, { folder, key: rest[0] }, { cards: true });
       json({ asks: got.asks });
     } else if (form === 'wait' && rest.length === 1) {
       // Waits here, for the session, which can't sleep in the foreground or keep a loop of its own,

@@ -108,6 +108,7 @@ A **route** is how this computer starts builder sessions. There are three:
 The route is a per-computer, per-agent setting in the profile: `builders:<computerId>`, with the value `desktop` or `background`. The launch command is a separate key (section 8). It is in the catalogue's **advanced** group, `home: 'profile'`, like `windowsBuildCommands:<computerId>`. The setting is per computer because the work laptop and the Mac differ, and per agent because Copilot's crew has its own route (section 9.6).
 
 - **Default.** None. Setup sets it from the sign-in check (section 10.1): `desktop` when setup runs in a Desktop session, otherwise `background`. A route is never guessed outside setup.
+  - **Ruling, 24 November 2026.** The director ruled that with no route saved, builders start in the background, as they always have. The Builders line says so: "Builders: not chosen · starting in the background". A saved value or settings file that can't be read still starts nothing and is named.
 - **One reader.** A new module, `scripts/lib/route.js`, has `builderRoute({ agent, computer })`. It returns `{ route, launch?, from }` and is the only place that reads the setting. The waker, the helper's `/foreman/run`, health and the First Mate's facts all use it.
 - **Changing it** is a setting change, like any other: a card, a signed decision, a profile event. Section 11 says what happens to running sessions.
 

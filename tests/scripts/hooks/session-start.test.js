@@ -1251,13 +1251,13 @@ test('in the project\'s main folder the reload names the front desk\'s playbook,
 test('the Builders line states the recorded sign-in fact, to the First Mate only', async () => {
   await withHome(async () => {
     const builders = (out) => text(out).split('\n').filter((l) => l.startsWith('Builders:'));
-    assert.deepEqual(builders(await run(fake(), { env: {} })), ['Builders: background as `claude`']);
+    assert.deepEqual(builders(await run(fake(), { env: {} })), ['Builders: not chosen · starting in the background']);
     writeSignInFact(wheelhouseHome(), 'claude-code:background', { kind: 'not-signed-in', since: new Date(2026, 10, 24, 14, 2).toISOString(), command: 'claude', excerpt: 'Not logged in', starts: 1 });
-    assert.deepEqual(builders(await run(fake(), { env: {} })), ['Builders: background as `claude` · can\'t sign in since 14:02 (not signed in)']);
+    assert.deepEqual(builders(await run(fake(), { env: {} })), ['Builders: not chosen · starting in the background · can\'t sign in since 14:02 (not signed in)']);
     // A fact file that can't be read is said, never left out.
     fs.writeFileSync(path.join(wheelhouseHome(), 'sign-in.json'), '{');
     const [damaged] = builders(await run(fake(), { env: {} }));
-    assert.match(damaged, /^Builders: background as `claude` · .*sign-in\.json can't be read: line 1, column 2\./);
+    assert.match(damaged, /^Builders: not chosen · .*sign-in\.json can't be read: line 1, column 2\./);
   });
 });
 

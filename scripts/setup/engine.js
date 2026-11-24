@@ -549,7 +549,10 @@ export function setupRoutes({
   let sessionIsApp = false;
   // When the session asking started (the command says so, when it can tell): step 10's plan reads from it whether the session has the sandbox's limit.
   let sessionStartedAt;
-  const ctxFor = (folder, n, runId, startedAt) => ({ folder, step: n, runId, startedAt, now, userHome, platform, desktop: sessionIsApp, sessionStartedAt, answers: answersWithConsent(runId).answers });
+  // Where the session asking runs ('desktop', 'terminal' or 'unknown', as the command reads CLAUDE_CODE_ENTRYPOINT): step 3 asks
+  // where builders start from it.
+  let sessionEntry = 'unknown';
+  const ctxFor = (folder, n, runId, startedAt) => ({ folder, step: n, runId, startedAt, now, userHome, platform, desktop: sessionIsApp, entrypoint: sessionEntry, sessionStartedAt, answers: answersWithConsent(runId).answers });
 
   // ---- The one card, Customise and changing an answer (design section 15.1) ----
 
@@ -1125,8 +1128,10 @@ export function setupRoutes({
   }
 
   const aware = (route) => (body) => {
-    const { desktop, sessionStartedAt: started, ...rest } = body ?? {};
+    const { desktop, entrypoint, sessionStartedAt: started, ...rest } = body ?? {};
     sessionIsApp = desktop === true;
+    // Only the requests that build step cards say where the session runs; the others leave what was last said.
+    if (entrypoint !== undefined) sessionEntry = ['desktop', 'terminal', 'unknown'].includes(entrypoint) ? entrypoint : 'unknown';
     sessionStartedAt = typeof started === 'string' && Number.isFinite(Date.parse(started)) ? started : undefined;
     return route(rest);
   };

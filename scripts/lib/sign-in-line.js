@@ -60,8 +60,23 @@ export function timeWords(iso) {
 
 // The First Mate's Builders line, stated from the recorded facts and nothing else (section 10.5):
 //   Builders: background as `claude` · can't sign in since 14:02 (not signed in)
-// A fact file that can't be read is said so, never left out. Part 5 extends this with the route.
-export function buildersLine({ home, agent = 'claude-code', route = 'background', program = 'claude' } = {}) {
+//   Builders: Claude Desktop
+//   Builders: not chosen · starting in the background
+// `route` is what scripts/lib/route.js read: 'desktop', 'background', or null where none is saved (builders start in the background, and the line says so). A
+// settings problem the route reader named (`fault`, as faultLine takes it) and a fact file that can't be read are said so,
+// never left out.
+export function buildersLine({ home, agent = 'claude-code', route = 'background', program = 'claude', fault = null } = {}) {
+  if (fault !== null) return `Builders: ${faultLine(fault)}`;
+  if (route === 'desktop') return 'Builders: Claude Desktop';
+  // No route chosen: an install that predates the setting still starts builders in the background, so a sign-in fact kept for
+  // that route is still said.
+  if (route === null) {
+    const kept = readSignIn(home);
+    const none = 'Builders: not chosen · starting in the background';
+    if (!kept.ok) return `${none} · ${faultLine(kept.fault)}`;
+    const old = kept.facts[`${agent}:background`];
+    return old === undefined ? none : `${none} · can't sign in since ${timeWords(old.since)} (${kindWords(old.kind)})`;
+  }
   const as = `${route} as \`${commandName(program)}\``;
   const read = readSignIn(home);
   if (!read.ok) return `Builders: ${as} · ${faultLine(read.fault)}`;
@@ -71,10 +86,10 @@ export function buildersLine({ home, agent = 'claude-code', route = 'background'
 }
 
 // The same line for the board's status lines, with its level: `watch` while builders can't sign in or the file can't be read.
-export function buildersHealth({ home, agent = 'claude-code', route = 'background', program = 'claude' } = {}) {
+export function buildersHealth({ home, agent = 'claude-code', route = 'background', program = 'claude', fault = null } = {}) {
   const read = readSignIn(home);
-  const calm = read.ok && read.facts[`${agent}:${route}`] === undefined;
-  return { level: calm ? 'ok' : 'watch', text: buildersLine({ home, agent, route, program }) };
+  const calm = fault === null && read.ok && (route === 'desktop' || read.facts[`${agent}:${route ?? 'background'}`] === undefined);
+  return { level: calm ? 'ok' : 'watch', text: buildersLine({ home, agent, route, program, fault }) };
 }
 
 // What a start refused by the gate says, as a start refused for a damaged settings file says its own.
