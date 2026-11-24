@@ -6,11 +6,13 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { wheelhouseHome } from '../lib/paths.js';
 import { compareVersions } from '../lib/versions.js';
 import { WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { declined } from './declined.js';
 import { openJournal, updateLockHeld } from './journal.js';
+import { releaseVersion } from '../lib/plugin-version.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LOOK_EVERY_MS = 7 * DAY_MS;
@@ -47,12 +49,12 @@ export function projectRef(folder) {
   return null;
 }
 
-// This copy of Wheelhouse's version, v-prefixed, from the plugin.json beside these scripts; null when unreadable.
+// This copy of Wheelhouse's version, v-prefixed, from the plugin.json beside these scripts; null when unreadable or a build between releases.
 // The test suite sets WHEELHOUSE_RUNNING_VERSION, so a board read in a test doesn't change with each release.
 export function runningVersion() {
   if (process.env.WHEELHOUSE_RUNNING_VERSION) return withV(process.env.WHEELHOUSE_RUNNING_VERSION);
   try {
-    return withV(JSON.parse(fs.readFileSync(new URL('../../.claude-plugin/plugin.json', import.meta.url), 'utf8'))?.version);
+    return withV(releaseVersion(fileURLToPath(new URL('../..', import.meta.url))));
   } catch {
     return null;
   }

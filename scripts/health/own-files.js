@@ -17,6 +17,7 @@ import { wheelhouseHome } from '../lib/paths.js';
 import { loginStartRecord } from '../lib/login-start.js';
 import { MARKETPLACE, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { fetchTag, tagTree } from '../update/release.js';
+import { pluginVersion } from '../lib/plugin-version.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Folders never walked into: a repository's history, and installed packages.
@@ -123,9 +124,7 @@ export function ownFilesChanged(baseline, now) {
 // A file's hash as the update records it for the files it wrote: the same as the look's own (null when it can't be read).
 export const fileHash = (file, read = fs.readFileSync) => hashOf(file, read);
 
-const versionOf = (root) => {
-  try { return String(JSON.parse(fs.readFileSync(path.join(root, '.claude-plugin', 'plugin.json'), 'utf8')).version); } catch { return null; }
-};
+const versionOf = pluginVersion;
 
 const bareVersion = (v) => String(v ?? '').replace(/^v/, '');
 

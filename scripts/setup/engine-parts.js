@@ -21,6 +21,7 @@ export const engineWanted = () => false;
 export { engineInstalled, POLICY_FILE, ARCHON_CONFIG_FILE, ENGINE_FILES, WORKTREE_PATH, mirrorRulesFile };
 import { installEngine } from '../engine/install.js';
 import { newId } from './journal.js';
+import { pluginVersion } from '../lib/plugin-version.js';
 
 export const PLUGIN_SCOPE = Object.freeze({ install: true, plugin: 'wheelhouse@wheelhouse', scope: 'user' });
 
@@ -105,7 +106,7 @@ export function versionAtScope(claudeHome, scope = PLUGIN_SCOPE) {
 
 // The version of the Wheelhouse running setup, from its own manifest.
 export function ownVersion(root = PLUGIN_ROOT) {
-  try { return String(JSON.parse(fs.readFileSync(path.join(root, '.claude-plugin', 'plugin.json'), 'utf8')).version); } catch { return '0'; }
+  return pluginVersion(root) ?? '0';
 }
 
 // Whether version `a` is below `b`, comparing their three numbered parts in turn (0.1.2 is below 0.2.0). Only plain

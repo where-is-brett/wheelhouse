@@ -93,6 +93,7 @@ import { NO_HELPER } from '../lib/host-lines.js';
 import { keptRequest, clearRequest } from '../lib/kept-request.js';
 import { retiredPiece } from '../settings/catalogue.js';
 import { SETTINGS_CHANGED, settingsCardNote } from '../lib/settings-card.js';
+import { pluginVersion } from '../lib/plugin-version.js';
 
 const SELF = fileURLToPath(import.meta.url);
 // The script that brings this computer's settings for a project up to date, run detached.
@@ -185,14 +186,7 @@ function olderThan(version, floor) {
 }
 
 // This copy's version, from its own .claude-plugin/plugin.json; null when unreadable.
-function ownVersion(pluginRoot) {
-  try {
-    const version = JSON.parse(fs.readFileSync(path.join(pluginRoot, '.claude-plugin', 'plugin.json'), 'utf8'))?.version;
-    return typeof version === 'string' && version !== '' ? version : null;
-  } catch {
-    return null;
-  }
-}
+const ownVersion = pluginVersion;
 
 const oneLine = (value) => {
   const text = String(value ?? '').replace(/\s+/g, ' ').trim();

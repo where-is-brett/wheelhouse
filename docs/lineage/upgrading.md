@@ -75,9 +75,11 @@ It does not push. Push the branch yourself and open a pull request. Both the man
 
 Then cut a Wheelhouse release, once the upgrade has merged:
 
-1. Raise `version` in `.claude-plugin/plugin.json`. Every release has its own version: each session stamps its pull requests with the Wheelhouse version it runs, and the gate refuses one whose version is not the installed manifest's.
-2. Write the manifest again with `node scripts/lineage/manifest.js write`. It takes `wheelhouse.version` in `lineage/manifest.json` from `plugin.json` and fingerprints each upstream afresh at its pins, so only that version should change in it; if anything else changes, stop and find out why.
+1. Add `version` in `.claude-plugin/plugin.json`, on the release's commit only. The main line names none, so Claude Code keys each install by its commit and no build overwrites another's plugin folder; the tag check refuses a tag whose `plugin.json` version is not the tag less its `v`. Every release has its own version: each session stamps its pull requests with the Wheelhouse version it runs, and the gate refuses one whose version is not the installed manifest's.
+2. Write the manifest again with `node scripts/lineage/manifest.js write`. It takes `wheelhouse.version` in `lineage/manifest.json` from `plugin.json` (`dev` on the main line) and fingerprints each upstream afresh at its pins, so only that version should change in it; if anything else changes, stop and find out why.
 3. Run `node scripts/lineage/manifest.js verify` again, open the pull request (`plugin.json` and the manifest are guardrails, so it goes through the gate as above), and tag the merged commit as the release.
+
+After the tag, take `version` out of `plugin.json` again and write the manifest again, so the main line is back to `dev`.
 
 A release that only moves the pins, with every check green, carries `lineage/release.json` saying `{ "kind": "pins-only", "lineage": "passed" }`, committed once `manifest.js verify` has passed on the release's commit. Any other release leaves it out or says another kind. The file may also carry `says`, two or three plain lines for the update card ("What's new"); a release without it shows "No summary was given for this release." In each project, the gate reads that file from Wheelhouse's repository at the release's tag: a pull request that only moves the project to a pins-only release, on Wheelhouse's default branch, needs the review but not the director's approval, and the briefing gets a line. Without the file, the director approves it as any other guardrail change.
 

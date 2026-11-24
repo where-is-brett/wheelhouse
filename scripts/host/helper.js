@@ -26,6 +26,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { computerId, helperAddress, profileDir, oldProfileDir, stateDir, oldStateDir, wheelhouseHome, engineDir, archonHome } from '../lib/paths.js';
 import { stopState, setStop, liftStop } from '../lib/stop.js';
 import { bypassActive } from '../lib/bypass.js';
@@ -186,6 +187,7 @@ import { readTurn } from '../lib/session-files.js';
 import { lockFreeNow } from '../lib/free-seat.js';
 import { asideKind, sessionRole, recordRole } from '../lib/role.js';
 import { worktreeRoot, sameFolder } from '../hooks/kit.js';
+import { pluginVersion } from '../lib/plugin-version.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 // The adapter's refusal of a merge by a key GitLab does not let merge (adapter.js), and what the
@@ -280,14 +282,7 @@ const PROVENANCE_UNWRITTEN = 'the record of what built this pull request could n
 
 // The plugin's version, from .claude-plugin/plugin.json beside these scripts, so session-start
 // can tell a helper left running from an older copy. Null when it cannot be read.
-const PLUGIN_VERSION = (() => {
-  try {
-    const version = JSON.parse(fs.readFileSync(new URL('../../.claude-plugin/plugin.json', import.meta.url), 'utf8'))?.version;
-    return typeof version === 'string' && version !== '' ? version : null;
-  } catch {
-    return null;
-  }
-})();
+const PLUGIN_VERSION = pluginVersion(fileURLToPath(new URL('../..', import.meta.url)));
 
 const FOLDER_MS = 60 * 1000;
 const HOST_MS = 5 * 60 * 1000;

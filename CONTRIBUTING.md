@@ -49,7 +49,7 @@ node --test --import ./tests/helpers/test-home.js tests/github/plan.test.js
 
 Releases are tags on `main`, published on GitHub as pre-releases for now.
 
-1. Follow "Then cut a Wheelhouse release" in [`docs/lineage/upgrading.md`](docs/lineage/upgrading.md): raise the version in `.claude-plugin/plugin.json`, then write and verify the manifest. Its pull request also needs the items below.
+1. Follow "Then cut a Wheelhouse release" in [`docs/lineage/upgrading.md`](docs/lineage/upgrading.md): add the version to `.claude-plugin/plugin.json` on the release's commit only, then write and verify the manifest. Its pull request also needs the items below.
 2. Change the release's name in `README.md`, where the install lines and the status lines give it. A test records the fingerprint of `plugin.json`: its failure names the file and gives the new value.
 3. Run CI by hand on the branch with macOS ticked (Actions, CI, Run workflow).
 4. Once it merges, tag the merged commit and publish the notes:

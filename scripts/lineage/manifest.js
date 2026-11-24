@@ -20,6 +20,7 @@ import { checkAnchors, checkCarried, readRegister } from './register.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { MARKETPLACE } from './marketplace.js';
 import { AGENT_PINS } from '../agents/pins.js';
+import { pluginVersion } from '../lib/plugin-version.js';
 
 export const MANIFEST_PATH = 'lineage/manifest.json';
 // The oldest Node.js a Wheelhouse release runs on (package.json's engines).
@@ -220,7 +221,8 @@ export function buildManifest({ roots, version, upstreams = UPSTREAMS, pins = AG
 // Fetches every upstream afresh and writes lineage/manifest.json under `root`. Returns
 // the manifest. Each fetch goes into its own new folder under the temporary folder, removed after.
 export async function writeManifest({ root = repoRoot(), fetchTo = fetchUpstream, log = () => {} } = {}) {
-  const version = JSON.parse(fs.readFileSync(path.join(root, '.claude-plugin', 'plugin.json'), 'utf8')).version;
+  const version = pluginVersion(root);
+  if (version === null) throw new Error('The plugin.json in the repository can\'t be read');
   const made = [];
   try {
     const roots = {};
