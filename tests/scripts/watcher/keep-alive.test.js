@@ -1,5 +1,5 @@
 // tests/scripts/watcher/keep-alive.test.js
-// DRAFT (part 5, task 1). Fails until scripts/watcher/keep-alive.js exists.
+import '../../helpers/homes.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { keepWatcherAlive, keepAllAlive } from '../../../scripts/watcher/keep-alive.js';
@@ -61,4 +61,38 @@ test('the helper\'s tick keeps each project\'s watcher alive and leaves a skippe
   });
   assert.deepEqual(answers, { a: 'started', b: 'running' });
   assert.deepEqual(started, ['a']);
+});
+
+test('a held project has no watcher: keep-alive skips it, and lifting the hold starts it on the next tick', async () => {
+  const h = harness();
+  let isHeld = true;
+  h.options.held = () => isHeld;
+  assert.equal(await keepWatcherAlive('p', h.options), 'held');
+  assert.deepEqual(h.seen.started, []);
+  assert.equal(h.seen.asked, 0, 'its configuration is not asked for');
+  isHeld = false;
+  assert.equal(await keepWatcherAlive('p', h.options), 'started');
+  assert.deepEqual(h.seen.started, ['p']);
+});
+
+test('the watcher is started with the standard environment, not the session\'s', async () => {
+  const h = harness();
+  let given;
+  h.options.start = (project, options) => { given = options.env; return { started: true }; };
+  h.options.env = { HOME: '/Users/s', PATH: '/usr/bin', ANTHROPIC_BASE_URL: 'https://x.invalid', FOO: 'bar' };
+  assert.equal(await keepWatcherAlive('p', h.options), 'started');
+  assert.equal('ANTHROPIC_BASE_URL' in given, false);
+  assert.equal('FOO' in given, false);
+  assert.equal(given.WHEELHOUSE_HOME, process.env.WHEELHOUSE_HOME);
+});
+
+test('a session\'s start records its time in the home; the helper\'s tick does not', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const file = path.join(process.env.WHEELHOUSE_HOME, 'last-session.json');
+  fs.rmSync(file, { force: true });
+  await keepWatcherAlive('p', harness().options);
+  assert.equal(fs.existsSync(file), false);
+  await keepWatcherAlive('p', { ...harness().options, session: true });
+  assert.equal(fs.existsSync(file), true);
 });

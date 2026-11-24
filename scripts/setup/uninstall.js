@@ -147,6 +147,7 @@ import { clicksDir, usedDir, shownDir, askedDir, answersDir, answeredDir, record
 import { HOST_TOOLS, toolFolder, toolsDir } from '../lib/host-tools.js';
 import { enrolledFile, signingKeyFile, readEnrolled } from '../state/signing.js';
 import { ownFilesFile } from '../health/own-files.js';
+import { LAST_SESSION_FILE } from '../lib/standard-env.js';
 import { CLICK_FRESH_MS, RETENTION_DAYS, STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { cleanDeep } from '../lib/clean.js';
@@ -983,6 +984,8 @@ export async function uninstallPlan({
     // and clicking it write them, and the list must be the same before and after.
     // The trust clicks and the record of the profile's enrolments last fetched (the session start's)
     // too, Wheelhouse's own (ruling R86).
+    // The time of the home's last session (scripts/lib/standard-env.js), Wheelhouse's own record, is there once a session has run.
+    if (exists(path.join(wheelhouseHome(), LAST_SESSION_FILE))) remove(path.join(wheelhouseHome(), LAST_SESSION_FILE), 'last');
     for (const p of [clicksDir(), usedDir(), shownDir(), askedDir(), answersDir(), answeredDir(), recordsDir(), droppedFile(), trustDir(), seenFile(), stepPlansDir()]) remove(p, 'last');
   } else {
     // The project's own fetch mirror, merge queue folder and the folder an earlier version kept for a reader, in the engine folder (the helper makes them
