@@ -187,16 +187,16 @@ test('a second computer runs steps 1, 2, 3, 6, 7 (this computer\'s files only), 
 
     // Step 3: the join question, the host and the connection, then its Go ahead.
     assert.equal((await status()).ask, 3);
-    const answers = { join: fromOtherComputer('Cafe-Menu'), host: HOST_LABELS.github, connection: WAYS.quick, builders: BUILDER_CHOICES.background };
+    const answers = { join: fromOtherComputer('Cafe-Menu'), host: HOST_LABELS.github, connection: WAYS.quick, builders: BUILDER_CHOICES.background, 'keep-usual': 'Don\'t keep them' };
     let three = await plan(3);
     const asked = [];
     while (three.ask) {
       asked.push(three.ask.id.replace(/-[0-9a-f]{10,}$/, ''));
-      assert.ok(asked.length < 6, 'step 3 asks each question once');
+      assert.ok(asked.length < 7, 'step 3 asks each question once');
       say(three.ask, answers[asked.at(-1)]);
       three = await plan(3);
     }
-    assert.deepEqual(asked, ['join', 'host', 'connection', 'builders'], 'a joining computer is asked where its builders start');
+    assert.deepEqual(asked, ['join', 'host', 'connection', 'builders', 'keep-usual'], 'a joining computer is asked where its builders start');
     await goAhead(3, three);
     assert.deepEqual(written.map((e) => [e.kind, e.data.key, e.data.value]), [['setting', `builders:${computerId()}`, 'background']]);
     order.push(3);

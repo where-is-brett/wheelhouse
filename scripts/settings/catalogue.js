@@ -142,6 +142,33 @@ const checkOwnApp = (v) => v === null || (isObject(v) && onlyKeys(v, ['clientId'
   && typeof v.owner === 'string' && LOGIN.test(v.owner));
 export const OWN_GITHUB_APP = { label: 'Your own GitHub App', group: 'advanced', check: checkOwnApp, default: null, home: 'profile' };
 
+// The director's usual answers to step 3's questions, one per computer (`usual.<name>:<computer>`, design section 12.3), kept in
+// the profile and read by setup's "Use your usual setup?" card. Only what differs by the director, never by the project: never
+// the product, live data, real users, signing apps, protection, Locked, or anything naming a repository. A project's own answer
+// wins inside that project (precedence is unchanged), and nothing is exported, imported or synced.
+export const USUAL_KEY = /^usual\.(host|gitlabBase|gitRoute|connection):[0-9a-f]{8}$/;
+// A GitLab's address alone: https, a host, no sign-in, path, query or fragment, so it can never name a repository.
+const checkBase = (v) => {
+  if (typeof v !== 'string' || v.length > 200) return false;
+  try {
+    const u = new URL(v);
+    return u.protocol === 'https:' && u.host !== '' && u.username === '' && u.password === '' && u.pathname === '/' && u.search === '' && u.hash === '' && !v.endsWith('/');
+  } catch { return false; }
+};
+const WORDS = {
+  host: { local: 'kept on this computer', github: 'GitHub', gitlab: 'GitLab' },
+  gitRoute: { own: 'your own git as it is', wheelhouse: 'Wheelhouse\'s own git' },
+  connection: { 'own-app': 'your own app', 'wheelhouse-app': 'the Wheelhouse app' },
+};
+export const USUAL = Object.freeze({
+  host: { label: 'Usual host', group: 'advanced', levels: Object.keys(WORDS.host), default: null, home: 'profile', say: (v) => WORDS.host[v] ?? String(v) },
+  gitlabBase: { label: 'Usual GitLab address', group: 'advanced', check: checkBase, default: null, home: 'profile', say: (v) => String(v) },
+  gitRoute: { label: 'Usual git route', group: 'advanced', levels: Object.keys(WORDS.gitRoute), default: null, home: 'profile', say: (v) => WORDS.gitRoute[v] ?? String(v) },
+  connection: { label: 'Usual connection', group: 'advanced', levels: Object.keys(WORDS.connection), default: null, home: 'profile', say: (v) => WORDS.connection[v] ?? String(v) },
+});
+export const USUAL_NAMES = Object.freeze(Object.keys(USUAL));
+export const usualKey = (name, computer) => `usual.${name}:${computer}`;
+
 // Retired keys: settings a parked piece owned (design section 4.1). Old records and profiles may
 // still hold them; the catalogue accepts any value for them and nothing reads them. A lift-out part
 // retires a key by deleting its SETTINGS entry and adding one line here (or to RETIRED_PATTERNS).
@@ -169,6 +196,7 @@ export function definitionOf(key, lists = SHIPPED) {
   if (WINDOWS_BUILDS_KEY.test(key)) return WINDOWS_BUILD_COMMANDS;
   if (BUILDER_LAUNCH_KEY.test(key)) return BUILDER_LAUNCH;
   if (BUILDERS_KEY.test(key)) return BUILDERS;
+  if (USUAL_KEY.test(key)) return USUAL[key.slice(6, key.indexOf(':'))];
   return undefined;
 }
 

@@ -260,8 +260,10 @@ const NO_APP = path.join(os.tmpdir(), 'wh-no-such-app.json');
 
 // ---- The step, driven ----
 
-const ctxFor = (folder, extra = {}) => ({ folder, step: 3, now: () => NOW, platform: 'darwin', userHome: folder, answers: {}, ...extra });
 const said = (label) => (typeof label === 'object' ? { label: null, text: label.text, at: NOW.toISOString() } : { label, text: null, at: NOW.toISOString() });
+// The keep-as-usual question (scripts/setup/usual.js) is answered "Don't keep them" unless a test says otherwise, so a plan that
+// lists its changes does so; usual.test.js covers the question itself.
+const ctxFor = (folder, extra = {}) => ({ folder, step: 3, now: () => NOW, platform: 'darwin', userHome: folder, ...extra, answers: { '3.keep-usual': said('Don\'t keep them'), ...(extra.answers ?? {}) } });
 
 // Plans the step, answering each question with the label `pick(id, card)` gives, until it lists its
 // changes. Gives the list, the answers and the questions asked, in order.
@@ -284,6 +286,7 @@ const choose = ({ realUsers = REAL_USERS.no, locked = LEVELS.standard, host = HO
   if (id === 'gitlab-where') return GITLAB_COM;
   if (id === 'project-name') return card?.recommend ?? 'Shop';
   if (id === 'builders') return card.recommend;
+  if (id === 'keep-usual') return 'Don\'t keep them';
   // On the Mac's card a narrow way sits behind Make it stricter.
   if (id.startsWith('connection-')) return card?.options && !card.options.some((o) => o.label === way) && card.options.some((o) => o.label === STRICTER) ? STRICTER : way;
   throw new Error(`asked ${id}`);
@@ -2998,7 +3001,7 @@ test('a folder checked out to a joined repository can never become a full run, i
     // Every join answer saying A new product changes nothing: the question isn't asked, and the
     // list joins the repository the folder is checked out to.
     const fresh = Object.fromEntries(['join', ...planned.asked.map((a) => a.id)].map((id) => [`3.${id}`, said(id.startsWith('join') ? NEW_PRODUCT : planned.answers[`3.${id}`].label)]));
-    const replanned = await answerJoin(step, { ...ctx, answers: fresh }, joining());
+    const replanned = await answerJoin(step, { ...ctx, answers: { '3.keep-usual': said('Don\'t keep them'), ...fresh } }, joining());
     assert.equal(replanned.changes.find((c) => c.action === 'join').name, `${USER}/Cafe-Menu`);
     assert.ok(!replanned.changes.some((c) => c.action === 'repository'));
     // A list of a product of its own (as an old card might hold) is refused, and records nothing.

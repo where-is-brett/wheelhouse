@@ -82,6 +82,7 @@ import { fileURLToPath } from 'node:url';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { wheelhouseHome, stateDir, projectSlug, computerId } from '../lib/paths.js';
 import { builderChoice, saveBuilderRoute } from './builders-ask.js';
+import { planWithUsual, saveUsual, usualFromChanges, USE_USUAL, USUAL_ID } from './usual.js';
 import { toolPath, toolState } from '../lib/host-tools.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
@@ -2629,7 +2630,7 @@ export function hostStep({
     return { tool, cliSigned, found, curl, offered, gitPath, look, proxied: proxy !== null, proxyPassword, noRoad: noTool && !curl };
   }
 
-  return {
+  const step = {
     n: 3,
     title: SETUP_TITLES[3],
     long: true,
@@ -2998,6 +2999,11 @@ export function hostStep({
       }
       // Where builders start, as answered, saved first: it changes nothing in the project, and the rest of the step can stop.
       await saveBuilderRoute({ answers: ctx.answers, profile: profileFor(), computer: computerId() });
+      await saveUsual({ answers: ctx.answers, changes, profile: profileFor(), computer: computerId(), defaultBase: DEFAULT_GITLAB });
+      // "Use my usual" is kept in setup's record with each answer it stood for, so the answers the project took are its own.
+      if (ctx.answers?.[`3.${USUAL_ID}`]?.label === USE_USUAL) {
+        record({ id: newId('chg'), kind: 'answer', target: `step ${JOIN_STEP}`, before: null, after: { from: 'usual', ...usualFromChanges(changes, DEFAULT_GITLAB) } });
+      }
       halt();
       const connection = changes.find((c) => c.action === 'connection');
       if (!connection) throw new Error('Step 3\'s list names no connection');
@@ -3224,5 +3230,11 @@ export function hostStep({
         if (held !== null) await held.end();
       }
     },
+  };
+  // The director's usual answers laid over the step's own plan (scripts/setup/usual.js), and kept at apply.
+  const usualLabels = { keepHere: KEEP_HERE, github: HOST_LABELS.github, gitlab: HOST_LABELS.gitlab, gitlabCom: GITLAB_COM, gitlabComBase: DEFAULT_GITLAB, own: WAYS.own, wheelhouse: WAYS.wheelhouse, asIs: WAYS.asIs };
+  return {
+    ...step,
+    plan: (ctx) => planWithUsual({ plan: (c) => step.plan(c), ctx, views, computer: computerId(), labels: usualLabels, defaultBase: DEFAULT_GITLAB }),
   };
 }

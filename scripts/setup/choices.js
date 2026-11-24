@@ -82,6 +82,8 @@ export function aboutOf(key) {
   if (id === 'live-data') return 'live data';
   if (id === 'apple-apps') return 'signing Apple apps';
   if (id === 'builders') return 'where builders start';
+  if (id === 'usual') return 'your usual setup';
+  if (id === 'keep-usual') return 'keeping your answers as your usual';
   if (id === 'phone') return 'phone notifications';
   if (id.startsWith('host-tool-')) return `${id === 'host-tool-gh' ? 'GitHub' : 'GitLab'}'s own program`;
   return id;

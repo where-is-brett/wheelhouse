@@ -67,6 +67,10 @@ Where your conversations, transcripts and records go, and what uninstall removes
 
 What Wheelhouse protects you from, what it doesn't, and how to report a problem are in [`SECURITY.md`](SECURITY.md). Setup switches these protections on by itself; on a Mac you can also choose **Make it stricter** when it asks how to connect to GitHub or GitLab.
 
+## Your usual answers
+
+Setup keeps your usual host, GitLab address, git route and connection, once for each computer. On the next project it opens step 3 with **Use your usual setup?**: **Use my usual** takes them, and setup still reaches the host and still checks that builders can sign in; **Choose each** asks each question as before. When your answers differ from the usual, or none are kept yet, setup ends step 3 by asking whether to keep them. They live in your settings on that computer only, so nothing is exported or shared, a project's own answer wins in that project, and you change them later from the settings card.
+
 ## Trying Wheelhouse without touching your usual setup
 
 Wheelhouse keeps its records on a computer in one folder, `.wheelhouse` in your home folder. To try it in a folder of its own (a rehearsal, or a second set-up that must not touch the first), give the folder to the session in one of two ways.

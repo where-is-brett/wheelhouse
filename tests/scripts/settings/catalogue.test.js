@@ -1,7 +1,7 @@
 // tests/scripts/settings/catalogue.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BUILDERS, BUILDER_LAUNCH, SETTINGS, WINDOWS_BUILD_COMMANDS, RETIRED, RETIRED_PATTERNS, checkSetting, definitionOf, isAllowed, retiredPiece } from '../../../scripts/settings/catalogue.js';
+import { BUILDERS, BUILDER_LAUNCH, USUAL, USUAL_NAMES, usualKey, SETTINGS, WINDOWS_BUILD_COMMANDS, RETIRED, RETIRED_PATTERNS, checkSetting, definitionOf, isAllowed, retiredPiece } from '../../../scripts/settings/catalogue.js';
 import { PACE, paceOf } from '../../../scripts/lib/build-loop.js';
 import { BRIEFING_GAP_HOURS, UNUSUAL } from '../../../scripts/lib/core-numbers.js';
 import { DEFAULT_SOURCES } from '../../../scripts/sources/list.js';
@@ -299,4 +299,33 @@ test('where builders start is a setting per computer, kept in the profile, deskt
   for (const value of [null, 'both', 'Desktop', true, ['desktop']]) assert.throws(() => checkSetting(key, value), /can't be/, JSON.stringify(value));
   assert.throws(() => checkSetting(key, 'desktop', '2026-11-24T18:00:00.000Z'), /can't have an end time/);
   for (const bad of ['builders', 'builders:', 'builders:0A1B2C3D', 'builders:0a1b2c3']) assert.throws(() => checkSetting(bad, 'desktop'), /no setting called/, bad);
+});
+
+test('usual answers are four settings per computer, kept in the profile, none until saved', () => {
+  const computer = '0a1b2c3d';
+  assert.deepEqual([...USUAL_NAMES], ['host', 'gitlabBase', 'gitRoute', 'connection']);
+  for (const name of USUAL_NAMES) {
+    const key = usualKey(name, computer);
+    assert.equal(definitionOf(key), USUAL[name], key);
+    assert.equal(USUAL[name].home, 'profile');
+    assert.equal(USUAL[name].default, null);
+  }
+  assert.ok(isAllowed(usualKey('host', computer), 'gitlab'));
+  assert.ok(isAllowed(usualKey('gitRoute', computer), 'own'));
+  assert.ok(isAllowed(usualKey('connection', computer), 'own-app'));
+  assert.ok(isAllowed(usualKey('gitlabBase', computer), 'https://gitlab.example.org'));
+  assert.ok(isAllowed(usualKey('gitlabBase', computer), 'https://gitlab.example.org:8443'));
+  assert.throws(() => checkSetting(usualKey('host', computer), 'bitbucket'), /can't be/);
+  for (const bad of ['usual.host', 'usual.host:', 'usual.host:0A1B2C3D', 'usual.host:0a1b2c3']) assert.throws(() => checkSetting(bad, 'github'), /no setting called/, bad);
+});
+
+test('never usual: the product, live data, real users, signs apps, protection, Locked, or anything naming a repository', () => {
+  const computer = '0a1b2c3d';
+  for (const name of ['product', 'liveData', 'realUsers', 'signsApps', 'protection', 'locked', 'repo', 'repository', 'project', 'name']) {
+    assert.equal(definitionOf(usualKey(name, computer)), undefined, name);
+  }
+  // an address that names a repository, carries a sign-in, or isn't https is no usual address
+  for (const bad of ['https://gitlab.example.org/group/project', 'https://gitlab.example.org/group/project.git', 'https://me:secret@gitlab.example.org', 'http://gitlab.example.org', 'gitlab.example.org', 'https://gitlab.example.org/', 'https://gitlab.example.org?x=1', 'git@gitlab.example.org:group/project.git', '']) {
+    assert.equal(isAllowed(usualKey('gitlabBase', computer), bad), false, bad);
+  }
 });

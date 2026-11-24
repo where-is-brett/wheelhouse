@@ -116,6 +116,7 @@ async function answerAll(step, ctx, pick) {
 
 const pick = (id, card) => {
   if (id === 'real-users') return REAL_USERS.no;
+  if (id === 'keep-usual') return 'Don\'t keep them';
   if (id.startsWith('connection-')) return card.options.find((o) => o.label === WAYS.asIs)?.label ?? STRICTER;
   throw new Error(`asked ${id}`);
 };
