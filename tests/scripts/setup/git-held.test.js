@@ -83,3 +83,30 @@ test('where the look cannot tell, "Use my git as it is" claims nothing either wa
   assert.notEqual(card.recommend, 'Use my git as it is');
   assert.equal(connectionCard({ host: 'gitlab', platform: 'win32', asIs: true, held: true, toolOut: true }).recommend, 'Use my git as it is');
 });
+
+test('the hosts this computer holds a sign-in for are read by name alone, and the public hosts are left out', async () => {
+  const { signedInHosts } = await import('../../../scripts/setup/git-held.js');
+  assert.deepEqual(await signedInHosts({}), [], 'no home named, nothing read');
+  const home = tempFolder('wh-signed-');
+  fs.mkdirSync(path.join(home, '.config', 'glab-cli'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.config', 'glab-cli', 'config.yml'), 'git_protocol: https\nhosts:\n  git.acme.example:\n    token: secret-value\n    api_host: git.acme.example\n  gitlab.com:\n    token: other\n');
+  fs.writeFileSync(path.join(home, '.git-credentials'), 'https://ann:pw@code.other.example\nhttps://ann:pw@github.com\n');
+  const got = await signedInHosts({ home, platform: 'linux', env: {} });
+  assert.deepEqual(got, ['git.acme.example', 'code.other.example']);
+  assert.ok(!JSON.stringify(got).includes('secret-value') && !JSON.stringify(got).includes('pw'), 'never a key');
+  const win = await signedInHosts({ home: tempFolder('wh-signed-'), platform: 'win32', env: {}, run: async () => ({ code: 0, stdout: 'Target: LegacyGeneric:target=git:https://git.win.example\nTarget: git:https://bitbucket.org\n' }) });
+  assert.deepEqual(win, ['git.win.example']);
+});
+
+test('the which-GitLab and address cards offer a host this computer holds a sign-in for by name, recommend none, and say where to type', async () => {
+  const { gitlabWhere, COMPANY_GITLAB } = await import('../../../scripts/setup/host.js');
+  const where = gitlabWhere({ answer: () => null, name: 'Cafe-Menu', others: [], signedIn: () => ['git.acme.example'] });
+  assert.deepEqual(where.ask.card.options.map((o) => o.label).slice(0, 1), ['git.acme.example']);
+  assert.equal(where.ask.card.recommend, null);
+  const chose = (id) => (id === 'gitlab-where' ? { label: COMPANY_GITLAB, text: null } : null);
+  const address = gitlabWhere({ answer: chose, name: 'Cafe-Menu', others: [], signedIn: () => ['git.acme.example'] }).ask.card;
+  assert.equal(address.options[0].label, 'git.acme.example');
+  assert.match(address.what, /type it in the box under the options \(marked Other, or Type something\)/);
+  const picked = gitlabWhere({ answer: (id) => (id === 'gitlab-where' ? { label: 'git.acme.example', text: null } : null), name: 'Cafe-Menu', others: [], signedIn: () => ['git.acme.example'] });
+  assert.equal(picked.host, 'git.acme.example');
+});

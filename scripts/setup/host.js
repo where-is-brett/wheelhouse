@@ -105,7 +105,7 @@ import { listEvents } from '../state/events.js';
 import { joinedRepo, runClosed, stepDone, JOIN_STEP } from '../lib/setup-run.js';
 import { PROXY_HAS_PASSWORD } from '../host/proxy.js';
 import { askDirectorGit, directorProxy } from '../host/director-git.js';
-import { gitHoldsKey } from './git-held.js';
+import { gitHoldsKey, signedInHosts } from './git-held.js';
 import { readProfileViews, PROFILE_BRANCH } from '../profile/store.js';
 import { toolsStatus, originUrl, applyCompanyCa, curlStatus, toolsLeftOut, hostToolChoice, hostToolId, hostToolCard, NEW_PRODUCT } from './tools.js';
 import {
@@ -582,10 +582,12 @@ export function knownCompanyHosts(others = [], { projects = registeredProjects }
   return found.slice(0, MOST_KNOWN);
 }
 
-function gitlabWhereAsk(name, { id, refused, remote, known = [], company = false }) {
+function gitlabWhereAsk(name, { id, refused, remote, known = [], signedIn = [], company = false }) {
   const options = [];
   if (remote !== null) options.push({ label: remote, says: 'Where this folder already sends its work. Setup names it in the project settings.' });
   for (const address of known.filter((k) => k !== remote)) options.push({ label: address, says: 'Your projects here already use it. Setup names it in the project settings.' });
+  // Hosts this computer holds a sign-in for are only guesses at a GitLab, so they come after, and none is recommended.
+  for (const address of signedIn.filter((k) => k !== remote && !known.includes(k)).slice(0, Math.max(0, MOST_KNOWN - known.length))) options.push({ label: address, says: 'This computer already holds a sign-in for it. If it is your company\'s GitLab, pick it; setup names it in the project settings.' });
   options.push({ label: GITLAB_COM, says: 'The public GitLab, on your own account.' });
   options.push({ label: COMPANY_GITLAB, says: 'Setup asks for its address next, and names it in the project settings.' });
   // Customise asks it apart from the cards after it, since its answer can bring the address card before them.
@@ -600,8 +602,8 @@ function gitlabWhereAsk(name, { id, refused, remote, known = [], company = false
       options,
       // Which GitLab is a fact the director knows, not a preference, so the card recommends none; only where the folder
       // already sends its work does it name that one.
-      recommend: remote ?? (known.length === 1 ? known[0] : null),
-      because: remote !== null ? 'this folder already sends its work' : known.length === 1 ? 'your projects here already use it' : company ? 'you said your company runs its own, and only you know whether that is a GitLab of its own' : 'only you know which GitLab your work uses',
+      recommend: remote ?? (known.length === 1 && signedIn.length === 0 ? known[0] : null),
+      because: remote !== null ? 'this folder already sends its work' : known.length === 1 && signedIn.length === 0 ? 'your projects here already use it' : company ? 'you said your company runs its own, and only you know whether that is a GitLab of its own' : 'only you know which GitLab your work uses',
       meanwhile: MEANWHILE,
     },
   };
@@ -610,7 +612,7 @@ function gitlabWhereAsk(name, { id, refused, remote, known = [], company = false
 // The address card waits for the director's own answer: its answer is the address typed, so it recommends neither way out,
 // and a look at the choices takes nothing in its place.
 // It ends its batch where the answer could bring the refusal of a name (takenAfterMiss), so that comes before the questions after it.
-function gitlabAddressAsk(name, { id, refused, known = [], mayRefuse = false }) {
+function gitlabAddressAsk(name, { id, refused, known = [], signedIn = [], mayRefuse = false }) {
   return {
     id,
     typed: true,
@@ -618,10 +620,11 @@ function gitlabAddressAsk(name, { id, refused, known = [], mayRefuse = false }) 
     ...(mayRefuse ? { endsBatch: true } : {}),
     card: {
       level: 2,
-      what: `${refused === null ? '' : `${refused}. `}What is your company's GitLab address, such as https://gitlab.example.org? ${known.length > 0 ? 'Choose one of yours below, or choose Other and type it.' : 'Choose Other and type it.'}`,
+      what: `${refused === null ? '' : `${refused}. `}What is your company's GitLab address, such as https://gitlab.example.org? ${known.length + signedIn.length > 0 ? 'Choose one of yours below, or type it in the box under the options (marked Other, or Type something).' : 'Type it in the box under the options (marked Other, or Type something).'}`,
       why: `Setup needs it to sign in and make ${name} there, and names it in the project settings.`,
       options: [
         ...known.map((address) => ({ label: address, says: 'A GitLab your projects here already use.' })),
+        ...signedIn.map((address) => ({ label: address, says: 'This computer already holds a sign-in for it.' })),
         { label: GITLAB_COM, says: 'The public GitLab, for a company that has none of its own.' },
         { label: GO_BACK, says: 'Back to the question of which GitLab.' },
       ],
@@ -636,9 +639,10 @@ function gitlabAddressAsk(name, { id, refused, known = [], mayRefuse = false }) 
 // The first card offers the host the folder's remotes already name, the public service, or the company's own
 // (which asks a second card for the address); an address typed on either is taken directly. One that is
 // not an address asks again under a new id, saying why.
-export function gitlabWhere({ answer, name, others = [], mayRefuse = false }) {
+export function gitlabWhere({ answer, name, others = [], mayRefuse = false, signedIn = () => [] }) {
   const remote = remoteHost(others);
   const known = knownCompanyHosts(others);
+  const stored = signedIn().filter((k) => k !== remote && !known.includes(k));
   let state = 'where';
   let refused = null;
   // Whether the director has said their company runs its own GitLab: chosen it, or typed an address.
@@ -648,7 +652,7 @@ export function gitlabWhere({ answer, name, others = [], mayRefuse = false }) {
     const got = answer(id);
     // Asked again after Go back, the card says so, so it reads differently from the one answered.
     const said = refused ?? (n > 0 ? 'Choose again' : null);
-    if (got === null) return { ask: state === 'where' ? gitlabWhereAsk(name, { id, refused: said, remote, known, company }) : gitlabAddressAsk(name, { id, refused, known: known.slice(0, 2), mayRefuse }) };
+    if (got === null) return { ask: state === 'where' ? gitlabWhereAsk(name, { id, refused: said, remote, known, signedIn: stored, company }) : gitlabAddressAsk(name, { id, refused, known: known.slice(0, MOST_KNOWN), signedIn: stored.slice(0, Math.max(0, MOST_KNOWN - known.length)), mayRefuse }) };
     if (got.label === GITLAB_COM) return { base: DEFAULT_GITLAB };
     if (got.label === COMPANY_GITLAB || (typeof got.text === 'string' && got.text.trim() !== '')) company = true;
     if (state === 'where' && got.label === COMPANY_GITLAB) {
@@ -661,7 +665,7 @@ export function gitlabWhere({ answer, name, others = [], mayRefuse = false }) {
       refused = null;
       continue;
     }
-    const typed = known.includes(got.label) ? got.label : got.text;
+    const typed = known.includes(got.label) || stored.includes(got.label) ? got.label : got.text;
     if (typeof typed !== 'string' || typed.trim() === '') {
       refused = 'Choose one of the buttons, or Other and type your company\'s GitLab address';
       continue;
@@ -2718,7 +2722,8 @@ export function hostStep({
       // A pasted address named its GitLab: neither the which-GitLab card nor the address card is asked.
       if (join?.pin?.company !== undefined) company = join.pin.company;
       else if (host === 'gitlab' && product.host !== 'gitlab') {
-        company = gitlabWhere({ answer, name: product.name, others: product.others ?? remotesOf(ctx.folder), mayRefuse: join?.mayRefuse === true });
+        const signedIn = await signedInHosts({ home: ctx.userHome, platform, run }).catch(() => []);
+        company = gitlabWhere({ answer, name: product.name, others: product.others ?? remotesOf(ctx.folder), mayRefuse: join?.mayRefuse === true, signedIn: () => signedIn });
         if (company.ask) return { ask: company.ask };
         // The chosen host is the one the folder's own remote names: that remote's project is the product, never a new one.
         // A project named by its whole address typed is the product too.

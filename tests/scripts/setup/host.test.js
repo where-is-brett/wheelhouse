@@ -3622,7 +3622,7 @@ test('a typed GitLab address that is not one asks again under a new id, saying w
     const answers = { '3.real-users': said(REAL_USERS.no), '3.host': said(HOST_LABELS.gitlab), '3.gitlab-where': said(COMPANY_GITLAB) };
     const got = await stepFor(standIn()).plan(ctxFor(folder, { answers }));
     assert.equal(got.ask.id, 'gitlab-address-1');
-    assert.match(got.ask.card.what, /What is your company's GitLab address, such as https:\/\/gitlab\.example\.org\? Choose Other and type it/);
+    assert.match(got.ask.card.what, /What is your company's GitLab address, such as https:\/\/gitlab\.example\.org\? Type it in the box under the options \(marked Other, or Type something\)/);
     composeCard({ ...got.ask.card, kind: 'question', suggest: false });
     // An address typed there is taken directly; a bad one asks again, saying why; Go back returns to the first card.
     const typed = (text) => ({ label: null, text, at: NOW.toISOString() });

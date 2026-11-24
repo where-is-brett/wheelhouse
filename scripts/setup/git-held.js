@@ -99,3 +99,55 @@ function netrcNames(host, home) {
   }
   return 'none';
 }
+
+// ---- The hosts this computer already signs in to ----
+
+// Hosts that are not a company's GitLab, whatever stores a sign-in for them.
+const NOT_GITLAB = /^(?:(?:www\.)?github\.com|(?:www\.)?gitlab\.com|bitbucket\.org|dev\.azure\.com|ssh\.dev\.azure\.com|[^.]+\.visualstudio\.com|[^.]+\.pkg\.github\.com|gist\.github\.com)$/i;
+const HOST_NAME = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i;
+
+// The host names where this computer holds a sign-in a GitLab might use, as names alone, never a key: the hosts GitLab's own tool
+// (glab) is set up for, those in git's `store` files and `.netrc`, and, on Windows, Credential Manager's `git:` entries (read by
+// name with `cmdkey /list`). Each is a guess at a company's GitLab, so the card that offers one names where it was found and
+// recommends none. Reads only; at most `limit` names.
+export async function signedInHosts({ home, platform = process.platform, env = process.env, limit = 4, run = null } = {}) {
+  // Without the computer's home named there is nothing to read, so a caller that has none (a test) sees no hosts.
+  if (typeof home !== 'string' || home === '') return [];
+  const found = [];
+  const add = (name) => {
+    const host = String(name ?? '').trim().toLowerCase().replace(/\.$/, '');
+    if (host !== '' && !host.includes(':') && HOST_NAME.test(host) && host.includes('.') && !NOT_GITLAB.test(host) && !found.includes(host)) found.push(host);
+  };
+  const read = (file) => {
+    try {
+      return fs.readFileSync(file, 'utf8');
+    } catch {
+      return '';
+    }
+  };
+  // glab's file lists each host as a key under `hosts:`.
+  for (const file of [path.join(env.XDG_CONFIG_HOME ?? path.join(home, '.config'), 'glab-cli', 'config.yml'), ...(env.APPDATA ? [path.join(env.APPDATA, 'glab-cli', 'config.yml')] : [])]) {
+    const text = read(file);
+    const block = /^hosts:\s*\r?\n((?:[ \t]+.*\r?\n?)*)/m.exec(text)?.[1] ?? '';
+    for (const line of block.split(/\r?\n/)) {
+      const key = /^ {1,4}([A-Za-z0-9.-]+):\s*$/.exec(line)?.[1];
+      if (key) add(key);
+    }
+  }
+  for (const file of [path.join(home, '.git-credentials'), path.join(env.XDG_CONFIG_HOME ?? path.join(home, '.config'), 'git', 'credentials')]) {
+    for (const line of read(file).split(/\r?\n/)) {
+      const host = /^https:\/\/(?:[^@/\s]*@)?([^:/\s]+)/i.exec(line.trim())?.[1];
+      if (host) add(host);
+    }
+  }
+  for (const name of ['.netrc', '_netrc']) {
+    for (const match of read(path.join(home, name)).matchAll(/machine\s+(\S+)/gi)) add(match[1]);
+  }
+  if (platform === 'win32' && run !== null) {
+    try {
+      const got = await run('cmdkey', ['/list']);
+      for (const match of String(got?.stdout ?? '').matchAll(/git:https:\/\/(?:[^/@\s]+@)?([^/\s:]+)/gi)) add(match[1]);
+    } catch { /* none to read */ }
+  }
+  return found.slice(0, limit);
+}
