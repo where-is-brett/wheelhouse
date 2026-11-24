@@ -43,7 +43,7 @@ import { readSeen } from '../briefing/seen.js';
 import { readStatus } from '../safekeeping/readings.js';
 import { readFrontDeskModel } from '../lib/front-desk-model.js';
 import { agentSandboxLine } from '../agents/sandbox-line.js';
-import { buildersHealth } from '../lib/sign-in-gate.js';
+import { buildersHealth } from '../lib/sign-in-line.js';
 import { readLatest, runningBuild, updateFacts } from '../update/board.js';
 
 export const NOT_A_PROJECT = 'This folder isn\'t part of a Wheelhouse project';

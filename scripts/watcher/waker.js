@@ -170,7 +170,8 @@ import { sameStart } from '../lib/start-time.js';
 import { pidAlive, processStartTimes, processStartTime } from '../lib/process-start.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { stopState } from '../lib/stop.js';
-import { classify, cleanExcerpt, commandName, gateFor, readSignIn, signInCard, writeSignInFact } from '../lib/sign-in-gate.js';
+// The gate's writers and the excerpt cleaning are read when a start fails (shutRoute), not by every process that loads this file.
+import { classify, commandName, gateFor, readSignIn } from '../lib/sign-in-line.js';
 import claudeSessions, { ROLE_VARIABLE, featureModeOf, sessionEnv, sessionModeOf } from '../../adapters/claude-code/sessions.js';
 import { sessionsOfProject } from '../agents/project-agent.js';
 import { BY_LAUNCHER } from '../agents/tool-sheets.js';
@@ -1067,6 +1068,7 @@ export function makeWaker({
   let cardOwed = null;
   async function raiseSignInCard(fact) {
     try {
+      const { signInCard } = await import('../lib/sign-in-gate.js');
       await raise({ kind: 'card', data: signInCard(fact) });
       cardOwed = null;
     } catch (e) {
@@ -1078,6 +1080,7 @@ export function makeWaker({
     const home = wheelhouseHome();
     const key = routeKey();
     const before = readSignIn(home);
+    const { writeSignInFact, cleanExcerpt } = await import('../lib/sign-in-gate.js');
     let fact;
     try {
       fact = writeSignInFact(home, key, {

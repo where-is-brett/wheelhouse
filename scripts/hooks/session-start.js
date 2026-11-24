@@ -96,7 +96,6 @@ import { NO_HELPER } from '../lib/host-lines.js';
 import { keptRequest, clearRequest } from '../lib/kept-request.js';
 import { retiredPiece } from '../settings/catalogue.js';
 import { SETTINGS_CHANGED, settingsCardNote } from '../lib/settings-card.js';
-import { buildersLine } from '../lib/sign-in-gate.js';
 import { DEV_VERSION, pluginVersion } from '../lib/plugin-version.js';
 
 const SELF = fileURLToPath(import.meta.url);
@@ -1018,15 +1017,17 @@ async function started(input, deps) {
   }
   const text = reload({
     views, events: cardEvents, stop: stopOf(), lineage, notes, feature: madeFeatureSlug(input.cwd), stateRoot, windows, builds, frontDesk, aside: asideNote, where,
-    buildersFact: frontDesk ? buildersLineOf(input) : null,
+    buildersFact: frontDesk ? await buildersLineOf(input) : null,
     sheet: toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: commandRoot({ dir, self }, pluginRoot), platform }),
   });
   return text === '' ? undefined : answer.context('SessionStart', text);
 }
 
 // The Builders line for the front desk's session start: the recorded sign-in fact for the agent this session runs on.
-function buildersLineOf(input) {
+// It is read when the front desk starts, not by every session start.
+async function buildersLineOf(input) {
   try {
+    const { buildersLine } = await import('../lib/sign-in-line.js');
     return buildersLine({ home: wheelhouseHome(), agent: agentOfInput(input) ?? 'claude-code' });
   } catch {
     return null; // a line that can't be made is left out, as the other facts are

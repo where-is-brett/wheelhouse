@@ -9,49 +9,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
-import { faultLine, readJsonNamed } from './read-json-named.js';
+import { faultLine } from './read-json-named.js';
+import { KINDS, isPlain, validFact, signInFile, kindWords, readSignIn, commandName, timeWords, buildersLine, buildersHealth, GATE_LINE, gateFor, classify } from './sign-in-line.js';
 import { hide } from './clean.js';
 import { maskText } from '../state/secret-scan.js';
 
-export const KINDS = Object.freeze(['not-signed-in', 'blocked', 'no-program', 'other']);
+export { KINDS, signInFile, kindWords, readSignIn, commandName, timeWords, buildersLine, buildersHealth, GATE_LINE, gateFor, classify };
 export const EXCERPT_CHARS = 200;
-// A sign-in failure is one short message at the start of a run. Output longer than this is a session that ran, and what it
-// printed about logging in is its own work, not a refusal.
-const SHORT_OUTPUT = 2000;
-const NAME_CHARS = 60;
-
-const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-
-export const signInFile = (home) => path.join(home, 'sign-in.json');
-
-// The words each kind is shown as, after "said it".
-const KIND_WORDS = Object.freeze({
-  'not-signed-in': 'not signed in',
-  blocked: 'blocked',
-  'no-program': "the program wasn't found",
-  other: 'it failed',
-});
-export const kindWords = (kind) => KIND_WORDS[kind] ?? KIND_WORDS.other;
-
-function validFact(fact) {
-  return isPlain(fact) && KINDS.includes(fact.kind) && typeof fact.since === 'string' && !Number.isNaN(Date.parse(fact.since))
-    && typeof fact.command === 'string' && typeof fact.excerpt === 'string' && Number.isInteger(fact.starts) && fact.starts >= 1;
-}
-
-// { ok: true, facts } | { ok: false, fault } where fault is { file, line, column, hint }. No file is no facts.
-export function readSignIn(home) {
-  const file = signInFile(home);
-  const read = readJsonNamed(file);
-  if (read.ok === false) return { ok: false, fault: { file, line: read.line, column: read.column, hint: read.hint } };
-  if (read.missing === true) return { ok: true, facts: {} };
-  const bad = (hint) => ({ ok: false, fault: { file, line: null, column: null, hint } });
-  if (!isPlain(read.value)) return bad('the file must be written inside one pair of curly brackets `{ }`');
-  for (const [route, fact] of Object.entries(read.value)) {
-    if (!/^[a-z0-9-]+:[a-z0-9-]+$/.test(route)) return bad('a name in it is not an agent and a route, like "claude-code:background"');
-    if (!validFact(fact)) return bad(`the entry for ${route} doesn't hold a kind, a time, a command, an excerpt and a count`);
-  }
-  return { ok: true, facts: read.value };
-}
 
 // Writes the whole map to a temporary name renamed over the file, so no reader sees half of it.
 function writeFacts(home, facts) {
@@ -88,36 +52,6 @@ export function clearSignInFact(home, agentRoute) {
   return gone !== undefined;
 }
 
-// What a start refused by the gate says, as a start refused for a damaged settings file says its own.
-export const GATE_LINE = "not started: builders can't sign in";
-
-// { open: true } | { open: false, reason }. A fact shuts the route; so does a file that can't be read.
-export function gateFor(home, agentRoute) {
-  const read = readSignIn(home);
-  if (!read.ok) return { open: false, reason: `${GATE_LINE}: ${faultLine(read.fault)}` };
-  const fact = read.facts[agentRoute];
-  if (fact === undefined) return { open: true };
-  return { open: false, reason: `${GATE_LINE} (${kindWords(fact.kind)} since ${timeWords(fact.since)})` };
-}
-
-// `exit` is { code, signal, error }: the run's own end. no-program is the system's word (a program not found or not allowed
-// to run, or a command line cmd.exe can't be given safely), never the output's. Otherwise the short output is read with the
-// agent's `patterns` ({ notSignedIn, blocked }): a forbidden organisation or a policy is blocked, before the rest.
-export function classify(output, exit, patterns) {
-  const error = exit?.error;
-  if (error) {
-    const code = typeof error === 'string' ? error : error.code;
-    const said = typeof error === 'string' ? error : String(error.message ?? '');
-    if (code === 'ENOENT' || code === 'EACCES' || code === 'EPERM' || /Cannot pass this to a \.cmd program safely/.test(said)) return 'no-program';
-  }
-  const text = typeof output === 'string' ? output : '';
-  if (text.length > SHORT_OUTPUT) return 'other';
-  const any = (list) => Array.isArray(list) && list.some((re) => re instanceof RegExp && re.test(text));
-  if (any(patterns?.blocked)) return 'blocked';
-  if (any(patterns?.notSignedIn)) return 'not-signed-in';
-  return 'other';
-}
-
 // A key or token after its name, a home folder that carries a user's name, and any long unbroken run of letters and digits
 // (an opaque token no pattern knows) are hidden too, so the excerpt never carries one.
 const NAMED_TOKEN = /\b(bearer|token|key|secret|password)(["']?\s*[:=]?\s*["']?)[A-Za-z0-9._~+/-]{12,}=*/gi;
@@ -140,39 +74,6 @@ export function cleanExcerpt(output) {
   let cut = one.slice(0, EXCERPT_CHARS - 1);
   if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
   return `${cut.trimEnd()}…`;
-}
-
-// The program's name only: the last part of its path, with no extension a Windows program has, cut to NAME_CHARS. `file` is
-// one program (a path may hold spaces), never a command line, so no argument and no folder ever reaches a line.
-export function commandName(file) {
-  const base = String(file ?? '').trim().split(/[\\/]/).pop().replace(/\.(?:exe|cmd|bat)$/i, '').replace(/[^\w.+-]/g, '');
-  return (base === '' ? 'claude' : base).slice(0, NAME_CHARS);
-}
-
-// "14:02", this computer's own clock.
-export function timeWords(iso) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return 'an unknown time';
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
-// The First Mate's Builders line, stated from the recorded facts and nothing else (section 10.5):
-//   Builders: background as `claude` · can't sign in since 14:02 (not signed in)
-// A fact file that can't be read is said so, never left out. Part 5 extends this with the route.
-export function buildersLine({ home, agent = 'claude-code', route = 'background', program = 'claude' } = {}) {
-  const as = `${route} as \`${commandName(program)}\``;
-  const read = readSignIn(home);
-  if (!read.ok) return `Builders: ${as} · ${faultLine(read.fault)}`;
-  const fact = read.facts[`${agent}:${route}`];
-  if (fact === undefined) return `Builders: ${as}`;
-  return `Builders: ${route} as \`${commandName(fact.command)}\` · can't sign in since ${timeWords(fact.since)} (${kindWords(fact.kind)})`;
-}
-
-// The same line for the board's status lines, with its level: `watch` while builders can't sign in or the file can't be read.
-export function buildersHealth({ home, agent = 'claude-code', route = 'background', program = 'claude' } = {}) {
-  const read = readSignIn(home);
-  const calm = read.ok && read.facts[`${agent}:${route}`] === undefined;
-  return { level: calm ? 'ok' : 'watch', text: buildersLine({ home, agent, route, program }) };
 }
 
 // The director's card the first time a route's fact is written (section 10.4): a plain question card through the First Mate.
