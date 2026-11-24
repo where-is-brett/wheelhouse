@@ -461,13 +461,13 @@ test('setup says so when VS Code would answer Copilot\'s questions with no click
   assert.match(line('{\n // mine\n "chat.autoReply": true,\n}'), /chat\.autoReply is on.*no click/);
   assert.match(line('{"github.copilot.chat.cli.askUser": false}'), /askUser setting.*off/);
   // Nothing stored: each new chat starts on Manual, so the director picks the level in the chat.
-  const PICK = /new Copilot chat starts on Manual.*Assisted.*Allow all.*never Autopilot/s;
+  const PICK = /new Copilot chat starts on Manual.*pick Allow all.*never Autopilot/s;
   assert.match(line('{"chat.autoReply": false, "github.copilot.chat.cli.askUser": true}'), PICK);
   assert.match(line('{}'), PICK);
   assert.match(line(null), PICK);
   assert.equal(line('{not json'), null);
   // The approvals level: Assisted and Allow all are named and what each means; Autopilot keeps its warning.
-  assert.match(line('{"chat.defaultConfiguration": {"approvals": "assisted"}}'), /Assisted.*a reviewer.*each action/s);
+  assert.match(line('{"chat.defaultConfiguration": {"approvals": "assisted"}}'), /Assisted.*recommends Allow all.*only clicks/s);
   assert.match(line('{"chat.defaultConfiguration": {"approvals": "allowAll"}}'), /Allow all.*without asking/s);
   assert.match(line('{"chat.tools.global.autoApprove": true}'), /Allow all.*without asking/s);
   assert.match(line('{"chat.defaultConfiguration": {"approvals": "autopilot"}}'), /Autopilot.*answers.*no click/s);

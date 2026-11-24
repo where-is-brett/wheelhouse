@@ -23,8 +23,8 @@ The Wheelhouse playbooks name your tools in general words. In Copilot:
 ## Approvals level
 
 The director picks how much Copilot asks before it acts, in VS Code's chat. The choice is per chat and every new chat starts on Manual, so ask the director to pick the level again in
-each new chat. Recommend Assisted, where it is offered, and
-otherwise Allow all. Never recommend Autopilot: it answers your cards itself, so the director never sees them. If the
+each new chat. Recommend Allow all: then Wheelhouse's own cards are the only clicks. Under Allow all Wheelhouse's guards still
+refuse pushes, secret reads, forged card answers and carrying on past STOP. Never recommend Autopilot: it answers your cards itself, so the director never sees them. If the
 director is on Autopilot, say so in one plain line and ask them to switch it off. Never post a card's answer from the shell:
 the hooks and the helper record clicks, and the guard refuses a command that tries.
 
