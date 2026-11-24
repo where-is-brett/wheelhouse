@@ -232,7 +232,8 @@ test('the playbook shows uninstall\'s list when its card points to status, and s
 
 test('the README gives the Node.js line and the install commands as they are, at the plugin\'s release', () => {
   assert.ok(readme.includes(NODE_LINE), 'NODE_LINE');
-  const version = JSON.parse(read('.claude-plugin/plugin.json')).version;
+  // The main line names no version; the README's own comment names the release being prepared.
+  const version = JSON.parse(read('.claude-plugin/plugin.json')).version ?? /Until v(\d+\.\d+\.\d+) is tagged/.exec(readme)?.[1];
   // Until the release is tagged, the README installs from main; the tag line waits in a comment beside it.
   const uncommented = readme.replace(/<!--[\s\S]*?-->/g, '');
   const tagged = INSTALL_COMMANDS.every((command) => uncommented.includes(command.replace('<tag>', `v${version}`)));
