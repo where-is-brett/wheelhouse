@@ -483,7 +483,7 @@ test('the VS Code chat\'s environment, COPILOT_CLI alone, is the Copilot harness
   assert.ok(r.calls.length > 0);
 });
 
-test('a session start from another window\'s seat carries the id line and the window card through the entry', async () => {
+test('a session start from another window\'s seat carries the id line and the plain seat line through the entry', async () => {
   await withHome(async () => {
     const { seatFile } = await import('../../../../scripts/lib/first-mate-seat.js');
     const file = seatFile('shop');
@@ -497,11 +497,10 @@ test('a session start from another window\'s seat carries the id line and the wi
     const context = said.hookSpecificOutput?.additionalContext ?? said.additionalContext ?? start.text;
     assert.match(context, /Your session id is chat-9: give it as --session chat-9/);
     assert.match(context, /isn't the First Mate: it is in another window/);
-    assert.match(context, /write no question and no options of your own/);
+    assert.match(context, /write no question and no options/);
     assert.match(context, /session a, last active/);
     assert.doesNotMatch(context, /Leave it there/);
-    assert.match(context, /confirm seat-take-over --session/);
-    assert.doesNotMatch(context, /AskUserQuestion/);
+    assert.doesNotMatch(context, /confirm seat-take-over|own window|AskUserQuestion/);
   });
 });
 
@@ -513,9 +512,9 @@ test('through the entry, a front-desk command that records is refused without th
   assert.equal(bare.code, 2);
   assert.match(bare.text, /--session chat-9/);
   assert.equal((await go('wh-frontdesk cards --session other')).code, 2);
-  assert.equal((await go('wh-frontdesk confirm seat-take-over')).code, 2);
+  assert.equal((await go(`wh-frontdesk undo ${'a'.repeat(40)}`)).code, 2);
   assert.equal((await go('wh-frontdesk cards --session chat-9')).code, 0);
-  assert.equal((await go('wh-frontdesk confirm seat-take-over --session chat-9')).code, 0);
+  assert.equal((await go(`wh-frontdesk undo ${'a'.repeat(40)} --session chat-9`)).code, 0);
   assert.equal((await go('wh-frontdesk views waiting')).code, 0, 'a read needs no id');
 });
 

@@ -18,8 +18,8 @@ export default Object.freeze({
   settings,
   sessions,
   // On Copilot a chat click can't bind: no hook signs, and a hook runs beside the agent (design section 6.3). A click
-  // binds only from a policy hook outside the agent, the helper's window or the code host's page.
-  cards: Object.freeze({ binding: Object.freeze(['policy-hook', 'window', 'host']) }),
+  // binds only from a policy hook outside the agent or the code host's page.
+  cards: Object.freeze({ binding: Object.freeze(['policy-hook', 'host']) }),
   // Nothing is committed to a project until setup comes back for Copilot (design section 8, part 11).
   packaging: Object.freeze({ files: () => [] }),
   toolSheet,

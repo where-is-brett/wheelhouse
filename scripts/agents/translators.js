@@ -19,5 +19,5 @@ export const TRANSLATORS = Object.freeze({
 
 // `picker` says whether a click in an agent's question picker is recorded for the helper to act on, so every card is asked
 // in the chat. It is true for an agent whose hooks sign (writes 'self'), and for one whose hooks only read once its check
-// has passed (the one switch, C6_PASSED). Until then such an agent's decisions and signing cards go to the helper's window.
+// has passed (the one switch, C6_PASSED). Until then such an agent's decisions and signing cards are plain chat messages and their work waits.
 export const HOOK_CLICKS_LIVE = Object.values(TRANSLATORS).some((t) => t.writes !== 'self' && t.picker === true);

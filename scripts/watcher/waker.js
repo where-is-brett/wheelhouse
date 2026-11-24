@@ -76,7 +76,7 @@
 //     then does a feature's prompt carry the Thoroughness column's lines, and a Shape 2 wake's copy its `column`;
 //     another agent's prompt stays one line naming its file, as a .cmd shim needs;
 //   - `grantProofs`, the proofs an answer must name for its build-command grant to count (buildGrants'
-//     `proofs`, ruling P8-8): an agent whose hooks don't sign counts only a click in the helper's own window.
+//     `proofs`, ruling P8-8): an agent whose hooks don't sign counts only the click a hook saw on the card (proof `hook-click`).
 //     Without it, every verified answer counts, as before.
 // A feature call that says the level it runs at (`level`) has it recorded as a
 // `level` record when it changes (ruling P8-5).
@@ -135,7 +135,7 @@
 // and is tried again. Once the files match again the wake goes, and `raise`
 // is given a `control-file-lift`, which closes the card. The director's Keep
 // (a signed `keep-control-files` action, from a signed click on Claude Code or
-// the helper's window, naming the finding's hash, made after the record it
+// the helper's, from a click a hook saw, naming the finding's hash, made after the record it
 // replaces) keeps the files as they were found as the new record, and the
 // wake goes; a plain record never does (ruling P7-31).
 //

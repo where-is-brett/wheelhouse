@@ -364,8 +364,8 @@ export function writeVia(agent) {
 }
 
 // Whether every card of this agent is asked in its question picker (scripts/agents/translators.js `picker`): true where the hooks
-// sign, and where they only read once the click the picker gave back is recorded. False sends decisions and signing cards to
-// the helper's window.
+// sign, and where they only read once the click the picker gave back is recorded. False makes decisions and signing cards plain chat
+// messages, and their work waits.
 export function cardsInPicker(agent) {
   return writeVia(agent) === 'self' || (Object.hasOwn(TRANSLATORS, agent) && TRANSLATORS[agent].picker === true);
 }

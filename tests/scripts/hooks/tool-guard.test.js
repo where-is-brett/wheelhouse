@@ -1608,6 +1608,8 @@ test('a shell command that posts to the helper\'s card routes is refused, howeve
       'curl --unix-socket ~/.wheelhouse/helper.sock http://h/cards/chat-click',
       "curl   -s  'http://h/cards/hook-click'",
       'curl "http://h/cards/hook-auto"',
+      'curl -X POST http://h/cards/apply -d x',
+      `node -e "fetch('http://h/cards/earnable',{method:'POST'})"`,
       'wget --post-data=x http://127.0.0.1:9/cards/chat-click',
       'Invoke-WebRequest -Uri http://h/cards/chat-click',
       "iwr 'http://h/cards/hook-shown' -Method Post",
@@ -1628,7 +1630,7 @@ test('a shell command that posts to the helper\'s card routes is refused, howeve
     }
     for (const command of [
       'ls cards', 'echo "cards are shown"', 'grep -rn "/cards/chat-click" scripts', 'cat docs/cards/notes.md', 'curl http://localhost:3000/cards',
-      'curl https://example.com/api', 'node scripts/x.js', 'git log --oneline -- cards/', 'rg chat-click',
+      'curl https://example.com/api', 'curl http://localhost:3000/cards/applying', 'node scripts/x.js', 'git log --oneline -- cards/', 'rg chat-click',
     ]) {
       assert.equal(await bash(ctx, command), undefined, command);
     }
