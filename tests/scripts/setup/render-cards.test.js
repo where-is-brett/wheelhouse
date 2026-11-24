@@ -268,6 +268,11 @@ test('path j: the first card\'s Put it on GitLab click asks where it is kept alo
   assert.deepEqual(first.card.options.map((o) => o.label), ['Go ahead', 'Put it on GitLab', 'Customise']);
   assert.equal(first.answer.label, 'Put it on GitLab');
   assert.equal(cards[1].id, 'join', 'where the project is kept is asked next, and no other choice with it');
+  // The director has just asked for GitLab, so that card recommends it and does not argue for keeping the project here.
+  const where = cards[1].card;
+  assert.match(where.options.find((o) => o.label === 'GitLab').description, /^Recommended: /);
+  assert.doesNotMatch(where.options.find((o) => o.label === 'Keep it on this computer').description, /^Recommended/);
+  assert.doesNotMatch(JSON.stringify(where), /simplest start|nothing to sign in to|needs no account/);
   assert.match(cards.find((c) => c.step === 0 && c.card.question.includes('with your choices')).card.question, /private project on your GitLab account/);
   // Windows never says "computer's password".
   for (const c of cards) assert.doesNotMatch(JSON.stringify(c.card), /computer's password|computer password/);

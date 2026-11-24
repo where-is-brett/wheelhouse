@@ -107,7 +107,7 @@ import {
 } from '../lib/setup-run.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 import {
-  ONE_CARD_STEP, CHOICE_STEPS, openChoices, oneCard, setupTime, answersWithConsent, customisingSince, customiseBatch, gitlabSince, gitlabBatch, consentIn, consentHolds, consentWithdrawn,
+  ONE_CARD_STEP, CHOICE_STEPS, openChoices, oneCard, setupTime, answersWithConsent, customisingSince, customiseBatch, gitlabSince, gitlabBatch, gitlabCard, consentIn, consentHolds, consentWithdrawn,
 } from './choices.js';
 import { redoCard, choiceList, changeRequests, setUpAgainAsked, stepFourDrift } from './redo.js';
 import { productOf, asIsReachEnv, guardAsIsReach } from './host.js';
@@ -626,7 +626,7 @@ export function setupRoutes({
     const toGitLab = gitlabSince(own);
     if (toGitLab !== null && !(consent !== null && Date.parse(consent.at) > Date.parse(toGitLab))) {
       const where = gitlabBatch(list, toGitLab);
-      if (where.length > 0) return { ok: true, asks: where.map((c) => askChoice(run, c)), progress: ['Setup · where it is kept', 'Choose where the project is kept; nothing runs until you say Go ahead.'] };
+      if (where.length > 0) return { ok: true, asks: where.map((c) => askChoice(run, gitlabCard(c))), progress: ['Setup · where it is kept', 'Choose where the project is kept; nothing runs until you say Go ahead.'] };
     }
     if (since !== null && !(consent !== null && Date.parse(consent.at) > Date.parse(since))) {
       const batch = customiseBatch(list, since);

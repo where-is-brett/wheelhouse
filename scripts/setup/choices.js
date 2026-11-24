@@ -330,7 +330,10 @@ function historyLine(claudeHome) {
   } catch {
     return plain;
   }
+  // A number written as text counts as its number; a limit of 0 or less is not one Claude Code keeps, so step 6 changes it.
+  if (typeof now === 'string' && now.trim() !== '') now = Number(now);
   if (typeof now !== 'number' || !Number.isFinite(now) || now === RETENTION_DAYS) return plain;
+  if (now <= 0) return `${plain} (your Claude Code setting is ${now} days, so this changes it)`;
   return now > RETENTION_DAYS ? `${plain} (your Claude Code setting is ${now} days, so this changes it, and chats older than ${RETENTION_DAYS} days are deleted)` : `${plain} (your Claude Code setting is ${now} days, so this raises it; nothing is deleted)`;
 }
 
@@ -487,6 +490,16 @@ export function customisingSince(answers) {
 export function gitlabSince(answers) {
   const last = stepZero(answers).filter((a) => ONE_CARD_ID.test(a.id)).at(-1);
   return last?.label === USE_GITLAB ? last.at : null;
+}
+
+// A where question as the click on Put it on GitLab asks it: the director has just asked for GitLab, so GitLab is its
+// recommendation and no line argues for keeping the project here. Only the card changes; the answer is still the director's
+// own click on it, signed against the card as asked. A card with no GitLab option is returned as it is.
+export function gitlabCard(entry) {
+  const card = entry.card;
+  const gitlab = card?.options?.find((o) => o.label === HOST_LABELS.gitlab || o.label === PUT_ON_GITLAB);
+  if (!gitlab) return entry;
+  return { ...entry, card: { ...card, why: 'You chose GitLab on the first card. This sets where your work is kept and who can reach it.', recommend: gitlab.label, because: 'you asked for it on the first card' } };
 }
 
 // The choices that click asks: where the project is kept, until it has been answered since.
