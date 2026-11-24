@@ -67,10 +67,11 @@ async function computer(answer, { hosted = false } = {}) {
     windows.push({ file, args });
     return answer({ argv: argvOf(args) });
   };
+  const askWindow = (card) => askInWindow({ ...card, platform: 'darwin', run: windowRun });
   let tick = 0;
   const helper = await startHelper({
     run: hostGuard,
-    askWindow: (card) => askInWindow({ ...card, platform: 'darwin', run: windowRun }),
+    askWindow,
     address: testAddress(home),
     envFor: async () => ({}),
     adapterFor: async () => ({ defaultBranch: async () => 'main' }),
