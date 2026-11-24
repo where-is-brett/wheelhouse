@@ -394,9 +394,14 @@ test('the other way to connect is a click that takes git\'s own route out of the
 
 test('once a sign-in works, plan 3 gives step 3 on: no sign-in card, and the plan covered by the one card\'s Go ahead when it holds, else step 3\'s own cards', async () => {
   for (const consent of [true, false]) {
-    await withProject(async ({ folder, user, plan, answer }) => {
+    await withProject(async ({ folder, user, plan, answer, tools }) => {
       const run = startRun({ folder, now: () => T0 });
-      if (consent) await answer((await plan(0)).ask.card, 'Go ahead');
+      if (consent) {
+        await answer((await plan(0)).ask.card, 'Go ahead');
+        // The first card's plan reads the launch environment for telemetry through the stand-in launchctl, and only reads.
+        assert.ok(tools.calls().every((line) => line.startsWith('launchctl getenv ')), tools.calls().join('\n'));
+        tools.reset();
+      }
       for (const n of [1, 2]) markStep(run.id, n, 'doneAt', { now: () => T0 });
       addChanges(run.id, [made(), record({ at: T0.toISOString() })]);
       const asked = await plan(3);
