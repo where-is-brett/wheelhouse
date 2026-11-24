@@ -35,19 +35,9 @@ import { typedRepliesIn } from './switch.js';
 import { readDecisions } from './pending.js';
 import { parseReply } from './reply.js';
 import { LETTERS } from './message.js';
+import { startedByScript, SCRIPT_ENTRYPOINT } from '../lib/started-by-script.js';
 
-// The values of CLAUDE_CODE_ENTRYPOINT that are not a person typing: Claude Code's print mode and its SDKs. The app,
-// the editor and the terminal each set another value.
-const SCRIPT_ENTRYPOINT = /^sdk-/;
-// The variables only Wheelhouse's own starters set on a session they run.
-const STARTER_VARIABLES = ['WHEELHOUSE_ROLE', 'WHEELHOUSE_SESSION', 'WHEELHOUSE_AGENT', 'WHEELHOUSE_ENGINE_RUN'];
-
-// Whether the session was started by a script, from the environment its hooks inherit.
-export function startedByScript(env = process.env) {
-  const entry = env?.CLAUDE_CODE_ENTRYPOINT;
-  if (typeof entry === 'string' && SCRIPT_ENTRYPOINT.test(entry)) return true;
-  return STARTER_VARIABLES.some((name) => typeof env?.[name] === 'string' && env[name] !== '');
-}
+export { startedByScript };
 
 // The piece whose helm this session sits at (crew visibility design, 9.4), or null: the hold names this session, the hold is
 // opened, and the entrypoint is not a script's. The starter variables are not checked, as the helm session carries its piece's role.

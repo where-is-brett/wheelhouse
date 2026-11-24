@@ -43,12 +43,13 @@ import {
 } from '../watcher/waker.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { sameStart, startSeconds } from '../lib/start-time.js';
+import { FOREMAN_PROMPT_LEAD } from './prompt-lead.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 // How long the watcher's lock or health record counts as fresh.
 export const WATCHER_FRESH_MS = 10 * 60 * 1000;
-export const FOREMAN_PROMPT_LEAD = 'Wheelhouse foreman:';
+export { FOREMAN_PROMPT_LEAD };
 
 class StartError extends Error {}
 const refuse = (message) => { throw new StartError(message); };

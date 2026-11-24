@@ -42,7 +42,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { answer, runAndExit, worktreeRoot, projectOf, pluginRoots, isInside, managedDir, managedMarker, readTailEntries, readSmallText, beingSetUp, removedFrom, isWhy } from './kit.js';
+import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, managedMarker, readTailEntries, beingSetUp, removedFrom, isWhy } from './kit.js';
 import { keep, sendPending, withinBudget } from './pending.js';
 import { keepWatcherAlive } from '../watcher/keep-alive.js';
 import { recordClaudePath } from '../lib/claude.js';
@@ -58,15 +58,16 @@ import { buildViews } from '../state/views.js';
 import { numberedWaiting } from '../board/model.js';
 import { startBackground, startDetached } from '../lib/background.js';
 import { sessionRole, asideKind } from '../lib/role.js';
+import { branchOf, featureSlug, madeFeatureSlug } from '../lib/feature-slug.js';
+import { SETUP_FIRST } from '../lib/setup-first.js';
 import { RECENT_MS, readSeat, takeSeat, refreshSeat, seatFree, firstMatePid } from '../lib/first-mate-seat.js';
-import { startedByScript } from '../decisions/answer.js';
+import { startedByScript } from '../lib/started-by-script.js';
 import { asideLine } from '../lib/front-desk.js';
 import { seatCard, agoWords } from '../lib/seat-card.js';
 import { projectConfig } from '../watcher/main.js';
 import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
 import { readProject } from '../lib/projects.js';
 import { ensureIgnored } from '../feature/files.js';
-import { safeFeatureFolder, readBrief } from '../feature/status.js';
 import { run as runProgram } from '../lib/run.js';
 import {
   LOW_NODE_SCRIPT, guardedReady, lowNodeReady, needsSelfTest, selfTest, SELF_TEST_MS,
@@ -119,7 +120,7 @@ export const FRONT_DESK_LINE = 'This is the First Mate. Load wheelhouse:front-de
 // In a folder being set up: where setup stands, and that setup comes before whatever the director's
 // message asks, which is kept for the front desk (SETUP_FIRST). board-context.js says it again with
 // each prompt while setup is unfinished, so a long first message can't win over this line.
-export const SETUP_FIRST = 'Setup comes first, whatever the director\'s message asks: if setup isn\'t already under way in this conversation, say in one plain line that you\'ll set Wheelhouse up first and keep their request for afterwards, then follow wheelhouse:setup. Keep their request as they wrote it, and do no work on it until setup is done. Two requests go first instead: one about Wheelhouse itself (updating, reinstalling or removing it, or a claude plugin command), and one that says not to run setup now. Do that, then say they can carry on with setup by saying so.';
+export { SETUP_FIRST };
 export const NOT_SET_UP = `This folder isn't set up for Wheelhouse yet. ${SETUP_FIRST}`;
 export const partWay = (n, title) => `Setup is part-way through: step ${n}, ${title}, is next. Carry on with setup at once, whatever the director's first message says: run \`resume\` and follow wheelhouse:setup, with no question first. ${SETUP_FIRST}`;
 // The request the director made in an earlier session of this setup, as they wrote it, for the First Mate once setup is done.
@@ -212,55 +213,7 @@ const show = (value) => (typeof value === 'string' ? value : (JSON.stringify(val
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Small regular files only, opened without waiting: a FIFO HEAD can't hang the hook.
-const readText = (file) => readSmallText(file);
-
-// The branch a folder is on, read from the HEAD file with fs only (never git).
-export function branchOf(cwd) {
-  if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) return null;
-  let dir = path.resolve(cwd);
-  for (;;) {
-    const dot = path.join(dir, '.git');
-    let stat = null;
-    try {
-      stat = fs.statSync(dot);
-    } catch { /* look higher */ }
-    let gitdir = null;
-    if (stat?.isDirectory()) gitdir = dot;
-    else if (stat?.isFile()) {
-      const pointer = /^gitdir:\s*(.+?)\s*$/m.exec(readText(dot) ?? '');
-      if (!pointer) return null;
-      gitdir = path.resolve(dir, pointer[1]);
-    }
-    if (gitdir) {
-      const head = /^ref:\s*refs\/heads\/(.+?)\s*$/m.exec(readText(path.join(gitdir, 'HEAD')) ?? '');
-      return head ? head[1] : null;
-    }
-    const up = path.dirname(dir);
-    if (up === dir) return null;
-    dir = up;
-  }
-}
-
-export function featureSlug(cwd) {
-  const match = /^feature\/([A-Za-z0-9._-]+)$/.exec(branchOf(cwd) ?? '');
-  return match && !/^\.+$/.test(match[1]) ? match[1] : null;
-}
-
-// The branch's slug when `cwd` is in a worktree Wheelhouse made for that feature: its
-// `.wheelhouse/feature` folder is safe and its brief's `work` is the slug. Null otherwise, and
-// null when anything can't be read. A `feature/` branch alone is not a feature session.
-export function madeFeatureSlug(cwd) {
-  try {
-    const slug = featureSlug(cwd);
-    if (slug === null) return null;
-    const root = worktreeRoot(cwd);
-    if (root === null || !safeFeatureFolder(root)) return null;
-    return readBrief(root).work === slug ? slug : null;
-  } catch {
-    return null;
-  }
-}
+export { branchOf, featureSlug, madeFeatureSlug };
 
 // The views as the helper last wrote them on disk, when it cannot give them.
 // While views are being replaced the old ones sit in `views.old` for a moment (or for good

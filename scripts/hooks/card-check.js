@@ -60,7 +60,8 @@ import { cardButtons } from '../cards/buttons.js';
 import { standing } from './prompt-record.js';
 import { isDecisionCard, readDecisions } from '../decisions/pending.js';
 import { decisionText, blocksIn } from '../decisions/message.js';
-import { startedByScript, typedRepliesOn } from '../decisions/answer.js';
+import { startedByScript } from '../lib/started-by-script.js';
+import { typedRepliesOn } from '../decisions/answer.js';
 
 const SHA12 = '([0-9a-f]{12})';
 // The plain lines a card needs before its last: the question, why it is the director's and what happens meanwhile. A

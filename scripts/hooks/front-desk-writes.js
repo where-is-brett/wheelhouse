@@ -30,7 +30,7 @@ import { buildViews } from '../state/views.js';
 import { listEvents } from '../state/events.js';
 import { readEnrolled } from '../state/signing.js';
 import { stateDir } from '../lib/paths.js';
-import { isOpen } from '../desk/views.js';
+import { isOpen } from '../desk/is-open.js';
 
 export const WRITING = Object.freeze({ Edit: 'file_path', Write: 'file_path', MultiEdit: 'file_path', NotebookEdit: 'notebook_path' });
 const SHELL = ['Bash', 'PowerShell'];

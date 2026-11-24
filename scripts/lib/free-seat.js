@@ -6,7 +6,7 @@ import { readProject } from './projects.js';
 import { computerId } from './paths.js';
 import { sessionRole } from './role.js';
 import { STALE_AFTER_MS, readSeat, takeSeat, refreshSeat, seatFree, seatInUse } from './first-mate-seat.js';
-import { startedByScript } from '../decisions/answer.js';
+import { startedByScript } from './started-by-script.js';
 
 // Whether this computer holds the lock or could take it, judged by reading it and taking nothing (for a hook that doesn't
 // keep the lock): free when no helper can be asked, the project is in git alone, nothing holds it, this computer holds it, or

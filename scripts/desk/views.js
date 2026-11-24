@@ -7,7 +7,8 @@ import { heldByNotNow, numberedWaiting } from '../board/model.js';
 import { effectiveSettings, settingsText } from '../settings/effective.js';
 import { SETTINGS } from '../settings/catalogue.js';
 import { glossaryOf, plainWords, termPattern } from '../frontdesk/glossary.js';
-import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
+import { since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
+import { isOpen } from './is-open.js';
 import { cardTextOf, hashOf } from './card-text.js';
 import { cardButtons } from '../cards/buttons.js';
 import { dataHash } from '../state/events.js';
@@ -61,15 +62,7 @@ export function recentLines(decided, now) {
   return recent.length === 0 ? [] : [RECENT_LEAD, ...recent.map((d) => `- ${subjectOf(d.card)}: ${answeredWords(d, now)}`)];
 }
 
-// Whether `id` names open work, as the queue reads it: no report has ended it, and its feature
-// hasn't closed since it was queued (scripts/foreman/queue.js).
-export function isOpen(views, id) {
-  const entry = isPlain(views.work) ? views.work[id] : undefined;
-  if (!isPlain(entry)) return false;
-  const feature = isPlain(views.features) ? views.features[id] : undefined;
-  const closed = feature?.data?.step === 'closed' && since(feature, entry.work);
-  return !closed && !endedBy(views.reports, id, entry.work);
-}
+export { isOpen };
 
 // The survey taken when setup finished, as short lines: what it counted, the requests by number
 // and title, each piece of unfinished work by its name (for `carry-on --line`), its newest subject

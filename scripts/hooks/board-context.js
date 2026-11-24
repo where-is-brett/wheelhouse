@@ -47,9 +47,10 @@ import { stoppedQuestion } from './stopped-question.js';
 import { answeredWords, subjectOf, NOTE_LEAD } from '../cards/answered.js';
 import { SINCE_LEAD, SINCE_TAIL } from '../cards/panel-words.js';
 import { chatCopy, approveWorkLine } from '../state/card-lines.js';
-import { isOpen } from '../desk/views.js';
+import { isOpen } from '../desk/is-open.js';
 import { readOpen, clearOpen } from '../lib/session-files.js';
-import { featureSlug, madeFeatureSlug, SETUP_FIRST } from './session-start.js';
+import { featureSlug, madeFeatureSlug } from '../lib/feature-slug.js';
+import { SETUP_FIRST } from '../lib/setup-first.js';
 import { keepRequest } from '../lib/kept-request.js';
 import { briefingModel as realBriefingModel } from '../briefing/model.js';
 import { heldBackLine } from '../board/model.js';
@@ -72,7 +73,7 @@ import { startedAsScript } from '../lib/started-as-script.js';
 import { HEADINGS, NOT_CHECKED, NONE_CHANGED, briefingIn } from '../desk/context.js';
 import { deskClient, unreached } from '../desk/client.js';
 import { isDecisionCard } from '../decisions/pending.js';
-import { startedByScript } from '../decisions/answer.js';
+import { startedByScript } from '../lib/started-by-script.js';
 import { typedRepliesIn } from '../decisions/switch.js';
 import { parseReply } from '../decisions/reply.js';
 import { ownWords } from '../lib/own-words.js';
@@ -268,6 +269,20 @@ const STOPPED_TAIL = 'Never say a card was closed without an answer.';
 // The most cards one line names; the rest are on the board.
 const NOTE_CARDS = 6;
 
+// How far back the decided cards are read: an hour before the First Mate's last turn began, or before now when none is known.
+function outcomesSince(since, at) {
+  const from = Date.parse(since);
+  return new Date((Number.isFinite(from) ? from : at.getTime()) - 3600000).toISOString();
+}
+
+// The waiting view, read once for every line the prompt builds from it (the cards due, the decisions, the stuck notes, the helm
+// notes, the approvals with no card, the decided cards): each asks for the one view with its own extras, so one read with all
+// the extras answers them all, where a read each was seven helper round trips in turn, each rebuilding the views.
+function sharedWaiting(desk, { since, at }) {
+  let once;
+  return { ...desk, read: (view, args) => (view === 'waiting' ? (once ??= desk.read('waiting', { stuck: true, helmNotes: true, outcomes: { since: outcomesSince(since, at) } })) : desk.read(view, args)) };
+}
+
 // The two lines, in the order they go into the context: [since, stopped], each a string or null. `since` is when the
 // First Mate's last turn began (the prompt before this one); `open` is what the session's open.json held. A card the
 // stopped line names is left out of the since line.
@@ -275,8 +290,7 @@ async function cardNotes({ project, input, since, at, desk, open }) {
   // The decided cards, the card events and the board's numbers all come through the desk (design section 4.4): the hook
   // reads neither the state nor the keys itself.
   const from = Date.parse(since);
-  const back = new Date((Number.isFinite(from) ? from : at.getTime()) - 3600000).toISOString();
-  const got = await desk.read('waiting', { outcomes: { since: back } });
+  const got = await desk.read('waiting', { outcomes: { since: outcomesSince(since, at) } });
   const data = isRecord(got?.data) ? got.data : {};
   const decided = Array.isArray(data.outcomes) ? data.outcomes.filter((o) => isRecord(o) && isRecord(o.card) && isRecord(o.decided)) : [];
   const events = Array.isArray(data.cards) ? data.cards.filter((e) => isRecord(e) && typeof e.id === 'string') : [];
@@ -483,29 +497,34 @@ export async function decide(input, deps = {}) {
       await within(() => visitLearning({ project, cwd: input.cwd, client: asker, at, boardAsks: visits.boardAsks }), learnWaitMs);
     }
     const desk = givenDesk ?? deskOf({ cwd: input.cwd, client, at });
-    const count = (await within(() => cardsToAsk(desk, at), waitMs)) ?? 0;
-    const cards = count > 0 ? cardsLine(count) : null;
     const sessionId = typeof input.session_id === 'string' ? input.session_id : null;
     // On an agent whose hooks can't write, no prompt time is kept here, so the helper keeps the session's last turn time and
     // the since line counts from it. With no helper there is none, and the hook writes nothing here.
     const turnAt = writes || sessionId === null ? null : await within(() => helperTurnAt({ cwd: input.cwd, client, session: sessionId }), waitMs);
     const sinceAt = writes ? seen.promptAt : turnAt ?? null;
-    // What the cards just answered or left open say, ahead of the cards line. A session's open.json is read once and
-    // cleared by this prompt, whatever comes of the lines.
+    // A session's open.json is read once and cleared by this prompt, whatever comes of the lines.
     const open = sessionId === null ? null : attempt(() => readOpen(sessionId), null);
     if (writes && sessionId !== null) attempt(() => clearOpen(sessionId));
     // What the prompt hook makes of a reply (scripts/decisions/answer.js) it tells in its own context for this turn. Here the
     // reply is only read, under the same guards, to leave out the decision it answers.
     const typed = !writes || startedByScript(env) ? null : attempt(() => ownWords(input.prompt), null);
-    const decisionLine = await within(() => decisionLineOf(desk, typed), waitMs);
-    const stuck = await within(() => stuckLine(desk, seen.promptAt, at), waitMs);
-    const helmNote = await within(() => helmNoteLine(desk, seen.promptAt, at), waitMs);
-    const orphans = await within(() => orphanLineOf(desk), waitMs);
+    // Every line the waiting view gives, from one read, each within its own wait: together they wait no longer than one does.
+    const waiting = sharedWaiting(desk, { since: sinceAt, at });
+    const [counted, decisionLine, stuck, helmNote, orphans, noted] = await Promise.all([
+      within(() => cardsToAsk(waiting, at), waitMs),
+      within(() => decisionLineOf(waiting, typed), waitMs),
+      within(() => stuckLine(waiting, seen.promptAt, at), waitMs),
+      within(() => helmNoteLine(waiting, seen.promptAt, at), waitMs),
+      within(() => orphanLineOf(waiting), waitMs),
+      within(() => cardNotes({ project, input, since: sinceAt, at, desk: waiting, open }), waitMs),
+    ]);
+    const count = counted ?? 0;
+    const cards = count > 0 ? cardsLine(count) : null;
     // The daily digest the watcher made waits for the director's next message and is shown once, here (scripts/digest/due.js). A hook that
     // only reads leaves it for one that can take it away.
     // A session a script started is no director arriving, so it never uses the digest up.
     const digest = writes && !startedByScript(env) ? attempt(() => readDigest(project), null) : null;
-    const notes = [decisionLine, orphans, digest?.text ?? null, stuck, helmNote, ...((await within(() => cardNotes({ project, input, since: sinceAt, at, desk, open }), waitMs)) ?? [])].filter((line) => typeof line === 'string');
+    const notes = [decisionLine, orphans, digest?.text ?? null, stuck, helmNote, ...(noted ?? [])].filter((line) => typeof line === 'string');
     const reserve = (cards === null ? 0 : cards.length + 2) + notes.reduce((sum, line) => sum + line.length + 2, 0);
     // A survey not worked out in time is left to the briefing view, which takes the record's latest.
     const survey = want === 'briefing' ? (await within(() => surveyOf({ project, client, desk }), learnWaitMs)) ?? undefined : null;

@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome } from './paths.js';
-import { pidAlive, processStartTime } from '../watcher/waker.js';
+import { pidAlive, processStartTime } from './process-start.js';
 import { listProcesses } from '../engine/stop.js';
 import { roleFile } from './role.js';
 

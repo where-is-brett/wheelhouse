@@ -10,11 +10,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome } from './paths.js';
-import { madeFeatureSlug } from '../hooks/session-start.js';
+import { madeFeatureSlug } from './feature-slug.js';
 import { projectOf, worktreeRoot } from '../hooks/kit.js';
 import { readSeat } from './first-mate-seat.js';
-import { FOREMAN_PROMPT_LEAD } from '../foreman/start.js';
-import { ROLE_VARIABLE } from '../watcher/waker.js';
+import { FOREMAN_PROMPT_LEAD } from '../foreman/prompt-lead.js';
+import { ROLE_VARIABLE } from '../../adapters/claude-code/sessions.js';
 
 export const ROLES = Object.freeze(['foreman', 'front-desk', 'feature', 'why', 'aside']);
 // The command that makes a window an ordinary session, never the First Mate.
