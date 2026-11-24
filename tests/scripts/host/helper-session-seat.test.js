@@ -147,15 +147,26 @@ test('/session/seat takes nothing for an aside chat, a worktree or an id a seat 
   });
 });
 
-test('/session/seat with aside records the choice, gives up a seat the session holds, and the session then takes nothing', async () => {
+test('/session/seat with aside records the choice where none is, and the session then takes nothing', async () => {
   await withSeatHelper(async ({ client, folder }) => {
-    assert.deepEqual(await client.session.seat({ cwd: folder, session: 'chat-1' }), { ok: true, holds: true });
     assert.deepEqual(await client.session.seat({ cwd: folder, session: 'chat-1', aside: true }), { ok: true, holds: false });
-    assert.equal(readSeat('o__p'), null);
     assert.equal(JSON.parse(fs.readFileSync(roleFile('chat-1'), 'utf8')).role, 'aside');
     assert.deepEqual(await client.session.seat({ cwd: folder, session: 'chat-1' }), { ok: true, holds: false }, 'a free seat, and the chat is an aside');
     assert.equal(readSeat('o__p'), null);
     assert.notEqual((await client.session.seat({ cwd: folder, session: 'has space', aside: true })).ok, true);
+  });
+});
+
+test('/session/seat with aside never gives up a held seat or turns a recorded role, since any caller can name any session', async () => {
+  await withSeatHelper(async ({ client, folder }) => {
+    putSeat();
+    assert.equal(recordRole('a', 'front-desk'), true);
+    assert.deepEqual(await client.session.seat({ cwd: folder, session: 'a', aside: true }), { ok: true, holds: true });
+    assert.equal(readSeat('o__p').session, 'a', 'the holder keeps the seat');
+    assert.equal(JSON.parse(fs.readFileSync(roleFile('a'), 'utf8')).role, 'front-desk', 'the holder\'s record is unchanged');
+    // So another chat's next write still finds the seat held.
+    assert.deepEqual(await client.session.seat({ cwd: folder, session: 'b' }), { ok: true, holds: false });
+    assert.equal(readSeat('o__p').session, 'a');
   });
 });
 

@@ -178,11 +178,11 @@ import { briefHash } from '../feature/files.js';
 import { HAND_DONE, HAND_GOAL } from '../lib/by-hand-done.js';
 import { writeInside } from '../lib/write-inside.js';
 import { tieNamesWork } from '../lib/by-hand-tie.js';
-import { holdsSeat, readSeat, takeSeat, refreshSeat, handOverSeat, releaseSeat, seatFree, STALE_AFTER_MS } from '../lib/first-mate-seat.js';
+import { holdsSeat, readSeat, takeSeat, refreshSeat, handOverSeat, seatFree, STALE_AFTER_MS } from '../lib/first-mate-seat.js';
 import { seatCard } from '../lib/seat-card.js';
 import { readTurn } from '../lib/session-files.js';
 import { lockFreeNow } from '../lib/free-seat.js';
-import { asideKind, sessionRole, recordAside, recordRole } from '../lib/role.js';
+import { asideKind, sessionRole, recordRole } from '../lib/role.js';
 import { worktreeRoot, sameFolder } from '../hooks/kit.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
@@ -2411,15 +2411,16 @@ export async function startHelper({
   // doesn't hold it takes it here when it is free or absent and the session may (takeFree), as a Claude Code window's first write
   // does. With `take`, a session in the project's main folder takes the seat while it is free, with no process recorded (the
   // helper's own ancestor is not the session's window), as a session start does where hooks can write; it is then free again
-  // after it has been idle a while. With `aside`, the session has chosen to be an aside: its role is recorded and it gives up
-  // any seat it holds.
+  // after it has been idle a while. With `aside`, the session has chosen to be an aside: its role is recorded, so it never takes
+  // a free seat.
   async function doSessionSeat({ project, session, take, aside, cwd }, ctx) {
     if (typeof session !== 'string' || session === '') refuse('this session has no id to look the seat up by');
+    // Any caller can name any session here, so the choice is only recorded where no role is: a recorded role isn't turned and
+    // a held seat isn't given up, or a chat could free another's seat and take it with no click.
     if (aside === true) {
       if (!SEAT_SESSION.test(session)) refuse('the session id is not one a seat can name');
-      if (!recordAside(session)) recordRole(session, 'aside');
-      releaseSeat(project, session);
-      return { ok: true, holds: false };
+      recordRole(session, 'aside');
+      return { ok: true, holds: holdsSeat(project, session) };
     }
     if (take === true) {
       if (!SEAT_SESSION.test(session)) refuse('the session id is not one a seat can name');
