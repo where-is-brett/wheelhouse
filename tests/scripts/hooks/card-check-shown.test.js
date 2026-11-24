@@ -160,7 +160,7 @@ test('typed replies switched off: the question picker is allowed for a decision,
   });
 });
 
-test('on an agent whose hooks only read, the picker is refused for a decision whatever the switch, and it is answered in the window', async () => {
+test('on an agent whose hooks only read, the picker is refused for a decision whatever the switch, and its answer waits', async () => {
   await inHomeOff(async () => {
     const card = raise('How often should the digest go out?', '2026-11-08T01:00:00.000Z');
     const question = { ...asQuestion({ data: card.data }), allowFreeformInput: false };

@@ -752,7 +752,7 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
 // of it fails; a lock that only couldn't be pushed (the computer's git settings wait for a click, say) leaves the seat to be
 // taken. The hook writes nothing: a free seat is taken by the helper, for the
 // session, with no process recorded (the seat is then free after it has been idle a while). Where another live window holds
-// the seat, the session is told so, and with a helper to open the window, offered the take-over card as text. A session
+// the seat, the session is told so, and with a helper to sign its click, offered the take-over card as text. A session
 // that chose to be an aside, stands in a worktree, was started by a script or has no id takes nothing and is offered no
 // card. Gives { aside, seatNotes, firstMate }: the aside line (or null), the lines for the notes, and whether the session
 // is the First Mate (it stands in the main folder, chose nothing else, and no other live window holds the seat). It

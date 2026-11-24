@@ -1447,7 +1447,7 @@ export async function startHelper({
   }
 
   // A refused push's answer with the card that confirms the settings raised, once, while none waits: the card's id, and `needs`
-  // `window`, as an undo's answer says. The refusal stands without a card that could not be raised.
+  // `card`, as an undo's answer says. The refusal stands without a card that could not be raised.
   async function withSettingsCard(project, pushed) {
     try {
       const made = await settingsCardNow(project);
@@ -2535,9 +2535,9 @@ export async function startHelper({
     const confirmed = CONFIRMED_STEPS.some((step) => card === step || card.startsWith(`${step}-`));
     const shownCard = listEvents(stateDir(project), { report: () => {} }).find((e) => e.kind === 'card' && e.id === card);
     const asked = shownCard?.data?.question ?? card;
-    if (confirmed && signsOn(label, asked)) refuse('that step is confirmed outside the chat, never by a click in it');
+    if (confirmed && signsOn(label, asked)) refuse('that step is decided only by a click Wheelhouse\'s own hook records, never by an agent\'s account of one');
     // A decision answered by a click the chat can't sign would close it without the signed answer the crew acts on.
-    if (isDecisionCard(shownCard?.data)) refuse('a decision is answered in the window or by a typed reply, never by a click in the chat');
+    if (isDecisionCard(shownCard?.data)) refuse('a decision is answered only by a click Wheelhouse\'s own hook records or the director\'s own typed reply, never by an agent\'s account of a click');
     const mayDecide = /^merge-/.test(card);
     if (signsOn(label, asked) && !mayDecide) refuse('a click in the chat can\'t decide that card');
     const data = { question: card, label, hash, ...(commit === undefined ? {} : { commit }), ...(text === undefined ? {} : { text }), proof, where: 'chat' };
@@ -2770,10 +2770,10 @@ export async function startHelper({
 
   // What a click on `label` would record for `card`: the signed record the same click earns in a
   // hook that signs (prompt-record.js's earned, from the card's own question in the state), when it decides a
-  // step the window confirms; else null. A pull request's head is read through this helper's own route.
+  // step only a recorded click decides; else null. A pull request's head is read through this helper's own route.
   async function helperEarned(project, card, label, ctx) {
     const question = card.data?.question;
-    // The Update card's Not now is the one put-off the window signs: a decline of that plan, earned as the panel's press earns it.
+    // The Update card's Not now is the one put-off a recorded click signs: a decline of that plan, earned as the panel's press earns it.
     // The card's own data stands for the card as asked where the helper composed it (the seat card), as the Update card's does.
     const asked = card.seat === undefined ? askedUpdateCard(question, card.data) : card.data;
     const declines = label === NOT_NOW && askedUpdateCard(question, card.data) !== undefined;
@@ -2858,7 +2858,7 @@ export async function startHelper({
   const shortSession = (id) => id.slice(0, 8);
 
   // The seat the card offers to `session`, as the seat file holds it now: held by another window that is still live, and the
-  // asker a session in the project's main folder with an id a seat can name. Refuses otherwise, before any window opens.
+  // asker a session in the project's main folder with an id a seat can name. Refuses otherwise, before the card is asked.
   async function seatToOffer({ project, session, cwd }) {
     if (typeof session !== 'string' || !SEAT_SESSION.test(session)) refuse('this window has no session id to move the First Mate to');
     if (!(await inMainFolder(cwd, recordOf(project).folder))) refuse('the First Mate\'s seat moves only to a window in the project\'s main folder');

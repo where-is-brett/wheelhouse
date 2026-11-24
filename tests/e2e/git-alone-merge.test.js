@@ -21,7 +21,8 @@ import { run } from '../../scripts/lib/run.js';
 import { liftStop, setStop } from '../../scripts/lib/stop.js';
 import { g } from '../helpers/git-fixture.js';
 import { tempFolder } from '../helpers/homes.js';
-import { dataHash, eventPath, listEvents, makeEvent } from '../../scripts/state/events.js';
+import { dataHash, eventPath, listEvents, makeEvent, writeEvent } from '../../scripts/state/events.js';
+import { sign } from '../../scripts/state/signing.js';
 import { decide as cardCheck } from '../../scripts/hooks/card-check.js';
 import { decide as promptRecord } from '../../scripts/hooks/prompt-record.js';
 
@@ -214,7 +215,7 @@ async function confirm(client, card, label) {
   return client.cards.hookClick({ ...ask, label });
 }
 
-test('Keep it answers Main moved at the window, and the queue goes on', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
+test('Keep it answers Main moved in the chat, and the queue goes on', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
   const { helper, client, home } = world;
   await ticksUntil(helper, () => seenMain(P) !== null, 'the first look');
   const moved = await moveOutside(home);
@@ -227,6 +228,27 @@ test('Keep it answers Main moved at the window, and the queue goes on', { timeou
   assert.equal(seenMain(P), moved);
   await ticksUntil(helper, () => changeOf(n).state === 'merged', 'the merge');
   assert.equal((await run('git', ['merge-base', '--is-ancestor', moved, 'refs/heads/main'], { cwd: home })).code, 0, 'what moved it stays');
+}, { check: checks() }));
+
+test('a Keep it the hook signed is carried out by /cards/apply, but not while All stop is on', { timeout: 120000 }, () => gitAloneWorld(async (world) => {
+  const { helper, client, home } = world;
+  await ticksUntil(helper, () => seenMain(P) !== null, 'the first look');
+  const before = seenMain(P);
+  const moved = await moveOutside(home);
+  const card = await ticksUntil(helper, () => cardOf((d) => String(d.question).includes(moved)), 'the Main moved card');
+  // As Claude Code's prompt record does: the helper says what the click earns, the hook signs it, then asks the helper to carry it out.
+  const earned = await client.cards.earnable({ project: P, message: card.data.question, options: card.data.options, label: 'Keep it' });
+  assert.equal(earned.made?.data?.action, 'keep-main', JSON.stringify(earned));
+  await writeEvent({ project: P, event: sign(makeEvent(earned.made)) });
+  setStop({ by: 'helper' });
+  try {
+    assert.deepEqual(await client.cards.apply({ project: P }), { ok: false, refused: 'All stop is on' }, 'nothing is carried out under All stop');
+    assert.equal(seenMain(P), before);
+  } finally {
+    liftStop();
+  }
+  assert.equal((await client.cards.apply({ project: P })).kept, true);
+  assert.equal(seenMain(P), moved);
 }, { check: checks() }));
 
 test('Undo it takes what moved the main version back out, under All stop too, and one click does it once', { timeout: 120000 }, () => gitAloneWorld(async (world) => {

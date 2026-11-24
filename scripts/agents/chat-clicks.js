@@ -5,7 +5,7 @@
 
 // `chat-click` is the agent's own account of the click.
 export const CHAT_PROOFS = Object.freeze(['chat-click']);
-// The steps that need the director's confirmed click outside the chat (the window, Task 4): never a chat click.
+// The steps that need a click Wheelhouse's own hook records (a signed click, or a `hook-click`): never a chat click.
 export const CONFIRMED_STEPS = Object.freeze(['lift-stop', 'guardrail-change', 'unattended', 'runbook-step', 'ci-push', 'ask-allowance']);
 // `hook-click` is a click an agent's own hook saw come back from the question tool (the harness's answer, not the
 // model's), recorded by /cards/hook-click for a card /cards/hook-shown recorded as shown to that session. It may decide

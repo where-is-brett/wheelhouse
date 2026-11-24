@@ -119,7 +119,7 @@ const CLICK_LINES = Object.freeze([
   ['Its click records itself.', 'Its click is the director\'s answer to act on.'],
 ]);
 
-// The playbook's lines on how a decision and a card with a window are asked, in the words of an agent whose every card is asked in
+// The playbook's lines on how a decision and a card that signs are asked, in the words of an agent whose every card is asked in
 // its picker. The decision's bullet is replaced whole (it starts with its bold lead); the others by their words.
 const PICKER_LINES = Object.freeze([
   ['Every question is a card from `card` or `cards`, except a decision, which is a plain chat message (see Decisions).', 'Every question is a card from `card` or `cards`, a decision among them.'],
