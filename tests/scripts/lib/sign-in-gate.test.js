@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  signInFile, readSignIn, writeSignInFact, clearSignInFact, gateFor, classify, cleanExcerpt, commandName, buildersLine, buildersHealth, timeWords,
+  signInFile, readSignIn, writeSignInFact, clearSignInFact, gateFor, classify, cleanExcerpt, commandName, buildersLine, buildersHealth, timeWords, signInCard,
 } from '../../../scripts/lib/sign-in-gate.js';
 import { signInPatterns } from '../../../adapters/claude-code/sign-in-patterns.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -117,4 +117,24 @@ test('the Builders line states the recorded fact, and says a damaged file', () =
   fs.writeFileSync(signInFile(h), '{');
   assert.match(buildersLine({ home: h }), /^Builders: background as `claude` · .*sign-in\.json can't be read: line 1, column 2\./);
   assert.equal(buildersHealth({ home: h }).level, 'watch');
+});
+
+test('the excerpt hides keys, tokens and a home folder that carries a user\'s name', () => {
+  const key = `sk-ant-api03-${'a1B2'.repeat(10)}`;
+  const github = `ghp_${'x'.repeat(36)}`;
+  const opaque = 'Zq9'.repeat(16);
+  const said = cleanExcerpt(`Invalid API key ${key} Authorization: Bearer abc123DEF456ghi ${github} token=${opaque} at /Users/jane.doe/.claude and C:\\Users\\Jane\\AppData and /home/jdoe/x`);
+  for (const secret of [key, github, opaque, 'abc123DEF456ghi', 'jane.doe', 'Jane', 'jdoe']) assert.ok(!said.includes(secret), `${secret} in ${said}`);
+  assert.match(said, /^Invalid API key /);
+  assert.match(said, /~\/\.claude/);
+  assert.ok(said.length <= 200);
+});
+
+test('the sign-in card says what happened, why it comes to the director, three options and what happens meanwhile', () => {
+  const card = signInCard({ kind: 'no-program', since: '2026-11-24T03:02:00.000Z', command: '/opt/x/claude.exe', excerpt: '', starts: 1 });
+  assert.equal(card.kind, 'question');
+  assert.match(card.question, /^Builders can't sign in on this computer\nWhat happened: 1 builder start failed at \d\d:\d\d\. `claude` said it couldn't be found or run\. /);
+  assert.deepEqual(card.parts.options.map((o) => o.recommended), [false, false, true]);
+  assert.equal(card.descriptions[2].startsWith('Recommended: '), true);
+  assert.equal(card.line, null);
 });

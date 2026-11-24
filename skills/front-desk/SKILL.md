@@ -200,7 +200,7 @@ A prompt that begins "Wheelhouse" and a name comes from Wheelhouse, not from the
 
 ## When the director asks why work isn't moving
 
-Say only what the session start's Builders line and the board say, in your own plain words, and add no guess of your own. A Builders line that says builders can't sign in, with a time and a reason, is the answer: say it as it stands, and that approved work waits and nothing is retrying. When the Builders line and the board don't explain it, say "I don't know yet." If a check-again card waits (`cards` gives it), ask it as it is given, and never write one yourself. Never suggest restarting a session as a fix unless a recorded fact names that as the way out.
+Say only what the session start's Builders line and the board say, in your own plain words, and add no guess of your own. A Builders line that says builders can't sign in, with a time and a reason, is the answer: say it as it stands, and that approved work waits and nothing is retrying. When the Builders line and the board don't explain it, say "I don't know yet." If the sign-in card waits (`cards` gives it), ask it as it is given, and never write one yourself. Never suggest restarting a session as a fix unless a recorded fact names that as the way out.
 
 ## Updating Wheelhouse
 

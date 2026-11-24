@@ -10,9 +10,9 @@ import path from 'node:path';
 import {
   makeWaker, writeWake, readWake, wakesDir, sessionModeOf, featureModeOf, sessionEnv, spawnDetached, pidAlive, processStartTime, makeStartTimes,
   outboxFile, runningFile, sessionFile, lostFile, grantsUsedFile, watcherDir, PROMPTS, MAX_RUN_MS, STARTING_MS, windowsBuildsOf, premiumRestFile,
-  startsDir, failingFile, startHold, clearStartFailures,
+  startsDir, failingFile, startHold, clearStartFailures, PROVE_MS,
 } from '../../../scripts/watcher/waker.js';
-import { readSignIn } from '../../../scripts/lib/sign-in-gate.js';
+import { readSignIn, timeWords } from '../../../scripts/lib/sign-in-gate.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { briefHash, featurePaths } from '../../../scripts/feature/files.js';
 import { recordInState, briefFields, briefText } from '../../helpers/foreman.js';
@@ -508,9 +508,11 @@ test('a feature bundle wakes only that feature\'s session, by the id the watcher
   assert.equal(fs.readFileSync(copy, 'utf8'), fs.readFileSync(record, 'utf8'));
   assert.equal(Object.hasOwn(call.env, 'WHEELHOUSE_ROLE'), false, 'a feature session is not the foreman, whatever the watcher inherited');
 
-  // A second wake while that session still runs waits for it; another feature does not.
+  // A second wake while that session still runs waits for it; another feature does not, once the first has run long
+  // enough to show builders sign in.
   const again = writeWake(P, featureBundle('login-page', 'f1'));
   await w.wakeFeature('login-page', again);
+  w.clock.move(PROVE_MS);
   await w.wakeFeature('search-box', writeWake(P, featureBundle('search-box', 'c1')));
   assert.equal(fake.calls.length, 2);
   assert.equal(fake.calls[1].cwd, search);
@@ -1023,6 +1025,7 @@ test('the foreman, and only the foreman, is told it is the foreman; no session g
   const features = fakeRun();
   const w = waker(features, { locate: () => dir, baseEnv: { ...host, WHEELHOUSE_ROLE: 'foreman', wheelhouse_role: 'foreman' } });
   await w.startFeature({ work: 'search-box', worktree: worktree() });
+  w.clock.move(PROVE_MS); // the first start has run long enough to show builders sign in
   await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page')));
   assert.equal(features.calls.length, 2);
   for (const call of features.calls) assert.deepEqual(call.env, { PATH: BIN, CLAUDE_CONFIG_DIR: '/c', ANTHROPIC_API_KEY_HELPER: 'kept', ...FOREGROUND_ONLY });
@@ -1860,6 +1863,10 @@ test('a damaged settings file keeps the wake waiting, says why once, and never f
 const NOT_LOGGED_IN = 'Not logged in · Please run /login\n';
 const GATE = "not started: builders can't sign in";
 // A started process ends with `output` in its kept output file and `code`.
+// A wake for each of two pieces, in turn.
+async function wakeBoth(w, works) {
+  for (const work of works) await w.wakeFeature(work, writeWake(P, featureBundle(work, `${work}-1`)));
+}
 async function endWith(fake, call, output, code = 1) {
   if (output !== null) fs.appendFileSync(call.output, output);
   fake.end(call.pid, code);
@@ -1895,10 +1902,21 @@ test('one sign-in failure writes the fact and nothing starts on that route for a
   // Another piece's start is refused, with the gate's own line; nothing is started.
   await assert.rejects(() => start('b-page'), (error) => error.message.startsWith(GATE));
   assert.equal(fake.calls.length, 1);
-  // One card, once, in the section 10.4 words.
-  const cards = raised.filter((r) => r.kind === 'note' && /Builders can't sign in on this computer/.test(r.data.words));
+  // One card, once, in the section 10.4 words: a question card the First Mate asks in chat, never a note.
+  const cards = raised.filter((r) => r.kind === 'card');
   assert.equal(cards.length, 1);
-  assert.match(cards[0].data.words, /1 builder start failed at \d\d:\d\d\. `claude` said it isn't logged in\. Work is waiting; nothing is retrying\./);
+  assert.equal(raised.filter((r) => r.kind === 'note').length, 0);
+  const card = cards[0].data;
+  assert.equal(card.kind, 'question');
+  assert.deepEqual(card.question.split('\n'), [
+    "Builders can't sign in on this computer",
+    `What happened: 1 builder start failed at ${timeWords(fact.since)}. \`claude\` said it isn't logged in. Work is waiting; nothing is retrying.`,
+    'Why it comes to you: Only you can sign in, or choose how builders start.',
+    'Meanwhile: Approved work waits. Nothing is lost.',
+  ]);
+  assert.deepEqual(card.options, ['Use Claude Desktop for builders', 'Set a launch command', "I've signed in; check again"]);
+  assert.equal(card.recommend, "I've signed in; check again");
+  assert.equal(card.line, null, 'never held back by the day\'s budget of lines');
 }));
 
 test('no retry after a sign-in failure: further ticks start no process, a wake waits queued, and the card is written once', () => withHome(async () => {
@@ -1914,7 +1932,80 @@ test('no retry after a sign-in failure: further ticks start no process, a wake w
   assert.equal(w.waiting().length, 1, 'the wake stays queued');
   assert.equal(w.waiting()[0].failures ?? 0, 0, 'no failure counted against it');
   assert.ok(errors.some((e) => e.startsWith(GATE)));
-  assert.equal(raised.filter((r) => r.kind === 'note' && /can't sign in/.test(r.data.words)).length, 1);
+  assert.equal(raised.filter((r) => r.kind === 'card').length, 1);
+}));
+
+test('a sign-in card that can\'t be recorded is raised at the next refused start, then never again', () => withHome(async () => {
+  let refuse = true;
+  const raised = [];
+  const { w, fake, errors, start } = gateSetup({
+    raise: async (r) => {
+      if (r.kind === 'card' && refuse) throw new Error('the helper gave no answer');
+      raised.push(r);
+    },
+  });
+  await start('a-page');
+  await endWith(fake, fake.calls[0], NOT_LOGGED_IN);
+  assert.equal(raised.filter((r) => r.kind === 'card').length, 0);
+  assert.ok(errors.some((e) => /its card couldn't be recorded/.test(e)));
+  await w.wakeFeature('a-page', writeWake(P, featureBundle('a-page', 'n1')));
+  refuse = false;
+  for (let i = 0; i < 3; i += 1) {
+    w.clock.move(20 * MIN);
+    await w.pump();
+  }
+  assert.equal(raised.filter((r) => r.kind === 'card').length, 1);
+  assert.equal(fake.calls.length, 1);
+}));
+
+test('a start whose end this watcher never saw (the foreman\'s own command) is read and shuts the route', () => withHome(async () => {
+  const dir = worktree();
+  const fake = fakeRun(); // no exit is ever seen
+  const raised = [];
+  const w = waker(fake, { locate: () => dir, raise: async (r) => { raised.push(r); } });
+  await w.startFeature({ work: 'a-page', worktree: dir, briefFile: featurePaths(dir).brief });
+  const out = fake.calls[0].output;
+  fs.appendFileSync(out, NOT_LOGGED_IN);
+  fake.live.delete(fake.calls[0].pid);
+  await w.pump();
+  assert.equal(readSignIn(wheelhouseHome()).facts['claude-code:background'].kind, 'not-signed-in');
+  assert.equal(raised.filter((r) => r.kind === 'card').length, 1);
+  assert.ok(!fs.existsSync(out), 'read once, then deleted');
+  assert.ok(fs.existsSync(lostFile(P, 'a-page')), 'resumed once builders sign in');
+}));
+
+test('until a start is known to sign in, a pass starts one builder; the rest wait queued and start once it has', () => withHome(async () => {
+  const dirA = worktree();
+  const dirB = worktree();
+  keepSession('a-page', dirA);
+  keepSession('b-page', dirB);
+  const fake = fakeRun({ exits: true });
+  const w = waker(fake, { locate: (work) => ({ 'a-page': dirA, 'b-page': dirB })[work] ?? null });
+  await wakeBoth(w, ['a-page', 'b-page']);
+  assert.equal(fake.calls.length, 1, 'one start, not one per piece');
+  // It can't sign in: the other piece never starts.
+  await endWith(fake, fake.calls[0], NOT_LOGGED_IN);
+  w.clock.move(20 * MIN);
+  await w.pump();
+  assert.equal(fake.calls.length, 1);
+  assert.deepEqual(w.waiting().map((e) => e.work).sort(), ['a-page', 'b-page']);
+}));
+
+test('a builder that still runs after PROVE_MS shows the route signs in, and the next pass starts the rest', () => withHome(async () => {
+  const dirA = worktree();
+  const dirB = worktree();
+  keepSession('a-page', dirA);
+  keepSession('b-page', dirB);
+  const fake = fakeRun({ exits: true });
+  const w = waker(fake, { locate: (work) => ({ 'a-page': dirA, 'b-page': dirB })[work] ?? null });
+  await wakeBoth(w, ['a-page', 'b-page']);
+  assert.equal(fake.calls.length, 1);
+  w.clock.move(PROVE_MS - 1);
+  await w.pump();
+  assert.equal(fake.calls.length, 1);
+  w.clock.move(1);
+  await w.pump();
+  assert.equal(fake.calls.length, 2);
 }));
 
 test('a wake whose start fails to sign in goes again with no failure counted', () => withHome(async () => {

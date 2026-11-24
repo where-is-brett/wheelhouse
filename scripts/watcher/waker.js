@@ -167,7 +167,7 @@ import { sameStart } from '../lib/start-time.js';
 import { pidAlive, processStartTimes, processStartTime } from '../lib/process-start.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { stopState } from '../lib/stop.js';
-import { classify, cleanExcerpt, commandName, gateFor, readSignIn, timeWords, writeSignInFact } from '../lib/sign-in-gate.js';
+import { classify, cleanExcerpt, commandName, gateFor, readSignIn, signInCard, writeSignInFact } from '../lib/sign-in-gate.js';
 import claudeSessions, { ROLE_VARIABLE, featureModeOf, sessionEnv, sessionModeOf } from '../../adapters/claude-code/sessions.js';
 import { sessionsOfProject } from '../agents/project-agent.js';
 import { BY_LAUNCHER } from '../agents/tool-sheets.js';
@@ -324,6 +324,8 @@ export const START_FAILURES_HELD = 3;
 const START_OUTPUT_DAYS_MS = 24 * 60 * 60 * 1000;
 // The kinds that shut a whole route: signing in, or the program, is wrong for every project on this computer.
 const ROUTE_KINDS = ['not-signed-in', 'blocked', 'no-program'];
+// How long a session must run before its route counts as signing in, when it hasn't ended yet.
+export const PROVE_MS = 30 * 1000;
 
 // The piece's hold for failing starts, or null. A record that is there and can't be read holds too, never "no hold".
 export function startHold(project, work) {
@@ -1047,34 +1049,71 @@ export function makeWaker({
     return commandName(call?.file);
   };
 
-  const KIND_SAID = {
-    'not-signed-in': "it isn't logged in",
-    blocked: 'its sign-in was refused for an organisation or a policy',
-    'no-program': "it couldn't be found or run",
-  };
-  // A start classified as a sign-in failure shuts the route: the fact is written, and the director's card is raised once,
-  // the first time. Nothing here retries.
-  async function shutRoute(kind, call, output, error) {
+  // A start classified as a sign-in failure shuts the route: the fact is written, and the director's card (section 10.4) is
+  // raised once, the first time. A card that can't be recorded is owed and raised at the next refused start. Nothing here
+  // retries a start.
+  let cardOwed = null;
+  async function raiseSignInCard(fact) {
+    try {
+      await raise({ kind: 'card', data: signInCard(fact) });
+      cardOwed = null;
+    } catch (e) {
+      if (cardOwed === null) onError(`Builders can't sign in on this computer, and its card couldn't be recorded: ${e instanceof Error ? e.message : 'unknown error'}`);
+      cardOwed = fact;
+    }
+  }
+  async function shutRoute(kind, program, output, error) {
     const home = wheelhouseHome();
     const key = routeKey();
     const before = readSignIn(home);
     let fact;
     try {
       fact = writeSignInFact(home, key, {
-        kind, since: now().toISOString(), command: programOf(call), excerpt: cleanExcerpt(output !== '' ? output : error?.message ?? ''), starts: 1,
+        kind, since: now().toISOString(), command: program, excerpt: cleanExcerpt(output !== '' ? output : error?.message ?? ''), starts: 1,
       });
     } catch (e) {
       onError(`The sign-in fact couldn't be written: ${e instanceof Error ? e.message : 'unknown error'}`);
       return;
     }
     if (!before.ok || before.facts[key] !== undefined) return;
-    const words = `Builders can't sign in on this computer: 1 builder start failed at ${timeWords(fact.since)}. \`${fact.command}\` said ${KIND_SAID[kind]}. `
-      + 'Work is waiting; nothing is retrying. Only the director can sign in, or choose how builders start.';
+    await raiseSignInCard(fact);
+  }
+
+  // Until one start on this watcher is known to sign in, a pass of wakes starts one session and waits for it: a start that
+  // can't sign in ends within seconds, so one that ends any other way, or still runs after PROVE_MS, shows the route signs
+  // in. A route that can't sign in then costs one start, not one per piece waiting (section 10.2).
+  let proved = false;
+  let trialAt = null;
+  const proving = () => {
+    if (proved || trialAt === null) return false;
+    if (now().getTime() - trialAt < PROVE_MS) return true;
+    proved = true;
+    trialAt = null;
+    return false;
+  };
+  const routeShut = () => {
+    proved = false;
+    trialAt = null;
+  };
+
+  // The start output of a run whose end this watcher never saw (a start made by the foreman's command, or before a
+  // restart), read once and classified like any other. Says whether it shut the route.
+  async function classifyUnseen(ended) {
+    let output = '';
     try {
-      await raise({ kind: 'note', data: { about: 'engine', words } });
-    } catch (e) {
-      onError(`${words} (its card couldn't be recorded: ${e instanceof Error ? e.message : 'unknown error'})`);
+      output = readOutput(ended.startOutput, 0);
+    } catch {
+      return false;
     }
+    let patterns = null;
+    try {
+      patterns = sessionsOf().signInPatterns ?? null;
+    } catch { /* read with none */ }
+    const kind = classify(output, { code: null }, patterns);
+    if (!ROUTE_KINDS.includes(kind)) return false;
+    routeShut();
+    await shutRoute(kind, typeof ended.program === 'string' ? commandName(ended.program) : 'claude', output, null);
+    return true;
   }
 
   // A piece whose start failed some other way (a crash, a timeout, an unknown exit): three in a row of one kind hold it,
@@ -1112,12 +1151,19 @@ export function makeWaker({
     }
     if (exit.code === 0 && !exit.error) {
       if (target !== 'foreman') clearStartFailures(project, nameOf(target));
+      proved = true;
+      trialAt = null;
       return { gated: false };
     }
     const kind = classify(output, exit, adapter?.signInPatterns ?? null);
     if (ROUTE_KINDS.includes(kind)) {
-      await shutRoute(kind, call, output, exit.error);
+      routeShut();
+      await shutRoute(kind, programOf(call), output, exit.error);
       return { gated: true };
+    }
+    if (Number.isInteger(exit.code)) {
+      proved = true;
+      trialAt = null;
     }
     // A throw before any process ran (no exit code) is the start's own fault, counted by the wake's own failures.
     if (target !== 'foreman' && Number.isInteger(exit.code)) await countStartFailure(nameOf(target), kind);
@@ -1287,8 +1333,18 @@ export function makeWaker({
     const ids = list(state.ended.entries).filter((x) => typeof x === 'string');
     const same = (r) => r.at === state.ended.at && r.pid === state.ended.pid && r.state === state.ended.state;
     if (claimRecord(target, same) === null) return;
-    // A start's output kept only to classify it, for a run whose end this watcher never saw: not read, and not left.
-    if (typeof state.ended.startOutput === 'string' && path.dirname(state.ended.startOutput) === startsDir(project)) fs.rmSync(state.ended.startOutput, { force: true });
+    // A start's output kept only to classify it, for a run whose end this watcher never saw: read once, then not left.
+    // A run that couldn't sign in leaves its wakes to go again with no failure counted, and its piece to be resumed once
+    // the route signs in.
+    if (typeof state.ended.startOutput === 'string' && path.dirname(state.ended.startOutput) === startsDir(project)) {
+      const gated = await classifyUnseen(state.ended);
+      fs.rmSync(state.ended.startOutput, { force: true });
+      if (gated) {
+        settle(ids, 'again');
+        if (state.why === 'gone' && state.ended.state === 'running') markLost(target, { at: state.ended.at, why: 'gone' });
+        return;
+      }
+    }
     const kept = isPlain(state.ended.run) && typeof state.ended.run.output === 'string' ? state.ended.run : null;
     if (kept?.premium === true && state.ended.state !== 'starting' && await premiumRefused(target, kept, null, ids)) {
       return;
@@ -1448,7 +1504,7 @@ export function makeWaker({
     watcherFolder(project, 'running');
     const file0 = runningFile(project, target);
     const at = now().toISOString();
-    writeJsonFile(file0, { state: 'starting', at, file, entries, ...(kept ? { run: kept } : {}), ...(own !== null ? { startOutput: own } : {}) });
+    writeJsonFile(file0, { state: 'starting', at, file, entries, ...(kept ? { run: kept } : {}), ...(own !== null ? { startOutput: own, program: programOf(call) } : {}) });
     let started;
     try {
       afterRecord(call);
@@ -1462,7 +1518,8 @@ export function makeWaker({
       throw error;
     }
     const startTime = await timeOf(started.pid, [], { fresh: true });
-    writeJsonFile(file0, { state: 'running', pid: started.pid, startTime, at, file, entries, ...(target === 'foreman' && sessionId !== null ? { sessionId } : {}), ...(kept ? { run: kept } : {}), ...(own !== null ? { startOutput: own } : {}) });
+    writeJsonFile(file0, { state: 'running', pid: started.pid, startTime, at, file, entries, ...(target === 'foreman' && sessionId !== null ? { sessionId } : {}), ...(kept ? { run: kept } : {}), ...(own !== null ? { startOutput: own, program: programOf(call) } : {}) });
+    if (judged && target !== 'foreman' && !proved && trialAt === null) trialAt = now().getTime();
     if (started.exited && typeof started.exited.then === 'function') {
       started.exited.then((code) => serial(async () => {
         const mine = forget(target, started.pid);
@@ -1839,6 +1896,7 @@ export function makeWaker({
       const refused = startRefused(work);
       if (refused !== null) {
         gateHeld(refused);
+        if (cardOwed !== null) await raiseSignInCard(cardOwed);
         continue;
       }
 
@@ -1866,6 +1924,8 @@ export function makeWaker({
         }
         unstarted.delete(work);
         if (await controlHeld(work, cwd, waiting.map((e) => e.id))) continue;
+        // One builder start at a time until a start here is known to sign in: the rest wait, queued, for the next pass.
+        if (proving()) continue;
       }
       let gathered;
       let copy;
