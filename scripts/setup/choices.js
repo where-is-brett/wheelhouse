@@ -152,6 +152,9 @@ const KEPT_ID = /^(?:join|kept|host)(?:-|$)/;
 const BACKUP_ID = /^backup(?:-|$)/;
 // Questions whose card reads the same whatever the director says of where the project is kept.
 const INDEPENDENT_ID = /^(?:real-users|live-data|product-.*)$/;
+// Questions that follow the real-users answer: the description card names it, and live data is not asked of a product with
+// real users. They wait for that answer, so none is asked in a form the answer beside it would change.
+const AFTER_REAL_USERS = /^(?:live-data|product-.*)$/;
 // The choices a click on Put it on GitLab asks: where the project is kept, and that alone. Whether to fetch the host's
 // own tool is asked under a host- id too, but is not where the project is kept: its recommendation stands, named on the card.
 const WHERE_ID = /^(?:join|kept|host)(?:-(?!tool-)|$)/;
@@ -235,7 +238,8 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
   if (id === 'real-users') {
     const live = choices.find((c) => c.id === 'live-data')?.label;
     if (label === REAL_USERS.no) return live === LIVE_DATA.no ? 'Before launch: no real users and no live data yet.' : 'Before launch: no real users yet.';
-    return 'Launched: it has real users.';
+    // A product with real users is taken to hold live data (scripts/setup/questions.js), so the line says what that means.
+    return 'Launched: it has real users, so agents are told to use test data only.';
   }
   if (id === 'locked') return label === LEVELS.locked ? 'Locked: you type your computer password once, at its step.' : null;
   if (id === 'host') {
@@ -264,6 +268,8 @@ function lineOf({ id, label, text, line }, { name, platform, choices, host }) {
     return null;
   }
   if (id === 'live-data') {
+    // An answer left from before real-users was yes no longer counts: the real-users line says it.
+    if (choices.find((c) => c.id === 'real-users')?.label === REAL_USERS.yes) return null;
     const before = choices.find((c) => c.id === 'real-users')?.label === REAL_USERS.no;
     if (label === LIVE_DATA.no) return before && choices.some((c) => c.id === 'real-users') ? null : 'No live data yet.';
     return 'Agents are told to use test data only, to be safe.';
@@ -568,11 +574,12 @@ export function answersWithConsent(runId, { read = answersFor } = {}) {
 export function customiseBatch(list, since) {
   const open = list.filter((c) => !(c.chosen && newer(c.chosen.at, since)));
   const unsaid = open.some((c) => KEPT_ID.test(c.id));
+  const usersOpen = open.some((c) => c.id === 'real-users');
   // Questions that don't depend on where the project is kept come first, so one card holds as many as it can; Apple signing,
   // which few projects are asked, comes last.
   const rank = (c) => (INDEPENDENT_ID.test(c.id) ? 0 : c.id === 'apple-apps' ? 2 : 1);
   const ordered = open.map((c, i) => ({ c, i })).sort((x, y) => rank(x.c) - rank(y.c) || x.i - y.i).map(({ c }) => c);
-  const batch = ordered.filter((c) => !(unsaid && BACKUP_ID.test(c.id))).slice(0, PER_CARD);
+  const batch = ordered.filter((c) => !(unsaid && BACKUP_ID.test(c.id)) && !(usersOpen && AFTER_REAL_USERS.test(c.id))).slice(0, PER_CARD);
   const ends = batch.findIndex((c) => c.endsBatch === true);
   return ends === -1 ? batch : batch.slice(0, ends + 1);
 }

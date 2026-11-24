@@ -620,14 +620,21 @@ export function setupRoutes({
     if (!oneCardNext(run)) return { ok: true, done: true };
     // A settings file setup can't read is said before the first card, with an offer to mend it.
     const claudeHome = process.env.CLAUDE_CONFIG_DIR || path.join(userHome, '.claude');
-    const damaged = damagedSettings({ folder, claudeHome });
+    let damaged = damagedSettings({ folder, claudeHome });
     if (damaged.length > 0) {
       run ??= startRun({ folder, now });
       const asked = mendAsk(damaged);
       const said = answersFor(run.id)[`${ONE_CARD_STEP}.${asked.id}`];
-      if (said?.label === MEND) mend(damaged);
-      else if (said?.label === MEND_MYSELF) return { ok: true, wait: 0, why: `${damaged.map((d) => d.words).join('; ')} can't be read; setup carries on once ${damaged.length > 1 ? 'they are' : 'it is'} mended` };
-      else return { ok: true, ask: askChoice(run, { step: ONE_CARD_STEP, ...asked }), progress: ['Setup · a settings file', 'One of your settings files can\'t be read; nothing runs until you choose.'] };
+      // A file setup could not mend (a link to a file elsewhere, or one it can't write) waits for the director, as one they
+      // chose to mend themselves does; mending is tried once per look, and a file that is mended is never touched again.
+      if (said?.label === MEND) {
+        mend(damaged);
+        damaged = damagedSettings({ folder, claudeHome });
+      }
+      const waiting = (why) => ({ ok: true, wait: 0, why: `${damaged.map((d) => d.words).join('; ')} can't be read${why}; setup carries on once ${damaged.length > 1 ? 'they are' : 'it is'} mended` });
+      if (said?.label === MEND && damaged.length > 0) return waiting(` and setup could not mend ${damaged.length > 1 ? 'them' : 'it'}`);
+      if (said?.label === MEND_MYSELF) return waiting('');
+      if (said?.label !== MEND) return { ok: true, ask: askChoice(run, { step: ONE_CARD_STEP, ...asked }), progress: ['Setup · a settings file', 'One of your settings files can\'t be read; nothing runs until you choose.'] };
     }
     const own = run ? answersFor(run.id) : {};
     const list = await openNow(run, folder);

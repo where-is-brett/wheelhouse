@@ -292,10 +292,13 @@ test('path a: Customise groups the questions that do not depend on each other, a
   const calls = new Set(cards.map((c) => c.call?.n));
   const customise = cards.filter((c) => c.call !== undefined && c.call.n > 1 && c.step !== 0);
   assert.ok(customise.length > calls.size - 2, 'some call held several questions');
-  // The first call after Customise holds the questions that read the same whatever the host is: real users, the description, live data, where it is kept.
+  // The first call after Customise holds the questions that read the same whatever the host is: real users and where it is
+  // kept. The description and live data depend on the real-users answer, so they come in a later call, never beside it.
   const first = cards.filter((c) => c.call?.n === cards.find((x) => x.call?.n > 1)?.call.n);
-  assert.deepEqual(first.map((c) => c.id.replace(/-before-launch|-launched/, '')), ['real-users', 'product', 'live-data', 'join']);
-  assert.ok(first.every((c) => c.call.of === 4));
+  assert.deepEqual(first.map((c) => c.id), ['real-users', 'join']);
+  assert.ok(first.every((c) => c.call.of === 2));
+  const usersAt = cards.findIndex((c) => c.id === 'real-users');
+  for (const id of [/^product-/, /^live-data$/]) assert.ok(cards.findIndex((c) => id.test(c.id)) > usersAt, `${id} is asked after real users`);
   // The project's name is asked with the connection, once the host is known.
   const named = cards.find((c) => c.id === 'project-name');
   assert.match(named.card.question, /What should the new project on GitLab be called\?/);

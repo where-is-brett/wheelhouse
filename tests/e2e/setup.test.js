@@ -97,6 +97,8 @@ const NEW_ANSWERS = {
   'phone-ready': READY.ready, 'push-arrived': ARRIVED.yes,
   // Step 2's choice about gh, which this computer lacks: fetched, as these tests follow.
   'host-tool-gh': 'Fetch GitHub\'s tool',
+  // Step 3's name for the new repository: the folder's own, its first option, as the card recommends.
+  'project-name': (ask) => ask.card.options[0].label,
 };
 // The board in a log `follow` gave.
 const log10 = (log) => log.find((e) => e.health).health;
@@ -108,7 +110,10 @@ const customiseOnce = (answers) => {
 };
 // A log as [step, what] pairs: a question by its id without its digest, else what happened.
 const shape = (log) => log.map((e) => [e.step, e.ask?.replace(/-[0-9a-f]{10,}$/, '') ?? (e.covered ? 'covered' : e.goAhead ? 'go ahead' : e.settled ? 'settled' : e.health ? 'health' : 'wait')]);
-const byId = (answers) => (id) => answers[Object.keys(answers).find((k) => id === k || id.startsWith(`${k}-`))];
+const byId = (answers) => (id, plan, ask) => {
+  const answer = answers[Object.keys(answers).find((k) => id === k || id.startsWith(`${k}-`))];
+  return typeof answer === 'function' ? answer(ask ?? plan?.ask) : answer;
+};
 
 // The signed setup clicks kept on a computer, each with whether the helper used it.
 const keptClicks = (c) => c.act(() => (fs.existsSync(clicksDir()) ? fs.readdirSync(clicksDir()) : []).map((name) => JSON.parse(fs.readFileSync(path.join(clicksDir(), name), 'utf8')))
@@ -319,18 +324,18 @@ test('an existing project with rules: step 5 asks nothing and follows them as th
         return answer(id, plan, ask);
       },
     });
-    // An existing project: no joining question and no repository made. Customise asks its four
-    // choices together, then the one card again, whose Go ahead covers every step's list; step 5
-    // settles with no card.
+    // An existing project: no joining question and no repository made. Customise asks its choices
+    // on two cards, step 4's after the real-users answer they depend on, then the one card again,
+    // whose Go ahead covers every step's list; step 5 settles with no card.
     assert.deepEqual(shape(log), [
       [0, 'plan'],
-      [3, 'real-users'], [3, 'connection'], [4, 'product-before-launch'], [4, 'live-data'],
-      // This computer has no gh, so step 2's choice about fetching it is the fifth, on a card of its own.
-      [2, 'host-tool-gh'],
+      // This computer has no gh, so step 2's choice about fetching it joins the first card.
+      [3, 'real-users'], [3, 'connection'], [2, 'host-tool-gh'],
+      [4, 'product-before-launch'], [4, 'live-data'],
       [0, 'plan'],
       [1, 'settled'], [2, 'covered'], [3, 'covered'], [4, 'settled'], [5, 'settled'],
     ]);
-    assert.deepEqual(log.filter((e) => e.together).map((e) => e.together), [4, 4, 4, 4, 1], 'asked together, four to a card');
+    assert.deepEqual(log.filter((e) => e.together).map((e) => e.together), [3, 3, 3, 2, 2], 'asked together on two cards');
     assert.match(log.find((e) => e.step === 3 && e.goAhead).card.question, /a-director\/Harbour-Log on GitHub, kept as it is/);
     assert.ok(!a.calls.some((call) => call[1] === 'repo' && call[2] === 'create' && call[3] === repo));
 
@@ -364,22 +369,22 @@ test('setup stopped after Customise\'s cards resumes at the one card in the next
     assert.equal(one.plan.step, 0);
     await a.click(one.plan.ask.card, 'Customise');
     const { plan } = await a.cli('resume');
-    assert.deepEqual(plan.asks.map((x) => x.id.replace(/-[0-9a-f]{10,}$/, '')), ['join'], 'the join card ends its batch, so the questions a joining product skips wait for its answer');
-    await a.clickAll(plan.asks.map((x) => x.card), plan.asks.map((x) => byId(NEW_ANSWERS)(x.id)));
+    assert.deepEqual(plan.asks.map((x) => x.id.replace(/-[0-9a-f]{10,}$/, '')), ['real-users', 'join'], 'the join card ends its batch, so the questions a joining product skips wait for its answer');
+    await a.clickAll(plan.asks.map((x) => x.card), plan.asks.map((x) => byId(NEW_ANSWERS)(x.id, undefined, x)));
     const stopped = await a.setupRun();
     await a.stop();
 
     // The next session: a helper started afresh, and the session start's reload.
     await a.start();
     await a.sessionStart();
-    // The rest of the choices (step 4's, then GitHub's tool once GitHub is chosen), then the one
+    // The rest of the choices (step 4's, the new repository's name and the connection, then GitHub's tool once GitHub is chosen), then the one
     // card with the director's choices on it.
     const next = (await a.cli('resume')).plan;
-    assert.deepEqual(next.asks.map((x) => x.id.replace(/-[0-9a-f]{10,}$/, '')), ['real-users', 'connection', 'product-before-launch', 'live-data'], 'the join answered is not asked again');
-    await a.clickAll(next.asks.map((x) => x.card), next.asks.map((x) => byId(NEW_ANSWERS)(x.id)));
+    assert.deepEqual(next.asks.map((x) => x.id.replace(/-[0-9a-f]{10,}$/, '')), ['product-before-launch', 'live-data', 'project-name', 'connection'], 'the join and real-users answered are not asked again');
+    await a.clickAll(next.asks.map((x) => x.card), next.asks.map((x) => byId(NEW_ANSWERS)(x.id, undefined, x)));
     const tool = (await a.cli('resume')).plan;
     assert.deepEqual(tool.asks.map((x) => x.id), ['host-tool-gh']);
-    await a.clickAll(tool.asks.map((x) => x.card), tool.asks.map((x) => byId(NEW_ANSWERS)(x.id)));
+    await a.clickAll(tool.asks.map((x) => x.card), tool.asks.map((x) => byId(NEW_ANSWERS)(x.id, undefined, x)));
     const card = (await a.cli('resume')).plan;
     assert.equal(card.step, 0);
     assert.match(card.ask.card.question, /Here's the plan, with your choices\./);

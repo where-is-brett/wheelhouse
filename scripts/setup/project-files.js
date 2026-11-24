@@ -143,7 +143,7 @@ import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STO
 import { isolated, refuseUnlistedSettings, reaching, setupGit, subcommandOf, REMOTE_CALLS } from './git.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
 import { agentEntries } from '../agents/setup-parts.js';
-import { LIVE_DATA, SIGNS_APPS } from './questions.js';
+import { LIVE_DATA, SIGNS_APPS, liveDataAnswer } from './questions.js';
 import { newId, readJournal, SAY_CHARS } from './journal.js';
 import { localViews } from '../lib/local-views.js';
 import { effectiveSettings } from '../settings/effective.js';
@@ -302,7 +302,7 @@ function sameContent(rel, a, b) {
 // `listens` is true only when the last commit's configuration holds `localListening: true` (see committedListening):
 // no question asks for it, and a true that is only in the working copy is not honoured.
 export function starterConfig({ answers = {}, frontDesk = null, midSized = null, found = null, everyRole = null, listens = false, agents = null } = {}) {
-  const live = answers['4.live-data'];
+  const live = liveDataAnswer(answers);
   if (live?.label !== LIVE_DATA.yes && live?.label !== LIVE_DATA.no) throw new Error('Step 4 has not been told whether the product holds live data yet');
   const starter = { ...readConfig(null), pages: [], liveData: live.label === LIVE_DATA.yes };
   // Only the director's Yes on step 4's question opens the keychain (check 73), never the working copy.
@@ -1364,7 +1364,7 @@ export function projectFilesStep({
       const found = projectForFolder(ctx.folder);
       if (found === null) return { wait: PROJECT_WAIT_MS, why: `step 3 (${SETUP_TITLES[3]}) has not registered the project yet; its files come once it has` };
       if (joiningRun(ctx)) return thisComputer(ctx, found, platform);
-      if (!ctx.answers?.['4.live-data']) return { wait: PROJECT_WAIT_MS, why: 'step 4 has not been told whether the product holds live data yet; the configuration says so' };
+      if (!liveDataAnswer(ctx.answers)) return { wait: PROJECT_WAIT_MS, why: 'step 4 has not been told whether the product holds live data yet; the configuration says so' };
       const { record } = found;
       const { host, repo } = record;
       const local = host === 'local';

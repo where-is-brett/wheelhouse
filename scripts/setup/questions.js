@@ -31,6 +31,12 @@ import { REAL_USERS, LEVELS, productOf, repoName } from './host.js';
 import { readJournal } from './journal.js';
 
 export const LIVE_DATA = Object.freeze({ yes: 'Yes, live data', no: 'No live data' });
+
+// The live-data answer step 4 and step 7 go by: a product with real users holds live data by being relied on, so it is
+// taken as yes and never asked; otherwise the director's answer, or undefined while it is not given.
+export function liveDataAnswer(answers = {}) {
+  return answers['3.real-users']?.label === REAL_USERS.yes ? { label: LIVE_DATA.yes } : answers['4.live-data'];
+}
 export const SIGNS_APPS = Object.freeze({ no: 'No', yes: 'Yes, it signs apps' });
 export const PRODUCT = Object.freeze({ readme: 'The README\'s words', shaping: 'Still taking shape', later: 'Describe it later' });
 // How long a step whose answers write to the project's records waits for step 3 to set them up.
@@ -273,7 +279,7 @@ export function questionsStep() {
       const product = answers[`4.${asked.id}`] ?? answers[`4.${other}`];
       if (!product) return { ask: asked };
       // A product with real users holds live data by being relied on, so it is not asked again.
-      const live = realUsers ? { label: LIVE_DATA.yes } : answers['4.live-data'];
+      const live = liveDataAnswer(answers);
       if (!live) return { ask: liveDataAsk(name, { isNew: newProduct(ctx, project) }) };
       const apple = signsAppleApps(ctx.folder) ? answers['4.apple-apps'] : null;
       if (apple === undefined) return { ask: appleAppsAsk(name) };

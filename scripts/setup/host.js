@@ -525,7 +525,7 @@ function projectNameAsk(id, name, host, refused) {
       what: `${refused === undefined ? '' : `${refused} `}What should the new ${kind} on ${NAME[host]} be called?`,
       why: `It is the name you and your team see on ${NAME[host]}. A name takes letters, numbers, dots, dashes and underscores.`,
       options: [
-        { label: keepName(name), says: `The ${kind} is called ${name}, like this folder.` },
+        { label: keepName(name), says: `The ${kind} is called ${name}.` },
         { label: OTHER_NAME, says: 'Choose Other and type the name.' },
       ],
       recommend: keepName(name),
@@ -561,7 +561,8 @@ export function projectName({ answer, name, host }) {
 const MOST_KNOWN = 2;
 
 // The company GitLabs this computer already uses, as the address each goes by, the folder's own remotes first: those the
-// folder's remotes name, then those the projects set up here name (their `gitlabHosts`, or where their own remotes send work).
+// folder's remotes name, then those the projects set up here name as GitLabs in their settings (`gitlabHosts`). Another
+// project's remotes are not read: they may lead anywhere, and only the settings say a host is a GitLab.
 export function knownCompanyHosts(others = [], { projects = registeredProjects } = {}) {
   const found = [];
   const add = (address) => {
@@ -575,8 +576,7 @@ export function knownCompanyHosts(others = [], { projects = registeredProjects }
   for (const { record } of list) {
     if (typeof record?.folder !== 'string') continue;
     const config = readGitlabHosts(record.folder).gitlabHosts ?? [];
-    for (const entry of config) if (companyAddress(`https://${entry}`).host !== undefined) add(String(entry).trim());
-    add(remoteHost(remotesOf(record.folder)));
+    for (const entry of config) add(companyAddress(`https://${String(entry).trim()}`).host);
   }
   return found.slice(0, MOST_KNOWN);
 }
@@ -584,7 +584,7 @@ export function knownCompanyHosts(others = [], { projects = registeredProjects }
 function gitlabWhereAsk(name, { id, refused, remote, known = [], company = false }) {
   const options = [];
   if (remote !== null) options.push({ label: remote, says: 'Where this folder already sends its work. Setup names it in the project settings.' });
-  for (const address of known.filter((k) => k !== remote)) options.push({ label: address, says: 'A GitLab your projects here already use. Setup names it in the project settings.' });
+  for (const address of known.filter((k) => k !== remote)) options.push({ label: address, says: 'Your projects here already use it. Setup names it in the project settings.' });
   options.push({ label: GITLAB_COM, says: 'The public GitLab, on your own account.' });
   options.push({ label: COMPANY_GITLAB, says: 'Setup asks for its address next, and names it in the project settings.' });
   // Customise asks it apart from the cards after it, since its answer can bring the address card before them.
@@ -600,7 +600,7 @@ function gitlabWhereAsk(name, { id, refused, remote, known = [], company = false
       // Which GitLab is a fact the director knows, not a preference, so the card recommends none; only where the folder
       // already sends its work does it name that one.
       recommend: remote ?? (known.length === 1 ? known[0] : null),
-      because: remote !== null ? 'this folder already sends its work there' : known.length === 1 ? 'your projects here already use it' : company ? 'you said your company runs its own, and only you know whether that is a GitLab of its own' : 'only you know which GitLab your work uses',
+      because: remote !== null ? 'this folder already sends its work' : known.length === 1 ? 'your projects here already use it' : company ? 'you said your company runs its own, and only you know whether that is a GitLab of its own' : 'only you know which GitLab your work uses',
       meanwhile: MEANWHILE,
     },
   };

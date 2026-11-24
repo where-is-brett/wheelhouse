@@ -53,3 +53,50 @@ test('mending keeps the file as it was beside itself and writes what can be read
   mend(damagedSettings({ folder, claudeHome: null }));
   assert.equal(fs.readFileSync(`${local}.broken-2`, 'utf8'), 'again {');
 });
+
+test('a comma or comment inside a setting\'s text is kept as it is', () => {
+  const folder = folderWith({ '.claude/settings.local.json': '{ "env": { "A": "x,}", "B": "a // b", "C": "/* c */" }, }' });
+  mend(damagedSettings({ folder, claudeHome: null }));
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(folder, '.claude', 'settings.local.json'), 'utf8')), { env: { A: 'x,}', B: 'a // b', C: '/* c */' } });
+});
+
+test('a settings file that is a link to a file outside its folder is named but never written through', () => {
+  const folder = folderWith({});
+  const outside = folderWith({ 'shared.json': '{ "a": 1, }' });
+  fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+  fs.symlinkSync(path.join(outside, 'shared.json'), path.join(folder, '.claude', 'settings.local.json'));
+  const damaged = damagedSettings({ folder, claudeHome: null });
+  assert.equal(damaged.length, 1);
+  assert.equal(damaged[0].elsewhere, true);
+  const done = mend(damaged);
+  assert.equal(done[0].mended, false);
+  assert.equal(fs.readFileSync(path.join(outside, 'shared.json'), 'utf8'), '{ "a": 1, }');
+  assert.equal(fs.existsSync(path.join(folder, '.claude', 'settings.local.json.broken')), false);
+  assert.match(mendAsk(damaged).card.what, /elsewhere/);
+});
+
+test('a file that can\'t be written is left as it was, with no copy left beside it', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, () => {
+  const folder = folderWith({ '.claude/settings.local.json': '{ "a": 1, }' });
+  const file = path.join(folder, '.claude', 'settings.local.json');
+  fs.chmodSync(file, 0o400);
+  try {
+    const done = mend(damagedSettings({ folder, claudeHome: null }));
+    assert.equal(done[0].mended, false);
+    assert.equal(fs.readFileSync(file, 'utf8'), '{ "a": 1, }');
+    assert.equal(fs.existsSync(`${file}.broken`), false);
+    // Tried again, it still leaves no copies behind.
+    mend(damagedSettings({ folder, claudeHome: null }));
+    assert.equal(fs.existsSync(`${file}.broken`), false);
+  } finally {
+    fs.chmodSync(file, 0o600);
+  }
+});
+
+test('the copy keeps the file\'s own permissions', { skip: process.platform === 'win32' }, () => {
+  const folder = folderWith({ '.claude/settings.local.json': '{ "env": { "TOKEN": "x" }, }' });
+  const file = path.join(folder, '.claude', 'settings.local.json');
+  fs.chmodSync(file, 0o600);
+  mend(damagedSettings({ folder, claudeHome: null }));
+  assert.equal(fs.statSync(`${file}.broken`).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+});

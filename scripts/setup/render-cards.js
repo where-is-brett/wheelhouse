@@ -22,6 +22,7 @@
 //   h   an address pasted with a sign-in name and password in it: not kept, asked again saying so, then kept on this computer
 //   j   the public GitLab on Windows, reached by the first card's own Put it on GitLab click instead of Customise
 //   k   GitHub on a Mac, with the project's settings.local.json not readable: mended before the first card
+//   l   GitHub on a Mac, Customise, with real users: live data is taken as yes and not asked; Standard is chosen on Locked
 //   i   path a with a long user name and project name, and Copilot's command line installed: Copilot is chosen on the builder question and is signed in
 // --desktop answers as the Desktop app can: a card whose question is the same as an earlier card's shows the
 // earlier one, so the answer that comes back is the one given there. It also asks each card with its first line reworded, as a
@@ -68,6 +69,7 @@ export const PATHS = Object.freeze({
   h: { title: 'An address pasted with a sign-in name and password in it: not kept, asked again saying so, then kept on this computer', platform: 'darwin', host: 'Keep it on this computer', glab: 'in', join: HELD_ADDRESS, miss: true, reask: ['Keep it on this computer'] },
   j: { title: 'The public GitLab on Windows, reached by the first card\'s Put it on GitLab click', platform: 'win32', host: 'GitLab', where: 'public', glab: 'unavailable', gitlabClick: true },
   k: { title: 'GitHub on a Mac, with this computer\'s settings for the project not readable, mended before the first card', platform: 'darwin', host: 'GitHub', gh: 'in', damaged: true },
+  l: { title: 'GitHub on a Mac, Customise, with real users: live data taken as yes, not asked', platform: 'darwin', host: 'GitHub', gh: 'in', realUsers: true },
   i: { title: 'A company\'s GitLab on Windows with a long user name and project name, Use my git as it is chosen, Copilot\'s command line installed and chosen on the builder question, and Copilot signed in', platform: 'win32', host: 'GitLab', where: 'company', way: 'Use my git as it is', glab: 'unavailable', agent: 'Copilot', folderName: 'wheelhouse-t6-17-11-2026', userName: 'firstname.lastname-longer' },
 });
 
@@ -346,7 +348,9 @@ function choose(p, { id, card }, { stepTwoDone }) {
   // The builder question, where another agent's command line is installed: the path's agent.
   if (id === 'agent' && p.agent !== undefined) return { label: pick(p.agent) };
   if (/^mend-/.test(id)) return { label: pick('Mend it') };
-  if (id === 'real-users') return { label: pick('Not yet') };
+  if (id === 'real-users') return { label: pick(p.realUsers === true ? 'Yes, real users' : 'Not yet') };
+  // Locked is asked only of a product with real users on a Mac; this renderer's step 3 connects without it, so Standard is taken.
+  if (id === 'locked') return { label: pick('Standard') };
   // A project kept on this computer: no backup folder is named, so no window or typed path is asked for.
   if (/^backup/.test(id)) return { label: pick('Not now, keep building') };
   // A pasted address on the join question; once it missed, the question asked again is answered as any join question is, with the path's host.
