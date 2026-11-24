@@ -1,14 +1,21 @@
 // tests/scripts/host/helper-idle-stop.test.js
 // A throwaway home's helper stops an hour after the last session of its home; the default home's never does. No host tool
 // and no network: the helper's adapter is a stand-in.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { recordLastSession, touchLastSession, LAST_SESSION_FILE } from '../../../scripts/lib/standard-env.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
 import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const unix = process.platform !== 'win32';
 const HOUR = 60 * 60 * 1000;
@@ -18,7 +25,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function started(home, now, extra = {}) {
   const stops = { count: 0 };
   const helper = await startHelper({
-    address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), now,
+    run: hostGuard, address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), now,
     idleLookMs: 20, idleConfirmMs: 5, dispatchMs: 60 * 1000,
     onStop: (close) => { stops.count += 1; return close(); },
     ...extra,
