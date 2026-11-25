@@ -241,3 +241,22 @@ test('the skill\'s Desktop commands exist: wait-wake takes --take, --finish and 
   assert.ok(act.has('builder-started'));
   assert.match(ACT_JS, /'foreman-session'/);
 });
+
+test('the Desktop loop resumes a stopped builder with send_message, then a fresh start in the same worktree with the resume brief if that fails, as the probe finding says', async () => {
+  const [, desktop] = /## On the Desktop route\n([\s\S]*?)(?=\n## |$)/.exec(raw) ?? [];
+  const [, resume] = /\n### When Desktop was closed\n([\s\S]*?)(?=\n#{2,3} |$)/.exec(desktop) ?? [];
+  assert.ok(resume, 'a part for a stopped builder');
+  assert.match(resume, /send_message/);
+  assert.match(resume, /act resume-offer <work>/);
+  assert.match(resume, /same worktree/);
+  assert.match(resume, /resume brief/);
+  assert.match(resume, /act builder-started <work>/);
+  assert.match(resume, /message-then-fresh-start/);
+  assert.match(resume, /rows-lost/);
+  assert.match(resume, /rows-return/);
+  // The first try is the message, and a fresh start follows only a failed message.
+  assert.ok(resume.indexOf('send_message') < resume.indexOf('act resume-offer'));
+  assert.match(resume, /helm/);
+  const act = await subcommands(actMain, [], { client: {} });
+  assert.ok(act.has('resume-offer'));
+});

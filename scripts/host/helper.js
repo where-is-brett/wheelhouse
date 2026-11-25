@@ -4497,7 +4497,7 @@ export async function startHelper({
   // Sends one alert for the decisions that wait, through each channel the director switched on in Notifications and has set up.
   // { ok, none } when there is no such channel, { ok, held } inside the quiet hours, else { ok, sent, failed: [channel] }. A
   // channel that fails is tried once more; nothing is ever taken as an answer. It answers under STOP: it only says a decision waits.
-  async function doAlert({ project, count }) {
+  async function doAlert({ project, count, kind }) {
     if (!Number.isInteger(count) || count < 1 || count > 999) return { ok: false, refused: 'an alert needs the number of decisions that wait' };
     const repo = typeof readProject(project)?.repo === 'string' ? readProject(project).repo.split('/').at(-1) : '';
     const notifications = notificationsNow();
@@ -4505,7 +4505,7 @@ export async function startHelper({
     // Nothing is switched on, or it is quiet: the store is not read at all.
     if (on.length === 0) return { ok: true, none: true };
     if (inQuiet(notifications?.quiet, now())) return { ok: true, held: true };
-    const done = await deliverAlert({ count, project: repo || project, notifications, settings: await alertSettings(on), now: now(), fetch });
+    const done = await deliverAlert({ count, project: repo || project, kind: kind === 'away' ? 'away' : undefined, notifications, settings: await alertSettings(on), now: now(), fetch });
     return { ok: true, ...done };
   }
 
@@ -7168,7 +7168,7 @@ export async function startHelper({
       // An alert needs no connection to the host, so a broken sign-in can't stop it: it is answered without the project's context.
       try {
         onArrive(url.pathname);
-        return send(res, 200, await doAlert({ project: checkProject(body.project), count: body.count }));
+        return send(res, 200, await doAlert({ project: checkProject(body.project), count: body.count, kind: body.kind }));
       } catch (error) {
         return send(res, 200, { ok: false, refused: clean(error instanceof Error ? error.message : '', []) || 'the request failed' });
       }

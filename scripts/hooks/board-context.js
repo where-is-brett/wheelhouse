@@ -314,6 +314,14 @@ async function context(input, deps = {}) {
         adoptBuilder({ project: found.project, checkout: found.record.folder, sessionId: input.session_id, prompt: input.prompt, cwd: input.cwd });
       } catch { /* the builder carries on; the foreman asks for the record and is told it is missing */ }
     }
+    // The director typing in a builder's row on the Desktop route: a prompt that didn't come through the foreman takes the helm.
+    // Only a feature session that isn't on its first prompt pays for the load.
+    if (writes && !first && role === 'feature' && madeFeatureSlug(input.cwd) === null) {
+      try {
+        const { holdFromPrompt } = await import('../foreman/helm-hold.js');
+        await holdFromPrompt({ project: found.project, sessionId: input.session_id, prompt: input.prompt, first, now });
+      } catch { /* the prompt goes through; the next one tries again */ }
+    }
     // The aside command typed after the session start took the seat: the record turns aside and the seat is given up.
     if (writes && role === 'aside' && keep) {
       attempt(() => recordAside(input.session_id));

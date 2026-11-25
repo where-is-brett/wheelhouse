@@ -1034,13 +1034,17 @@ async function started(input, deps) {
 // It is read when the front desk starts, not by every session start.
 async function buildersLineOf(input, project) {
   try {
-    const [{ buildersLine }, { builderRoute }, { sessionsFor }] = await Promise.all([import('../lib/sign-in-line.js'), import('../lib/route.js'), import('../agents/project-agent.js')]);
+    const [{ buildersLine, foremanFact }, { builderRoute }, { sessionsFor }] = await Promise.all([import('../lib/sign-in-line.js'), import('../lib/route.js'), import('../agents/project-agent.js')]);
     const agent = agentOfInput(input) ?? 'claude-code';
     const home = wheelhouseHome();
     const found = builderRoute({ agent, home, routes: sessionsFor(agent).routes });
     // The Desktop foreman's check-in age, read only on that route.
     const foremanAge = found.route === 'desktop' ? (await import('../foreman/check-in.js')).checkInAge(project) : null;
-    return buildersLine({ home, agent, route: found.route, program: found.launch?.[0], fault: found.from === 'fault' ? found.fault : null, foremanAge });
+    const line = buildersLine({ home, agent, route: found.route, program: found.launch?.[0], fault: found.from === 'fault' ? found.fault : null, foremanAge });
+    // Desktop closed: the foreman isn't running and wakes wait for it.
+    const wakes = found.route === 'desktop' && !(Number.isFinite(foremanAge) && foremanAge <= 3 * 60 * 1000) ? (await import('../watcher/desktop-queue.js')).takeWakes(project).length : 0;
+    const fact = foremanFact({ route: found.route, foremanAge, wakes });
+    return fact === null ? line : `${line}\n${fact}`;
   } catch {
     return null; // a line that can't be made is left out, as the other facts are
   }

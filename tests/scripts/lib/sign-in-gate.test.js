@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  signInFile, readSignIn, writeSignInFact, clearSignInFact, gateFor, classify, cleanExcerpt, commandName, buildersLine, buildersHealth, timeWords, signInCard,
+  signInFile, readSignIn, writeSignInFact, clearSignInFact, gateFor, classify, cleanExcerpt, commandName, buildersLine, buildersHealth, foremanFact, timeWords, signInCard,
 } from '../../../scripts/lib/sign-in-gate.js';
 import { signInPatterns } from '../../../adapters/claude-code/sign-in-patterns.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -169,4 +169,15 @@ test('the Builders line on Desktop ends "foreman running" while the foreman\'s c
   assert.equal(buildersLine({ home: h, route: 'desktop', foremanAge: 3 * 60 * 1000 + 1 }), 'Builders: Claude Desktop');
   assert.equal(buildersLine({ home: h, route: 'background', foremanAge: 0 }), 'Builders: background as `claude`');
   assert.deepEqual(buildersHealth({ home: h, route: 'desktop', foremanAge: 1000 }), { level: 'ok', text: 'Builders: Claude Desktop · foreman running' });
+});
+
+test('the foreman fact: only on Desktop, only while no check-in is fresh and a wake waits', () => {
+  const D = { route: 'desktop', foremanAge: null, wakes: 3 };
+  assert.equal(foremanFact(D), 'Foreman: not running · 3 wakes waiting · offer the "Start the foreman" card (foreman-card)');
+  assert.equal(foremanFact({ ...D, wakes: 1 }), 'Foreman: not running · 1 wake waiting · offer the "Start the foreman" card (foreman-card)');
+  assert.equal(foremanFact({ ...D, foremanAge: 3 * 60 * 1000 + 1 }), 'Foreman: not running · 3 wakes waiting · offer the "Start the foreman" card (foreman-card)');
+  assert.equal(foremanFact({ ...D, foremanAge: 3 * 60 * 1000 }), null);
+  assert.equal(foremanFact({ ...D, wakes: 0 }), null);
+  assert.equal(foremanFact({ ...D, route: 'background' }), null);
+  assert.equal(foremanFact({ ...D, route: null }), null);
 });

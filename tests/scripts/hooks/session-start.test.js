@@ -1261,6 +1261,29 @@ test('the Builders line states the recorded sign-in fact, to the First Mate only
   });
 });
 
+test('on the Desktop route the First Mate\'s start shows "Foreman: not running · 3 wakes waiting" and the card to offer, and nothing when nothing waits', async () => {
+  await withHome(async () => {
+    const { profileViewsDir } = await import('../../../scripts/lib/paths.js');
+    const { queueWake } = await import('../../../scripts/watcher/desktop-queue.js');
+    const { writeWake } = await import('../../../scripts/watcher/waker.js');
+    const { checkIn } = await import('../../../scripts/foreman/check-in.js');
+    fs.mkdirSync(profileViewsDir(), { recursive: true });
+    fs.writeFileSync(path.join(profileViewsDir(), 'settings.json'), JSON.stringify({ [`builders:${computerId()}`]: { key: `builders:${computerId()}`, value: 'desktop' } }));
+    const foreman = (out) => text(out).split('\n').filter((l) => l.startsWith('Foreman:'));
+    assert.deepEqual(foreman(await run(fake(), { env: {} })), [], 'nothing waits, so nothing is said');
+    const wake = (n) => queueWake(P, { kind: 'feature-wake', work: `piece-${n}`, file: writeWake(P, { to: 'feature', work: `piece-${n}`, events: [], digest: [], dropped: 0 }) });
+    wake(1);
+    assert.deepEqual(foreman(await run(fake(), { env: {} })), ['Foreman: not running · 1 wake waiting · offer the "Start the foreman" card (foreman-card)']);
+    wake(2);
+    wake(3);
+    assert.deepEqual(foreman(await run(fake(), { env: {} })), ['Foreman: not running · 3 wakes waiting · offer the "Start the foreman" card (foreman-card)']);
+    checkIn(P, { sessionId: 'foreman-0001' });
+    assert.deepEqual(foreman(await run(fake(), { env: {} })), [], 'a fresh check-in is a foreman running');
+    // A foreman session itself is told nothing of this.
+    assert.deepEqual(foreman(await run(fake(), { env: { WHEELHOUSE_ROLE: 'foreman' } })), []);
+  });
+});
+
 test('a feature worktree and the foreman are not pointed at the front desk\'s playbook', async () => {
   await withHome(async (home) => {
     const tree = path.join(home, 'tree');

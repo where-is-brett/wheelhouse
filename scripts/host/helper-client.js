@@ -113,7 +113,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       batch: post('/decisions/batch'), // { project, date? } -> { ok, step: 'none' | 'opened' | 'waiting' | 'merged', pr?, head?, files?, why? }: the next step of the change that adds the day's decision records with no piece (design section 6.6); refused under STOP
     },
     // Phone alerts (scripts/alerts/send.js). Only the helper holds a channel's topic or token and only the helper sends; no answer holds one.
-    alert: post('/alert'), //        { project, count } -> { ok, none: true } (no channel is switched on and set up) | { ok, held: true } (quiet hours) | { ok, sent, failed: [channel] }: one alert, "<n> decisions wait in <project>", a channel that fails tried once more
+    alert: post('/alert'), //        { project, count, kind? } -> (kind `away`: the one sentence "Wheelhouse has work waiting. Open Claude to carry on." for a foreman that is away) { ok, none: true } (no channel is switched on and set up) | { ok, held: true } (quiet hours) | { ok, sent, failed: [channel] }: one alert, "<n> decisions wait in <project>", a channel that fails tried once more
     alerts: {
       ntfy: post('/alerts/ntfy'), //         { project | cwd, topic, server? } -> { ok, channel }: keeps the topic; the answer never holds it
       telegram: post('/alerts/telegram'), // { project | cwd, chat } -> { ok, channel }: the helper asks the director for the bot token in the system's hidden-entry dialog and keeps it

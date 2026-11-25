@@ -45,6 +45,9 @@ export async function decide(input, deps = {}) {
     if (roleOf({ sessionId: input.session_id, cwd: input.cwd, env }) !== 'feature') return undefined;
     const hold = holdBySession(found.project, input.session_id);
     if (hold === null || typeof hold.work !== 'string') return undefined;
+    // On the Desktop route the session stays open: the director's hold on a builder row is never ended by its session ending.
+    const { readBuilder } = await import('../foreman/desktop-builders.js');
+    if (readBuilder(found.project, hold.work)?.sessionId === input.session_id) return undefined;
     // The helm process hands back itself once the session has exited; only a hold whose holder is gone is handed back here.
     if (Number.isInteger(hold.holder) && alive(hold.holder)) return undefined;
     const config = wakerFor === null ? await configOf(found.project) : null;

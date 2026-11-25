@@ -20,8 +20,13 @@ const CHAT = /^-?[0-9]{1,20}$|^@[A-Za-z][A-Za-z0-9_]{3,31}$/;
 const TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
+// The kind of alert that says work waits for the Desktop foreman (builders and settings design, section 7.5): one set sentence.
+export const AWAY = 'away';
+export const AWAY_TEXT = 'Wheelhouse has work waiting. Open Claude to carry on.';
+
 // What an alert says: a count and the project's name, and nothing else. The name keeps only letters, digits, dashes and underscores (a dot becomes a dash), so it can never read as a link, and is cut short.
-export function alertText({ count, project }) {
+export function alertText({ count, project, kind }) {
+  if (kind === AWAY) return AWAY_TEXT;
   const name = String(project ?? '').replace(/[.\s]+/g, '-').replace(/[^A-Za-z0-9_-]/g, '').slice(0, NAME_MAX) || 'the-project';
   return count === 1 ? `1 decision waits in ${name}` : `${count} decisions wait in ${name}`;
 }
@@ -88,12 +93,12 @@ export async function sendAlert({ channel, settings, text, fetch = globalThis.fe
 //   { held: true }                          inside the quiet hours: nothing is sent, and it is asked again later
 //   { sent, failed: [channel, ...] }        each channel tried, and once more when it failed; `sent` when any went
 // `notifications` is the setting's value ({ channels, quiet? }). Nothing is retried beyond the one more try.
-export async function deliverAlert({ count, project, notifications, settings, now = new Date(), fetch }) {
+export async function deliverAlert({ count, project, kind, notifications, settings, now = new Date(), fetch }) {
   const switchedOn = Array.isArray(notifications?.channels) ? notifications.channels : [];
   const channels = CHANNELS.filter((c) => switchedOn.includes(c) && isSetUp(c, settings));
   if (channels.length === 0) return { none: true };
   if (inQuiet(notifications?.quiet, typeof now === 'function' ? now() : now)) return { held: true };
-  const text = alertText({ count, project });
+  const text = alertText({ count, project, kind });
   let sent = false;
   const failed = [];
   for (const channel of channels) {

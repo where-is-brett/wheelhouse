@@ -114,3 +114,12 @@ test('no alert is sent when no channel is set up, and the decision still waits i
   assert.deepEqual(await deliverAlert({ count: 1, project: 'harbour-demo', notifications: undefined, settings: SETTINGS, fetch }), { none: true });
   assert.equal(calls.length, 0);
 });
+
+test('the notice that the Desktop foreman is away is one set sentence, with no count and no name', async () => {
+  const words = 'Wheelhouse has work waiting. Open Claude to carry on.';
+  assert.equal(alertText({ count: 4, project: 'harbour-demo', kind: 'away' }), words);
+  const { calls, fetch } = recorder({ ok: true });
+  const done = await deliverAlert({ count: 2, project: 'harbour-demo', kind: 'away', notifications: { channels: ['ntfy'] }, settings: { ntfy: { topic: 'harbour-demo-topic-7' } }, now: new Date(2026, 10, 25, 12, 0), fetch });
+  assert.equal(done.sent, true);
+  assert.equal(calls[0].init.body, words);
+});

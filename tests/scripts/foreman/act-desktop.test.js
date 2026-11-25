@@ -134,3 +134,68 @@ test('builder-started refuses with no adopted record, and a worktree outside .cl
   assert.match(r.err, /inside .*\.claude.*worktrees/);
   assert.deepEqual(fake.writes, []);
 }));
+
+// A piece started on Desktop and recorded, whose session then stopped (Desktop quit).
+async function stoppedPiece() {
+  const checkout = await project({ git: true });
+  const fake = fakeClient({ views: views() });
+  await act(START, { client: fake.client, route: () => 'desktop', findings: NO_CWD, ...noWaker([]) });
+  const tree = await desktopWorktree(checkout, 'add-export-1');
+  recordBuilder(P, 'add-export', { sessionId: S, worktree: tree, branch: 'claude/add-export-1', now });
+  await act(['builder-started', 'add-export'], { client: fake.client, route: () => 'desktop', findings: NO_CWD, ...noWaker([]) });
+  const recorded = emptyViews();
+  recorded.work['add-export'] = workView('add-export', { shownFirst: true });
+  recorded.features['add-export'] = { key: 'add-export', id: 'f1', at: new Date(T0).toISOString(), data: { work: 'add-export', step: 'started', worktree: tree, branch: 'claude/add-export-1', session: S, brief: briefHash(fs.readFileSync(featurePaths(tree).brief, 'utf8')) } };
+  return { checkout, tree, client: fakeClient({ views: recorded }).client };
+}
+
+test('resume-offer gives a fresh start in the same worktree, with the resume brief, and starts nothing itself', () => withHome(async () => {
+  const { tree, client } = await stoppedPiece();
+  const r = await act(['resume-offer', 'add-export', '--foreman-session', F], { client, route: () => 'desktop', findings: NO_CWD, ...noWaker([]) });
+  assert.equal(r.code, 0, r.err);
+  const offer = offerOf(r.out);
+  assert.equal(offer.cwd, tree, 'the same worktree');
+  assert.equal(offer.worktree, false, 'Desktop makes no worktree of its own');
+  assert.deepEqual({ i: offer.initiation, f: offer.freshContext, m: offer.permissionMode, w: offer.wakeWhenDone }, { i: 'offer', f: true, m: 'auto', w: true });
+  const lines = offer.prompt.split('\n');
+  assert.ok(lines[0].startsWith(BUILDER_PROMPT_LEAD));
+  assert.match(lines[0], /resuming/);
+  assert.equal(lines[1], markerLine(P, 'add-export'));
+  assert.match(offer.prompt, /Export the report as CSV/, 'the brief is in it');
+}));
+
+test('resume-offer refuses on the background route, for a piece that never started, and for a piece at the director\'s helm', () => withHome(async () => {
+  const { client, tree } = await stoppedPiece();
+  const bg = await act(['resume-offer', 'add-export'], { client, route: () => 'background', findings: NO_CWD, ...noWaker([]) });
+  assert.equal(bg.code, 1);
+  assert.match(bg.err, /Desktop route/);
+  const never = emptyViews();
+  never.work['add-export'] = workView('add-export', { shownFirst: true });
+  const none = await act(['resume-offer', 'add-export'], { client: fakeClient({ views: never }).client, route: () => 'desktop', findings: NO_CWD, ...noWaker([]) });
+  assert.equal(none.code, 1);
+  assert.match(none.err, /never started|no session/i);
+  const { holdFile } = await import('../../../scripts/crew/hold.js');
+  fs.mkdirSync(path.dirname(holdFile(P, 'add-export')), { recursive: true });
+  fs.writeFileSync(holdFile(P, 'add-export'), '{}\n');
+  const held = await act(['resume-offer', 'add-export'], { client, route: () => 'desktop', findings: NO_CWD, ...noWaker([]) });
+  assert.equal(held.out.includes('Desktop offer: '), false);
+  assert.match(held.out, /helm/);
+  assert.ok(tree);
+}));
+
+test('builder-started after a resume keeps the new session for the same worktree, and refuses a builder in another worktree', () => withHome(async () => {
+  const { checkout, tree, client } = await stoppedPiece();
+  const NEW = 'cccccccc-1111-2222-3333-444444444444';
+  recordBuilder(P, 'add-export', { sessionId: NEW, worktree: tree, branch: 'claude/add-export-1', now });
+  const r = await act(['builder-started', 'add-export'], { client, route: () => 'desktop', findings: NO_CWD, ...noWaker([]) });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /resumed/);
+  assert.equal(JSON.parse(fs.readFileSync(sessionFile(P, 'add-export'), 'utf8')).sessionId, NEW);
+  // A builder that came up in a worktree Desktop made afresh is not the same piece's.
+  const elsewhere = await desktopWorktree(checkout, 'add-export-2');
+  recordBuilder(P, 'add-export', { sessionId: F, worktree: elsewhere, branch: 'claude/add-export-2', now });
+  const bad = await act(['builder-started', 'add-export'], { client, route: () => 'desktop', findings: NO_CWD, ...noWaker([]) });
+  assert.equal(bad.code, 1);
+  assert.match(bad.err, /another worktree/);
+  assert.equal(JSON.parse(fs.readFileSync(sessionFile(P, 'add-export'), 'utf8')).sessionId, NEW);
+}));
