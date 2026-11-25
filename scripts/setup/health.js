@@ -856,7 +856,7 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
       if (got?.ok === true) lines.push(`Passed: ${BUILDERS_PASSED}.`);
       else {
         green = false;
-        lines.push(`Failed: ${got?.line ?? BUILDERS_CHECK}. ${BUILDERS_TODO}.`);
+        lines.push(`Failed: ${got?.line ?? BUILDERS_CHECK}. ${typeof got?.todo === 'string' ? got.todo : BUILDERS_TODO}.`);
       }
     }
   }
