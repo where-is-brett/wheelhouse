@@ -77,3 +77,35 @@ export function listBuilders(project) {
   }
   return out;
 }
+
+// --- The offer made and not yet taken up ---
+// With no `cwd` on an offer, the worktree doesn't exist when the foreman is given the offer, so the brief it will hold waits
+// here, in the watcher's folder, until the builder has adopted its worktree and `act builder-started` writes it there.
+const pendingDir = (project) => path.join(path.dirname(stateDir(project)), 'watcher', 'desktop-pending');
+export const OFFER_FRESH_MS = 30 * 60 * 1000;
+
+export function keepPending(project, work, { text, hash, approved, held = null, now = () => new Date() }) {
+  builderRecordFile(project, work); // the work id is checked
+  put(path.join(pendingDir(project), `${work}.json`), { text, hash, ...(approved === undefined || approved === null ? {} : { approved }), held, at: now().toISOString() });
+}
+
+// The kept offer, or null: none, one that isn't whole, or (with `fresh`) one older than OFFER_FRESH_MS.
+export function readPending(project, work, { now = () => new Date(), fresh = false } = {}) {
+  try {
+    builderRecordFile(project, work);
+    const file = path.join(pendingDir(project), `${work}.json`);
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.size > 4 * 1024 * 1024) return null;
+    const v = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (typeof v?.text !== 'string' || typeof v.hash !== 'string' || Number.isNaN(Date.parse(v.at))) return null;
+    if (fresh && now().getTime() - Date.parse(v.at) > OFFER_FRESH_MS) return null;
+    return v;
+  } catch {
+    return null;
+  }
+}
+
+export function dropPending(project, work) {
+  builderRecordFile(project, work); // the work id is checked
+  fs.rmSync(path.join(pendingDir(project), `${work}.json`), { force: true });
+}

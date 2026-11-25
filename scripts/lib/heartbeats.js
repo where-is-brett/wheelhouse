@@ -26,6 +26,7 @@ function readJson(file) {
 
 // A name the card may show: the foreman, or a work id as the watcher writes one.
 const NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const SESSION_ID = /^[A-Za-z0-9-]{8,64}$/;
 const shown = (w) => typeof w === 'string' && (w === 'foreman' || NAME.test(w));
 
 // Records the builders the watcher ended for the All stop set at `stop` (its `at`): `{ at, stop, stopped: [work] }`. A
@@ -39,7 +40,8 @@ export function writeStopped(home, project, { at, stop, works }) {
 }
 
 // { stopped: string[], running: { name, why }[] }, from files only (a process id is asked of the system, nothing more).
-// `stopped` is read only from the record for the All stop now on. Part 6 adds the foreman and Desktop builders to it.
+// `stopped` is read only from the record for the All stop now on. On the Desktop route the foreman counts as running while its
+// check-in is fresh, and a Desktop builder until the foreman notes it ended (scripts/foreman/check-in.js, desktop-builders.js).
 export function stillRunning(home, project, { now = () => new Date(), alive = pidAlive, stopAt = () => stopState().at } = {}) {
   const kept = readJson(stoppedFile(home, project));
   const current = kept !== null && kept.stop !== undefined && kept.stop === stopAt();
@@ -65,6 +67,22 @@ export function stillRunning(home, project, { now = () => new Date(), alive = pi
     if (m === null || !NAME.test(m[1])) continue;
     const run = readJson(path.join(watcherFolder(home, project), 'running', n));
     if (Number.isInteger(run?.pid) && alive(run.pid)) running.push({ name: `builder ${m[1]}`, why: 'still ending' });
+  }
+  // The Desktop route: the foreman's check-in, and the builders Desktop started for it (a record without an end).
+  const checkIn = readJson(path.join(watcherFolder(home, project), 'foreman-check-in.json'));
+  const checked = Date.parse(checkIn?.at ?? '');
+  if (typeof checkIn?.sessionId === 'string' && SESSION_ID.test(checkIn.sessionId) && !Number.isNaN(checked) && now().getTime() - checked < HEARTBEAT_FRESH_MS) {
+    running.push({ name: 'the foreman', why: 'its Desktop session, ending on All stop' });
+  }
+  let desktop = [];
+  try {
+    desktop = fs.readdirSync(path.join(watcherFolder(home, project), 'desktop-builders'));
+  } catch { /* none */ }
+  for (const n of desktop.sort()) {
+    const m = /^([a-z0-9][a-z0-9-]{0,39})\.json$/.exec(n);
+    if (m === null) continue;
+    const rec = readJson(path.join(watcherFolder(home, project), 'desktop-builders', n));
+    if (typeof rec?.sessionId === 'string' && SESSION_ID.test(rec.sessionId) && rec.endedAt === undefined) running.push({ name: `builder ${m[1]}`, why: 'its Desktop session, not yet stopped' });
   }
   return { stopped, running };
 }
