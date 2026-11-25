@@ -10,7 +10,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { main, approveWorkInput, readInput, SEAT_WRITES, SEAT_REFUSAL, NO_SEAT_REFUSAL, seatRefusal, SESSION_NEEDED, RECORD_KINDS, needsApproval, MEANWHILE, CHECKS_UNSAID, RECENT_MS, RECENT_LEAD } from '../../../scripts/frontdesk/cli.js';
+import { main, foremanBrief, approveWorkInput, readInput, SEAT_WRITES, SEAT_REFUSAL, NO_SEAT_REFUSAL, seatRefusal, SESSION_NEEDED, RECORD_KINDS, needsApproval, MEANWHILE, CHECKS_UNSAID, RECENT_MS, RECENT_LEAD } from '../../../scripts/frontdesk/cli.js';
 import { cardsDue } from '../../../scripts/hooks/waiting-lines.js';
 import { numberedWaiting } from '../../../scripts/board/model.js';
 import { composeCard, whatProblem } from '../../../scripts/cards/compose.js';
@@ -2907,7 +2907,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['frobnicate', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, show, undo, move, carry-on, archive, restore, premium-card, premium-check, note, decision, pull-back, alerts, page, helm\n$/);
+    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, show, undo, move, carry-on, archive, restore, premium-card, premium-check, foreman-brief, note, decision, pull-back, alerts, page, helm\n$/);
     const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -2974,7 +2974,7 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, show, undo, move, carry-on, archive, restore, premium-card, premium-check, note, decision, pull-back, alerts, page, helm\n');
+  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, show, undo, move, carry-on, archive, restore, premium-card, premium-check, foreman-brief, note, decision, pull-back, alerts, page, helm\n');
   assert.equal(done.stdout, '');
 });
 
@@ -3615,4 +3615,16 @@ test('an approval card asks "Approve this design?" for a feature, says "you shap
   assert.match(small.options[0].says, /Building waits for your approval\.$/);
   assert.equal(composeCard(feature).question.question.split('\n')[0].includes('Approve this design?'), true);
   assert.equal(composeCard(small).question.question.includes('Approve this work as written?'), true);
+});
+
+test('foreman-brief gives the one line to start the Desktop foreman with, and refuses or says plainly when it should not start', async () => {
+  const brief = async (p) => ({ title: `Wheelhouse · Foreman · ${p}`, initiation: 'user_asked' });
+  const base = { project: 'o__p', route: 'desktop', age: null, stop: () => ({ on: false }), brief };
+  assert.deepEqual(JSON.parse(await foremanBrief(base)), { title: 'Wheelhouse · Foreman · o__p', initiation: 'user_asked' });
+  assert.equal(await foremanBrief({ ...base, age: 60 * 1000 }), 'The foreman is running already for o__p: nothing to start.');
+  assert.ok(JSON.parse(await foremanBrief({ ...base, age: 3 * 60 * 1000 })).title, 'a check-in 3 minutes old gives way');
+  await assert.rejects(foremanBrief({ ...base, route: 'background' }), /do not start in Claude Desktop/);
+  await assert.rejects(foremanBrief({ ...base, route: null }), /do not start in Claude Desktop/);
+  await assert.rejects(foremanBrief({ ...base, stop: () => ({ on: true }) }), /All stop is on/);
+  await assert.rejects(foremanBrief({ ...base, project: undefined, cwd: '/nowhere/at/all' }), /not a Wheelhouse project/);
 });

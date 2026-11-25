@@ -190,7 +190,7 @@ export function sessionFlag(argv) {
   return { argv: left, session };
 }
 
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'show', 'undo', 'move', 'carry-on', 'archive', 'restore', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts', 'page', 'helm'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'show', 'undo', 'move', 'carry-on', 'archive', 'restore', 'premium-card', 'premium-check', 'foreman-brief', 'note', 'decision', 'pull-back', 'alerts', 'page', 'helm'];
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
 // The Lift STOP card, which `cards` puts first under STOP. It is composed on each visit and never
 // recorded as a card, since under STOP the helper writes nothing; the click on it is signed by the
@@ -1609,6 +1609,22 @@ export async function premiumCheck({ client, cwd }) {
     : "Your account doesn't have the premium model, so nothing changes. I'll offer it again after setup runs and finds it.";
 }
 
+// The Desktop foreman's start (builders and settings design, section 7.1): after the director has asked for the foreman in words, the
+// one line to give `start_session`: its title, its brief and its fixed options. Nothing starts here. Refused while All stop is on,
+// where builders don't start in Desktop, and, with a plain statement instead, while the foreman's check-in is under 3 minutes old.
+// `projectOf`, `route`, `age`, `stop` and `brief` are for tests.
+export async function foremanBrief({ cwd, project, route, age, stop, brief } = {}) {
+  const named = project ?? projectOf(cwd)?.project;
+  if (typeof named !== 'string') throw new CliError('This folder is not a Wheelhouse project, so there is no foreman to start');
+  if ((stop ?? (await import('../lib/stop.js')).stopState)().on) throw new CliError('All stop is on, so the foreman is not started');
+  const where = route ?? (await import('../lib/route.js')).builderRoute({ home: (await import('../lib/paths.js')).wheelhouseHome() }).route;
+  if (where !== 'desktop') throw new CliError('Builders do not start in Claude Desktop on this computer, so there is no Desktop foreman to start');
+  const { FOREMAN_REFUSE_MS, checkInAge } = await import('../foreman/check-in.js');
+  const seen = age === undefined ? checkInAge(named) : age;
+  if (seen !== null && seen < FOREMAN_REFUSE_MS) return `The foreman is running already for ${named}: nothing to start.`;
+  return JSON.stringify(await (brief ?? (async (p) => (await import('../foreman/start.js')).desktopBrief({ project: p })))(named));
+}
+
 // --- Ready-made changes ---
 
 // What the helper made ready, as it answered (scripts/survey/ready.js): the work id it chose, the
@@ -1853,6 +1869,9 @@ export async function main(argv, {
     } else if (command === 'premium-card' || command === 'premium-check') {
       only(rest, 0, `${command} takes no arguments`);
       lines([await (command === 'premium-card' ? premiumCard : premiumCheck)({ client: helper, cwd: here })]);
+    } else if (command === 'foreman-brief') {
+      only(rest, 0, 'foreman-brief takes no arguments');
+      lines([await foremanBrief({ cwd: here })]);
     } else if (command === 'views') {
       const usage = `Give the view's name: views <name>, one of ${VIEW_NAMES.join(', ')}; waiting also takes --since <time>`;
       let since;
