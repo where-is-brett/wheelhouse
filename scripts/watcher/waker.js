@@ -598,7 +598,7 @@ export function featureWakesDir(worktree) {
 // with COPYFILE_EXCL, so it never follows a link left in its place; and the
 // folder is checked once more after. If it moved, the copy is removed and the
 // wake counts as not delivered. `beforeCopy(dir)` is for tests.
-function copyWake(project, file, place, { beforeCopy = () => {}, add = null } = {}) {
+export function copyWake(project, file, place, { beforeCopy = () => {}, add = null } = {}) {
   const moved = () => { throw new Error("The wakes folder isn't a real folder where it should be"); };
   const read = readCapped(file, WAKE_BYTES);
   if (read === null) throw new Error("The wake's record can't be read");

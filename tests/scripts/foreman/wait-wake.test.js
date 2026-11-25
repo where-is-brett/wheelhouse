@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
 import { waitForWake, takeWakes as takeForForeman, finishTaken, main, WAIT_MAX_MS, HEARTBEAT_MS } from '../../../scripts/foreman/wait-wake.js';
 import { checkInAge, checkIn } from '../../../scripts/foreman/check-in.js';
 import { queueWake, takeWakes } from '../../../scripts/watcher/desktop-queue.js';
@@ -27,6 +28,7 @@ function clock(plan = {}) {
 const act = (run) => ({ run });
 const desktop = () => ({ route: 'desktop' });
 const calm = () => ({ on: false });
+const copyOf = async (project, wake) => (wake.kind === 'feature-start' ? null : `/copies/${wake.kind}-${wake.work ?? 'foreman'}.json`);
 const wait = (c, over = {}) => waitForWake(P, { sessionId: S, now: c.now, sleep: c.sleep, route: desktop, stop: calm, poll: 2000, ...over });
 
 test('it exits at once when a wake is queued, printing how many', () => withHome(async () => {
@@ -124,12 +126,12 @@ test('taking wakes prints one line each, drops a wake for a piece at the directo
   queueWake(P, { kind: 'feature-wake', work: 'beta', file: bundle('beta'), now: () => new Date(T0 + 1) });
   queueWake(P, { kind: 'feature-start', work: 'gamma', file: bundle('gamma'), now: () => new Date(T0 + 2) });
   queueWake(P, { kind: 'foreman', file: bundle(), now: () => new Date(T0 + 3) });
-  const got = await takeForForeman(P, { sessionId: S, route: desktop, stop: calm, now: () => new Date(T0 + 5) });
+  const got = await takeForForeman(P, { sessionId: S, route: desktop, stop: calm, now: () => new Date(T0 + 5), deliver: copyOf });
   assert.deepEqual(got.lines, [
-    'WAKE feature-wake alpha 0f0e0d0c-aaaa-bbbb-cccc-111122223333',
+    'WAKE feature-wake alpha 0f0e0d0c-aaaa-bbbb-cccc-111122223333 /copies/feature-wake-alpha.json',
     'held beta',
-    'WAKE feature-start gamma -',
-    'WAKE foreman - -',
+    'WAKE feature-start gamma - -',
+    'WAKE foreman - - /copies/foreman-foreman.json',
   ]);
   assert.equal(takeWakes(P).length, 0);
   assert.equal(await finishTaken(P), 3);
@@ -140,8 +142,8 @@ test('the command line: --take and --finish, a project name that is not one is r
   await project();
   queueWake(P, { kind: 'feature-wake', work: 'alpha', file: bundle('alpha'), now: () => new Date(T0) });
   let out = '';
-  assert.equal(await main(['--project', P, '--session', S, '--take'], { out: (t) => { out += t; }, route: desktop, stop: calm }), 0);
-  assert.equal(out, 'WAKE feature-wake alpha -\n');
+  assert.equal(await main(['--project', P, '--session', S, '--take'], { out: (t) => { out += t; }, route: desktop, stop: calm, deliver: copyOf }), 0);
+  assert.equal(out, 'WAKE feature-wake alpha - /copies/feature-wake-alpha.json\n');
   out = '';
   assert.equal(await main(['--project', P, '--finish'], { out: (t) => { out += t; } }), 0);
   assert.equal(out, 'finished: 1\n');
@@ -149,4 +151,23 @@ test('the command line: --take and --finish, a project name that is not one is r
   assert.equal(await main(['--project', '../x', '--session', S], { err: (t) => { err += t; } }), 1);
   assert.match(err, /project/);
   assert.equal(await main(['--project', P, '--session', 'a b'], { err: () => {} }), 1);
+}));
+
+test('a foreman wake is copied into the main checkout\'s foreman wakes folder, which is the path printed', () => withHome(async () => {
+  const checkout = await project();
+  queueWake(P, { kind: 'foreman', file: bundle(), now: () => new Date(T0) });
+  const got = await takeForForeman(P, { sessionId: S, route: desktop, stop: calm, now: () => new Date(T0) });
+  const m = /^WAKE foreman - - (.+)$/.exec(got.lines[0]);
+  assert.ok(m, got.lines.join('\n'));
+  assert.ok(fs.realpathSync(m[1]).startsWith(fs.realpathSync(path.join(checkout, '.wheelhouse', 'foreman', 'wakes'))));
+  assert.ok(fs.existsSync(m[1]));
+}));
+
+test('a wake that can\'t be delivered is given back and named, not dropped', () => withHome(async () => {
+  await project();
+  queueWake(P, { kind: 'feature-wake', work: 'alpha', file: bundle('alpha'), now: () => new Date(T0) });
+  const got = await takeForForeman(P, { sessionId: S, route: desktop, stop: calm, now: () => new Date(T0), deliver: async () => { throw new Error('no worktree'); } });
+  assert.deepEqual(got.lines, ['not delivered feature-wake alpha']);
+  assert.equal(takeWakes(P).length, 1);
+  assert.equal(await finishTaken(P), 0);
 }));

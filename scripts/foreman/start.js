@@ -45,6 +45,7 @@ import {
 import { startedAsScript } from '../lib/started-as-script.js';
 import { sameStart, startSeconds } from '../lib/start-time.js';
 import { FOREMAN_PROMPT_LEAD } from './prompt-lead.js';
+import { FOREMAN_SKILL, desktopForemanCommands } from './tools.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -192,6 +193,23 @@ export function foremanSession({
       cwd: checkout, env: call.env, stdio: 'inherit', windowsHide: true, windowsVerbatimArguments: call.verbatim,
     },
   };
+}
+
+// The Desktop foreman (builders and settings design, section 7.1): what the First Mate gives `start_session` once the director has
+// clicked "Start the foreman". `user_asked` because the click said so in words; fresh context; worktree off, so it works in the
+// project's main checkout as the foreman always has; Auto (decision 16.4). Its brief marks the route `desktop` and gives the
+// three commands it types, exactly as they are to be typed: the wake and act commands, and the wait it keeps in the background.
+export function desktopBrief({ project, pluginRoot = PLUGIN_ROOT, platform = process.platform }) {
+  if (typeof project !== 'string' || !/^[A-Za-z0-9._-]{1,100}$/.test(project)) throw new StartError('A project name is letters, digits, dots, hyphens and underscores');
+  const { wake, act, wait } = desktopForemanCommands(pluginRoot, { platform });
+  const prompt = [
+    `${FOREMAN_PROMPT_LEAD} you are the long-lived Bosun of ${project}. Follow ${FOREMAN_SKILL}, the section "On the Desktop route".`,
+    'Route: desktop',
+    `Run wake as: ${wake}`,
+    `Run act as: ${act}`,
+    `Run wait as: ${wait} --project ${project}`,
+  ].join('\n');
+  return { title: `Wheelhouse · Foreman · ${project}`, prompt, initiation: 'user_asked', freshContext: true, worktree: false, permissionMode: 'auto' };
 }
 
 // Runs a program in this terminal and resolves with its exit code.

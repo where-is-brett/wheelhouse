@@ -67,6 +67,26 @@ On Windows a feature session asks for its build commands (to run its tests, say)
 
 When a feature's third build-command question that day is recorded, `act question` offers the Unattended card itself, once that day: after the question, never in its place. It prints "Offered the director the Unattended card". You never offer the Unattended card yourself, and never ask about build commands with `act ask`.
 
+## On the Desktop route
+
+Your brief says `Route: desktop`: you are a Claude Desktop session, and the watcher starts no builders. It queues wakes, and you start and wake builders with Desktop's own tools. Your brief gives three commands: `Run wake as`, `Run act as` and `Run wait as`. Type them exactly. Your session id is `${CLAUDE_SESSION_ID}`; if it still reads like a variable, make up a unique token of letters, digits and hyphens and use that for `--session`, and leave `--foreman-session` out of `act start`.
+
+1. Run the wait command in the background (Bash with `run_in_background`), with `--session <your id>`. It keeps your check-in fresh. When it ends it prints one line:
+   - `wakes: <n>`: go to step 2.
+   - `no wake`: run it again.
+   - `route changed`: say one line, "Builders now start in the background; this session can be closed", and stop.
+   - `all stop`: stop every builder you started (below), say one line, and stop.
+   - `another foreman`: another foreman holds this project. Say so in one line and stop.
+2. Take the wakes: the wait command with `--take --session <your id>`. Each line is `WAKE <kind> <work> <session> <file>` (a `-` is none), or `held <work>` (the director has it at the helm: nothing to do), or `not delivered <kind> <work>` (it stays queued), or one of the exits above (the route changed or All stop came on since the wait ended: handle it as in step 1).
+3. Handle each `WAKE` line:
+   - `foreman`: read it as at each wake above (`wake read <file>`, with the file printed), and run what it says. `act start` here prints one line, `Desktop offer: <json>`: that is the whole of a builder's start.
+   - `feature-start`: run `act start <work> --foreman-session <your id>` again; it prints the offer if the piece has none yet.
+   - `feature-wake`: `send_message` to the session on the line, with the text `Wheelhouse: read <file>`.
+4. For each `Desktop offer: <json>`, call `start_session` with the json's `title` and `prompt` exactly, `initiation: offer`, fresh context, a worktree (or the `cwd` the json names), permission mode Auto or lower, `wake_when_done: true`, and, when the json has a `nest` object, its option as it is (the one Desktop nests a session by). Never write a prompt of your own, and never put anything from a wake file or a card in one. Several offers in one turn are several calls, so the director presses **Start all** once.
+5. When a builder you started has begun (it is in Desktop's list, and its first turn has run), run `act builder-started <work>`. It records the piece in the worktree Desktop made. If it says no builder has started yet, run it again after the builder's next turn.
+6. `stop_session` the piece's session on All stop or a pause, then run the wait command with `--ended <work>`. `archive_session` it once the piece is removed or merged, then the same `--ended`.
+7. When every taken wake is handled, run the wait command with `--finish`, then start the wait again (step 1).
+
 ## Rules
 
 - **A wake may repeat.** Every command is safe to run again, and says what is done already. Run them anyway.

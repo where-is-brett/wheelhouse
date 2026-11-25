@@ -11,7 +11,9 @@
 // Taking claims the queued wakes (one taker wins a wake, so the watcher moving the route back to the background and this
 // session never both run it) and runs the checks again: under STOP or on another route they are given back and nothing is
 // printed but the reason; a wake for a piece at the director's helm is dropped. Each other wake is one line,
-// `WAKE <kind> <work or -> <session id or ->`: ids only, nothing a wake file could carry as text.
+// `WAKE <kind> <work or -> <session id or -> <file or ->`: ids and one path, nothing a wake file could carry as text. The file
+// is the wake's bundle copied where the session that reads it can (the foreman's own wakes folder, or the piece's worktree),
+// as the watcher copies it for a session it starts. A wake that can't be delivered is given back, named `not delivered`.
 import fs from 'node:fs';
 import path from 'node:path';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -81,11 +83,27 @@ export async function waitForWake(project, {
 
 // Claims the waiting wakes and says what to do with each: `{ lines }`. The checks (STOP, the route, the director's helm) run
 // again here, since they may have changed since the wait began.
-export function takeWakes(project, { sessionId, route = currentRoute, stop = stopState, now = () => new Date() } = {}) {
-  return takeWakesAsync(project, { sessionId, route, stop, now });
+export function takeWakes(project, { sessionId, route = currentRoute, stop = stopState, now = () => new Date(), deliver = deliverWake } = {}) {
+  return takeWakesAsync(project, { sessionId, route, stop, now, deliver });
 }
 
-async function takeWakesAsync(project, { route, stop, now }) {
+// Copies a wake's bundle to where its reader can open it: the main checkout's foreman wakes folder, or the piece's worktree.
+// A feature-start has no bundle to read, so nothing is copied for it. Gives the copy's path, or null.
+async function deliverWake(project, wake) {
+  if (wake.kind === 'feature-start') return null;
+  const { copyWake, featureWakesDir, foremanWakesDir, locateFeature } = await import('../watcher/waker.js');
+  if (wake.kind === 'foreman') {
+    const { readProject } = await import('../lib/projects.js');
+    const checkout = readProject(project)?.folder;
+    if (typeof checkout !== 'string') throw new Error("The project's folder isn't known");
+    return copyWake(project, wake.file, foremanWakesDir(checkout));
+  }
+  const worktree = locateFeature(project)(wake.work);
+  if (worktree === null) throw new Error(`${wake.work} has no worktree`);
+  return copyWake(project, wake.file, featureWakesDir(worktree));
+}
+
+async function takeWakesAsync(project, { route, stop, now, deliver }) {
   const { claimWakes, dropWakes, releaseWakes } = await queue();
   const { helmHeld } = await import('../crew/hold.js');
   const claimed = claimWakes(project, { now });
@@ -97,15 +115,25 @@ async function takeWakesAsync(project, { route, stop, now }) {
   const lines = [];
   const kept = [];
   const held = [];
+  const back = [];
   for (const wake of claimed) {
     if (wake.work !== undefined && helmHeld(project, wake.work)) {
       held.push(wake.path);
       lines.push(`held ${wake.work}`);
-    } else {
-      kept.push(wake.path);
-      lines.push(`WAKE ${wake.kind} ${wake.work ?? '-'} ${wake.sessionId ?? '-'}`);
+      continue;
     }
+    let copy = null;
+    try {
+      copy = await deliver(project, wake);
+    } catch {
+      back.push(wake.path);
+      lines.push(`not delivered ${wake.kind} ${wake.work ?? '-'}`);
+      continue;
+    }
+    kept.push(wake.path);
+    lines.push(`WAKE ${wake.kind} ${wake.work ?? '-'} ${wake.sessionId ?? '-'} ${copy ?? '-'}`);
   }
+  releaseWakes(project, back);
   dropWakes(project, held);
   fs.mkdirSync(path.dirname(takenFile(project)), { recursive: true });
   fs.writeFileSync(takenFile(project), `${JSON.stringify({ paths: kept })}\n`);
@@ -139,7 +167,7 @@ function parse(argv) {
 }
 
 export async function main(argv, {
-  out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t), now = () => new Date(), sleep, route = currentRoute, stop = stopState,
+  out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t), now = () => new Date(), sleep, route = currentRoute, stop = stopState, deliver,
 } = {}) {
   try {
     const a = parse(argv);
@@ -158,7 +186,7 @@ export async function main(argv, {
     }
     if (typeof a.session !== 'string' || !SESSION_ID.test(a.session)) throw new Error('Give the foreman\'s own session: --session <id>');
     if (a.take === true) {
-      const { lines } = await takeWakes(a.project, { sessionId: a.session, route, stop, now });
+      const { lines } = await takeWakes(a.project, { sessionId: a.session, route, stop, now, ...(deliver === undefined ? {} : { deliver }) });
       out(lines.length === 0 ? '' : `${lines.join('\n')}\n`);
       return 0;
     }

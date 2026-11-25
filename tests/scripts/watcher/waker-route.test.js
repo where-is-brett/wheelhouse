@@ -261,7 +261,7 @@ test('a wake the foreman took and kept is not run again by the watcher after the
   const { w, state } = setUp('desktop');
   await w.wakeForeman(foremanWake());
   const got = await foremanTakes(P, { sessionId: 'aaaaaaaa-1111-2222-3333-444444444444', route: () => ({ route: 'desktop' }), stop: () => ({ on: false }), now: () => new Date(T0) });
-  assert.deepEqual(got.lines, ['WAKE foreman - -']);
+  assert.match(got.lines[0], /^WAKE foreman - - \S+$/);
   state.route = 'background';
   state.at = T0 + 1000;
   await w.pump();

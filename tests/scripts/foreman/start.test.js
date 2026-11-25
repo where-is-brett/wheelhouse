@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { foremanSession, main, startWatcher, stopWatcher, stopForeman, watcherRunning, FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
+import { desktopBrief, foremanSession, main, startWatcher, stopWatcher, stopForeman, watcherRunning, FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 import { foremanTools } from '../../../scripts/foreman/tools.js';
 import { FOREMAN_FALLBACK_COMPACT } from '../../../scripts/lib/build-loop.js';
 import { healthFile, lockFile } from '../../../scripts/watcher/main.js';
@@ -263,4 +263,22 @@ test('stopForeman stops only the foreman process the watcher recorded, while it 
     assert.equal((await stopForeman(P, { kill, alive, startTime: async () => 'x' })).stopped, false);
     assert.deepEqual(killed, [5151]);
   });
+});
+
+test('the Desktop brief: a user_asked start in the main checkout, titled for the project, in Auto, with the route marked desktop and its three commands', () => {
+  const b = desktopBrief({ project: P, pluginRoot: MAC_ROOT, platform: 'darwin' });
+  assert.equal(b.title, `Wheelhouse · Foreman · ${P}`);
+  assert.deepEqual({ i: b.initiation, f: b.freshContext, w: b.worktree, m: b.permissionMode }, { i: 'user_asked', f: true, w: false, m: 'auto' });
+  const lines = b.prompt.split('\n');
+  assert.ok(lines[0].startsWith(FOREMAN_PROMPT_LEAD));
+  assert.ok(lines[0].includes('wheelhouse:foreman'));
+  assert.ok(lines.includes('Route: desktop'));
+  assert.ok(lines.includes(`Run wake as: node '${MAC_ROOT}/scripts/foreman/wake.js'`));
+  assert.ok(lines.includes(`Run act as: node '${MAC_ROOT}/scripts/foreman/act.js'`));
+  assert.ok(lines.includes(`Run wait as: node '${MAC_ROOT}/scripts/foreman/wait-wake.js' --project ${P}`));
+  assert.doesNotMatch(b.prompt, /model|Opus|Sonnet|Haiku/i);
+});
+
+test('the Desktop brief refuses a project name that is not one', () => {
+  assert.throws(() => desktopBrief({ project: 'o p; rm', pluginRoot: MAC_ROOT }), /project/);
 });
