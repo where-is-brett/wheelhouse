@@ -104,11 +104,73 @@ export function takeWakes(project) {
   return out;
 }
 
-// Removes the named wakes once they are handled. A path outside the queue folder is ignored.
-export function dropWakes(project, paths) {
-  const dir = queueDir(project);
+// --- Claims ---
+// Two takers can meet at one wake: the foreman's session, and the watcher moving a route back to the background. A claim moves
+// the file out of the queue by a rename, which only one taker wins, so a wake is handled once. A claim not finished or released
+// within CLAIM_STALE_MS (its taker ended) goes back to the queue at the next claim, so none is lost.
+export const CLAIM_STALE_MS = 10 * 60 * 1000;
+const CLAIMED = /^(\d{13})~(wake-\d{13}-[0-9a-f]{12}\.json)$/;
+export const claimedDir = (project) => path.join(queueDir(project), 'claimed');
+
+function restoreStale(project, nowMs) {
+  let names;
+  try {
+    names = fs.readdirSync(claimedDir(project));
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const m = CLAIMED.exec(name);
+    if (m === null || nowMs - Number(m[1]) < CLAIM_STALE_MS) continue;
+    try {
+      fs.renameSync(path.join(claimedDir(project), name), path.join(queueDir(project), m[2]));
+    } catch { /* gone, or a newer wake holds the name */ }
+  }
+}
+
+// Takes every waiting wake, oldest first, for this taker alone: each with its `path` in the claims folder. A wake another
+// taker claimed first is not returned. Finish with dropWakes (handled) or releaseWakes (not handled).
+export function claimWakes(project, { now = () => new Date() } = {}) {
+  restoreStale(project, now().getTime());
+  const out = [];
+  const stamp = String(now().getTime()).padStart(13, '0');
+  for (const wake of takeWakes(project)) {
+    const target = path.join(claimedDir(project), `${stamp}~${path.basename(wake.path)}`);
+    try {
+      fs.mkdirSync(claimedDir(project), { recursive: true });
+      fs.renameSync(wake.path, target);
+    } catch {
+      continue; // another taker's rename won
+    }
+    out.push({ ...wake, path: target });
+  }
+  return out;
+}
+
+// Gives claimed wakes back to the queue. A wake for the same piece that arrived meanwhile is newer, so the released one is dropped.
+export function releaseWakes(project, paths) {
+  const waiting = takeWakes(project);
   for (const p of Array.isArray(paths) ? paths : []) {
-    if (typeof p === 'string' && FILE.test(path.basename(p)) && inside(dir, p)) fs.rmSync(p, { force: true });
+    if (typeof p !== 'string' || !inside(claimedDir(project), p)) continue;
+    const m = CLAIMED.exec(path.basename(p));
+    if (m === null) continue;
+    const wake = readWake(project, p);
+    if (wake === null || waiting.some((w) => sameTarget(w, wake))) {
+      fs.rmSync(p, { force: true });
+      continue;
+    }
+    try {
+      fs.renameSync(p, path.join(queueDir(project), m[2]));
+    } catch { /* gone */ }
+  }
+}
+
+// Removes the named wakes once they are handled, whether still in the queue or claimed. A path outside either folder is ignored.
+export function dropWakes(project, paths) {
+  for (const p of Array.isArray(paths) ? paths : []) {
+    if (typeof p !== 'string') continue;
+    const base = path.basename(p);
+    if ((FILE.test(base) && inside(queueDir(project), p)) || (CLAIMED.test(base) && inside(claimedDir(project), p))) fs.rmSync(p, { force: true });
   }
 }
 

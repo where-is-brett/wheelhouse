@@ -228,3 +228,59 @@ test('a resume on desktop waits while the files that steer agents in its folder 
   await assert.rejects(w.resumeFeature({ work: 'login-page', prompt: 'Carry on.' }), /steer agents/);
   assert.deepEqual(takeWakes(P), []);
 }));
+
+// --- A take by the foreman racing the move back to the background ---
+
+test('the watcher ticks while the foreman holds a claim, and the route has changed: the wake is handled once, never lost', () => withHome(async () => {
+  await project();
+  const { takeWakes: foremanTakes, finishTaken } = await import('../../../scripts/foreman/wait-wake.js');
+  const { w, state } = setUp('desktop');
+  await w.wakeForeman(foremanWake());
+  assert.equal(takeWakes(P).length, 1);
+  // The foreman has claimed the wake when the route changes: its own check runs the watcher's tick in between.
+  const route = async () => {
+    state.route = 'background';
+    state.at = T0 + 1000;
+    await w.pump();
+    assert.equal(state.calls.length, 0, 'the watcher did not run a wake the foreman holds');
+    return { route: 'background' };
+  };
+  const got = await foremanTakes(P, { sessionId: 'aaaaaaaa-1111-2222-3333-444444444444', route, stop: () => ({ on: false }), now: () => new Date(T0) });
+  assert.deepEqual(got.lines, ['route changed'], 'the foreman gave it back');
+  assert.equal(takeWakes(P).length, 1, 'back in the queue');
+  state.at = T0 + 2000;
+  await w.pump();
+  assert.equal(state.calls.length, 1, 'then the watcher ran it, once');
+  assert.deepEqual(takeWakes(P), []);
+  assert.equal(await finishTaken(P), 0, 'nothing is left for the foreman to run');
+}));
+
+test('a wake the foreman took and kept is not run again by the watcher after the route changes', () => withHome(async () => {
+  await project();
+  const { takeWakes: foremanTakes, finishTaken } = await import('../../../scripts/foreman/wait-wake.js');
+  const { w, state } = setUp('desktop');
+  await w.wakeForeman(foremanWake());
+  const got = await foremanTakes(P, { sessionId: 'aaaaaaaa-1111-2222-3333-444444444444', route: () => ({ route: 'desktop' }), stop: () => ({ on: false }), now: () => new Date(T0) });
+  assert.deepEqual(got.lines, ['WAKE foreman - -']);
+  state.route = 'background';
+  state.at = T0 + 1000;
+  await w.pump();
+  await w.pump();
+  assert.equal(state.calls.length, 0, 'the foreman has it');
+  assert.equal(await finishTaken(P), 1);
+  assert.deepEqual(takeWakes(P), []);
+}));
+
+test('the watcher moves a wake first and the foreman then finds none: the wake runs once', () => withHome(async () => {
+  await project();
+  const { takeWakes: foremanTakes } = await import('../../../scripts/foreman/wait-wake.js');
+  const { w, state } = setUp('desktop');
+  await w.wakeForeman(foremanWake());
+  state.route = 'background';
+  state.at = T0 + 1000;
+  await w.pump();
+  assert.equal(state.calls.length, 1);
+  const got = await foremanTakes(P, { sessionId: 'aaaaaaaa-1111-2222-3333-444444444444', route: () => ({ route: 'desktop' }), stop: () => ({ on: false }), now: () => new Date(T0) });
+  assert.deepEqual(got.lines, []);
+  assert.equal(state.calls.length, 1);
+}));

@@ -1134,42 +1134,55 @@ export function makeWaker({
   // time while a start here proves): while one holds, it stays queued.
   const requeueSaid = new Set();
   async function requeueDesktopWakes() {
-    const { dropWakes, takeWakes } = await import('./desktop-queue.js');
-    const wakes = takeWakes(project);
+    const { claimWakes, dropWakes, releaseWakes } = await import('./desktop-queue.js');
+    // Claimed, not just read: the foreman's session may take the same wake in this instant, and a claim is won by one taker.
+    const wakes = claimWakes(project, { now });
     if (wakes.length === 0) return;
     const there = new Set(load().map((e) => e.file));
     const starts = wakes.filter((w) => w.kind === 'feature-start');
     const back = wakes.filter((w) => w.kind !== 'feature-start' && !there.has(w.file));
-    if (back.length > 0) save([...load(), ...back.map((w) => newEntry({ to: w.kind === 'foreman' ? 'foreman' : 'feature', ...(w.work === undefined ? {} : { work: w.work }), file: w.file }))]);
-    dropWakes(project, wakes.filter((w) => w.kind !== 'feature-start').map((w) => w.path));
-    for (const wake of starts) {
-      if (stopped()) return;
-      const { work } = wake;
-      if (helmHeld(project, work)) continue;
-      const worktree = locate(work);
-      if (worktree === null) {
-        dropWakes(project, [wake.path]); // the feature has closed or gone
-        continue;
-      }
-      if (!featureWorktreeOk(project, worktree) || !lstatOf(featurePaths(worktree).brief)?.isFile()) {
+    // Whatever is not handled below goes back to the queue, so no wake is lost.
+    const waiting = new Set(wakes.map((w) => w.path));
+    try {
+      if (back.length > 0) save([...load(), ...back.map((w) => newEntry({ to: w.kind === 'foreman' ? 'foreman' : 'feature', ...(w.work === undefined ? {} : { work: w.work }), file: w.file }))]);
+      const others = wakes.filter((w) => w.kind !== 'feature-start').map((w) => w.path);
+      dropWakes(project, others);
+      for (const o of others) waiting.delete(o);
+      const settled = (wake) => {
+        waiting.delete(wake.path);
         dropWakes(project, [wake.path]);
-        continue;
+      };
+      for (const wake of starts) {
+        if (stopped()) return;
+        const { work } = wake;
+        if (helmHeld(project, work)) continue;
+        const worktree = locate(work);
+        if (worktree === null) {
+          settled(wake); // the feature has closed or gone
+          continue;
+        }
+        if (!featureWorktreeOk(project, worktree) || !lstatOf(featurePaths(worktree).brief)?.isFile()) {
+          settled(wake);
+          continue;
+        }
+        if (await controlHeld(work, worktree, [])) continue;
+        const refused = startRefused(work);
+        if (refused !== null) {
+          gateHeld(refused);
+          continue;
+        }
+        if (proving()) continue;
+        try {
+          await launchFeature(work, worktree, featurePaths(worktree).brief);
+          settled(wake);
+        } catch (error) {
+          const why = `The ${work} session couldn't be started on the background: ${error instanceof Error ? error.message : 'unknown error'}`;
+          if (!requeueSaid.has(why)) onError(why);
+          requeueSaid.add(why);
+        }
       }
-      if (await controlHeld(work, worktree, [])) continue;
-      const refused = startRefused(work);
-      if (refused !== null) {
-        gateHeld(refused);
-        continue;
-      }
-      if (proving()) continue;
-      try {
-        await launchFeature(work, worktree, featurePaths(worktree).brief);
-        dropWakes(project, [wake.path]);
-      } catch (error) {
-        const why = `The ${work} session couldn't be started on the background: ${error instanceof Error ? error.message : 'unknown error'}`;
-        if (!requeueSaid.has(why)) onError(why);
-        requeueSaid.add(why);
-      }
+    } finally {
+      releaseWakes(project, [...waiting]);
     }
   }
   // What the gate last held back, said once until it changes.
