@@ -13,6 +13,7 @@ import claudeSessions, { sessionEnv } from '../../adapters/claude-code/sessions.
 import { classify, commandName, readSignIn } from '../lib/sign-in-line.js';
 import { SAID, clearSignInFact } from '../lib/sign-in-gate.js';
 import { stopState } from '../lib/stop.js';
+import { FOREMAN_SETUP_MS, checkInAge } from '../foreman/check-in.js';
 
 export const CHECK_PROMPT = 'Reply with the word ready.';
 export const CHECK_WAIT_MS = 90 * 1000;
@@ -35,19 +36,27 @@ export function checkLine(kind, program) {
   return `A builder started as \`${commandName(program)}\` couldn't sign in: it said ${SAID[kind] ?? SAID.other}.`;
 }
 
+// What a failed Desktop check says: the foreman is what proves this route.
+export const DESKTOP_LINE = "The foreman hasn't checked in";
+export const DESKTOP_TODO = 'Start the foreman from the card in Claude Desktop, then check again';
+
 const fail = (kind, program) => ({ ok: false, kind, line: checkLine(kind, program) });
 
 // builderSignInCheck({ home, agent, route, launch, run?, timeoutMs }) -> { ok: true } | { ok: false, kind, line }.
 // `launch` is the words of the launch command saved for this computer, or null. `home` is Wheelhouse's home, which this
 // check doesn't write to; clearing is recheckRoute's. `run`, `env` and `platform` are for tests.
 export async function builderSignInCheck({
-  home, agent = 'claude-code', route = 'background', launch = null, run = realRun, timeoutMs = CHECK_WAIT_MS,
+  home, agent = 'claude-code', route = 'background', launch = null, run = realRun, timeoutMs = CHECK_WAIT_MS, project, now = () => new Date(), checkInAge: foremanAge = checkInAge,
   env = process.env, platform = process.platform, adapter = claudeSessions, resolve = resolveClaude,
 } = {}) {
   void home;
   void agent;
-  // The Desktop route is checked by the foreman's check-in (part 6), which isn't built yet.
-  if (route === 'desktop') return { ok: false, kind: 'other', line: 'not built yet' };
+  // The Desktop route is proved by the foreman's check-in: its Desktop session is signed in as Desktop is, and a check-in under
+  // 2 minutes old shows it is running (no probe builder is started on this route).
+  if (route === 'desktop') {
+    const age = typeof project === 'string' ? foremanAge(project, { now }) : null;
+    return age !== null && age < FOREMAN_SETUP_MS ? { ok: true } : { ok: false, kind: 'other', line: DESKTOP_LINE, todo: DESKTOP_TODO };
+  }
   let program = launch?.[0] ?? 'claude';
   let call;
   try {

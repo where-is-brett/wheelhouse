@@ -10,7 +10,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { main, approveWorkInput, readInput, SEAT_WRITES, SEAT_REFUSAL, NO_SEAT_REFUSAL, seatRefusal, SESSION_NEEDED, RECORD_KINDS, needsApproval, MEANWHILE, CHECKS_UNSAID, RECENT_MS, RECENT_LEAD } from '../../../scripts/frontdesk/cli.js';
+import { main, foremanBrief, foremanCard, approveWorkInput, readInput, SEAT_WRITES, SEAT_REFUSAL, NO_SEAT_REFUSAL, seatRefusal, SESSION_NEEDED, RECORD_KINDS, needsApproval, MEANWHILE, CHECKS_UNSAID, RECENT_MS, RECENT_LEAD } from '../../../scripts/frontdesk/cli.js';
 import { cardsDue } from '../../../scripts/hooks/waiting-lines.js';
 import { numberedWaiting } from '../../../scripts/board/model.js';
 import { composeCard, whatProblem } from '../../../scripts/cards/compose.js';
@@ -36,6 +36,7 @@ import { setStop, stopState } from '../../../scripts/lib/stop.js';
 import { decide as cardCheck, cardProblems } from '../../../scripts/hooks/card-check.js';
 import { decide as promptRecord } from '../../../scripts/hooks/prompt-record.js';
 import { answerInput } from '../../../scripts/cards/compose.js';
+import { START_FOREMAN, LEAVE_IT } from '../../../scripts/foreman/foreman-card.js';
 import { controlFilesNamed } from '../../../scripts/cards/build-loop.js';
 import { plainWords, glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 import { boardModel } from '../../../scripts/board/model.js';
@@ -2907,7 +2908,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['frobnicate', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, show, undo, move, carry-on, archive, restore, premium-card, premium-check, note, decision, pull-back, alerts, page, helm\n$/);
+    assert.match(unknown.err, /^Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, show, undo, move, carry-on, archive, restore, premium-card, premium-check, foreman-card, foreman-brief, note, decision, pull-back, alerts, page, helm\n$/);
     const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -2974,7 +2975,7 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, show, undo, move, carry-on, archive, restore, premium-card, premium-check, note, decision, pull-back, alerts, page, helm\n');
+  assert.equal(done.stderr, 'Commands: cards, pull-cards, card, again, why, suggest, drop, ask-bosun, record, similar, views, explain, preview, show, undo, move, carry-on, archive, restore, premium-card, premium-check, foreman-card, foreman-brief, note, decision, pull-back, alerts, page, helm\n');
   assert.equal(done.stdout, '');
 });
 
@@ -3615,4 +3616,40 @@ test('an approval card asks "Approve this design?" for a feature, says "you shap
   assert.match(small.options[0].says, /Building waits for your approval\.$/);
   assert.equal(composeCard(feature).question.question.split('\n')[0].includes('Approve this design?'), true);
   assert.equal(composeCard(small).question.question.includes('Approve this work as written?'), true);
+});
+
+test('foreman-card records the "Start the foreman" card once, and says plainly when the foreman runs or may not start', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const base = { client: helper.client, cwd: CWD, project: 'o__p', route: 'desktop', age: null, stop: () => ({ on: false }), now: () => NOW };
+    const got = await foremanCard(base);
+    const recorded = helper.writes().filter((w) => w.kind === 'card');
+    assert.equal(recorded.length, 1);
+    assert.equal(got.id, helper.held.find((e) => e.kind === 'card').id);
+    assert.deepEqual(recorded[0].data.options, [START_FOREMAN, LEAVE_IT]);
+    assert.match(got.question.question, /Start the foreman\?/);
+    assert.match(got.question.options[0].description, /^Recommended: /);
+    assert.ok(!/session id|prompt|start_session|user_asked/i.test(JSON.stringify(got.question)), 'the card reads plainly');
+    // Asked again while it waits, the same card comes back and nothing more is written.
+    const again = await foremanCard(base);
+    assert.equal(again.id, got.id);
+    assert.equal(helper.writes().filter((w) => w.kind === 'card').length, 1);
+    // A fresh check-in: no card, the plain sentence instead.
+    assert.equal(await foremanCard({ ...base, age: 60 * 1000 }), 'The foreman is running already for o__p: nothing to start.');
+    await assert.rejects(foremanCard({ ...base, route: 'background' }), /do not start in Claude Desktop/);
+    await assert.rejects(foremanCard({ ...base, stop: () => ({ on: true }) }), /All stop is on/);
+    assert.equal(helper.writes().filter((w) => w.kind === 'card').length, 1);
+  });
+});
+
+test('foreman-brief gives the one line to start the Desktop foreman with, and refuses or says plainly when it should not start', async () => {
+  const brief = async (p) => ({ title: `Wheelhouse · Foreman · ${p}`, initiation: 'user_asked' });
+  const base = { project: 'o__p', route: 'desktop', age: null, stop: () => ({ on: false }), brief };
+  assert.deepEqual(JSON.parse(await foremanBrief(base)), { title: 'Wheelhouse · Foreman · o__p', initiation: 'user_asked' });
+  assert.equal(await foremanBrief({ ...base, age: 60 * 1000 }), 'The foreman is running already for o__p: nothing to start.');
+  assert.ok(JSON.parse(await foremanBrief({ ...base, age: 3 * 60 * 1000 })).title, 'a check-in 3 minutes old gives way');
+  await assert.rejects(foremanBrief({ ...base, route: 'background' }), /do not start in Claude Desktop/);
+  await assert.rejects(foremanBrief({ ...base, route: null }), /do not start in Claude Desktop/);
+  await assert.rejects(foremanBrief({ ...base, stop: () => ({ on: true }) }), /All stop is on/);
+  await assert.rejects(foremanBrief({ ...base, project: undefined, cwd: '/nowhere/at/all' }), /not a Wheelhouse project/);
 });

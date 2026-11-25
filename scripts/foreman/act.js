@@ -173,7 +173,10 @@ import {
 import { confirmLine, replyCode, replyCodeLine, unattendedBuildsLine } from '../state/card-lines.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { recordHandled } from '../watcher/handled.js';
-import { recordedBriefs } from '../watcher/sources.js';
+import { inWorktreesFolder, plainWorktreePath, recordedBriefs } from '../watcher/sources.js';
+import { dropPending, keepPending, readBuilder, readPending } from './desktop-builders.js';
+import { desktopFindings } from './desktop-findings.js';
+import { builderStart } from './desktop-start.js';
 import { writeBaseline } from '../watcher/control-files.js';
 import { makeWaker, pidAlive, sessionFile, watcherDir, writeJsonFile, writeWake } from '../watcher/waker.js';
 import { helmHeld } from '../crew/hold.js';
@@ -273,11 +276,11 @@ function optionsOf(found, recommendation) {
 
 // --- Where things stand, and writing to state ---
 
-function context({ project, client, now, run, wakerFor, pluginRoot, makeId, out, platform, isLocked, foremanPass }) {
+function context({ project, client, now, run, wakerFor, pluginRoot, makeId, out, platform, isLocked, foremanPass, route, findings }) {
   let views = null;
   let config = null;
   const ctx = {
-    project, client, now, run, pluginRoot, platform, isLocked,
+    project, client, now, run, pluginRoot, platform, isLocked, route, findings,
     say: (line) => out(`${line}\n`),
     async views() {
       views ??= (await loadViews(project, client)).views;
@@ -607,7 +610,8 @@ async function startSession(ctx, work, worktree, config) {
 }
 
 async function start(ctx, work, rest) {
-  const found = flagsOf(rest, ['goal', 'done', 'appetite-sessions', 'appetite-tokens', 'ruling', 'plan', 'slices'], 'start');
+  const found = flagsOf(rest, ['goal', 'done', 'appetite-sessions', 'appetite-tokens', 'ruling', 'plan', 'slices', 'foreman-session'], 'start');
+  const desktop = (await ctx.route()) === 'desktop';
   const views = await ctx.views();
   const entry = views.work[work];
   if (!isPlain(entry?.work?.data)) refuse(`There is no work named ${work} in state`);
@@ -624,10 +628,17 @@ async function start(ctx, work, rest) {
     if (existing.step === 'started' && lstatOf(sessionFile(ctx.project, work)) === null) {
       const worktree = worktreeOf(ctx.project, views, work);
       ctx.say(`${work} was started already, but its session had not begun.`);
-      await startSession(ctx, work, worktree, config);
+      if (desktop) await offer(ctx, work, { views, found, text: await recordedText(ctx, work, worktree), worktree });
+      else await startSession(ctx, work, worktree, config);
       return;
     }
     ctx.say(`${work} was started already (it is at ${existing.step}).`);
+    return;
+  }
+  // On the Desktop route with no `cwd` on an offer, the record waits for the builder's own worktree: an offer made and not
+  // taken up is not made twice.
+  if (desktop && !ctx.findings.cwdOnOffer && readBuilder(ctx.project, work) === null && readPending(ctx.project, work, { now: ctx.now, fresh: true }) !== null) {
+    ctx.say(`${work} was offered already: the foreman starts nothing more until the builder has started or the offer is 30 minutes old.`);
     return;
   }
 
@@ -682,6 +693,12 @@ async function start(ctx, work, rest) {
     held = why;
   }
 
+  if (desktop && !ctx.findings.cwdOnOffer) {
+    keepPending(ctx.project, work, { text, hash: briefHash(text), ...(approved ? { approved: { text: approved.text, hash: approved.hash } } : {}), held, now: ctx.now });
+    await offer(ctx, work, { views, found, text });
+    if (held !== null) ctx.say(`It is held (${whyText(held)}), so its session plans and then waits.`);
+    return;
+  }
   const checkout = checkoutOf(ctx.project);
   const worktree = path.join(checkout, '.claude', 'worktrees', work);
   const branch = `feature/${work}`;
@@ -709,7 +726,67 @@ async function start(ctx, work, rest) {
   await ctx.write('feature', { work, step: 'started', worktree, branch, brief: hash, ...(slices ? { slice: { n: 1, m: slices } } : {}) });
   ctx.say(`Wrote the brief (version 1, ${short(hash)}) and recorded ${work} as started.`);
   if (held !== null) ctx.say(`It is held (${whyText(held)}), so its session plans and then waits.`);
-  await startSession(ctx, work, worktree, config);
+  if (desktop) await offer(ctx, work, { views, found, text, worktree });
+  else await startSession(ctx, work, worktree, config);
+}
+
+// The brief the piece's worktree holds, read back for an offer made again.
+async function recordedText(ctx, work, worktree) {
+  const text = readCapped(featurePaths(worktree).brief, BRIEF_BYTES);
+  if (typeof text !== 'string') refuse(`${work}'s brief can't be read`);
+  return text;
+}
+
+// The Desktop route: nothing is started here. The foreman is given the one line to start the builder with: its title and
+// prompt, built from the record (never from a wake file), and the set `start_session` options (scripts/foreman/desktop-start.js).
+async function offer(ctx, work, { views, found, text, worktree }) {
+  const given = single(found, 'foreman-session');
+  if (given !== undefined && !/^[A-Za-z0-9-]{8,64}$/.test(given)) refuse('--foreman-session is the foreman\'s own session id');
+  const start = builderStart({
+    project: ctx.project, work, title: views.work[work]?.work?.data?.title, brief: text, findings: ctx.findings, foremanSessionId: given, worktree,
+  });
+  ctx.say(`Desktop offer: ${JSON.stringify(start)}`);
+}
+
+// --- builder-started ---
+
+// The builder Desktop started has adopted its worktree (its own hook recorded the session, folder and branch from the marker
+// line of its first prompt): the piece is recorded as started there, its brief is written into it, and its session is kept so
+// a wake finds it.
+async function builderStarted(ctx, work, rest) {
+  flagsOf(rest, [], 'builder-started');
+  const views = await ctx.views();
+  if (!isPlain(views.work[work]?.work?.data)) refuse(`There is no work named ${work} in state`);
+  const existing = featureOf(views, work);
+  if (existing !== null && existing.step !== 'closed' && typeof existing.worktree === 'string' && typeof existing.session === 'string') {
+    ctx.say(`${work} was recorded as started already.`);
+    return;
+  }
+  const record = readBuilder(ctx.project, work);
+  if (record === null) refuse(`No builder has started for ${work} yet: its session records its worktree at its first prompt`);
+  const checkout = checkoutOf(ctx.project);
+  const worktree = record.worktree;
+  if (!plainWorktreePath(worktree) || !inWorktreesFolder(checkout, worktree) || !lstatOf(worktree)?.isDirectory()) {
+    refuse(`The ${work} builder's worktree isn't inside the project's .claude/worktrees folder, which Wheelhouse's records and guards need`);
+  }
+  const pending = readPending(ctx.project, work);
+  if (pending === null) refuse(`${work} has no offer waiting: start it with act start first`);
+  try {
+    ensureIgnored(worktree, { mainCheckout: checkout });
+  } catch (error) {
+    refuse(oneLine(error.message, 200));
+  }
+  realFolders(worktree, ['.wheelhouse', 'feature']);
+  if (!safeFeatureFolder(worktree)) refuse("The worktree's feature folder isn't a real folder inside it");
+  if (pending.approved) placeApproved(worktree, pending.approved.text);
+  writeWhole(featurePaths(worktree).brief, pending.text);
+  const hash = briefHash(pending.text);
+  if (hash !== pending.hash) refuse(`${work}'s kept brief doesn't match its hash, so nothing was recorded`);
+  await ctx.write('feature', { work, step: 'started', worktree, branch: record.branch, session: record.sessionId, brief: hash });
+  fs.mkdirSync(path.dirname(sessionFile(ctx.project, work)), { recursive: true });
+  writeJsonFile(sessionFile(ctx.project, work), { sessionId: record.sessionId, worktree, at: ctx.now().toISOString() });
+  dropPending(ctx.project, work);
+  ctx.say(`Recorded ${work} as started in ${worktree} on ${record.branch}, and wrote its brief there.`);
 }
 
 // --- plan-ready, build, pause, resume ---
@@ -1846,8 +1923,14 @@ async function restart(ctx, work, rest) {
 
 // --- The command line ---
 
+// How builders start on this computer now: 'desktop', 'background' or null (none chosen, which starts in the background).
+async function routeHere() {
+  const { builderRoute } = await import('../lib/route.js');
+  return builderRoute({ home: wheelhouseHome() }).route;
+}
+
 const COMMANDS = {
-  start, 'plan-ready': planReady, build, pause, resume, question, 'extra-plan': extraPlan, 'stuck-note': stuckNote, ask, amend, restore, reapprove, merge, close, restart,
+  start, 'builder-started': builderStarted, 'plan-ready': planReady, build, pause, resume, question, 'extra-plan': extraPlan, 'stuck-note': stuckNote, ask, amend, restore, reapprove, merge, close, restart,
 };
 const USAGE = `Commands: ${Object.keys(COMMANDS).join(', ')}, each followed by the work id`;
 
@@ -1865,6 +1948,7 @@ export async function main(argv, {
   cwd = process.cwd(), project: given, client = helperClient(), now = () => new Date(), run = runProgram,
   wakerFor, pluginRoot = PLUGIN_ROOT, makeId = () => crypto.randomUUID(), platform = process.platform, isLocked = lockedByPath,
   out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t), foremanPass = takeForemanPass(),
+  route = routeHere, findings = desktopFindings(),
 } = {}) {
   try {
     const [command, work, ...rest] = argv;
@@ -1876,7 +1960,7 @@ export async function main(argv, {
     if (typeof work !== 'string' || !SLUG.test(work)) refuse('Give the work id: lower-case letters, digits and hyphens, at most 40');
     const project = given ?? projectHere(cwd);
     const waker = wakerFor ?? ((cfg, print) => makeWaker({ shape: 1, project, config: cfg, print }));
-    const ctx = context({ project, client, now, run, wakerFor: waker, pluginRoot, makeId, out, platform, isLocked, foremanPass });
+    const ctx = context({ project, client, now, run, wakerFor: waker, pluginRoot, makeId, out, platform, isLocked, foremanPass, route, findings });
     await COMMANDS[command](ctx, work, rest);
     return 0;
   } catch (error) {

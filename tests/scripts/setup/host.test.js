@@ -4470,13 +4470,22 @@ test('the answer is saved at apply as this computer\'s route, through the helper
     // A retry with the same answer, now waiting for its Confirm, writes nothing more.
     await applyStep(step, folder, planned.changes, { answers: planned.answers });
     assert.equal(profile.writes.filter((x) => x.data.key === BUILDER_KEY()).length, 1);
-    // The launch command answer saves the background route; the command itself is asked for by the First Mate.
+    // The launch command answer saves the background route, and the command typed on the card that follows is saved beside it.
     const launch = memoryProfile();
     const other = stepFor(standIn(), { views: () => null, profileRoutes: launch });
     const folder2 = productFolder('Cafe');
-    const answered = await answerAll(other, ctxFor(folder2, { entrypoint: 'terminal' }), (id, card) => (id === 'builders' ? 'In the background with a launch command' : choose()(id, card)));
+    const answered = await answerJoin(other, ctxFor(folder2, { entrypoint: 'terminal' }), (id, card) => {
+      if (id === 'builders') return 'In the background with a launch command';
+      if (id === 'builder-launch') return 'node wrapper';
+      return choose()(id, card);
+    });
+    assert.equal(answered.asked.at(-1).id, 'builder-launch');
+    assert.equal(answered.asked.at(-1).typed, true);
     await applyStep(other, folder2, answered.changes, { answers: answered.answers });
     assert.deepEqual(launch.writes.filter((x) => x.data.key === BUILDER_KEY()).map((x) => x.data.value), ['background']);
+    const words = launch.writes.filter((x) => x.data.key === `builderLaunch:${computerId()}`);
+    assert.deepEqual(words.map((x) => x.data.value), [['node', 'wrapper']]);
+    assert.equal(typeof words[0].data.words, 'string');
   });
 });
 

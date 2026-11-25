@@ -1264,6 +1264,19 @@ test('the Builders check is a counted line: a pass is Passed, a failure keeps th
   });
 });
 
+test('a Desktop route with no foreman check-in fails the builders line with its own next step, not the terminal sign-in one', async () => {
+  await withProject(async ({ folder }) => {
+    const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
+    const got = await healthCheck({
+      folder, run, reported: GREEN_LINES, load: OK_BOARD,
+      builders: async () => ({ ok: false, kind: 'other', line: "The foreman hasn't checked in", todo: 'Start the foreman from the card in Claude Desktop, then check again' }),
+    });
+    assert.equal(got.green, false);
+    assert.ok(got.lines.includes("Failed: The foreman hasn't checked in. Start the foreman from the card in Claude Desktop, then check again."), got.lines.join('\n'));
+    assert.equal(got.lines.some((l) => /claude \/login/.test(l)), false);
+  });
+});
+
 test('"All checks passed" counts only the checks that ran and names the one that did not', async () => {
   await withProject(async ({ folder }) => {
     const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));

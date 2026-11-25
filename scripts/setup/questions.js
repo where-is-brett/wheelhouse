@@ -282,7 +282,7 @@ function phoneAsk(name, { terminal }) {
 }
 
 // Where builders start: step 3's advanced question, kept in its own module so step 3 can ask it.
-export { BUILDER_CHOICES, entrypointKind, builderRouteAsk, builderRouteSetting } from './builders-ask.js';
+export { BUILDER_CHOICES, entrypointKind, builderRouteAsk, builderRouteSetting, builderLaunchSetting, launchWords } from './builders-ask.js';
 
 export function questionsStep() {
   return {

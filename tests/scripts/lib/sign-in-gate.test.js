@@ -159,3 +159,14 @@ test('the sign-in card says what happened, why it comes to the director, three o
   assert.equal(card.descriptions[2].startsWith('Recommended: '), true);
   assert.equal(card.line, null);
 });
+
+test('the Builders line on Desktop ends "foreman running" while the foreman\'s check-in is under 3 minutes old, and says nothing of it otherwise', () => {
+  const h = home();
+  assert.equal(buildersLine({ home: h, route: 'desktop' }), 'Builders: Claude Desktop');
+  assert.equal(buildersLine({ home: h, route: 'desktop', foremanAge: null }), 'Builders: Claude Desktop');
+  assert.equal(buildersLine({ home: h, route: 'desktop', foremanAge: 0 }), 'Builders: Claude Desktop · foreman running');
+  assert.equal(buildersLine({ home: h, route: 'desktop', foremanAge: 3 * 60 * 1000 }), 'Builders: Claude Desktop · foreman running');
+  assert.equal(buildersLine({ home: h, route: 'desktop', foremanAge: 3 * 60 * 1000 + 1 }), 'Builders: Claude Desktop');
+  assert.equal(buildersLine({ home: h, route: 'background', foremanAge: 0 }), 'Builders: background as `claude`');
+  assert.deepEqual(buildersHealth({ home: h, route: 'desktop', foremanAge: 1000 }), { level: 'ok', text: 'Builders: Claude Desktop · foreman running' });
+});

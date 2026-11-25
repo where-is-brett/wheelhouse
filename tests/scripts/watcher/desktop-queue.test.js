@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { dropWakes, oldestWaiting, queueDir, queueWake, takeWakes } from '../../../scripts/watcher/desktop-queue.js';
+import { claimWakes, dropWakes, oldestWaiting, queueDir, queueWake, releaseWakes, takeWakes } from '../../../scripts/watcher/desktop-queue.js';
 import { watcherDir, writeWake } from '../../../scripts/watcher/waker.js';
 import { withHome } from '../../helpers/homes.js';
 import { P, T0, project } from '../../helpers/foreman.js';
@@ -90,4 +90,47 @@ test('a queue file is read only as a whole wake this module could have written: 
   }
   if (made) assert.throws(() => queueWake(P, { kind: 'feature-wake', work: 'alpha', file: linked }), /wakes folder/);
   assert.deepEqual(takeWakes(P).map((w) => w.path), [good]);
+}));
+
+test('a claimed wake leaves the queue for exactly one claimer, and a second claim finds nothing', () => withHome(async () => {
+  await project();
+  queueWake(P, { kind: 'feature-wake', work: 'alpha', file: bundle('alpha'), now: at(0) });
+  queueWake(P, { kind: 'foreman', file: bundle(), now: at(1) });
+  const first = claimWakes(P, { now: at(2) });
+  const second = claimWakes(P, { now: at(2) });
+  assert.deepEqual(first.map((w) => `${w.kind}:${w.work ?? ''}`), ['feature-wake:alpha', 'foreman:']);
+  assert.deepEqual(second, []);
+  assert.deepEqual(takeWakes(P), []);
+  assert.equal(oldestWaiting(P), null);
+}));
+
+test('a released wake is back in the queue; a dropped one is gone; a path outside the claims is ignored', () => withHome(async () => {
+  await project();
+  queueWake(P, { kind: 'feature-wake', work: 'alpha', file: bundle('alpha'), now: at(0) });
+  queueWake(P, { kind: 'feature-wake', work: 'beta', file: bundle('beta'), now: at(1) });
+  const [a, b] = claimWakes(P, { now: at(2) });
+  releaseWakes(P, [a.path, '/etc/passwd']);
+  dropWakes(P, [b.path]);
+  assert.deepEqual(takeWakes(P).map((w) => w.work), ['alpha']);
+  assert.deepEqual(claimWakes(P, { now: at(3) }).map((w) => w.work), ['alpha']);
+}));
+
+test('a release that finds a newer wake for the same piece in the queue drops the older one', () => withHome(async () => {
+  await project();
+  queueWake(P, { kind: 'feature-wake', work: 'alpha', file: bundle('alpha'), now: at(0) });
+  const [old] = claimWakes(P, { now: at(1) });
+  queueWake(P, { kind: 'feature-wake', work: 'alpha', file: bundle('alpha'), now: at(2) });
+  releaseWakes(P, [old.path]);
+  assert.equal(takeWakes(P).length, 1);
+  assert.equal(takeWakes(P)[0].at, new Date(T0 + 2000).toISOString());
+}));
+
+test('a claim left more than 10 minutes by a taker that never finished goes back to the queue at the next claim', () => withHome(async () => {
+  await project();
+  queueWake(P, { kind: 'feature-wake', work: 'alpha', file: bundle('alpha'), now: at(0) });
+  const [mine] = claimWakes(P, { now: at(1) });
+  assert.deepEqual(claimWakes(P, { now: at(60) }), []);
+  assert.equal(fs.existsSync(mine.path), true);
+  const later = claimWakes(P, { now: at(60 * 11) });
+  assert.deepEqual(later.map((w) => w.work), ['alpha']);
 }));
