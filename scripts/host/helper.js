@@ -2465,7 +2465,14 @@ export async function startHelper({
     let holds = holdsSeat(project, session);
     if (holds) refreshSeat(project, session);
     else if (await takeFree({ project, session, cwd }, ctx)) holds = true;
-    return { ok: true, holds };
+    if (holds) return { ok: true, holds };
+    // Whether another live window holds the seat (the take-over card is then offered), or none does, as when the lock couldn't be taken.
+    let elsewhere = false;
+    try {
+      const seat = readSeat(project);
+      elsewhere = Boolean(seat) && seat.session !== session && !(await seatFree(seat));
+    } catch { /* taken as none */ }
+    return { ok: true, holds, elsewhere };
   }
 
   // A session that doesn't hold the seat takes it when it is absent or free, only if it is in the project's main folder, has not

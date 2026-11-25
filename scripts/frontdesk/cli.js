@@ -151,6 +151,8 @@ export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossa
 // The commands that write a record, hand out a card or change the board: only the window that holds the First Mate's seat runs them.
 export { SEAT_WRITES };
 export const SEAT_REFUSAL = 'The First Mate is in another window, so this window can look things up but not record anything or hand out cards. The director can move the First Mate here with the take-over card in this window.';
+// Where no window holds the seat (the lock couldn't be taken, say), there is no card to offer: the seat is taken at a later start.
+export const NO_SEAT_REFUSAL = 'This window doesn\'t hold the First Mate\'s seat yet, so it can look things up but not record anything or hand out cards. No other window holds it; a later session start in this window tries again.';
 
 // The refusal for a seat write from a window that doesn't hold the seat; null when the command may run. A script or test
 // (no session id) and a folder in no project are never refused. The seat is read through the host helper, since this
@@ -167,7 +169,8 @@ export async function seatRefusal({ command, rest = [], env, cwd, client, sessio
   if (typeof session !== 'string' || session === '') return null;
   let got;
   try { got = await client.session.seat({ cwd, session }); } catch { return null; }
-  return got?.ok === true && got.holds === false ? SEAT_REFUSAL : null;
+  if (got?.ok !== true || got.holds !== false) return null;
+  return got.elsewhere === false ? NO_SEAT_REFUSAL : SEAT_REFUSAL;
 }
 
 // `--session <id>` (or `--session=<id>`) taken out of the arguments: { argv, session }. The id is the chat's own, which an

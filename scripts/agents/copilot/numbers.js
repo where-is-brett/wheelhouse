@@ -5,6 +5,10 @@
 export const GUARD_TIMEOUT_SEC = 120;
 // Every guard answers within this, or refuses.
 export const GUARD_DEADLINE_MS = 30000;
+// What a session start has for the helper's work (the lock, the views, the seat), kept under the deadline above and far under
+// the hook's registered limit. The hook's own default is Claude Code's eight seconds, which a lock kept through git on a slow
+// computer (a touch and a take, each a fetch and a push) can use up before the take is answered.
+export const SESSION_START_MS = 20000;
 // The prompt hook only informs, and the model waits on it before every prompt: past this it adds nothing and the prompt goes on.
 export const PROMPT_DEADLINE_MS = 10000;
 // The three tiers a project can run at.

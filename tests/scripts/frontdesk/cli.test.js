@@ -10,7 +10,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { main, approveWorkInput, readInput, SEAT_WRITES, SEAT_REFUSAL, seatRefusal, SESSION_NEEDED, RECORD_KINDS, needsApproval, MEANWHILE, CHECKS_UNSAID, RECENT_MS, RECENT_LEAD } from '../../../scripts/frontdesk/cli.js';
+import { main, approveWorkInput, readInput, SEAT_WRITES, SEAT_REFUSAL, NO_SEAT_REFUSAL, seatRefusal, SESSION_NEEDED, RECORD_KINDS, needsApproval, MEANWHILE, CHECKS_UNSAID, RECENT_MS, RECENT_LEAD } from '../../../scripts/frontdesk/cli.js';
 import { cardsDue } from '../../../scripts/hooks/waiting-lines.js';
 import { numberedWaiting } from '../../../scripts/board/model.js';
 import { composeCard, whatProblem } from '../../../scripts/cards/compose.js';
@@ -3322,6 +3322,16 @@ test('a helper that can\'t answer about the seat refuses nothing', async () => {
   assert.equal(await seatRefusal({ command: 'cards', env, cwd: CWD, client: failing }), null);
   const unsure = { session: { seat: async () => ({ ok: true }) } };
   assert.equal(await seatRefusal({ command: 'cards', env, cwd: CWD, client: unsure }), null);
+});
+
+test('the take-over card is named only where another window holds the seat', async () => {
+  const env = { CLAUDE_CODE_SESSION_ID: 'a' };
+  const said = (answer) => seatRefusal({ command: 'cards', env, cwd: CWD, client: { session: { seat: async () => answer } } });
+  assert.equal(await said({ ok: true, holds: false, elsewhere: true }), SEAT_REFUSAL);
+  assert.equal(await said({ ok: true, holds: false }), SEAT_REFUSAL);
+  const none = await said({ ok: true, holds: false, elsewhere: false });
+  assert.equal(none, NO_SEAT_REFUSAL);
+  assert.doesNotMatch(none, /take-over card/);
 });
 
 test('seatRefusal leaves commands outside the list alone', async () => {
