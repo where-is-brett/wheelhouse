@@ -1632,13 +1632,15 @@ export async function foremanCard({ client, cwd, now, session, project, route, a
   const { FOREMAN_TOPIC, foremanCardInput } = await import('../foreman/foreman-card.js');
   // A question card has no set line, so the card waiting already is found by its topic: it comes back, never a second one.
   const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
-  const { views, paneLive: panel } = await viewsOf(client, cwd, { since: new Date(at.getTime() - RECENT_MS), session });
+  const { views, cards: events, paneLive: panel } = await viewsOf(client, cwd, { since: new Date(at.getTime() - RECENT_MS), session, cards: true });
   const waiting = (Array.isArray(views.waiting) ? views.waiting : []).find((c) => c.data?.kind === 'question' && c.data?.topic === FOREMAN_TOPIC);
   if (waiting !== undefined) {
     if (waiting.asked !== null && waiting.asked !== undefined) return { question: asQuestion(waiting), id: waiting.id, alreadyAsked: true };
     return { question: asQuestion(waiting), id: waiting.id, ...withProblems(await handOut(client, cwd, [{ id: waiting.id, question: waiting.data.question }], { stop: false, panel })) };
   }
-  return card({ client, cwd, input: foremanCardInput(), now, session });
+  // Each offer has its own words (see foremanCardInput), so one that was offered before is counted from the record.
+  const asked = events.filter((e) => e.kind === 'card' && e.data?.kind === 'question' && e.data?.topic === FOREMAN_TOPIC).length;
+  return card({ client, cwd, input: foremanCardInput({ asked }), now, session });
 }
 
 // The Desktop foreman's start (builders and settings design, section 7.1): after the director's click on "Start the foreman
