@@ -107,12 +107,15 @@ export function takeWakes(project) {
 // --- Claims ---
 // Two takers can meet at one wake: the foreman's session, and the watcher moving a route back to the background. A claim moves
 // the file out of the queue by a rename, which only one taker wins, so a wake is handled once. A claim not finished or released
-// within CLAIM_STALE_MS (its taker ended) goes back to the queue at the next claim, so none is lost.
+// within CLAIM_STALE_MS (its taker ended) goes back to the queue at the next claim, or while the foreman waits, so none is lost.
 export const CLAIM_STALE_MS = 10 * 60 * 1000;
 const CLAIMED = /^(\d{13})~(wake-\d{13}-[0-9a-f]{12}\.json)$/;
 export const claimedDir = (project) => path.join(queueDir(project), 'claimed');
 
-function restoreStale(project, nowMs) {
+// Gives claims older than CLAIM_STALE_MS back to the queue, apart from those named in `keep`: wakes the taker is still handling.
+export function restoreStale(project, { now = () => new Date(), keep = [] } = {}) {
+  const nowMs = now().getTime();
+  const kept = new Set((Array.isArray(keep) ? keep : []).filter((p) => typeof p === 'string').map((p) => path.basename(p)));
   let names;
   try {
     names = fs.readdirSync(claimedDir(project));
@@ -121,7 +124,7 @@ function restoreStale(project, nowMs) {
   }
   for (const name of names) {
     const m = CLAIMED.exec(name);
-    if (m === null || nowMs - Number(m[1]) < CLAIM_STALE_MS) continue;
+    if (m === null || kept.has(name) || nowMs - Number(m[1]) < CLAIM_STALE_MS) continue;
     try {
       fs.renameSync(path.join(claimedDir(project), name), path.join(queueDir(project), m[2]));
     } catch { /* gone, or a newer wake holds the name */ }
@@ -129,9 +132,10 @@ function restoreStale(project, nowMs) {
 }
 
 // Takes every waiting wake, oldest first, for this taker alone: each with its `path` in the claims folder. A wake another
-// taker claimed first is not returned. Finish with dropWakes (handled) or releaseWakes (not handled).
-export function claimWakes(project, { now = () => new Date() } = {}) {
-  restoreStale(project, now().getTime());
+// taker claimed first is not returned. Finish with dropWakes (handled) or releaseWakes (not handled). `keep` names this taker's
+// own claims still being handled, which are not given back however old.
+export function claimWakes(project, { now = () => new Date(), keep = [] } = {}) {
+  restoreStale(project, { now, keep });
   const out = [];
   const stamp = String(now().getTime()).padStart(13, '0');
   for (const wake of takeWakes(project)) {

@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { waitForWake, takeWakes as takeForForeman, finishTaken, main, WAIT_MAX_MS, HEARTBEAT_MS } from '../../../scripts/foreman/wait-wake.js';
 import { checkInAge, checkIn } from '../../../scripts/foreman/check-in.js';
-import { queueWake, takeWakes } from '../../../scripts/watcher/desktop-queue.js';
+import { claimedDir, queueWake, takeWakes } from '../../../scripts/watcher/desktop-queue.js';
 import { writeWake } from '../../../scripts/watcher/waker.js';
 import { holdFile } from '../../../scripts/crew/hold.js';
 import { withHome } from '../../helpers/homes.js';
@@ -170,4 +170,32 @@ test('a wake that can\'t be delivered is given back and named, not dropped', () 
   assert.deepEqual(got.lines, ['not delivered feature-wake alpha']);
   assert.equal(takeWakes(P).length, 1);
   assert.equal(await finishTaken(P), 0);
+}));
+
+test('a claim the foreman abandoned (taken, never finished) goes back to the queue while the next foreman waits, and ends that wait', () => withHome(async () => {
+  await project();
+  queueWake(P, { kind: 'feature-wake', work: 'alpha', file: bundle('alpha'), now: () => new Date(T0) });
+  const taken = await takeForForeman(P, { sessionId: S, route: desktop, stop: calm, now: () => new Date(T0), deliver: copyOf });
+  assert.equal(taken.lines.length, 1);
+  assert.deepEqual(takeWakes(P), [], 'claimed, out of the queue');
+  // The session ends without --finish. A new wait, with no new wake, finds it once the claim is 10 minutes old.
+  const c = clock();
+  c.ms = T0 + 9 * 60 * 1000;
+  const got = await wait(c, { poll: 30000 });
+  assert.deepEqual(got, { exit: 'wakes', text: 'wakes: 1' });
+  assert.ok(c.ms - T0 >= 10 * 60 * 1000 && c.ms - T0 < 11 * 60 * 1000, 'restored at 10 minutes, not left until a new wake');
+}));
+
+test('a second take before finish keeps the first take\'s wakes: none is restored and run twice, and finish drops them all', () => withHome(async () => {
+  await project();
+  queueWake(P, { kind: 'feature-wake', work: 'alpha', file: bundle('alpha'), now: () => new Date(T0) });
+  const first = await takeForForeman(P, { sessionId: S, route: desktop, stop: calm, now: () => new Date(T0), deliver: copyOf });
+  assert.equal(first.lines.length, 1);
+  // Handling runs long (offers waiting for the director); a new wake comes, and the foreman takes again 15 minutes on.
+  queueWake(P, { kind: 'feature-wake', work: 'beta', file: bundle('beta'), now: () => new Date(T0 + 15 * 60 * 1000) });
+  const second = await takeForForeman(P, { sessionId: S, route: desktop, stop: calm, now: () => new Date(T0 + 15 * 60 * 1000), deliver: copyOf });
+  assert.deepEqual(second.lines.map((l) => l.split(' ').slice(0, 3).join(' ')), ['WAKE feature-wake beta'], 'alpha is not given again');
+  assert.deepEqual(takeWakes(P), [], 'alpha is not back in the queue');
+  assert.equal(await finishTaken(P), 2);
+  assert.deepEqual(fs.readdirSync(claimedDir(P)), [], 'nothing left claimed');
 }));

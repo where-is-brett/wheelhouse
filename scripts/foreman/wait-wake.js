@@ -52,7 +52,7 @@ async function noteStopped(project, works, stop, now) {
 export async function waitForWake(project, {
   sessionId, now = () => new Date(), sleep = (ms) => new Promise((r) => { setTimeout(r, ms); }), route = currentRoute, stop = stopState, poll = POLL_MS,
 } = {}) {
-  const { takeWakes } = await queue();
+  const { restoreStale, takeWakes } = await queue();
   const started = now().getTime();
   const first = checkIn(project, { sessionId, now });
   if (!first.ok) return { exit: 'another foreman', text: 'another foreman' };
@@ -74,6 +74,8 @@ export async function waitForWake(project, {
         return { exit: 'route changed', text: 'route changed' };
       }
     }
+    // A claim taken and never finished (a foreman that ended mid-way) comes back here, not only when a new wake arrives.
+    restoreStale(project, { now });
     const waiting = takeWakes(project);
     if (waiting.length > 0) return { exit: 'wakes', text: `wakes: ${waiting.length}` };
     if (t - started >= WAIT_MAX_MS) return { exit: 'no wake', text: 'no wake' };
@@ -106,7 +108,9 @@ async function deliverWake(project, wake) {
 async function takeWakesAsync(project, { route, stop, now, deliver }) {
   const { claimWakes, dropWakes, releaseWakes } = await queue();
   const { helmHeld } = await import('../crew/hold.js');
-  const claimed = claimWakes(project, { now });
+  // Wakes an earlier take handed over and no finish has dropped yet are still being handled: kept claimed, and kept on the list.
+  const before = readTaken(project).filter((p) => lstatOf(p)?.isFile() === true);
+  const claimed = claimWakes(project, { now, keep: before });
   const reason = stop().on ? 'all stop' : (await onDesktop(route)) ? null : 'route changed';
   if (reason !== null) {
     releaseWakes(project, claimed.map((w) => w.path));
@@ -136,18 +140,31 @@ async function takeWakesAsync(project, { route, stop, now, deliver }) {
   releaseWakes(project, back);
   dropWakes(project, held);
   fs.mkdirSync(path.dirname(takenFile(project)), { recursive: true });
-  fs.writeFileSync(takenFile(project), `${JSON.stringify({ paths: kept })}\n`);
+  fs.writeFileSync(takenFile(project), `${JSON.stringify({ paths: [...before, ...kept] })}\n`);
   return { lines };
 }
 
-// Drops the wakes the last take handed to the foreman: how many.
-export async function finishTaken(project) {
-  const { dropWakes } = await queue();
+// The claims the takes since the last finish handed to the foreman.
+function readTaken(project) {
   let paths = [];
   try {
     paths = JSON.parse(fs.readFileSync(takenFile(project), 'utf8')).paths;
   } catch { /* none taken */ }
-  const list = Array.isArray(paths) ? paths.filter((p) => typeof p === 'string') : [];
+  return Array.isArray(paths) ? paths.filter((p) => typeof p === 'string') : [];
+}
+
+function lstatOf(p) {
+  try {
+    return fs.lstatSync(p);
+  } catch {
+    return null;
+  }
+}
+
+// Drops the wakes the takes since the last finish handed to the foreman: how many.
+export async function finishTaken(project) {
+  const { dropWakes } = await queue();
+  const list = readTaken(project);
   dropWakes(project, list);
   fs.rmSync(takenFile(project), { force: true });
   return list.length;
