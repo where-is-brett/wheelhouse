@@ -120,3 +120,20 @@ test('helm-end: for an agent whose hooks only read it hands nothing back', async
     assert.equal(woken.length, 0);
   });
 });
+
+test('helm-end: on the Desktop route the session stays open and its hold is never ended by SessionEnd', async () => {
+  await withHome(async () => {
+    const { recordBuilder } = await import('../../../scripts/foreman/desktop-builders.js');
+    const tree = fs.realpathSync.native(tempFolder('wh-helm-row-'));
+    recordBuilder(P, 'login', { sessionId: 's-desktop-1', worktree: tree, branch: 'claude/login' });
+    await takeHold(P, { work: 'login', sessionId: 's-desktop-1' });
+    const woken = [];
+    await decide(input('s-desktop-1'), deps(woken));
+    assert.equal(helmHeld(P, 'login'), true, 'the hold stands');
+    assert.equal(woken.length, 0);
+    // A hold on a piece with no Desktop builder record still ends as before.
+    await takeHold(P, { work: 'other', sessionId: 's-bg-1' });
+    await decide(input('s-bg-1'), deps(woken));
+    assert.equal(helmHeld(P, 'other'), false);
+  });
+});

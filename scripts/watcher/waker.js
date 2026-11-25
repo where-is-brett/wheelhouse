@@ -818,6 +818,7 @@ export function makeWaker({
   onNote = () => {},
   routing = null,
   raise = async () => {},
+  notifyAway = async () => ({ none: true }),
   walkCap = WALK_CAP,
   beforeCopy = () => {},
 }) {
@@ -2123,6 +2124,15 @@ export function makeWaker({
     const toDesktop = route.effective === 'desktop';
     if (toDesktop) await endStaleDetached(moved);
     else await requeueDesktopWakes();
+    // Desktop closed: the foreman's absence is recorded once a spell and noticed at most once a day. It watches only; whatever
+    // it finds, nothing is started and the route is not changed.
+    if (toDesktop) {
+      try {
+        await (await import('./foreman-away.js')).watchForeman(project, { now, raise, notify: notifyAway, onError });
+      } catch (error) {
+        onError(`The foreman's absence couldn't be checked: ${error instanceof Error ? error.message : 'unknown error'}`);
+      }
+    }
     const works = [...new Set([...load().filter((e) => e.to === 'feature').map((e) => e.work), ...runningWorks()])];
     for (const work of [undefined, ...works]) {
       const target = targetOf(work);

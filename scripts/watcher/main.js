@@ -117,6 +117,17 @@ export function raiseRecord(project, client, { now = () => new Date() } = {}) {
   };
 }
 
+// The phone notice that work waits while the foreman is away (scripts/watcher/foreman-away.js): the helper's alert, asked for
+// with the `away` kind, which says the one sentence and no count. Answers `{ sent }`, `{ held }` or `{ none }`; throws when the
+// helper gives no answer, so the watcher asks again at a later tick.
+export function awayNotice(project, client) {
+  return async ({ count }) => {
+    const answer = await client.alert({ project, count, kind: 'away' });
+    if (answer?.ok !== true) throw new Error(typeof answer?.refused === 'string' ? answer.refused : 'the helper gave no answer');
+    return answer;
+  };
+}
+
 // The awake time since the last loop: none on the first, never below nothing
 // (a clock set back), and at most `cap`.
 export function awakeSince(last, t, cap) {
@@ -297,7 +308,7 @@ export async function runWatcher({
       if (settings !== null && wake === null) {
         try {
           wake = waker ?? makeWaker({
-            shape, project, config: settings, now, onError: fault, onNote: log, raise: raiseRecord(project, client, { now }), ...wakerOptions,
+            shape, project, config: settings, now, onError: fault, onNote: log, raise: raiseRecord(project, client, { now }), notifyAway: awayNotice(project, client), ...wakerOptions,
           });
         } catch (error) {
           fault(`The watcher can't wake sessions with this configuration: ${error.message}`);

@@ -183,3 +183,15 @@ export function oldestWaiting(project) {
   const wakes = takeWakes(project);
   return wakes.length === 0 ? null : wakes.map((w) => w.at).sort()[0];
 }
+
+// When the newest claim was taken (epoch ms), or null when none is held: a taker still handling wakes it claimed.
+export function newestClaim(project) {
+  let names;
+  try {
+    names = fs.readdirSync(claimedDir(project));
+  } catch {
+    return null;
+  }
+  const times = names.map((n) => CLAIMED.exec(n)).filter((m) => m !== null).map((m) => Number(m[1]));
+  return times.length === 0 ? null : Math.max(...times);
+}

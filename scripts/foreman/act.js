@@ -174,7 +174,7 @@ import { confirmLine, replyCode, replyCodeLine, unattendedBuildsLine } from '../
 import { readEnrolled, verify } from '../state/signing.js';
 import { recordHandled } from '../watcher/handled.js';
 import { inWorktreesFolder, plainWorktreePath, recordedBriefs } from '../watcher/sources.js';
-import { dropPending, keepPending, readBuilder, readPending } from './desktop-builders.js';
+import { OFFER_FRESH_MS, dropPending, dropResume, keepPending, keepResume, readBuilder, readPending, readResume } from './desktop-builders.js';
 import { desktopFindings } from './desktop-findings.js';
 import { builderStart } from './desktop-start.js';
 import { writeBaseline } from '../watcher/control-files.js';
@@ -739,16 +739,65 @@ async function recordedText(ctx, work, worktree) {
 
 // The Desktop route: nothing is started here. The foreman is given the one line to start the builder with: its title and
 // prompt, built from the record (never from a wake file), and the set `start_session` options (scripts/foreman/desktop-start.js).
-async function offer(ctx, work, { views, found, text, worktree }) {
+async function offer(ctx, work, { views, found, text, worktree, resume = false }) {
   const given = single(found, 'foreman-session');
   if (given !== undefined && !/^[A-Za-z0-9-]{8,64}$/.test(given)) refuse('--foreman-session is the foreman\'s own session id');
   const start = builderStart({
-    project: ctx.project, work, title: views.work[work]?.work?.data?.title, brief: text, findings: ctx.findings, foremanSessionId: given, worktree,
+    project: ctx.project, work, title: views.work[work]?.work?.data?.title, brief: text, findings: ctx.findings, foremanSessionId: given, worktree, resume,
   });
   ctx.say(`Desktop offer: ${JSON.stringify(start)}`);
 }
 
+// A stopped builder on the Desktop route, started afresh (design section 7.5): `send_message` failed, so the foreman asks for the
+// offer of a new session in the piece's own worktree, which reads the record and carries on. The same checks as a start: the
+// piece is at no helm, and the offer is built from the record, never from a wake file.
+async function resumeOffer(ctx, work, rest) {
+  const found = flagsOf(rest, ['foreman-session'], 'resume-offer');
+  if ((await ctx.route()) !== 'desktop') refuse('resume-offer is for the Desktop route: on the background route the watcher resumes a session itself');
+  const views = await ctx.views();
+  if (!isPlain(views.work[work]?.work?.data)) refuse(`There is no work named ${work} in state`);
+  if (atTheHelm(ctx, work)) return;
+  const existing = featureOf(views, work);
+  if (existing === null || existing.step === 'closed' || typeof existing.worktree !== 'string' || typeof existing.session !== 'string') refuse(`${work} has no session to resume: it never started on Desktop, or it has closed`);
+  const worktree = existing.worktree;
+  if (!plainWorktreePath(worktree) || !lstatOf(worktree)?.isDirectory()) refuse(`The ${work} worktree isn't there to resume in`);
+  // One fresh start at a time, and none once one came up outside the piece's folder: offering again would only loop.
+  const kept = readResume(ctx.project, work);
+  if (kept !== null && kept.session === existing.session) {
+    if (kept.missed) {
+      ctx.say(`Nothing to do: ${work} couldn't be carried on in its own folder after Desktop closed, so it waits for the director.`);
+      return;
+    }
+    if (ctx.now().getTime() - Date.parse(kept.at) < OFFER_FRESH_MS) {
+      ctx.say(`Nothing to do: a fresh start for ${work} was offered at ${kept.at}. Run act builder-started ${work} after its first turn.`);
+      return;
+    }
+  }
+  const text = await recordedText(ctx, work, worktree);
+  keepResume(ctx.project, work, { session: existing.session, worktree, now: ctx.now });
+  await offer(ctx, work, { views, found, text, worktree, resume: true });
+}
+
+// The session id kept for the piece's wakes, or null.
+function readSessionId(project, work) {
+  try {
+    const kept = JSON.parse(fs.readFileSync(sessionFile(project, work), 'utf8'));
+    return typeof kept?.sessionId === 'string' ? kept.sessionId : null;
+  } catch {
+    return null;
+  }
+}
+
 // --- builder-started ---
+
+// A fresh start offered after Desktop closed came up outside the piece's own worktree: Desktop didn't open it in the folder it
+// was given, so its hook recorded it elsewhere or not at all. The session is not kept, no fresh start is offered again for the
+// piece (that would only repeat), and the director is told once, in plain words; the piece waits for them.
+async function missedResume(ctx, work, existing, resumed, stray) {
+  keepResume(ctx.project, work, { session: resumed.session, worktree: resumed.worktree, missed: true, now: ctx.now });
+  await ctx.write('note', { about: 'engine', words: `Claude Desktop didn't open ${work}'s new session in that piece's own folder, so it can't carry on by itself after Desktop closed. It waits for you: take the helm of ${work} from the front desk to carry it on.` });
+  ctx.say(`${work}'s fresh start came up ${stray === null ? 'outside its own worktree' : `in another worktree (${stray.worktree})`}, not ${existing.worktree}, so its session was not kept and the director has been told. Stop and archive that new session, then run the wait command with --ended ${work}. No more fresh starts are offered for ${work}.`);
+}
 
 // The builder Desktop started has adopted its worktree (its own hook recorded the session, folder and branch from the marker
 // line of its first prompt): the piece is recorded as started there, its brief is written into it, and its session is kept so
@@ -759,6 +808,24 @@ async function builderStarted(ctx, work, rest) {
   if (!isPlain(views.work[work]?.work?.data)) refuse(`There is no work named ${work} in state`);
   const existing = featureOf(views, work);
   if (existing !== null && existing.step !== 'closed' && typeof existing.worktree === 'string' && typeof existing.session === 'string') {
+    // A session started afresh after Desktop closed (resume-offer): the new session is kept for the same worktree, so a wake finds
+    // it. One that came up in any other worktree is not this piece's.
+    const again = readBuilder(ctx.project, work);
+    const fresh = again !== null && again.sessionId !== existing.session && again.endedAt === undefined && readSessionId(ctx.project, work) !== again.sessionId;
+    const same = fresh && path.resolve(again.worktree) === path.resolve(existing.worktree);
+    if (same) {
+      fs.mkdirSync(path.dirname(sessionFile(ctx.project, work)), { recursive: true });
+      writeJsonFile(sessionFile(ctx.project, work), { sessionId: again.sessionId, worktree: existing.worktree, at: ctx.now().toISOString() });
+      dropResume(ctx.project, work);
+      ctx.say(`${work} resumed in its own worktree, and its new session is kept.`);
+      return;
+    }
+    const resumed = readResume(ctx.project, work);
+    if (resumed !== null && !resumed.missed && resumed.session === existing.session) {
+      await missedResume(ctx, work, existing, resumed, fresh ? again : null);
+      return;
+    }
+    if (fresh) refuse(`The ${work} builder started in another worktree (${again.worktree}), not the piece's own, so its session was not kept`);
     ctx.say(`${work} was recorded as started already.`);
     return;
   }
@@ -1930,7 +1997,7 @@ async function routeHere() {
 }
 
 const COMMANDS = {
-  start, 'builder-started': builderStarted, 'plan-ready': planReady, build, pause, resume, question, 'extra-plan': extraPlan, 'stuck-note': stuckNote, ask, amend, restore, reapprove, merge, close, restart,
+  start, 'resume-offer': resumeOffer, 'builder-started': builderStarted, 'plan-ready': planReady, build, pause, resume, question, 'extra-plan': extraPlan, 'stuck-note': stuckNote, ask, amend, restore, reapprove, merge, close, restart,
 };
 const USAGE = `Commands: ${Object.keys(COMMANDS).join(', ')}, each followed by the work id`;
 

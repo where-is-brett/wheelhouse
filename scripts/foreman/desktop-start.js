@@ -34,21 +34,26 @@ export function builderTitle({ project, title, nested }) {
 
 // What the foreman gives `start_session` for a piece. `brief` is the feature brief's text from the record; `worktree` is
 // Wheelhouse's own, passed as `cwd` only where the probe showed an offer accepts one.
-export function builderStart({ project, work, title, brief, findings = desktopFindings(), foremanSessionId, worktree }) {
+export function builderStart({ project, work, title, brief, findings = desktopFindings(), foremanSessionId, worktree, resume = false }) {
   if (typeof project !== 'string' || !PROJECT.test(project)) throw new Error('The project is letters, digits, dots, hyphens and underscores');
   if (typeof work !== 'string' || !WORK.test(work)) throw new Error('The work id is lower-case letters, digits and hyphens');
   const how = findings.nesting.how;
   const nested = how !== null;
-  const prompt = `${BUILDER_PROMPT_LEAD} you are the session for ${work}, and your brief follows.\n${markerLine(project, work)}\n\n${brief}`;
+  // A resume is a fresh session in the piece's own worktree after Desktop closed on the one before (design section 7.5): it reads
+  // the record and carries on, and Desktop makes no worktree for it.
+  const said = resume
+    ? `you are resuming the session for ${work}: Desktop closed and your first session ended. First check that your working folder is ${worktree}: if it isn't, change nothing and end your turn saying only that. Otherwise read your brief and the record, then carry on from where it left off. Your brief follows.`
+    : `you are the session for ${work}, and your brief follows.`;
+  const prompt = `${BUILDER_PROMPT_LEAD} ${said}\n${markerLine(project, work)}\n\n${brief}`;
   return {
     title: builderTitle({ project, title, nested }),
     prompt,
     initiation: 'offer',
     freshContext: true,
-    worktree: true,
+    worktree: !resume,
     permissionMode: 'auto',
     wakeWhenDone: true,
     ...(nested && typeof foremanSessionId === 'string' ? { nest: { [how]: foremanSessionId } } : {}),
-    ...(findings.cwdOnOffer && typeof worktree === 'string' ? { cwd: worktree } : {}),
+    ...((resume || findings.cwdOnOffer) && typeof worktree === 'string' ? { cwd: worktree } : {}),
   };
 }

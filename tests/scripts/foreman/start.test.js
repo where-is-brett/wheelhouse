@@ -276,6 +276,8 @@ test('the Desktop brief: a user_asked start in the main checkout, titled for the
   assert.ok(lines.includes(`Run wake as: node '${MAC_ROOT}/scripts/foreman/wake.js'`));
   assert.ok(lines.includes(`Run act as: node '${MAC_ROOT}/scripts/foreman/act.js'`));
   assert.ok(lines.includes(`Run wait as: node '${MAC_ROOT}/scripts/foreman/wait-wake.js' --project ${P}`));
+  assert.ok(lines.includes('Quit and reopen: message-then-fresh-start'), 'what Desktop did with builder rows when it reopened, from the probe findings');
+  assert.ok(desktopBrief({ project: P, pluginRoot: MAC_ROOT, platform: 'darwin', findings: { quitAndReopen: 'rows-lost' } }).prompt.split('\n').includes('Quit and reopen: rows-lost'));
   assert.doesNotMatch(b.prompt, /\bmodel\b/i);
 });
 

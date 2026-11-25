@@ -88,6 +88,15 @@ export function buildersLine({ home, agent = 'claude-code', route = 'background'
   return `Builders: ${route} as \`${commandName(fact.command)}\` · can't sign in since ${timeWords(fact.since)} (${kindWords(fact.kind)})`;
 }
 
+// The fact the First Mate's session start adds when Desktop is closed or the foreman was never started (builders and settings
+// design, section 7.5): "Foreman: not running · 3 wakes waiting", and the card to offer. Only on the Desktop route, only while
+// the check-in is not fresh and a wake waits; otherwise null. `wakes` is the number of wakes in the Desktop queue.
+export function foremanFact({ route, foremanAge = null, wakes = 0 } = {}) {
+  if (route !== 'desktop' || !Number.isInteger(wakes) || wakes < 1) return null;
+  if (Number.isFinite(foremanAge) && foremanAge <= FOREMAN_RUNNING_MS) return null;
+  return `Foreman: not running · ${wakes} ${wakes === 1 ? 'wake' : 'wakes'} waiting · offer the "Start the foreman" card (foreman-card)`;
+}
+
 // The same line for the board's status lines, with its level: `watch` while builders can't sign in or the file can't be read.
 export function buildersHealth({ home, agent = 'claude-code', route = 'background', program = 'claude', fault = null, foremanAge = null } = {}) {
   const read = readSignIn(home);

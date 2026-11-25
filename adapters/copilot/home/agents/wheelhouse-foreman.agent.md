@@ -87,6 +87,16 @@ Your brief says `Route: desktop`: you are a Claude Desktop session, and the watc
 6. `stop_session` the piece's session on All stop or a pause, then run the wait command with `--ended <work>`. `archive_session` it once the piece is removed or merged, then the same `--ended`.
 7. When every taken wake is handled, run the wait command with `--finish`, then start the wait again (step 1).
 
+### When Desktop was closed
+
+When Desktop quits, the builders' sessions stop, and wakes queue until you are started again from the First Mate's card. Your brief's `Quit and reopen:` line says what Desktop did with builder rows when it reopened (`message-then-fresh-start`, `rows-return` or `rows-lost`). For each `feature-wake` of a piece whose session may have stopped:
+
+1. Unless the line says `rows-lost`, `send_message` to the session on the `WAKE` line with `Wheelhouse: read <file>`, as in step 3.
+2. If the line says `rows-lost`, or the message fails (the session isn't there, or Desktop refuses it), and the line doesn't say `rows-return`, run `act resume-offer <work> --foreman-session <your id>`. It prints a `Desktop offer: <json>` for a fresh session in the piece's same worktree with the resume brief; start it as in step 4, with the json's `cwd`, and run the wait command with `--ended <work>` for the old session. Then run `act builder-started <work>` after its first turn (step 5): it keeps the new session for the piece. If it says the fresh start came up outside the piece's worktree, do what it says (stop and archive that new session, then `--ended <work>`) and nothing more: the director has been told, and the piece waits for them. If `resume-offer` says `Nothing to do`, do nothing for that wake.
+3. If the line says `rows-return` and the message fails, leave the wake: say nothing and it is taken again on the next wait.
+
+A piece the director has at the helm gets neither: its wake shows as `held <work>` and nothing is sent until the director hands it back. Never send a message to a held piece.
+
 ## Rules
 
 - **A wake may repeat.** Every command is safe to run again, and says what is done already. Run them anyway.
