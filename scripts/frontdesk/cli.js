@@ -1610,7 +1610,7 @@ export async function premiumCheck({ client, cwd }) {
 }
 
 // The Desktop foreman's start (builders and settings design, section 7.1): after the director has asked for the foreman in words, the
-// one line to give `start_session`: its title, its brief and its fixed options. Nothing starts here. Refused while All stop is on,
+// one line to give `start_session`: its title, its brief and its set options. Nothing starts here. Refused while All stop is on,
 // where builders don't start in Desktop, and, with a plain statement instead, while the foreman's check-in is under 3 minutes old.
 // `projectOf`, `route`, `age`, `stop` and `brief` are for tests.
 export async function foremanBrief({ cwd, project, route, age, stop, brief } = {}) {

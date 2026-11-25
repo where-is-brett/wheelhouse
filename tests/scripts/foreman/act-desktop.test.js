@@ -126,7 +126,7 @@ test('builder-started refuses with no adopted record, and a worktree outside .cl
   const none = await act(['builder-started', 'add-export'], { client: fake.client, route: () => 'desktop', findings: NO_CWD, ...noWaker([]) });
   assert.equal(none.code, 1);
   assert.match(none.err, /No builder has started/);
-  const outside = path.join(path.dirname(checkout), 'elsewhere');
+  const outside = path.join(fs.mkdtempSync(path.join(path.dirname(checkout), 'outside-')), 'wt');
   await g(checkout, 'worktree', 'add', '-q', '-b', 'claude/else', outside);
   recordBuilder(P, 'add-export', { sessionId: S, worktree: fs.realpathSync.native(outside), branch: 'claude/else', now });
   const r = await act(['builder-started', 'add-export'], { client: fake.client, route: () => 'desktop', findings: NO_CWD, ...noWaker([]) });

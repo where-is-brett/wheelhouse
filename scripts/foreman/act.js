@@ -738,7 +738,7 @@ async function recordedText(ctx, work, worktree) {
 }
 
 // The Desktop route: nothing is started here. The foreman is given the one line to start the builder with: its title and
-// prompt, built from the record (never from a wake file), and the fixed `start_session` options (scripts/foreman/desktop-start.js).
+// prompt, built from the record (never from a wake file), and the set `start_session` options (scripts/foreman/desktop-start.js).
 async function offer(ctx, work, { views, found, text, worktree }) {
   const given = single(found, 'foreman-session');
   if (given !== undefined && !/^[A-Za-z0-9-]{8,64}$/.test(given)) refuse('--foreman-session is the foreman\'s own session id');
