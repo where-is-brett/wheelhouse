@@ -109,3 +109,34 @@ export function dropPending(project, work) {
   builderRecordFile(project, work); // the work id is checked
   fs.rmSync(path.join(pendingDir(project), `${work}.json`), { force: true });
 }
+
+// --- A fresh start offered after Desktop closed (design section 7.5) ---
+// `act resume-offer` keeps `{ session, worktree, at }` here: the piece's recorded session it stands in for, and its own worktree.
+// `act builder-started` then keeps the new session only when it came up in that worktree. When it didn't (Desktop ignored `cwd`
+// and opened it elsewhere), the resume is marked `missed`, and no more fresh starts are offered for that session.
+const resumesDir = (project) => path.join(path.dirname(stateDir(project)), 'watcher', 'desktop-resumes');
+
+export function keepResume(project, work, { session, worktree, missed = false, now = () => new Date() }) {
+  builderRecordFile(project, work); // the work id is checked
+  put(path.join(resumesDir(project), `${work}.json`), { session, worktree, ...(missed ? { missed: true } : {}), at: now().toISOString() });
+}
+
+// The kept resume, or null: none, or one that isn't whole.
+export function readResume(project, work) {
+  try {
+    builderRecordFile(project, work);
+    const file = path.join(resumesDir(project), `${work}.json`);
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.size > 8192) return null;
+    const v = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (typeof v?.session !== 'string' || typeof v.worktree !== 'string' || Number.isNaN(Date.parse(v.at))) return null;
+    return { session: v.session, worktree: v.worktree, missed: v.missed === true, at: v.at };
+  } catch {
+    return null;
+  }
+}
+
+export function dropResume(project, work) {
+  builderRecordFile(project, work); // the work id is checked
+  fs.rmSync(path.join(resumesDir(project), `${work}.json`), { force: true });
+}

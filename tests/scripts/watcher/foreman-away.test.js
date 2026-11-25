@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { watchForeman, AWAY_STATE, awayFile } from '../../../scripts/watcher/foreman-away.js';
 import { checkIn } from '../../../scripts/foreman/check-in.js';
-import { queueWake } from '../../../scripts/watcher/desktop-queue.js';
+import { claimWakes, queueWake } from '../../../scripts/watcher/desktop-queue.js';
 import { writeWake } from '../../../scripts/watcher/waker.js';
 import { withHome } from '../../helpers/homes.js';
 import { standInTools } from '../../helpers/host-stand-ins.js';
@@ -121,4 +121,18 @@ test('no check-in ever: the wake must itself be over 3 minutes old; with nothing
   assert.equal((await watchForeman(P, { now: at(11 * MIN), ...t })).away, false);
   assert.equal((await watchForeman(P, { now: at(14 * MIN), ...t })).away, true);
   assert.equal(AWAY_STATE, 'foreman-away');
+}));
+
+test('a foreman handling wakes it took is not away while its claim is fresh, though its heartbeat is old and a new wake waits', () => withHome(async () => {
+  await project();
+  checkIn(P, { sessionId: 'foreman-0001', now: at(0) });
+  wakeAt(0);
+  assert.equal(claimWakes(P, { now: at(1 * MIN) }).length, 1, 'the foreman took the wake');
+  wakeAt(2 * MIN);
+  const t = tools();
+  assert.deepEqual(await watchForeman(P, { now: at(6 * MIN), ...t }), { away: false });
+  assert.equal(t.seen.records.length + t.seen.notices.length, 0);
+  // A claim left stale (the foreman ended mid-way) no longer shows it there.
+  assert.equal((await watchForeman(P, { now: at(12 * MIN), ...t })).away, true);
+  assert.equal(t.seen.records.length, 1);
 }));

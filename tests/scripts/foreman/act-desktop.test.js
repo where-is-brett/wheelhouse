@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { main } from '../../../scripts/foreman/act.js';
-import { recordBuilder } from '../../../scripts/foreman/desktop-builders.js';
+import { readResume, recordBuilder } from '../../../scripts/foreman/desktop-builders.js';
 import { markerLine } from '../../../scripts/foreman/desktop-start.js';
 import { BUILDER_PROMPT_LEAD } from '../../../scripts/foreman/prompt-lead.js';
 import { briefHash, featurePaths } from '../../../scripts/feature/files.js';
@@ -146,7 +146,8 @@ async function stoppedPiece() {
   const recorded = emptyViews();
   recorded.work['add-export'] = workView('add-export', { shownFirst: true });
   recorded.features['add-export'] = { key: 'add-export', id: 'f1', at: new Date(T0).toISOString(), data: { work: 'add-export', step: 'started', worktree: tree, branch: 'claude/add-export-1', session: S, brief: briefHash(fs.readFileSync(featurePaths(tree).brief, 'utf8')) } };
-  return { checkout, tree, client: fakeClient({ views: recorded }).client };
+  const after = fakeClient({ views: recorded });
+  return { checkout, tree, client: after.client, writes: after.writes };
 }
 
 test('resume-offer gives a fresh start in the same worktree, with the resume brief, and starts nothing itself', () => withHome(async () => {
@@ -198,4 +199,61 @@ test('builder-started after a resume keeps the new session for the same worktree
   assert.equal(bad.code, 1);
   assert.match(bad.err, /another worktree/);
   assert.equal(JSON.parse(fs.readFileSync(sessionFile(P, 'add-export'), 'utf8')).sessionId, NEW);
+}));
+
+test('a resume offer is made once: a second is nothing to do while the first is fresh, and the prompt asks the builder to check its folder', () => withHome(async () => {
+  const { tree, client } = await stoppedPiece();
+  const first = await act(['resume-offer', 'add-export', '--foreman-session', F], { client, route: () => 'desktop', findings: NO_CWD, ...noWaker([]) });
+  assert.equal(first.code, 0, first.err);
+  assert.ok(offerOf(first.out).prompt.split('\n')[0].includes(`working folder is ${tree}`), 'the builder checks it opened in the piece\'s folder');
+  const second = await act(['resume-offer', 'add-export', '--foreman-session', F], { client, route: () => 'desktop', findings: NO_CWD, ...noWaker([]) });
+  assert.equal(second.code, 0, second.err);
+  assert.equal(second.out.includes('Desktop offer: '), false);
+  assert.match(second.out, /^Nothing to do: a fresh start for add-export was offered/m);
+  // Once the offer is old, one more is made.
+  const later = await act(['resume-offer', 'add-export', '--foreman-session', F], { client, route: () => 'desktop', findings: NO_CWD, now: () => new Date(T0 + 31 * 60 * 1000), ...noWaker([]) });
+  assert.ok(later.out.includes('Desktop offer: '), later.err);
+  // A fresh start in the piece's own folder is kept, and the offer is done with.
+  const NEW = 'cccccccc-1111-2222-3333-444444444444';
+  recordBuilder(P, 'add-export', { sessionId: NEW, worktree: tree, branch: 'claude/add-export-1', now });
+  const ok = await act(['builder-started', 'add-export'], { client, route: () => 'desktop', findings: NO_CWD, ...noWaker([]) });
+  assert.match(ok.out, /resumed/);
+  assert.equal(readResume(P, 'add-export'), null);
+}));
+
+test('a fresh start Desktop opened outside the piece\'s folder is not kept: the director is told once, and no fresh start is offered again', () => withHome(async () => {
+  const { tree, client, writes } = await stoppedPiece();
+  const before = JSON.parse(fs.readFileSync(sessionFile(P, 'add-export'), 'utf8')).sessionId;
+  await act(['resume-offer', 'add-export', '--foreman-session', F], { client, route: () => 'desktop', findings: NO_CWD, ...noWaker([]) });
+  // Desktop ignored the folder and opened the session in the main checkout: its hook recorded nothing new.
+  const r = await act(['builder-started', 'add-export'], { client, route: () => 'desktop', findings: NO_CWD, ...noWaker([]) });
+  assert.equal(r.code, 0, 'not a refusal, so the foreman doesn\'t turn it into a question');
+  assert.match(r.out, /not kept/);
+  assert.match(r.out, /--ended add-export/);
+  const notes = writes.filter((w) => w.kind === 'note' && w.data.about === 'engine');
+  assert.equal(notes.length, 1);
+  assert.match(notes[0].data.words, /take the helm of add-export/);
+  assert.equal(notes[0].data.words.includes(tree), false, 'no path in the director\'s words');
+  assert.equal(JSON.parse(fs.readFileSync(sessionFile(P, 'add-export'), 'utf8')).sessionId, before, 'the kept session is unchanged');
+  // Asked again, nothing is offered and nothing more is said to the director.
+  const again = await act(['resume-offer', 'add-export', '--foreman-session', F], { client, route: () => 'desktop', findings: NO_CWD, now: () => new Date(T0 + 2 * 60 * 60 * 1000), ...noWaker([]) });
+  assert.equal(again.code, 0, again.err);
+  assert.equal(again.out.includes('Desktop offer: '), false);
+  assert.match(again.out, /^Nothing to do: add-export couldn't be carried on/m);
+  const twice = await act(['builder-started', 'add-export'], { client, route: () => 'desktop', findings: NO_CWD, ...noWaker([]) });
+  assert.match(twice.out, /recorded as started already/);
+  assert.equal(writes.filter((w) => w.kind === 'note' && w.data.about === 'engine').length, 1);
+}));
+
+test('a fresh start Desktop opened in a worktree of its own is a missed resume too', () => withHome(async () => {
+  const { checkout, client, writes } = await stoppedPiece();
+  await act(['resume-offer', 'add-export', '--foreman-session', F], { client, route: () => 'desktop', findings: NO_CWD, ...noWaker([]) });
+  const elsewhere = await desktopWorktree(checkout, 'add-export-2');
+  const STRAY = 'dddddddd-1111-2222-3333-444444444444';
+  recordBuilder(P, 'add-export', { sessionId: STRAY, worktree: elsewhere, branch: 'claude/add-export-2', now });
+  const r = await act(['builder-started', 'add-export'], { client, route: () => 'desktop', findings: NO_CWD, ...noWaker([]) });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /another worktree/);
+  assert.notEqual(JSON.parse(fs.readFileSync(sessionFile(P, 'add-export'), 'utf8')).sessionId, STRAY);
+  assert.equal(writes.filter((w) => w.kind === 'note' && w.data.about === 'engine').length, 1);
 }));

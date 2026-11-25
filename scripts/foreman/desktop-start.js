@@ -42,7 +42,7 @@ export function builderStart({ project, work, title, brief, findings = desktopFi
   // A resume is a fresh session in the piece's own worktree after Desktop closed on the one before (design section 7.5): it reads
   // the record and carries on, and Desktop makes no worktree for it.
   const said = resume
-    ? `you are resuming the session for ${work}: Desktop closed and your first session ended. Read your brief and the record, then carry on from where it left off. Your brief follows.`
+    ? `you are resuming the session for ${work}: Desktop closed and your first session ended. First check that your working folder is ${worktree}: if it isn't, change nothing and end your turn saying only that. Otherwise read your brief and the record, then carry on from where it left off. Your brief follows.`
     : `you are the session for ${work}, and your brief follows.`;
   const prompt = `${BUILDER_PROMPT_LEAD} ${said}\n${markerLine(project, work)}\n\n${brief}`;
   return {

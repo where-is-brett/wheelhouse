@@ -15,13 +15,16 @@ export const WAKE_LEAD = 'Wheelhouse: read ';
 const SESSION_ID = /^[A-Za-z0-9-]{8,64}$/;
 const WAKES = /(^|[\\/])\.wheelhouse[\\/]feature[\\/]wakes$/;
 
-// Whether `prompt` is the foreman's wake message: one line, the lead, and a plain file in a builder's wakes folder.
-export function foremanMessage(prompt) {
+// Whether `prompt` is the foreman's wake message to the builder in `worktree`: one line, the lead, and a plain file in that
+// worktree's own wakes folder. A wake file in any other folder (another piece's, or one written to look like it) doesn't count.
+export function foremanMessage(prompt, worktree) {
   if (typeof prompt !== 'string' || !prompt.startsWith(WAKE_LEAD) || /[\r\n\0]/.test(prompt.trimEnd())) return false;
+  if (typeof worktree !== 'string' || !path.isAbsolute(worktree)) return false;
   const file = prompt.slice(WAKE_LEAD.length).trim();
   if (file === '' || !path.isAbsolute(file) || !WAKES.test(path.dirname(file))) return false;
   try {
-    return fs.lstatSync(file).isFile();
+    if (!fs.lstatSync(file).isFile()) return false;
+    return fs.realpathSync.native(path.dirname(file)) === fs.realpathSync.native(path.join(worktree, '.wheelhouse', 'feature', 'wakes'));
   } catch {
     return false;
   }
@@ -34,7 +37,7 @@ export async function holdFromPrompt({ project, sessionId, prompt, first = false
   if (first) return { held: false, why: 'first prompt' };
   const row = listBuilders(project).find((b) => b.sessionId === sessionId && b.endedAt === undefined);
   if (row === undefined) return { held: false, why: 'not a Desktop builder' };
-  if (foremanMessage(prompt)) return { held: false, why: "the foreman's message" };
+  if (foremanMessage(prompt, row.worktree)) return { held: false, why: "the foreman's message" };
   const { takeHold } = await import('../crew/hold.js');
   try {
     await takeHold(project, { work: row.work, sessionId, now });

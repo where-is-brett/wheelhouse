@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir } from '../lib/paths.js';
 import { FOREMAN_AWAY_MS, checkInAge } from '../foreman/check-in.js';
-import { oldestWaiting, takeWakes } from './desktop-queue.js';
+import { CLAIM_STALE_MS, newestClaim, oldestWaiting, takeWakes } from './desktop-queue.js';
 
 export const AWAY_STATE = 'foreman-away';
 // The notice goes again after a day, and a notice that was held or had no channel is asked again after ten minutes.
@@ -57,7 +57,10 @@ export async function watchForeman(project, { now = () => new Date(), raise = as
   const t = now().getTime();
   const age = checkInAge(project, { now });
   const oldest = oldestWaiting(project);
-  const away = wakes.length > 0 && (age === null ? t - Date.parse(oldest) > FOREMAN_AWAY_MS : age > FOREMAN_AWAY_MS);
+  // The foreman heartbeats only while it waits: one handling wakes it took (a claim not yet stale) is there, not away.
+  const claim = newestClaim(project);
+  const busy = claim !== null && t - claim < CLAIM_STALE_MS;
+  const away = wakes.length > 0 && !busy && (age === null ? t - Date.parse(oldest) > FOREMAN_AWAY_MS : age > FOREMAN_AWAY_MS);
   const state = read(project);
   if (!away) {
     // The spell is over; the day's notice stays on record.
