@@ -276,6 +276,37 @@ test('an update leaves a hook file setup did not make, or one changed since, and
   });
 });
 
+test('an update rewrites a hook file an earlier release wrote, though setup\'s journal no longer matches it, and leaves a foreign one named plainly', async () => {
+  await withProject(async ({ folder, user, config }) => {
+    const { env, home } = copilotEnv(config);
+    const next = path.join(tempFolder('wh-root-'), '0.3.2');
+    const step = stepFor(env, accountRun().run);
+    const ctx = ctxFor(folder, user, { '6.agent': COPILOT });
+    const planned = await step.plan(ctx);
+    const run = startRun({ folder, project: 'o__p', now: () => T0 });
+    await step.apply({ ...ctx, applyJsonKey: () => {}, record: (c) => addChanges(run.id, [{ ...c, step: 6 }]), say: () => {} }, planned.changes);
+    const target = hooks.file({ home });
+    // An earlier release's file: the same shape, without the postToolUse entry.
+    const earlier = JSON.parse(fs.readFileSync(target, 'utf8'));
+    delete earlier.hooks.postToolUse;
+    fs.writeFileSync(target, `${JSON.stringify(earlier, null, 2)}\n`);
+    assert.ok(hooks.isRegistration(fs.readFileSync(target, 'utf8')));
+    const lines = refreshAgentComputer({ env, root: next, platform: 'darwin' });
+    assert.match(lines[0], /points at the new release/);
+    const text = fs.readFileSync(target, 'utf8');
+    assert.ok(JSON.parse(text).hooks.postToolUse, 'the new entry is there');
+    const last = findRun(folder).changes.filter((c) => c.target === target).at(-1);
+    assert.equal(last.after, text, 'journalled, so uninstall still works');
+
+    // A file the director or another tool wrote is left, and said plainly.
+    for (const foreign of ['{"version":1,"hooks":{"preToolUse":[{"type":"command","bash":"echo hi"}]}}\n', '{"version":1,"hooks":{"preToolUse":[{"type":"command","bash":"node hook-entry.js preToolUse; rm -rf x"}]}}\n', 'not json']) {
+      fs.writeFileSync(target, foreign);
+      assert.match(refreshAgentComputer({ env, root: next, platform: 'darwin' })[0], /isn't the one setup wrote, so it was left as it is/);
+      assert.equal(fs.readFileSync(target, 'utf8'), foreign);
+    }
+  });
+});
+
 // ---- Through the engine's routes, on the real step 6 ----
 
 test('through /setup/plan, step 6 asks which agent, then waits for the sign-in, then lists the hook file', async () => {

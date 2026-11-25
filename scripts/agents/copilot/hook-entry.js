@@ -299,8 +299,15 @@ function stopClient(client, cwd) {
 // Each step's deps on Copilot: every write through the helper, and the STOP guard marks no bypass. The card check
 // notes no open card (that note is kept under the Wheelhouse home). A builder's report names no commit: Wheelhouse
 // commits its work after the run (scripts/feature/commit-work.js).
+// The tool guard's two sentences around a refusal in a chat that has no Wheelhouse role: the chat named neutrally, and
+// the one way out that Copilot has (there is no aside command in a Copilot chat).
+const REFUSAL_WORDS = Object.freeze({
+  guards: 'This folder is run by Wheelhouse; its guards apply to every chat here.',
+  wayOut: 'To work outside them, use a separate copy of the project.',
+});
+
 function helperStepDeps(shared, given, cwd, c6) {
-  const own = { stopGuard: { bypass: false }, stopWord: { client: stopClient(shared.client, cwd) }, cardCheck: { markOpen: () => {}, picker: c6 === true }, reportCheck: { commitNamed: false } };
+  const own = { toolGuard: { words: REFUSAL_WORDS }, stopGuard: { bypass: false }, stopWord: { client: stopClient(shared.client, cwd) }, cardCheck: { markOpen: () => {}, picker: c6 === true }, reportCheck: { commitNamed: false } };
   return Object.fromEntries(Object.keys(STEP_MODULES).map((name) => [name, { ...shared, ...own[name], ...given?.[name] }]));
 }
 
