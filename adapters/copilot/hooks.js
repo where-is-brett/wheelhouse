@@ -100,6 +100,32 @@ export function registrationText({ node, root, platform } = {}) {
   return `${JSON.stringify(registration({ node, root, platform }), null, 2)}\n`;
 }
 
+// Whether `text` is a hook file some Wheelhouse release wrote: the registration's own shape, version 1 and one command entry
+// per event, each running a hook-entry.js with its own event as the argument. A release that registered fewer events
+// (before `postToolUse`) is one too; a file with any other text, a changed space included, is not. A file of the person's own, or another tool's, is not.
+export function isRegistration(text) {
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  const record = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  if (!record(data) || `${JSON.stringify(data, null, 2)}\n` !== text || data.version !== 1 || !record(data.hooks) || Object.keys(data).length !== 2) return false;
+  const events = Object.keys(data.hooks);
+  if (events.length === 0) return false;
+  // Each line is exactly one of the two forms entryFor writes, and nothing else.
+  const ours = (line, event) => typeof line === 'string' && (
+    new RegExp(`^"[^"]+" "[^"]*hook-entry\\.js" ${event}$`).test(line) || new RegExp(`^& '[^']+(?:''[^']*)*' '[^']*hook-entry\\.js' ${event}; exit \\$LASTEXITCODE$`).test(line));
+  return events.every((event) => {
+    const list = data.hooks[event];
+    if (!EVENTS.includes(event) || !Array.isArray(list) || list.length !== 1 || !record(list[0])) return false;
+    const entry = list[0];
+    const lines = [entry.command, entry.bash, entry.powershell].filter((v) => v !== undefined);
+    return entry.type === 'command' && lines.length > 0 && lines.every((line) => ours(line, event));
+  });
+}
+
 // Writes the registration to the hook file of `home`, replacing any file of that name (Lean's shell guard writes
 // the same name, so only one is ever registered). Returns the file's path. Setup's step only.
 export function writeRegistration({ home = copilotHome(), node, root, platform } = {}) {
@@ -116,4 +142,4 @@ export function writeRegistration({ home = copilotHome(), node, root, platform }
   return target;
 }
 
-export default Object.freeze({ registration, file, writeRegistration, registrationText });
+export default Object.freeze({ registration, file, writeRegistration, registrationText, isRegistration });

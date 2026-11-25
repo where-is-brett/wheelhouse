@@ -620,3 +620,12 @@ test('the free-input flag off does not hide a schema field that takes typed word
   await run('preToolUse', call('ask_user', { message: 'What next?', allowFreeformInput: false, requestedSchema: { properties: { answer: { type: 'string', enum: ['A'] }, count: { type: 'integer' } } } }), { steps: r.steps, c6: true });
   assert.equal(r.calls.find((c) => c.name === 'cardCheck').input.tool_input.questions[0].allowFreeformInput, true);
 });
+
+test('the tool guard is given Copilot\'s own words for a chat with no role: no Claude session, no aside command', async () => {
+  const r = recording();
+  await run('preToolUse', call('bash', { command: 'ls' }), { steps: r.steps });
+  const words = r.calls.find((c) => c.name === 'toolGuard').deps.words;
+  assert.match(words.guards, /every chat here/);
+  assert.doesNotMatch(`${words.guards} ${words.wayOut}`, /Claude|aside/);
+  assert.match(words.wayOut, /separate copy of the project/);
+});

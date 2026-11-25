@@ -1112,10 +1112,13 @@ const denial = (out) => (out?.hookSpecificOutput?.permissionDecision === 'deny' 
 // A refusal as the session should read it: a refused command lookup (PLUGIN_READ) also prints the First Mate's card command
 // lines, and a session with no role is told first that the guards apply to it and how to work outside them. Guards never
 // change, only the words; where the role can't be told, the refusal stays as it was.
-async function wordedRefusal(out, input, { env, pluginRoot, platform }) {
+// `words` ({ guards, wayOut }) is another agent's wording for the same two sentences.
+async function wordedRefusal(out, input, { env, pluginRoot, platform, words: given = {} }) {
   const reason = denial(out);
   if (reason === null) return out;
   let words = reason;
+  const guards = given.guards ?? GUARDS_SENTENCE;
+  const wayOut = given.wayOut ?? WAY_OUT;
   if (reason.startsWith(PLUGIN_READ)) {
     try {
       words = `${reason}. ${cardCommandLine(frontDeskCommand(pluginRoot, { platform }))}`;
@@ -1123,14 +1126,14 @@ async function wordedRefusal(out, input, { env, pluginRoot, platform }) {
   }
   try {
     const { sessionRole } = await import('../lib/role.js');
-    if (sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'aside') words = `${GUARDS_SENTENCE} ${words.replace(/[.\s]+$/, '')}. ${WAY_OUT}`;
+    if (sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'aside') words = `${guards} ${words.replace(/[.\s]+$/, '')}. ${wayOut}`;
   } catch { /* the role can't be told */ }
   return answer.deny(words);
 }
 
 export async function decide(input, options = {}) {
   const out = await decideTool(input, options);
-  return out === undefined ? out : wordedRefusal(out, input, { env: options.env ?? process.env, pluginRoot: options.pluginRoot ?? PLUGIN_ROOT, platform: options.platform ?? process.platform });
+  return out === undefined ? out : wordedRefusal(out, input, { env: options.env ?? process.env, pluginRoot: options.pluginRoot ?? PLUGIN_ROOT, platform: options.platform ?? process.platform, words: options.words });
 }
 
 async function decideTool(input, { dir, projectOf: find = projectOf, home = os.homedir(), platform = process.platform, pluginRoot = PLUGIN_ROOT, entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, projectDir = process.env.CLAUDE_PROJECT_DIR, env = process.env, engineHome = archonHome() } = {}) {

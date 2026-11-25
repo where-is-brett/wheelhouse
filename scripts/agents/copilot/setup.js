@@ -171,16 +171,23 @@ export function refresh({
   const said = [];
   // `write` puts the new text in place once the journal holds the change; `what` names the file in the line for a file left
   // as it is, and `done` is the line for one rewritten.
-  const redo = (target, content, what, done, write) => {
+  // `ours` tells a file an earlier release wrote from one the person or another tool wrote, for a file setup's journal no
+  // longer matches; it is then recorded in the run that held it, or the latest run.
+  const redo = (target, content, what, done, write, ours) => {
     const there = read(target);
     if (there === null || there === content) return;
-    const held = runHolding(target, journal());
-    if (held === null || held.change.after !== there) {
+    let held = runHolding(target, journal());
+    if ((held === null || held.change.after !== there) && ours?.(there) === true) {
+      const runs = Array.isArray(journal()?.runs) ? journal().runs : [];
+      const run = held?.run ?? runs.at(-1);
+      held = run === undefined ? null : { run, change: { step: held?.change.step } };
+    }
+    if (held === null || (held.change.after !== there && ours?.(there) !== true)) {
       said.push(`${what} in ${home} isn't the one setup wrote, so it was left as it is; run setup again to write it.`);
       return;
     }
     try {
-      add(held.run.id, [{ id: newId('chg'), step: held.change.step, kind: 'file', target, before: there, after: content }]);
+      add(held.run.id, [{ id: newId('chg'), ...(held.change.step === undefined ? {} : { step: held.change.step }), kind: 'file', target, before: there, after: content }]);
       write();
       said.push(done);
     } catch (error) {
@@ -189,7 +196,7 @@ export function refresh({
   };
   const hookTarget = hooks.file({ home });
   const hookText = hooks.registrationText({ node, root, platform });
-  redo(hookTarget, hookText, "Copilot's hook file", "Copilot's hook file now points at the new release.", () => hooks.writeRegistration({ home, node, root, platform }));
+  redo(hookTarget, hookText, "Copilot's hook file", "Copilot's hook file now points at the new release.", () => hooks.writeRegistration({ home, node, root, platform }), hooks.isRegistration);
   for (const f of firstMateFiles({ home, root, read })) redo(f.target, f.content, `The First Mate's file ${path.basename(f.target)}`, `The First Mate's file ${path.basename(f.target)} now matches the new release.`, () => writeWhole(f.target, f.content));
   for (const f of brainstormingTargets({ home, brainstorming })) redo(f.target, f.content, `Superpowers' brainstorming file ${path.relative(path.join(home, 'skills'), f.target)}`, `Superpowers' brainstorming file ${path.basename(f.target)} now matches the pinned release.`, () => writeWhole(f.target, f.content));
   return said.length === 0 ? null : said.join(' ');

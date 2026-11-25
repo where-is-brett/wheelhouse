@@ -98,6 +98,14 @@ director says "why <n>", run \`why decision <n> <their words>\` and relay its an
 A click on a card with no signing option is the director's answer: act on it, and say what you did.
 `;
 
+// A chat can outlast the release that started it, and its earlier turns may name commands and cards that are gone.
+const CURRENT_WORDS = `## Only what these instructions name
+
+Use only the commands and cards that these instructions and the tool sheet name. A command from an earlier turn of this chat
+that Wheelhouse now refuses as unknown or with its usage line is gone: never run it again, and never describe what it was
+meant to do. Say in one plain line that the command is gone, and go on with the commands named here. Wheelhouse never opens a window: every card is asked in this chat.
+`;
+
 const INSTRUCTIONS_TEXT = (sheet, picker = false) => `# Wheelhouse's First Mate in Copilot
 
 ${GUARD}
@@ -105,6 +113,7 @@ ${GUARD}
 ${sheet.trim()}
 
 ${APPROVALS_LEVEL}
+${CURRENT_WORDS}
 ${picker ? PICKER_CLICKS : UNRECORDED_CLICKS}
 Ask each card with ask_user as the tool sheet says: one card per call, and several cards one call after another. The question is
 the card's text, then one line per option, "Label: what it does". The options are the card's exact labels. The \`default\` is
