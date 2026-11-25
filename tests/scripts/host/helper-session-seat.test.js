@@ -28,12 +28,12 @@ test('/session/seat says whether the session holds the seat, refuses a session w
     const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}) });
     try {
       const client = helperClient({ address: helper.address });
-      assert.deepEqual(await client.session.seat({ cwd: folder, session: 'a' }), { ok: true, holds: false }, 'no seat file: held by no one');
+      assert.deepEqual(await client.session.seat({ cwd: folder, session: 'a' }), { ok: true, holds: false, elsewhere: false }, 'no seat file: held by no one');
       const table = [{ pid: 10, ppid: 1, command: 'claude' }, { pid: 20, ppid: 10, command: 'node hook.js' }];
       const taken = await takeSeat('o__p', { session: 'b', folder }, { alive: () => true, startTime: async () => 'T1', ancestor: { pid: 20, table } });
       assert.equal(taken.held, true);
       assert.deepEqual(await client.session.seat({ cwd: folder, session: 'b' }), { ok: true, holds: true });
-      assert.deepEqual(await client.session.seat({ cwd: folder, session: 'a' }), { ok: true, holds: false });
+      assert.deepEqual(await client.session.seat({ cwd: folder, session: 'a' }), { ok: true, holds: false, elsewhere: false });
       for (const session of [undefined, '']) assert.notEqual((await client.session.seat({ project: 'o__p', session })).ok, true);
       setStop({ by: 'prompt' });
       assert.deepEqual(await client.session.seat({ project: 'o__p', session: 'b' }), { ok: true, holds: true }, 'a read under STOP');
@@ -69,7 +69,7 @@ test('/session/seat keeps the holder\'s seat fresh at most once a minute, and an
   await withSeatHelper(async ({ client, folder }) => {
     putSeat();
     const stale = readSeat('o__p').seenAt;
-    assert.deepEqual(await client.session.seat({ cwd: folder, session: 'b' }), { ok: true, holds: false });
+    assert.deepEqual(await client.session.seat({ cwd: folder, session: 'b' }), { ok: true, holds: false, elsewhere: true });
     assert.equal(readSeat('o__p').seenAt, stale, 'another session\'s ask changes nothing');
     assert.deepEqual(await client.session.seat({ cwd: folder, session: 'a' }), { ok: true, holds: true });
     const fresh = readSeat('o__p').seenAt;
@@ -119,7 +119,7 @@ test('/session/seat takes a free or absent seat for a front-desk chat in the mai
     assert.deepEqual([seat.session, seat.pid, seat.pidStart], ['setup-chat', null, null]);
     // A held seat is left alone.
     putSeat();
-    assert.deepEqual(await client.session.seat({ cwd: folder, session: 'chat-2' }), { ok: true, holds: false });
+    assert.deepEqual(await client.session.seat({ cwd: folder, session: 'chat-2' }), { ok: true, holds: false, elsewhere: true });
     assert.equal(readSeat('o__p').session, 'a');
     // A holder that ended after the chat started.
     putSeat({ pid: 999999 });
@@ -132,7 +132,7 @@ test('/session/seat takes nothing for an aside chat, a worktree or an id a seat 
   await withSeatHelper(async ({ client, folder }) => {
     // A role recorded as aside.
     assert.equal(recordRole('side-chat', 'aside'), true);
-    assert.deepEqual(await client.session.seat({ cwd: folder, session: 'side-chat' }), { ok: true, holds: false });
+    assert.deepEqual(await client.session.seat({ cwd: folder, session: 'side-chat' }), { ok: true, holds: false, elsewhere: false });
     assert.equal(readSeat('o__p'), null);
     // A worktree.
     const tree = path.join(folder, 'tree');
@@ -141,8 +141,8 @@ test('/session/seat takes nothing for an aside chat, a worktree or an id a seat 
     fs.mkdirSync(gitdir, { recursive: true });
     fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${gitdir}\n`);
     fs.writeFileSync(path.join(gitdir, 'HEAD'), 'ref: refs/heads/feature/side\n');
-    assert.deepEqual(await client.session.seat({ cwd: tree, session: 'chat-1' }), { ok: true, holds: false });
-    assert.deepEqual(await client.session.seat({ cwd: folder, session: 'has space' }), { ok: true, holds: false });
+    assert.deepEqual(await client.session.seat({ cwd: tree, session: 'chat-1' }), { ok: true, holds: false, elsewhere: false });
+    assert.deepEqual(await client.session.seat({ cwd: folder, session: 'has space' }), { ok: true, holds: false, elsewhere: false });
     assert.equal(readSeat('o__p'), null);
   });
 });
@@ -151,7 +151,7 @@ test('/session/seat with aside records the choice where none is, and the session
   await withSeatHelper(async ({ client, folder }) => {
     assert.deepEqual(await client.session.seat({ cwd: folder, session: 'chat-1', aside: true }), { ok: true, holds: false });
     assert.equal(JSON.parse(fs.readFileSync(roleFile('chat-1'), 'utf8')).role, 'aside');
-    assert.deepEqual(await client.session.seat({ cwd: folder, session: 'chat-1' }), { ok: true, holds: false }, 'a free seat, and the chat is an aside');
+    assert.deepEqual(await client.session.seat({ cwd: folder, session: 'chat-1' }), { ok: true, holds: false, elsewhere: false }, 'a free seat, and the chat is an aside');
     assert.equal(readSeat('o__p'), null);
     assert.notEqual((await client.session.seat({ cwd: folder, session: 'has space', aside: true })).ok, true);
   });
@@ -165,14 +165,14 @@ test('/session/seat with aside never gives up a held seat or turns a recorded ro
     assert.equal(readSeat('o__p').session, 'a', 'the holder keeps the seat');
     assert.equal(JSON.parse(fs.readFileSync(roleFile('a'), 'utf8')).role, 'front-desk', 'the holder\'s record is unchanged');
     // So another chat's next write still finds the seat held.
-    assert.deepEqual(await client.session.seat({ cwd: folder, session: 'b' }), { ok: true, holds: false });
+    assert.deepEqual(await client.session.seat({ cwd: folder, session: 'b' }), { ok: true, holds: false, elsewhere: true });
     assert.equal(readSeat('o__p').session, 'a');
   });
 });
 
 test('/session/seat takes nothing when the project\'s lock can\'t be read', async () => {
   await withSeatHelper(async ({ client, folder }) => {
-    assert.deepEqual(await client.session.seat({ cwd: folder, session: 'chat-1' }), { ok: true, holds: false });
+    assert.deepEqual(await client.session.seat({ cwd: folder, session: 'chat-1' }), { ok: true, holds: false, elsewhere: false });
     assert.equal(readSeat('o__p'), null);
   }, { host: 'github' });
 });
