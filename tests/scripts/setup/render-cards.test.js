@@ -177,6 +177,22 @@ test('path a on the Desktop app reaches the end of setup with no pause and no lo
   assert.deepEqual(cards.filter((c) => c.stale), [], 'no card came back as an earlier one');
 });
 
+// The Desktop route: in the Desktop app the builder question says where setup runs, recommends Desktop and is answered with it, and
+// the same path through the app's echo of an earlier card ends unpaused with no stale answer.
+test('path m: in Claude Desktop the builder question says so, recommends Desktop, and setup ends with no loop, with or without the app\'s echo', async () => {
+  for (const desktop of [false, true]) {
+    const { cards, end } = await rendered('m', { desktop });
+    assert.deepEqual(end, { step: 10, how: 'finished' });
+    const ask = cards.find((c) => c.id === 'builders');
+    assert.ok(ask, 'the builder question is asked');
+    assert.match(ask.card.question, /Setup is running in Claude Desktop\./);
+    assert.doesNotMatch(ask.card.question, /can't tell/);
+    assert.match(recommendedOf(ask.card), /^In Claude Desktop/);
+    assert.match(ask.answer.label, /^In Claude Desktop/);
+    assert.deepEqual(cards.filter((c) => c.stale), [], 'no card came back as an earlier one');
+  }
+});
+
 // Every Go-ahead card lists what its step does one thing to a line, in words a product owner reads without help.
 const JARGON = /\bpins?\b|extraheader|tested versions|stable channel|\d+ keys in your|merge gate|sandbox's checks/i;
 test('every path\'s Go-ahead cards list one thing to a line, with no jargon', async () => {

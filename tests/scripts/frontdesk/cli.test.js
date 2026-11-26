@@ -3642,6 +3642,27 @@ test('foreman-card records the "Start the foreman" card once, and says plainly w
   });
 });
 
+test('the "Start the foreman" card read again after an answer is a new card with its own words, so a stale echo of the old answer cannot decide it', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const base = { client: helper.client, cwd: CWD, project: 'o__p', route: 'desktop', age: null, stop: () => ({ on: false }), now: () => NOW };
+    const asked = [];
+    for (const label of [START_FOREMAN, LEAVE_IT, START_FOREMAN]) {
+      const got = await foremanCard(base);
+      // The card waits: no earlier answer, quoted by the same words, has decided it.
+      assert.ok(helper.views().waiting.some((c) => c.id === got.id), `offer ${asked.length + 1} waits`);
+      assert.ok(!asked.includes(got.question.question), 'its words are not those of an earlier offer');
+      asked.push(got.question.question);
+      // Desktop echoes the earlier answer for a card with the same words, so the answer is quoted by the question.
+      await helper.client.state.write({ cwd: CWD, kind: 'card-answer', data: { question: got.question.question, label } });
+      assert.ok(!helper.views().waiting.some((c) => c.id === got.id), 'the answer decides it');
+    }
+    assert.equal(helper.held.filter((e) => e.kind === 'card').length, 3);
+    assert.match(asked[1], /again/);
+    assert.ok(!/session id|prompt|start_session|user_asked/i.test(asked.join('\n')), 'every offer reads plainly');
+  });
+});
+
 test('foreman-brief gives the one line to start the Desktop foreman with, and refuses or says plainly when it should not start', async () => {
   const brief = async (p) => ({ title: `Wheelhouse · Foreman · ${p}`, initiation: 'user_asked' });
   const base = { project: 'o__p', route: 'desktop', age: null, stop: () => ({ on: false }), brief };
