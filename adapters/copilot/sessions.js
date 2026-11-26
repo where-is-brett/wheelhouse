@@ -26,12 +26,12 @@ import { ACTIVITY_DAYS, BACKGROUND_SESSIONS_READY, LEVELS } from '../../scripts/
 import { activitySummary, finalAnswer, modelOfRun, monthRefusedIn, sessionIdOf, sessionUsage, eventsOf } from '../../scripts/agents/copilot/run-output.js';
 import { commitWork } from '../../scripts/feature/commit-work.js';
 import { recordRefusal, recordRun } from '../../scripts/agents/copilot/usage.js';
-import { checkVersions, noSubsetRunner, readVersions } from '../../scripts/agents/copilot/versions.js';
+import { checkVersions, noSubsetRunner, readVersions, resolveCopilot } from '../../scripts/agents/copilot/versions.js';
 import { BUILDER_PROMPT_LEAD } from '../../scripts/foreman/prompt-lead.js';
 import { PLUGIN_ROOT, foremanCommands } from '../../scripts/foreman/tools.js';
 import { BIN_DIR, LAUNCHER_SESSION, launcherOf, pathWithLaunchers } from '../../scripts/lib/launchers.js';
 import { DEFAULT_BUILD_COMMANDS, isModelName } from '../../scripts/gate/guardrails.js';
-import { quoteForCmd, resolveCommand } from '../../scripts/lib/claude.js';
+import { quoteForCmd } from '../../scripts/lib/claude.js';
 import { commandPath } from '../../scripts/lib/command-path.js';
 import { run as realRun } from '../../scripts/lib/run.js';
 import { writeProvenance } from '../../scripts/lineage/check.js';
@@ -188,7 +188,7 @@ function sessionCall({ project, target, role, agent, config, plan, prompt, sessi
     prompt, sessionId: resume === null ? named : null, resume: resume === null ? null : named, logDir, usageFile, role, ...(agent === undefined ? {} : { agent }), model,
     allow: rulesOf(rules.allow, 'allow'), deny: rulesOf(rules.deny, 'deny'),
   });
-  const resolved = copilot ?? resolveCommand({ name: 'copilot', platform, env });
+  const resolved = copilot ?? resolveCopilot({ platform, env });
   let call;
   if (resolved.kind === 'cmd') {
     let line;

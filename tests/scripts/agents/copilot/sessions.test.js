@@ -302,7 +302,7 @@ test('a CLI whose version can\'t be read fails closed: no start, and the home is
   const silent = part({ versions: { env: { PATH: COPILOT_ON_PATH() }, platform: 'linux', run: guardedRun(async () => ({ code: 0, stdout: '1.0.105\n' }), { log }) } });
   await assert.rejects(silent.prepare({ project: P, target: 'foreman' }), /isn't the version Wheelhouse has tested/);
   assert.equal(fs.existsSync(sessionHome(P, 'foreman')), false);
-  assert.deepEqual(log, ['copilot --version'], 'it asked the program, and the stand-in refused');
+  assert.deepEqual(log, ['copilot --version', 'copilot --version'], 'it asked the program twice, and the stand-in refused both times');
 }));
 
 test('a newer CLI that passes the safety subset starts', () => withHome(async () => {

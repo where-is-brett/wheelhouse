@@ -129,3 +129,12 @@ test('the foreman\'s own session is started hidden, and the waker starts its chi
   assert.doesNotMatch(call.text, /detached/);
   assert.match(call.text, /stdio: \[call\.input \? 'pipe' : 'ignore', 'pipe', 'pipe'\]/);
 });
+
+test('the Copilot version read starts `copilot` through lib/run.js, which hides its window, and never asks for a visible one', () => {
+  const sessions = fs.readFileSync(path.join(ROOT, 'adapters/copilot/sessions.js'), 'utf8');
+  assert.match(sessions, /import \{ run as realRun \} from '\.\.\/\.\.\/scripts\/lib\/run\.js'/);
+  for (const file of ['scripts/agents/copilot/versions.js', 'adapters/copilot/sessions.js']) {
+    assert.doesNotMatch(fs.readFileSync(path.join(ROOT, file), 'utf8'), /windowsHide\s*:\s*false/, file);
+  }
+  assert.match(fs.readFileSync(path.join(ROOT, 'scripts/lib/run.js'), 'utf8'), /windowsHide = true/);
+});

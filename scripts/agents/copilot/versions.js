@@ -76,23 +76,71 @@ function readJson(file) {
 }
 
 const VERSION_WAIT_MS = 30000;
-// `copilot --version`'s answer, asked once per process (a watcher start): the version, or null when it can't be had.
-const cliAsked = new Map();
-async function cliFromRun({ run, env, platform }) {
-  const key = `${platform}`;
-  if (cliAsked.has(key)) return cliAsked.get(key);
-  let found = null;
+
+// Where VS Code puts the Copilot CLI's shim on Windows. VS Code adds that folder to the PATH of its own terminals only, so a
+// process started elsewhere (the watcher) may not have it.
+function shimFolders(env) {
+  const at = (name) => Object.entries(env ?? {}).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
+  return [[at('LOCALAPPDATA'), 'Programs'], [at('ProgramFiles'), '']].flatMap(([base, sub]) => (
+    typeof base === 'string' && base !== ''
+      ? ['Microsoft VS Code', 'Microsoft VS Code Insiders'].map((app) => path.win32.join(base, sub, app, 'bin', 'copilot-shim'))
+      : []));
+}
+
+// resolveCopilot({ platform, env, exists }) -> { kind, file }
+//   The `copilot` program as resolveCommand finds it; on Windows, when the PATH has none, VS Code's shim folders are looked in
+//   too. Throws when it is nowhere.
+export function resolveCopilot({ platform = process.platform, env = process.env, exists = fs.existsSync } = {}) {
   try {
-    const resolved = resolveCommand({ name: 'copilot', platform, env });
-    const call = resolved.kind === 'cmd'
-      ? { file: 'cmd.exe', args: ['/d', '/s', '/c', `"${[resolved.file, '--version'].map(quoteForCmd).join(' ')}"`], verbatim: true }
-      : { file: resolved.file, args: ['--version'], verbatim: false };
-    const result = await run(call.file, call.args, { env, input: '', timeoutMs: VERSION_WAIT_MS, windowsVerbatimArguments: call.verbatim });
-    found = result?.code === 0 ? versionIn(result.stdout) : null;
-  } catch {
-    found = null;
+    return resolveCommand({ name: 'copilot', platform, env, exists });
+  } catch (error) {
+    if (platform !== 'win32') throw error;
+    const key = Object.keys(env ?? {}).find((k) => k.toLowerCase() === 'path') ?? 'Path';
+    const widened = { ...env, [key]: [String(env?.[key] ?? ''), ...shimFolders(env)].filter(Boolean).join(';') };
+    return resolveCommand({ name: 'copilot', platform, env: widened, exists });
   }
-  cliAsked.set(key, found);
+}
+
+// Why the last `copilot --version` read gave no version, in a few plain words with no paths or output (null when it gave one),
+// for whoever asks why a hold names a version not known.
+let lastFault = null;
+export const cliFault = () => lastFault;
+
+// `copilot --version`'s answers kept for the process, by platform and PATH. Only a version is kept: a read that failed is
+// asked again at the next start, so an early failure (a slow start, a PATH not yet set) never holds the whole process.
+const cliAsked = new Map();
+async function cliOnce({ run, env, platform, exists }) {
+  let resolved;
+  try {
+    resolved = resolveCopilot({ platform, env, exists });
+  } catch {
+    lastFault = 'copilot not found on the PATH';
+    return null;
+  }
+  const call = resolved.kind === 'cmd'
+    ? { file: 'cmd.exe', args: ['/d', '/s', '/c', `"${[resolved.file, '--version'].map(quoteForCmd).join(' ')}"`], verbatim: true }
+    : { file: resolved.file, args: ['--version'], verbatim: false };
+  try {
+    const result = await run(call.file, call.args, { env, input: '', timeoutMs: VERSION_WAIT_MS, windowsVerbatimArguments: call.verbatim });
+    if (result?.timedOut === true) { lastFault = 'copilot --version timed out'; return null; }
+    if (result?.code !== 0) { lastFault = `copilot --version exited with ${result?.code ?? 'no code'}`; return null; }
+    // The answer is read from either stream: a shim that hands on to another program may write to the one it was not given.
+    const found = versionIn(result.stdout) ?? versionIn(result.stderr);
+    lastFault = found === null ? 'copilot --version printed no version number' : null;
+    return found;
+  } catch {
+    lastFault = 'copilot --version could not be started';
+    return null;
+  }
+}
+
+// `copilot --version`'s answer: the version, or null when it can't be had after two tries.
+async function cliFromRun({ run, env, platform, exists }) {
+  const pathKey = Object.keys(env ?? {}).find((k) => k.toLowerCase() === 'path');
+  const key = `${platform}\0${pathKey ? env[pathKey] : ''}`;
+  if (cliAsked.has(key)) return cliAsked.get(key);
+  const found = (await cliOnce({ run, env, platform, exists })) ?? (await cliOnce({ run, env, platform, exists }));
+  if (found !== null) cliAsked.set(key, found);
   return found;
 }
 
@@ -100,14 +148,14 @@ async function cliFromRun({ run, env, platform }) {
 //   The versions of VS Code, its Copilot runtime and Copilot CLI in use here, each a version or null, never guessed.
 //   The CLI's is never read from a file: a file on this computer could claim the pinned version. It comes from
 //   COPILOT_CLI_BINARY_VERSION (a Copilot hook's environment, check 58: the hook's input carries no version), else from
-//   `copilot --version` through `run`, asked once per process; without `run`, nothing is started. VS Code's and the
+//   `copilot --version` through `run` (a version is kept for the process; a failed read is tried twice and asked again at the next start); without `run`, nothing is started. VS Code's and the
 //   runtime's come from the add-on's record (`<home>/agents/copilot-versions.json`) when it is there; the add-on is parked.
-export async function readVersions({ home = wheelhouseHome(), env = process.env, run = null, platform = process.platform } = {}) {
+export async function readVersions({ home = wheelhouseHome(), env = process.env, run = null, platform = process.platform, exists = fs.existsSync } = {}) {
   const kept = readJson(versionsFile(home));
   const vscode = versionOrNull(kept?.vscode);
   const runtime = versionOrNull(kept?.runtime);
   let cli = versionOrNull(env?.COPILOT_CLI_BINARY_VERSION);
-  if (cli === null && typeof run === 'function') cli = await cliFromRun({ run, env, platform });
+  if (cli === null && typeof run === 'function') cli = await cliFromRun({ run, env, platform, exists });
   return { vscode, runtime, cli };
 }
 
@@ -122,7 +170,7 @@ const CHOICES = /--model\b[^\n]*?\(choices:\s*((?:"[^"\n]*"(?:,\s*)?)+)\)/s;
 export async function copilotModels({ run, env = process.env, platform = process.platform } = {}) {
   if (typeof run !== 'function') return [];
   try {
-    const resolved = resolveCommand({ name: 'copilot', platform, env });
+    const resolved = resolveCopilot({ platform, env });
     const call = resolved.kind === 'cmd'
       ? { file: 'cmd.exe', args: ['/d', '/s', '/c', `"${[resolved.file, '--help'].map(quoteForCmd).join(' ')}"`], verbatim: true }
       : { file: resolved.file, args: ['--help'], verbatim: false };
