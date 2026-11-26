@@ -1613,6 +1613,13 @@ export function makeWaker({
       try {
         prepared = await adapter.prepare({ project, target });
       } catch (error) {
+        // Put in the watcher's log once for each refusal's words of a target, so why a start keeps being refused is there to
+        // read before the wake's failures are counted. A start that passes clears them, so a refusal that returns is logged again.
+        const refusal = error instanceof Error ? error.message : 'unknown error';
+        if (refusedPrepare.get(`${project}\0${target}`) !== refusal) {
+          refusedPrepare.set(`${project}\0${target}`, refusal);
+          onError(`The ${nameOf(target)} session's start was refused before its run: ${refusal}`);
+        }
         for (const record of list(error?.records)) {
           const said = `${record?.kind}:${JSON.stringify(record?.data?.mismatches ?? record?.data ?? null)}`;
           if (raisedPrepare.has(said)) continue;
@@ -1629,6 +1636,7 @@ export function makeWaker({
         }
         throw error;
       }
+      refusedPrepare.delete(`${project}\0${target}`);
       if (prepared?.lifted === true) await liftHolds();
     }
     if (target !== 'foreman' && typeof adapter.beforeWork === 'function' && typeof cwd === 'string') {
@@ -1724,8 +1732,9 @@ export function makeWaker({
     }
     return started.pid;
   }
-  // The records a refused prepare raised, each once for this waker.
+  // The records a refused prepare raised, and the last refusal's words logged for each target.
   const raisedPrepare = new Set();
+  const refusedPrepare = new Map();
 
   // A prepare that removed a hold of the project's (an agent's own, ruling P8-32): its lift is recorded here, through
   // `raise`, as the session start and the mod's tick record one, so its card closes on a computer with neither. It

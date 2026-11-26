@@ -76,39 +76,98 @@ function readJson(file) {
 }
 
 const VERSION_WAIT_MS = 30000;
-// `copilot --version`'s answer, asked once per process (a watcher start): the version, or null when it can't be had.
-const cliAsked = new Map();
-async function cliFromRun({ run, env, platform }) {
-  const key = `${platform}`;
-  if (cliAsked.has(key)) return cliAsked.get(key);
-  let found = null;
-  try {
-    const resolved = resolveCommand({ name: 'copilot', platform, env });
-    const call = resolved.kind === 'cmd'
-      ? { file: 'cmd.exe', args: ['/d', '/s', '/c', `"${[resolved.file, '--version'].map(quoteForCmd).join(' ')}"`], verbatim: true }
-      : { file: resolved.file, args: ['--version'], verbatim: false };
-    const result = await run(call.file, call.args, { env, input: '', timeoutMs: VERSION_WAIT_MS, windowsVerbatimArguments: call.verbatim });
-    found = result?.code === 0 ? versionIn(result.stdout) : null;
-  } catch {
-    found = null;
-  }
-  cliAsked.set(key, found);
-  return found;
+
+// Where VS Code puts the Copilot CLI's shim on Windows: under VS Code installed for the whole computer first, then under
+// the per-user install. VS Code adds that folder to the PATH of its own terminals only, so a process started elsewhere
+// (the watcher) may not have it.
+function shimFolders(env) {
+  const at = (name) => Object.entries(env ?? {}).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
+  return [[at('ProgramFiles'), ''], [at('LOCALAPPDATA'), 'Programs']].flatMap(([base, sub]) => (
+    typeof base === 'string' && base !== ''
+      ? ['Microsoft VS Code', 'Microsoft VS Code Insiders'].map((app) => path.win32.join(base, sub, app, 'bin', 'copilot-shim'))
+      : []));
 }
 
-// readVersions({ home, env, run, platform }) -> Promise<{ vscode, runtime, cli }>
-//   The versions of VS Code, its Copilot runtime and Copilot CLI in use here, each a version or null, never guessed.
+// resolveCopilot({ platform, env, exists }) -> { kind, file }
+//   The `copilot` program as resolveCommand finds it; on Windows, when the PATH has none, VS Code's shim folders are looked in
+//   too. Throws when it is nowhere.
+export function resolveCopilot({ platform = process.platform, env = process.env, exists = fs.existsSync } = {}) {
+  try {
+    return resolveCommand({ name: 'copilot', platform, env, exists });
+  } catch (error) {
+    if (platform !== 'win32') throw error;
+    const key = Object.keys(env ?? {}).find((k) => k.toLowerCase() === 'path') ?? 'Path';
+    const widened = { ...env, [key]: [String(env?.[key] ?? ''), ...shimFolders(env)].filter(Boolean).join(';') };
+    return resolveCommand({ name: 'copilot', platform, env: widened, exists });
+  }
+}
+
+// One try of `copilot --version`, for the program `resolved`: { version, fault, timedOut }. `fault` is why no version came, in a
+// few plain words with no paths or output (null when one did), for whoever asks why a hold names a version not known.
+async function cliOnce({ run, env, resolved }) {
+  const call = resolved.kind === 'cmd'
+    ? { file: 'cmd.exe', args: ['/d', '/s', '/c', `"${[resolved.file, '--version'].map(quoteForCmd).join(' ')}"`], verbatim: true }
+    : { file: resolved.file, args: ['--version'], verbatim: false };
+  try {
+    const result = await run(call.file, call.args, { env, input: '', timeoutMs: VERSION_WAIT_MS, windowsVerbatimArguments: call.verbatim });
+    if (result?.timedOut === true) return { version: null, fault: 'copilot --version timed out', timedOut: true };
+    if (result?.code !== 0) return { version: null, fault: `copilot --version exited with ${result?.code ?? 'no code'}`, timedOut: false };
+    // The answer is read from either stream: a shim that hands on to another program may write to the one it was not given.
+    const version = versionIn(result.stdout) ?? versionIn(result.stderr);
+    return { version, fault: version === null ? 'copilot --version printed no version number' : null, timedOut: false };
+  } catch {
+    return { version: null, fault: 'copilot --version could not be started', timedOut: false };
+  }
+}
+
+// How long a read that failed is kept before the next start asks again, so a program that hangs doesn't cost every wake.
+const FAILED_READ_KEPT_MS = 5 * 60 * 1000;
+// `copilot --version`'s answers kept for the process, by the program file asked: a version for good, a fault for
+// FAILED_READ_KEPT_MS.
+const cliAsked = new Map();
+// Forgets every kept answer (for a test that reads several computers in turn).
+export const forgetCliReads = () => cliAsked.clear();
+
+// The CLI's version as `copilot --version` gives it: { cli, fault }, the version or null with why. A quick failure is tried once
+// more; a timeout isn't, since a second wait would only double the stall.
+async function readCli({ run, env, platform, exists, now }) {
+  let resolved;
+  try {
+    resolved = resolveCopilot({ platform, env, exists });
+  } catch {
+    return { cli: null, fault: 'copilot not found on the PATH' };
+  }
+  const key = `${resolved.kind}\0${resolved.file}`;
+  const kept = cliAsked.get(key);
+  if (kept?.version !== undefined) return { cli: kept.version, fault: null };
+  if (kept !== undefined && now() < kept.until) return { cli: null, fault: kept.fault };
+  let read = await cliOnce({ run, env, resolved });
+  if (read.version === null && !read.timedOut) read = await cliOnce({ run, env, resolved });
+  cliAsked.set(key, read.version !== null ? { version: read.version } : { fault: read.fault, until: now() + FAILED_READ_KEPT_MS });
+  return { cli: read.version, fault: read.fault };
+}
+
+// readVersionsAndFault({ home, env, run, platform, exists, now }) -> Promise<{ versions: { vscode, runtime, cli }, fault }>
+//   The versions of VS Code, its Copilot runtime and Copilot CLI in use here, each a version or null, never guessed, and
+//   why the CLI's couldn't be read (null when it was).
 //   The CLI's is never read from a file: a file on this computer could claim the pinned version. It comes from
 //   COPILOT_CLI_BINARY_VERSION (a Copilot hook's environment, check 58: the hook's input carries no version), else from
-//   `copilot --version` through `run`, asked once per process; without `run`, nothing is started. VS Code's and the
-//   runtime's come from the add-on's record (`<home>/agents/copilot-versions.json`) when it is there; the add-on is parked.
-export async function readVersions({ home = wheelhouseHome(), env = process.env, run = null, platform = process.platform } = {}) {
+//   `copilot --version` through `run` (a version is kept for the process; a failed read is tried twice, unless it timed out,
+//   and kept for five minutes); without `run`, nothing is started. VS Code's and the runtime's come from the add-on's
+//   record (`<home>/agents/copilot-versions.json`) when it is there; the add-on is parked.
+export async function readVersionsAndFault({ home = wheelhouseHome(), env = process.env, run = null, platform = process.platform, exists = fs.existsSync, now = Date.now } = {}) {
   const kept = readJson(versionsFile(home));
   const vscode = versionOrNull(kept?.vscode);
   const runtime = versionOrNull(kept?.runtime);
   let cli = versionOrNull(env?.COPILOT_CLI_BINARY_VERSION);
-  if (cli === null && typeof run === 'function') cli = await cliFromRun({ run, env, platform });
-  return { vscode, runtime, cli };
+  let fault = null;
+  if (cli === null && typeof run === 'function') ({ cli, fault } = await readCli({ run, env, platform, exists, now }));
+  return { versions: { vscode, runtime, cli }, fault };
+}
+
+// readVersions(options) -> Promise<{ vscode, runtime, cli }>: readVersionsAndFault's versions alone.
+export async function readVersions(options = {}) {
+  return (await readVersionsAndFault(options)).versions;
 }
 
 // The models offered in Copilot's own help: `--model`'s choices, `(choices: "a", "b")`. No check has recorded the
@@ -122,7 +181,7 @@ const CHOICES = /--model\b[^\n]*?\(choices:\s*((?:"[^"\n]*"(?:,\s*)?)+)\)/s;
 export async function copilotModels({ run, env = process.env, platform = process.platform } = {}) {
   if (typeof run !== 'function') return [];
   try {
-    const resolved = resolveCommand({ name: 'copilot', platform, env });
+    const resolved = resolveCopilot({ platform, env });
     const call = resolved.kind === 'cmd'
       ? { file: 'cmd.exe', args: ['/d', '/s', '/c', `"${[resolved.file, '--help'].map(quoteForCmd).join(' ')}"`], verbatim: true }
       : { file: resolved.file, args: ['--help'], verbatim: false };
@@ -144,9 +203,17 @@ const sameVersions = (a, b) => (a?.cli ?? null) !== null && ['vscode', 'runtime'
 const NAMED_CHARS = 32;
 const named = (value) => (typeof value === 'string' ? (value.length > NAMED_CHARS ? `${value.slice(0, NAMED_CHARS)}...` : value) : 'a version not known');
 
-// The words of a version hold: which versions, and that they haven't passed. At most HOLD_WHY_CHARS.
-export function versionWhy(versions, pin = null) {
+// The most of a read's fault a hold's words name.
+const FAULT_CHARS = 60;
+
+// The words of a version hold: which versions, and that they haven't passed. A CLI version that couldn't be read is said
+// so, with `fault` (cliFault's words) when one is given. At most HOLD_WHY_CHARS.
+export function versionWhy(versions, pin = null, fault = null) {
   const pinned = pin === null ? '' : `, and Wheelhouse is pinned to ${named(pin)}`;
+  if ((versions?.cli ?? null) === null && typeof fault === 'string' && fault !== '') {
+    const words = `Copilot CLI's version couldn't be read (${fault.slice(0, FAULT_CHARS)}), so it isn't known to be the version Wheelhouse has tested${pinned}, and Copilot work is held`;
+    return words.slice(0, HOLD_WHY_CHARS);
+  }
   const words = `Copilot CLI ${named(versions?.cli)} (VS Code ${named(versions?.vscode)}, Copilot runtime ${named(versions?.runtime)}) isn't the version Wheelhouse has tested${pinned}, and it hasn't passed Wheelhouse's safety checks, so Copilot work is held`;
   return words.slice(0, HOLD_WHY_CHARS);
 }
@@ -154,13 +221,13 @@ export function versionWhy(versions, pin = null) {
 // What lifts a version hold, as the card and the hook say it (ruling P8-32).
 export const VERSION_LIFTS = "No click here lifts the hold: it lifts once Copilot is back at the version Wheelhouse is pinned to, or a newer version passes Wheelhouse's safety checks, which the watcher tries again each time it starts, or once this project runs on Claude Code on this computer again.";
 
-// copilotVersionCheck({ versions, last, runSubset, pin }) -> Promise<{ changed, ok, why }>
+// copilotVersionCheck({ versions, last, runSubset, pin, fault }) -> Promise<{ changed, ok, why }>
 //   A CLI at the pinned version passes without running anything: the pin is the version the trial's checks ran on. Any
 //   other version, or none known, is checked against the versions last checked (`last`, null when none have been): the
 //   same versions pass; a change, or nothing checked yet, runs the safety subset once (`runSubset({ versions })`, the
 //   evaluation runner over the safety scenarios), which must answer `{ ok: true }` to pass; anything else, a throw
-//   among it, fails.
-export async function copilotVersionCheck({ versions, last, runSubset, pin = null }) {
+//   among it, fails. `fault` is why the CLI's version couldn't be read, for the hold's words.
+export async function copilotVersionCheck({ versions, last, runSubset, pin = null, fault = null }) {
   if (pin !== null && (versions?.cli ?? null) === pin) return { changed: false, ok: true, why: null };
   if (last !== null && last !== undefined && sameVersions(versions, last)) return { changed: false, ok: true, why: null };
   let answer;
@@ -170,7 +237,7 @@ export async function copilotVersionCheck({ versions, last, runSubset, pin = nul
     answer = null;
   }
   const ok = answer?.ok === true;
-  return { changed: true, ok, why: ok ? null : versionWhy(versions, pin) };
+  return { changed: true, ok, why: ok ? null : versionWhy(versions, pin, fault) };
 }
 
 // The subset's runner until the evaluation runner (part 10 of the build) gives one: it fails, so a version other than the
@@ -184,7 +251,7 @@ export const VERSION_HOLD = 'copilot-version';
 // The versions whose subset this process has run, so a failed one isn't run again before the watcher starts again.
 const subsetRun = new Set();
 
-// checkVersions({ project, versions, runSubset, pin, home, now }) -> Promise<{ lifted }>
+// checkVersions({ project, versions, fault, runSubset, pin, home, now }) -> Promise<{ lifted }>
 //   Before a Copilot session starts: the version check, for `project`. `pin` is the manifest's (pinnedCli). A CLI at the
 //   pin, or versions already checked, pass. Any other CLI runs
 //   the subset (once per process for the same versions): a pass records them as checked and lifts the project's
@@ -192,12 +259,14 @@ const subsetRun = new Set();
 //   card while it stands) and refuses the start. A refusal throws an error carrying the lineage hold's record, with
 //   `why` naming the versions, until that record is in the state (the error's `raised`, which the waker calls once
 //   it is), so the hold raises one card. `lifted` says a pass removed the project's version hold, so its card can close.
-export async function checkVersions({ project, versions, runSubset = noSubsetRunner, pin = pinnedCli(), home = wheelhouseHome(), now = () => new Date() }) {
+//   `fault` (cliFault's words) is why a CLI version couldn't be read: the hold's words and its record name it.
+export async function checkVersions({ project, versions, fault = null, runSubset = noSubsetRunner, pin = pinnedCli(), home = wheelhouseHome(), now = () => new Date() }) {
+  const unread = (versions?.cli ?? null) === null && typeof fault === 'string' && fault !== '' ? fault.slice(0, FAULT_CHARS) : null;
   const last = readJson(seenFile(home));
   const held = readAgentHold(project, VERSION_HOLD);
   const key = JSON.stringify([versions?.vscode ?? null, versions?.runtime ?? null, versions?.cli ?? null]);
   const tried = subsetRun.has(key) && held !== null && sameVersions(held.versions, versions);
-  const result = tried ? { changed: true, ok: false, why: versionWhy(versions, pin) } : await copilotVersionCheck({ versions, last, runSubset, pin });
+  const result = tried ? { changed: true, ok: false, why: versionWhy(versions, pin, unread) } : await copilotVersionCheck({ versions, last, runSubset, pin, fault: unread });
   if (result.changed && !tried) subsetRun.add(key);
   if (result.ok) {
     if (result.changed) {
@@ -206,8 +275,9 @@ export async function checkVersions({ project, versions, runSubset = noSubsetRun
     }
     return { lifted: liftAgentWork(project, VERSION_HOLD) };
   }
-  const mismatches = [{ upstream: 'copilot', path: `cli ${named(versions?.cli)}` }];
-  const { set, recorded } = holdAgentWork({ project, name: VERSION_HOLD, agent: 'copilot', mismatches, why: result.why, lifts: VERSION_LIFTS, keep: { versions: { vscode: versions?.vscode ?? null, runtime: versions?.runtime ?? null, cli: versions?.cli ?? null } }, now });
+  // The fault is in the path, so a new fault raises a card with its own words rather than keeping the first one's.
+  const mismatches = [{ upstream: 'copilot', path: `cli ${named(versions?.cli)}${unread === null ? '' : ` (${unread})`}` }];
+  const { set, recorded } = holdAgentWork({ project, name: VERSION_HOLD, agent: 'copilot', mismatches, why: result.why, lifts: VERSION_LIFTS, keep: { versions: { vscode: versions?.vscode ?? null, runtime: versions?.runtime ?? null, cli: versions?.cli ?? null }, ...(unread === null ? {} : { fault: unread }) }, now });
   throw Object.assign(new Error(`${result.why}: no Copilot session is started until it passes`), {
     records: recorded ? [] : [{ kind: 'lineage-hold', data: { at: now().toISOString(), mismatches, why: result.why, lifts: VERSION_LIFTS } }],
     raised: () => markAgentRecorded(project, VERSION_HOLD, set),

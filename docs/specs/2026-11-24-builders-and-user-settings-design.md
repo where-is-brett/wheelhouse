@@ -394,6 +394,7 @@ The rehearsal's write-up (24 November 2026) numbers its faults. Fault 8 is secti
 
 - **A clean environment.** Whoever starts the helper or a watcher (the session-start keep-alive, the helper's tick, the sign-in start) gives it the same standard environment, built from scratch:
   - `HOME` (on Windows, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `SystemRoot`, `TEMP`);
+  - on Windows, Windows' own system settings: `ComSpec`, `PATHEXT`, `windir`, `SystemDrive`, `ProgramFiles`, `ProgramFiles(x86)`, `ProgramW6432`, `CommonProgramFiles`, `CommonProgramFiles(x86)`, `CommonProgramW6432`, `ProgramData`, `ALLUSERSPROFILE`. The director ruled on 26 November 2026 that these come with it: without them a program the process starts, such as a coding agent's command-line shim, can't find `cmd.exe` or its install folder. Still nothing of the starting session's, and no user name, home drive or temporary folder of a logon;
   - `PATH` from `pathWithNode` and `claude-path.json`;
   - locale variables;
   - `WHEELHOUSE_HOME` set explicitly.

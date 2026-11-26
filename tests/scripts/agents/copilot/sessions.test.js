@@ -4,7 +4,7 @@
 // from the output, the version check before every start, and the waker driven with the part. No Copilot program is run
 // (a stand-in file stands where the waker looks for one), and no request is spent.
 import '../../../helpers/homes.js';
-import { after, test } from 'node:test';
+import { after, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -28,6 +28,9 @@ import { makeEvent } from '../../../../scripts/state/events.js';
 import { makeWaker } from '../../../../scripts/watcher/waker.js';
 import { readBaseline, writeBaseline } from '../../../../scripts/watcher/control-files.js';
 import { BUILDER_PROMPT_LEAD } from '../../../../scripts/foreman/prompt-lead.js';
+import { forgetCliReads } from '../../../../scripts/agents/copilot/versions.js';
+
+beforeEach(() => forgetCliReads());
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const NODE = process.execPath;
@@ -300,9 +303,26 @@ test('a CLI at the pinned version starts, and one that differs is held with the 
 test('a CLI whose version can\'t be read fails closed: no start, and the home is not written', () => withHome(async () => {
   const log = [];
   const silent = part({ versions: { env: { PATH: COPILOT_ON_PATH() }, platform: 'linux', run: guardedRun(async () => ({ code: 0, stdout: '1.0.105\n' }), { log }) } });
-  await assert.rejects(silent.prepare({ project: P, target: 'foreman' }), /isn't the version Wheelhouse has tested/);
+  await assert.rejects(silent.prepare({ project: P, target: 'foreman' }), /couldn't be read \(copilot --version exited with 1\), so it isn't known to be the version Wheelhouse has tested/);
   assert.equal(fs.existsSync(sessionHome(P, 'foreman')), false);
-  assert.deepEqual(log, ['copilot --version'], 'it asked the program, and the stand-in refused');
+  assert.deepEqual(log, ['copilot --version', 'copilot --version'], 'it asked the program twice, and the stand-in refused both times');
+}));
+
+test('a refusal for a version that can\'t be read names why, and the part\'s version read alone starts no session and writes no hold', () => withHome(async () => {
+  const timedOut = part({ versions: { env: { PATH: COPILOT_ON_PATH() }, platform: 'linux', run: async () => ({ code: null, timedOut: true, stdout: '', stderr: '' }) } });
+  const read = await timedOut.versionRead();
+  assert.deepEqual(read, { versions: { vscode: null, runtime: null, cli: null }, fault: 'copilot --version timed out' });
+  assert.equal(readAgentHold(P, 'copilot-version'), null, 'reading the version holds nothing');
+  assert.equal(fs.existsSync(sessionHome(P, 'foreman')), false);
+  await assert.rejects(timedOut.prepare({ project: P, target: 'foreman' }), (error) => {
+    assert.match(error.message, /couldn't be read \(copilot --version timed out\)/);
+    assert.match(error.records[0].data.why, /timed out/);
+    assert.match(error.records[0].data.mismatches[0].path, /timed out/, 'the fault is in the mismatch, so a new fault raises words of its own');
+    return true;
+  });
+  assert.equal(readAgentHold(P, 'copilot-version').fault, 'copilot --version timed out');
+  const atPin = await part().versionRead();
+  assert.deepEqual(atPin, { versions: { vscode: null, runtime: null, cli: COPILOT_VERSION }, fault: null });
 }));
 
 test('a newer CLI that passes the safety subset starts', () => withHome(async () => {
