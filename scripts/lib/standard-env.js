@@ -5,13 +5,20 @@
 //
 // What it holds: HOME (on Windows USERPROFILE, APPDATA, LOCALAPPDATA, SystemRoot and TEMP in its place); PATH, with the
 // folder of the Node.js that runs this process and of the `claude` recorded in the home; LANG, LC_ALL and LC_CTYPE when set;
-// and WHEELHOUSE_HOME, always, so the process serves one home.
+// and WHEELHOUSE_HOME, always, so the process serves one home. On Windows it holds the computer's own system variables too
+// (SYSTEM_NAMES): they belong to the computer, not to a session, and without them a program the process starts can't find
+// cmd.exe, the program extensions or its install folder.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathWithNode, readRecordedClaude } from './claude.js';
 
 const WINDOWS_NAMES = ['USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'SystemRoot', 'TEMP'];
+export const SYSTEM_NAMES = [
+  'ComSpec', 'PATHEXT', 'windir', 'SystemDrive', 'TMP', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'ProgramData',
+  'CommonProgramFiles', 'CommonProgramFiles(x86)', 'CommonProgramW6432', 'ALLUSERSPROFILE', 'PUBLIC', 'HOMEDRIVE', 'HOMEPATH',
+  'USERNAME', 'USERDOMAIN', 'COMPUTERNAME', 'OS', 'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS',
+];
 const LOCALE_NAMES = ['LANG', 'LC_ALL', 'LC_CTYPE'];
 
 // The value of a variable of `env`; on Windows the name's case is not told apart.
@@ -32,7 +39,7 @@ export function standardEnv({
   if (typeof home !== 'string' || home === '') throw new Error('A standard environment needs the Wheelhouse home it serves');
   const out = {};
   if (platform === 'win32') {
-    for (const name of WINDOWS_NAMES) {
+    for (const name of [...WINDOWS_NAMES, ...SYSTEM_NAMES]) {
       const value = valueOf(env, name, platform);
       if (value !== undefined) out[name] = value;
     }

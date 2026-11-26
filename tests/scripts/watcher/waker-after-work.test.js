@@ -34,7 +34,7 @@ function worktree() {
 }
 
 // A part that reads a run as finished, and keeps what afterWork is asked.
-function partWith({ afterWork, beforeWork }) {
+function partWith({ afterWork, beforeWork, prepare }) {
   const output = path.join(tempFolder('wh-run-'), 'run.jsonl');
   const asked = [];
   const part = {
@@ -47,14 +47,15 @@ function partWith({ afterWork, beforeWork }) {
     afterRun: () => ({ ok: true, why: null, sessionId: 's1', records: [{ kind: 'activity', data: { role: 'builder' } }] }),
     afterWork: async (options) => { asked.push(options); return afterWork(options); },
     ...(beforeWork === undefined ? {} : { beforeWork }),
+    ...(prepare === undefined ? {} : { prepare }),
   };
   return { part, output, asked };
 }
 
-function driven({ afterWork = async () => ({ records: [] }), beforeWork, raise = async () => {}, onError = () => {} }) {
+function driven({ afterWork = async () => ({ records: [] }), beforeWork, prepare, raise = async () => {}, onError = () => {} }) {
   const dir = worktree();
   writeBaseline(P, 'login-page', dir);
-  const { part, output, asked } = partWith({ afterWork, beforeWork });
+  const { part, output, asked } = partWith({ afterWork, beforeWork, prepare });
   const live = new Set();
   let end;
   const run = () => ({ pid: 200, exited: new Promise((resolve) => { live.add(200); end = (code) => { live.delete(200); resolve(code); }; }) });
@@ -116,4 +117,17 @@ test('an afterWork that throws is reported, and the run still settles', () => wi
   assert.deepEqual(raised, ['activity']);
   assert.equal(errors.length, 1);
   assert.match(errors[0], /login-page session left in its worktree couldn't be settled: boom/);
+}));
+
+test('a start the adapter refuses before its run is put in the watcher\'s log, once for each refusal\'s words', () => withHome(async () => {
+  const errors = [];
+  let why = 'the version couldn\'t be read (it timed out)';
+  const h = driven({ prepare: async () => { throw new Error(why); }, onError: (e) => errors.push(e) });
+  await assert.rejects(h.start(), /timed out/);
+  await assert.rejects(h.start(), /timed out/);
+  assert.deepEqual(errors, ["The login-page session's start was refused before its run: the version couldn't be read (it timed out)"]);
+  why = 'the version couldn\'t be read (it exited with 1)';
+  await assert.rejects(h.start(), /exited with 1/);
+  assert.equal(errors.length, 2);
+  assert.match(errors[1], /exited with 1/);
 }));

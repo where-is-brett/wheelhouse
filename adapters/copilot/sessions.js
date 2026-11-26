@@ -26,7 +26,7 @@ import { ACTIVITY_DAYS, BACKGROUND_SESSIONS_READY, LEVELS } from '../../scripts/
 import { activitySummary, finalAnswer, modelOfRun, monthRefusedIn, sessionIdOf, sessionUsage, eventsOf } from '../../scripts/agents/copilot/run-output.js';
 import { commitWork } from '../../scripts/feature/commit-work.js';
 import { recordRefusal, recordRun } from '../../scripts/agents/copilot/usage.js';
-import { checkVersions, noSubsetRunner, readVersions, resolveCopilot } from '../../scripts/agents/copilot/versions.js';
+import { checkVersions, cliFault, noSubsetRunner, readVersions, resolveCopilot } from '../../scripts/agents/copilot/versions.js';
 import { BUILDER_PROMPT_LEAD } from '../../scripts/foreman/prompt-lead.js';
 import { PLUGIN_ROOT, foremanCommands } from '../../scripts/foreman/tools.js';
 import { BIN_DIR, LAUNCHER_SESSION, launcherOf, pathWithLaunchers } from '../../scripts/lib/launchers.js';
@@ -507,6 +507,11 @@ export function sessionsPart({ ready = BACKGROUND_SESSIONS_READY, plan: given = 
   const { runSubset = noSubsetRunner, run = realRun, ...readFrom } = versionsFrom;
   // The versions read before this part's latest start, for that run's provenance.
   let lastVersions = null;
+  // The versions in use, read as a start reads them, and why the CLI's couldn't be read (null when it was).
+  const versionRead = async () => {
+    const versions = await readVersions({ ...readFrom, run });
+    return { versions, fault: versions.cli === null ? cliFault() : null };
+  };
   const switched = (build) => (options = {}) => {
     switchedOn(ready);
     return build({ plan: part, ...options });
@@ -527,13 +532,15 @@ export function sessionsPart({ ready = BACKGROUND_SESSIONS_READY, plan: given = 
     // hold's record; a check that passes again lifts that hold, and says so (`lifted`).
     async prepare({ project, target }) {
       switchedOn(ready);
-      const versions = await readVersions({ ...readFrom, run });
+      const { versions, fault } = await versionRead();
       lastVersions = versions;
-      const checked = await checkVersions({ project, versions, runSubset, ...(readFrom.home === undefined ? {} : { home: readFrom.home }) });
+      const checked = await checkVersions({ project, versions, fault, runSubset, ...(readFrom.home === undefined ? {} : { home: readFrom.home }) });
       activityFolder(project);
       const { lifted } = await writeHomeWithKits({ project, target, kits, home });
       return { lifted: checked?.lifted === true || lifted === true };
     },
+    // The version read alone, as prepare makes it: no check, no hold and no session (the version probe's).
+    versionRead,
     afterRun: (options) => afterRun({ ...options, versions: lastVersions }),
     afterWork,
     beforeWork,

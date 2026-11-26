@@ -184,6 +184,38 @@ test('on Windows a copilot program missing from the PATH is looked for in VS Cod
   assert.match(cliFault(), /not found/);
 }));
 
+test('on Windows the shim of VS Code installed for the whole computer is looked for first, and the per-user one after it', () => withHome(async (home) => {
+  const system = 'C:\\Program Files\\Microsoft VS Code\\bin\\copilot-shim\\copilot.exe';
+  const user = 'C:\\Users\\p\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\copilot-shim\\copilot.exe';
+  const env = { Path: 'C:\\Windows-order', LOCALAPPDATA: 'C:\\Users\\p\\AppData\\Local', ProgramFiles: 'C:\\Program Files' };
+  const started = [];
+  const run = async (file) => { started.push(file); return { code: 0, stdout: 'GitHub Copilot CLI 1.0.105.\nRun \'copilot update\' to check for updates.\n' }; };
+  assert.equal((await readVersions({ home, env, run, platform: 'win32', exists: (f) => f === system || f === user })).cli, '1.0.105');
+  assert.equal(started[0], system);
+  started.length = 0;
+  assert.equal((await readVersions({ home, env: { ...env, Path: 'C:\\Windows-order-b' }, run, platform: 'win32', exists: (f) => f === user })).cli, '1.0.105');
+  assert.equal(started[0], user);
+}));
+
+test('a CLI version that could not be read names why in the hold\'s words and record, within what the record may carry, and no path', () => withHome(async (home) => {
+  const fault = 'copilot --version timed out';
+  const why = versionWhy({ vscode: null, runtime: null, cli: null }, '1.0.105', fault);
+  assert.match(why, /couldn't be read \(copilot --version timed out\)/);
+  assert.match(why, /pinned to 1\.0\.105/);
+  assert.ok(why.length <= HOLD_WHY_CHARS);
+  assert.ok(versionWhy({ vscode: null, runtime: null, cli: null }, '1.0.105', 'x'.repeat(500)).length <= HOLD_WHY_CHARS);
+  // A version that was read names no fault, whatever is given.
+  assert.doesNotMatch(versionWhy(NEWER, '1.0.105', fault), /timed out/);
+  let error;
+  try {
+    await checkVersions({ project: PROJECT, versions: { vscode: null, runtime: null, cli: null }, fault, runSubset: subsetOf(false), home, now: NOW });
+  } catch (e) { error = e; }
+  assert.match(error.message, /timed out/);
+  assert.match(error.records[0].data.why, /timed out/);
+  assert.doesNotThrow(() => makeEvent({ kind: 'lineage-hold', data: error.records[0].data, now: NOW }));
+  assert.equal(readAgentHold(PROJECT, VERSION_HOLD).fault, fault);
+}));
+
 test('copilotModels reads the models Copilot offers, and guesses none', async () => {
   const help = (stdout, code = 0) => async () => ({ code, stdout });
   const text = 'Options:\n  --model <model>  Set the AI model to use (choices: "model-a", "model-b-1.5", "-bad", "model-a")\n  --help\n';
