@@ -26,7 +26,7 @@ import { ACTIVITY_DAYS, BACKGROUND_SESSIONS_READY, LEVELS } from '../../scripts/
 import { activitySummary, finalAnswer, modelOfRun, monthRefusedIn, sessionIdOf, sessionUsage, eventsOf } from '../../scripts/agents/copilot/run-output.js';
 import { commitWork } from '../../scripts/feature/commit-work.js';
 import { recordRefusal, recordRun } from '../../scripts/agents/copilot/usage.js';
-import { checkVersions, cliFault, noSubsetRunner, readVersions, resolveCopilot } from '../../scripts/agents/copilot/versions.js';
+import { checkVersions, noSubsetRunner, readVersionsAndFault, resolveCopilot } from '../../scripts/agents/copilot/versions.js';
 import { BUILDER_PROMPT_LEAD } from '../../scripts/foreman/prompt-lead.js';
 import { PLUGIN_ROOT, foremanCommands } from '../../scripts/foreman/tools.js';
 import { BIN_DIR, LAUNCHER_SESSION, launcherOf, pathWithLaunchers } from '../../scripts/lib/launchers.js';
@@ -509,8 +509,8 @@ export function sessionsPart({ ready = BACKGROUND_SESSIONS_READY, plan: given = 
   let lastVersions = null;
   // The versions in use, read as a start reads them, and why the CLI's couldn't be read (null when it was).
   const versionRead = async () => {
-    const versions = await readVersions({ ...readFrom, run });
-    return { versions, fault: versions.cli === null ? cliFault() : null };
+    const { versions, fault } = await readVersionsAndFault({ ...readFrom, run });
+    return { versions, fault: versions.cli === null ? fault : null };
   };
   const switched = (build) => (options = {}) => {
     switchedOn(ready);

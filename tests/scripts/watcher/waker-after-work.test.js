@@ -131,3 +131,17 @@ test('a start the adapter refuses before its run is put in the watcher\'s log, o
   assert.equal(errors.length, 2);
   assert.match(errors[1], /exited with 1/);
 }));
+
+test('a refusal that comes back after a start that passed is put in the log again', () => withHome(async () => {
+  const errors = [];
+  let refuse = true;
+  const h = driven({ prepare: async () => { if (refuse) throw new Error('held for a version'); return {}; }, onError: (e) => errors.push(e) });
+  await assert.rejects(h.start(), /held for a version/);
+  refuse = false;
+  await h.start();
+  h.end(0);
+  await flush();
+  refuse = true;
+  await assert.rejects(h.start(), /held for a version/);
+  assert.equal(errors.filter((e) => /held for a version/.test(e)).length, 2);
+}));

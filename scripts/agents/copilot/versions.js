@@ -102,62 +102,72 @@ export function resolveCopilot({ platform = process.platform, env = process.env,
   }
 }
 
-// Why the last `copilot --version` read gave no version, in a few plain words with no paths or output (null when it gave one),
-// for whoever asks why a hold names a version not known.
-let lastFault = null;
-export const cliFault = () => lastFault;
-
-// `copilot --version`'s answers kept for the process, by platform and PATH. Only a version is kept: a read that failed is
-// asked again at the next start, so an early failure (a slow start, a PATH not yet set) never holds the whole process.
-const cliAsked = new Map();
-async function cliOnce({ run, env, platform, exists }) {
-  let resolved;
-  try {
-    resolved = resolveCopilot({ platform, env, exists });
-  } catch {
-    lastFault = 'copilot not found on the PATH';
-    return null;
-  }
+// One try of `copilot --version`, for the program `resolved`: { version, fault, timedOut }. `fault` is why no version came, in a
+// few plain words with no paths or output (null when one did), for whoever asks why a hold names a version not known.
+async function cliOnce({ run, env, resolved }) {
   const call = resolved.kind === 'cmd'
     ? { file: 'cmd.exe', args: ['/d', '/s', '/c', `"${[resolved.file, '--version'].map(quoteForCmd).join(' ')}"`], verbatim: true }
     : { file: resolved.file, args: ['--version'], verbatim: false };
   try {
     const result = await run(call.file, call.args, { env, input: '', timeoutMs: VERSION_WAIT_MS, windowsVerbatimArguments: call.verbatim });
-    if (result?.timedOut === true) { lastFault = 'copilot --version timed out'; return null; }
-    if (result?.code !== 0) { lastFault = `copilot --version exited with ${result?.code ?? 'no code'}`; return null; }
+    if (result?.timedOut === true) return { version: null, fault: 'copilot --version timed out', timedOut: true };
+    if (result?.code !== 0) return { version: null, fault: `copilot --version exited with ${result?.code ?? 'no code'}`, timedOut: false };
     // The answer is read from either stream: a shim that hands on to another program may write to the one it was not given.
-    const found = versionIn(result.stdout) ?? versionIn(result.stderr);
-    lastFault = found === null ? 'copilot --version printed no version number' : null;
-    return found;
+    const version = versionIn(result.stdout) ?? versionIn(result.stderr);
+    return { version, fault: version === null ? 'copilot --version printed no version number' : null, timedOut: false };
   } catch {
-    lastFault = 'copilot --version could not be started';
-    return null;
+    return { version: null, fault: 'copilot --version could not be started', timedOut: false };
   }
 }
 
-// `copilot --version`'s answer: the version, or null when it can't be had after two tries.
-async function cliFromRun({ run, env, platform, exists }) {
-  const pathKey = Object.keys(env ?? {}).find((k) => k.toLowerCase() === 'path');
-  const key = `${platform}\0${pathKey ? env[pathKey] : ''}`;
-  if (cliAsked.has(key)) return cliAsked.get(key);
-  const found = (await cliOnce({ run, env, platform, exists })) ?? (await cliOnce({ run, env, platform, exists }));
-  if (found !== null) cliAsked.set(key, found);
-  return found;
+// How long a read that failed is kept before the next start asks again, so a program that hangs doesn't cost every wake.
+const FAILED_READ_KEPT_MS = 5 * 60 * 1000;
+// `copilot --version`'s answers kept for the process, by the program file asked: a version for good, a fault for
+// FAILED_READ_KEPT_MS.
+const cliAsked = new Map();
+// Forgets every kept answer (for a test that reads several computers in turn).
+export const forgetCliReads = () => cliAsked.clear();
+
+// The CLI's version as `copilot --version` gives it: { cli, fault }, the version or null with why. A quick failure is tried once
+// more; a timeout isn't, since a second wait would only double the stall.
+async function readCli({ run, env, platform, exists, now }) {
+  let resolved;
+  try {
+    resolved = resolveCopilot({ platform, env, exists });
+  } catch {
+    return { cli: null, fault: 'copilot not found on the PATH' };
+  }
+  const key = `${resolved.kind}\0${resolved.file}`;
+  const kept = cliAsked.get(key);
+  if (kept?.version !== undefined) return { cli: kept.version, fault: null };
+  if (kept !== undefined && now() < kept.until) return { cli: null, fault: kept.fault };
+  let read = await cliOnce({ run, env, resolved });
+  if (read.version === null && !read.timedOut) read = await cliOnce({ run, env, resolved });
+  cliAsked.set(key, read.version !== null ? { version: read.version } : { fault: read.fault, until: now() + FAILED_READ_KEPT_MS });
+  return { cli: read.version, fault: read.fault };
 }
 
-// readVersions({ home, env, run, platform }) -> Promise<{ vscode, runtime, cli }>
-//   The versions of VS Code, its Copilot runtime and Copilot CLI in use here, each a version or null, never guessed.
+// readVersionsAndFault({ home, env, run, platform, exists, now }) -> Promise<{ versions: { vscode, runtime, cli }, fault }>
+//   The versions of VS Code, its Copilot runtime and Copilot CLI in use here, each a version or null, never guessed, and
+//   why the CLI's couldn't be read (null when it was).
 //   The CLI's is never read from a file: a file on this computer could claim the pinned version. It comes from
 //   COPILOT_CLI_BINARY_VERSION (a Copilot hook's environment, check 58: the hook's input carries no version), else from
-//   `copilot --version` through `run` (a version is kept for the process; a failed read is tried twice and asked again at the next start); without `run`, nothing is started. VS Code's and the
-//   runtime's come from the add-on's record (`<home>/agents/copilot-versions.json`) when it is there; the add-on is parked.
-export async function readVersions({ home = wheelhouseHome(), env = process.env, run = null, platform = process.platform, exists = fs.existsSync } = {}) {
+//   `copilot --version` through `run` (a version is kept for the process; a failed read is tried twice, unless it timed out,
+//   and kept for five minutes); without `run`, nothing is started. VS Code's and the runtime's come from the add-on's
+//   record (`<home>/agents/copilot-versions.json`) when it is there; the add-on is parked.
+export async function readVersionsAndFault({ home = wheelhouseHome(), env = process.env, run = null, platform = process.platform, exists = fs.existsSync, now = Date.now } = {}) {
   const kept = readJson(versionsFile(home));
   const vscode = versionOrNull(kept?.vscode);
   const runtime = versionOrNull(kept?.runtime);
   let cli = versionOrNull(env?.COPILOT_CLI_BINARY_VERSION);
-  if (cli === null && typeof run === 'function') cli = await cliFromRun({ run, env, platform, exists });
-  return { vscode, runtime, cli };
+  let fault = null;
+  if (cli === null && typeof run === 'function') ({ cli, fault } = await readCli({ run, env, platform, exists, now }));
+  return { versions: { vscode, runtime, cli }, fault };
+}
+
+// readVersions(options) -> Promise<{ vscode, runtime, cli }>: readVersionsAndFault's versions alone.
+export async function readVersions(options = {}) {
+  return (await readVersionsAndFault(options)).versions;
 }
 
 // The models offered in Copilot's own help: `--model`'s choices, `(choices: "a", "b")`. No check has recorded the
@@ -265,7 +275,8 @@ export async function checkVersions({ project, versions, fault = null, runSubset
     }
     return { lifted: liftAgentWork(project, VERSION_HOLD) };
   }
-  const mismatches = [{ upstream: 'copilot', path: `cli ${named(versions?.cli)}` }];
+  // The fault is in the path, so a new fault raises a card with its own words rather than keeping the first one's.
+  const mismatches = [{ upstream: 'copilot', path: `cli ${named(versions?.cli)}${unread === null ? '' : ` (${unread})`}` }];
   const { set, recorded } = holdAgentWork({ project, name: VERSION_HOLD, agent: 'copilot', mismatches, why: result.why, lifts: VERSION_LIFTS, keep: { versions: { vscode: versions?.vscode ?? null, runtime: versions?.runtime ?? null, cli: versions?.cli ?? null }, ...(unread === null ? {} : { fault: unread }) }, now });
   throw Object.assign(new Error(`${result.why}: no Copilot session is started until it passes`), {
     records: recorded ? [] : [{ kind: 'lineage-hold', data: { at: now().toISOString(), mismatches, why: result.why, lifts: VERSION_LIFTS } }],

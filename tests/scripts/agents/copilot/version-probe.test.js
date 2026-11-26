@@ -42,3 +42,11 @@ test('with no copilot to be found, the probe says why and exits 1', { skip: !uni
   assert.equal(status, 1);
   assert.match(stdout, /why not read: copilot (not found on the PATH|--version could not be started)/);
 });
+
+test('the probe says where the program was found as a kind, never its path', { skip: !unix }, () => {
+  const bin = tempFolder('wh-probe-bin-');
+  fs.writeFileSync(path.join(bin, 'copilot'), "#!/bin/sh\nprintf 'GitHub Copilot CLI 1.0.105.\\n'\n", { mode: 0o755 });
+  const { stdout } = probe([bin]);
+  assert.match(stdout, /program found: on the PATH, direct/);
+  assert.doesNotMatch(stdout, new RegExp(bin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+});

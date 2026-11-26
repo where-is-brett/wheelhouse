@@ -5,9 +5,11 @@
 //
 // What it holds: HOME (on Windows USERPROFILE, APPDATA, LOCALAPPDATA, SystemRoot and TEMP in its place); PATH, with the
 // folder of the Node.js that runs this process and of the `claude` recorded in the home; LANG, LC_ALL and LC_CTYPE when set;
-// and WHEELHOUSE_HOME, always, so the process serves one home. On Windows it holds the computer's own system variables too
-// (SYSTEM_NAMES): they belong to the computer, not to a session, and without them a program the process starts can't find
-// cmd.exe, the program extensions or its install folder.
+// and WHEELHOUSE_HOME, always, so the process serves one home. On Windows it holds Windows' own system settings too
+// (SYSTEM_NAMES, the director's ruling of 26 November 2026): the command interpreter, the program extensions and the
+// program and shared-program folders. They are set for the computer, not for a logon or a session, and without them a
+// program the process starts can't find cmd.exe, the program extensions or its install folder. No user name, home drive
+// or temporary folder of a logon comes with them.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,9 +17,8 @@ import { pathWithNode, readRecordedClaude } from './claude.js';
 
 const WINDOWS_NAMES = ['USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'SystemRoot', 'TEMP'];
 export const SYSTEM_NAMES = [
-  'ComSpec', 'PATHEXT', 'windir', 'SystemDrive', 'TMP', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'ProgramData',
-  'CommonProgramFiles', 'CommonProgramFiles(x86)', 'CommonProgramW6432', 'ALLUSERSPROFILE', 'PUBLIC', 'HOMEDRIVE', 'HOMEPATH',
-  'USERNAME', 'USERDOMAIN', 'COMPUTERNAME', 'OS', 'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS',
+  'ComSpec', 'PATHEXT', 'windir', 'SystemDrive', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'ProgramData',
+  'CommonProgramFiles', 'CommonProgramFiles(x86)', 'CommonProgramW6432', 'ALLUSERSPROFILE',
 ];
 const LOCALE_NAMES = ['LANG', 'LC_ALL', 'LC_CTYPE'];
 

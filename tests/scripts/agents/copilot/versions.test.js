@@ -4,7 +4,7 @@
 // installed CLI is another version that hasn't passed the safety subset. Made-up versions stand in wherever the test needs a
 // version other than the pin; no Copilot program is started.
 import '../../../helpers/homes.js';
-import { test } from 'node:test';
+import { beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,7 +13,7 @@ import { withHome } from '../../../helpers/homes.js';
 import { COPILOT_VERSION } from '../../../../scripts/agents/copilot/numbers.js';
 import { AGENT_PINS } from '../../../../scripts/agents/pins.js';
 import {
-  VERSION_HOLD, VERSION_LIFTS, checkVersions, cliFault, copilotModels, copilotVersionCheck, isTested, pinnedCli, readVersions, seenFile, versionWhy, versionsFile,
+  VERSION_HOLD, VERSION_LIFTS, checkVersions, copilotModels, copilotVersionCheck, forgetCliReads, isTested, pinnedCli, readVersions, readVersionsAndFault, seenFile, versionWhy, versionsFile,
 } from '../../../../scripts/agents/copilot/versions.js';
 import { agentHoldFile, agentHoldWords, isHeld, readAgentHold } from '../../../../scripts/lineage/check.js';
 import { buildManifest, readManifest } from '../../../../scripts/lineage/manifest.js';
@@ -127,6 +127,8 @@ test('a hold\'s words stay within what the record may carry, and name the pin', 
 
 // ---- The versions in use ----
 
+beforeEach(() => forgetCliReads());
+
 test('readVersions takes the CLI\'s version from the environment or from `copilot --version`, never from a file', () => withHome(async (home) => {
   let started = 0;
   const run = async () => { started += 1; return { code: 0, stdout: 'GitHub Copilot CLI 7.0.9.\n' }; };
@@ -149,26 +151,40 @@ test('readVersions takes the CLI\'s version from the environment or from `copilo
   assert.deepEqual(asked, []);
 }));
 
-test('a CLI version that could not be read is not kept: a later read tries again', () => withHome(async (home) => {
-  const env = { Path: 'C:\\bin-retry-a' };
+test('a CLI version that could not be read is kept for five minutes, then asked again; a good answer is kept for the process', () => withHome(async (home) => {
+  const env = { Path: 'C:\\bin' };
   const exists = () => true;
-  let answers = [{ code: 1, stdout: '' }, { code: 1, stdout: '' }, { code: 0, stdout: 'GitHub Copilot CLI 1.0.105.\n' }];
+  let at = 1000;
+  const now = () => at;
+  const answers = [{ code: 1, stdout: '' }, { code: 1, stdout: '' }, { code: 0, stdout: 'GitHub Copilot CLI 1.0.105.\n' }];
   const asked = [];
   const run = async () => { asked.push(1); return answers.shift(); };
-  const first = await readVersions({ home, env, run, platform: 'win32', exists });
-  assert.equal(first.cli, null, 'a failed read is null');
-  const second = await readVersions({ home, env, run, platform: 'win32', exists });
-  assert.equal(second.cli, '1.0.105', 'a later start asks again and is not held to the early failure');
-  assert.equal((await readVersions({ home, env, run, platform: 'win32', exists })).cli, '1.0.105');
+  const first = await readVersionsAndFault({ home, env, run, platform: 'win32', exists, now });
+  assert.equal(first.versions.cli, null, 'a failed read is null');
+  assert.equal(first.fault, 'copilot --version exited with 1');
+  assert.equal(asked.length, 2, 'a quick failure is tried once more');
+  at += 60000;
+  const soon = await readVersionsAndFault({ home, env, run, platform: 'win32', exists, now });
+  assert.deepEqual([soon.versions.cli, soon.fault, asked.length], [null, 'copilot --version exited with 1', 2], 'the failure is kept, so a start soon after does not pay for it again');
+  at += 5 * 60 * 1000;
+  assert.equal((await readVersionsAndFault({ home, env, run, platform: 'win32', exists, now })).versions.cli, '1.0.105', 'later it asks again');
+  assert.equal((await readVersions({ home, env, run, platform: 'win32', exists, now })).cli, '1.0.105');
   assert.equal(asked.length, 3, 'a good answer is kept for the process');
 }));
 
-test('a read that fails once is tried once more before it counts, and an answer written to stderr is read', () => withHome(async (home) => {
+test('a read that timed out is tried once for a start, not twice', () => withHome(async (home) => {
+  let calls = 0;
+  const run = async () => { calls += 1; return { code: null, timedOut: true, stdout: '', stderr: '' }; };
+  const read = await readVersionsAndFault({ home, env: { Path: 'C:\\bin' }, run, platform: 'win32', exists: () => true });
+  assert.deepEqual([read.versions.cli, read.fault, calls], [null, 'copilot --version timed out', 1]);
+}));
+
+test('a read that fails once quickly is tried once more, and an answer written to stderr is read', () => withHome(async (home) => {
   let calls = 0;
   const flaky = async () => { calls += 1; return calls === 1 ? { code: 0, stdout: '' } : { code: 0, stdout: 'GitHub Copilot CLI 1.0.106.\n' }; };
-  assert.equal((await readVersions({ home, env: { Path: 'C:\\bin-retry-b' }, run: flaky, platform: 'win32', exists: () => true })).cli, '1.0.106');
+  assert.equal((await readVersions({ home, env: { Path: 'C:\\bin' }, run: flaky, platform: 'win32', exists: () => true })).cli, '1.0.106');
   const onStderr = async () => ({ code: 0, stdout: '', stderr: 'GitHub Copilot CLI 1.0.107.\n' });
-  assert.equal((await readVersions({ home, env: { Path: 'C:\\bin-retry-c' }, run: onStderr, platform: 'win32', exists: () => true })).cli, '1.0.107');
+  assert.equal((await readVersions({ home, env: { Path: 'C:\\bin2' }, run: onStderr, platform: 'win32', exists: () => true })).cli, '1.0.107');
 }));
 
 test('on Windows a copilot program missing from the PATH is looked for in VS Code\'s shim folders, and the fault is named when none answers', () => withHome(async (home) => {
@@ -179,9 +195,9 @@ test('on Windows a copilot program missing from the PATH is looked for in VS Cod
   const found = await readVersions({ home, env, run, platform: 'win32', exists: (f) => f === shim });
   assert.equal(found.cli, '1.0.105');
   assert.equal(started[0], shim);
-  const none = await readVersions({ home, env: { Path: 'C:\\nowhere' }, run, platform: 'win32', exists: () => false });
-  assert.equal(none.cli, null, 'a program that is nowhere still fails closed');
-  assert.match(cliFault(), /not found/);
+  const none = await readVersionsAndFault({ home, env: { Path: 'C:\\nowhere' }, run, platform: 'win32', exists: () => false });
+  assert.equal(none.versions.cli, null, 'a program that is nowhere still fails closed');
+  assert.match(none.fault, /not found/);
 }));
 
 test('on Windows the shim of VS Code installed for the whole computer is looked for first, and the per-user one after it', () => withHome(async (home) => {
@@ -193,7 +209,7 @@ test('on Windows the shim of VS Code installed for the whole computer is looked 
   assert.equal((await readVersions({ home, env, run, platform: 'win32', exists: (f) => f === system || f === user })).cli, '1.0.105');
   assert.equal(started[0], system);
   started.length = 0;
-  assert.equal((await readVersions({ home, env: { ...env, Path: 'C:\\Windows-order-b' }, run, platform: 'win32', exists: (f) => f === user })).cli, '1.0.105');
+  assert.equal((await readVersions({ home, env: { ...env, Path: 'C:\\Windows-order' }, run, platform: 'win32', exists: (f) => f === user })).cli, '1.0.105');
   assert.equal(started[0], user);
 }));
 

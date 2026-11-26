@@ -4,7 +4,7 @@
 // from the output, the version check before every start, and the waker driven with the part. No Copilot program is run
 // (a stand-in file stands where the waker looks for one), and no request is spent.
 import '../../../helpers/homes.js';
-import { after, test } from 'node:test';
+import { after, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -28,6 +28,9 @@ import { makeEvent } from '../../../../scripts/state/events.js';
 import { makeWaker } from '../../../../scripts/watcher/waker.js';
 import { readBaseline, writeBaseline } from '../../../../scripts/watcher/control-files.js';
 import { BUILDER_PROMPT_LEAD } from '../../../../scripts/foreman/prompt-lead.js';
+import { forgetCliReads } from '../../../../scripts/agents/copilot/versions.js';
+
+beforeEach(() => forgetCliReads());
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const NODE = process.execPath;
@@ -314,6 +317,7 @@ test('a refusal for a version that can\'t be read names why, and the part\'s ver
   await assert.rejects(timedOut.prepare({ project: P, target: 'foreman' }), (error) => {
     assert.match(error.message, /couldn't be read \(copilot --version timed out\)/);
     assert.match(error.records[0].data.why, /timed out/);
+    assert.match(error.records[0].data.mismatches[0].path, /timed out/, 'the fault is in the mismatch, so a new fault raises words of its own');
     return true;
   });
   assert.equal(readAgentHold(P, 'copilot-version').fault, 'copilot --version timed out');

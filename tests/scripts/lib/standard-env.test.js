@@ -34,17 +34,18 @@ test('the claude path is read from the home\'s record when not given', () => {
   assert.equal(env.PATH, '/usr/bin:/bin');
 });
 
-test('the Windows set holds the home variables and the system ones, and no others besides PATH, locale and WHEELHOUSE_HOME', () => {
+test('the Windows set holds the home variables and the system settings of the computer, and no names of a logon or others besides PATH, locale and WHEELHOUSE_HOME', () => {
   const win = {
     USERPROFILE: 'C:\\Users\\s', APPDATA: 'C:\\Users\\s\\AppData\\Roaming', LOCALAPPDATA: 'C:\\Users\\s\\AppData\\Local', SystemRoot: 'C:\\Windows', TEMP: 'C:\\Temp',
     Path: 'C:\\Windows\\System32', LC_ALL: 'C', HOME: 'C:\\Users\\s', ANTHROPIC_BASE_URL: 'https://x.invalid', FOO: 'bar',
     COMSPEC: 'C:\\Windows\\system32\\cmd.exe', PATHEXT: '.COM;.EXE;.BAT;.CMD', windir: 'C:\\Windows', SystemDrive: 'C:', TMP: 'C:\\Temp',
+    USERNAME: 's', USERDOMAIN: 'D', HOMEDRIVE: 'H:', HOMEPATH: '\\', COMPUTERNAME: 'PC', OS: 'Windows_NT', PROCESSOR_ARCHITECTURE: 'AMD64', NUMBER_OF_PROCESSORS: '8', PUBLIC: 'C:\\Users\\Public',
     ProgramFiles: 'C:\\Program Files', 'ProgramFiles(x86)': 'C:\\Program Files (x86)', ProgramData: 'C:\\ProgramData',
     WT_SESSION: 'abc', TERM_PROGRAM: 'vscode', CLAUDE_CODE_ENTRYPOINT: 'claude-desktop',
   };
   const env = standardEnv({ home: 'C:\\wh', platform: 'win32', env: win, claudePath: 'C:\\c\\claude.exe', exists: () => true });
   assert.deepEqual(Object.keys(env).sort(), [
-    'APPDATA', 'ComSpec', 'LC_ALL', 'LOCALAPPDATA', 'PATHEXT', 'Path', 'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)', 'SystemDrive', 'SystemRoot', 'TEMP', 'TMP',
+    'APPDATA', 'ComSpec', 'LC_ALL', 'LOCALAPPDATA', 'PATHEXT', 'Path', 'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)', 'SystemDrive', 'SystemRoot', 'TEMP',
     'USERPROFILE', 'WHEELHOUSE_HOME', 'windir',
   ]);
   // A name read in another case is written in its usual one.

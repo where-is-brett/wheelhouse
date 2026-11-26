@@ -18,7 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sessionsFor } from '../project-agent.js';
-import { pathWithClaude } from '../../lib/claude.js';
+import { pathWithClaude, resolveCommand } from '../../lib/claude.js';
 import { jobFolder, wheelhouseHome } from '../../lib/paths.js';
 import { SYSTEM_NAMES, standardEnv } from '../../lib/standard-env.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
@@ -32,14 +32,25 @@ const POLL_MS = 250;
 // What the read gave, in the current process's environment.
 async function readHere() {
   const { versions, fault } = await sessionsFor('copilot').versionRead();
-  let program;
+  return { versions, fault, program: programFound(), names: Object.keys(process.env) };
+}
+
+// Where the program was found, as a kind and how it is started, never its path (a path names the user's folder).
+function programFound() {
+  let found;
+  let where = 'on the PATH';
   try {
-    const found = resolveCopilot();
-    program = `${found.file} (${found.kind})`;
+    found = resolveCommand({ name: 'copilot' });
   } catch {
-    program = 'not found';
+    try {
+      found = resolveCopilot();
+    } catch {
+      return 'not found';
+    }
+    const base = Object.entries(process.env).find(([key]) => key.toLowerCase() === 'programfiles')?.[1];
+    where = typeof base === 'string' && base !== '' && found.file.toLowerCase().startsWith(base.toLowerCase()) ? 'VS Code (whole computer)' : 'VS Code (this user)';
   }
-  return { versions, fault, program, names: Object.keys(process.env) };
+  return `${where}, ${found.kind === 'cmd' ? 'through cmd' : 'direct'}`;
 }
 
 // The environment startWatcher gives the watcher; `asBefore` leaves out the Windows system variables.
@@ -86,7 +97,13 @@ const lines = (label, read) => [
 export async function main(argv = process.argv.slice(2), { say = (line) => process.stdout.write(`${line}\n`) } = {}) {
   if (argv[0] === '--copy') {
     // The copy: read, and write what was read where the starting process waits for it.
-    const read = await readHere();
+    let read;
+    try {
+      read = await readHere();
+    } catch (error) {
+      // Said without paths: a message may name the user's folders.
+      read = { error: String(error?.message ?? 'no reason given').replace(/[A-Za-z]:[\\/][^\s'"]*|\/[^\s'"]+/g, '<path>').replace(/\s+/g, ' ').slice(0, 200) };
+    }
     const file = argv[1];
     fs.writeFileSync(`${file}.part`, JSON.stringify(read));
     fs.renameSync(`${file}.part`, file);
@@ -98,6 +115,10 @@ export async function main(argv = process.argv.slice(2), { say = (line) => proce
   for (const line of lines("In this shell's environment", here)) say(line);
   if (watcher === null) {
     say(`As the watcher reads it${asBefore ? ' (as before)' : ''}: the copy wrote nothing within ${WAIT_MS / 1000} seconds`);
+    return 1;
+  }
+  if (typeof watcher.error === 'string') {
+    say(`As the watcher reads it${asBefore ? ' (as before)' : ''}: the copy failed: ${watcher.error}`);
     return 1;
   }
   for (const line of lines(`As the watcher reads it${asBefore ? ' (as before)' : ''}`, watcher)) say(line);
