@@ -128,14 +128,23 @@ export function desktopRoots({ platform = process.platform, homedir = os.homedir
   return roots;
 }
 
-// Fields on a record that names the title and look like a parent link. Only the record's own top level is read.
+// Fields on a record that names the title and look like a parent link. The record's top level is read, and one level into a
+// parent-like object (Desktop keeps `spawnedFrom` and `startChain` so); only plain values are given back.
+const PARENT_LIKE = /parent|spawn|origin|owner|started.?by|fork|chain/i;
+const plainValue = (value) => value != null && typeof value !== 'object';
+const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
 export function parentFields(record, title) {
-  if (!record || typeof record !== 'object' || Array.isArray(record)) return [];
+  if (!isRecord(record)) return [];
   const names = Object.values(record).some((v) => v === title);
   if (!names) return [];
-  return Object.entries(record)
-    .filter(([key, value]) => /parent|spawn|origin|owner|started.?by|fork/i.test(key) && value != null && typeof value !== 'object')
-    .map(([field, value]) => ({ field, value }));
+  const found = [];
+  for (const [key, value] of Object.entries(record)) {
+    if (!PARENT_LIKE.test(key)) continue;
+    if (plainValue(value)) found.push({ field: key, value });
+    else if (isRecord(value)) for (const [inner, v] of Object.entries(value)) if (plainValue(v)) found.push({ field: `${key}.${inner}`, value: v });
+  }
+  return found;
 }
 
 export const mergeFindings = (earlier, later) => {

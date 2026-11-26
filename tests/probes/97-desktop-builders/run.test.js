@@ -60,6 +60,24 @@ test('parentFields finds a parent-like field on the record that names the title,
   assert.deepEqual(parentFields({ title: 'probe-builder', id: 'a' }, 'probe-builder'), []);
 });
 
+test('parentFields reads one level into a parent-like object, such as spawnedFrom and startChain, plain values only', () => {
+  const store = {
+    title: 'probe-cwd',
+    originCwd: 'C:/x',
+    spawnedFrom: { sessionId: 'local_f1', sideSession: true, deep: { parent: 'no' }, gone: null },
+    startChain: { firstSessionId: 'local_f1', depth: 1 },
+    other: { parent: 'zzz' },
+  };
+  assert.deepEqual(parentFields(store, 'probe-cwd'), [
+    { field: 'originCwd', value: 'C:/x' },
+    { field: 'spawnedFrom.sessionId', value: 'local_f1' },
+    { field: 'spawnedFrom.sideSession', value: true },
+    { field: 'startChain.firstSessionId', value: 'local_f1' },
+    { field: 'startChain.depth', value: 1 },
+  ]);
+  assert.deepEqual(parentFields({ title: 'probe-cwd', spawnedFrom: ['local_f1'] }, 'probe-cwd'), []);
+});
+
 test('mergeFindings keeps earlier keys and ignores unknown ones', () => {
   assert.deepEqual(mergeFindings({ entrypoint: 'a' }, { pluginLoad: 'b', bogus: 1 }), { entrypoint: 'a', pluginLoad: 'b' });
 });
