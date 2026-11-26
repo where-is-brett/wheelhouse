@@ -22,8 +22,8 @@ test('nesting is reported plainly either way', () => {
 });
 
 test('the note starts with its path comment and the date as day month year', () => {
-  const lines = notesFor({}).split('\n');
-  assert.equal(lines[0], '<!-- docs/specs/notes/2026-11-24-desktop-probe.md -->');
+  const lines = notesFor({}, 'notes/x.md').split('\n');
+  assert.equal(lines[0], '<!-- notes/x.md -->');
   assert.match(notesFor({}), /24 November 2026/);
 });
 

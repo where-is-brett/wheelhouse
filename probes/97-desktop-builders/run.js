@@ -5,7 +5,7 @@
 //   node probes/97-desktop-builders/run.js report <try> [dir]   a started session records what it sees of itself
 //   node probes/97-desktop-builders/run.js note <key> <json>    record one finding the foreman read for itself
 //   node probes/97-desktop-builders/run.js scan <title>         look in Desktop's own files for a parent field on a session
-//   node probes/97-desktop-builders/run.js assemble [out]       write the findings as the sitting's note
+//   node probes/97-desktop-builders/run.js assemble <out>       write the findings as the sitting's note
 // Findings are kept under the probe's own folder in the Wheelhouse home's scratch area, never in the repository.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -32,10 +32,11 @@ export const FINDINGS = Object.freeze([
 
 const asText = (value) => (typeof value === 'string' ? value : JSON.stringify(value));
 
-// The note parts 6 and 7 read. Every key appears; one nobody tried says so.
-export function notesFor(findings = {}) {
+// The note parts 6 and 7 read. Every key appears; one nobody tried says so. The note's own path
+// comes from whoever writes it, so no code here names a file under docs/specs/.
+export function notesFor(findings = {}, notePath = '') {
   const lines = [
-    '<!-- docs/specs/notes/2026-11-24-desktop-probe.md -->',
+    `<!-- ${notePath} -->`,
     '# Desktop probe findings',
     '',
     'Recorded on 24 November 2026 by the sitting in `probes/97-desktop-builders/README.md`. Parts 6 and 7 of the builders plan follow these.',
@@ -215,8 +216,13 @@ function main(argv) {
     }
     console.log(JSON.stringify(found, null, 2));
   } else if (command === 'assemble') {
-    const out = args[0] ?? 'docs/specs/notes/2026-11-24-desktop-probe.md';
-    fs.writeFileSync(out, notesFor(readFindings()));
+    const out = args[0];
+    if (!out) {
+      console.error('usage: run.js assemble <repository-relative path of the note>');
+      process.exitCode = 2;
+      return;
+    }
+    fs.writeFileSync(out, notesFor(readFindings(), out.split(path.sep).join('/')));
     console.log(`note written: ${out}`);
   } else {
     console.error('usage: run.js prepare|report|note|scan|assemble');
