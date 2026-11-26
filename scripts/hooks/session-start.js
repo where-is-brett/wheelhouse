@@ -1024,7 +1024,7 @@ async function started(input, deps) {
   }
   const text = reload({
     views, events: cardEvents, stop: stopOf(), lineage, notes, feature: madeFeatureSlug(input.cwd), stateRoot, windows, builds, frontDesk, aside: asideNote, where,
-    buildersFact: frontDesk ? await buildersLineOf(input) : null,
+    buildersFact: frontDesk ? await buildersLineOf(input, project) : null,
     sheet: toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: commandRoot({ dir, self }, pluginRoot), platform }),
   });
   return text === '' ? undefined : answer.context('SessionStart', text);
@@ -1032,13 +1032,19 @@ async function started(input, deps) {
 
 // The Builders line for the front desk's session start: the recorded sign-in fact for the agent this session runs on.
 // It is read when the front desk starts, not by every session start.
-async function buildersLineOf(input) {
+async function buildersLineOf(input, project) {
   try {
-    const [{ buildersLine }, { builderRoute }, { sessionsFor }] = await Promise.all([import('../lib/sign-in-line.js'), import('../lib/route.js'), import('../agents/project-agent.js')]);
+    const [{ buildersLine, foremanFact }, { builderRoute }, { sessionsFor }] = await Promise.all([import('../lib/sign-in-line.js'), import('../lib/route.js'), import('../agents/project-agent.js')]);
     const agent = agentOfInput(input) ?? 'claude-code';
     const home = wheelhouseHome();
     const found = builderRoute({ agent, home, routes: sessionsFor(agent).routes });
-    return buildersLine({ home, agent, route: found.route, program: found.launch?.[0], fault: found.from === 'fault' ? found.fault : null });
+    // The Desktop foreman's check-in age, read only on that route.
+    const foremanAge = found.route === 'desktop' ? (await import('../foreman/check-in.js')).checkInAge(project) : null;
+    const line = buildersLine({ home, agent, route: found.route, program: found.launch?.[0], fault: found.from === 'fault' ? found.fault : null, foremanAge });
+    // Desktop closed: the foreman isn't running and wakes wait for it.
+    const wakes = found.route === 'desktop' && !(Number.isFinite(foremanAge) && foremanAge <= 3 * 60 * 1000) ? (await import('../watcher/desktop-queue.js')).takeWakes(project).length : 0;
+    const fact = foremanFact({ route: found.route, foremanAge, wakes });
+    return fact === null ? line : `${line}\n${fact}`;
   } catch {
     return null; // a line that can't be made is left out, as the other facts are
   }

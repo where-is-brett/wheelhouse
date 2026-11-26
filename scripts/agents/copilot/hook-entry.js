@@ -48,7 +48,7 @@ import claudeTools from '../../../adapters/claude-code/tools.js';
 import copilotTools from '../../../adapters/copilot/tools.js';
 import { toGuardInput, fromGuardAnswer, harnessOf, exitCodeFor, patchChanges, callsOf, upperDrive, UNKNOWN_TOOL, SHELL_INPUT_TOOLS } from '../../../adapters/copilot/translate.js';
 import { readInput, answer, projectOf, registeredByPath, beingSetUp, managedDir, isWhy } from '../../hooks/kit.js';
-import { C6_PASSED, GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC, HELPER_PROBE_MS, PROMPT_DEADLINE_MS } from './numbers.js';
+import { C6_PASSED, GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC, HELPER_PROBE_MS, PROMPT_DEADLINE_MS, SESSION_START_MS } from './numbers.js';
 import { helperClient } from '../../host/helper-client.js';
 import { labelsIn, VSCODE_ASK } from './ask-click.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
@@ -75,6 +75,7 @@ const GUARD_EVENT = 'preToolUse';
 
 // The deadline stays inside the limit the registration gives.
 if (GUARD_DEADLINE_MS >= GUARD_TIMEOUT_SEC * 1000) throw new Error('The hook deadline must be shorter than the registered limit');
+if (SESSION_START_MS >= GUARD_DEADLINE_MS) throw new Error('The session start\'s time must be shorter than the hook deadline');
 
 // Each step's module, loaded only for the event that runs it, so one start loads what that event needs.
 const STEP_MODULES = Object.freeze({
@@ -299,8 +300,15 @@ function stopClient(client, cwd) {
 // Each step's deps on Copilot: every write through the helper, and the STOP guard marks no bypass. The card check
 // notes no open card (that note is kept under the Wheelhouse home). A builder's report names no commit: Wheelhouse
 // commits its work after the run (scripts/feature/commit-work.js).
+// The tool guard's two sentences around a refusal in a chat that has no Wheelhouse role: the chat named neutrally, and
+// the one way out that Copilot has (there is no aside command in a Copilot chat).
+const REFUSAL_WORDS = Object.freeze({
+  guards: 'This folder is run by Wheelhouse; its guards apply to every chat here.',
+  wayOut: 'To work outside them, use a separate copy of the project.',
+});
+
 function helperStepDeps(shared, given, cwd, c6) {
-  const own = { stopGuard: { bypass: false }, stopWord: { client: stopClient(shared.client, cwd) }, cardCheck: { markOpen: () => {}, picker: c6 === true }, reportCheck: { commitNamed: false } };
+  const own = { sessionStart: { totalMs: SESSION_START_MS }, toolGuard: { words: REFUSAL_WORDS }, stopGuard: { bypass: false }, stopWord: { client: stopClient(shared.client, cwd) }, cardCheck: { markOpen: () => {}, picker: c6 === true }, reportCheck: { commitNamed: false } };
   return Object.fromEntries(Object.keys(STEP_MODULES).map((name) => [name, { ...shared, ...own[name], ...given?.[name] }]));
 }
 

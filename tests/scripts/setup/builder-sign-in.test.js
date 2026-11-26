@@ -54,8 +54,18 @@ test('a fake that never answers fails at 90 seconds', async () => {
   assert.equal(ran.last.opts.timeoutMs, 90_000);
 });
 
-test('the desktop route is part 6\'s: not built yet', async () => {
-  assert.deepEqual(await builderSignInCheck({ home: '/unused', route: 'desktop' }), { ok: false, kind: 'other', line: 'not built yet' });
+test('the desktop route passes on a foreman check-in under 2 minutes old, and fails otherwise', async () => {
+  const at = Date.parse('2026-11-25T10:00:00.000Z');
+  const ages = (age) => ({ checkInAge: () => age, now: () => new Date(at) });
+  assert.deepEqual(await builderSignInCheck({ home: '/unused', route: 'desktop', project: 'o__p', ...ages(0) }), { ok: true });
+  assert.deepEqual(await builderSignInCheck({ home: '/unused', route: 'desktop', project: 'o__p', ...ages(2 * 60 * 1000 - 1) }), { ok: true });
+  for (const age of [2 * 60 * 1000, 10 * 60 * 1000, null]) {
+    const got = await builderSignInCheck({ home: '/unused', route: 'desktop', project: 'o__p', ...ages(age) });
+    assert.equal(got.ok, false);
+    assert.match(got.line, /foreman hasn't checked in/);
+    assert.match(got.todo, /Start the foreman/);
+  }
+  assert.equal((await builderSignInCheck({ home: '/unused', route: 'desktop', ...ages(0) })).ok, false, 'no project, no check-in to read');
 });
 
 test('a passing check clears the fact and opens the gate for the queued wakes; a failing one keeps it', async () => {

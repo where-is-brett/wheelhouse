@@ -87,3 +87,32 @@ test('the All stopped card lists stopped and still-running parts from heartbeats
   assert.match(allStoppedWords({ stopped: [], running: [] }), /^Stopped: nothing was running\.\nStill running: nothing\./);
   assert.match(allStoppedWords({ stopped: ['builder a'], running: [] }), /^Stopped: 1 builder\./);
 });
+
+test('the Desktop foreman is running while its check-in is fresh; its Desktop builders until the foreman notes them ended', () => {
+  const home = tempFolder('wh-beats-');
+  write(home, `projects/${P}/watcher/foreman-check-in.json`, { sessionId: 'aaaaaaaa-1111-2222-3333-444444444444', at: new Date(NOW - 30 * 1000).toISOString() });
+  const rec = { sessionId: 'bbbbbbbb-1111-2222-3333-444444444444', worktree: '/x/y', branch: 'claude/a', at: new Date(NOW - 600 * 1000).toISOString() };
+  write(home, `projects/${P}/watcher/desktop-builders/alpha.json`, rec);
+  write(home, `projects/${P}/watcher/desktop-builders/beta.json`, { ...rec, endedAt: new Date(NOW - 5 * 1000).toISOString() });
+  assert.deepEqual(stillRunning(home, P, { now, alive: alive([]), stopAt }).running, [
+    { name: 'the foreman', why: 'its Desktop session, ending on All stop' },
+    { name: 'builder alpha', why: 'its Desktop session, not yet stopped' },
+  ]);
+  write(home, `projects/${P}/watcher/foreman-check-in.json`, { sessionId: 'aaaaaaaa-1111-2222-3333-444444444444', at: new Date(NOW - HEARTBEAT_FRESH_MS - 1000).toISOString() });
+  assert.deepEqual(stillRunning(home, P, { now, alive: alive([]), stopAt }).running.map((r) => r.name), ['builder alpha']);
+});
+
+test('the foreman and Desktop builders are listed as stopped, once recorded for the All stop now on', () => {
+  const home = tempFolder('wh-beats-');
+  writeStopped(home, P, { at: STOP, stop: STOP, works: ['foreman', 'alpha', 'beta'] });
+  const got = stillRunning(home, P, { now, alive: alive([]), stopAt });
+  assert.deepEqual(got.stopped, ['foreman', 'builder alpha', 'builder beta']);
+  assert.match(allStoppedWords(got), /^Stopped: 2 builders, the foreman\./);
+});
+
+test('a malformed foreman check-in or builder record is not counted as running', () => {
+  const home = tempFolder('wh-beats-');
+  write(home, `projects/${P}/watcher/foreman-check-in.json`, '{nope');
+  write(home, `projects/${P}/watcher/desktop-builders/alpha.json`, { sessionId: 'a b; x', worktree: '/x', branch: 'b', at: new Date(NOW).toISOString() });
+  assert.deepEqual(stillRunning(home, P, { now, alive: alive([]), stopAt }).running, []);
+});

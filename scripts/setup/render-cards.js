@@ -23,6 +23,7 @@
 //   j   the public GitLab on Windows, reached by the first card's own Put it on GitLab click instead of Customise
 //   k   GitHub on a Mac, with the project's settings.local.json not readable: mended before the first card
 //   l   GitHub on a Mac, Customise, with real users: live data is taken as yes and not asked; Standard is chosen on Locked
+//   m   a project kept on this computer, on a Mac, in Claude Desktop, Customise, builders started in Claude Desktop
 //   i   path a with a long user name and project name, and Copilot's command line installed: Copilot is chosen on the builder question and is signed in
 // --desktop answers as the Desktop app can: a card whose question is the same as an earlier card's shows the
 // earlier one, so the answer that comes back is the one given there. It also asks each card with its first line reworded, as a
@@ -70,6 +71,7 @@ export const PATHS = Object.freeze({
   j: { title: 'The public GitLab on Windows, reached by the first card\'s Put it on GitLab click', platform: 'win32', host: 'GitLab', where: 'public', glab: 'unavailable', gitlabClick: true },
   k: { title: 'GitHub on a Mac, with this computer\'s settings for the project not readable, mended before the first card', platform: 'darwin', host: 'GitHub', gh: 'in', damaged: true },
   l: { title: 'GitHub on a Mac, Customise, with real users: live data taken as yes, not asked', platform: 'darwin', host: 'GitHub', gh: 'in', realUsers: true },
+  m: { title: 'A project kept on this computer, on a Mac in Claude Desktop, Customise, builders started in Claude Desktop', platform: 'darwin', host: 'Keep it on this computer', glab: 'in', gh: 'in', entrypoint: 'desktop', builders: 'In Claude Desktop (you\'ll see each one)' },
   i: { title: 'A company\'s GitLab on Windows with a long user name and project name, Use my git as it is chosen, Copilot\'s command line installed and chosen on the builder question, and Copilot signed in', platform: 'win32', host: 'GitLab', where: 'company', way: 'Use my git as it is', glab: 'unavailable', agent: 'Copilot', folderName: 'wheelhouse-t6-17-11-2026', userName: 'firstname.lastname-longer' },
 });
 
@@ -349,6 +351,7 @@ function choose(p, { id, card }, { stepTwoDone }) {
   // The builder question, where another agent's command line is installed: the path's agent.
   if (id === 'agent' && p.agent !== undefined) return { label: pick(p.agent) };
   if (/^mend-/.test(id)) return { label: pick('Mend it') };
+  if (id === 'builders' && p.builders !== undefined) return { label: pick(p.builders) };
   if (id === 'real-users') return { label: pick(p.realUsers === true ? 'Yes, real users' : 'Not yet') };
   // Locked is asked only of a product with real users on a Mac; this renderer's step 3 connects without it, so Standard is taken.
   if (id === 'locked') return { label: pick('Standard') };
@@ -472,7 +475,9 @@ export async function renderPath(name, { desktop = false, keep = false } = {}) {
         tool_input: { questions: [card] }, tool_response: { answers: { [card.question]: value } },
       }, { client, now: () => new Date(clock - 500) });
     };
-    const plan = (step) => routes['/setup/plan']({ folder, step, ...(desktop ? { desktop: true } : {}) });
+    // A path run in the Desktop app's own session tells the plan so, as the setup command does (scripts/setup/cli.js).
+    const where = p.entrypoint === undefined ? {} : { desktop: true, entrypoint: p.entrypoint };
+    const plan = (step) => routes['/setup/plan']({ folder, step, ...(desktop ? { desktop: true } : {}), ...where });
     const runId = () => readJournal().runs.find((r) => r.folder === folder)?.id;
     // The one card and Customise, until a Go ahead holds; asked again after a miss at step 3, until the plan's new Go ahead holds.
     const oneCard = async () => {

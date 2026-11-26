@@ -399,9 +399,98 @@ test('a proxy-only change does not bring the card back, a record made with the p
     change('[credential]\n\thelper = !/b/other\n[http]\n\tproxy = http://p.example.org:8080\n');
     assert.equal((await lookAtTrusted({ file, cwd: folder })).same, false);
   });
+  // A record made with the proxy in it, whose proxy is since taken away (or changed, or its names written in capitals): only the proxy
+  // differs, so it is the same settings, and the record is rewritten in the present form. Another difference still brings the card.
+  const PROXIES = '[http]\n\tproxy = http://ada:s3cretpass@p.example.org:8080\n\tproxyAuthMethod = basic\n[http "https://other.example.org/"]\n\tProxy = http://q.example.org:3128\n';
+  const BASE = '[credential]\n\thelper = !/a/helper\n[http]\n\tsslCAInfo = /x/ca.pem\n';
+  for (const [name, now, same] of [
+    ['both proxy keys taken away', BASE, true],
+    ['the proxy changed', `${BASE}[http]\n\tproxy = http://other.example.org:1\n`, true],
+    ['the proxy kept', `${BASE}${PROXIES}`, true],
+    ['the proxy taken away and a certificate file changed', BASE.replace('/x/ca.pem', '/y/ca.pem'), false],
+    ['the proxy taken away and a helper added', `${BASE}[credential]\n\thelper = !/b/other\n`, false],
+    ['the proxy taken away and a rewrite added', `${BASE}[url "ssh://git@o.example.org/"]\n\tinsteadOf = https://o.example.org/\n`, false],
+  ]) {
+    await inFolderWith(`${BASE}${PROXIES}`, async ({ folder, file, change }) => {
+      const { readSettingsFor, settingsFingerprint } = await import('../../../scripts/lib/safe-git.js');
+      const { settingName } = await import('../../../scripts/lib/settings-card.js');
+      const crypto = await import('node:crypto');
+      await confirmComputerSettings({ file, cwd: folder });
+      // Make the record as the earlier form did: the proxy keys in the fingerprint, the names and the marks.
+      const entries = await readSettingsFor({ cwd: folder });
+      const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const [folderKey] = Object.keys(record.folders);
+      const secret = fs.readFileSync(path.join(path.dirname(file), 'git-settings.key'));
+      const lowered = entries.map(({ key, value }) => [key.toLowerCase(), value])
+        .filter(([key]) => /^(?:credential\..+|core\.sshcommand|url\..+|http\..+|remote\..+|ssh\..+|include\.path|includeif\..+\.path)$/.test(key));
+      const grouped = new Map();
+      for (const [key, value] of lowered) grouped.set(settingName(key), [...(grouped.get(settingName(key)) ?? []), [key, value]]);
+      record.folders[folderKey] = proxiedSettingsFingerprint(entries);
+      record.names[folderKey] = [...grouped.keys()].sort();
+      record.marks[folderKey] = Object.fromEntries([...grouped].map(([n, pairs]) => [n, crypto.createHmac('sha256', secret).update(JSON.stringify(pairs)).digest('hex').slice(0, 16)]));
+      assert.ok(record.names[folderKey].includes('http.proxy'), 'the old record names the proxy');
+      assert.notEqual(record.folders[folderKey], settingsFingerprint(entries));
+      fs.writeFileSync(file, JSON.stringify(record));
+      change(now);
+      assert.equal((await lookAtTrusted({ file, cwd: folder })).same, same, name);
+    });
+  }
   const entries = [{ key: 'credential.helper', value: 'a' }, { key: 'http.proxy', value: 'p' }];
   assert.match(proxiedSettingsFingerprint(entries), /^v2:[0-9a-f]{64}$/);
   assert.notEqual(proxiedSettingsFingerprint(entries), proxiedSettingsFingerprint([entries[0]]));
+});
+
+// A push against a record made with the proxy in it (fingerprint, names and marks), the proxy since taken away: the push goes and the
+// record is rewritten in the present form, with no proxy name, mark or value; with anything else changed too, the push is refused and
+// the record is left as it was.
+test('a push goes when only the proxy differs from a record made with the proxy in it, and the record is rewritten without it', async () => {
+  const { confirmComputerSettings, safeGit, readSettingsFor, settingsFingerprint, proxiedSettingsFingerprint } = await import('../../../scripts/lib/safe-git.js');
+  const { settingName } = await import('../../../scripts/lib/settings-card.js');
+  const crypto = await import('node:crypto');
+  const url = 'https://github.com/o/p.git';
+  const BASE = `[credential]\n\thelper = !/a/helper\n[http]\n\tsslCAInfo = /x/ca.pem\n[remote "origin"]\n\turl = ${url}\n`;
+  const PROXIES = '[http]\n\tproxy = http://ada:s3cretpass@p.example.org:8080\n\tproxyAuthMethod = basic\n[remote "origin"]\n\tproxy = http://q.example.org:3128\n';
+  for (const [name, now, goes] of [
+    ['both proxy keys and the remote proxy taken away', BASE, true],
+    ['the proxy taken away and the helper changed', BASE.replace('/a/helper', '/b/other'), false],
+    ['the proxy taken away and the remote address changed', BASE.replace(url, 'https://evil.example.org/o/p.git'), false],
+  ]) {
+    await inFolderWith(`${BASE}${PROXIES}`, async ({ folder, file, change }) => {
+      await confirmComputerSettings({ file, cwd: folder });
+      const entries = await readSettingsFor({ cwd: folder });
+      const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const [key] = Object.keys(record.folders);
+      const secret = fs.readFileSync(path.join(path.dirname(file), 'git-settings.key'));
+      const grouped = new Map();
+      for (const { key: k, value } of entries) {
+        const lower = k.toLowerCase();
+        if (!/^(?:credential\..+|core\.sshcommand|url\..+|http\..+|remote\..+|ssh\..+|include\.path|includeif\..+\.path)$/.test(lower)) continue;
+        grouped.set(settingName(lower), [...(grouped.get(settingName(lower)) ?? []), [lower, value]]);
+      }
+      record.folders[key] = proxiedSettingsFingerprint(entries);
+      record.names[key] = [...grouped.keys()].sort();
+      record.marks[key] = Object.fromEntries([...grouped].map(([n, pairs]) => [n, crypto.createHmac('sha256', secret).update(JSON.stringify(pairs)).digest('hex').slice(0, 16)]));
+      assert.ok(record.marks[key]['remote.proxy'] && record.marks[key]['http.proxyauthmethod'], 'the old record marks the proxy');
+      const old = JSON.stringify(record);
+      fs.writeFileSync(file, old);
+      change(now);
+      const fake = (f, args, options) => (args[0] === 'config' ? run(f, args, options) : Promise.resolve({ code: 0, stdout: args[0] === 'remote' ? `${url}\n` : '', stderr: '' }));
+      const push = safeGit({ cwd: folder, reach: 'push', run: fake, pushTo: { remote: 'origin', url }, trust: { file } });
+      const out = await push(['push', '--no-verify', 'origin', 'main']).then((got) => ({ ok: got.code === 0 }), (error) => ({ code: error.code }));
+      const after = fs.readFileSync(file, 'utf8');
+      if (!goes) {
+        assert.equal(out.code, 'git-settings-changed', name);
+        assert.equal(after, old, `${name}: the record is left as it was`);
+        return;
+      }
+      assert.deepEqual(out, { ok: true }, name);
+      const rewritten = JSON.parse(after);
+      assert.equal(rewritten.folders[key], settingsFingerprint(await readSettingsFor({ cwd: folder })));
+      assert.ok(!rewritten.names[key].some((n) => /proxy/.test(n)), 'no proxy name is kept');
+      assert.ok(!Object.keys(rewritten.marks[key]).some((n) => /proxy/.test(n)), 'no proxy mark is kept');
+      assert.doesNotMatch(after, /s3cretpass|p\.example|q\.example/);
+    });
+  }
 });
 
 test('a folder setup never confirmed is refused where a record exists, even one that names other folders', async () => {

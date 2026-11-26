@@ -81,7 +81,7 @@ import { withoutBom } from '../gate/guardrails.js';
 import { fileURLToPath } from 'node:url';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { wheelhouseHome, stateDir, projectSlug, computerId } from '../lib/paths.js';
-import { builderChoice, saveBuilderRoute } from './builders-ask.js';
+import { builderChoice, saveBuilderLaunch, saveBuilderRoute } from './builders-ask.js';
 import { planWithUsual, usualFromChanges, USE_USUAL, USUAL_ID } from './usual.js';
 import { toolPath, toolState } from '../lib/host-tools.js';
 import { canonicalJson } from '../lib/canonical.js';
@@ -3001,6 +3001,7 @@ export function hostStep({
       }
       // Where builders start, as answered, saved first: it changes nothing in the project, and the rest of the step can stop.
       await saveBuilderRoute({ answers: ctx.answers, profile: profileFor(), computer: computerId() });
+      await saveBuilderLaunch({ answers: ctx.answers, profile: profileFor(), computer: computerId() });
       halt();
       const connection = changes.find((c) => c.action === 'connection');
       if (!connection) throw new Error('Step 3\'s list names no connection');

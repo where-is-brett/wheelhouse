@@ -671,7 +671,7 @@ const isAsIsMirror = (key) => registeredProjects().some(({ project, record }) =>
 //   - A folder with none in any other record was never confirmed: refused.
 //   - Where there is no record at all, a push records what it finds as the first use only while no project is connected as-is: with
 //     one, setup would have recorded, so the loss is refused until the director confirms again.
-function checkTrusted(file, folder, { now, old, proxied }) {
+function checkTrusted(file, folder, { now, old, proxied, entries }) {
   const record = readRecord(file);
   if (record === 'refused') throw new SettingsChanged(SETTINGS_CHANGED_LINE);
   const key = folderKey(folder);
@@ -692,6 +692,13 @@ function checkTrusted(file, folder, { now, old, proxied }) {
   // An entry made with the earlier fingerprint, still true of the settings: rewritten in the present form.
   if (kept === proxied || (!String(kept).startsWith('v2:') && kept === old)) {
     writeRecord(file, { folders: { ...record.folders, [key]: now }, legacy: record.legacy, names: record.names, marks: record.marks, check: record.check, programs: record.programs });
+    return;
+  }
+  // The same, but the proxy is not as it was when the record was made (changed, or taken away): the rest is checked by the marks.
+  if (onlyProxyDiffers(record, key, entries, file)) {
+    const secret = markKey(file);
+    const names = { ...record.names, [key]: settingNames(trustedSettings(entries).map(([name]) => name)) };
+    writeRecord(file, { folders: { ...record.folders, [key]: now }, legacy: record.legacy, names, marks: { ...record.marks, [key]: valueMarks(entries, secret) }, check: record.check, programs: record.programs });
     return;
   }
   throw new SettingsChanged(SETTINGS_CHANGED_LINE);
@@ -717,6 +724,23 @@ export async function confirmComputerSettings({ file, run = realRun, gitPath = '
   const { [key]: _was, ...others } = kept.programs;
   const programs = program === null ? others : { ...others, [key]: program };
   writeRecord(file, { folders: { ...kept.folders, [key]: fingerprint }, legacy: kept.legacy, names: { ...kept.names, [key]: settingNames(trustedSettings(entries).map(([name]) => name)) }, marks, check, programs });
+}
+
+// Whether the settings now differ from those confirmed for `key` in nothing but the proxy. A record made while the proxy values were
+// part of the fingerprint holds a hash that no longer matches once the proxy changes or is taken away, and the hash can't be taken
+// apart; the value marks can: every setting but the proxy ones must carry the mark it had, with none added and none gone. False
+// when no marks were kept with the key that is here (nothing then says the rest is as it was).
+const NETWORK_NAME = /^(?:http\.(?:proxy|proxyauthmethod|noproxy)|remote\.(?:proxy|proxyauthmethod))$/;
+function onlyProxyDiffers(held, key, entries, file) {
+  const kept = held?.marks[key];
+  if (kept === undefined) return false;
+  const secret = markKey(file);
+  if (secret === null || held.check !== keyCheck(secret)) return false;
+  const now = valueMarks(entries, secret);
+  const others = (marks) => Object.entries(marks).filter(([name]) => !NETWORK_NAME.test(name));
+  const was = others(kept);
+  const is = others(now);
+  return was.length === is.length && was.every(([name, mark]) => now[name] === mark);
 }
 
 // The names whose value mark now differs from the one kept for `key`, when marks were kept with the key that is here now.
@@ -751,7 +775,7 @@ export async function lookAtTrusted({ file, run = realRun, gitPath = 'git', cwd 
   const held = record !== null && record !== 'refused' ? record : null;
   return {
     hash: fingerprint.slice('v2:'.length),
-    same: held?.folders[key] === fingerprint || held?.folders[key] === proxiedSettingsFingerprint(entries),
+    same: held?.folders[key] === fingerprint || held?.folders[key] === proxiedSettingsFingerprint(entries) || onlyProxyDiffers(held, key, entries, file),
     names: settingNames(trustedSettings(entries).map(([name]) => name)),
     was: held?.names[key] ?? null,
     changed: changedNames(held, key, entries, file),
@@ -839,7 +863,7 @@ export function safeGit({
     const why = settingsRefusal(entries);
     if (why !== null) throw new LookRefusal(`Git's settings on this computer ${why}, which Wheelhouse does not allow for a push. Remove that setting, then try again.`);
     // What the computer's settings were when as-is pushing was first used: a change since is the director's to confirm.
-    if (trust !== null && subcommandOf(args) === 'push') checkTrusted(trust.file, cwd, { now: settingsFingerprint(entries), old: legacySettingsFingerprint(entries), proxied: proxiedSettingsFingerprint(entries) });
+    if (trust !== null && subcommandOf(args) === 'push') checkTrusted(trust.file, cwd, { now: settingsFingerprint(entries), old: legacySettingsFingerprint(entries), proxied: proxiedSettingsFingerprint(entries), entries });
     const extras = hookNames(entries).map((name) => [`hook.${name}.enabled`, 'false']);
     if (pushTo !== null && /^https?:\/\//i.test(pushTo.url)) extras.push([`http.${pushTo.url}.sslVerify`, 'true']);
     const count = Number.parseInt(given.GIT_CONFIG_COUNT ?? '0', 10) || 0;

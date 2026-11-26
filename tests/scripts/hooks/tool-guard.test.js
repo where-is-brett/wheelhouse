@@ -1918,6 +1918,24 @@ test('a refusal in a session with no role begins with the guards sentence and na
   });
 });
 
+test('a refusal in a session with no role takes another agent\'s two sentences when they are given', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const { recordRole } = await import('../../../scripts/lib/role.js');
+      const env = { WHEELHOUSE_HOME: path.join(home, 'wh') };
+      const aside = { ...call(main, 'Read', { file_path: path.join(main, '.env') }), session_id: 'aside-2' };
+      assert.ok(recordRole('aside-2', 'aside'));
+      const words = { guards: 'Guards here.', wayOut: 'Use a copy.' };
+      const out = await decide(aside, { dir: path.join(base, 'managed'), home, pluginRoot: PLUGIN, env, words });
+      const why = out?.hookSpecificOutput?.permissionDecisionReason ?? '';
+      assert.ok(denied(out));
+      assert.ok(why.startsWith('Guards here. ') && why.endsWith('. Use a copy.'), why);
+      assert.doesNotMatch(why, /Claude|aside/);
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
 test('a refused command lookup prints the First Mate\'s command lines', async () => {
   await withHome(async (home) => {
     const { base, main } = makeProject();

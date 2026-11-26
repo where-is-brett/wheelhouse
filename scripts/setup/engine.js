@@ -765,10 +765,15 @@ export function setupRoutes({
     });
   }
 
-  // The builder sign-in check step 10's health makes: the way builders start on this computer (the background route; the Desktop route's
-  // is the foreman's check-in, part 6). A launch command that can't be read fails it, saying which fault it is (never the settings path).
-  async function buildersCheckNow() {
+  // The builder sign-in check step 10's health makes: the way builders start on this computer (on the Desktop route, the foreman's check-in). A launch command that can't be read fails it, saying which fault it is (never the settings path).
+  async function buildersCheckNow(folder) {
     const { builderSignInCheck, launchFaultLine } = await import('./builder-sign-in.js');
+    // On the Desktop route the foreman's check-in is the proof (no launch command is involved).
+    const { builderRoute } = await import('../lib/route.js');
+    if ((buildersWith.routeFor ?? (() => builderRoute({ home: wheelhouseHome() }).route))() === 'desktop') {
+      const { projectForFolder } = await import('../lib/projects.js');
+      return (buildersWith.check ?? builderSignInCheck)({ home: wheelhouseHome(), route: 'desktop', project: projectForFolder(folder)?.project });
+    }
     const { storedLaunch } = await import('../lib/launch-stored.js');
     let launch = null;
     try {
@@ -1087,7 +1092,7 @@ export function setupRoutes({
     if (!onRunList(found, HEALTH_STEP)) refuse(notOnList(found, HEALTH_STEP));
     const before = healthQueue.get(found.id) ?? Promise.resolve();
     const turn = before.catch(() => {}).then(async () => {
-      const read = (run) => health({ folder: run.folder, run, reported: lines, now, desktop: sessionIsApp, ...(buildersWith.live === true || buildersWith.check ? { builders: buildersCheckNow } : {}) });
+      const read = (run) => health({ folder: run.folder, run, reported: lines, now, desktop: sessionIsApp, ...(buildersWith.live === true || buildersWith.check ? { builders: () => buildersCheckNow(run.folder) } : {}) });
       const answerOf = (got) => ({ ok: true, green: got.green, lines: got.lines, board: got.board, trials: got.trials });
       let run = runById(found.id);
       if (healthGreen(run) || stopped()) return answerOf(await read(run));

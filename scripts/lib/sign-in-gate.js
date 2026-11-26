@@ -10,12 +10,12 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { faultLine } from './read-json-named.js';
-import { KINDS, isPlain, validFact, signInFile, kindWords, readSignIn, commandName, timeWords, buildersLine, buildersHealth, GATE_LINE, gateFor, classify } from './sign-in-line.js';
+import { KINDS, isPlain, validFact, signInFile, kindWords, readSignIn, commandName, timeWords, buildersLine, buildersHealth, foremanFact, GATE_LINE, gateFor, classify } from './sign-in-line.js';
 import { hide } from './clean.js';
 import { maskText } from '../state/secret-scan.js';
 import { stopState } from './stop.js';
 
-export { KINDS, signInFile, kindWords, readSignIn, commandName, timeWords, buildersLine, buildersHealth, GATE_LINE, gateFor, classify };
+export { KINDS, signInFile, kindWords, readSignIn, commandName, timeWords, buildersLine, buildersHealth, foremanFact, GATE_LINE, gateFor, classify };
 export const EXCERPT_CHARS = 200;
 
 // Writes the whole map to a temporary name renamed over the file, so no reader sees half of it.

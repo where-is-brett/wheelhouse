@@ -52,6 +52,7 @@ import { readSeen, readSurveyAt, markSeen, readVisits } from '../briefing/seen.j
 import { readDigest, clearDigest } from '../digest/due.js';
 import { takeFailures } from '../alerts/tick.js';
 import { sessionRole, recordRole, recordAside, asideByChoice } from '../lib/role.js';
+import { BUILDER_PROMPT_LEAD } from '../foreman/prompt-lead.js';
 import { refreshSeat, movedAway, releaseSeat } from '../lib/first-mate-seat.js';
 import { SEAT_MOVED_LINE } from '../lib/front-desk.js';
 import { helperClient } from '../host/helper-client.js';
@@ -305,6 +306,22 @@ async function context(input, deps = {}) {
     // An aside the seat made (another session holds it) is not recorded: the seat can change, a choice can't.
     const keep = role !== 'aside' || attempt(() => asideByChoice({ prompt: input.prompt, cwd: input.cwd }), false);
     const first = writes && keep ? attempt(() => recordRole(input.session_id, role), false) : false;
+    // A builder Desktop started: its first prompt's marker line names the piece, and the worktree Desktop made is recorded for
+    // it. Only a prompt that begins with the builder lead pays for the load, and only in a worktree Wheelhouse didn't make.
+    if (writes && first && role === 'feature' && input.prompt.startsWith(BUILDER_PROMPT_LEAD) && madeFeatureSlug(input.cwd) === null) {
+      try {
+        const { adoptBuilder } = await import('../foreman/adopt.js');
+        adoptBuilder({ project: found.project, checkout: found.record.folder, sessionId: input.session_id, prompt: input.prompt, cwd: input.cwd });
+      } catch { /* the builder carries on; the foreman asks for the record and is told it is missing */ }
+    }
+    // The director typing in a builder's row on the Desktop route: a prompt that didn't come through the foreman takes the helm.
+    // Only a feature session that isn't on its first prompt pays for the load.
+    if (writes && !first && role === 'feature' && madeFeatureSlug(input.cwd) === null) {
+      try {
+        const { holdFromPrompt } = await import('../foreman/helm-hold.js');
+        await holdFromPrompt({ project: found.project, sessionId: input.session_id, prompt: input.prompt, first, now });
+      } catch { /* the prompt goes through; the next one tries again */ }
+    }
     // The aside command typed after the session start took the seat: the record turns aside and the seat is given up.
     if (writes && role === 'aside' && keep) {
       attempt(() => recordAside(input.session_id));

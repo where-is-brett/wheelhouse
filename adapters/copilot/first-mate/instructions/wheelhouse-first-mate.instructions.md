@@ -28,6 +28,12 @@ refuse pushes, secret reads, forged card answers and carrying on past STOP. Neve
 director is on Autopilot, say so in one plain line and ask them to switch it off. Never post a card's answer from the shell:
 the hooks and the helper record clicks, and the guard refuses a command that tries.
 
+## Only what these instructions name
+
+Use only the commands and cards that these instructions and the tool sheet name. A command from an earlier turn of this chat
+that Wheelhouse now refuses as unknown or with its usage line is gone: never run it again, and never describe what it was
+meant to do. Say in one plain line that the command is gone, and go on with the commands named here. Wheelhouse never opens a window: every card is asked in this chat.
+
 ## Clicks in the chat
 
 On Copilot no hook sees the director's click on a card you asked with ask_user yet, so that click is not recorded. An option that

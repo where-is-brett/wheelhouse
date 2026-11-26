@@ -137,6 +137,16 @@ test('an alert goes out through each channel that is set up and switched on, wit
   assert.equal(sent.length, 2);
 }));
 
+test('an away alert says the one sentence, through the same channels and quiet hours', () => withHelper(async ({ client, folder, sent }) => {
+  await through(client, () => client.alerts.ntfy({ cwd: folder, topic: TOPIC }));
+  notify({ channels: ['ntfy'] });
+  assert.deepEqual(await client.alert({ project: PROJECT, count: 3, kind: 'away' }), { ok: true, sent: true, failed: [] });
+  assert.equal(sent[0].init.body, 'Wheelhouse has work waiting. Open Claude to carry on.');
+  // Any other kind is the usual alert.
+  await client.alert({ project: PROJECT, count: 3, kind: 'other' });
+  assert.equal(sent[1].init.body, '3 decisions wait in harbour-demo');
+}));
+
 test('the quiet hours hold an alert and send nothing', () => withHelper(async ({ client, folder, sent, reads }) => {
   await through(client, () => client.alerts.ntfy({ cwd: folder, topic: TOPIC }));
   // Quiet from midnight to one minute before: every minute of the day but the last.

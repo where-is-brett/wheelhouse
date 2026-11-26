@@ -151,6 +151,8 @@ export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossa
 // The commands that write a record, hand out a card or change the board: only the window that holds the First Mate's seat runs them.
 export { SEAT_WRITES };
 export const SEAT_REFUSAL = 'The First Mate is in another window, so this window can look things up but not record anything or hand out cards. The director can move the First Mate here with the take-over card in this window.';
+// Where no window holds the seat (the lock couldn't be taken, say), there is no card to offer: the seat is taken at a later start.
+export const NO_SEAT_REFUSAL = 'This window doesn\'t hold the First Mate\'s seat yet, so it can look things up but not record anything or hand out cards. No other window holds it; a later session start in this window tries again.';
 
 // The refusal for a seat write from a window that doesn't hold the seat; null when the command may run. A script or test
 // (no session id) and a folder in no project are never refused. The seat is read through the host helper, since this
@@ -167,7 +169,8 @@ export async function seatRefusal({ command, rest = [], env, cwd, client, sessio
   if (typeof session !== 'string' || session === '') return null;
   let got;
   try { got = await client.session.seat({ cwd, session }); } catch { return null; }
-  return got?.ok === true && got.holds === false ? SEAT_REFUSAL : null;
+  if (got?.ok !== true || got.holds !== false) return null;
+  return got.elsewhere === false ? NO_SEAT_REFUSAL : SEAT_REFUSAL;
 }
 
 // `--session <id>` (or `--session=<id>`) taken out of the arguments: { argv, session }. The id is the chat's own, which an
@@ -187,7 +190,7 @@ export function sessionFlag(argv) {
   return { argv: left, session };
 }
 
-const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'show', 'undo', 'move', 'carry-on', 'archive', 'restore', 'premium-card', 'premium-check', 'note', 'decision', 'pull-back', 'alerts', 'page', 'helm'];
+const COMMANDS = ['cards', 'pull-cards', 'card', 'again', 'why', 'suggest', 'drop', 'ask-bosun', 'record', 'similar', 'views', 'explain', 'preview', 'show', 'undo', 'move', 'carry-on', 'archive', 'restore', 'premium-card', 'premium-check', 'foreman-card', 'foreman-brief', 'note', 'decision', 'pull-back', 'alerts', 'page', 'helm'];
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
 // The Lift STOP card, which `cards` puts first under STOP. It is composed on each visit and never
 // recorded as a card, since under STOP the helper writes nothing; the click on it is signed by the
@@ -1606,6 +1609,49 @@ export async function premiumCheck({ client, cwd }) {
     : "Your account doesn't have the premium model, so nothing changes. I'll offer it again after setup runs and finds it.";
 }
 
+// Whether the Desktop foreman may start for this folder's project: `{ named }` when it may, or the plain sentence to say when it is
+// running already. Refused while All stop is on and where builders don't start in Desktop; a check-in under 3 minutes old means
+// the foreman is running. `project`, `route`, `age` and `stop` are for tests.
+async function foremanMayStart({ cwd, project, route, age, stop }) {
+  const named = project ?? projectOf(cwd)?.project;
+  if (typeof named !== 'string') throw new CliError('This folder is not a Wheelhouse project, so there is no foreman to start');
+  if ((stop ?? (await import('../lib/stop.js')).stopState)().on) throw new CliError('All stop is on, so the foreman is not started');
+  const where = route ?? (await import('../lib/route.js')).builderRoute({ home: (await import('../lib/paths.js')).wheelhouseHome() }).route;
+  if (where !== 'desktop') throw new CliError('Builders do not start in Claude Desktop on this computer, so there is no Desktop foreman to start');
+  const { FOREMAN_REFUSE_MS, checkInAge } = await import('../foreman/check-in.js');
+  const seen = age === undefined ? checkInAge(named) : age;
+  if (seen !== null && seen < FOREMAN_REFUSE_MS) return { running: `The foreman is running already for ${named}: nothing to start.` };
+  return { named };
+}
+
+// The "Start the foreman" card (builders and settings design, sections 7.1 and 14): recorded and handed out as any question card
+// is, through `card`. While the foreman is running it is not asked, and the sentence saying so comes back instead.
+export async function foremanCard({ client, cwd, now, session, project, route, age, stop } = {}) {
+  const may = await foremanMayStart({ cwd, project, route, age, stop });
+  if (may.running !== undefined) return may.running;
+  const { FOREMAN_TOPIC, foremanCardInput } = await import('../foreman/foreman-card.js');
+  // A question card has no set line, so the card waiting already is found by its topic: it comes back, never a second one.
+  const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
+  const { views, cards: events, paneLive: panel } = await viewsOf(client, cwd, { since: new Date(at.getTime() - RECENT_MS), session, cards: true });
+  const waiting = (Array.isArray(views.waiting) ? views.waiting : []).find((c) => c.data?.kind === 'question' && c.data?.topic === FOREMAN_TOPIC);
+  if (waiting !== undefined) {
+    if (waiting.asked !== null && waiting.asked !== undefined) return { question: asQuestion(waiting), id: waiting.id, alreadyAsked: true };
+    return { question: asQuestion(waiting), id: waiting.id, ...withProblems(await handOut(client, cwd, [{ id: waiting.id, question: waiting.data.question }], { stop: false, panel })) };
+  }
+  // Each offer has its own words (see foremanCardInput), so one that was offered before is counted from the record.
+  const asked = events.filter((e) => e.kind === 'card' && e.data?.kind === 'question' && e.data?.topic === FOREMAN_TOPIC).length;
+  return card({ client, cwd, input: foremanCardInput({ asked }), now, session });
+}
+
+// The Desktop foreman's start (builders and settings design, section 7.1): after the director's click on "Start the foreman
+// session", the one line to give `start_session`: its title, its brief and its set options. Nothing starts here. Refused or
+// answered plainly as for the card. `brief` is for tests.
+export async function foremanBrief({ cwd, project, route, age, stop, brief } = {}) {
+  const may = await foremanMayStart({ cwd, project, route, age, stop });
+  if (may.running !== undefined) return may.running;
+  return JSON.stringify(await (brief ?? (async (p) => (await import('../foreman/start.js')).desktopBrief({ project: p })))(may.named));
+}
+
 // --- Ready-made changes ---
 
 // What the helper made ready, as it answered (scripts/survey/ready.js): the work id it chose, the
@@ -1850,6 +1896,14 @@ export async function main(argv, {
     } else if (command === 'premium-card' || command === 'premium-check') {
       only(rest, 0, `${command} takes no arguments`);
       lines([await (command === 'premium-card' ? premiumCard : premiumCheck)({ client: helper, cwd: here })]);
+    } else if (command === 'foreman-card') {
+      only(rest, 0, 'foreman-card takes no arguments');
+      const got = await foremanCard({ client: helper, cwd: here, now, session: sessionId });
+      if (typeof got === 'string') lines([got]);
+      else json(got);
+    } else if (command === 'foreman-brief') {
+      only(rest, 0, 'foreman-brief takes no arguments');
+      lines([await foremanBrief({ cwd: here })]);
     } else if (command === 'views') {
       const usage = `Give the view's name: views <name>, one of ${VIEW_NAMES.join(', ')}; waiting also takes --since <time>`;
       let since;

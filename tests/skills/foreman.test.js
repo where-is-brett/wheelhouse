@@ -137,9 +137,12 @@ test('each flag the skill gives is one act.js parses for that command', () => {
   for (const flag of ask) assert.ok(flags.ask.has(flag), `act ask takes --${flag}`);
   assert.deepEqual(flagsIn(parts['At each wake']).sort(), ['acted', 'idle']);
   for (const [name, text] of Object.entries(parts)) {
+    // The Desktop route's flags are wait-wake.js's own, and act start's --foreman-session.
+    const allowed = name === 'On the Desktop route' ? ['take', 'finish', 'ended', 'session', 'foreman-session'] : ['acted', 'idle'];
     if (!['Starting work', 'Asking the director', 'At each wake'].includes(name)) {
-      for (const flag of flagsIn(text)) assert.ok(['acted', 'idle'].includes(flag), `${name}: --${flag}`);
+      for (const flag of flagsIn(text)) assert.ok(allowed.includes(flag), `${name}: --${flag}`);
     }
+    if (name === 'On the Desktop route') assert.ok(flags.start.has('foreman-session'));
   }
 });
 
@@ -213,4 +216,47 @@ test('the skill says what to do when a document changed since its approval', () 
 
 test('the skill makes the drift card the one exception to waiting or dropping at a start question', () => {
   assert.match(body, /wait, or drop the work\. The exception is the card for a document changed since its approval, which the wake's command puts with its own options\./);
+});
+
+test('the Desktop loop names the offer, Auto, wake_when_done, nesting from the probe, stop_session on STOP and pause, archive_session on remove or merge, and its exits', () => {
+  const [, desktop] = /## On the Desktop route\n([\s\S]*?)(?=\n## |$)/.exec(raw) ?? [];
+  assert.ok(desktop, 'a section for the Desktop route');
+  for (const word of ['start_session', 'initiation: offer', 'Auto', 'wake_when_done', 'send_message', 'stop_session', 'archive_session', 'Run wait as', '--take', '--finish', '--ended']) {
+    assert.ok(desktop.includes(word), `the Desktop route names ${word}`);
+  }
+  for (const exit of ['wakes: <n>', 'no wake', 'route changed', 'all stop', 'another foreman']) assert.ok(desktop.includes(exit), `the exit "${exit}"`);
+  assert.match(desktop, /nest/i);
+  assert.match(desktop, /Builders now start in the background; this session can be closed/);
+  // Offers carry nothing from a wake: the title and prompt are `act start`'s own.
+  assert.match(desktop, /Desktop offer: /);
+  assert.match(desktop, /act builder-started/);
+  // The commands the section names are ones the scripts have.
+  assert.doesNotMatch(desktop, /`(git|npm|gh|glab|cd|rm|bash|sh|node -e) /);
+});
+
+test('the skill\'s Desktop commands exist: wait-wake takes --take, --finish and --ended, and act has builder-started', async () => {
+  const wait = source('scripts/foreman/wait-wake.js');
+  for (const flag of ['--take', '--finish', '--ended', '--session', '--project']) assert.ok(wait.includes(`'${flag}'`) || wait.includes(`${flag}`), flag);
+  const act = await subcommands(actMain, [], { client: {} });
+  assert.ok(act.has('builder-started'));
+  assert.match(ACT_JS, /'foreman-session'/);
+});
+
+test('the Desktop loop resumes a stopped builder with send_message, then a fresh start in the same worktree with the resume brief if that fails, as the probe finding says', async () => {
+  const [, desktop] = /## On the Desktop route\n([\s\S]*?)(?=\n## |$)/.exec(raw) ?? [];
+  const [, resume] = /\n### When Desktop was closed\n([\s\S]*?)(?=\n#{2,3} |$)/.exec(desktop) ?? [];
+  assert.ok(resume, 'a part for a stopped builder');
+  assert.match(resume, /send_message/);
+  assert.match(resume, /act resume-offer <work>/);
+  assert.match(resume, /same worktree/);
+  assert.match(resume, /resume brief/);
+  assert.match(resume, /act builder-started <work>/);
+  assert.match(resume, /message-then-fresh-start/);
+  assert.match(resume, /rows-lost/);
+  assert.match(resume, /rows-return/);
+  // The first try is the message, and a fresh start follows only a failed message.
+  assert.ok(resume.indexOf('send_message') < resume.indexOf('act resume-offer'));
+  assert.match(resume, /helm/);
+  const act = await subcommands(actMain, [], { client: {} });
+  assert.ok(act.has('resume-offer'));
 });

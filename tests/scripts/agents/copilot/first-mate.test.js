@@ -60,6 +60,12 @@ test('the instructions give the tool sheet and send every card with a signing op
   assert.doesNotMatch(text, /chat-click/, 'no route records a chat click on Copilot');
 });
 
+test('the instructions keep a long chat to the commands and cards they name now', () => {
+  const text = built.get(INSTRUCTIONS);
+  assert.match(text, /## Only what these instructions name/);
+  assert.match(text, /earlier turn of this chat[\s\S]*never run it again, and never describe what it was\s+meant to do/);
+});
+
 test('the agent never says a click in the chat records itself', () => {
   const text = built.get(AGENT);
   assert.doesNotMatch(text, /a click or a typed reply records itself|the click records itself|Its click records itself/);

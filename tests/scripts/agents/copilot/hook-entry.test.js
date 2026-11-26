@@ -9,7 +9,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { runEntry, EVENT_NAMES, DEADLINE, COULD_NOT_RUN, APP_TOOL, NO_TEXT } from '../../../../scripts/agents/copilot/hook-entry.js';
-import { GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC } from '../../../../scripts/agents/copilot/numbers.js';
+import { GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC, SESSION_START_MS } from '../../../../scripts/agents/copilot/numbers.js';
 import { toGuardInput, patchChanges, patchPaths } from '../../../../adapters/copilot/translate.js';
 import { NO_HELPER_STOP } from '../../../../scripts/lib/stop.js';
 import { hookMain } from '../../../../scripts/hooks/kit.js';
@@ -249,6 +249,29 @@ test('a tool Wheelhouse does not know is refused and marked; outside a Wheelhous
   assert.deepEqual(marks, [['unknown-tool', { name: 'brand_new_tool' }]]);
   const outside = await runEntry('preToolUse', { stdin: Readable.from([JSON.stringify(call('bash', { command: 'ls' }))]), env: ENV, deps: { client: up, steps: r.steps, projectOf: () => null, dir: '/nowhere' } });
   assert.deepEqual(outside, { text: '', code: 0 });
+});
+
+test('a session start has more time than Claude Code\'s eight seconds for the lock, and less than the hook deadline', async () => {
+  const r = recording();
+  await run('sessionStart', { sessionId: 's1', cwd: PROJECT, source: 'new' }, { steps: r.steps });
+  const given = r.calls.find((c) => c.name === 'sessionStart').deps.totalMs;
+  assert.equal(given, SESSION_START_MS);
+  assert.ok(given > 8000 && given < GUARD_DEADLINE_MS);
+});
+
+test('a lock take that answers after eight seconds is still waited for inside a Copilot session start', async () => {
+  await withHome(async () => {
+    const lateTake = { ok: true, result: { taken: true, counter: 1 } };
+    // Real time is too slow to wait eight seconds: the step is given the budget the entry sets, scaled down by a tenth, with the
+    // same ratio of the touch and the take to it that the laptop showed (the touch used most of it).
+    const scale = 10;
+    const budget = SESSION_START_MS / scale;
+    const slow = (ms, answer) => new Promise((resolve) => setTimeout(() => resolve(answer), ms / scale));
+    const client = { ...up, state: { views: async () => ({ ok: true, views: {} }) }, lock: { touch: () => slow(6000, { ok: true, result: { touched: false } }), take: () => slow(4000, lateTake) }, session: { mark: async () => ({ ok: true }) } };
+    const { decide } = await import('../../../../scripts/hooks/session-start.js');
+    const seen = await decide({ session_id: 'chat-9', cwd: PROJECT }, { writeVia: 'helper', client, helperUp: true, agent: 'copilot', dir: '/nowhere', projectOf: () => ({ project: 'shop' }), env: {}, totalMs: budget });
+    assert.doesNotMatch(JSON.stringify(seen), /lock couldn't be taken/);
+  });
 });
 
 test('a harness that is not Copilot\'s gets the session-start notice and only reading', async () => {
@@ -596,4 +619,13 @@ test('the free-input flag off does not hide a schema field that takes typed word
   const r = recording();
   await run('preToolUse', call('ask_user', { message: 'What next?', allowFreeformInput: false, requestedSchema: { properties: { answer: { type: 'string', enum: ['A'] }, count: { type: 'integer' } } } }), { steps: r.steps, c6: true });
   assert.equal(r.calls.find((c) => c.name === 'cardCheck').input.tool_input.questions[0].allowFreeformInput, true);
+});
+
+test('the tool guard is given Copilot\'s own words for a chat with no role: no Claude session, no aside command', async () => {
+  const r = recording();
+  await run('preToolUse', call('bash', { command: 'ls' }), { steps: r.steps });
+  const words = r.calls.find((c) => c.name === 'toolGuard').deps.words;
+  assert.match(words.guards, /every chat here/);
+  assert.doesNotMatch(`${words.guards} ${words.wayOut}`, /Claude|aside/);
+  assert.match(words.wayOut, /separate copy of the project/);
 });

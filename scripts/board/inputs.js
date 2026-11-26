@@ -179,7 +179,8 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
       const [{ builderRoute }, { sessionsFor }] = await Promise.all([import('../lib/route.js'), import('../agents/project-agent.js')]);
       const agent = usageAgent ?? 'claude-code';
       const found = builderRoute({ agent, home: wheelhouseHome(), routes: sessionsFor(agent).routes, readViews: () => profileViews });
-      builderFacts = { route: found.route, program: found.launch?.[0], fault: found.from === 'fault' ? found.fault : null };
+      const foremanAge = found.route === 'desktop' ? (await import('../foreman/check-in.js')).checkInAge(project) : null;
+      builderFacts = { route: found.route, program: found.launch?.[0], fault: found.from === 'fault' ? found.fault : null, foremanAge };
     } catch { /* the line is stated without the route */ }
   }
   const sources = offline ? null : readSources();

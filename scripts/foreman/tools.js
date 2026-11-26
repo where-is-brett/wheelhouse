@@ -18,7 +18,7 @@ import { commandPath } from '../lib/command-path.js';
 // The plugin this file sits in: scripts/foreman/ is two folders down.
 export const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-const SCRIPTS = Object.freeze({ wake: 'scripts/foreman/wake.js', act: 'scripts/foreman/act.js' });
+const SCRIPTS = Object.freeze({ wake: 'scripts/foreman/wake.js', act: 'scripts/foreman/act.js', wait: 'scripts/foreman/wait-wake.js' });
 
 // The plugin root as it is written in a command, without its quotes: on
 // Windows, forward slashes after its drive letter.
@@ -40,6 +40,13 @@ export function foremanCommands(pluginRoot = PLUGIN_ROOT, { platform = process.p
     wake: `node '${root}/${SCRIPTS.wake}'`,
     act: `node '${root}/${SCRIPTS.act}'`,
   };
+}
+
+// The Desktop foreman's three commands: `{ wake, act, wait }`. The wait script takes `--project <p>` and its own session; it is
+// not one of the allowed tools of a foreman the watcher starts, which never waits for wakes.
+export function desktopForemanCommands(pluginRoot = PLUGIN_ROOT, { platform = process.platform } = {}) {
+  const root = rootOf(pluginRoot, platform);
+  return { ...foremanCommands(pluginRoot, { platform }), wait: `node '${root}/${SCRIPTS.wait}'` };
 }
 
 // The foreman's playbook, as Claude Code names a plugin's skill: the plugin's

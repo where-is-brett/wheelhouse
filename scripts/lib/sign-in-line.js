@@ -7,6 +7,8 @@ import { faultLine, readJsonNamed } from './read-json-named.js';
 
 export const KINDS = Object.freeze(['not-signed-in', 'blocked', 'no-program', 'other']);
 const NAME_CHARS = 60;
+// A Desktop foreman check-in no older than this is the foreman running (the watcher calls it away beyond it).
+const FOREMAN_RUNNING_MS = 3 * 60 * 1000;
 // A sign-in failure is one short message at the start of a run. Output longer than this is a session that ran, and what it
 // printed about logging in is its own work, not a refusal.
 const SHORT_OUTPUT = 2000;
@@ -65,9 +67,10 @@ export function timeWords(iso) {
 // `route` is what scripts/lib/route.js read: 'desktop', 'background', or null where none is saved (builders start in the background, and the line says so). A
 // settings problem the route reader named (`fault`, as faultLine takes it) and a fact file that can't be read are said so,
 // never left out.
-export function buildersLine({ home, agent = 'claude-code', route = 'background', program = 'claude', fault = null } = {}) {
+// `foremanAge` is the Desktop foreman's check-in age in ms (scripts/foreman/check-in.js's checkInAge), or null when there is none.
+export function buildersLine({ home, agent = 'claude-code', route = 'background', program = 'claude', fault = null, foremanAge = null } = {}) {
   if (fault !== null) return `Builders: ${faultLine(fault)}`;
-  if (route === 'desktop') return 'Builders: Claude Desktop';
+  if (route === 'desktop') return `Builders: Claude Desktop${Number.isFinite(foremanAge) && foremanAge <= FOREMAN_RUNNING_MS ? ' · foreman running' : ''}`;
   // No route chosen: an install that predates the setting still starts builders in the background, so a sign-in fact kept for
   // that route is still said.
   if (route === null) {
@@ -85,11 +88,20 @@ export function buildersLine({ home, agent = 'claude-code', route = 'background'
   return `Builders: ${route} as \`${commandName(fact.command)}\` · can't sign in since ${timeWords(fact.since)} (${kindWords(fact.kind)})`;
 }
 
+// The fact the First Mate's session start adds when Desktop is closed or the foreman was never started (builders and settings
+// design, section 7.5): "Foreman: not running · 3 wakes waiting", and the card to offer. Only on the Desktop route, only while
+// the check-in is not fresh and a wake waits; otherwise null. `wakes` is the number of wakes in the Desktop queue.
+export function foremanFact({ route, foremanAge = null, wakes = 0 } = {}) {
+  if (route !== 'desktop' || !Number.isInteger(wakes) || wakes < 1) return null;
+  if (Number.isFinite(foremanAge) && foremanAge <= FOREMAN_RUNNING_MS) return null;
+  return `Foreman: not running · ${wakes} ${wakes === 1 ? 'wake' : 'wakes'} waiting · offer the "Start the foreman" card (foreman-card)`;
+}
+
 // The same line for the board's status lines, with its level: `watch` while builders can't sign in or the file can't be read.
-export function buildersHealth({ home, agent = 'claude-code', route = 'background', program = 'claude', fault = null } = {}) {
+export function buildersHealth({ home, agent = 'claude-code', route = 'background', program = 'claude', fault = null, foremanAge = null } = {}) {
   const read = readSignIn(home);
   const calm = fault === null && read.ok && (route === 'desktop' || read.facts[`${agent}:${route ?? 'background'}`] === undefined);
-  return { level: calm ? 'ok' : 'watch', text: buildersLine({ home, agent, route, program, fault }) };
+  return { level: calm ? 'ok' : 'watch', text: buildersLine({ home, agent, route, program, fault, foremanAge }) };
 }
 
 // What a start refused by the gate says, as a start refused for a damaged settings file says its own.

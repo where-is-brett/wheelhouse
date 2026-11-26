@@ -197,7 +197,7 @@ PR #370's six rules, kept in substance. After way-of-working section 6.1, "card"
 | Surface | Watching | Steering |
 |---|---|---|
 | **Terminal** | Steps in the chat's Logbook; the page; `runs.js --follow` | Yes: the helm command opens the session in the terminal |
-| **Claude desktop app** | The same, in the chat; the page opens in the app's file pane | Yes, through the app's terminal panel (the one-click Run). Claude Code's documentation says the app's sidebar lists only sessions the app runs itself, so a crew session never appears there as a session row |
+| **Claude desktop app** | The same, in the chat; the page opens in the app's file pane | Yes, through the app's terminal panel (the one-click Run). Claude Code's documentation says the app's sidebar lists only sessions the app runs itself, so a crew session the background route starts never appears there as a session row. On the Desktop route the foreman starts each builder through the app, so a crew session does show there, as the row named after its piece (builders and settings design, section 7.4) |
 | **Phone (the Claude app)** | Nothing new: alerts say only that something waits (way of working, section 9). Transcripts stay on the computer (rule 5) | Nothing built. A helm session is an ordinary running interactive session, so Claude Code's Remote Control (`/remote-control` inside it) can already continue it from the phone or claude.ai/code while the computer stays on (Pro, Max, Team and Enterprise plans; not with an API key). That is enough for a start |
 
 ### 9.4 Talking to the piece directly
